@@ -21,6 +21,7 @@ import (
 )
 
 func TestDeliveryCommitsSharedConversationLedger(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	s := exchange.New(db)
 	r := start(t, s)
@@ -102,6 +103,7 @@ func (m materialStore) Read(ctx context.Context, ref ledger.Material) (string, e
 	return string(data), err
 }
 func TestLargeExchangeUsesSharedMaterialsAndMasksSecrets(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
@@ -151,6 +153,7 @@ func TestLargeExchangeUsesSharedMaterialsAndMasksSecrets(t *testing.T) {
 }
 
 func TestLargeMailboxRollbackDoesNotRetainMaterialMetadata(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)

@@ -47,6 +47,7 @@ func (p *retentionWrite) Insert(context.Context, *canon.Tx) (Material, error) {
 	return Material{ID: fmt.Sprint(len(p.owner.bodies)), Revision: 1, Path: p.path, SHA256: fmt.Sprintf("%x", sha256.Sum256(p.body))}, nil
 }
 func TestRetainResultIsAtomicAndReplayable(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	a, _, _ := areaFixture(t)
 	writer := &retentionWriter{}
@@ -113,6 +114,7 @@ func TestRetainResultIsAtomicAndReplayable(t *testing.T) {
 	}
 }
 func TestRetainRejectsChangedBytesAndOutsideLink(t *testing.T) {
+	t.Parallel()
 	for _, link := range []bool{false, true} {
 		t.Run(fmt.Sprint(link), func(t *testing.T) {
 			s, _ := testStore(t)

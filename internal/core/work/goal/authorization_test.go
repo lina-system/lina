@@ -22,6 +22,7 @@ func authorizationStep(t *testing.T, e *Engine) State {
 }
 
 func TestPublishedAuthorizationWaitResumesWithoutObservingAnEffect(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	granted := false
 	effects, observations := 0, 0
@@ -67,6 +68,7 @@ func TestPublishedAuthorizationWaitResumesWithoutObservingAnEffect(t *testing.T)
 }
 
 func TestObservationDoesNotUseClaimSnapshotAfterAuthorizationRequeue(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	queued := revisionAction(t, e, "a", Assign)
 	if err := e.Signal(t.Context(), Signal{ID: "first-approval-hint", ActionID: queued.ID}); err != nil {
@@ -104,6 +106,7 @@ func TestObservationDoesNotUseClaimSnapshotAfterAuthorizationRequeue(t *testing.
 }
 
 func TestAuthorizationSignalRechecksGrantAndExecutesOnceAcrossRestart(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	checks, effects := 0, 0
 	granted := false
@@ -167,6 +170,7 @@ func TestAuthorizationSignalRechecksGrantAndExecutesOnceAcrossRestart(t *testing
 }
 
 func TestRevisionRetiresAuthorizationWaitWithoutDispatch(t *testing.T) {
+	t.Parallel()
 	for _, inFlight := range []bool{false, true} {
 		t.Run(map[bool]string{false: "parked", true: "authorization-in-flight"}[inFlight], func(t *testing.T) {
 			e := revisionEngine(t, readyTask("a"))
@@ -203,6 +207,7 @@ func TestRevisionRetiresAuthorizationWaitWithoutDispatch(t *testing.T) {
 }
 
 func TestSignalDoesNotRepeatExecutedActionNeedingPerson(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	effects := 0
 	e.cfg.Driver = &fixtureDriver{run: func(Action) (Observation, error) {
@@ -224,6 +229,7 @@ func TestSignalDoesNotRepeatExecutedActionNeedingPerson(t *testing.T) {
 }
 
 func TestAuthorizationSignalDuringCheckIsNotLost(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	entered, release := make(chan struct{}), make(chan struct{})
 	checks, effects := 0, 0
@@ -256,6 +262,7 @@ func TestAuthorizationSignalDuringCheckIsNotLost(t *testing.T) {
 }
 
 func TestReleasedAuthorizationRetryWakesAfterEarlierSignalWasConsumed(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	a := revisionAction(t, e, "a", Assign)
 	// An approval hint has requeued this identity while its previous authority

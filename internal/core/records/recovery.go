@@ -77,7 +77,7 @@ func (r *Store) acquire(ctx context.Context) (string, error) {
 	if err = r.root.Link(name, ".git/index.lock"); err != nil {
 		return "", err
 	}
-	if err = syncDirectory(r.root, ".git"); err != nil {
+	if err = r.syncDirectory(".git"); err != nil {
 		return "", err
 	}
 	return token, nil
@@ -100,7 +100,7 @@ func (r *Store) release(ctx context.Context, token string) error {
 	if err = r.root.Remove(".git/result-lock-" + token); err != nil && !errors.Is(err, os.ErrNotExist) {
 		return err
 	}
-	if err = syncDirectory(r.root, ".git"); err != nil {
+	if err = r.syncDirectory(".git"); err != nil {
 		return err
 	}
 	return r.db.Write(ctx, func(tx *canon.Tx) error {
@@ -317,5 +317,5 @@ func (r *Store) cleanStages() error {
 			}
 		}
 	}
-	return syncDirectory(r.root, ".git")
+	return r.syncDirectory(".git")
 }

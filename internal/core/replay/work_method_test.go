@@ -9,6 +9,7 @@ import (
 )
 
 func TestRequestKeepsPinnedWorkMethodWithCandidateVoice(t *testing.T) {
+	t.Parallel()
 	ep := replay.Episode{WorkMethod: `{"schema":1,"reply":{"candidates":2}}`, Persona: agents.Layers{Core: "core", UserVoice: "before"}}
 	ep.Evidence.Assembly.InstructionFormat = "persona-tui-work-method-v1"
 	ep.Evidence.Assembly.AgentID = "agent"

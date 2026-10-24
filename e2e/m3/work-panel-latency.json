@@ -1,0 +1,7 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "count": 50,
+  "transitions": 50,
+  "p95_ms": 500,
+  "max_ms": 1000
+}

@@ -12,6 +12,7 @@ import (
 )
 
 func TestEditRechecksAuthorityAfterReadingInput(t *testing.T) {
+	t.Parallel()
 	for _, body := range []string{"original", "changed"} {
 		for _, state := range []struct {
 			name, sql string
