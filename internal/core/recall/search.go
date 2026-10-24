@@ -984,7 +984,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return "", err
 		}
-		if material.Valid {
+		if material.Valid || !body.Valid {
 			if readEvent == nil {
 				return "", ErrBytesUnavailable
 			}
@@ -993,9 +993,6 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 				return "", ErrBytesUnavailable
 			}
 			return text, nil
-		}
-		if !body.Valid {
-			return "", ErrBytesUnavailable
 		}
 		// Stored spans address the display body. The excerpt is derived text:
 		// flagged secrets are removed, not left as the display placeholder.
