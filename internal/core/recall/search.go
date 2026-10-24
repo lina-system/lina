@@ -50,8 +50,9 @@ type Scope struct {
 	SpeakerKind                     guard.SpeakerKind
 	Origin                          string
 	Platform, Account, Chat, Author string
-	PersonOnly                      bool
 	CommonOnly                      bool
+	// PersonOnly selects person-authored events and person-subject memory items.
+	PersonOnly bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -134,7 +135,7 @@ func validScope(scope Scope) error {
 	if !utf8.ValidString(scope.Agent) || strings.ContainsRune(scope.Agent, 0) {
 		return ErrInvalid
 	}
-	if scope.Origin != "messenger" && (scope.Platform != "" || scope.Account != "" || scope.Chat != "" || scope.Author != "" || scope.PersonOnly) {
+	if scope.Origin != "messenger" && (scope.Platform != "" || scope.Account != "" || scope.Chat != "" || scope.Author != "") {
 		return ErrInvalid
 	}
 	for _, kind := range scope.Kinds {
@@ -460,9 +461,6 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 				args = append(args, filter.value)
 			}
 		}
-		if scope.PersonOnly {
-			where = append(where, alias+".speaker_kind='person'")
-		}
 	} else {
 		where = append(where, alias+".person=?", holderCondition(scope, alias), "coalesce(json_extract("+alias+".origin,'$.kind'),'')<>'messenger'")
 		args = append(args, scope.Person)
@@ -489,6 +487,10 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if scope.SpeakerKind != "" {
 		where = append(where, alias+".speaker_kind=?")
 		args = append(args, string(scope.SpeakerKind))
+	}
+	if scope.PersonOnly {
+		where = append(where, `((`+alias+`.kind='event' AND `+alias+`.speaker_kind='person')
+ OR (`+alias+`.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=`+alias+`.source_id AND m.subject_kind='person')))`)
 	}
 	if scope.Origin != "" {
 		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
@@ -809,7 +811,7 @@ func maskDerived(text string, spans []secrets.Span) (string, error) {
 func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (string, error) {
 	switch hit.Kind {
 	case Event:
-		var body string
+		var body sql.NullString
 		var material sql.NullString
 		var spans []secrets.Span
 		err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -847,7 +849,10 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return maskDerived(body, spans)
+		if !body.Valid {
+			return "", ErrBytesUnavailable
+		}
+		return maskDerived(body.String, spans)
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {

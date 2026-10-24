@@ -59,6 +59,12 @@ for events and items together, materializes the item set in one scoped read, and
 reads an event's text only for the results that remain. Its cost follows the
 hits, not the number of person events.
 
+Person-model queries set `PersonOnly`, which filters person-authored events and
+person-subject memory items before ranking and the limit, including queued
+sources. General recall keeps its wider kind/speaker filters. Event bodies in
+materials have a nullable inline body; search resolves those through the bound
+reader or reports unavailable bytes without failing the whole result list.
+
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term
 ranking, identical-text collapse, lineage, scope and visibility classes,
