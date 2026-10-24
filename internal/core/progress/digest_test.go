@@ -7,6 +7,7 @@ import (
 )
 
 func TestDigestBoundsCountsAndKeepsWaitingFirst(t *testing.T) {
+	t.Parallel()
 	entries := Compute([]Unit{{ID: "hidden", Kind: "project", Name: "Build\na report", Active: true}})
 	for _, n := range []int{0, 2, 5, 8} {
 		waiting := make([]string, n)
@@ -29,6 +30,7 @@ func TestDigestBoundsCountsAndKeepsWaitingFirst(t *testing.T) {
 }
 
 func TestDigestPreservesExecutionStateWithoutPlanOutcome(t *testing.T) {
+	t.Parallel()
 	rows := Compute([]Unit{{ID: "private-session", Kind: "project", Name: "Fixture job", State: "failed", Landed: true}})
 	digest := Digest(nil, rows)
 	if len(digest.Lines) != 1 || !strings.Contains(digest.Lines[0], "failed: Fixture job") || rows[0].Line.Stage != "unknown" || rows[0].Line.Percent != nil {

@@ -11,6 +11,7 @@ import (
 // twelve task rows of those lines, and the run outside any 일 as a line of its
 // own: four lines by state while the running list still shows thirteen rows.
 func TestCountFollowsLinesNotRows(t *testing.T) {
+	t.Parallel()
 	units := []Unit{}
 	tasks := 0
 	for i := range 3 {

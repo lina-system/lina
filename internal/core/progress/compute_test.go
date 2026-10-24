@@ -8,6 +8,7 @@ import (
 )
 
 func TestComputeUnknownHierarchyAndSeenCompletion(t *testing.T) {
+	t.Parallel()
 	yes := true
 	units := []Unit{
 		{ID: "private-goal", Kind: "goal", Name: "Ship the workshop"},
@@ -42,12 +43,14 @@ func TestComputeUnknownHierarchyAndSeenCompletion(t *testing.T) {
 	}
 }
 func TestComputeOrderUsesWaitingThenLatestMovement(t *testing.T) {
+	t.Parallel()
 	got := Compute([]Unit{{ID: "a", Name: "Earlier", Active: true, Updated: 1}, {ID: "b", Name: "Latest", Active: true, Updated: 2}, {ID: "c", Name: "Needs a reply", Waiting: 1}})
 	if len(got) != 3 || got[0].Ref != "c" || got[1].Ref != "b" || got[2].Ref != "a" {
 		t.Fatalf("order: %+v", got)
 	}
 }
 func TestGoalDoesNotBecomeDoneWithoutItsOwnVerdict(t *testing.T) {
+	t.Parallel()
 	yes := true
 	rows := Compute([]Unit{{ID: "goal", Kind: "goal", Name: "Goal", Waiting: 1}, {ID: "project", Parent: "goal", Kind: "project", Name: "Project", Done: &yes, Seen: true}})
 	if len(rows) != 1 || rows[0].Line.Stage != "unknown" || rows[0].Line.Percent != nil {
@@ -59,6 +62,7 @@ func TestGoalDoesNotBecomeDoneWithoutItsOwnVerdict(t *testing.T) {
 // word is its current stage entry and that the entries stay on the line. A
 // running goal is visible on its own, without a child row.
 func TestComputeGoalCarriesCurrentStageAndEntries(t *testing.T) {
+	t.Parallel()
 	stages := []Stage{
 		{Number: 1, Kind: KindStage, Label: "숙소 고르기", State: StepDone, Steps: []StageStep{{ID: "private-step", Name: "숙소 고르기", State: StepDone}}},
 		{Number: 2, Kind: KindStage, Label: "이동 준비", State: StepWorking, Steps: []StageStep{{ID: "private-step-2", Name: "이동 준비", State: StepWorking}}},
