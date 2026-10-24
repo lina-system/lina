@@ -308,6 +308,61 @@ func TestSearchKoreanFixtureEventParity(t *testing.T) {
 	}
 }
 
+func TestSearchQueuedDerivationDoesNotSuppressIndexedEvents(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "original", "conversation", "owner", "agent", "도서관 원문", base, "")
+	admitAt(t, db, "unrelated", "conversation", "owner", "agent", "도서관 곁글", base.Add(time.Second), "")
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body)
+ VALUES('queued-view','conversation','owner','agent','person','{"kind":"tui"}','2026-01-02T00:00:02Z','2026-01-02T00:00:02Z','recorded','{"kind":"import"}','도서관 보기')`)
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind,ordinal) VALUES('queued-view','original','view_of',0)`)
+	if n := count(t, db, "SELECT count(*) FROM recall_doc WHERE source_id='queued-view'"); n != 0 {
+		t.Fatal("queued view was indexed")
+	}
+	if n := count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id='queued-view'"); n != 1 {
+		t.Fatal("queued view missing from the pending queue")
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"original", "unrelated"}) {
+		t.Fatalf("queued view suppressed indexed events: %v", ids)
+	}
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,replay_of,body)
+ VALUES('queued-copy','conversation','owner','agent','person','{"kind":"tui"}','2026-01-02T00:00:03Z','2026-01-02T00:00:03Z','recorded','{"kind":"import"}','original','도서관 사본')`)
+	scope.IncludeReplay = true
+	ids = searchIDs(t, db, scope, "도서관", 0)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{"original", "unrelated"}) {
+		t.Fatalf("queued replay suppressed indexed events: %v", ids)
+	}
+}
+
+func TestSearchOmitsGeneratedResultViewWhenSourceDoesNotMatch(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "source", "conversation", "owner", "agent", "ordinary garden reply", base, "")
+	_, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryAgent, ledger.Input{
+		ID: "legacy-card", ConversationID: "conversation", AgentID: "agent", ParentID: "source",
+		ScaffoldKind: "result", Surface: ledger.Surface{Kind: "tui"},
+		OccurredAt: base.Add(time.Second), RecordedAt: base.Add(time.Second), TimeQuality: "observed",
+		Body:      `{"type":"document_draft","text":"ordinary garden reply"}`,
+		Relations: []ledger.Relation{{Kind: "view_of", TargetID: "source"}},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	admitAt(t, db, "prose", "conversation", "owner", "agent", "the note names document_draft once", base.Add(2*time.Second), "")
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	ids := searchIDs(t, db, scope, "document_draft", 0)
+	if !reflect.DeepEqual(ids, []string{"prose"}) {
+		t.Fatalf("generated result view returned: %v", ids)
+	}
+	if ids := searchIDs(t, db, scope, "garden", 0); !reflect.DeepEqual(ids, []string{"source"}) {
+		t.Fatalf("source hidden behind its result view: %v", ids)
+	}
+}
+
 func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)

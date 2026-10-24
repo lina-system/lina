@@ -418,7 +418,9 @@ func lineageFilter(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
+	// Compare source identities. A still-queued copy has a NULL document id, and
+	// NOT IN treats that NULL as unknown for every event.
+	return ` WHERE c.kind<>'event' OR NOT EXISTS (SELECT 1 FROM derived x WHERE x.id=c.source_id)`
 }
 
 func holderCondition(scope Scope, alias string) string {
@@ -466,7 +468,8 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	}
 	if containsKind(kinds, Event) {
 		where = append(where, `(`+alias+`.kind<>'event' OR EXISTS(SELECT 1 FROM conv_event e WHERE e.id=`+alias+`.source_id
-   AND coalesce(e.scaffold_kind,'')<>'reply_check'))`)
+   AND coalesce(e.scaffold_kind,'')<>'reply_check'
+   AND NOT (coalesce(e.scaffold_kind,'')='result' AND EXISTS(SELECT 1 FROM ev_rel view WHERE view.event_id=e.id AND view.kind='view_of'))))`)
 	}
 	if containsKind(kinds, Memory) {
 		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
