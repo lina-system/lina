@@ -135,6 +135,10 @@ func fixture() {
 			if mode == "recover-command-done" {
 				result["status"] = "completed"
 			}
+			if mode == "recover-text-call" {
+				result["status"] = "completed"
+				result["items"] = []any{map[string]any{"type": "agentMessage", "id": "text", "text": `[tool_use id=x name=_bash] {"command":"pwd"}`}}
+			}
 			if mode == "recover-missing-items" {
 				delete(result, "items")
 			}
@@ -166,11 +170,11 @@ func fixture() {
 			}
 			switch os.Getenv("LINA_CODEX_FIXTURE") {
 			case "cancel-read":
-				notify("item/agentMessage/delta", map[string]any{"threadId": "thread-1", "turnId": turn, "itemId": "message", "delta": "read_pending"})
+				notify("turn/plan/updated", map[string]any{"threadId": "thread-1", "turnId": turn, "plan": []any{}})
 				continue
 			case "overflow":
 				for i := 0; i < 300; i++ {
-					notify("item/agentMessage/delta", map[string]any{"threadId": "thread-1", "turnId": turn, "itemId": "message", "delta": "x"})
+					notify("turn/plan/updated", map[string]any{"threadId": "thread-1", "turnId": turn, "plan": []any{}})
 				}
 				continue
 			case "oversize":
@@ -418,7 +422,7 @@ func TestCanceledRPCDoesNotInterruptWorker(t *testing.T) {
 	go func() { _, err := s.Snapshot(call, th); done <- err }()
 	for {
 		e := <-s.Events()
-		if e.Progress != nil && e.Progress.Text == "read_pending" {
+		if e.Progress != nil && e.Progress.Phase == "doing" {
 			break
 		}
 	}

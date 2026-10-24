@@ -357,10 +357,10 @@ func agentFixture() {
 			case "unknown":
 				pending = f.ID
 				send(map[string]any{"jsonrpc": "2.0", "method": "session/update", "params": map[string]any{"sessionId": "fixture", "update": map[string]any{"sessionUpdate": "future_result", "status": "done"}}})
-				progress("Waiting")
+				thought("Waiting")
 			case "cancel":
 				pending = f.ID
-				progress("Waiting")
+				thought("Waiting")
 			case "success":
 				progress("Writing result")
 				os.WriteFile("result.txt", []byte("result\n"), 0600)
@@ -381,7 +381,7 @@ func agentFixture() {
 			}
 			reply(pending, map[string]any{"stopReason": "end_turn"})
 		case "session/cancel":
-			progress("Cancel received")
+			thought("Cancel received")
 			for {
 				if _, err := os.Stat("release"); err == nil {
 					break
