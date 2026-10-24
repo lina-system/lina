@@ -197,8 +197,13 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     return client;
   };
 
-  const keep = async (login: KakaoLogin): Promise<void> => {
+  // keep writes the session only while this attempt is still the current one.
+  // A cancel during a credential write must not sign the replacement in, clear
+  // its pending login, or make the abandoned account current.
+  const keep = async (login: KakaoLogin, mine: number): Promise<void> => {
+    if (mine !== generation) return;
     if (!login.credentials?.access_token) {
+      if (mine !== generation) return;
       failure = 'login failed';
       throw new Refusal('source_failing', failure);
     }
@@ -209,9 +214,13 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       device_uuid: login.credentials.device_uuid,
       device_type: 'tablet',
     };
+    if (mine !== generation) return;
     await credentials.setAccount(saved);
+    if (mine !== generation) return;
     await credentials.setCurrentAccount(saved.account_id);
+    if (mine !== generation) return;
     await credentials.clearPendingLogin();
+    if (mine !== generation) return;
     account = saved;
     ownId = String(saved.user_id);
     signedIn = true;
@@ -224,9 +233,12 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
   // device of the person is evicted; an occupied slot asks for the passcode.
   const submit = async (): Promise<SignInStep> => {
     if (!pending) throw new Refusal('invalid_request', 'no sign-in in progress');
+    const mine = generation;
     const result = await sdk.attemptLogin(pending.email, pending.password, pending.deviceUuid, 'tablet', false);
+    if (mine !== generation) return { state: 'needs_sign_in' };
     if (result.authenticated) {
-      await keep(result);
+      await keep(result, mine);
+      if (mine !== generation) return { state: 'needs_sign_in' };
       return { state: 'signed_in' };
     }
     if (result.next_action === 'provide_passcode') {
@@ -276,7 +288,7 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       pending = null;
       return;
     }
-    await keep(result);
+    await keep(result, mine);
   };
 
   const signInState = async (): Promise<SignInState> => {

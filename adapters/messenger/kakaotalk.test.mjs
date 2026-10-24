@@ -226,6 +226,37 @@ test('a cancelled sign-in is not resumed by the next connection', async () => {
   assert.equal(again.show, undefined);
 });
 
+test('a cancelled sign-in does not become signed in when its credential write finishes', async () => {
+  let release;
+  const holdAccountWrite = new Promise(resolve => { release = resolve; });
+  const { driver, fixture } = open({
+    login: {
+      attempts: [{ authenticated: false, next_action: 'provide_passcode' }, { authenticated: true, account_id: '7788', user_id: '7788' }],
+      passcode: '4821',
+      holdAccountWrite,
+    },
+    profile: { user_id: '7788', nickname: 'Me' },
+    chats: [],
+  });
+  await driver.beginSignIn();
+  await driver.answer('email', 'person@example.test');
+  assert.deepEqual(await driver.answer('password', 'synthetic-password'), {
+    state: 'needs_sign_in', show: { kind: 'code', value: '4821' },
+  });
+  const started = Date.now();
+  while (!fixture.calls.includes('setAccount')) {
+    if (Date.now() - started > 1000) assert.fail('setAccount was not reached');
+    await new Promise(resolve => setTimeout(resolve, 5));
+  }
+  await driver.cancelSignIn();
+  const replacement = await driver.beginSignIn();
+  assert.deepEqual(replacement.prompt, { key: 'email', kind: 'text', text: 'KakaoTalk email' });
+  release();
+  await new Promise(resolve => setTimeout(resolve, 30));
+  assert.equal(await driver.signInState(), 'needs_sign_in');
+  assert.deepEqual(await driver.beginSignIn(), replacement);
+});
+
 test('a rejected password starts a new attempt instead of staying failed', async () => {
   const { driver, fixture } = open({
     login: {

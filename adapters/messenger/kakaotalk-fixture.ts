@@ -33,7 +33,14 @@ export type Recorded = {
   loginErrors?: string[];
   // session: an injected failure of acquireSession, for the live path.
   session?: { error?: string };
-  login?: { attempts?: RecordedLogin[]; passcode?: string; registration?: { error?: string; delayMs?: number } };
+  login?: {
+    attempts?: RecordedLogin[];
+    passcode?: string;
+    registration?: { error?: string; delayMs?: number };
+    // holdAccountWrite pauses setAccount until it settles. A test cancels the
+    // sign-in while that write is still in flight.
+    holdAccountWrite?: Promise<void>;
+  };
   profile?: { user_id: string; nickname: string };
   chats?: RecordedChat[];
   pages?: Record<string, RecordedPage>;
@@ -119,6 +126,7 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
     },
     async setAccount(account: RecordedAccount) {
       calls.push('setAccount');
+      if (script.login?.holdAccountWrite) await script.login.holdAccountWrite;
       accounts[account.account_id] = account;
       persist();
     },
