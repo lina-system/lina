@@ -9,6 +9,7 @@ import (
 )
 
 func TestMemoPromotionUndoAndStaleProtection(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	c := Change{ID: "memo", Path: "inbox/notes.md", Data: []byte("---\nid: \"memo\"\nkind: memo\nstate: active\nperson_id: \"person\"\n---\n\n# Plan the visit\n\nKeep this note.\n")}
 	rev := commit(t, s, c)
@@ -49,6 +50,7 @@ func TestMemoPromotionUndoAndStaleProtection(t *testing.T) {
 }
 
 func TestMemoPromotionCrashRecoveryKeepsUndo(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"intent", "file", "ref", "checkpoint"} {
 		t.Run(stage, func(t *testing.T) {
 			s, root, db := setup(t)

@@ -14,6 +14,7 @@ import (
 )
 
 func TestIndexRebuiltOnOpen(t *testing.T) {
+	t.Parallel()
 	s, root, db := setup(t)
 	c := Change{ID: "stable", Path: "inbox/note.md", Data: doc("stable", "Prototype")}
 	rev := commit(t, s, c)
@@ -38,6 +39,7 @@ func TestIndexRebuiltOnOpen(t *testing.T) {
 }
 
 func TestIndexSearchProjectionLiveAndRebuilt(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	commit(t, s, Change{ID: "stable", Path: "inbox/note.md", Data: []byte("---\nid: \"stable\"\nkind: memo\nstate: active\nperson_id: \"person\"\nbelongs_to: [\"goal\"]\nblocked_by: [\"dependency\"]\n---\n\n# Prototype\n\nCalibration measurements.\n")})
 	check := func() {
@@ -120,6 +122,7 @@ func indexDump(t *testing.T, db Canon) string {
 }
 
 func TestIndexQueryMoveUpdateAndRebuildEquality(t *testing.T) {
+	t.Parallel()
 	s, _, db := setup(t)
 	data := []byte("---\nid: \"first\"\nkind: memo\nstate: active\nperson_id: \"person\"\nbelongs_to: [\"goal\"]\nblocked_by: [\"dependency\"]\n---\n\n# Prototype\n\nCalibration measurements.\n")
 	c := Change{ID: "first", Path: "inbox/note.md", Data: data}
@@ -171,6 +174,7 @@ func TestIndexQueryMoveUpdateAndRebuildEquality(t *testing.T) {
 }
 
 func TestOutsideChangesAreValidatedShownAndNeverAdopted(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"modified", "invalid", "added", "duplicate_id", "deleted", "moved", "symlink", "committed", "locked"} {
 		t.Run(kind, func(t *testing.T) {
 			s, root, db := setup(t)
