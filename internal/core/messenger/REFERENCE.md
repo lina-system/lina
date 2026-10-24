@@ -79,7 +79,8 @@ again, so a missed link is not repaired later.
 `messenger_attachment` stores the id, name, media type and size for the
 revision that carried them. The bytes are not fetched. An edit adds the new
 revision's rows and leaves the earlier ones. Deleting the record removes the
-rows and keeps the legacy reference.
+rows and keeps the legacy reference. The table is canon migration 69, after
+the murmur import tables.
 
 ## Imported records
 
