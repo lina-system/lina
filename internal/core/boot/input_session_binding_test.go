@@ -95,3 +95,34 @@ func TestModelBindingWorkerSessionReferencesFollowTheChosenTask(t *testing.T) {
 		t.Fatalf("the person's chosen task was refused: %+v", *result)
 	}
 }
+
+// A follow_work to a session kept only in the recovery record still has a task
+// card. That must be stored for the worker's return, not refused as a live steer.
+func TestFollowWorkRetainedSessionKeepsOfflineDelivery(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task-a", Title: "First task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (recovery.Recovery{DB: r.db}).Put(t.Context(), recovery.Record{ID: "session-retained", Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: "input-retained", Thread: worker.Thread{ID: "session-retained", TaskID: "task-a"}, State: "active"}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "retained-follow", "Change the format.")
+	tools := modelBindingTools(t, r, input)
+	for i := range 13 {
+		got := questionCall(t, tools, "follow_work", "retained-"+string(rune('a'+i)), map[string]string{"id": "session:session-retained", "text": "Change the format."})
+		if i < 12 && got.Code != loop.OK {
+			t.Fatalf("retained session follow-up %d: %+v", i, got)
+		}
+		if i == 12 && got.Code == loop.OK {
+			t.Fatal("another retained follow-up replenished the coordination allowance")
+		}
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), "codex:session-retained")
+	if err != nil || len(messages) != 12 || messages[0].Text != "Change the format." || messages[0].TaskID != "task-a" || messages[0].SpeakerKind != "agent" || messages[0].Sender != r.agent {
+		t.Fatalf("offline delivery: %+v %v", messages, err)
+	}
+}
