@@ -48,6 +48,7 @@ func TestM2BindingChipInstalledCore(t *testing.T) {
 	chip = strings.Replace(chip, "%s", "Garden", 1)
 	h.keys(terminal, "Add a garden to-do.\r")
 	snapshot := waitScreen(t, h, terminal, chip)
+	alphaSaveScreen(t, terminal, "binding-chip-120x34", snapshot, "")
 	rows := chipRows(snapshot, chip)
 	if len(rows) != 1 {
 		t.Fatalf("chip rows = %d, want exactly one:\n%s", len(rows), screenText(snapshot))
@@ -64,6 +65,7 @@ func TestM2BindingChipInstalledCore(t *testing.T) {
 	// One tap stands for Ctrl+B in a terminal: the list of other candidates.
 	h.keys(terminal, "\x02")
 	list := waitScreen(t, h, terminal, design.Text(design.English, "binding.title"))
+	alphaSaveScreen(t, terminal, "binding-move-list-120x34", list, "")
 	text := screenText(list)
 	for _, want := range []string{design.Text(design.English, "binding.new"), design.Text(design.English, "binding.none")} {
 		if !strings.Contains(text, want) {

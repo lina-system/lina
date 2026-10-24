@@ -121,3 +121,16 @@ func TestBindingMoveListOpensOnCtrlB(t *testing.T) {
 		t.Error("the list stayed open after the move")
 	}
 }
+
+func TestBindingMoveShowsUnmovedEffects(t *testing.T) {
+	m := chipShell()
+	m.conversation.move = moveList{open: true, input: "one", busy: true}
+	reason := "left"
+	m.bindingResponse(protocol.Envelope{Payload: protocol.BindingMoveResult{MoveID: "move:one", InputID: "one", Effects: []protocol.BindingEffectOutcome{{Kind: "start", Item: "run", Moved: false, Reason: &reason}}}})
+	if !m.conversation.move.open {
+		t.Fatal("move result hid the effect that was not moved")
+	}
+	if got := strings.Join(m.moveRows(120), "\n"); !strings.Contains(got, "Not moved") {
+		t.Fatalf("missing unmoved effect: %s", got)
+	}
+}

@@ -54,6 +54,7 @@ import (
 type conversationRuntime struct {
 	inputJudge         atropos.Judge
 	inputCreationMu    sync.Mutex
+	inputMoveMu        sync.Mutex
 	publications       *publicationRuntime
 	externalTask       string
 	summaryPreparation conversationPreparation

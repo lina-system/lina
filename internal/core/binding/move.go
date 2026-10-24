@@ -129,17 +129,18 @@ type Outcome struct {
 
 // Move is the durable record of one rebinding.
 type Move struct {
-	ID         string          `json:"id"`
-	InputEvent string          `json:"input_event"`
-	Person     string          `json:"person"`
-	Agent      string          `json:"agent"`
-	Decider    string          `json:"decider"`
-	From       Target          `json:"from"`
-	To         Target          `json:"to"`
-	Effects    []Outcome       `json:"effects"`
-	State      State           `json:"state"`
-	Candidates []Item          `json:"candidates,omitempty"`
-	At         string          `json:"at"`
+	ID         string    `json:"id"`
+	InputEvent string    `json:"input_event"`
+	Person     string    `json:"person"`
+	Agent      string    `json:"agent"`
+	Decider    string    `json:"decider"`
+	From       Target    `json:"from"`
+	To         Target    `json:"to"`
+	Effects    []Outcome `json:"effects"`
+	State      State     `json:"state"`
+	Candidates []Item    `json:"candidates,omitempty"`
+	At         string    `json:"at"`
+	Input      Input     `json:"input"`
 }
 
 // Count is one decider's binding and move totals.

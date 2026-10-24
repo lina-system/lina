@@ -388,14 +388,14 @@ func TestChannelMoveListsAndAppliesChoice(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(list, "1. Lamps") || !strings.Contains(list, "new item") || !strings.Contains(list, "no item") || strings.Contains(list, "1. Plants") || !strings.Contains(list, "Now: Plants") {
+	if !strings.Contains(list, "2. Lamps") || !strings.Contains(list, "new item") || !strings.Contains(list, "no item") || strings.Contains(list, "1. Plants") || !strings.Contains(list, "Now: Plants") {
 		t.Fatalf("move list = %q", list)
 	}
 	choice, err := inbox.New(r.db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "channel-fixture", NativeID: "person-3"}, Body: []byte(`{"message_id":"person-3","text":"/move 1"}`)})
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = r.channels.channelMove(t.Context(), r, event, b, channelInput{id: choice.ID, native: "person-3"}, "person-1", "1"); err != nil {
+	if err = r.channels.channelMove(t.Context(), r, event, b, channelInput{id: choice.ID, native: "person-3"}, "person-1", "2"); err != nil {
 		t.Fatal(err)
 	}
 	moves := 0
@@ -406,5 +406,162 @@ func TestChannelMoveListsAndAppliesChoice(t *testing.T) {
 	}
 	if moves != 1 {
 		t.Fatalf("moves = %d after the channel choice", moves)
+	}
+}
+
+func TestBindingMoveUpdatesChoiceAndRetries(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
+	fixtureRecord(t, r, "lamps", "todo", "open", "", "Lamps", "Replace bulbs.")
+	inputID := admitForBinding(t, r, "move-choice", "Plants need watering.")
+	target := binding.Target{Class: "existing", ID: "lamps", Kind: "todo"}
+	first, err := r.moveBinding(t.Context(), inputID, target, "same-request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Get(t.Context(), inputID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := currentChoice(choices).Target; got != target {
+		t.Errorf("binding after move = %+v, want %+v", got, target)
+	}
+	if chip := r.chipFor(t.Context(), input); chip == nil || chip.Name != "Lamps" {
+		t.Errorf("chip after move = %+v", chip)
+	}
+	again, err := r.moveBinding(t.Context(), inputID, target, "same-request")
+	if err != nil || again.ID != first.ID || again.At != first.At {
+		t.Errorf("retry = %+v, %v; want original receipt", again, err)
+	}
+	replay, ok := moveReplayCase(first)
+	if !ok || replay.Input.Text != input.Body.Text() {
+		t.Errorf("replay lost original input: %+v", replay.Input)
+	}
+}
+
+func TestBindingMoveToGoal(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "goal", "initiative", "active", "", "Healthy garden", "Grow vegetables.")
+	fixtureRecord(t, r, "garden", "project", "active", "", "Garden", "Plan beds.")
+	input := admitForBinding(t, r, "to-goal", "Garden")
+	fixtureRecord(t, r, "seedlings", "todo", "open", "garden", "Seedlings", "Sow them.")
+	recordEffect(t, r, input, "write_record", `{"kind":"todo"}`, nil, map[string]string{"id": "seedlings"})
+	move, err := r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "goal", Kind: "initiative"}, "goal")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, parent := readRecord(t, r, "seedlings"); parent != "goal" {
+		t.Fatalf("parent=%q, effects=%+v", parent, move.Effects)
+	}
+}
+
+func TestBindingMoveRefusedEditPreservesOriginal(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
+	fixtureRecord(t, r, "garden", "project", "active", "", "Garden", "Plan beds.")
+	input := admitForBinding(t, r, "bad-target", "Plants")
+	before, rev, err := r.records.Read(t.Context(), "plants")
+	if err != nil {
+		t.Fatal(err)
+	}
+	receipt, err := coreexec.WriteRecord(t.Context(), r.records, records.Actor{Person: r.person, Agent: r.agent}, coreexec.RecordWrite{ID: "plants", Revision: rev, Kind: "todo", Title: "Plants", Note: "Water daily."})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordEffect(t, r, input, "write_record", `{"id":"plants","kind":"todo","title":"Plants","note":"Water daily."}`, &effectBefore{body: before.Data, revision: rev}, receipt)
+	move, err := r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "garden", Kind: "project"}, "bad-target")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(move.Effects) != 1 || move.Effects[0].Moved {
+		t.Errorf("refused edit reported moved: %+v", move.Effects)
+	}
+	if got, _ := readRecord(t, r, "plants"); got != "Plants|Water daily." {
+		t.Errorf("refused edit discarded original change: %s", got)
+	}
+}
+
+func TestBindingStatsCountModelPick(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
+	fixtureRecord(t, r, "lamps", "todo", "open", "", "Lamps", "Replace bulbs.")
+	id := admitForBinding(t, r, "model-pick", "Take care of it.")
+	input, err := r.journal().Get(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		return appendInputChoices(t.Context(), tx, input, "model-choice", []binding.Choice{{Request: 0, Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: "plants", Kind: "todo"}, Decider: "model"}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.moveBinding(t.Context(), id, binding.Target{Class: "existing", ID: "lamps", Kind: "todo"}, "model-move"); err != nil {
+		t.Fatal(err)
+	}
+	stats, err := r.bindingStats(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(stats.Deciders) != 1 || stats.Deciders[0].Decider != "model" || stats.Deciders[0].Bindings != 1 || stats.Deciders[0].Moves != 1 || stats.Deciders[0].PerHundred != 100 {
+		t.Fatalf("wrong decider counts: %+v", stats)
+	}
+}
+
+func TestBindingMoveKeepsEverySteer(t *testing.T) {
+	r := runRuntime(t)
+	seedRun(t, r, "run-alpha", "Alpha")
+	seedRun(t, r, "run-beta", "Beta")
+	input := admitForBinding(t, r, "two-steers", "Alpha")
+	for _, note := range []string{"Use a table.", "Include sources."} {
+		raw, _ := json.Marshal(map[string]string{"id": "run-alpha", "text": note})
+		recordEffect(t, r, input, "follow_work", string(raw), nil, map[string]string{"state": "submitted"})
+	}
+	move, err := r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "run-beta", Kind: "run"}, "two-steers")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(move.Effects) != 2 || move.Effects[0].Receipt == move.Effects[1].Receipt {
+		t.Errorf("steers share receipts: %+v", move.Effects)
+	}
+	for _, id := range []string{"run-alpha", "run-beta"} {
+		got := strings.Join(runFollowKeys(t, r, id), "\n")
+		for _, note := range []string{"Use a table.", "Include sources."} {
+			if !strings.Contains(got, note) {
+				t.Errorf("%s lost %s: %s", id, note, got)
+			}
+		}
+	}
+}
+
+func TestBindingMoveCombinesEditChain(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "Water them.")
+	fixtureRecord(t, r, "lamps", "todo", "open", "", "Lamps", "Replace bulbs.")
+	input := admitForBinding(t, r, "edits", "Plants")
+	for _, write := range []coreexec.RecordWrite{{ID: "plants", Kind: "todo", Title: "Garden plants", Note: "Water them."}, {ID: "plants", Kind: "todo", Title: "Garden plants", Note: "Water daily."}} {
+		before, rev, err := r.records.Read(t.Context(), "plants")
+		if err != nil {
+			t.Fatal(err)
+		}
+		write.Revision = rev
+		receipt, err := coreexec.WriteRecord(t.Context(), r.records, records.Actor{Person: r.person, Agent: r.agent}, write)
+		if err != nil {
+			t.Fatal(err)
+		}
+		raw, _ := json.Marshal(write)
+		recordEffect(t, r, input, "write_record", string(raw), &effectBefore{body: before.Data, revision: rev}, receipt)
+	}
+	if _, err := r.moveBinding(t.Context(), input, binding.Target{Class: "existing", ID: "lamps", Kind: "todo"}, "edits"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readRecord(t, r, "plants"); got != "Plants|Water them." {
+		t.Errorf("original not restored: %s", got)
+	}
+	if got, _ := readRecord(t, r, "lamps"); got != "Garden plants|Water daily." {
+		t.Errorf("lost accumulated edit: %s", got)
 	}
 }

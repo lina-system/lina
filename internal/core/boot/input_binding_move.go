@@ -4,6 +4,7 @@ package boot
 import (
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -143,7 +144,32 @@ func readBindingEffects(ctx context.Context, tx *canon.Tx, input string) ([]bind
 		e.LeftPerson = left == 1
 		effects = append(effects, e)
 	}
-	return effects, rows.Err()
+	return combineBindingEdits(effects), rows.Err()
+}
+
+// combineBindingEdits restores the first before-image and transfers the final
+// fields of an uninterrupted edit chain. A created item already carries edits.
+func combineBindingEdits(effects []binding.Effect) []binding.Effect {
+	out := make([]binding.Effect, 0, len(effects))
+	latest := map[string]int{}
+	for _, effect := range effects {
+		if index, ok := latest[effect.RecordID]; ok && effect.RecordID != "" && effect.Kind == binding.EffectEdit {
+			previous := &out[index]
+			if previous.Kind == binding.EffectCreate {
+				continue
+			}
+			if previous.Kind == binding.EffectEdit && previous.AfterRevision == effect.BeforeRevision {
+				previous.AfterRevision = effect.AfterRevision
+				previous.Payload = effect.Payload
+				continue
+			}
+		}
+		if effect.RecordID != "" {
+			latest[effect.RecordID] = len(out)
+		}
+		out = append(out, effect)
+	}
+	return out
 }
 
 // itemName reads the display name of a bound item from the same projections
@@ -181,6 +207,17 @@ func (r *conversationRuntime) boundChip(ctx context.Context, tx *canon.Tx, input
 	state, err := r.bindingState(ctx, tx, input)
 	if err != nil {
 		return binding.Chip{}, err
+	}
+	var raw string
+	if err = tx.QueryRowContext(ctx, "SELECT body FROM conv_event WHERE id=?", inputBindingID(input.ID)).Scan(&raw); err != nil {
+		return binding.Chip{}, err
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(raw), &decision); err != nil {
+		return binding.Chip{}, err
+	}
+	if decision.Snapshot != nil {
+		state = *decision.Snapshot
 	}
 	chip := binding.ChipFor(state, target)
 	chip.Name = name
@@ -273,6 +310,12 @@ var errOutsideBinding = errors.New("outside input binding")
 // moveBinding appends one rebinding event, re-attaches what the turn did and
 // records the counter, label and replay case.
 func (r *conversationRuntime) moveBinding(ctx context.Context, inputID string, target binding.Target, key string) (binding.Move, error) {
+	root := r
+	if r.router != nil {
+		root = r.router.root
+	}
+	root.inputMoveMu.Lock()
+	defer root.inputMoveMu.Unlock()
 	input, err := r.journal().Get(ctx, inputID)
 	if err != nil {
 		return binding.Move{}, err
@@ -280,10 +323,29 @@ func (r *conversationRuntime) moveBinding(ctx context.Context, inputID string, t
 	if input.PersonID != r.person || input.SpeakerKind != guard.Person {
 		return binding.Move{}, errOutsideBinding
 	}
+	moveID := "move:" + inputID + ":" + shortKey(key)
+	var prior binding.Move
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		if err := tx.QueryRowContext(ctx, "SELECT record FROM binding_moves WHERE id=?", moveID).Scan(&raw); err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, &prior)
+	})
+	if err == nil {
+		if prior.To != target {
+			return binding.Move{}, errOutsideBinding
+		}
+		return prior, r.publishBindingChip(ctx, input)
+	}
+	if !errors.Is(err, sql.ErrNoRows) {
+		return binding.Move{}, err
+	}
 	var decision binding.Decision
 	var state binding.State
 	var from binding.Target
 	var decider string
+	var current binding.Choice
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
 		var raw string
 		if err = tx.QueryRowContext(ctx, "SELECT body FROM conv_event WHERE id=? AND scaffold_kind=?", inputBindingID(inputID), inputBindingKind).Scan(&raw); err != nil {
@@ -296,8 +358,15 @@ func (r *conversationRuntime) moveBinding(ctx context.Context, inputID string, t
 		if err != nil {
 			return err
 		}
-		current := currentChoice(choices)
+		current = currentChoice(choices)
 		from, decider = current.Target, current.Decider
+		var original string
+		err = tx.QueryRowContext(ctx, "SELECT decided_by FROM binding_moves WHERE input_event=? ORDER BY rowid LIMIT 1", inputID).Scan(&original)
+		if err == nil {
+			decider = original
+		} else if !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
 		if decider == "" {
 			decider = decision.Decider
 		}
@@ -318,8 +387,10 @@ func (r *conversationRuntime) moveBinding(ctx context.Context, inputID string, t
 		return binding.Move{}, err
 	}
 	now := time.Now().UTC()
-	moveID := "move:" + inputID + ":" + shortKey(key)
-	move := binding.Move{ID: moveID, InputEvent: inputID, Person: input.PersonID, Agent: input.AgentID, Decider: decider, From: from, To: target, Effects: []binding.Outcome{}, At: now.Format(time.RFC3339Nano), State: state, Candidates: decision.Candidates}
+	move := binding.Move{ID: moveID, InputEvent: inputID, Person: input.PersonID, Agent: input.AgentID, Decider: decider, From: from, To: target, Effects: []binding.Outcome{}, At: now.Format(time.RFC3339Nano), State: state, Candidates: decision.Candidates, Input: binding.Input{Text: input.Body.Text(), ReplyTo: input.Surface.ReplyTo, Card: input.Surface.Card, Thread: input.Surface.Thread}}
+	if decision.Snapshot != nil {
+		move.State = *decision.Snapshot
+	}
 	var effects []binding.Effect
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
 		var err error
@@ -346,8 +417,11 @@ func (r *conversationRuntime) moveBinding(ctx context.Context, inputID string, t
 		if _, err = tx.ExecContext(ctx, "INSERT INTO binding_moves(id,input_event,person,agent,conversation,decided_by,from_target,to_target,record,moved_at) VALUES(?,?,?,?,?,?,?,?,?,?) ON CONFLICT(id) DO NOTHING", moveID, inputID, move.Person, move.Agent, input.ConversationID, move.Decider, move.From.ID, move.To.ID, raw, move.At); err != nil {
 			return err
 		}
-		_, err = ledger.AppendSystemSnapshot(ctx, tx, ledger.Input{ID: "binding-move:" + moveID, ParentID: inputID, ConversationID: input.ConversationID, AgentID: input.AgentID, Surface: input.Surface, ScaffoldKind: bindingMoveKind, OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(raw), Relations: []ledger.Relation{{TargetID: inputID, Kind: "view_of"}}})
-		return err
+		if _, err = ledger.AppendSystemSnapshot(ctx, tx, ledger.Input{ID: "binding-move:" + moveID, ParentID: inputID, ConversationID: input.ConversationID, AgentID: input.AgentID, Surface: input.Surface, ScaffoldKind: bindingMoveKind, OccurredAt: now, RecordedAt: now, TimeQuality: "recorded", Body: string(raw), Relations: []ledger.Relation{{TargetID: inputID, Kind: "view_of"}}}); err != nil {
+			return err
+		}
+		choice := binding.Choice{Request: current.Request, Quote: current.Quote, Target: target, Decider: "person"}
+		return appendInputChoices(ctx, tx, input, "binding-move-choice:"+moveID, []binding.Choice{choice})
 	})
 	if err != nil {
 		return binding.Move{}, err
@@ -439,7 +513,7 @@ func (r *conversationRuntime) confirmTodoParent(ctx context.Context, id string) 
 	if err != nil {
 		return err
 	}
-	if kind != "project" && kind != "area" {
+	if kind != "project" && kind != "initiative" && kind != "area" {
 		return records.ErrInvalid
 	}
 	return nil
@@ -459,43 +533,67 @@ func (r *conversationRuntime) moveEditedRecord(ctx context.Context, effect bindi
 		outcome.Reason = "changed_since"
 		return outcome, nil
 	}
-	if _, err = r.records.Commit(ctx, records.Change{ID: effect.RecordID, Base: revision, Path: record.Path, Data: effect.BeforeBody}, records.Actor{Person: r.person, Agent: r.agent}); err != nil {
+	changes := []records.Change{{ID: effect.RecordID, Base: revision, Path: record.Path, Data: effect.BeforeBody}}
+	receipt := "restored"
+	if to.Class == "existing" {
+		if to.ID == effect.RecordID {
+			outcome.Reason = "same_target"
+			return outcome, nil
+		}
+		next, reason := r.reapplyEdit(ctx, effect, to.ID)
+		if reason != "" {
+			outcome.Reason = reason
+			return outcome, nil
+		}
+		if next != nil {
+			changes = append(changes, *next)
+			receipt = "restored+applied"
+		}
+	}
+	if _, err = r.records.CommitBatch(ctx, changes, records.Actor{Person: r.person, Agent: r.agent}); err != nil {
 		outcome.Reason = "stale"
 		return outcome, nil
 	}
-	outcome.Moved, outcome.Receipt = true, "restored"
-	if to.Class != "existing" || to.ID == effect.RecordID {
-		return outcome, nil
-	}
-	applied, reason := r.reapplyEdit(ctx, effect, to.ID)
-	if reason != "" {
-		outcome.Reason, outcome.Receipt = reason, "restored"
-		return outcome, nil
-	}
-	if applied {
-		outcome.Receipt = "restored+applied"
-	}
+	outcome.Moved, outcome.Receipt = true, receipt
 	return outcome, nil
 }
 
-// reapplyEdit writes the fields the turn changed onto the right item, keeping
-// that item's other fields.
-func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Effect, target string) (bool, string) {
+// moveEditRepo stages the validated target write for the same publication as
+// the restoration. A rejected destination must leave the original edit intact.
+type moveEditRepo struct {
+	records.Repo
+	change *records.Change
+}
+
+func (s *moveEditRepo) Commit(_ context.Context, c records.Change, _ records.Actor) (records.Rev, error) {
+	s.change = &c
+	return c.Base, nil
+}
+func (s *moveEditRepo) Read(ctx context.Context, id records.ID) (records.Record, records.Rev, error) {
+	if s.change != nil && s.change.ID == id {
+		return records.Record{ID: id, Path: s.change.Path, Data: s.change.Data}, s.change.Base, nil
+	}
+	return s.Repo.Read(ctx, id)
+}
+
+// reapplyEdit prepares the changed fields on the right item while preserving
+// its other fields. WriteRecord performs the ordinary ownership/field checks.
+func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Effect, target string) (*records.Change, string) {
 	var write coreexec.RecordWrite
 	if json.Unmarshal(effect.Payload, &write) != nil {
-		return false, "missing_payload"
+		return nil, "missing_payload"
 	}
 	right, rightRevision, err := r.records.Read(ctx, target)
 	if err != nil {
-		return false, "not_a_record"
+		return nil, "not_a_record"
 	}
 	beforeKind, beforeTitle, beforeNote, _, _ := recordParts(effect.BeforeBody)
 	kind, title, note, _, _ := recordParts(right.Data)
 	if kind != write.Kind {
-		return false, "target_kind"
+		return nil, "target_kind"
 	}
 	if write.Title == beforeTitle && write.Note == beforeNote && write.Todo == nil {
-		return false, ""
+		return nil, ""
 	}
 	if write.Title != beforeTitle {
 		title = write.Title
@@ -505,11 +603,10 @@ func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Ef
 	}
 	var todo *records.Todo
 	if write.Todo != nil {
-		var beforeTodo *records.Todo
+		var beforeTodo, rightTodo *records.Todo
 		if beforeKind == "todo" {
 			beforeTodo, _, _, _ = records.ReadTodo(effect.BeforeBody)
 		}
-		var rightTodo *records.Todo
 		if kind == "todo" {
 			rightTodo, _, _, _ = records.ReadTodo(right.Data)
 		}
@@ -517,10 +614,11 @@ func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Ef
 			todo = mergeTodo(beforeTodo, write.Todo, rightTodo)
 		}
 	}
-	if _, err = coreexec.WriteRecord(ctx, r.records, records.Actor{Person: r.person, Agent: r.agent}, coreexec.RecordWrite{ID: target, Revision: rightRevision, Kind: kind, Title: title, Note: note, Todo: todo}); err != nil {
-		return false, "target_refused"
+	staged := &moveEditRepo{Repo: r.records}
+	if _, err = coreexec.WriteRecord(ctx, staged, records.Actor{Person: r.person, Agent: r.agent}, coreexec.RecordWrite{ID: target, Revision: rightRevision, Kind: kind, Title: title, Note: note, Todo: todo}); err != nil {
+		return nil, "target_refused"
 	}
-	return true, ""
+	return staged.change, ""
 }
 
 // mergeTodo copies only the fields the edit changed onto the right item.
@@ -570,7 +668,8 @@ func recordParts(data []byte) (kind, title, note, front, body string) {
 }
 
 func (r *conversationRuntime) moveSteer(ctx context.Context, moveID string, effect binding.Effect, to binding.Target, outcome binding.Outcome) (binding.Outcome, error) {
-	withdrawal, err := r.withdrawSteer(ctx, moveID, effect)
+	effectKey := moveID + ":" + shortKey(effect.TurnID+":"+effect.CallID)
+	withdrawal, err := r.withdrawSteer(ctx, effectKey, effect)
 	if err != nil {
 		outcome.Reason = "withdrawal_refused"
 		return outcome, nil
@@ -580,7 +679,7 @@ func (r *conversationRuntime) moveSteer(ctx context.Context, moveID string, effe
 		outcome.Reason, outcome.Receipt = "no_target", withdrawal
 		return outcome, nil
 	}
-	delivery, err := r.followMove(ctx, moveID, to.ID, steerText(effect.Payload), "deliver")
+	delivery, err := r.followMove(ctx, effectKey, to.ID, steerText(effect.Payload), "deliver")
 	if err != nil {
 		outcome.Reason, outcome.Receipt = "delivery_refused", withdrawal
 		return outcome, nil
@@ -628,29 +727,40 @@ func (r *conversationRuntime) bindingStats(ctx context.Context) (binding.Stats, 
 	bindings := map[string]int{}
 	moves := map[string]int{}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT body FROM conv_event WHERE scaffold_kind=? AND agent_id=?", inputBindingKind, r.agent)
+		rows, err := tx.QueryContext(ctx, "SELECT parent_id FROM conv_event WHERE scaffold_kind=? AND agent_id=?", inputBindingKind, r.agent)
 		if err != nil {
 			return err
 		}
+		var inputs []string
 		for rows.Next() {
-			var raw string
-			if err = rows.Scan(&raw); err != nil {
+			var id string
+			if err = rows.Scan(&id); err != nil {
 				rows.Close()
 				return err
 			}
-			var d binding.Decision
-			if json.Unmarshal([]byte(raw), &d) != nil {
-				continue
+			inputs = append(inputs, id)
+		}
+		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
+			return err
+		}
+		for _, id := range inputs {
+			var decider string
+			err = tx.QueryRowContext(ctx, "SELECT decided_by FROM binding_moves WHERE input_event=? ORDER BY rowid LIMIT 1", id).Scan(&decider)
+			if errors.Is(err, sql.ErrNoRows) {
+				choices, e := readInputChoices(ctx, tx, ledger.Event{ID: id})
+				if e != nil {
+					return e
+				}
+				decider = currentChoice(choices).Decider
+			} else if err != nil {
+				return err
 			}
-			decider := d.Decider
 			if decider == "" {
 				decider = "no-rule"
 			}
 			bindings[decider]++
 		}
-		if err = errors.Join(rows.Err(), rows.Close()); err != nil {
-			return err
-		}
+
 		rows, err = tx.QueryContext(ctx, "SELECT decided_by,count(*) FROM binding_moves WHERE agent=? GROUP BY decided_by", r.agent)
 		if err != nil {
 			return err
@@ -752,7 +862,7 @@ func moveReplayCase(move binding.Move) (intakereplay.Case, bool) {
 	if state.Focus.Class != "existing" {
 		state.Focus = binding.Target{Class: "none"}
 	}
-	c := intakereplay.Case{Version: 1, ID: move.ID, Set: "hard", State: &state, Input: binding.Input{Text: "move binding review"}, Gold: []intakereplay.Gold{{Target: move.To}}, Observed: []intakereplay.Binding{{Target: move.From, Decider: move.Decider}}}
+	c := intakereplay.Case{Version: 1, ID: move.ID, Set: "hard", State: &state, Input: move.Input, Gold: []intakereplay.Gold{{Target: move.To}}, Observed: []intakereplay.Binding{{Target: move.From, Decider: move.Decider}}}
 	if intakereplay.Validate(c) != "" {
 		return intakereplay.Case{}, false
 	}

@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"fmt"
 	"strconv"
 
 	tea "charm.land/bubbletea/v2"
@@ -21,6 +22,7 @@ type moveList struct {
 	busy     bool
 	failed   bool
 	received bool
+	outcomes []protocol.BindingEffectOutcome
 }
 
 // chipBlock returns the newest person message that carries a chip.
@@ -67,6 +69,12 @@ func (m *shellModel) moveKey(key string) (tea.Cmd, bool) {
 	move := &m.conversation.move
 	if !move.open {
 		return nil, false
+	}
+	if len(move.outcomes) > 0 {
+		if key == "enter" || key == "esc" || key == "ctrl+b" || key == "q" {
+			*move = moveList{}
+		}
+		return nil, true
 	}
 	switch key {
 	case "esc", "ctrl+b", "q":
@@ -145,9 +153,10 @@ func (m *shellModel) bindingResponse(e protocol.Envelope) bool {
 		}
 		return true
 	case protocol.BindingMoveResult:
-		m.conversation.move.busy = false
-		m.conversation.move.open = false
-		m.conversation.move = moveList{}
+		if m.conversation.move.input != p.InputID {
+			return true
+		}
+		m.conversation.move = moveList{open: len(p.Effects) > 0, input: p.InputID, outcomes: p.Effects}
 		return true
 	}
 	return false
@@ -158,6 +167,22 @@ func (m *shellModel) moveRows(width int) []string {
 	text := func(id string) string { return design.Text(m.styles.options.Language, id) }
 	move := &m.conversation.move
 	lines := []string{m.styles.Title.Render(render.Truncate(text("binding.title"), width, render.Unicode{}))}
+	if len(move.outcomes) > 0 {
+		lines[0] = m.styles.Title.Render(text("binding_move_result"))
+		for _, effect := range move.outcomes {
+			label := text("binding.effect." + effect.Kind)
+			status := "binding.effect.moved"
+			if !effect.Moved {
+				status = "binding.effect.not_moved"
+			}
+			line := fmt.Sprintf(text(status), label)
+			if effect.Reason != nil && *effect.Reason == "left" {
+				line += " - " + text("binding.effect.left")
+			}
+			lines = append(lines, render.Truncate(line, width, render.Unicode{}))
+		}
+		return lines
+	}
 	if move.failed {
 		return append(lines, m.styles.Muted.Render(render.Truncate(text("binding.failed"), width, render.Unicode{})))
 	}
@@ -173,7 +198,7 @@ func (m *shellModel) moveRows(width int) []string {
 		}
 		line := "  " + label
 		if i == move.index {
-			line = m.styles.Accent.Render("› ") + label
+			line = m.styles.Accent.Render(m.styles.listBullet()+" ") + label
 		}
 		lines = append(lines, render.Truncate(line, width, render.Unicode{}))
 	}

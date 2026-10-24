@@ -295,7 +295,7 @@ func (s *Store) validateTodoLinks(ctx context.Context, id string, d document) er
 		}
 		for _, target := range d.todo.BelongsTo {
 			var count int
-			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM records_text WHERE id=? AND person=? AND kind IN ('project','area')", target, d.person).Scan(&count); err != nil {
+			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM records_text WHERE id=? AND person=? AND kind IN ('initiative','project','area')", target, d.person).Scan(&count); err != nil {
 				return err
 			}
 			if count != 1 {
