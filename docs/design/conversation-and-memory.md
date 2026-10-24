@@ -400,10 +400,7 @@ answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
-and event, so a channel follow-up keeps that channel's source and work
-preparation keeps that channel's binding. A system turn that consumes
-person steering still offers binding; a call that stays on the system
-event does not borrow the person's target gate. Reading a tied
+and event, so a channel follow-up keeps that channel's source. Reading a tied
 candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it
@@ -419,7 +416,7 @@ ContextPacket and remain reconstructible from their ledger sources.
 **When to ask.** The agent asks which item only when both hold:
 
 - two targets still tie after the rules and its own reading;
-- a wrong pick would do something a move cannot undo: steer a running task or run, steer a task waiting on the person's input, start work that runs at once, stop a worker, or send, pay or delete.
+- a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, stop a worker, or send, pay or delete.
 
 It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
 

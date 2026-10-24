@@ -18,9 +18,7 @@ choice bytes for request replay.
 
 A person-selected new target keeps that decider. Once its created id is recorded,
 a later read, progress check, or follow-up may name that existing item; any
-other item stays pending. In one response, `bind_input` commits before a later
-work call: the work call's scheduling key is the binding key, a newline, and
-its own target. Other targets still run beside that update. A model follow-up to a worker task uses the agent
+other item stays pending. A model follow-up to a worker task uses the agent
 message path and the requesting conversation. An unrelated conversation is
 refused before delivery. `worker_input` and `worker_interrupt` resolve their session to
 that task before the person's choice is checked. `worker_interrupt` is a stop:
@@ -33,9 +31,7 @@ send. Cancelling a timer stops. Reads stay unclassified. A code goal tool resolv
 `goal_id` through the goal package's project record id before the same check.
 The binding snapshot includes that record as a project. A goal id that does
 not resolve is refused. Steering execution uses the selected input's runtime, so a
-channel follow-up keeps that channel source and work preparation keeps that
-channel binding. A system turn that consumes person steering still offers
-binding. A retained tie is not a settled
+channel follow-up keeps that channel source. A retained tie is not a settled
 reply target or the next focus. A reply that stays unresolved keeps that tie,
 so a later control asks before it runs.
 

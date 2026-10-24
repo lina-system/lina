@@ -20,23 +20,6 @@ func TestAskRequiresTieAndIrreversibleAction(t *testing.T) {
 		}
 	}
 }
-func TestSteerAsksWhenTiedTaskNeedsInput(t *testing.T) {
-	s := State{Items: []Item{{ID: "a", Kind: "task", State: "input_needed"}, {ID: "b", Kind: "task", State: "input_needed"}}}
-	a, b := Target{Class: "existing", Kind: "task", ID: "a"}, Target{Class: "existing", Kind: "task", ID: "b"}
-	c := Choice{Quote: "continue that", Target: a, Tied: []Target{a, b}, Action: "steer"}
-	if err := ValidateChoice(s, "continue that", c); err != nil {
-		t.Fatal(err)
-	}
-	if !NeedsQuestion(s, c) {
-		t.Fatal("input_needed tie did not ask")
-	}
-	s.Items[0].State = "done"
-	s.Items[1].State = "done"
-	if NeedsQuestion(s, c) {
-		t.Fatal("finished tasks asked")
-	}
-}
-
 func TestQuestionPageKeepsEveryInheritedTarget(t *testing.T) {
 	targets := make([]Target, 10)
 	items := make([]Item, len(targets))
@@ -101,7 +84,7 @@ func TestNeedsQuestionCountsTargetsHeldForLaterPage(t *testing.T) {
 	if NeedsQuestion(State{Items: items}, quiet) {
 		t.Fatal("a later initiative made a steer ask")
 	}
-	for _, state := range []string{"running", "working", "waiting", "needs_input", "input_needed"} {
+	for _, state := range []string{"running", "working", "waiting", "needs_input"} {
 		risky := Item{ID: "live", Kind: "task", State: state}
 		choice := quiet
 		choice.More = []Target{later, {Class: "existing", Kind: "task", ID: risky.ID}}

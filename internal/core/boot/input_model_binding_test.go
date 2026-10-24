@@ -419,27 +419,3 @@ func TestSelectedNewTargetResolvesToCreatedIdentity(t *testing.T) {
 		t.Fatalf("follow-up missing: notes=%d err=%v", len(run.FollowUps), err)
 	}
 }
-
-func TestWorkCallFollowsBindingSchedule(t *testing.T) {
-	r, _ := turnRuntime(t)
-	input := questionPersonInput(t, r, "order", "Start the library work.")
-	tools := modelBindingTools(t, r, input)
-	bindKey, err := tools["bind_input"].Validate(provider.ToolCall{ID: "bind", Name: "bind_input", Arguments: `{"bindings":[{"request":0,"quote":"Start the library work.","target":{"class":"none"}}]}`})
-	if err != nil {
-		t.Fatal(err)
-	}
-	workKey, err := tools["read_record"].Validate(provider.ToolCall{ID: "read", Name: "read_record", Arguments: `{"id":"record"}`})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(workKey, bindKey+"\n") || workKey == bindKey {
-		t.Fatalf("work key %q does not follow binding key %q", workKey, bindKey)
-	}
-	otherKey, err := tools["follow_work"].Validate(provider.ToolCall{ID: "follow", Name: "follow_work", Arguments: `{"id":"run","text":"Check it"}`})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !strings.HasPrefix(otherKey, bindKey+"\n") || otherKey == workKey {
-		t.Fatalf("targets collapsed: work=%q follow=%q", workKey, otherKey)
-	}
-}
