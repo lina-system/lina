@@ -85,8 +85,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 	}
 	b.sessions = &workerListSource{workers: r.workers, person: r.person}
 	b.list = runs.NewRunningList(r.db, map[string]runs.ListSource{
-		"run": runs.RunListSource{}, "work": runs.WorkListSource{Person: r.person},
-		"session": b.sessions, "a2a": a2aListSource{},
+		"run": goalQuietRuns{inner: runs.RunListSource{}}, "work": goalQuietWork{inner: runs.WorkListSource{Person: r.person}},
+		"session": b.sessions, "a2a": a2aListSource{}, "goal": goalTaskList{},
 	})
 	b.notices = lane.NewNotices(r.db, nil)
 	b.notices.OnDelivered = func(d lane.Delivery) {
@@ -123,6 +123,8 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 				}
 				if id, ok := strings.CutPrefix(ref.ID, "task:"); ok {
 					ref.Source, ref.ID = "work", id
+				} else if id, ok := strings.CutPrefix(ref.ID, "goal:"); ok {
+					ref.Source, ref.ID = "goal", id
 				} else if id, ok := strings.CutPrefix(ref.ID, "session:"); ok {
 					ref.Source, ref.ID = "session", id
 				}
@@ -442,6 +444,17 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 	}
 	for conversation := range conversations {
 		err = r.background.service.TransferNotices(ctx, conversation, func(ctx context.Context, n runs.Notice) error {
+			// A goal task lands as a running-list row. Acknowledging the run
+			// without a lane notice is the landing; it is not a second message.
+			if !n.EffectQuestion {
+				owned, err := r.goalOwnsRun(ctx, n.ID)
+				if err != nil {
+					return err
+				}
+				if owned {
+					return nil
+				}
+			}
 			language, err := r.turnLanguage(ctx, n.Origin.Turn)
 			if err != nil {
 				return err
@@ -497,6 +510,8 @@ func (r *conversationRuntime) publishRunning(ctx context.Context) error {
 	for _, entry := range snapshot.Entries {
 		if entry.Ref.Source == "work" {
 			entry.Ref.ID = "task:" + entry.Ref.ID
+		} else if entry.Ref.Source == "goal" {
+			entry.Ref.ID = "goal:" + entry.Ref.ID
 		} else if entry.Ref.Source == "session" {
 			entry.Ref.ID = "session:" + entry.Ref.ID
 		}

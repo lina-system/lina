@@ -418,6 +418,10 @@ func wireProgressRows(entries []progress.Entry, workers map[string][]protocol.Pr
 			line.Stages = &stages
 		}
 		row := protocol.ProgressRow{Ref: entry.Ref, Line: line}
+		if entry.GoalID != "" {
+			goalID := entry.GoalID
+			row.GoalID = &goalID
+		}
 		if len(refs) > 0 {
 			row.StageRefs = &refs
 		}

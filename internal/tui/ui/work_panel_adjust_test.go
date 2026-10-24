@@ -21,6 +21,15 @@ func adjustShell(cards []state.WorkCard) *shellModel {
 	return m
 }
 
+// goalCards are goal lines: Core names each card's goal apart from its ref.
+func goalCards(n int) []state.WorkCard {
+	cards := navigationCards(n)
+	for i := range cards {
+		cards[i].GoalID = "goal-" + cards[i].ID
+	}
+	return cards
+}
+
 func adjustCommand(t *testing.T, m *shellModel, msg tea.KeyMsg) protocol.Payload {
 	t.Helper()
 	_, cmd := m.Update(msg)
@@ -46,14 +55,16 @@ func TestWorkPanelAdjustSendsThePersonsChoice(t *testing.T) {
 		"stop":      {tea.KeyPressMsg{Code: tea.KeyDelete}, "stop", true},
 	} {
 		t.Run(name, func(t *testing.T) {
-			m := adjustShell(navigationCards(4))
+			m := adjustShell(goalCards(4))
+			goal := "goal-" + m.conversation.workSelected
 			if tc.operation == "stop" {
 				// The stop asks first and sends only on Enter.
 				if request := adjustCommand(t, m, tc.msg); request != nil {
 					t.Fatalf("Delete sent %T before the person confirmed", request)
 				}
-				if request := adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}); request == nil {
-					t.Fatal("Enter did not confirm the stop")
+				request, ok := adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeyEnter}).(protocol.WorkControlRequest)
+				if !ok || request.GoalID != goal || request.Confirm == nil || !*request.Confirm {
+					t.Fatalf("Enter did not confirm the stop: %+v", request)
 				}
 				return
 			}
@@ -61,7 +72,7 @@ func TestWorkPanelAdjustSendsThePersonsChoice(t *testing.T) {
 			if !ok {
 				t.Fatalf("%s sent no control request", name)
 			}
-			if request.Operation != tc.operation || request.GoalID != m.conversation.workSelected || request.Confirm != nil {
+			if request.Operation != tc.operation || request.GoalID != goal || request.Confirm != nil {
 				t.Fatalf("%s sent %+v", name, request)
 			}
 		})
@@ -69,7 +80,7 @@ func TestWorkPanelAdjustSendsThePersonsChoice(t *testing.T) {
 }
 
 func TestWorkPanelStopAsksThenCancels(t *testing.T) {
-	m := adjustShell(navigationCards(4))
+	m := adjustShell(goalCards(4))
 	selected := m.conversation.workSelected
 	adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeyDelete})
 	rows := m.workPanelRows(40, 20)
@@ -91,7 +102,7 @@ func TestWorkPanelStopAsksThenCancels(t *testing.T) {
 }
 
 func TestWorkPanelPausedCardResumes(t *testing.T) {
-	cards := navigationCards(4)
+	cards := goalCards(4)
 	cards[0].Paused = true
 	cards[0].Now = design.Text(design.English, "progress.paused")
 	m := adjustShell(cards)
@@ -143,9 +154,86 @@ func TestWorkPanelAdjustNeedsTheWorkCapability(t *testing.T) {
 	}
 }
 
+// A held key repeats on terminals that report key events. Pause and stop are
+// toggles, so a repeat can neither undo the pause Core just applied nor cancel
+// the stop ask the first press opened.
+func TestWorkPanelToggleKeysIgnoreRepeats(t *testing.T) {
+	cards := goalCards(4)
+	m := adjustShell(cards)
+	if request, ok := adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}).(protocol.WorkControlRequest); !ok || request.Operation != "pause" {
+		t.Fatalf("Space sent %+v", request)
+	}
+	cards[0].Paused = true
+	m.content.Blocks = []state.Block{{Topic: "progress", Work: &state.WorkSummary{Cards: cards}}}
+	if request := adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " ", IsRepeat: true}); request != nil {
+		t.Fatalf("a held Space sent %+v after Core's pause", request)
+	}
+	adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeyDelete})
+	adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeyDelete, IsRepeat: true})
+	if m.conversation.workStop == "" {
+		t.Fatal("a held Delete cancelled its own stop ask")
+	}
+	// Moving and the limit keys still repeat.
+	m.conversation.workStop = ""
+	if request := adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeyDown, Mod: tea.ModShift, IsRepeat: true}); request == nil {
+		t.Fatal("a held Shift+Down did not move the card")
+	}
+}
+
+// Only a goal line accepts goal commands. A background run or a conversation
+// worker has a ref of its own, which is not a goal.
+func TestWorkPanelGoalControlsNeedAGoal(t *testing.T) {
+	cards := goalCards(2)
+	cards[0].GoalID = ""
+	m := adjustShell(cards)
+	// Wide enough for every work hint, so a missing hint is the panel's choice.
+	m.Update(tea.WindowSizeMsg{Width: 300, Height: 34})
+	for _, msg := range []tea.KeyPressMsg{
+		{Code: tea.KeyUp, Mod: tea.ModShift},
+		{Code: tea.KeyDown, Mod: tea.ModShift},
+		{Code: tea.KeySpace, Text: " "},
+		{Code: tea.KeyDelete},
+	} {
+		if request := adjustCommand(t, m, msg); request != nil {
+			t.Fatalf("%s on a card without a goal sent %+v", msg, request)
+		}
+	}
+	if m.conversation.workStop != "" {
+		t.Fatal("Delete asked to stop a card without a goal")
+	}
+	footer := ansi.Strip(m.conversationFooter(false))
+	for _, hint := range []string{"work.move", "work.pause", "work.stop"} {
+		if strings.Contains(footer, design.Text(design.English, hint)) {
+			t.Fatalf("footer offers %s for a card without a goal: %q", hint, footer)
+		}
+	}
+	if request, ok := adjustCommand(t, m, tea.KeyPressMsg{Code: '-', Text: "-"}).(protocol.WorkLimitRequest); !ok || request.Operation != "limit_down" {
+		t.Fatalf("the run limit is not per card, got %+v", request)
+	}
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	if request, ok := adjustCommand(t, m, tea.KeyPressMsg{Code: tea.KeySpace, Text: " "}).(protocol.WorkControlRequest); !ok || request.GoalID != "goal-1" {
+		t.Fatalf("Space on a goal line sent %+v", request)
+	}
+	footer = ansi.Strip(m.conversationFooter(false))
+	if !strings.Contains(footer, design.Text(design.English, "work.pause")) {
+		t.Fatalf("footer hides pause on a goal line: %q", footer)
+	}
+}
+
+func TestProjectWorkKeepsTheGoalApartFromTheRef(t *testing.T) {
+	state := protocol.RunningStateInProgress
+	goal := "goal-a"
+	line := protocol.ProgressLine{Name: "Work", Kind: "project", Stage: "unknown", Next: "unknown", JustFinished: "unknown", Waiting: "0", Depth: "0", State: &state}
+	rows := []protocol.ProgressRow{{Ref: "goal-a", GoalID: &goal, Line: line}, {Ref: "run:b", Line: line}, {Ref: "session:c", Line: line}}
+	summary := projectWork(protocol.ProgressUpdate{Rows: &rows})
+	if len(summary.Cards) != 3 || summary.Cards[0].GoalID != "goal-a" || summary.Cards[1].GoalID != "" || summary.Cards[2].GoalID != "" {
+		t.Fatalf("cards = %+v", summary.Cards)
+	}
+}
+
 // The adjust keys never change the card locally; Core's update does.
 func TestWorkPanelAdjustKeepsTheCardUntilCoreUpdates(t *testing.T) {
-	cards := navigationCards(4)
+	cards := goalCards(4)
 	m := adjustShell(cards)
 	before := ansi.Strip(m.View().Content)
 	m.Update(tea.KeyPressMsg{Code: tea.KeyUp, Mod: tea.ModShift})
