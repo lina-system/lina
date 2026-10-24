@@ -1088,8 +1088,8 @@ Both client listeners run during RECOVERING and share the READY transition, inst
 
 ## LINA OS composition
 
-LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/thisisjun786/lina-os).
-Its composition, profiles and desktop environment rules live in [lina-os `docs/design.md`](https://github.com/thisisjun786/lina-os/blob/main/docs/design.md).
+LINA OS is a separate, optional project in [thisisjun786/lina-os](https://github.com/lina-system/lina-os).
+Its composition, profiles and desktop environment rules live in [lina-os `docs/design.md`](https://github.com/lina-system/lina-os/blob/main/docs/design.md).
 
 ## Runtime acceptance
 

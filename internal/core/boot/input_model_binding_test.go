@@ -33,6 +33,18 @@ func bindingArgs(choices ...binding.Choice) map[string]any {
 	return map[string]any{"bindings": choices}
 }
 
+func TestDecodeBindingRequestIgnoresLaterPage(t *testing.T) {
+	raw := `{"bindings":[{"request":0,"quote":"stop it","target":{"class":"none"},"more":[{"class":"existing","id":"wide-0","kind":"task"}]}]}`
+	in, err := decodeBindingRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var choice binding.Choice
+	if len(in.Bindings) != 1 || json.Unmarshal(in.Bindings[0], &choice) != nil || len(choice.More) != 0 || choice.Target.Class != "none" {
+		t.Fatalf("model later page was kept: %+v", in.Bindings)
+	}
+}
+
 func modelBindingTools(t *testing.T, r *conversationRuntime, input ledger.Event) map[string]loop.Tool {
 	t.Helper()
 	s := &turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}}
