@@ -88,8 +88,9 @@ func Migrations() []Migration {
 		{Version: 73, SQL: MessengerReadCoverageSchema},
 		{Version: 74, SQL: MessengerOwnerSchema},
 		{Version: 75, SQL: DiscordSessionsSchema},
-		{Version: 76, SQL: recallSearchSchema},
-		{Version: 77, SQL: storeContractSchema},
+		{Version: 76, SQL: MessengerPendingSchema},
+		{Version: 77, SQL: recallSearchSchema},
+		{Version: 78, SQL: storeContractSchema},
 	}
 }
 
@@ -144,6 +145,7 @@ var publishedMigrationTables = []struct {
 	{71, "binding_effects"}, {71, "binding_moves"},
 	{72, "messenger_attachment"},
 	{75, "discord_sessions"},
+	{76, "messenger_relation_pending"}, {76, "messenger_deletion_pending"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
@@ -167,7 +169,7 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 	for _, entry := range publishedMigrationTables {
 		var count int
 		kind := "table"
-		if version >= 77 && (entry.table == "sum_edge" || entry.table == "sum_cover") {
+		if version >= 78 && (entry.table == "sum_edge" || entry.table == "sum_cover") {
 			kind = "view"
 		}
 		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type=? AND name=?", kind, entry.table).Scan(&count); err != nil {

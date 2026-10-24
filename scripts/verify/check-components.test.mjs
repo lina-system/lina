@@ -375,6 +375,42 @@ test('a unit shard runs one test package at a time inside its CPU share', t => {
   assert.ok(suite.includes('-count=1'), 'tests remain uncached');
 });
 
+test('an e2e shard watchdog outlives a scenario that overruns to its own deadline', t => {
+  const sb = fixture(t);
+  // Shard e2e-m3-3 planned 218 s of measured work. One scenario overran its
+  // 42 s weight to its own four-minute deadline, and the remaining scenarios,
+  // including the matrix test that runs last, still had to complete. Go's
+  // package watchdog must outlast that total, so only the regressed scenario
+  // fails and the healthy siblings are not reported as failures.
+  const occupied = [
+    ['TestM3WorkPanelEventLatency', 240],
+    ['TestM3WorkPanelLiveMatrix', 52],
+    ['TestM3DelegationUnavailableLeavesConversation', 26],
+    ['TestM3DrawnMocks', 14],
+    ['TestM3WorkPanelInstalledCoreMatrix', 30],
+    ['TestM3ScheduledOwnerStop', 10],
+    ['TestM3RunningCountInstalledCore', 2],
+    ['TestM3LocalModel', 2],
+  ];
+  const seconds = occupied.reduce((sum, [, value]) => sum + value, 0);
+  const calls = [];
+  const result = checkComponents({ cwd: sb.dir, phase: 'e2e', json: true,
+    testPattern: `^(${occupied.map(([name]) => name).join('|')})$`,
+    components: [{ name: 'lina', module: '.', packages: ['./e2e/...'] }],
+    execute(command, args) {
+      calls.push(args);
+      if (args[0] === 'test') {
+        const minutes = Number(/-timeout=(\d+)m$/.exec(args.find(arg => arg.startsWith('-timeout=')))?.[1]);
+        assert.ok(args.includes('-run') && args.includes('-parallel=4'));
+        if (seconds >= minutes * 60) return { status: 1, stdout: 'panic: test timed out\n', stderr: '' };
+        return { status: 0, stdout: '{"Action":"pass","Package":"example.invalid/e2e"}\n', stderr: '' };
+      }
+      return { status: 0, stdout: args[0] === 'env' ? 'go1.27.3\n' : '', stderr: '' };
+    } });
+  assert.equal(result.status, 0, result.output);
+  assert.ok(calls.find(args => args[0] === 'test').includes('-timeout=10m'));
+});
+
 test('acceptance batches run every enumerated test once within the shared budget', t => {
   const sb = fixture(t);
   sb.write(sb.dir, 'e2e/fixture_test.go', '// SPDX-License-Identifier: Apache-2.0\npackage e2e\n');
