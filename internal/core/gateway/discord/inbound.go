@@ -59,20 +59,16 @@ var pairCode = regexp.MustCompile(`^[a-f0-9]{32}$`)
 func (a *Adapter) human(u user) bool {
 	return snowflake.MatchString(u.ID) && !u.Bot && u.ID != a.bot.Account
 }
-func (a *Adapter) ignore(ctx context.Context, addr channels.Address, id, previous, cursor string) error {
+func (a *Adapter) ignore(ctx context.Context, addr channels.Address, id, cursor string) error {
 	return a.db.Write(ctx, func(tx *canon.Tx) error {
 		seen, err := channels.Seen(ctx, tx, a.bot, id)
 		if err != nil || seen {
 			return err
 		}
-		return channels.RecordReceipt(ctx, tx, addr, "", id, previous, cursor, 0)
+		return channels.NoteReceipt(ctx, tx, addr, "", id, cursor, 0)
 	})
 }
 func (a *Adapter) dispatch(ctx context.Context, in gateway.Admitter, kind string, data json.RawMessage, cursor string) error {
-	previous, err := a.store.Cursor(ctx, a.bot)
-	if err != nil {
-		return err
-	}
 	if kind == "INTERACTION_CREATE" {
 		var q interaction
 		if json.Unmarshal(data, &q) != nil {
@@ -88,14 +84,15 @@ func (a *Adapter) dispatch(ctx context.Context, in gateway.Admitter, kind string
 		token := q.Token
 		q.Token = ""
 		if q.Type == 3 {
-			q.Address, err = a.address(ctx, q.Channel, q.Guild)
+			address, err := a.address(ctx, q.Channel, q.Guild)
 			if err != nil {
 				return err
 			}
-			return a.button(ctx, q, previous, cursor, token)
+			q.Address = address
+			return a.button(ctx, q, cursor, token)
 		}
 		if q.Type != 2 {
-			return a.ignore(ctx, channels.Address{Bot: a.bot, Chat: q.Channel}, "interaction:"+q.ID, previous, cursor)
+			return a.ignore(ctx, channels.Address{Bot: a.bot, Chat: q.Channel}, "interaction:"+q.ID, cursor)
 		}
 
 		addr, err := a.address(ctx, q.Channel, q.Guild)
@@ -103,7 +100,7 @@ func (a *Adapter) dispatch(ctx context.Context, in gateway.Admitter, kind string
 			return err
 		}
 		var admitted, seen bool
-		if err = a.db.Read(ctx, func(tx *canon.Tx) error {
+		if err := a.db.Read(ctx, func(tx *canon.Tx) error {
 			var err error
 			seen, err = channels.Seen(ctx, tx, a.bot, "interaction:"+q.ID)
 			if err != nil || seen {
@@ -119,7 +116,7 @@ func (a *Adapter) dispatch(ctx context.Context, in gateway.Admitter, kind string
 			return err
 		}
 		if q.Data.Name != "lina" || !a.human(q.User) {
-			return a.ignore(ctx, addr, "interaction:"+q.ID, previous, cursor)
+			return a.ignore(ctx, addr, "interaction:"+q.ID, cursor)
 		}
 		text := ""
 		for _, option := range q.Data.Options {
@@ -127,7 +124,7 @@ func (a *Adapter) dispatch(ctx context.Context, in gateway.Admitter, kind string
 				text = option.Value
 			}
 		}
-		err = a.admitMessage(ctx, in, message{ID: "interaction:" + q.ID, Channel: q.Channel, Guild: q.Guild, Content: text, Author: q.User}, previous, cursor, true)
+		err = a.admitMessage(ctx, in, message{ID: "interaction:" + q.ID, Channel: q.Channel, Guild: q.Guild, Content: text, Author: q.User}, cursor, true)
 		if err == nil && admitted {
 			a.mu.Lock()
 			a.interactions[q.ID] = token
@@ -142,14 +139,13 @@ func (a *Adapter) dispatch(ctx context.Context, in gateway.Admitter, kind string
 		if json.Unmarshal(data, &m) != nil {
 			return errResponse
 		}
-		return a.admitMessage(ctx, in, m, previous, cursor, false)
+		return a.admitMessage(ctx, in, m, cursor, false)
 	}
-	return a.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor=? WHERE bot=? AND cursor=?", cursor, a.bot.Key(), previous)
-		return err
-	})
+	// The session owner advances the shared checkpoint after every subscriber
+	// admits this dispatch.
+	return nil
 }
-func (a *Adapter) admitMessage(ctx context.Context, in gateway.Admitter, m message, previous, cursor string, command bool) error {
+func (a *Adapter) admitMessage(ctx context.Context, in gateway.Admitter, m message, cursor string, command bool) error {
 	addr, err := a.address(ctx, m.Channel, m.Guild)
 	if err != nil {
 		return err
@@ -159,7 +155,7 @@ func (a *Adapter) admitMessage(ctx context.Context, in gateway.Admitter, m messa
 		return errResponse
 	}
 	if !a.human(m.Author) {
-		return a.ignore(ctx, addr, id, previous, cursor)
+		return a.ignore(ctx, addr, id, cursor)
 	}
 	var seen bool
 	if err := a.db.Read(ctx, func(tx *canon.Tx) error { var err error; seen, err = channels.Seen(ctx, tx, a.bot, id); return err }); err != nil || seen {
@@ -168,7 +164,7 @@ func (a *Adapter) admitMessage(ctx context.Context, in gateway.Admitter, m messa
 	if m.Guild == "" {
 		code := strings.TrimPrefix(m.Content, "/start ")
 		if pairCode.MatchString(code) && a.store.Pair(ctx, a.bot, code, m.Author.ID, m.Channel, time.Now()) == nil {
-			return a.ignore(ctx, addr, id, previous, cursor)
+			return a.ignore(ctx, addr, id, cursor)
 		}
 	}
 	addressed := command || m.Guild == ""
@@ -192,9 +188,9 @@ func (a *Adapter) admitMessage(ctx context.Context, in gateway.Admitter, m messa
 		ID      string `json:"message_id"`
 		Text    string `json:"text"`
 	}{reply, m.ID, m.Content})
-	return in.Admit(ctx, gateway.Inbound{Address: addr, NativeID: id, Sender: m.Author.ID, Direct: m.Guild == "", Addressed: addressed, PreviousCursor: previous, Cursor: cursor, Body: body})
+	return in.Admit(ctx, gateway.Inbound{Address: addr, NativeID: id, Sender: m.Author.ID, Direct: m.Guild == "", Addressed: addressed, Cursor: cursor, DeferCursor: true, Body: body})
 }
-func (a *Adapter) button(ctx context.Context, q interaction, previous, cursor, token string) error {
+func (a *Adapter) button(ctx context.Context, q interaction, cursor, token string) error {
 	addr := q.Address
 	queued := false
 	err := a.db.Write(ctx, func(tx *canon.Tx) error {
@@ -222,7 +218,7 @@ func (a *Adapter) button(ctx context.Context, q interaction, previous, cursor, t
 				queued = true
 			}
 		}
-		return channels.RecordReceipt(ctx, tx, addr, agent, "interaction:"+q.ID, previous, cursor, row)
+		return channels.NoteReceipt(ctx, tx, addr, agent, "interaction:"+q.ID, cursor, row)
 	})
 	if err != nil || !queued {
 		return err
