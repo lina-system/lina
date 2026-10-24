@@ -309,3 +309,23 @@ func TestUnplannedRecordCorrectionStaysBlockedAcrossRestart(t *testing.T) {
 		t.Fatalf("new correction did not reopen one manager turn: %+v", s.Actions)
 	}
 }
+
+func TestProgressRefUsesBareGoalID(t *testing.T) {
+	record, ok := ProjectRecordID("turn:input:goal")
+	if !ok || record != "goal:turn:input:goal" {
+		t.Fatalf("record = %q %v", record, ok)
+	}
+	ref, ok := ProgressRef(record)
+	if !ok || ref != "turn:input:goal" {
+		t.Fatalf("ref = %q %v", ref, ok)
+	}
+	if _, ok = ProgressRef("turn:input:goal"); ok {
+		t.Fatal("bare goal id resolved as a record")
+	}
+	if _, ok = ProgressRef("goal:"); ok {
+		t.Fatal("empty goal id resolved")
+	}
+	if _, ok = ProgressRef(""); ok {
+		t.Fatal("empty id resolved")
+	}
+}

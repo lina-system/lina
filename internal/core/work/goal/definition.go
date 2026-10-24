@@ -168,6 +168,21 @@ func ProjectRecordID(goalID string) (string, bool) {
 	return "goal:" + goalID, true
 }
 
+// ProgressRef is the progress-line id of a project record. The progress
+// projection keeps the bare goal id. A value that is not that record does
+// not resolve, so a bare goal id stays a goal id.
+func ProgressRef(recordID string) (string, bool) {
+	goalID, ok := strings.CutPrefix(recordID, "goal:")
+	if !ok {
+		return "", false
+	}
+	canonical, ok := ProjectRecordID(goalID)
+	if !ok || canonical != recordID {
+		return "", false
+	}
+	return goalID, true
+}
+
 func (e *Engine) prepareDefinition(ctx context.Context, g *Goal) error {
 	if e.cfg.Records == nil {
 		return ErrInvalid

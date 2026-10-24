@@ -604,6 +604,74 @@ func TestCreatedCodeGoalStaysOnSelectedProject(t *testing.T) {
 	}
 }
 
+func TestReadWorkProgressResolvesCodeGoalRecord(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	input := questionPersonInput(t, r, "progress-choice", "How is the library work going?")
+	tools := modelBindingTools(t, r, input)
+	admit := func(bindings map[string]loop.Tool, id, outcome string) (goalID, recordID string) {
+		t.Helper()
+		got := questionCall(t, bindings, "dispatch_code_goal", id, map[string]any{
+			"outcome": outcome, "done": "checks pass",
+			"scope":             map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+			"criteria":          []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+			"no_service_reason": "library",
+			"tasks":             []any{},
+		})
+		if got.Code != loop.OK {
+			t.Fatalf("admit %s: %+v", id, got)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(got.Output, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields["goal_id"], fields["record_id"]
+	}
+	chosenID, chosenRecord := admit(tools, "progress-goal", "library work")
+	wantRecord, ok := goaleng.ProjectRecordID(chosenID)
+	if !ok || chosenRecord != wantRecord {
+		t.Fatalf("record id = %s", chosenRecord)
+	}
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:progress-choice", []binding.Choice{{
+		Quote:  input.Body.Text(),
+		Target: binding.Target{Class: "existing", ID: chosenRecord, Kind: "project"},
+	}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	read := questionCall(t, tools, "read_work_progress", "record-progress", map[string]string{"id": chosenRecord})
+	if read.Code != loop.OK {
+		t.Fatalf("progress read denied: %+v", read)
+	}
+	var body struct {
+		ID       string `json:"id"`
+		Progress struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"progress"`
+	}
+	if err := json.Unmarshal(read.Output, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ID != chosenRecord {
+		t.Fatalf("response id = %s, want the record id used for the binding check", body.ID)
+	}
+	if body.Progress.State == "unknown" || body.Progress.Name != "library work" {
+		t.Fatalf("record id missed the progress line: %s", read.Output)
+	}
+	otherInput := questionPersonInput(t, r, "other-progress", "Leave the other library alone.")
+	otherTools := modelBindingTools(t, r, otherInput)
+	_, otherRecord := admit(otherTools, "other-progress-goal", "other library")
+	blocked := questionCall(t, tools, "read_work_progress", "other-record", map[string]string{"id": otherRecord})
+	if blocked.Code != loop.Denied || !strings.Contains(string(blocked.Output), "input_target_pending") {
+		t.Fatalf("other record bypassed the chosen project: %+v", blocked)
+	}
+}
+
 func TestWorkCompletionTurnKeepsBindingTools(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
