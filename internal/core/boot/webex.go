@@ -14,7 +14,11 @@ import (
 )
 
 func (r *conversationRuntime) initWebex(relay *clientsrv.SignInRelay, transport http.RoundTripper) error {
-	r.webex = webex.NewService(r.ctx, messenger.Open(r.db, r.materials, r.removals), webex.Config{Person: r.person, Vault: r.vault, Transport: transport})
+	store, err := r.messengerStore(r.ctx)
+	if err != nil {
+		return err
+	}
+	r.webex = webex.NewService(r.ctx, store, webex.Config{Person: r.person, Vault: r.vault, Transport: transport})
 	if err := r.webex.Start(r.ctx); err != nil {
 		return err
 	}

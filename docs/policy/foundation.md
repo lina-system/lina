@@ -106,11 +106,12 @@ the positive integer repository variable `QA_RECOVERY_PASSES` (default `3`).
 Each failure resets the pass count. A failure, pass and another failure within
 48 hours of the first failure marks the issue `flaky`; it stays open until the
 same recovery threshold is met. Commit order decides that sequence: a pass
-reported after both failures still counts when it sits between them. The
-observation window is the span of those three plan start times, at most 48
-hours. The reporter keeps the newest failure heads, at most 16, even when the
-stored heads are more than 48 hours apart, so a delayed failure between them
-can still complete the sequence.
+reported after both failures still counts when it sits between them. Every
+retained failure pair is checked, so a mark that lies between the pair but
+outside the window does not hide it. The observation window is the span of
+those three plan start times, at most 48 hours. The reporter keeps the newest
+failure heads, at most 16, even when the stored heads are more than 48 hours
+apart, so a delayed failure between them can still complete the sequence.
 The label remains as history after recovery. The reporter creates the label if
 it is missing and preserves other labels.
 An unfinished test resets the recovery streak without creating a failure;
@@ -196,8 +197,10 @@ another shard fails. `--jobs` bounds simultaneous shards (default two) and each
 gets a share of the available CPUs. Each command retains a bounded deadline.
 Bubblewrap exposes only the candidate, tools, public dependency caches and the
 command's temporary output directory, with isolated home, temporary files and
-PID namespace. Host-owned state, run metadata, logs and retained results are
-not mounted into the sandbox. Shards receive a read-only sealed plan. After
+PID namespace. The tools are the system `/usr`, the running Node executable, the
+npm package installed beside it when that is outside `/usr`, actionlint found on
+`PATH` and the Go toolchain. Host-owned state, run metadata, logs and retained
+results are not mounted into the sandbox. Shards receive a read-only sealed plan. After
 each command exits, the host imports only bounded regular output files through
 no-follow file descriptors; links and special files are rejected. Host writes
 use exclusive file creation and atomic replacement.
