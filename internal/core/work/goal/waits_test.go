@@ -3,10 +3,22 @@ package goal
 
 import (
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 	"time"
 )
+
+func TestPersistedClearTodoIDStillDecodes(t *testing.T) {
+	t.Parallel()
+	var g Goal
+	if err := json.Unmarshal([]byte(`{"id":"g","clear_todos":["host-reply",{"todo_id":"other","who":"host","since":"2026-10-20","next_check":"1970-01-01"}]}`), &g); err != nil {
+		t.Fatal(err)
+	}
+	if len(g.ClearTodos) != 2 || g.ClearTodos[0].TodoID != "host-reply" || g.ClearTodos[0].Who != "" || g.ClearTodos[1].TodoID != "other" || g.ClearTodos[1].Who != "host" {
+		t.Fatalf("clear todos: %+v", g.ClearTodos)
+	}
+}
 
 func outsideWait() Wait {
 	return Wait{
@@ -170,7 +182,7 @@ func TestChangeSignalReadsTheSourceOnce(t *testing.T) {
 	}
 	cleared := false
 	for _, w := range linked {
-		cleared = cleared || w.TodoID == "host-reply" && w.Who == "" && w.Since == "" && w.NextCheck == ""
+		cleared = cleared || w.Wake == "" && w.TodoID == "host-reply" && w.Who == "host" && w.Since == "2026-10-20" && w.NextCheck == "1970-01-01"
 	}
 	if !cleared {
 		t.Fatalf("closed read left waiting_on: %+v", linked)
