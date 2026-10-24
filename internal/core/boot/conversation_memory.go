@@ -163,7 +163,7 @@ func (r *conversationRuntime) topicPacket(ctx context.Context, input ledger.Even
 			query = query[:len(query)-1]
 		}
 	}
-	hits, err := recall.Match(ctx, r.db, recall.Scope{Person: r.person, Agent: r.agent, Kinds: []recall.Kind{recall.Memory}, ExternalModel: true, At: at.Unix()}, recall.Query{Text: query, Limit: 12})
+	hits, err := recall.Match(ctx, r.db, recall.Scope{Person: r.person, Agent: r.agent, Kinds: []recall.Kind{recall.Memory}, ExternalModel: true, At: at.Unix()}, recall.Query{Text: query, Limit: 12, Vectors: r.vectorQuery()})
 	if err != nil {
 		return nil, err
 	}

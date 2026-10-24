@@ -11,11 +11,13 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/replay"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/turn"
@@ -88,6 +90,93 @@ func TestLiveTopicRecall(t *testing.T) {
 			}
 		})
 	}
+}
+
+// A paraphrase shares no searchable term with the stored memory. Per-turn
+// recall returns that memory only when embeddings are configured.
+func TestTopicRecallUsesConfiguredVectors(t *testing.T) {
+	r, _ := turnRuntime(t)
+	conversation := r.conversation
+	r.conversation = "earlier-topic"
+	source := queuedContextEvent(t, r, "kiln-source", "obsidian kiln schedule", guard.EntryOwner, "")
+	item, err := coreexec.NewMemory(r.db, r.materials, nil).Remember(t.Context(), memory.Write{Person: r.person, Agent: r.agent, Item: memory.Item{
+		Kind: memory.Fact, Content: source.Body.Text(), Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated,
+		Evidence: []memory.Evidence{{Kind: memory.Event, ID: source.ID, Precision: memory.Exact}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.conversation = conversation
+	input, _ := admitTurnInput(t, r, "ceramic firing timetable")
+	packet, err := r.topicPacket(t.Context(), input, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(packet) != 0 {
+		t.Fatalf("lexical paraphrase returned %d topic memories", len(packet))
+	}
+	index := recall.New(r.db, nil)
+	for range 20 {
+		n, err := index.DrainBatch(t.Context())
+		if err != nil {
+			t.Fatal(err)
+		}
+		if n == 0 {
+			break
+		}
+	}
+	vectors, err := recall.NewVectors(t.Context(), r.db, nil, paraphraseEmbeddings{})
+	if err != nil {
+		t.Fatal(err)
+	}
+	for range 20 {
+		if _, err := vectors.DrainBatch(t.Context()); err != nil {
+			t.Fatal(err)
+		}
+		var ready int
+		if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+			return tx.QueryRowContext(t.Context(), "SELECT ready FROM search_index_config WHERE name='recall'").Scan(&ready)
+		}); err != nil {
+			t.Fatal(err)
+		}
+		if ready == 1 {
+			break
+		}
+	}
+	r.vectors = vectors
+	if r.router != nil && r.router.root != nil {
+		r.router.root.vectors = vectors
+	}
+	packet, err = r.topicPacket(t.Context(), input, time.Now())
+	if err != nil {
+		t.Fatal(err)
+	}
+	found := false
+	for _, got := range packet {
+		if got.ID == "memory:"+item.ID {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("configured vectors missed the paraphrase: %+v", packet)
+	}
+}
+
+type paraphraseEmbeddings struct{}
+
+func (paraphraseEmbeddings) VectorConfig() recall.VectorConfig {
+	return recall.VectorConfig{Endpoint: "http://127.0.0.1/embeddings", Model: "fixture-paraphrase", Dimension: 2}
+}
+
+func (paraphraseEmbeddings) Embed(_ context.Context, texts []string) ([][]float32, error) {
+	out := make([][]float32, len(texts))
+	for i, text := range texts {
+		out[i] = []float32{1, 0}
+		if strings.Contains(text, "obsidian") || strings.Contains(text, "ceramic") {
+			out[i] = []float32{0, 1}
+		}
+	}
+	return out, nil
 }
 
 func TestLiveTopicReplay(t *testing.T) {
