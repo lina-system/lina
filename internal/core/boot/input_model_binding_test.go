@@ -32,6 +32,23 @@ func bindingArgs(choices ...binding.Choice) map[string]any {
 	return map[string]any{"bindings": choices}
 }
 
+func TestDecodeBindingRequestIgnoresLaterPage(t *testing.T) {
+	raw := `{"bindings":[{"request":0,"quote":"stop it","target":{"class":"none"},"more":[{"class":"existing","id":"wide-0","kind":"task"}]}]}`
+	in, err := decodeBindingRequest(raw)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Model choices are normalized against state before storage. Core-only
+	// paging metadata must not survive that boundary.
+	choices, err := binding.NormalizeChoices(binding.State{}, "stop it", in.Bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(choices) != 1 || len(choices[0].More) != 0 || choices[0].Target.Class != "none" {
+		t.Fatalf("model later page was kept: %+v", choices)
+	}
+}
+
 func modelBindingTools(t *testing.T, r *conversationRuntime, input ledger.Event) map[string]loop.Tool {
 	t.Helper()
 	s := &turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}}
