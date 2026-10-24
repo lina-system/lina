@@ -7,6 +7,7 @@ import (
 )
 
 func TestInvalidDefinitionIsolatedAcrossRestart(t *testing.T) {
+	t.Parallel()
 	for _, missing := range []string{"done", "criteria"} {
 		t.Run(missing, func(t *testing.T) {
 			e := revisionEngine(t, readyTask("queued"), readyTask("live"))
@@ -93,6 +94,7 @@ func TestInvalidDefinitionIsolatedAcrossRestart(t *testing.T) {
 }
 
 func TestPreviouslyInstalledInvalidDefinitionQuarantinedOnStartup(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("queued"))
 	_ = revisionAction(t, e, "queued", Assign)
 	g := revisionSnapshot(t, e).Goals[0]

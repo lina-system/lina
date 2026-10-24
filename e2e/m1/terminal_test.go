@@ -78,6 +78,10 @@ func (h *harness) startTerminalScreen(environment []string, combined, screen boo
 }
 
 func (h *harness) startTerminalSize(environment []string, combined, screen bool, width, height int) *terminal {
+	return h.startTerminalObserved(environment, combined, screen, width, height, nil)
+}
+
+func (h *harness) startTerminalObserved(environment []string, combined, screen bool, width, height int, observe func(time.Time, tuiterm.Snapshot)) *terminal {
 	h.t.Helper()
 	master, err := os.OpenFile("/dev/ptmx", os.O_RDWR|unix.O_NOCTTY|unix.O_NONBLOCK, 0)
 	if err != nil {
@@ -126,7 +130,7 @@ func (h *harness) startTerminalSize(environment []string, combined, screen bool,
 		defer close(term.done)
 		defer close(term.lines)
 		if term.screen != nil {
-			term.err = copyTerminalScreen(term.screen, master)
+			term.err = copyTerminalScreenObserved(term.screen, master, observe)
 			term.screen.Close()
 			return
 		}

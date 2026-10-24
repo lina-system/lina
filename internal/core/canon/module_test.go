@@ -14,6 +14,7 @@ import (
 )
 
 func TestSQLiteModuleDigestAndInitialization(t *testing.T) {
+	t.Parallel()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -26,6 +27,7 @@ func TestSQLiteModuleDigestAndInitialization(t *testing.T) {
 }
 
 func TestPackagedSQLiteRejectsTamperingBeforeOpening(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("LINA_TEST_PACKAGED_SQLITE_TAMPER") == "1" {
 		original := sqlite3.Binary
 		sqlite3.Binary = append([]byte(nil), original...)
@@ -54,6 +56,7 @@ func TestPackagedSQLiteRejectsTamperingBeforeOpening(t *testing.T) {
 }
 
 func TestPackagedSQLiteVector(t *testing.T) {
+	t.Parallel()
 	db, err := OpenSQLite(t.Context(), filepath.Join(t.TempDir(), "vector.sqlite"))
 	if err != nil {
 		t.Fatal(err)
@@ -75,6 +78,7 @@ func TestPackagedSQLiteVector(t *testing.T) {
 // The vector engine is an acceptance input, not a shipped or downloaded test
 // dependency. Its construction and exact digest are recorded in the evidence.
 func TestSQLiteVectorAcceptance(t *testing.T) {
+	t.Parallel()
 	path := os.Getenv("LINA_TEST_VECTOR_WASM")
 	if path == "" {
 		t.Skip("optional vector engine not supplied")
@@ -113,11 +117,12 @@ func TestSQLiteVectorAcceptance(t *testing.T) {
 		t.Fatal(got)
 	}
 	// The same engine must retain the required storage behavior.
-	TestSQLiteWALFullFTS5AndReopen(t)
-	TestSQLiteOnlineBackupReadsLiveWAL(t)
+	t.Run("WALFullFTS5AndReopen", TestSQLiteWALFullFTS5AndReopen)
+	t.Run("OnlineBackupReadsLiveWAL", TestSQLiteOnlineBackupReadsLiveWAL)
 }
 
 func TestSQLiteModuleProcess(t *testing.T) {
+	t.Parallel()
 	if os.Getenv("LINA_TEST_SQLITE_MODULE") != "1" {
 		return
 	}

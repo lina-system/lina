@@ -27,6 +27,7 @@ func textSQL(t *testing.T, db *sql.DB, query string, args ...any) string {
 }
 
 func TestSQLiteWALFullFTS5AndReopen(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "canon ?#%.sqlite")
 	db, err := OpenSQLite(t.Context(), path)
 	if err != nil {
@@ -73,6 +74,7 @@ func TestSQLiteWALFullFTS5AndReopen(t *testing.T) {
 }
 
 func TestSQLiteOnlineBackupReadsLiveWAL(t *testing.T) {
+	t.Parallel()
 	path := filepath.Join(t.TempDir(), "source.sqlite")
 	db, err := OpenSQLite(t.Context(), path)
 	if err != nil {
@@ -125,6 +127,7 @@ func TestSQLiteOnlineBackupReadsLiveWAL(t *testing.T) {
 }
 
 func TestSQLiteFailures(t *testing.T) {
+	t.Parallel()
 	missing := filepath.Join(t.TempDir(), "missing.sqlite")
 	if db, err := OpenSQLiteReader(t.Context(), missing); err == nil {
 		db.Close()
@@ -156,5 +159,28 @@ func TestSQLiteFailures(t *testing.T) {
 	}
 	if _, err := os.Stat(destination); !errors.Is(err, os.ErrNotExist) {
 		t.Fatalf("failed backup left output: %v", err)
+	}
+}
+
+// Core's own open keeps FULL synchronization; only a test root that is thrown
+// away may skip commit sync.
+func TestStoreSynchronousFollowsDurability(t *testing.T) {
+	for _, tc := range []struct {
+		name   string
+		noSync bool
+		want   string
+	}{{"durable", false, "2"}, {"throwaway", true, "0"}} {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg := storeConfig(t)
+			cfg.NoSync = tc.noSync
+			s := openStore(t, cfg)
+			var got string
+			if err := s.writer.QueryRowContext(t.Context(), "PRAGMA synchronous").Scan(&got); err != nil {
+				t.Fatal(err)
+			}
+			if got != tc.want {
+				t.Fatalf("synchronous=%s, want %s", got, tc.want)
+			}
+		})
 	}
 }

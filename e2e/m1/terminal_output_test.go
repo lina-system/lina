@@ -12,13 +12,18 @@ import (
 	"strings"
 	"syscall"
 	"testing"
+	"time"
 
 	"github.com/charmbracelet/x/ansi"
 	tuiterm "github.com/thisisjun786/lina/internal/tui/term"
 )
 
 func copyTerminalScreen(screen *tuiterm.Recorder, input io.Reader) error {
-	writer := &terminalScreenWriter{screen: screen}
+	return copyTerminalScreenObserved(screen, input, nil)
+}
+
+func copyTerminalScreenObserved(screen *tuiterm.Recorder, input io.Reader, observe func(time.Time, tuiterm.Snapshot)) error {
+	writer := &terminalScreenWriter{screen: screen, observe: observe}
 	_, err := io.Copy(writer, input)
 	// Linux ends a PTY with EIO; cleanup can also close the master. Neither
 	// makes a partial renderer write into a completed screen.
@@ -39,9 +44,19 @@ var terminalWriteEnd = []byte(ansi.SaveCursor + ansi.SetTopBottomMargins(0, 0) +
 
 type terminalScreenWriter struct {
 	screen  *tuiterm.Recorder
+	observe func(time.Time, tuiterm.Snapshot)
 	tail    []byte
 	pending []byte
 	framed  bool
+}
+
+func (w *terminalScreenWriter) frame(data []byte) (int, error) {
+	n, err := w.screen.Write(data)
+	at := time.Now()
+	if err == nil && w.observe != nil {
+		w.observe(at, w.screen.Snapshot())
+	}
+	return n, err
 }
 
 func (w *terminalScreenWriter) Write(data []byte) (int, error) {
@@ -56,7 +71,7 @@ func (w *terminalScreenWriter) Write(data []byte) (int, error) {
 			return w.screen.Write(data)
 		}
 		end := at + len(terminalWriteEnd) - len(w.tail)
-		if _, err := w.screen.Write(data[:end]); err != nil {
+		if _, err := w.frame(data[:end]); err != nil {
 			return 0, err
 		}
 		w.framed, w.tail = true, nil
@@ -69,7 +84,7 @@ func (w *terminalScreenWriter) Write(data []byte) (int, error) {
 			return n, nil
 		}
 		end := at + len(terminalWriteEnd)
-		if _, err := w.screen.Write(w.pending[:end]); err != nil {
+		if _, err := w.frame(w.pending[:end]); err != nil {
 			return 0, err
 		}
 		w.pending = w.pending[end:]

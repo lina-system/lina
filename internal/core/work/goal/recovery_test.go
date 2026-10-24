@@ -21,6 +21,7 @@ var recoveryCases = []struct {
 }
 
 func TestActionKindRecoverySpec(t *testing.T) {
+	t.Parallel()
 	for _, tc := range recoveryCases {
 		t.Run(string(tc.kind), func(t *testing.T) {
 			spec := kindSpecs[tc.kind]
@@ -50,6 +51,7 @@ func TestActionKindRecoverySpec(t *testing.T) {
 }
 
 func TestRestoreWorkerAwardsPreservesPathRules(t *testing.T) {
+	t.Parallel()
 	for _, tc := range recoveryCases {
 		for _, count := range []int{0, 2} {
 			for _, denied := range []bool{false, true} {
@@ -89,6 +91,7 @@ func TestRestoreWorkerAwardsPreservesPathRules(t *testing.T) {
 }
 
 func TestRestoreAwardGuardsAndPlanning(t *testing.T) {
+	t.Parallel()
 	initial := Task{ID: "task", Stage: TaskBuilding, Attempt: 2, NodeID: "host", RepairAsked: true}
 	for _, a := range []Action{
 		{Kind: Resume, Attempt: 1},

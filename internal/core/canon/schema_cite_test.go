@@ -9,6 +9,7 @@ import (
 )
 
 func TestCitationMigrationPreservesRevisionPointers(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	cfg.Migrations = all

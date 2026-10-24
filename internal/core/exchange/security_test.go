@@ -14,6 +14,7 @@ import (
 
 func credential() string { return "ghp_" + strings.Repeat("Synthetic", 5) }
 func TestSecretShapedReferencesNeverEnterMailbox(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"delivery", "from", "to", "check", "material", "revision"} {
 		t.Run(field, func(t *testing.T) {
 			s := exchange.New(database(t))
@@ -45,6 +46,7 @@ func TestSecretShapedReferencesNeverEnterMailbox(t *testing.T) {
 	}
 }
 func TestSecretShapedAnswerEvidenceIsRejectedBeforeCheck(t *testing.T) {
+	t.Parallel()
 	for _, field := range []string{"event", "material", "revision"} {
 		t.Run(field, func(t *testing.T) {
 			s := exchange.New(database(t))
@@ -83,6 +85,7 @@ func (k *secretKnowledge) Material(ctx context.Context, m exchange.Material) (st
 	return text + " " + credential() + " " + secret.Placeholder, err
 }
 func TestKnowledgeProjectionRemovesSecretsBeforeModel(t *testing.T) {
+	t.Parallel()
 	s := exchange.New(database(t))
 	r := start(t, s)
 	p, err := s.Prepare(t.Context(), r.DeliveryID, "answerer", now, &secretKnowledge{knowledge{t: t}})

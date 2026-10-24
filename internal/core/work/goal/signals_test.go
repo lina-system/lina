@@ -27,6 +27,7 @@ func claimedAssignment(t *testing.T) (*Engine, Action) {
 	return e, a
 }
 func TestCommittedSignalWakesReadOnlyObservationImmediately(t *testing.T) {
+	t.Parallel()
 	e, a := claimedAssignment(t)
 	if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeRunning, Handle: "worker-handle"}); err != nil {
 		t.Fatal(err)
@@ -51,6 +52,7 @@ func TestCommittedSignalWakesReadOnlyObservationImmediately(t *testing.T) {
 	}
 }
 func TestQuotaFailoverSpendsNoRecovery(t *testing.T) {
+	t.Parallel()
 	e, a := claimedAssignment(t)
 	if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeQuota, EffectsSettled: true, QuotaReset: 200}); err != nil {
 		t.Fatal(err)
@@ -69,6 +71,7 @@ func TestQuotaFailoverSpendsNoRecovery(t *testing.T) {
 }
 
 func TestQuotaRestoresInterruptedRecoveryAllowances(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []ActionKind{Resume, ContinueWorker, RepairConflict} {
 		t.Run(string(kind), func(t *testing.T) {
 			e := revisionEngine(t, readyTask("a"))
@@ -112,6 +115,7 @@ func TestQuotaRestoresInterruptedRecoveryAllowances(t *testing.T) {
 	}
 }
 func TestWorkerWithoutReceiptGetsOnlyOneContinuation(t *testing.T) {
+	t.Parallel()
 	e, a := claimedAssignment(t)
 	if err := e.Report(t.Context(), a.ID, 1, Observation{Status: OutcomeNoReceipt, EffectsSettled: true, Handle: "thread"}); err != nil {
 		t.Fatal(err)
@@ -143,6 +147,7 @@ func TestWorkerWithoutReceiptGetsOnlyOneContinuation(t *testing.T) {
 }
 
 func TestPRChangeSignalInvalidatesCachedMergeProofs(t *testing.T) {
+	t.Parallel()
 	e, worker := claimedAssignment(t)
 	if err := e.Report(t.Context(), worker.ID, 1, Observation{Status: OutcomeSucceeded, Head: "old-head", EffectsSettled: true}); err != nil {
 		t.Fatal(err)

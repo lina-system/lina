@@ -57,6 +57,8 @@ only.
 | `/var/db/lina/locked-screen/enabled` | `socket=`, `uid=`, `deadline_ms=` for the plug-in. Absent means the feature is off. |
 | `/var/db/lina/locked-screen/measured-builds` | A copy of `measured-builds.txt` from the release. |
 | `/var/db/lina/locked-screen/eval-test-mac` | Present only on the eval's test Mac; it waives the build check and nothing else does. |
+| `/var/db/lina/locked-screen/evaluation` | The plug-in's crash marker. The guard removes one older than 5 seconds after the install passes its checks. |
+| `/var/db/lina/locked-screen/restore-retry` | The reason of a restore whose rule write failed. The guard retries it on every pass until it succeeds; an uninstall that removes the guard removes it too. |
 | `/Library/Security/SecurityAgentPlugins/LinaUnlock.bundle` | The plug-in, copied from the release and checked before the rule names it. |
 | `/Library/PrivilegedHelperTools/com.lina.locked-screen.guard` | The guard. |
 | `/Library/LaunchDaemons/com.lina.locked-screen.guard.plist` | The job that starts it. |
@@ -87,9 +89,12 @@ sudo build/lina-locked-screen uninstall
 The install runs in this order, and every failure removes what that attempt
 wrote and leaves the rule as it found it: Apple silicon; a measured macOS build
 (the release's own list decides, so a first install does not need an installed
-one); the rule shape; the backup; the measured list; the bundle copy and its
-signature; the guard job; the two rights; the self-test deny; the rule write and
-its read-back; the enabled marker; the pending record.
+one); no restore waiting for a retry; the rule shape; the backup; the measured
+list; the bundle copy and its signature; the guard job; the two rights; the
+self-test deny; the rule write and its read-back; the enabled marker; the
+pending record. The verified bundle is copied beside the installed one and
+swapped with it in one step (`renamex_np` with `RENAME_SWAP`), so an earlier
+install's rule never names a missing bundle.
 
 A failure keeps LINA's right and the bundle when the rule cannot be read or
 still names the right, because removing either would leave the lock screen
@@ -100,18 +105,21 @@ restores a rule that names a right the uninstall is about to remove.
 The last step asks the person to lock the Mac and unlock it by hand once. The
 guard records the lock, and a manual unlock inside two minutes of it completes
 the install. No unlock inside that window restores the backup, so the next
-attempt starts from the stock rule.
+attempt starts from the stock rule. An unlock the guard first sees after the
+window, because it was stopped or could not read the session, restores too.
 
 Uninstall leaves a rule someone else wrote alone and reports it. When that rule
 still names LINA's right, the right and the bundle stay as well, so the rule
-never names a missing plug-in; the feature is off either way.
+never names a missing plug-in; the feature is off either way. An uninstall that
+removes the guard also removes `restore-retry`: the rule no longer names LINA,
+and without the guard nothing would clear it before the next install.
 
 ## Guard
 
 The guard passes over its state at load, on every change of the plug-in folder
-and once a second. Each pass first checks the pending manual unlock, then
-restores the backup — or the stock rule when the backup is unusable or absent —
-when it finds any of these:
+and once a second. Each pass first retries a restore that failed, then checks
+the pending manual unlock, then restores the backup — or the stock rule when the
+backup is unusable or absent — when it finds any of these:
 
 - the bundle is missing, or its signature is invalid or unreadable, while the
   rule names LINA's right; or that right is missing;
@@ -119,9 +127,12 @@ when it finds any of these:
 - the macOS build is not in the measured list, and this is not the eval's test
   Mac.
 
-A restore turns the feature off and removes the pending record. The guard has no
-other write: every path that writes a rule writes either the backup's rule or
-`use-login-window-ui`.
+A restore turns the feature off and removes the pending record. When its rule
+write fails it leaves `restore-retry`, because turning the feature off removed
+what triggered it; an install waits until that retry succeeds. A pass that finds
+nothing to restore while the feature is on removes a crash marker left by an
+evaluation that crashed. The guard writes no other rule: every path that writes
+a rule writes either the backup's rule or `use-login-window-ui`.
 
 ## Rollback and manual recovery
 

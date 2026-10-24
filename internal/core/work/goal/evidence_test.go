@@ -4,6 +4,7 @@ package goal
 import "testing"
 
 func TestCriterionRejectsUncollectedEvidence(t *testing.T) {
+	t.Parallel()
 	g := finishedGoal()
 	for _, kind := range []EvidenceKind{ReadEvidence, RunEvidence, JudgmentEvidence, "citation", "receipt", "model", "turn", "exit_code"} {
 		t.Run(string(kind), func(t *testing.T) {
@@ -18,6 +19,7 @@ func TestCriterionRejectsUncollectedEvidence(t *testing.T) {
 }
 
 func TestCitationCriterionCanBeAdmitted(t *testing.T) {
+	t.Parallel()
 	g := oneGoal(readyTask("a"))
 	g.Criteria[0].Check.Kind = "citation"
 	if err := validateGoal(g); err != nil {
@@ -26,6 +28,7 @@ func TestCitationCriterionCanBeAdmitted(t *testing.T) {
 }
 
 func TestCollectedEvidenceRequiresTheRecordOutputOrJudgmentInputs(t *testing.T) {
+	t.Parallel()
 	read := EvidenceRead{Target: "document", Revision: "v1", Content: "The source passage."}
 	for _, tc := range []struct {
 		name      string
@@ -52,6 +55,7 @@ func TestCollectedEvidenceRequiresTheRecordOutputOrJudgmentInputs(t *testing.T) 
 }
 
 func TestPluginReadbackMatchesTheRequestedFields(t *testing.T) {
+	t.Parallel()
 	c := CriterionCheck{Kind: ReadEvidence, Expected: []byte(`{"time":"09:00","place":{"room":"A"},"attendees":["owner"]}`)}
 	for _, tc := range []struct {
 		record string

@@ -7,6 +7,7 @@ import (
 )
 
 func TestChangedOnlyAfterCommittedMutation(t *testing.T) {
+	t.Parallel()
 	s := openStore(t, storeConfig(t))
 	changed := s.Changed()
 	aborted := errors.New("abort")

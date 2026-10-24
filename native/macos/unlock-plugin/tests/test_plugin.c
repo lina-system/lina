@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: Apache-2.0
 // MechanismDeactivate must call DidDeactivate. Returning success without that
 // call leaves the authorization engine waiting.
-#include <stdarg.h>
 #include <stdio.h>
 #include <stdlib.h>
 
@@ -12,7 +11,6 @@
 #include "test.h"
 
 static int set_results;
-static int log_lines;
 static int forbidden_calls;
 static int deactivations;
 static AuthorizationEngineRef deactivated_engine;
@@ -31,49 +29,45 @@ static OSStatus record_deactivate(AuthorizationEngineRef engine) {
   return deactivate_status;
 }
 
-static void record_log(AuthorizationEngineRef engine, const char *format, ...) {
+static OSStatus forbidden(AuthorizationEngineRef engine) {
   (void)engine;
-  (void)format;
-  log_lines++;
-}
-
-static OSStatus forbidden_context(AuthorizationEngineRef engine, const char *key, const void **value) {
-  (void)engine;
-  (void)key;
-  (void)value;
   forbidden_calls++;
   return errAuthorizationSuccess;
 }
 
-static OSStatus forbidden_set_context(AuthorizationEngineRef engine, const char *key, const void *value) {
-  (void)engine;
+static OSStatus forbidden_context(AuthorizationEngineRef engine, AuthorizationString key,
+                                  AuthorizationContextFlags *flags, const AuthorizationValue **value) {
   (void)key;
+  (void)flags;
   (void)value;
-  forbidden_calls++;
-  return errAuthorizationSuccess;
+  return forbidden(engine);
 }
 
-static OSStatus forbidden_hint(AuthorizationEngineRef engine, const char *key, const void **value) {
-  (void)engine;
+static OSStatus forbidden_set_context(AuthorizationEngineRef engine, AuthorizationString key,
+                                      AuthorizationContextFlags flags, const AuthorizationValue *value) {
   (void)key;
+  (void)flags;
   (void)value;
-  forbidden_calls++;
-  return errAuthorizationSuccess;
+  return forbidden(engine);
 }
 
-static OSStatus forbidden_set_hint(AuthorizationEngineRef engine, const char *key, const void *value) {
-  (void)engine;
+static OSStatus forbidden_hint(AuthorizationEngineRef engine, AuthorizationString key,
+                               const AuthorizationValue **value) {
   (void)key;
   (void)value;
-  forbidden_calls++;
-  return errAuthorizationSuccess;
+  return forbidden(engine);
+}
+
+static OSStatus forbidden_set_hint(AuthorizationEngineRef engine, AuthorizationString key,
+                                   const AuthorizationValue *value) {
+  (void)key;
+  (void)value;
+  return forbidden(engine);
 }
 
 static OSStatus forbidden_arguments(AuthorizationEngineRef engine, const AuthorizationValueVector **arguments) {
-  (void)engine;
   (void)arguments;
-  forbidden_calls++;
-  return errAuthorizationSuccess;
+  return forbidden(engine);
 }
 
 // The entry-point tests never invoke the mechanism, so the macOS host is not
@@ -85,13 +79,13 @@ const struct lina_host *lina_darwin_host(void) {
 
 static AuthorizationCallbacks callbacks_with_deactivate(void) {
   AuthorizationCallbacks callbacks = {
+    .version = 4,
     .SetResult = record_result,
     .DidDeactivate = record_deactivate,
-    .WriteLog = record_log,
     .GetContextValue = forbidden_context,
     .SetContextValue = forbidden_set_context,
-    .GetHint = forbidden_hint,
-    .SetHint = forbidden_set_hint,
+    .GetHintValue = forbidden_hint,
+    .SetHintValue = forbidden_set_hint,
     .GetArguments = forbidden_arguments,
   };
   return callbacks;
@@ -99,7 +93,6 @@ static AuthorizationCallbacks callbacks_with_deactivate(void) {
 
 static void reset_counters(void) {
   set_results = 0;
-  log_lines = 0;
   forbidden_calls = 0;
   deactivations = 0;
   deactivated_engine = NULL;
@@ -130,7 +123,6 @@ static void test_deactivate_calls_did_deactivate(void) {
   CHECK(deactivations == 1);
   CHECK(deactivated_engine == engine);
   CHECK(set_results == 0);
-  CHECK(log_lines == 0);
   CHECK(forbidden_calls == 0);
   interface->MechanismDestroy(mechanism);
   CHECK(deactivations == 1);

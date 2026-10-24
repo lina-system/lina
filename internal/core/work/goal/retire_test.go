@@ -7,6 +7,7 @@ import (
 )
 
 func TestRetirementKeepsAssessmentRulesAtEachSite(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		revision       bool
@@ -61,6 +62,7 @@ func TestRetirementKeepsAssessmentRulesAtEachSite(t *testing.T) {
 }
 
 func TestRetireSignaledMergeKeepsDispatchedEffects(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		action Action

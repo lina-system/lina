@@ -9,6 +9,7 @@ import (
 // Migration 65 adds the messenger source registry and widens the ledger's
 // relation kinds. A published install keeps its events and relations.
 func TestMessengerUpgradeKeepsLedgerRelationsAndAddsKinds(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append([]Migration{}, Migrations()[:61]...)
 	db := openStore(t, cfg)
@@ -60,6 +61,7 @@ INSERT INTO ev_rel(event_id,target_id,kind) VALUES('newer','older','in_thread')`
 }
 
 func TestMessengerTablesRequireSourceAndKeepUniqueReferences(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	db := openStore(t, cfg)
@@ -104,6 +106,7 @@ VALUES('person','discord','account-1','official','discord','connected','2026-10-
 
 // Hiding an event removes its document from the one index; restoring queues it.
 func TestMessengerRemovalHidesTheIndexedDocument(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	db := openStore(t, cfg)
