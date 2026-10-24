@@ -407,12 +407,22 @@ type effectRow struct {
 	agent, state string
 }
 
+// MaxAdmitMessages is the largest page effectsFor can bind. That statement
+// uses two placeholders per message id plus the platform, account and chat.
+// The linked SQLite build allows 32766 variables, so one more id fails with
+// "too many SQL variables" and the cursor never commits.
+const (
+	sqliteMaxVariables     = 32766
+	effectQueryFixedParams = 3
+	effectQueryParamsPerID = 2
+	MaxAdmitMessages       = (sqliteMaxVariables - effectQueryFixedParams) / effectQueryParamsPerID
+)
+
 func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids []string) (map[string]effectRow, error) {
 	effects := map[string]effectRow{}
 	if len(ids) == 0 {
 		return effects, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := []any{source.Platform, source.Account, chat}
 	// The two IN lists take the same ids in the same order: the first list
 	// matches the client id and the second the platform's message id.
@@ -423,8 +433,7 @@ func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids 
 		args = append(args, id)
 	}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT client_id,message,agent,state FROM messenger_effect
-WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN (`+placeholders+`) OR message IN (`+placeholders+`))`, args...)
+		rows, err := tx.QueryContext(ctx, effectLookupSQL(len(ids)), args...)
 		if err != nil {
 			return err
 		}
@@ -443,6 +452,14 @@ WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN 
 		return rows.Err()
 	})
 	return effects, err
+}
+
+// effectLookupSQL is the effectsFor statement. MaxAdmitMessages is the largest
+// n this statement can bind on the linked SQLite build.
+func effectLookupSQL(n int) string {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", n), ",")
+	return `SELECT client_id,message,agent,state FROM messenger_effect
+WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN (` + placeholders + `) OR message IN (` + placeholders + `))`
 }
 
 // PageResult reports one committed page.
