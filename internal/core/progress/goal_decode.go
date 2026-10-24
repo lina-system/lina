@@ -19,6 +19,8 @@ func decodeProgressGoal(raw []byte) (goal.Goal, error) {
 		Turn        string         `json:"turn"`
 		CreatedAt   int64          `json:"created_at"`
 		State       goal.GoalState `json:"state"`
+		Rank        int            `json:"rank"`
+		Paused      bool           `json:"paused"`
 		AttentionID string         `json:"attention_id"`
 		Tasks       []struct {
 			ID      string         `json:"id"`
@@ -38,7 +40,7 @@ func decodeProgressGoal(raw []byte) (goal.Goal, error) {
 	if err := json.Unmarshal(raw, &display); err != nil {
 		return goal.Goal{}, err
 	}
-	g := goal.Goal{ID: display.ID, Person: display.Person, Agent: display.Agent, Turn: display.Turn, CreatedAt: display.CreatedAt, State: display.State, AttentionID: display.AttentionID}
+	g := goal.Goal{ID: display.ID, Person: display.Person, Agent: display.Agent, Turn: display.Turn, CreatedAt: display.CreatedAt, State: display.State, AttentionID: display.AttentionID, Rank: display.Rank, Paused: display.Paused}
 	if display.Tasks != nil {
 		g.Tasks = make([]goal.Task, len(display.Tasks))
 		for i, task := range display.Tasks {
