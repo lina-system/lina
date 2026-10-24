@@ -71,6 +71,19 @@ func TestRestoreCommandBoundaries(t *testing.T) {
 	}
 }
 
+// Each target installs, boots installed Core three times and runs a backup plus
+// two restores, so one scenario covers several operations. The acceptance shard
+// runs four scenarios at once and every child shares that CPU budget, which
+// pushed this scenario past the single-operation total in the post-merge run.
+// A restart-sized total gives that work room without stretching the harness
+// default for single-operation scenarios.
+const restoreScenarioTimeout = 12 * operationTimeout
+
+// TestM1RestoreInstalledConversation checks whole generations, a different
+// restore root, epoch fencing and schema upgrade: a committed reply survives a
+// backup, a post-backup turn is not restored, non-terminal channel deliveries
+// become unknown, and the restored Core keeps the conversation identity while
+// advancing the control epoch.
 func TestM1RestoreInstalledConversation(t *testing.T) {
 	t.Parallel()
 
@@ -82,7 +95,7 @@ func TestM1RestoreInstalledConversation(t *testing.T) {
 		t.Run(targetKind, func(t *testing.T) {
 			provider := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) { emitResponse(w, "synthetic restore reply", true) }))
 			defer provider.Close()
-			h, start := installedConversationHarness(t, provider.URL)
+			h, start := installedConversationHarnessWithin(t, restoreScenarioTimeout, provider.URL)
 			core := start(true)
 			c, conversation := conversationClient(t, h)
 			admittedTurn(t, h, c, conversation, "before-backup", "synthetic before backup")
