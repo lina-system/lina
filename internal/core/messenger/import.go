@@ -485,6 +485,8 @@ func speakerOf(route Route) string {
 		return "automation"
 	case RouteSystem:
 		return "system"
+	case RouteParticipant:
+		return "external_participant"
 	default:
 		return "external_participant"
 	}
