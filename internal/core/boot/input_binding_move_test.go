@@ -764,3 +764,134 @@ func TestBindingEffectResolvesWorkerSession(t *testing.T) {
 		t.Fatalf("worker steer targets = %#v", targets)
 	}
 }
+
+func TestEditFieldsIgnoreToolArgumentStamp(t *testing.T) {
+	payload := []byte(`{"id":"plants","revision":"abc","kind":"todo","title":"Plants","note":"old","edited":{"title":true,"retained":true}}`)
+	before := []byte("---\nkind: todo\n---\n\n# Plants\n\nold\n")
+	fields := editFieldsOf(payload, before)
+	if fields.Title || fields.Note || fields.Retained {
+		t.Fatalf("tool argument chose fields: %+v", fields)
+	}
+	relocated := []byte(`{"id":"lamps","revision":"","kind":"todo","title":"Lamps","note":"new","edited":{"note":true,"retained":true}}`)
+	same := []byte("---\nkind: todo\n---\n\n# Lamps\n\nnew\n")
+	fields = editFieldsOf(relocated, same)
+	if !fields.Note || fields.Title {
+		t.Fatalf("retained list dropped a matching note: %+v", fields)
+	}
+}
+
+// recordMovedEdit writes one field change and keeps it as a binding effect.
+func recordMovedEdit(t *testing.T, r *conversationRuntime, input, id string, write coreexec.RecordWrite) {
+	t.Helper()
+	before, rev, err := r.records.Read(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	write.ID, write.Revision = id, rev
+	receipt, err := coreexec.WriteRecord(t.Context(), r.records, records.Actor{Person: r.person, Agent: r.agent}, write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := json.Marshal(write)
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordEffect(t, r, input, "write_record", string(raw), &effectBefore{body: before.Data, revision: rev}, receipt)
+}
+
+// A later move must keep every field the edit changed, including a field whose
+// value already matches the item that holds the edit.
+func TestBindingMoveKeepsEditedFieldsDestinationAlreadyHas(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "plants", "todo", "open", "", "Plants", "old")
+	fixtureRecord(t, r, "lamps", "todo", "open", "", "Lamps", "new")
+	fixtureRecord(t, r, "pots", "todo", "open", "", "Pots", "other")
+	noteInput := admitForBinding(t, r, "note-match", "Plants")
+	recordMovedEdit(t, r, noteInput, "plants", coreexec.RecordWrite{Kind: "todo", Title: "Plants", Note: "new"})
+	if _, err := r.moveBinding(t.Context(), noteInput, binding.Target{Class: "existing", ID: "lamps", Kind: "todo"}, "note-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.moveBinding(t.Context(), noteInput, binding.Target{Class: "existing", ID: "pots", Kind: "todo"}, "note-2"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readRecord(t, r, "plants"); got != "Plants|old" {
+		t.Errorf("original note edit was not restored: %s", got)
+	}
+	if got, _ := readRecord(t, r, "lamps"); got != "Lamps|new" {
+		t.Errorf("matching destination was not restored: %s", got)
+	}
+	if got, _ := readRecord(t, r, "pots"); got != "Pots|new" {
+		t.Errorf("later move dropped a note the previous item already had: %s", got)
+	}
+
+	fixtureRecord(t, r, "seeds", "todo", "open", "", "Seeds", "old")
+	fixtureRecord(t, r, "bulbs", "todo", "open", "", "Bulbs", "new")
+	fixtureRecord(t, r, "soil", "todo", "open", "", "Soil", "other")
+	bothInput := admitForBinding(t, r, "both-fields", "Seeds")
+	recordMovedEdit(t, r, bothInput, "seeds", coreexec.RecordWrite{Kind: "todo", Title: "Garden", Note: "new"})
+	if _, err := r.moveBinding(t.Context(), bothInput, binding.Target{Class: "existing", ID: "bulbs", Kind: "todo"}, "both-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := r.moveBinding(t.Context(), bothInput, binding.Target{Class: "existing", ID: "soil", Kind: "todo"}, "both-2"); err != nil {
+		t.Fatal(err)
+	}
+	if got, _ := readRecord(t, r, "seeds"); got != "Seeds|old" {
+		t.Errorf("original multi-field edit was not restored: %s", got)
+	}
+	if got, _ := readRecord(t, r, "bulbs"); got != "Bulbs|new" {
+		t.Errorf("partial match was not restored: %s", got)
+	}
+	if got, _ := readRecord(t, r, "soil"); got != "Garden|new" {
+		t.Errorf("later move dropped the field that already matched: %s", got)
+	}
+}
+
+// A later move keeps to-do fields the edit changed when the item that holds
+// the edit already has the new value, or already lacks a field the edit cleared.
+func TestBindingMoveKeepsTodoFieldsDestinationAlreadyHas(t *testing.T) {
+	r := runRuntime(t)
+	fixtureRecord(t, r, "beds", "todo", "open", "", "Beds", "Dig.")
+	fixtureRecord(t, r, "paths", "todo", "open", "", "Paths", "Lay.")
+	fixtureRecord(t, r, "tools", "todo", "open", "", "Tools", "Sharpen.")
+	setTodo := func(id, title, rev string, todo records.Todo) {
+		t.Helper()
+		if _, err := coreexec.WriteRecord(t.Context(), r.records, records.Actor{Person: r.person, Agent: r.agent}, coreexec.RecordWrite{ID: id, Revision: rev, Kind: "todo", Title: title, Note: "Dig.", Todo: &todo}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	_, bedsRev, err := r.records.Read(t.Context(), "beds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setTodo("beds", "Beds", bedsRev, records.Todo{State: "open", Deadline: "2026-10-24", DeadlineSource: "person", Tags: []string{"old"}})
+	_, pathsRev, err := r.records.Read(t.Context(), "paths")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setTodo("paths", "Paths", pathsRev, records.Todo{State: "open", Important: true, Tags: []string{"keep"}})
+	_, toolsRev, err := r.records.Read(t.Context(), "tools")
+	if err != nil {
+		t.Fatal(err)
+	}
+	setTodo("tools", "Tools", toolsRev, records.Todo{State: "open", Deadline: "2026-11-01", DeadlineSource: "person", Tags: []string{"other"}})
+	todoInput := admitForBinding(t, r, "todo-fields", "Beds")
+	recordMovedEdit(t, r, todoInput, "beds", coreexec.RecordWrite{Kind: "todo", Title: "Beds", Note: "Dig.", Todo: &records.Todo{State: "open", Important: true, Tags: []string{"beds"}}})
+	if _, err = r.moveBinding(t.Context(), todoInput, binding.Target{Class: "existing", ID: "paths", Kind: "todo"}, "todo-1"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.moveBinding(t.Context(), todoInput, binding.Target{Class: "existing", ID: "tools", Kind: "todo"}, "todo-2"); err != nil {
+		t.Fatal(err)
+	}
+	restored := readTodo(t, r, "beds")
+	if restored.Important || restored.Deadline != "2026-10-24" || len(restored.Tags) != 1 || restored.Tags[0] != "old" {
+		t.Errorf("original to-do was not restored: %+v", restored)
+	}
+	held := readTodo(t, r, "paths")
+	if !held.Important || held.Deadline != "" || len(held.Tags) != 1 || held.Tags[0] != "keep" {
+		t.Errorf("matching to-do was not restored: %+v", held)
+	}
+	moved := readTodo(t, r, "tools")
+	if !moved.Important || moved.Deadline != "" || moved.DeadlineSource != "" || len(moved.Tags) != 1 || moved.Tags[0] != "beds" {
+		t.Errorf("later move dropped to-do fields the previous item already had: %+v", moved)
+	}
+}
