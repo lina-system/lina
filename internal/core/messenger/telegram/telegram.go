@@ -361,7 +361,7 @@ func (a *Adapter) ListChats(ctx context.Context, source messenger.SourceID) ([]m
 		if err != nil {
 			return nil, err
 		}
-		list, total, err := a.dialogs(response)
+		list, count, complete, err := a.dialogs(response)
 		if err != nil {
 			return nil, err
 		}
@@ -372,16 +372,19 @@ func (a *Adapter) ListChats(ctx context.Context, source messenger.SourceID) ([]m
 			seen[item.chat.ID] = true
 			chats = append(chats, item.chat)
 		}
-		if len(list) < a.size || (total > 0 && len(chats) >= total) || len(list) == 0 {
-			break
+		if complete || count < a.size {
+			return chats, nil
+		}
+		if len(list) == 0 {
+			return nil, ErrInvalid
 		}
 		last := list[len(list)-1]
 		if last.top == 0 {
-			break
+			return nil, ErrInvalid
 		}
 		offsetID, offsetPeer = last.top, last.peer
 	}
-	return chats, nil
+	return nil, ErrInvalid
 }
 
 // dialogItem pairs a registry chat with the platform's pagination fields.
@@ -392,20 +395,21 @@ type dialogItem struct {
 }
 
 // dialogs converts one response and remembers its entities.
-func (a *Adapter) dialogs(response tg.MessagesDialogsClass) ([]dialogItem, int, error) {
+func (a *Adapter) dialogs(response tg.MessagesDialogsClass) ([]dialogItem, int, bool, error) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	var list []tg.DialogClass
 	var users []tg.UserClass
 	var chats []tg.ChatClass
-	total := 0
+	complete := false
 	switch v := response.(type) {
 	case *tg.MessagesDialogs:
 		list, users, chats = v.Dialogs, v.Users, v.Chats
+		complete = true
 	case *tg.MessagesDialogsSlice:
-		list, users, chats, total = v.Dialogs, v.Users, v.Chats, v.Count
+		list, users, chats = v.Dialogs, v.Users, v.Chats
 	default:
-		return nil, 0, nil
+		return nil, 0, true, nil
 	}
 	a.rememberLocked(users, chats)
 	out := make([]dialogItem, 0, len(list))
@@ -427,7 +431,7 @@ func (a *Adapter) dialogs(response tg.MessagesDialogsClass) ([]dialogItem, int, 
 			peer: peer, top: dialog.TopMessage,
 		})
 	}
-	return out, total, nil
+	return out, len(list), complete, nil
 }
 
 // Page reads one page of a chat.

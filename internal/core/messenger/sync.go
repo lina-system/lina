@@ -26,7 +26,11 @@ type Service struct {
 	mu         sync.Mutex
 	lastSync   map[string]time.Time
 	perSource  map[string]Adapter
+	syncReads  map[string]map[*sourceRead]struct{}
+	stopping   map[string]bool
 }
+
+type sourceRead struct{ cancel context.CancelFunc }
 
 // Factory opens the adapter of one source. It returns false when it does not
 // serve that source. Core uses it for account-specific credentials.
@@ -39,7 +43,7 @@ func NewService(store *Store, adapters map[string]Adapter, interval time.Duratio
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, adapters: adapters, interval: interval, wake: make(chan struct{}, 1), liveWake: make(chan struct{}, 1), liveCancel: map[string]context.CancelFunc{}, lastSync: map[string]time.Time{}, perSource: map[string]Adapter{}}
+	return &Service{store: store, adapters: adapters, interval: interval, wake: make(chan struct{}, 1), liveWake: make(chan struct{}, 1), liveCancel: map[string]context.CancelFunc{}, lastSync: map[string]time.Time{}, perSource: map[string]Adapter{}, syncReads: map[string]map[*sourceRead]struct{}{}, stopping: map[string]bool{}}
 }
 
 // WithFactory adds the per-source adapter factory.
@@ -143,8 +147,12 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		s.mu.Lock()
 		s.lastSync[key] = current
 		s.mu.Unlock()
-		if err != nil && ctx.Err() == nil {
-			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
+		if err != nil && ctx.Err() == nil && !errors.Is(err, context.Canceled) {
+			s.activity.RLock()
+			if s.connected(ctx, source) {
+				_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
+			}
+			s.activity.RUnlock()
 		} else if err == nil {
 			results[key] = result
 		}
@@ -167,16 +175,38 @@ func sourceID(source Source) SourceID {
 
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (result Result, err error) {
-	defer func() {
-		if errors.Is(err, ErrNeedsSignIn) {
-			err = s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
-		}
-	}()
 	s.activity.RLock()
 	defer s.activity.RUnlock()
 	if !s.connected(ctx, source) {
 		return Result{}, nil
 	}
+	key := source.Platform + "\x00" + source.Account
+	s.mu.Lock()
+	if s.stopping[key] {
+		s.mu.Unlock()
+		return Result{}, nil
+	}
+	ctx, cancel := context.WithCancel(ctx)
+	read := &sourceRead{cancel: cancel}
+	if s.syncReads[key] == nil {
+		s.syncReads[key] = map[*sourceRead]struct{}{}
+	}
+	s.syncReads[key][read] = struct{}{}
+	s.mu.Unlock()
+	defer func() {
+		if ctx.Err() != nil {
+			err = ctx.Err()
+		} else if errors.Is(err, ErrNeedsSignIn) {
+			err = s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
+		}
+		cancel()
+		s.mu.Lock()
+		delete(s.syncReads[key], read)
+		if len(s.syncReads[key]) == 0 {
+			delete(s.syncReads, key)
+		}
+		s.mu.Unlock()
+	}()
 	adapter, ok := s.adapterFor(source)
 	if !ok {
 		return Result{}, ErrInvalid
@@ -405,7 +435,7 @@ func (s *Service) connected(ctx context.Context, source Source) bool {
 	}
 	for _, row := range rows {
 		if row.Platform == source.Platform && row.Account == source.Account {
-			return row.State == StateConnected
+			return row.State == StateConnected || row.State == StateFailing
 		}
 	}
 	return false
@@ -413,14 +443,22 @@ func (s *Service) connected(ctx context.Context, source Source) bool {
 
 // Disconnect stops reading before removing the source's authentication.
 func (s *Service) Disconnect(ctx context.Context, source Source) error {
-	s.activity.Lock()
-	defer s.activity.Unlock()
 	key := source.Platform + "\x00" + source.Account
+	// Cancel network reads and rate-limit waits before waiting for their writes.
 	s.mu.Lock()
+	s.stopping[key] = true
+	for read := range s.syncReads[key] {
+		read.cancel()
+	}
 	if cancel := s.liveCancel[key]; cancel != nil {
 		cancel()
 		delete(s.liveCancel, key)
 	}
+	s.mu.Unlock()
+	s.activity.Lock()
+	defer s.activity.Unlock()
+	defer func() { s.mu.Lock(); delete(s.stopping, key); s.mu.Unlock() }()
+	s.mu.Lock()
 	adapter := s.perSource[key]
 	delete(s.perSource, key)
 	delete(s.lastSync, key)

@@ -84,7 +84,10 @@ without them stays `needs_sign_in` with `ErrNoCredentials`.
 ## Reads
 
 `SignIn` reports state without prompting. `ListChats` pages dialogs and records
-each peer's input form; `Page` reads history from the cursor:
+each peer's input form. Completion uses the raw dialog count and response type,
+before folders or unsupported peers are filtered. A page that cannot advance
+reports a failure rather than committing a partial list. `Page` reads history
+from the cursor:
 
 - fill: page backwards from the oldest id read so far, oldest first in the page;
 - steady: read the newest page and keep only ids above the newest id the fill

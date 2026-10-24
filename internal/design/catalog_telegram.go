@@ -3,6 +3,9 @@ package design
 
 func init() {
 	register(map[string]translation{
+		"idle":              {"Ready", "준비됨"},
+		"code":              {"Sign-in code", "인증 코드"},
+		"password":          {"Password", "비밀번호"},
 		"telegram_request":  {"Telegram source request", "Telegram 소스 요청"},
 		"telegram_result":   {"Telegram source result", "Telegram 소스 결과"},
 		"telegram.heading":  {"Telegram account", "Telegram 계정"},

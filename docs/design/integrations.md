@@ -745,11 +745,14 @@ cancelled when the client closes it or disconnects.
 Core derives the account ID from Telegram's authenticated user. Application
 credentials and MTProto sessions stay in the person's secret store; code and
 password are transient. Restart resumes connected sources from those sessions.
-Disconnect stops source reads and removes that account's saved session while
-retaining its imported records.
+Disconnect cancels active reads and rate-limit waits before removing that
+account's saved session, while retaining its imported records. A transient
+source failure retries on the next interval.
 
 The source reads dialogs and pages history by message ID, with at most 100
-messages per page and a one-minute poll interval. First fill walks backwards;
+messages per page and a one-minute poll interval. Dialog pagination follows
+the unfiltered platform response, so skipped folder entries do not hide later
+chats. First fill walks backwards;
 catch-up retains the last completed watermark until every newer page commits.
 Live edits supersede stored records and explicit deletion updates retract them.
 Reads send no read acknowledgement, presence or typing request. A Telegram

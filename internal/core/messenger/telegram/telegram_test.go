@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/gotd/td/tg"
+	"github.com/gotd/td/tgtest"
 
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/messenger/telegram"
@@ -393,5 +394,32 @@ func nextEvent(t *testing.T, events <-chan messenger.Event) messenger.Event {
 	case <-time.After(10 * time.Second):
 		t.Fatal("no live event")
 		return messenger.Event{}
+	}
+}
+
+func TestDialogPagingContinuesAfterFilteredFolder(t *testing.T) {
+	s := newServer(t)
+	adapter := newSizedAdapter(t, s, newVault(t), nil, 2)
+	signIn(t, adapter)
+	var offsets []int
+	s.dispatcher.HandleFunc(tg.MessagesGetDialogsRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		var request tg.MessagesGetDialogsRequest
+		if err := request.Decode(req.Buf); err != nil {
+			return err
+		}
+		offsets = append(offsets, request.OffsetID)
+		if request.OffsetID == 0 {
+			return server.SendResult(req, &tg.MessagesDialogsSlice{Count: 3, Dialogs: []tg.DialogClass{
+				&tg.DialogFolder{Folder: tg.Folder{ID: 1, Title: "Archived"}, Peer: &tg.PeerUser{UserID: self.ID}, TopMessage: 7},
+				&tg.Dialog{Peer: &tg.PeerUser{UserID: other.ID}, TopMessage: 4},
+			}, Users: []tg.UserClass{self, other}})
+		}
+		return server.SendResult(req, &tg.MessagesDialogs{Dialogs: []tg.DialogClass{
+			&tg.Dialog{Peer: &tg.PeerUser{UserID: self.ID}, TopMessage: 2},
+		}, Users: []tg.UserClass{self}})
+	})
+	chats, err := adapter.ListChats(t.Context(), sourceID)
+	if err != nil || len(chats) != 2 || len(offsets) != 2 || offsets[1] != 4 {
+		t.Fatalf("filtered dialog truncated paging: chats=%+v offsets=%v err=%v", chats, offsets, err)
 	}
 }
