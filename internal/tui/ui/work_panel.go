@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"encoding/json"
 	"fmt"
 	"strconv"
 	"strings"
@@ -40,6 +41,11 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 		}
 		if v.State != nil {
 			c.State = *v.State
+		}
+		// Core's pause belongs to the card, not to its Now text: the person sees
+		// the paused word and the same card answers resume with its own state.
+		if v.Paused != nil && *v.Paused {
+			c.Paused = true
 		}
 		if v.Stages != nil {
 			refs := map[string][]string{}
@@ -108,7 +114,27 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 		waiting, _ := p.Counts.Waiting.Int64()
 		summary.Counts = &state.WorkCount{Running: max(0, int(running)), Waiting: max(0, int(waiting))}
 	}
+	// The title shows a limit only when the person set one; automatic is the
+	// absence of a choice, not a number to draw.
+	if p.Limit != nil && !p.Limit.Automatic {
+		if value, err := p.Limit.Value.Int64(); err == nil && value > 0 {
+			summary.Limit = &state.WorkLimit{Value: int(value)}
+		}
+	}
 	return summary
+}
+
+// workLimitValue is the run limit Core applied, when the person set one.
+func (m *shellModel) workLimitValue() int {
+	if !m.hasCapability("progress") {
+		return 0
+	}
+	for _, b := range m.content.Blocks {
+		if b.Topic == "progress" && b.Work != nil && b.Work.Limit != nil {
+			return b.Work.Limit.Value
+		}
+	}
+	return 0
 }
 
 func (m *shellModel) workCards() []state.WorkCard {
@@ -189,12 +215,17 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		ellipsis = "..."
 	}
 	title := text("work.title")
+	separator := m.styles.tokens.GlyphUnicodeActivitySeparator
+	if m.styles.options.ASCII {
+		separator = m.styles.tokens.GlyphAsciiActivitySeparator
+	}
 	if m.conversation.workFilter != "" {
-		separator := m.styles.tokens.GlyphUnicodeActivitySeparator
-		if m.styles.options.ASCII {
-			separator = m.styles.tokens.GlyphAsciiActivitySeparator
-		}
 		title += " " + separator + " " + text("work.filter."+string(m.conversation.workFilter))
+	}
+	// The limit is shown only when the person set a number; automatic is the
+	// absence of a choice.
+	if limit := m.workLimitValue(); limit > 0 {
+		title += " " + separator + " " + fmt.Sprintf(text("work.limit"), limit)
 	}
 	rows := []string{panelClip(title, width, ellipsis)}
 	active, done := m.selectableWorkCards()
@@ -240,6 +271,11 @@ func (m *shellModel) workPanelRows(width, height int) []string {
 		activity := c.Now
 		if activity == "" {
 			activity = text("unknown")
+		}
+		// A stop ask replaces the card's Now with its one question until the
+		// person confirms or cancels.
+		if m.conversation.workStop == c.ID {
+			activity = text("work.stop_confirm")
 		}
 		u := render.Unicode{}
 		budget := max(0, width-u.Width(prefix)-u.Width(elapsed)-1)
@@ -302,6 +338,20 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 		m.workStageKey(card, key)
 		return nil
 	}
+	// A stop ask owns the next key: Enter confirms it and any other key
+	// cancels it without doing that key's own work.
+	if m.conversation.workStop != "" {
+		card := m.conversation.workStop
+		m.conversation.workStop = ""
+		if key == "enter" {
+			return m.workControl(card, "stop", true)
+		}
+		if key == "ctrl+d" {
+			m.status = ConnectionStatus{State: Quit}
+			return tea.Quit
+		}
+		return nil
+	}
 	switch key {
 	case "ctrl+d":
 		m.status = ConnectionStatus{State: Quit}
@@ -345,8 +395,68 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 			m.conversation.workSelected = cards[index].ID
 			m.conversation.workIndex = index
 		}
+	case "shift+up", "shift+down":
+		// A move changes only Core's rank; the card moves when Core's update
+		// arrives.
+		cards, _ := m.selectableWorkCards()
+		if len(cards) > 0 {
+			operation := "rank_up"
+			if key == "shift+down" {
+				operation = "rank_down"
+			}
+			return m.workControl(cards[m.conversation.workIndex].ID, operation, false)
+		}
+	case "space":
+		// The person's pause toggles the card's own recorded state.
+		cards, _ := m.selectableWorkCards()
+		if len(cards) > 0 {
+			card := cards[m.conversation.workIndex]
+			operation := "pause"
+			if card.Paused {
+				operation = "resume"
+			}
+			return m.workControl(card.ID, operation, false)
+		}
+	case "delete":
+		cards, _ := m.selectableWorkCards()
+		if len(cards) > 0 {
+			m.conversation.workStop = cards[m.conversation.workIndex].ID
+		}
+	case "-":
+		return m.workLimit("limit_down", nil)
+	case "+", "shift++", "shift+=":
+		return m.workLimit("limit_up", nil)
+	case "0":
+		return m.workLimit("limit_auto", nil)
 	}
 	return nil
+}
+
+// workControl sends one of the person's choices about a card. The panel changes
+// nothing locally: the card moves, pauses or leaves only when Core's update
+// arrives.
+func (m *shellModel) workControl(goalID, operation string, confirm bool) tea.Cmd {
+	if goalID == "" || !m.mutationsAllowed() || !m.hasCapability("work") {
+		return nil
+	}
+	request := protocol.WorkControlRequest{GoalID: goalID, Operation: operation}
+	if confirm {
+		value := true
+		request.Confirm = &value
+	}
+	generation := m.generation
+	return func() tea.Msg { return shellManagement{Generation: generation, Request: request} }
+}
+
+// workLimit sends the person's run limit choice. The title shows the applied
+// limit only after Core reports it.
+func (m *shellModel) workLimit(operation string, value *json.Number) tea.Cmd {
+	if !m.mutationsAllowed() || !m.hasCapability("work") {
+		return nil
+	}
+	request := protocol.WorkLimitRequest{Operation: operation, Value: value}
+	generation := m.generation
+	return func() tea.Msg { return shellManagement{Generation: generation, Request: request} }
 }
 
 func (m *shellModel) workPanelInterval() time.Duration {
