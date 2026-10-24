@@ -26,7 +26,7 @@ func formatElapsed(elapsed time.Duration) string {
 
 func (m *shellModel) activityRequested() bool {
 	return (m.content.Busy || m.content.TurnActive) && m.status.State == Live && m.hasComposer() &&
-		m.size.Width >= 40 && m.size.Height >= 10 && !m.accounts.open && !m.channels.open && !m.talk.open &&
+		m.size.Width >= 40 && m.size.Height >= 10 && !m.accounts.open && !m.telegram.open && !m.channels.open && !m.talk.open &&
 		m.content.CardView.ID == ""
 }
 

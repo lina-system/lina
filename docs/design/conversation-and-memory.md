@@ -373,15 +373,20 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 **The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
 `bind_input` records one request per binding. Choices append system events to the
-admission binding; retries retain the same event and question. The tool tolerates
+admission binding; retries retain the same event and question. A retry of a
+stored call is compared before the current work snapshot rewrites it, so a
+parent project that completes after the call leaves that call unchanged. The tool tolerates
 the shapes a model naturally writes, because a rejected argument loses the whole
 message: a request ordinal is optional and omitted ordinals take message order,
 a target may be the candidate object, its exact id or title, `new` or `none`, and
 an excerpt that is absent or not an exact copy becomes the input text. A kind
 word is mapped to the stored kinds, an unknown kind becomes a to-do, and a parent
-that is not an open initiative or project is dropped. Only a target naming no
+that is not an open initiative or project is dropped. A name that matches no
+open item and exactly one offered item, including a finished item, binds that
+item. Only a target naming no
 candidate, or more than one, returns `field` and `reason` with the allowed ids so
-the model can correct the next call. A work tool may name `input_binding` to
+the model can correct the next call. A tied alternative that cannot be resolved
+returns that same correction instead of being dropped. A work tool may name `input_binding` to
 select a request or consumed steering input. Both tools accept the selector under
 `input_event_id`, `input` or `text`: absent means the current input, `current`
 means the turn's own input, and an exact copy of an input's text means that input.
@@ -390,6 +395,12 @@ arbitrary ledger lookup. Case and spacing differences in input text are ignored.
 When the turn has only that input, other prose in the selector means it too.
 Conflicting selectors are rejected. Unknown binding fields are ignored.
 A question about two new targets labels each choice with its kind and parent.
+When one response binds and acts on the same input, the work call runs only after
+`bind_input` committed the choice or the pending target question. Calls for other
+inputs or other targets keep running in parallel. A turn with no person input of
+its own runs an unqualified work call as the turn's own tool, even after it
+consumed steering; only a call that names the steering input waits for that
+input's binding.
 A single `prepare_work` or `schedule_work` receipt records the created task as
 that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record

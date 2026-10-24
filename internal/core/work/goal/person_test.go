@@ -101,3 +101,22 @@ func TestTaskLandingChangesTheRunningRow(t *testing.T) {
 		t.Fatalf("technical name stayed on the row: %q", summary)
 	}
 }
+
+func TestRunningRowUsesDoneWhenTheTaskHasNoName(t *testing.T) {
+	task := readyTask("write")
+	task.Name = ""
+	summary, state := RunningRow(task)
+	if summary != task.Done || state != "working" {
+		t.Fatalf("unnamed task: %q %s", summary, state)
+	}
+	task.Done = "issue #3"
+	summary, _ = RunningRow(task)
+	if summary != "In progress" {
+		t.Fatalf("technical done: %q", summary)
+	}
+	task.Name = "Write the note"
+	summary, _ = RunningRow(task)
+	if summary != "Write the note" {
+		t.Fatalf("named task: %q", summary)
+	}
+}

@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"charm.land/lipgloss/v2"
+	uv "github.com/charmbracelet/ultraviolet"
 	"github.com/charmbracelet/x/ansi"
 	"github.com/thisisjun786/lina/internal/design"
 	"github.com/thisisjun786/lina/internal/tui/render"
@@ -131,9 +132,11 @@ func localizedConnectionView(state Connection, t design.Tokens, ascii bool, lang
 
 // Styles converts generated semantic data into Lip Gloss styles in one place.
 type Styles struct {
-	tokens                                         design.Tokens
-	options                                        Options
-	Text, Muted, Accent, Title, Canvas, Code, Line lipgloss.Style
+	tokens                                                       design.Tokens
+	options                                                      Options
+	Text, Muted, Accent, Title, Canvas, Code, Line               lipgloss.Style
+	Success, Warning, Error, Unknown, Working, Waiting, Disabled lipgloss.Style
+	Focus, Border, Selection, OnAccent, DiffAdded, DiffRemoved   lipgloss.Style
 }
 
 func NewStyles(options Options) Styles {
@@ -169,6 +172,19 @@ func NewStyles(options Options) Styles {
 	s.Muted = base.Foreground(paint(tokens.ColorMuted))
 	s.Line = base.Foreground(paint(tokens.ColorLine))
 	s.Accent = base.Foreground(paint(tokens.ColorAccent))
+	s.Success = base.Foreground(paint(tokens.ColorSuccess))
+	s.Warning = base.Foreground(paint(tokens.ColorWarning))
+	s.Error = base.Foreground(paint(tokens.ColorError))
+	s.Unknown = base.Foreground(paint(tokens.ColorUnknown))
+	s.Working = base.Foreground(paint(tokens.ColorWorking))
+	s.Waiting = base.Foreground(paint(tokens.ColorWaiting))
+	s.Disabled = base.Foreground(paint(tokens.ColorDisabled))
+	s.Focus = base.Foreground(paint(tokens.ColorFocus))
+	s.Border = base.Foreground(paint(tokens.ColorBorder))
+	s.Selection = base.Foreground(paint(tokens.ColorOnSelection)).Background(paint(tokens.ColorSelection))
+	s.OnAccent = base.Foreground(paint(tokens.ColorOnAccent)).Background(paint(tokens.ColorAccent))
+	s.DiffAdded = base.Foreground(paint(tokens.ColorDiffAdded)).Background(paint(tokens.ColorDiffAddedBackground))
+	s.DiffRemoved = base.Foreground(paint(tokens.ColorDiffRemoved)).Background(paint(tokens.ColorDiffRemovedBackground))
 	s.Title = s.Text.Bold(tokens.TypeTitleWeight > tokens.TypeWeight && options.Profile != Monochrome)
 	s.Code = s.Text
 	if options.Profile != Monochrome {
@@ -176,6 +192,42 @@ func NewStyles(options Options) Styles {
 	}
 	s.Canvas = base
 	return s
+}
+
+// viewport fills the canvas and restores its default colours after nested
+// styles reset them. Padding alone leaves unstyled spaces inside a row (for
+// example after the composer placeholder) on the terminal's own background.
+func (s Styles) viewport(content string, width, height int) string {
+	if s.options.Profile == Monochrome || width <= 0 || height <= 0 {
+		return content
+	}
+	content = s.Text.Width(width).Height(height).Render(content)
+	var out strings.Builder
+	var pen uv.Style
+	var state byte
+	parser := ansi.NewParser()
+	for content != "" {
+		seq, _, n, next := ansi.DecodeSequence(content, state, parser)
+		content, state = content[n:], next
+		out.WriteString(seq)
+		if strings.HasPrefix(seq, "\x1b[") && parser.Command() == 'm' {
+			uv.ReadStyle(parser.Params(), &pen)
+			var defaults ansi.Style
+			if pen.Fg == nil {
+				pen.Fg = s.Text.GetForeground()
+				defaults = defaults.ForegroundColor(pen.Fg)
+			}
+			if pen.Bg == nil {
+				pen.Bg = s.Canvas.GetBackground()
+				defaults = defaults.BackgroundColor(pen.Bg)
+			}
+			if len(defaults) > 0 {
+				out.WriteString(defaults.String())
+			}
+		}
+	}
+	out.WriteString(ansi.ResetStyle)
+	return out.String()
 }
 
 // Screen keeps a single reading edge and one blank row between groups.
