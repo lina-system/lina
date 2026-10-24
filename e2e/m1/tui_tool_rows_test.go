@@ -94,16 +94,16 @@ func toolRowsGate(t *testing.T, h *harness, release <-chan struct{}) (string, <-
 
 func TestM1TUIToolRows(t *testing.T) {
 	for _, variant := range []struct {
-		name, theme string
-		ascii       bool
-		env         []string
+		name, theme  string
+		ascii, plain bool
+		env          []string
 	}{
-		{"light-truecolor-unicode", "light", false, []string{"COLORTERM=truecolor"}},
-		{"dark-256-unicode", "dark", false, nil},
-		{"high-contrast-16-unicode", "high-contrast", false, []string{"TERM=vt100"}},
-		{"light-no-color-ascii", "light", true, []string{"NO_COLOR=1"}},
-		{"dark-no-color-ascii", "dark", true, []string{"NO_COLOR=1"}},
-		{"high-contrast-no-color-ascii", "high-contrast", true, []string{"NO_COLOR=1"}},
+		{"light-truecolor-unicode", "light", false, false, []string{"COLORTERM=truecolor"}},
+		{"dark-256-unicode", "dark", false, false, nil},
+		{"high-contrast-16-unicode", "high-contrast", false, false, []string{"TERM=vt100"}},
+		{"light-no-color-ascii", "light", true, true, []string{"NO_COLOR=1"}},
+		{"dark-no-color-ascii", "dark", true, true, []string{"NO_COLOR=1"}},
+		{"high-contrast-no-color-ascii", "high-contrast", true, true, []string{"NO_COLOR=1"}},
 	} {
 		t.Run(variant.name, func(t *testing.T) {
 			text := func(key string) string { return design.Text(design.English, "tool."+key) }
@@ -193,7 +193,11 @@ func TestM1TUIToolRows(t *testing.T) {
 			case <-h.ctx.Done():
 				t.Fatal("TUI not subscribed")
 			}
-			waitComposerReady(t, h, terminal)
+			if variant.plain {
+				waitPlainComposerReady(t, h, terminal)
+			} else {
+				waitComposerReady(t, h, terminal)
+			}
 			h.keys(terminal, "List fixture skills\r")
 			ctx, cancel := context.WithTimeout(h.ctx, 5*time.Second)
 			screen, err := terminal.screen.Wait(ctx, func(s tuiterm.Snapshot) bool { return strings.Contains(screenText(s), running) })
@@ -209,6 +213,9 @@ func TestM1TUIToolRows(t *testing.T) {
 			waitScreen(t, h, terminal, failed)
 			waitScreen(t, h, terminal, "Tool failed as expected.")
 			t.Logf("observed completion: %s; %s", ok, failed)
+			if variant.plain && strings.Contains(string(terminal.screen.Bytes()), "\x1b") {
+				t.Fatal("NO_COLOR tool lifecycle emitted escape styling")
+			}
 			t.Logf("terminal capture:\n%s", screenText(terminal.screen.Snapshot()))
 			// A later turn rebuilds the request from stored conversation history.
 			client, conversation := conversationClient(t, h)
