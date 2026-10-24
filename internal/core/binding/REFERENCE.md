@@ -19,7 +19,8 @@ choice bytes for request replay.
 A person-selected new target keeps that decider. Once its created id is recorded,
 a later read, progress check, or follow-up may name that existing item; any
 other item stays pending. A model follow-up to a worker task uses the agent
-message path. `worker_input` and `worker_interrupt` resolve their session to
+message path and the requesting conversation. An unrelated conversation is
+refused before delivery. `worker_input` and `worker_interrupt` resolve their session to
 that task before the person's choice is checked. `worker_interrupt` is a stop:
 a retained tie asks which task before cancellation. `submit_step_graph` starts
 work, so a retained tie asks which project before the graph is admitted. A code goal tool resolves

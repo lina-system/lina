@@ -467,8 +467,13 @@ func (r *conversationRuntime) followWorkerTask(ctx context.Context, input ledger
 	if err != nil {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
+	// The registry is shared. Check and deliver as the requester so an
+	// unrelated conversation cannot steer or speak as the owner.
+	if !entry.origin.workerConversation(r) {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
 	ctx = context.WithValue(ctx, workerCallIdentityKey{}, "binding-follow:"+turnID+":"+callID)
-	result, err := entry.origin.workerOperation(ctx, "worker_input", turnID, input, in)
+	result, err := r.workerOperation(ctx, "worker_input", turnID, input, in)
 	if err != nil || result.State != tools.Applied {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}

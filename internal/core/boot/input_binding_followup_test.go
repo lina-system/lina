@@ -702,3 +702,61 @@ func TestSubmitStepGraphAsksBeforeStartingTiedWork(t *testing.T) {
 		t.Fatalf("resolved graph missing: %+v %v", graph, err)
 	}
 }
+
+func TestFollowWorkStaysInsideWorkerConversation(t *testing.T) {
+	requester, _ := turnRuntime(t)
+	dev := workAgentFixture(t, requester)
+	owner := newConversationView(requester, dev, "manager:unit")
+	owner.codingDelivery = requester
+	dir := t.TempDir()
+	reserve := t.TempDir()
+	task := work.Task{ID: "owned-task", PersonID: owner.person, AgentID: owner.agent, ConversationID: owner.conversation, Title: "Owned task", Done: "Done", ArtifactRoots: []string{dir}}
+	if err := requester.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := requester.work.Start(t.Context(), work.Run{ID: "owned-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "owned-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := requester.work.ReserveWorker(t.Context(), "owned-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "owned-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: owner, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "owned-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	requester.workers.mu.Lock()
+	requester.workers.sessions[thread.ID] = entry
+	requester.workers.mu.Unlock()
+	t.Cleanup(func() {
+		requester.workers.mu.Lock()
+		delete(requester.workers.sessions, thread.ID)
+		requester.workers.mu.Unlock()
+	})
+	follow := func(view *conversationRuntime, id, text string) loop.Result {
+		t.Helper()
+		input := questionPersonInput(t, view, id, text)
+		tools := modelBindingTools(t, view, input)
+		return questionCall(t, tools, "follow_work", id, map[string]string{"id": "task:" + task.ID + ":1", "text": text})
+	}
+	samePerson := newConversationView(requester, requester.agent, "unrelated")
+	otherPerson := newConversationView(requester, requester.agent, "foreign-person")
+	otherPerson.person = "someone-else"
+	for _, foreign := range []*conversationRuntime{samePerson, otherPerson} {
+		got := follow(foreign, "foreign-"+foreign.conversation, "Steer from outside")
+		if got.Code != loop.Denied {
+			t.Fatalf("%s follow reached the worker: %+v", foreign.conversation, got)
+		}
+	}
+	if probe.inputs != 0 {
+		t.Fatalf("unrelated follow-ups delivered %d inputs", probe.inputs)
+	}
+	owned := follow(owner, "owner-follow", "Steer as the owner")
+	if owned.Code != loop.OK || probe.inputs != 1 || !strings.Contains(probe.text, `sender="`+owner.agent+`"`) {
+		t.Fatalf("owner follow: code=%s inputs=%d text=%s", owned.Code, probe.inputs, probe.text)
+	}
+	requested := follow(requester, "requester-follow", "Steer as the requester")
+	if requested.Code != loop.OK || probe.inputs != 2 || !strings.Contains(probe.text, `sender="`+requester.agent+`"`) || strings.Contains(probe.text, `sender="`+owner.agent+`"`) {
+		t.Fatalf("requester follow: code=%s inputs=%d text=%s", requested.Code, probe.inputs, probe.text)
+	}
+}
