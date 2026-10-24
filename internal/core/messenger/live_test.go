@@ -6,7 +6,9 @@ import (
 	"errors"
 	"io"
 	"strings"
+	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -247,4 +249,47 @@ func TestLiveAdmissionDoesNotOverwriteNewerProgress(t *testing.T) {
 	if chats[0].Cursor != "newer-page" {
 		t.Fatalf("live admission overwrote progress: %q", chats[0].Cursor)
 	}
+}
+
+// Pause a scheduled page after planning but before committing its event. The
+// live deletion must either see that event or prevent its later admission.
+func TestScheduledPageCannotOutrunLiveDeletion(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		source := f.connect(t)
+		planned, release := make(chan struct{}), make(chan struct{})
+		var paused atomic.Bool
+		f.store.WithClock(func() time.Time {
+			if paused.CompareAndSwap(false, true) {
+				close(planned)
+				<-release
+			}
+			return f.now
+		})
+		pageDone, deletionDone := make(chan error, 1), make(chan error, 1)
+		go func() {
+			_, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+				Messages: []messenger.Message{message("overlap", messenger.RouteParticipant, f.now, "must disappear")}, Next: "page-1",
+			})
+			pageDone <- err
+		}()
+		<-planned
+		go func() {
+			_, err := f.store.AdmitEvent(t.Context(), source, messenger.Event{Chat: "dm-1", Deletion: &messenger.Deletion{Message: "overlap", At: f.now}})
+			deletionDone <- err
+		}()
+		// Wait for the deletion to finish or block behind page admission. This
+		// chooses the interleaving deterministically, with no wall-clock delay.
+		synctest.Wait()
+		close(release)
+		if err := <-pageDone; err != nil {
+			t.Fatal(err)
+		}
+		if err := <-deletionDone; err != nil {
+			t.Fatal(err)
+		}
+		if n := count(t, f.db, "SELECT count(*) FROM retract_visible_event WHERE origin LIKE '%messenger%'"); n != 0 {
+			t.Fatalf("page resurrected %d searchable events after a live deletion", n)
+		}
+	})
 }

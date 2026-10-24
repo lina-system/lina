@@ -8,7 +8,6 @@ import (
 	"errors"
 	"fmt"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -36,20 +35,33 @@ type Removals interface {
 
 // Store owns the source registry and messenger admission.
 type Store struct {
-	// liveMu orders live admission against switches and disconnection, including
-	// deletions that use the retraction path in a separate transaction.
-	liveMu    sync.Mutex
-	db        *canon.Store
-	materials ledger.Materials
-	removals  Removals
-	now       func() time.Time
+	// admissionGate orders scheduled and live admission against switches and
+	// disconnection, including deletions that use a separate retraction transaction.
+	admissionGate chan struct{}
+	db            *canon.Store
+	materials     ledger.Materials
+	removals      Removals
+	now           func() time.Time
 }
 
 // Open composes the store. materials carries bodies above the ledger's inline
 // size; removals hides deleted records. Core supplies both.
 func Open(db *canon.Store, materials ledger.Materials, removals Removals) *Store {
-	return &Store{db: db, materials: materials, removals: removals, now: time.Now}
+	return &Store{db: db, materials: materials, removals: removals, now: time.Now, admissionGate: make(chan struct{}, 1)}
 }
+
+// lockAdmission waits for a complete admission, including retraction, while
+// allowing a cancelled reader to leave without waiting for another source.
+func (s *Store) lockAdmission(ctx context.Context) error {
+	select {
+	case s.admissionGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Store) unlockAdmission() { <-s.admissionGate }
 
 // WithClock replaces the clock for deterministic tests.
 func (s *Store) WithClock(now func() time.Time) *Store { s.now = now; return s }
@@ -100,8 +112,10 @@ func (s State) valid() bool {
 // Disconnect stops sync for a source and marks it disconnected. Its records
 // stay; the caller deletes the credentials it holds.
 func (s *Store) Disconnect(ctx context.Context, person, platform, account string) error {
-	s.liveMu.Lock()
-	defer s.liveMu.Unlock()
+	if err := s.lockAdmission(ctx); err != nil {
+		return err
+	}
+	defer s.unlockAdmission()
 	return s.setState(ctx, person, platform, account, StateDisconnected, "")
 }
 
@@ -277,8 +291,10 @@ ON CONFLICT(platform,account,chat) DO UPDATE SET name=excluded.name,kind=exclude
 
 // SetSwitches leaves a chat out of sync, learning or embedding.
 func (s *Store) SetSwitches(ctx context.Context, person, platform, account, chat string, switches Switches) error {
-	s.liveMu.Lock()
-	defer s.liveMu.Unlock()
+	if err := s.lockAdmission(ctx); err != nil {
+		return err
+	}
+	defer s.unlockAdmission()
 	if !validName(person) || !validName(platform) || !validName(account) || !validName(chat) {
 		return ErrInvalid
 	}
@@ -471,8 +487,10 @@ func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (Pag
 	if (event.Message == nil) == (event.Deletion == nil) {
 		return PageResult{}, ErrInvalid
 	}
-	s.liveMu.Lock()
-	defer s.liveMu.Unlock()
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
 	connected, err := s.liveConnected(ctx, source)
 	if err != nil {
 		return PageResult{}, err
@@ -528,6 +546,10 @@ func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) 
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
 func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from Cursor, page Page) (PageResult, error) {
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
 	return s.admit(ctx, source, chat, from, page, true)
 }
 

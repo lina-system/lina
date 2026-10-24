@@ -779,7 +779,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 
 ### Sync and coverage
 
-- Core reads each source on its schedule or from its live events. For a scheduled page, the records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Live admission leaves that pagination cursor and coverage unchanged. Reading the same messages again adds nothing.
+- Core reads each source on its schedule or from its live events. For a scheduled page, the records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Live admission leaves that pagination cursor and coverage unchanged. A scheduled page that overlaps a reported deletion cannot make the deleted message searchable again. Reading the same messages again adds nothing.
 - A chat's first fill reads back as far as the platform allows.
 - A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
