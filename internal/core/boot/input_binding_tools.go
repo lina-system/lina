@@ -178,13 +178,17 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if result := r.bindWorkCall(ctx, input, ref.Request, s.turnID, clean); result != nil {
 					return *result
 				}
-				// follow_work's prepared closure carries the turn that built it.
-				// A selected steering input must submit on that input's runtime,
-				// so the follow-up keeps the steering channel's receipt.
+				// Prepared closures capture the turn that built them. A selected
+				// channel input must carry that input's receipt into the effect:
+				// a follow-up keeps its source, and a new run keeps the channel
+				// turn so later checks still use that channel's tool permission.
 				var result loop.Result
-				if clean.Name == "follow_work" {
+				switch {
+				case clean.Name == "follow_work":
 					result = r.submitFollowWork(ctx, c.ID, s.turnID, clean.Arguments, &input)
-				} else {
+				case clean.Name == "start_run" && r.channelBinding != nil:
+					result = r.submitStartRun(ctx, clean, &input)
+				default:
 					result = tool.Execute(ctx, clean)
 				}
 				if result.Code == loop.OK {
@@ -487,6 +491,23 @@ func (r *conversationRuntime) submitFollowWork(ctx context.Context, callID, turn
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
 	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
+}
+
+// submitStartRun admits a run on the selected channel runtime. The origin turn
+// is the channel receipt, including when an app turn only selected that input.
+func (r *conversationRuntime) submitStartRun(ctx context.Context, call provider.ToolCall, event *ledger.Event) loop.Result {
+	if r.channelBinding == nil || event == nil || r.background == nil {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	receiptID := event.ID
+	if !strings.HasPrefix(receiptID, "channel-input:") {
+		var err error
+		receiptID, err = r.originatingChannelInputID(ctx, *event)
+		if err != nil {
+			return loop.Result{ID: call.ID, Code: loop.Denied}
+		}
+	}
+	return r.background.service.StartTool(r.runOrigin("turn:"+receiptID)).Execute(ctx, call)
 }
 
 func createsBindingItem(name string) bool {

@@ -797,3 +797,67 @@ func TestModelBindingNewWorkTargetsHaveDistinctLabels(t *testing.T) {
 		t.Fatalf("labels do not name kind and parent: %#v", q.Choices)
 	}
 }
+
+func TestStartRunKeepsChannelSteeringReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app, inboxID := admitTurnInput(t, r, "app-turn")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "start_run", "from-app", map[string]any{
+		"Goal": "Research the draft", "Scope": "Read the catalog", "NotTouch": "Do not send",
+		"Done": "A short note exists", "Result": "summary",
+		"Checks":        []map[string]string{{"Name": "note", "Kind": "claimed"}},
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel steering start: %+v", got)
+	}
+	var receipt struct{ ID string }
+	if json.Unmarshal(got.Output, &receipt) != nil || receipt.ID == "" {
+		t.Fatalf("receipt: %s", got.Output)
+	}
+	record, err := r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Origin.Turn != "turn:"+steering.ID {
+		t.Fatalf("run kept the app origin %s", record.Origin.Turn)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err != nil {
+		t.Fatal(err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err == nil {
+		t.Fatal("revoked channel still authorized the queued run")
+	}
+	revoked.Scope.Tools = true
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	turns := turn.New(r.db)
+	if err = turns.Claim(t.Context(), s.turnID, r.conversation, inboxID); err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "from-app", Name: "start_run", Arguments: "{}"}
+	if err = turns.Journal(s.turnID).Calls(t.Context(), 0, []provider.ToolCall{call}); err != nil {
+		t.Fatal(err)
+	}
+	if err = turns.Journal(s.turnID).Result(t.Context(), 0, 0, got); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.syncRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, err = r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil || !record.Released {
+		t.Fatalf("committed channel start was not released: %+v %v", record, err)
+	}
+}
