@@ -165,6 +165,14 @@ Judgment material:
 - An evaluation set of labeled judgments is held out. It never enters judgment material or training, and every judge, threshold and material change is measured on it for accuracy and latency.
 - Each judge call records its latency. A call that runs past the latency budget counts as no answer and follows the handoff rules.
 
+The Core input-binding path accepts an optional non-chat judge adapter. Atropos
+supplies revision-bound candidate identities plus new, none, not applicable and
+hold; it accepts only a complete probability distribution with a unique winner
+above its threshold. It records latency, validates the revision again before
+saving a choice, and hands stale, missing, invalid or uncertain answers to the
+main model. A generic new choice still needs the main model to choose the kind,
+parent and duplicate explanation. No configured adapter means no judge call.
+
 Jev is called through its own non-chat adapter, separate from the model path ([runtime.md](runtime.md)).
 
 ## Klotho: project planning

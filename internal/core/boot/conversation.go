@@ -17,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/a2a"
 	"github.com/thisisjun786/lina/internal/core/accounts"
 	"github.com/thisisjun786/lina/internal/core/agents"
+	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/assets"
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -51,6 +52,8 @@ import (
 // conversationRuntime is boot's composition of existing stores and flows. The
 // model and all accepted work belong to Core, independent of client lifetime.
 type conversationRuntime struct {
+	inputJudge         atropos.Judge
+	inputCreationMu    sync.Mutex
 	publications       *publicationRuntime
 	externalTask       string
 	summaryPreparation conversationPreparation

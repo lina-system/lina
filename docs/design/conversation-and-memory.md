@@ -371,6 +371,28 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 
 **The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
+`bind_input` records one request per binding. Choices append system events to the
+admission binding; retries retain the same event and question. The tool tolerates
+the shapes a model naturally writes, because a rejected argument loses the whole
+message: a request ordinal is optional and omitted ordinals take message order,
+a target may be the candidate object, its exact id or title, `new` or `none`, and
+an excerpt that is absent or not an exact copy becomes the input text. An exact
+candidate id is bound before a leading kind name and colon are read as new work. A kind
+word is mapped to the stored kinds, an unknown kind becomes a to-do, and a parent
+that is not an open initiative or project is dropped. Only a target naming no
+candidate, or more than one, returns `field` and `reason` with the allowed ids so
+the model can correct the next call. A work tool may name `input_binding` to
+select a request or consumed steering input. Both tools accept the selector under
+`input_event_id`, `input` or `text`: absent means the current input, `current`
+means the turn's own input, and an exact copy of an input's text means that input.
+An event id is valid only for an event this turn consumed; it is never an
+arbitrary ledger lookup. Conflicting selectors are rejected.
+Its ordinary authority and state checks still run. A steering input retains its
+own tool scope and current channel binding; it cannot borrow the original turn's
+permissions. Reading a tied candidate does not resolve the original ambiguity.
+Current choices enter the
+ContextPacket and remain reconstructible from their ledger sources.
+
 **When to ask.** The agent asks which item only when both hold:
 
 - two targets still tie after the rules and its own reading;
@@ -379,6 +401,12 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
 
 When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
+
+Target questions use the existing question card and Waiting for me. Their
+recommendation is the first option, with no default action. A card answer or an
+exact offered label or number resolves only that request; declining or cancelling
+records its cancellation. An unrelated turn can proceed without resolving it.
+Core checks a retained tie again when a later tool would make it irreversible. Stopping a worker counts as steering the running task it controls, so that tie asks before cancellation.
 
 **Showing and moving.**
 
@@ -404,6 +432,14 @@ is launched. Temporary state is removed after each pair. The replay-only
 baselines do not change ordinary conversation intake.
 
 `lina intake-replay --core <cases.jsonl>` runs the production admission binding and candidate ranking, with the fixture's persisted clock, prior focus and surface facts. It reports the same per-set and per-decider scores. The ordinary command retains the two historical baselines for comparison.
+
+`lina intake-replay --model <cases.jsonl>` uses an explicitly configured model
+route and the production `bind_input` tool in that isolated runtime. It offers
+only the ranked candidates, recent context and binding tool, never work execution,
+gold labels or the original agent's choice. The command sends private case text
+to the configured route only when this model mode is selected. Its scores remain
+separate from the deterministic baselines; a synthetic run cannot establish the
+private-set acceptance thresholds.
 
 The two baselines are **focus-only** (always the recorded focus, including an
 aged focus) and **rules-then-focus** (the three explicit-fact rules above, then
@@ -737,6 +773,7 @@ Core's `observe_health` currently observes records-index head and row-count cons
 Core mechanisms it relies on: the to-do record and the candidate objects of [work-and-delegation.md](work-and-delegation.md#the-to-do-record), the undo log, reconciliation of the 오늘 (today) view against linked threads, a cross-channel thread ledger, a decision store and per-class rejection counters.
 
 1. Candidates come from what the person says and from sources the person does not tick off (chat, mail, calendar), not only from "add" commands.
+   A proposal equivalent to an open to-do remains a pending candidate under the records admission checks. The input-binding duplicate guard does not discard that proposal or create a new work binding for it.
 2. A 할 일 (to-do) is a named object plus an action. An unknown state becomes "check the status of X".
 3. Areas come from the person's own classification statements, stored as rules and applied by default. What the person says must never be mixed stays separate.
 4. Reversible writes (add, edit, complete, re-date, label, note) are done at once and reported in one line with an undo handle. Sending in the person's name, calendar changes, deletion, money, publishing and sharing a file link show the full content and wait for a yes.
