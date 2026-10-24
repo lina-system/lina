@@ -219,10 +219,8 @@ func (r *conversationRuntime) goalResultPage(ctx context.Context, person, id str
 		return r.background.service.ResultPage(ctx, person, runID, offset)
 	case goal.WaitStep:
 		return "", 0, runs.ErrState
-	default:
-		if task.Kind != "" && task.Kind != goal.TaskStep {
-			return "", 0, runs.ErrListItem
-		}
+	case goal.TaskStep, "":
+		// An omitted kind is a worker task. The card is the result the row covers.
 		listID, err := r.goalWorkListID(ctx, person, task, actions)
 		if err != nil {
 			return "", 0, err
@@ -231,6 +229,8 @@ func (r *conversationRuntime) goalResultPage(ctx context.Context, person, id str
 			return "", 0, runs.ErrListItem
 		}
 		return r.work.SummaryPage(ctx, listID, offset)
+	default:
+		return "", 0, runs.ErrListItem
 	}
 }
 
