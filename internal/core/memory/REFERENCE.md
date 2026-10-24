@@ -187,3 +187,7 @@ no participating agent.
 tokens per 1,000 own messages on the synthetic corpus. The synthetic provider
 estimates tokens as UTF-8 bytes / 4; the figure is a bound, not a billing
 reconciliation.
+
+Memory candidate reads and `RestrictedEvents` share recall's `RestrictionCTE`.
+This applies scope through memory chains and copied events before candidate
+limits, including direct item/profile/relationship reads without a text query.

@@ -13,10 +13,12 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/compaction"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/recall"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 )
 
 func admitAt(t *testing.T, db *canon.Store, id, conversation, person, agent, body string, at time.Time, replayOf string) {
@@ -355,5 +357,78 @@ func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	}})
 	if err != nil || len(hits) != 2 {
 		t.Fatalf("fusion: %+v %v", hits, err)
+	}
+}
+
+func TestRestrictedSummaryAncestryBeforeLimit(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "protected", "private-conversation", "owner", "agent", "observatory private", base, "")
+	admitAt(t, db, "safe", "public-conversation", "owner", "agent", "observatory public", base, "")
+	store := compaction.New(db)
+	publish := func(id, conversation, text string, children []string, event string) {
+		frontier, err := store.Frontier(t.Context(), conversation)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if _, err := store.Publish(t.Context(), compaction.Proposal{Expected: frontier, ID: id, Children: children, Cover: []compaction.Coverage{{EventID: event}}, Output: compaction.Output{Text: text, Model: "fixture", PromptVersion: "1", BuiltAt: base, Dropped: "none"}}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	publish("child", "private-conversation", "observatory private", nil, "protected")
+	admitAt(t, db, "later", "private-conversation", "owner", "agent", "later source", base.Add(time.Second), "")
+	publish("parent", "private-conversation", "observatory private", []string{"child"}, "later")
+	publish("public", "public-conversation", "observatory public "+strings.Repeat("context ", 30), nil, "safe")
+	protectedItem := remember(t, db, "agent", "", "observatory private", memory.NeverLeaves, "protected")
+	write(t, db, `UPDATE sum_node SET text=text`)
+	for _, indexed := range []bool{false, true} {
+		if indexed {
+			drain(t, db)
+		}
+		scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Summary}, ExternalModel: true}
+		if ids := searchIDs(t, db, scope, "observatory", 1); !reflect.DeepEqual(ids, []string{"public"}) {
+			t.Errorf("indexed=%v protected ancestor displaced visible result: %v", indexed, ids)
+		}
+		scope.ExternalModel = false
+		if ids := searchIDs(t, db, scope, "observatory", 0); len(ids) != 3 {
+			t.Errorf("local scope lost sources: %v", ids)
+		}
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Summary}, ExternalModel: true}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "no-lexical-match", Limit: 1, Vectors: func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{"parent", "public"}, nil
+	}})
+	if err != nil || len(hits) != 1 || hits[0].ID != "public" {
+		t.Fatalf("vector hook bypassed restricted ancestry: %v %v", hits, err)
+	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE memory_item SET scope='private',record=json_set(record,'$.scope','private') WHERE id=?", protectedItem)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if ids := searchIDs(t, db, scope, "observatory", 0); len(ids) != 3 {
+		t.Fatalf("private memory was treated as never-leaves: %v", ids)
+	}
+	scope.Projection = true
+	if ids := searchIDs(t, db, scope, "observatory", 1); !reflect.DeepEqual(ids, []string{"public"}) {
+		t.Fatalf("projection exposed private ancestor: %v", ids)
+	}
+}
+
+func TestSearchExcerptUsesCanonicalDerivedSpans(t *testing.T) {
+	db := database(t)
+	body := "observatory private-value context"
+	at := time.Unix(1700000000, 0)
+	event, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, ledger.Input{ID: "flagged", ConversationID: "conversation", AgentID: "agent", PersonID: "owner", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: body, SecretSpans: []secrets.Span{{Start: len("observatory "), End: len("observatory private-value"), Sensitivity: "secret"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	hits, err := recall.Search(t.Context(), db, nil, recall.Scope{Person: "owner", Agent: "agent", ExternalModel: true}, recall.Query{Text: "observatory"})
+	if err != nil || len(hits) != 1 {
+		t.Fatalf("search: %v %v", hits, err)
+	}
+	if hits[0].Excerpt != event.Body.DerivedText() {
+		t.Fatalf("excerpt differs from authorized derived text: %q", hits[0].Excerpt)
 	}
 }
