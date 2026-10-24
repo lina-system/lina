@@ -117,6 +117,16 @@ CREATE UNIQUE INDEX cite_summary_event_owner ON cite(target_id)
  WHERE view_kind='summary' AND target_kind='event' AND dropped_revision IS NULL;
 CREATE UNIQUE INDEX cite_summary_child_owner ON cite(target_id)
  WHERE view_kind='summary' AND target_kind='summary' AND dropped_revision IS NULL;
+CREATE TRIGGER cite_summary_shape BEFORE INSERT ON cite
+WHEN NEW.view_kind='summary' AND
+ (NEW.target_kind NOT IN ('event','summary')
+ OR (NEW.target_kind='event' AND NEW.role='cites')
+ OR (NEW.target_kind='summary' AND NEW.role<>'cites'))
+BEGIN SELECT RAISE(ABORT,'invalid_summary_citation'); END;
+CREATE TRIGGER cite_summary_node_delete BEFORE DELETE ON sum_node
+WHEN EXISTS(SELECT 1 FROM cite WHERE view_kind='summary' AND dropped_revision IS NULL
+ AND (view_id=OLD.id OR (target_kind='summary' AND target_id=OLD.id)))
+BEGIN SELECT RAISE(ABORT,'summary_in_use'); END;
 CREATE TRIGGER cite_summary_child BEFORE INSERT ON cite
 WHEN NEW.view_kind='summary' AND NEW.target_kind='summary' AND NEW.dropped_revision IS NULL
 AND NOT EXISTS(SELECT 1 FROM sum_node p JOIN sum_node c ON p.conversation_id=c.conversation_id
