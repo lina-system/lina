@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/runs"
 	goal "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/materials"
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
@@ -35,6 +37,27 @@ func (d *codeGoalDriver) goalRunOrigin(ctx context.Context, g goal.Goal) (runs.O
 		return nil
 	})
 	return o, err
+}
+
+func researchPartialObservation(r runs.Record) goal.Observation {
+	open := make([]goal.ResearchOpen, 0, len(r.Artifact.Open))
+	for _, item := range r.Artifact.Open {
+		open = append(open, goal.ResearchOpen{Question: item.Question, Reason: item.Reason})
+	}
+	var unresolved []string
+	for _, c := range r.Citations {
+		if !c.Resolved {
+			unresolved = append(unresolved, c.Anchor.AssetID)
+		}
+	}
+	return goal.Observation{
+		Status: goal.OutcomePartial, Handle: r.ID, EffectsSettled: true, Code: "background_partial",
+		Proof: goal.Proof{Revision: fmt.Sprintf("%s:%d", r.Material.ID, r.Material.Revision), Ref: r.Material.ID},
+		Partial: &goal.ResearchPartial{
+			RunID: r.ID, Missing: runs.PartialGap(r), Reason: r.Artifact.OpenReason, Open: open, Unresolved: unresolved,
+			MaterialID: r.Material.ID, MaterialRevision: r.Material.Revision,
+		},
+	}
 }
 
 // A start that never admitted a run has no effect to wait for. Settle the
@@ -64,7 +87,11 @@ func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal
 		}
 		id = r.ID
 	} else {
-		raw, err := json.Marshal(t.Background)
+		brief := t.Background
+		if t.ResearchFollowUp != nil {
+			brief = t.ResearchFollowUp
+		}
+		raw, err := json.Marshal(brief)
 		if err != nil {
 			return goal.Observation{}, err
 		}
@@ -99,6 +126,9 @@ func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal
 			return goal.Observation{}, err
 		}
 		if r.State == runs.Landed {
+			if r.Outcome == runs.Partial && r.Material.ID != "" && r.Material.Revision >= 1 {
+				return researchPartialObservation(r), nil
+			}
 			if r.Outcome != runs.Complete || r.Material.ID == "" || r.Material.Revision < 1 {
 				return goal.Observation{Status: goal.OutcomeNeedsPerson, Handle: id, EffectsSettled: true, Code: "background_incomplete"}, nil
 			}
@@ -110,6 +140,91 @@ func (d *codeGoalDriver) backgroundStep(ctx context.Context, g goal.Goal, t goal
 		case <-changed:
 		}
 	}
+}
+
+func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g goal.Goal, t goal.Task, a goal.Action) (goal.Observation, *goal.CollectedEvidence, error) {
+	if d.runtime.background == nil || a.Check == nil || t.ID == "" {
+		return goal.Observation{}, nil, goal.ErrNeedsPerson
+	}
+	origin, err := d.goalRunOrigin(ctx, g)
+	if err != nil {
+		return goal.Observation{}, nil, err
+	}
+	var latest runs.Record
+	var attempt int
+	found := false
+	for _, action := range s.Actions {
+		if action.GoalID != g.ID || action.TaskID != t.ID || action.Kind != goal.Assign || action.State != "finished" || action.Superseded {
+			continue
+		}
+		id := action.ID
+		if action.ObserveActionID != "" {
+			id = action.ObserveActionID
+		}
+		record, ok, err := d.runtime.background.service.Started(ctx, origin, id)
+		if err != nil {
+			return goal.Observation{}, nil, err
+		}
+		if !ok || record.State != runs.Landed || action.Attempt < attempt {
+			continue
+		}
+		latest, attempt, found = record, action.Attempt, true
+	}
+	if !found || latest.Material.ID == "" {
+		return goal.Observation{}, nil, goal.ErrNeedsPerson
+	}
+	proof := goal.Proof{Revision: a.Revision, Ref: latest.Material.ID, Passed: false}
+	read := goal.EvidenceRead{Target: a.Check.Target, Revision: a.Revision, Content: latest.Artifact.Body}
+	if strings.TrimSpace(read.Content) == "" {
+		read.Content = "result"
+	}
+	collected := &goal.CollectedEvidence{Reads: []goal.EvidenceRead{read}}
+	switch a.Check.Method {
+	case "research.citations":
+		if a.Check.Kind != goal.CitationEvidence {
+			return goal.Observation{}, nil, goal.ErrInvalid
+		}
+		checked, err := materials.Check(ctx, d.runtime.assets, latest.Artifact.Citations)
+		if err != nil {
+			return goal.Observation{}, nil, err
+		}
+		proof.Passed = true
+		var lines []string
+		for _, c := range checked {
+			if !c.Resolved {
+				proof.Passed = false
+				if c.Anchor.AssetID != "" {
+					lines = append(lines, c.Anchor.AssetID)
+				}
+			}
+		}
+		if proof.Passed {
+			collected.Output = "every cited passage resolves"
+		} else if len(lines) == 0 {
+			collected.Output = "no cited passage"
+		} else {
+			collected.Output = "unresolved citation " + strings.Join(lines, ", ")
+		}
+	case "research.rubric":
+		if a.Check.Kind != goal.JudgmentEvidence || strings.TrimSpace(a.Check.Rubric) == "" {
+			return goal.Observation{}, nil, goal.ErrInvalid
+		}
+		proof.Passed = goal.QuestionsHandled(t.ResearchGap, latest.Artifact.Missing, researchOpen(latest))
+		collected.Rubric = a.Check.Rubric
+		collected.Judgment = "each question is answered or marked open with its reason"
+		collected.Output = collected.Judgment
+	default:
+		return goal.Observation{}, nil, goal.ErrInvalid
+	}
+	return goal.Observation{Status: goal.OutcomeSucceeded, Proof: proof}, collected, nil
+}
+
+func researchOpen(r runs.Record) []goal.ResearchOpen {
+	out := make([]goal.ResearchOpen, 0, len(r.Artifact.Open))
+	for _, item := range r.Artifact.Open {
+		out = append(out, goal.ResearchOpen{Question: item.Question, Reason: item.Reason})
+	}
+	return out
 }
 
 // A wait holds no worker lease. Signals trigger an owner-scoped source read;

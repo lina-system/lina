@@ -73,6 +73,9 @@ func (s *Service) run(ctx context.Context, id string) error {
 	if r.Origin.Job != "" {
 		cfg.Request.Purpose = provider.BackgroundJob
 	}
+	if r.Brief.FollowOf != "" {
+		cfg.Request.Instructions += " This run continues a partial result. Answer only what it says is missing. If the sources cannot answer a question, leave it in missing and set open_reason to why."
+	}
 	cfg.Request.Items = r.Checkpoint
 	if len(cfg.Request.Items) == 0 {
 		b, _ := json.Marshal(r.Brief)

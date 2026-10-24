@@ -5,7 +5,9 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"path/filepath"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -97,6 +99,85 @@ func TestGoalStepBackgroundUsesRecordedOrigin(t *testing.T) {
 // A start rejected before admission never created a run, so it must settle the
 // action instead of holding its capacity forever. The same holds for recovery:
 // no receipt means no effect can have started.
+func TestGoalStepPartialFollowUpMarksTheQuestionOpen(t *testing.T) {
+	r := controlRuntime(t)
+	var calls atomic.Int32
+	s, err := runs.New(runs.Config{Epoch: r.epoch, DB: r.db, Assets: r.assets, WorkDir: filepath.Join(r.root, "work"), Authorize: func(context.Context, runs.Origin, runs.Brief) error { return nil }, Stream: func(_ context.Context, req provider.Request) (provider.Stream, error) {
+		n := calls.Add(1)
+		if n == 1 {
+			return bootAnswer(runs.Artifact{Body: "Notes so far.", Done: false, Missing: []string{"the fee"}}), nil
+		}
+		var brief runs.Brief
+		if len(req.Items) == 0 || json.Unmarshal(req.Items[0], &struct {
+			Content *string `json:"content"`
+		}{}) != nil {
+			t.Errorf("follow-up request missing brief: %s", req.Items)
+		}
+		var message struct {
+			Content string `json:"content"`
+		}
+		if len(req.Items) > 0 {
+			_ = json.Unmarshal(req.Items[0], &message)
+			_ = json.Unmarshal([]byte(message.Content), &brief)
+		}
+		if n == 2 && (brief.Scope != "the fee" || brief.FollowOf == "") {
+			t.Errorf("follow-up was not scoped to the gap: %+v", brief)
+		}
+		return bootAnswer(runs.Artifact{Body: "Notes so far.", Done: false, Missing: []string{"the fee"}, OpenReason: "The sources do not state it."}), nil
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	r.background = &backgroundRuntime{service: s}
+	d := &codeGoalDriver{runtime: r}
+	g := goal.Goal{ID: "goal", Person: r.person, Agent: r.agent, Conversation: r.conversation, Turn: "turn"}
+	task := goal.Task{ID: "step", Kind: goal.BackgroundStep, Background: &goal.BackgroundBrief{Goal: "collect", Scope: "named sources", NotTouch: "files", Done: "report", Result: "document", Checks: []goal.BackgroundCheck{{Name: "report", Kind: "claimed"}}}}
+	first, err := d.backgroundStep(t.Context(), g, task, goal.Action{ID: "start", Kind: goal.Assign, StepKind: goal.BackgroundStep}, false)
+	if err != nil || first.Status != goal.OutcomePartial || first.Partial == nil || len(first.Partial.Missing) != 1 || first.Partial.Missing[0] != "the fee" {
+		t.Fatalf("partial observation: %+v %v", first, err)
+	}
+	origin, err := d.goalRunOrigin(t.Context(), g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	record, found, err := s.Started(t.Context(), origin, "start")
+	if err != nil || !found {
+		t.Fatal(err, found)
+	}
+	follow, ok := runs.FollowUpBrief(record)
+	if !ok {
+		t.Fatal("no follow-up brief")
+	}
+	task.ResearchFollowUp = &goal.BackgroundBrief{Goal: follow.Goal, Scope: follow.Scope, NotTouch: follow.NotTouch, Done: follow.Done, Result: follow.Result, FollowOf: follow.FollowOf, Checks: []goal.BackgroundCheck{{Name: "report", Kind: "claimed"}}, Refs: []goal.BackgroundRef{{ID: follow.Refs[0].ID, Revision: follow.Refs[0].Revision}}}
+	second, err := d.backgroundStep(t.Context(), g, task, goal.Action{ID: "follow", Kind: goal.Assign, StepKind: goal.BackgroundStep}, false)
+	if err != nil || second.Status != goal.OutcomePartial || second.Partial == nil || len(second.Partial.Open) != 1 || second.Partial.Open[0].Question != "the fee" || second.Partial.Open[0].Reason == "" {
+		t.Fatalf("open question: %+v %v", second, err)
+	}
+	if calls.Load() != 2 {
+		t.Fatalf("runs=%d", calls.Load())
+	}
+}
+
+func bootAnswer(a runs.Artifact) provider.Stream {
+	b, _ := json.Marshal(a)
+	item, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": string(b)}}})
+	return &bootStream{events: []provider.Event{{Kind: provider.ItemDone, Item: item}, {Kind: provider.Terminal}}}
+}
+
+type bootStream struct{ events []provider.Event }
+
+func (s *bootStream) Next(context.Context) (provider.Event, error) {
+	if len(s.events) == 0 {
+		return provider.Event{}, io.EOF
+	}
+	e := s.events[0]
+	s.events = s.events[1:]
+	return e, nil
+}
+func (*bootStream) Meta() provider.Meta { return provider.Meta{} }
+func (*bootStream) Close() error        { return nil }
+
 func TestGoalStepBackgroundRefusalSettles(t *testing.T) {
 	for _, observe := range []bool{false, true} {
 		name := "execute"

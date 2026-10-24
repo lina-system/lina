@@ -81,12 +81,20 @@ type Brief struct {
 	Result                      string
 	Allow                       []string
 	Refs                        []Ref
+	// FollowOf is the partial run this brief continues.
+	FollowOf string `json:"FollowOf,omitempty"`
+}
+type OpenQuestion struct {
+	Question string `json:"question"`
+	Reason   string `json:"reason"`
 }
 type Artifact struct {
-	Body      string             `json:"body"`
-	Done      bool               `json:"done"`
-	Missing   []string           `json:"missing,omitempty"`
-	Citations []materials.Anchor `json:"citations,omitempty"`
+	Body       string             `json:"body"`
+	Done       bool               `json:"done"`
+	Missing    []string           `json:"missing,omitempty"`
+	OpenReason string             `json:"open_reason,omitempty"`
+	Open       []OpenQuestion     `json:"open,omitempty"`
+	Citations  []materials.Anchor `json:"citations,omitempty"`
 }
 type Record struct {
 	MockHistory []json.RawMessage        `json:"mock_history,omitempty"`

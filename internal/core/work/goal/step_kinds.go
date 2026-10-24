@@ -9,11 +9,19 @@ type StepKind string
 
 // BackgroundBrief is the ledger's work definition. Boot converts its wire
 // shape to the run service input; the work store does not depend on that flow.
+type BackgroundRef struct {
+	ID       string
+	Revision int64
+}
+
 type BackgroundBrief struct {
 	Goal, Scope, NotTouch, Done string
 	Checks                      []BackgroundCheck
 	Result                      string
 	Allow                       []string
+	// FollowOf is the partial run this brief continues. Refs names its material.
+	FollowOf string
+	Refs     []BackgroundRef
 }
 
 type BackgroundCheck struct{ Name, Kind string }
