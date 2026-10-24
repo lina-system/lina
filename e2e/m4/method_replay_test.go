@@ -139,7 +139,7 @@ func TestMethodReplayThroughTheCommand(t *testing.T) {
 	baseline := methodBaseline(t)
 	run := func(changed string, wantExit int) map[string]any {
 		t.Helper()
-		cmd := exec.CommandContext(t.Context(), binary, "method-replay", cases, "--changed", changed, "--baseline", baseline)
+		cmd := exec.CommandContext(t.Context(), binary, "method-replay", cases, "--changed", changed, "--baseline", baseline, "--repeat", "3")
 		cmd.Env = []string{
 			"PATH=" + os.Getenv("PATH"), "HOME=" + t.TempDir(), "TMPDIR=" + t.TempDir(),
 			"LINA_RESPONSES_BASE_URL=" + server.URL + "/v1", "LINA_RESPONSES_MODEL=fixture-model",
