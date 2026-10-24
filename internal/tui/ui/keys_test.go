@@ -135,3 +135,16 @@ func TestShortcutEnhancedQuestion(t *testing.T) {
 		t.Fatal("enhanced shifted question did not open sheet")
 	}
 }
+
+// The sheet lists actions, not values: a catalog entry that fills a value into
+// its text belongs to the panel, so no sheet entry may keep a format verb.
+func TestShortcutSheetHasNoFormatVerbs(t *testing.T) {
+	for _, language := range []design.Language{design.English, design.Korean} {
+		m := conversationShell()
+		m.styles.options.Language = language
+		sheet := m.shortcutSheet()
+		if strings.Contains(sheet, "%") {
+			t.Errorf("%s sheet shows a format verb:\n%s", language, sheet)
+		}
+	}
+}

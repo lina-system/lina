@@ -45,7 +45,7 @@ var keyBindings = []keyBinding{
 	{"work.move", []string{"Shift+Up/Down"}, 5, "work.move", "work"},
 	{"work.pause", []string{"Space"}, 6, "work.pause", "work"},
 	{"work.stop", []string{"Delete"}, 7, "work.stop", "work"},
-	{"work.limit", []string{"-/+", "0"}, 8, "work.limit", "work"},
+	{"work.limit_set", []string{"-/+", "0"}, 8, "work.limit_set", "work"},
 	{"shortcuts.close", []string{"Esc"}, 4, "shortcuts.close", "work"},
 	{"work.details", []string{"Ctrl+O"}, 5, "work.details", "work"},
 	{"work.expand", []string{"Enter"}, 1, "work.expand", "stages"},

@@ -2,6 +2,7 @@
 package ui
 
 import (
+	"fmt"
 	"strings"
 	"testing"
 
@@ -129,13 +130,17 @@ func TestWorkPanelLimitKeysAndTitle(t *testing.T) {
 			}
 		})
 	}
-	m := adjustShell(navigationCards(4))
-	if rows := m.workPanelRows(40, 20); strings.Contains(rows[0], design.Text(design.English, "work.limit")) {
-		t.Fatalf("automatic shows a limit: %q", rows[0])
-	}
-	m.content.Blocks = []state.Block{{Topic: "progress", Work: &state.WorkSummary{Cards: navigationCards(4), Limit: &state.WorkLimit{Value: 3}}}}
-	if rows := m.workPanelRows(40, 20); !strings.Contains(rows[0], "3") {
-		t.Fatalf("a set limit is not in the title: %q", rows[0])
+	for _, language := range []design.Language{design.English, design.Korean} {
+		m := adjustShell(navigationCards(4))
+		m.styles.options.Language = language
+		limit := fmt.Sprintf(design.Text(language, "work.limit"), 3)
+		if rows := m.workPanelRows(40, 20); strings.Contains(rows[0], limit) {
+			t.Fatalf("%s: automatic shows a limit: %q", language, rows[0])
+		}
+		m.content.Blocks = []state.Block{{Topic: "progress", Work: &state.WorkSummary{Cards: navigationCards(4), Limit: &state.WorkLimit{Value: 3}}}}
+		if rows := m.workPanelRows(40, 20); !strings.Contains(rows[0], limit) {
+			t.Fatalf("%s: a set limit is not in the title: %q", language, rows[0])
+		}
 	}
 }
 
