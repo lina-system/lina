@@ -754,6 +754,64 @@ func TestRepairDoesNotKeepALinkChangeWhenRetractionStops(t *testing.T) {
 	}
 }
 
+// TestRepairRetractsACitingItemHiddenByItsAncestor proves a repair still
+// retracts an item that is hidden only because an ancestor in its evidence
+// was forgotten. Restoring that ancestor must not show the item again.
+func TestRepairRetractsACitingItemHiddenByItsAncestor(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-wrong", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "Discord profile"}}},
+		{Record: "person-right"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, discord("d-hidden"), "Someone", phone("+821012340001", "Discord profile"))
+	link := usable(t, f, discord("d-hidden"))
+	if len(link) != 1 {
+		t.Fatal("the identity did not link")
+	}
+	ancestor := f.itemIn(t, "person-wrong", "ancestor fact", "native:ancestor")
+	child := f.itemCiting(t, "person-wrong", "citing fact", ancestor.ID)
+	if err := f.store.RecordArtifact(t.Context(), link[0].ID, "item", child.ID); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Forget(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: ancestor.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	if visible(t, f, child.ID) {
+		t.Fatal("the ancestor's removal left the citing item visible")
+	}
+	if _, err := f.store.Correct(t.Context(), link[0].ID, "person-right"); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Restore(t.Context(), retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: ancestor.ID}}}); err != nil {
+		t.Fatal(err)
+	}
+	if visible(t, f, child.ID) {
+		t.Fatal("restoring the ancestor showed the unrepaired citing item")
+	}
+}
+
+func (f *fixture) itemCiting(t *testing.T, subject, content, ancestor string) memory.Item {
+	t.Helper()
+	var item memory.Item
+	err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		var err error
+		item, err = memory.Insert(t.Context(), tx, memory.Write{Agent: "agent", Person: "person", Item: memory.Item{
+			Kind: memory.Fact, Content: content, Person: "person", Basis: memory.Derived,
+			Subject:  memory.Subject{Kind: memory.ThirdParty, ID: subject},
+			Evidence: []memory.Evidence{{Kind: memory.MemoryItem, ID: ancestor, Precision: memory.Exact}},
+		}}, func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
+			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content}, nil
+		})
+		return err
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return item
+}
+
 func TestCorrectMovesTheLinkAndRetractsItsItems(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{

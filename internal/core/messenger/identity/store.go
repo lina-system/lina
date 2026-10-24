@@ -993,6 +993,9 @@ func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, err
 
 // citingItems lists the memory items a link produced. The artifact table is the
 // record of what the link wrote; a citation of the link itself counts too.
+// An item hidden only because an ancestor was forgotten is included: restoring
+// that ancestor would show it again unless this repair retracts it. An item
+// that is already retracted, or whose row is gone, is left as it is.
 func (s *Store) citingItems(ctx context.Context, tx *canon.Tx, linkID string) ([]string, error) {
 	rows, err := tx.QueryContext(ctx, `SELECT id FROM identity_artifact WHERE link=? AND kind='item'
 UNION
@@ -1008,11 +1011,15 @@ SELECT view_id FROM cite WHERE view_kind='memory' AND target_kind='external' AND
 		if err := rows.Scan(&id); err != nil {
 			return nil, err
 		}
-		var visible bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM retract_visible_memory WHERE id=? AND person=?)", id, s.person).Scan(&visible); err != nil {
+		var repairable bool
+		if err := tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM memory_item m
+WHERE m.id=? AND m.person=? AND m.state='active'
+AND NOT EXISTS(SELECT 1 FROM retract_target r WHERE r.kind='memory' AND r.id=m.id AND r.state<>'active'))`,
+			id, s.person).Scan(&repairable); err != nil {
 			return nil, err
 		}
-		if visible {
+		if repairable {
 			items = append(items, id)
 		}
 	}
