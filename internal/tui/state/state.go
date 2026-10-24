@@ -61,6 +61,25 @@ type WorkCard struct {
 	Started, Finished time.Time
 	State             protocol.RunningState
 	Waiting           int
+	Stages            []WorkStage
+}
+
+// Stage numbers, labels and states are Core's display projection. The client
+// never reconstructs a graph or a stage from the card's activity.
+type WorkStage struct {
+	Kind, Number, Label, State string
+	Steps                      []WorkStageStep
+}
+
+type WorkStageStep struct {
+	ID, Name, State string
+	Started         time.Time
+	Workers         []WorkStageWorker
+}
+
+type WorkStageWorker struct {
+	Name  string
+	State protocol.RunningState
 }
 
 // WaitingSummary is display-only. Answer identities remain on decision cards.

@@ -2029,7 +2029,7 @@ The embedded meta-skill describes this procedure.
 **C-28 Importing a Hermes install (changed).**
 Contract: [memory importer add-ons](conversation-and-memory.md#memory-importer-add-ons), [Hermes import](conversation-and-memory.md#importing-a-hermes-install), [filesystem.md](filesystem.md#importing-another-memory-system), [integrations.md](integrations.md#memory-importers).
 The optional Hermes adapter lives in `internal/addons/importer/hermes`, outside the Core layers.
-Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`.
+Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception per adapter: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`, and `cmd/lina/import_murmur.go` the exact murmur adapter package for `lina import-murmur`.
 Core, onboarding and other commands remain independent of adapter execution.
 Foundation registers the adapter and `testdata/hermes/` for build, vet, analyzer and test checks.
 An installed adapter runs as a background job started by the person, with no model call and deterministic classification.

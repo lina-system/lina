@@ -104,11 +104,11 @@ VALUES('person','discord','account-1','official','discord','connected','2026-10-
 	}
 }
 
-// Migration 68 adds attachment metadata beside records that already exist.
+// Migration 69 adds attachment metadata beside records that already exist.
 func TestMessengerAttachmentUpgradeKeepsRecords(t *testing.T) {
 	t.Parallel()
 	cfg := storeConfig(t)
-	cfg.Migrations = append([]Migration{}, Migrations()[:67]...)
+	cfg.Migrations = append([]Migration{}, Migrations()[:68]...)
 	db := openStore(t, cfg)
 	if err := db.Write(t.Context(), func(tx *Tx) error {
 		_, err := tx.ExecContext(t.Context(), `INSERT INTO messenger_source(person,platform,account,mode,adapter,state,connected_at)

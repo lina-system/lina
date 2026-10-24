@@ -1383,7 +1383,7 @@ Settled choices:
 
 ### Importing a murmur store
 
-murmur is the owner's earlier store of KakaoTalk, Discord and iMessage messages. Its importer follows [Memory importer add-ons](#memory-importer-add-ons), with these differences, because a messenger chat goes on after the import. The mapping and the move are in [messengers.md](../research/messengers.md#murmur-mapped-onto-core).
+murmur is the owner's earlier store of KakaoTalk, Discord and iMessage messages. Its importer follows [Memory importer add-ons](#memory-importer-add-ons), with these differences, because a messenger chat goes on after the import. The mapping and the move are in [messengers.md](../research/messengers.md#murmur-mapped-onto-core). The adapter lives outside Core in `internal/addons/importer/murmur`; the explicit `lina import-murmur` command is its installed entry point, and no onboarding or ordinary conversation starts it.
 
 - **Source.** A stopped murmur data home that the person hands over: its spool and config, copied with a hash check. Its derived database, vectors and model cache are not read. The schema gate accepts spool event version 1 with the message fields of murmur's model and refuses anything else.
 - **Destination.** Messenger records of the matching source: KakaoTalk, Discord or iMessage. A source the person has not connected is created in the import-only state. The records are not sealed; live records of the same chat join them by key. For one KakaoTalk key, the archive value wins over the live value, as in murmur.

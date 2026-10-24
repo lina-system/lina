@@ -81,6 +81,18 @@ revision that carried them. The bytes are not fetched. An edit adds the new
 revision's rows and leaves the earlier ones. Deleting the record removes the
 rows and keeps the legacy reference.
 
+## Imported records
+
+`AdmitImport` takes one chat of a memory importer's run through the same
+transaction as a platform page: masking, speaker entries, relations and
+materials. A source row's own reference is `messenger_legacy_ref`, keyed
+`(system, instance, kind, key)` and pointing at the record; the platform
+reference on the event stays the live one, so a source connected later joins the
+imported records. One run admits one row per platform key, murmur's archive value
+wins over a live value, a changed row without a later edit is reported as a
+conflict, and a record whose stored speaker kind differs from the confirmed map
+gets a new revision that supersedes it.
+
 ## Coverage
 
 `messenger_coverage` records each complete read's range and time. Intermediate
