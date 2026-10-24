@@ -411,9 +411,19 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 						if preparation == nil {
 							return loop.Result{ID: c.ID, Code: loop.Denied}
 						}
+						// A target answer is a continuation. Its receipt is the
+						// originating channel input, not this turn's system event.
+						receiptID := preparation.event.ID
+						if !strings.HasPrefix(receiptID, "channel-input:") {
+							var err error
+							receiptID, err = r.originatingChannelInputID(ctx, preparation.event)
+							if err != nil {
+								return loop.Result{ID: c.ID, Code: loop.Denied}
+							}
+						}
 						err := r.db.Read(ctx, func(tx *canon.Tx) error {
 							var raw []byte
-							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", preparation.event.ID).Scan(&raw)
+							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
 							if err != nil {
 								return err
 							}
@@ -438,18 +448,9 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					}
 					return loop.Result{ID: c.ID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
 				}
-				projection, err := r.ownerSnapshot(ctx)
+				line, err := r.workProgress(ctx, a.ID)
 				if err != nil {
 					return bindingFailure(c.ID, err)
-				}
-				var line any = map[string]string{"state": "unknown"}
-				if projection.Rows != nil {
-					for _, row := range *projection.Rows {
-						if row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
-							line = row.Line
-							break
-						}
-					}
 				}
 				raw, _ := json.Marshal(map[string]any{"id": a.ID, "progress": line})
 				return loop.Result{ID: c.ID, Code: loop.OK, Output: raw}

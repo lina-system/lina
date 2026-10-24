@@ -406,7 +406,7 @@ Target questions use the existing question card and Waiting for me. Their
 recommendation is the first option, with no default action. A card answer or an
 exact offered label or number resolves only that request; declining or cancelling
 records its cancellation. An unrelated turn can proceed without resolving it.
-Core checks a retained tie again when a later tool would make it irreversible. Stopping a worker counts as steering the running task it controls, so that tie asks before cancellation.
+Core checks a retained tie again when a later tool would make it irreversible. Stopping a worker counts as steering the running task it controls, so that tie asks before cancellation. When the person answers a channel-originated target question, the resumed instruction recovers the original channel receipt through the continuation's parent chain before a follow-up is delivered.
 
 **Showing and moving.**
 

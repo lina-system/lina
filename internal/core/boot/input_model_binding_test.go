@@ -550,6 +550,113 @@ func TestModelBindingFollowRawTaskGeneration(t *testing.T) {
 	}
 }
 
+func TestReadWorkProgressKeepsAcknowledgedCompletion(t *testing.T) {
+	r, _ := turnRuntime(t)
+	card := work.Card{Task: work.Task{ID: "finished-task", AgentID: r.agent, PersonID: r.person, ConversationID: r.conversation, Title: "Finished materials"}, State: "done", Verdict: "verified", Run: &work.Run{Generation: 1}}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO work_cards(task_id,record) VALUES(?,?)", card.Task.ID, raw)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "progress-ask", "Where did the materials land?")
+	tools := modelBindingTools(t, r, input)
+	read := func() (string, string) {
+		t.Helper()
+		got := questionCall(t, tools, "read_work_progress", "observe-"+card.Task.ID, map[string]string{"id": card.Task.ID})
+		if got.Code != loop.OK {
+			t.Fatalf("progress read: %+v", got)
+		}
+		var body struct {
+			Progress struct {
+				State *string `json:"state"`
+				Name  string  `json:"name"`
+			} `json:"progress"`
+		}
+		if json.Unmarshal(got.Output, &body) != nil {
+			t.Fatalf("progress body: %s", got.Output)
+		}
+		state := ""
+		if body.Progress.State != nil {
+			state = *body.Progress.State
+		}
+		return state, body.Progress.Name
+	}
+	if state, name := read(); state != "done" || name != card.Task.Title {
+		t.Fatalf("unseen completion = %s %q", state, name)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO running_seen(source,item_id,person) VALUES('work',?,?)", card.Task.ID+":1", r.person)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	snapshot, err := r.ownerSnapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if snapshot.Rows != nil {
+		for _, row := range *snapshot.Rows {
+			if row.Ref == card.Task.ID {
+				t.Fatalf("acknowledged completion stayed on the running list: %+v", row)
+			}
+		}
+	}
+	if state, name := read(); state != "done" || name != card.Task.Title {
+		t.Fatalf("acknowledged completion lost: state=%s name=%q", state, name)
+	}
+	missing := questionCall(t, tools, "read_work_progress", "missing", map[string]string{"id": "missing-task"})
+	if missing.Code != loop.OK || !strings.Contains(string(missing.Output), `"state":"unknown"`) {
+		t.Fatalf("unobserved progress: %+v", missing)
+	}
+}
+
+func TestFollowWorkRecoversChannelReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	const runID = "channel-run"
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{{ID: runID, Title: "Shared draft", Kind: "run", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := questionChannelInputs(t, r)
+	view, input := channel("one", "first")
+	follow := func(turnID string, event ledger.Event, text string) loop.Result {
+		t.Helper()
+		bindings := map[string]loop.Tool{}
+		if _, err := view.prepareBindingWorkTools(turnID, &toolPreparation{event: event}, bindings); err != nil {
+			t.Fatal(err)
+		}
+		return questionCall(t, bindings, "follow_work", turnID, map[string]string{"id": runID, "text": text})
+	}
+	if got := follow("direct", input, "Keep the original scope."); got.Code != loop.OK {
+		t.Fatalf("channel input follow-up: %+v", got)
+	}
+	at := time.Now().UTC()
+	answer, err := r.journal().Admit(t.Context(), guard.EntrySystem, ledger.Input{ID: "target-question:answer", ParentID: input.ID, ConversationID: r.conversation, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "question_answer", OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: "Recorded your response: Shared draft"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := follow("answer", answer, "Use a table."); got.Code != loop.OK {
+		t.Fatalf("answered target did not resume the channel follow-up: %+v", got)
+	}
+	outer, err := r.journal().Admit(t.Context(), guard.EntrySystem, ledger.Input{ID: "later-answer", ParentID: answer.ID, ConversationID: r.conversation, AgentID: r.agent, Surface: input.Surface, ScaffoldKind: "question_answer", OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: "Recorded a later response"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got := follow("chain", outer, "Keep the table."); got.Code != loop.OK {
+		t.Fatalf("continuation chain lost the channel receipt: %+v", got)
+	}
+	record, err := r.background.service.Get(t.Context(), runID)
+	if err != nil || len(record.FollowUps) != 3 || record.FollowUps[1] != "Use a table." {
+		t.Fatalf("follow-ups: %+v %v", record.FollowUps, err)
+	}
+}
+
 func TestModelBindingSteeringKeepsToolScope(t *testing.T) {
 	r, _ := turnRuntime(t)
 	input := questionPersonInput(t, r, "owner-turn", "Read available skills")
