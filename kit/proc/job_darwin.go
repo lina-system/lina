@@ -92,8 +92,9 @@ func (r jobRecord) failure() error {
 	return err
 }
 
-// sharedWriter serializes writes to a writer that may be supplied for both
-// stdout and stderr, which os/exec also guarantees.
+// sharedWriter serializes writes through the lock its stream holds. os/exec
+// gives the same guarantee when stdout and stderr are the same writer, and no
+// guarantee at all when they are not, so distinct streams never share a lock.
 type sharedWriter struct {
 	mu *sync.Mutex
 	w  io.Writer
@@ -105,12 +106,26 @@ func (s *sharedWriter) Write(p []byte) (int, error) {
 	return s.w.Write(p)
 }
 
+// sameWriter reports whether two writers are the same value, including types
+// that cannot be compared.
+func sameWriter(a, b io.Writer) bool {
+	if a == nil || b == nil {
+		return false
+	}
+	same := false
+	func() {
+		defer func() { _ = recover() }()
+		same = a == b
+	}()
+	return same
+}
+
 type jobStream struct {
 	listener *net.UnixListener
 	accepted chan *net.UnixConn
 	conn     *net.UnixConn
 	pump     chan error
-	stdin    bool
+	writeMu  *sync.Mutex // nil for the input stream
 }
 
 type jobProcess struct {
@@ -122,7 +137,8 @@ type jobProcess struct {
 	streams                   map[string]*jobStream // "in", "out" and "err"
 	stdin                     io.Reader
 	stdout, stderr            io.Writer
-	writeMu                   sync.Mutex
+	stdinMu                   sync.Mutex
+	stdinErr                  error
 	coalition                 uint64
 	loaded                    bool
 	stop                      sync.Once
@@ -152,6 +168,7 @@ func newProcess(c Command) (process, error) {
 	if err != nil {
 		return nil, err
 	}
+	outMu := &sync.Mutex{}
 	p := &jobProcess{dir: dir, label: "com.lina.proc." + strings.ToLower(rand.Text()), streams: map[string]*jobStream{}, stdin: c.Stdin, stdout: c.Stdout, stderr: c.Stderr, stopped: make(chan struct{})}
 	fail := func(err error) (process, error) {
 		p.release()
@@ -172,7 +189,15 @@ func newProcess(c Command) (process, error) {
 		if err != nil {
 			return fail(err)
 		}
-		p.streams[stream.name] = &jobStream{listener: listener, accepted: make(chan *net.UnixConn, 1), pump: make(chan error, 1), stdin: stream.name == "in"}
+		var lock *sync.Mutex
+		if stream.name != "in" {
+			lock = &sync.Mutex{}
+			if sameWriter(c.Stdout, c.Stderr) {
+				// One writer for both streams must see one write at a time.
+				lock = outMu
+			}
+		}
+		p.streams[stream.name] = &jobStream{listener: listener, accepted: make(chan *net.UnixConn, 1), pump: make(chan error, 1), writeMu: lock}
 	}
 	request.Ctl = filepath.Join(dir, "ctl.sock")
 	ctl, err := net.ListenUnix("unix", &net.UnixAddr{Name: request.Ctl, Net: "unix"})
@@ -299,16 +324,27 @@ func (p *jobProcess) start() error {
 		stream.conn = conn
 		switch name {
 		case "in":
-			go func() { _, _ = io.Copy(conn, p.stdin); stream.pump <- conn.CloseWrite() }()
+			go func() {
+				_, err := io.Copy(conn, p.stdin)
+				if skipStdinCopyError(err) {
+					err = nil
+				}
+				p.stdinMu.Lock()
+				if err != nil && p.stdinErr == nil {
+					p.stdinErr = err
+				}
+				p.stdinMu.Unlock()
+				stream.pump <- conn.CloseWrite()
+			}()
 		case "out":
 			go func() {
-				_, err := io.Copy(&sharedWriter{mu: &p.writeMu, w: p.stdout}, conn)
+				_, err := io.Copy(&sharedWriter{mu: stream.writeMu, w: p.stdout}, conn)
 				stream.pump <- err
 				_ = conn.Close()
 			}()
 		default:
 			go func() {
-				_, err := io.Copy(&sharedWriter{mu: &p.writeMu, w: p.stderr}, conn)
+				_, err := io.Copy(&sharedWriter{mu: stream.writeMu, w: p.stderr}, conn)
 				stream.pump <- err
 				_ = conn.Close()
 			}()
@@ -416,7 +452,21 @@ func (p *jobProcess) wait() error {
 	default:
 		statusErr = decodeErr
 	}
-	return errors.Join(statusErr, p.stopErr, p.drain())
+	return errors.Join(statusErr, p.stopErr, p.drain(), p.stdinFailure())
+}
+
+// stdinFailure reports a reader that failed partway through the input. A
+// command that stopped reading first is not a failure, as with os/exec.
+func (p *jobProcess) stdinFailure() error {
+	p.stdinMu.Lock()
+	defer p.stdinMu.Unlock()
+	return p.stdinErr
+}
+
+func skipStdinCopyError(err error) bool {
+	// The job's end of the input closed because the command finished, which
+	// is a normal end of input rather than a failed command.
+	return errors.Is(err, syscall.EPIPE) || errors.Is(err, syscall.ECONNRESET) || errors.Is(err, net.ErrClosed)
 }
 
 func (p *jobProcess) next() (jobRecord, error) {
@@ -540,9 +590,9 @@ func (p *jobProcess) drain() error {
 		if stream.conn == nil {
 			continue
 		}
-		if stream.stdin {
+		if stream.writeMu == nil {
 			// The caller owns the reader; a reader that never ends keeps this
-			// copy blocked, which is not an error in the command's own result.
+			// copy blocked. Its error is reported by stdinFailure instead.
 			continue
 		}
 		remaining := time.Until(deadline)
