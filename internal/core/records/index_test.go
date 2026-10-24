@@ -46,7 +46,7 @@ func TestIndexSearchProjectionLiveAndRebuilt(t *testing.T) {
 		t.Helper()
 		err := db.Read(t.Context(), func(tx *canon.Tx) error {
 			var hits, edges int
-			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_fts WHERE records_fts MATCH 'Calibration'").Scan(&hits); err != nil {
+			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM recall_text WHERE recall_text MATCH 'Calibration'").Scan(&hits); err != nil {
 				return err
 			}
 			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM records_edges WHERE source='stable'").Scan(&edges); err != nil {
@@ -76,9 +76,9 @@ func indexDump(t *testing.T, db Canon) string {
 		for _, query := range []string{
 			"SELECT id,path,blob,revision FROM records_index ORDER BY id",
 			"SELECT id,person,kind,state,title,note FROM records_text ORDER BY id",
-			"SELECT id,title,note FROM records_fts ORDER BY id",
-			"SELECT id,title,note FROM records_korean_fts ORDER BY id",
-			"SELECT gram,id FROM records_korean_bigram ORDER BY gram,id",
+			"SELECT source_id,revision,person,holder,conversation,occurred_at,speaker_kind,origin,replay,text_hash FROM recall_doc WHERE kind='record' ORDER BY source_id",
+			"SELECT d.source_id FROM recall_doc d JOIN recall_text f ON f.rowid=d.id WHERE d.kind='record' ORDER BY d.source_id",
+			"SELECT d.source_id FROM recall_doc d JOIN recall_pair f ON f.rowid=d.id WHERE d.kind='record' ORDER BY d.source_id",
 			"SELECT source,relation,target FROM records_edges ORDER BY source,relation,target",
 			"SELECT head FROM records_index_state",
 			"SELECT id,fields,when_value,deadline,repeat_next FROM records_todo ORDER BY id",

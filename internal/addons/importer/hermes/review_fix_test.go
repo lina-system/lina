@@ -44,7 +44,7 @@ func TestReviewUnsealedEventsNeverReachLiveLedger(t *testing.T) {
 	if _, err = p.Import(t.Context(), db); err != nil {
 		t.Fatal(err)
 	}
-	for _, table := range []string{"conv_event", "retract_visible_event", "ledger_search_text", "ledger_search_pending", "memory_item"} {
+	for _, table := range []string{"conv_event", "retract_visible_event", "recall_doc", "recall_pending", "memory_item"} {
 		assertCount(t, db, table, 0)
 	}
 	if _, err = p.Verify(t.Context(), db); err != nil {

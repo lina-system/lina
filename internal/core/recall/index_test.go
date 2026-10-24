@@ -69,7 +69,7 @@ func TestAdmissionWritesContentlessIndexesAtomically(t *testing.T) {
 		{"SELECT count(*) FROM recall_text WHERE body IS NOT NULL", 0},
 		{"SELECT count(*) FROM recall_pair WHERE body IS NOT NULL", 0},
 		{"SELECT count(*) FROM recall_pending", 0},
-		{"SELECT count(*) FROM ledger_search_text", 1},
+		{"SELECT count(*) FROM sqlite_schema WHERE name='ledger_search_text'", 0},
 	} {
 		if got := count(t, db, check.query); got != check.want {
 			t.Fatalf("%s: %d, want %d", check.query, got, check.want)
@@ -80,9 +80,6 @@ func TestAdmissionWritesContentlessIndexesAtomically(t *testing.T) {
 func TestAdmissionKeepsTextFollowingMaskedAssignment(t *testing.T) {
 	db := database(t)
 	admit(t, db, "assignment", "password=hunter2 도서관")
-	if n := count(t, db, "SELECT count(*) FROM ledger_search WHERE ledger_search MATCH '도서관'"); n != 1 {
-		t.Fatal("fixture must be searchable in the ledger")
-	}
 	if n := count(t, db, "SELECT count(*) FROM recall_text WHERE recall_text MATCH '도서관'"); n != 1 {
 		t.Fatal("derived text was masked twice")
 	}

@@ -92,6 +92,7 @@ func Migrations() []Migration {
 		{Version: 77, SQL: recallSearchSchema},
 		{Version: 78, SQL: IdentitySchema},
 		{Version: 79, SQL: IdentityRepairSchema},
+		{Version: 80, SQL: storeContractSchema},
 	}
 }
 
@@ -175,7 +176,11 @@ func validatePublishedCatalog(ctx context.Context, path string, version int, mig
 	defer close()
 	for _, entry := range publishedMigrationTables {
 		var count int
-		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type='table' AND name=?", entry.table).Scan(&count); err != nil {
+		kind := "table"
+		if version >= 80 && (entry.table == "sum_edge" || entry.table == "sum_cover") {
+			kind = "view"
+		}
+		if err = db.QueryRowContext(ctx, "SELECT count(*) FROM sqlite_schema WHERE type=? AND name=?", kind, entry.table).Scan(&count); err != nil {
 			return err
 		}
 		if (count == 1) != (version >= entry.version) {

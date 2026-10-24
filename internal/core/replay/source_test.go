@@ -287,7 +287,7 @@ func TestExportRefusesPrivateEvidenceAndDirectRetractions(t *testing.T) {
 			err := db.Write(t.Context(), func(tx *canon.Tx) error {
 				if kind == "private" {
 					_, err := tx.ExecContext(t.Context(), `INSERT INTO memory_item(id,person,holder,subject_kind,subject_id,normalized,content,scope,state,valid_from,valid_until,supersedes,standing,record)
-      VALUES('private-item','person','all','person','person','synthetic','synthetic','private','active',0,0,'',0,'{"evidence":[{"kind":"event","id":"input"}]}')`)
+      VALUES('private-item','person','all','person','person','synthetic','synthetic','private','active',0,0,'',0,'{"evidence":[]}'); INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role) VALUES('memory','private-item','1',0,'event','input','0','event','cites')`)
 					return err
 				}
 				if _, err := tx.ExecContext(t.Context(), "INSERT INTO removal_applied VALUES(1,'removal','digest')"); err != nil {

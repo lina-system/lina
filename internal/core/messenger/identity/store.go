@@ -6,7 +6,6 @@ import (
 	"crypto/rand"
 	"database/sql"
 	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"sort"
@@ -723,8 +722,8 @@ WHERE m.person=? AND m.id IN (
 			return nil, err
 		}
 		var item memory.Item
-		if json.Unmarshal(raw, &item) != nil {
-			continue
+		if err := memory.DecodeItem(ctx, tx, raw, &item); err != nil {
+			return nil, err
 		}
 		if inWindow(from, through, item.ValidFrom) {
 			items = append(items, id)

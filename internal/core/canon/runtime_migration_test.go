@@ -151,7 +151,7 @@ func TestPlanningUpgradePreservesPublishedKoreanSearch(t *testing.T) {
 	if err := db.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	cfg.Migrations = Migrations()
+	cfg.Migrations = migrationsBefore(t, storeContractSchema)
 	db = openStore(t, cfg)
 	if err := db.Read(t.Context(), func(tx *Tx) error {
 		var tokenizer, fallback string

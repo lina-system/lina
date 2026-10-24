@@ -322,11 +322,8 @@ func replaceIndex(ctx context.Context, tx *canon.Tx, rows []indexRow) error {
 	if _, err := tx.ExecContext(ctx, "DELETE FROM records_index"); err != nil {
 		return err
 	}
-	// FTS is disposable too: clear orphaned rows after an interrupted restore.
-	if _, err := tx.ExecContext(ctx, "DELETE FROM records_fts"); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM records_korean_fts"); err != nil {
+	// Clear derived documents, including any orphan left by an interrupted rebuild.
+	if _, err := tx.ExecContext(ctx, "DELETE FROM recall_doc WHERE kind='record'"); err != nil {
 		return err
 	}
 	for _, r := range rows {

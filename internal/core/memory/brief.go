@@ -19,8 +19,9 @@ type BriefSource struct {
 	Text     string   `json:"text"`
 }
 type BriefSentence struct {
-	Text      string     `json:"text"`
-	Citations []Evidence `json:"citations"`
+	Text          string     `json:"text"`
+	Citations     []Evidence `json:"citations,omitempty"`
+	CitationCount int        `json:"citation_count,omitempty"`
 }
 type BriefTask struct {
 	Scope      RecallScope   `json:"scope"`
@@ -290,7 +291,7 @@ func validateBriefSources(ctx context.Context, tx *canon.Tx, task BriefTask, sco
 				return err
 			}
 			var item Item
-			if err := json.Unmarshal(raw, &item); err != nil {
+			if err := DecodeItem(ctx, tx, raw, &item); err != nil {
 				return err
 			}
 			if item.Revision != ref.Revision || item.Content != source.Text {
@@ -351,21 +352,44 @@ func readBrief(ctx context.Context, tx *canon.Tx, person, agent string) (briefRe
 		return result, err
 	}
 	err = json.Unmarshal(raw, &result)
-	return result, err
+	if err != nil {
+		return result, err
+	}
+	refs, err := EvidenceAt(ctx, tx, "person_brief", canon.BriefCitationID(person, agent), result.Task.Generation)
+	if err != nil {
+		return result, err
+	}
+	offset := 0
+	for i := range result.Sentences {
+		n := result.Sentences[i].CitationCount
+		if n < 0 || n > len(refs)-offset {
+			return result, ErrEvidence
+		}
+		result.Sentences[i].Citations = refs[offset : offset+n]
+		result.Sentences[i].CitationCount = 0
+		offset += n
+	}
+	if offset != len(refs) {
+		return result, ErrEvidence
+	}
+	return result, nil
 }
 func writeBrief(ctx context.Context, tx *canon.Tx, record briefRecord) error {
+	var refs []Evidence
+	record.Sentences = slices.Clone(record.Sentences)
+	for i := range record.Sentences {
+		sentence := &record.Sentences[i]
+		refs = append(refs, sentence.Citations...)
+		sentence.CitationCount = len(sentence.Citations)
+		sentence.Citations = nil
+	}
 	raw, err := json.Marshal(record)
 	if err != nil {
 		return err
 	}
 	task := record.Task
-	_, err = tx.ExecContext(ctx, `INSERT INTO memory_person_brief VALUES(?,?,?,?) ON CONFLICT(person,agent) DO UPDATE SET generation=excluded.generation,record=excluded.record`, task.Scope.Person, task.Scope.Agent, task.Generation, raw)
-	if err != nil {
+	if _, err := tx.ExecContext(ctx, `INSERT INTO memory_person_brief VALUES(?,?,?,?) ON CONFLICT(person,agent) DO UPDATE SET generation=excluded.generation,record=excluded.record`, task.Scope.Person, task.Scope.Agent, task.Generation, raw); err != nil {
 		return err
-	}
-	var refs []Evidence
-	for _, sentence := range record.Sentences {
-		refs = append(refs, sentence.Citations...)
 	}
 	evidence, err := json.Marshal(refs)
 	if err != nil {
@@ -373,6 +397,7 @@ func writeBrief(ctx context.Context, tx *canon.Tx, record briefRecord) error {
 	}
 	return canon.WriteEvidenceCitations(ctx, tx, "person_brief", canon.BriefCitationID(task.Scope.Person, task.Scope.Agent), task.Generation, evidence)
 }
+
 func BriefApply(agent, person string, now func() int64, resolve ResolveEvidence) func(context.Context, *canon.Tx, jobapi.Task, json.RawMessage) error {
 	return func(ctx context.Context, tx *canon.Tx, task jobapi.Task, output json.RawMessage) error {
 		if now == nil {

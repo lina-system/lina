@@ -78,7 +78,7 @@ func TestNameCorrectionsRetainIdentityAndAliasesAcrossAgents(t *testing.T) {
 		if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM memory_revision WHERE item_id=?`, first.ID).Scan(&revisions); err != nil {
 			return err
 		}
-		return tx.QueryRowContext(t.Context(), `SELECT count(*) FROM memory_item WHERE json_extract(record,'$.kind')='correction' AND EXISTS(SELECT 1 FROM json_each(record,'$.evidence') WHERE json_extract(value,'$.kind')='item' AND json_extract(value,'$.id')=?)`, first.ID).Scan(&corrections)
+		return tx.QueryRowContext(t.Context(), `SELECT count(*) FROM memory_item WHERE json_extract(record,'$.kind')='correction' AND EXISTS(SELECT 1 FROM cite c WHERE c.view_kind='memory' AND c.view_id=memory_item.id AND c.dropped_revision IS NULL AND c.target_kind='memory' AND c.target_id=?)`, first.ID).Scan(&corrections)
 	}); err != nil || revisions != 3 || corrections != 2 {
 		t.Fatalf("revision/correction evidence: %d/%d %v", revisions, corrections, err)
 	}

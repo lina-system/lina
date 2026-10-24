@@ -117,14 +117,10 @@ func (s *Store) Rebuild(ctx context.Context, conversation string, summarize Summ
 			if _, err := tx.ExecContext(ctx, `UPDATE sum_node SET model=?,prompt_version=?,built_at=?,epoch=?,status='ready',text=?,dropped=?,revision=? WHERE id=?`, n.Output.Model, n.Output.PromptVersion, stamp(n.Output.BuiltAt), n.Epoch, n.Output.Text, n.Output.Dropped, n.Revision, id); err != nil {
 				return err
 			}
-			for _, c := range n.Cover {
-				if _, err := tx.ExecContext(ctx, "UPDATE sum_cover SET reason=? WHERE node_id=? AND event_id=?", c.Reason, id, c.EventID); err != nil {
-					return err
-				}
-			}
+
 		}
 		for _, id := range changed {
-			if err := canon.WriteSummaryCitations(ctx, tx, id, nodes[id].Revision); err != nil {
+			if err := writeCitations(ctx, tx, nodes[id]); err != nil {
 				return err
 			}
 		}

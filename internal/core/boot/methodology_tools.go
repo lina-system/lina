@@ -33,7 +33,7 @@ type healthObservation struct {
 func (r *conversationRuntime) observeRecordsHealth(ctx context.Context) (healthObservation, error) {
 	h := healthObservation{Source: "core:records_index"}
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(ctx, `SELECT s.head,i.head,(SELECT count(*) FROM records_index),(SELECT count(*) FROM records_text),(SELECT count(*) FROM records_fts) FROM records_state s JOIN records_index_state i ON i.singleton=s.singleton WHERE s.singleton=1`).Scan(&h.Head, &h.IndexHead, &h.Records, &h.Texts, &h.SearchRows)
+		return tx.QueryRowContext(ctx, `SELECT s.head,i.head,(SELECT count(*) FROM records_index),(SELECT count(*) FROM records_text),(SELECT count(*) FROM recall_doc WHERE kind='record') FROM records_state s JOIN records_index_state i ON i.singleton=s.singleton WHERE s.singleton=1`).Scan(&h.Head, &h.IndexHead, &h.Records, &h.Texts, &h.SearchRows)
 	})
 	if err != nil {
 		return h, err

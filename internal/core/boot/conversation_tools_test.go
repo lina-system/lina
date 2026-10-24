@@ -36,6 +36,7 @@ func TestConversationToolFamilies(t *testing.T) {
 		"persona":     r.preparePersonaTools,
 		"skills":      r.prepareSkillTools,
 		"records":     r.prepareRecordTools,
+		"recall":      r.prepareRecallTools,
 		"results":     r.prepareResultTools,
 		"methodology": r.prepareMethodologyTools,
 		"planning":    r.preparePlanningTools,

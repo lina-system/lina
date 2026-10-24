@@ -64,7 +64,7 @@ func TestMemoryEvidenceReadsCurrentSpan(t *testing.T) {
 					if err := json.Unmarshal(raw, &item); err != nil {
 						return err
 					}
-					if strings.Contains(string(raw), "한국어") || item.Evidence[0].Quote != "" {
+					if strings.Contains(string(raw), "한국어") || len(item.Evidence) != 0 {
 						t.Errorf("%s copied event text", table)
 					}
 				}

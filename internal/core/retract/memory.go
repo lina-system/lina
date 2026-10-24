@@ -166,43 +166,42 @@ func resolveMemory(ctx context.Context, tx *canon.Tx, ref Ref, person string) (T
 			continue
 		}
 		seen[id] = true
-		rows, err := tx.QueryContext(ctx, "SELECT record FROM memory_revision WHERE item_id=? ORDER BY revision", id)
+		var owner string
+		if err := tx.QueryRowContext(ctx, `SELECT person FROM memory_item WHERE id=?
+ UNION ALL SELECT person FROM retract_target WHERE kind='memory' AND id=? AND state='erased' LIMIT 1`, id, id).Scan(&owner); err != nil {
+			return Target{}, err
+		}
+		if owner != person {
+			return Target{}, ErrInvalid
+		}
+		rows, err := tx.QueryContext(ctx, "SELECT DISTINCT target_kind,target_id FROM cite WHERE view_kind='memory' AND view_id=?", id)
 		if err != nil {
 			return Target{}, err
 		}
-		var records []memoryRecord
+		type reference struct{ kind, id string }
+		var refs []reference
 		for rows.Next() {
-			var raw []byte
-			var record memoryRecord
-			if err := rows.Scan(&raw); err != nil {
+			var ref reference
+			if err := rows.Scan(&ref.kind, &ref.id); err != nil {
 				rows.Close()
 				return Target{}, err
 			}
-			if err := json.Unmarshal(raw, &record); err != nil {
-				rows.Close()
-				return Target{}, err
-			}
-			records = append(records, record)
+			refs = append(refs, ref)
 		}
 		if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 			return Target{}, err
 		}
-		for _, record := range records {
-			if record.Person != person {
-				return Target{}, ErrInvalid
-			}
-			for _, e := range record.Evidence {
-				switch e.Kind {
-				case "event":
-					var conversation string
-					if err := tx.QueryRowContext(ctx, "SELECT conversation_id FROM conv_event WHERE id=?", e.ID).Scan(&conversation); err != nil {
-						return Target{}, err
-					}
-					target.Events = append(target.Events, e.ID)
-					target.Conversations = append(target.Conversations, conversation)
-				case "item":
-					pending = append(pending, e.ID)
+		for _, ref := range refs {
+			switch ref.kind {
+			case "event":
+				var conversation string
+				if err := tx.QueryRowContext(ctx, "SELECT conversation_id FROM conv_event WHERE id=?", ref.id).Scan(&conversation); err != nil {
+					return Target{}, err
 				}
+				target.Events = append(target.Events, ref.id)
+				target.Conversations = append(target.Conversations, conversation)
+			case "memory":
+				pending = append(pending, ref.id)
 			}
 		}
 	}

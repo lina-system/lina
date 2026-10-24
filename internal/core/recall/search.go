@@ -272,7 +272,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 			return nil, err
 		}
 	}
-	statement := `WITH ` + strings.Join(with, ",\n") + `,
+	statement := `WITH RECURSIVE ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
  SELECT d.id,d.kind,d.source_id,d.revision,d.occurred_at,d.holder,d.conversation,d.text_hash,d.replay,
   p.score AS score,(p.doc IS NOT NULL) AS paired,(t.doc IS NOT NULL) AS trigram,` + olderD + ` AS older
@@ -428,11 +428,21 @@ func restrictedCTE(scope Scope) (string, []any) {
 	if !scope.Projection && !scope.ExternalModel {
 		return "", nil
 	}
-	return `restricted AS (
+	cte := `restricted AS (
   SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
   WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`,
-		[]any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
+   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`
+	kinds := kindsOf(scope)
+	if containsKind(kinds, Summary) || containsKind(kinds, Record) {
+		// Follow protected evidence through every summary and record ancestor.
+		cte += `, restricted_views(kind,id) AS (
+ SELECT 'event',id FROM restricted
+ UNION
+ SELECT c.view_kind,c.view_id FROM restricted_views r JOIN cite c INDEXED BY cite_target
+ ON c.target_kind=r.kind AND c.target_id=r.id
+ WHERE c.dropped_revision IS NULL AND c.view_kind IN ('summary','record'))`
+	}
+	return cte, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
 }
 
 func holderCondition(scope Scope, alias string) string {
@@ -502,8 +512,10 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	}
 	if restricted {
 		where = append(where, `(`+alias+`.kind<>'event' OR NOT EXISTS(SELECT 1 FROM restricted r WHERE r.id=`+alias+`.source_id))`)
-		where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3 JOIN restricted r3 ON r3.id=c3.target_id
-   WHERE c3.view_kind=`+alias+`.kind AND c3.view_id=`+alias+`.source_id AND c3.dropped_revision IS NULL))`)
+		if containsKind(kinds, Summary) || containsKind(kinds, Record) {
+			where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM restricted_views r3
+   WHERE r3.kind=`+alias+`.kind AND r3.id=`+alias+`.source_id))`)
+		}
 	}
 	return where, args
 }
@@ -817,6 +829,9 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 				return "", ErrBytesUnavailable
 			}
 			return text, nil
+		}
+		if !body.Valid {
+			return "", ErrBytesUnavailable
 		}
 		return body.String, nil
 	case Memory:
