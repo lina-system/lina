@@ -397,9 +397,14 @@ export async function runPipeline(root, plan, { jobs, log = console.error, run =
           wake();
           continue;
         }
+        // The build shard's exhaustive process follows GOMAXPROCS. A caller's
+        // -p cap applies there so typechecking stays inside a 6G job. Unit
+        // shards keep the wider share; their package timeout assumes it.
+        const cap = Number(/(?:^|\s)-p=(\d+)(?:\s|$)/.exec(process.env.GOFLAGS ?? '')?.[1] ?? 0);
+        const procs = cap > 0 && task.kind === 'build' ? cap : Math.max(1, Math.floor(availableParallelism() / jobs));
         const result = await run(process.execPath, [join(root, 'scripts/foundation.mjs'),
           '--plan', file, '--shard', task.id, '--out', join(results, task.id + '.json')],
-        { cwd: root, env: { ...cleanEnv(), GOMAXPROCS: String(Math.max(1, Math.floor(availableParallelism() / jobs))) },
+        { cwd: root, env: { ...cleanEnv(), GOMAXPROCS: String(procs) },
           timeoutMs: Math.min(timeouts[task.kind] + 5000, remaining) });
         if (result.status !== 0) upstream = 'failure';
         // Workers write machine results to files; their stdout is a short progress record.
