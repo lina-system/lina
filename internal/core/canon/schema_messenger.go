@@ -145,3 +145,47 @@ WHEN NEW.kind='event' AND NEW.state='active' AND OLD.state<>'active' BEGIN
  INSERT OR IGNORE INTO recall_pending(kind,source_id) VALUES('event',NEW.id);
 END;
 `
+
+// MessengerLearningSchema adds the learning switches and progress used by the
+// messenger extraction job. A source keeps a learning watermark: the time it
+// connected, or the end of an import the person left learning off for. The
+// cursor is the source's committed ledger position; the two are separate
+// because a first fill or an import may admit old records after the connection
+// without making them learning input.
+const MessengerLearningSchema = `
+-- SQLite refuses ALTER TABLE ADD COLUMN with CHECK under canon's writer
+-- authorizer, so these two switches are checked by the messenger store.
+ALTER TABLE messenger_source ADD COLUMN learn INTEGER NOT NULL DEFAULT 1;
+ALTER TABLE messenger_chat ADD COLUMN scope TEXT NOT NULL DEFAULT 'local';
+-- learn_after makes the watermark an exclusive floor, for an import that
+-- covered history the person left out of learning: its own last record must not
+-- become input at the boundary.
+ALTER TABLE messenger_source ADD COLUMN learn_after INTEGER NOT NULL DEFAULT 0;
+-- messenger_learning_skip states the ledger interval a learning switch
+-- excluded: from_rowid when the switch went off, to_rowid when it came back on
+-- (0 while it is still off). Records inside it are never learned, even when the
+-- switch returns before the next scan sees it. chat='' covers a whole source.
+CREATE TABLE messenger_learning_skip (
+ platform TEXT NOT NULL, account TEXT NOT NULL, chat TEXT NOT NULL DEFAULT '',
+ from_rowid INTEGER NOT NULL CHECK(from_rowid>=0), to_rowid INTEGER NOT NULL DEFAULT 0 CHECK(to_rowid>=0),
+ PRIMARY KEY(platform,account,chat,from_rowid)
+);
+CREATE TABLE messenger_learning_cursor (
+ platform TEXT NOT NULL, account TEXT NOT NULL, through INTEGER NOT NULL DEFAULT 0 CHECK(through>=0),
+ PRIMARY KEY(platform,account),
+ FOREIGN KEY(platform,account) REFERENCES messenger_source(platform,account)
+);
+UPDATE messenger_source SET learning_watermark=connected_at WHERE learning_watermark='';
+` + MessengerLearningSeed
+
+// MessengerLearningSeed preserves opt-outs that predate the learning schema.
+// Their start is unknown, so all previously admitted records stay excluded.
+// Message timestamps cannot bound ledger positions: backfill may be out of order.
+const MessengerLearningSeed = `
+INSERT INTO messenger_learning_skip(platform,account,chat,from_rowid)
+SELECT c.platform,c.account,c.chat,0
+FROM messenger_chat c
+WHERE c.learn=0
+ AND NOT EXISTS(SELECT 1 FROM messenger_learning_skip k
+  WHERE k.platform=c.platform AND k.account=c.account AND k.chat=c.chat AND k.to_rowid=0);
+`

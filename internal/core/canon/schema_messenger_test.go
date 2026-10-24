@@ -3,6 +3,7 @@ package canon
 
 import (
 	"errors"
+	"fmt"
 	"testing"
 )
 
@@ -149,5 +150,81 @@ VALUES('event','record','person','messenger:discord:account-1','messenger:discor
 	}
 	if n := count("SELECT count(*) FROM retract_visible_event WHERE id='record'"); n != 1 {
 		t.Fatal("restored record stayed hidden")
+	}
+}
+
+// A chat that is already disabled when the learning schema arrives keeps its
+// opt-out: the migration states an open excluded interval for it, starting at
+// the chat's learning watermark or at the newest admitted record when the
+// source has none. Re-running the seed adds nothing.
+func TestMessengerLearningUpgradeSeedsDisabledChats(t *testing.T) {
+	t.Parallel()
+	cfg := storeConfig(t)
+	cfg.Migrations = migrationsBefore(t, MessengerLearningSchema)
+	db := openStore(t, cfg)
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), `INSERT INTO messenger_source(person,platform,account,mode,adapter,state,connected_at)
+VALUES('person','fixture','acct','official','fixture','connected','2026-10-01T00:00:00Z');
+INSERT INTO messenger_source(person,platform,account,mode,adapter,state,connected_at)
+VALUES('person','fixture','marked','official','fixture','connected','2026-10-01T00:00:00Z');
+UPDATE messenger_source SET learning_watermark='2026-10-02T00:00:00Z' WHERE account='marked';
+INSERT INTO messenger_chat(platform,account,chat,kind,learn) VALUES('fixture','acct','dm','direct',0);
+INSERT INTO messenger_chat(platform,account,chat,kind,learn) VALUES('fixture','acct','open','direct',1);
+INSERT INTO messenger_chat(platform,account,chat,kind,learn) VALUES('fixture','marked','dm','direct',0);
+INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body)
+VALUES('older','conversation','person','agent','person','{"kind":"tui"}','2026-09-01T10:00:00Z','2026-09-01T10:00:00Z','observed','{"kind":"messenger"}','older'),
+      ('newer','conversation','person','agent','person','{"kind":"tui"}','2026-10-02T10:00:00Z','2026-10-02T10:00:00Z','observed','{"kind":"messenger"}','newer');
+INSERT INTO messenger_record(platform,account,chat,message,event,occurred_at)
+VALUES('fixture','acct','dm','m-old','older','2026-09-01T10:00:00Z'),
+      ('fixture','acct','dm','m-new','newer','2026-10-02T10:00:00Z'),
+      ('fixture','marked','dm','m-3','newer','2026-10-02T10:00:00Z')`)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Close(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	cfg.Migrations = Migrations()
+	db = openStore(t, cfg)
+	defer db.Close(t.Context())
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		// An upgrade has no historical switch boundary. Every existing record
+		// in a disabled chat must remain excluded, regardless of message time.
+		for _, account := range []string{"acct", "marked"} {
+			var uncovered int
+			if err := tx.QueryRowContext(t.Context(), `SELECT count(*)
+FROM messenger_record m JOIN conv_event e ON e.id=m.event
+WHERE m.account=? AND NOT EXISTS (
+ SELECT 1 FROM messenger_learning_skip k WHERE k.platform=m.platform AND k.account=m.account
+ AND k.chat=m.chat AND e.rowid>k.from_rowid AND (k.to_rowid=0 OR e.rowid<=k.to_rowid))`, account).Scan(&uncovered); err != nil {
+				return err
+			}
+			if uncovered != 0 {
+				return fmt.Errorf("%s: upgrade left %d disabled records eligible", account, uncovered)
+			}
+		}
+		var leaked int
+		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM messenger_learning_skip WHERE chat='open'").Scan(&leaked); err != nil {
+			return err
+		}
+		if leaked != 0 {
+			return errors.New("a learning chat got an interval")
+		}
+		return nil
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Write(t.Context(), func(tx *Tx) error {
+		_, err := tx.ExecContext(t.Context(), MessengerLearningSeed)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	var count int
+	if err := db.Read(t.Context(), func(tx *Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM messenger_learning_skip").Scan(&count)
+	}); err != nil || count != 2 {
+		t.Fatalf("seed rerun added intervals: %d %v", count, err)
 	}
 }

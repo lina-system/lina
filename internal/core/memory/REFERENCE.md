@@ -115,6 +115,79 @@ scripted provider and resolves its material-backed evidence through management
 before and after restart. Package fixtures cover import, legacy revisions,
 secret spans, cross-agent reads and tombstones.
 
+### Messenger extraction
+
+The whole-main job is `messenger-extraction`, registered separately from the
+per-agent conversation job. It has its own budget, cadence and adoption record
+(`stated messenger memory`).
+
+- `PrepareMessengerExtraction` reads this person's sources in one snapshot. A
+  source's learning watermark is a time floor set when it connects; its
+  `messenger_learning_cursor` row is the committed ledger position. Only live,
+  visible, canonical `person` records at or after the floor are eligible, except
+  that a learning-off import's floor excludes its own instant. The source
+  switch, the chat switch and a `never-leaves` chat narrow it further.
+- A source or chat with learning off is not read: its cursor passes the records
+  that arrived in that window, so turning learning back on does not learn them
+  late. `messenger_learning_skip` states that window when the switch moves, so a
+  switch that returns before the next scan still excludes it. A `never-leaves`
+  chat is skipped and states the same interval.
+- The switch and the scope are one condition: the interval opens when the chat's
+  combined answer (`learn` and a scope other than `never-leaves`) goes off and
+  closes only when that answer returns, so leaving never-leaves while the switch
+  is off does not reopen the window. An interval that holds no record is dropped
+  when it closes; keeping it would read as still open. Its position counts every
+  admitted record, deleted ones included, so a deletion cannot move the endpoint
+  backwards.
+- A Discord bot-mode source is searchable and not learned from until the owner
+  confirms the platform's developer-policy reading, so preparation passes it
+  over as if its switch were off and its cursor moves past what arrived.
+- A participant's turn inside the window breaks the burst, as a non-person turn
+  does in a conversation (`docs/design/go-core.md`): the scan reads those turns
+  without making them evidence. The next utterance selects its context
+  independently. The scan stops at the limit-th person record or eight times
+  that many records of any speaker, so each prefix stays bounded.
+- A context message that a memory restricts after preparation rebuilds the
+  batch, the same as restricted evidence. Adding a `never-leaves` memory does not
+  move the retraction epoch, so the check reads the restriction set directly.
+- A proposal passes the writer's own validation before the model result is
+  cached, so an item Apply would refuse cannot stall the job.
+- Material-backed bodies are loaded before preparation takes its read
+  transaction (`MessengerEvidenceCandidates` plus the writer's preload), because
+  canon serves one reader and a material read inside the transaction would wait
+  on the connection it holds. Core's `readMessengerEvidence` does this with the
+  same batch and context limits as preparation and the same source and chat
+  controls. Both use `messengerScanRows`, with one person-record limit across
+  sources. Context slots count inline records before filtering for material
+  bodies. Restricted records are not preloaded. The body count is bounded by
+  the batch limit times one plus the context limit.
+- A burst is consecutive records in one chat within the configurable window.
+  Up to three earlier visible records of that chat travel as `Context`; their
+  ids are not in the allowed evidence set.
+- Items take the default holder of their kind and no source agent. The kinds
+  one agent holds (shared history, relationship, emotion observation) are
+  refused, as are non-stated bases and a nonempty holder, scope or source agent.
+- `ApplyMessengerExtraction` rechecks the epoch, every prepared record, the
+  chat switch and scope, the source policy, watermark and cursor, that each prepared
+  record is still the live record of its message, and that no learning switch
+  has excluded it since preparation, before writing. A
+  source that supplied no utterance may be learning-off; it only contributes
+  skip progress. It commits the items and the scanned source cursors together.
+  An obsolete batch is consumed without writing or advancing cursors. Empty
+  scans also recheck watermark and revocation before committing progress, so
+  a concurrent authorized import cannot lose its newly eligible history.
+
+The messenger write path uses `insertKind{messenger: true}`: every evidence
+origin must be a messenger record held by one of the batch's sources, and the
+stored evidence entry carries no source agent. Ledger citations of messenger
+records resolve for every agent the source allows, because the conversation has
+no participating agent.
+
+`TestMessengerExtractionCostPerThousandMessages` reports calls and reported
+tokens per 1,000 own messages on the synthetic corpus. The synthetic provider
+estimates tokens as UTF-8 bytes / 4; the figure is a bound, not a billing
+reconciliation.
+
 Memory candidate reads and `RestrictedEvents` share recall's `RestrictionCTE`.
 This applies scope through memory chains and copied events before candidate
 limits, including direct item/profile/relationship reads without a text query.

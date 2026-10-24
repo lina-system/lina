@@ -46,6 +46,8 @@ type Service struct {
 	// Core runs gains one at its next schedule and a disconnected source stops
 	// its reader at once.
 	watching map[string]*watcher
+	// changed wakes the messenger extraction job after a read admitted records.
+	changed func()
 }
 
 // watcher is one source's live reader.
@@ -148,6 +150,10 @@ func closeAdapter(adapter Adapter) {
 // Store is the registry and admission store the service reads into.
 func (s *Service) Store() *Store { return s.store }
 
+// SetAfterSync registers a non-blocking wake after a source read completes.
+// Learning uses it to scan new records without waiting for its own ticker.
+func (s *Service) SetAfterSync(fn func()) { s.changed = fn }
+
 // Run reads every connected source until ctx ends. It never returns an error:
 // a failing source is recorded in its own registry row.
 func (s *Service) Run(ctx context.Context) {
@@ -210,6 +216,9 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
 		} else if err == nil {
 			results[key] = result
+			if s.changed != nil {
+				s.changed()
+			}
 		}
 	}
 	if s.store.identities != nil && ctx.Err() == nil {

@@ -168,6 +168,43 @@ after the messages arrive still links without a restart. Core gives the same
 identity store to the sync loop, the Teams service and the Webex service, and
 the Teams worker rematches after each of its passes.
 
+## Learning inputs
+
+`messenger_source.learning_watermark` is a time floor: `Connect` sets it to the
+connection time for a new source and preserves it on a later registration. An
+import moves it with `SetLearningWatermark`, which also resets the source's
+cursor: back to its oldest message when the person turned learning on, and to
+its newest message with `learn_after` set when they left it off, so the import's
+own last record stays outside the learned range.
+
+`messenger_learning_cursor.through` is the committed ledger position the
+extraction job has scanned for that source. It is independent of the watermark,
+so a first fill with old message times advances progress without becoming input.
+
+`messenger_source.learn` is the source-wide switch, and `messenger_chat.learn`
+narrows it per chat. Turning either off writes the interval it excludes to
+`messenger_learning_skip` in the same transaction (`chat=''` for a whole
+source); turning it back on closes that interval. The migration seeds an open
+interval for every chat that is already disabled when the schema arrives,
+starting at ledger position zero because the old switch's start is unknown.
+Message timestamps do not order admission: backfilled history can arrive after
+newer records. The seed skips a chat that already has an open interval, so a
+rerun adds nothing. An interval excludes every
+record in its ledger range even when the switch returns before the next scan, so
+the window the person opted out of is never learned late. Entering
+`never-leaves` states the same interval, and leaving it closes it. The chat
+switch and the scope are one condition: an interval closes only when the chat
+learns again (`learn` and a scope other than `never-leaves`), and one that held
+no record is deleted rather than left closed at its own start. The position
+counts every admitted record including deleted ones, so a deletion cannot move
+it backwards and leave the interval reading as open. `messenger_chat.scope` carries the chat's sensitivity class:
+`local`, `private` or `never-leaves`. A `never-leaves` chat stays searchable and
+is never learning input. A disabled source or chat still advances the learning
+cursor past what arrived while it was off, so re-enabling does not learn that
+window late. SQLite refuses `ALTER TABLE ADD COLUMN` with a CHECK
+under canon's writer authorizer, so the added switches are validated by the
+store instead of by a table constraint.
+
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
 change ledger attribution or create an automatic person merge.

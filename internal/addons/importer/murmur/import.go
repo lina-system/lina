@@ -125,8 +125,8 @@ func (p *Plan) Import(ctx context.Context, store *messenger.Store, batchID strin
 
 // applyLearning states the run's learning choice on each source. A source the
 // run created import-only starts at the older end of the history when the person
-// turned learning on, and at its newer end when they left it off, so nothing
-// older is learned by accident.
+// turned learning on, and after its newer end when they left it off, so nothing
+// in the import is learned by accident.
 func (p *Plan) applyLearning(ctx context.Context, store *messenger.Store, sources map[string]messenger.Source, learning Learning) error {
 	for _, source := range sources {
 		if source.State != messenger.StateImportOnly {
@@ -142,7 +142,7 @@ func (p *Plan) applyLearning(ctx context.Context, store *messenger.Store, source
 		if at.IsZero() {
 			continue
 		}
-		if err := store.SetLearningWatermark(ctx, source.Person, source.Platform, source.Account, at); err != nil {
+		if err := store.SetLearningWatermark(ctx, source.Person, source.Platform, source.Account, at, !learning.Enabled); err != nil {
 			return err
 		}
 	}

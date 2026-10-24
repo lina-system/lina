@@ -4,7 +4,9 @@ package ledger
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"strings"
 	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -16,14 +18,38 @@ func (s *Store) Citation(ctx context.Context, person, agent string, ref canon.Ci
 	check := func() (canon.CitationValue, error) {
 		value := canon.CitationValue{}
 		err := s.db.Read(ctx, func(tx *canon.Tx) error {
+			var owner string
+			var who sql.NullString
+			var origin, surface string
+			err := tx.QueryRowContext(ctx, `SELECT agent_id,person_id,origin,surface FROM conv_event WHERE id=?`, ref.TargetID).Scan(&owner, &who, &origin, &surface)
+			if errors.Is(err, sql.ErrNoRows) {
+				value.Status = "bytes_unavailable"
+				return nil
+			}
+			if err != nil {
+				return err
+			}
+			// A messenger conversation has no participating agent: its holder
+			// names the source, and every agent the source lets read may cite it.
+			// Records the person did not write carry no person id, so the source
+			// supplies the owner and a different person still cannot read them.
+			messenger := strings.Contains(origin, `"kind":"messenger"`)
+			if messenger && !who.Valid {
+				var ownerPerson string
+				if err := tx.QueryRowContext(ctx, `SELECT person FROM messenger_source WHERE platform=? AND account=?`,
+					messengerField(surface, "platform"), messengerField(surface, "account")).Scan(&ownerPerson); err != nil || ownerPerson != person {
+					value.Status = "restricted"
+					return nil
+				}
+			}
 			var state string
 			tomb := canon.CitationTombstone{}
-			err := tx.QueryRowContext(ctx, `SELECT state,person,agent,at FROM retract_target WHERE kind='event' AND id=?`, ref.TargetID).Scan(&state, &tomb.Person, &tomb.Agent, &tomb.At)
+			err = tx.QueryRowContext(ctx, `SELECT state,person,agent,at FROM retract_target WHERE kind='event' AND id=?`, ref.TargetID).Scan(&state, &tomb.Person, &tomb.Agent, &tomb.At)
 			if err != nil && !errors.Is(err, sql.ErrNoRows) {
 				return err
 			}
 			if err == nil && state != "active" {
-				if tomb.Person != person || tomb.Agent != agent {
+				if tomb.Person != person || tomb.Agent != agent && !messenger {
 					value.Status = "restricted"
 					return nil
 				}
@@ -35,17 +61,7 @@ func (s *Store) Citation(ctx context.Context, person, agent string, ref canon.Ci
 				}
 				return nil
 			}
-			var owner string
-			var who sql.NullString
-			err = tx.QueryRowContext(ctx, `SELECT agent_id,person_id FROM conv_event WHERE id=?`, ref.TargetID).Scan(&owner, &who)
-			if errors.Is(err, sql.ErrNoRows) {
-				value.Status = "bytes_unavailable"
-				return nil
-			}
-			if err != nil {
-				return err
-			}
-			if owner != agent || who.Valid && who.String != person {
+			if owner != agent && !messenger || who.Valid && who.String != person {
 				value.Status = "restricted"
 				return nil
 			}
@@ -93,4 +109,15 @@ func (s *Store) Citation(ctx context.Context, person, agent string, ref canon.Ci
 		text = text[start:end]
 	}
 	return canon.CitationValue{Quote: text}, nil
+}
+
+// messengerField reads one string field of a messenger event's surface. A
+// missing or malformed field is empty, which matches no source.
+func messengerField(surface, key string) string {
+	var fields map[string]any
+	if err := json.Unmarshal([]byte(surface), &fields); err != nil {
+		return ""
+	}
+	value, _ := fields[key].(string)
+	return value
 }

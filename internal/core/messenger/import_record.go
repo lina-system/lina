@@ -12,16 +12,16 @@ import (
 // ImportRecordRow is the retained record of one memory import: the run it
 // belongs to, what it wrote, and the person's learning choice with its count.
 type ImportRecordRow struct {
-	Batch             ImportBatch
-	System, Instance  string
-	Person            string
-	ConfigHash        string
-	SpoolHash         string
-	Learning          bool
-	LearningMessages  int
-	LearningThrough   time.Time
-	Report            any
-	BackupGeneration  string
+	Batch            ImportBatch
+	System, Instance string
+	Person           string
+	ConfigHash       string
+	SpoolHash        string
+	Learning         bool
+	LearningMessages int
+	LearningThrough  time.Time
+	Report           any
+	BackupGeneration string
 }
 
 // RecordImport retains the run's report with the batch it wrote. The row is the
@@ -65,29 +65,6 @@ func (s *Store) SetImportBackup(ctx context.Context, batch, generation string) e
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
 		result, err := tx.ExecContext(ctx, "UPDATE messenger_import SET backup_generation=? WHERE batch_id=?", generation, batch)
-		if err != nil {
-			return err
-		}
-		if n, err := result.RowsAffected(); err != nil {
-			return err
-		} else if n == 0 {
-			return ErrNotFound
-		}
-		return nil
-	})
-}
-
-// SetLearningWatermark records how far a source's history is learned from. An
-// import that covers older history moves it back to the start of that history
-// when the person turned learning on, and forward to its end when they left it
-// off, so untouched history stays search-only either way.
-func (s *Store) SetLearningWatermark(ctx context.Context, person, platform, account string, at time.Time) error {
-	if !validName(person) || !validName(platform) || !validName(account) {
-		return ErrInvalid
-	}
-	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET learning_watermark=? WHERE platform=? AND account=? AND person=?",
-			formatOptional(at), platform, account, person)
 		if err != nil {
 			return err
 		}

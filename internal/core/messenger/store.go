@@ -123,11 +123,38 @@ func (s *Store) Connect(ctx context.Context, source Source) error {
 	if at.IsZero() {
 		at = s.now()
 	}
+	atText := at.UTC().Format(time.RFC3339Nano)
+	watermark := source.LearningWatermark
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
-VALUES(?,?,?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,owner=excluded.owner,workspace=excluded.workspace,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
-			source.Person, source.Platform, source.Account, source.Owner, source.Workspace, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
+		// A new source learns from its connection time; an explicit watermark
+		// (an import the person allowed learning for) is kept as given. A later
+		// Connect that supplies none preserves the stored one.
+		result, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
+VALUES(?,?,?,?,?,?,?,?,?,coalesce(nullif(?,''),?),?,?)
+ON CONFLICT(platform,account) DO NOTHING`,
+			source.Person, source.Platform, source.Account, source.Owner, source.Workspace, string(source.Mode), source.Adapter, string(source.State), source.Failure, watermark, atText, terms, atText)
+		if err != nil {
+			return fmt.Errorf("connect insert: %w", err)
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n != 0 {
+			// A new source learns from now: its own existing records, if any,
+			// are before the cursor as well as before the watermark.
+			_, err := tx.ExecContext(ctx, `INSERT INTO messenger_learning_cursor(platform,account,through)
+SELECT ?,?,coalesce((SELECT max(e.rowid) FROM messenger_record m JOIN conv_event e ON e.id=m.event
+ WHERE m.platform=? AND m.account=?),0)
+ON CONFLICT(platform,account) DO NOTHING`, source.Platform, source.Account, source.Platform, source.Account)
+			if err != nil {
+				return fmt.Errorf("connect cursor: %w", err)
+			}
+			return nil
+		}
+		_, err = tx.ExecContext(ctx, `UPDATE messenger_source SET person=?,owner=?,workspace=?,mode=?,adapter=?,state=?,failure=?,
+ learning_watermark=CASE WHEN ?<>'' THEN ? ELSE learning_watermark END,accepted_terms=?
+WHERE platform=? AND account=?`,
+			source.Person, source.Owner, source.Workspace, string(source.Mode), source.Adapter, string(source.State), source.Failure,
+			watermark, watermark, terms, source.Platform, source.Account)
 		return err
 	})
 }
@@ -186,7 +213,7 @@ func (s *Store) Sources(ctx context.Context, person string) ([]Source, error) {
 	}
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,learn,accepted_terms,connected_at
 FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 		if err != nil {
 			return err
@@ -207,7 +234,7 @@ FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 	var source Source
 	var mode, state, terms, connected string
-	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Owner, &source.Workspace, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
+	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Owner, &source.Workspace, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &source.Learn, &terms, &connected); err != nil {
 		return Source{}, err
 	}
 	source.Mode, source.State = Mode(mode), State(state)
@@ -237,7 +264,7 @@ func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 func (s *Store) allSources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,workspace,mode,adapter,state,failure,learning_watermark,learn,accepted_terms,connected_at
 FROM messenger_source ORDER BY platform,account`)
 		if err != nil {
 			return err
@@ -262,7 +289,7 @@ func (s *Store) Chats(ctx context.Context, person, platform, account string) ([]
 	}
 	var chats []ChatRecord
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT chat,name,kind,first_message_at,sync,learn,embed,cursor FROM messenger_chat
+		rows, err := tx.QueryContext(ctx, `SELECT chat,name,kind,first_message_at,sync,learn,embed,scope,cursor FROM messenger_chat
 WHERE platform=? AND account=? AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=platform AND o.account=account AND o.person=?)
 ORDER BY chat`, platform, account, person)
 		if err != nil {
@@ -272,7 +299,7 @@ ORDER BY chat`, platform, account, person)
 		for rows.Next() {
 			chat := ChatRecord{Platform: platform, Account: account}
 			var first, cursor string
-			if err := rows.Scan(&chat.Chat, &chat.Name, &chat.Kind, &first, &chat.Sync, &chat.Learn, &chat.Embed, &cursor); err != nil {
+			if err := rows.Scan(&chat.Chat, &chat.Name, &chat.Kind, &first, &chat.Sync, &chat.Learn, &chat.Embed, &chat.Scope, &cursor); err != nil {
 				return err
 			}
 			if first != "" {
@@ -330,6 +357,13 @@ func (s *Store) SetSwitches(ctx context.Context, person, platform, account, chat
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		wasLearn, scope, err := chatEligibility(ctx, tx, platform, account, chat)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE messenger_chat SET sync=?,learn=?,embed=? WHERE platform=? AND account=? AND chat=?
 AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? AND o.person=?)`,
 			boolInt(switches.Sync), boolInt(switches.Learn), boolInt(switches.Embed), platform, account, chat, platform, account, person)
@@ -341,7 +375,156 @@ AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? A
 		} else if n == 0 {
 			return ErrNotFound
 		}
+		// The switch states the interval it excludes in the same transaction,
+		// so a record from that window is not learned when the switch returns
+		// before the next scan. The chat's scope is the other control, so the
+		// interval follows their combined answer, not this switch alone.
+		return s.stateLearningInterval(ctx, tx, platform, account, chat,
+			chatLearns(wasLearn, scope), chatLearns(switches.Learn, scope))
+	})
+}
+
+// chatEligibility reads the two controls that decide whether a chat feeds
+// learning: its own switch and its scope.
+func chatEligibility(ctx context.Context, tx *canon.Tx, platform, account, chat string) (bool, string, error) {
+	var learn bool
+	var scope string
+	err := tx.QueryRowContext(ctx, "SELECT learn,scope FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
+		platform, account, chat).Scan(&learn, &scope)
+	return learn, scope, err
+}
+
+// chatLearns is the chat's effective learning answer. A never-leaves chat is
+// never learning input, whatever its switch says.
+func chatLearns(learn bool, scope string) bool {
+	return learn && scope != ChatNeverLeaves
+}
+
+// learningMark is the newest ledger position a source has admitted. It counts
+// every admitted record, deleted ones included: a deletion must not move the
+// position backwards, or closing an interval would leave it at its own start
+// and the predicate would read that as still open.
+func learningMark(ctx context.Context, tx *canon.Tx, platform, account string) (int64, error) {
+	var mark int64
+	err := tx.QueryRowContext(ctx, `SELECT coalesce(max(e.rowid),0)
+FROM messenger_record m JOIN conv_event e ON e.id=m.event
+WHERE m.platform=? AND m.account=?`, platform, account).Scan(&mark)
+	return mark, err
+}
+
+// stateLearningInterval states the interval a source or chat excludes from
+// learning when its effective answer goes off, and closes it when the answer
+// returns. chat="" covers a whole source. An interval that holds no record is
+// removed rather than kept closed at its own start, which would read as open.
+func (s *Store) stateLearningInterval(ctx context.Context, tx *canon.Tx, platform, account, chat string, was, now bool) error {
+	if was == now {
 		return nil
+	}
+	mark, err := learningMark(ctx, tx, platform, account)
+	if err != nil {
+		return err
+	}
+	if now {
+		if _, err = tx.ExecContext(ctx, `UPDATE messenger_learning_skip SET to_rowid=max(to_rowid,?)
+WHERE platform=? AND account=? AND chat=? AND to_rowid=0`, mark, platform, account, chat); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(ctx, `DELETE FROM messenger_learning_skip
+WHERE platform=? AND account=? AND chat=? AND to_rowid<=from_rowid`, platform, account, chat)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO messenger_learning_skip(platform,account,chat,from_rowid) VALUES(?,?,?,?)
+ON CONFLICT(platform,account,chat,from_rowid) DO UPDATE SET to_rowid=0`, platform, account, chat, mark)
+	return err
+}
+
+// SetChatScope assigns a chat's sensitivity class. A never-leaves chat remains
+// searchable but is never learning input.
+func (s *Store) SetChatScope(ctx context.Context, person, platform, account, chat, scope string) error {
+	if !validName(person) || !validName(platform) || !validName(account) || !validName(chat) ||
+		(scope != ChatLocal && scope != ChatPrivate && scope != ChatNeverLeaves) {
+		return ErrInvalid
+	}
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		learn, previous, err := chatEligibility(ctx, tx, platform, account, chat)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, `UPDATE messenger_chat SET scope=? WHERE platform=? AND account=? AND chat=?
+AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? AND o.person=?)`,
+			scope, platform, account, chat, platform, account, person)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrNotFound
+		}
+		// Entering never-leaves closes learning input for the interval it
+		// covers, the same way the learning switch does, and leaving it reopens
+		// that input only when the switch is on too.
+		return s.stateLearningInterval(ctx, tx, platform, account, chat,
+			chatLearns(learn, previous), chatLearns(learn, scope))
+	})
+}
+
+// SetSourceLearn turns learning on or off for every chat of a source. The
+// per-chat switch still applies.
+func (s *Store) SetSourceLearn(ctx context.Context, person, platform, account string, learn bool) error {
+	if !validName(person) || !validName(platform) || !validName(account) {
+		return ErrInvalid
+	}
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		var was bool
+		err := tx.QueryRowContext(ctx, "SELECT learn FROM messenger_source WHERE person=? AND platform=? AND account=?",
+			person, platform, account).Scan(&was)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
+		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET learn=? WHERE person=? AND platform=? AND account=?",
+			boolInt(learn), person, platform, account)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrNotFound
+		}
+		return s.stateLearningInterval(ctx, tx, platform, account, "", was, learn)
+	})
+}
+
+// SetLearningWatermark moves the source's learning floor and resets progress,
+// so the range the import states is read once. after makes the floor exclusive:
+// an import the person left learning off states its own last record as the
+// floor, and that record stays outside the learned range.
+func (s *Store) SetLearningWatermark(ctx context.Context, person, platform, account string, at time.Time, after bool) error {
+	if !validName(person) || !validName(platform) || !validName(account) || at.IsZero() {
+		return ErrInvalid
+	}
+	text := at.UTC().Format(time.RFC3339Nano)
+	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET learning_watermark=?,learn_after=? WHERE person=? AND platform=? AND account=?",
+			text, boolInt(after), person, platform, account)
+		if err != nil {
+			return err
+		}
+		if n, err := result.RowsAffected(); err != nil {
+			return err
+		} else if n == 0 {
+			return ErrNotFound
+		}
+		_, err = tx.ExecContext(ctx, `INSERT INTO messenger_learning_cursor(platform,account,through) VALUES(?,?,0)
+ON CONFLICT(platform,account) DO UPDATE SET through=0`, platform, account)
+		return err
 	})
 }
 
