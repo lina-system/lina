@@ -242,6 +242,7 @@ func TestMessengerImportConsentAndChatSwitch(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	drain(t, db)
 	finishVectors(t, db, v)
 	if f.calls != 0 || vectorCount(t, db) != 0 {
 		t.Fatal("unconsented messenger import sent")
@@ -249,14 +250,22 @@ func TestMessengerImportConsentAndChatSwitch(t *testing.T) {
 	if err = recall.SetImportConsent(t.Context(), db, "conversation", true); err != nil {
 		t.Fatal(err)
 	}
+	drain(t, db)
 	finishVectors(t, db, v)
-	if vectorCount(t, db) != 1 {
+	if vectorCount(t, db) != 0 {
+		t.Fatal("import consent granted source consent")
+	}
+	write(t, db, "INSERT INTO messenger_embed_source VALUES('owner','fixture','account')")
+	drain(t, db)
+	finishVectors(t, db, v)
+	if vectorCount(t, db) != 2 {
 		t.Fatal("consented messenger import not embedded")
 	}
 	write(t, db, "UPDATE messenger_chat SET embed=0")
 	if vectorCount(t, db) != 0 {
 		t.Fatal("disabled chat retained vector")
 	}
+	drain(t, db)
 	finishVectors(t, db, v)
 	if f.calls != 1 {
 		t.Fatal("disabled chat embedded")

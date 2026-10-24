@@ -43,13 +43,15 @@ type Scope struct {
 	Person string
 	// Agent selects the agent's own holder and conversation set. An empty agent
 	// sees only common items and records.
-	Agent        string
-	Kinds        []Kind
-	Conversation string
-	Since, Until time.Time
-	SpeakerKind  guard.SpeakerKind
-	Origin       string
-	CommonOnly   bool
+	Agent                           string
+	Kinds                           []Kind
+	Conversation                    string
+	Since, Until                    time.Time
+	SpeakerKind                     guard.SpeakerKind
+	Origin                          string
+	Platform, Account, Chat, Author string
+	PersonOnly                      bool
+	CommonOnly                      bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -130,6 +132,9 @@ func validScope(scope Scope) error {
 		return ErrInvalid
 	}
 	if !utf8.ValidString(scope.Agent) || strings.ContainsRune(scope.Agent, 0) {
+		return ErrInvalid
+	}
+	if scope.Origin != "messenger" && (scope.Platform != "" || scope.Account != "" || scope.Chat != "" || scope.Author != "" || scope.PersonOnly) {
 		return ErrInvalid
 	}
 	for _, kind := range scope.Kinds {
@@ -444,11 +449,26 @@ func holderCondition(scope Scope, alias string) string {
 // scopeWhere applies the scope before matching. It is shared by the published
 // index and the still-queued sources so both see the same filters.
 func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias string) ([]string, []any) {
-	where := []string{alias + ".person=?", holderCondition(scope, alias)}
+	var where []string
 	var args []any
-	args = append(args, scope.Person)
-	if !scope.CommonOnly && scope.Agent != "" {
-		args = append(args, scope.Agent)
+	if scope.Origin == "messenger" {
+		where = append(where, `EXISTS(SELECT 1 FROM messenger_record mr JOIN messenger_source ms ON ms.platform=mr.platform AND ms.account=mr.account JOIN retract_visible_event me ON me.id=mr.event WHERE mr.event=`+alias+`.source_id AND mr.state='live' AND ms.person=?)`)
+		args = append(args, scope.Person)
+		for _, filter := range []struct{ column, value string }{{"platform", scope.Platform}, {"account", scope.Account}, {"chat", scope.Chat}, {"author", scope.Author}} {
+			if filter.value != "" {
+				where = append(where, `EXISTS(SELECT 1 FROM messenger_record mf WHERE mf.event=`+alias+`.source_id AND mf.`+filter.column+`=?)`)
+				args = append(args, filter.value)
+			}
+		}
+		if scope.PersonOnly {
+			where = append(where, alias+".speaker_kind='person'")
+		}
+	} else {
+		where = append(where, alias+".person=?", holderCondition(scope, alias), "coalesce(json_extract("+alias+".origin,'$.kind'),'')<>'messenger'")
+		args = append(args, scope.Person)
+		if !scope.CommonOnly && scope.Agent != "" {
+			args = append(args, scope.Agent)
+		}
 	}
 	where = append(where, alias+".kind IN ("+placeholders(len(kinds))+")")
 	for _, kind := range kinds {
@@ -824,7 +844,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return body, nil
+		return maskDerived(body, spans)
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {

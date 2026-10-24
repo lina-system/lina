@@ -17,6 +17,9 @@ import (
 )
 
 func runEmbedding(args []string) int {
+	if len(args) > 0 && args[0] == "messenger" {
+		return runMessengerEmbedding(args[1:])
+	}
 	flags := flag.NewFlagSet("lina embedding", flag.ContinueOnError)
 	root := flags.String("state-root", "", "installed state root; stop Core before configuring")
 	endpoint := flags.String("endpoint", "", "full OpenAI-compatible embeddings URL; enables embedding of LINA conversations")

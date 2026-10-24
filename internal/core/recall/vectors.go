@@ -69,6 +69,7 @@ type embeddingDocument struct {
 	sequence, id             int64
 	kind, source, hash, text string
 	external                 bool
+	window                   bool
 	spans                    []secrets.Span
 }
 
@@ -129,6 +130,10 @@ func (v *Vectors) DrainBatch(ctx context.Context) (int, error) {
 			if eligible == 0 {
 				continue
 			}
+			if d.kind == "summary" && strings.HasPrefix(d.source, "messenger-window:") {
+				d.window = true
+				continue
+			}
 			src, err := readSource(ctx, tx, d.kind, d.source)
 			if errors.Is(err, sql.ErrNoRows) {
 				continue
@@ -168,7 +173,7 @@ func (v *Vectors) DrainBatch(ctx context.Context) (int, error) {
 			if err != nil || current != generation {
 				return err
 			}
-			_, err = tx.ExecContext(ctx, "UPDATE search_index_config SET ready=1 WHERE name='recall' AND NOT EXISTS(SELECT 1 FROM recall_embed_pending) AND NOT EXISTS(SELECT 1 FROM recall_pending)")
+			_, err = tx.ExecContext(ctx, "UPDATE search_index_config SET ready=1 WHERE name='recall' AND NOT EXISTS(SELECT 1 FROM recall_embed_pending) AND NOT EXISTS(SELECT 1 FROM recall_pending) AND NOT EXISTS(SELECT 1 FROM messenger_window_pending)")
 			return err
 		})
 		return 0, err
@@ -179,7 +184,9 @@ func (v *Vectors) DrainBatch(ctx context.Context) (int, error) {
 	var skipped []embeddingDocument
 	var failures error
 	for _, d := range batch {
-		if d.external {
+		if d.window {
+			d.text, err = windowText(ctx, v.db, v.readEvent, d.source)
+		} else if d.external {
 			if v.readEvent == nil {
 				failures = errors.Join(failures, ErrBytesUnavailable)
 				continue
@@ -352,9 +359,17 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 		where = append(where, "("+older+")=0")
 		args = append(args, olderArgs...)
 	}
-	prefix += `, candidates AS MATERIALIZED (SELECT d.*,vec_distance_cosine(v.embedding,?) AS distance FROM recall_embed_eligible d JOIN recall_vec v ON v.rowid=d.id WHERE ` + strings.Join(where, " AND ") + `), ` + lineageCTE(containsKind(kindsOf(scope), Event)) + `
- unique_docs AS (SELECT c.*,row_number() OVER(PARTITION BY CASE WHEN kind='event' THEN conversation||':'||text_hash ELSE kind||':'||source_id END ORDER BY julianday(occurred_at),source_id) AS twin FROM candidates c` + lineageFilter(containsKind(kindsOf(scope), Event)) + `) SELECT kind,source_id FROM unique_docs WHERE twin=1 ORDER BY distance,julianday(occurred_at) DESC,source_id LIMIT ?`
-	args = append(append(append(prefixArgs, vectorBytes(vectors[0])), args...), VectorCandidates)
+	candidateSQL := `SELECT d.*,vec_distance_cosine(v.embedding,?) AS distance FROM recall_embed_eligible d JOIN recall_vec v ON v.rowid=d.id WHERE ` + strings.Join(where, " AND ")
+	candidateArgs := append([]any{vectorBytes(vectors[0])}, args...)
+	if scope.Origin == "messenger" && containsKind(kindsOf(scope), Event) {
+		// A window is navigation: rank its in-scope records, never summary text.
+		candidateSQL += ` UNION ALL SELECT d.*,vec_distance_cosine(v.embedding,?) AS distance FROM messenger_window w JOIN recall_embed_eligible wd ON wd.kind='summary' AND wd.source_id=w.id JOIN recall_vec v ON v.rowid=wd.id JOIN cite c ON c.view_kind='summary' AND c.view_id=w.id AND c.dropped_revision IS NULL JOIN recall_doc d ON d.kind='event' AND d.source_id=c.target_id WHERE ` + strings.Join(where, " AND ")
+		candidateArgs = append(candidateArgs, vectorBytes(vectors[0]))
+		candidateArgs = append(candidateArgs, args...)
+	}
+	prefix += `, candidates AS MATERIALIZED (` + candidateSQL + `), ` + lineageCTE(containsKind(kindsOf(scope), Event)) + `
+ unique_docs AS (SELECT c.*,row_number() OVER(PARTITION BY CASE WHEN kind='event' THEN conversation||':'||text_hash ELSE kind||':'||source_id END ORDER BY distance,julianday(occurred_at),source_id) AS twin FROM candidates c` + lineageFilter(containsKind(kindsOf(scope), Event)) + `) SELECT kind,source_id FROM unique_docs WHERE twin=1 ORDER BY distance,julianday(occurred_at) DESC,source_id LIMIT ?`
+	args = append(append(prefixArgs, candidateArgs...), VectorCandidates)
 	var ids []string
 	err = v.db.Read(ctx, func(tx *canon.Tx) error {
 		current, ready, err := v.generation(ctx, tx)

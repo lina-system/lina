@@ -463,6 +463,8 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 			capabilities := adapter.Capabilities()
 			page.Coverage = &ReadCoverage{HistoryDepth: capabilities.HistoryDepth, CursorSurvivesRestart: capabilities.CursorKind != "none"}
 		}
+		page.Coverage.Interval = s.intervalOf(source)
+		page.Coverage.ReadWindow = adapter.Capabilities().ReadWindow
 		outcome, err := s.admitPage(ctx, source, chat.Chat, cursor, page)
 		result.Added += outcome.Added
 		result.Updated += outcome.Updated

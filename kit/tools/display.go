@@ -29,6 +29,10 @@ func DisplayName(name string) string {
 		return "Saving memory"
 	case "recall_person":
 		return "Recalling context"
+	case "messenger_chats":
+		return "Read messenger chats"
+	case "recall":
+		return "Recall evidence"
 	case "expand":
 		return "Reading context"
 	case "present_result", "present_surface":

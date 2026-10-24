@@ -104,3 +104,29 @@ Reference: the repository's design and #1040 measurements were read. The supplie
 Hermes source directories were unavailable; this is an implementation of LINA's
 contract, not a claim to reproduce unseen upstream embedding behavior. Private
 parity/model-comparison measurements are still required before closing #874.
+
+## Messenger recall
+
+Origin `messenger` selects current visible messenger records by their source's
+person, rather than an agent holder or the presence of a person-authored message.
+Platform, account, chat, author and person-only filters apply before ranking.
+Every other origin excludes messenger documents, including LINA's own writes.
+The live tools return the same source/chat/items/coverage/cursor envelope;
+`MessengerExpand` rechecks its anchor and removal epoch on each page.
+
+Windows use the shared index's summary navigation kind, an opaque
+`messenger-window:` identity and `covers` citations. They have no `sum_node`
+body and no FTS postings. The text drain builds up to 120 records of one queued
+chat per batch, groups at most ten with gaps no greater than five minutes, and
+retains only membership and a derived-text hash. A durable sequence fences
+admission, edits, removal and consent changes during material reads. The vector
+worker resolves each window's masked member text and applies the source, chat,
+import and sensitivity consent checks through its citations. Window vectors
+rank their permitted event members through the existing fusion entry.
+
+`messenger_embed_source` records source consent; the default-on chat switches
+never grant source consent. `messenger.Store.SetEmbedding` and the explicit
+`lina embedding messenger` command are the control path. They are not model
+tools. Revocation removes derived vectors in the same writer transaction.
+Coverage stores the adapter cadence and read window with each complete read.
+Older coverage without those values stays stale instead of claiming freshness.

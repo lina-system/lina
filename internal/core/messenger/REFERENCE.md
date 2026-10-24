@@ -147,3 +147,12 @@ change ledger attribution or create an automatic person merge.
 Live events and history pages serialize revision planning and commit through a
 cancellable, per-source admission lock. Platform requests happen outside that
 lock, so waiting for a provider does not hold up live admission.
+
+## Search and embedding consent
+
+Core binds the person's identity to `recall`, `expand` and `messenger_chats`.
+The shared recall package owns filtering, evidence pages, coverage and message
+windows. Source embedding is off until the person calls `SetEmbedding`, exposed
+by `lina embedding messenger`; each chat's switch can further exclude it.
+Neither sync nor a model tool grants that consent. Window work is queued in the
+same transaction as admission, edits, removal and chat embedding changes.
