@@ -137,7 +137,7 @@ func TestClaimCapacityReturnsRecoveryAllowances(t *testing.T) {
 				revisionReport(t, e, "a", Merge, Observation{Status: OutcomeConflict})
 			case ContinueWorker:
 				revisionReport(t, e, "a", Assign, Observation{Status: OutcomeNoReceipt, Handle: "thread", EffectsSettled: true})
-			case Assign, InspectPR, Merge, RunQA, RepairQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion:
+			case Assign, InspectPR, Merge, RunQA, RepairQA, Deploy, Verify, Observe, Decide, PlanGoal, CheckCriterion, ReadSource:
 				t.Fatal("unexpected fixture")
 			}
 			old := revisionAction(t, e, "a", kind)

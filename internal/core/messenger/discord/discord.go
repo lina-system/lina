@@ -136,7 +136,7 @@ func (a *Adapter) personID(ctx context.Context) string {
 
 // FetchAttachment needs the platform's signed CDN location, which this
 // increment does not store. Attachment metadata still reaches the record.
-func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _ string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _, _ string) (io.ReadCloser, error) {
 	if id != a.sourceID() {
 		return nil, messenger.ErrInvalid
 	}

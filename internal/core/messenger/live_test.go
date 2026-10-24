@@ -189,7 +189,7 @@ func (a *liveAdapter) Live(ctx context.Context, _ messenger.SourceID, deliver fu
 	}
 }
 
-func (a *liveAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+func (a *liveAdapter) FetchAttachment(context.Context, messenger.SourceID, string, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 
