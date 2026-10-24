@@ -748,9 +748,10 @@ person waits are recorded on the owning goal step in the journal before
 startup. Core's own card order, card fields and projected stage list are its oracle — the
 stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
-languages and glyph modes. A check whose input the build does not publish yet is
-reported as missing and never as a pass: E6 and E7 need the opened 일 view of
-#770, and E11 to E14 the scheduling passes of #772 and #773. E4 and E8 to E9
+languages and glyph modes. A check whose input a recording does not supply is
+reported as missing and never as a pass. E6 and E7 run separately in
+`TestM3WorkPanelStages`; E11 to E14 need scheduling-pass recordings from #772
+and #773. E4 and E8 to E9
 also run in `TestM3WorkPanelEventLatency`: 50 live corpus graphs remain in
 progress while 50 of the fan-out graph’s 82 parallel steps land. Each stub
 worker writes a result before Core accepts its observation. Eight PTYs observe
