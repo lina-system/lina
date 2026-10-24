@@ -155,7 +155,7 @@ func TestReplyLeavesMultipleTargetsUnresolved(t *testing.T) {
 	}
 }
 
-func TestCreatedReceiptBecomesNextFocus(t *testing.T) {
+func TestCreatedReceiptsLeaveMultipleTargetsUnresolved(t *testing.T) {
 	r := controlRuntime(t)
 	now := time.Now().UTC()
 	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
@@ -207,8 +207,60 @@ func TestCreatedReceiptBecomesNextFocus(t *testing.T) {
 	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
 		t.Fatal(err)
 	}
-	if decision.Target.ID != "scheduled-1" {
-		t.Fatalf("next input missed the created task: %+v", decision)
+	if decision.Target.Class != "none" || decision.FocusFresh {
+		t.Fatalf("multiple created tasks became one focus: %+v", decision)
+	}
+}
+
+func TestInputChoicesProjectOneFocus(t *testing.T) {
+	a := binding.Target{Class: "existing", ID: "focus-a", Kind: "task"}
+	b := binding.Target{Class: "existing", ID: "focus-b", Kind: "task"}
+	none := binding.Target{Class: "none"}
+	for _, tc := range []struct {
+		name    string
+		choices []binding.Choice
+		want    binding.Target
+	}{
+		{"single", []binding.Choice{{Target: a}}, a},
+		{"same item", []binding.Choice{{Target: a}, {Target: a}}, a},
+		{"distinct", []binding.Choice{{Target: a}, {Target: b}}, none},
+		{"reversed", []binding.Choice{{Target: b}, {Target: a}}, none},
+		{"single created", []binding.Choice{{Target: binding.Target{Class: "new", Kind: "task"}, CreatedID: a.ID}}, a},
+		{"created and existing same item", []binding.Choice{{Target: binding.Target{Class: "new", Kind: "task"}, CreatedID: a.ID}, {Target: a}}, a},
+		{"tie then settled", []binding.Choice{{Target: a, Tied: []binding.Target{a, b}}, {Target: a}}, none},
+		{"settled then tie", []binding.Choice{{Target: a}, {Target: a, Tied: []binding.Target{a, b}}}, none},
+		{"question then settled", []binding.Choice{{Target: a, Question: "pending"}, {Target: a}}, none},
+		{"cancelled then settled", []binding.Choice{{Target: b, Cancelled: true}, {Target: a}}, none},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			r := controlRuntime(t)
+			input := questionPersonInput(t, r, "focus-parent", "Check both tasks")
+			for n := range tc.choices {
+				tc.choices[n].Request = n
+				tc.choices[n].Quote = input.Body.Text()
+			}
+			if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+				return appendInputChoices(t.Context(), tx, input, "focus-choices", tc.choices)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			next := questionPersonInput(t, r, "focus-next", "stop it")
+			var state binding.State
+			if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+				var err error
+				state, err = r.bindingState(t.Context(), tx, next)
+				return err
+			}); err != nil {
+				t.Fatal(err)
+			}
+			if state.Focus != tc.want {
+				t.Fatalf("focus = %+v, want %+v", state.Focus, tc.want)
+			}
+			decision := binding.Resolve(state, binding.Input{Text: "stop it"})
+			if decision.Target != tc.want || decision.FocusFresh != (tc.want.Class == "existing") {
+				t.Fatalf("follow-up = %+v, want %+v", decision, tc.want)
+			}
+		})
 	}
 }
 
@@ -654,6 +706,15 @@ func TestReplyToReadTieStaysUnresolved(t *testing.T) {
 }
 
 func TestTiedChoiceClearsAdmissionFocus(t *testing.T) {
+	testChoiceClearsAdmissionFocus(t, false)
+}
+
+func TestMultiTargetChoiceClearsAdmissionFocus(t *testing.T) {
+	testChoiceClearsAdmissionFocus(t, true)
+}
+
+func testChoiceClearsAdmissionFocus(t *testing.T, split bool) {
+	t.Helper()
 	r, _ := turnRuntime(t)
 	reserve := t.TempDir()
 	first := work.Task{ID: "focus-a", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Alpha", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
@@ -710,13 +771,21 @@ func TestTiedChoiceClearsAdmissionFocus(t *testing.T) {
 	tools := modelBindingTools(t, r, parent)
 	a := binding.Target{Class: "existing", Kind: "task", ID: first.ID}
 	b := binding.Target{Class: "existing", Kind: "task", ID: second.ID}
-	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{Quote: text, Target: a, Tied: []binding.Target{a, b}, Action: "read"}}}); got.Code != loop.OK {
+	choices := []binding.Choice{{Quote: text, Target: a, Tied: []binding.Target{a, b}, Action: "read"}}
+	if split {
+		choices = []binding.Choice{{Quote: "check", Target: b}, {Request: 1, Quote: "its progress", Target: a}}
+	}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: choices}); got.Code != loop.OK {
 		t.Fatal(got)
 	}
 	now := time.Now().UTC()
+	surface := ledger.Surface{Kind: "tui", ReplyTo: parent.ID}
+	if split {
+		surface.ReplyTo = ""
+	}
 	reply, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
 		ID: "focus-stop", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
-		Surface: ledger.Surface{Kind: "tui", ReplyTo: parent.ID}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "stop it",
+		Surface: surface, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "stop it",
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -730,12 +799,16 @@ func TestTiedChoiceClearsAdmissionFocus(t *testing.T) {
 		t.Fatal(err)
 	}
 	if !decision.Unresolved || decision.Rule == "reply-or-card" || decision.FocusFresh || decision.Target.ID == first.ID || decision.Target.ID == second.ID {
-		t.Fatalf("tied choice kept admission focus: %+v", decision)
+		t.Errorf("ambiguous choices kept admission focus: %+v", decision)
 	}
 	replyTools := modelBindingTools(t, r, reply)
 	stopped := questionCall(t, replyTools, "worker_interrupt", "stop-focus", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
 	if stopped.Code != loop.Denied || !strings.Contains(string(stopped.Output), "input_target_pending") || probe.interrupts != 0 {
 		t.Fatalf("reply interrupted A without a target question: %+v interrupts=%d", stopped, probe.interrupts)
+	}
+	pending, err := waiting.NewConversationQuestions(r.db).Pending(t.Context(), r.person, r.agent)
+	if err != nil || len(pending) != 1 || pending[0].Binding == nil || len(pending[0].Choices) != 2 {
+		t.Fatalf("missing target question: %+v %v", pending, err)
 	}
 }
 
