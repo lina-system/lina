@@ -143,11 +143,14 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 	// Long replies scroll their beginning out of view. Require a substantial
 	// suffix of the painted answer, not a topic already present in the request.
 	// The committed body is Markdown source; the frame shows list markers and
-	// link labels from the conversation renderer.
-	painted := alphaQuestionText(screen)
+	// link labels from the conversation renderer. Normalize Markdown only on
+	// source text, then ignore wrapping on both sides. Reinterpreting painted
+	// punctuation as Markdown loses literal operators and code identifiers.
+	compact := func(text string) string { return strings.Join(strings.Fields(text), "") }
+	painted := compact(screen)
 	tokens := design.Dark()
 	for _, bullet := range []string{tokens.GlyphUnicodeAction, tokens.GlyphAsciiAction} {
-		runes := []rune(alphaQuestionText(ui.VisibleMarkdown(reply, bullet)))
+		runes := []rune(compact(ui.VisibleMarkdown(reply, bullet)))
 		if len(runes) == 0 {
 			continue
 		}
@@ -155,7 +158,7 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 			runes = runes[len(runes)-64:]
 		}
 		suffix := string(runes)
-		if strings.Contains(alphaQuestionText(ui.VisibleMarkdown(request, bullet)), suffix) {
+		if strings.Contains(compact(ui.VisibleMarkdown(request, bullet)), suffix) {
 			continue
 		}
 		if strings.Contains(painted, suffix) {
@@ -245,6 +248,23 @@ func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
 	legacyLinked := "자세한 내용은 [문서](https://example.com/water)를 보세요."
 	if !alphaRecoveredReplyVisible(request, legacyLinked, "자세한 내용은 문서를 보세요.\n"+live) {
 		t.Error("a rendered link label was rejected")
+	}
+	for _, tc := range []struct {
+		name, request, reply, screen string
+		want                         bool
+	}{
+		{"literal-result-not-echo", "결과는 ab입니다.", "결과는 `a_b`입니다.", "결과는 a_b입니다.", true},
+		{"missing-code-underscore", request, "결과는 `a_b`입니다.", "결과는 ab입니다.", false},
+		{"missing-multiplication", request, "계산은 3 * 2 = 6입니다.", "계산은 3 2 = 6입니다.", false},
+		{"missing-code-hash", request, "결과는 `#42`입니다.", "결과는 42입니다.", false},
+		{"wrapped-comparison", request, "비교는 7 > 4입니다.", "비교는 7\n> 4입니다.", true},
+		{"formatted-source", request, "## 결과\n\n> **계산**은 `3 * 2`입니다.", "결과\n계산은 3 * 2입니다.", true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := alphaRecoveredReplyVisible(tc.request, tc.reply, tc.screen+"\n"+live); got != tc.want {
+				t.Fatalf("result visible=%t, want %t", got, tc.want)
+			}
+		})
 	}
 }
 

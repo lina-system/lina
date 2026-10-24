@@ -928,7 +928,10 @@ delivered result and an independently verified artifact. That result is visible
 when a suffix of the committed reply, after the conversation Markdown render,
 is on the frame and is not only the request. List markers use the surface
 action glyph, and a link contributes its label, so a bulleted ending or a
-Markdown link still counts. Card checks hold the worker
+Markdown link still counts. Comparison ignores whitespace from wrapping after
+rendering the source, but preserves literal punctuation in the rendered reply
+and frame, including code identifiers and operators at wrapped line boundaries.
+Card checks hold the worker
 at an unanswered request and wait for its name, documented elapsed time and current
 activity. Recorder regressions cover the overlay, split redraw and delayed progress.
 
