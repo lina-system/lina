@@ -72,19 +72,25 @@ Sion's and Arin's are unchanged.
 `TestM4StarterLayersAreShippedRevisions` checks the structure of every pair:
 both versioned revision files are present and usable, each layer has one title
 heading, the core keeps at least four rule paragraphs and the default voice at
-least four examples. `TestM4StarterIdentityAndVoice` checks the name in both
-titles, the character marker and the voice's address and register markers.
-`TestM4StarterLayersHaveNoTopicSwitchOrClosing` checks both layers of every
-preset for the two prohibitions. `TestM4ChecksCatchRegressions` proves each
-prohibition check fails on a violation and accepts a legitimate rewrite,
+least four examples. `TestM4StarterIdentityAndVoice` checks the markers the issue
+fixes one token at a time: each name, each character word, each address term,
+register word and speech ending. Whitespace, punctuation and symbols are stripped
+from the layer and from the token before the comparison, so `~야/~어/~지`,
+`~야, ~어, ~지` and `야 어 지` are the same three markers and a layer may reword,
+reorder or reseparate them. `TestM4StarterLayersHaveNoTopicSwitchOrClosing`
+checks both layers of every preset for the two prohibitions, matching the topic,
+register and emptiness tokens the same way, so a rewrite of a prohibition passes
+and an instruction to switch or to close fails. `TestM4ChecksCatchRegressions`
+proves each check fails on a violation and accepts a legitimate rewrite,
 including a layer that states the prohibition itself ("do not switch register",
 "do not end with nothing to decide").
 
-None of these requires a particular phrase. Rewording a rule, an example or the
-line about exchanges between agents keeps the suite green, and a layer that drops
-to a title or loses a revision file fails. The meaning of the text, including
-Arin's correction example staying in her register, is content review and the #590
-replay's subject, not a text assertion.
+None of these requires a phrase. The limit of a token check is stated rather than
+hidden: a single-syllable marker such as `지` matches wherever that syllable
+occurs, so the check catches a layer that drops the marker entirely, not a list
+edit that removes one ending while the syllable survives elsewhere. The meaning
+of the text, including Arin's correction example staying in her register, is
+content review and the #590 replay's subject, not a text assertion.
 
 The checks do not pin the judgment-rule wording: the design does not ship those
 changes, and a required-phrase list fails a legitimate rewrite. A rewrite of a
