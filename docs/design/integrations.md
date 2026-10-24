@@ -804,7 +804,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - It offers read operations only. Write methods and reads that change read state have no route in it.
 - It runs in the OS sandbox with network on, and writes only in its data directory ([filesystem.md](filesystem.md#state-root-and-layout)).
 - The person signs in through the add-on's own flow, such as KakaoTalk's passcode or Discord's QR code, typing into it through the app or the TUI. LINA relays and keeps nothing. The session stays in the add-on's data directory, outside backups; after a restore or on a new main the person signs in again.
-- One process runs for each account and stays running, so the platform sees one session.
+- One process runs for each account and stays running, so the platform sees one session. Core starts these children after binding its client socket, which their sandbox hides. Each read carries the source platform and account; a session refuses any other source. Core retries failed sources on their schedule, preserving the committed cursor, and bounds consecutive add-on restarts. A malformed or oversized response refuses the batch with "upstream changed".
 - A pinned version changes only through a reviewed update that reads upstream's changes to the platforms LINA uses.
 - When the add-on or its runtime is missing or failing, only its sources fail.
 
