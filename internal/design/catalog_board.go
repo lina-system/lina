@@ -24,6 +24,8 @@ func init() {
 		"work.pause":      {"Pause", "일시정지"},
 		"work.stop":       {"Stop", "중단"},
 		"work.limit":      {"Limit %d", "한도 %d"},
+		// The sheet and footer name the action; the panel title fills the value.
+		"work.limit_set": {"Set limit", "한도 정하기"},
 		// The card's second row asks before a stop.
 		"work.stop_confirm": {"Stop? Enter to confirm", "중단할까요? Enter 확인"},
 

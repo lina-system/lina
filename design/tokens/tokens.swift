@@ -16,6 +16,22 @@ public enum LinaTokens {
         public static let muted: NSColor = dynamic(light: 0x626978, dark: 0xA6ADBD, highContrast: 0xDDDDDD)
         public static let accent: NSColor = dynamic(light: 0x2F4BDB, dark: 0x5685FF, highContrast: 0x6795FF)
         public static let line: NSColor = dynamic(light: 0xCFD3DE, dark: 0x383E4C, highContrast: 0xFFFFFF)
+        public static let onAccent: NSColor = dynamic(light: 0xFFFFFF, dark: 0x000000, highContrast: 0x000000)
+        public static let success: NSColor = dynamic(light: 0x17633D, dark: 0x8FE0B4, highContrast: 0x8FE0B4)
+        public static let warning: NSColor = dynamic(light: 0x805000, dark: 0xF6D58C, highContrast: 0xF6D58C)
+        public static let error: NSColor = dynamic(light: 0xAD2940, dark: 0xFFACB8, highContrast: 0xFFACB8)
+        public static let unknown: NSColor = dynamic(light: 0x626978, dark: 0xDDDDDD, highContrast: 0xDDDDDD)
+        public static let diffAdded: NSColor = dynamic(light: 0x17633D, dark: 0x8FE0B4, highContrast: 0x8FE0B4)
+        public static let diffRemoved: NSColor = dynamic(light: 0xAD2940, dark: 0xFFACB8, highContrast: 0xFFACB8)
+        public static let diffAddedBackground: NSColor = dynamic(light: 0xE2F1E8, dark: 0x15281F, highContrast: 0x000000)
+        public static let diffRemovedBackground: NSColor = dynamic(light: 0xFCE7EC, dark: 0x301B24, highContrast: 0x000000)
+        public static let focus: NSColor = dynamic(light: 0x2F4BDB, dark: 0x5685FF, highContrast: 0x6795FF)
+        public static let border: NSColor = dynamic(light: 0x626978, dark: 0xA6ADBD, highContrast: 0xDDDDDD)
+        public static let selection: NSColor = dynamic(light: 0x838A9B, dark: 0x626D82, highContrast: 0x626D82)
+        public static let onSelection: NSColor = dynamic(light: 0x20232D, dark: 0xF4F5F9, highContrast: 0xFFFFFF)
+        public static let working: NSColor = dynamic(light: 0x2F4BDB, dark: 0x5685FF, highContrast: 0x6795FF)
+        public static let waiting: NSColor = dynamic(light: 0x2F4BDB, dark: 0x5685FF, highContrast: 0x6795FF)
+        public static let disabled: NSColor = dynamic(light: 0x626978, dark: 0xA6ADBD, highContrast: 0xDDDDDD)
 
         private static func dynamic(light: UInt32, dark: UInt32, highContrast: UInt32) -> NSColor {
             NSColor(name: nil) { appearance in
@@ -37,6 +53,7 @@ public enum LinaTokens {
         public static let gutter: CGFloat = 24
         public static let section: CGFloat = 24
         public static let page: CGFloat = 32
+        public static let compact: CGFloat = 4
     }
 
     public enum Radius {

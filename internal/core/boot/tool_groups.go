@@ -134,6 +134,13 @@ func prepareToolGroups(all []provider.ToolDecl, method agents.WorkMethodSettings
 			return "", err
 		}
 		return binding.Validate(nested)
+	}, Gate: func(call provider.ToolCall) string {
+		// The nested work call keeps its binding dependency through the bridge.
+		nested, binding, err := decodeCall(call)
+		if err != nil || binding.Gate == nil {
+			return ""
+		}
+		return binding.Gate(nested)
 	}, Execute: func(ctx context.Context, call provider.ToolCall) loop.Result {
 		nested, binding, err := decodeCall(call)
 		if err != nil {
