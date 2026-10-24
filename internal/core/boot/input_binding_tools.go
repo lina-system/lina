@@ -219,8 +219,13 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	case "propose_candidate":
 		title = str("title")
 		kind = "todo"
-	case "revise_code_goal":
-		id = str("goal_id")
+	case "revise_code_goal", "submit_step_graph", "read_step_graph":
+		// The work engine stores the project record as goal: plus the goal id.
+		// Binding candidates use that record id.
+		goalID := str("goal_id")
+		if goalID != "" {
+			id = "goal:" + goalID
+		}
 	case "prepare_work":
 		id = str("task_id")
 		title = str("title")

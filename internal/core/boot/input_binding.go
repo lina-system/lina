@@ -114,7 +114,7 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 	}
 	// The person's work queue is shared by their agents. Record projections are
 	// refreshed by the records writer before publication becomes visible.
-	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.title,t.kind,t.state,coalesce(a.last_activity,''),coalesce(v.fields,'{}') FROM records_text t LEFT JOIN records_activity a ON a.id=t.id LEFT JOIN records_todo v ON v.id=t.id WHERE t.person=? AND t.kind IN ('initiative','project','todo')`, input.PersonID)
+	rows, err := tx.QueryContext(ctx, `SELECT t.id,t.title,t.kind,t.state,coalesce(a.last_activity,''),coalesce(v.fields,'{}') FROM records_text t LEFT JOIN records_activity a ON a.id=t.id LEFT JOIN records_todo v ON v.id=t.id WHERE t.person=? AND t.kind IN ('initiative','project','todo','goal')`, input.PersonID)
 	if err != nil {
 		return s, err
 	}

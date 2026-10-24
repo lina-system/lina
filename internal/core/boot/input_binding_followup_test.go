@@ -15,6 +15,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
+	goaleng "github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -454,5 +455,70 @@ func TestResumedChannelFollowRecoversReceipt(t *testing.T) {
 	run, err := view.background.service.Get(t.Context(), second.ID)
 	if err != nil || len(run.FollowUps) != 1 {
 		t.Fatalf("follow-up missing: notes=%d err=%v", len(run.FollowUps), err)
+	}
+}
+
+func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	input := questionPersonInput(t, r, "goal-choice", "Correct the chosen project.")
+	tools := modelBindingTools(t, r, input)
+	admit := func(id, outcome string) (goalID, recordID, revision string) {
+		t.Helper()
+		got := questionCall(t, tools, "dispatch_code_goal", id, map[string]any{
+			"outcome": outcome, "done": "checks pass",
+			"scope":             map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+			"criteria":          []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+			"no_service_reason": "library",
+			"tasks":             []any{},
+		})
+		if got.Code != loop.OK {
+			t.Fatalf("admit %s: %+v", id, got)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(got.Output, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields["goal_id"], fields["record_id"], fields["revision"]
+	}
+	chosenID, chosenRecord, chosenRevision := admit("goal-a", "chosen outcome")
+	otherID, _, otherRevision := admit("goal-b", "other outcome")
+	if chosenRecord != "goal:"+chosenID {
+		t.Fatalf("record id = %s", chosenRecord)
+	}
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:goal-choice", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: chosenRecord, Kind: "goal"}}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	revised := questionCall(t, tools, "revise_code_goal", "revise-other", map[string]any{
+		"goal_id": otherID, "revision": otherRevision,
+		"outcome": "hijacked outcome", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if revised.Code != loop.Denied || !strings.Contains(string(revised.Output), "input_target_pending") {
+		t.Fatalf("revise_code_goal bypassed the chosen project: %+v", revised)
+	}
+	snap, err := r.workEngine.engine.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, g := range snap.Goals {
+		if g.ID == otherID && g.Summary != "other outcome" {
+			t.Fatalf("other goal changed: %+v", g)
+		}
+	}
+	kept := questionCall(t, tools, "revise_code_goal", "revise-chosen", map[string]any{
+		"goal_id": chosenID, "revision": chosenRevision,
+		"outcome": "corrected chosen outcome", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if kept.Code != loop.OK {
+		t.Fatalf("chosen goal stayed blocked: %+v", kept)
 	}
 }
