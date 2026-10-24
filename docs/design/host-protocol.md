@@ -209,7 +209,7 @@ body preservation, rendered text, provenance and recorded counts.
 
 The native result service is not a client wire implementation. Client body and
 save schemas, client result handlers and result-type negotiation remain required
-by [#419](https://github.com/thisisjun786/lina/issues/419). A native service or
+by [#419](https://github.com/lina-system/lina/issues/419). A native service or
 codec run cannot establish those client scenarios or their supported rows.
 
 ## Background result reads
@@ -695,6 +695,21 @@ using the app's registered localhost callback at port 8400. State, issuer,
 callback address and expiry are checked in Core. Completion reports connection
 status, including unsupported tenant consent. Source records and coverage use
 the existing messenger store, independently of the client lifetime.
+
+### Webex source settings
+
+The owner-only `webex` 1.0 capability provides `webex_request` and
+`webex_result`. `configure` takes `platform: "webex"`, `client_id` and
+`client_secret`; `sign_in` takes `platform: "webex"`; `disconnect` takes the
+platform account ID. `list` returns source account IDs, states and sanitized
+failure causes. Every operation requires the owner's eligible decider at the
+current epoch. Secret values are input-only and never appear in results.
+
+Sign-in uses `sign_in_relay` on the same connection. Core retains PKCE, state
+and the ten-minute attempt; another connection cannot finish or replace it.
+`cannot_listen` selects the registered port 8400 and accepts a pasted callback
+URL. Completion reports `connected` and the verified platform account ID.
+The source reader continues independently of that client connection.
 
 ## Deferred
 

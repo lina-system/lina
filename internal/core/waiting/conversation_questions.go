@@ -49,6 +49,7 @@ type ConversationQuestions struct{ db Canon }
 func NewConversationQuestions(db Canon) *ConversationQuestions { return &ConversationQuestions{db} }
 
 func (q QuestionDraft) Valid() bool {
+	// Five is the question card limit. Target ties use the same cap.
 	if len(q.Choices) > 5 {
 		return false
 	}
