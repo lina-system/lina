@@ -36,7 +36,8 @@ The same identity seen in two chats or two sources is one identity. Every
 admission of a person's or an external participant's record observes the author
 inside the page's transaction (`messenger.Store.WithIdentities`); bots and
 platform notices are not observed. The person's own account (`Self`) is recorded
-so it is known, and is never linked as another person.
+so it is known, and is never linked as another person. A later observation that
+omits the mark does not change it.
 
 Core composes one identity store per conversation and gives it to every reader
 it starts: the messenger sync loop, the built-in Teams service and the built-in
@@ -59,7 +60,10 @@ identity at Core start (`Rematch`).
 
 1. Candidate records are the people records that list one of the identity's
    identifiers. More than one candidate is ambiguous (`shared_identifier`): a
-   family phone, a team mailbox, or a contact card listing two people's numbers.
+   family phone, a team mailbox, a contact card listing two people's numbers,
+   or a later identifier that belongs to a different record. Ambiguity is read
+   from every identifier the identity currently shows, so an earlier exact link
+   stops being usable while that conflict is open.
 2. An identity with an active exact or confirmed link to another record is
    ambiguous (`two_links`).
 3. An identifier another identity already showed is a move. Both platforms
@@ -102,14 +106,16 @@ that identity. `Correct` moves the identity to the right record, retracts what
 the old link produced and requeues that identity.
 
 `Merge` records both record ids, moves the links and the items of the first
-record to the second, and `UndoMerge` puts each back on the record it came from.
+record to the second, and `UndoMerge` puts each link and each item that still
+exists back on the record it came from. A forgotten item moves back still
+forgotten. A permanently deleted item stays gone, and neither blocks the undo.
 `Split` moves the identities the person chooses and the items their evidence
 produced. Item moves run through `memory.ReassignSubject` in the same
 transaction, so an item keeps its evidence, holder and scope.
 
 What a link produced is recorded in `identity_artifact` (memory items, and the
 kind reserved for people-record entries) and a citation of the link as external
-evidence counts too. Migration 79 adds `identity_repair`: pending item ids are written with the link change and requeue in canon. Delivery through the removal list follows commit; `Rematch` drains pending repairs before matching at startup and on scheduled passes. Delivery acknowledges already-hidden or deleted items without submitting a duplicate `Forget` transition. A failure remains pending and is returned to the caller; it is never reported as completed repair.
+evidence counts too. Migration 79 adds `identity_repair`: pending item ids are written with the link change and requeue in canon. Delivery through the removal list follows commit; `Rematch` drains pending repairs before matching at startup and on scheduled passes. A citing item hidden only because an ancestor was forgotten is still queued and retracted, so restoring that ancestor does not show it again. An item already retracted, or whose row is gone, is acknowledged without a duplicate `Forget`. A failure remains pending and is returned to the caller; it is never reported as completed repair.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction
@@ -136,8 +142,12 @@ inside the contact section is refused rather than guessed at.
 ## Evaluation
 
 `testdata/identity/synthetic.json` holds the hard cases; `lina identity-eval`
-runs it and prints the measures. `--private <dir>` runs the owner's labelled
-export and writes `counts.json` with counts and rates only. The files are
+runs it and prints the measures. The synthetic gate is no wrong usable link,
+every planted ambiguity, and every moved-identifier window. `--private <dir>` runs the owner's labelled export and
+writes `counts.json` with counts and rates only. Its `gate` is the owner-sample
+gate: the synthetic conditions plus at least 300 usable links. Each sender
+identity counts once, so repeated observations of one sender are one trial. A shorter sample
+records `gate` false and the command exits unsuccessfully. The files are
 `people.json` (the same shape as the set's `people`), `identities.json` (`SetIdentity`
 without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>"|"unknown"|"self"}`).
 

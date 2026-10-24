@@ -33,8 +33,9 @@ func (s *Store) queueRepairTx(ctx context.Context, tx *canon.Tx, link string, it
 }
 
 // recoverRepairs delivers committed intent before matching resumes. A crash
-// after Forget but before acknowledgment is safe: already-hidden targets are
-// acknowledged without submitting a second, invalid Forget transition.
+// after Forget but before acknowledgment is safe: an item that is already
+// retracted, or whose row is gone, is acknowledged without a second Forget.
+// An item that is still active is forgotten even when an ancestor hides it.
 func (s *Store) recoverRepairs(ctx context.Context) error {
 	s.repairMu.Lock()
 	defer s.repairMu.Unlock()
@@ -58,13 +59,17 @@ func (s *Store) recoverRepairs(ctx context.Context) error {
 		return err
 	}
 	for _, r := range pending {
-		var visible bool
+		var repairable bool
 		if err := s.db.Read(ctx, func(tx *canon.Tx) error {
-			return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM retract_visible_memory WHERE id=? AND person=?)", r.item, s.person).Scan(&visible)
+			return tx.QueryRowContext(ctx, `SELECT EXISTS(
+SELECT 1 FROM memory_item m
+WHERE m.id=? AND m.person=? AND m.state='active'
+AND NOT EXISTS(SELECT 1 FROM retract_target r WHERE r.kind='memory' AND r.id=m.id AND r.state<>'active'))`,
+				r.item, s.person).Scan(&repairable)
 		}); err != nil {
 			return err
 		}
-		if visible {
+		if repairable {
 			if s.removals == nil {
 				return ErrInvalid
 			}
