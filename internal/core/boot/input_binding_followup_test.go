@@ -619,6 +619,33 @@ func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
 	}
 }
 
+// A card action replies to the agent event that presented the card, not to a
+// person input. That reply has no binding row to inherit a tie from.
+func TestCardActionToolSkipsAgentReplyTie(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	card, err := r.journal().Admit(t.Context(), guard.EntryAgent, ledger.Input{
+		ID: "agent-card", AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Choose a time.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	press, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "card-press", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: card.ID, Card: "card-1"}, OccurredAt: now.Add(time.Second), RecordedAt: now.Add(time.Second), TimeQuality: "observed",
+		Body: "Dentist appointment\nchoose: {\"slot\":[\"wed-1500\"]}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := modelBindingTools(t, r, press)
+	saved := questionCall(t, tools, "write_record", "save-choice", map[string]any{"kind": "memo", "title": "Appointment choice", "note": "Wednesday at 15:00"})
+	if saved.Code != loop.OK {
+		t.Fatalf("card action tool failed: %+v", saved)
+	}
+}
+
 func TestReplyToReadTieStaysUnresolved(t *testing.T) {
 	r, _ := turnRuntime(t)
 	reserve := t.TempDir()
@@ -1381,6 +1408,144 @@ func TestFollowWorkKeepsChannelTaskReceipt(t *testing.T) {
 	messages, err := r.work.SteeringMessages(t.Context(), probe.Name()+":"+thread.ID)
 	if err != nil || len(messages) != 1 || len(messages[0].Source) == 0 {
 		t.Fatalf("task follow-up lost its channel receipt: %+v %v", messages, err)
+	}
+}
+
+func TestCreatedCodeGoalStaysOnSelectedProject(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	otherInput := questionPersonInput(t, r, "other-project", "Leave the other library alone.")
+	otherTools := modelBindingTools(t, r, otherInput)
+	input := questionPersonInput(t, r, "new-project", "Start the library work.")
+	tools := modelBindingTools(t, r, input)
+	admit := func(bindings map[string]loop.Tool, id, outcome string) (goalID, recordID, revision string) {
+		t.Helper()
+		got := questionCall(t, bindings, "dispatch_code_goal", id, map[string]any{
+			"outcome": outcome, "done": "checks pass",
+			"scope":             map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+			"criteria":          []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+			"no_service_reason": "library",
+			"tasks":             []any{},
+		})
+		if got.Code != loop.OK {
+			t.Fatalf("admit %s: %+v", id, got)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(got.Output, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields["goal_id"], fields["record_id"], fields["revision"]
+	}
+	otherID, _, otherRevision := admit(otherTools, "other-goal", "other library")
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:new-project", []binding.Choice{{
+		Quote:  input.Body.Text(),
+		Target: binding.Target{Class: "new", Kind: "project"},
+	}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	chosenID, chosenRecord, chosenRevision := admit(tools, "created-goal", "library work")
+	wantRecord, ok := goaleng.ProjectRecordID(chosenID)
+	if !ok || chosenRecord != wantRecord {
+		t.Fatalf("record id = %s", chosenRecord)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 1 || choices[0].CreatedID != chosenRecord || choices[0].Target.Kind != "project" {
+		t.Fatalf("created identity: %+v %v", choices, err)
+	}
+	read := questionCall(t, tools, "read_record", "read-created", map[string]any{"id": chosenRecord})
+	if read.Code != loop.OK {
+		t.Fatalf("created record stayed blocked: %+v", read)
+	}
+	revised := questionCall(t, tools, "revise_code_goal", "revise-created", map[string]any{
+		"goal_id": chosenID, "revision": chosenRevision,
+		"outcome": "corrected library work", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if revised.Code != loop.OK {
+		t.Fatalf("created goal stayed blocked: %+v", revised)
+	}
+	blocked := questionCall(t, tools, "revise_code_goal", "revise-other", map[string]any{
+		"goal_id": otherID, "revision": otherRevision,
+		"outcome": "hijacked library", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if blocked.Code != loop.Denied || !strings.Contains(string(blocked.Output), "input_target_pending") {
+		t.Fatalf("other goal was reachable: %+v", blocked)
+	}
+}
+
+func TestReadWorkProgressResolvesCodeGoalRecord(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	input := questionPersonInput(t, r, "progress-choice", "How is the library work going?")
+	tools := modelBindingTools(t, r, input)
+	admit := func(bindings map[string]loop.Tool, id, outcome string) (goalID, recordID string) {
+		t.Helper()
+		got := questionCall(t, bindings, "dispatch_code_goal", id, map[string]any{
+			"outcome": outcome, "done": "checks pass",
+			"scope":             map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+			"criteria":          []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+			"no_service_reason": "library",
+			"tasks":             []any{},
+		})
+		if got.Code != loop.OK {
+			t.Fatalf("admit %s: %+v", id, got)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(got.Output, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields["goal_id"], fields["record_id"]
+	}
+	chosenID, chosenRecord := admit(tools, "progress-goal", "library work")
+	wantRecord, ok := goaleng.ProjectRecordID(chosenID)
+	if !ok || chosenRecord != wantRecord {
+		t.Fatalf("record id = %s", chosenRecord)
+	}
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:progress-choice", []binding.Choice{{
+		Quote:  input.Body.Text(),
+		Target: binding.Target{Class: "existing", ID: chosenRecord, Kind: "project"},
+	}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	read := questionCall(t, tools, "read_work_progress", "record-progress", map[string]string{"id": chosenRecord})
+	if read.Code != loop.OK {
+		t.Fatalf("progress read denied: %+v", read)
+	}
+	var body struct {
+		ID       string `json:"id"`
+		Progress struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"progress"`
+	}
+	if err := json.Unmarshal(read.Output, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ID != chosenRecord {
+		t.Fatalf("response id = %s, want the record id used for the binding check", body.ID)
+	}
+	if body.Progress.State == "unknown" || body.Progress.Name != "library work" {
+		t.Fatalf("record id missed the progress line: %s", read.Output)
+	}
+	otherInput := questionPersonInput(t, r, "other-progress", "Leave the other library alone.")
+	otherTools := modelBindingTools(t, r, otherInput)
+	_, otherRecord := admit(otherTools, "other-progress-goal", "other library")
+	blocked := questionCall(t, tools, "read_work_progress", "other-record", map[string]string{"id": otherRecord})
+	if blocked.Code != loop.Denied || !strings.Contains(string(blocked.Output), "input_target_pending") {
+		t.Fatalf("other record bypassed the chosen project: %+v", blocked)
 	}
 }
 
