@@ -80,3 +80,12 @@ Read before implementing #452; no upstream code is copied.
   not claims of identical upstream behaviour. Esc retains LINA's turn interrupt.
 - **Unknown:** the issue author's reference revision, upstream terminal repeat
   handling, restoration and hint expiry. Upstream was read, not executed.
+
+### Binding chip and move list (#788)
+
+A person message whose binding left the fresh focus, returned to an aged focus
+or created an item shows one `binding.chip` row after its metadata. The row is
+truncated to the conversation width, so it never wraps. `Ctrl+B` asks Core for
+the other candidates, "new" and "none" and draws them over the conversation
+area; a digit, `n` or `0` moves the binding, and the chip row updates when Core
+republishes the message. A message bound to a fresh focus shows no chip.

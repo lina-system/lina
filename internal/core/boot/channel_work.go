@@ -165,6 +165,7 @@ func (c *channelRuntime) admitChannelInput(ctx context.Context, shared *conversa
 	answer := protocol.ItemDone{Text: &text, Speaker: &speaker, AgentID: &input.AgentID}
 	if input.SpeakerKind == guard.Person {
 		answer.PersonID = &input.PersonID
+		answer.Binding = shared.chipFor(ctx, input)
 	}
 	if err = shared.publish(ctx, protocol.KindItemDone, id, answer); err != nil {
 		return err
@@ -243,6 +244,12 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 	}); err != nil {
 		return err
 	}
+	chipLine := ""
+	if input, err := view.journal().Get(ctx, parent); err == nil {
+		if chip := view.chipFor(ctx, input); chip != nil && chip.Show {
+			chipLine = channelChipText(chip)
+		}
+	}
 	for _, id := range ids {
 		item, err := view.journal().Get(ctx, id)
 		if err != nil {
@@ -277,6 +284,11 @@ func (c *channelRuntime) channelReplies(ctx context.Context, view *conversationR
 		parts, err := shape(text, summary, link)
 		if err != nil {
 			return err
+		}
+		// One line under the reply names the item the person's message is
+		// about and how to reach the move list.
+		if chipLine != "" && id == ids[len(ids)-1] {
+			parts = append(parts, chipLine)
 		}
 		if err = c.store.Enqueue(ctx, channels.Message{ID: "channel-reply:" + id, Address: event.Address, Agent: in.agent, LedgerRef: id, ReplyTo: in.native, Parts: parts}); err != nil {
 			return err

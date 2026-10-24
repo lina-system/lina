@@ -26,6 +26,14 @@ const (
 	KindSubscribe            Kind = "subscribe"
 	KindOutputDelta          Kind = "output_delta"
 	KindItemDone             Kind = "item_done"
+	KindBindingGet           Kind = "binding_get"
+	KindBinding              Kind = "binding"
+	KindBindingMove          Kind = "binding_move"
+	KindBindingMoveResult    Kind = "binding_move_result"
+	KindBindingStatsGet      Kind = "binding_stats_get"
+	KindBindingStats         Kind = "binding_stats"
+	KindBindingExport        Kind = "binding_export"
+	KindBindingExportResult  Kind = "binding_export_result"
 	KindTurnState            Kind = "turn_state"
 	KindToolActivity         Kind = "tool_activity"
 	KindApprovalRequest      Kind = "approval_request"
@@ -267,6 +275,73 @@ type ApprovalRequest struct {
 type BackgroundNotice struct {
 	Stream *StreamMetadata `json:"stream,omitempty"`
 	Text   *string         `json:"text,omitempty"`
+}
+type Binding struct {
+	Candidates []BindingCandidate  `json:"candidates"`
+	Chip       BindingChip         `json:"chip"`
+	InputID    string              `json:"input_id"`
+	Moves      []BindingMoveResult `json:"moves"`
+	Target     BindingTarget       `json:"target"`
+}
+type BindingCandidate struct {
+	ID    string `json:"id"`
+	Kind  string `json:"kind"`
+	State string `json:"state"`
+	Title string `json:"title"`
+}
+type BindingChip struct {
+	InputID string        `json:"input_id"`
+	Name    string        `json:"name"`
+	Show    bool          `json:"show"`
+	Target  BindingTarget `json:"target"`
+}
+type BindingDeciderCount struct {
+	Bindings   json.Number `json:"bindings"`
+	Decider    string      `json:"decider"`
+	Moves      json.Number `json:"moves"`
+	PerHundred json.Number `json:"per_hundred"`
+}
+type BindingEffectOutcome struct {
+	Item    string  `json:"item"`
+	Kind    string  `json:"kind"`
+	Moved   bool    `json:"moved"`
+	Reason  *string `json:"reason,omitempty"`
+	Receipt *string `json:"receipt,omitempty"`
+}
+type BindingExport struct {
+}
+type BindingExportResult struct {
+	Cases     json.Number `json:"cases"`
+	Directory string      `json:"directory"`
+}
+type BindingGet struct {
+	InputID string `json:"input_id"`
+}
+type BindingMove struct {
+	InputID string        `json:"input_id"`
+	Target  BindingTarget `json:"target"`
+}
+type BindingMoveResult struct {
+	Decider string                 `json:"decider"`
+	Effects []BindingEffectOutcome `json:"effects"`
+	From    BindingTarget          `json:"from"`
+	InputID string                 `json:"input_id"`
+	MoveID  string                 `json:"move_id"`
+	To      BindingTarget          `json:"to"`
+}
+type BindingStats struct {
+	Bindings   json.Number           `json:"bindings"`
+	Deciders   []BindingDeciderCount `json:"deciders"`
+	Moves      json.Number           `json:"moves"`
+	PerHundred json.Number           `json:"per_hundred"`
+}
+type BindingStatsGet struct {
+}
+type BindingTarget struct {
+	Class  string  `json:"class"`
+	ID     *string `json:"id,omitempty"`
+	Kind   *string `json:"kind,omitempty"`
+	Parent *string `json:"parent,omitempty"`
 }
 type Capability struct {
 	Catalogs *[]string     `json:"catalogs,omitempty"`
@@ -564,6 +639,7 @@ type Interrupt struct {
 }
 type ItemDone struct {
 	AgentID  *string              `json:"agent_id,omitempty"`
+	Binding  *BindingChip         `json:"binding,omitempty"`
 	Details  *string              `json:"details,omitempty"`
 	EchoKey  *string              `json:"echo_key,omitempty"`
 	PersonID *string              `json:"person_id,omitempty"`
@@ -1597,6 +1673,14 @@ func (History) isPayload()              {}
 func (Subscribe) isPayload()            {}
 func (OutputDelta) isPayload()          {}
 func (ItemDone) isPayload()             {}
+func (BindingGet) isPayload()           {}
+func (Binding) isPayload()              {}
+func (BindingMove) isPayload()          {}
+func (BindingMoveResult) isPayload()    {}
+func (BindingStatsGet) isPayload()      {}
+func (BindingStats) isPayload()         {}
+func (BindingExport) isPayload()        {}
+func (BindingExportResult) isPayload()  {}
 func (TurnState) isPayload()            {}
 func (ToolActivity) isPayload()         {}
 func (ApprovalRequest) isPayload()      {}
@@ -1756,6 +1840,38 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		return p, err
 	case KindItemDone:
 		var p ItemDone
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingGet:
+		var p BindingGet
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBinding:
+		var p Binding
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingMove:
+		var p BindingMove
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingMoveResult:
+		var p BindingMoveResult
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingStatsGet:
+		var p BindingStatsGet
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingStats:
+		var p BindingStats
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingExport:
+		var p BindingExport
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindBindingExportResult:
+		var p BindingExportResult
 		err := json.Unmarshal(data, &p)
 		return p, err
 	case KindTurnState:
@@ -2144,6 +2260,14 @@ const clientSchemaJSON = `{
         "subscribe",
         "output_delta",
         "item_done",
+        "binding_get",
+        "binding",
+        "binding_move",
+        "binding_move_result",
+        "binding_stats_get",
+        "binding_stats",
+        "binding_export",
+        "binding_export_result",
         "turn_state",
         "tool_activity",
         "approval_request",
@@ -2534,6 +2658,134 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/item_done"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export_result"
           }
         }
       }
@@ -4694,9 +4946,306 @@ const clientSchemaJSON = `{
         "person_id": {
           "type": "string",
           "minLength": 1
+        },
+        "binding": {
+          "$ref": "#/$defs/binding_chip"
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "binding_target": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": [
+            "existing",
+            "new",
+            "none"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "additionalProperties": false
+    },
+    "binding_candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "binding_chip": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "show": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "show",
+        "name",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_get": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "input_id"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chip": {
+          "$ref": "#/$defs/binding_chip"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/binding_candidate"
+          }
+        },
+        "moves": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      },
+      "required": [
+        "input_id",
+        "chip",
+        "target",
+        "candidates",
+        "moves"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_effect_outcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "moved": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "item",
+        "moved"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move_result": {
+      "type": "object",
+      "properties": {
+        "move_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "to": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "decider": {
+          "type": "string"
+        },
+        "effects": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/binding_effect_outcome"
+          }
+        }
+      },
+      "required": [
+        "move_id",
+        "input_id",
+        "from",
+        "to",
+        "decider",
+        "effects"
+      ],
+      "additionalProperties": false
+    },
+    "binding_decider_count": {
+      "type": "object",
+      "properties": {
+        "decider": {
+          "type": "string"
+        },
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "decider",
+        "bindings",
+        "moves",
+        "per_hundred"
+      ],
+      "additionalProperties": false
+    },
+    "binding_stats_get": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_stats": {
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deciders": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/binding_decider_count"
+          }
+        }
+      },
+      "required": [
+        "bindings",
+        "moves",
+        "per_hundred",
+        "deciders"
+      ],
+      "additionalProperties": false
+    },
+    "binding_export": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_export_result": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "cases": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "directory",
+        "cases"
+      ],
       "additionalProperties": false
     },
     "turn_state": {

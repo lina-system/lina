@@ -329,6 +329,10 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 		out = choices
 		return nil
 	})
+	if err == nil && len(out) > 0 {
+		// A choice the person or the model made updates the visible chip.
+		err = r.publishBindingChip(ctx, input)
+	}
 	return
 }
 func bindInputDeclaration() provider.ToolDecl {

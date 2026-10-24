@@ -64,3 +64,25 @@ blocks when replaying recorded requests. Loader receipts and declaration order
 remain unchanged. Large committed authored results survive a later request-size
 refusal, with the diagnostic kept as a separate system notice. The TUI prefers
 the authored result by default and exposes notice Details through card navigation.
+
+### Binding chip and moves (#788)
+
+`boundChip` reads the admission decision and the append-only choices, so the
+chip follows a model, tool or person decision. `ChipFor` shows it only when the
+final target is not the fresh focus. Live input, history, channel replies and
+every later tool call republish the person's `item_done` with the chip.
+
+`binding_effects` keeps what a bound turn did, in call order: a created record's
+id, an edit's previous bytes and revision, a steer's text and target, and work
+that started (marked as having left the person). `moveBinding` validates the
+chosen target against the ranked offers and the current state, then re-attaches
+each effect: a created to-do changes its parent project in one saved version, an
+edit restores the wrong record and writes only the changed fields onto the right
+one, and a steer sends one withdrawal and one delivery through the durable
+follow-up queue, whose retained keys are its receipts. Effects that left the
+person are listed with reason `left`.
+
+`binding_moves` stores each move with its outcomes, the label (the chosen
+target) and the state snapshot. `bindingStats` counts moves per hundred bindings
+by decider, and `exportBindingCases` writes one valid intake case per move under
+`derived/intake-cases/`; both read only canon, so a restart keeps them.

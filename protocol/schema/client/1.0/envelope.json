@@ -25,6 +25,14 @@
         "subscribe",
         "output_delta",
         "item_done",
+        "binding_get",
+        "binding",
+        "binding_move",
+        "binding_move_result",
+        "binding_stats_get",
+        "binding_stats",
+        "binding_export",
+        "binding_export_result",
         "turn_state",
         "tool_activity",
         "approval_request",
@@ -415,6 +423,134 @@
         "properties": {
           "payload": {
             "$ref": "#/$defs/item_done"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_move_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats_get"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats_get"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_stats"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_stats"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "binding_export_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/binding_export_result"
           }
         }
       }
@@ -2575,9 +2711,306 @@
         "person_id": {
           "type": "string",
           "minLength": 1
+        },
+        "binding": {
+          "$ref": "#/$defs/binding_chip"
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "binding_target": {
+      "type": "object",
+      "properties": {
+        "class": {
+          "type": "string",
+          "enum": [
+            "existing",
+            "new",
+            "none"
+          ]
+        },
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "parent": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "class"
+      ],
+      "additionalProperties": false
+    },
+    "binding_candidate": {
+      "type": "object",
+      "properties": {
+        "id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "title": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "id",
+        "title",
+        "kind",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "binding_chip": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "show": {
+          "type": "boolean"
+        },
+        "name": {
+          "type": "string"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "show",
+        "name",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_get": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "input_id"
+      ],
+      "additionalProperties": false
+    },
+    "binding": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "chip": {
+          "$ref": "#/$defs/binding_chip"
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "candidates": {
+          "type": "array",
+          "maxItems": 8,
+          "items": {
+            "$ref": "#/$defs/binding_candidate"
+          }
+        },
+        "moves": {
+          "type": "array",
+          "maxItems": 20,
+          "items": {
+            "$ref": "#/$defs/binding_move_result"
+          }
+        }
+      },
+      "required": [
+        "input_id",
+        "chip",
+        "target",
+        "candidates",
+        "moves"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move": {
+      "type": "object",
+      "properties": {
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "$ref": "#/$defs/binding_target"
+        }
+      },
+      "required": [
+        "input_id",
+        "target"
+      ],
+      "additionalProperties": false
+    },
+    "binding_effect_outcome": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string"
+        },
+        "item": {
+          "type": "string"
+        },
+        "moved": {
+          "type": "boolean"
+        },
+        "reason": {
+          "type": "string"
+        },
+        "receipt": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "item",
+        "moved"
+      ],
+      "additionalProperties": false
+    },
+    "binding_move_result": {
+      "type": "object",
+      "properties": {
+        "move_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "input_id": {
+          "type": "string",
+          "minLength": 1
+        },
+        "from": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "to": {
+          "$ref": "#/$defs/binding_target"
+        },
+        "decider": {
+          "type": "string"
+        },
+        "effects": {
+          "type": "array",
+          "maxItems": 32,
+          "items": {
+            "$ref": "#/$defs/binding_effect_outcome"
+          }
+        }
+      },
+      "required": [
+        "move_id",
+        "input_id",
+        "from",
+        "to",
+        "decider",
+        "effects"
+      ],
+      "additionalProperties": false
+    },
+    "binding_decider_count": {
+      "type": "object",
+      "properties": {
+        "decider": {
+          "type": "string"
+        },
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "decider",
+        "bindings",
+        "moves",
+        "per_hundred"
+      ],
+      "additionalProperties": false
+    },
+    "binding_stats_get": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_stats": {
+      "type": "object",
+      "properties": {
+        "bindings": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "moves": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "per_hundred": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "deciders": {
+          "type": "array",
+          "maxItems": 16,
+          "items": {
+            "$ref": "#/$defs/binding_decider_count"
+          }
+        }
+      },
+      "required": [
+        "bindings",
+        "moves",
+        "per_hundred",
+        "deciders"
+      ],
+      "additionalProperties": false
+    },
+    "binding_export": {
+      "type": "object",
+      "properties": {},
+      "required": [],
+      "additionalProperties": false
+    },
+    "binding_export_result": {
+      "type": "object",
+      "properties": {
+        "directory": {
+          "type": "string"
+        },
+        "cases": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "directory",
+        "cases"
+      ],
       "additionalProperties": false
     },
     "turn_state": {
