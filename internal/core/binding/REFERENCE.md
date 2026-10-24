@@ -40,3 +40,32 @@ Their resolution appends the selected or cancelled binding in the same transacti
 as the answer inbox event. General skipped-question defaults never resolve them.
 The optional Atropos judge receives a closed candidate list and revision; its
 accepted choices, probabilities and observed latency are ledger evidence.
+
+## Showing and moving a binding
+
+Seen, inferred and unknown, from the reference installs named by the porting
+rule (`~/.hermes/hermes-agent`, `~/.hermes/plugins`, `~/code/codex-relay-workflow`):
+
+- **Seen:** none. Those paths do not exist on the development host, so no
+  reference behaviour for a message-level binding chip, a move list or effect
+  re-attachment could be read.
+- **Inferred:** none. Nothing about Hermes, Honcho, LCM-X or CRW is claimed.
+- **Unknown:** how a reference surfaces a binding, how a corrected target is
+  labelled, and whether it re-attaches effects. LINA therefore implements the
+  rule from its own contract: [conversation-and-memory.md](../../../docs/design/conversation-and-memory.md#what-a-message-is-about)
+  (Showing and moving), [work-and-delegation.md](../../../docs/design/work-and-delegation.md#messages-about-work)
+  (Moving a binding) and [surfaces.md](../../../docs/design/surfaces.md#threads-on-screen).
+
+`ChipFor` shows the chip when the final target is not the fresh focus, which is
+exactly "leaves the focus, returns to an aged focus or creates an item".
+`Offers` lists the other ranked candidates plus `new` and `none`; `Offered`
+re-validates a chosen target before Core writes anything. `Tally` counts moves
+per hundred bindings for each decider.
+
+Core stores what the bound turn did in `binding_effects` before a later move
+needs it: a created record keeps its id, an edit keeps the bytes and revision it
+replaced, a steer keeps its text and target, and work that started from the
+turn is marked as having left the person. `binding_moves` holds each move with
+its effects and outcomes, the label (the chosen target) and the state snapshot
+the replay case is rebuilt from. The counter and the case export read only that
+canon, so both survive a restart.

@@ -94,3 +94,12 @@ step refs remain readable without guessing an identity from a name.
 sets, closed-entry disclosure, replacement, 82-step scrolling and step Details.
 The installed-state Core/PTY acceptance is `TestM3WorkPanelStages`, using the
 fixed work-panel corpus and its E6/E7 evaluators with real stub worker processes.
+
+### Binding chip and move list (#788)
+
+A person message whose binding left the fresh focus, returned to an aged focus
+or created an item shows one `binding.chip` row after its metadata. The row is
+truncated to the conversation width, so it never wraps. `Ctrl+B` asks Core for
+the other candidates, "new" and "none" and draws them over the conversation
+area; a digit, `n` or `0` moves the binding, and the chip row updates when Core
+republishes the message. A message bound to a fresh focus shows no chip.

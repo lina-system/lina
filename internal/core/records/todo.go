@@ -158,6 +158,48 @@ func (v Todo) Validate() error {
 
 var todoKeys = strings.Fields("state checklist when deadline deadline_source repeat important tags belongs_to source blocked_by waiting_on assignee pull_request issue execution_state priority completion")
 
+// frontFields reads the key/value front matter of a record. Values stay in
+// their stored JSON or bare form; callers decode only the keys they own.
+func frontFields(front string) (map[string]string, error) {
+	fields := map[string]string{}
+	for _, line := range strings.Split(front, "\n") {
+		key, value, ok := strings.Cut(line, ": ")
+		if !ok {
+			return nil, ErrInvalid
+		}
+		if _, duplicate := fields[key]; duplicate {
+			return nil, ErrInvalid
+		}
+		fields[key] = value
+	}
+	return fields, nil
+}
+
+// ReadTodo returns a record's typed planning fields with the front matter and
+// body around them, so Core can change one field without re-parsing Markdown.
+func ReadTodo(data []byte) (*Todo, string, string, error) {
+	if _, err := recordID(data); err != nil {
+		return nil, "", "", err
+	}
+	front, body, ok := strings.Cut(string(data[4:]), "\n---\n")
+	if !ok {
+		return nil, "", "", ErrInvalid
+	}
+	fields, err := frontFields(front)
+	if err != nil {
+		return nil, "", "", err
+	}
+	kind := strings.Trim(fields["kind"], `"`)
+	if kind != "todo" {
+		return nil, front, body, ErrInvalid
+	}
+	todo, err := parseTodo(fields)
+	if err != nil {
+		return nil, "", "", err
+	}
+	return todo, front, body, nil
+}
+
 func parseTodo(fields map[string]string) (*Todo, error) {
 	raw := map[string]json.RawMessage{}
 	for _, key := range todoKeys {
