@@ -88,6 +88,7 @@ func Migrations() []Migration {
 		{Version: 73, SQL: MessengerReadCoverageSchema},
 		{Version: 74, SQL: MessengerOwnerSchema},
 		{Version: 75, SQL: DiscordSessionsSchema},
+		{Version: 76, SQL: recallSearchSchema},
 	}
 }
 
