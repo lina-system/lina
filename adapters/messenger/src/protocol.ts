@@ -17,7 +17,7 @@ export type Author = { id: string; name: string };
 
 export type Attachment = { id: string; name: string; mimeType: string; size: number };
 
-export type Chat = { id: string; name: string; kind: string; firstMessageAt?: string };
+export type Chat = { id: string; name: string; kind: string; firstMessageAt?: string; lastMessageId?: string };
 
 export type Message = {
   id: string;
@@ -70,7 +70,11 @@ export type Prompt = { key: string; kind: 'text' | 'secret'; text: string };
 // the value and keeps none of it.
 export type SignInStep = { state: SignInState; prompt?: Prompt; show?: { kind: 'url' | 'code'; value: string } };
 
-export type LiveEvent = { event: 'message'; message: Message } | { event: 'deletion'; deletion: Deletion };
+// A live event names the chat it belongs to; a push carries no page position,
+// so Core admits it without moving that chat's cursor.
+export type LiveEvent =
+  | { event: 'message'; chat: string; message: Message }
+  | { event: 'deletion'; chat: string; deletion: Deletion };
 
 export type Driver = {
   readonly platform: string;

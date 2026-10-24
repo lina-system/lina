@@ -17,6 +17,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"sync"
 	"time"
 
@@ -58,27 +59,68 @@ func Capabilities() messenger.Capabilities {
 
 // Adapter reads one account through the add-on process that serves it.
 type Adapter struct {
-	platform, account string
-	process           *process
+	platform, key string
+	single        bool
+	process       *process
+	// describe reads the platform driver's descriptor once the session has it;
+	// nil means the add-on's own descriptor still applies.
+	describe func() (messenger.Capabilities, bool)
+	session  *Session
 }
 
 // Session is the add-on process for one account. Adapter returns a
 // messenger.Adapter that never starts a second process for the same account.
 type Session struct {
-	platform, account string
-	process           *process
+	platform, key string
+	single        bool
+	process       *process
+
+	capsMu sync.Mutex
+	// caps is the platform driver's descriptor, read once per session.
+	caps *messenger.Capabilities
 }
 
 // NewSession starts one add-on process for an account. It returns a session
 // even when the process cannot start; the first operation then reports why, so
 // the source shows the cause instead of Core failing to boot.
 func NewSession(platform, account string, config Config) *Session {
-	return &Session{platform: platform, account: account, process: newProcess(platform, account, config)}
+	return newSession(platform, account, false, config)
+}
+
+// newSession composes one process. A single-account session answers for every
+// account of its platform, because LINA runs one session for that platform.
+func newSession(platform, key string, single bool, config Config) *Session {
+	return &Session{platform: platform, key: key, single: single, process: newProcess(platform, key, config)}
 }
 
 // Adapter is the messenger adapter boundary for this account.
 func (s *Session) Adapter() messenger.Adapter {
-	return &Adapter{platform: s.platform, account: s.account, process: s.process}
+	return &Adapter{platform: s.platform, key: s.key, single: s.single, process: s.process, describe: s.descriptor, session: s}
+}
+
+// descriptor returns the driver's descriptor if this session already read it.
+func (s *Session) descriptor() (messenger.Capabilities, bool) {
+	s.capsMu.Lock()
+	defer s.capsMu.Unlock()
+	if s.caps == nil {
+		return messenger.Capabilities{}, false
+	}
+	return *s.caps, true
+}
+
+// keepDescriptor records the platform's descriptor from a signIn reply.
+func (s *Session) keepDescriptor(raw *wireCapabilities) error {
+	if raw == nil {
+		return nil
+	}
+	caps, err := raw.capabilities()
+	if err != nil {
+		return err
+	}
+	s.capsMu.Lock()
+	s.caps = &caps
+	s.capsMu.Unlock()
+	return nil
 }
 
 // Close stops the process and joins it.
@@ -87,17 +129,22 @@ func (s *Session) Close(ctx context.Context) error { return s.process.Close(ctx)
 // Platform is the platform this session reads.
 func (s *Session) Platform() string { return s.platform }
 
-// Account is the account this session reads.
-func (s *Session) Account() string { return s.account }
+// Account is the session's own identity: the account, or the platform where
+// LINA keeps one session for it.
+func (s *Session) Account() string { return s.key }
 
 func (a *Adapter) SignIn(ctx context.Context, id messenger.SourceID) (messenger.SignInState, error) {
 	if err := a.forAccount(id); err != nil {
 		return messenger.Failing, err
 	}
 	var result struct {
-		State string `json:"state"`
+		State        string            `json:"state"`
+		Capabilities *wireCapabilities `json:"capabilities"`
 	}
 	if err := a.process.call(ctx, "signIn", nil, &result); err != nil {
+		return messenger.Failing, err
+	}
+	if err := a.session.keepDescriptor(result.Capabilities); err != nil {
 		return messenger.Failing, err
 	}
 	switch result.State {
@@ -183,7 +230,14 @@ func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _
 	return nil, ErrAttachmentFetch
 }
 
-func (a *Adapter) Capabilities() messenger.Capabilities { return Capabilities() }
+func (a *Adapter) Capabilities() messenger.Capabilities {
+	if a.describe != nil {
+		if caps, ok := a.describe(); ok {
+			return caps
+		}
+	}
+	return Capabilities()
+}
 
 // Manager keeps one add-on session per account for as long as Core runs, so the
 // platform sees one session per account and a second sync does not restart it.
@@ -210,12 +264,15 @@ func (m *Manager) Addon(platform, account string) (messenger.Adapter, error) {
 	return session.Adapter(), nil
 }
 
-// Start returns the account's session, starting its process on first use.
+// Start returns the account's session, starting its process on first use. A
+// platform listed in SingleAccount has one session for every account, so the
+// session outlives a source's account changing from the pending sign-in to the
+// platform's own user id.
 func (m *Manager) Start(platform, account string) (*Session, error) {
 	if m == nil {
 		return nil, ErrNotConfigured
 	}
-	key := platform + "\x00" + account
+	key := m.key(platform, account)
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
@@ -224,9 +281,54 @@ func (m *Manager) Start(platform, account string) (*Session, error) {
 	if session, ok := m.sessions[key]; ok {
 		return session, nil
 	}
-	session := NewSession(platform, account, m.cfg)
+	session := newSession(platform, key, key == platform, m.cfg)
 	m.sessions[key] = session
 	return session, nil
+}
+
+// Stop closes one account's session and forgets it, so a later start begins a
+// new process. Disconnecting a source uses it to end the platform session.
+func (m *Manager) Stop(ctx context.Context, platform, account string) error {
+	if m == nil {
+		return nil
+	}
+	key := m.key(platform, account)
+	m.mu.Lock()
+	session, ok := m.sessions[key]
+	delete(m.sessions, key)
+	m.mu.Unlock()
+	if !ok {
+		return nil
+	}
+	return session.Close(ctx)
+}
+
+// Remove closes one account's session and deletes its data directory, so a
+// disconnected source loses the platform session it held.
+func (m *Manager) Remove(ctx context.Context, platform, account string) error {
+	if m == nil {
+		return nil
+	}
+	key := m.key(platform, account)
+	if err := m.Stop(ctx, platform, account); err != nil {
+		return err
+	}
+	dir := DataDir(m.cfg.StateRoot, platform, key)
+	if err := os.RemoveAll(dir); err != nil {
+		return err
+	}
+	return nil
+}
+
+// key is the session identity: the platform itself where LINA supports one
+// account, the account otherwise.
+func (m *Manager) key(platform, account string) string {
+	for _, single := range m.cfg.SingleAccount {
+		if single == platform {
+			return platform
+		}
+	}
+	return account
 }
 
 // Close stops every session and joins each process.
@@ -249,9 +351,13 @@ func (m *Manager) Close(ctx context.Context) error {
 	return err
 }
 
-// forAccount enforces the same source boundary as the official adapters.
+// forAccount enforces the same source boundary as the official adapters. A
+// single-account platform has one session for every account it serves.
 func (a *Adapter) forAccount(id messenger.SourceID) error {
-	if id.Platform != a.platform || id.Account == "" || id.Account != a.account {
+	if id.Platform != a.platform || id.Account == "" {
+		return messenger.ErrInvalid
+	}
+	if !a.single && id.Account != a.key {
 		return messenger.ErrInvalid
 	}
 	return nil

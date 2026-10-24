@@ -579,6 +579,7 @@ func TestDeleteChatHidesEveryRecord(t *testing.T) {
 // requested cursor is recorded.
 type fakeAdapter struct {
 	chats     []messenger.Chat
+	window    time.Duration
 	pages     map[string][]messenger.Page
 	requested []messenger.Cursor
 	fail      error
@@ -624,7 +625,7 @@ func (a *fakeAdapter) FetchAttachment(context.Context, messenger.SourceID, strin
 	return nil, errors.New("no attachments")
 }
 func (a *fakeAdapter) Capabilities() messenger.Capabilities {
-	return messenger.Capabilities{Edits: true, Deletions: true}
+	return messenger.Capabilities{Edits: true, Deletions: true, ReadWindow: a.window}
 }
 
 // A page with more than one id must still match an effect by the platform's
@@ -978,5 +979,181 @@ func TestScheduledReaderLeavesUnownedSourcesUntouched(t *testing.T) {
 		if row.State != messenger.StateConnected || row.Failure != "" {
 			t.Fatalf("reader changed another source: %+v", row)
 		}
+	}
+}
+
+// A chat whose listed last message is the one already stored is not read
+// again, but the read it replaces still counts as coverage: the chat is not
+// left looking stale or in a gap because it had nothing new.
+func TestChatWithNothingNewIsCoveredWithoutARead(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &fakeAdapter{
+		chats: []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct", LastMessageID: "m-1"}},
+		pages: map[string][]messenger.Page{"": {{Messages: []messenger.Message{
+			message("m-1", messenger.RoutePerson, f.now, "only"),
+		}, Next: "m-1", Through: f.now}}},
+	}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.requested) != 1 {
+		t.Fatalf("first read requested %v", adapter.requested)
+	}
+	f.now = f.now.Add(30 * time.Minute)
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.requested) != 1 {
+		t.Fatalf("a chat with nothing new was read again: %v", adapter.requested)
+	}
+	freshness, err := f.store.Freshness(t.Context(), source, "dm-1", time.Hour, 48*time.Hour)
+	if err != nil || freshness.State != "fresh" {
+		t.Fatalf("freshness after a covered skip: %+v %v", freshness, err)
+	}
+	// A listed last message the store has not read still reads the chat.
+	adapter.chats[0].LastMessageID = "m-2"
+	adapter.pages["m-1"] = []messenger.Page{{Messages: []messenger.Message{
+		message("m-2", messenger.RouteParticipant, f.now, "new"),
+	}, Next: "m-2", Through: f.now}}
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if len(adapter.requested) != 2 || adapter.requested[1] != "m-1" {
+		t.Fatalf("the next read did not resume from the committed cursor: %v", adapter.requested)
+	}
+}
+
+// A gap is recorded once and told once; a later complete read ends it, so the
+// next gap is told again.
+func TestGapIsToldOnceUntilACoveredReadEndsIt(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &fakeAdapter{
+		window: 48 * time.Hour,
+		chats:  []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct", LastMessageID: "m-1"}},
+		pages: map[string][]messenger.Page{"": {{Messages: []messenger.Message{
+			message("m-1", messenger.RoutePerson, f.now, "only"),
+		}, Next: "m-1", Through: f.now}}},
+	}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	var told []string
+	service.Notify = func(_ context.Context, _ messenger.Source, chat messenger.ChatRecord) error {
+		told = append(told, chat.Chat)
+		return nil
+	}
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if len(told) != 0 {
+		t.Fatalf("a fresh chat was reported as a gap: %v", told)
+	}
+	f.now = f.now.Add(49 * time.Hour)
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if len(told) != 1 {
+		t.Fatalf("gap told %d times, want 1", len(told))
+	}
+	f.now = f.now.Add(time.Hour)
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if len(told) != 1 {
+		t.Fatalf("the same gap was told again: %v", told)
+	}
+	// A read that reaches new messages ends the episode and covers the chat.
+	adapter.chats[0].LastMessageID = "m-2"
+	adapter.pages["m-1"] = []messenger.Page{{Messages: []messenger.Message{
+		message("m-2", messenger.RouteParticipant, f.now, "new"),
+	}, Next: "m-2", Through: f.now}}
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	f.now = f.now.Add(49 * time.Hour)
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if len(told) != 2 {
+		t.Fatalf("a new gap after a covered read was not told: %v", told)
+	}
+}
+
+// A live message is admitted at once and never moves the chat's cursor: the
+// cursor belongs to page reads.
+func TestLiveEventIsAdmittedWithoutMovingTheCursor(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	page := messenger.Page{Messages: []messenger.Message{message("m-1", messenger.RoutePerson, f.now, "first")}, Next: "m-1", Through: f.now}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", page); err != nil {
+		t.Fatal(err)
+	}
+	live := message("m-2", messenger.RouteParticipant, f.now.Add(time.Minute), "pushed")
+	if _, err := f.store.AdmitEvent(t.Context(), source, messenger.Event{Chat: "dm-1", Message: &live}); err != nil {
+		t.Fatal(err)
+	}
+	chats, err := f.store.Chats(t.Context(), "person", "discord", "account-1")
+	if err != nil || len(chats) != 1 || chats[0].Cursor != "m-1" {
+		t.Fatalf("cursor moved by a live event: %+v %v", chats, err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE message='m-2'"); n != 1 {
+		t.Fatalf("live record stored %d times", n)
+	}
+}
+
+// A source the platform refused to authenticate asks for sign-in while another
+// account of the same platform keeps reading.
+type signInStateAdapter struct {
+	fakeAdapter
+	state messenger.SignInState
+}
+
+func (a *signInStateAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
+	return a.state, nil
+}
+
+func TestExpiredSourceAsksForSignInWhileAnotherAccountKeepsReading(t *testing.T) {
+	f := newFixture(t)
+	expired := f.connect(t)
+	reading := expired
+	reading.Account = "account-2"
+	if err := f.store.Connect(t.Context(), reading); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.UpsertChats(t.Context(), reading, []messenger.Chat{{ID: "dm-2", Name: "Direct", Kind: "direct", LastMessageID: "m-1"}}); err != nil {
+		t.Fatal(err)
+	}
+	adapters := map[string]messenger.Adapter{
+		expired.Account: &signInStateAdapter{state: messenger.NeedsSignIn},
+		reading.Account: &fakeAdapter{
+			chats: []messenger.Chat{{ID: "dm-2", Name: "Direct", Kind: "direct", LastMessageID: "m-1"}},
+			pages: map[string][]messenger.Page{"": {{Messages: []messenger.Message{
+				message("m-1", messenger.RouteParticipant, f.now, "still reading"),
+			}, Next: "m-1", Through: f.now}}},
+		},
+	}
+	service := messenger.NewServiceWithResolver(f.store, func(source messenger.Source) (messenger.Adapter, bool) {
+		adapter, ok := adapters[source.Account]
+		return adapter, ok
+	}, time.Minute)
+	service.SyncAll(t.Context(), &f.now)
+	rows, err := f.store.Sources(t.Context(), "person")
+	if err != nil || len(rows) != 2 {
+		t.Fatalf("sources %+v, %v", rows, err)
+	}
+	state := map[string]messenger.State{}
+	for _, row := range rows {
+		state[row.Account] = row.State
+	}
+	if state[expired.Account] != messenger.StateNeedsSignIn || state[reading.Account] != messenger.StateConnected {
+		t.Fatalf("states %+v", state)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE account='account-2' AND message='m-1'"); n != 1 {
+		t.Fatalf("the other account read %d records", n)
+	}
+	chats, err := f.store.Chats(t.Context(), "person", reading.Platform, reading.Account)
+	if err != nil || len(chats) != 1 || chats[0].Cursor != "m-1" {
+		t.Fatalf("other account cursor %+v, %v", chats, err)
 	}
 }

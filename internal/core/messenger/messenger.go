@@ -112,12 +112,15 @@ type Event struct {
 	Deletion *Deletion
 }
 
-// Chat is a chat as the platform lists it.
+// Chat is a chat as the platform lists it. LastMessageID is the newest
+// message the platform reports for the chat, when it reports one; a sync that
+// already stored it reads nothing and records the coverage instead.
 type Chat struct {
 	ID             string
 	Name           string
 	Kind           string // direct, group, channel or thread
 	FirstMessageAt time.Time
+	LastMessageID  string
 }
 
 // Cursor is an opaque position inside one chat. It is committed with the
@@ -235,6 +238,8 @@ type ChatRecord struct {
 	FirstMessageAt          time.Time
 	Sync, Learn, Embed      bool
 	Cursor                  Cursor
+	// LastMessage is the newest message the platform's last listing named.
+	LastMessage string
 }
 
 // Switches are the person's choices for one chat.

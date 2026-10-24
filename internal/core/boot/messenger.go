@@ -63,6 +63,8 @@ func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *Messenger
 	}
 	store := messenger.Open(r.db, r.materials, r.removals)
 	service := messenger.NewServiceWithResolver(store, r.messengerResolver(cfg), cfg.Interval)
+	initKakaoTalk(r, cfg)
+	service.Notify = r.notifyMessengerGap
 	runCtx, stop := context.WithCancel(ctx)
 	r.messenger, r.messengerAddon, r.messengerStop, r.messengerDone = service, cfg.Addon, stop, make(chan struct{})
 	go func() {

@@ -27,6 +27,11 @@ type Service struct {
 	resolve  Resolver
 	interval time.Duration
 
+	// Notify tells the person that a chat passed its platform read window
+	// without a complete read. Core sets it; a nil Notify records the gap
+	// without a notice.
+	Notify func(context.Context, Source, ChatRecord) error
+
 	mu       sync.Mutex
 	lastSync map[string]time.Time
 	// resolved caches one adapter per source account, so a schedule and a live
@@ -179,6 +184,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 			continue
 		}
 		result, err := s.Sync(ctx, source)
+		s.ensureLive(ctx, source)
 		s.mu.Lock()
 		s.lastSync[key] = current
 		s.mu.Unlock()
@@ -373,9 +379,27 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 		if !chat.Sync {
 			continue
 		}
-		outcome, err := s.syncChat(ctx, source, adapter, chat)
-		result.add(outcome)
+		// The gap is decided from the coverage before this pass reads: a pass
+		// that completes the read closes it afterwards.
+		gap, err := s.gapState(ctx, source, adapter, chat)
 		if err != nil {
+			return result, err
+		}
+		if chat.LastMessage != "" && string(chat.Cursor) == chat.LastMessage {
+			// The listing names the message the chat already read through, so
+			// there is nothing to page. The chat is still covered: it has no
+			// new messages, not an unfinished read.
+			if err := s.store.RecordCoverage(ctx, source, chat.Chat, chat.Cursor); err != nil {
+				return result, err
+			}
+		} else {
+			outcome, err := s.syncChat(ctx, source, adapter, chat)
+			result.add(outcome)
+			if err != nil {
+				return result, err
+			}
+		}
+		if err := s.settleGap(ctx, source, chat, gap); err != nil {
 			return result, err
 		}
 	}
@@ -424,6 +448,34 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		}
 		cursor = page.Next
 	}
+}
+
+// gapState reports whether the chat passed the platform's read window before
+// this pass read it, so messages may be missing.
+func (s *Service) gapState(ctx context.Context, source Source, adapter Adapter, chat ChatRecord) (bool, error) {
+	capabilities := adapter.Capabilities()
+	interval := capabilities.Interval
+	if interval <= 0 {
+		interval = s.interval
+	}
+	freshness, err := s.store.Freshness(ctx, source, chat.Chat, interval, capabilities.ReadWindow)
+	if err != nil {
+		return false, err
+	}
+	return freshness.State == "gap", nil
+}
+
+// settleGap closes the gap a completed read ended, or records a new one and
+// tells the person once. A chat still in a gap is not told again.
+func (s *Service) settleGap(ctx context.Context, source Source, chat ChatRecord, gap bool) error {
+	if !gap {
+		return s.store.ClearGap(ctx, source, chat.Chat)
+	}
+	fresh, err := s.store.NoteGap(ctx, source, chat.Chat)
+	if err != nil || !fresh || s.Notify == nil {
+		return err
+	}
+	return s.Notify(ctx, source, chat)
 }
 
 // Live reads a source's pushed events until ctx ends. A platform without live

@@ -126,6 +126,8 @@ const (
 	KindTeamsResult          Kind = "teams_result"
 	KindWebexRequest         Kind = "webex_request"
 	KindWebexResult          Kind = "webex_result"
+	KindKakaotalkRequest     Kind = "kakaotalk_request"
+	KindKakaotalkResult      Kind = "kakaotalk_result"
 )
 
 type A2aCallStatus struct {
@@ -656,6 +658,46 @@ type ItemDone struct {
 	Speaker  *ConversationSpeaker `json:"speaker,omitempty"`
 	Stream   *StreamMetadata      `json:"stream,omitempty"`
 	Text     *string              `json:"text,omitempty"`
+}
+type KakaotalkPrompt struct {
+	Key  string `json:"key"`
+	Kind string `json:"kind"`
+	Text string `json:"text"`
+}
+type KakaotalkRequest struct {
+	Accept    *bool   `json:"accept,omitempty"`
+	Account   *string `json:"account,omitempty"`
+	Operation string  `json:"operation"`
+	Platform  *string `json:"platform,omitempty"`
+	Prompt    *string `json:"prompt,omitempty"`
+	Value     *string `json:"value,omitempty"`
+}
+type KakaotalkResult struct {
+	Account   *string            `json:"account,omitempty"`
+	Links     *[]string          `json:"links,omitempty"`
+	Operation *string            `json:"operation,omitempty"`
+	Platform  *string            `json:"platform,omitempty"`
+	Sources   *[]KakaotalkSource `json:"sources,omitempty"`
+	Status    *string            `json:"status,omitempty"`
+	Step      *KakaotalkStep     `json:"step,omitempty"`
+	Terms     *string            `json:"terms,omitempty"`
+}
+type KakaotalkShow struct {
+	Kind  string `json:"kind"`
+	Value string `json:"value"`
+}
+type KakaotalkSource struct {
+	Account  string  `json:"account"`
+	Failure  *string `json:"failure,omitempty"`
+	Platform string  `json:"platform"`
+	State    string  `json:"state"`
+	Terms    *string `json:"terms,omitempty"`
+}
+type KakaotalkStep struct {
+	Account *string          `json:"account,omitempty"`
+	Prompt  *KakaotalkPrompt `json:"prompt,omitempty"`
+	Show    *KakaotalkShow   `json:"show,omitempty"`
+	State   string           `json:"state"`
 }
 type LauncherReply struct {
 	AgentID        string          `json:"agent_id"`
@@ -1908,6 +1950,8 @@ func (TeamsRequest) isPayload()         {}
 func (TeamsResult) isPayload()          {}
 func (WebexRequest) isPayload()         {}
 func (WebexResult) isPayload()          {}
+func (KakaotalkRequest) isPayload()     {}
+func (KakaotalkResult) isPayload()      {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -2387,6 +2431,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p WebexResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindKakaotalkRequest:
+		var p KakaotalkRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindKakaotalkResult:
+		var p KakaotalkResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2544,7 +2596,9 @@ const clientSchemaJSON = `{
         "teams_request",
         "teams_result",
         "webex_request",
-        "webex_result"
+        "webex_result",
+        "kakaotalk_request",
+        "kakaotalk_result"
       ]
     },
     "message_id": {
@@ -4702,6 +4756,38 @@ const clientSchemaJSON = `{
         "properties": {
           "payload": {
             "$ref": "#/$defs/webex_result"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "kakaotalk_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/kakaotalk_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "kakaotalk_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/kakaotalk_result"
           }
         }
       }
@@ -11911,6 +11997,369 @@ const clientSchemaJSON = `{
           }
         }
       ]
+    },
+    "kakaotalk_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "card",
+            "connect",
+            "sign_in",
+            "answer",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "kakaotalk"
+          ]
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "accept": {
+          "type": "boolean"
+        },
+        "prompt": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "connect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "accept"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "answer"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "prompt",
+              "value"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "disconnect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account"
+            ]
+          }
+        }
+      ]
+    },
+    "kakaotalk_step": {
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "signed_in",
+            "needs_sign_in",
+            "failing"
+          ]
+        },
+        "account": {
+          "type": "string"
+        },
+        "prompt": {
+          "$ref": "#/$defs/kakaotalk_prompt"
+        },
+        "show": {
+          "$ref": "#/$defs/kakaotalk_show"
+        }
+      },
+      "required": [
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "kakaotalk_prompt": {
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 64
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "text",
+            "secret"
+          ]
+        },
+        "text": {
+          "type": "string",
+          "maxLength": 512
+        }
+      },
+      "required": [
+        "key",
+        "kind",
+        "text"
+      ],
+      "additionalProperties": false
+    },
+    "kakaotalk_show": {
+      "type": "object",
+      "properties": {
+        "kind": {
+          "type": "string",
+          "enum": [
+            "url",
+            "code"
+          ]
+        },
+        "value": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 4096
+        }
+      },
+      "required": [
+        "kind",
+        "value"
+      ],
+      "additionalProperties": false
+    },
+    "kakaotalk_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "card",
+            "connect",
+            "sign_in",
+            "answer",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs_sign_in",
+            "failing",
+            "disconnected"
+          ]
+        },
+        "account": {
+          "type": "string"
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/kakaotalk_source"
+          }
+        },
+        "terms": {
+          "type": "string"
+        },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        },
+        "step": {
+          "$ref": "#/$defs/kakaotalk_step"
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sources"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "card"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "terms",
+              "links"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "connect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "step"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "step"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "answer"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "step"
+            ]
+          }
+        }
+      ]
+    },
+    "kakaotalk_source": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs_sign_in",
+            "failing",
+            "unreachable",
+            "import_only",
+            "disconnected"
+          ]
+        },
+        "failure": {
+          "type": "string"
+        },
+        "terms": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "account",
+        "state"
+      ],
+      "additionalProperties": false
     }
   }
 }

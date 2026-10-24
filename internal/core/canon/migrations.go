@@ -88,6 +88,7 @@ func Migrations() []Migration {
 		{Version: 73, SQL: MessengerReadCoverageSchema},
 		{Version: 74, SQL: MessengerOwnerSchema},
 		{Version: 75, SQL: DiscordSessionsSchema},
+		{Version: 76, SQL: MessengerGapSchema},
 	}
 }
 
@@ -142,6 +143,7 @@ var publishedMigrationTables = []struct {
 	{71, "binding_effects"}, {71, "binding_moves"},
 	{72, "messenger_attachment"},
 	{75, "discord_sessions"},
+	{76, "messenger_gap"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is

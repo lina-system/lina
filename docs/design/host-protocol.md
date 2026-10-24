@@ -711,6 +711,25 @@ and the ten-minute attempt; another connection cannot finish or replace it.
 URL. Completion reports `connected` and the verified platform account ID.
 The source reader continues independently of that client connection.
 
+### KakaoTalk source settings
+
+The owner-only `kakaotalk` 1.0 capability provides `kakaotalk_request` and
+`kakaotalk_result`. `card` takes no field beyond the operation and returns the
+connect card's terms and the documents they cite. `connect` takes `accept: true`
+and starts the add-on's own sign-in; `sign_in` takes the platform account ID to
+sign in again; `answer` takes `prompt` and `value`; `disconnect` takes the
+platform account ID; `list` returns the platform account ID, state, sanitized
+failure cause and accepted term. Every operation requires the owner's eligible
+decider at the current epoch.
+
+A sign-in step is returned in `step`: `state` is `signed_in`,
+`needs_sign_in` or `failing`, `prompt` names the add-on's own question with its
+kind (`text` or `secret`), and `show` carries a `code` the person confirms on
+their phone. Prompt answers and passcodes are transient: they travel only on
+the connection that accepted the terms, are never stored, and the relay ends
+after ten minutes. The source reader continues independently of that client
+connection.
+
 ## Deferred
 
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).

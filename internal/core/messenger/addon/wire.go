@@ -28,6 +28,7 @@ type wireResponse struct {
 
 type wireEvent struct {
 	Event    string        `json:"event"`
+	Chat     string        `json:"chat"`
 	Message  *wireMessage  `json:"message"`
 	Deletion *wireDeletion `json:"deletion"`
 	Error    string        `json:"error"`
@@ -55,6 +56,9 @@ func (e wireEvent) event() (messenger.Event, error) {
 	if e.Error != "" {
 		return messenger.Event{}, fmt.Errorf("%w: live event error", ErrUpstreamChanged)
 	}
+	if !validIdentifier(e.Chat) {
+		return messenger.Event{}, fmt.Errorf("%w: live event chat", ErrUpstreamChanged)
+	}
 	switch e.Event {
 	case "message":
 		if e.Message == nil || e.Deletion != nil {
@@ -64,7 +68,7 @@ func (e wireEvent) event() (messenger.Event, error) {
 		if err != nil {
 			return messenger.Event{}, err
 		}
-		return messenger.Event{Message: &message}, nil
+		return messenger.Event{Chat: e.Chat, Message: &message}, nil
 	case "deletion":
 		if e.Deletion == nil || e.Message != nil {
 			return messenger.Event{}, fmt.Errorf("%w: live deletion", ErrUpstreamChanged)
@@ -73,7 +77,7 @@ func (e wireEvent) event() (messenger.Event, error) {
 		if err != nil {
 			return messenger.Event{}, err
 		}
-		return messenger.Event{Deletion: &deletion}, nil
+		return messenger.Event{Chat: e.Chat, Deletion: &deletion}, nil
 	}
 	return messenger.Event{}, fmt.Errorf("%w: live event %q", ErrUpstreamChanged, e.Event)
 }
@@ -167,6 +171,8 @@ type wireChat struct {
 	Name           string `json:"name"`
 	Kind           string `json:"kind"`
 	FirstMessageAt string `json:"firstMessageAt"`
+	// LastMessageID is present for a platform that lists the newest message.
+	LastMessageID string `json:"lastMessageId"`
 }
 
 func (c wireChat) chat() (messenger.Chat, error) {
@@ -182,7 +188,36 @@ func (c wireChat) chat() (messenger.Chat, error) {
 	if err != nil {
 		return messenger.Chat{}, err
 	}
-	return messenger.Chat{ID: c.ID, Name: c.Name, Kind: c.Kind, FirstMessageAt: first}, nil
+	if c.LastMessageID != "" && !validIdentifier(c.LastMessageID) {
+		return messenger.Chat{}, fmt.Errorf("%w: chat last message", ErrUpstreamChanged)
+	}
+	return messenger.Chat{ID: c.ID, Name: c.Name, Kind: c.Kind, FirstMessageAt: first, LastMessageID: c.LastMessageID}, nil
+}
+
+type wireCapabilities struct {
+	HistoryDepth      string  `json:"historyDepth"`
+	CursorKind        string  `json:"cursorKind"`
+	Edits             bool    `json:"edits"`
+	Deletions         bool    `json:"deletions"`
+	LiveEvents        bool    `json:"liveEvents"`
+	IntervalSeconds   float64 `json:"intervalSeconds"`
+	ReadWindowSeconds float64 `json:"readWindowSeconds"`
+}
+
+// capabilities checks the platform driver's descriptor. The add-on has no write
+// verb, so a descriptor that names one is drift.
+func (c wireCapabilities) capabilities() (messenger.Capabilities, error) {
+	if c.HistoryDepth == "" || c.CursorKind == "" || len(c.HistoryDepth) > 128 || len(c.CursorKind) > 128 {
+		return messenger.Capabilities{}, fmt.Errorf("%w: capability text", ErrUpstreamChanged)
+	}
+	if c.IntervalSeconds < 0 || c.ReadWindowSeconds < 0 || c.IntervalSeconds > 365*24*3600 || c.ReadWindowSeconds > 365*24*3600 {
+		return messenger.Capabilities{}, fmt.Errorf("%w: capability time", ErrUpstreamChanged)
+	}
+	return messenger.Capabilities{
+		HistoryDepth: c.HistoryDepth, CursorKind: c.CursorKind, Edits: c.Edits, Deletions: c.Deletions,
+		LiveEvents: c.LiveEvents, Interval: time.Duration(c.IntervalSeconds * float64(time.Second)),
+		ReadWindow: time.Duration(c.ReadWindowSeconds * float64(time.Second)),
+	}, nil
 }
 
 type wirePage struct {
@@ -275,6 +310,7 @@ func requiredResult(op string, raw []byte) error {
 		"page":      {"messages", "deletions", "next", "hasMore"},
 		"listChats": {"chats"}, "members": {"members"}, "signIn": {"state"},
 		"beginSignIn": {"state"}, "answer": {"state"}, "whoami": {"author"},
+		"capabilities": {"historyDepth", "cursorKind", "edits", "deletions", "liveEvents", "intervalSeconds", "readWindowSeconds"},
 	}
 	var value map[string]json.RawMessage
 	if json.Unmarshal(raw, &value) != nil || value == nil {
