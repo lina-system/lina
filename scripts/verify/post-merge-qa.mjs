@@ -31,17 +31,21 @@ export async function readArtifactJSON(artifact, name, { api, repository }) {
 
 const failureMarkLimit = 16;
 
+// A delayed failure can land between heads that are not yet within 48 hours
+// of each other. Keep the newest heads and apply the window when the pass arrives.
 function pruneFailureMarks(marks) {
-  const keep = new Array(marks.length).fill(false);
-  for (let index = 0; index < marks.length - 1; index++) {
-    const span = marks[index + 1].at - marks[index].at;
-    if (span >= 0 && span <= 48 * hour) {
-      keep[index] = true;
-      keep[index + 1] = true;
-    }
+  return marks.slice(-failureMarkLimit);
+}
+
+function withinFlakyWindow(times) {
+  let earliest = Infinity;
+  let latest = -Infinity;
+  for (const time of times) {
+    if (!Number.isFinite(time)) return false;
+    if (time < earliest) earliest = time;
+    if (time > latest) latest = time;
   }
-  if (marks.length) keep[marks.length - 1] = true;
-  return marks.filter((_, index) => keep[index]).slice(-failureMarkLimit);
+  return latest - earliest <= 48 * hour;
 }
 
 // Retain failure heads so a pass reported later can still sit between them.
@@ -228,8 +232,7 @@ async function advanceState(previous, observation, { plan, before, identity, req
     for (let index = 0; index < state.failureMarks.length - 1 && !state.flaky; index++) {
       const earlier = state.failureMarks[index];
       const later = state.failureMarks[index + 1];
-      const span = later.at - earlier.at;
-      if (span < 0 || span > 48 * hour || plan.head === later.head) continue;
+      if (plan.head === later.head || !withinFlakyWindow([earlier.at, later.at, plan.started])) continue;
       if (await isAncestor(earlier.head, plan.head) && await isAncestor(plan.head, later.head)) state.flaky = true;
     }
   } else {
