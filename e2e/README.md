@@ -78,10 +78,12 @@ separate test process per package.
   controls alone can appear while initial conversation discovery is pending.
   Reading-position checks also wait for a known conversation item before
   scrolling: Connected and waiting cards can precede the conversation snapshot.
-  Socket startup retries are bounded; there are no fixed sleeps. A recovering
-  Core may explicitly refuse an input probe as `unavailable`; only that refusal
-  allows a fresh probe. Malformed frames, wrong identities or correlations, and
-  other replies fail immediately.
+  Socket startup retries are bounded; there are no fixed sleeps. Installed Core
+  compiles its embedded SQLite Wasm module before binding, so a start uses a
+  one-minute startup budget while protocol operations keep the ten-second
+  operation deadline. A recovering Core may explicitly refuse an input probe as
+  `unavailable`; only that refusal allows a fresh probe. Malformed frames, wrong
+  identities or correlations, and other replies fail immediately.
 - Protocol frames and terminal lines have bounded readers. Operations and child
   lifetimes have deadlines. Cleanup closes connections and PTYs, kills and reaps
   remaining child processes, joins the terminal reader, and removes state even
