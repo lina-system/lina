@@ -30,6 +30,9 @@ func projectWork(payload protocol.Payload) *state.WorkSummary {
 			continue
 		}
 		c := state.WorkCard{ID: row.Ref, Name: clean(v.Name)}
+		if row.GoalID != nil {
+			c.GoalID = *row.GoalID
+		}
 		if v.Now != nil {
 			c.Now = clean(*v.Now)
 		}
@@ -344,7 +347,12 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 		card := m.conversation.workStop
 		m.conversation.workStop = ""
 		if key == "enter" {
-			return m.workControl(card, "stop", true)
+			for _, c := range m.workCards() {
+				if c.ID == card {
+					return m.workControl(c.GoalID, "stop", true)
+				}
+			}
+			return nil
 		}
 		if key == "ctrl+d" {
 			m.status = ConnectionStatus{State: Quit}
@@ -398,29 +406,25 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 	case "shift+up", "shift+down":
 		// A move changes only Core's rank; the card moves when Core's update
 		// arrives.
-		cards, _ := m.selectableWorkCards()
-		if len(cards) > 0 {
+		if card, ok := m.selectedGoalCard(); ok {
 			operation := "rank_up"
 			if key == "shift+down" {
 				operation = "rank_down"
 			}
-			return m.workControl(cards[m.conversation.workIndex].ID, operation, false)
+			return m.workControl(card.GoalID, operation, false)
 		}
 	case "space":
 		// The person's pause toggles the card's own recorded state.
-		cards, _ := m.selectableWorkCards()
-		if len(cards) > 0 {
-			card := cards[m.conversation.workIndex]
+		if card, ok := m.selectedGoalCard(); ok {
 			operation := "pause"
 			if card.Paused {
 				operation = "resume"
 			}
-			return m.workControl(card.ID, operation, false)
+			return m.workControl(card.GoalID, operation, false)
 		}
 	case "delete":
-		cards, _ := m.selectableWorkCards()
-		if len(cards) > 0 {
-			m.conversation.workStop = cards[m.conversation.workIndex].ID
+		if card, ok := m.selectedGoalCard(); ok {
+			m.conversation.workStop = card.ID
 		}
 	case "-":
 		return m.workLimit("limit_down", nil)
@@ -430,6 +434,16 @@ func (m *shellModel) workPanelKey(key string) tea.Cmd {
 		return m.workLimit("limit_auto", nil)
 	}
 	return nil
+}
+
+// selectedGoalCard is the selected card when Core names its goal. A background
+// run or a conversation worker has no goal, so goal commands skip it.
+func (m *shellModel) selectedGoalCard() (state.WorkCard, bool) {
+	cards, _ := m.selectableWorkCards()
+	if len(cards) == 0 || cards[m.conversation.workIndex].GoalID == "" {
+		return state.WorkCard{}, false
+	}
+	return cards[m.conversation.workIndex], true
 }
 
 // workControl sends one of the person's choices about a card. The panel changes
