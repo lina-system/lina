@@ -479,12 +479,18 @@ type fakeAdapter struct {
 	pages     map[string][]messenger.Page
 	requested []messenger.Cursor
 	fail      error
+	signIn    messenger.SignInState
 	calls     int
+	signIns   int
 }
 
 func (a *fakeAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
+	a.signIns++
 	if a.fail != nil {
 		return messenger.Failing, a.fail
+	}
+	if a.signIn != "" {
+		return a.signIn, nil
 	}
 	return messenger.SignedIn, nil
 }
