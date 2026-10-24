@@ -24,6 +24,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/exchange"
+	gatewaydiscord "github.com/thisisjun786/lina/internal/core/gateway/discord"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -304,5 +305,30 @@ func TestChannelSupervisorRetriesReadsAndShowsTerminalFailure(t *testing.T) {
 	result, err := r.channels.Channel(t.Context(), session, protocol.ChannelRequest{Operation: str("list")})
 	if err != nil || (*result.Connections)[0].Status != "unavailable" {
 		t.Fatal("dead worker reported connected")
+	}
+}
+
+// A subscriber that fell too far behind must not disable the channel worker
+// that shares its token: the supervisor reconnects and the next session
+// replays from the last accepted checkpoint.
+func TestChannelSupervisorRecoversFromABacklog(t *testing.T) {
+	var healthy atomic.Bool
+	calls, pauses := 0, 0
+	superviseChannel(t.Context(), &healthy, func(context.Context) error {
+		calls++
+		healthy.Store(true)
+		if calls == 1 {
+			return channels.Retry(gatewaydiscord.ErrBacklog)
+		}
+		return context.Canceled
+	}, func(context.Context, time.Duration) error {
+		pauses++
+		if healthy.Load() {
+			t.Fatal("failed worker still healthy")
+		}
+		return nil
+	})
+	if calls != 2 || pauses != 1 || healthy.Load() {
+		t.Fatalf("backlog calls = %d, pauses = %d; the channel worker was left stopped", calls, pauses)
 	}
 }
