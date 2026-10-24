@@ -141,12 +141,22 @@ func supervisorGuard(file *ast.File, fn *ast.FuncDecl) bool {
 		}
 		return strings.Join(strings.Fields(b.String()), "")
 	}
-	condition := "len(" + osName + ".Args)>1&&" + osName + ".Args[1]==\"proc-supervise\""
-	dispatch := osName + ".Exit(" + procName + ".SuperviseMain(" + osName + ".Args[2:]," + osName + ".Stderr))"
+	// Both helpers must be dispatched before the test binary starts running
+	// commands: Linux re-execs the binary as proc-supervise, and macOS runs
+	// proc-job inside a launchd job.
+	guarded := map[string]bool{}
+	dispatches := map[string]string{
+		"proc-supervise": "SuperviseMain",
+		"proc-job":       "JobMain",
+	}
 	for _, stmt := range fn.Body.List {
-		if branch, ok := stmt.(*ast.IfStmt); ok && compact(branch.Cond) == condition && len(branch.Body.List) == 1 {
-			if compact(branch.Body.List[0]) == dispatch {
-				return true
+		if branch, ok := stmt.(*ast.IfStmt); ok && len(branch.Body.List) == 1 {
+			for helper, entry := range dispatches {
+				condition := "len(" + osName + ".Args)>1&&" + osName + ".Args[1]==" + strconv.Quote(helper)
+				dispatch := osName + ".Exit(" + procName + "." + entry + "(" + osName + ".Args[2:]," + osName + ".Stderr))"
+				if compact(branch.Cond) == condition && compact(branch.Body.List[0]) == dispatch {
+					guarded[helper] = true
+				}
 			}
 		}
 		ran := false
@@ -159,10 +169,10 @@ func supervisorGuard(file *ast.File, fn *ast.FuncDecl) bool {
 			return true
 		})
 		if ran {
-			return false
+			break
 		}
 	}
-	return false
+	return guarded["proc-supervise"] && guarded["proc-job"]
 }
 
 func scan(root, name, pkg string) (source, error) {
@@ -248,7 +258,7 @@ func run() error {
 			result = append(result, record)
 		}
 		if requires && !guarded {
-			return fmt.Errorf("%s: proc-supervise requires an early TestMain dispatch to os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))", pkg.Path)
+			return fmt.Errorf("%s: proc-supervise and proc-job require early TestMain dispatches to os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr)) and os.Exit(proc.JobMain(os.Args[2:], os.Stderr))", pkg.Path)
 		}
 	}
 	return json.NewEncoder(os.Stdout).Encode(result)

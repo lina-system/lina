@@ -13,6 +13,10 @@ import (
 	"github.com/thisisjun786/lina/kit/proc"
 )
 
+// escapeDenial refuses the two calls with which a command leaves its process
+// group. The rule is inherited across fork and exec and cannot be removed.
+const escapeDenial = "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid))"
+
 func findLauncher() (string, error) {
 	return resolveHostLauncher(runtime.GOOS, runtime.GOARCH, exec.LookPath)
 }
@@ -34,9 +38,9 @@ func prepare(launcher string, c Config, command Command) (proc.Command, func(), 
 (allow file-write-data (literal "/dev/null"))
 (deny system-fcntl (fcntl-command 80 110))
 `)
-	// The command cannot leave its process group, so teardown reaches every
-	// descendant. kit/proc skips its own copy of this rule for this launcher.
-	policy.WriteString(proc.EscapeDenial + "\n")
+	// Linux denies the same calls in its seccomp policy, so a sandboxed command
+	// cannot start a new session or process group on either platform.
+	policy.WriteString(escapeDenial + "\n")
 	for _, path := range c.WriteRoots {
 		fmt.Fprintf(&policy, "(allow file-write* (subpath %q))\n", path)
 		fmt.Fprintf(&policy, "(deny file-write-unlink (literal %q))\n", path)
@@ -57,5 +61,5 @@ func prepare(launcher string, c Config, command Command) (proc.Command, func(), 
 	}
 	args := []string{"-p", policy.String(), command.Path}
 	args = append(args, command.Args...)
-	return proc.Command{Path: launcher, Args: args, Dir: c.WorkDir, Env: c.Env, Confined: true, Stdin: command.Stdin, Stdout: command.Stdout, Stderr: command.Stderr}, func() {}, nil
+	return proc.Command{Path: launcher, Args: args, Dir: c.WorkDir, Env: c.Env, Stdin: command.Stdin, Stdout: command.Stdout, Stderr: command.Stderr}, func() {}, nil
 }
