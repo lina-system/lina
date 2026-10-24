@@ -23,6 +23,9 @@ func (f transportFunc) RoundTrip(r *http.Request) (*http.Response, error) { retu
 func response(status int, body string) *http.Response {
 	return &http.Response{StatusCode: status, Header: make(http.Header), Body: io.NopCloser(strings.NewReader(body))}
 }
+func account() messenger.SourceID {
+	return messenger.SourceID{Platform: "teams", Account: tenant + ":owner"}
+}
 func adapter(t *testing.T, f transportFunc) *Adapter {
 	t.Helper()
 	return NewAdapter(Config{Tenant: tenant, Account: tenant + ":owner", Token: func(context.Context, bool) (secret.Secret, error) { return secret.New("synthetic-token"), nil }, Transport: transportFunc(func(r *http.Request) (*http.Response, error) {
@@ -31,6 +34,16 @@ func adapter(t *testing.T, f transportFunc) *Adapter {
 		}
 		return f(r)
 	})})
+}
+func TestAnotherAccountIsRefused(t *testing.T) {
+	a := adapter(t, func(*http.Request) (*http.Response, error) {
+		t.Fatal("another account was read")
+		return nil, nil
+	})
+	other := messenger.SourceID{Platform: "teams", Account: tenant + ":other"}
+	if _, err := a.Page(t.Context(), other, "chat:chat", ""); !errors.Is(err, ErrInvalid) {
+		t.Fatalf("other account page: %v", err)
+	}
 }
 func TestChatPagingEditsDeletionsAndProfiles(t *testing.T) {
 	calls := 0
@@ -58,7 +71,7 @@ func TestChatPagingEditsDeletionsAndProfiles(t *testing.T) {
 			return nil, nil
 		}
 	})
-	p, err := a.Page(t.Context(), "chat:chat", "")
+	p, err := a.Page(t.Context(), account(), "chat:chat", "")
 	if err != nil || !p.HasMore || len(p.Messages) != 1 {
 		t.Fatalf("page: %+v %v", p, err)
 	}
@@ -66,11 +79,11 @@ func TestChatPagingEditsDeletionsAndProfiles(t *testing.T) {
 	if m.Author.ID != tenant+":other" || m.Author.Email != "someone@example.test" || m.Route != messenger.RouteParticipant || strings.TrimSpace(m.Text) != "Edited & safe" || m.Edited.IsZero() {
 		t.Fatalf("message: %+v", m)
 	}
-	p, err = a.Page(t.Context(), "chat:chat", p.Next)
+	p, err = a.Page(t.Context(), account(), "chat:chat", p.Next)
 	if err != nil || p.HasMore || len(p.Deletions) != 1 || p.Deletions[0].Message != "m1" {
 		t.Fatalf("deletion page %+v %v", p, err)
 	}
-	if _, err = a.Page(t.Context(), "chat:chat", p.Next); err != nil {
+	if _, err = a.Page(t.Context(), account(), "chat:chat", p.Next); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -82,7 +95,7 @@ func TestGraphNextLinkCannotEscapeCollection(t *testing.T) {
 				calls++
 				return response(200, `{"value":[],"@odata.nextLink":"`+next+`"}`), nil
 			})
-			_, err := a.Page(t.Context(), "chat:chat", "")
+			_, err := a.Page(t.Context(), account(), "chat:chat", "")
 			if !errors.Is(err, ErrDestination) || calls != 1 {
 				t.Fatalf("escape: calls=%d err=%v", calls, err)
 			}
@@ -102,13 +115,13 @@ func TestThrottleAndConsent(t *testing.T) {
 		return response(200, `{"value":[]}`), nil
 	})
 	a.wait = func(_ context.Context, d time.Duration) error { waited = d; return nil }
-	if _, err := a.Page(t.Context(), "chat:chat", ""); err != nil || waited != 7*time.Second || calls != 2 {
+	if _, err := a.Page(t.Context(), account(), "chat:chat", ""); err != nil || waited != 7*time.Second || calls != 2 {
 		t.Fatalf("retry %v %v %d", err, waited, calls)
 	}
 	a = adapter(t, func(*http.Request) (*http.Response, error) {
 		return response(403, `{"error":{"code":"Forbidden","message":"private diagnostic"}}`), nil
 	})
-	if _, err := a.Page(t.Context(), "chat:chat", ""); !errors.Is(err, ErrUnsupported) || strings.Contains(err.Error(), "private") {
+	if _, err := a.Page(t.Context(), account(), "chat:chat", ""); !errors.Is(err, ErrUnsupported) || strings.Contains(err.Error(), "private") {
 		t.Fatal(err)
 	}
 }
@@ -130,7 +143,7 @@ func TestChannelsIncludePagedRepliesWithoutUnsupportedFilter(t *testing.T) {
 			return nil, nil
 		}
 	})
-	p, err := a.Page(t.Context(), "channel:team:channel", "")
+	p, err := a.Page(t.Context(), account(), "channel:team:channel", "")
 	if err != nil || p.HasMore || len(p.Messages) != 2 || len(p.Deletions) != 1 || p.Messages[1].ReplyTo != "root" || p.Messages[1].Route != messenger.RouteAutomation {
 		t.Fatalf("channel %+v %v", p, err)
 	}
@@ -156,7 +169,7 @@ func TestRefreshOnceAfterUnauthorizedAndRedirectsNeverFollowed(t *testing.T) {
 		}
 		return secret.New("synthetic-token"), nil
 	}
-	if _, err := a.Page(t.Context(), "chat:chat", ""); err != nil || refreshes != 1 || calls != 3 {
+	if _, err := a.Page(t.Context(), account(), "chat:chat", ""); err != nil || refreshes != 1 || calls != 3 {
 		t.Fatalf("refresh=%d calls=%d err=%v", refreshes, calls, err)
 	}
 	calls = 0
@@ -166,7 +179,7 @@ func TestRefreshOnceAfterUnauthorizedAndRedirectsNeverFollowed(t *testing.T) {
 		r.Header.Set("Location", "https://evil.example/steal")
 		return r, nil
 	})
-	if _, err := a.Page(t.Context(), "chat:chat", ""); err == nil || calls != 1 {
+	if _, err := a.Page(t.Context(), account(), "chat:chat", ""); err == nil || calls != 1 {
 		t.Fatal("redirect followed", err, calls)
 	}
 }
@@ -176,7 +189,7 @@ func TestLongRetryAfterReturnsDeadlineAndCancellationDoesNotAdvance(t *testing.T
 		r.Header.Set("Retry-After", "120")
 		return r, nil
 	})
-	p, err := a.Page(t.Context(), "chat:chat", "")
+	p, err := a.Page(t.Context(), account(), "chat:chat", "")
 	var retry *RetryError
 	if !errors.As(err, &retry) || retry.After != 2*time.Minute || p.Next != "" {
 		t.Fatalf("retry %+v %v", p, err)
@@ -200,11 +213,11 @@ func TestEncodedGraphLinksAndDeletedUser(t *testing.T) {
 		}
 		return response(200, `{"value":[{"id":"m1","createdDateTime":"2026-10-20T10:00:00Z","lastModifiedDateTime":"2026-10-20T10:00:00Z","from":{"user":{"id":"deleted","displayName":"Former member"}},"body":{"content":"retained history"}}]}`), nil
 	})
-	p, err := a.Page(t.Context(), "chat:19:chat@thread.v2", "")
+	p, err := a.Page(t.Context(), account(), "chat:19:chat@thread.v2", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	p, err = a.Page(t.Context(), "chat:19:chat@thread.v2", p.Next)
+	p, err = a.Page(t.Context(), account(), "chat:19:chat@thread.v2", p.Next)
 	if err != nil || len(p.Messages) != 1 || p.Messages[0].Author.ID != tenant+":deleted" || p.Messages[0].Author.Email != "" {
 		t.Fatal(p, err)
 	}

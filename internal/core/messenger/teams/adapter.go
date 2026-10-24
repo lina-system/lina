@@ -38,11 +38,28 @@ var _ messenger.Adapter = (*Adapter)(nil)
 func (*Adapter) Capabilities() messenger.Capabilities {
 	return messenger.Capabilities{HistoryDepth: "Graph retained history", CursorKind: "Graph nextLink and modification watermark", Edits: true, Deletions: true, Interval: time.Minute}
 }
-func (*Adapter) Live(context.Context, func(messenger.Event) error) error { return nil }
-func (*Adapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+
+// forAccount refuses a call for any account other than the one this adapter
+// was built for. Sync names that account on every read.
+func (a *Adapter) forAccount(id messenger.SourceID) error {
+	if id.Platform != "teams" || id.Account == "" || id.Account != a.cfg.Account {
+		return ErrInvalid
+	}
+	return nil
+}
+func (a *Adapter) Live(_ context.Context, id messenger.SourceID, _ func(messenger.Event) error) error {
+	return a.forAccount(id)
+}
+func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _ string) (io.ReadCloser, error) {
+	if err := a.forAccount(id); err != nil {
+		return nil, err
+	}
 	return nil, ErrUnsupported
 }
-func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
+func (a *Adapter) SignIn(ctx context.Context, id messenger.SourceID) (messenger.SignInState, error) {
+	if err := a.forAccount(id); err != nil {
+		return "", err
+	}
 	_, err := a.cfg.Token(ctx, false)
 	if err != nil {
 		return messenger.NeedsSignIn, err
@@ -65,7 +82,10 @@ func chatPath(id string) (string, bool, error) {
 	}
 	return "", false, ErrInvalid
 }
-func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
+func (a *Adapter) ListChats(ctx context.Context, id messenger.SourceID) ([]messenger.Chat, error) {
+	if err := a.forAccount(id); err != nil {
+		return nil, err
+	}
 	out := []messenger.Chat{}
 	err := a.pages(ctx, graph+"/me/chats?$top=50", func(raw json.RawMessage) error {
 		var c struct{ ID, Topic, ChatType string }
@@ -98,7 +118,10 @@ func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
 	})
 	return out, err
 }
-func (a *Adapter) Members(ctx context.Context, id string) ([]messenger.Author, error) {
+func (a *Adapter) Members(ctx context.Context, account messenger.SourceID, id string) ([]messenger.Author, error) {
+	if err := a.forAccount(account); err != nil {
+		return nil, err
+	}
 	path, _, err := chatPath(id)
 	if err != nil {
 		return nil, err
@@ -140,7 +163,10 @@ type cursor struct {
 	High  time.Time `json:"high"`
 }
 
-func (a *Adapter) Page(ctx context.Context, id string, position messenger.Cursor) (messenger.Page, error) {
+func (a *Adapter) Page(ctx context.Context, account messenger.SourceID, id string, position messenger.Cursor) (messenger.Page, error) {
+	if err := a.forAccount(account); err != nil {
+		return messenger.Page{}, err
+	}
 	path, channel, err := chatPath(id)
 	if err != nil {
 		return messenger.Page{}, err
