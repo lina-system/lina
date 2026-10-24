@@ -503,7 +503,7 @@ Every issue names, under Design, the spec sections it implements; a pull request
   `tui` `feature` · parent M3-21 · after M3-22 · G3-09\
 - **M3-24** Cursor adapter\
   `core` `feature` · after M2-07, M2-38 · G3-10\
-  Done: Find the installed `cursor-agent` and record version and sign-in state; Not signed in is unsupported delegation; Run headless per task in its worktree with `stream-json` progress; Process exit plus the final stream event ends the run, and exit 0 without a final event is unknown; Interrupt stops the run; Once-only recovery resumes the same chat id in the same work area; Quota or rate-limit replies park the worker until reset without spending a retry; The adapter is an opt-in account of the person. Exact flags, stream events and control behavior are to be confirmed by [#210](https://github.com/thisisjun786/lina/issues/210).
+  Done: Find the installed `cursor-agent` and record version and sign-in state; Not signed in is unsupported delegation; Run headless per task in its worktree with `stream-json` progress; Process exit plus the final stream event ends the run, and exit 0 without a final event is unknown; Interrupt stops the run; Once-only recovery resumes the same chat id in the same work area; Quota or rate-limit replies park the worker until reset without spending a retry; The adapter is an opt-in account of the person. Exact flags, stream events and control behavior are to be confirmed by [#210](https://github.com/lina-system/lina/issues/210).
 - **M3-25** Antigravity adapter\
   `core` `feature` · after M2-07, M2-38 · G3-16\
   Done: The result event ends the turn; Success is confirmed from the pull request and never from the exit code; An unapproved tool soft-denial is reported.
