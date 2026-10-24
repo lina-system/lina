@@ -592,11 +592,11 @@ func bindingAction(name string) string {
 	switch name {
 	case "follow_work", "worker_input":
 		return "steer"
-	case "worker_interrupt":
+	case "worker_interrupt", "cancel_timer":
 		return "stop"
-	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph", "build_mock":
+	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph", "build_mock", "revise_code_goal", "call_tool", "refresh_work":
 		return "start"
-	case "send_handoff":
+	case "send_handoff", "remote_agent", "begin_artifact_change":
 		return "send"
 	case "trash_record":
 		return "delete"

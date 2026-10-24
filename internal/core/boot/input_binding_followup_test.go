@@ -822,3 +822,89 @@ func TestBuildMockAsksBeforeAdmittingTiedWork(t *testing.T) {
 		t.Fatalf("tied build reached Admit: goals=%d err=%v", len(snapshot.Goals), err)
 	}
 }
+
+func TestBindingActionClassifiesEveryWrappedTool(t *testing.T) {
+	r, _ := turnRuntime(t)
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	input := questionPersonInput(t, r, "tool-class", "Which tools can change work?")
+	tools := modelBindingTools(t, r, input)
+	got := map[string]string{}
+	for name := range tools {
+		if name == "bind_input" || name == "resolve_question" || name == "ask_question" {
+			continue
+		}
+		got[name] = bindingAction(name)
+	}
+	want := map[string]string{
+		"begin_artifact_change":  "send",
+		"build_mock":             "start",
+		"calculate":              "",
+		"call_tool":              "start",
+		"cancel_timer":           "stop",
+		"change_persona":         "",
+		"create_timer":           "",
+		"dispatch_code_goal":     "start",
+		"dispatch_work":          "start",
+		"draft_plan":             "",
+		"fill_persona_setting":   "",
+		"fill_work_method":       "",
+		"finish_artifact_change": "",
+		"follow_work":            "steer",
+		"handoff_status":         "",
+		"land_work_result":       "",
+		"list_candidates":        "",
+		"load_tools":             "",
+		"mini_app":               "",
+		"observe_health":         "",
+		"plan_index":             "",
+		"prepare_work":           "",
+		"present_result":         "",
+		"present_surface":        "",
+		"promote_memo":           "",
+		"propose_candidate":      "",
+		"query_records":          "",
+		"read_plan":              "",
+		"read_record":            "",
+		"read_result":            "",
+		"read_skill":             "",
+		"read_step_graph":        "",
+		"read_work_progress":     "",
+		"record_emotion":         "",
+		"record_relationship":    "",
+		"remember_name":          "",
+		"remote_agent":           "send",
+		"repair_records_index":   "",
+		"report_work_result":     "",
+		"retain_work_result":     "",
+		"revise_code_goal":       "start",
+		"send_handoff":           "send",
+		"set_emotion_expression": "",
+		"skill_index":            "",
+		"skill_notices":          "",
+		"start_run":              "start",
+		"submit_step_graph":      "start",
+		"timer_status":           "",
+		"undo_persona":           "",
+		"undo_record":            "",
+		"undo_skill":             "",
+		"worker_input":           "steer",
+		"worker_interrupt":       "stop",
+		"worker_quota":           "",
+		"worker_read_file":       "",
+		"worker_snapshot":        "",
+		"worker_start":           "start",
+		"write_record":           "",
+		"write_skill":            "",
+	}
+	if len(got) != len(want) {
+		t.Fatalf("wrapped tools = %v", got)
+	}
+	for name, action := range want {
+		if got[name] != action {
+			t.Errorf("%s action = %q, want %q", name, got[name], action)
+		}
+	}
+}
