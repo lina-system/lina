@@ -102,6 +102,11 @@ func rebuildPersonaItems(ep replay.Episode, sources []replay.Context, profile []
 				return nil, replay.Exclusion("missing_assembly")
 			}
 			item = relationshipContext(*source.Memory, a.AgentID)
+		case "topic-memory-v1":
+			if source.Memory == nil {
+				return nil, replay.Exclusion("missing_assembly")
+			}
+			item = topicContext(*source.Memory, a.AgentID)
 		default:
 			return nil, replay.Exclusion("missing_assembly")
 		}

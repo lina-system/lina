@@ -1134,6 +1134,8 @@ func TestBindingActionClassifiesEveryWrappedTool(t *testing.T) {
 		"handoff_status":         "",
 		"land_work_result":       "",
 		"list_candidates":        "",
+		"recall":                 "",
+		"expand":                 "",
 		"load_tools":             "",
 		"mini_app":               "",
 		"observe_health":         "",
