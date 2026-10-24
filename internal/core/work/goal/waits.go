@@ -201,8 +201,14 @@ func applyWaitRead(g *Goal, a Action, o Observation) error {
 	}
 	w := g.Waits[idx]
 	if *o.SourceOpen {
-		g.DecisionRow = expiryRow(w)
-		g.AttentionID = "goal:" + g.ID + ":wait:" + w.Wake
+		if g.DecisionRow == "" {
+			g.DecisionRow = expiryRow(w)
+			g.AttentionID = "goal:" + g.ID + ":wait:" + w.Wake
+		} else {
+			// Independent expiries share the goal's row. Keep every proposal
+			// and its draft; a later source must not replace an earlier one.
+			g.DecisionRow += "\n\n" + expiryRow(w)
+		}
 		g.BlockedReason = g.DecisionRow
 		g.State = GoalBlocked
 	}

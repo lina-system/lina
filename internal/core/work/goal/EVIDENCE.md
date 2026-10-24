@@ -38,6 +38,8 @@ land. They do not hold independent task dispatch. A manager observation can
 carry `waits` together with the legacy `wait`; Core validates the combined set
 before committing any task or wait, rejecting duplicate wake identities.
 Each retained wait has its own source, durable deadline and read receipt.
+Several expiries append their recommendations and drafts to the same retained
+row without replacing its identity or dropping an earlier unresolved proposal.
 
 `e2e/trip_goal_test.go` drives real Core with calendar and mail service stubs.
 It prepares an itinerary, reads the calendar and sent item, retains independent

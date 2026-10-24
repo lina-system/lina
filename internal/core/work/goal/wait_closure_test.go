@@ -4,6 +4,7 @@ package goal
 import (
 	"encoding/json"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 )
@@ -39,6 +40,28 @@ func TestRecordedWaitAndDecisionHoldGoalClosure(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestMultipleExpiredWaitsKeepEveryRecommendation(t *testing.T) {
+	first, second := outsideWait(), outsideWait()
+	first.Recorded, second.Recorded = true, true
+	second.Wake = "booking.changed"
+	second.Recommendation, second.Draft = "The booking is unconfirmed.", "Please confirm the booking."
+	g := oneGoal()
+	g.Waits = []Wait{first, second}
+	for _, w := range []Wait{first, second} {
+		if err := applyWaitRead(&g, Action{TaskID: waitTaskID(w.Wake), ReadCause: "deadline"}, Observation{SourceOpen: boolPtr(true)}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if len(g.Waits) != 0 || g.State != GoalBlocked || g.AttentionID == "" {
+		t.Fatalf("expired waits did not become a row: %+v", g)
+	}
+	for _, text := range []string{first.Recommendation, first.Draft, second.Recommendation, second.Draft} {
+		if !strings.Contains(g.DecisionRow, text) || !strings.Contains(g.BlockedReason, text) {
+			t.Fatalf("expiry lost a recommendation or draft: %q", g.DecisionRow)
+		}
 	}
 }
 
