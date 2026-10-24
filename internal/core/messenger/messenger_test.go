@@ -517,6 +517,22 @@ func TestSyncReportsFailureOnTheSource(t *testing.T) {
 	}
 }
 
+func TestSyncRetriesFailingSource(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &fakeAdapter{fail: errors.New("temporary platform failure")}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	service.SyncAll(t.Context(), &f.now)
+	adapter.fail = nil
+	adapter.pages = map[string][]messenger.Page{"": {{Messages: []messenger.Message{message("recovered", messenger.RouteParticipant, f.now, "recovered message")}, Next: "recovered-cursor"}}}
+	later := f.now.Add(time.Hour)
+	service.SyncAll(t.Context(), &later)
+	sources, err := f.store.Sources(t.Context(), source.Person)
+	if err != nil || len(sources) != 1 || sources[0].State != messenger.StateConnected || len(adapter.requested) == 0 {
+		t.Fatalf("source did not recover: sources=%+v requested=%v err=%v", sources, adapter.requested, err)
+	}
+}
+
 // An unofficial source needs the person's accepted terms.
 func TestUnofficialSourceRequiresAcceptedTerms(t *testing.T) {
 	f := newFixture(t)
@@ -978,5 +994,51 @@ func TestScheduledReaderLeavesUnownedSourcesUntouched(t *testing.T) {
 		if row.State != messenger.StateConnected || row.Failure != "" {
 			t.Fatalf("reader changed another source: %+v", row)
 		}
+	}
+}
+
+type blockedSyncAdapter struct {
+	fakeAdapter
+	started chan struct{}
+}
+
+func (a *blockedSyncAdapter) ListChats(ctx context.Context, _ messenger.SourceID) ([]messenger.Chat, error) {
+	close(a.started)
+	<-ctx.Done()
+	return nil, ctx.Err()
+}
+
+func TestDisconnectCancelsActiveSync(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &blockedSyncAdapter{started: make(chan struct{})}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	synced := make(chan struct{})
+	go func() { defer close(synced); service.SyncAll(ctx, &f.now) }()
+	<-adapter.started
+	disconnected := make(chan error, 1)
+	go func() { disconnected <- service.Disconnect(t.Context(), source) }()
+	timer := time.NewTimer(2 * time.Second)
+	defer timer.Stop()
+	select {
+	case err := <-disconnected:
+		if err != nil {
+			t.Fatal(err)
+		}
+	case <-timer.C:
+		cancel()
+		<-synced
+		<-disconnected
+		t.Fatal("disconnect waited for active sync instead of cancelling it")
+	}
+	<-synced
+	sources, err := f.store.Sources(t.Context(), source.Person)
+	if err != nil || len(sources) != 1 || sources[0].State != messenger.StateDisconnected {
+		t.Fatalf("cancelled sync changed disconnected state: %+v %v", sources, err)
+	}
+	if _, err := service.Sync(t.Context(), source); err != nil {
+		t.Fatal(err)
 	}
 }

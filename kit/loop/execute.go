@@ -69,6 +69,7 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 	results := make([]Result, len(calls))
 	blocked := make([]bool, len(calls))
 	targets := make([]string, len(calls))
+	gates := make([]string, len(calls))
 	// Validate and preflight every call in order before any executor starts.
 	for i, c := range calls {
 		r := Result{ID: c.ID}
@@ -81,6 +82,9 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 			r.Code = Invalid
 		} else {
 			targets[i] = target
+			if t.Gate != nil {
+				gates[i] = t.Gate(c)
+			}
 			if cfg.Before != nil {
 				if denied := cfg.Before(ctx, c); denied != nil {
 					r = *denied
@@ -102,6 +106,28 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 	}
 	slots := make(chan struct{}, parallel)
 	last := map[string]chan struct{}{}
+	done := make([]chan struct{}, len(calls))
+	for i := range done {
+		done[i] = make(chan struct{})
+	}
+	// Calls with the same write target form a chain in call order. A gate names
+	// another call's write target; its call waits for that call even when it
+	// appears later in the response.
+	previous := make([]chan struct{}, len(calls))
+	for i := range calls {
+		if targets[i] == "" {
+			continue
+		}
+		previous[i] = last[targets[i]]
+		last[targets[i]] = done[i]
+	}
+	gate := make([]chan struct{}, len(calls))
+	for i := range calls {
+		if gates[i] == "" || gates[i] == targets[i] {
+			continue
+		}
+		gate[i] = last[gates[i]]
+	}
 	var wg sync.WaitGroup
 	var mu sync.Mutex
 	var failure error
@@ -114,23 +140,22 @@ func execute(ctx context.Context, cfg Config, round int, calls []provider.ToolCa
 		cancel(err)
 	}
 	for i, c := range calls {
-		done := make(chan struct{})
-		previous := last[targets[i]]
-		if targets[i] != "" {
-			last[targets[i]] = done
-		} else {
-			previous = nil
-		}
 		wg.Go(func() {
-			defer close(done)
+			defer close(done[i])
 			r := results[i]
 			// Only calls that never reach Execute receive a synthetic abort. Once
 			// dispatched, its returned result describes the committed receipt.
 			if !blocked[i] {
 				r = Result{ID: c.ID, Code: Aborted}
-				if previous != nil {
+				if previous[i] != nil {
 					select {
-					case <-previous:
+					case <-previous[i]:
+					case <-runCtx.Done():
+					}
+				}
+				if gate[i] != nil {
+					select {
+					case <-gate[i]:
 					case <-runCtx.Done():
 					}
 				}

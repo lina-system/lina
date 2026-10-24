@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/thisisjun786/lina/internal/core/agents"
 	"github.com/thisisjun786/lina/internal/core/assemble/atropos"
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -639,6 +640,99 @@ func TestSelectedNewTargetResolvesToCreatedIdentity(t *testing.T) {
 	}
 }
 
+func TestAnswerContinuationKeepsExplicitRequestOrdinal(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "first-run", Title: "First run", Kind: "run", State: "running", LastActivity: now},
+		{ID: "second-run", Title: "Second run", Kind: "run", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "split-continue", "Note this for later. Change its format.")
+	tools := modelBindingTools(t, r, input)
+	none := binding.Target{Class: "none"}
+	first := binding.Target{Class: "existing", ID: "first-run", Kind: "run"}
+	second := binding.Target{Class: "existing", ID: "second-run", Kind: "run"}
+	result := questionCall(t, tools, "bind_input", "split-tie", map[string]any{"bindings": []any{
+		map[string]any{"request": 0, "quote": "Note this for later.", "target": none},
+		map[string]any{"request": 1, "quote": "Change its format.", "target": first, "tied": []binding.Target{first, second}, "action": "steer"},
+	}})
+	if result.Code != loop.OK {
+		t.Fatalf("tie: %+v", result)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 2 || choices[1].Question == "" {
+		t.Fatalf("request 1 not held: %+v %v", choices, err)
+	}
+	q, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), choices[1].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	revision, value := "1", q.Choices[1]
+	values := protocol.FormValues{"answer": {String: &value}}
+	answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if outcome, err := r.answerConversationQuestion(t.Context(), r.person, answer, "answer"); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("answer: %s %v", outcome, err)
+	}
+	continued, err := r.journal().Get(t.Context(), q.ID+":answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	resumed := modelBindingTools(t, r, continued)
+	got := questionCall(t, resumed, "write_record", "independent", map[string]any{
+		"id": "", "revision": "", "kind": "todo", "title": "Independent note", "note": "Keep request zero.",
+		"input_binding": map[string]any{"request": 0},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("explicit request 0 was overwritten by the continuation: %+v", got)
+	}
+	choices, err = r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 2 || choices[1].Target != second || choices[1].Decider != "person" {
+		t.Fatalf("request 1 changed: %+v %v", choices, err)
+	}
+	if choices[0].Target.Class == "none" && choices[0].CreatedID == "" {
+		t.Fatal("request 0 did not receive the independent record")
+	}
+}
+
+func TestModelBindingNewWorkTargetsHaveDistinctLabels(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "garden", Title: "North garden", Kind: "project", State: "active", LastActivity: now},
+		{ID: "library", Title: "South library", Kind: "project", State: "active", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "new-tie", "Start a task under one project.")
+	tools := modelBindingTools(t, r, input)
+	garden := binding.Target{Class: "new", Kind: "task", Parent: "garden"}
+	library := binding.Target{Class: "new", Kind: "task", Parent: "library"}
+	result := questionCall(t, tools, "bind_input", "new-tie", bindingRequest{Bindings: []binding.Choice{{
+		Quote: input.Body.Text(), Target: garden, Tied: []binding.Target{garden, library}, Action: "start",
+	}}})
+	if result.Code != loop.OK {
+		t.Fatalf("new-work tie was not retained: %+v", result)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 1 || choices[0].Question == "" {
+		t.Fatalf("question missing: %+v %v", choices, err)
+	}
+	q, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), choices[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Choices) != 2 || q.Choices[0] == q.Choices[1] {
+		t.Fatalf("labels: %#v", q.Choices)
+	}
+	if !strings.Contains(q.Choices[0], "task") || !strings.Contains(q.Choices[0], "North garden") || !strings.Contains(q.Choices[1], "task") || !strings.Contains(q.Choices[1], "South library") {
+		t.Fatalf("labels do not name kind and parent: %#v", q.Choices)
+	}
+}
+
 // A task may be named like a generation reference. The gate and execution share
 // one resolver, so the follow-up reaches the task the person selected, and an
 // unmatched suffix still falls back to the task it qualifies.
@@ -762,6 +856,29 @@ func TestReadWorkProgressKeepsAcknowledgedCompletion(t *testing.T) {
 	}
 }
 
+// A task may be named goal:foo. That string is also a project record id.
+// The progress read keeps the task before it strips the prefix.
+func TestReadWorkProgressKeepsLiteralGoalPrefixedTask(t *testing.T) {
+	r, _ := turnRuntime(t)
+	card := work.Card{Task: work.Task{ID: "goal:foo", AgentID: r.agent, PersonID: r.person, ConversationID: r.conversation, Title: "Goal-shaped task"}, State: "done", Verdict: "verified", Run: &work.Run{Generation: 1}}
+	raw, err := json.Marshal(card)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO work_cards(task_id,record) VALUES(?,?)", card.Task.ID, raw)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "goal-shaped-progress", "Where is the goal-shaped task?")
+	tools := modelBindingTools(t, r, input)
+	got := questionCall(t, tools, "read_work_progress", "goal-shaped", map[string]string{"id": "goal:foo"})
+	if got.Code != loop.OK || !strings.Contains(string(got.Output), `"name":"Goal-shaped task"`) || strings.Contains(string(got.Output), `"state":"unknown"`) {
+		t.Fatalf("literal goal-prefixed task missed its progress line: %+v", got)
+	}
+}
+
 func TestFollowWorkRecoversChannelReceipt(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
@@ -833,5 +950,100 @@ func TestFollowWorkKeepsChannelSteeringReceipt(t *testing.T) {
 	var source channelFollowSource
 	if json.Unmarshal(record.FollowSources[0], &source) != nil || source.Sender != "42" || source.Address != view.channelAddress || !source.Addressed {
 		t.Fatalf("receipt: %s", record.FollowSources[0])
+	}
+}
+
+// A system turn that resumes an ordinary question has no held request, but it
+// can still consume person steering. The model must be able to bind it, and a
+// work call that names it must carry the steering input through the gate.
+func TestOrdinaryQuestionAnswerKeepsBindingForSteering(t *testing.T) {
+	r, _ := turnRuntime(t)
+	root := questionPersonInput(t, r, "ordinary-question", "Ask me which format to use")
+	tools, _ := questionBindings(t, r, root, agents.ProjectWorkMethod(agents.Preparation{}, agents.State{}))
+	asked := questionCall(t, tools, "ask_question", "format", waiting.QuestionDraft{Question: "Which format?", Recommendation: "Table", Default: "table"})
+	if asked.Code != loop.OK {
+		t.Fatalf("ask: %+v", asked)
+	}
+	var q waiting.ConversationQuestion
+	if json.Unmarshal(asked.Output, &q) != nil || q.ID == "" || q.Binding != nil {
+		t.Fatalf("question: %s", asked.Output)
+	}
+	route := r.route
+	r.route = nil
+	defer func() { r.route = route }()
+	revision, value := "1", "table"
+	values := protocol.FormValues{"answer": {String: &value}}
+	answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if outcome, err := r.answerConversationQuestion(t.Context(), r.person, answer, "answer"); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("answer: %s %v", outcome, err)
+	}
+	resumed, err := r.journal().Get(t.Context(), q.ID+":answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if resumed.SpeakerKind == guard.Person {
+		t.Fatal("the answer turn is not a system turn")
+	}
+	steering := questionPersonInput(t, r, "steering-input", "Use the second format instead")
+	prepare := func(inputs map[string]acceptedSteering) *turnState {
+		t.Helper()
+		s := &turnState{runtime: r, input: resumed, turnID: "turn:" + resumed.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: inputs}
+		declarations, err := r.prepareBindingWorkTools(s.turnID, &toolPreparation{event: resumed}, s.bindings)
+		if err != nil {
+			t.Fatal(err)
+		}
+		s.prepareInputBinding(declarations)
+		return s
+	}
+	bound := prepare(map[string]acceptedSteering{steering.ID: {event: steering}})
+	if _, ok := bound.bindings["bind_input"]; !ok {
+		t.Fatal("a resumed ordinary question dropped bind_input for its steering")
+	}
+	bind := func(turn *turnState, args string) (string, error) {
+		t.Helper()
+		return turn.bindings["bind_input"].Validate(provider.ToolCall{ID: "bind", Name: "bind_input", Arguments: args})
+	}
+	gate := func(turn *turnState, args string) string {
+		t.Helper()
+		return turn.bindings["read_work_progress"].Gate(provider.ToolCall{ID: "progress", Name: "read_work_progress", Arguments: args})
+	}
+	// The work call names the steering input, so it waits for the binding call
+	// that binds that same input.
+	request := `{"bindings":[{"quote":"Use the second format instead","target":{"class":"none"}}],"input_event_id":"` + steering.ID + `"}`
+	barrier, err := bind(bound, request)
+	if err != nil || barrier != "binding-gate:"+steering.ID {
+		t.Fatalf("steering binding target: %q %v", barrier, err)
+	}
+	// The base's text selector must resolve the same gate during validation
+	// and execution, including on a resumed system turn.
+	textRequest := `{"bindings":[{"target":"none"}],"text":"Use the second format instead"}`
+	if got, err := bind(bound, textRequest); err != nil || got != barrier {
+		t.Fatalf("text selector binding target: %q %v", got, err)
+	}
+	if got := bound.bindings["bind_input"].Execute(t.Context(), provider.ToolCall{ID: "text-bind", Name: "bind_input", Arguments: textRequest}); got.Code != loop.OK {
+		t.Fatalf("text selector binding failed: %+v", got)
+	}
+	if got := gate(bound, `{"id":"worker-1","input_binding":{"input_event_id":"`+steering.ID+`"}}`); got != barrier {
+		t.Fatalf("work call did not gate on the steering binding: %q", got)
+	}
+	// Consumed steering does not make the hosting system event the default:
+	// an unqualified work call stays this turn's own tool.
+	if got := gate(bound, `{"id":"worker-1"}`); got != "" {
+		t.Fatalf("consumed steering gated unqualified work on %q", got)
+	}
+	if got := questionCall(t, bound.bindings, "read_work_progress", "progress", map[string]string{"id": "worker-1"}); got.Code == loop.Denied {
+		t.Fatalf("consumed steering denied the turn's work call: %+v", got)
+	}
+	bare := prepare(nil)
+	// The hosting system event is not a person input, so binding it by default
+	// is refused and a call that names no input runs without a gate.
+	if _, err = bind(bare, `{"bindings":[{"quote":"table","target":{"class":"none"}}]}`); err == nil {
+		t.Fatal("an answer turn bound its own system event")
+	}
+	if got := gate(bare, `{"id":"worker-1"}`); got != "" {
+		t.Fatalf("a turn without a person input gated work on %q", got)
+	}
+	if got := questionCall(t, bare.bindings, "read_work_progress", "progress", map[string]string{"id": "worker-1"}); got.Code == loop.Denied {
+		t.Fatalf("a turn without a person input denied its work call: %+v", got)
 	}
 }

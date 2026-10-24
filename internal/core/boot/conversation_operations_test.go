@@ -183,9 +183,10 @@ func TestConversationRegistrationSurface(t *testing.T) {
 			// from the registration helpers: it guards the installed surface.
 			want := map[protocol.Kind]string{
 				protocol.KindAccountRequest: "accounts", protocol.KindSignInListening: "sign_in_relay", protocol.KindSignInRedirect: "sign_in_relay",
-				protocol.KindTeamsRequest:  "teams",
-				protocol.KindWebexRequest:  "webex",
-				protocol.KindRecordRequest: "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
+				protocol.KindTeamsRequest:    "teams",
+				protocol.KindWebexRequest:    "webex",
+				protocol.KindTelegramRequest: "telegram_source",
+				protocol.KindRecordRequest:   "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
 				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
 				protocol.KindWorkSwitchRequest: "work", protocol.KindWorkControlRequest: "work",
@@ -232,7 +233,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				if !ok || op.Handle == nil || op.Capability != (protocol.Capability{Name: capability, Version: "1.0"}) || !reflect.DeepEqual(op.AdditionalCapabilities, additional[kind]) {
 					t.Errorf("operation %s: %+v", kind, op)
 				}
-				if (op.Disconnect != nil) != (kind == protocol.KindAccountRequest) {
+				if (op.Disconnect != nil) != (kind == protocol.KindAccountRequest || kind == protocol.KindTelegramRequest) {
 					t.Errorf("disconnect changed for %s", kind)
 				}
 				if (op.CapabilityFor != nil) != (kind == protocol.KindAgentRequest || kind == protocol.KindProgressGet) {

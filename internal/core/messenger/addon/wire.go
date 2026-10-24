@@ -8,6 +8,7 @@ package addon
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"time"
 
@@ -29,9 +30,31 @@ type wireEvent struct {
 	Event    string        `json:"event"`
 	Message  *wireMessage  `json:"message"`
 	Deletion *wireDeletion `json:"deletion"`
+	Error    string        `json:"error"`
+}
+
+// An "ended" frame closes a live subscription the add-on did not stop on
+// request and names the cause's code. It carries nothing else.
+func (e wireEvent) checkEnded() error {
+	if e.Message != nil || e.Deletion != nil || e.Error == "" {
+		return fmt.Errorf("%w: live end", ErrUpstreamChanged)
+	}
+	return nil
+}
+
+// liveEnded is the error Live returns for an ended subscription. A session the
+// platform revoked needs sign-in; any other cause is the add-on's code.
+func liveEnded(cause string) error {
+	if cause == "needs_sign_in" {
+		return errors.Join(ErrLiveEnded, messenger.ErrNeedsSignIn)
+	}
+	return fmt.Errorf("%w: %s", ErrLiveEnded, cause)
 }
 
 func (e wireEvent) event() (messenger.Event, error) {
+	if e.Error != "" {
+		return messenger.Event{}, fmt.Errorf("%w: live event error", ErrUpstreamChanged)
+	}
 	switch e.Event {
 	case "message":
 		if e.Message == nil || e.Deletion != nil {

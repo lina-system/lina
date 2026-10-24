@@ -735,6 +735,40 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 - The connect card of an unofficial platform says in plain words that the platform's terms forbid automating a personal account, links the term, says that even reading may get the account limited, and says that LINA will only read. The person accepts before connecting, and LINA records the acceptance with the person and the date.
 - LINA never takes tokens, cookies or passwords from other apps or browsers, never signs in as an official client with that client's id or secret, never scripts a developer portal and never evicts the person's other devices. Reading never marks a message read, shows presence or typing, or joins or leaves a chat.
 
+### Telegram source
+
+The person connects their own account from `/telegram` in the TUI. The setup
+form links to `https://my.telegram.org` and asks for the person's own `api_id`
+and `api_hash`, phone number, sign-in code, and optional two-step verification
+password. LINA never creates an application or account. Inputs go through the
+owner settings route and never enter conversation history or a model request.
+Sign-in is bound to that client connection, expires after five minutes, and is
+cancelled when the client closes it or disconnects.
+
+Core derives the account ID from Telegram's authenticated user. Application
+credentials and MTProto sessions stay in the person's secret store; code and
+password are transient. Restart resumes connected sources from those sessions.
+Signing in again stops the previous reader before replacing its session, so the
+next read uses the newly authenticated account session.
+Disconnect cancels active reads and rate-limit waits before removing that
+account's saved session, while retaining its imported records. A transient
+source failure retries on the next interval.
+
+The source reads dialogs and pages history by message ID, with at most 100
+messages per page and a one-minute poll interval. Dialog pagination follows
+the unfiltered platform response, so skipped folder entries do not hide later
+chats. First fill walks backwards;
+catch-up retains the last completed watermark until every newer page commits.
+Live edits supersede stored records and explicit deletion updates retract them.
+Before a source is current, Core reconciles missed account and channel updates
+from checkpoints kept beside its session. Checkpoints advance only after the
+corresponding records commit. A gap beyond Telegram's recovery window reports
+a source failure and retains the checkpoint; missing history is never inferred
+to be a deletion.
+Reads send no read acknowledgement, presence or typing request. A Telegram
+channel bot remains a separate channel connection. This increment reads only;
+write verbs remain subject to the messenger write-grant implementation.
+
 ### Microsoft Teams source
 
 Teams reads work and school accounts through Microsoft Graph v1.0 with the
@@ -820,12 +854,14 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - It runs in the OS sandbox with network on, and writes only in its data directory ([filesystem.md](filesystem.md#state-root-and-layout)).
 - The person signs in through the add-on's own flow, such as KakaoTalk's passcode or Discord's QR code, typing into it through the app or the TUI. LINA relays and keeps nothing. The session stays in the add-on's data directory, outside backups; after a restore or on a new main the person signs in again.
 - One process runs for each account and stays running, so the platform sees one session. Core starts these children after binding its client socket, which their sandbox hides. Each read carries the source platform and account; a session refuses any other source. Core retries failed sources on their schedule, preserving the committed cursor, and bounds consecutive add-on restarts. A malformed or oversized response refuses the batch with "upstream changed".
+- A live subscription that ends without being stopped, such as after a lost connection or a revoked session, is reported to Core with its cause; it never stays shown as active. A revoked session needs sign-in; any other cause leaves the source to be read again on its schedule. The add-on keeps serving its other reads.
 - A pinned version changes only through a reviewed update that reads upstream's changes to the platforms LINA uses.
 - When the add-on or its runtime is missing or failing, only its sources fail. A platform with no registered driver is refused as `unsupported_platform`; that code is not rewritten as a generic source failure.
 
 ### Sync and coverage
 
 - Core reads each source on its schedule or from its live events. For a scheduled page, the records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Live admission leaves that pagination cursor and coverage unchanged. A live event that cannot be admitted yet, such as an edit held behind an unsettled write, is replayed on the same session instead of being acknowledged, so it is not lost. A scheduled page that overlaps a reported deletion cannot make the deleted message searchable again. Reading the same messages again adds nothing.
+- Live events and history pages for one source finish admission one at a time, so a newer edit sees the preceding committed revision. Waiting for admission can be cancelled; platform reads run independently of admission.
 - A failing source is read again on its schedule and returns to connected when a read completes; the person sees its cause in between. A source that needs sign-in waits for the person, and an unreachable, import-only or disconnected source is not read.
 - A chat's first fill reads back as far as the platform allows.
 - Where a platform serves no cursor that survives a restart, a read covers only its newest messages, and the chat's coverage record states that depth and that the cursor does not survive. Overlap between those reads is resolved by the platform message id, so a message reads once.

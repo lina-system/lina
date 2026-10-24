@@ -2,6 +2,7 @@
 package work
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
@@ -16,24 +17,25 @@ import (
 // SteeringMessage is the session mailbox projection. Receipts are append-only
 // work-ledger facts; neither delivery nor a worker's acknowledgement accepts work.
 type SteeringMessage struct {
-	Sender          string     `json:"sender,omitempty"`
-	SpeakerKind     string     `json:"speaker_kind,omitempty"`
-	ID              string     `json:"id"`
-	Session         string     `json:"session"`
-	TaskID          string     `json:"task_id"`
-	Person          string     `json:"person"`
-	Agent           string     `json:"agent"`
-	Conversation    string     `json:"conversation"`
-	Text            string     `json:"text"`
-	Tier            string     `json:"tier"`
-	Mechanism       string     `json:"mechanism"`
-	State           string     `json:"state"`
-	Reason          string     `json:"reason,omitempty"`
-	SentAt          time.Time  `json:"sent_at"`
-	DeliveredAt     *time.Time `json:"delivered_at,omitempty"`
-	ReadAt          *time.Time `json:"read_at,omitempty"`
-	ActedAt         *time.Time `json:"acted_at,omitempty"`
-	ActionLatencyMS *int64     `json:"action_latency_ms,omitempty"`
+	Sender          string          `json:"sender,omitempty"`
+	SpeakerKind     string          `json:"speaker_kind,omitempty"`
+	ID              string          `json:"id"`
+	Session         string          `json:"session"`
+	TaskID          string          `json:"task_id"`
+	Person          string          `json:"person"`
+	Agent           string          `json:"agent"`
+	Conversation    string          `json:"conversation"`
+	Text            string          `json:"text"`
+	Tier            string          `json:"tier"`
+	Mechanism       string          `json:"mechanism"`
+	State           string          `json:"state"`
+	Reason          string          `json:"reason,omitempty"`
+	SentAt          time.Time       `json:"sent_at"`
+	DeliveredAt     *time.Time      `json:"delivered_at,omitempty"`
+	ReadAt          *time.Time      `json:"read_at,omitempty"`
+	ActedAt         *time.Time      `json:"acted_at,omitempty"`
+	ActionLatencyMS *int64          `json:"action_latency_ms,omitempty"`
+	Source          json.RawMessage `json:"source,omitempty"`
 }
 
 type SteeringReceipt struct {
@@ -99,7 +101,7 @@ func (s *Service) StoreSteering(ctx context.Context, m SteeringMessage) (Steerin
 	err := s.db.Write(ctx, func(tx *canon.Tx) error {
 		prior, err := readSteering(ctx, tx, m.ID)
 		if err == nil {
-			if prior.Session != m.Session || prior.TaskID != m.TaskID || prior.Person != m.Person || prior.Agent != m.Agent || prior.Conversation != m.Conversation || prior.Text != m.Text || prior.Sender != m.Sender || prior.SpeakerKind != m.SpeakerKind {
+			if prior.Session != m.Session || prior.TaskID != m.TaskID || prior.Person != m.Person || prior.Agent != m.Agent || prior.Conversation != m.Conversation || prior.Text != m.Text || prior.Sender != m.Sender || prior.SpeakerKind != m.SpeakerKind || !bytes.Equal(prior.Source, m.Source) {
 				return ErrState
 			}
 			m = prior
