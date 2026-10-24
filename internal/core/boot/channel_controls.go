@@ -26,12 +26,17 @@ func (c *channelRuntime) channelControl(ctx context.Context, shared *conversatio
 	var body struct {
 		Text      string `json:"text"`
 		Forwarded bool   `json:"forwarded"`
+		ReplyTo   string `json:"reply_to"`
 	}
 	if json.Unmarshal(event.Body, &body) != nil {
 		return false, channels.ErrInvalid
 	}
 	if body.Forwarded {
 		return false, nil
+	}
+	// A chip line says /move; the list and the choice are one reply apart.
+	if arg, ok := moveCommand(body.Text); ok {
+		return true, c.channelMove(ctx, shared, event, b, in, body.ReplyTo, arg)
 	}
 	scope := b.Conversation
 	if event.Direct {
