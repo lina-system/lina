@@ -11,24 +11,43 @@ import (
 // DefaultInterval is the schedule for a source whose adapter states none.
 const DefaultInterval = time.Minute
 
+// Resolver selects the adapter for one source. The add-on runs one process per
+// account, so a source's adapter is not a function of its platform alone.
+type Resolver interface {
+	Resolve(source Source) (Adapter, bool)
+}
+
+// ResolverFunc adapts a function to Resolver.
+type ResolverFunc func(source Source) (Adapter, bool)
+
+func (f ResolverFunc) Resolve(source Source) (Adapter, bool) { return f(source) }
+
+// ByPlatform resolves each source to the adapter its platform names.
+func ByPlatform(adapters map[string]Adapter) ResolverFunc {
+	return func(source Source) (Adapter, bool) {
+		adapter, ok := adapters[source.Platform]
+		return adapter, ok
+	}
+}
+
 // Service reads connected sources on their schedule and from their live events.
 // One source's failure never blocks another source or the conversation.
 type Service struct {
 	store    *Store
-	adapters map[string]Adapter
+	resolve  Resolver
 	interval time.Duration
 
 	mu       sync.Mutex
 	lastSync map[string]time.Time
 }
 
-// NewService composes the sync loop. adapters are keyed by platform; a source
-// without an adapter is left untouched.
-func NewService(store *Store, adapters map[string]Adapter, interval time.Duration) *Service {
+// NewService composes the sync loop. A source the resolver does not know is
+// left untouched.
+func NewService(store *Store, resolve Resolver, interval time.Duration) *Service {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, adapters: adapters, interval: interval, lastSync: map[string]time.Time{}}
+	return &Service{store: store, resolve: resolve, interval: interval, lastSync: map[string]time.Time{}}
 }
 
 // Store is the registry and admission store the service reads into.
@@ -87,7 +106,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 }
 
 func (s *Service) intervalOf(source Source) time.Duration {
-	if adapter, ok := s.adapters[source.Platform]; ok {
+	if adapter, ok := s.resolve.Resolve(source); ok {
 		if interval := adapter.Capabilities().Interval; interval > 0 {
 			return interval
 		}
@@ -97,7 +116,7 @@ func (s *Service) intervalOf(source Source) time.Duration {
 
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
-	adapter, ok := s.adapters[source.Platform]
+	adapter, ok := s.resolve.Resolve(source)
 	if !ok {
 		return Result{}, ErrInvalid
 	}
@@ -176,7 +195,7 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 // Live reads a source's pushed events until ctx ends. A platform without live
 // events returns immediately.
 func (s *Service) Live(ctx context.Context, source Source, deliver func(Event) error) error {
-	adapter, ok := s.adapters[source.Platform]
+	adapter, ok := s.resolve.Resolve(source)
 	if !ok {
 		return ErrInvalid
 	}

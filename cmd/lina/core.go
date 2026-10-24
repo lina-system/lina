@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
@@ -16,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/internal/core/messenger/addon"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/update"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -85,6 +87,12 @@ func runCore(args []string) int {
 		}
 	}
 	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
+	// The messenger add-on is an external component with an explicit route, as
+	// the Claude adapter is. Without it only the unofficial messenger sources
+	// fail, with Node.js named as the cause.
+	if starter, err := messengerAddon(*root, *socket); err == nil && starter != nil {
+		cfg.Messenger = &boot.MessengerConfig{Addon: starter}
+	}
 	if *tailnet != "" {
 		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}
 	}
@@ -99,4 +107,20 @@ func runCore(args []string) int {
 		return 78
 	}
 	return 0
+}
+
+// messengerAddon reads the add-on's explicit route from the environment. A
+// partial configuration is refused here; an absent one leaves the add-on
+// unconfigured, so its sources report the missing Node.js and everything else
+// keeps working.
+func messengerAddon(root, socket string) (*addon.Manager, error) {
+	node, program := os.Getenv("LINA_MESSENGER_NODE"), os.Getenv("LINA_MESSENGER_ADDON")
+	if node == "" && program == "" {
+		return nil, nil
+	}
+	if !filepath.IsAbs(node) || !filepath.IsAbs(program) {
+		fmt.Fprintln(os.Stderr, "lina core: invalid messenger configuration")
+		return nil, errors.New("invalid messenger configuration")
+	}
+	return addon.NewManager(addon.Config{Node: node, Program: program, StateRoot: root, Socket: socket}), nil
 }

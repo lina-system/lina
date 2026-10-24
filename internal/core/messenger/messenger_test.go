@@ -151,7 +151,7 @@ func TestInterruptedReadResumesFromTheCommittedCursor(t *testing.T) {
 	adapter := &fakeAdapter{chats: []messenger.Chat{{ID: "dm-1", Kind: "direct"}}, pages: map[string][]messenger.Page{
 		"cursor-2": {{Messages: []messenger.Message{message("m-3", messenger.RoutePerson, f.now.Add(2*time.Minute), "three")}, Next: "cursor-3"}},
 	}}
-	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	service := messenger.NewService(f.store, messenger.ByPlatform(map[string]messenger.Adapter{"discord": adapter}), time.Hour)
 	if _, err := service.Sync(t.Context(), source); err != nil {
 		t.Fatal(err)
 	}
@@ -397,7 +397,7 @@ func TestRecordBecomesOneIndexDocumentWithMaskedURL(t *testing.T) {
 func TestSyncReportsFailureOnTheSource(t *testing.T) {
 	f := newFixture(t)
 	source := f.connect(t)
-	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": &fakeAdapter{fail: errors.New("platform refused")}}, time.Hour)
+	service := messenger.NewService(f.store, messenger.ByPlatform(map[string]messenger.Adapter{"discord": &fakeAdapter{fail: errors.New("platform refused")}}), time.Hour)
 	service.SyncAll(t.Context(), &f.now)
 	sources, err := f.store.Sources(t.Context(), "person")
 	if err != nil {

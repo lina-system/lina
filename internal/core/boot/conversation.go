@@ -83,6 +83,7 @@ type conversationRuntime struct {
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
 	messenger       *messenger.Service
+	messengerAddon  AddonStarter
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
 	channels        *channelRuntime
@@ -415,6 +416,11 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 		case <-r.messengerDone:
 		case <-ctx.Done():
 			return ctx.Err()
+		}
+	}
+	if r.messengerAddon != nil {
+		if err := r.messengerAddon.Close(ctx); err != nil {
+			return err
 		}
 	}
 	if r.publications != nil && r.publications.stop != nil {

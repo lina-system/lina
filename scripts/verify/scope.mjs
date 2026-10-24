@@ -53,7 +53,7 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 
 export function kind(path) {
   if (['scripts/verify/test-times.json', 'scripts/verify/bwrap.apparmor'].includes(path)) return 'automation';
-  if (path.startsWith('adapters/claude/') || path.startsWith('adapters/claude-acp/')) return 'automation';
+  if (path.startsWith('adapters/claude/') || path.startsWith('adapters/claude-acp/') || path.startsWith('adapters/messenger/')) return 'automation';
   // Native parts carry their own portable tests; the automation check compiles
   // and runs them, so a change under native/ selects it.
   if (path.startsWith('native/')) return 'automation';
