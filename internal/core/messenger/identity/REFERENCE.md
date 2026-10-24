@@ -94,8 +94,11 @@ transaction, so an item keeps its evidence, holder and scope.
 
 What a link produced is recorded in `identity_artifact` (memory items, and the
 kind reserved for people-record entries) and a citation of the link as external
-evidence counts too. The removal list is durable and idempotent, so it runs after
-the link's own transaction; a failure surfaces and the link is already unusable.
+evidence counts too. Removing, correcting, or superseding a link retracts those
+items through the one removal list in the same writer transaction as the link
+change. The link change and the retraction become visible together. An empty
+retraction commits the link and writes no removal-list line. A failure rolls
+the link change back with the retraction. Recovery replays the removal list.
 
 A repair leaves one row per identity in `identity_requeue`, from the source's
 learning watermark or, without one, the identity's first sighting. Extraction

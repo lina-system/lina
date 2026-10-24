@@ -698,6 +698,62 @@ func TestSplitMovesOneIdentityAndItsItems(t *testing.T) {
 	}
 }
 
+// stopRemovals can forget only in its own later transaction. A repair must
+// refuse it and leave the link unchanged when items have to be retracted.
+type stopRemovals struct{}
+
+func (stopRemovals) Forget(context.Context, retract.Request) error {
+	return errors.New("removal stopped")
+}
+
+func TestRepairDoesNotKeepALinkChangeWhenRetractionStops(t *testing.T) {
+	t.Parallel()
+	for _, act := range []string{"remove", "correct", "confirm", "no removal path"} {
+		t.Run(act, func(t *testing.T) {
+			t.Parallel()
+			people := identity.StaticPeople{
+				{Record: "person-wrong", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "Discord profile"}}},
+				{Record: "person-right"},
+			}
+			f := newFixture(t, people)
+			f.now = at(9)
+			observe(t, f, discord("d-repair"), "Someone", phone("+821012340001", "Discord profile"))
+			before := usable(t, f, discord("d-repair"))
+			if len(before) != 1 || before[0].Record != "person-wrong" {
+				t.Fatalf("exact link = %+v", before)
+			}
+			item := f.item(t, "person-wrong", "repair rollback "+act)
+			if err := f.store.RecordArtifact(t.Context(), before[0].ID, "item", item.ID); err != nil {
+				t.Fatal(err)
+			}
+			var removals identity.Removals = stopRemovals{}
+			if act == "no removal path" {
+				removals = nil
+			}
+			f.store = identity.Open(f.db, "person", people, removals).WithClock(func() time.Time { return f.now })
+			var err error
+			switch act {
+			case "remove", "no removal path":
+				_, err = f.store.Remove(t.Context(), before[0].ID)
+			case "correct":
+				_, err = f.store.Correct(t.Context(), before[0].ID, "person-right")
+			case "confirm":
+				_, err = f.store.Confirm(t.Context(), discord("d-repair"), "person-right", "that one")
+			}
+			if !errors.Is(err, identity.ErrInvalid) {
+				t.Fatalf("error = %v, want ErrInvalid", err)
+			}
+			got := links(t, f, discord("d-repair"))
+			if len(got) != 1 || got[0].Record != "person-wrong" || got[0].Class != identity.Exact || got[0].State != identity.Active {
+				t.Fatalf("link changed without a retraction: %+v", got)
+			}
+			if !visible(t, f, item.ID) {
+				t.Fatal("the item was hidden without a committed repair")
+			}
+		})
+	}
+}
+
 func TestCorrectMovesTheLinkAndRetractsItsItems(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{

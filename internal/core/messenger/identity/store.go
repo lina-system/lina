@@ -801,17 +801,18 @@ func (s *Store) Question(ctx context.Context, id Identity) (Question, bool, erro
 }
 
 // Confirm records the person's answer: this identity is this people record.
+// A link the answer supersedes is removed, and the items it produced are
+// retracted, in that same writer transaction.
 func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) (Link, error) {
 	if !id.valid() || record == "" {
 		return Link{}, ErrInvalid
 	}
 	at := s.now()
 	var confirmed Link
-	var superseded []supersededLink
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	_, err := s.commitRepair(ctx, func(tx *canon.Tx) ([]string, bool, error) {
 		links, err := s.linksTx(ctx, tx, id)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
 		signals := []Signal{{Kind: SignalAnswer, Source: s.person, Value: words}}
 		var chosen *Link
@@ -823,71 +824,68 @@ func (s *Store) Confirm(ctx context.Context, id Identity, record, words string) 
 		}
 		if chosen == nil {
 			if err := s.insertLink(ctx, tx, id, record, Confirmed, s.person, at, time.Time{}, signals); err != nil {
-				return err
+				return nil, false, err
 			}
 		} else if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET class='confirmed',maker=?,revision=revision+1,valid_through='' WHERE id=?`, s.person, chosen.ID); err != nil {
-			return err
+			return nil, false, err
 		} else if err := writeChange(ctx, tx, chosen.ID, chosen.Revision+1, "confirm", Confirmed, Active, record, s.person, at); err != nil {
-			return err
+			return nil, false, err
 		} else if err := writeSignals(ctx, tx, chosen.ID, signals); err != nil {
-			return err
+			return nil, false, err
 		}
 		// The person's answer settles the identity: a link the matcher made to
 		// another record is superseded and repaired like any wrong match.
+		var items []string
+		superseded := false
 		for _, link := range links {
 			if link.State != Active || link.Record == record {
 				continue
 			}
 			if _, err := tx.ExecContext(ctx, "UPDATE identity_link SET state='removed',revision=revision+1 WHERE id=?", link.ID); err != nil {
-				return err
+				return nil, false, err
 			}
 			if err := writeChange(ctx, tx, link.ID, link.Revision+1, "superseded", link.Class, Removed, link.Record, s.person, at); err != nil {
-				return err
+				return nil, false, err
 			}
-			items, err := s.citingItems(ctx, tx, link.ID)
+			cited, err := s.citingItems(ctx, tx, link.ID)
 			if err != nil {
-				return err
+				return nil, false, err
 			}
-			superseded = append(superseded, supersededLink{id: link.ID, items: items})
+			if err := dropItemArtifacts(ctx, tx, link.ID, cited); err != nil {
+				return nil, false, err
+			}
+			items = append(items, cited...)
+			superseded = true
 		}
-		if len(superseded) > 0 {
-			if _, err := s.requeueTx(ctx, tx, id, at, "link superseded"); err != nil {
-				return err
+		requeued := false
+		if superseded {
+			var err error
+			if requeued, err = s.requeueTx(ctx, tx, id, at, "link superseded"); err != nil {
+				return nil, false, err
 			}
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE identity_question SET state='answered',answer=? WHERE platform=? AND scope=? AND user=?", words, id.Platform, id.Scope, id.User); err != nil {
-			return err
+			return nil, false, err
 		}
 		links, err = s.linksTx(ctx, tx, id)
 		if err != nil {
-			return err
+			return nil, false, err
 		}
+		confirmed = Link{}
 		for _, link := range links {
 			if link.Record == record && link.State == Active {
 				confirmed = link
 			}
 		}
-		return nil
+		if confirmed.ID == "" {
+			return nil, false, ErrNotFound
+		}
+		return items, requeued, nil
 	})
 	if err != nil {
 		return Link{}, err
 	}
-	if confirmed.ID == "" {
-		return Link{}, ErrNotFound
-	}
-	for _, link := range superseded {
-		if _, err := s.retract(ctx, link.id, link.items, false); err != nil {
-			return Link{}, err
-		}
-	}
 	return confirmed, nil
-}
-
-// supersededLink is a link the person's answer replaced, with the items it
-// produced, retracted after the answer commits.
-type supersededLink struct {
-	id    string
-	items []string
 }
 
 // Reject keeps the person's refusal: the link is no longer usable and never
@@ -919,83 +917,78 @@ func (s *Store) setState(ctx context.Context, linkID string, state LinkState, ac
 
 // Remove is the person's act: the link stops being usable, every item it
 // produced is retracted through the one retraction path, and only this
-// identity's messages after the learning watermark are queued again.
+// identity's messages after the learning watermark are queued again. The link
+// change and the retraction commit together.
 func (s *Store) Remove(ctx context.Context, linkID string) (Repair, error) {
 	if linkID == "" {
 		return Repair{}, ErrInvalid
 	}
 	at := s.now()
-	var identity Identity
-	var revision int
-	var class Class
-	var record string
-	var items []string
-	var requeued bool
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	return s.commitRepair(ctx, func(tx *canon.Tx) ([]string, bool, error) {
+		var identity Identity
+		var revision int
+		var class Class
+		var record string
 		if err := tx.QueryRowContext(ctx, "SELECT platform,scope,user,revision,class,record FROM identity_link WHERE id=?", linkID).
 			Scan(&identity.Platform, &identity.Scope, &identity.User, &revision, &class, &record); err != nil {
-			return err
+			return nil, false, err
 		}
 		if _, err := tx.ExecContext(ctx, "UPDATE identity_link SET state='removed',revision=revision+1 WHERE id=?", linkID); err != nil {
-			return err
+			return nil, false, err
 		}
 		if err := writeChange(ctx, tx, linkID, revision+1, "remove", class, Removed, record, s.person, at); err != nil {
-			return err
+			return nil, false, err
 		}
-		var err error
-		if items, err = s.citingItems(ctx, tx, linkID); err != nil {
-			return err
+		items, err := s.citingItems(ctx, tx, linkID)
+		if err != nil {
+			return nil, false, err
 		}
-		requeued, err = s.requeueTx(ctx, tx, identity, at, "link removed")
-		return err
+		if err := dropItemArtifacts(ctx, tx, linkID, items); err != nil {
+			return nil, false, err
+		}
+		requeued, err := s.requeueTx(ctx, tx, identity, at, "link removed")
+		return items, requeued, err
 	})
-	if err != nil {
-		return Repair{}, err
-	}
-	return s.retract(ctx, linkID, items, requeued)
 }
 
 // Correct moves an identity to the right people record. The items the old link
 // produced are retracted, and only this identity's messages after the learning
-// watermark are queued again.
+// watermark are queued again. The move and the retraction commit together.
 func (s *Store) Correct(ctx context.Context, linkID, record string) (Repair, error) {
 	if linkID == "" || record == "" {
 		return Repair{}, ErrInvalid
 	}
 	at := s.now()
-	var identity Identity
-	var revision int
-	var class Class
-	var previous string
-	var items []string
-	var requeued bool
-	err := s.db.Write(ctx, func(tx *canon.Tx) error {
+	return s.commitRepair(ctx, func(tx *canon.Tx) ([]string, bool, error) {
+		var identity Identity
+		var revision int
+		var class Class
+		var previous string
 		if err := tx.QueryRowContext(ctx, "SELECT platform,scope,user,revision,class,record FROM identity_link WHERE id=?", linkID).
 			Scan(&identity.Platform, &identity.Scope, &identity.User, &revision, &class, &previous); err != nil {
-			return err
+			return nil, false, err
 		}
 		if _, err := tx.ExecContext(ctx, `UPDATE identity_link SET record=?,class='confirmed',maker=?,state='active',revision=revision+1,valid_through='' WHERE id=?`,
 			record, s.person, linkID); err != nil {
-			return err
+			return nil, false, err
 		}
 		if err := writeChange(ctx, tx, linkID, revision+1, "correct", Confirmed, Active, record, s.person, at); err != nil {
-			return err
+			return nil, false, err
 		}
 		answer := []Signal{{Kind: SignalAnswer, Source: s.person, Value: "moved to " + record}}
 		if err := writeSignals(ctx, tx, linkID, answer); err != nil {
-			return err
+			return nil, false, err
 		}
-		var err error
-		if items, err = s.citingItems(ctx, tx, linkID); err != nil {
-			return err
+		items, err := s.citingItems(ctx, tx, linkID)
+		if err != nil {
+			return nil, false, err
 		}
-		requeued, err = s.requeueTx(ctx, tx, identity, at, "link corrected")
-		return err
+		if err := dropItemArtifacts(ctx, tx, linkID, items); err != nil {
+			return nil, false, err
+		}
+		requeued, err := s.requeueTx(ctx, tx, identity, at, "link corrected")
+		return items, requeued, err
 	})
-	if err != nil {
-		return Repair{}, err
-	}
-	return s.retract(ctx, linkID, items, requeued)
 }
 
 // citingItems lists the memory items a link produced. The artifact table is the
@@ -1026,37 +1019,76 @@ SELECT view_id FROM cite WHERE view_kind='memory' AND target_kind='external' AND
 	return items, rows.Err()
 }
 
-func (s *Store) retract(ctx context.Context, linkID string, items []string, requeued bool) (Repair, error) {
-	if len(items) > 0 {
-		if s.removals == nil {
-			return Repair{}, ErrInvalid
+// atomicRemovals journals a forget in the same fenced writer as the caller's
+// canon changes. The removal list Core opens implements it.
+type atomicRemovals interface {
+	ForgetDuring(context.Context, string, func(*canon.Tx) ([]retract.Ref, error)) error
+}
+
+// commitRepair runs mutate and the retraction of the items it names in one
+// writer transaction. An empty item list commits mutate and writes no removal
+// line. A removal path that cannot share that writer leaves the link unchanged
+// when there are items to retract.
+func (s *Store) commitRepair(ctx context.Context, mutate func(*canon.Tx) ([]string, bool, error)) (Repair, error) {
+	describe := func(n int, requeued bool) Repair {
+		repair := Repair{Items: n, Requeued: requeued, Description: fmt.Sprintf("%d items retracted", n)}
+		if requeued {
+			repair.Description += "; messages requeued after the learning watermark"
 		}
-		targets := make([]retract.Ref, 0, len(items))
-		for _, item := range items {
-			targets = append(targets, retract.Ref{Kind: retract.Memory, ID: item})
-		}
-		if err := s.removals.Forget(ctx, retract.Request{Person: s.person, Targets: targets}); err != nil {
-			return Repair{}, err
-		}
-		if err := s.db.Write(ctx, func(tx *canon.Tx) error {
-			// The item artifacts go with the items the removal list recorded; a
-			// people-record entry is retracted by the write that owns it (#1077).
-			for _, item := range items {
-				if _, err := tx.ExecContext(ctx, "DELETE FROM identity_artifact WHERE link=? AND kind='item' AND id=?", linkID, item); err != nil {
-					return err
-				}
-			}
-			return nil
-		}); err != nil {
-			return Repair{}, err
-		}
+		return repair
 	}
-	repair := Repair{Items: len(items), Requeued: requeued}
-	repair.Description = fmt.Sprintf("%d items retracted", len(items))
-	if requeued {
-		repair.Description += "; messages requeued after the learning watermark"
+	during, ok := s.removals.(atomicRemovals)
+	if !ok {
+		var repair Repair
+		err := s.db.Write(ctx, func(tx *canon.Tx) error {
+			items, requeued, err := mutate(tx)
+			if err != nil {
+				return err
+			}
+			if len(items) > 0 {
+				return ErrInvalid
+			}
+			repair = describe(0, requeued)
+			return nil
+		})
+		if err != nil {
+			return Repair{}, err
+		}
+		return repair, nil
+	}
+	var repair Repair
+	err := during.ForgetDuring(ctx, s.person, func(tx *canon.Tx) ([]retract.Ref, error) {
+		items, requeued, err := mutate(tx)
+		if err != nil {
+			return nil, err
+		}
+		refs := make([]retract.Ref, 0, len(items))
+		seen := map[string]bool{}
+		for _, item := range items {
+			if item == "" || seen[item] {
+				continue
+			}
+			seen[item] = true
+			refs = append(refs, retract.Ref{Kind: retract.Memory, ID: item})
+		}
+		repair = describe(len(refs), requeued)
+		return refs, nil
+	})
+	if err != nil {
+		return Repair{}, err
 	}
 	return repair, nil
+}
+
+// dropItemArtifacts removes the item rows a repair is retracting. A
+// people-record entry is retracted by the write that owns it (#1077).
+func dropItemArtifacts(ctx context.Context, tx *canon.Tx, linkID string, items []string) error {
+	for _, item := range items {
+		if _, err := tx.ExecContext(ctx, "DELETE FROM identity_artifact WHERE link=? AND kind='item' AND id=?", linkID, item); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 // requeueTx queues only this identity's messages after the source's learning

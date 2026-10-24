@@ -199,8 +199,9 @@ type Person struct {
 	Identifiers []SeenIdentifier
 }
 
-// Removals is the one retraction path. A removed or corrected link retracts the
-// items it produced through it.
+// Removals is the one retraction path. A removed, corrected, or superseded link
+// retracts the items it produced through it. A removal path that can journal
+// inside the caller's writer commits that retraction with the link change.
 type Removals interface {
 	Forget(context.Context, retract.Request) error
 }
