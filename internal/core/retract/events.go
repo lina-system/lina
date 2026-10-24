@@ -80,7 +80,9 @@ func applyEvent(ctx context.Context, tx *canon.Tx, e entry, target Target) error
 		// check constraint needs one of text or material.
 		_, err := tx.ExecContext(ctx, "UPDATE conv_event SET body='',material_id=NULL,material_revision=NULL WHERE id=?", target.ID)
 		return err
-	case disconnect:
+	case suppress, disconnect:
+		// A wrong-match repair hides cited memory items. It does not retract
+		// the ledger event, and a source disconnect is not an event removal.
 		return ErrInvalid
 	default:
 		return ErrInvalid
