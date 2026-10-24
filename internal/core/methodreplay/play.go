@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
+	"github.com/thisisjun786/lina/persona"
 )
 
 // ErrReply reports a stream that produced no assistant text.
@@ -30,8 +31,19 @@ type Player struct {
 // installed conversation's persona-tui-work-method-v1 assembly so the measured
 // difference comes from the layers and record, not from a different wrapper.
 func Instructions(preset Preset, role string) (string, error) {
-	p := agents.Preparation{AgentID: role, Name: role, OwnerPersonID: "owner", Layers: preset.Layers, WorkMethod: preset.WorkMethod}
+	p := agents.Preparation{AgentID: role, Name: starterName(role), OwnerPersonID: "owner", Layers: preset.Layers, WorkMethod: preset.WorkMethod}
 	return assemble.TUIInstructions(p, nil)
+}
+
+// starterName is the display name the shipped persona introduces itself as.
+// A role that is not a starter keeps its key, so an unknown case stays answerable.
+func starterName(role string) string {
+	for _, starter := range persona.Starters() {
+		if starter.Key == role {
+			return starter.Name
+		}
+	}
+	return role
 }
 
 func (p Player) Play(ctx context.Context, c Case, v Variant) (string, error) {
