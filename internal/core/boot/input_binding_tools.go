@@ -406,7 +406,7 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	case "read_work_progress", "follow_work":
 		id = str("id")
 		if c.Name == "follow_work" {
-			id, err = r.followTargetTask(ctx, id)
+			id, err = r.followTaskID(ctx, id)
 		} else if taskID, ok := workerFollowTask(id); ok && taskID != id {
 			if _, lookupErr := r.work.Get(ctx, taskID); lookupErr == nil {
 				id = taskID
@@ -582,10 +582,13 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if preparation != nil {
 						event = preparation.event
 					}
-					if taskID, ok := workerFollowTask(a.ID); ok {
-						if _, err := r.work.Get(ctx, taskID); err == nil {
-							return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
-						}
+					// Deliver to the identity the chosen-target gate checked.
+					taskID, err := r.followCallTask(ctx, event.ID, turnID, c.ID, a.ID)
+					if err != nil {
+						return loop.Result{ID: c.ID, Code: loop.Denied}
+					}
+					if _, err := r.work.Get(ctx, taskID); err == nil {
+						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
 					}
 					var source json.RawMessage
 					if r.channelBinding != nil {
@@ -610,7 +613,7 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 						}
 						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
 					}
-					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: a.ID, Text: a.Text}}, source)
+					_, err = r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: taskID, Text: a.Text}}, source)
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
@@ -857,13 +860,11 @@ func (r *conversationRuntime) workerSessionTask(ctx context.Context, session str
 	return "", nil
 }
 
-// Resolve the same generation-bound task references used by owner controls.
-// Raw task and background-run IDs retain their identity.
-func (r *conversationRuntime) followTargetTask(ctx context.Context, ref string) (string, error) {
-	// Match execution's precedence when a raw task ID contains a prefix.
-	if card, err := r.work.Get(ctx, ref); err == nil {
-		return card.Task.ID, nil
-	}
+// followTaskID resolves a follow_work id to the task the follow-up reaches.
+// The chosen-target gate and execution share it, so the identity that is
+// checked is the identity that receives the instruction. A literal task id
+// wins over a generation suffix: a task named "a:1" is not generation 1 of "a".
+func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (string, error) {
 	if session, ok := strings.CutPrefix(ref, "session:"); ok {
 		return r.workerSessionTask(ctx, session)
 	}
@@ -876,12 +877,31 @@ func (r *conversationRuntime) followTargetTask(ctx context.Context, ref string) 
 		})
 		return card.Task.ID, err
 	}
-	// Execution strips an unprefixed generation too, so the gate must check the
-	// task the follow-up reaches rather than the raw reference.
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
+	}
 	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
 		if _, err := r.work.Get(ctx, taskID); err == nil {
 			return taskID, nil
 		}
 	}
 	return ref, nil
+}
+
+// followCallTask returns the task the gate checked for this call. It reads the
+// saved binding so execution does not resolve the reference a second time; a
+// call the gate left unbound (no settled choice) resolves once here.
+func (r *conversationRuntime) followCallTask(ctx context.Context, inputID, turnID, callID, ref string) (string, error) {
+	if inputID != "" {
+		event, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+callID)
+		if err == nil && event.ParentID == inputID {
+			var batch bindingBatch
+			if json.Unmarshal([]byte(event.Body.Text()), &batch) == nil && len(batch.Bindings) == 1 {
+				if target := batch.Bindings[0].Target; target.Class == "existing" && target.ID != "" {
+					return target.ID, nil
+				}
+			}
+		}
+	}
+	return r.followTaskID(ctx, ref)
 }
