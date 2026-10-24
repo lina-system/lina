@@ -295,6 +295,35 @@ func TestSamePageRootAndReplyKeepRelations(t *testing.T) {
 	}
 }
 
+// A stored root edited on the same page as a new reply is linked once, to the
+// revision this page admits.
+func TestReplyLinksOneRevisionOfEditedRoot(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	root := message("root", messenger.RouteParticipant, f.now, "thread root")
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{root}, Next: "c1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	edited := root
+	edited.Text = "thread root, edited"
+	edited.Edited = f.now.Add(time.Minute)
+	reply := message("reply", messenger.RouteParticipant, f.now.Add(2*time.Minute), "answer")
+	reply.ReplyTo = "root"
+	reply.Thread = "root"
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "c1", messenger.Page{
+		Messages: []messenger.Message{reply, edited}, Next: "c2",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	rootEvent := f.eventsFor(t, source, "dm-1", "root")
+	replyEvent := f.eventsFor(t, source, "dm-1", "reply")
+	if len(replyEvent.Relations) != 2 || !relationTargets(replyEvent, "replies_to", rootEvent.ID) || !relationTargets(replyEvent, "in_thread", rootEvent.ID) {
+		t.Fatalf("reply relations: %+v, root %s", replyEvent.Relations, rootEvent.ID)
+	}
+}
+
 func relationTargets(event ledger.Event, kind, target string) bool {
 	for _, relation := range event.Relations {
 		if relation.Kind == kind && relation.TargetID == target {

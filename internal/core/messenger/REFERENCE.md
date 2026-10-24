@@ -28,7 +28,9 @@ where it was, so the next read sees it again.
 Reply and thread targets are resolved before that batch is written. A target
 already committed in the chat uses that record's event. A target admitted on
 the same page uses the event of that admission, and the batch is ordered so
-the target is written first. A target that is neither committed nor on this
+the target is written first. Each target names one revision: when a committed
+target is edited on the same page, the relation names the new revision only.
+Imports resolve targets the same way. A target that is neither committed nor on this
 page adds no relation, and the message is still kept. Two messages that name
 each other cannot both be written first, so the link kept is the one from the
 message later in the page to the message earlier in it.

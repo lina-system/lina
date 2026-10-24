@@ -544,7 +544,7 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 	plans = orderPagePlans(plans)
 	admitted := map[string]string{}
 	for i := range plans {
-		plans[i].relations, err = s.importRelations(ctx, source, chat, plans[i].message, existing, admitted)
+		plans[i].relations, err = s.importRelations(ctx, source, chat, plans[i].message, admitted)
 		if err != nil {
 			return PageResult{}, err
 		}
@@ -683,32 +683,6 @@ func orderPagePlans(plans []recordPlan) []recordPlan {
 		}
 	}
 	return out
-}
-
-func (s *Store) relations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow) ([]ledger.Relation, error) {
-	var ids []string
-	for _, id := range []string{message.ReplyTo, message.Thread} {
-		if id != "" {
-			ids = append(ids, id)
-		}
-	}
-	if len(ids) == 0 {
-		return nil, nil
-	}
-	rows, err := s.recordRows(ctx, source, chat, ids)
-	if err != nil {
-		return nil, err
-	}
-	var relations []ledger.Relation
-	for _, target := range []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}} {
-		if target.id == "" {
-			continue
-		}
-		if row, ok := rows[target.id]; ok && row.state == "live" && row.visible && row.event != "" {
-			relations = append(relations, ledger.Relation{TargetID: row.event, Kind: target.kind})
-		}
-	}
-	return relations, nil
 }
 
 // admission builds the trusted entry and ledger input of one record.

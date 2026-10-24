@@ -251,7 +251,7 @@ func (s *Store) orderImport(ctx context.Context, source Source, chat string, pla
 				}
 			}
 		}
-		relations, err := s.importRelations(ctx, source, chat, plan.message, existing, admitted)
+		relations, err := s.importRelations(ctx, source, chat, plan.message, admitted)
 		if err != nil {
 			return err
 		}
@@ -273,32 +273,35 @@ func (s *Store) orderImport(ctx context.Context, source Source, chat string, pla
 }
 
 // importRelations resolves a record's reply and thread targets against what the
-<<<<<<< HEAD
-// chat already holds and what this run admits before it in the same transaction.
-=======
 // chat already holds and what this admission has already planned. AdmitPage and
 // AdmitImport share it. planned maps a platform message id to the event id of
-// a record placed earlier in the same batch.
->>>>>>> origin/feat/1523
-func (s *Store) importRelations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow, planned map[string]string) ([]ledger.Relation, error) {
-	relations, err := s.relations(ctx, source, chat, message, existing)
-	if err != nil {
-		return nil, err
+// a record placed earlier in the same batch. Each target names one revision:
+// the planned one when the batch also edits it, else the committed one.
+func (s *Store) importRelations(ctx context.Context, source Source, chat string, message Message, planned map[string]string) ([]ledger.Relation, error) {
+	targets := []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}}
+	var stored []string
+	for _, target := range targets {
+		if _, ok := planned[target.id]; target.id != "" && !ok {
+			stored = append(stored, target.id)
+		}
 	}
-	seen := make(map[string]bool, len(relations))
-	for _, relation := range relations {
-		seen[relation.TargetID+"\x00"+relation.Kind] = true
+	rows := map[string]recordRow{}
+	if len(stored) > 0 {
+		var err error
+		if rows, err = s.recordRows(ctx, source, chat, stored); err != nil {
+			return nil, err
+		}
 	}
-	for _, target := range []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}} {
+	var relations []ledger.Relation
+	for _, target := range targets {
 		if target.id == "" {
 			continue
 		}
-		id, ok := planned[target.id]
-		if !ok || seen[id+"\x00"+target.kind] {
-			continue
+		if id, ok := planned[target.id]; ok {
+			relations = append(relations, ledger.Relation{TargetID: id, Kind: target.kind})
+		} else if row, ok := rows[target.id]; ok && row.state == "live" && row.visible && row.event != "" {
+			relations = append(relations, ledger.Relation{TargetID: row.event, Kind: target.kind})
 		}
-		seen[id+"\x00"+target.kind] = true
-		relations = append(relations, ledger.Relation{TargetID: id, Kind: target.kind})
 	}
 	return relations, nil
 }
