@@ -21,6 +21,7 @@ type Cell struct {
 	Content    string
 	Width      int
 	Foreground color.Color
+	Background color.Color
 	Bold       bool
 }
 
@@ -102,7 +103,7 @@ func (r *Recorder) snapshot() Snapshot {
 		s.Cells[y] = make([]Cell, r.emulator.Width())
 		for x := range s.Cells[y] {
 			if c := r.emulator.CellAt(x, y); c != nil {
-				s.Cells[y][x] = Cell{Content: c.Content, Width: c.Width, Foreground: c.Style.Fg, Bold: c.Style.Attrs&uv.AttrBold != 0}
+				s.Cells[y][x] = Cell{Content: c.Content, Width: c.Width, Foreground: c.Style.Fg, Background: c.Style.Bg, Bold: c.Style.Attrs&uv.AttrBold != 0}
 			}
 		}
 	}
