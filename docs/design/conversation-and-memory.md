@@ -398,7 +398,7 @@ ContextPacket and remain reconstructible from their ledger sources.
 - two targets still tie after the rules and its own reading;
 - a wrong pick would do something a move cannot undo: steer a running task or run, start work that runs at once, or send, pay or delete.
 
-It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
+It asks one question, with its recommended pick first and the tied targets as one-tap answers. Otherwise it picks the most likely target and shows it. Each answer names one target. A new-work answer names its kind and, when it has a parent, that parent, so two new targets stay distinct. The tie is read from the candidates and the cost of a wrong pick, never from the model's stated confidence. No message in the owner's data needed such a question.
 
 When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
 
@@ -406,7 +406,7 @@ Target questions use the existing question card and Waiting for me. Their
 recommendation is the first option, with no default action. A card answer or an
 exact offered label or number resolves only that request; declining or cancelling
 records its cancellation. An unrelated turn can proceed without resolving it.
-Core checks a retained tie again when a later tool would make it irreversible. Stopping a worker counts as steering the running task it controls, so that tie asks before cancellation. When the person answers a channel-originated target question, the resumed instruction recovers the original channel receipt through the continuation's parent chain before a follow-up is delivered.
+Core checks a retained tie again when a later tool would make it irreversible. Stopping a worker counts as steering the running task it controls, so that tie asks before cancellation. On the answer continuation, a work call that omits a request ordinal uses the answered request. An explicit ordinal keeps the request it names. When the person answers a channel-originated target question, the resumed instruction recovers the original channel receipt through the continuation's parent chain before a follow-up is delivered.
 
 **Showing and moving.**
 

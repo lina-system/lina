@@ -157,7 +157,9 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if _, err = tool.Validate(clean); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
 				}
-				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" {
+				// A target-question continuation resumes the answered request.
+				// An explicit ordinal still selects the request it names.
+				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal {
 					ref.Request = s.bindingRequest
 				}
 				input, r, err := s.selectedBindingInput(ref.InputEventID, ref.Input)

@@ -402,12 +402,7 @@ func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input led
 				qid := fmt.Sprintf("%starget:%s:%d", conversationQuestionPrefix, input.ID, c.Request)
 				labels := make([]string, len(c.Tied))
 				for j, target := range c.Tied {
-					labels[j] = target.Class
-					for _, item := range state.Items {
-						if item.ID == target.ID {
-							labels[j] = item.Title + " (" + item.ID + ")"
-						}
-					}
+					labels[j] = bindingQuestionLabel(state, target)
 				}
 				draft := waiting.QuestionDraft{Question: "Which item should this apply to?", Recommendation: labels[0], Choices: labels, Default: labels[0]}
 				q := waiting.ConversationQuestion{ID: qid, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Turn: "binding:" + input.ID, AskedAt: time.Now().UTC(), QuestionDraft: draft, Binding: c}
@@ -424,6 +419,36 @@ func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input led
 		return nil
 	})
 	return
+}
+
+// bindingQuestionLabel names one tied target. Existing items use their title
+// and id. New work names its kind and parent so two new targets stay distinct.
+func bindingQuestionLabel(state binding.State, target binding.Target) string {
+	if target.ID != "" {
+		for _, item := range state.Items {
+			if item.ID == target.ID {
+				return item.Title + " (" + item.ID + ")"
+			}
+		}
+	}
+	if target.Class != "new" {
+		return target.Class
+	}
+	label := "new"
+	if target.Kind != "" {
+		label += " " + target.Kind
+	}
+	if target.Parent == "" {
+		return label
+	}
+	parent := target.Parent
+	for _, item := range state.Items {
+		if item.ID == target.Parent {
+			parent = item.Title + " (" + item.ID + ")"
+			break
+		}
+	}
+	return label + " under " + parent
 }
 
 // assignBindingRequests places every omitted ordinal in message order. A single
