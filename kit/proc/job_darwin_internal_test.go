@@ -203,6 +203,6 @@ func TestJobNilEnvironmentIsEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	if out.Len() != 0 {
-		t.Fatalf("nil Env inherited the job's environment: %q", out.String())
+		t.Fatalf("nil Env inherited %d bytes of the job's environment", out.Len())
 	}
 }
