@@ -1,0 +1,11 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "corpus": "work-panel.json",
+  "checks": ["E6 no graph", "E7 workers"],
+  "widths": [120, 100],
+  "height": 34,
+  "languages": ["en", "ko"],
+  "glyphs": ["unicode", "ascii"],
+  "phases": ["roots", "parallel", "landed"],
+  "result": "stage worker result"
+}

@@ -17,6 +17,7 @@ import (
 )
 
 func TestPreparedMaterialSharesCallerCommit(t *testing.T) {
+	t.Parallel()
 	for _, commit := range []bool{false, true} {
 		t.Run(map[bool]string{false: "rollback", true: "commit"}[commit], func(t *testing.T) {
 			s, db, root := setup(t)
@@ -81,6 +82,7 @@ func assertPreparedClean(t *testing.T, root string) {
 // Abruptly terminate the subprocess at each publication boundary, so neither
 // PreparedMaterial.Close nor canon's deferred rollback can perform cleanup.
 func TestPreparedMaterialCrashRecovery(t *testing.T) {
+	t.Parallel()
 	if root := os.Getenv("LINA_ASSET_TX_CRASH_ROOT"); root != "" {
 		s, db := openCrashStore(t, root, 1)
 		w, err := assets.OpenMaterialWriter(t.Context(), s)

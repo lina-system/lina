@@ -71,6 +71,7 @@ func admit(t *testing.T, s *ledger.Store, entry guard.Entry, in ledger.Input) le
 }
 
 func TestAdmissionMasksBeforeCommitAndPreservesFieldsAcrossRestart(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	s := ledger.New(db, nil)
 	token := "sk-proj-" + strings.Repeat("Synthetic", 5)
@@ -118,6 +119,7 @@ func TestAdmissionMasksBeforeCommitAndPreservesFieldsAcrossRestart(t *testing.T)
 }
 
 func TestSpeakerKindComesFromTrustedEntryAndEvidenceSurvivesReadback(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	for i, tc := range []struct {
@@ -153,6 +155,7 @@ func TestSpeakerKindComesFromTrustedEntryAndEvidenceSurvivesReadback(t *testing.
 }
 
 func TestInvalidAdmissionIsAtomic(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	for name, change := range map[string]func(*ledger.Input){
@@ -224,6 +227,7 @@ func (s observingCanon) Write(ctx context.Context, fn func(*canon.Tx) error) err
 }
 
 func TestAdmissionPublishesAllRowsOnlyAfterCommit(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	admit(t, s, guard.EntryOwner, input("parent"))
@@ -278,6 +282,7 @@ func (s failingCanon) Write(ctx context.Context, fn func(*canon.Tx) error) error
 }
 
 func TestRollbackCancellationDuplicateAndReaderNeverAcknowledge(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	failure := errors.New("commit failed")
 	s := ledger.New(failingCanon{db, failure}, nil)

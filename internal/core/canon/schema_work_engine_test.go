@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestWorkEventSequenceReplacementAfterUpgrade(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	cfg.Migrations = migrationsBefore(t, workEventSequenceSchema)
@@ -68,6 +69,7 @@ func TestWorkEventSequenceReplacementAfterUpgrade(t *testing.T) {
 }
 
 func TestWorkLedgerUpgradePreservesPublishedSchemas(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	// Versions 35 and 36 are already published by dev. Exercise their actual
 	// tables and retained records before appending the work journal at 37.
@@ -146,6 +148,7 @@ skill_maintenance_notices n WHERE o.id='maintenance' AND o.revision=2 AND n.sequ
 }
 
 func TestWorkLedgerUpgradePreservesExistingCanon(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	index := -1
@@ -186,6 +189,7 @@ func TestWorkLedgerUpgradePreservesExistingCanon(t *testing.T) {
 }
 
 func TestWorkLedgerMigrationAndAtomicProjection(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	db := openStore(t, cfg)

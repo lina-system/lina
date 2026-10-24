@@ -18,7 +18,7 @@ export function registryFor(cwd) {
   const architecture = existsSync(join(cwd, 'internal/archtest')) ? ['./internal/archtest/...'] : [];
   const buildinfo = existsSync(join(cwd, 'internal/buildinfo')) ? ['./internal/buildinfo/...'] : [];
   const core = existsSync(join(cwd, 'internal/core')) ? ['./internal/core/...'] : [];
-  const addonDirectories = ['internal/addons/importer/hermes/'];
+  const addonDirectories = ['internal/addons/importer/hermes/', 'internal/addons/importer/murmur/'];
   const addonPackages = addonDirectories.filter(directory => existsSync(join(cwd, directory)))
     .map(directory => `./${directory}...`);
   const skills = existsSync(join(cwd, 'skills')) ? ['./skills/...'] : [];
@@ -35,7 +35,7 @@ export function registryFor(cwd) {
     { name: 'storebench', module: '.', directories: ['internal/core/storebench/'], files: [], packages: ['./internal/core/storebench/...'] },
     { name: 'crw-takeover', module: '.', directories: ['tools/crw-takeover/'], files: [], packages: ['./tools/crw-takeover/...'] },
     { name: 'kit', module: 'kit', directories: ['kit/', 'protocol/schema/', 'protocol/fixtures/'], files: [], packages: ['./...'] },
-    { name: 'lina', module: '.', directories: ['design/', 'cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/', 'e2e/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', 'testdata/provider-replay/', 'testdata/identity/', ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', ...generatedui, './cmd/lina/...', ...architecture, ...buildinfo, ...persona, ...skills, ...core, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
+{ name: 'lina', module: '.', directories: ['design/', 'cmd/lina/', 'internal/archtest/', 'internal/buildinfo/', 'internal/core/', 'e2e/', 'adapters/applefm/', 'persona/', 'skills/', 'testdata/korean/', 'testdata/hermes/', 'testdata/crw/', 'testdata/provider-replay/', 'testdata/worker-eval/', 'testdata/identity/', ...addonDirectories, ...clientDirectories, 'third_party/codex-app-server/'], files: ['doc.go'], packages: ['.', ...generatedui, './cmd/lina/...', ...architecture, ...buildinfo, ...persona, ...skills, ...core, ...addonPackages, ...clientPackages, ...e2e, ...vendored], binary: 'lina' },
     { name: 'moirai-worker', module: '.', directories: ['cmd/moirai-worker/', 'internal/moirai/'], files: [], packages: ['./cmd/moirai-worker/...', './internal/moirai/...'], binary: 'moirai-worker' },
     { name: 'lina-node', module: '.', directories: ['cmd/lina-node/'], files: [], packages: ['./cmd/lina-node/...'], binary: 'lina-node' },
   ];

@@ -8,6 +8,7 @@ import (
 )
 
 func TestRecallPersonScopeRewritesOnlyWhenItChanges(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	db := openStore(t, cfg)
@@ -98,6 +99,7 @@ func TestRecallPersonScopeRewritesOnlyWhenItChanges(t *testing.T) {
 }
 
 func TestRecallPersonScopeUpgradeKeepsInferredPerson(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	var prior []Migration

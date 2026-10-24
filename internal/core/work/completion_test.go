@@ -14,6 +14,7 @@ import (
 )
 
 func TestCompletionCommittedWithFinish(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	startFixture(t, s)
 	if err := s.Submit(t.Context(), "run-1", receiptFixture()); err != nil {
@@ -43,6 +44,7 @@ func TestCompletionCommittedWithFinish(t *testing.T) {
 }
 
 func TestCompletionInsertFailureRollsBackFinish(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	startFixture(t, s)
 	if err := s.Submit(t.Context(), "run-1", receiptFixture()); err != nil {
@@ -64,6 +66,7 @@ func TestCompletionInsertFailureRollsBackFinish(t *testing.T) {
 }
 
 func TestCompletionClaimsAndReconcile(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	startFixture(t, s)
 	ctx := t.Context()
@@ -133,6 +136,7 @@ func TestCompletionClaimsAndReconcile(t *testing.T) {
 }
 
 func TestCompletionIgnoresOldHeadAndAttempt(t *testing.T) {
+	t.Parallel()
 	for _, change := range []string{"head", "attempt"} {
 		t.Run(change, func(t *testing.T) {
 			s, db := testStore(t)
@@ -177,6 +181,7 @@ func TestCompletionIgnoresOldHeadAndAttempt(t *testing.T) {
 }
 
 func TestCompletionReceiptAfterTermination(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	if err := s.Finish(t.Context(), "task-1", "run-1", "completed"); err != nil {
@@ -196,6 +201,7 @@ func TestCompletionReceiptAfterTermination(t *testing.T) {
 }
 
 func TestCompletionLegacyHeadAndMovedHeadCycles(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	must := func(err error) {
@@ -233,6 +239,7 @@ func TestCompletionLegacyHeadAndMovedHeadCycles(t *testing.T) {
 }
 
 func TestCompletionReplacementFileReceipt(t *testing.T) {
+	t.Parallel()
 	for _, changed := range []string{"file", "directory"} {
 		for _, handled := range []bool{false, true} {
 			t.Run(fmt.Sprintf("%s/handled=%t", changed, handled), func(t *testing.T) {

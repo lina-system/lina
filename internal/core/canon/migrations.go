@@ -79,7 +79,10 @@ func Migrations() []Migration {
 		{Version: 64, SQL: MiniAppsSchema},
 		{Version: 65, SQL: MessengerSchema},
 		{Version: 66, SQL: EventErasureSchema},
-		{Version: 67, SQL: IdentitySchema},
+{Version: 67, SQL: ModelServedSchema},
+		{Version: 68, SQL: MessengerImportSchema},
+		{Version: 69, SQL: TeamsSchema},
+		{Version: 70, SQL: IdentitySchema},
 	}
 }
 
@@ -128,11 +131,14 @@ var publishedMigrationTables = []struct {
 	{64, "mini_app"}, {64, "mini_app_revision"}, {64, "mini_app_change"}, {64, "mini_app_event"},
 	{65, "messenger_source"}, {65, "messenger_chat"}, {65, "messenger_coverage"},
 	{65, "messenger_record"}, {65, "messenger_record_revision"}, {65, "messenger_effect"},
-	{67, "identity_sender"}, {67, "identity_identifier"}, {67, "identity_name"},
-	{67, "identity_link"}, {67, "identity_link_signal"}, {67, "identity_link_change"},
-	{67, "identity_question"}, {67, "identity_question_candidate"}, {67, "identity_artifact"}, {67, "identity_merge"},
-	{67, "identity_merge_link"}, {67, "identity_merge_alias"}, {67, "identity_merge_artifact"},
-	{67, "identity_requeue"},
+{67, "model_served"},
+	{68, "messenger_import"}, {68, "messenger_legacy_ref"},
+	{69, "teams_connection"}, {69, "messenger_author"},
+	{70, "identity_sender"}, {70, "identity_identifier"}, {70, "identity_name"},
+	{70, "identity_link"}, {70, "identity_link_signal"}, {70, "identity_link_change"},
+	{70, "identity_question"}, {70, "identity_question_candidate"}, {70, "identity_artifact"}, {70, "identity_merge"},
+	{70, "identity_merge_link"}, {70, "identity_merge_alias"}, {70, "identity_merge_artifact"},
+	{70, "identity_requeue"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
