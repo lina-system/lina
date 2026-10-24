@@ -320,6 +320,23 @@ func TestAlphaResidencyRequiresPrivateStateParent(t *testing.T) {
 	if err := alphaResidencyStateParent("/tmp", "/tmp"); err == nil {
 		t.Fatal("the temporary directory was accepted as a private parent")
 	}
+	// The parent may not exist yet: an ancestor symlink into the temporary
+	// directory still makes it shared.
+	base := t.TempDir()
+	shared := filepath.Join(base, "shared")
+	if err := os.MkdirAll(shared, 0700); err != nil {
+		t.Fatal(err)
+	}
+	alias := filepath.Join(base, "alias")
+	if err := os.Symlink(shared, alias); err != nil {
+		t.Skip("symlinks unavailable:", err)
+	}
+	if err := alphaResidencyStateParent(filepath.Join(alias, "new"), shared); err == nil {
+		t.Fatal("a not-yet-created parent under a symlink into the temporary directory was accepted")
+	}
+	if err := alphaResidencyStateParent(filepath.Join(base, "private", "new"), shared); err != nil {
+		t.Fatalf("a private parent that does not exist yet was rejected: %v", err)
+	}
 }
 
 // alphaResidencyStateParent checks the declared parent of the long run's state
@@ -340,18 +357,28 @@ func alphaResidencyStateParent(parent, temp string) error {
 	return nil
 }
 
-// alphaWithinDirectory reports whether path is temp or lies under it, after
-// resolving each existing prefix so a symlinked path cannot hide the overlap.
+// alphaWithinDirectory reports whether path is temp or lies under it. The
+// parent may not exist yet, so the longest existing ancestor is resolved and
+// the missing components are appended: an ancestor symlink still decides where
+// the new directory will land.
 func alphaWithinDirectory(path, temp string) (bool, error) {
 	resolve := func(p string) (string, error) {
 		abs, err := filepath.Abs(p)
 		if err != nil {
 			return "", err
 		}
-		if resolved, err := filepath.EvalSymlinks(abs); err == nil {
-			return resolved, nil
+		missing := ""
+		for {
+			if resolved, err := filepath.EvalSymlinks(abs); err == nil {
+				return filepath.Join(resolved, missing), nil
+			}
+			parent := filepath.Dir(abs)
+			if parent == abs {
+				return filepath.Join(abs, missing), nil
+			}
+			missing = filepath.Join(filepath.Base(abs), missing)
+			abs = parent
 		}
-		return abs, nil
 	}
 	path, err := resolve(path)
 	if err != nil {

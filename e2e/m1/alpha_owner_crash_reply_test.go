@@ -142,7 +142,7 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 	}
 	// Long replies scroll their beginning out of view. Require a substantial
 	// suffix of the committed answer, not a topic already present in the request.
-	runes := []rune(alphaRenderedText(reply))
+	runes := []rune(alphaRenderedText(reply, false))
 	if len(runes) == 0 {
 		return false
 	}
@@ -150,7 +150,7 @@ func alphaRecoveredReplyVisible(request, reply, screen string) bool {
 		runes = runes[len(runes)-64:]
 	}
 	suffix := string(runes)
-	return !strings.Contains(alphaRenderedText(request), suffix) && strings.Contains(alphaRenderedText(screen), suffix)
+	return !strings.Contains(alphaRenderedText(request, false), suffix) && strings.Contains(alphaRenderedText(screen, true), suffix)
 }
 
 var alphaMarkdownLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
@@ -158,8 +158,10 @@ var alphaMarkdownLink = regexp.MustCompile(`\[([^\]]*)\]\([^)]*\)`)
 // alphaRenderedText reduces Markdown source and the TUI's rendering of it to
 // the same visible text. The screen replaces emphasis, headings, list markers
 // and link targets with presentation, so comparing the source's syntax alone
-// would reject a correctly delivered result.
-func alphaRenderedText(text string) string {
+// would reject a correctly delivered result. A wrapped screen line can begin
+// with a literal operator, so only the glyphs the renderer actually emits as a
+// list marker are removed from the screen side.
+func alphaRenderedText(text string, rendered bool) string {
 	var out strings.Builder
 	for _, line := range strings.Split(text, "\n") {
 		line = alphaMarkdownLink.ReplaceAllString(line, "$1")
@@ -177,7 +179,11 @@ func alphaRenderedText(text string) string {
 			}
 			line = strings.TrimPrefix(strings.TrimPrefix(rest, ">"), " ")
 		}
-		for _, marker := range []string{"›", "•", "·", "-", "*", "+"} {
+		markers := []string{"›", "•", "·"}
+		if !rendered {
+			markers = append(markers, "-", "*", "+")
+		}
+		for _, marker := range markers {
 			if strings.HasPrefix(line, marker+" ") || strings.HasPrefix(line, marker+"\t") {
 				line = strings.TrimLeft(line[len(marker):], " \t")
 				break
@@ -249,6 +255,15 @@ func TestAlphaRecoveredReplyRequiresResultText(t *testing.T) {
 	ordered := "1. 물 주기\n2. 수확하기"
 	if !alphaRecoveredReplyVisible(request, ordered, "1. 물 주기\n2. 수확하기\n"+live) {
 		t.Error("a rendered ordered list was rejected")
+	}
+	// A wrapped screen line may begin with a literal operator that is content,
+	// not a list marker. It must keep matching the reply's own text.
+	wrapped := "계산은 3 + 2 = 5입니다."
+	if !alphaRecoveredReplyVisible(request, wrapped, "계산은 3\n+ 2 = 5입니다.\n"+live) {
+		t.Error("an operator at a wrapped line boundary was treated as a list marker")
+	}
+	if !alphaRecoveredReplyVisible(request, "차이는 7 - 4 = 3입니다.", "차이는 7\n- 4 = 3입니다.\n"+live) {
+		t.Error("a minus at a wrapped line boundary was treated as a list marker")
 	}
 	linked := "자세한 내용은 [문서](https://example.com/water)를 보세요."
 	if !alphaRecoveredReplyVisible(request, linked, "자세한 내용은 문서를 보세요.\n"+live) {
