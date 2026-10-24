@@ -71,6 +71,10 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 	if err := add(spec, handler); err != nil {
 		return nil, err
 	}
+	spec, handler = r.recallTool()
+	if err := add(spec, handler); err != nil {
+		return nil, err
+	}
 	mem := coreexec.NewMemory(r.db, r.materials, nil)
 	spec, handler = mem.RecallPersonTool(memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, func() int64 { return ep.Clock.Unix() })
 	if err := add(spec, handler); err != nil {
