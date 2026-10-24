@@ -19,6 +19,8 @@ type quotaStopAdapter struct {
 	unknown bool
 }
 
+func (*quotaStopAdapter) Capabilities() worker.CapabilitySet { return nil }
+
 func (a *quotaStopAdapter) Name() string                                       { return "first" }
 func (a *quotaStopAdapter) Version(context.Context) (string, error)            { return "fixture", nil }
 func (a *quotaStopAdapter) Quota(context.Context) ([]provider.QuotaRow, error) { return nil, nil }
