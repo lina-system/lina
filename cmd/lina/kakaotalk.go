@@ -13,9 +13,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/charmbracelet/x/term"
 	"github.com/thisisjun786/lina/internal/buildinfo"
 	"github.com/thisisjun786/lina/internal/clientapi"
+	"github.com/thisisjun786/lina/internal/tui/term"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -72,7 +72,7 @@ func runKakaoTalk(args []string) int {
 	defer c.Close()
 	// The terminal supplies answers to the add-on's own prompts. Values are
 	// written to the request and dropped; a secret is read without echo.
-	terminal := term.IsTerminal(os.Stdin.Fd())
+	terminal := term.IsTerminal(os.Stdin)
 	// poll repeats the operation that started the relay while the phone
 	// confirms the tablet; an answer is never resent.
 	poll := request
@@ -144,7 +144,7 @@ func readAnswer(terminal, secret bool, prompt string) (string, bool) {
 	var line []byte
 	var err error
 	if secret && terminal {
-		line, err = term.ReadPassword(os.Stdin.Fd())
+		line, err = term.ReadSecret(os.Stdin)
 		fmt.Fprintln(os.Stderr)
 	} else {
 		line, err = bufio.NewReader(io.LimitReader(os.Stdin, 4097)).ReadBytes('\n')
