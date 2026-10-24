@@ -174,5 +174,5 @@ func (s *Store) Expire(ctx context.Context, now time.Time) error {
 			return err
 		}
 	}
-	return syncDir(s.root, "versions/agents")
+	return s.syncDir("versions/agents")
 }

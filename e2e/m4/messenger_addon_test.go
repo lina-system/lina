@@ -277,21 +277,25 @@ func TestM4MessengerAddonFailsWithoutNode(t *testing.T) {
 // every adapter that does not depend on the add-on.
 type otherSource struct{}
 
-func (*otherSource) SignIn(context.Context) (messenger.SignInState, error) {
+func (*otherSource) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
 	return messenger.SignedIn, nil
 }
-func (*otherSource) ListChats(context.Context) ([]messenger.Chat, error) {
+func (*otherSource) ListChats(context.Context, messenger.SourceID) ([]messenger.Chat, error) {
 	return []messenger.Chat{{ID: "room-1", Name: "Room", Kind: "group"}}, nil
 }
-func (*otherSource) Page(_ context.Context, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+func (*otherSource) Page(_ context.Context, _ messenger.SourceID, chat string, cursor messenger.Cursor) (messenger.Page, error) {
 	if cursor != "" {
 		return messenger.Page{Next: cursor}, nil
 	}
 	return messenger.Page{Messages: []messenger.Message{{ID: chat + "-m1", Route: messenger.RouteParticipant, At: time.Now(), Text: "kept"}}, Next: "done"}, nil
 }
-func (*otherSource) Members(context.Context, string) ([]messenger.Author, error) { return nil, nil }
-func (*otherSource) Live(context.Context, func(messenger.Event) error) error     { return nil }
-func (*otherSource) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (*otherSource) Members(context.Context, messenger.SourceID, string) ([]messenger.Author, error) {
+	return nil, nil
+}
+func (*otherSource) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
+	return nil
+}
+func (*otherSource) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (*otherSource) Capabilities() messenger.Capabilities {

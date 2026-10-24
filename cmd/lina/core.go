@@ -72,6 +72,11 @@ func runCore(args []string) int {
 		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
 		return 78
 	}
+	local, err := modelpath.LocalFromEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
+		return 78
+	}
 	// The adapter now owns the configured credential. Consume it before boot
 	// captures environments for workers, which keep their own provider setup.
 	if route != nil && route.Adapter.Provider() == provider.Claude {
@@ -86,13 +91,8 @@ func runCore(args []string) int {
 			return 78
 		}
 	}
-	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
-	// The messenger add-on is an external component with an explicit route, as
-	// the Claude adapter is. Without it only the unofficial messenger sources
-	// fail, with Node.js named as the cause.
-	if starter, err := messengerAddon(*root, *socket); err == nil && starter != nil {
-		cfg.Messenger = &boot.MessengerConfig{Addon: starter}
-	}
+	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, Local: local, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
+	cfg.Messenger = &boot.MessengerConfig{Addon: messengerAddon(*root, *socket)}
 	if *tailnet != "" {
 		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}
 	}
@@ -109,18 +109,11 @@ func runCore(args []string) int {
 	return 0
 }
 
-// messengerAddon reads the add-on's explicit route from the environment. A
-// partial configuration is refused here; an absent one leaves the add-on
-// unconfigured, so its sources report the missing Node.js and everything else
-// keeps working.
-func messengerAddon(root, socket string) (*addon.Manager, error) {
+// messengerAddon keeps missing or partial configuration local to its sources.
+func messengerAddon(root, socket string) *addon.Manager {
 	node, program := os.Getenv("LINA_MESSENGER_NODE"), os.Getenv("LINA_MESSENGER_ADDON")
-	if node == "" && program == "" {
-		return nil, nil
-	}
 	if !filepath.IsAbs(node) || !filepath.IsAbs(program) {
-		fmt.Fprintln(os.Stderr, "lina core: invalid messenger configuration")
-		return nil, errors.New("invalid messenger configuration")
+		node, program = "", ""
 	}
-	return addon.NewManager(addon.Config{Node: node, Program: program, StateRoot: root, Socket: socket}), nil
+	return addon.NewManager(addon.Config{Node: node, Program: program, StateRoot: root, Socket: socket})
 }

@@ -30,6 +30,7 @@ func startScheduled(t *testing.T, s *Service, id string) Run {
 	return r
 }
 func TestGraphRejectsCycleAndUnorderedOverlapAtomically(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"cycle", "missing", "overlap", "empty area"} {
 		t.Run(kind, func(t *testing.T) {
 			s, _ := testStore(t)
@@ -55,6 +56,7 @@ func TestGraphRejectsCycleAndUnorderedOverlapAtomically(t *testing.T) {
 	}
 }
 func TestReleaseWaitsForObservedMergeAndNeverHoldsIndependentTask(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	a, b, c := scheduled("a"), scheduled("b", "a"), scheduled("c")
 	b.Schedule.Areas = []string{"a/file.go"}
@@ -102,6 +104,7 @@ func TestReleaseWaitsForObservedMergeAndNeverHoldsIndependentTask(t *testing.T) 
 	}
 }
 func TestAreaLeaseSurvivesFinishRecoveryAndConcurrentWake(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	a, b := scheduled("a"), scheduled("b")
 	b.Schedule.Group = "other"
@@ -147,6 +150,7 @@ func TestAreaLeaseSurvivesFinishRecoveryAndConcurrentWake(t *testing.T) {
 	}
 }
 func TestWaitPriorityAndCapacityRelease(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	a, b, c := scheduled("a"), scheduled("b", "a"), scheduled("c")
 	if err := s.Schedule(t.Context(), []Task{a, b, c}); err != nil {
@@ -187,6 +191,7 @@ func TestWaitPriorityAndCapacityRelease(t *testing.T) {
 	}
 }
 func TestUnmergeableReturnedOnlyOnceAndBoundToRun(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	if err := s.Schedule(t.Context(), []Task{scheduled("a")}); err != nil {
 		t.Fatal(err)
@@ -222,6 +227,7 @@ func TestUnmergeableReturnedOnlyOnceAndBoundToRun(t *testing.T) {
 	}
 }
 func TestGlobIntersection(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		a, b string
 		want bool

@@ -7,6 +7,7 @@ import (
 )
 
 func TestQARepairPlanningFailureBlocksOnlyAffectedGoal(t *testing.T) {
+	t.Parallel()
 	g := finishedGoal()
 	g.Tasks[0].Stage = TaskQAFailed
 	g.Tasks[0].QA.Passed = false
@@ -53,6 +54,7 @@ func TestQARepairPlanningFailureBlocksOnlyAffectedGoal(t *testing.T) {
 }
 
 func TestQAFailureBecomesManagerRepairTask(t *testing.T) {
+	t.Parallel()
 	g := finishedGoal()
 	g.Tasks[0].Stage = TaskQAFailed
 	g.Tasks[0].QA.Passed = false
@@ -67,6 +69,7 @@ func TestQAFailureBecomesManagerRepairTask(t *testing.T) {
 }
 
 func TestPassingRepairQASupersedesFailedCommitWithoutErasingEvidence(t *testing.T) {
+	t.Parallel()
 	g := finishedGoal()
 	g.Tasks[0].Stage = TaskQAFailed
 	g.Tasks[0].QA.Passed = false

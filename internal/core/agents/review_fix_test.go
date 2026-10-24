@@ -137,7 +137,7 @@ func TestReviewOpenRemovesInterruptedTemporaryFiles(t *testing.T) {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(repoPath(a.ID), "objects", "ab")
-	if err := privateDirs(s.root, dir); err != nil {
+	if err := s.privateDirs(dir); err != nil {
 		t.Fatal(err)
 	}
 	stale := filepath.Join(dir, ".persona-tmp-"+newID())

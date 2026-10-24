@@ -25,6 +25,7 @@ func (s *runtimeStream) Next(context.Context) (provider.Event, error) {
 func (*runtimeStream) Meta() provider.Meta { return provider.Meta{Class: provider.AgentRuntime} }
 func (*runtimeStream) Close() error        { return nil }
 func TestSandboxRuntimeBridgeUsesOnlyRecordedResults(t *testing.T) {
+	t.Parallel()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -59,6 +60,7 @@ func TestSandboxRuntimeBridgeUsesOnlyRecordedResults(t *testing.T) {
 }
 
 func TestSandboxRuntimeBridgeDispatchesNestedReads(t *testing.T) {
+	t.Parallel()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)
@@ -126,6 +128,7 @@ func TestSandboxRuntimeBridgeDispatchesNestedReads(t *testing.T) {
 }
 
 func TestSandboxRuntimeBridgeRejectsNestedWriteTarget(t *testing.T) {
+	t.Parallel()
 	executable, err := os.Executable()
 	if err != nil {
 		t.Fatal(err)

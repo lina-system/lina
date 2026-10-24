@@ -1,0 +1,131 @@
+# SPDX-License-Identifier: Apache-2.0
+# Developer ID signing is separate from the ad-hoc PR and branch build in
+# macos-unlock-plugin.yml. Only release pushes and explicit manual requests can
+# reach this workflow; the macos-signing environment still gates the key.
+name: macOS unlock plug-in signed
+
+on:
+  push:
+    branches: [dev, main]
+    tags: ['v*']
+    paths:
+      - 'native/macos/**'
+      - '.github/workflows/macos-unlock-plugin.yml'
+      - '.github/workflows/macos-unlock-plugin-signed.yml'
+  workflow_dispatch:
+    inputs:
+      sign:
+        description: 'Sign with LINA''s Developer ID identity (needs the macos-signing environment approval)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: macos-unlock-plugin-signed-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  signed-bundle:
+    name: signed bundle (arm64, Developer ID)
+    # Release refs sign on their own; any other ref signs only when a person asks
+    # for it and approves the environment. Fork pull requests never reach this job.
+    if: >-
+      (github.event_name == 'push'
+        && (github.ref == 'refs/heads/dev' || github.ref == 'refs/heads/main'
+          || startsWith(github.ref, 'refs/tags/v')))
+      || (github.event_name == 'workflow_dispatch' && inputs.sign)
+    runs-on: macos-15
+    timeout-minutes: 15
+    # Required reviewers on this environment are what releases the key: the job
+    # waits for approval before the secrets reach the runner.
+    environment: macos-signing
+    steps:
+      - name: Check out the candidate
+        uses: actions/checkout@34e114876b0b11c390a56381ad16ebd13914f8d5 # v4.3.1
+        with:
+          persist-credentials: false
+      - name: Record the machine
+        run: |
+          sw_vers
+          uname -m
+          xcrun --sdk macosx clang --version
+      - name: Import the Developer ID identity
+        env:
+          SIGNING_P12: ${{ secrets.MACOS_SIGNING_P12 }}
+          SIGNING_PASSWORD: ${{ secrets.MACOS_SIGNING_P12_PASSWORD }}
+          SIGNING_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          missing=()
+          [[ -n "$SIGNING_P12" ]] || missing+=(MACOS_SIGNING_P12)
+          [[ -n "$SIGNING_PASSWORD" ]] || missing+=(MACOS_SIGNING_P12_PASSWORD)
+          [[ -n "$SIGNING_IDENTITY" ]] || missing+=(MACOS_SIGN_IDENTITY)
+          [[ -n "$TEAM_ID" ]] || missing+=(MACOS_TEAM_ID)
+          if (( ${#missing[@]} )); then
+            echo "the macos-signing environment is missing: ${missing[*]}" >&2
+            exit 1
+          fi
+          keychain="$RUNNER_TEMP/lina-signing.keychain-db"
+          printf '%s' "$SIGNING_P12" | base64 --decode > "$RUNNER_TEMP/lina-signing.p12"
+          security create-keychain -p lina "$keychain"
+          security set-keychain-settings -lut 900 "$keychain"
+          security unlock-keychain -p lina "$keychain"
+          security import "$RUNNER_TEMP/lina-signing.p12" -k "$keychain" -P "$SIGNING_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -k lina "$keychain" > /dev/null
+          security list-keychains -d user -s "$keychain"
+          rm -f "$RUNNER_TEMP/lina-signing.p12"
+      - name: Build, sign and verify the bundle
+        working-directory: native/macos/unlock-plugin
+        env:
+          LINA_TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+          LINA_SIGN_IDENTITY: ${{ secrets.MACOS_SIGN_IDENTITY }}
+        run: |
+          set -o pipefail
+          ./build.sh 2>&1 | tee "$RUNNER_TEMP/build.log"
+          {
+            echo '## Build, sign and verify (Developer ID)'
+            echo '```'
+            cat "$RUNNER_TEMP/build.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Record the architecture and the signature
+        working-directory: native/macos/unlock-plugin
+        run: |
+          set -o pipefail
+          bundle=build/LinaUnlock.bundle
+          lipo -archs "$bundle/Contents/MacOS/LinaUnlock" 2>&1 | tee "$RUNNER_TEMP/signature.log"
+          codesign --verify --strict --verbose=2 "$bundle" 2>&1 | tee -a "$RUNNER_TEMP/signature.log"
+          codesign -dvvv "$bundle" 2>&1 | tee -a "$RUNNER_TEMP/signature.log"
+          {
+            echo '## Architecture and signature'
+            echo '```'
+            cat "$RUNNER_TEMP/signature.log"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Check the Developer ID signature
+        working-directory: native/macos/unlock-plugin
+        env:
+          TEAM_ID: ${{ secrets.MACOS_TEAM_ID }}
+        run: |
+          set -euo pipefail
+          report=$(codesign -dvvv build/LinaUnlock.bundle 2>&1)
+          printf '%s\n' "$report"
+          if ! grep -Eq 'flags=0x[0-9a-f]+\(([a-z]+,)*runtime(,[a-z]+)*\)' <<<"$report"; then
+            echo 'the bundle is missing the hardened runtime flag' >&2
+            exit 1
+          fi
+          grep -Fxq "TeamIdentifier=$TEAM_ID" <<<"$report" ||
+            { echo "the bundle is not signed for the Developer ID team" >&2; exit 1; }
+      - name: Keep the signed bundle
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: LinaUnlock-bundle-signed
+          path: native/macos/unlock-plugin/build/LinaUnlock.bundle
+          if-no-files-found: error
+          retention-days: 5
+      - name: Remove the signing identity
+        if: always()
+        run: security delete-keychain "$RUNNER_TEMP/lina-signing.keychain-db" || true

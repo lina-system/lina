@@ -53,7 +53,7 @@ type frameFacts struct {
 var (
 	elapsedTail = regexp.MustCompile(`(?:^|\s)((?:\d+d \d{2}h)|(?:\d+h \d{2}m)|(?:\d+m))\s*$`)
 	actionMark  = regexp.MustCompile(`^[›>]\s`)
-	entryRow    = regexp.MustCompile(`^\s*(?:(\d+)\s+)?([✓●○!×?·+*ox])\s+(.*)$`)
+	entryRow    = regexp.MustCompile(`^\s*(?:[›>]\s+)?(?:(\d+)\s+)?([✓●○!×?·+*ox.])\s+(.*)$`)
 )
 
 // templateRegex matches a design format, capturing each %d value in order.
@@ -611,7 +611,7 @@ func checkNoGraph(r *panelRecording) panelVerdict {
 					v.Detail = c.Name + ": the stage view holds an arrow or box-drawing character"
 					return v
 				}
-				if entryRow.MatchString(strings.TrimSpace(row)) {
+				if panelEntryLine(row) {
 					entries++
 				}
 			}
@@ -621,7 +621,7 @@ func checkNoGraph(r *panelRecording) panelVerdict {
 				return v
 			}
 			for _, row := range view.Rows {
-				if entryRow.MatchString(strings.TrimSpace(row)) {
+				if panelEntryLine(row) {
 					continue
 				}
 				// An indented row expands an entry into its steps and sessions.
@@ -660,10 +660,20 @@ func checkNoGraph(r *panelRecording) panelVerdict {
 	return v
 }
 
+// Stage rows have at most the two-cell selection prefix. Deeper state
+// marks belong to expanded steps; the optional action mark is presentation.
+func panelEntryLine(row string) bool {
+	indent := len(row) - len(strings.TrimLeft(row, " "))
+	if indent > 2 || strings.HasPrefix(row, "  › ") || strings.HasPrefix(row, "  > ") {
+		return false
+	}
+	return entryRow.MatchString(strings.TrimSpace(row))
+}
+
 func entryRows(rows []string) []string {
 	out := []string{}
 	for _, row := range rows {
-		if entryRow.MatchString(strings.TrimSpace(row)) {
+		if panelEntryLine(row) {
 			out = append(out, row)
 		}
 	}
@@ -679,12 +689,18 @@ func checkWorkers(r *panelRecording) panelVerdict {
 			for _, worker := range view.Workers {
 				v.Input = true
 				open := false
+				stepInProgress := false
 				for _, entry := range view.Entries {
 					if entry.Number == worker.Entry && entry.Open {
 						open = true
+						for _, step := range entry.Steps {
+							if step.Name == worker.Step && (step.State == "working" || step.State == "needs_input") {
+								stepInProgress = true
+							}
+						}
 					}
 				}
-				if !worker.Expanded || worker.Step == "" || !open {
+				if !worker.Expanded || worker.Step == "" || !open || !stepInProgress {
 					v.Detail = fmt.Sprintf("%s: worker row %q is not under an expanded step of an open entry", c.Name, worker.Text)
 					return v
 				}
@@ -694,7 +710,7 @@ func checkWorkers(r *panelRecording) panelVerdict {
 				}
 			}
 			for _, row := range view.Rows {
-				if !strings.Contains(row, "[") || !strings.Contains(row, "]") || entryRow.MatchString(strings.TrimSpace(row)) {
+				if !strings.Contains(row, "[") || !strings.Contains(row, "]") || panelEntryLine(row) {
 					continue
 				}
 				matched := false

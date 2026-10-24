@@ -830,7 +830,7 @@ The work of a goal is a graph of steps inside and a numbered list outside. The p
 - **Revision tools.** For a code goal, the manager submits the complete step list with `submit_step_graph(goal_id, expected_revision, steps)` and reads the admitted list with `read_step_graph(goal_id)`. Each step carries its stable key, name, work definition, write area and blockers. Core binds the caller to the goal's person, manager and conversation; a recorded originating conversation may use that same binding. Revision 0 means that no explicit step graph has been submitted. An accepted revision increments this number once and stores the unchanged list together with the executable task definitions in one work-ledger transaction. Repeating the same list against the immediately preceding revision returns the same receipt. A stale revision must be read again; it cannot overwrite a later list. Existing goals remain readable without a backfill. Execution events do not rewrite the admitted list, and restart preserves its order, names, work and blockers.
 - **Refusal.** A refused submission commits neither tasks nor a graph revision. It returns one machine code: `graph_cycle`, `graph_unknown_step` (including duplicate keys or blockers), `graph_invalid_area`, or `graph_invalid_name`. Other malformed work is `graph_invalid`; editing or removing started work is `graph_started_step`; a version conflict is `graph_stale_revision`. A missing goal and a caller outside its owning scope both return `graph_unavailable`. Names are measured by grapheme display width, including wide characters and combining marks, and are never shortened or rewritten to pass. Mechanical refusal covers issue/PR references, paths and filenames, branch/id notation and technical tokens, plus the graph's keys, base branches and known check names. Control and invisible formatting characters cannot hide a technical token. A name-only revision preserves worker claims and results; changing unstarted work retires only undispatched reservations and uses the normal execution fences for in-flight effects.
 - **Names.** The manager names each step in a few plain words of the person's language, at most 24 display cells (P): the thing the step does, such as "숙소 고르기" or "로그인 화면 수정", with no explanation ([surfaces.md](surfaces.md#default-view)). Core refuses a name that holds an issue or pull request number, a branch, a path, a check name or an id, the same rule as a line of the running list. Naming is judgment; the refusal is mechanical.
-- **Frontier.** After every event Core commits for a goal, the derivation of Next action computes the goal's ready frontier: the steps that have not started and whose blockers have all landed, or that have a recorded stacked start (see Parallel hand-off). Each frontier step whose write area, quota and capacity allow it is dispatched in that derivation, in the placement order of Capacity; one that cannot start shows its one reason. A step outside the frontier never starts. The frontier is computed from the ledger alone, without a model call, and two derivations over the same ledger give the same frontier in the same order.
+- **Frontier.** After every event Core commits for a goal, the derivation of Next action computes the goal's ready frontier: the steps that have not started and whose blockers are all satisfied, or that have a recorded stacked start (see Parallel hand-off). A blocker is satisfied by step kind and outcome, not by every terminal event: a task blocker when it has landed, a background-run blocker when it has landed `complete` with its stored result, a wait blocker when it has closed on its observed event or date, and any blocker closed as superseded. A background run that landed `failed` or `cancelled` produced no usable outcome for its dependents, and a `partial` run or an expired unchanged wait stays held until recovery or the manager's decision resolves it under Next action. Each frontier step whose write area, quota and capacity allow it is dispatched in that derivation, in the placement order of Capacity; one that cannot start shows its one reason. A step outside the frontier never starts. The frontier is computed from the ledger alone, without a model call, and two derivations over the same ledger give the same frontier in the same order.
 - **Kinds and landing.** Graph submissions may mix `task` (the default), `background` and `wait` steps. A background step carries a `start_run` brief and resource request; it uses the existing run service and lands from its stored complete result. A wait names either a date (`at`, Unix seconds) or a canonical record and its current revision with a deadline. Core closes it only after observing the date or a different owner-visible record revision. An expired unchanged record needs a decision. Waits hold no worker capacity or write-area lease. Code predecessors release on observed merge, background predecessors on complete stored results, and wait predecessors on their closing observation; a completion claim alone releases none of them. An incomplete background result stays visible for a manager decision. A start the run service refuses before admission creates no run and no effect; the step closes as needing a decision, which releases its reservation so the manager can correct the brief.
 - **One placement pass.** The ready frontier includes steps held by area, quota or capacity, in deadline, dependency depth, goal creation time, goal id and step id order. Core reserves every compatible start in that pass, accounting for earlier reservations in the same pass. A quota hold is distinct from a host-capacity hold. Graph storage order and event delivery order do not set placement order; recovery observes existing claimed starts instead of issuing them again.
 - **Stages are display.** The stage list (see Stages) is a projection of the graph. A stage never holds work back: a step starts when it is in the frontier, even while an earlier stage still has steps running.
@@ -915,7 +915,7 @@ Workers are coding tools the user installed or signed in to: Codex, Claude Code,
 
 - Codex runs on its own app-server protocol over stdio (see Codex adapter).
 - Every ACP worker runs through one ACP adapter: Claude Code through the `claude-agent-acp` adapter program, Cursor (`cursor-agent acp`), Gemini CLI (`gemini --acp`) and Grok natively (see ACP adapter). Codex is never driven through ACP: both Codex ACP adapters measured worse than the app-server ([worker-protocols.md](../research/worker-protocols.md)).
-- Antigravity runs as a headless child with streaming output (see Antigravity headless adapter). The Claude Code headless adapter remains beside the ACP one until the worker evaluation chooses between them.
+- Antigravity runs as a headless child with streaming output (see Antigravity headless adapter). [CC] keeps ACP as its worker connection; its headless adapter stays only as an explicit selection ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 
 Each worker thread is a per-task coding-agent session: it implements the task packet, opens the task's pull request, waits for CI and review bots, fixes every CI failure and the P0 and P1 findings once, and reports done with a completion receipt only when the resulting head is green and no P0 or P1 remains. Review and CI stay with that session and never return to the manager for triage.
 
@@ -1068,8 +1068,10 @@ worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
 A successful completion committed before the restart settles that exact turn's
 recovery record, so a restart never presents the finished session as an unknown
-live placeholder or recovers it again. Failed and transport-loss notices stay
-unknown until the thread is read.
+live placeholder or recovers it again. The same applies when the record write
+failed and the session then closed without a restart: settling it removes the
+closed session, so views read the recorded outcome. Failed and transport-loss
+notices stay unknown until the thread is read.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific
@@ -1249,8 +1251,10 @@ Added workers participate in normal dispatch authority, readiness and receipts.
 - **Versions.** The adapter is verified per profile and version, listed in the release manifest's `verifiedWorkerVersions` like Codex (see Compatibility). An added agent is always unverified.
 
 The lifecycle adapter in #747 registers `claude-acp`, `cursor`, `gemini` and
-`grok` with `dispatch_work`; `claude` retains the headless adapter pending the
-worker evaluation. Each attempt records its version again after session
+`grok` with `dispatch_work`; `claude` keeps the headless adapter only as an
+explicit selection, because the worker evaluation kept ACP for [CC]
+([worker-evaluation.md](../../evidence/worker-evaluation.md)). Each attempt
+records its version again after session
 initialization and reports an unverified version while continuing the task.
 Gemini CLI installation reads its version through `gemini --acp` and
 `initialize`, without opening a session or requiring sign-in. Dispatch uses the
@@ -1301,8 +1305,10 @@ installs are discarded; complete installs are checked before reuse. Readiness
 records `claude --version`; the result separately records `agentInfo.version`.
 A missing Claude or Node returns an unsupported cause for this worker through
 `dispatch_work`, while other installed workers remain available. The `claude`
-headless worker remains a separate selection pending evaluation. A separately
-opted-in live test records the person's Claude version and the program version.
+headless worker stays available only as an explicit selection; the evaluation
+kept ACP ([worker-evaluation.md](../../evidence/worker-evaluation.md)). A
+separately opted-in live test records the person's Claude version and the
+program version.
 
 ### Readiness
 
@@ -1950,8 +1956,8 @@ When there is more work than the person wants running, the person adjusts it fro
 - **Order.** Every goal has a rank. A new goal takes the last rank. Moving a goal up or down swaps its rank with its neighbour among the goals that are not final. Rank comes before the placement order of Capacity: ready steps of a higher-ranked goal are placed first, then the order of Capacity applies.
 - **Pause.** A paused goal gets no new step and no further input to its work threads, under the pause rule of Control; what is in progress ends its current turn and stops there. Its waits keep their deadlines. Resume returns it to its rank. A paused goal never resumes by itself.
 - **Stop.** Stopping a goal makes it `stopped` (see Lifecycle). It is final, keeps what it produced, and takes the person's confirmation.
-- **Run limit.** The run limit is how many goals may have a step in progress at once. By default it is automatic: on each pass Core sets it to what the free slots and the quota rows of Capacity can carry, and never below one. The person can set a number instead or return it to automatic. A goal past the limit starts no new step. Lowering the limit, by the person or automatically, stops nothing that runs: steps in progress finish, and the running count falls as they end.
-- **Queue.** Goals that have a ready step but no run slot wait in rank order. Each knows its place and its one reason: the run limit (`slot`), a worker's quota (`quota`) or host load (`load`). The reason is `quota` or `load` when the automatic limit fell because of that report.
+- **Run limit.** The run limit is how many goals may have a step in progress at once. By default it is automatic: on each pass Core sets it from the goals already running plus the additional goals that the free slots and the quota rows of Capacity can carry, and never below one, so slots already held by running goals do not lower the limit when no shortage exists. When free capacity or quota can carry no additional goal, the automatic limit admits no new start and falls to one as running steps end. The person can set a number instead or return it to automatic. A goal past the limit starts no new step. Lowering the limit, by the person or automatically, stops nothing that runs: steps in progress finish, and the running count falls as they end.
+- **Queue.** Goals that have a ready step but no run slot wait in rank order. Each knows its place and its one reason: the run limit (`slot`), a worker's quota (`quota`) or host load (`load`). The reason is `quota` or `load` when a worker's quota or host load leaves no free capacity for the automatic limit to admit the goal.
 - **Shown on the line.** A paused goal's Now is 일시정지 (paused). A queued goal's Now is its reason and place, such as "자리 대기 · 3번째" (waiting for a slot, 3rd). These follow 확인 필요 in the order of Now (see Progress line), and such a goal is ordered with the lines that wait on something other than the person.
 
 ### Recovery
@@ -2272,6 +2278,13 @@ Work progress is seen through work cards and the running list built from them. T
 
 ### Progress line
 
+New work-engine events retain Core's admission timestamp at nanosecond
+precision inside their commit transaction, separately from the source event's
+time. Retries and projection rebuilds preserve the original timestamp; legacy
+events without one remain unknown. Commit-to-surface measurements use that
+stored timestamp, including transaction storage time, and never substitute the
+time a later observer reads the event.
+
 LINA Core keeps one progress line for each 일 and each 목표 that has work in flight or something waiting on the person. The line is the person's view of where a piece of work stands, and it is the only form in which the progress of an 일 or a 목표 reaches a surface ([surfaces.md](surfaces.md#progress-at-a-glance)). It is computed from the records and the work cards. It is never written by hand and never taken from a model's estimate.
 
 | Field | What it holds |
@@ -2301,13 +2314,24 @@ LINA Core keeps one progress line for each 일 and each 목표 that has work in 
 
 The stage list is how the person sees the steps of a goal: a short numbered list, never a graph. LINA Core computes it from the step graph (see Step graph) and the work cards; a client only draws it ([surfaces.md](surfaces.md#progress-at-a-glance)).
 
-- **Source.** Core projects the list from the admitted step graph revisions in commit order and the step states observed with each of them; it keeps no separate stage record. A step whose blockers have not landed is not ready and reads next. The same ledger therefore gives the same list after a restart, and a projection that changes nothing changes no entry.
+- **Source.** Core projects the list from the admitted step graph revisions in commit order and the step states observed with each of them; it keeps no separate stage record. A step whose blockers are not satisfied (see Step graph) is not ready and reads next. The same ledger therefore gives the same list after a restart, and a projection that changes nothing changes no entry.
 - **Numbering.** A step with no blockers is in stage 1, and any other step is in the stage after the highest stage of its blockers. A stage is every step with the same number. Steps that may run at the same time therefore share one stage, which is one entry of the list, never one entry per step.
-- **Done stages stay done.** A stage is done when each of its steps has landed or was closed as superseded. A done stage keeps its number and its steps and never reopens: a step admitted later is placed at least one stage past the leading run of done stages. A repair step, or a step that a correction by the person adds, therefore appears as the current or a later stage, never inside a finished one.
+- **Done stages stay done.** A stage is done when each of its steps is done (satisfying the completion rule of its kind under Step graph) or was closed as superseded. A done stage keeps its number and its steps and never reopens: a step admitted later is placed at least one stage past the leading run of done stages. A repair step, or a step that a correction by the person adds, therefore appears as the current or a later stage, never inside a finished one.
 - **Entries.** The list is the numbered stages in order, followed by 확인 (checking), the collection of evidence before close (see Evidence before close). While a goal is `defining` and has no admitted graph, its list is the single entry 설계 (design), and a `done` goal shows 끝 (done). A numbered entry carries its number, its state and its label. The label of a one-step stage is that step's name; the label of a larger stage is the name of its first step, ordered by start and then by id, followed by the number of the others ("로그인 화면 수정 외 1").
 - **State of an entry.** An entry has the state of its most urgent step, in the order input needed, failed, stopped, working, waiting, unknown and done. An entry none of whose steps is ready or started is next. A superseded step leaves the counts.
 - **Current stage.** The current stage is the lowest-numbered entry that is not done; it is the line's stage (see Progress line). Because stages never hold work back, a later entry can be working at the same time and shows its own state.
 - **Detail.** A stage that is not done and has a step that is ready or started opens to its steps, which normally means only the current stage. Under each step in progress are its live worker sessions, by worker name and state word only. Done stages and stages that have not started show no steps and no workers. Each step keeps its card and Details.
+
+  A session row requires both the scoped step's recorded session handle and a
+  matching active dispatch binding or retained process-local live session. Ledger history alone cannot claim a
+  worker is still alive after restart. Adapter observations are read outside
+  canon and off the progress publication path. A session-local cache supplies
+  observations for at most five seconds; an absent, expired or different-turn
+  observation is unknown while a bounded asynchronous read refreshes it.
+  Completion wakes the progress publisher without delaying canonical updates.
+  Failed observations remain unknown, and ended or replaced sessions disappear. A retained idle session can remain under work being
+  handled, with the waiting state. The client retains step selection by its
+  opaque ref, separately from the display-only stage line.
 - **Updates.** Core recomputes the stage list and Now in the transaction that commits an event of the goal, and publishes the changed line and list on the progress topic ([host-protocol.md](host-protocol.md)) within 250 ms (P) of that commit. A recomputation that changes nothing publishes nothing.
 
 ### Running list
@@ -2521,7 +2545,7 @@ The running-Core acceptance scenario is `e2e/m3/operational-switch.json`.
 - Retention periods for closed workspaces: set during work engine implementation acceptance.
 - Whether Codex subagents inside a worker see the `lina` tools, and that a declined approval leaves the action unexecuted: confirmed by QA in the worker adapter implementation issue.
 - Remote-device worker hosting through Node and the worker's own pull-request path from the device: verified during Node implementation acceptance; unsupported until then.
-- The ACP worker profiles: confirmed against each installed version when the profile is built, with live runs in the worker evaluation ([worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building)). Which Claude Code adapter stays, ACP or headless, is decided by that evaluation.
+- The ACP worker profiles: confirmed against each installed version when the profile is built, with live runs in the worker evaluation ([worker-protocols.md](../research/worker-protocols.md#evaluation-defined-before-building)). That evaluation kept ACP for [CC] ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - The wire format of delivery layers, work events and progress data: added to [host-protocol.md](host-protocol.md) during work engine implementation acceptance.
 - The Korean words of the frame and of the date fields, and the exposure of the four-level priority: set by a card sort with non-developers and by use.
 - The thresholds of the to-do record (surviving briefings before a question, the rate at which rejected automatic additions fall back to candidates), Korean date parsing coverage (lunar dates, month ends, business days), the commit granularity and inbox form of the records repository, and its behavior at thousands of files: set by measurement during work engine implementation acceptance.

@@ -150,6 +150,7 @@ func snapshot(t *testing.T, db *canon.Store) string {
 	return strings.Join(all, "\n")
 }
 func TestExportSelectionMaskingImmutableSourcesAndNoWrites(t *testing.T) {
+	t.Parallel()
 	db, source, root := fixture(t)
 	scope := replay.Scope{Person: "person", Agent: "agent"}
 	id := seed(t, db, "input", guard.EntryOwner)
@@ -206,6 +207,7 @@ func TestExportSelectionMaskingImmutableSourcesAndNoWrites(t *testing.T) {
 	}
 }
 func TestReplaySourceRejectsForeignPersonAndUnrecordedAssembly(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	seed(t, db, "input", guard.EntryOwner)
 	if _, err := source.Load(t.Context(), replay.Scope{Person: "other", Agent: "agent"}, "turn:input"); err == nil {
@@ -221,6 +223,7 @@ func TestReplaySourceRejectsForeignPersonAndUnrecordedAssembly(t *testing.T) {
 }
 
 func TestRecordedEffectReceiptIsReadWithoutRecoveryOrDispatch(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	id := seed(t, db, "input", guard.EntryOwner)
 	call := provider.ToolCall{ID: "call", Name: "write_file", Arguments: `{"path":"note","content":"violet"}`}
@@ -263,6 +266,7 @@ func TestRecordedEffectReceiptIsReadWithoutRecoveryOrDispatch(t *testing.T) {
 }
 
 func TestReplayRejectsReconstructionThatDoesNotMatchOriginalRequest(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	id := seed(t, db, "input", guard.EntryOwner)
 	source.Project = func([]ledger.Event, string, string) ([]provider.Item, error) {
@@ -275,6 +279,7 @@ func TestReplayRejectsReconstructionThatDoesNotMatchOriginalRequest(t *testing.T
 }
 
 func TestExportRefusesPrivateEvidenceAndDirectRetractions(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"private", "retracted"} {
 		t.Run(kind, func(t *testing.T) {
 			db, source, _ := fixture(t)
@@ -306,6 +311,7 @@ func TestExportRefusesPrivateEvidenceAndDirectRetractions(t *testing.T) {
 }
 
 func TestExportExcludesTurnDependingOnForgottenRecallResult(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	id := seed(t, db, "input", guard.EntryOwner)
 	call := provider.ToolCall{ID: "recall", Name: "recall_person", Arguments: `{"question":"What is remembered?","query":"violet"}`}
@@ -332,6 +338,7 @@ func TestExportExcludesTurnDependingOnForgottenRecallResult(t *testing.T) {
 }
 
 func TestExportExcludesRetractedReplyEvenWhenInputRemainsVisible(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	id := seed(t, db, "input", guard.EntryOwner)
 	now := time.Date(2026, 1, 2, 2, 4, 6, 0, time.UTC)
@@ -360,6 +367,7 @@ func TestExportExcludesRetractedReplyEvenWhenInputRemainsVisible(t *testing.T) {
 }
 
 func TestPersonaContextExclusionReasons(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ name, source, state, revision, reason string }{
 		{"missing memory", "relationship-v1", "", "", "forgotten"},
 		{"missing name", "name-v1", "", "", "forgotten"},
@@ -405,6 +413,7 @@ func TestPersonaContextExclusionReasons(t *testing.T) {
 }
 
 func TestOldProducerWithoutRequestEvidenceIsCounted(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	ctx := t.Context()
 	at := time.Date(2026, 1, 2, 2, 4, 5, 0, time.UTC)
@@ -435,6 +444,7 @@ func TestOldProducerWithoutRequestEvidenceIsCounted(t *testing.T) {
 }
 
 func TestUnknownRequestLayoutCannotExport(t *testing.T) {
+	t.Parallel()
 	db, source, _ := fixture(t)
 	seedWithEvidence(t, db, "input", guard.EntryOwner, func(e *ledger.RequestEvidence) { e.Assembly.RequestLayout = "future-layout" })
 	episodes, manifest, err := source.Episodes(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, selection())

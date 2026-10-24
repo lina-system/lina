@@ -85,7 +85,10 @@ func (s *Session) Platform() string { return s.platform }
 // Account is the account this session reads.
 func (s *Session) Account() string { return s.account }
 
-func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
+func (a *Adapter) SignIn(ctx context.Context, id messenger.SourceID) (messenger.SignInState, error) {
+	if err := a.forAccount(id); err != nil {
+		return messenger.Failing, err
+	}
 	var result struct {
 		State string `json:"state"`
 	}
@@ -103,7 +106,10 @@ func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
 	return messenger.Failing, fmt.Errorf("%w: sign-in state %q", ErrUpstreamChanged, result.State)
 }
 
-func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
+func (a *Adapter) ListChats(ctx context.Context, id messenger.SourceID) ([]messenger.Chat, error) {
+	if err := a.forAccount(id); err != nil {
+		return nil, err
+	}
 	var result struct {
 		Chats []wireChat `json:"chats"`
 	}
@@ -121,7 +127,10 @@ func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
 	return chats, nil
 }
 
-func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *Adapter) Page(ctx context.Context, id messenger.SourceID, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+	if err := a.forAccount(id); err != nil {
+		return messenger.Page{}, err
+	}
 	var result wirePage
 	if err := a.process.call(ctx, "page", map[string]any{"chat": chat, "cursor": string(cursor)}, &result); err != nil {
 		return messenger.Page{}, err
@@ -129,7 +138,10 @@ func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor
 	return result.page()
 }
 
-func (a *Adapter) Members(ctx context.Context, chat string) ([]messenger.Author, error) {
+func (a *Adapter) Members(ctx context.Context, id messenger.SourceID, chat string) ([]messenger.Author, error) {
+	if err := a.forAccount(id); err != nil {
+		return nil, err
+	}
 	var result struct {
 		Members []wireAuthor `json:"members"`
 	}
@@ -148,13 +160,19 @@ func (a *Adapter) Members(ctx context.Context, chat string) ([]messenger.Author,
 }
 
 // Live delivers the add-on's pushed events until ctx ends.
-func (a *Adapter) Live(ctx context.Context, deliver func(messenger.Event) error) error {
+func (a *Adapter) Live(ctx context.Context, id messenger.SourceID, deliver func(messenger.Event) error) error {
+	if err := a.forAccount(id); err != nil {
+		return err
+	}
 	return a.process.live(ctx, deliver)
 }
 
 // FetchAttachment is not offered: the operation table carries attachment
 // metadata only.
-func (a *Adapter) FetchAttachment(context.Context, string, string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(_ context.Context, id messenger.SourceID, _, _ string) (io.ReadCloser, error) {
+	if err := a.forAccount(id); err != nil {
+		return nil, err
+	}
 	return nil, ErrAttachmentFetch
 }
 
@@ -222,4 +240,12 @@ func (m *Manager) Close(ctx context.Context) error {
 		err = errors.Join(err, session.Close(ctx))
 	}
 	return err
+}
+
+// forAccount enforces the same source boundary as the official adapters.
+func (a *Adapter) forAccount(id messenger.SourceID) error {
+	if id.Platform != a.platform || id.Account == "" || id.Account != a.account {
+		return messenger.ErrInvalid
+	}
+	return nil
 }

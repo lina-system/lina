@@ -11,25 +11,6 @@ import (
 // DefaultInterval is the schedule for a source whose adapter states none.
 const DefaultInterval = time.Minute
 
-// Resolver selects the adapter for one source. The add-on runs one process per
-// account, so a source's adapter is not a function of its platform alone.
-type Resolver interface {
-	Resolve(source Source) (Adapter, bool)
-}
-
-// ResolverFunc adapts a function to Resolver.
-type ResolverFunc func(source Source) (Adapter, bool)
-
-func (f ResolverFunc) Resolve(source Source) (Adapter, bool) { return f(source) }
-
-// ByPlatform resolves each source to the adapter its platform names.
-func ByPlatform(adapters map[string]Adapter) ResolverFunc {
-	return func(source Source) (Adapter, bool) {
-		adapter, ok := adapters[source.Platform]
-		return adapter, ok
-	}
-}
-
 // Service reads connected sources on their schedule and from their live events.
 // One source's failure never blocks another source or the conversation.
 type Service struct {
@@ -41,9 +22,27 @@ type Service struct {
 	lastSync map[string]time.Time
 }
 
-// NewService composes the sync loop. A source the resolver does not know is
-// left untouched.
-func NewService(store *Store, resolve Resolver, interval time.Duration) *Service {
+// NewService composes the sync loop. adapters are keyed by the adapter name a
+// source records. A platform with one adapter uses the platform name; Discord's
+// bot and personal account register two names. A source whose name is absent
+// is left untouched.
+func NewService(store *Store, adapters map[string]Adapter, interval time.Duration) *Service {
+	if interval <= 0 {
+		interval = DefaultInterval
+	}
+	return NewServiceWithResolver(store, func(source Source) (Adapter, bool) {
+		adapter, ok := adapters[source.Adapter]
+		return adapter, ok
+	}, interval)
+}
+
+// Resolver selects an adapter for the source account.
+type Resolver func(Source) (Adapter, bool)
+type ResolverFunc = Resolver
+
+// NewServiceWithResolver supports account-specific sessions while NewService
+// retains the registry of adapter names used by official platform services.
+func NewServiceWithResolver(store *Store, resolve Resolver, interval time.Duration) *Service {
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
@@ -106,7 +105,7 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 }
 
 func (s *Service) intervalOf(source Source) time.Duration {
-	if adapter, ok := s.resolve.Resolve(source); ok {
+	if adapter, ok := s.adapterFor(source); ok {
 		if interval := adapter.Capabilities().Interval; interval > 0 {
 			return interval
 		}
@@ -114,13 +113,25 @@ func (s *Service) intervalOf(source Source) time.Duration {
 	return s.interval
 }
 
+// adapterFor selects the implementation the source recorded. Lookup is not by
+// platform: two accounts on one platform, or a bot and a personal account, would
+// otherwise share one instance and one read.
+func (s *Service) adapterFor(source Source) (Adapter, bool) {
+	return s.resolve(source)
+}
+
+func sourceID(source Source) SourceID {
+	return SourceID{Platform: source.Platform, Account: source.Account}
+}
+
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
-	adapter, ok := s.resolve.Resolve(source)
+	adapter, ok := s.adapterFor(source)
 	if !ok {
 		return Result{}, ErrInvalid
 	}
-	state, err := adapter.SignIn(ctx)
+	id := sourceID(source)
+	state, err := adapter.SignIn(ctx, id)
 	if err != nil {
 		return Result{}, err
 	}
@@ -130,7 +141,7 @@ func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 		}
 		return Result{}, nil
 	}
-	chats, err := adapter.ListChats(ctx)
+	chats, err := adapter.ListChats(ctx, id)
 	if err != nil {
 		return Result{}, err
 	}
@@ -166,7 +177,7 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 		if err := ctx.Err(); err != nil {
 			return result, err
 		}
-		page, err := adapter.Page(ctx, chat.Chat, cursor)
+		page, err := adapter.Page(ctx, sourceID(source), chat.Chat, cursor)
 		if err != nil {
 			return result, err
 		}
@@ -195,11 +206,11 @@ func (s *Service) syncChat(ctx context.Context, source Source, adapter Adapter, 
 // Live reads a source's pushed events until ctx ends. A platform without live
 // events returns immediately.
 func (s *Service) Live(ctx context.Context, source Source, deliver func(Event) error) error {
-	adapter, ok := s.resolve.Resolve(source)
+	adapter, ok := s.adapterFor(source)
 	if !ok {
 		return ErrInvalid
 	}
-	return adapter.Live(ctx, deliver)
+	return adapter.Live(ctx, sourceID(source), deliver)
 }
 
 // failureCause keeps a short, bounded cause on the registry row.

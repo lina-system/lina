@@ -61,11 +61,16 @@ func TestScanRejectsEscapingPath(t *testing.T) {
 
 func TestScanSupervisorGuard(t *testing.T) {
 	const procImport = `"github.com/thisisjun786/lina/kit/proc"`
-	guarded := func(osName, procName string) string {
-		return "func TestMain(m *testing.M) {\n" +
-			"\tif len(" + osName + ".Args) > 1 && " + osName + ".Args[1] == \"proc-supervise\" {\n" +
+	dispatches := func(osName, procName string) string {
+		return "\tif len(" + osName + ".Args) > 1 && " + osName + ".Args[1] == \"proc-supervise\" {\n" +
 			"\t\t" + osName + ".Exit(" + procName + ".SuperviseMain(" + osName + ".Args[2:], " + osName + ".Stderr))\n" +
 			"\t}\n" +
+			"\tif len(" + osName + ".Args) > 1 && " + osName + ".Args[1] == \"proc-job\" {\n" +
+			"\t\t" + osName + ".Exit(" + procName + ".JobMain(" + osName + ".Args[2:], " + osName + ".Stderr))\n" +
+			"\t}\n"
+	}
+	guarded := func(osName, procName string) string {
+		return "func TestMain(m *testing.M) {\n" + dispatches(osName, procName) +
 			"\t" + osName + ".Exit(m.Run())\n" +
 			"}\n"
 	}
@@ -85,6 +90,15 @@ func TestScanSupervisorGuard(t *testing.T) {
 			source: "package fixture_test\nimport (\n\tosAlias \"os\"\n\t\"testing\"\n\tprocAlias " + procImport + "\n)\n" +
 				guarded("osAlias", "procAlias"),
 			guarded: true,
+		},
+		{
+			// A Linux-only dispatch leaves macOS jobs to run the test suite.
+			name: "supervisor only",
+			source: "package fixture_test\nimport (\n\t\"os\"\n\t\"testing\"\n\t" + procImport + "\n)\n" +
+				"func TestMain(m *testing.M) {\n" +
+				dispatches("os", "proc")[:strings.Index(dispatches("os", "proc"), "\tif len(os.Args) > 1 && os.Args[1] == \"proc-job\"")] +
+				"\tos.Exit(m.Run())\n}\n",
+			guarded: false,
 		},
 		{
 			name: "comment",
@@ -150,7 +164,7 @@ func TestRunRequiresGuardForProcImports(t *testing.T) {
 	t.Cleanup(func() { os.Args = previous })
 	os.Args = []string{"scenarios", requestPath}
 	err = run()
-	if err == nil || !strings.Contains(err.Error(), "proc-supervise requires an early TestMain dispatch") {
+	if err == nil || !strings.Contains(err.Error(), "proc-supervise and proc-job require early TestMain dispatches") {
 		t.Fatalf("run() error = %v", err)
 	}
 }

@@ -101,11 +101,11 @@ func TestSignInAndChatsReadThroughTheAddon(t *testing.T) {
 	}}
 	adapter := session(t, s).Adapter()
 
-	state, err := adapter.SignIn(t.Context())
+	state, err := adapter.SignIn(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
 	if err != nil || state != messenger.NeedsSignIn {
 		t.Fatalf("sign-in state = %v, %v", state, err)
 	}
-	chats, err := adapter.ListChats(t.Context())
+	chats, err := adapter.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
 	if err != nil || len(chats) != 1 || chats[0].ID != "chat-1" || chats[0].Kind != "direct" {
 		t.Fatalf("chats = %+v, %v", chats, err)
 	}
@@ -125,7 +125,7 @@ func TestUnknownResponseShapeRefusesTheBatch(t *testing.T) {
 	} {
 		t.Run(name, func(t *testing.T) {
 			s := &script{responses: map[string][]string{"page": {response}}}
-			_, err := session(t, s).Adapter().Page(t.Context(), "chat-1", "")
+			_, err := session(t, s).Adapter().Page(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, "chat-1", "")
 			if !errors.Is(err, addon.ErrUpstreamChanged) {
 				t.Fatalf("page error = %v, want upstream changed", err)
 			}
@@ -138,7 +138,7 @@ func TestUnsupportedPlatformFailsOnlyThatSource(t *testing.T) {
 	s := &script{responses: map[string][]string{
 		"members": {`{"id":"","ok":false,"error":"unsupported_platform"}`},
 	}}
-	_, err := session(t, s).Adapter().Members(t.Context(), "chat-1")
+	_, err := session(t, s).Adapter().Members(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, "chat-1")
 	if !errors.Is(err, addon.ErrUnsupportedPlatform) {
 		t.Fatalf("members error = %v", err)
 	}
@@ -148,7 +148,7 @@ func TestMissingNodeReportsTheCauseWithoutStartingAChild(t *testing.T) {
 	t.Parallel()
 	value := addon.NewSession("kakaotalk", "account-1", addon.Config{StateRoot: t.TempDir()})
 	t.Cleanup(func() { _ = value.Close(context.Background()) })
-	if _, err := value.Adapter().ListChats(t.Context()); !errors.Is(err, addon.ErrNotConfigured) {
+	if _, err := value.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}); !errors.Is(err, addon.ErrNotConfigured) {
 		t.Fatalf("list chats error = %v, want %v", err, addon.ErrNotConfigured)
 	}
 	if !strings.Contains(addon.ErrNotConfigured.Error(), "Node.js") {
@@ -166,7 +166,7 @@ func TestRestartIsBounded(t *testing.T) {
 	t.Cleanup(func() { _ = value.Close(context.Background()) })
 	var err error
 	for range 6 {
-		_, err = value.Adapter().ListChats(t.Context())
+		_, err = value.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
 		if err != nil && errors.Is(err, addon.ErrStopped) {
 			break
 		}
@@ -191,7 +191,7 @@ func TestOversizedLineFromTheAddonFailsAsUpstreamChanged(t *testing.T) {
 		Runner: s, RestartDelay: time.Millisecond, MaxRestarts: 0, RequestTimeout: 2 * time.Second,
 	})
 	t.Cleanup(func() { _ = value.Close(context.Background()) })
-	_, err := value.Adapter().ListChats(t.Context())
+	_, err := value.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
 	if !errors.Is(err, addon.ErrStopped) {
 		t.Fatalf("error = %v", err)
 	}
@@ -242,15 +242,15 @@ func TestRealAddonProgramThroughTheSupervisor(t *testing.T) {
 	})
 	t.Cleanup(func() { _ = value.Close(context.Background()) })
 	adapter := value.Adapter()
-	chats, err := adapter.ListChats(t.Context())
+	chats, err := adapter.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"})
 	if err != nil || len(chats) != 1 {
 		t.Fatalf("chats = %+v, %v", chats, err)
 	}
-	page, err := adapter.Page(t.Context(), "dm-1", "")
+	page, err := adapter.Page(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, "dm-1", "")
 	if err != nil || len(page.Messages) != 1 || page.Messages[0].ID != "m-1" {
 		t.Fatalf("page = %+v, %v", page, err)
 	}
-	if _, err := adapter.Members(t.Context(), "dm-1"); err != nil {
+	if _, err := adapter.Members(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, "dm-1"); err != nil {
 		t.Fatal(err)
 	}
 	// The data directory is the add-on's own, 0700 and outside the canon.

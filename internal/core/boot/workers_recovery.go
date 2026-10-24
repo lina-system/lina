@@ -145,10 +145,11 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 		r.workers.mu.Lock()
 		e := r.workers.sessions[rec.ID]
 		r.workers.mu.Unlock()
+		var stale *workerSession
 		if e != nil && rec.State != "decision" {
 			select {
 			case <-e.done:
-				e = nil
+				stale, e = e, nil
 			default:
 			}
 		}
@@ -161,6 +162,7 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 				continue
 			}
 			if r.settleRecordedWorker(ctx, &rec) {
+				r.workers.retire(rec.ID, stale)
 				continue
 			}
 			input, err := r.journal().Get(ctx, rec.Input)
@@ -290,6 +292,26 @@ func (r *conversationRuntime) settleRecordedWorker(ctx context.Context, rec *rec
 		return (recovery.Recovery{DB: r.db}).Put(ctx, *rec) == nil
 	}
 	return false
+}
+
+// retire removes a closed session whose record has settled. Views then read
+// the recorded outcome. A replacement registered meanwhile stays.
+func (b *workerRuntime) retire(id string, e *workerSession) {
+	if e == nil {
+		return
+	}
+	b.mu.Lock()
+	if b.sessions[id] != e {
+		b.mu.Unlock()
+		return
+	}
+	delete(b.sessions, id)
+	b.mu.Unlock()
+	e.stageSnapshot.Close()
+	if e.close != nil {
+		_ = e.close()
+	}
+	e.process.Release()
 }
 
 func (e *workerSession) reconcileWorker(ctx context.Context) {

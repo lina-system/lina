@@ -7,6 +7,7 @@ import (
 )
 
 func TestMainHostCapacityUsesMeasuredLoadMemoryAndDisk(t *testing.T) {
+	t.Parallel()
 	n, err := hostSample("main", "8.0 4.0 2.0 1/100 99\n", "MemTotal: 16000000 kB\nMemAvailable: 8000000 kB\n", 16000, 8, Resources{CPU: 6, MemoryMB: 10000, DiskMB: 12000}, map[string]bool{"worker": true}, time.Unix(100, 0))
 	if err != nil {
 		t.Fatal(err)

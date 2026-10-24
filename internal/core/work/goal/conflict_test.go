@@ -7,6 +7,7 @@ import (
 )
 
 func TestInspectionConflictSignalUsesCentralFence(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(map[bool]string{false: "live", true: "restart"}[restart], func(t *testing.T) {
 			e := revisionEngine(t, readyTask("a"))
@@ -48,6 +49,7 @@ func TestInspectionConflictSignalUsesCentralFence(t *testing.T) {
 }
 
 func TestInspectionConflictReturnsToOwnWorkerOnce(t *testing.T) {
+	t.Parallel()
 	e, worker := claimedAssignment(t)
 	if err := e.Report(t.Context(), worker.ID, worker.Epoch, Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true}); err != nil {
 		t.Fatal(err)
@@ -79,6 +81,7 @@ func TestInspectionConflictReturnsToOwnWorkerOnce(t *testing.T) {
 }
 
 func TestInspectionSecondConflictNeedsPerson(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true})
 	revisionReport(t, e, "a", InspectPR, revisionPR("head"))
@@ -105,6 +108,7 @@ func TestInspectionSecondConflictNeedsPerson(t *testing.T) {
 }
 
 func TestInspectionUnknownMergeabilityKeepsInspecting(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"))
 	revisionReport(t, e, "a", Assign, Observation{Status: OutcomeSucceeded, Head: "head", EffectsSettled: true})
 	observation := revisionPR("head")
@@ -124,6 +128,7 @@ func TestInspectionUnknownMergeabilityKeepsInspecting(t *testing.T) {
 }
 
 func TestInspectionConflictRequiresCurrentHead(t *testing.T) {
+	t.Parallel()
 	for _, head := range []string{"", "other-head"} {
 		t.Run("head="+head, func(t *testing.T) {
 			e := revisionEngine(t, readyTask("a"))

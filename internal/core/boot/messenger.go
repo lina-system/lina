@@ -12,7 +12,7 @@ import (
 // source registry, admission and the sync loop are Core's; adapters are the
 // platform boundary.
 type MessengerConfig struct {
-	// Adapters are keyed by platform for adapters that serve every account of a
+	// Adapters are keyed by adapter name for adapters that serve every account of a
 	// platform. The messenger add-on is not one of these: it runs one process per
 	// account, so Addon supplies it instead.
 	Adapters map[string]messenger.Adapter
@@ -41,7 +41,7 @@ func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *Messenger
 		return nil
 	}
 	store := messenger.Open(r.db, r.materials, r.removals)
-	service := messenger.NewService(store, resolveMessenger(cfg), cfg.Interval)
+	service := messenger.NewServiceWithResolver(store, resolveMessenger(cfg), cfg.Interval)
 	runCtx, stop := context.WithCancel(ctx)
 	r.messenger, r.messengerAddon, r.messengerStop, r.messengerDone = service, cfg.Addon, stop, make(chan struct{})
 	go func() {
@@ -59,7 +59,7 @@ func (r *conversationRuntime) Messenger() *messenger.Service { return r.messenge
 // keeps one session per account, so the platform sees one session.
 func resolveMessenger(cfg *MessengerConfig) messenger.ResolverFunc {
 	return func(source messenger.Source) (messenger.Adapter, bool) {
-		if adapter, ok := cfg.Adapters[source.Platform]; ok {
+		if adapter, ok := cfg.Adapters[source.Adapter]; ok {
 			return adapter, true
 		}
 		if cfg.Addon == nil || source.Mode != messenger.ModeUnofficial {

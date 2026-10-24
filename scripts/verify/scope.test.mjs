@@ -147,6 +147,39 @@ for (const path of [
   });
 }
 
+for (const path of [
+  'internal/addons/importer/murmur/events.go',
+  'internal/addons/importer/murmur/import_test.go',
+]) {
+  test(`murmur change ${path} selects its consumer checks`, t => {
+    const r = repository(t);
+    const files = {
+      'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+      'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+      'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+      'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
+      'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+      'internal/addons/importer/murmur/events.go': 'package murmur\n',
+      'internal/addons/importer/murmur/import_test.go': 'package murmur\n',
+    };
+    mkdirSync(join(r.cwd, 'cmd/lina'), { recursive: true });
+    mkdirSync(join(r.cwd, 'kit'), { recursive: true });
+    mkdirSync(join(r.cwd, 'internal/addons/importer/murmur'), { recursive: true });
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(r.cwd, name), content);
+    }
+    const base = r.commit();
+    writeFileSync(join(r.cwd, path), `${files[path]}// changed\n`);
+    const scope = r.classify(r.commit(), { base });
+    assert.deepEqual(scope.unmapped, []);
+    assert.deepEqual(scope.selectedComponents, ['lina']);
+    assert.equal(scope.components, true);
+    assert.equal(scope.automation, false);
+    assert.equal(kind(path), 'components');
+    assert.ok(componentRegistry.find(c => c.name === 'lina').packages.includes('./internal/addons/importer/murmur/...'));
+  });
+}
+
 test('Hermes readers and synthetic fixtures select their consumer checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -696,8 +729,13 @@ test('QA guide and repository opt-in have registered verification', () => {
   assert.equal(kind('.devflow'), 'automation');
 });
 
+test('the Apple helper belongs to the lina component', () => {
+  assert.equal(kind('adapters/applefm/main.swift'), 'components');
+  assert.equal(kind('adapters/applefm/README.md'), 'components');
+});
+
 test('Claude and messenger adapters and npm configuration select automation and dependency verification', () => {
-  for (const path of ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json', 'adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', 'adapters/messenger/package.json', 'adapters/messenger/package-lock.json', 'adapters/messenger/main.ts', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
+  for (const path of ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json', 'adapters/messenger/package.json', 'adapters/messenger/package-lock.json', 'adapters/messenger/main.ts', 'adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
     assert.equal(kind(path), 'automation', path);
   }
 });

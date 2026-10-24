@@ -24,6 +24,14 @@ type conversationMaterials struct {
 }
 type conversationMaterial struct{ *assets.PreparedMaterial }
 
+// LedgerMaterials adapts the asset store and its writer to the ledger's material
+// boundary. Core composes it for its own writes; a command that runs Core's
+// admission with Core stopped uses the same adapter, so both paths store bodies
+// alike.
+func LedgerMaterials(store *assets.Store, writer *assets.MaterialWriter, actor assets.Actor) ledger.Materials {
+	return &conversationMaterials{store: store, writer: writer, actor: actor}
+}
+
 func (p conversationMaterial) Insert(ctx context.Context, tx *canon.Tx) (ledger.Material, error) {
 	asset, err := p.PreparedMaterial.Insert(ctx, tx)
 	return ledger.Material{ID: asset.ID, Revision: asset.Revision}, err
