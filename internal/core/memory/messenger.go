@@ -283,27 +283,38 @@ func (s *Store) PrepareMessengerExtraction(ctx context.Context, person string, l
 			}
 			holder := messengerHolder(source.platform, source.account)
 			floorText := floor.UTC().Format(time.RFC3339Nano)
-			rows, err := tx.QueryContext(ctx, `SELECT e.rowid,e.id,c.chat,c.scope
-FROM messenger_record m
-JOIN conv_event e ON e.id=m.event
-JOIN messenger_chat c ON c.platform=m.platform AND c.account=m.account AND c.chat=m.chat
-WHERE m.platform=? AND m.account=? AND e.rowid>?
- AND e.speaker_kind='person' AND coalesce(e.person_id,'')=?
- AND c.learn=1 AND c.scope<>?
- AND (CASE WHEN ? THEN julianday(e.occurred_at)>julianday(?) ELSE julianday(e.occurred_at)>=julianday(?) END)
- AND `+messengerReadableRecord+`
-ORDER BY e.rowid LIMIT ?`, source.platform, source.account, source.after, person, string(NeverLeaves), source.exclusive, floorText, floorText, limit)
+			// Another participant's turn is read as well, without being learned
+			// input: it breaks the burst, as a non-person turn does in a
+			// conversation (docs/design/go-core.md). The window stops at the
+			// limit-th person record, so the batch stays bounded.
+			rows, err := tx.QueryContext(ctx, `WITH cand AS (
+ SELECT e.rowid AS seq, e.id AS id, c.chat AS chat, c.scope AS scope,
+  (e.speaker_kind='person' AND coalesce(e.person_id,'')=?) AS mine,
+  sum(CASE WHEN e.speaker_kind='person' AND coalesce(e.person_id,'')=? THEN 1 ELSE 0 END) OVER (ORDER BY e.rowid) AS persons
+ FROM messenger_record m
+ JOIN conv_event e ON e.id=m.event
+ JOIN messenger_chat c ON c.platform=m.platform AND c.account=m.account AND c.chat=m.chat
+ WHERE m.platform=? AND m.account=? AND e.rowid>?
+  AND c.learn=1 AND c.scope<>?
+  AND (e.speaker_kind<>'person' OR coalesce(e.person_id,'')<>?
+       OR (CASE WHEN ? THEN julianday(e.occurred_at)>julianday(?) ELSE julianday(e.occurred_at)>=julianday(?) END))
+  AND `+messengerReadableRecord+`
+)
+SELECT seq,id,chat,scope,mine FROM cand WHERE persons<=? ORDER BY seq LIMIT ?`,
+				person, person, source.platform, source.account, source.after, string(NeverLeaves), person,
+				source.exclusive, floorText, floorText, limit, limit*8)
 			if err != nil {
 				return fmt.Errorf("messenger records %s/%s: %w", source.platform, source.account, err)
 			}
 			type row struct {
 				sequence        int64
 				id, chat, scope string
+				mine            bool
 			}
 			var scanned []row
 			for rows.Next() {
 				var v row
-				if err := rows.Scan(&v.sequence, &v.id, &v.chat, &v.scope); err != nil {
+				if err := rows.Scan(&v.sequence, &v.id, &v.chat, &v.scope, &v.mine); err != nil {
 					rows.Close()
 					return err
 				}
@@ -328,6 +339,12 @@ ORDER BY e.rowid LIMIT ?`, source.platform, source.account, source.after, person
 			}
 			for _, v := range scanned {
 				progress.Through = v.sequence
+				if !v.mine {
+					// The participant's turn breaks the burst; it is not read as
+					// evidence and never becomes context for the next utterance.
+					previous = ""
+					continue
+				}
 				ref := Evidence{Kind: Event, ID: v.id, Precision: Exact}
 				origin, err := resolve(ctx, tx, ref)
 				if err != nil {
@@ -473,8 +490,15 @@ func ValidateMessengerExtraction(batch MessengerBatch, items []Item) error {
 		}
 	}
 	for _, item := range items {
-		if !validMessengerKind(item.Kind) || item.Basis != Stated || item.Subject != (Subject{Kind: Person, ID: batch.Person}) ||
-			item.ID != "" || item.Holder != "" || item.SourceAgent != "" || item.Scope != "" || item.Supersedes != "" || len(item.Evidence) == 0 {
+		if item.ID != "" || item.Holder != "" || item.SourceAgent != "" || item.Scope != "" || item.Supersedes != "" || len(item.Evidence) == 0 {
+			return ErrInvalid
+		}
+		// The same write validation Apply runs, so a proposal that could never
+		// commit is refused before the result is cached.
+		if _, err := validateMode(Write{Person: batch.Person, Item: item}, false, true); err != nil {
+			return ErrInvalid
+		}
+		if item.Subject != (Subject{Kind: Person, ID: batch.Person}) {
 			return ErrInvalid
 		}
 		for _, evidence := range item.Evidence {
@@ -652,6 +676,12 @@ WHERE e.id=? AND `+messengerReadableRecord, ref.ID).Scan(&current); err != nil {
 		}
 		for _, message := range utterance.Context {
 			if !present(message.ID) {
+				return ErrJobConflict
+			}
+			// A memory added since preparation can restrict this message
+			// without moving the retraction epoch, so the batch rebuilds rather
+			// than sending it to the model.
+			if blocked[message.ID] {
 				return ErrJobConflict
 			}
 			var visible int

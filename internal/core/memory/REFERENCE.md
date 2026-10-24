@@ -140,6 +140,15 @@ per-agent conversation job. It has its own budget, cadence and adoption record
 - A Discord bot-mode source is searchable and not learned from until the owner
   confirms the platform's developer-policy reading, so preparation passes it
   over as if its switch were off and its cursor moves past what arrived.
+- A participant's turn inside the window breaks the burst, as a non-person turn
+  does in a conversation (`docs/design/go-core.md`): the scan reads those turns
+  without making them evidence or context of the next utterance, and the batch
+  window stops at the limit-th person record so it stays bounded.
+- A context message that a memory restricts after preparation rebuilds the
+  batch, the same as restricted evidence. Adding a `never-leaves` memory does not
+  move the retraction epoch, so the check reads the restriction set directly.
+- A proposal passes the writer's own validation before the model result is
+  cached, so an item Apply would refuse cannot stall the job.
 - Material-backed bodies are loaded before preparation takes its read
   transaction (`MessengerEvidenceCandidates` plus the writer's preload), because
   canon serves one reader and a material read inside the transaction would wait

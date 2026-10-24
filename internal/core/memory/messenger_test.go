@@ -3,6 +3,7 @@ package memory
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -504,6 +505,82 @@ func TestMessengerExtractionGatesBotModeDiscord(t *testing.T) {
 	}
 }
 
+// A participant's turn breaks the burst even inside the window, so two answers
+// to different questions are separate utterances and the second one carries the
+// question it answers as context.
+func TestMessengerExtractionBreaksBurstOnParticipantTurn(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	admitMessages(t, store, source,
+		messengerMessage("mine-1", messenger.RoutePerson, start.Add(time.Minute), "Yes."),
+		messengerMessage("other", messenger.RouteParticipant, start.Add(time.Minute+10*time.Second), "Do you prefer tea or coffee?"),
+		messengerMessage("mine-2", messenger.RoutePerson, start.Add(time.Minute+20*time.Second), "Tea."),
+	)
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 2 {
+		t.Fatalf("participant turn did not break the burst: %+v", batch.Utterances)
+	}
+	if batch.Utterances[0].Text != "Yes." || batch.Utterances[1].Text != "Tea." {
+		t.Fatalf("utterances: %+v", batch.Utterances)
+	}
+	context := batch.Utterances[1].Context
+	if len(context) == 0 || !strings.Contains(context[len(context)-1].Text, "tea or coffee") {
+		t.Fatalf("second utterance lost its question: %+v", context)
+	}
+}
+
+// A context message that a memory restricts after preparation is not sent to
+// the model: the batch rebuilds instead.
+func TestMessengerExtractionRebuildsWhenContextBecomesRestricted(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	admitMessages(t, store, source,
+		messengerMessage("other", messenger.RouteParticipant, start.Add(time.Minute), "The person lives on Mars."),
+		messengerMessage("mine", messenger.RoutePerson, start.Add(2*time.Minute), "I prefer jasmine tea."),
+	)
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 || len(batch.Utterances[0].Context) == 0 {
+		t.Fatalf("prepared: %+v", batch.Utterances)
+	}
+	context := batch.Utterances[0].Context
+	restrictEvent(t, db, context[len(context)-1].ID)
+	if err := New(db).CheckMessengerExtraction(t.Context(), batch, messengerResolve(db)); !errors.Is(err, ErrJobConflict) {
+		t.Fatalf("restricted context was accepted: %v", err)
+	}
+}
+
+// A proposal that Apply would refuse is refused before the model result is
+// cached, so one malformed item cannot stall learning.
+func TestMessengerExtractionValidationRejectsUnwritableItems(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	admitMessages(t, store, source,
+		messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer jasmine tea."),
+	)
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 {
+		t.Fatalf("prepared: %+v", batch.Utterances)
+	}
+	evidence := batch.Utterances[0].Events
+	valid := Item{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
+		Basis: Stated, Evidence: evidence}
+	if err := ValidateMessengerExtraction(batch, []Item{valid}); err != nil {
+		t.Fatalf("valid proposal refused: %v", err)
+	}
+	for name, mutate := range map[string]func(*Item){
+		"empty content":   func(i *Item) { i.Content = "" },
+		"revision":        func(i *Item) { i.Revision = 2 },
+		"validity":        func(i *Item) { i.ValidFrom, i.ValidUntil = 10, 5 },
+		"never-leaves":    func(i *Item) { i.Scope = NeverLeaves },
+		"agent-held kind": func(i *Item) { i.Kind = SharedHistory },
+		"source agent":    func(i *Item) { i.SourceAgent = "agent-a" },
+		"other subject":   func(i *Item) { i.Subject = Subject{Kind: Person, ID: "someone"} },
+	} {
+		item := valid
+		mutate(&item)
+		if err := ValidateMessengerExtraction(batch, []Item{item}); err == nil {
+			t.Fatalf("%s was accepted", name)
+		}
+	}
+}
+
 // An import the person started with learning on moves the watermark back and
 // resets progress, so older history becomes input once.
 func TestMessengerExtractionImportWithLearning(t *testing.T) {
@@ -525,5 +602,28 @@ func TestMessengerExtractionImportWithLearning(t *testing.T) {
 	sources, err := store.Sources(t.Context(), messengerTestPerson)
 	if err != nil || len(sources) != 1 || !sources[0].Learn {
 		t.Fatalf("source learning switch: %+v %v", sources, err)
+	}
+}
+
+// restrictEvent writes a never-leaves memory that cites one event, as a
+// restriction the person's own scope choice produces.
+func restrictEvent(t *testing.T, db *canon.Store, id string) {
+	t.Helper()
+	item := Item{ID: "restricted", Kind: Fact, Content: "Restricted statement", Holder: All, Scope: NeverLeaves,
+		Subject: Subject{Kind: Person, ID: messengerTestPerson}, Basis: Stated, State: Active, Revision: 1,
+		Evidence: []Evidence{{Kind: Event, ID: id, Precision: Exact}}}
+	raw, err := json.Marshal(item)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), `INSERT INTO memory_item(id,person,holder,subject_kind,subject_id,normalized,content,scope,state,valid_from,valid_until,supersedes,standing,record)
+VALUES(?,?,?,?,?,?,?,?,?,0,0,'',0,?)`, item.ID, messengerTestPerson, string(item.Holder), string(item.Subject.Kind), item.Subject.ID,
+			"restricted statement", item.Content, string(item.Scope), string(item.State), raw); err != nil {
+			return err
+		}
+		return revision(t.Context(), tx, item, raw)
+	}); err != nil {
+		t.Fatal(err)
 	}
 }
