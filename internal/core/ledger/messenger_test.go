@@ -23,6 +23,7 @@ func messengerInput(id string) ledger.Input {
 }
 
 func TestMessengerRecordAdmissionKeepsRouteAndReference(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	in := messengerInput("record-1")
@@ -62,6 +63,7 @@ func TestMessengerRecordAdmissionKeepsRouteAndReference(t *testing.T) {
 }
 
 func TestMessengerAdmissionFixesSpeakerKindFromTheEntry(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	for i, tc := range []struct {
@@ -113,6 +115,7 @@ func TestMessengerAdmissionFixesSpeakerKindFromTheEntry(t *testing.T) {
 }
 
 func TestMessengerRecordMasksURLSecretsAtAdmission(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	hash := "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
