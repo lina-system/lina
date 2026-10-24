@@ -258,6 +258,9 @@ func (e *Engine) Admit(ctx context.Context, g Goal) error {
 			return ErrInvalid
 		}
 	}
+	if err := AcceptProse(g); err != nil {
+		return err
+	}
 	if err := e.prepareDefinition(ctx, &g); err != nil {
 		return err
 	}
