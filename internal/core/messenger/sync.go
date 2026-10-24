@@ -339,6 +339,12 @@ func (s *Service) follow(ctx context.Context, source Source, key string, w *watc
 		if ctx.Err() != nil || errors.Is(err, ErrNotConnected) {
 			return
 		}
+		if errors.Is(err, ErrNeedsSignIn) {
+			// The platform revoked the session: the source waits for the person
+			// instead of being read again.
+			_ = s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
+			return
+		}
 		if err != nil && !channels.Retryable(err) && !errors.Is(err, ErrPageWaiting) {
 			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
 		}

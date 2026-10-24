@@ -116,7 +116,8 @@ func (m TerminalMatrix) Validate() error {
 
 // validate requires the automated QA record to name its evidence, to leave the
 // owner's confirmation with an issue, and to describe each terminal it ran with
-// the observed product, version, TERM and transport.
+// the observed product, version, TERM and transport. A version counts as
+// observed only when it contains a version number.
 func (qa AutomatedQA) validate() error {
 	if strings.TrimSpace(qa.Evidence) == "" {
 		return errors.New("automated QA record needs its evidence path")
@@ -132,7 +133,7 @@ func (qa AutomatedQA) validate() error {
 		if strings.TrimSpace(run.ID) == "" || strings.TrimSpace(run.Terminal) == "" {
 			return errors.New("automated QA run needs an id and terminal")
 		}
-		if strings.TrimSpace(run.Version) == "" {
+		if strings.TrimSpace(run.Version) == "" || !hasObservedVersion(run.Version) {
 			return fmt.Errorf("automated QA run needs the observed version: %s", run.ID)
 		}
 		if strings.TrimSpace(run.Term) == "" {
@@ -147,6 +148,17 @@ func (qa AutomatedQA) validate() error {
 		seen[run.ID] = true
 	}
 	return nil
+}
+
+// hasObservedVersion reports whether version contains a version number.
+// A product name alone, such as "OpenSSH, tmux", does not.
+func hasObservedVersion(version string) bool {
+	for _, r := range version {
+		if r >= '0' && r <= '9' {
+			return true
+		}
+	}
+	return false
 }
 
 // confirmsProposal requires the confirmed list to confirm the recorded proposal:
