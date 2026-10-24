@@ -415,6 +415,17 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					}
 					waits = append(waits, w)
 				}
+				kept := map[string]bool{}
+				for _, w := range waits {
+					if w.Recorded && w.Wake != "" {
+						kept[w.Wake] = true
+					}
+				}
+				for _, old := range g.Waits {
+					if old.Recorded && old.TodoID != "" && !kept[old.Wake] {
+						queueClear(g, old)
+					}
+				}
 				g.Waits = waits
 			}
 			if g.State != GoalDone && g.State != GoalStopped && !g.Paused {
@@ -750,16 +761,10 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			t.Stage = TaskConflicted
 		case OutcomeFailed:
 			if a.Kind == ReadSource {
-				a.State = "finished"
-				// A failed deadline read did not close the wait. Apply the same
-				// row a still-open read would, so the only deadline read cannot
-				// leave the goal waiting with no further signal.
-				if a.ReadCause == "deadline" {
-					open := true
-					if err := applyWaitRead(&g, a, Observation{SourceOpen: &open}); err != nil {
-						return err
-					}
+				if err := finishFailedSourceRead(&g, a); err != nil {
+					return err
 				}
+				a.State = "finished"
 				break
 			}
 			if a.Kind == Verify {
