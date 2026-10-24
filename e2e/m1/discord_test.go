@@ -560,6 +560,16 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	if strings.Join(parts, "") != reply || !strings.HasSuffix(parts[0], "\n\n") {
 		t.Fatalf("reply split lost paragraph: lengths %d %d", len(parts[0]), len(parts[1]))
 	}
+	// The reply that started the background run binds to its item, so the
+	// channel names that item in one line under the reply (surfaces.md).
+	select {
+	case text := <-sent:
+		if !strings.Contains(text, "Read the skill inventory") || !strings.Contains(text, "/move") || strings.Contains(text, "\n") {
+			t.Fatalf("binding chip = %q", text)
+		}
+	case <-h.ctx.Done():
+		t.Fatal("binding chip did not reach Discord")
+	}
 	select {
 	case text := <-sent:
 		if !strings.Contains(text, workResult) {
@@ -586,7 +596,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	})
 	c.conn.Close()
 	h.stopCore(core)
-	if modelCalls.Load() != 6 || sendCalls.Load() != 4 {
+	if modelCalls.Load() != 6 || sendCalls.Load() != 5 {
 		t.Fatalf("duplicate/external dispatch: model=%d sends=%d", modelCalls.Load(), sendCalls.Load())
 	}
 	core = start()
@@ -603,7 +613,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	})
 	c.conn.Close()
 	h.stopCore(core)
-	if modelCalls.Load() != 6 || sendCalls.Load() != 4 {
+	if modelCalls.Load() != 6 || sendCalls.Load() != 5 {
 		t.Fatal("restart replayed work")
 	}
 }

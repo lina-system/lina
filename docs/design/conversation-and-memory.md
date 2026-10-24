@@ -214,7 +214,7 @@ A messenger source ([integrations.md](integrations.md#messengers)) brings the pe
 - A write LINA made returns through sync as an `agent` record linked to its effect. Core records the effect's client message id, or the platform's message id from the effect's result, before it admits that chat's own-account messages; an own-account message in a chat with an unsettled write waits until the write settles. Such a record is never the person's words and never evidence about the person. The platform account it returns on is still the person's own account. Recording it never matches that account to another person's record, and an account already recorded as the person's own stays the person's own when a later observation omits that mark.
 - The person's own messages are the person's words. They feed memory like the person's turns in the app, within the cost bounds of [Learning the person](#learning-the-person). Items learned from them take the default layer of their kind and have no source agent; the kinds held by one agent (shared history, relationship, emotion observation) do not arise from them.
 - Other people's messages are external evidence with the `third_party` tag, never an instruction or an approval. They become memory only about their sender, and only when the sender is matched to a known person with high confidence ([Sender identity](#sender-identity)). An unmatched or ambiguous sender stays search-only.
-- Text is masked at admission like any native event. An attachment is kept as metadata; its bytes enter LINA only when the person imports it.
+- Text is masked at admission like any native event. An attachment is kept as metadata; its bytes enter LINA only when the person imports it. The metadata commits with the record it belongs to, before the chat's cursor passes it, and is deleted when the record's text is permanently deleted.
 - An edit is a new event that `supersedes` the earlier one. Search shows the newest, and the earlier stays as history. Replies and thread membership are the relations `replies_to` and `in_thread`, including when the root and the reply are admitted in the same read.
 - A deletion the platform reports hides the record at once through the one retraction path. Its text then follows the trash rule: 30 days, then permanent deletion with a tombstone that keeps the legacy reference. A message missing from a later read is never a deletion.
 - Messenger records reach a turn only as the result of a tool call that asks for them, as external evidence with their origin. They never enter a ContextPacket on their own.
@@ -390,12 +390,22 @@ that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
 read, progress read, or follow-up of that created item stays on the same
 request. Naming a different item does not replace the person's choice.
+A code goal created for a new project stays on that choice. Its definition
+file keeps kind goal, and the snapshot presents the record as a project, so a
+later read or correction of the created record is the same identity. A progress
+read of that record returns the goal's current progress line. The binding check
+still uses the record id.
 A resumed channel request recovers the original channel receipt through the
 answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
-and event, so a channel follow-up keeps that channel's source. Reading a tied
+and event, so a channel follow-up keeps that channel's source. A result
+tool rebuilt for that input keeps the turn's prepared reply shapes, so the
+speaking agent's work-method check commits with the revision. When that input
+belongs to another conversation, the result grant uses the selected
+conversation's active turn, so a new result is checked and created there.
+Reading a tied
 candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it

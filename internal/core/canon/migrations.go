@@ -84,7 +84,8 @@ func Migrations() []Migration {
 		{Version: 69, SQL: TeamsSchema},
 		{Version: 70, SQL: workRunLimitSchema},
 		{Version: 71, SQL: BindingMoveSchema},
-		{Version: 72, SQL: IdentitySchema},
+		{Version: 72, SQL: MessengerAttachmentSchema},
+		{Version: 73, SQL: IdentitySchema},
 	}
 }
 
@@ -137,11 +138,12 @@ var publishedMigrationTables = []struct {
 	{68, "messenger_import"}, {68, "messenger_legacy_ref"},
 	{69, "teams_connection"}, {69, "messenger_author"},
 	{71, "binding_effects"}, {71, "binding_moves"},
-	{72, "identity_sender"}, {72, "identity_identifier"}, {72, "identity_name"},
-	{72, "identity_link"}, {72, "identity_link_signal"}, {72, "identity_link_change"},
-	{72, "identity_question"}, {72, "identity_question_candidate"}, {72, "identity_artifact"}, {72, "identity_merge"},
-	{72, "identity_merge_link"}, {72, "identity_merge_alias"}, {72, "identity_merge_artifact"},
-	{72, "identity_requeue"},
+	{72, "messenger_attachment"},
+	{73, "identity_sender"}, {73, "identity_identifier"}, {73, "identity_name"},
+	{73, "identity_link"}, {73, "identity_link_signal"}, {73, "identity_link_change"},
+	{73, "identity_question"}, {73, "identity_question_candidate"}, {73, "identity_artifact"}, {73, "identity_merge"},
+	{73, "identity_merge_link"}, {73, "identity_merge_alias"}, {73, "identity_merge_artifact"},
+	{73, "identity_requeue"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is

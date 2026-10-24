@@ -28,6 +28,9 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
   let liveStop: (() => void) | null = null;
   let buffer = '';
   let openError: string | null = null;
+  // An unregistered platform stays `unsupported_platform`. Later reads repeat
+  // that refusal and do not reopen the driver.
+  let unsupported: Refusal | null = null;
 
   const write = (value: unknown) => {
     output.write(frame(value));
@@ -35,10 +38,15 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
 
   const driverOrOpen = async (): Promise<Driver> => {
     if (driver) return driver;
+    if (unsupported) throw unsupported;
     if (openError) throw new Refusal('source_failing', openError);
     try {
       driver = await runtime.open(addon.platform);
     } catch (error) {
+      if (error instanceof Refusal && error.code === 'unsupported_platform') {
+        unsupported = error;
+        throw error;
+      }
       openError = describe(error);
       throw new Refusal('source_failing', openError);
     }
