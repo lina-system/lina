@@ -1378,6 +1378,8 @@ its terminal-restoration paths.
 
 LN-85 delivers the harness and scenario validation. [#86](https://github.com/thisisjun786/lina/issues/86)
 records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
+A confirmed matrix records each terminal's observed product version and `TERM`;
+a proposed entry cannot carry either field.
 Owner confirmation of that list is still pending and is the first Done-when item
 of [follow-up #371](https://github.com/thisisjun786/lina/issues/371), which also
 owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final
