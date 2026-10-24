@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -947,6 +948,97 @@ func TestCorrectMovesTheLinkAndRetractsItsItems(t *testing.T) {
 	if len(requeues) != 1 || requeues[0].Identity != discord("d-1") {
 		t.Fatalf("requeues = %+v", requeues)
 	}
+}
+
+// TestCorrectLeavesTheSourceEligible proves a wrong-match repair hides the
+// item and queues the identity again without treating the source event or its
+// conversation as forgotten. The rebuilt item belongs to the right record, and
+// a later message in the same chat can be learned.
+func TestCorrectLeavesTheSourceEligible(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-wrong", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "Discord profile"}}},
+		{Record: "person-right"},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, discord("d-1"), "Someone", phone("+821012340001", "Discord profile"))
+	link := usable(t, f, discord("d-1"))
+	if len(link) != 1 {
+		t.Fatal("the identity did not link")
+	}
+	const conversation = "native:chat"
+	item := f.itemIn(t, "person-wrong", "wrong fact", conversation)
+	if err := f.store.RecordArtifact(t.Context(), link[0].ID, "item", item.ID); err != nil {
+		t.Fatal(err)
+	}
+	repair, err := f.store.Correct(t.Context(), link[0].ID, "person-right")
+	if err != nil {
+		t.Fatal(err)
+	}
+	requeues, err := f.store.Requeues(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if repair.Items != 1 || repair.Requeued != true || len(requeues) != 1 || visible(t, f, item.ID) {
+		t.Fatalf("repair = %+v requeues = %+v visible = %t", repair, requeues, visible(t, f, item.ID))
+	}
+	var problems []string
+	if _, err := f.remember(t, "person-right", "right fact", "event-wrong fact"); err != nil {
+		problems = append(problems, "rebuilt item rejected: "+err.Error())
+	}
+	if _, err := f.events.Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "event-later note", ConversationID: conversation, AgentID: "agent", PersonID: "person",
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: f.now, RecordedAt: f.now,
+		TimeQuality: "recorded", Body: "later note", Locator: "event-later note",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.remember(t, "person-other", "later fact", "event-later note"); err != nil {
+		problems = append(problems, "later message blocked: "+err.Error())
+	}
+	if !eventVisible(t, f, "event-wrong fact") {
+		problems = append(problems, "source event hidden from search")
+	}
+	if len(problems) > 0 {
+		t.Fatal(fmt.Sprintf("source stayed ineligible: %s", joinProblems(problems)))
+	}
+}
+
+func joinProblems(problems []string) string {
+	out := problems[0]
+	for _, problem := range problems[1:] {
+		out += "; " + problem
+	}
+	return out
+}
+
+func (f *fixture) remember(t *testing.T, subject, content, event string) (memory.Item, error) {
+	t.Helper()
+	var item memory.Item
+	err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		var err error
+		item, err = memory.Insert(t.Context(), tx, memory.Write{Agent: "agent", Person: "person", Item: memory.Item{
+			Kind: memory.Fact, Content: content, Person: "person", Basis: memory.Derived,
+			Subject:  memory.Subject{Kind: memory.ThirdParty, ID: subject},
+			Evidence: []memory.Evidence{{Kind: memory.Event, ID: event, Precision: memory.Exact}},
+		}}, func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
+			return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Private, Quote: content}, nil
+		})
+		return err
+	})
+	return item, err
+}
+
+func eventVisible(t *testing.T, f *fixture, event string) bool {
+	t.Helper()
+	var found bool
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT EXISTS(SELECT 1 FROM retract_visible_event WHERE id=?)", event).Scan(&found)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return found
 }
 
 func TestProposalsComeInOneBatchOfAtMostFive(t *testing.T) {

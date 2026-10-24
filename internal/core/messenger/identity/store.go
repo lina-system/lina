@@ -1128,7 +1128,7 @@ func (s *Store) commitRepair(ctx context.Context, mutate func(*canon.Tx) ([]stri
 				return retract.Intent{}, err
 			}
 			repair = describe(len(refs), requeued)
-			return retract.Intent{Refs: refs, Repair: raw}, nil
+			return retract.Intent{Refs: refs, Repair: raw, Suppress: true}, nil
 		})
 		if err != nil {
 			return Repair{}, err

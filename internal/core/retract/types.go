@@ -49,6 +49,9 @@ const (
 	restore    action = "restore"
 	erase      action = "erase"
 	disconnect action = "disconnect"
+	// suppress hides cited items for a wrong-match repair. It does not record
+	// their evidence events or conversations as forgotten.
+	suppress action = "suppress"
 )
 
 type entry struct {
@@ -69,7 +72,7 @@ func (e entry) valid() bool {
 		return false
 	}
 	switch e.Action {
-	case forget, restore, erase, disconnect:
+	case forget, restore, erase, disconnect, suppress:
 	default:
 		return false
 	}

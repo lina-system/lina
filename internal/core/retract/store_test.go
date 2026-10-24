@@ -303,6 +303,46 @@ func TestInvalidRemovalDoesNotCloseReads(t *testing.T) {
 	}
 }
 
+func TestSuppressHidesTheItemWithoutBlockingItsEvidence(t *testing.T) {
+	t.Parallel()
+	for _, suppress := range []bool{false, true} {
+		t.Run(map[bool]string{false: "forget", true: "suppress"}[suppress], func(t *testing.T) {
+			t.Parallel()
+			db, root := fixture(t)
+			seedProtocol(t, db)
+			s := protocolStore(t, db, root)
+			var err error
+			if suppress {
+				err = s.ForgetDuringIntent(t.Context(), "person-1", func(*canon.Tx) (Intent, error) {
+					return Intent{Refs: []Ref{{Kind: Memory, ID: "memory-1"}}, Suppress: true}, nil
+				})
+			} else {
+				err = s.Forget(t.Context(), Request{Person: "person-1", Targets: []Ref{{Kind: Memory, ID: "memory-1"}}})
+			}
+			if err != nil {
+				t.Fatal(err)
+			}
+			var state string
+			var blocks int
+			if err := db.Read(t.Context(), func(tx *canon.Tx) error {
+				if err := tx.QueryRowContext(t.Context(), "SELECT state FROM retract_target WHERE id='memory-1'").Scan(&state); err != nil {
+					return err
+				}
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM retract_block").Scan(&blocks)
+			}); err != nil {
+				t.Fatal(err)
+			}
+			want := 2
+			if suppress {
+				want = 0
+			}
+			if state != "trashed" || blocks != want {
+				t.Fatalf("state=%s blocks=%d, want trashed and %d", state, blocks, want)
+			}
+		})
+	}
+}
+
 func TestTrashRecoveryAndExpiryBoundaries(t *testing.T) {
 	t.Parallel()
 	for _, atBoundary := range []bool{false, true} {

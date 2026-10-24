@@ -113,7 +113,7 @@ func expandMemory(ctx context.Context, tx *canon.Tx, e entry) ([]Target, error) 
 			}
 			// Existing removals already travel with every generation. Do not reset
 			// their trash deadline or try to resolve content that was erased.
-			if state == "erased" || state == "trashed" && e.Action == forget {
+			if state == "erased" || state == "trashed" && (e.Action == forget || e.Action == suppress) {
 				continue
 			}
 			target, err := resolveMemory(ctx, tx, Ref{Kind: Memory, ID: id}, e.Person)
@@ -218,7 +218,7 @@ func applyMemory(ctx context.Context, tx *canon.Tx, e entry, target Target) erro
 		return ErrInvalid
 	}
 	switch e.Action {
-	case forget, restore:
+	case forget, suppress, restore:
 		state := "trashed"
 		if e.Action == restore {
 			state = "active"

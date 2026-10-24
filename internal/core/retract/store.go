@@ -35,11 +35,14 @@ type Request struct {
 	Targets []Ref
 }
 
-// Intent is a forget committed with an optional durable repair. Repair is JSON
-// ids and actions. Recovery replays it in the same transaction as the targets.
+// Intent is a retraction committed with an optional durable repair. Repair is
+// JSON ids and actions. Recovery replays it in the same transaction as the
+// targets. Suppress hides the items and leaves their evidence events and
+// conversations eligible. An ordinary forget leaves Suppress false.
 type Intent struct {
-	Refs   []Ref
-	Repair []byte
+	Refs     []Ref
+	Repair   []byte
+	Suppress bool
 }
 
 type projection struct {
@@ -232,7 +235,11 @@ func (s *Store) ForgetDuringIntent(ctx context.Context, person string, fn func(*
 			if len(refs) == 0 {
 				return nil
 			}
-			e := entry{Version: 1, Action: forget, At: s.now().UnixNano(), Person: person, Repair: intent.Repair}
+			act := forget
+			if intent.Suppress {
+				act = suppress
+			}
+			e := entry{Version: 1, Action: act, At: s.now().UnixNano(), Person: person, Repair: intent.Repair}
 			var nonce [16]byte
 			if _, err := rand.Read(nonce[:]); err != nil {
 				return err
@@ -252,6 +259,12 @@ func (s *Store) ForgetDuringIntent(ctx context.Context, person string, fn func(*
 				e.Targets, err = s.projection.expand(ctx, tx, e)
 				if err != nil {
 					return err
+				}
+			}
+			if e.Action == suppress {
+				for i := range e.Targets {
+					e.Targets[i].Events = nil
+					e.Targets[i].Conversations = nil
 				}
 			}
 			if !e.valid() {
@@ -402,7 +415,7 @@ func transition(ctx context.Context, tx *canon.Tx, t Target, e entry) error {
 		if state != "trashed" || e.At < at || e.At-at >= int64(TrashRetention) {
 			return ErrInvalid
 		}
-	case forget:
+	case forget, suppress:
 		if state == "trashed" {
 			return ErrInvalid
 		}
@@ -418,7 +431,7 @@ func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, 
 	for _, target := range e.Targets {
 		state := ""
 		switch e.Action {
-		case forget:
+		case forget, suppress:
 			state = "trashed"
 		case restore:
 			state = "active"
@@ -451,7 +464,7 @@ func (s *Store) apply(ctx context.Context, tx *canon.Tx, e entry, sequence int, 
 			if _, err := tx.ExecContext(ctx, "DELETE FROM retract_block WHERE item_id=?", target.ID); err != nil {
 				return err
 			}
-			if e.Action != restore {
+			if e.Action == forget || e.Action == erase {
 				for _, event := range target.Events {
 					if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO retract_block(item_id,person,holder,event_id) VALUES(?,?,?,?)", target.ID, e.Person, target.Holder, event); err != nil {
 						return err
