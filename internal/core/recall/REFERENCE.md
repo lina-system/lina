@@ -51,7 +51,9 @@ records by a literal scan of the already scoped set. A source that is still
 queued keeps its text in canon; `Match` matches it there, so search does not
 wait for the background drain. A queued event whose body lives in material is
 read through the caller's `EventText` reader, which only `ledger.Store.Search`
-supplies. `recall_doc.text_hash` collapses events with
+supplies, and only when the requested kinds include events. Those hits join
+the same candidate set, so lineage exclusion and the limit apply to them
+before a result is returned. `recall_doc.text_hash` collapses events with
 identical derived text inside one conversation to the earliest of them. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
@@ -66,7 +68,8 @@ hits, not the number of person events.
 
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term
-ranking, identical-text collapse, lineage, scope and visibility classes,
+ranking, identical-text collapse, lineage (including a queued view or replay and a material-backed copy), kind filters on queued material text,
+scope and visibility classes,
 retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.

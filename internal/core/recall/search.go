@@ -263,10 +263,32 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	var external []Hit
 	if query.EventText != nil {
 		var err error
-		external, err = pendingEventText(ctx, db, scope, at, restricted, terms, query.EventText)
+		external, err = pendingEventText(ctx, db, scope, kinds, at, restricted, terms, query.EventText)
 		if err != nil {
 			return nil, err
 		}
+	}
+	// Material-backed hits have no inline body, so the pending scan above
+	// cannot see them. They still have to be candidates before lineage
+	// exclusion and the limit, or a queued copy is returned beside its original.
+	materialUnion := ""
+	if len(external) > 0 {
+		ids := make([]string, len(external))
+		for i, hit := range external {
+			ids[i] = hit.ID
+		}
+		encoded, err := jsonArray(ids)
+		if err != nil {
+			return nil, err
+		}
+		materialUnion = `
+ UNION ALL
+ SELECT NULL AS id,'event',s.source_id,s.revision,s.occurred_at,s.holder,s.conversation,NULL AS text_hash,s.replay,
+  NULL AS score,0 AS paired,0 AS trigram,` + olderS + ` AS older
+ FROM recall_source s
+ WHERE s.kind='event' AND s.source_id IN (SELECT value FROM json_each(?))`
+		args = append(args, olderSArgs...)
+		args = append(args, encoded)
 	}
 	statement := `WITH ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
@@ -279,6 +301,7 @@ candidates AS MATERIALIZED (
   NULL AS score,0 AS paired,0 AS trigram,` + olderS + ` AS older
  FROM recall_source s JOIN recall_pending q ON q.kind=s.kind AND q.source_id=s.source_id
  WHERE ` + strings.Join(pendingWhere, "\n AND ") + `
+` + materialUnion + `
 ),
 ` + lineageCTE(lineageEvents) + `
 dedup AS (
@@ -292,7 +315,7 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	limit := query.Limit
 	if limit > 0 {
 		statement += " LIMIT ?"
-		args = append(args, limit+len(external))
+		args = append(args, limit)
 	}
 	var hits []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -319,10 +342,6 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 	if err != nil {
 		return nil, err
 	}
-	hits = append(hits, external...)
-	if limit > 0 && len(hits) > limit {
-		hits = hits[:limit]
-	}
 	if query.Vectors != nil {
 		return fuse(ctx, db, scope, query, hits)
 	}
@@ -332,7 +351,13 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 // pendingEventText reads the derived text of queued events whose body lives in
 // material, so a caller with material access sees them before the background
 // drain publishes them. The scan is bounded by the queue, never the corpus.
-func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]Hit, error) {
+// Events the caller did not ask for are not read: the live recall tool always
+// supplies a reader, and a memory or record query must not grow event hits
+// while those events are still queued.
+func pendingEventText(ctx context.Context, db Canon, scope Scope, kinds []Kind, at int64, restricted bool, terms []term, readEvent ReadEvent) ([]Hit, error) {
+	if !containsKind(kinds, Event) {
+		return nil, nil
+	}
 	var lowered []string
 	for _, t := range terms {
 		if t.runes >= 3 || t.pair {
@@ -415,7 +440,10 @@ func lineageFilter(enabled bool) string {
 	if !enabled {
 		return ""
 	}
-	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
+	// A queued candidate has no recall_doc row, so its row id is NULL. Putting
+	// that NULL into NOT IN drops every event. source_id is set for both
+	// published and queued candidates, and derived.id is that same identity.
+	return ` WHERE c.kind<>'event' OR c.source_id NOT IN (SELECT x.id FROM derived x)`
 }
 
 // restrictedCTE lists the events protected by a private or never-leaves memory
