@@ -13,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
@@ -29,12 +30,23 @@ type Removals interface {
 	Forget(context.Context, retract.Request) error
 }
 
+// Identities records the sender of an admitted record. Core supplies sender
+// identity; it matches the author inside the page's own transaction, so a
+// record and the identity it was seen with commit together.
+type Identities interface {
+	Prepare(context.Context) (*identity.Observer, error)
+	// Rematch matches identities that have no link again, so a people record
+	// created after the messages still links.
+	Rematch(context.Context) (int, error)
+}
+
 // Store owns the source registry and messenger admission.
 type Store struct {
-	db        *canon.Store
-	materials ledger.Materials
-	removals  Removals
-	now       func() time.Time
+	db         *canon.Store
+	materials  ledger.Materials
+	removals   Removals
+	identities Identities
+	now        func() time.Time
 }
 
 // Open composes the store. materials carries bodies above the ledger's inline
@@ -45,6 +57,9 @@ func Open(db *canon.Store, materials ledger.Materials, removals Removals) *Store
 
 // WithClock replaces the clock for deterministic tests.
 func (s *Store) WithClock(now func() time.Time) *Store { s.now = now; return s }
+
+// WithIdentities records every admitted author as a sender identity.
+func (s *Store) WithIdentities(identities Identities) *Store { s.identities = identities; return s }
 
 func validName(text string) bool { return text != "" && !strings.ContainsRune(text, 0) }
 
@@ -73,10 +88,10 @@ func (s *Store) Connect(ctx context.Context, source Source) error {
 		at = s.now()
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
-			source.Person, source.Platform, source.Account, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
+		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,workspace=excluded.workspace,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
+			source.Person, source.Platform, source.Account, source.Workspace, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
 		return err
 	})
 }
@@ -131,7 +146,7 @@ func (s *Store) Sources(ctx context.Context, person string) ([]Source, error) {
 	}
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 		if err != nil {
 			return err
@@ -152,7 +167,7 @@ FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 	var source Source
 	var mode, state, terms, connected string
-	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
+	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Workspace, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
 		return Source{}, err
 	}
 	source.Mode, source.State = Mode(mode), State(state)
@@ -182,7 +197,7 @@ func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 func (s *Store) allSources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,workspace,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source ORDER BY platform,account`)
 		if err != nil {
 			return err
@@ -570,6 +585,19 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}
 		return result, nil
 	}
+	var observe func(context.Context, *canon.Tx, identity.Observation) error
+	if s.identities != nil {
+		for _, plan := range plans {
+			if _, ok := senderObservation(source, plan); ok {
+				observer, err := s.identities.Prepare(ctx)
+				if err != nil {
+					return PageResult{}, err
+				}
+				observe = observer.ObserveTx
+				break
+			}
+		}
+	}
 	batch := make([]ledger.Admission, 0, len(plans))
 	index := make(map[string]int, len(plans))
 	for i, plan := range plans {
@@ -589,6 +617,13 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		plan := plans[i]
 		if err := s.writeRecord(ctx, tx, source, chat, plan, event); err != nil {
 			return err
+		}
+		if observe != nil {
+			if observation, ok := senderObservation(source, plan); ok {
+				if err := observe(ctx, tx, observation); err != nil {
+					return err
+				}
+			}
 		}
 		if i == last {
 			for _, id := range repairs {
@@ -611,6 +646,36 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}
 	}
 	return result, nil
+}
+
+// senderObservation builds the identity observation of one admitted author.
+// Bots and platform notices are not people, so only a person or an external
+// participant is observed.
+func senderObservation(source Source, plan recordPlan) (identity.Observation, bool) {
+	message := plan.message
+	if message.Author.ID == "" {
+		return identity.Observation{}, false
+	}
+	switch message.Route {
+	case RoutePerson, RouteParticipant:
+	default:
+		return identity.Observation{}, false
+	}
+	observation := identity.Observation{
+		Identity: identity.Identity{Platform: source.Platform, Scope: source.Workspace, User: message.Author.ID},
+		At:       message.At,
+		Self:     message.Route == RoutePerson && !plan.ownWrite,
+	}
+	if message.At.IsZero() {
+		observation.At = time.Now()
+	}
+	if name := strings.TrimSpace(message.Author.Name); name != "" {
+		observation.Names = []identity.NameSeen{{Value: name, At: observation.At}}
+	}
+	for _, identifier := range message.Author.Identifiers {
+		observation.Identifiers = append(observation.Identifiers, identity.SeenIdentifier{Kind: identity.Kind(identifier.Kind), Value: identifier.Value, Source: identifier.Source, At: observation.At})
+	}
+	return observation, true
 }
 
 type recordPlan struct {

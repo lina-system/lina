@@ -171,6 +171,10 @@ Measures: precision of usable links (`exact` without ambiguity, and `confirmed` 
 
 Gate: no wrong usable link on the synthetic set, and at least 300 usable links in the owner's sample checked against the owner's labels with none wrong. Only usable links count as trials: unmatched, ambiguous and unknown identities say nothing about link correctness. With n usable links checked and none wrong, the wrong-link rate is below 3/n at 95 percent confidence (the rule of three), so 300 gives below 1 percent. With fewer than 300, the owner labels more identities; the report states the bound 3/n reached, and learning about other people stays off until the gate holds.
 
+**First run (2026-10-24, `identity-matcher/1`).** `lina identity-eval` on `testdata/identity/synthetic.json`: 17 usable links, 0 wrong (precision 1.000), 58.6 percent of identities linked automatically, 5 of 5 planted ambiguities flagged, 3 proposals with top-1 precision 1.000, repair clean (the item the removed link produced was retracted through the removal list and only the repaired identity's messages were queued), and the bound 3/17 = 0.176. The gate holds on the synthetic set.
+
+The owner sample has not been run. Its export lives only on the owner's machine, and no labelled sample was available to this work, so the repository records no owner counts. `lina identity-eval --private <dir>` reads `people.json`, `identities.json` and `labels.json` from that directory and writes `counts.json` there with counts and rates only; the identity evaluation section of the package reference defines the three files. Until at least 300 usable links are checked with none wrong, learning about other people (#1077) stays off. Matching, links and search work without the gate.
+
 ## Migration
 
 Following the data-pipeline method: the sink key is the legacy reference, every write is an upsert on it, every replay is bounded, and a gate runs before readers see a load.

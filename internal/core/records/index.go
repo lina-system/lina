@@ -36,6 +36,8 @@ type Index interface {
 type document struct {
 	person, kind, state, title, note, source string
 	belongs, blocked                         []string
+	names                                    []string
+	contacts                                 []Contact
 	todo                                     *Todo
 }
 
@@ -84,6 +86,21 @@ func parseDocument(data []byte) (document, error) {
 					return d, ErrInvalid
 				}
 			}
+		}
+	}
+	if raw, ok := fields["names"]; ok {
+		if json.Unmarshal([]byte(raw), &d.names) != nil {
+			return d, ErrInvalid
+		}
+		for _, name := range d.names {
+			if strings.TrimSpace(name) == "" {
+				return d, ErrInvalid
+			}
+		}
+	}
+	if d.kind == "person" {
+		if d.contacts, err = parseContacts(body); err != nil {
+			return d, err
 		}
 	}
 	if d.kind == "todo" {

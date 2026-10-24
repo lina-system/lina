@@ -44,6 +44,8 @@ func main() {
 			os.Exit(runMockExport(os.Args[2:]))
 		case "export":
 			os.Exit(runExport(os.Args[2:]))
+		case "identity-eval":
+			os.Exit(runIdentityEval(os.Args[2:]))
 		case "replay-worker":
 			if err := replay.Worker(context.Background(), os.Stdin, os.Stdout); err != nil {
 				os.Exit(70)
@@ -58,6 +60,6 @@ func main() {
 			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|doctor|replay|provider-replay|intake-replay|export|a2a|version|file-tool|worker-tools|proc-supervise>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|doctor|replay|provider-replay|intake-replay|export|identity-eval|a2a|version|file-tool|worker-tools|proc-supervise>")
 	os.Exit(64)
 }

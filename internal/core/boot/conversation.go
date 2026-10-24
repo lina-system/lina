@@ -29,6 +29,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
+	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
@@ -83,6 +84,7 @@ type conversationRuntime struct {
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
 	messenger       *messenger.Service
+	senderIdentity  *identity.Store
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
 	channels        *channelRuntime
