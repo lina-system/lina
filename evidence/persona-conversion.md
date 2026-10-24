@@ -85,44 +85,41 @@ through installed Core, replaces stale layers, observes the prepared request
 and exercises a real skill tool and its conversation result. These tests prove
 publication and preparation; the content comparison above establishes fidelity.
 
-The persona tests guard the M4 revision structurally, against the layer the #584
-conversion shipped (`persona/testdata/m4-baseline`, copied from that revision):
+The persona tests check the concrete M4 requirements as well as the revision
+against the layer the #584 conversion shipped (`persona/testdata/m4-baseline`):
 
-- `TestM4StarterRevisionCarriesTheDocumentedChanges` requires, for each preset,
-  that the core gained at least one rule paragraph the #584 core did not have,
-  that dev's and life's default voices gained one where the design lists a voice
-  change, and that nothing was dropped without a replacement. It compares
-  paragraphs, not sentences, so a rule that is reworded still passes.
-- `TestM4StarterIdentityAndVoice` requires the persona name in both titles, the
-  character marker, the address terms and register markers, four examples and
-  the line for agent exchanges.
-- `TestM4StarterLayersHaveNoTopicSwitchOrClosing` rejects a sentence that
-  instructs a register change on a topic and a sentence that closes on a
-  decision with nothing left in it, in either layer. A sentence that forbids
-  either is allowed, as are register chosen by what a sentence does and a
-  statement that the voice does not change: the check looks for an instruction
-  to do the prohibited thing, so a layer may state the prohibition itself.
-- `TestM4ChecksCatchRegressions` drives each helper with synthetic fixtures: a
-  reworded rule and a rule replaced by another pass; an unchanged layer, a
-  dropped rule, a core change landing in an example and a stubbed core fail; a
-  topic switch and a nothing-to-decide line are found while stable voice,
-  role-based register, open decisions and the design's own prohibitions
-  ("말투를 바꾸지 않고", "정할 일이 없다는 문구로 끝내지 않는다", "Do not end a
-  reply with nothing to decide") are not.
+- `TestM4StarterChangesAreCarried` checks 24 requirements across the eight
+  presets, in the core or default voice named by the design. Concept groups
+  cover each core change, Sion's evidence labels and Arin's correction register.
+  Core and voice rules cannot be supplied by examples. Arin's correction check
+  reads the quoted example, excluding its caption and surrounding voice rules.
+  Kai's figure, source and as-of date must occur together, so another source
+  reference elsewhere cannot hide a missing citation.
+- `TestM4EachDocumentedChangeIsRequired` independently removes each requirement
+  from the shipped layer while leaving the other changes in place. It also
+  removes individual parts of compound requirements: the four personal-tool
+  boundaries, evidence labels, explicit safety, dislikes and fixed choices,
+  source and date, trading-day verification, and both rounding bounds.
+- `TestM4StarterRevisionCarriesTheDocumentedChanges` retains the structural
+  comparison with #584: each core and the dev/life default voices must have a
+  new rule, and removed paragraphs must have replacements.
+- `TestM4StarterIdentityAndVoice` retains name, character, address terms,
+  register markers, examples and the line for agent exchanges for every preset,
+  including the six default voices the design leaves unchanged.
+- `TestM4StarterLayersHaveNoTopicSwitchOrClosing` checks both layers for every
+  preset, including dev's fixed-closing prohibition and life's topic-switch
+  prohibition. Existing helper regression tests retain allowed prohibitions,
+  stable voice, open decisions and meaning-preserving rewrite examples.
 
-A check without a wording list cannot tell whether a changed paragraph still
-says what the design asks; a word list can, but it fails a legitimate rewrite,
-which the repository forbids. The tests therefore verify that the revision
-happened and that its two prohibitions hold, and the meaning of each change is
-established by the per-preset comparison above and measured by the M4-4 replay
-(#590). A partial edit inside an already changed paragraph is invisible to the
-structural check for the same reason.
+The concept alternatives are focused textual checks, not a semantic evaluator
+or a snapshot of the whole persona. A legitimate rewrite may require updating
+an alternative and its removal fixture; that alone does not change the design.
+Model-response quality remains a separate replay evaluation under #590.
 
-Mutation run against the shipped layers: rewording Lina's source-reading rule
-(묻기 전에 → 질문하기에 앞서, with the rest of the sentence rewritten) passed;
-reverting the knowledge core to its #584 text failed; an added topic register
-switch in Arin's voice failed; Arin's rule rewritten as "말투를 바꾸지 않고
-사극 존대를 그대로" passed; a nothing-to-decide closing in her core
-("정할 일은 없사옵니다") failed and the same statement as a prohibition
-("정할 일이 없다는 문구로 답을 끝내지 않사옵니다") passed; the suite passed
-again after restoring the files.
+Takeover red/green evidence: replacing only Arin's correction example with the
+#584 example made `TestM4StarterChangesAreCarried/life` fail with
+`voice layer does not carry the listed change "the correction example keeps
+the honorific register"`. Restoring the shipped example made all `TestM4`
+tests pass. The new removal matrix also exposed an initial false positive when
+Kai's figure lost its source but another sentence still mentioned sources;
+requiring the citation alongside the figure made that regression fail.
