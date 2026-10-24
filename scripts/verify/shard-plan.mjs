@@ -138,8 +138,8 @@ export function distinctScenarios(scenarios) {
   return result;
 }
 
-// An acceptance shard is one `go test` process under the six-minute package
-// timeout. Measured work above this budget buys another shard, because a
+// An acceptance shard is one `go test` process under the ten-minute e2e
+// package watchdog. Measured work above this budget buys another shard, because a
 // failing sibling otherwise leaves no time for the remaining scenarios: run
 // 40015895235 reached 355 s in its single m3 shard and killed scenarios that
 // had not started. Scenario files stay together, so a lone heavy file can
@@ -162,7 +162,7 @@ export function planComponents({ cwd, scope, inventory = readInventory, unitCoun
   const metadata = scope.e2e === false ? { scenarios: [], sharedFiles: [] } : scanScenarios({ cwd, packages: data.packages });
   const scenarios = distinctScenarios(metadata.scenarios);
   const changed = scope.changed.filter(path => kind(path) !== 'docs');
-  const choice = scope.e2e === false ? { selected: [], reason: 'pull-request-default' } : selectScenarios({ scenarios, packages: data.packages, changed,
+  const choice = scope.e2e === false ? { selected: [], reason: scope.event === 'push' ? 'push-sanity' : 'pull-request-default' } : selectScenarios({ scenarios, packages: data.packages, changed,
     full: scope.automation || scope.dependencies || ['manual-full', 'empty-diff', 'base-unavailable', 'unmapped-paths'].includes(scope.reason),
     shared: changed.some(path => metadata.sharedFiles.includes(path)) || scenarios.some(scenario => scenario.unknownBinary),
   });

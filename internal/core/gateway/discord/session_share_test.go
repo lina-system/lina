@@ -352,7 +352,7 @@ func TestSourceOnlyCheckpointSurvivesHubRecreation(t *testing.T) {
 func TestLastBaseSubscriberCancelsSocket(t *testing.T) {
 	ctx, cancel := context.WithCancel(t.Context())
 	defer cancel()
-	h := &hub{stop: make(chan struct{}), done: make(chan struct{}), socket: cancel}
+	h := &hub{stop: make(chan struct{}), done: make(chan struct{}), socket: &live{cancel: cancel, replace: make(chan struct{})}}
 	m := &member{intents: baseIntents}
 	h.members = []*member{m}
 	go func() { <-ctx.Done(); close(h.done) }()

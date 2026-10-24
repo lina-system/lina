@@ -180,7 +180,7 @@ test('an actual failing Go scenario publishes the diagnostic for post-merge QA',
     'cmd/lina/main.go': 'package main\nfunc main() {}\n',
     'e2e/scenario_test.go': 'package e2e\nimport "testing"\nfunc TestOne(t *testing.T) { t.Run("child", func(t *testing.T) { t.Fatal("forced QA diagnostic") }) }\n',
   });
-  const { plan } = selectFoundation({ cwd: work, full: true, event: 'push', log() {} });
+  const { plan } = selectFoundation({ cwd: work, full: true, event: 'schedule', log() {} });
   assert.equal(plan.selection.result, 'success');
   const task = plan.tasks.find(task => task.kind === 'e2e');
   const record = await executeTask(work, plan, task.id, () => {});
@@ -208,7 +208,7 @@ func TestWaiting(t *testing.T) { t.Parallel(); t.Fatal("must not resume") }
 func TestCrash(t *testing.T) { panic("forced package failure") }
 `,
   });
-  const { plan } = selectFoundation({ cwd: work, full: true, event: 'push', log() {} });
+  const { plan } = selectFoundation({ cwd: work, full: true, event: 'schedule', log() {} });
   assert.equal(plan.selection.result, 'success');
   const task = plan.tasks.find(task => task.kind === 'e2e');
   const record = await executeTask(work, plan, task.id, () => {});

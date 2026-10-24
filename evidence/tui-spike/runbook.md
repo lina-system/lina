@@ -11,6 +11,12 @@ selected. [Follow-up #371](https://github.com/thisisjun786/lina/issues/371) owns
 remaining cases and the final decision. They do not block LN-85's harness delivery;
 this runbook does not close #87 or establish terminal acceptance.
 
+The alpha evidence for the list is the [automated terminal QA](terminal-qa/README.md):
+the built TUI run in six Linux terminals and one SSH/tmux PTY, recorded with the
+observed versions and `TERM` in [terminals.json](terminals.json) under
+`automated_qa`. It is not the owner's confirmation; these commands and the final
+library decision stay with #371.
+
 The commands use the [scenario runner](../../internal/tui/spike/run/terminal_test.go)
 and LN-86's recording writer. S8 runs its headless harness. The other commands
 write to the real terminal and record its output through the same emulator.
