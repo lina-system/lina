@@ -442,6 +442,63 @@ func TestQueuedReplayCopyDoesNotHideIndexedEvents(t *testing.T) {
 	}
 }
 
+func TestQueuedMaterialKeepsPendingScoreOrder(t *testing.T) {
+	db := database(t)
+	materials := &queuedMaterials{}
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "indexed", "conversation", "owner", "agent", "도서관 산책", base.Add(time.Hour), "")
+	admitAt(t, db, "pending", "conversation", "owner", "agent", "도서관 산책", base, "")
+	requeue(t, db, "event", "pending")
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	before := searchIDs(t, db, scope, "도서관 산책", 0)
+	admitMaterial(t, db, materials, "queued", "산책 "+strings.Repeat("padding ", 4000), base.Add(2*time.Hour))
+	requeue(t, db, "event", "queued")
+	after := matchIDs(t, db, scope, "도서관 산책", 0, func(ctx context.Context, id string) (string, error) {
+		event, err := ledger.New(db, materials).Get(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return event.Body.DerivedText(), nil
+	})
+	kept := make([]string, 0, len(before))
+	for _, id := range after {
+		if id != "queued" {
+			kept = append(kept, id)
+		}
+	}
+	if !reflect.DeepEqual(kept, before) {
+		t.Fatalf("queued material reordered published hits: before %v after %v", before, after)
+	}
+}
+
+func TestQueuedMaterialDoesNotReorderIndexedHits(t *testing.T) {
+	db := database(t)
+	materials := &queuedMaterials{}
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "short", "conversation", "owner", "agent", "도서관", base.Add(time.Hour), "")
+	admitAt(t, db, "long", "conversation", "owner", "agent", "도서관 산책 "+strings.Repeat("다른단어 ", 400), base, "")
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	before := searchIDs(t, db, scope, "도서관 산책", 0)
+	admitMaterial(t, db, materials, "queued", "산책 "+strings.Repeat("padding ", 4000), base.Add(2*time.Hour))
+	requeue(t, db, "event", "queued")
+	after := matchIDs(t, db, scope, "도서관 산책", 0, func(ctx context.Context, id string) (string, error) {
+		event, err := ledger.New(db, materials).Get(ctx, id)
+		if err != nil {
+			return "", err
+		}
+		return event.Body.DerivedText(), nil
+	})
+	indexed := make([]string, 0, 2)
+	for _, id := range after {
+		if id != "queued" {
+			indexed = append(indexed, id)
+		}
+	}
+	if !reflect.DeepEqual(indexed, before) {
+		t.Fatalf("queued material reordered indexed hits: before %v after %v", before, after)
+	}
+}
+
 func TestQueuedMaterialEventsStayOutOfOtherKinds(t *testing.T) {
 	db := database(t)
 	materials := &queuedMaterials{}

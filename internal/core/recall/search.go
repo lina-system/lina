@@ -256,27 +256,18 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	queuedArgs = append(queuedArgs, pendingArgs...)
 	olderD, olderDArgs := olderExpr(kinds, at, "d")
 	olderS, olderSArgs := olderExpr(kinds, at, "s")
-	// Term counts are needed only while queued material still has to be merged
-	// into the published order. The indexed path keeps its previous shape.
-	indexedTerms, pendingTerms, termJoins := "0", "0", ""
-	var pendingTermArgs []any
-	if len(external) > 0 {
-		var ctes []string
-		var cteArgs []any
-		ctes, cteArgs, termJoins, indexedTerms, pendingTerms, pendingTermArgs = termCountSQL(terms)
-		with = append(with, ctes...)
-		withArgs = append(withArgs, cteArgs...)
-	}
+	// Term count is part of the published order, not only of the merge. A queued
+	// material hit then joins that order without rearranging hits already ranked.
+	ctes, cteArgs, termJoins, indexedTerms, pendingTerms, pendingTermArgs := termCountSQL(terms)
+	with = append(with, ctes...)
+	withArgs = append(withArgs, cteArgs...)
 	args := append([]any{}, withArgs...)
 	args = append(args, olderDArgs...)
 	args = append(args, indexArgs...)
 	args = append(args, olderSArgs...)
 	args = append(args, pendingTermArgs...)
 	args = append(args, queuedArgs...)
-	order := "CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianday(occurred_at) DESC, source_id"
-	if len(external) > 0 {
-		order = "CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, terms DESC, score, julianday(occurred_at) DESC, source_id"
-	}
+	order := "CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, terms DESC, score, julianday(occurred_at) DESC, source_id"
 	statement := `WITH RECURSIVE ` + strings.Join(with, ",\n") + `,
 candidates AS MATERIALIZED (
  SELECT d.id,d.kind,d.source_id,d.revision,d.occurred_at,d.holder,d.conversation,d.text_hash,d.replay,
@@ -558,7 +549,12 @@ func mergeRanked(hits []ranked, limit int) []Hit {
 		if a.terms != b.terms {
 			return a.terms > b.terms
 		}
-		if a.scored && b.scored && a.score != b.score {
+		// A missing BM25 score sorts first, matching SQLite's ASC order for the
+		// NULL score of a row that is still queued.
+		if a.scored != b.scored {
+			return !a.scored
+		}
+		if a.scored && a.score != b.score {
 			return a.score < b.score
 		}
 		if !a.OccurredAt.Equal(b.OccurredAt) {
