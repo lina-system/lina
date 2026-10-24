@@ -76,7 +76,11 @@ about freshness is stored.
 
 ## Not in this increment
 
-Live events are on the adapter boundary and the service can deliver them, but no
-platform adapter ships yet (#1070 and the per-platform issues). Writes are
+Live events are on the adapter boundary and the service can deliver them, and the [Teams adapter](teams/README.md) polls Graph through Core. Other
+platforms are tracked by #1070 and the per-platform issues. Writes are
 recorded and matched here; the write verbs, grants and approvals belong to
 #1084. Learning from the person's own records is #1075.
+
+Sender profile emails, when supplied by an adapter, are stored as evidence in
+`messenger_author` with the source account and platform author ID. They do not
+change ledger attribution or create an automatic person merge.

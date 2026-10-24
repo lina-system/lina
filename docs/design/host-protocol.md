@@ -680,6 +680,22 @@ the running handlers. This design registers no kind or supported combination;
 peers without that implemented capability must refuse the operation. A2A
 messages are never inserted wholesale into a host envelope to bypass validation.
 
+### Teams source settings
+
+The owner-only `teams` 1.0 capability provides `teams_request` and `teams_result`.
+`configure` takes a connection `id`, `tenant` and `client_id`; `list` returns
+public connection metadata, state and reason. `sign_in`, `disconnect` and `chats`
+take `id`. `switches` also takes `chat`, `sync`, `learn` and `embed`. Core binds the
+person and current epoch from the authenticated session and requires an eligible
+decider. Tokens never travel in settings results or conversation content.
+
+Sign-in shares the client browser relay on that same connection. A listening
+client supplies its port; a client reporting `cannot_listen` can paste the URL
+using the app's registered localhost callback at port 8400. State, issuer,
+callback address and expiry are checked in Core. Completion reports connection
+status, including unsupported tenant consent. Source records and coverage use
+the existing messenger store, independently of the client lifetime.
+
 ## Deferred
 
 - The JSON Schema to TypeScript type generator: chosen before the first LINA app work ([surfaces.md](surfaces.md#app-front-end)).

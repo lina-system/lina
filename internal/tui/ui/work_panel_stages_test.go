@@ -311,6 +311,57 @@ func TestWorkPanelStagesWorkersAndStepIdentity(t *testing.T) {
 	}
 }
 
+// A selected ready step can change stage while its Details stay open. The pager
+// follows the opaque ref into the stage that now holds it.
+func TestWorkPanelOpenStepDetailsFollowCurrentStage(t *testing.T) {
+	var rows []protocol.ProgressRow
+	if err := json.Unmarshal([]byte(stagePanelRows), &rows); err != nil {
+		t.Fatal(err)
+	}
+	stages := *rows[0].Line.Stages
+	refs := make([]protocol.ProgressStageRefs, len(stages))
+	for i, entry := range stages {
+		ref := protocol.ProgressStageRefs{Kind: entry.Kind, Number: entry.Number, Steps: []string{}}
+		if entry.Steps != nil {
+			for j := range *entry.Steps {
+				ref.Steps = append(ref.Steps, fmt.Sprintf("step-%d-%d", i, j))
+			}
+		}
+		refs[i] = ref
+	}
+	rows[0].StageRefs = &refs
+	raw, err := json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := stagePanelShell(t, 100, design.English, false, string(raw))
+	m.Update(tea.KeyPressMsg{Code: tea.KeyEnter})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m.Update(tea.KeyPressMsg{Code: tea.KeyDown})
+	m.Update(tea.KeyPressMsg{Code: 'o', Mod: tea.ModCtrl})
+	if got := m.pagerText(); !strings.Contains(got, "Signup screen") || strings.Contains(got, design.Text(design.English, "unknown")) {
+		t.Fatalf("ready step Details missing before the move: %s", got)
+	}
+	login := (*stages[1].Steps)[0]
+	signup := (*stages[1].Steps)[1]
+	signupRef := refs[1].Steps[1]
+	stages[1].Steps = &[]protocol.ProgressStageStep{login}
+	stages[1].Label = "Login screen"
+	refs[1].Steps = []string{refs[1].Steps[0]}
+	stages[2].State = "waiting"
+	stages[2].Label = "Signup screen"
+	stages[2].Steps = &[]protocol.ProgressStageStep{signup}
+	refs[2].Steps = []string{signupRef}
+	raw, err = json.Marshal(rows)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m.Update(shellData{Generation: 1, Message: workPanelFrame(t, 2, string(raw))})
+	if got := m.pagerText(); !strings.Contains(got, "Signup screen") || strings.Contains(got, design.Text(design.English, "unknown")) {
+		t.Fatalf("open step Details lost the ref after it moved stages: %s", got)
+	}
+}
+
 func TestWorkPanelStageWorkerRowsScrollWithTheirStep(t *testing.T) {
 	steps := make([]protocol.ProgressStageStep, 82)
 	refs := make([]string, 82)
