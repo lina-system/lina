@@ -27,15 +27,13 @@ import (
 // controls the scenario; socket deadlines below are failure bounds only.
 type scenarioClock struct{ now time.Time }
 
-// tuiFixtures scripts the peer against the shell's own hello offers, so a
-// capability added to the shell cannot silently drift from the TUI e2e. Keep
-// the shared conformance corpus unchanged: the TUI scenario explicitly offers
-// its implemented capabilities, which Core may grant or not. A refused 1.1
-// handshake reconnects once with the legacy envelope, so hello-legacy.json
-// carries the same offers without the fields only a newer minor version defines.
+// The TUI scenario offers exactly what the shell sends in its hello. Reading
+// the shell's own list keeps the scripted handshake in step with a new offer.
+// Keep the shared conformance corpus unchanged. A refused 1.1 handshake
+// reconnects once with the legacy envelope, so hello-legacy.json carries the
+// same offers without the fields only a newer minor version defines.
 func tuiFixtures(t *testing.T) fstest.MapFS {
 	t.Helper()
-	capabilities := ui.Capabilities()
 	fixtures := fstest.MapFS{}
 	root := os.DirFS("../../protocol/fixtures/client/1.0")
 	err := fs.WalkDir(root, ".", func(path string, entry fs.DirEntry, err error) error {
@@ -60,7 +58,8 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 	}
 	hello := envelope.Payload.(protocol.Hello)
 	hello.ProtocolVersions = []string{"1.1", "1.0"}
-	hello.Capabilities = append([]protocol.Capability(nil), capabilities...)
+	capabilities := ui.ShellCapabilities()
+	hello.Capabilities = capabilities
 	// The real client sends its compiled platform, and Core admits the pair.
 	platform := runtime.GOOS + "/" + runtime.GOARCH
 	hello.Platform = &platform
