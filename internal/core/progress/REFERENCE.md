@@ -35,6 +35,22 @@ The stage word is the lowest-numbered stage entry that is not done.
 `e2e/m3/progress-line.json` drives a headless Core whose first step lands from an injected worker result: the subscribed topic carries the entries, the changed line arrives within 250 ms of the commit, exactly one line changes, and a recomputation that changes no line publishes no frame.
 `internal/core/boot/progress_line_test.go` checks the same projection and wire shape without a socket.
 
+### Work-card stage projection (#770)
+
+`AttachCardStages` attaches the same scoped goal list to a work card. Core reuses
+the goal projection in the current canon snapshot and reads closed goals only
+when that projection is absent. Boot also resolves manager-owned dispatch cards
+through the saved worker action and its original owner, conversation and turn.
+Neither path joins by a display name or changes the card's owner or state.
+
+StageStep keeps the canonical step and session identities internally. Boot emits
+step refs beside the line, and display-only worker names/states inside its steps.
+Active dispatch bindings and retained worker.Live sessions each own a snapshot
+cache. Progress reads the cache without waiting for adapter I/O; a cold, expired
+or different-turn entry is unknown while one bounded read refreshes it. Read
+completion wakes the publisher. The session owns and joins the read, so ended
+or replaced sessions cannot reuse an old observation.
+
 ### Event-to-card latency
 
 #771 uses the managed project lines and row membership from #767. The

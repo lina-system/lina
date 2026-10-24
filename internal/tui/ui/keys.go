@@ -38,10 +38,16 @@ var keyBindings = []keyBinding{
 	{"waiting", []string{"Ctrl+W"}, 12, "", ""},
 	{"running", []string{"Ctrl+R"}, 13, "", ""},
 	{"progress", []string{"Ctrl+P"}, 14, "", ""},
+	{"work.open", []string{"Enter"}, 0, "work.open", "work"},
 	{"work.view", []string{"Ctrl+P"}, 1, "work.view", "work"},
 	{"work.filter", []string{"Left/Right"}, 2, "work.filter", "work"},
 	{"shortcuts.scroll", []string{"Up/Down"}, 3, "shortcuts.scroll", "work"},
 	{"shortcuts.close", []string{"Esc"}, 4, "shortcuts.close", "work"},
+	{"work.details", []string{"Ctrl+O"}, 5, "work.details", "work"},
+	{"work.expand", []string{"Enter"}, 1, "work.expand", "stages"},
+	{"shortcuts.close", []string{"Esc"}, 2, "shortcuts.close", "stages"},
+	{"shortcuts.scroll", []string{"Up/Down"}, 3, "shortcuts.scroll", "stages"},
+	{"work.details", []string{"Ctrl+O"}, 4, "work.details", "stages"},
 	{"shortcuts.transcript", []string{"Ctrl+T"}, 15, "shortcuts.transcript", ""},
 	{"shortcuts.close", []string{"Esc", "q", "Ctrl+O"}, 1, "shortcuts.close", "pager"},
 	{"shortcuts.search", []string{"/"}, 2, "shortcuts.search", "pager"},
@@ -77,7 +83,7 @@ func bindingsFor(section string) []keyBinding {
 func (m *shellModel) shortcutSheet() string {
 	text := func(id string) string { return design.Text(m.styles.options.Language, id) }
 	var lines []string
-	for _, section := range []struct{ id, title string }{{"", "shortcuts.title"}, {"work", "work.title"}, {"pager", "shortcuts.pager"}, {"commands", "controls.help"}} {
+	for _, section := range []struct{ id, title string }{{"", "shortcuts.title"}, {"work", "work.title"}, {"stages", "work.stages"}, {"pager", "shortcuts.pager"}, {"commands", "controls.help"}} {
 		if len(lines) > 0 {
 			lines = append(lines, "")
 		}
@@ -104,6 +110,9 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 		section = "pager"
 	} else if m.conversation.workFocused {
 		section = "work"
+		if _, open := m.openedWorkCard(); open {
+			section = "stages"
+		}
 	}
 	if section == "" && m.conversation.viewport.unseen {
 		marker := "  " + design.Text(m.styles.options.Language, "conversation.new_messages")

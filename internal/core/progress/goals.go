@@ -82,7 +82,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			return nil, err
 		}
 		// One manager runs one 일, so a managed goal is the 일 the person reads.
-		u := Unit{ID: g.ID, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages)}
+		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages)}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}

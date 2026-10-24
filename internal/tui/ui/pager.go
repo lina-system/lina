@@ -15,6 +15,8 @@ import (
 )
 
 type textPager struct {
+	workCard, workStage, workStep string
+
 	surface                  *surfacePager
 	result                   *resultPager
 	board                    *boardView
@@ -46,6 +48,9 @@ func (m *shellModel) openPager(text string) {
 }
 
 func (m *shellModel) pagerText() string {
+	if m.conversation.pager.workCard != "" {
+		return m.workDetails()
+	}
 	if !m.conversation.pager.transcript {
 		return m.conversation.pager.text + m.conversation.pager.surface.status(m.styles.options.Language)
 	}

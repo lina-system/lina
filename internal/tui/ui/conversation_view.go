@@ -42,7 +42,7 @@ func (m *shellModel) conversationContent(showNotice bool) string {
 		}
 		return strings.Join(rows, "\n")
 	}
-	if m.conversation.workFocused && plan.SidePane.Height == 0 {
+	if m.conversation.workFocused && !m.conversation.pager.open && plan.SidePane.Height == 0 {
 		for i, line := range m.workPanelRows(plan.Conversation.Width, plan.Conversation.Height) {
 			rows[plan.Conversation.Y+i] = line
 		}
