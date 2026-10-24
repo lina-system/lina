@@ -240,14 +240,35 @@ type backgroundStream struct {
 
 func (s *backgroundStream) Close() error { defer s.activity.Release(); return s.Stream.Close() }
 
+// channelRunInbox is the inbox id behind a channel-started run. A selected
+// receipt is used when the requesting turn is a different input.
+func channelRunInbox(o runs.Origin) (int64, bool, error) {
+	eventID := o.ChannelReceipt
+	if eventID == "" {
+		rest, ok := strings.CutPrefix(o.Turn, "turn:")
+		if !ok || !strings.HasPrefix(rest, "channel-input:") {
+			return 0, false, nil
+		}
+		eventID = rest
+	}
+	raw, ok := strings.CutPrefix(eventID, "channel-input:")
+	if !ok || raw == "" {
+		return 0, false, runs.ErrScope
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, false, runs.ErrScope
+	}
+	return id, true, nil
+}
+
 func (r *conversationRuntime) authorizeRun(ctx context.Context, o runs.Origin, b runs.Brief) error {
 	if o.Person != r.person || o.Epoch != r.epoch || o.Job != "" || r.route == nil {
 		return runs.ErrScope
 	}
-	if strings.HasPrefix(o.Turn, "turn:channel-input:") {
-		id, err := strconv.ParseInt(strings.TrimPrefix(o.Turn, "turn:channel-input:"), 10, 64)
+	if id, ok, err := channelRunInbox(o); ok || err != nil {
 		if err != nil {
-			return runs.ErrScope
+			return err
 		}
 		if err = r.db.Read(ctx, func(tx *canon.Tx) error {
 			var raw []byte
