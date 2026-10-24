@@ -7,6 +7,8 @@ package proc
 import (
 	"bytes"
 	"io"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -43,13 +45,39 @@ func TestSameWriterOnlySharesComparableWriters(t *testing.T) {
 	if sameWriter(&buffer, &other) {
 		t.Fatal("different writers share a lock")
 	}
-	uncomparable := func() io.Writer { return sliceWriter{&buffer} }
+	uncomparable := func() io.Writer { return sliceWriter{[]*bytes.Buffer{&buffer}} }
 	if sameWriter(uncomparable(), uncomparable()) {
 		t.Fatal("an uncomparable writer was treated as shared")
 	}
 }
 
-// sliceWriter is an io.Writer whose dynamic type cannot be compared.
-type sliceWriter struct{ b *bytes.Buffer }
+// sliceWriter is an io.Writer whose dynamic type cannot be compared, like the
+// writers the standard library itself uses.
+type sliceWriter struct{ buffers []*bytes.Buffer }
 
-func (w sliceWriter) Write(p []byte) (int, error) { return w.b.Write(p) }
+func (w sliceWriter) Write(p []byte) (int, error) { return w.buffers[0].Write(p) }
+
+// TestOwnerResolvesTheJobDirectory keeps the job's private directory out of the
+// command's reach: an unset or relative directory is resolved against the
+// owner's own, and an absolute one is left alone.
+func TestOwnerResolvesTheJobDirectory(t *testing.T) {
+	wd, err := os.Getwd()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if got, err := ownerDirectory(""); err != nil || got != wd {
+		t.Fatalf("unset directory = %q, %v; want %q", got, err, wd)
+	}
+	if got, err := ownerDirectory("relative/dir"); err != nil || got != filepath.Join(wd, "relative/dir") {
+		t.Fatalf("relative directory = %q, %v", got, err)
+	}
+	if got, err := ownerDirectory("/tmp"); err != nil || got != "/tmp" {
+		t.Fatalf("absolute directory = %q, %v", got, err)
+	}
+	if got := ownerEnvironment(nil); got == nil || len(got) != 0 {
+		t.Fatalf("nil environment = %#v, want an empty list", got)
+	}
+	if got := ownerEnvironment([]string{"A=1"}); len(got) != 1 || got[0] != "A=1" {
+		t.Fatalf("explicit environment = %#v", got)
+	}
+}

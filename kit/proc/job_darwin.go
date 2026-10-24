@@ -150,20 +150,11 @@ func newProcess(c Command) (process, error) {
 	if len(c.ExtraFiles) != 0 {
 		return nil, errors.New("a launchd job cannot inherit extra descriptors")
 	}
-	if c.Dir == "" {
-		// The helper runs in the job's private directory, so an unset
-		// directory must be resolved here to match the owner's own.
-		wd, err := os.Getwd()
-		if err != nil {
-			return nil, err
-		}
-		c.Dir = wd
+	var err error
+	if c.Dir, err = ownerDirectory(c.Dir); err != nil {
+		return nil, err
 	}
-	// A command never inherits an implicit environment: nil and empty both
-	// arrive at the job as an empty list, as they do on Linux.
-	if c.Env == nil {
-		c.Env = []string{}
-	}
+	c.Env = ownerEnvironment(c.Env)
 	dir, err := tempDir()
 	if err != nil {
 		return nil, err
@@ -223,6 +214,33 @@ func newProcess(c Command) (process, error) {
 		return fail(err)
 	}
 	return p, nil
+}
+
+// ownerDirectory resolves the directory a job receives. The helper runs in the
+// job's private directory, so an unset or relative directory is resolved here
+// against the owner's own before it is sent.
+func ownerDirectory(dir string) (string, error) {
+	if filepath.IsAbs(dir) {
+		return dir, nil
+	}
+	base := dir
+	if base == "" {
+		wd, err := os.Getwd()
+		if err != nil {
+			return "", err
+		}
+		base = wd
+	}
+	return filepath.Abs(base)
+}
+
+// ownerEnvironment keeps an explicit environment explicit: a nil list is sent
+// as the empty one a Linux command receives, never as "inherit the job's".
+func ownerEnvironment(env []string) []string {
+	if env == nil {
+		return []string{}
+	}
+	return env
 }
 
 // tempDir keeps every socket path inside the 104-byte Unix-socket limit.
