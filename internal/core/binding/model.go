@@ -124,7 +124,7 @@ func NeedsQuestion(s State, c Choice) bool {
 	case "steer":
 		for _, target := range c.Tied {
 			for _, i := range s.Items {
-				if i.ID == target.ID && (i.Kind == "task" || i.Kind == "run") && slices.Contains([]string{"running", "working", "waiting", "needs_input", "input_needed"}, i.State) {
+				if i.ID == target.ID && (i.Kind == "task" || i.Kind == "run") && slices.Contains([]string{"running", "working", "waiting", "needs_input"}, i.State) {
 					return true
 				}
 			}
