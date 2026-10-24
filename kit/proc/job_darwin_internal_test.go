@@ -8,7 +8,6 @@ import (
 	"bytes"
 	"io"
 	"os"
-	"path/filepath"
 	"strings"
 	"testing"
 )
@@ -68,13 +67,15 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	if got, err := ownerDirectory(""); err != nil || got != wd {
 		t.Fatalf("unset directory = %q, %v; want %q", got, err, wd)
 	}
-	if got, err := ownerDirectory("relative/dir"); err != nil || got != filepath.Join(wd, "relative/dir") {
+	if got, err := ownerDirectory("relative/dir"); err != nil || got != strings.TrimSuffix(wd, "/")+"/relative/dir" {
 		t.Fatalf("relative directory = %q, %v", got, err)
 	}
-	// A symlink followed by ".." is resolved by the kernel, not lexically here:
-	// "link/.." must arrive uncleaned so it selects the symlink's parent.
-	if got, err := ownerDirectory("link/.."); err != nil || got != filepath.Join(wd, "link/..") || strings.HasSuffix(got, "/..") == false {
-		t.Fatalf("relative directory with a symlink = %q, %v", got, err)
+	// A symlink followed by ".." is resolved by the kernel, not lexically here.
+	// filepath.Join would clean "link/.." away and the comparison would reject
+	// the path the kernel must receive.
+	wantLink := strings.TrimSuffix(wd, "/") + "/link/.."
+	if got, err := ownerDirectory("link/.."); err != nil || got != wantLink {
+		t.Fatalf("relative directory with a symlink = %q, %v; want %q", got, err, wantLink)
 	}
 	if got, err := ownerDirectory("/tmp"); err != nil || got != "/tmp" {
 		t.Fatalf("absolute directory = %q, %v", got, err)
