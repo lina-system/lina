@@ -190,6 +190,18 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 				id = taskID
 			}
 		}
+	case "worker_input", "worker_interrupt":
+		// These tools name a session, not a work item. The session's task is
+		// the binding identity, so a settled choice still applies.
+		session := str("session")
+		if r.workers != nil {
+			for _, entry := range r.workers.entries() {
+				if entry.thread.ID == session && entry.thread.TaskID != "" {
+					id = entry.thread.TaskID
+					break
+				}
+			}
+		}
 	case "schedule_work":
 		var tasks []struct {
 			What string `json:"what"`

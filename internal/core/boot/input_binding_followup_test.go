@@ -330,6 +330,13 @@ func TestFollowWorkNormalizesChosenWorker(t *testing.T) {
 	if probe.inputs != 0 {
 		t.Fatalf("other task received %d follow-ups", probe.inputs)
 	}
+	direct := questionCall(t, tools, "worker_input", "direct-other", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "text": "Steer the other task"})
+	if direct.Code != loop.Denied || !strings.Contains(string(direct.Output), "input_target_pending") {
+		t.Fatalf("worker_input bypassed the chosen task: %+v", direct)
+	}
+	if probe.inputs != 0 {
+		t.Fatalf("direct worker input reached the other task %d times", probe.inputs)
+	}
 }
 
 func TestFollowWorkUsesSelectedChannelSource(t *testing.T) {
