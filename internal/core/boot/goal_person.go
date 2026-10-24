@@ -70,7 +70,36 @@ func (goalTaskList) Read(ctx context.Context, tx *canon.Tx, id string) (runs.Lis
 			continue
 		}
 		summary, state := goal.RunningRow(task)
-		return runs.ListItem{Person: g.Person, Agent: g.Agent, Summary: summary, State: state}, nil
+		item := runs.ListItem{Person: g.Person, Agent: g.Agent, Summary: summary, State: state}
+		if state == "working" {
+			if reason, ok := goal.RunningHold(g, task.ID); ok {
+				item.State = "waiting"
+				item.Reason = reason
+			}
+		}
+		if task.Kind != goal.BackgroundStep {
+			return item, nil
+		}
+		actions, err := goalTaskActions(ctx, tx, g.ID, task.ID)
+		if err != nil {
+			return runs.ListItem{}, err
+		}
+		runID, err := goalTaskRunID(ctx, tx, g.Person, goalTaskCalls(actions, task.Attempt, false))
+		if err != nil {
+			return runs.ListItem{}, err
+		}
+		if runID == "" {
+			return item, nil
+		}
+		runItem, err := (runs.RunListSource{}).Read(ctx, tx, runID)
+		if err != nil {
+			return runs.ListItem{}, err
+		}
+		if runItem.State == string(runs.Waiting) {
+			item.State = "waiting"
+			item.Reason = runItem.Reason
+		}
+		return item, nil
 	}
 	return runs.ListItem{}, sql.ErrNoRows
 }
@@ -319,49 +348,9 @@ func (r *conversationRuntime) goalBackgroundRun(ctx context.Context, person stri
 	}
 	var id string
 	err := r.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, "SELECT id, record FROM background_runs WHERE json_extract(record,'$.Origin.Person')=?", person)
-		if err != nil {
-			return err
-		}
-		defer rows.Close()
-		type stored struct {
-			id     string
-			record runs.Record
-		}
-		var runsForPerson []stored
-		for rows.Next() {
-			var raw []byte
-			var item stored
-			if err = rows.Scan(&item.id, &raw); err != nil {
-				return err
-			}
-			if err = json.Unmarshal(raw, &item.record); err != nil {
-				return err
-			}
-			if item.record.ID == item.id && item.record.Origin.Person == person && item.record.StartKey != "" {
-				runsForPerson = append(runsForPerson, item)
-			}
-		}
-		if err = rows.Err(); err != nil {
-			return err
-		}
-		for _, call := range calls {
-			var matched string
-			for _, item := range runsForPerson {
-				if item.record.StartKey != runs.CallKey(item.record.Origin, call) {
-					continue
-				}
-				if matched != "" && matched != item.id {
-					return runs.ErrListItem
-				}
-				matched = item.id
-			}
-			if matched != "" {
-				id = matched
-				return nil
-			}
-		}
-		return nil
+		var err error
+		id, err = goalTaskRunID(ctx, tx, person, calls)
+		return err
 	})
 	if err != nil || id == "" {
 		if err == nil {
@@ -370,6 +359,77 @@ func (r *conversationRuntime) goalBackgroundRun(ctx context.Context, person stri
 		return "", err
 	}
 	return id, nil
+}
+
+func goalTaskActions(ctx context.Context, tx *canon.Tx, goalID, taskID string) ([]goal.Action, error) {
+	rows, err := tx.QueryContext(ctx, "SELECT body FROM work_records WHERE kind='action' AND json_extract(body,'$.goal_id')=? AND json_extract(body,'$.task_id')=?", goalID, taskID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var actions []goal.Action
+	for rows.Next() {
+		var body []byte
+		var action goal.Action
+		if err = rows.Scan(&body); err != nil {
+			return nil, err
+		}
+		if err = json.Unmarshal(body, &action); err != nil {
+			return nil, err
+		}
+		if action.GoalID == goalID && action.TaskID == taskID {
+			actions = append(actions, action)
+		}
+	}
+	return actions, rows.Err()
+}
+
+func goalTaskRunID(ctx context.Context, tx *canon.Tx, person string, calls []string) (string, error) {
+	if person == "" || len(calls) == 0 {
+		return "", nil
+	}
+	rows, err := tx.QueryContext(ctx, "SELECT id, record FROM background_runs WHERE json_extract(record,'$.Origin.Person')=?", person)
+	if err != nil {
+		return "", err
+	}
+	defer rows.Close()
+	type stored struct {
+		id     string
+		record runs.Record
+	}
+	var runsForPerson []stored
+	for rows.Next() {
+		var raw []byte
+		var item stored
+		if err = rows.Scan(&item.id, &raw); err != nil {
+			return "", err
+		}
+		if err = json.Unmarshal(raw, &item.record); err != nil {
+			return "", err
+		}
+		if item.record.ID == item.id && item.record.Origin.Person == person && item.record.StartKey != "" {
+			runsForPerson = append(runsForPerson, item)
+		}
+	}
+	if err = rows.Err(); err != nil {
+		return "", err
+	}
+	for _, call := range calls {
+		var matched string
+		for _, item := range runsForPerson {
+			if item.record.StartKey != runs.CallKey(item.record.Origin, call) {
+				continue
+			}
+			if matched != "" && matched != item.id {
+				return "", runs.ErrListItem
+			}
+			matched = item.id
+		}
+		if matched != "" {
+			return matched, nil
+		}
+	}
+	return "", nil
 }
 
 // goalTaskCalls orders the actions that may own the task's result. The current
