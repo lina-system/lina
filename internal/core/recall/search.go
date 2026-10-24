@@ -757,7 +757,9 @@ func maskDerived(text string, spans []secrets.Span) (string, error) {
 func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (string, error) {
 	switch hit.Kind {
 	case Event:
-		var body string
+		// A material-backed event keeps no body in canon; its text is read
+		// through readEvent below.
+		var body sql.NullString
 		var material sql.NullString
 		var spans []secrets.Span
 		err := db.Read(ctx, func(tx *canon.Tx) error {
@@ -795,7 +797,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return text, nil
 		}
-		return body, nil
+		return body.String, nil
 	case Memory:
 		var text string
 		err := db.Read(ctx, func(tx *canon.Tx) error {
