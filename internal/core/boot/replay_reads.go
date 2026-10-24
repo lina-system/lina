@@ -51,9 +51,13 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 		}
 		ids, next, err := expansion.Page(ctx, agent, ref, offset, limit)
 		if errors.Is(err, sql.ErrNoRows) && !prefixed {
-			ids, next, err = expansion.Page(ctx, agent, "event:"+id, offset, limit)
+			ref = "event:" + id
+			ids, next, err = expansion.Page(ctx, agent, ref, offset, limit)
 		}
 		if err != nil {
+			return nil, err
+		}
+		if err := r.checkExpansionRestriction(ctx, ref, true); err != nil {
 			return nil, err
 		}
 		events := []replay.Event{}
@@ -79,7 +83,7 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 		return nil, err
 	}
 	mem := coreexec.NewMemory(r.db, r.materials, nil)
-	spec, handler = mem.RecallPersonTool(memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, func() int64 { return ep.Clock.Unix() })
+	spec, handler = mem.RecallPersonTool(memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true, Projection: true}, func() int64 { return ep.Clock.Unix() })
 	if err := add(spec, handler); err != nil {
 		return nil, err
 	}

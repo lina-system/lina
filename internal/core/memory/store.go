@@ -426,34 +426,33 @@ func (s *Store) recall(ctx context.Context, scope RecallScope, q Query, standing
 	var hits []Hit
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
 		holders := scope.Holders()
-		restricted, err := restrictedEvents(ctx, tx, scope)
-		if err != nil {
-			return err
+		cte, prefixArgs := recall.RestrictionCTE(recall.Scope{Person: scope.Person, Projection: scope.Projection, ExternalModel: scope.ExternalModel})
+		prefix, restriction := "WITH ", ""
+		if cte != "" {
+			prefix = "WITH RECURSIVE " + cte + ", "
+			restriction = "AND NOT EXISTS(SELECT 1 FROM restricted r WHERE r.kind='memory' AND r.id=m.id)"
 		}
-		restrictedJSON, _ := json.Marshal(restricted)
 		match := "1"
-		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, matched, matched, holders[0], holders[1], q.At, scope.Projection, scope.ExternalModel, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, string(restrictedJSON), q.Kind, q.Kind, q.History}
+		args := []any{q.At, q.At, scope.Person, q.ID, q.ID, matched, matched, holders[0], holders[1], q.At, standing, q.PersonOnly, relationship, scope.Agent, scope.Person, q.Kind, q.Kind, q.History}
 		if matched != "" {
 			match = "EXISTS(SELECT 1 FROM json_each(?) WHERE value=e.id)"
 			args = append(args, matched)
 		}
 		args = append(args, q.After, q.After, q.After, q.After, limit)
-		rows, err := tx.QueryContext(ctx, `WITH candidates AS MATERIALIZED (
+		rows, err := tx.QueryContext(ctx, prefix+`candidates AS MATERIALIZED (
    SELECT m.id,m.sequence,m.record,m.normalized,
    (SELECT max(r.sequence) FROM memory_revision r WHERE r.item_id=m.id) AS priority,
    ((m.valid_until<>0 AND m.valid_until<=?) OR EXISTS(SELECT 1 FROM memory_item n WHERE n.supersedes=m.id AND n.valid_from<=?)) AS older
    FROM retract_visible_memory m WHERE m.person=? AND (?='' OR m.id=?) AND (?='' OR m.id IN (SELECT value FROM json_each(?))) AND m.holder IN (?,?) AND m.state='active' AND m.valid_from<=?
-   AND (?=0 OR m.scope='local') AND (?=0 OR m.scope<>'never-leaves') AND (?=0 OR m.standing=1)
+   AND (?=0 OR m.standing=1)
    AND (?=0 OR m.subject_kind='person')
    AND (?=0 OR (m.holder=? AND m.subject_kind='person' AND m.subject_id=? AND json_extract(m.record,'$.kind')='relationship'))
-   AND NOT EXISTS(SELECT 1 FROM json_each(m.record,'$.evidence') refs
-    JOIN json_each(?) blocked ON blocked.key=json_extract(refs.value,'$.id')
-    WHERE json_extract(refs.value,'$.kind')='event')
+   `+restriction+`
    AND (?='' OR json_extract(m.record,'$.kind')=?)
    ), eligible AS MATERIALIZED (SELECT * FROM candidates WHERE ? OR NOT older)
    SELECT e.record,e.older FROM eligible e WHERE `+match+` AND (?='' OR e.priority < (SELECT max(sequence) FROM memory_revision WHERE item_id=?)
    OR (e.priority=(SELECT max(sequence) FROM memory_revision WHERE item_id=?) AND e.id>?))
-   ORDER BY e.priority DESC,e.id LIMIT ?`, args...)
+   ORDER BY e.priority DESC,e.id LIMIT ?`, append(prefixArgs, args...)...)
 		if err != nil {
 			return err
 		}
@@ -535,18 +534,11 @@ func (s *Store) RestrictedEvents(ctx context.Context, scope RecallScope) (map[st
 }
 func restrictedEvents(ctx context.Context, tx *canon.Tx, scope RecallScope) (map[string]bool, error) {
 	ids := map[string]bool{}
-	if !scope.Projection && !scope.ExternalModel {
+	cte, args := recall.RestrictionCTE(recall.Scope{Person: scope.Person, Projection: scope.Projection, ExternalModel: scope.ExternalModel})
+	if cte == "" {
 		return ids, nil
 	}
-	// A protected source stays protected when another holder has a common copy.
-	// Only event ids leave this query; candidate records still use RecallScope.
-	// The citation index supplies the item's current evidence without decoding
-	// or copying the record JSON.
-	rows, err := tx.QueryContext(ctx, `SELECT DISTINCT c.target_id
-  FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL
-  AND m.person=? AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))`,
-		scope.Person, scope.Projection, scope.ExternalModel)
+	rows, err := tx.QueryContext(ctx, "WITH RECURSIVE "+cte+" SELECT id FROM restricted WHERE kind='event'", args...)
 	if err != nil {
 		return nil, err
 	}

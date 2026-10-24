@@ -2,6 +2,7 @@
 package replay_test
 
 import (
+	"context"
 	"encoding/json"
 	"testing"
 	"time"
@@ -112,5 +113,73 @@ func TestRecallResultReferencesAreRevalidated(t *testing.T) {
 				t.Fatalf("revoked recall exported: %+v %v", manifest, err)
 			}
 		})
+	}
+}
+
+func TestExportRejectsTransitiveProtectedSources(t *testing.T) {
+	for _, scope := range []memory.Scope{memory.Local, memory.Private, memory.NeverLeaves} {
+		for _, copied := range []bool{false, true} {
+			name := string(scope)
+			if copied {
+				name += "/view-of-replay"
+			}
+			t.Run(name, func(t *testing.T) {
+				db, source, _ := fixture(t)
+				id := seed(t, db, "input", guard.EntryOwner)
+				evidenceID := "input"
+				if copied {
+					at := time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)
+					for _, eventID := range []string{"original", "copy"} {
+						in := ledger.Input{ID: eventID, ConversationID: "earlier", PersonID: "person", AgentID: "agent", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: at, RecordedAt: at, TimeQuality: "observed", Body: "protected fact"}
+						if eventID == "copy" {
+							in.ReplayOf = "original"
+						}
+						if _, err := ledger.New(db, nil).Admit(t.Context(), guard.EntryOwner, in); err != nil {
+							t.Fatal(err)
+						}
+					}
+					if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+						_, err := tx.ExecContext(t.Context(), "INSERT INTO ev_rel(event_id,target_id,kind) VALUES('input','copy','view_of')")
+						return err
+					}); err != nil {
+						t.Fatal(err)
+					}
+					evidenceID = "original"
+				}
+				readScope := replay.Scope{Person: "person", Agent: "agent"}
+				ep, err := source.Load(t.Context(), readScope, id)
+				if err != nil {
+					t.Fatal(err)
+				}
+				mem := coreexec.NewMemory(db, nil, nil)
+				item, err := mem.Remember(t.Context(), memory.Write{Person: "person", Agent: "agent", Item: memory.Item{Kind: memory.Fact, Content: "Source memory.", Subject: memory.Subject{Kind: memory.Person, ID: "person"}, Basis: memory.Stated, Evidence: []memory.Evidence{{Kind: memory.Event, ID: evidenceID, Precision: memory.Exact}}}})
+				if err != nil {
+					t.Fatal(err)
+				}
+				err = db.Write(t.Context(), func(tx *canon.Tx) error {
+					_, err := memory.Insert(t.Context(), tx, memory.Write{Person: "person", Agent: "agent", Item: memory.Item{Kind: memory.Fact, Content: "Sensitive umbrella classification.", Scope: scope, Subject: memory.Subject{Kind: memory.World, ID: "observatory"}, Basis: memory.Derived, Evidence: []memory.Evidence{{Kind: memory.MemoryItem, ID: item.ID, Revision: item.Revision, Precision: memory.Exact}}}}, func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
+						return memory.Origin{Person: "person", Agent: "agent", Speaker: guard.Person, Scope: memory.Local}, nil
+					})
+					return err
+				})
+				if err != nil {
+					t.Fatal(err)
+				}
+				allowed := scope == memory.Local
+				if err := source.ValidateEpisode(t.Context(), ep); (err == nil) != allowed {
+					t.Errorf("dispatch allowed=%v, err=%v", allowed, err)
+				}
+				if _, err := source.ReadEvent(t.Context(), readScope, "input"); (err == nil) != allowed {
+					t.Errorf("read allowed=%v, err=%v", allowed, err)
+				}
+				if _, err := source.Load(t.Context(), readScope, id); (err == nil) != allowed {
+					t.Errorf("load allowed=%v, err=%v", allowed, err)
+				}
+				_, manifest, err := source.Episodes(t.Context(), readScope, selection())
+				if err != nil || (manifest.Exported == 1) != allowed || !allowed && manifest.LeftOut != 1 {
+					t.Errorf("export allowed=%v: %+v, err=%v", allowed, manifest, err)
+				}
+			})
+		}
 	}
 }

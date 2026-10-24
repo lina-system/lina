@@ -9,6 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
 	"github.com/thisisjun786/lina/internal/core/guard"
@@ -131,6 +132,9 @@ func (r *conversationRuntime) expandRecall(ctx context.Context, agent, id string
 	if err != nil {
 		return nil, compaction.ErrExpand
 	}
+	if err := r.checkExpansionRestriction(ctx, id, false); err != nil {
+		return nil, err
+	}
 	restricted, err := r.memoryStore().RestrictedEvents(ctx, memory.RecallScope{Person: r.person, Agent: agent, ExternalModel: true})
 	if err != nil {
 		return nil, err
@@ -152,6 +156,28 @@ func (r *conversationRuntime) expandRecall(ctx context.Context, agent, id string
 		return nil, compaction.ErrExpand
 	}
 	return body, nil
+}
+
+// Check the requested node too, so paging past a protected event cannot turn a
+// restricted summary into a readable view. Page still enforces agent ownership.
+func (r *conversationRuntime) checkExpansionRestriction(ctx context.Context, ref string, projection bool) error {
+	kind, id, ok := strings.Cut(ref, ":")
+	if !ok || id == "" {
+		return compaction.ErrExpand
+	}
+	if kind == "node" {
+		kind = "summary"
+	}
+	return r.db.Read(ctx, func(tx *canon.Tx) error {
+		restricted, err := recall.SourceRestricted(ctx, tx, recall.Scope{Person: r.person, Projection: projection, ExternalModel: true}, kind, id)
+		if err != nil {
+			return err
+		}
+		if restricted {
+			return compaction.ErrExpand
+		}
+		return nil
+	})
 }
 
 func (r *conversationRuntime) prepareRecallTools(turnID string, _ *toolPreparation, bindings map[string]loop.Tool) ([]provider.ToolDecl, error) {

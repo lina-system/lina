@@ -196,7 +196,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	restricted := scope.Projection || scope.ExternalModel
 	var with []string
 	var withArgs []any
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+	if cte, cteArgs := RestrictionCTE(scope); cte != "" {
 		with = append(with, cte)
 		withArgs = append(withArgs, cteArgs...)
 	}
@@ -350,7 +350,7 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 		"NOT EXISTS(SELECT 1 FROM recall_doc x WHERE x.kind=s.kind AND x.source_id=s.source_id)",
 		"s.body IS NULL")
 	prefix := ""
-	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+	if cte, cteArgs := RestrictionCTE(scope); cte != "" {
 		prefix = "WITH RECURSIVE " + cte + " "
 		args = append(cteArgs, args...)
 	}
@@ -421,38 +421,11 @@ func lineageFilter(enabled bool) string {
 	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
 }
 
-// restrictedCTE lists protected sources and their citation dependents for the
-// caller's person. Empty when the scope reads everything.
-func restrictedCTE(scope Scope) (string, []any) {
-	if !scope.Projection && !scope.ExternalModel {
-		return "", nil
-	}
-	return restrictedSources(scope)
-}
-
 func holderCondition(scope Scope, alias string) string {
 	if scope.CommonOnly || scope.Agent == "" {
 		return alias + ".holder='all'"
 	}
 	return alias + ".holder IN (?,'all')"
-}
-
-// Follow protected memory to its evidence, then protect every current view
-// that depends on any of those sources. Typed identities and UNION terminate
-// cycles without confusing equal ids belonging to different source kinds.
-func restrictedSources(scope Scope) (string, []any) {
-	return `sensitive(kind,id) AS (
- SELECT 'memory',m.id FROM memory_item m WHERE m.person=?
-  AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))
- UNION
- SELECT c.target_kind,c.target_id FROM cite c JOIN sensitive s ON c.view_kind=s.kind AND c.view_id=s.id
-  WHERE c.dropped_revision IS NULL
-), restricted(kind,id) AS (
- SELECT kind,id FROM sensitive
- UNION
- SELECT c.view_kind,c.view_id FROM cite c JOIN restricted r ON c.target_kind=r.kind AND c.target_id=r.id
-  WHERE c.dropped_revision IS NULL
-)`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
 }
 
 // scopeWhere applies the scope before matching. It is shared by the published
@@ -656,7 +629,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		args = append(args, olderArgs...)
 	}
 	prefix := ""
-	if fragment, prefixArgs := restrictedCTE(scope); fragment != "" {
+	if fragment, prefixArgs := RestrictionCTE(scope); fragment != "" {
 		prefix = "WITH RECURSIVE " + fragment + " "
 		args = append(prefixArgs, args...)
 	}

@@ -250,13 +250,33 @@ func (s Source) ValidateEpisode(ctx context.Context, ep Episode) error {
 		scope := Scope{Person: a.OwnerPersonID, Agent: a.AgentID}
 		// Legacy assembly records lack OwnerPersonID. Bind their read checks
 		// to the canonical input's conversation owner, never exported prose.
-		if len(ep.Calls) > 0 && scope.Person == "" {
+		if (len(ep.Calls) > 0 || ep.Input.ID != "") && scope.Person == "" {
 			var agent string
 			err := tx.QueryRowContext(ctx, `SELECT person,holder FROM recall_source WHERE kind='event' AND source_id=?`, ep.Input.ID).Scan(&scope.Person, &agent)
 			if errors.Is(err, sql.ErrNoRows) || err == nil && (scope.Person == "" || agent != scope.Agent) {
 				return Exclusion("restricted_content")
 			}
 			if err != nil {
+				return err
+			}
+		}
+		// A scope restriction may change without a removal epoch change. Check
+		// the recorded event sources again before dispatch, including copies.
+		ids := make(map[string]bool)
+		if ep.Input.ID != "" {
+			ids[ep.Input.ID] = true
+		}
+		for _, event := range ep.History {
+			ids[event.ID] = true
+		}
+		for _, ref := range ep.ReplyRefs {
+			ids[ref.ID] = true
+		}
+		for _, event := range ep.Next {
+			ids[event.ID] = true
+		}
+		for id := range ids {
+			if err := visible(ctx, tx, scope, id); err != nil {
 				return err
 			}
 		}
