@@ -44,6 +44,7 @@ func (s *Session) Start(ctx context.Context, l lease.Lease, spec worker.StartSpe
 		s.approvalKey = append([]byte(nil), spec.ApprovalKey...)
 	}
 	s.tools = declared
+	s.toolDeclarations = spec.Tools
 	s.snapshot = worker.ThreadSnapshot{Thread: worker.Thread{TaskID: spec.TaskID, AttemptID: spec.AttemptID, ProcessGeneration: s.generation, BindingEpoch: 1}, State: worker.Unknown, Worker: s.Name(), Version: s.version, Capabilities: s.Capabilities()}
 	s.mu.Unlock()
 	p := wire.V2ThreadStartParams{Cwd: &spec.Workdir}
@@ -112,6 +113,11 @@ func (s *Session) startTurn(ctx context.Context, text string, thread worker.Thre
 			return errors.New("Codex thread cannot start another turn")
 		}
 		s.snapshot.Output = ""
+		s.snapshot.Finish = nil
+		s.snapshot.EffectsKnown = false
+		s.text = worker.TurnText{}
+		s.realTool = false
+		s.textHandled = false
 		s.startingTurn = true
 		started = true
 		return nil
@@ -263,6 +269,11 @@ func (s *Session) Snapshot(ctx context.Context, t worker.Thread) (worker.ThreadS
 	s.mu.Lock()
 	err := s.bound(t, false)
 	revision := s.revision
+	if err == nil && s.textHandled {
+		result := s.textSnapshot()
+		s.mu.Unlock()
+		return result, nil
+	}
 	s.mu.Unlock()
 	if err != nil {
 		return worker.ThreadSnapshot{}, err
