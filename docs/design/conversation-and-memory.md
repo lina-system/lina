@@ -1301,7 +1301,7 @@ Imported observations, card lines and legacy summaries stay outside recall, Cont
 
 ### Importing a Hermes install
 
-Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The remaining Hermes import work in [#115](https://github.com/thisisjun786/lina/issues/115), its sub-issues and [#320](https://github.com/thisisjun786/lina/issues/320) keeps its scope under this framing ([#330](https://github.com/thisisjun786/lina/issues/330)). No other source adapter is implemented by this change.
+Hermes is the first adapter under the memory importer add-on contract. Its M1 purpose is the owner's continuity test: verify that LINA can pick up the owner's existing memory and work patterns without a break. It is optional, and copying a Hermes database is not LINA's default mode. The Hermes import work in [#115](https://github.com/thisisjun786/lina/issues/115), its sub-issues and [#320](https://github.com/thisisjun786/lina/issues/320) landed in `internal/addons/importer/hermes` and the `lina import-hermes` command under this framing ([#330](https://github.com/thisisjun786/lina/issues/330)). No other source adapter is implemented by this change.
 
 The adapter lives outside Core in `internal/addons/importer/hermes`. The explicit `lina import-hermes` command is its installed entry point; no onboarding or ordinary conversation starts it. Importing remains optional.
 
