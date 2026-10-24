@@ -1,1 +1,26 @@
-[]
+[
+  {
+    "kind": "install-script",
+    "name": "@whiskeysockets/baileys",
+    "version": "7.0.0-rc14",
+    "reason": "The preinstall script only checks Node >=20. The add-on requires >=22.18 and imports the published WhatsApp SDK with scripts disabled in its dependency test."
+  },
+  {
+    "kind": "install-script",
+    "name": "classic-level",
+    "version": "3.0.0",
+    "reason": "The registry tarball includes N-API prebuilds. The add-on dependency test opens, writes and reads a disposable database using the included prebuild with node-gyp-build never run at install time."
+  },
+  {
+    "kind": "install-script",
+    "name": "protobufjs",
+    "version": "7.6.6",
+    "reason": "The postinstall script only emits dependency version-scheme advice. Published runtime code is tested through the pinned SDK imports without lifecycle scripts."
+  },
+  {
+    "kind": "install-script",
+    "name": "koffi",
+    "version": "2.16.3",
+    "reason": "Optional SDK dependency omitted from the messenger add-on installation with --omit=optional. The dependency test asserts that it is absent; no install script or native library is used."
+  }
+]
