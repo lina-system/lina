@@ -136,7 +136,9 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   combined answer (`learn` and a scope other than `never-leaves`) goes off and
   closes only when that answer returns, so leaving never-leaves while the switch
   is off does not reopen the window. An interval that holds no record is dropped
-  when it closes; keeping it would read as still open.
+  when it closes; keeping it would read as still open. Its position counts every
+  admitted record, deleted ones included, so a deletion cannot move the endpoint
+  backwards.
 - A Discord bot-mode source is searchable and not learned from until the owner
   confirms the platform's developer-policy reading, so preparation passes it
   over as if its switch were off and its cursor moves past what arrived.

@@ -375,13 +375,15 @@ func chatLearns(learn bool, scope string) bool {
 	return learn && scope != ChatNeverLeaves
 }
 
-// learningMark is the newest ledger position a source has admitted.
+// learningMark is the newest ledger position a source has admitted. It counts
+// every admitted record, deleted ones included: a deletion must not move the
+// position backwards, or closing an interval would leave it at its own start
+// and the predicate would read that as still open.
 func learningMark(ctx context.Context, tx *canon.Tx, platform, account string) (int64, error) {
 	var mark int64
 	err := tx.QueryRowContext(ctx, `SELECT coalesce(max(e.rowid),0)
 FROM messenger_record m JOIN conv_event e ON e.id=m.event
-WHERE m.platform=? AND m.account=? AND m.state='live' AND json_extract(e.origin,'$.kind')='messenger'`,
-		platform, account).Scan(&mark)
+WHERE m.platform=? AND m.account=?`, platform, account).Scan(&mark)
 	return mark, err
 }
 
@@ -398,12 +400,12 @@ func (s *Store) stateLearningInterval(ctx context.Context, tx *canon.Tx, platfor
 		return err
 	}
 	if now {
-		if _, err = tx.ExecContext(ctx, `UPDATE messenger_learning_skip SET to_rowid=?
+		if _, err = tx.ExecContext(ctx, `UPDATE messenger_learning_skip SET to_rowid=max(to_rowid,?)
 WHERE platform=? AND account=? AND chat=? AND to_rowid=0`, mark, platform, account, chat); err != nil {
 			return err
 		}
 		_, err = tx.ExecContext(ctx, `DELETE FROM messenger_learning_skip
-WHERE platform=? AND account=? AND chat=? AND to_rowid=from_rowid`, platform, account, chat)
+WHERE platform=? AND account=? AND chat=? AND to_rowid<=from_rowid`, platform, account, chat)
 		return err
 	}
 	_, err = tx.ExecContext(ctx, `INSERT INTO messenger_learning_skip(platform,account,chat,from_rowid) VALUES(?,?,?,?)

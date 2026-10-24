@@ -12,6 +12,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/messenger"
+	"github.com/thisisjun786/lina/internal/core/retract"
 )
 
 const messengerTestPerson = "person"
@@ -505,6 +506,32 @@ func TestMessengerExtractionGatesBotModeDiscord(t *testing.T) {
 	}
 }
 
+// Deleting every record while learning is off and turning it back on leaves no
+// open interval: the position counts deleted records too, so a later message is
+// still learned.
+func TestMessengerExtractionDeletionDoesNotKeepIntervalOpen(t *testing.T) {
+	db, _, source, start := messengerRecords(t)
+	removing := messenger.Open(db, nil, noRemovals{})
+	if err := removing.SetSourceLearn(t.Context(), messengerTestPerson, source.Platform, source.Account, false); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, removing, source,
+		messengerMessage("gone", messenger.RoutePerson, start.Add(time.Minute), "I live on Mars."),
+	)
+	if _, err := removing.DeleteRecords(t.Context(), source, "dm", []string{"gone"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := removing.SetSourceLearn(t.Context(), messengerTestPerson, source.Platform, source.Account, true); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, removing, source,
+		messengerMessage("later", messenger.RoutePerson, start.Add(2*time.Minute), "I prefer jasmine tea."),
+	)
+	if batch := prepareMessenger(t, db); len(batch.Utterances) != 1 {
+		t.Fatalf("a deleted interval excluded a later record: %+v", batch.Utterances)
+	}
+}
+
 // A participant's turn breaks the burst even inside the window, so two answers
 // to different questions are separate utterances and the second one carries the
 // question it answers as context.
@@ -604,6 +631,12 @@ func TestMessengerExtractionImportWithLearning(t *testing.T) {
 		t.Fatalf("source learning switch: %+v %v", sources, err)
 	}
 }
+
+// noRemovals accepts deletions without hiding the retracted target, so a test
+// can observe the record's own deleted state.
+type noRemovals struct{}
+
+func (noRemovals) Forget(context.Context, retract.Request) error { return nil }
 
 // restrictEvent writes a never-leaves memory that cites one event, as a
 // restriction the person's own scope choice produces.

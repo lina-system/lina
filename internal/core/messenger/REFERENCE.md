@@ -177,7 +177,9 @@ the window the person opted out of is never learned late. Entering
 `never-leaves` states the same interval, and leaving it closes it. The chat
 switch and the scope are one condition: an interval closes only when the chat
 learns again (`learn` and a scope other than `never-leaves`), and one that held
-no record is deleted rather than left closed at its own start. `messenger_chat.scope` carries the chat's sensitivity class:
+no record is deleted rather than left closed at its own start. The position
+counts every admitted record including deleted ones, so a deletion cannot move
+it backwards and leave the interval reading as open. `messenger_chat.scope` carries the chat's sensitivity class:
 `local`, `private` or `never-leaves`. A `never-leaves` chat stays searchable and
 is never learning input. A disabled source or chat still advances the learning
 cursor past what arrived while it was off, so re-enabling does not learn that
