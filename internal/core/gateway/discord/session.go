@@ -28,13 +28,16 @@ type cursor struct {
 // sessionError maps a close to an outcome. Invalid sequence and expired
 // sessions need a fresh Identify; other closes resume from the cursor.
 func sessionError(err error) (reset bool, cause error) {
-	switch websocket.CloseStatus(err) {
-	case websocket.StatusCode(4013), websocket.StatusCode(4014):
+	switch code := int(websocket.CloseStatus(err)); code {
+	case 4013, 4014:
+		// Discord refused the requested intents, including the privileged
+		// message-content intent a source needs.
 		return false, ErrIntentsDenied
 	case 4007, 4009:
 		return true, errUnavailable
+	default:
+		return false, errUnavailable
 	}
-	return false, errUnavailable
 }
 
 // Run joins the bot token's Gateway session and admits channel input from it.
