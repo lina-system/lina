@@ -86,6 +86,7 @@ func Migrations() []Migration {
 
 		{Version: 71, SQL: BindingMoveSchema},
 		{Version: 72, SQL: MessengerAttachmentSchema},
+		{Version: 73, SQL: MessengerReadCoverageSchema},
 	}
 }
 
