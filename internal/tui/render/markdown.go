@@ -38,6 +38,7 @@ type MarkdownBlock struct {
 	Prefix string
 	Indent int
 	Code   bool // Literal block origin, independent of syntax token count.
+	Table  *MarkdownTable
 }
 
 // MarkdownParser belongs to the UI adapter; render owns no parser dependency.
@@ -216,6 +217,19 @@ func wrapMarkdown(block MarkdownBlock, config Config) []StyledRow {
 	if indent >= config.Width {
 		prefix = Truncate(prefix, max(0, config.Width-1), m)
 		indent = m.Width(prefix)
+	}
+	if block.Table != nil {
+		rows := block.Table.Rows(config.Width-indent, m)
+		for i := range rows {
+			label := prefix
+			if i > 0 {
+				label = strings.Repeat(" ", indent)
+			}
+			if label != "" {
+				rows[i].Spans = append([]Span{{Text: label}}, rows[i].Spans...)
+			}
+		}
+		return rows
 	}
 	var text strings.Builder
 	ends := make([]int, len(block.Spans))

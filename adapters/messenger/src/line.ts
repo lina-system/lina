@@ -313,18 +313,28 @@ export function lineDriver(sdk: unknown, options: DriverOptions): Driver {
       if (!profile?.mid) throw new Refusal('upstream_changed', 'LINE profile');
       return { id: profile.mid, name: typeof profile.display_name === 'string' ? profile.display_name : '' };
     },
-    live(deliver: (event: LiveEvent) => void): () => void {
+    // A stream that ends without being stopped is reported, not retried here:
+    // Core reads the source again on its schedule. A revoked session also
+    // drops the client, so the next read asks for sign-in.
+    live(deliver: (event: LiveEvent) => void, ended: (error: unknown) => void): () => void {
       const stop = new AbortController();
       void (async () => {
+        let open: Client | null = null;
         try {
-          const open = await session();
+          open = await session();
           for await (const event of open.streamEvents(stop.signal)) {
             if (stop.signal.aborted) return;
             if (event?.kind === 'message') deliver({ event: 'message', message: liveRecord(event.message) });
           }
-        } catch {
-          // A live stream that ends is retried by the next sync; the source's
-          // registry row reports a failure meanwhile.
+          if (!stop.signal.aborted) ended(new Refusal('live_ended', 'LINE live stream closed'));
+        } catch (error) {
+          if (stop.signal.aborted) return;
+          if (revoked(error)) {
+            if (open && client === open) client = null;
+            ended(new Refusal('needs_sign_in', 'LINE sign-in is required'));
+            return;
+          }
+          ended(error);
         }
       })();
       return () => stop.abort();

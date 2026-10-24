@@ -161,7 +161,7 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if _, err = tool.Validate(clean); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
 				}
-				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" {
+				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal {
 					ref.Request = s.bindingRequest
 				}
 				input, r, err := s.selectedBindingInput(ref.InputEventID, ref.Input)
@@ -195,7 +195,20 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				var args map[string]json.RawMessage
 				_ = json.Unmarshal([]byte(clean.Arguments), &args)
 				before := r.captureEffectBefore(ctx, clean, args)
-				result := exec.Execute(ctx, clean)
+				callCtx := ctx
+				if clean.Name == "worker_input" && r.channelBinding != nil {
+					source, err := r.channelSteeringSource(ctx, input)
+					if err != nil {
+						return bindingFailure(c.ID, err)
+					}
+					callCtx = context.WithValue(ctx, channelSteeringSourceKey{}, source)
+				}
+				var result loop.Result
+				if clean.Name == "start_run" && r.channelBinding != nil {
+					result = r.submitStartRun(callCtx, clean, input, s.turnID)
+				} else {
+					result = exec.Execute(callCtx, clean)
+				}
 				if result.Code == loop.OK {
 					if err := r.recordCreatedBinding(ctx, input, ref.Request, s.turnID, clean, result); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_receipt_failed"}`)}
@@ -590,28 +603,9 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if _, err := r.work.Get(ctx, taskID); err == nil {
 						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
 					}
-					var source json.RawMessage
-					if r.channelBinding != nil {
-						var e gateway.Inbound
-						if preparation == nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						receiptID, err := r.channelReceiptEventID(ctx, preparation.event)
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						err = r.db.Read(ctx, func(tx *canon.Tx) error {
-							var raw []byte
-							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
-							if err != nil {
-								return err
-							}
-							return json.Unmarshal(raw, &e)
-						})
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
+					source, err := r.channelSteeringSource(ctx, event)
+					if err != nil {
+						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
 					_, err = r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: taskID, Text: a.Text}}, source)
 					if err != nil {
@@ -697,6 +691,13 @@ func (r *conversationRuntime) followWorkerTask(ctx context.Context, input ledger
 	// unrelated conversation cannot steer or speak as the owner.
 	if !entry.origin.workerConversation(r) {
 		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	source, err := r.channelSteeringSource(ctx, input)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	if len(source) > 0 {
+		ctx = context.WithValue(ctx, channelSteeringSourceKey{}, source)
 	}
 	ctx = context.WithValue(ctx, workerCallIdentityKey{}, "binding-follow:"+turnID+":"+callID)
 	result, err := r.workerOperation(ctx, "worker_input", turnID, input, in)
@@ -812,6 +813,49 @@ func (r *conversationRuntime) channelReceiptEventID(ctx context.Context, event l
 		}
 		current = parent
 	}
+}
+
+// channelSteeringSource is the selected channel input's delivery receipt.
+// A runtime without a channel binding returns no receipt.
+func (r *conversationRuntime) channelSteeringSource(ctx context.Context, event ledger.Event) (json.RawMessage, error) {
+	if r.channelBinding == nil {
+		return nil, nil
+	}
+	receiptID, err := r.channelReceiptEventID(ctx, event)
+	if err != nil {
+		return nil, err
+	}
+	var inbound gateway.Inbound
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, &inbound)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: inbound.Sender, Direct: inbound.Direct, Addressed: inbound.Addressed})
+}
+
+// submitStartRun admits a run on the selected channel runtime. The requesting
+// turn stays the turn that called start_run. A different selected channel
+// input is kept beside it so later checks still use that channel's permission.
+func (r *conversationRuntime) submitStartRun(ctx context.Context, call provider.ToolCall, event ledger.Event, turnID string) loop.Result {
+	if r.channelBinding == nil || r.background == nil || turnID == "" {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	receiptID, err := r.channelReceiptEventID(ctx, event)
+	if err != nil {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	origin := r.runOrigin(turnID)
+	if turnID != "turn:"+receiptID {
+		origin.ChannelReceipt = receiptID
+	}
+	return r.background.service.StartTool(origin).Execute(ctx, call)
 }
 
 func bindingAction(name string) string {

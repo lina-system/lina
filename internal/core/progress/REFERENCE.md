@@ -33,6 +33,7 @@ Now follows the order of the design: a step that needs the person, then the earl
 The stage word is the lowest-numbered stage entry that is not done.
 `Line.Stages` carries the entries, and the line holds no step id; `StageStep.ID` stays on the projection side.
 `e2e/m3/progress-line.json` drives a headless Core whose first step lands from an injected worker result: the subscribed topic carries the entries, the changed line arrives within 250 ms of the commit, exactly one line changes, and a recomputation that changes no line publishes no frame.
+`progress.UnitLine` is that same line for one unit before the running list drops a landed unit the person has already seen. A progress question uses it when the published list no longer contains the item. An id with no unit stays unknown.
 `internal/core/boot/progress_line_test.go` checks the same projection and wire shape without a socket.
 
 ### Work-card stage projection (#770)

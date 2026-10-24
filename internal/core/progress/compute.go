@@ -102,20 +102,8 @@ func Compute(units []Unit) []Entry {
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
-		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Paused: u.Paused, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
-		if u.JustFinished != "" {
-			line.JustFinished = u.JustFinished
-		}
-		if u.Next != "" {
-			line.Next = u.Next
-		}
-		// The line's stage word is its current stage entry: the lowest-numbered
-		// entry that is not done.
-		if current, ok := currentStage(u.Stages); ok {
-			line.Stage = current.Label
-		}
 		landed := u.Landed || u.Done != nil && *u.Done
-		rows[u.ID] = &row{unit: u, line: line, visible: (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
+		rows[u.ID] = &row{unit: u, line: UnitLine(u), visible: (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
 	}
 	// A 목표 is visible through its own work, live children or a pending decision.
 	// Its children are 일 lines, so they stay lines and are counted; only the
@@ -193,6 +181,24 @@ func Compute(units []Unit) []Entry {
 		}
 	}
 	return out
+}
+
+// UnitLine is one unit's current projection before the running list drops a
+// landed unit the person has already seen. Unobserved stage words stay unknown.
+func UnitLine(u Unit) Line {
+	line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Paused: u.Paused, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
+	if u.JustFinished != "" {
+		line.JustFinished = u.JustFinished
+	}
+	if u.Next != "" {
+		line.Next = u.Next
+	}
+	// The line's stage word is its current stage entry: the lowest-numbered
+	// entry that is not done.
+	if current, ok := currentStage(u.Stages); ok {
+		line.Stage = current.Label
+	}
+	return line
 }
 
 // currentStage is the line's stage word: the lowest-numbered entry that is not

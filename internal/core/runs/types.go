@@ -72,7 +72,11 @@ type Ref struct {
 }
 type Origin struct {
 	Person, Agent, Conversation, Turn, Job string
-	Epoch                                  uint64
+	// ChannelReceipt is the selected channel input when a turn starts a run
+	// for steering other than its own input. Empty when Turn is already that
+	// input. Authorization rechecks the receipt; Turn stays the turn that asked.
+	ChannelReceipt string `json:",omitempty"`
+	Epoch          uint64
 }
 type Brief struct {
 	Mock                        *result.ResultRef `json:"Mock,omitempty"`
