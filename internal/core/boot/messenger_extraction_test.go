@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 	"time"
@@ -470,4 +471,72 @@ func TestMessengerExtractionCostPerThousandMessages(t *testing.T) {
 	t.Logf("messenger extraction cost: messages=%d calls=%d calls_per_1000=%.1f input_tokens=%d output_tokens=%d tokens_per_1000=%d",
 		messages, cost.calls, float64(cost.calls)*1000/float64(messages), cost.input, cost.output,
 		(cost.input+cost.output)*1000/int64(messages))
+}
+
+func TestMessengerEvidenceCandidatesUseOneGlobalBound(t *testing.T) {
+	for _, variant := range []string{"sources", "context", "inline-context"} {
+		t.Run(variant, func(t *testing.T) {
+			r, _, _, store, source, start := messengerExtractionFixture(t)
+			long := strings.Repeat("synthetic context ", ledger.InlineBytes/8)
+			for i := 0; i < 8; i++ {
+				current := source
+				if variant == "sources" {
+					current.Account = fmt.Sprintf("acct-%d", i)
+					if err := store.Connect(t.Context(), current); err != nil {
+						t.Fatal(err)
+					}
+					if err := store.UpsertChats(t.Context(), current, []messenger.Chat{{ID: "dm", Kind: "direct"}}); err != nil {
+						t.Fatal(err)
+					}
+				}
+				admitMessenger(t, store, current, messengerRecord(fmt.Sprintf("context-%d", i), messenger.RouteParticipant, start.Add(time.Duration(i*3+1)*time.Minute), long))
+				if variant == "inline-context" {
+					admitMessenger(t, store, current, messengerRecord(fmt.Sprintf("inline-%d", i), messenger.RouteParticipant, start.Add(time.Duration(i*3+2)*time.Minute), "Short context."))
+				}
+				admitMessenger(t, store, current, messengerRecord(fmt.Sprintf("own-%d", i), messenger.RoutePerson, start.Add(time.Duration(i*3+3)*time.Minute), "I prefer tea."))
+			}
+			refs, err := memory.New(r.db).MessengerEvidenceCandidates(t.Context(), r.person, 1, 1)
+			if err != nil {
+				t.Fatal(err)
+			}
+			want := 1
+			if variant == "inline-context" {
+				want = 0
+			}
+			if len(refs) != want {
+				t.Fatalf("preloaded %d material bodies, want %d for one pending message", len(refs), want)
+			}
+		})
+	}
+}
+
+// Cursor-only progress must be checked against the same canonical snapshot as
+// a task with model input. An import can reset a still-zero cursor while moving
+// its watermark, so comparing the cursor alone loses newly authorized history.
+func TestMessengerExtractionSkipProgressRechecksImport(t *testing.T) {
+	r, _, service, store, source, start := messengerExtractionFixture(t)
+	admitMessenger(t, store, source, messengerRecord("old", messenger.RoutePerson, start.Add(-time.Hour), "I prefer tea."))
+	resolve, err := r.readMessengerEvidence(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	batch, err := memory.New(r.db).PrepareMessengerExtraction(t.Context(), r.person, 32, 3, 2*time.Minute, resolve)
+	if err != nil || len(batch.Utterances) != 0 {
+		t.Fatalf("prepare: %+v %v", batch, err)
+	}
+	if err := store.SetLearningWatermark(t.Context(), r.person, source.Platform, source.Account, start.Add(-time.Hour), false); err != nil {
+		t.Fatal(err)
+	}
+	err = service.ScheduleMessengerExtraction(t.Context(), jobs.MessengerExtractionJob, r.person, batch)
+	if !errors.Is(err, jobapi.ErrConflict) {
+		t.Fatalf("obsolete skip committed: %v", err)
+	}
+	resolve, err = r.readMessengerEvidence(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	fresh, err := memory.New(r.db).PrepareMessengerExtraction(t.Context(), r.person, 32, 3, 2*time.Minute, resolve)
+	if err != nil || len(fresh.Utterances) != 1 {
+		t.Fatalf("import history lost: %+v %v", fresh, err)
+	}
 }

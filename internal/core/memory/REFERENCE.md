@@ -144,8 +144,9 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   over as if its switch were off and its cursor moves past what arrived.
 - A participant's turn inside the window breaks the burst, as a non-person turn
   does in a conversation (`docs/design/go-core.md`): the scan reads those turns
-  without making them evidence or context of the next utterance, and the batch
-  window stops at the limit-th person record so it stays bounded.
+  without making them evidence. The next utterance selects its context
+  independently. The scan stops at the limit-th person record or eight times
+  that many records of any speaker, so each prefix stays bounded.
 - A context message that a memory restricts after preparation rebuilds the
   batch, the same as restricted evidence. Adding a `never-leaves` memory does not
   move the retraction epoch, so the check reads the restriction set directly.
@@ -156,8 +157,10 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   canon serves one reader and a material read inside the transaction would wait
   on the connection it holds. Core's `readMessengerEvidence` does this with the
   same batch and context limits as preparation and the same source and chat
-  controls, so the preload covers the pending batch and its context and never
-  grows with the person's history.
+  controls. Both use `messengerScanRows`, with one person-record limit across
+  sources. Context slots count inline records before filtering for material
+  bodies. Restricted records are not preloaded. The body count is bounded by
+  the batch limit times one plus the context limit.
 - A burst is consecutive records in one chat within the configurable window.
   Up to three earlier visible records of that chat travel as `Context`; their
   ids are not in the allowed evidence set.
@@ -165,12 +168,14 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   one agent holds (shared history, relationship, emotion observation) are
   refused, as are non-stated bases and a nonempty holder, scope or source agent.
 - `ApplyMessengerExtraction` rechecks the epoch, every prepared record, the
-  chat switch and scope, the source watermark and cursor, that each prepared
+  chat switch and scope, the source policy, watermark and cursor, that each prepared
   record is still the live record of its message, and that no learning switch
   has excluded it since preparation, before writing. A
   source that supplied no utterance may be learning-off; it only contributes
   skip progress. It commits the items and the scanned source cursors together.
-  An obsolete batch is consumed without writing or advancing cursors.
+  An obsolete batch is consumed without writing or advancing cursors. Empty
+  scans also recheck watermark and revocation before committing progress, so
+  a concurrent authorized import cannot lose its newly eligible history.
 
 The messenger write path uses `insertKind{messenger: true}`: every evidence
 origin must be a messenger record held by one of the batch's sources, and the

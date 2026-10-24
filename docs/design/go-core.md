@@ -1914,6 +1914,10 @@ It reads the person's live messenger records at or after each source's learning 
 A source or chat with learning off, and a `never-leaves` chat, advance the source's learning cursor without being read.
 Items take the default holder of their kind and no source agent; the write path accepts only messenger records of that batch as evidence.
 An empty batch advances the scanned cursors without a model task, and Apply rechecks each cursor and switch before committing items and cursors together.
+The source and chat controls exclude admission-order intervals transactionally, so resuming before a scan does not learn the disabled window.
+Upgrades seed an open interval for already-disabled chats, conservatively excluding existing records because the earlier switch time is unknown.
+Material preloading and preparation share one bounded record selection across sources; context limits count both inline and material-backed records before selecting bodies.
+Dispatch and Apply recheck source policy (including the Discord bot gate), chat scope, live revisions and restrictions for both evidence and context.
 
 Maintenance reads one exact holder, including `all` for the common pass.
 Its editable choice is revision-checked and defaults to no allowed actions.

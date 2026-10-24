@@ -1,16 +1,20 @@
 // SPDX-License-Identifier: Apache-2.0
-package memory
+package memory_test
 
 import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/retract"
 )
@@ -46,25 +50,25 @@ func messengerMessage(id string, route messenger.Route, at time.Time, text strin
 
 // messengerResolve reads the admitted event so the test resolves evidence from
 // canon rather than trusting the proposed item.
-func messengerResolve(db *canon.Store) ResolveEvidence {
-	return func(ctx context.Context, tx *canon.Tx, ref Evidence) (Origin, error) {
+func messengerResolve(db *canon.Store) memory.ResolveEvidence {
+	return func(ctx context.Context, tx *canon.Tx, ref memory.Evidence) (memory.Origin, error) {
 		var id, agent, speaker, person, origin, body, occurred string
 		if err := tx.QueryRowContext(ctx, `SELECT id,agent_id,speaker_kind,coalesce(person_id,''),origin,coalesce(body,''),occurred_at FROM conv_event WHERE id=?`, ref.ID).
 			Scan(&id, &agent, &speaker, &person, &origin, &body, &occurred); err != nil {
-			return Origin{}, err
+			return memory.Origin{}, err
 		}
 		at, err := time.Parse(time.RFC3339Nano, occurred)
 		if err != nil {
-			return Origin{}, err
+			return memory.Origin{}, err
 		}
-		return Origin{ID: id, Person: person, Agent: agent, Speaker: guard.SpeakerKind(speaker), Quote: body,
-			OccurredAt: at.Unix(), Scope: Local, Messenger: strings.Contains(origin, `"kind":"messenger"`)}, nil
+		return memory.Origin{ID: id, Person: person, Agent: agent, Speaker: guard.SpeakerKind(speaker), Quote: body,
+			OccurredAt: at.Unix(), Scope: memory.Local, Messenger: strings.Contains(origin, `"kind":"messenger"`)}, nil
 	}
 }
 
-func prepareMessenger(t *testing.T, db *canon.Store) MessengerBatch {
+func prepareMessenger(t *testing.T, db *canon.Store) memory.MessengerBatch {
 	t.Helper()
-	batch, err := New(db).PrepareMessengerExtraction(t.Context(), messengerTestPerson, 32, 3, 2*time.Minute, messengerResolve(db))
+	batch, err := memory.New(db).PrepareMessengerExtraction(t.Context(), messengerTestPerson, 32, 3, 2*time.Minute, messengerResolve(db))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,22 +102,22 @@ func TestMessengerExtractionReadsOnlyPersonRecordsAfterWatermark(t *testing.T) {
 	if len(utterance.Context) == 0 || !strings.Contains(utterance.Context[len(utterance.Context)-1].Text, "Mars") {
 		t.Fatalf("missing untrusted context: %+v", utterance.Context)
 	}
-	items := []Item{{Kind: Preference, Content: "Prefers jasmine tea in the morning", Subject: Subject{Kind: Person, ID: messengerTestPerson},
-		Basis: Stated, Evidence: utterance.Events}}
-	if err := ValidateMessengerExtraction(batch, items); err != nil {
+	items := []memory.Item{{Kind: memory.Preference, Content: "Prefers jasmine tea in the morning", Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson},
+		Basis: memory.Stated, Evidence: utterance.Events}}
+	if err := memory.ValidateMessengerExtraction(batch, items); err != nil {
 		t.Fatal(err)
 	}
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		return ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
 	}); err != nil {
 		t.Fatal(err)
 	}
-	hits, err := New(db).Recall(t.Context(), RecallScope{Agent: "agent-a", Person: messengerTestPerson}, Query{At: time.Now().Unix()})
+	hits, err := memory.New(db).Recall(t.Context(), memory.RecallScope{Agent: "agent-a", Person: messengerTestPerson}, memory.Query{At: time.Now().Unix()})
 	if err != nil || len(hits) != 1 {
 		t.Fatalf("recalled: %+v %v", hits, err)
 	}
 	item := hits[0]
-	if item.Holder != All || item.SourceAgent != "" || len(item.Evidence) != 2 {
+	if item.Holder != memory.All || item.SourceAgent != "" || len(item.Evidence) != 2 {
 		t.Fatalf("messenger item shape: %+v", item)
 	}
 	for _, evidence := range item.Evidence {
@@ -144,13 +148,13 @@ func TestMessengerExtractionRefusesOtherSpeakersAsPersonEvidence(t *testing.T) {
 	if contextID == "" {
 		t.Fatal("participant record absent from context")
 	}
-	item := Item{Kind: Fact, Content: "Lives on Mars", Subject: Subject{Kind: Person, ID: messengerTestPerson},
-		Basis: Stated, Evidence: []Evidence{{Kind: Event, ID: contextID, Precision: Exact}}}
-	if err := ValidateMessengerExtraction(batch, []Item{item}); !errors.Is(err, ErrEvidence) && !errors.Is(err, ErrPersonEvidence) {
+	item := memory.Item{Kind: memory.Fact, Content: "Lives on Mars", Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson},
+		Basis: memory.Stated, Evidence: []memory.Evidence{{Kind: memory.Event, ID: contextID, Precision: memory.Exact}}}
+	if err := memory.ValidateMessengerExtraction(batch, []memory.Item{item}); !errors.Is(err, memory.ErrEvidence) && !errors.Is(err, memory.ErrPersonEvidence) {
 		t.Fatalf("participant evidence accepted: %v", err)
 	}
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		return ApplyMessengerExtraction(t.Context(), tx, batch, []Item{item}, messengerResolve(db))
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, []memory.Item{item}, messengerResolve(db))
 	}); err == nil {
 		t.Fatal("apply accepted participant evidence about the person")
 	}
@@ -169,7 +173,7 @@ func TestMessengerExtractionSwitchesAndProgress(t *testing.T) {
 		t.Fatalf("first scan: %+v", batch.Utterances)
 	}
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		return ApplyMessengerExtraction(t.Context(), tx, batch, nil, messengerResolve(db))
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, nil, messengerResolve(db))
 	}); err != nil {
 		t.Fatal(err)
 	}
@@ -245,21 +249,21 @@ func TestMessengerExtractionRejectsForeignChatAndScope(t *testing.T) {
 	if len(batch.Utterances) != 1 {
 		t.Fatalf("utterances: %+v", batch.Utterances)
 	}
-	item := Item{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
-		Basis: Stated, Evidence: batch.Utterances[0].Events}
+	item := memory.Item{Kind: memory.Preference, Content: "Prefers jasmine tea", Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson},
+		Basis: memory.Stated, Evidence: batch.Utterances[0].Events}
 	item.Holder = "agent-a"
-	if err := ValidateMessengerExtraction(batch, []Item{item}); err == nil {
+	if err := memory.ValidateMessengerExtraction(batch, []memory.Item{item}); err == nil {
 		t.Fatal("agent holder accepted for a messenger item")
 	}
 	item.Holder = ""
-	item.Kind = SharedHistory
-	if err := ValidateMessengerExtraction(batch, []Item{item}); err == nil {
+	item.Kind = memory.SharedHistory
+	if err := memory.ValidateMessengerExtraction(batch, []memory.Item{item}); err == nil {
 		t.Fatal("agent-held kind accepted for a messenger item")
 	}
 	// A different source cursor makes the prepared batch obsolete.
 	batch.Sources[0].After = 99
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		return ApplyMessengerExtraction(t.Context(), tx, batch, []Item{item}, messengerResolve(db))
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, []memory.Item{item}, messengerResolve(db))
 	}); err == nil {
 		t.Fatal("stale source cursor applied")
 	}
@@ -321,10 +325,10 @@ func TestMessengerExtractionDisabledSourceKeepsOthersLearning(t *testing.T) {
 	if len(batch.Utterances) != 1 || len(batch.Sources) != 2 {
 		t.Fatalf("batch: %+v", batch)
 	}
-	items := []Item{{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
-		Basis: Stated, Evidence: batch.Utterances[0].Events}}
+	items := []memory.Item{{Kind: memory.Preference, Content: "Prefers jasmine tea", Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson},
+		Basis: memory.Stated, Evidence: batch.Utterances[0].Events}}
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		return ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
 	}); err != nil {
 		t.Fatalf("disabled source blocked the batch: %v", err)
 	}
@@ -344,12 +348,12 @@ func TestMessengerExtractionRebuildsOnChatScopeChange(t *testing.T) {
 	if err := store.SetChatScope(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm", "private"); err != nil {
 		t.Fatal(err)
 	}
-	items := []Item{{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
-		Basis: Stated, Evidence: batch.Utterances[0].Events}}
+	items := []memory.Item{{Kind: memory.Preference, Content: "Prefers jasmine tea", Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson},
+		Basis: memory.Stated, Evidence: batch.Utterances[0].Events}}
 	err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		return ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
 	})
-	if !errors.Is(err, ErrJobConflict) {
+	if !errors.Is(err, memory.ErrJobConflict) {
 		t.Fatalf("scope change applied: %v", err)
 	}
 }
@@ -369,12 +373,12 @@ func TestMessengerExtractionRebuildsOnEditedRecord(t *testing.T) {
 	edited := messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer green tea.")
 	edited.Edited = start.Add(2 * time.Minute)
 	admitMessages(t, store, source, edited)
-	items := []Item{{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
-		Basis: Stated, Evidence: batch.Utterances[0].Events}}
+	items := []memory.Item{{Kind: memory.Preference, Content: "Prefers jasmine tea", Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson},
+		Basis: memory.Stated, Evidence: batch.Utterances[0].Events}}
 	err := db.Write(t.Context(), func(tx *canon.Tx) error {
-		return ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, items, messengerResolve(db))
 	})
-	if !errors.Is(err, ErrJobConflict) {
+	if !errors.Is(err, memory.ErrJobConflict) {
 		t.Fatalf("edited record applied: %v", err)
 	}
 }
@@ -569,7 +573,7 @@ func TestMessengerExtractionRebuildsWhenContextBecomesRestricted(t *testing.T) {
 	}
 	context := batch.Utterances[0].Context
 	restrictEvent(t, db, context[len(context)-1].ID)
-	if err := New(db).CheckMessengerExtraction(t.Context(), batch, messengerResolve(db)); !errors.Is(err, ErrJobConflict) {
+	if err := memory.New(db).CheckMessengerExtraction(t.Context(), batch, messengerResolve(db)); !errors.Is(err, memory.ErrJobConflict) {
 		t.Fatalf("restricted context was accepted: %v", err)
 	}
 }
@@ -586,23 +590,23 @@ func TestMessengerExtractionValidationRejectsUnwritableItems(t *testing.T) {
 		t.Fatalf("prepared: %+v", batch.Utterances)
 	}
 	evidence := batch.Utterances[0].Events
-	valid := Item{Kind: Preference, Content: "Prefers jasmine tea", Subject: Subject{Kind: Person, ID: messengerTestPerson},
-		Basis: Stated, Evidence: evidence}
-	if err := ValidateMessengerExtraction(batch, []Item{valid}); err != nil {
+	valid := memory.Item{Kind: memory.Preference, Content: "Prefers jasmine tea", Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson},
+		Basis: memory.Stated, Evidence: evidence}
+	if err := memory.ValidateMessengerExtraction(batch, []memory.Item{valid}); err != nil {
 		t.Fatalf("valid proposal refused: %v", err)
 	}
-	for name, mutate := range map[string]func(*Item){
-		"empty content":   func(i *Item) { i.Content = "" },
-		"revision":        func(i *Item) { i.Revision = 2 },
-		"validity":        func(i *Item) { i.ValidFrom, i.ValidUntil = 10, 5 },
-		"never-leaves":    func(i *Item) { i.Scope = NeverLeaves },
-		"agent-held kind": func(i *Item) { i.Kind = SharedHistory },
-		"source agent":    func(i *Item) { i.SourceAgent = "agent-a" },
-		"other subject":   func(i *Item) { i.Subject = Subject{Kind: Person, ID: "someone"} },
+	for name, mutate := range map[string]func(*memory.Item){
+		"empty content":   func(i *memory.Item) { i.Content = "" },
+		"revision":        func(i *memory.Item) { i.Revision = 2 },
+		"validity":        func(i *memory.Item) { i.ValidFrom, i.ValidUntil = 10, 5 },
+		"never-leaves":    func(i *memory.Item) { i.Scope = memory.NeverLeaves },
+		"agent-held kind": func(i *memory.Item) { i.Kind = memory.SharedHistory },
+		"source agent":    func(i *memory.Item) { i.SourceAgent = "agent-a" },
+		"other subject":   func(i *memory.Item) { i.Subject = memory.Subject{Kind: memory.Person, ID: "someone"} },
 	} {
 		item := valid
 		mutate(&item)
-		if err := ValidateMessengerExtraction(batch, []Item{item}); err == nil {
+		if err := memory.ValidateMessengerExtraction(batch, []memory.Item{item}); err == nil {
 			t.Fatalf("%s was accepted", name)
 		}
 	}
@@ -642,9 +646,9 @@ func (noRemovals) Forget(context.Context, retract.Request) error { return nil }
 // restriction the person's own scope choice produces.
 func restrictEvent(t *testing.T, db *canon.Store, id string) {
 	t.Helper()
-	item := Item{ID: "restricted", Kind: Fact, Content: "Restricted statement", Holder: All, Scope: NeverLeaves,
-		Subject: Subject{Kind: Person, ID: messengerTestPerson}, Basis: Stated, State: Active, Revision: 1,
-		Evidence: []Evidence{{Kind: Event, ID: id, Precision: Exact}}}
+	item := memory.Item{ID: "restricted", Kind: memory.Fact, Content: "Restricted statement", Holder: memory.All, Scope: memory.NeverLeaves,
+		Subject: memory.Subject{Kind: memory.Person, ID: messengerTestPerson}, Basis: memory.Stated, State: memory.Active, Revision: 1,
+		Evidence: []memory.Evidence{{Kind: memory.Event, ID: id, Precision: memory.Exact}}}
 	raw, err := json.Marshal(item)
 	if err != nil {
 		t.Fatal(err)
@@ -655,8 +659,99 @@ VALUES(?,?,?,?,?,?,?,?,?,0,0,'',0,?)`, item.ID, messengerTestPerson, string(item
 			"restricted statement", item.Content, string(item.Scope), string(item.State), raw); err != nil {
 			return err
 		}
-		return revision(t.Context(), tx, item, raw)
+		if _, err := tx.ExecContext(t.Context(), "INSERT INTO memory_revision(item_id,revision,record) VALUES(?,?,?)", item.ID, item.Revision, raw); err != nil {
+			return err
+		}
+		evidence, err := json.Marshal(item.Evidence)
+		if err != nil {
+			return err
+		}
+		return canon.WriteEvidenceCitations(t.Context(), tx, "memory", item.ID, item.Revision, evidence)
 	}); err != nil {
 		t.Fatal(err)
+	}
+}
+
+func database(t *testing.T) *canon.Store {
+	t.Helper()
+	root := t.TempDir()
+	if err := os.Chmod(root, 0700); err != nil {
+		t.Fatal(err)
+	}
+	c, err := ctlfiles.Open(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { c.Close() })
+	if err := c.Acquire(); err != nil {
+		t.Fatal(err)
+	}
+	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(root, "canon.sqlite"), Epoch: 1, Controls: c, Migrations: canon.Migrations()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { db.Close(context.Background()) })
+	return db
+}
+
+// An old historical record can be admitted after a newer disabled record.
+// Migration must not infer ledger ordering from the message timestamps.
+func TestMessengerExtractionUpgradeExcludesOutOfOrderHistory(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	if err := store.SetSwitches(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm", messenger.Switches{Sync: true}); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, store, source,
+		messengerMessage("disabled", messenger.RoutePerson, start.Add(time.Minute), "I live on Mars."),
+		messengerMessage("backfill", messenger.RoutePerson, start.Add(-time.Hour), "Old history."))
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		if _, err := tx.ExecContext(t.Context(), "DELETE FROM messenger_learning_skip"); err != nil {
+			return err
+		}
+		_, err := tx.ExecContext(t.Context(), canon.MessengerLearningSeed)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.SetSwitches(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm", messenger.Switches{Sync: true, Learn: true}); err != nil {
+		t.Fatal(err)
+	}
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 0 {
+		t.Fatalf("upgrade leaked %d disabled utterances", len(batch.Utterances))
+	}
+	admitMessages(t, store, source, messengerMessage("enabled", messenger.RoutePerson, start.Add(2*time.Minute), "I prefer tea."))
+	batch = prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 || batch.Utterances[0].Text != "I prefer tea." {
+		t.Fatalf("enabled window: %+v", batch.Utterances)
+	}
+}
+
+func TestMessengerExtractionRechecksSourcePolicy(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	source.Platform, source.Mode = "discord", messenger.ModeUnofficial
+	source.AcceptedTerms = &messenger.Terms{Person: messengerTestPerson, At: start, Text: "synthetic terms"}
+	if err := store.Connect(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if err := store.UpsertChats(t.Context(), source, []messenger.Chat{{ID: "dm", Kind: "direct"}}); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, store, source, messengerMessage("mine", messenger.RoutePerson, start.Add(time.Minute), "I prefer tea."))
+	batch := prepareMessenger(t, db)
+	if len(batch.Utterances) != 1 {
+		t.Fatalf("utterances=%d", len(batch.Utterances))
+	}
+	source.Mode = messenger.ModeOfficial
+	if err := store.Connect(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	if err := memory.New(db).CheckMessengerExtraction(t.Context(), batch, messengerResolve(db)); !errors.Is(err, memory.ErrJobConflict) {
+		t.Fatalf("gated source dispatched: %v", err)
+	}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		return memory.ApplyMessengerExtraction(t.Context(), tx, batch, nil, messengerResolve(db))
+	}); !errors.Is(err, memory.ErrJobConflict) {
+		t.Fatalf("gated source applied: %v", err)
 	}
 }

@@ -72,6 +72,18 @@ func (s *Service) ScheduleMessengerExtraction(ctx context.Context, id, person st
 			}
 		}
 		if len(batch.Utterances) == 0 {
+			// Even a cursor-only commit must retain its watermark and epoch.
+			// An authorized import may reset an already-zero cursor between
+			// preparation and scheduling while changing what is eligible.
+			unused := func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
+				return memory.Origin{}, memory.ErrEvidence
+			}
+			if err := memory.CheckMessengerExtractionTx(ctx, tx, batch, unused); err != nil {
+				if errors.Is(err, memory.ErrJobConflict) {
+					return jobapi.ErrConflict
+				}
+				return err
+			}
 			return messengerProgress(ctx, tx, batch.Sources)
 		}
 		_, err = tx.ExecContext(ctx, "INSERT INTO moirai_tasks VALUES(?,?,?)", id, seq+1, []byte(input))

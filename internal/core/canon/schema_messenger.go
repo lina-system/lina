@@ -178,20 +178,13 @@ CREATE TABLE messenger_learning_cursor (
 UPDATE messenger_source SET learning_watermark=connected_at WHERE learning_watermark='';
 ` + MessengerLearningSeed
 
-// MessengerLearningSeed states an open excluded interval for every chat that is
-// already disabled when the learning schema arrives. A chat may admit records
-// before the extraction job scans, so without the seed a chat disabled before
-// the upgrade would learn the window it was disabled for as soon as the switch
-// returned. The interval starts at the chat's learning watermark, or at the
-// newest admitted record when the source has none. Seeding only where no
-// interval is open keeps a rerun free of duplicates.
+// MessengerLearningSeed preserves opt-outs that predate the learning schema.
+// Their start is unknown, so all previously admitted records stay excluded.
+// Message timestamps cannot bound ledger positions: backfill may be out of order.
 const MessengerLearningSeed = `
 INSERT INTO messenger_learning_skip(platform,account,chat,from_rowid)
-SELECT c.platform,c.account,c.chat,
- coalesce((SELECT max(e.rowid) FROM messenger_record m JOIN conv_event e ON e.id=m.event
-  WHERE m.platform=c.platform AND m.account=c.account AND m.chat=c.chat
-   AND (s.learning_watermark='' OR julianday(e.occurred_at)<julianday(s.learning_watermark))),0)
-FROM messenger_chat c JOIN messenger_source s ON s.platform=c.platform AND s.account=c.account
+SELECT c.platform,c.account,c.chat,0
+FROM messenger_chat c
 WHERE c.learn=0
  AND NOT EXISTS(SELECT 1 FROM messenger_learning_skip k
   WHERE k.platform=c.platform AND k.account=c.account AND k.chat=c.chat AND k.to_rowid=0);

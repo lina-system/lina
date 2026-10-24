@@ -189,33 +189,19 @@ VALUES('fixture','acct','dm','m-old','older','2026-09-01T10:00:00Z'),
 	db = openStore(t, cfg)
 	defer db.Close(t.Context())
 	if err := db.Read(t.Context(), func(tx *Tx) error {
-		// A chat excludes what arrived at or after its watermark: the seed
-		// starts at the last record older than it, and covers the newer one.
-		for _, tc := range []struct{ account, before string }{
-			{"acct", "2026-10-01T00:00:00Z"},
-			{"marked", "2026-10-02T00:00:00Z"},
-		} {
-			var from, want int
-			var closed bool
-			if err := tx.QueryRowContext(t.Context(), "SELECT from_rowid,to_rowid<>0 FROM messenger_learning_skip WHERE account=?", tc.account).
-				Scan(&from, &closed); err != nil {
-				return err
-			}
-			if err := tx.QueryRowContext(t.Context(), `SELECT coalesce(max(e.rowid),0)
+		// An upgrade has no historical switch boundary. Every existing record
+		// in a disabled chat must remain excluded, regardless of message time.
+		for _, account := range []string{"acct", "marked"} {
+			var uncovered int
+			if err := tx.QueryRowContext(t.Context(), `SELECT count(*)
 FROM messenger_record m JOIN conv_event e ON e.id=m.event
-WHERE m.account=? AND julianday(e.occurred_at)<julianday(?)`, tc.account, tc.before).Scan(&want); err != nil {
+WHERE m.account=? AND NOT EXISTS (
+ SELECT 1 FROM messenger_learning_skip k WHERE k.platform=m.platform AND k.account=m.account
+ AND k.chat=m.chat AND e.rowid>k.from_rowid AND (k.to_rowid=0 OR e.rowid<=k.to_rowid))`, account).Scan(&uncovered); err != nil {
 				return err
 			}
-			if from != want || closed {
-				return fmt.Errorf("%s: interval %d open=%t, want %d open", tc.account, from, !closed, want)
-			}
-			var covered int
-			if err := tx.QueryRowContext(t.Context(), `SELECT count(*) FROM messenger_record m JOIN conv_event e ON e.id=m.event
-WHERE m.account=? AND e.rowid>?`, tc.account, from).Scan(&covered); err != nil {
-				return err
-			}
-			if covered == 0 {
-				return fmt.Errorf("%s: the seeded interval covers no record", tc.account)
+			if uncovered != 0 {
+				return fmt.Errorf("%s: upgrade left %d disabled records eligible", account, uncovered)
 			}
 		}
 		var leaked int

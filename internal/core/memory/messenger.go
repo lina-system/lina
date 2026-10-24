@@ -30,16 +30,13 @@ type MessengerMessage struct {
 
 // MessengerUtterance is one burst of the person's records in one chat.
 type MessengerUtterance struct {
-	Platform string `json:"platform"`
-	Account  string `json:"account"`
-	Chat     string `json:"chat"`
-	Scope    Scope  `json:"scope"`
-	// From is the chat's excluded-through position at preparation. Apply
-	// rebuilds the batch when the chat's switch moved it since.
-	From    int64              `json:"from,omitempty"`
-	Text    string             `json:"text"`
-	Events  []Evidence         `json:"events"`
-	Context []MessengerMessage `json:"context,omitempty"`
+	Platform string             `json:"platform"`
+	Account  string             `json:"account"`
+	Chat     string             `json:"chat"`
+	Scope    Scope              `json:"scope"`
+	Text     string             `json:"text"`
+	Events   []Evidence         `json:"events"`
+	Context  []MessengerMessage `json:"context,omitempty"`
 }
 
 // MessengerSourceProgress is one source's committed ledger position and its
@@ -75,98 +72,75 @@ const messengerReadableRecord = `m.state='live'
   WHERE k.platform=m.platform AND k.account=m.account AND (k.chat='' OR k.chat=m.chat)
    AND e.rowid>k.from_rowid AND (k.to_rowid=0 OR e.rowid<=k.to_rowid))`
 
-// messengerEvidenceCandidates lists the events the next preparation could read
-// or attach as context, whose bodies are material-backed. Preparation resolves
-// quotes inside one read transaction, and canon serves a single reader, so a
-// material read there would wait on the connection the transaction holds. A
-// caller loads these first, so the preload is bounded by the same batch and
-// context limits the preparation uses, not by the person's whole history.
+// MessengerEvidenceCandidates selects only material bodies used by the same
+// bounded record scan as preparation. Context is limited before filtering by
+// storage type, so inline records also occupy context slots.
 func (s *Store) MessengerEvidenceCandidates(ctx context.Context, person string, limit, contextLimit int) ([]Evidence, error) {
 	if s == nil || s.db == nil || !present(person) || limit < 1 || limit > 1000 || contextLimit < 0 || contextLimit > 8 {
 		return nil, ErrInvalid
 	}
-	var ids []string
+	var refs []Evidence
 	seen := map[string]bool{}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		blocked, err := restrictedEvents(ctx, tx, RecallScope{Person: person, ExternalModel: true})
+		if err != nil {
+			return err
+		}
+		collect := func(id string) error {
+			if seen[id] || blocked[id] {
+				return nil
+			}
+			seen[id] = true
+			var backed bool
+			if err := tx.QueryRowContext(ctx, "SELECT material_id IS NOT NULL FROM conv_event WHERE id=?", id).Scan(&backed); err != nil {
+				return err
+			}
+			if backed {
+				refs = append(refs, Evidence{Kind: Event, ID: id, Precision: Exact})
+			}
+			return nil
+		}
 		sources, err := messengerSources(ctx, tx, person)
 		if err != nil {
 			return err
 		}
+		remaining := limit
 		for _, source := range sources {
+			if remaining == 0 {
+				break
+			}
 			if !source.learns() {
 				continue
 			}
-			found, err := s.messengerCandidateIDs(ctx, tx, person, source, limit, contextLimit)
+			scanned, err := messengerScanRows(ctx, tx, person, source, remaining)
 			if err != nil {
 				return err
 			}
-			for _, id := range found {
-				if !seen[id] {
-					seen[id] = true
-					ids = append(ids, id)
+			for _, v := range scanned {
+				if !v.mine {
+					continue
+				}
+				remaining--
+				if blocked[v.id] {
+					continue
+				}
+				if err := collect(v.id); err != nil {
+					return err
+				}
+				context, err := messengerContextRows(ctx, tx, source.platform, source.account, v.chat, v.sequence, contextLimit)
+				if err != nil {
+					return err
+				}
+				for _, message := range context {
+					if err := collect(message.id); err != nil {
+						return err
+					}
 				}
 			}
 		}
 		return nil
 	})
-	if err != nil {
-		return nil, err
-	}
-	refs := make([]Evidence, 0, len(ids))
-	for _, id := range ids {
-		refs = append(refs, Evidence{Kind: Event, ID: id, Precision: Exact})
-	}
-	return refs, nil
-}
-
-// messengerCandidateIDs selects one source's next eligible records and the
-// context messages an utterance starting at any of them could attach.
-func (s *Store) messengerCandidateIDs(ctx context.Context, tx *canon.Tx, person string, source messengerSourceRow, limit, contextLimit int) ([]string, error) {
-	if contextLimit == 0 {
-		contextLimit = 0
-	}
-	floor, err := parseWatermark(source.watermark, source.connected)
-	if err != nil {
-		return nil, err
-	}
-	floorText := floor.UTC().Format(time.RFC3339Nano)
-	rows, err := tx.QueryContext(ctx, `WITH cand AS (
- SELECT e.rowid AS seq, e.id AS id, m.chat AS chat, e.material_id IS NOT NULL AS backed,
-  row_number() OVER (ORDER BY e.rowid) AS rn
- FROM messenger_record m
- JOIN conv_event e ON e.id=m.event
- JOIN messenger_chat c ON c.platform=m.platform AND c.account=m.account AND c.chat=m.chat
- WHERE m.platform=? AND m.account=? AND e.rowid>?
-  AND e.speaker_kind='person' AND coalesce(e.person_id,'')=?
-  AND c.learn=1 AND c.scope<>?
-  AND (CASE WHEN ? THEN julianday(e.occurred_at)>julianday(?) ELSE julianday(e.occurred_at)>=julianday(?) END)
-  AND `+messengerReadableRecord+`
-)
-SELECT id FROM cand WHERE rn<=? AND backed
-UNION
-SELECT x.id FROM (
- SELECT e.id AS id,
-  row_number() OVER (PARTITION BY cand.seq ORDER BY e.occurred_at DESC,e.rowid DESC) AS rn
- FROM cand
- JOIN messenger_record m ON m.platform=? AND m.account=? AND m.chat=cand.chat
- JOIN conv_event e ON e.id=m.event
- WHERE e.rowid<cand.seq AND e.material_id IS NOT NULL AND `+messengerReadableRecord+`
-) x WHERE x.rn<=?`,
-		source.platform, source.account, source.after, person, string(NeverLeaves), source.exclusive, floorText, floorText, limit,
-		source.platform, source.account, contextLimit)
-	if err != nil {
-		return nil, fmt.Errorf("messenger evidence candidates %s/%s: %w", source.platform, source.account, err)
-	}
-	defer rows.Close()
-	var ids []string
-	for rows.Next() {
-		var id string
-		if err := rows.Scan(&id); err != nil {
-			return nil, err
-		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+	return refs, err
 }
 
 // messengerSourceRow is one source at preparation.
@@ -225,12 +199,6 @@ func parseWatermark(text, connected string) (time.Time, error) {
 	return at, nil
 }
 
-type messengerChatRow struct {
-	platform, account, chat string
-	learn                   bool
-	scope                   string
-}
-
 // PrepareMessengerExtraction reads at most limit of the person's records across
 // this person's sources. Non-person records only advance progress. Through is
 // the source's committed ledger position, independent of the job's task
@@ -277,50 +245,9 @@ func (s *Store) PrepareMessengerExtraction(ctx context.Context, person string, l
 				batch.Sources = append(batch.Sources, progress)
 				continue
 			}
-			floor, err := parseWatermark(source.watermark, source.connected)
-			if err != nil {
-				return err
-			}
 			holder := messengerHolder(source.platform, source.account)
-			floorText := floor.UTC().Format(time.RFC3339Nano)
-			// Another participant's turn is read as well, without being learned
-			// input: it breaks the burst, as a non-person turn does in a
-			// conversation (docs/design/go-core.md). The window stops at the
-			// limit-th person record, so the batch stays bounded.
-			rows, err := tx.QueryContext(ctx, `WITH cand AS (
- SELECT e.rowid AS seq, e.id AS id, c.chat AS chat, c.scope AS scope,
-  (e.speaker_kind='person' AND coalesce(e.person_id,'')=?) AS mine,
-  sum(CASE WHEN e.speaker_kind='person' AND coalesce(e.person_id,'')=? THEN 1 ELSE 0 END) OVER (ORDER BY e.rowid) AS persons
- FROM messenger_record m
- JOIN conv_event e ON e.id=m.event
- JOIN messenger_chat c ON c.platform=m.platform AND c.account=m.account AND c.chat=m.chat
- WHERE m.platform=? AND m.account=? AND e.rowid>?
-  AND c.learn=1 AND c.scope<>?
-  AND (e.speaker_kind<>'person' OR coalesce(e.person_id,'')<>?
-       OR (CASE WHEN ? THEN julianday(e.occurred_at)>julianday(?) ELSE julianday(e.occurred_at)>=julianday(?) END))
-  AND `+messengerReadableRecord+`
-)
-SELECT seq,id,chat,scope,mine FROM cand WHERE persons<=? ORDER BY seq LIMIT ?`,
-				person, person, source.platform, source.account, source.after, string(NeverLeaves), person,
-				source.exclusive, floorText, floorText, limit, limit*8)
+			scanned, err := messengerScanRows(ctx, tx, person, source, remaining)
 			if err != nil {
-				return fmt.Errorf("messenger records %s/%s: %w", source.platform, source.account, err)
-			}
-			type row struct {
-				sequence        int64
-				id, chat, scope string
-				mine            bool
-			}
-			var scanned []row
-			for rows.Next() {
-				var v row
-				if err := rows.Scan(&v.sequence, &v.id, &v.chat, &v.scope, &v.mine); err != nil {
-					rows.Close()
-					return err
-				}
-				scanned = append(scanned, v)
-			}
-			if err := errors.Join(rows.Err(), rows.Close()); err != nil {
 				return err
 			}
 			if len(scanned) == 0 {
@@ -341,7 +268,12 @@ SELECT seq,id,chat,scope,mine FROM cand WHERE persons<=? ORDER BY seq LIMIT ?`,
 				progress.Through = v.sequence
 				if !v.mine {
 					// The participant's turn breaks the burst; it is not read as
-					// evidence and never becomes context for the next utterance.
+					// evidence; context selection handles it independently.
+					previous = ""
+					continue
+				}
+				remaining--
+				if blocked[v.id] {
 					previous = ""
 					continue
 				}
@@ -396,10 +328,7 @@ SELECT seq,id,chat,scope,mine FROM cand WHERE persons<=? ORDER BY seq LIMIT ?`,
 				u.Events = append(u.Events, ref)
 				previous = key
 				last = origin.OccurredAt
-				remaining--
-				if remaining == 0 {
-					break
-				}
+
 			}
 			batch.Sources = append(batch.Sources, progress)
 			if remaining == 0 {
@@ -409,6 +338,59 @@ SELECT seq,id,chat,scope,mine FROM cand WHERE persons<=? ORDER BY seq LIMIT ?`,
 		return nil
 	})
 	return batch, err
+}
+
+type messengerScanRow struct {
+	sequence        int64
+	id, chat, scope string
+	mine            bool
+}
+
+// messengerScanRows bounds one admission-ordered prefix. Both body preloading
+// and extraction count the same person records, including empty/restricted
+// ones, so neither phase can expand the other phase's resource bound.
+func messengerScanRows(ctx context.Context, tx *canon.Tx, person string, source messengerSourceRow, limit int) ([]messengerScanRow, error) {
+	floor, err := parseWatermark(source.watermark, source.connected)
+	if err != nil {
+		return nil, err
+	}
+	floorText := floor.UTC().Format(time.RFC3339Nano)
+	remaining := limit
+	rows, err := tx.QueryContext(ctx, `SELECT e.rowid,e.id,c.chat,c.scope,
+ (e.speaker_kind='person' AND coalesce(e.person_id,'')=?)
+FROM messenger_record m
+JOIN conv_event e ON e.id=m.event
+JOIN messenger_chat c ON c.platform=m.platform AND c.account=m.account AND c.chat=m.chat
+WHERE m.platform=? AND m.account=? AND e.rowid>?
+ AND c.learn=1 AND c.scope<>?
+ AND (e.speaker_kind<>'person' OR coalesce(e.person_id,'')<>?
+      OR (CASE WHEN ? THEN julianday(e.occurred_at)>julianday(?) ELSE julianday(e.occurred_at)>=julianday(?) END))
+ AND `+messengerReadableRecord+`
+ORDER BY e.rowid LIMIT ?`,
+		person, source.platform, source.account, source.after, string(NeverLeaves), person,
+		source.exclusive, floorText, floorText, limit*8)
+	if err != nil {
+		return nil, fmt.Errorf("messenger records %s/%s: %w", source.platform, source.account, err)
+	}
+	var scanned []messengerScanRow
+	for rows.Next() {
+		var v messengerScanRow
+		if err := rows.Scan(&v.sequence, &v.id, &v.chat, &v.scope, &v.mine); err != nil {
+			rows.Close()
+			return nil, err
+		}
+		scanned = append(scanned, v)
+		if v.mine {
+			remaining--
+			if remaining == 0 {
+				break
+			}
+		}
+	}
+	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return scanned, nil
 }
 
 // messengerSkip reports the newest live record of a source, which the caller
@@ -422,10 +404,12 @@ WHERE m.platform=? AND m.account=? AND m.state='live' AND e.rowid>? AND json_ext
 	return through, err
 }
 
-// messengerContext reads at most limit earlier records of one chat as untrusted
-// context. They are visible, canonical, not excluded by retraction and not in
-// an interval a learning switch excluded.
-func (s *Store) messengerContext(ctx context.Context, tx *canon.Tx, platform, account, chat string, before int64, limit int, blocked map[string]bool, resolve ResolveEvidence) ([]MessengerMessage, error) {
+type messengerContextRow struct {
+	id, speaker, author string
+	visible, canonical  bool
+}
+
+func messengerContextRows(ctx context.Context, tx *canon.Tx, platform, account, chat string, before int64, limit int) ([]messengerContextRow, error) {
 	if limit == 0 {
 		return nil, nil
 	}
@@ -438,13 +422,9 @@ ORDER BY e.occurred_at DESC,e.rowid DESC LIMIT ?`, platform, account, chat, befo
 	if err != nil {
 		return nil, err
 	}
-	type contextRow struct {
-		id, speaker, author string
-		visible, canonical  bool
-	}
-	var found []contextRow
+	var found []messengerContextRow
 	for rows.Next() {
-		var v contextRow
+		var v messengerContextRow
 		if err := rows.Scan(&v.id, &v.speaker, &v.author, &v.visible, &v.canonical); err != nil {
 			rows.Close()
 			return nil, err
@@ -452,6 +432,15 @@ ORDER BY e.occurred_at DESC,e.rowid DESC LIMIT ?`, platform, account, chat, befo
 		found = append(found, v)
 	}
 	if err := errors.Join(rows.Err(), rows.Close()); err != nil {
+		return nil, err
+	}
+	return found, nil
+}
+
+// messengerContext resolves the selected context through the prepared body cache.
+func (s *Store) messengerContext(ctx context.Context, tx *canon.Tx, platform, account, chat string, before int64, limit int, blocked map[string]bool, resolve ResolveEvidence) ([]MessengerMessage, error) {
+	found, err := messengerContextRows(ctx, tx, platform, account, chat, before, limit)
+	if err != nil {
 		return nil, err
 	}
 	var messages []MessengerMessage
@@ -595,17 +584,17 @@ func checkPreparedMessenger(ctx context.Context, tx *canon.Tx, batch MessengerBa
 		supplying[utterance.Platform+"\x00"+utterance.Account] = true
 	}
 	for _, source := range batch.Sources {
-		var watermark string
+		var watermark, mode string
 		var learn, exclusive bool
 		var cursor int64
-		err := tx.QueryRowContext(ctx, `SELECT s.learning_watermark,s.learn,s.learn_after,
+		err := tx.QueryRowContext(ctx, `SELECT s.learning_watermark,s.mode,s.learn,s.learn_after,
  coalesce((SELECT c.through FROM messenger_learning_cursor c WHERE c.platform=s.platform AND c.account=s.account),0)
-FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batch.Person, source.Platform, source.Account).Scan(&watermark, &learn, &exclusive, &cursor)
+FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batch.Person, source.Platform, source.Account).Scan(&watermark, &mode, &learn, &exclusive, &cursor)
 		if err != nil {
 			return ErrJobConflict
 		}
 		if watermark != source.Watermark || exclusive != source.Exclusive || cursor != source.After ||
-			!learn && supplying[source.Platform+"\x00"+source.Account] {
+			(!learn || messengerGated(source.Platform, mode)) && supplying[source.Platform+"\x00"+source.Account] {
 			return ErrJobConflict
 		}
 	}
