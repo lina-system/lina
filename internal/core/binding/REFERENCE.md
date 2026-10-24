@@ -16,6 +16,18 @@ is retained. Current choices overlay those events, and a created receipt supplie
 the next focus identity. `input-choice-v1` context sources reconstruct immutable
 choice bytes for request replay.
 
+`NormalizeChoices` decodes a model's binding arguments before validation:
+ordinals are optional and placed in message order, a target may be an object, an
+id, an exact title, `new` or `none`, an absent or inexact excerpt becomes the
+input text, and kind and parent words are mapped to stored values. Only a target
+naming no open item, or more than one, returns a correction with the allowed ids.
+
+A work tool that names its target appends the same kind of choice, so the
+message's item follows what the tool acts on. A worker session resolves to the
+work item it controls, which keeps a person's chosen target authoritative for
+`worker_input` and `worker_interrupt`: a session for another task in the same
+conversation is refused while a chosen target is in effect.
+
 A person-selected new target keeps that decider. Once its created id is recorded,
 a later read, progress check, or follow-up may name that existing item; any
 other item stays pending. A model follow-up to a worker task uses the agent

@@ -372,19 +372,24 @@ Word lists and timing do not bind. In the owner's data, status, memory and new-w
 
 **The model's part.** When no rule holds, the choice among the candidates, "new" and "none" is a closed choice of Atropos. Jev answers it when a judge is available and confident ([cognition-and-life.md](cognition-and-life.md#jev)). Otherwise the main model decides inside the turn. It resolves pronouns and dropped objects against the candidates, tells a continuation of the focus from new work, and splits a message that carries several requests into one binding each. A work tool call that names its target binds the message to it: a record write, a follow-up to a run, a progress read or a goal start. `bind_input` binds without another action. A reply with neither keeps a fresh focus, or binds to none when the focus has aged.
 
-`bind_input` records request ordinals and exact input excerpts. Choices append
-system events to the admission binding; retries retain the same event and question.
-A work tool may name `input_binding` to select a request or consumed steering input.
-Both tools use optional `input_event_id`: omit it for the current input, or name
-an admitted event consumed by this turn. It is never an arbitrary ledger lookup.
-The legacy `input` field remains readable. The current input's text, ignoring
-case and spacing, means that input. When the turn has only that input, other
-prose in the selector means it too. An event-shaped id the turn did not consume
-is rejected. Conflicting selectors are rejected. Unknown binding fields are
-ignored. Invalid new targets return the field and reason, allowed kinds, and
-for a parent error the authorized open initiative/project IDs, so the model can
-correct the next call. A question about two new targets labels each choice with
-its kind and parent, so the options stay distinct.
+`bind_input` records one request per binding. Choices append system events to the
+admission binding; retries retain the same event and question. The tool tolerates
+the shapes a model naturally writes, because a rejected argument loses the whole
+message: a request ordinal is optional and omitted ordinals take message order,
+a target may be the candidate object, its exact id or title, `new` or `none`, and
+an excerpt that is absent or not an exact copy becomes the input text. A kind
+word is mapped to the stored kinds, an unknown kind becomes a to-do, and a parent
+that is not an open initiative or project is dropped. Only a target naming no
+candidate, or more than one, returns `field` and `reason` with the allowed ids so
+the model can correct the next call. A work tool may name `input_binding` to
+select a request or consumed steering input. Both tools accept the selector under
+`input_event_id`, `input` or `text`: absent means the current input, `current`
+means the turn's own input, and an exact copy of an input's text means that input.
+An event id is valid only for an event this turn consumed; it is never an
+arbitrary ledger lookup. Case and spacing differences in input text are ignored.
+When the turn has only that input, other prose in the selector means it too.
+Conflicting selectors are rejected. Unknown binding fields are ignored.
+A question about two new targets labels each choice with its kind and parent.
 A single `prepare_work` or `schedule_work` receipt records the created task as
 that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record
@@ -445,6 +450,12 @@ A later page belongs to the same person, agent, and conversation as the
 question it continues.
 
 When it asks, Core keeps the instruction pending until the person explicitly selects a target or cancels it. Passing over the question, an unrelated turn or a deadline never applies the recommended pick. While the target is unresolved, Core does not deliver the instruction as a steer, start its work (including a step graph or a mock build), stop its worker, or perform its send, payment or deletion. Unrelated conversation and independent work continue. Selecting a target resolves only the binding; execution still requires the usual state and authorization checks ([main-authority.md](main-authority.md#approval)). This exception also applies to the general skipped-question rule in [Applying the record](preset-work-methods.md#applying-the-record).
+
+Target questions use the existing question card and Waiting for me. Their
+recommendation is the first option, with no default action. A card answer or an
+exact offered label or number resolves only that request; declining or cancelling
+records its cancellation. An unrelated turn can proceed without resolving it.
+Core checks a retained tie again when a later tool would make it irreversible.
 
 Target questions use the existing question card and Waiting for me. Their
 recommendation is the first option, with no default action. A card answer or an

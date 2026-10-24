@@ -51,6 +51,9 @@ type Inbound struct {
 	PreviousCursor, Cursor string
 	Direct, Addressed      bool
 	Body                   []byte
+	// DeferCursor leaves the shared session checkpoint to the transport session
+	// owner, which advances it only after every subscriber admits the dispatch.
+	DeferCursor bool
 }
 
 // Delivery carries only committed input. The composition root routes it through
@@ -75,6 +78,12 @@ func (g *Gateway) Admit(ctx context.Context, e Inbound) error {
 	}
 	var d Delivery
 	var inserted bool
+	record := channels.RecordReceipt
+	if e.DeferCursor {
+		record = func(ctx context.Context, tx *canon.Tx, a channels.Address, agent, id, _, cursor string, inboxID int64) error {
+			return channels.NoteReceipt(ctx, tx, a, agent, id, cursor, inboxID)
+		}
+	}
 	err := g.db.Write(ctx, func(tx *canon.Tx) error {
 		seen, err := channels.Seen(ctx, tx, e.Bot, e.NativeID)
 		if err != nil || seen {
@@ -82,7 +91,7 @@ func (g *Gateway) Admit(ctx context.Context, e Inbound) error {
 		}
 		b, err := channels.AdmitScope(ctx, tx, e.Address, e.Sender, e.Direct, e.Addressed)
 		if errors.Is(err, channels.ErrDenied) || errors.Is(err, sql.ErrNoRows) {
-			return channels.RecordReceipt(ctx, tx, e.Address, "", e.NativeID, e.PreviousCursor, e.Cursor, 0)
+			return record(ctx, tx, e.Address, "", e.NativeID, e.PreviousCursor, e.Cursor, 0)
 		}
 		if err != nil {
 			return err
@@ -95,7 +104,7 @@ func (g *Gateway) Admit(ctx context.Context, e Inbound) error {
 		if err != nil {
 			return err
 		}
-		if err = channels.RecordReceipt(ctx, tx, e.Address, b.Agent, e.NativeID, e.PreviousCursor, e.Cursor, r.ID); err != nil {
+		if err = record(ctx, tx, e.Address, b.Agent, e.NativeID, e.PreviousCursor, e.Cursor, r.ID); err != nil {
 			return err
 		}
 		inserted = r.Inserted
