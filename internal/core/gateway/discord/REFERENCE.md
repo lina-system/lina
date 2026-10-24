@@ -59,7 +59,9 @@ handshake before the next Identify, so the platform has ended the old session
 before the new one starts and a token never shows two sessions, even briefly.
 A subscriber that leaves without changing the union leaves the running socket
 in place, and the hub keeps its handle, so the next intent change or stop still
-reaches that socket.
+reaches that socket. A handover that arrives while the socket is still dialing
+cancels that attempt instead of waiting for it, and the next attempt identifies
+with the current union.
 A subscriber that cannot store a dispatch yet returns `channels.Retry`. Each
 subscriber has its own delivery worker, so the socket's read loop and the other
 subscribers keep running while that dispatch waits: later messages arrive and

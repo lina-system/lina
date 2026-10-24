@@ -100,7 +100,16 @@ func TestIntentChangeEndsTheOldSessionBeforeIdentifying(t *testing.T) {
 	if got := <-intents; got != int(baseIntents) {
 		t.Fatalf("first Identify intents = %d, want %d", got, baseIntents)
 	}
+	// Capture the running socket before the second subscriber attaches, so the
+	// assertion below waits for the hub's own handover request instead of
+	// racing the attach.
+	running := runningSocket(t, f)
 	start(IntentMessageContent)
+	select {
+	case <-running.replace:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the intent change never asked the running socket to hand over")
+	}
 	// The second subscriber changes the union, so the hub replaces the socket.
 	// Until the platform answers the close frame, it must see one session.
 	time.Sleep(250 * time.Millisecond)
@@ -124,6 +133,81 @@ func TestIntentChangeEndsTheOldSessionBeforeIdentifying(t *testing.T) {
 	}
 	cancel()
 	listeners.Wait()
+}
+
+// runningSocket returns the socket the hub for this fixture has published and
+// not yet replaced, so a test can wait for the hub's own handover request.
+func runningSocket(t *testing.T, f *fixture) *live {
+	t.Helper()
+	hubs.Lock()
+	h := hubs.byKey[hubKey{db: f.db, bot: f.a.bot.Key()}]
+	hubs.Unlock()
+	if h == nil {
+		t.Fatal("no hub runs for this bot token")
+	}
+	h.mu.Lock()
+	l := h.socket
+	h.mu.Unlock()
+	if l == nil {
+		t.Fatal("the hub has no running socket")
+	}
+	return l
+}
+
+// TestIntentChangeDuringTheDialDoesNotHoldTheLastSubscriber proves that a
+// replacement requested while the connection attempt is still pending cancels
+// that attempt, so the subscribers that leave afterwards return instead of
+// waiting for the dial timeout.
+func TestIntentChangeDuringTheDialDoesNotHoldTheLastSubscriber(t *testing.T) {
+	entered := make(chan struct{}, 2)
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		select {
+		case entered <- struct{}{}:
+		default:
+		}
+		<-r.Context().Done()
+		return nil, r.Context().Err()
+	})
+	f := setup(t, transport)
+	start := func(ctx context.Context, asked Intents) chan struct{} {
+		done := make(chan struct{})
+		go func() {
+			defer close(done)
+			_ = Listen(ctx, Listener{Bot: f.a.bot, Token: f.a.token, DB: f.db, Transport: transport, Intents: asked,
+				Handle: func(context.Context, string, json.RawMessage, string) error { return nil }})
+		}()
+		return done
+	}
+	firstCtx, cancelFirst := context.WithCancel(context.Background())
+	defer cancelFirst()
+	firstDone := start(firstCtx, 0)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the first listener never dialed")
+	}
+	// The privileged intent changes the union while that dial is pending, so
+	// the hub cancels the attempt and dials again with the whole union. A hub
+	// that only replaces a socket it already established would leave the
+	// pending attempt running.
+	secondCtx, cancelSecond := context.WithCancel(context.Background())
+	defer cancelSecond()
+	secondDone := start(secondCtx, IntentMessageContent)
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the replacement dial never started, so the pending attempt was not cancelled")
+	}
+	// With both subscribers gone, neither Listen may wait for the dial timeout.
+	cancelFirst()
+	cancelSecond()
+	for i, done := range []chan struct{}{firstDone, secondDone} {
+		select {
+		case <-done:
+		case <-time.After(5 * time.Second):
+			t.Fatalf("listener %d still waits for a pending dial", i+1)
+		}
+	}
 }
 
 // TestUnchangedDetachKeepsTheSocketForTheNextIntentChange proves that a

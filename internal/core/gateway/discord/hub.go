@@ -301,7 +301,6 @@ func (m *member) close() {
 func (h *hub) interrupt() {
 	h.mu.Lock()
 	l := h.socket
-	h.socket = nil
 	h.mu.Unlock()
 	if l != nil {
 		l.cancel()
@@ -313,7 +312,6 @@ func (h *hub) interrupt() {
 func (h *hub) handover() {
 	h.mu.Lock()
 	l := h.socket
-	h.socket = nil
 	h.mu.Unlock()
 	if l != nil {
 		l.handover()
@@ -710,43 +708,32 @@ func (h *hub) serve(asked Intents) error {
 	l := &live{cancel: cancel, replace: make(chan struct{})}
 	h.socket = l
 	h.mu.Unlock()
-	position := h.resume(ctx)
-	dialCtx, cancelDial := context.WithTimeout(ctx, 30*time.Second)
-	conn, _, err := websocket.Dial(dialCtx, "wss://gateway.discord.gg/?v=10&encoding=json", &websocket.DialOptions{HTTPClient: h.http})
-	cancelDial()
-	if err != nil {
-		if ctx.Err() != nil {
-			return nil
-		}
-		return errUnavailable
-	}
-	conn.SetReadLimit(1 << 20)
 	// A socket this hub replaces ends with a close handshake, so the platform
 	// has closed the old session before the next Identify. A socket the
-	// platform or an error ends is closed at once.
+	// platform or an error ends is closed at once. Until the dial returns this
+	// live has no connection, and a handover only cancels the attempt: nothing
+	// identified, so the platform has no session to end.
 	joined := make(chan struct{})
 	reader := false
+	var connMu sync.Mutex
+	var conn *websocket.Conn
 	var replaced, handed atomic.Bool
-	defer func() {
-		cancel()
-		// A close handshake in flight ends this socket itself; closing it here
-		// as well would wait behind that handshake.
-		if !handed.Load() {
-			conn.CloseNow()
-		}
-		if reader {
-			<-joined
-		}
-	}()
 	var handoverOnce sync.Once
 	handover := func() {
 		handoverOnce.Do(func() {
 			replaced.Store(true)
+			connMu.Lock()
+			c := conn
+			connMu.Unlock()
+			if c == nil {
+				cancel()
+				return
+			}
 			handed.Store(true)
 			closed := make(chan struct{})
 			go func() {
 				defer close(closed)
-				_ = conn.Close(websocket.StatusNormalClosure, "")
+				_ = c.Close(websocket.StatusNormalClosure, "")
 			}()
 			timer := time.NewTimer(closeGrace)
 			select {
@@ -758,8 +745,10 @@ func (h *hub) serve(asked Intents) error {
 			cancel()
 		})
 	}
+	// The watcher runs before the dial, so a hub that stops or replaces this
+	// socket while the attempt is pending cancels it instead of holding the
+	// last subscriber until the dial timeout.
 	watchDone := make(chan struct{})
-	defer close(watchDone)
 	go func() {
 		select {
 		case <-l.replace:
@@ -775,6 +764,38 @@ func (h *hub) serve(asked Intents) error {
 		}
 		handover()
 	}()
+	position := h.resume(ctx)
+	dialCtx, cancelDial := context.WithTimeout(ctx, 30*time.Second)
+	dialed, _, err := websocket.Dial(dialCtx, "wss://gateway.discord.gg/?v=10&encoding=json", &websocket.DialOptions{HTTPClient: h.http})
+	cancelDial()
+	if err != nil {
+		if ctx.Err() != nil {
+			return nil
+		}
+		return errUnavailable
+	}
+	dialed.SetReadLimit(1 << 20)
+	connMu.Lock()
+	conn = dialed
+	connMu.Unlock()
+	if replaced.Load() || ctx.Err() != nil {
+		// The hub stopped or replaced this attempt while it dialed, so this
+		// connection never identified and no session exists to end.
+		dialed.CloseNow()
+		return nil
+	}
+	defer func() {
+		cancel()
+		// A close handshake in flight ends this socket itself; closing it here
+		// as well would wait behind that handshake.
+		if !handed.Load() {
+			dialed.CloseNow()
+		}
+		if reader {
+			<-joined
+		}
+	}()
+	defer close(watchDone)
 	helloCtx, cancelHello := context.WithTimeout(ctx, 30*time.Second)
 	var hello frame
 	err = wsjson.Read(helloCtx, conn, &hello)
