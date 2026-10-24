@@ -1205,6 +1205,9 @@ The ledger names the class per request.
 
 Core holds potential text-call fragments until the terminal response is classified,
 including fragments split across streaming deltas and completed message items.
+Non-call output items, including opaque reasoning, wait for that classification;
+a defective response cannot leave old item indices or session state in a fresh
+continuation.
 Recovered calls receive fresh call IDs and pass through the same committed call
 journal, validation, hooks, approval and dispatch as native calls. Real structured
 calls, including AgentRuntime bridge calls, take precedence over text detection.

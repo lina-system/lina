@@ -196,15 +196,17 @@ func (s *textCallStream) Next(ctx context.Context) (provider.Event, error) {
 			if json.Unmarshal(e.Item, &item) != nil {
 				return provider.Event{}, ErrResponse
 			}
-			if item.Type == "function_call" || item.Type == "custom_tool_call" {
+			nativeCall := item.Type == "function_call" || item.Type == "custom_tool_call"
+			if nativeCall {
 				s.real.Store(true)
 			}
 			if item.Role == "assistant" && (item.Type == "message" || item.Type == "") {
 				s.texts[e.Index] = assistantText(item.Content)
-				// Completed assistant messages wait for the turn boundary, even when
-				// the provider sent no deltas. Other provider items stay verbatim.
-				s.pending = append(s.pending, e)
-			} else if s.held {
+			}
+			// Reasoning belongs to this response too. Holding every non-call
+			// item prevents the fresh stream from colliding with old indexes
+			// or carrying opaque state from the defective response forward.
+			if !nativeCall || s.held {
 				s.pending = append(s.pending, e)
 			} else {
 				return e, nil

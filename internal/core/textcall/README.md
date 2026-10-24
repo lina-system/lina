@@ -92,8 +92,9 @@ the research latency bar; unit tests do not pass or fail based on scheduling luc
 `simulated_dispatches` counts dispatch proposals. `planned_extra_model_turns` is
 zero for dispatch and one for restart; `planned_fresh_session_starts` is one for
 restart. There are zero same-session nudges. These are deterministic planned
-costs, not measured provider turns or completed sessions. Repeated-fault escalation
-and actual time to resumed work require the later runtime wiring.
+costs, not measured provider turns or completed sessions. Runtime stream tests and the M4 headless scenarios separately exercise
+repeated-fault failure and actual resumed tool dispatch; replay timings still
+measure only the pure decision.
 
 The command returns 0 only when at least one case was scored, every case matched,
 and none was rejected; 1 for rejected or mismatched cases, 64 for invalid usage,

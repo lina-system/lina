@@ -28,7 +28,9 @@ Each run uses its own input queue.
 It holds possible marker fragments (including single-byte prefixes) and completed
 assistant messages until a clean terminal boundary. It releases normal text
 verbatim; native call events and runtime bridge calls preempt recovery. Opaque
-provider items remain intact. A recovered call becomes a canonical function-call
+provider items remain intact on normal turns; a defective response's reasoning
+is withheld along with its assistant text so a fresh stream can restart item
+indices without retaining contaminated state. A recovered call becomes a canonical function-call
 item with a fresh ID and travels through `Run`'s existing journal and execution.
 
 An unusable call opens one fresh request through the same stream function with a

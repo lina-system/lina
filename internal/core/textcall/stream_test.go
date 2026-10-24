@@ -331,3 +331,27 @@ func TestCancelledTextStreamNeverStartsContinuation(t *testing.T) {
 		t.Fatalf("requests=%d err=%v", requests, err)
 	}
 }
+
+func TestFreshContinuationDropsPriorReasoningItems(t *testing.T) {
+	requests := 0
+	out, err := loop.Run(t.Context(), loop.Config{Stream: textcall.Guard(func(context.Context, provider.Request) (provider.Stream, error) {
+		requests++
+		if requests == 1 {
+			w := message("[tool_use")
+			for i := range w.events {
+				w.events[i].Index = 1
+			}
+			w.events = append([]provider.Event{{Kind: provider.ItemDone, Index: 0, Item: json.RawMessage(`{"type":"reasoning","id":"old-reasoning","summary":[]}`)}}, w.events...)
+			return w, nil
+		}
+		return message("Recovered."), nil
+	})})
+	if err != nil || requests != 2 {
+		t.Fatalf("requests=%d err=%v", requests, err)
+	}
+	for _, item := range out.Items {
+		if strings.Contains(string(item), "old-reasoning") {
+			t.Errorf("contaminated reasoning retained: %s", item)
+		}
+	}
+}

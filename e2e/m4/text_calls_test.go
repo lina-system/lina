@@ -19,13 +19,16 @@ import (
 	"github.com/thisisjun786/lina/kit/provider"
 )
 
-func textCallReply(w http.ResponseWriter, text string) {
+func textCallReply(w http.ResponseWriter, text string) { textCallReplyAt(w, text, 0) }
+func textCallReplyAt(w http.ResponseWriter, text string, index int) {
 	w.Header().Set("Content-Type", "text/event-stream")
 	for _, chunk := range []string{text[:1], text[1:]} {
 		raw, _ := json.Marshal(chunk)
-		fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":0,\"delta\":%s}\n\n", raw)
+		fmt.Fprintf(w, "data: {\"type\":\"response.output_text.delta\",\"output_index\":%d,\"delta\":%s}\n\n", index, raw)
 	}
-	reply(w, text)
+	item, _ := json.Marshal(map[string]any{"type": "message", "role": "assistant", "content": []map[string]string{{"type": "output_text", "text": text}}})
+	fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":%d,\"item\":%s}\n\n", index, item)
+	fmt.Fprint(w, "data: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n")
 }
 
 func TestTextCallsThroughRunningCore(t *testing.T) {
@@ -64,6 +67,10 @@ func TestTextCallsThroughRunningCore(t *testing.T) {
 						w.Header().Set("Content-Type", "text/event-stream")
 						fmt.Fprintf(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":1,\"item\":%s}\n\n", raw)
 						toolCall(w, "real-load", "load_tools", map[string]any{"tools": []string{"calculate"}})
+					} else if tc.name == "incomplete" {
+						w.Header().Set("Content-Type", "text/event-stream")
+						fmt.Fprint(w, "data: {\"type\":\"response.output_item.done\",\"output_index\":0,\"item\":{\"type\":\"reasoning\",\"id\":\"old-reasoning\",\"summary\":[]}}\n\n")
+						textCallReplyAt(w, tc.text, 1)
 					} else {
 						textCallReply(w, tc.text)
 					}
