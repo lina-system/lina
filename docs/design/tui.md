@@ -681,6 +681,16 @@ that order, the conversation's reading position or the draft.
 
 **Updates.** Topic updates replace cards in place. They never move focus, scroll the conversation, change the draft or close an opened 일 view. From Core's commit of a work event to the PTY frame that shows the changed card, the 95th percentile is at most 500 ms and the maximum at most 1 s with 50 일 running (P).
 
+E8 uses Core's durable work-event timestamp, written inside the commit
+transaction, as a conservative start that includes storage time. The endpoint
+is the first complete renderer write consumed from the PTY whose parsed card
+contains the new Now. A later observer wakeup or a partial PTY read cannot stand
+in for that frame. Every sample retains its event key, both timestamps, latency
+and frame; p95 uses the nearest rank (sample 48 of 50 after sorting). Missing
+frames, negative durations or an exceeded bound fail without retries. The
+draft, focus and retained conversation position are checked throughout and
+after closing the overlay.
+
 **Acceptance, defined before building.** `e2e/m3/work-panel.json` and its Go driver run installed Core with a fixture manager and stub workers, and the real TUI in a PTY at 120x34, in Korean and English, Unicode and ASCII. Inputs are fixed before any run: N = 1, 5, 20 and 50 일; the 일 at position i takes graph i mod 5 of a fixed corpus (one step; a chain of six; a diamond; a fan-out of one, 82 and one; two independent chains); names come from a fixed corpus of 1 to 60 graphemes with Hangul, wide, combining and emoji sequences. Exactly one 일 waits on the person and is the last one admitted; a second case at N = 50 has three. Each check passes or fails. No check is scored, retried or settled by sleeping:
 
 | Check | Pass when |
@@ -707,13 +717,20 @@ The harness and its self-test live in `TestM3WorkPanelEvaluation` and
 the graph corpus and the name corpus. The driver acts as the fixture manager: it
 admits each 일's graph through Core's goal engine as a step-graph revision, then
 records the 일's work with a stub worker session against that goal. It reads
-Core's own card order, card fields and projected stage list as its oracle — the
+the managed goal as the project card and its worker task as a detail row;
+person waits are recorded on the owning goal step in the journal before
+startup. Core's own card order, card fields and projected stage list are its oracle — the
 stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
 languages and glyph modes. A check whose input the build does not publish yet is
-reported as missing and never as a pass: E4 and E8 to E9 need the injected step
-transitions of #771, E6 and E7 the opened 일 view of #770, and E11 to E14 the
-scheduling passes of #772 and #773. The self-test
+reported as missing and never as a pass: E6 and E7 need the opened 일 view of
+#770, and E11 to E14 the scheduling passes of #772 and #773. E4 and E8 to E9
+also run in `TestM3WorkPanelEventLatency`: 50 live corpus graphs remain in
+progress while 50 of the fan-out graph’s 82 parallel steps land. Each stub
+worker writes a result before Core accepts its observation. Eight PTYs observe
+the same commits in both languages, glyph modes and widths, retaining every
+first changed frame and both timestamps. Each combination must independently
+meet the latency bound. The self-test
 builds a well-formed recording, changes one thing per check, and requires that
 check to fail and the others to stay green except where they read the same
 evidence.

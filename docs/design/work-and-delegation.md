@@ -2278,6 +2278,13 @@ Work progress is seen through work cards and the running list built from them. T
 
 ### Progress line
 
+New work-engine events retain Core's admission timestamp at nanosecond
+precision inside their commit transaction, separately from the source event's
+time. Retries and projection rebuilds preserve the original timestamp; legacy
+events without one remain unknown. Commit-to-surface measurements use that
+stored timestamp, including transaction storage time, and never substitute the
+time a later observer reads the event.
+
 LINA Core keeps one progress line for each 일 and each 목표 that has work in flight or something waiting on the person. The line is the person's view of where a piece of work stands, and it is the only form in which the progress of an 일 or a 목표 reaches a surface ([surfaces.md](surfaces.md#progress-at-a-glance)). It is computed from the records and the work cards. It is never written by hand and never taken from a model's estimate.
 
 | Field | What it holds |
