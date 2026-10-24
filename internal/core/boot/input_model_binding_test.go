@@ -491,6 +491,36 @@ func TestModelBindingBareGenerationFollowsChosenTask(t *testing.T) {
 	}
 }
 
+func TestFollowWorkPrefixedTaskKeepsChosenTarget(t *testing.T) {
+	for _, id := range []string{"session:foo", "task:foo"} {
+		t.Run(id, func(t *testing.T) {
+			r, _ := turnRuntime(t)
+			for _, taskID := range []string{id, "chosen"} {
+				if err := r.work.Create(t.Context(), work.Task{ID: taskID, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Task " + taskID, Done: "Done"}); err != nil {
+					t.Fatal(err)
+				}
+			}
+			input := questionPersonInput(t, r, "prefixed-task", "Change the format.")
+			tools := modelBindingTools(t, r, input)
+			chosen := binding.Target{Class: "existing", ID: "chosen", Kind: "task"}
+			if _, err := r.saveModelBinding(t.Context(), input, "person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: chosen}}, "person"); err != nil {
+				t.Fatal(err)
+			}
+			got := questionCall(t, tools, "follow_work", "follow", map[string]string{"id": id, "text": "Use a table."})
+			var output struct{ Code string }
+			if got.Code != loop.Denied || json.Unmarshal(got.Output, &output) != nil || output.Code != "input_target_pending" {
+				t.Errorf("follow_work(%q) bypassed the person's target: code=%s output=%s", id, got.Code, got.Output)
+			}
+			var messages int
+			if err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+				return tx.QueryRowContext(t.Context(), "SELECT count(*) FROM work_steering").Scan(&messages)
+			}); err != nil || messages != 0 {
+				t.Fatalf("follow-up stored: messages=%d err=%v", messages, err)
+			}
+		})
+	}
+}
+
 func TestModelBindingPrefixedTaskMatchesDelivery(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
@@ -845,13 +875,13 @@ func TestModelBindingRetryKeepsCompletedParent(t *testing.T) {
 	}
 }
 
-// A task may be named like a generation reference. The gate and execution share
-// one resolver, so the follow-up reaches the task the person selected, and an
-// unmatched suffix still falls back to the task it qualifies.
+// A task may be named like a session, task or generation reference. The gate
+// and execution share one resolver, so the follow-up reaches the selected task.
+// An unmatched suffix still falls back to the task it qualifies.
 func TestModelBindingFollowPrefersExactTaskID(t *testing.T) {
 	r, _ := turnRuntime(t)
 	probes := map[string]*messageProbe{}
-	for _, id := range []string{"a", "a:1", "b"} {
+	for _, id := range []string{"a", "a:1", "b", "foo", "session:foo", "task:foo"} {
 		dir := t.TempDir()
 		task := work.Task{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Task " + id, Done: "Done", ArtifactRoots: []string{dir}}
 		if err := r.work.Create(t.Context(), task); err != nil {
@@ -881,13 +911,18 @@ func TestModelBindingFollowPrefersExactTaskID(t *testing.T) {
 		}
 		r.workers.mu.Unlock()
 	})
-	input := questionPersonInput(t, r, "exact-task-id", "Change the format.")
-	tools := modelBindingTools(t, r, input)
-	if _, err := r.saveModelBinding(t.Context(), input, "exact-task-person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: "a:1", Kind: "task"}}}, "person"); err != nil {
-		t.Fatal(err)
-	}
-	if got := questionCall(t, tools, "follow_work", "exact", map[string]string{"id": "a:1", "text": "Change the format."}); got.Code != loop.OK {
-		t.Fatalf("the selected task was refused: %+v", got)
+	for n, id := range []string{"a:1", "session:foo", "task:foo"} {
+		input := questionPersonInput(t, r, fmt.Sprintf("exact-task-id-%d", n), "Change the format.")
+		tools := modelBindingTools(t, r, input)
+		if _, err := r.saveModelBinding(t.Context(), input, fmt.Sprintf("exact-task-person-choice-%d", n), []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: id, Kind: "task"}}}, "person"); err != nil {
+			t.Fatal(err)
+		}
+		if got := questionCall(t, tools, "follow_work", "exact", map[string]string{"id": id, "text": "Change the format."}); got.Code != loop.OK {
+			t.Fatalf("the selected task %s was refused: %+v", id, got)
+		}
+		if probes[id].inputs != 1 || probes["foo"].inputs != 0 {
+			t.Fatalf("follow-up reached %s=%d foo=%d", id, probes[id].inputs, probes["foo"].inputs)
+		}
 	}
 	if probes["a:1"].inputs != 1 || probes["a"].inputs != 0 {
 		t.Fatalf("follow-up reached a=%d a:1=%d", probes["a"].inputs, probes["a:1"].inputs)
