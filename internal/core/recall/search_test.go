@@ -360,6 +360,118 @@ func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	}
 }
 
+func TestSearchVectorCandidatesStayInsideScope(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0).UTC()
+	admitAt(t, db, "open", "conversation", "owner", "agent", "도서관 공개", base.Add(48*time.Hour), "")
+	admitAt(t, db, "early", "conversation", "owner", "agent", "도서관 이른", base, "")
+	admitAt(t, db, "protected", "conversation", "owner", "agent", "도서관 보호", base.Add(48*time.Hour), "")
+	admitAt(t, db, "elsewhere", "other", "owner", "agent", "도서관 다른대화", base.Add(48*time.Hour), "")
+	secret := remember(t, db, "agent", "", "비밀 기억", memory.NeverLeaves, "protected")
+	private := remember(t, db, "agent", "", "개인 기억", memory.Private, "open")
+	write(t, db, `INSERT INTO memory_item(id,person,holder,subject_kind,subject_id,normalized,content,scope,state,valid_from,valid_until,supersedes,standing,record)
+ VALUES('stale','owner','all','person','owner','지난 기억','지난 기억','local','active',?,?,'',0,'{"revision":1}')`, base.Add(-48*time.Hour).Unix(), base.Unix())
+	indexMemory(t, db, "stale", "지난 기억")
+
+	vectors := func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{secret, private, "stale", "protected", "early", "elsewhere", "open"}, nil
+	}
+	ids := func(scope recall.Scope) []string {
+		t.Helper()
+		hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", Vectors: vectors})
+		if err != nil {
+			t.Fatal(err)
+		}
+		out := make([]string, 0, len(hits))
+		for _, hit := range hits {
+			out = append(out, hit.ID)
+		}
+		return out
+	}
+	external := recall.Scope{Person: "owner", Agent: "agent", ExternalModel: true}
+	got := ids(external)
+	for _, id := range []string{secret, "protected"} {
+		if slices.Contains(got, id) {
+			t.Fatalf("external model returned %s: %v", id, got)
+		}
+	}
+	// private stays readable on an external-model scope. elsewhere is not
+	// evidence of that item, so lineage does not hide it.
+	if !slices.Contains(got, private) || !slices.Contains(got, "elsewhere") {
+		t.Fatalf("external model dropped an allowed hit: %v", got)
+	}
+
+	projected := external
+	projected.ExternalModel = false
+	projected.Projection = true
+	got = ids(projected)
+	if slices.Contains(got, private) || slices.Contains(got, secret) {
+		t.Fatalf("projection returned a closed memory: %v", got)
+	}
+
+	window := recall.Scope{Person: "owner", Agent: "agent", Since: base.Add(24 * time.Hour), Kinds: []recall.Kind{recall.Event}}
+	got = ids(window)
+	if slices.Contains(got, "early") || !slices.Contains(got, "open") {
+		t.Fatalf("time filter: %v", got)
+	}
+
+	current := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Memory}}
+	got = ids(current)
+	if slices.Contains(got, "stale") {
+		t.Fatalf("memory past validity returned: %v", got)
+	}
+	current.History = true
+	got = ids(current)
+	if !slices.Contains(got, "stale") {
+		t.Fatalf("history dropped a past memory: %v", got)
+	}
+
+	one := recall.Scope{Person: "owner", Agent: "agent", Conversation: "conversation", Kinds: []recall.Kind{recall.Event}}
+	got = ids(one)
+	if slices.Contains(got, "elsewhere") {
+		t.Fatalf("other conversation returned: %v", got)
+	}
+}
+
+func indexMemory(t *testing.T, db *canon.Store, id, text string) {
+	t.Helper()
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		return recall.Index(t.Context(), tx, "memory", id, text)
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSearchRanksPendingMaterialBeforeLimit(t *testing.T) {
+	db := database(t)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body)
+ VALUES('inline','conversation','owner','agent','person','{"kind":"tui"}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','observed','{"kind":"native"}','도서관 이전')`)
+	write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,material_id,material_revision)
+ VALUES('material','conversation','owner','agent','person','{"kind":"tui"}','2026-01-03T00:00:00Z','2026-01-03T00:00:00Z','observed','{"kind":"native"}','asset',1)`)
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}
+	read := func(_ context.Context, id string) (string, error) {
+		if id == "material" {
+			return "도서관 이후", nil
+		}
+		return "", nil
+	}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", Limit: 1, EventText: read})
+	if err != nil || len(hits) != 1 || hits[0].ID != "material" {
+		t.Fatalf("newer pending material lost the limit: %+v %v", hits, err)
+	}
+	hits, err = recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", Limit: 2, EventText: read})
+	if err != nil || len(hits) != 2 || hits[0].ID != "material" || hits[1].ID != "inline" {
+		t.Fatalf("pending order: %+v %v", hits, err)
+	}
+
+	// An indexed match stays ahead of a newer unscored material hit.
+	admitAt(t, db, "indexed", "conversation", "owner", "agent", "도서관", time.Unix(1700000000, 0), "")
+	hits, err = recall.Match(t.Context(), db, scope, recall.Query{Text: "도서관", Limit: 1, EventText: read})
+	if err != nil || len(hits) != 1 || hits[0].ID != "indexed" {
+		t.Fatalf("indexed match lost to pending material: %+v %v", hits, err)
+	}
+}
+
 func TestRestrictedSummaryAncestryBeforeLimit(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)
