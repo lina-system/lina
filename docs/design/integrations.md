@@ -768,6 +768,11 @@ to be a deletion. A channel the account left or can no longer read drops its
 checkpoint, and a later dialog listing sets a new one; it never stops the
 account's other chats. An attachment is fetched from the message it came with,
 so after a restart the source reads that message again for a current location.
+A channel read needs that channel's access hash. When the entity is not
+cached, including after a restart before dialog listing finishes, the source
+resolves it from the account's dialogs and then reads the message. A missing
+cache entry is not loss of access. The chat is unavailable only when those
+dialogs do not include it, or the platform refuses the read.
 Reads send no read acknowledgement, presence or typing request. A Telegram
 channel bot remains a separate channel connection. This increment reads only;
 write verbs remain subject to the messenger write-grant implementation.

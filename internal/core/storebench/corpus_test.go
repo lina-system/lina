@@ -4,6 +4,7 @@ package storebench
 import (
 	"fmt"
 	"math/rand/v2"
+	"slices"
 	"strings"
 	"unicode/utf8"
 
@@ -124,6 +125,10 @@ func generate(turns int) corpus {
 	return c
 }
 
+// missQuery is a literal term from no generated body. It measures what a query
+// that matches nothing costs.
+func (c corpus) missQuery() string { return "zzqx" }
+
 // 48 literal substrings and 12 Hangul pairs, as in the research method. A
 // snapshot without Hangul reports fewer queries rather than fabricating text.
 func (c corpus) queries() []string {
@@ -150,7 +155,13 @@ func (c corpus) queries() []string {
 		runes := []rune(strings.TrimSpace(texts[i%len(texts)]))
 		n := min(3+i%4, len(runes))
 		start := i * 31 % (len(runes) - n + 1)
-		q := strings.TrimSpace(string(runes[start : start+n]))
+		// One literal term: a window that lands across a space is shortened to
+		// the word on its left, so every generated query stays a single term.
+		window := runes[start : start+n]
+		if at := slices.Index(window, ' '); at >= 0 {
+			window = window[:at]
+		}
+		q := strings.TrimSpace(string(window))
 		if utf8.RuneCountInString(q) < 3 {
 			q = string(runes[:3])
 		}
