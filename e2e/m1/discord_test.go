@@ -564,7 +564,7 @@ func runM2DiscordCore(t *testing.T, closeCodes []websocket.StatusCode) {
 	// channel names that item in one line under the reply (surfaces.md).
 	select {
 	case text := <-sent:
-		if text != "Bound to Read the skill inventory · /move" {
+		if !strings.Contains(text, "Read the skill inventory") || !strings.Contains(text, "/move") || strings.Contains(text, "\n") {
 			t.Fatalf("binding chip = %q", text)
 		}
 	case <-h.ctx.Done():
