@@ -125,7 +125,14 @@ func (m *shellModel) conversationFooter(showNotice bool) string {
 		line = ansi.Truncate(line, max(0, width-ansi.StringWidth(marker)), "") + marker
 	}
 	var hints []string
+	goal := false
+	if section == "work" {
+		_, goal = m.selectedGoalCard()
+	}
 	for _, binding := range bindingsFor(section) {
+		if !goal && (binding.Action == "work.move" || binding.Action == "work.pause" || binding.Action == "work.stop") {
+			continue
+		}
 		if binding.Hint != "" {
 			hints = append(hints, binding.Keys[0]+" "+design.Text(m.styles.options.Language, binding.Hint))
 		}

@@ -143,6 +143,15 @@ func TestM3TelegramSourceInstalledCore(t *testing.T) {
 	waitForRows(t, h, done, 1, "SELECT count(*) FROM conv_event WHERE body LIKE '%second, edited%'")
 	call("/delete")
 	waitForRows(t, h, done, 1, "SELECT count(*) FROM removal_applied")
+	call("/missed-edit")
+	waitForRows(t, h, done, 1, "SELECT count(*) FROM conv_event WHERE body='second, recovered'")
+	call("/missed-delete")
+	waitForRows(t, h, done, 2, "SELECT count(*) FROM removal_applied")
+	// Signing in again must replace the cached reader and resume its checkpoint.
+	if result := exchange(protocol.TelegramRequest{Operation: "start", APIID: &apiID, APIHash: &hash, Phone: &phone}); result.Stage != "connected" {
+		t.Fatalf("reauthentication stage %s", result.Stage)
+	}
+	call("/ready")
 	client.Close()
 
 	var stats telegramStats
@@ -267,6 +276,7 @@ type fakeTelegram struct {
 	flooded    bool
 	deletion   bool
 	authorized bool
+	updates    []tg.UpdateClass
 }
 
 var fakePrime = []byte{
@@ -378,7 +388,23 @@ func newFakeTelegram(t *testing.T) *fakeTelegram {
 		})
 	})
 	f.dispatch.HandleFunc(tg.UpdatesGetStateRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
-		return server.SendResult(req, &tg.UpdatesState{Pts: 1, Date: int(time.Now().Unix())})
+		return server.SendResult(req, &tg.UpdatesState{Pts: 1, Date: 100})
+	})
+	f.dispatch.HandleFunc(tg.UpdatesGetDifferenceRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		var request tg.UpdatesGetDifferenceRequest
+		if err := request.Decode(req.Buf); err != nil {
+			return err
+		}
+		f.mu.Lock()
+		var pending []tg.UpdateClass
+		for _, update := range f.updates {
+			if update.(interface{ GetPts() int }).GetPts() > request.Pts {
+				pending = append(pending, update)
+			}
+		}
+		pts := 1 + len(f.updates)
+		f.mu.Unlock()
+		return server.SendResult(req, &tg.UpdatesDifference{OtherUpdates: pending, Users: []tg.UserClass{fakeSelf, fakeFriend}, State: tg.UpdatesState{Pts: pts, Date: 100}})
 	})
 	go f.Up(ctx)
 	<-f.Ready()
@@ -425,7 +451,7 @@ func (f *fakeTelegram) honouredFloodWait() bool {
 	return f.flooded
 }
 
-func (f *fakeTelegram) edit(t *testing.T, id int, text string) {
+func (f *fakeTelegram) edit(t *testing.T, id int, text string, push bool) {
 	t.Helper()
 	f.mu.Lock()
 	session, server := f.session, f.server
@@ -435,12 +461,21 @@ func (f *fakeTelegram) edit(t *testing.T, id int, text string) {
 	}
 	message := &tg.Message{ID: id, PeerID: &tg.PeerUser{UserID: fakeFriend.ID}, FromID: &tg.PeerUser{UserID: fakeFriend.ID},
 		Date: 200, Message: text, EditDate: 500}
-	if err := server.SendUpdates(context.Background(), session, &tg.UpdateEditMessage{Message: message, Pts: 2, PtsCount: 1}); err != nil {
+	f.mu.Lock()
+	pts := 2 + len(f.updates)
+	message.EditDate = 500 + pts
+	update := &tg.UpdateEditMessage{Message: message, Pts: pts, PtsCount: 1}
+	f.updates = append(f.updates, update)
+	f.mu.Unlock()
+	if !push {
+		return
+	}
+	if err := server.SendUpdates(context.Background(), session, update); err != nil {
 		t.Fatal(err)
 	}
 }
 
-func (f *fakeTelegram) delete(t *testing.T, id int) {
+func (f *fakeTelegram) delete(t *testing.T, id int, push bool) {
 	t.Helper()
 	f.mu.Lock()
 	session, server := f.session, f.server
@@ -449,7 +484,14 @@ func (f *fakeTelegram) delete(t *testing.T, id int) {
 	if server == nil {
 		t.Fatal("the source never established a session")
 	}
-	if err := server.SendUpdates(context.Background(), session, &tg.UpdateDeleteMessages{Messages: []int{id}, Pts: 3, PtsCount: 1}); err != nil {
+	f.mu.Lock()
+	update := &tg.UpdateDeleteMessages{Messages: []int{id}, Pts: 2 + len(f.updates), PtsCount: 1}
+	f.updates = append(f.updates, update)
+	f.mu.Unlock()
+	if !push {
+		return
+	}
+	if err := server.SendUpdates(context.Background(), session, update); err != nil {
 		t.Fatal(err)
 	}
 }
@@ -527,9 +569,13 @@ func TestTelegramBootHelper(t *testing.T) {
 				http.Error(w, "not ready", 503)
 			}
 		case "/edit":
-			fixture.edit(t, 2, "second, edited")
+			fixture.edit(t, 2, "second, edited", true)
 		case "/delete":
-			fixture.delete(t, 1)
+			fixture.delete(t, 1, true)
+		case "/missed-edit":
+			fixture.edit(t, 2, "second, recovered", false)
+		case "/missed-delete":
+			fixture.delete(t, 2, false)
 		case "/stats":
 			json.NewEncoder(w).Encode(telegramStats{fixture.honouredFloodWait(), fixture.invokedTypes()})
 		default:
@@ -549,10 +595,21 @@ func TestTelegramBootHelper(t *testing.T) {
 		a, err := telegram.New(telegram.Config{Person: source.Person, Account: source.Account, Vault: telegramVault(t, root), Options: fixture.options()})
 		if err == nil && !strings.HasPrefix(source.Account, "pending:") {
 			live <- a
+			return telegramPollingAdapter{a}, true, nil
 		}
 		return a, err == nil, err
 	}}})
 	if err != nil {
 		t.Fatal(err)
 	}
+}
+
+// Use the production sync path with a short fixture interval, without waiting
+// a minute to prove that an update absent from the live stream is recovered.
+type telegramPollingAdapter struct{ *telegram.Adapter }
+
+func (a telegramPollingAdapter) Capabilities() messenger.Capabilities {
+	caps := a.Adapter.Capabilities()
+	caps.Interval = 25 * time.Millisecond
+	return caps
 }

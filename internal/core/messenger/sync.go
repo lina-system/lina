@@ -242,6 +242,16 @@ func (s *Service) Sync(ctx context.Context, source Source) (result Result, err e
 	if err := s.store.UpsertChats(ctx, source, chats); err != nil {
 		return Result{}, err
 	}
+	if recovery, ok := adapter.(interface {
+		Recover(context.Context, SourceID, func(Event) error) error
+	}); ok {
+		if err := recovery.Recover(ctx, id, func(event Event) error {
+			_, err := s.apply(ctx, source, event)
+			return err
+		}); err != nil {
+			return result, err
+		}
+	}
 	records, err := s.store.Chats(ctx, source.Person, source.Platform, source.Account)
 	if err != nil {
 		return Result{}, err
@@ -343,6 +353,11 @@ func failureCause(err error) string {
 func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result, error) {
 	s.activity.RLock()
 	defer s.activity.RUnlock()
+	return s.apply(ctx, source, event)
+}
+
+// apply also serves recovery while Sync already holds the activity lock.
+func (s *Service) apply(ctx context.Context, source Source, event Event) (Result, error) {
 	if !s.connected(ctx, source) {
 		return Result{}, nil
 	}

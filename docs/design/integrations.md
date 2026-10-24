@@ -745,6 +745,8 @@ cancelled when the client closes it or disconnects.
 Core derives the account ID from Telegram's authenticated user. Application
 credentials and MTProto sessions stay in the person's secret store; code and
 password are transient. Restart resumes connected sources from those sessions.
+Signing in again stops the previous reader before replacing its session, so the
+next read uses the newly authenticated account session.
 Disconnect cancels active reads and rate-limit waits before removing that
 account's saved session, while retaining its imported records. A transient
 source failure retries on the next interval.
@@ -755,6 +757,11 @@ the unfiltered platform response, so skipped folder entries do not hide later
 chats. First fill walks backwards;
 catch-up retains the last completed watermark until every newer page commits.
 Live edits supersede stored records and explicit deletion updates retract them.
+Before a source is current, Core reconciles missed account and channel updates
+from checkpoints kept beside its session. Checkpoints advance only after the
+corresponding records commit. A gap beyond Telegram's recovery window reports
+a source failure and retains the checkpoint; missing history is never inferred
+to be a deletion.
 Reads send no read acknowledgement, presence or typing request. A Telegram
 channel bot remains a separate channel connection. This increment reads only;
 write verbs remain subject to the messenger write-grant implementation.
@@ -843,6 +850,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 
 - Core reads each source on its schedule or from its live events. The records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Reading the same messages again adds nothing.
 - Live events and history pages for one source finish admission one at a time, so a newer edit sees the preceding committed revision. Waiting for admission can be cancelled; platform reads run independently of admission.
+- A failing source is read again on its schedule and returns to connected when a read completes; the person sees its cause in between. A source that needs sign-in waits for the person, and an unreachable, import-only or disconnected source is not read.
 - A chat's first fill reads back as far as the platform allows.
 - A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.

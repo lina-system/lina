@@ -255,6 +255,11 @@ func TestReadsNeverTouchReadStateOrPresence(t *testing.T) {
 	if _, err := adapter.Page(t.Context(), sourceID, "user:2002", page.Next); err != nil {
 		t.Fatal(err)
 	}
+	for range 2 {
+		if err := adapter.Recover(t.Context(), sourceID, func(messenger.Event) error { return nil }); err != nil {
+			t.Fatal(err)
+		}
+	}
 	forbidden := map[uint32]string{
 		tg.MessagesReadHistoryRequestTypeID:         "messages.readHistory",
 		tg.MessagesReadMentionsRequestTypeID:        "messages.readMentions",

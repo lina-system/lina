@@ -6990,6 +6990,9 @@
         "line": {
           "$ref": "#/$defs/progress_line"
         },
+        "goal_id": {
+          "type": "string"
+        },
         "stage_refs": {
           "type": "array",
           "items": {

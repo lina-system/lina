@@ -113,6 +113,8 @@ type Adapter struct {
 	size int
 	wait func(context.Context, time.Duration) error
 
+	recoveryMu  sync.Mutex
+	channelPts  map[int64]int
 	mu          sync.Mutex
 	client      *telegram.Client
 	dispatcher  *tg.UpdateDispatcher
@@ -156,6 +158,7 @@ func New(cfg Config) (*Adapter, error) {
 	return &Adapter{
 		cfg: cfg, size: size, wait: wait,
 		liveReady:   make(chan struct{}),
+		channelPts:  map[int64]int{},
 		listeners:   map[int]func(messenger.Event) error{},
 		users:       map[int64]*tg.User{},
 		chats:       map[int64]*tg.Chat{},
@@ -417,6 +420,9 @@ func (a *Adapter) dialogs(response tg.MessagesDialogsClass) ([]dialogItem, int, 
 		dialog, ok := item.(*tg.Dialog)
 		if !ok || dialog == nil {
 			continue
+		}
+		if peer, ok := dialog.Peer.(*tg.PeerChannel); ok && dialog.Pts > 0 {
+			a.channelPts[peer.ChannelID] = dialog.Pts
 		}
 		key, name, kind, ok := a.chatLocked(dialog.Peer)
 		if !ok {

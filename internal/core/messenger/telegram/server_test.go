@@ -212,6 +212,9 @@ func newServer(t *testing.T) *server {
 	s.dispatcher.HandleFunc(tg.UpdatesGetStateRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
 		return server.SendResult(req, &tg.UpdatesState{Pts: 1, Date: int(time.Now().Unix())})
 	})
+	s.dispatcher.HandleFunc(tg.UpdatesGetDifferenceRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		return server.SendResult(req, &tg.UpdatesDifferenceEmpty{Date: 100})
+	})
 	go s.Up(ctx)
 	<-s.Ready()
 	return s

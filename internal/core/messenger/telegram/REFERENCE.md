@@ -137,3 +137,17 @@ the messenger loop even when no test configuration is supplied.
 Acceptance uses a child Core process and an in-process fake MTProto server.
 The owner client performs the full code/2FA exchange through the socket; an
 explicit subscription barrier precedes one edit and one deletion push.
+
+## Missed updates
+
+`Recover` establishes the account state and channel dialog pts before first fill.
+Each subsequent sync requests account differences (including slices) and channel
+differences before history paging. Core admits each event through the same
+per-source admission lock as live events. Completed response checkpoints persist
+as versioned secret-store blobs under `updates:<account>`; a failed admission or
+save replays from the previous checkpoint. Too-long or non-progressing differences
+report `telegram_update_gap` instead of treating the source as current.
+
+Seen: pinned gotd types expose account/channel differences and too-long responses.
+Inferred: canon's idempotent admission permits replay after an interrupted save.
+Unknown: Telegram's retention window; no missing message is inferred deleted.

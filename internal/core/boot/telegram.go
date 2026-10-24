@@ -231,7 +231,23 @@ func (c *telegramControl) start(connection, phone string) error {
 		err := adapter.Authenticate(ctx, telegram.PromptFuncs{PhoneFunc: func(context.Context) (string, error) { return phone, nil }, CodeFunc: func(context.Context, telegram.Code) (string, error) { return ask("code") }, PasswordFunc: func(context.Context) (string, error) { return ask("password") }})
 		if err == nil {
 			var account string
-			account, err = adapter.SaveSession(ctx)
+			account, err = adapter.Account(ctx)
+			if err == nil && c.r.messenger != nil {
+				var rows []messenger.Source
+				rows, err = c.store().Sources(ctx, c.r.person)
+				if err == nil {
+					for _, row := range rows {
+						if row.Platform == telegram.Platform && row.Account == account {
+							// Stop the old reader before replacing the session it could still save.
+							err = c.r.messenger.Disconnect(ctx, row)
+							break
+						}
+					}
+				}
+			}
+			if err == nil {
+				account, err = adapter.SaveSession(ctx)
+			}
 			if err == nil {
 				source.Account = account
 				source.Mode = messenger.ModeOfficial
