@@ -18,6 +18,8 @@ var KakaoTalkCapability = protocol.Capability{Name: "kakaotalk", Version: "1.0"}
 // the terms is the one whose sign-in answers are relayed.
 type KakaoTalkService interface {
 	KakaoTalk(context.Context, Session, protocol.KakaotalkRequest) (Result, error)
+	// EndKakaoTalk cancels the sign-in held by a connection that has gone away.
+	EndKakaoTalk(connection string)
 }
 
 // KakaoTalkOperations routes the source's control requests. Only a client that
@@ -37,6 +39,11 @@ func KakaoTalkOperations(service KakaoTalkService) map[protocol.Kind]Operation {
 				return Result{}, &OperationError{Code: protocol.ErrorNotAuthorized}
 			}
 			return service.KakaoTalk(ctx, session, p)
+		},
+		Disconnect: func(session Session) {
+			if service != nil {
+				service.EndKakaoTalk(session.ConnectionID)
+			}
 		},
 	}}
 }

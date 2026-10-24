@@ -51,6 +51,14 @@ func kakaotalkError(err error) error {
 	return &clientsrv.OperationError{Code: code}
 }
 
+// EndKakaoTalk cancels the sign-in relay when its client connection ends.
+func (r *conversationRuntime) EndKakaoTalk(connection string) {
+	if r.kakao == nil || connection == "" {
+		return
+	}
+	r.kakao.End(context.Background(), connection)
+}
+
 // KakaoTalk answers one control request for the person's KakaoTalk source. The
 // connect card's acceptance, the passcode relay and disconnecting are the
 // person's own acts; sync runs in Core independently.

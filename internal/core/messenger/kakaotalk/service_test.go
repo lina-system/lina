@@ -252,6 +252,50 @@ func TestAnswerNeedsALiveAttempt(t *testing.T) {
 	}
 }
 
+// An answer that arrives after the deadline still cancels the add-on flow.
+// Dropping only the relay record would let the next connection resume it.
+func TestExpiredAnswerCancelsTheAddonFlow(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn":  {emailPrompt, emailPrompt},
+		"cancelSignIn": {cancelled},
+	})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(11 * time.Minute)
+	if _, err := h.service.Answer(t.Context(), "first", "email", "person@example.test"); !errors.Is(err, kakaotalk.ErrNoAttempt) {
+		t.Fatalf("expired answer: %v", err)
+	}
+	if ops := h.script.ops(); len(ops) != 2 || ops[0] != "beginSignIn" || ops[1] != "cancelSignIn" {
+		t.Fatalf("expired answer did not cancel the add-on: %v", ops)
+	}
+	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
+		t.Fatalf("replacement after an expired answer: %v", err)
+	}
+	if ops := h.script.ops(); len(ops) != 3 || ops[2] != "beginSignIn" {
+		t.Fatalf("replacement resumed the abandoned flow: %v", ops)
+	}
+}
+
+// A connection that leaves during sign-in cancels that attempt, so the next
+// connection can begin instead of waiting out the abandoned relay.
+func TestEndingTheConnectionCancelsItsSignIn(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn":  {emailPrompt, emailPrompt},
+		"cancelSignIn": {cancelled},
+	})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	h.service.End(t.Context(), "first")
+	if ops := h.script.ops(); len(ops) != 2 || ops[1] != "cancelSignIn" {
+		t.Fatalf("ending the connection did not cancel the add-on: %v", ops)
+	}
+	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
+		t.Fatalf("the ended connection still held the flow: %v", err)
+	}
+}
+
 // The add-on runs one pending sign-in per platform, so only the connection that
 // began it may resume or answer it. Another connection is refused instead of
 // being shown the first one's prompt; a failed attempt frees the flow.

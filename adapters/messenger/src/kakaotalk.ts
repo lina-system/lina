@@ -221,6 +221,16 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     if (mine !== generation) return;
     await credentials.clearPendingLogin();
     if (mine !== generation) return;
+    // The read client stays logged out until this attempt hands it the new
+    // session. Reporting signed-in first would let Core ask who we are on a
+    // client that never logged in.
+    await client.login({
+      oauthToken: saved.oauth_token,
+      userId: saved.user_id,
+      deviceUuid: saved.device_uuid,
+      deviceType: 'tablet',
+    }, saved.account_id);
+    if (mine !== generation) return;
     account = saved;
     ownId = String(saved.user_id);
     signedIn = true;

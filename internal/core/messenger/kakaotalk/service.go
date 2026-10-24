@@ -254,10 +254,15 @@ func (s *Service) Answer(ctx context.Context, connection, prompt, value string) 
 	s.flow.Lock()
 	defer s.flow.Unlock()
 	s.mu.Lock()
-	s.expireLocked()
+	expired := s.expireLocked()
 	pending, ok := s.attempts[connection]
 	held := s.holder == connection
 	s.mu.Unlock()
+	// The deadline already removed the relay. Cancel its add-on flow before
+	// refusing the answer, or the next connection resumes the abandoned one.
+	for _, abandoned := range expired {
+		s.cancel(ctx, abandoned)
+	}
 	if !ok || !held || !s.now().Before(pending.expires) {
 		return Step{}, ErrNoAttempt
 	}
@@ -337,6 +342,26 @@ func (s *Service) source(ctx context.Context, account string) (*messenger.Source
 		}
 	}
 	return nil, nil
+}
+
+// End drops the sign-in this connection was holding and cancels it in the
+// add-on. A client that leaves during sign-in must not keep the flow or let
+// a background registration finish for a connection that is gone.
+func (s *Service) End(ctx context.Context, connection string) {
+	if connection == "" {
+		return
+	}
+	s.flow.Lock()
+	defer s.flow.Unlock()
+	s.mu.Lock()
+	pending, ok := s.attempts[connection]
+	if ok {
+		s.releaseLocked(connection)
+	}
+	s.mu.Unlock()
+	if ok {
+		s.cancel(ctx, pending)
+	}
 }
 
 // Disconnect stops the account's reads and live events, ends its add-on session

@@ -182,6 +182,8 @@ test('sign-in runs on the tablet slot through the passcode the person confirms o
   // code on their phone.
   await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(await driver.signInState(), 'signed_in');
+  // The new session is logged in before Core asks who the account is.
+  assert.ok(fixture.calls.includes('login'));
   assert.deepEqual(await driver.whoami(), { id: '7788', name: 'Me' });
   assert.ok(fixture.calls.includes('registerDevice'));
   assert.deepEqual(fixture.calls.filter(call => call === 'attemptLogin').length, 2);
