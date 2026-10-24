@@ -26,6 +26,10 @@ export type Addon = {
 export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream | { write(chunk: string): unknown }, runtime: Runtime, addon: Addon): Promise<void> {
   let driver: Driver | null = null;
   let liveStop: (() => void) | null = null;
+  // liveStart counts subscription attempts. A stop that arrives while one is
+  // still opening the driver invalidates it, so it never installs a
+  // subscription that has no reader.
+  let liveStart = 0;
   let buffer = '';
   let openError: string | null = null;
   // An unregistered platform stays `unsupported_platform`. Later reads repeat
@@ -59,16 +63,21 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
     liveStop = null;
   };
 
+  const cancelLive = () => {
+    liveStart++;
+    stopLive();
+  };
+
   const handle = async (request: Request): Promise<unknown> => {
     switch (request.op) {
       case 'hello':
         return { version: VERSION, platform: addon.platform, account: addon.account };
       case 'quit':
-        stopLive();
+        cancelLive();
         setImmediate(() => process.exit(0));
         return { stopped: true };
       case 'stop':
-        stopLive();
+        cancelLive();
         return { stopped: true };
       case 'signIn': {
         const value = await driverOrOpen();
@@ -99,7 +108,11 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
         return { author: author(await value.whoami()) };
       }
       case 'live': {
+        const start = ++liveStart;
         const value = await driverOrOpen();
+        // A stop arrived while this subscription was starting: it has no
+        // reader, so it is not installed.
+        if (start !== liveStart) return { live: false };
         stopLive();
         // current is false once this subscription is stopped, replaced or
         // ended, so a late event or a second end from the driver is dropped.
