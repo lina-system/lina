@@ -650,7 +650,7 @@ func (r *conversationRuntime) channelReceiptEventID(ctx context.Context, event l
 
 func bindingAction(name string) string {
 	switch name {
-	case "follow_work", "worker_input":
+	case "follow_work", "worker_input", "worker_interrupt":
 		return "steer"
 	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph":
 		return "start"

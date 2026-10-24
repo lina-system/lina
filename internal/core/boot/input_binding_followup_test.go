@@ -786,6 +786,45 @@ func TestSubmitStepGraphHoldsTiedStart(t *testing.T) {
 	}
 }
 
+func TestWorkerInterruptHoldsTiedSteer(t *testing.T) {
+	r, _ := turnRuntime(t)
+	for _, id := range []string{"task-a", "task-b"} {
+		card := work.Card{
+			Task:   work.Task{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: id},
+			State:  "working",
+			Active: true,
+		}
+		raw, err := json.Marshal(card)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+			_, err := tx.ExecContext(t.Context(), "INSERT INTO work_cards(task_id,record) VALUES(?,?)", id, raw)
+			return err
+		}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	probe := &workerProbe{snapshot: worker.ThreadSnapshot{Thread: worker.Thread{ID: "thread", TurnID: "turn", ProcessGeneration: 1, BindingEpoch: 1, TaskID: "task-a"}, State: worker.Active}}
+	r.workers = &workerRuntime{sessions: map[string]*workerSession{"thread": {adapter: probe, origin: r, thread: probe.snapshot.Thread}}}
+	t.Cleanup(func() { r.workers = nil })
+	input := questionPersonInput(t, r, "interrupt-tie", "Stop the chosen worker.")
+	tools := modelBindingTools(t, r, input)
+	a := binding.Target{Class: "existing", ID: "task-a", Kind: "task"}
+	b := binding.Target{Class: "existing", ID: "task-b", Kind: "task"}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{
+		Quote: input.Body.Text(), Target: a, Tied: []binding.Target{a, b}, Action: "read",
+	}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	got := questionCall(t, tools, "worker_interrupt", "tied-stop", map[string]any{
+		"session": "thread", "turn": "turn", "generation": 1, "binding": 1, "quote": input.Body.Text(),
+	})
+	if got.Code != loop.Denied || !strings.Contains(string(got.Output), "input_target_pending") || probe.interrupts != 0 {
+		t.Fatalf("tied interrupt reached the worker: %+v interrupts=%d", got, probe.interrupts)
+	}
+}
+
 func TestWorkCompletionTurnKeepsBindingTools(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
