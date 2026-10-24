@@ -349,6 +349,15 @@ func TestChannelMoveListsAndAppliesChoice(t *testing.T) {
 	fixtureRecord(t, r, "garden", "project", "active", "", "Garden", "Plan the beds.")
 	fixtureRecord(t, r, "plants", "todo", "open", "garden", "Plants", "Water them.")
 	fixtureRecord(t, r, "lamps", "todo", "open", "garden", "Lamps", "Replace the bulbs.")
+	// Candidates of one rank order by activity and then by id. Commits stamp
+	// whole seconds, so the fixtures would order by the wall clock whenever a
+	// second boundary falls between them; pin one activity to keep the list.
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "UPDATE records_activity SET last_activity='2026-01-01T00:00:00Z' WHERE id IN ('garden','plants','lamps')")
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
 	address := channels.Address{Bot: channels.Bot{Platform: "telegram", Account: "fixture"}, Chat: "100"}
 	admitted, err := json.Marshal(gateway.Inbound{Address: address, NativeID: "person-1", Body: []byte(`{"message_id":"person-1","text":"Plants"}`)})
 	if err != nil {
