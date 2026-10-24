@@ -115,6 +115,22 @@ test('a response shape the add-on does not know is refused, not passed on', asyn
   assert.deepEqual(frame, { id: 'p', ok: false, error: 'upstream_changed' });
 });
 
+test('a page coverage the add-on does not know is refused', async t => {
+  const h = harness(t, fixtureDriver({ page: { messages: [], deletions: [], next: '', hasMore: false, coverage: { historyDepth: 7 } } }));
+  const [frame] = await h.send({ id: 'p', op: 'page', chat: 'dm-1', cursor: '' });
+  assert.deepEqual(frame, { id: 'p', ok: false, error: 'upstream_changed' });
+});
+
+test('a decryption failure that carries text is refused', async t => {
+  const message = {
+    id: 'm-1', author: { id: 'u-1', name: 'A' }, route: 'external_participant',
+    at: '2026-10-01T00:00:00Z', text: 'visible', decryptionFailed: true,
+  };
+  const h = harness(t, fixtureDriver({ page: { messages: [message], deletions: [], next: '', hasMore: false } }));
+  const [frame] = await h.send({ id: 'p', op: 'page', chat: 'dm-1', cursor: '' });
+  assert.deepEqual(frame, { id: 'p', ok: false, error: 'upstream_changed' });
+});
+
 test('opening an unregistered platform keeps unsupported_platform', async t => {
   let opens = 0;
   const h = harness(t, fixtureDriver(), {
