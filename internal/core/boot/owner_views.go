@@ -324,30 +324,23 @@ func (r *conversationRuntime) progressObservation(ctx context.Context, order wai
 
 // workProgress answers one item from the current projection. The running list
 // hides a landed unit the person has already seen; asking again still reads
-// that unit. Ids are tried in order, so a literal task id wins before a goal
-// record is read as its bare goal. An id with no unit stays unknown.
-func (r *conversationRuntime) workProgress(ctx context.Context, ids ...string) (any, error) {
+// that unit. An id with no unit stays unknown.
+func (r *conversationRuntime) workProgress(ctx context.Context, id string) (any, error) {
 	observed, err := r.progressObservation(ctx, waiting.Priority)
 	if err != nil {
 		return nil, err
 	}
-	rows := wireProgressRows(progress.Compute(observed.units), observed.workers)
-	for _, id := range ids {
-		if id == "" {
+	for _, row := range wireProgressRows(progress.Compute(observed.units), observed.workers) {
+		if progressRefMatches(row.Ref, id) {
+			return row.Line, nil
+		}
+	}
+	for _, unit := range observed.units {
+		if !progressRefMatches(unit.ID, id) {
 			continue
 		}
-		for _, row := range rows {
-			if progressRefMatches(row.Ref, id) {
-				return row.Line, nil
-			}
-		}
-		for _, unit := range observed.units {
-			if !progressRefMatches(unit.ID, id) {
-				continue
-			}
-			hidden := wireProgressRows([]progress.Entry{{Ref: unit.ID, Line: progress.UnitLine(unit)}}, observed.workers)
-			return hidden[0].Line, nil
-		}
+		rows := wireProgressRows([]progress.Entry{{Ref: unit.ID, Line: progress.UnitLine(unit)}}, observed.workers)
+		return rows[0].Line, nil
 	}
 	return map[string]string{"state": "unknown"}, nil
 }

@@ -638,18 +638,24 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					}
 					return r.followSubmitted(ctx, preparation, turnID, c.ID, taskID, a.Text)
 				}
-				// The binding check keeps the project record id. The progress
-				// line uses the bare goal id, so resolve that reference here.
-				// The literal id is tried first: a task named goal:foo is not
-				// the goal foo. workProgress still reads a finished item the
-				// running list hid.
-				ids := []string{a.ID}
-				if ref, ok := goal.GoalID(a.ID); ok && ref != a.ID {
-					ids = append(ids, ref)
-				}
-				line, err := r.workProgress(ctx, ids...)
+				projection, err := r.ownerSnapshot(ctx)
 				if err != nil {
 					return bindingFailure(c.ID, err)
+				}
+				var line any = map[string]string{"state": "unknown"}
+				// The binding check keeps the project record id. The progress
+				// line uses the bare goal id, so resolve that reference here.
+				progressID := a.ID
+				if ref, ok := goal.GoalID(a.ID); ok && ref != a.ID {
+					progressID = ref
+				}
+				if projection.Rows != nil {
+					for _, row := range *projection.Rows {
+						if row.Ref == progressID || row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
+							line = row.Line
+							break
+						}
+					}
 				}
 				raw, _ := json.Marshal(map[string]any{"id": a.ID, "progress": line})
 				return loop.Result{ID: c.ID, Code: loop.OK, Output: raw}
@@ -711,9 +717,8 @@ func (r *conversationRuntime) followOfflineSession(ctx context.Context, input le
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
 	// reconcileWorkers skips a finished record, so held mail would never be
-	// delivered or refused. A completed session cannot resume: refuse before
-	// any offline message is stored. A canceled record still records the
-	// session_gone receipt below.
+	// delivered or refused. State finished with Canceled false cannot resume:
+	// refuse before AdmitMessage or StoreSteering queues offline mail.
 	if rec.State == "finished" && !rec.Canceled {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
@@ -1016,9 +1021,6 @@ func (r *conversationRuntime) workerSessionTask(ctx context.Context, session str
 // checked is the identity that receives the instruction. A literal task id
 // wins over a generation suffix: a task named "a:1" is not generation 1 of "a".
 func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (string, error) {
-	if card, err := r.work.Get(ctx, ref); err == nil {
-		return card.Task.ID, nil
-	}
 	if session, ok := strings.CutPrefix(ref, "session:"); ok {
 		return r.workerSessionTask(ctx, session)
 	}
@@ -1030,6 +1032,9 @@ func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (str
 			return err
 		})
 		return card.Task.ID, err
+	}
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
 	}
 	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
 		if _, err := r.work.Get(ctx, taskID); err == nil {
