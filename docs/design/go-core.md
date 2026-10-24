@@ -106,7 +106,7 @@ Layers under `internal/core/`:
 | L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
 | L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
-| L5 | `boot`, `supervise` |
+| L5 | `boot`, `supervise`, `methodreplay` |
 
 The separate worker has its own downward import layers.
 Core may import only its `jobapi` contract, never its reader or runtime; the worker imports no Core, provider, secret, process-launch or arbitrary third-party package.
@@ -1461,6 +1461,7 @@ macOS runs each command as its own launchd job through the explicit per-command 
 Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
 Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
 The owner stops and joins a file-backed input relay when the command returns, and it does not close the caller's file.
+A read timeout on input that is not a file is reported with the command result. The read deadline that stops the file relay is not an input failure.
 If the owner disappears before the helper connects, the helper still boots the job out and removes its directory.
 A relative command directory is prefixed with the owner's working directory and left uncleaned, so the kernel resolves a symlink followed by `..`.
 The sandbox's Seatbelt policy keeps its `setsid`/`setpgid` denial, which matches the Linux seccomp filter but is no longer what owns a command's descendants.

@@ -343,6 +343,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 	if err := addOperations(&r.identity, clientsrv.WorkControlOperations(r)); err != nil {
 		return nil, err
 	}
+	if err := addOperations(&r.identity, clientsrv.WorkLimitOperations(r)); err != nil {
+		return nil, err
+	}
 	if err = r.startWorkerLanes(); err != nil {
 		return nil, err
 	}
