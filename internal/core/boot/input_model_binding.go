@@ -193,13 +193,26 @@ func (s *turnState) bindingInput(id string) (ledger.Event, *conversationRuntime,
 			}
 		}
 	}
-	// A model that puts the message itself in the selector field names the one
-	// input this turn has. Event-like selectors stay strict: an admitted event
-	// the turn did not consume is not a binding target.
+	// Prose in the selector names the only input this turn has. An event-shaped
+	// id the turn did not consume stays unknown.
 	if !bindingSelectorIsEventID(id) && s.bindingSource == nil && len(s.bindingInputs) == 0 {
 		return s.input, s.runtime, nil
 	}
 	return ledger.Event{}, nil, &binding.ChoiceError{Field: "input_event_id", Reason: "unknown_input_event"}
+}
+
+func sameBindingSelector(selector string, event ledger.Event) bool {
+	if selector == event.ID {
+		return true
+	}
+	normalize := func(value string) string {
+		return binding.Fold(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+	}
+	return selector != "" && normalize(selector) == normalize(event.Body.Text())
+}
+
+func bindingSelectorIsEventID(id string) bool {
+	return id != "" && !strings.ContainsAny(id, " \t\r\n") && len(id) <= 256
 }
 
 func (s *turnState) currentBindingInput() (ledger.Event, *conversationRuntime, error) {
@@ -207,21 +220,6 @@ func (s *turnState) currentBindingInput() (ledger.Event, *conversationRuntime, e
 		return *s.bindingSource, s.runtime, nil
 	}
 	return s.input, s.runtime, nil
-}
-
-// sameBindingSelector compares an event id or the input text.
-func sameBindingSelector(selector string, event ledger.Event) bool {
-	if selector == event.ID {
-		return true
-	}
-	normalized := func(value string) string {
-		return binding.Fold(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
-	}
-	return selector != "" && normalized(selector) == normalized(event.Body.Text())
-}
-
-func bindingSelectorIsEventID(id string) bool {
-	return id != "" && !strings.ContainsAny(id, " \t\r\n") && len(id) <= 256
 }
 
 // Selectors may appear under more than one argument name. They must all
@@ -370,20 +368,36 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 		}
 		raws[n] = raw
 	}
-	return r.saveModelRawBinding(ctx, input, id, raws, decider)
+	return r.saveInputBinding(ctx, input, id, decider, func(state binding.State) ([]binding.Choice, error) {
+		normalized, err := binding.NormalizeChoices(state, input.Body.Text(), raws)
+		if err != nil {
+			return nil, err
+		}
+		// Only in-process callers may retain Core's inherited question pages.
+		for i := range normalized {
+			normalized[i].More = slices.Clone(choices[i].More)
+		}
+		return normalized, nil
+	})
 }
 
 // saveModelRawBinding normalizes the arguments a model sent before it stores or
 // validates them. Normalization needs the candidate snapshot, so it runs inside
 // the write transaction; a bad excerpt, kind or parent never aborts the call.
-func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input ledger.Event, id string, raws []json.RawMessage, decider string) (out []binding.Choice, err error) {
+func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input ledger.Event, id string, raws []json.RawMessage, decider string) ([]binding.Choice, error) {
+	return r.saveInputBinding(ctx, input, id, decider, func(state binding.State) ([]binding.Choice, error) {
+		return binding.NormalizeChoices(state, input.Body.Text(), raws)
+	})
+}
+
+func (r *conversationRuntime) saveInputBinding(ctx context.Context, input ledger.Event, id, decider string, normalize func(binding.State) ([]binding.Choice, error)) (out []binding.Choice, err error) {
 	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || input.SpeakerKind != guard.Person || r.channelBinding != nil && (!r.channelBinding.Scope.Tools || r.validateChannel(ctx) != nil) {
 		return nil, binding.ErrChoice
 	}
 	err = r.db.Write(ctx, func(tx *canon.Tx) error {
 		// An immutable call is idempotent, including its originally pending card.
-		// The stored batch is compared before a fresh normalization, so a parent
-		// that completed after the call does not rewrite it.
+		// The stored batch is compared before the current snapshot rewrites it,
+		// so a parent that completed after the call does not change the retry.
 		var raw string
 		e := tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND parent_id=? AND scaffold_kind=?`, id, input.ID, modelBindingKind).Scan(&raw)
 		if e == nil {
@@ -395,7 +409,7 @@ func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input led
 			if e != nil {
 				return e
 			}
-			choices, e := binding.NormalizeChoices(retainStoredParents(state, batch.Bindings), input.Body.Text(), raws)
+			choices, e := normalize(retainStoredParents(state, batch.Bindings))
 			if e != nil {
 				return e
 			}
@@ -417,7 +431,7 @@ func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input led
 		if e != nil {
 			return e
 		}
-		choices, e := binding.NormalizeChoices(state, input.Body.Text(), raws)
+		choices, e := normalize(state)
 		if e != nil {
 			return e
 		}

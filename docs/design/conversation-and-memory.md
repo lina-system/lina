@@ -214,7 +214,7 @@ A messenger source ([integrations.md](integrations.md#messengers)) brings the pe
 - A write LINA made returns through sync as an `agent` record linked to its effect. Core records the effect's client message id, or the platform's message id from the effect's result, before it admits that chat's own-account messages; an own-account message in a chat with an unsettled write waits until the write settles. Such a record is never the person's words and never evidence about the person.
 - The person's own messages are the person's words. They feed memory like the person's turns in the app, within the cost bounds of [Learning the person](#learning-the-person). Items learned from them take the default layer of their kind and have no source agent; the kinds held by one agent (shared history, relationship, emotion observation) do not arise from them.
 - Other people's messages are external evidence with the `third_party` tag, never an instruction or an approval. They become memory only about their sender, and only when the sender is matched to a known person with high confidence ([Sender identity](#sender-identity)). An unmatched or ambiguous sender stays search-only.
-- Text is masked at admission like any native event. An attachment is kept as metadata; its bytes enter LINA only when the person imports it.
+- Text is masked at admission like any native event. An attachment is kept as metadata; its bytes enter LINA only when the person imports it. The metadata commits with the record it belongs to, before the chat's cursor passes it, and is deleted when the record's text is permanently deleted.
 - An edit is a new event that `supersedes` the earlier one. Search shows the newest, and the earlier stays as history. Replies and thread membership are the relations `replies_to` and `in_thread`, including when the root and the reply are admitted in the same read.
 - A deletion the platform reports hides the record at once through the one retraction path. Its text then follows the trash rule: 30 days, then permanent deletion with a tombstone that keeps the legacy reference. A message missing from a later read is never a deletion.
 - Messenger records reach a turn only as the result of a tool call that asks for them, as external evidence with their origin. They never enter a ContextPacket on their own.
@@ -392,7 +392,10 @@ select a request or consumed steering input. Both tools accept the selector unde
 `input_event_id`, `input` or `text`: absent means the current input, `current`
 means the turn's own input, and an exact copy of an input's text means that input.
 An event id is valid only for an event this turn consumed; it is never an
-arbitrary ledger lookup. Conflicting selectors are rejected.
+arbitrary ledger lookup. Case and spacing differences in input text are ignored.
+When the turn has only that input, other prose in the selector means it too.
+Conflicting selectors are rejected. Unknown binding fields are ignored.
+A question about two new targets labels each choice with its kind and parent.
 A single `prepare_work` or `schedule_work` receipt records the created task as
 that request's focus. Several created tasks stay unresolved. When the person
 has selected a new target and creation has recorded its id, a later record

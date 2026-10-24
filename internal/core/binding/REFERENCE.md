@@ -29,6 +29,12 @@ naming no open item, or more than one, returns a correction with the allowed ids
 A tied alternative that cannot be resolved returns that correction instead of
 being dropped.
 
+A work tool that names its target appends the same kind of choice, so the
+message's item follows what the tool acts on. A worker session resolves to the
+work item it controls, which keeps a person's chosen target authoritative for
+`worker_input` and `worker_interrupt`: a session for another task in the same
+conversation is refused while a chosen target is in effect.
+
 A person-selected new target keeps that decider. Once its created id is recorded,
 a later read, progress check, or follow-up may name that existing item; any
 other item stays pending. A model follow-up to a worker task uses the agent

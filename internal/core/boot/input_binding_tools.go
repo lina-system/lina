@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/loop"
@@ -28,11 +29,11 @@ import (
 )
 
 type toolBindingRef struct {
-	InputEventID string
-	Input        string
-	Text         string
-	Request      int
-	Ordinal      bool
+	InputEventID string `json:"input_event_id,omitempty"`
+	Input        string `json:"input,omitempty"`
+	Text         string `json:"text,omitempty"`
+	Request      int    `json:"request"`
+	Ordinal      bool   `json:"-"`
 }
 
 // UnmarshalJSON accepts the shapes a model uses for the optional work binding:
@@ -405,18 +406,17 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 	case "read_work_progress", "follow_work":
 		id = str("id")
 		if c.Name == "follow_work" {
-			id, err = r.followTargetTask(ctx, id)
-		} else if taskID, ok := r.followWorkerIdentity(ctx, id); ok {
-			id = taskID
+			id, err = r.followTaskID(ctx, id)
+		} else if taskID, ok := workerFollowTask(id); ok && taskID != id {
+			if _, lookupErr := r.work.Get(ctx, taskID); lookupErr == nil {
+				id = taskID
+			}
 		}
 	case "worker_input", "worker_interrupt":
 		// These tools name a session, not a work item. The session's task is
-		// the binding identity, so a settled choice still applies.
-		id = r.workerTaskID(str("session"))
-		if id == "" {
-			// A recovered session still names its task before it is registered.
-			id, err = r.workerSessionTask(ctx, str("session"))
-		}
+		// the binding identity, so a settled choice still applies, including a
+		// session retained in the recovery record after a restart.
+		id, err = r.workerSessionTask(ctx, str("session"))
 	case "schedule_work":
 		var tasks []struct {
 			What string `json:"what"`
@@ -582,7 +582,12 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if preparation != nil {
 						event = preparation.event
 					}
-					if taskID, ok := r.followWorkerIdentity(ctx, a.ID); ok {
+					// Deliver to the identity the chosen-target gate checked.
+					taskID, err := r.followCallTask(ctx, event.ID, turnID, c.ID, a.ID)
+					if err != nil {
+						return loop.Result{ID: c.ID, Code: loop.Denied}
+					}
+					if _, err := r.work.Get(ctx, taskID); err == nil {
 						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
 					}
 					var source json.RawMessage
@@ -608,7 +613,7 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 						}
 						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
 					}
-					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: a.ID, Text: a.Text}}, source)
+					_, err = r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: taskID, Text: a.Text}}, source)
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
@@ -642,21 +647,6 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 		provider.ToolDecl(`{"type":"function","name":"read_work_progress","description":"Answer progress questions from the current item's progress line, never remembered status. Unknown stays unknown. Names the input's work target.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"follow_work","description":"Send a follow-up to the named running task or background run under its existing controls. Resolve a risky target tie with bind_input first; a pending instruction must not be sent. This does not cancel work.","parameters":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}`),
 	}, nil
-}
-
-// followWorkerIdentity is the task follow_work steers. workerFollowTask strips
-// a task: prefix and a trailing generation, and the card for that id is the
-// target. Authorization and delivery both call this so they name one task.
-func (r *conversationRuntime) followWorkerIdentity(ctx context.Context, ref string) (string, bool) {
-	taskID, ok := workerFollowTask(ref)
-	if !ok {
-		return "", false
-	}
-	card, err := r.work.Get(ctx, taskID)
-	if err != nil {
-		return "", false
-	}
-	return card.Task.ID, true
 }
 
 func workerFollowTask(id string) (string, bool) {
@@ -870,14 +860,48 @@ func (r *conversationRuntime) workerSessionTask(ctx context.Context, session str
 	return "", nil
 }
 
-// followTargetTask resolves a follow_work reference to the task delivery steers.
-// Sessions stay session lookups. Every other form uses followWorkerIdentity.
-func (r *conversationRuntime) followTargetTask(ctx context.Context, ref string) (string, error) {
+// followTaskID resolves a follow_work id to the task the follow-up reaches.
+// The chosen-target gate and execution share it, so the identity that is
+// checked is the identity that receives the instruction. A literal task id
+// wins over a generation suffix: a task named "a:1" is not generation 1 of "a".
+func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (string, error) {
 	if session, ok := strings.CutPrefix(ref, "session:"); ok {
 		return r.workerSessionTask(ctx, session)
 	}
-	if taskID, ok := r.followWorkerIdentity(ctx, ref); ok {
-		return taskID, nil
+	if task, ok := strings.CutPrefix(ref, "task:"); ok {
+		var card work.Card
+		err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			var err error
+			card, err = work.ReadReference(ctx, tx, task)
+			return err
+		})
+		return card.Task.ID, err
+	}
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
+	}
+	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
+		if _, err := r.work.Get(ctx, taskID); err == nil {
+			return taskID, nil
+		}
 	}
 	return ref, nil
+}
+
+// followCallTask returns the task the gate checked for this call. It reads the
+// saved binding so execution does not resolve the reference a second time; a
+// call the gate left unbound (no settled choice) resolves once here.
+func (r *conversationRuntime) followCallTask(ctx context.Context, inputID, turnID, callID, ref string) (string, error) {
+	if inputID != "" {
+		event, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+callID)
+		if err == nil && event.ParentID == inputID {
+			var batch bindingBatch
+			if json.Unmarshal([]byte(event.Body.Text()), &batch) == nil && len(batch.Bindings) == 1 {
+				if target := batch.Bindings[0].Target; target.Class == "existing" && target.ID != "" {
+					return target.ID, nil
+				}
+			}
+		}
+	}
+	return r.followTaskID(ctx, ref)
 }

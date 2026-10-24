@@ -19,6 +19,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	"github.com/thisisjun786/lina/internal/core/worker/recovery"
+	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -39,9 +40,14 @@ func TestDecodeBindingRequestIgnoresLaterPage(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	var choice binding.Choice
-	if len(in.Bindings) != 1 || json.Unmarshal(in.Bindings[0], &choice) != nil || len(choice.More) != 0 || choice.Target.Class != "none" {
-		t.Fatalf("model later page was kept: %+v", in.Bindings)
+	// Model choices are normalized against state before storage. Core-only
+	// paging metadata must not survive that boundary.
+	choices, err := binding.NormalizeChoices(binding.State{}, "stop it", in.Bindings)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(choices) != 1 || len(choices[0].More) != 0 || choices[0].Target.Class != "none" {
+		t.Fatalf("model later page was kept: %+v", choices)
 	}
 }
 
@@ -535,12 +541,15 @@ func TestModelBindingPrefixedTaskMatchesDelivery(t *testing.T) {
 	if _, err := r.saveModelBinding(t.Context(), input, "person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: chosen}}, "person"); err != nil {
 		t.Fatal(err)
 	}
-	delivered, ok := r.followWorkerIdentity(t.Context(), "task:a")
-	if !ok {
-		t.Fatal("task:a did not resolve to a task")
-	}
+	delivered, resolveErr := r.followTaskID(t.Context(), "task:a")
 	raw, _ := json.Marshal(map[string]any{"id": "task:a", "text": "Change the format."})
 	got := r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: "follow", Name: "follow_work", Arguments: string(raw)})
+	if resolveErr != nil {
+		if got == nil || got.Code == loop.OK {
+			t.Fatalf("unresolved task:a was allowed: %+v", got)
+		}
+		return
+	}
 	if delivered == chosen.ID {
 		if got != nil {
 			t.Fatalf("follow of the selected task was refused: %+v", got)
@@ -601,6 +610,43 @@ func TestModelBindingReplyUsesEffectiveTarget(t *testing.T) {
 				}
 			}
 		})
+	}
+}
+
+func TestModelBindingFollowRawTaskGeneration(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dir := t.TempDir()
+	reserve := t.TempDir()
+	task := work.Task{ID: "followed-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Followed task", Done: "Done", ArtifactRoots: []string{dir}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "followed-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "followed-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "followed-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "followed-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "followed-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	input := questionPersonInput(t, r, "follow", "Continue the current task.")
+	bindings := modelBindingTools(t, r, input)
+	if got := questionCall(t, bindings, "follow_work", "current", map[string]string{"id": task.ID, "text": "Change the format."}); got.Code != loop.OK {
+		t.Fatalf("current generation refused: %+v", got)
+	}
+	if probe.inputs != 1 || !strings.Contains(probe.text, "Change the format.") || strings.Contains(probe.text, `speaker_kind="person"`) {
+		t.Fatalf("agent follow-up missing: inputs=%d text=%s", probe.inputs, probe.text)
 	}
 }
 
@@ -734,5 +780,63 @@ func TestModelBindingRetryKeepsCompletedParent(t *testing.T) {
 	}{}
 	if fresh.Code != loop.OK || json.Unmarshal(fresh.Output, &saved) != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Target.Parent != "" {
 		t.Fatalf("new call kept a completed parent: %+v", fresh)
+	}
+}
+
+// A task may be named like a generation reference. The gate and execution share
+// one resolver, so the follow-up reaches the task the person selected, and an
+// unmatched suffix still falls back to the task it qualifies.
+func TestModelBindingFollowPrefersExactTaskID(t *testing.T) {
+	r, _ := turnRuntime(t)
+	probes := map[string]*messageProbe{}
+	for _, id := range []string{"a", "a:1", "b"} {
+		dir := t.TempDir()
+		task := work.Task{ID: id, PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Task " + id, Done: "Done", ArtifactRoots: []string{dir}}
+		if err := r.work.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+		if err := r.work.Start(t.Context(), work.Run{ID: "run-" + id, TaskID: id, Generation: 1, Worker: "codex", ThreadID: "session-" + id, TurnID: "old", NodeID: "node"}); err != nil {
+			t.Fatal(err)
+		}
+		reserve := t.TempDir()
+		if err := r.work.ReserveWorker(t.Context(), "worker-"+id, reserve); err != nil {
+			t.Fatal(err)
+		}
+		thread := worker.Thread{ID: "session-" + id, TaskID: id, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+		probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+		done := make(chan struct{})
+		close(done)
+		entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "worker-" + id, process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+		r.workers.mu.Lock()
+		r.workers.sessions[thread.ID] = entry
+		r.workers.mu.Unlock()
+		probes[id] = probe
+	}
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		for id := range probes {
+			delete(r.workers.sessions, "session-"+id)
+		}
+		r.workers.mu.Unlock()
+	})
+	input := questionPersonInput(t, r, "exact-task-id", "Change the format.")
+	tools := modelBindingTools(t, r, input)
+	if _, err := r.saveModelBinding(t.Context(), input, "exact-task-person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: "a:1", Kind: "task"}}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	if got := questionCall(t, tools, "follow_work", "exact", map[string]string{"id": "a:1", "text": "Change the format."}); got.Code != loop.OK {
+		t.Fatalf("the selected task was refused: %+v", got)
+	}
+	if probes["a:1"].inputs != 1 || probes["a"].inputs != 0 {
+		t.Fatalf("follow-up reached a=%d a:1=%d", probes["a"].inputs, probes["a:1"].inputs)
+	}
+	// Without a settled choice the suffix still resolves to the task it qualifies.
+	unsettled := questionPersonInput(t, r, "suffix-task-id", "Change the format.")
+	other := modelBindingTools(t, r, unsettled)
+	if got := questionCall(t, other, "follow_work", "suffix", map[string]string{"id": "b:7", "text": "Change the format."}); got.Code != loop.OK {
+		t.Fatalf("suffix reference refused: %+v", got)
+	}
+	if probes["b"].inputs != 1 {
+		t.Fatalf("suffix reference reached b=%d", probes["b"].inputs)
 	}
 }

@@ -205,6 +205,15 @@ func installedCodeGoal(t *testing.T, mode string) {
 				return
 			}
 			args := map[string]any{"outcome": "Produce and run the result", "done": "The running service returns the result", "scope": map[string]any{"repositories": []string{"fixture/project"}, "includes": "result.txt", "excludes": "design.md"}, "criteria": []any{map[string]any{"id": "result", "statement": "The result matches the request", "check": map[string]any{"kind": "check", "method": "acceptance", "target": "fixture/project"}}}, "service_target": "fixture-service", "tasks": []any{map[string]any{"id": "change", "done": "Produce result.txt", "repository": "fixture/project", "base": "dev", "area": "result.txt", "worker": "antigravity", "resources": map[string]any{"cpu": 0.01, "memory_mb": 1, "disk_mb": 1}}}}
+			if mode == "person-lines" {
+				script := personLineScript(t)
+				args["outcome"] = script.Outcome
+				args["done"] = script.Done
+				args["assumptions"] = script.Assumptions
+				args["asks"] = script.Asks
+				args["person_tasks"] = script.PersonTasks
+				args["criteria"] = []any{map[string]any{"id": "result", "statement": script.Statement, "check": map[string]any{"kind": "check", "method": "acceptance", "target": "fixture/project"}}}
+			}
 			if evidenceMode {
 				args["criteria"] = evidenceScenario(t).Criteria
 			}
@@ -373,8 +382,8 @@ func installedCodeGoal(t *testing.T, mode string) {
 	done := false
 	inspect := func(e protocol.Envelope) {
 		if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil {
-			done = done || strings.HasPrefix(*item.Text, "Done.")
-			if strings.HasPrefix(*item.Text, "This work needs attention.") {
+			done = done || strings.HasPrefix(*item.Text, "done.")
+			if strings.HasPrefix(*item.Text, "blocked.") {
 				if mode != "public" && mode != "failed-deploy" && mode != "worker-recovery-failed" && !expectEvidenceFailure {
 					t.Error("goal blocked: " + *item.Text)
 				}
@@ -483,6 +492,9 @@ func installedCodeGoal(t *testing.T, mode string) {
 	wantChecks := 5
 	if evidenceMode {
 		wantChecks = 7
+	}
+	if mode == "person-lines" {
+		assertPersonLines(t, db, g)
 	}
 	if g.State != goal.GoalDone || len(g.Checks) != wantChecks || !g.Deployment.Passed || !g.Verification.Passed {
 		var debug []string
