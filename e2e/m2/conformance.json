@@ -8,6 +8,6 @@
     {"name":"findings","expected":"ready_for_review"}
   ],
   "what":"Produce result.txt within the declared area",
-  "done":"Core checks the delivered head once and retains only structured manager judgments",
+  "done":"Core checks the pull request once, records Core-computed P1 findings for failed checks and write-area misses, and retains only structured manager judgments",
   "conformance":true
 }
