@@ -11,8 +11,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -1225,6 +1227,117 @@ func TestBindingActionClassifiesEveryWrappedTool(t *testing.T) {
 		if got[name] != action {
 			t.Errorf("%s action = %q, want %q", name, got[name], action)
 		}
+	}
+}
+
+func TestSteeredPresentResultKeepsReplyShapes(t *testing.T) {
+	r, _ := turnRuntime(t)
+	input := questionPersonInput(t, r, "owner-result", "Show the note")
+	steering := questionPersonInput(t, r, "steered-result", "Show this note")
+	s := &turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: r}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		receipt, err := inbox.Insert(t.Context(), tx, inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "test", NativeID: input.ID}})
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'active')`, s.turnID, r.conversation, receipt.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draft := map[string]any{
+		"type": "document_draft", "title": "Note", "summary": "Noted.",
+		"body": json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+	}
+	if got := questionCall(t, s.bindings, "present_result", "owner-card", draft); got.Code != loop.OK {
+		t.Fatalf("current input: %+v", got)
+	}
+	steered := map[string]any{
+		"type": "document_draft", "title": "Steered note", "summary": "Noted.",
+		"body":          json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	}
+	got := questionCall(t, s.bindings, "present_result", "steered-card", steered)
+	if got.Code != loop.OK {
+		t.Fatalf("steered present_result: %+v", got)
+	}
+	var parent, check string
+	err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), `SELECT parent_id FROM conv_event WHERE scaffold_kind='result' AND json_extract(body,'$.title')='Steered note'`).Scan(&parent); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), `SELECT c.body FROM conv_event c JOIN conv_event result ON result.id=c.parent_id WHERE c.scaffold_kind='reply_check' AND result.parent_id=?`, steering.ID).Scan(&check)
+	})
+	if err != nil || parent != steering.ID {
+		t.Fatalf("parent=%q err=%v", parent, err)
+	}
+	var recorded struct {
+		Shapes *reply.Shapes `json:"shapes"`
+	}
+	if json.Unmarshal([]byte(check), &recorded) != nil || recorded.Shapes == nil || recorded.Shapes.Status != s.replyShapes.Status || recorded.Shapes.Candidates != s.replyShapes.Candidates {
+		t.Fatalf("reply check lost the turn shapes: %s", check)
+	}
+}
+
+// A private turn can consume steering that belongs to a channel conversation.
+// The rebuilt result tool creates under that conversation, so its grant has to
+// name the channel conversation's turn rather than the private turn.
+func TestSteeredPresentResultUsesChannelTurn(t *testing.T) {
+	private, _ := turnRuntime(t)
+	channel := newConversationView(private, private.agent, "channel:room")
+	if channel.conversation == private.conversation {
+		t.Fatal("channel fixture reused the private conversation")
+	}
+	input := questionPersonInput(t, private, "private-turn", "Show the note")
+	channelInput := questionPersonInput(t, channel, "channel-turn", "The room is open")
+	now := time.Now()
+	steering, err := channel.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "channel-steer", PersonID: channel.person, AgentID: channel.agent, ConversationID: channel.conversation,
+		Surface: ledger.Surface{Kind: "channel", Platform: "discord", ChatID: "room"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed",
+		Body: "Show this note in the room",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channelTurn := "turn:" + channelInput.ID
+	s := &turnState{runtime: private, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: channel}}}
+	if _, err = s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = private.db.Write(t.Context(), func(tx *canon.Tx) error {
+		privateReceipt, err := inbox.Insert(t.Context(), tx, inbox.Input{Key: inbox.Key{Conversation: private.conversation, Source: "test", NativeID: input.ID}})
+		if err != nil {
+			return err
+		}
+		channelReceipt, err := inbox.Insert(t.Context(), tx, inbox.Input{Key: inbox.Key{Conversation: channel.conversation, Source: "test", NativeID: channelInput.ID}})
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(t.Context(), `INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'active')`, s.turnID, private.conversation, privateReceipt.ID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'active')`, channelTurn, channel.conversation, channelReceipt.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "present_result", "channel-card", map[string]any{
+		"type": "document_draft", "title": "Channel note", "summary": "Noted.",
+		"body":          json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("steered present_result: %+v", got)
+	}
+	var conversation, turnID string
+	err = private.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), `SELECT conversation_id, json_extract(body,'$.provenance.turn_id') FROM conv_event WHERE scaffold_kind='result' AND json_extract(body,'$.title')='Channel note'`).Scan(&conversation, &turnID)
+	})
+	if err != nil || conversation != channel.conversation || turnID != channelTurn {
+		t.Fatalf("conversation=%q turn=%q err=%v", conversation, turnID, err)
 	}
 }
 
