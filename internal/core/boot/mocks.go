@@ -183,7 +183,7 @@ func (r *conversationRuntime) mockModel(ctx context.Context, run string, input m
 	if err != nil {
 		return nil, err
 	}
-	stream, err := r.route.Adapter.Stream(ctx, activity, req)
+	stream, err := r.route.Stream(ctx, activity, req)
 	if err != nil {
 		return nil, err
 	}

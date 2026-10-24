@@ -210,7 +210,7 @@ func (r *conversationRuntime) receiveHandoff(ctx context.Context, receipt exchan
 			if err := r.exchangeAgent(ctx, record.To); err != nil {
 				return nil, err
 			}
-			return r.route.Adapter.Stream(ctx, activity, q)
+			return r.route.Stream(ctx, activity, q)
 		}, Observe: func(_ context.Context, e provider.Event) error {
 			if e.Kind == provider.ItemDone {
 				var item struct {

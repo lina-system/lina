@@ -72,7 +72,7 @@ func (r *conversationRuntime) startRuns(ctx context.Context) error {
 				return nil, err
 			}
 			req.Credential = r.route.Request(nil).Credential
-			stream, err := r.route.Adapter.Stream(ctx, activity, req)
+			stream, err := r.route.Stream(ctx, activity, req)
 			if err != nil {
 				activity.Release()
 				return nil, err

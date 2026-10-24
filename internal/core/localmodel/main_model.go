@@ -8,6 +8,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/thisisjun786/lina/internal/core/textcall"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/provider/applefm"
@@ -45,7 +46,9 @@ func (m AdapterModel) Complete(ctx context.Context, l lease.Lease, call Call) (C
 	req.Instructions = call.Instructions
 	req.Tools = nil
 	req.Bridge = nil
-	stream, err := m.Adapter.Stream(ctx, l, req)
+	stream, err := textcall.Guard(func(ctx context.Context, req provider.Request) (provider.Stream, error) {
+		return m.Adapter.Stream(ctx, l, req)
+	})(ctx, req)
 	if err != nil {
 		return Completion{}, err
 	}

@@ -3,8 +3,9 @@
 `Detect` is the pure shared boundary for [#1621](https://github.com/lina-system/lina/issues/1621).
 It proposes `none`, `parse_and_dispatch`, or `restart_fresh_session` from a
 completed turn and its active tool declarations. It does not execute tools,
-contact a provider, open sessions or write conversation state. Model-route and
-worker wiring remain separate work in #1622 and #1623.
+contact a provider, open sessions or write conversation state. Model routes install `Guard` in #1622; worker adapter wiring remains separate
+work in #1623. `Guard` translates declarations to the shared parser and delegates
+stream filtering and bounded continuation to `kit/loop.GuardTextCalls`.
 
 The [model contract](../../../docs/design/go-core.md#model-path-and-accounts) and
 [adapter contract](../../../docs/design/work-and-delegation.md#adapter-boundary)
