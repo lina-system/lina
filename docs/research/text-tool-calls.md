@@ -66,6 +66,14 @@ In every recorded case, the upstream response arrived with `content[].type="text
   2. the current worktree branch, `git status` / `git log --oneline -5` or verified tool receipts so far;
   3. a short rule reminder: use structured tool calls only, never prefix tool names with `_`, and do not read prior session transcript files.
 
+### Restarts per job
+
+One host's complete 2026-10-24 day (KST) backs the restart count and its needs-a-look mark: 50 `omp` sessions with model output across 32 jobs, read by a script that prints counts only.
+
+- 12 of 32 jobs had at least one terminal text-form tool call. Per affected job the day's count was 45, 14, 12, 9, 8, 6, 4, 3, 3, 2, 1 and 1, so half of them passed five under same-session nudging. Of 64 nudges into an affected session, 60 ended in another text-form tool call.
+- Two fresh sessions that followed an affected session and received their first input both finished the job with no text-form tool call; one took 7 minutes and 36 real tool calls.
+- Of 3 fresh-session restarts sent that day, 2 opened a new session that never received its first input and sat idle for more than 50 minutes. A restart therefore counts only once the new session accepts its first input.
+
 ## Evaluation, defined before building
 
 Before wiring recovery into `kit/loop`, `turn`, `runs` or `worker`, a deterministic replay evaluation scores the detector, parser and recovery action on recorded and synthetic transcripts.
@@ -110,3 +118,4 @@ Filed in milestone `M4 Fit how each agent works`:
 - [#1621](https://github.com/lina-system/lina/issues/1621) — Text tool-call replay and parser: score recovery and false positives before wiring.
 - [#1622](https://github.com/lina-system/lina/issues/1622) — Model routes: recover complete text tool calls or continue in a fresh session.
 - [#1623](https://github.com/lina-system/lina/issues/1623) — Workers: recover text tool calls or restart in a fresh session on the same worker.
+- [#1630](https://github.com/lina-system/lina/issues/1630) — Work: show fresh-session restarts and a needs-a-look mark per task.
