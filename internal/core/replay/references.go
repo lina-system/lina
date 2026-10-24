@@ -112,11 +112,57 @@ func recallResult(ctx context.Context, tx *canon.Tx, scope Scope, kind, id, revi
 		return err
 	}
 	for _, ref := range citations {
-		if err := recallReference(ctx, tx, scope, ref.TargetKind, ref.TargetID, ref.TargetRevision, map[string]bool{}); err != nil {
+		citeScope := scope
+		if kind == "memory" && ref.TargetKind == "event" {
+			agent, err := commonNameSource(ctx, tx, scope, id, revision, ref.TargetID)
+			if err != nil {
+				return err
+			}
+			if agent != "" {
+				citeScope.Agent = agent
+			}
+		}
+		if err := recallReference(ctx, tx, citeScope, ref.TargetKind, ref.TargetID, ref.TargetRevision, map[string]bool{}); err != nil {
 			return err
 		}
 	}
 	return nil
+}
+
+// commonNameSource returns the agent whose conversation holds event when it is
+// evidence of common name id at revision, as memoryReference checks it, and ""
+// for any other citation.
+func commonNameSource(ctx context.Context, tx *canon.Tx, scope Scope, id, revision, event string) (string, error) {
+	var data []byte
+	err := tx.QueryRowContext(ctx, `SELECT record FROM memory_revision WHERE item_id=? AND revision=?`, id, revision).Scan(&data)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", nil
+	}
+	if err != nil {
+		return "", err
+	}
+	var item memory.Item
+	if json.Unmarshal(data, &item) != nil || item.Kind != memory.Name || item.Holder != memory.All {
+		return "", nil
+	}
+	for _, ref := range item.Evidence {
+		if ref.Kind == memory.Event && ref.ID == event {
+			return nameSourceAgent(ctx, tx, scope.Person, event)
+		}
+	}
+	return "", nil
+}
+
+// A readable common name authorizes checking its provenance, not reading
+// another agent's turn. Bind the source agent from canon; visible still
+// enforces person ownership, privacy and removal.
+func nameSourceAgent(ctx context.Context, tx *canon.Tx, person, event string) (string, error) {
+	var agent string
+	err := tx.QueryRowContext(ctx, `SELECT agent_id FROM conv_event WHERE id=? AND person_id=? AND speaker_kind='person'`, event, person).Scan(&agent)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", Exclusion("restricted_content")
+	}
+	return agent, err
 }
 
 // Validate current identity/revision and the canonical citation graph. Neither
@@ -214,16 +260,11 @@ func memoryReference(ctx context.Context, tx *canon.Tx, scope Scope, id string, 
 	for _, ref := range item.Evidence {
 		evidenceScope := scope
 		if item.Kind == memory.Name && item.Holder == memory.All && ref.Kind == memory.Event {
-			// A readable common name authorizes checking its provenance, not
-			// reading another agent's turn. Bind the source agent from canon;
-			// visible still enforces person ownership, privacy and removal.
-			err := tx.QueryRowContext(ctx, `SELECT agent_id FROM conv_event WHERE id=? AND person_id=? AND speaker_kind='person'`, ref.ID, scope.Person).Scan(&evidenceScope.Agent)
-			if errors.Is(err, sql.ErrNoRows) {
-				return Exclusion("restricted_content")
-			}
+			agent, err := nameSourceAgent(ctx, tx, scope.Person, ref.ID)
 			if err != nil {
 				return err
 			}
+			evidenceScope.Agent = agent
 		}
 		if err := evidenceReference(ctx, tx, evidenceScope, ref, visiting); err != nil {
 			return err
