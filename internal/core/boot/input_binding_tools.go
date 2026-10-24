@@ -629,8 +629,9 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					}
 					// A session kept after restart still names a task card, but
 					// its worker is not registered. Sending that card to the
-					// live path drops the follow-up. Keep the offline mailbox.
-					if session, ok := strings.CutPrefix(a.ID, "session:"); ok && !r.workerSessionLive(session) {
+					// live path drops the follow-up. Keep the offline mailbox,
+					// unless the reference resolved as a literal task id.
+					if session, ok := strings.CutPrefix(a.ID, "session:"); ok && taskID != a.ID && !r.workerSessionLive(session) {
 						return r.followOfflineSession(ctx, event, turnID, c.ID, session, a.Text)
 					}
 					if _, err := r.work.Get(ctx, taskID); err == nil {
@@ -643,18 +644,9 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					return bindingFailure(c.ID, err)
 				}
 				var line any = map[string]string{"state": "unknown"}
-				// The binding check keeps the project record id. The progress
-				// line uses the bare goal id, so resolve that reference here.
-				progressID := a.ID
-				if ref, ok := goal.GoalID(a.ID); ok && ref != a.ID {
-					progressID = ref
-				}
 				if projection.Rows != nil {
-					for _, row := range *projection.Rows {
-						if row.Ref == progressID || row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
-							line = row.Line
-							break
-						}
+					if matched, ok := progressLineForID(*projection.Rows, a.ID); ok {
+						line = matched
 					}
 				}
 				raw, _ := json.Marshal(map[string]any{"id": a.ID, "progress": line})
@@ -666,6 +658,31 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 		provider.ToolDecl(`{"type":"function","name":"read_work_progress","description":"Answer progress questions from the current item's progress line, never remembered status. Unknown stays unknown. Names the input's work target.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"follow_work","description":"Send a follow-up to the named running task or background run under its existing controls. Resolve a risky target tie with bind_input first; a pending instruction must not be sent. This does not cancel work.","parameters":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}`),
 	}, nil
+}
+
+// progressLineForID reads the line for the id the caller named. A project
+// record id has no line of its own, so it may fall back to the bare goal id.
+// An item whose id is already goal:<name> keeps that id: stripping it would
+// read a different item named <name>.
+func progressLineForID(rows []protocol.ProgressRow, id string) (any, bool) {
+	if line, ok := matchProgressLine(rows, id); ok {
+		return line, true
+	}
+	// A project record is stored as goal:<bare> while its line uses <bare>.
+	// Only use that fallback when the given id itself has no line.
+	if rest, ok := strings.CutPrefix(id, "goal:"); ok && rest != "" {
+		return matchProgressLine(rows, rest)
+	}
+	return nil, false
+}
+
+func matchProgressLine(rows []protocol.ProgressRow, id string) (any, bool) {
+	for _, row := range rows {
+		if row.Ref == id || row.Ref == "run:"+id || row.Ref == "task:"+id || row.Ref == "record:"+id {
+			return row.Line, true
+		}
+	}
+	return nil, false
 }
 
 func workerFollowTask(id string) (string, bool) {
@@ -714,6 +731,12 @@ func (r *conversationRuntime) followOfflineSession(ctx context.Context, input le
 		}
 	}
 	if !found || rec.Thread.TaskID == "" {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	// reconcileWorkers skips a finished record, so held mail would never be
+	// delivered or refused. State finished with Canceled false cannot resume:
+	// refuse before AdmitMessage or StoreSteering queues offline mail.
+	if rec.State == "finished" && !rec.Canceled {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
 	name := rec.Worker
@@ -1013,8 +1036,12 @@ func (r *conversationRuntime) workerSessionTask(ctx context.Context, session str
 // followTaskID resolves a follow_work id to the task the follow-up reaches.
 // The chosen-target gate and execution share it, so the identity that is
 // checked is the identity that receives the instruction. A literal task id
-// wins over a generation suffix: a task named "a:1" is not generation 1 of "a".
+// wins over session/task prefixes and generation suffixes: a task named "a:1"
+// is not generation 1 of "a".
 func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (string, error) {
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
+	}
 	if session, ok := strings.CutPrefix(ref, "session:"); ok {
 		return r.workerSessionTask(ctx, session)
 	}
@@ -1026,9 +1053,6 @@ func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (str
 			return err
 		})
 		return card.Task.ID, err
-	}
-	if card, err := r.work.Get(ctx, ref); err == nil {
-		return card.Task.ID, nil
 	}
 	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
 		if _, err := r.work.Get(ctx, taskID); err == nil {
