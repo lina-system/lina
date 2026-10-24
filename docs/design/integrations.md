@@ -806,7 +806,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - The person signs in through the add-on's own flow, such as KakaoTalk's passcode or Discord's QR code, typing into it through the app or the TUI. LINA relays and keeps nothing. The session stays in the add-on's data directory, outside backups; after a restore or on a new main the person signs in again.
 - One process runs for each account and stays running, so the platform sees one session. Core starts these children after binding its client socket, which their sandbox hides. Each read carries the source platform and account; a session refuses any other source. Core retries failed sources on their schedule, preserving the committed cursor, and bounds consecutive add-on restarts. A malformed or oversized response refuses the batch with "upstream changed".
 - A pinned version changes only through a reviewed update that reads upstream's changes to the platforms LINA uses.
-- When the add-on or its runtime is missing or failing, only its sources fail.
+- When the add-on or its runtime is missing or failing, only its sources fail. A platform with no registered driver is refused as `unsupported_platform`; that code is not rewritten as a generic source failure.
 
 ### Sync and coverage
 
