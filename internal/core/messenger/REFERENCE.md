@@ -91,6 +91,23 @@ pages advance the cursor only. `Store.Freshness` derives fresh, stale or gap fro
 the newest read and the adapter's declared interval and read window; nothing
 about freshness is stored.
 
+The coverage row also carries the adapter's declared history depth and whether
+its cursor survives a restart. The sync loop fills both from
+`Adapter.Capabilities` before admitting a page (`CursorKind` `none` means no
+surviving position), and `Page.Coverage` overrides them when a read covers
+something else. LINE declares `newest-N` and `none`: every read asks for the
+newest messages again, and the platform message id, not a position, keeps a
+repeated read from storing anything twice.
+
+## Decryption failures
+
+`Message.DecryptionFailed` marks a message the platform served but this account
+could not decrypt. `messenger_record.decryption_failed` keeps the flag, the
+record's text is empty, and the event is admitted normally so the message still
+sits in its chat, in order, as a record. `AdmitPage` refuses a page that pairs
+the flag with text, and the add-on's wire check refuses the same, so a failure
+can never become an empty message that reads as something someone sent.
+
 ## Live events
 
 `AdmitEvent` admits one pushed message or deletion through the same admission

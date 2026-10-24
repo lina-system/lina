@@ -790,8 +790,16 @@ older messages with `beforeMessage`, follows room and membership paging, and
 catches up across multiple pages before moving its newest-message anchor. A
 room that was empty keeps that anchor unset, so the next burst fills back to
 the beginning before the anchor moves. A reply whose parent is on an older
-page of the same walk is returned with that parent; a parent older than the
-previous anchor is already stored.
+page of the same walk is returned with that parent when both fit in one
+admission. Admission binds two placeholders per message plus the platform,
+account and chat, and the linked SQLite build allows 32766 variables, so a
+page stops at 16381 messages. A wider gap carries the reply's id on the
+cursor and continues in bounded pages; the reply is returned on the page that
+reaches its parent, or on the next page after that parent was committed when
+the two no longer fit together. A page may commit only the cursor while every
+message it fetched is still waiting on a parent. A parent older than the
+previous anchor is already stored. A parent that never appears is left
+unresolved at the anchor or the beginning, and those bounded pages still commit.
 Paging must stay on the same origin and collection. HTTP redirects are refused.
 429 and 423 respect Retry-After; waits over one minute or exhausted attempts
 leave the cursor unchanged and report a retryable source failure. A failed
@@ -820,6 +828,8 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - Core reads each source on its schedule or from its live events. For a scheduled page, the records, the chat's cursor and a coverage record (the range read completely and when) commit in one transaction. Live admission leaves that pagination cursor and coverage unchanged. A live event that cannot be admitted yet, such as an edit held behind an unsettled write, is replayed on the same session instead of being acknowledged, so it is not lost. A scheduled page that overlaps a reported deletion cannot make the deleted message searchable again. Reading the same messages again adds nothing.
 - A failing source is read again on its schedule and returns to connected when a read completes; the person sees its cause in between. A source that needs sign-in waits for the person, and an unreachable, import-only or disconnected source is not read.
 - A chat's first fill reads back as far as the platform allows.
+- Where a platform serves no cursor that survives a restart, a read covers only its newest messages, and the chat's coverage record states that depth and that the cursor does not survive. Overlap between those reads is resolved by the platform message id, so a message reads once.
+- A message the platform served but this account could not decrypt is a record with no text and a decryption-failed flag: it is never an empty message, a message from the system, or a deletion.
 - A message missing from a later read is never treated as deleted. Edits and deletions the platform reports follow [Messenger records](conversation-and-memory.md#messenger-records).
 - Each chat is fresh, stale (no complete read within its interval) or in a gap (the time since its last complete read passed the platform's read window, so messages may be lost). A gap is shown on the source and told to the person once. An archive import can fill it later.
 - Rates are the adapter's: it honours the platform's retry-after and keeps its cursor.

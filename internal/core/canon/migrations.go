@@ -85,8 +85,9 @@ func Migrations() []Migration {
 		{Version: 70, SQL: workRunLimitSchema},
 		{Version: 71, SQL: BindingMoveSchema},
 		{Version: 72, SQL: MessengerAttachmentSchema},
-		{Version: 73, SQL: MessengerOwnerSchema},
-		{Version: 74, SQL: DiscordSessionsSchema},
+		{Version: 73, SQL: MessengerReadCoverageSchema},
+		{Version: 74, SQL: MessengerOwnerSchema},
+		{Version: 75, SQL: DiscordSessionsSchema},
 	}
 }
 
@@ -140,7 +141,7 @@ var publishedMigrationTables = []struct {
 	{69, "teams_connection"}, {69, "messenger_author"},
 	{71, "binding_effects"}, {71, "binding_moves"},
 	{72, "messenger_attachment"},
-	{74, "discord_sessions"},
+	{75, "discord_sessions"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is
