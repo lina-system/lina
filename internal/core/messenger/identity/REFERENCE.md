@@ -86,7 +86,9 @@ with the same name propose nothing. A rejection or a removal is kept and that
 proposal never returns. Proposals are offered in one batch of at most five.
 
 A link is usable when it is `confirmed`, or `exact` and unambiguous, and its
-validity covers the time asked about. Ambiguity is derived, never stored.
+validity covers the time asked about: a confirmed phone or email link ends when
+the identifier moves, exactly as an exact one does. Ambiguity is derived, never
+stored.
 
 ## Person actions and repair
 
