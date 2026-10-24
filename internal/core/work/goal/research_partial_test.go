@@ -130,8 +130,10 @@ func TestUnresolvedCitationHoldsTheDocumentCriterion(t *testing.T) {
 			evidence.Collected = &CollectedEvidence{Reads: []EvidenceRead{read}, Output: "unresolved citation"}
 		case JudgmentEvidence:
 			evidence.Collected = &CollectedEvidence{Reads: []EvidenceRead{read}, Rubric: c.Check.Rubric, Judgment: "marked open"}
-		default:
+		case ReadEvidence, RunEvidence:
 			evidence.Collected = &CollectedEvidence{Output: "runtime read"}
+		default:
+			t.Fatalf("unexpected evidence kind %s", c.Check.Kind)
 		}
 		g.Checks = append(g.Checks, evidence)
 	}

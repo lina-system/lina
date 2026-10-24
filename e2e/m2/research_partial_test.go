@@ -157,6 +157,8 @@ func (w *researchWorld) Observe(context.Context, work.Action) (work.Observation,
 }
 func (w *researchWorld) Execute(ctx context.Context, a work.Action) (work.Observation, error) {
 	switch a.Kind {
+	case work.Resume, work.InspectPR, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Observe, work.Decide, work.PlanGoal, work.ContinueWorker:
+		return work.Observation{}, fmt.Errorf("unexpected action %s", a.Kind)
 	case work.Assign:
 		s, err := w.engine.Snapshot(ctx)
 		if err != nil {
