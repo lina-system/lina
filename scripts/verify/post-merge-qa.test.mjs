@@ -200,6 +200,36 @@ test('one or two historical passing heads and duplicate runs cannot suppress a f
   }
 });
 
+test('an intervening late failure resets recovery in commit order and establishes flakiness', async () => {
+  const mock = github();
+  const opts = options(mock);
+  for (const [result, n] of [['fail', 1], ['pass', 2], ['pass', 4], ['fail', 3], ['pass', 5]]) {
+    await reconcileQA({ ...opts, ...fixture(result, n) });
+    assert.equal(mock.issues[0].state, 'open');
+  }
+  assert.ok(mock.issues[0].labels.includes('flaky'));
+  await reconcileQA({ ...opts, ...fixture('pass', 6) });
+  assert.equal(mock.issues[0].state, 'closed');
+});
+
+test('out-of-order passes count once and a late failure can invalidate a completed streak', async () => {
+  const mock = github();
+  const opts = options(mock);
+  await reconcileQA({ ...opts, ...fixture() });
+  for (const n of [4, 2, 4]) {
+    await reconcileQA({ ...opts, ...fixture('pass', n) });
+    assert.equal(mock.issues[0].state, 'open');
+  }
+  await reconcileQA({ ...opts, ...fixture('pass', 5) });
+  assert.equal(mock.issues[0].state, 'closed');
+  await reconcileQA({ ...opts, ...fixture('fail', 3) });
+  assert.equal(mock.issues[0].state, 'open');
+  assert.ok(mock.issues[0].labels.includes('flaky'));
+  assert.ok(mock.issues[0].body.includes(head(5)), 'latest tested head is not rolled back');
+  await reconcileQA({ ...opts, ...fixture('pass', 6) });
+  assert.equal(mock.issues[0].state, 'closed');
+});
+
 test('recovery count is configurable and invalid counts fail before writes', async () => {
   for (const requiredPasses of [0, -1, 1.5, NaN, Infinity, '3']) {
     const mock = github();
@@ -578,7 +608,7 @@ test('later passing observations advance a resolved issue watermark', async () =
   const mock = github();
   const opts = options(mock);
   await reconcileQA({ ...opts, ...fixture() });
-  for (const n of [2, 4, 5]) await reconcileQA({ ...opts, ...fixture('pass', n) });
+  for (const n of [2, 4, 5, 6]) await reconcileQA({ ...opts, ...fixture('pass', n) });
   await reconcileQA({ ...opts, ...fixture('fail', 3) });
   assert.equal(mock.issues[0].state, 'closed');
 });

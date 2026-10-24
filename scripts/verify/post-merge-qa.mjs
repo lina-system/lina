@@ -155,14 +155,72 @@ function bodyOf(state, observation, repository, runUrl, requiredPasses) {
     + `- Test: \`${state.package}:${state.test}\`\n`
     + `- First failing commit range: [${range}](https://github.com/${repository}/compare/${range})\n`
     + `- Latest tested head: \`${state.lastHead}\`\n`
+    + `- Reported head: \`${state.reportHead}\` (${state.reportResult})\n`
     + `- Result: ${{ fail: 'failed', pass: 'passed on a later head', unknown: 'unfinished; recovery not established' }[state.result]}\n`
     + `- Consecutive passing heads: ${state.passes}/${requiredPasses}\n`
     + (state.flaky ? '- Flaky: failure, pass and failure observed within 48 hours\n' : '')
     + `- [Workflow run](${runUrl})\n\n`
-    + (state.result === 'fail' ? `Failure lines:\n\n\`\`\`text\n${lines}\n\`\`\`\n`
+    + (observation.result === 'fail' ? `Failure lines:\n\n\`\`\`text\n${lines}\n\`\`\`\n`
       : state.result === 'unknown' ? 'The unfinished test resets the recovery streak without establishing a failure.\n'
         : state.passes >= requiredPasses ? 'The selected test has met the recovery threshold.\n'
         : 'The selected test passed; awaiting consecutive passing heads before closing.\n');
+}
+
+async function advanceState(previous, observation, { plan, before, identity, requiredPasses, isAncestor }) {
+  const sameHead = previous?.lastHead === plan.head;
+  const newer = !previous || sameHead || await isAncestor(previous.lastHead, plan.head);
+  if (previous && !newer && !await isAncestor(plan.head, previous.lastHead)) return null;
+  if (sameHead && observation.result === 'unknown') return null;
+  const state = { schema: 2, ...identity,
+    firstBase: previous?.firstBase ?? before, firstHead: previous?.firstHead ?? plan.head,
+    lastHead: newer ? plan.head : previous.lastHead,
+    result: newer ? observation.result : previous.result,
+    reportHead: plan.head, reportResult: observation.result,
+    barrierHead: previous?.barrierHead ?? previous?.lastHead ?? plan.head,
+    recoveryHeads: [...(previous?.recoveryHeads ?? [])],
+    lastFailureHead: previous?.lastFailureHead ?? (previous?.result === 'fail' ? previous.lastHead : null),
+    lastFailureAt: previous?.lastFailureAt ?? 0, firstPassHead: previous?.firstPassHead ?? null,
+    passedSinceFailure: previous?.passedSinceFailure ?? false,
+    flaky: previous?.flaky ?? false, lastReopenedAt: previous?.lastReopenedAt ?? 0 };
+  if (observation.result === 'pass') {
+    if (sameHead && previous.result === 'fail') state.result = 'fail';
+    if (state.lastFailureHead === plan.head) state.passedSinceFailure = true;
+    if (state.lastFailureHead && state.lastFailureHead !== plan.head
+        && await isAncestor(state.lastFailureHead, plan.head)
+        && (!state.firstPassHead || await isAncestor(plan.head, state.firstPassHead))) state.firstPassHead = plan.head;
+    if (plan.head !== state.barrierHead && await isAncestor(state.barrierHead, plan.head)
+        && !state.recoveryHeads.includes(plan.head)) {
+      let index = 0;
+      while (index < state.recoveryHeads.length && await isAncestor(state.recoveryHeads[index], plan.head)) index++;
+      state.recoveryHeads.splice(index, 0, plan.head);
+      state.recoveryHeads = state.recoveryHeads.slice(-requiredPasses);
+    }
+  } else {
+    if (observation.result === 'fail' && (!state.lastFailureHead
+        || await isAncestor(state.lastFailureHead, plan.head))) {
+      const passed = state.lastFailureHead === plan.head ? state.passedSinceFailure
+        : state.firstPassHead && await isAncestor(state.firstPassHead, plan.head);
+      if (passed && state.lastFailureAt && plan.started >= state.lastFailureAt
+          && plan.started - state.lastFailureAt <= 48 * hour) state.flaky = true;
+      state.lastFailureHead = plan.head;
+      state.lastFailureAt = Math.max(state.lastFailureAt, plan.started);
+      state.firstPassHead = null;
+      state.passedSinceFailure = false;
+    }
+    if (await isAncestor(state.barrierHead, plan.head)) {
+      state.barrierHead = plan.head;
+      const remaining = [];
+      for (const head of state.recoveryHeads) {
+        if (head !== plan.head && await isAncestor(plan.head, head)) remaining.push(head);
+      }
+      state.recoveryHeads = remaining;
+    }
+    if (observation.result === 'fail' && state.lastFailureHead === plan.head) {
+      state.firstPassHead = state.recoveryHeads[0] ?? null;
+    }
+  }
+  state.passes = state.recoveryHeads.length;
+  return state;
 }
 
 async function legacyState(issue, state, { api, route }) {
@@ -190,6 +248,8 @@ async function legacyState(issue, state, { api, route }) {
   }
   // Legacy markers did not retain per-head pass counts. Never invent a streak.
   return { ...state, schema: 2, passes: 0, flaky,
+    barrierHead: state.lastHead, recoveryHeads: [], firstPassHead: null,
+    lastFailureHead: state.result === 'fail' ? state.lastHead : null,
     lastFailureAt: state.result === 'fail' ? Date.parse(issue.updated_at) || lastFailureAt : lastFailureAt,
     passedSinceFailure: state.result === 'pass', lastReopenedAt };
 }
@@ -197,9 +257,10 @@ async function legacyState(issue, state, { api, route }) {
 async function updateStatus({ issue, state, issueState, requiredPasses, runUrl, route, api }) {
   const body = `${statusMarker}\nPost-merge QA: **${issueState}**.\n\n`
     + `- Latest tested head: \`${state.lastHead}\` (${state.result})\n`
+    + (state.reportHead ? `- Reported head: \`${state.reportHead}\` (${state.reportResult})\n` : '')
     + `- Consecutive passing heads: ${state.passes}/${requiredPasses}\n`
     + (state.flaky ? '- Flaky: failure, pass and failure within 48 hours.\n' : '')
-    + (issueState === 'closed' && state.result === 'fail'
+    + (issueState === 'closed' && state.reportResult === 'fail' && state.passes < requiredPasses
       ? '- Reopening deferred: this finding was already reopened within the last 24 hours.\n' : '')
     + (runUrl ? `- [Workflow run](${runUrl})\n` : '');
   for (let page = 1;; page++) {
@@ -286,41 +347,17 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
     if (!['fail', 'pass', 'unknown'].includes(observation.result)) continue;
     const identity = { branch, package: observation.package, test: observation.test };
     const previous = existing.get(key(identity));
-    if (previous) {
-      // A rerun can reveal a new failure, but only a later head proves recovery.
-      if (previous.state.lastHead === plan.head) {
-        if (observation.result === 'unknown') continue;
-        if (observation.result === 'pass' && previous.state.result !== 'unknown') {
-          // A same-head pass cannot erase a failure or count as recovery, but
-          // it is evidence of flakiness if another failure follows it.
-          if (previous.state.result === 'fail' && !previous.state.passedSinceFailure) {
-            const state = { ...previous.state, passedSinceFailure: true };
-            await updateIssue(previous, state,
-              previous.issue.body.replace(marker, `<!-- foundation-qa:${JSON.stringify(state)} -->`), previous.issue.state);
-          }
-          continue;
-        }
-      }
-      if (previous.state.lastHead !== plan.head && !await isAncestor(previous.state.lastHead, plan.head)) continue;
-    }
     if (observation.result !== 'fail' && !previous) continue;
     if (observation.result === 'fail' && !previous) {
       laterPasses ??= await laterPassingTests({ plan, observations, repository, branch, runId, api, readArtifact, isAncestor, requiredPasses });
       if (laterPasses.has(key(identity))) continue;
     }
-    const state = { schema: 2, ...identity,
-      firstBase: previous?.state.firstBase ?? before, firstHead: previous?.state.firstHead ?? plan.head,
-      lastHead: plan.head, result: observation.result,
-      passes: observation.result === 'pass' ? (previous?.state.passes ?? 0) + 1 : 0,
-      lastFailureAt: observation.result === 'fail' ? plan.started : previous?.state.lastFailureAt ?? 0,
-      passedSinceFailure: observation.result === 'unknown' ? previous?.state.passedSinceFailure ?? false : observation.result === 'pass',
-      flaky: previous?.state.flaky ?? false, lastReopenedAt: previous?.state.lastReopenedAt ?? 0 };
-    if (observation.result === 'fail' && previous?.state.passedSinceFailure
-        && previous.state.lastFailureAt && plan.started >= previous.state.lastFailureAt
-        && plan.started - previous.state.lastFailureAt <= 48 * hour) state.flaky = true;
+    const state = await advanceState(previous?.state, observation, { plan, before, identity, requiredPasses, isAncestor });
+    if (!state) continue;
     let issueState = previous?.issue.state ?? 'open';
-    if (observation.result === 'pass' && state.passes >= requiredPasses) issueState = 'closed';
+    if (state.passes >= requiredPasses) issueState = 'closed';
     if (observation.result === 'fail' && issueState === 'closed'
+        && state.passes < requiredPasses
         && (!state.lastReopenedAt || time - state.lastReopenedAt >= 24 * hour)) {
       issueState = 'open';
       state.lastReopenedAt = time;

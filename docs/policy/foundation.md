@@ -110,6 +110,12 @@ after the cooldown can reopen it, including a report of the same failing head.
 State changes and recovery progress edit that same comment instead of posting
 new comments. The issue body persists the pass count, failure timestamp, flaky
 classification and last reopen timestamp across reporter runs.
+Recovery retains the most recent passing head identities, bounded by the
+configured threshold, and orders them by commit ancestry. A late intervening
+failure or unfinished observation removes earlier passes from the streak, even
+when a newer head has already reported. A failure can reopen a prematurely
+closed finding through the same cooldown; a failure followed by enough known
+passing heads leaves it closed. The latest tested head never moves backward.
 
 The first run with this policy migrates existing QA markers on its branch even
 when a test is absent from today's artifacts. It uses the Actions bot's close and
