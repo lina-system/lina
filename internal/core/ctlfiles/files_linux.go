@@ -16,8 +16,6 @@ func owned(info os.FileInfo, directory bool) bool {
 	return ok && stat.Uid == uint32(os.Geteuid()) && (directory || stat.Nlink == 1)
 }
 
-// unlinked reports an inode whose last directory entry went away, which is
-// what an atomic replacement leaves in the reader's hand.
 func unlinked(info os.FileInfo) bool {
 	stat, ok := info.Sys().(*syscall.Stat_t)
 	return ok && stat.Nlink == 0

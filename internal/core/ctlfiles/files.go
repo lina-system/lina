@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"time"
 )
 
 var ErrLocked = errors.New("another Core holds the state root lock")
@@ -178,6 +179,12 @@ func record(name string) bool {
 	return false
 }
 
+// readAttempts bounds reopening while a writer atomically replaces a record.
+// A stale lookup can repeat across consecutive opens, so retries pause briefly.
+const readAttempts = 8
+
+const readRetryDelay = time.Millisecond
+
 func (s *Store) Read(name string) ([]byte, error) {
 	return readRecord(name, s.dir.OpenFile, s.dir.Lstat)
 }
@@ -186,89 +193,60 @@ func readRecord(name string, open func(string, int, os.FileMode) (*os.File, erro
 	if !record(name) {
 		return nil, errors.New("unknown control record")
 	}
-	for range readAttempts {
-		data, retry, err := readOnce(name, open, lstat)
+	for attempt := 0; ; attempt++ {
+		// O_NONBLOCK prevents an unexpected FIFO from blocking before fstat rejects it.
+		file, err := open(name, os.O_RDONLY|noFollow|nonBlock, 0)
 		if err != nil {
 			return nil, err
 		}
-		if !retry {
-			return data, nil
+		retry := attempt+1 < readAttempts
+		info, err := file.Stat()
+		if err != nil {
+			file.Close()
+			return nil, err
 		}
-	}
-	return nil, errors.New("control record changed during read")
-}
-
-// readAttempts bounds the retries a record read spends on atomic replacement.
-const readAttempts = 8
-
-// readOnce validates and reads one attempt. retry reports that Write replaced
-// the record mid-read, so the caller must reopen rather than accept the stale
-// or unlinked inode.
-func readOnce(name string, open func(string, int, os.FileMode) (*os.File, error), lstat func(string) (os.FileInfo, error)) ([]byte, bool, error) {
-	// O_NONBLOCK prevents an unexpected FIFO from blocking before fstat rejects it.
-	file, err := open(name, os.O_RDONLY|noFollow|nonBlock, 0)
-	if err != nil {
-		return nil, false, err
-	}
-	defer file.Close()
-	info, err := file.Stat()
-	if err != nil {
-		return nil, false, err
-	}
-	if err := private(info, false); err != nil {
-		// Write renames over the record, leaving the opened inode unlinked.
-		// Any other refusal is an unsafe inode, not a race.
-		if unlinked(info) {
-			return nil, true, nil
+		if err := private(info, false); err != nil {
+			file.Close()
+			// Write may replace the record between open and fstat. Never read
+			// the unlinked inode; reopen and validate the replacement in full.
+			if retry && unlinked(info) {
+				time.Sleep(readRetryDelay)
+				continue
+			}
+			return nil, err
 		}
-		return nil, false, err
+		// os.Root confines symlink traversal but can resolve a link within the
+		// root. Validate the entry itself and match it to the opened inode.
+		current, err := lstat(name)
+		if err == nil {
+			err = private(current, false)
+		}
+		if err != nil {
+			file.Close()
+			if retry && current != nil && unlinked(current) {
+				time.Sleep(readRetryDelay)
+				continue
+			}
+			return nil, err
+		}
+		if !os.SameFile(info, current) {
+			file.Close()
+			if retry {
+				time.Sleep(readRetryDelay)
+				continue
+			}
+			return nil, errors.New("control record changed during read")
+		}
+		data, err := io.ReadAll(io.LimitReader(file, 65537))
+		file.Close()
+		if err != nil {
+			return nil, err
+		}
+		if len(data) > 65536 {
+			return nil, errors.New("control record exceeds 64 KiB")
+		}
+		return data, nil
 	}
-	matched, err := namesInode(name, info, lstat)
-	if err != nil {
-		return nil, false, err
-	}
-	if !matched {
-		return nil, true, nil
-	}
-	data, err := io.ReadAll(io.LimitReader(file, 65537))
-	if err != nil {
-		return nil, false, err
-	}
-	if len(data) > 65536 {
-		return nil, false, errors.New("control record exceeds 64 KiB")
-	}
-	// Replacement fsyncs and renames a whole file, so a record whose bytes
-	// streamed from a superseded inode is discarded.
-	matched, err = namesInode(name, info, lstat)
-	if err != nil {
-		return nil, false, err
-	}
-	if !matched {
-		return nil, true, nil
-	}
-	return data, false, nil
-}
-
-// namesInode checks the directory entry itself, which os.Root still resolves
-// when a link's target lies inside the root, and matches it to the opened
-// inode. A vanished entry was replaced and reports no match.
-func namesInode(name string, opened os.FileInfo, lstat func(string) (os.FileInfo, error)) (bool, error) {
-	current, err := lstat(name)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	// Lookup can resolve the entry, then the rename can unlink it before
-	// Lstat copies the metadata. That snapshot is a replacement, not a link.
-	if unlinked(current) {
-		return false, nil
-	}
-	if err := private(current, false); err != nil {
-		return false, err
-	}
-	return os.SameFile(opened, current), nil
 }
 
 // Write publishes a whole record only after its temporary file is synced, then
