@@ -564,3 +564,66 @@ func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
 		t.Fatalf("record id of project A stayed blocked: %+v", prefixedChosen)
 	}
 }
+
+func TestInterruptTieAsksBeforeCancel(t *testing.T) {
+	r, _ := turnRuntime(t)
+	reserve := t.TempDir()
+	first := work.Task{ID: "tie-a", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "First task", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	second := work.Task{ID: "tie-b", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Second task", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	for _, task := range []work.Task{first, second} {
+		if err := r.work.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "tie-b-run", TaskID: second.ID, Generation: 1, Worker: "codex", ThreadID: "tie-b-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "tie-b-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "tie-b-thread", TaskID: second.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "tie-b-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	text := "check its progress and stop it"
+	input := questionPersonInput(t, r, "interrupt-tie", text)
+	tools := modelBindingTools(t, r, input)
+	a := binding.Target{Class: "existing", Kind: "task", ID: first.ID}
+	b := binding.Target{Class: "existing", Kind: "task", ID: second.ID}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{Quote: text, Target: a, Tied: []binding.Target{a, b}, Action: "read"}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	stopped := questionCall(t, tools, "worker_interrupt", "stop-tied", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": text})
+	if stopped.Code != loop.Denied || !strings.Contains(string(stopped.Output), "input_target_pending") {
+		t.Fatalf("tied interrupt ran: %+v", stopped)
+	}
+	if probe.interrupts != 0 {
+		t.Fatalf("tied interrupt cancelled the worker %d times", probe.interrupts)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) == 0 || choices[0].Question == "" {
+		t.Fatalf("tie did not ask: %+v %v", choices, err)
+	}
+	resolvedText := "stop the other task"
+	resolved := questionPersonInput(t, r, "interrupt-one", resolvedText)
+	resolvedTools := modelBindingTools(t, r, resolved)
+	if _, err := r.saveModelBinding(t.Context(), resolved, "binding-person:interrupt-one", []binding.Choice{{Quote: resolvedText, Target: b}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	one := questionCall(t, resolvedTools, "worker_interrupt", "stop-one", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": resolvedText})
+	if one.Code != loop.OK {
+		t.Fatalf("resolved interrupt refused: %+v", one)
+	}
+	if probe.interrupts != 1 {
+		t.Fatalf("resolved interrupt count = %d", probe.interrupts)
+	}
+}
