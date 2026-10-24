@@ -534,7 +534,8 @@ func (r *conversationRuntime) continueTargetQuestion(ctx context.Context, tx *ca
 	qid := targetQuestionID(input.ID, next.Request, page)
 	// A later page has its own turn so it does not consume the input's question budget.
 	turn := fmt.Sprintf("binding:%s:%d:page:%d", input.ID, next.Request, page)
-	asked := waiting.ConversationQuestion{ID: qid, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Turn: turn, AskedAt: time.Now().UTC(), QuestionDraft: draft, Binding: &next}
+	// The answer can arrive on the root runtime. The next page stays with the question that asked.
+	asked := waiting.ConversationQuestion{ID: qid, Person: q.Person, Agent: q.Agent, Conversation: q.Conversation, Input: input.ID, Turn: turn, AskedAt: time.Now().UTC(), QuestionDraft: draft, Binding: &next}
 	if err = waiting.NewConversationQuestions(questionTransaction{tx}).Ask(ctx, asked, 32); err != nil {
 		return err
 	}

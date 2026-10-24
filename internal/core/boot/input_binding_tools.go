@@ -182,7 +182,9 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 			if earlier.Question != "" || earlier.Cancelled {
 				continue
 			}
-			candidates := earlier.Tied
+			// A retained read stores the rest on More. The next control still sees them.
+			candidates := append([]binding.Target{}, earlier.Tied...)
+			candidates = append(candidates, earlier.More...)
 			if len(candidates) == 0 {
 				candidates = []binding.Target{overlayChoiceTarget(binding.Target{}, []binding.Choice{earlier})}
 			}
