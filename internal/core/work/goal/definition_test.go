@@ -309,3 +309,29 @@ func TestUnplannedRecordCorrectionStaysBlockedAcrossRestart(t *testing.T) {
 		t.Fatalf("new correction did not reopen one manager turn: %+v", s.Actions)
 	}
 }
+
+func TestGoalIDStripsProjectRecord(t *testing.T) {
+	record, ok := ProjectRecordID("turn:input:goal")
+	if !ok || record != "goal:turn:input:goal" {
+		t.Fatalf("record = %q %v", record, ok)
+	}
+	id, ok := GoalID(record)
+	if !ok || id != "turn:input:goal" {
+		t.Fatalf("id = %q %v", id, ok)
+	}
+	id, ok = GoalID("turn:input:goal")
+	if !ok || id != "turn:input:goal" {
+		t.Fatalf("bare id = %q %v", id, ok)
+	}
+	id, ok = GoalID("goal:")
+	if !ok || id != "goal:" {
+		t.Fatalf("empty record suffix = %q %v", id, ok)
+	}
+	if _, ok = GoalID(""); ok {
+		t.Fatal("empty id resolved")
+	}
+	again, ok := ProjectRecordID(record)
+	if !ok || again != record {
+		t.Fatal("record id was prefixed twice")
+	}
+}

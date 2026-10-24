@@ -101,21 +101,28 @@ func Movable(kind string) bool {
 	return false
 }
 
+// EffectCall names one stored tool call absorbed into a combined edit.
+type EffectCall struct {
+	TurnID string
+	CallID string
+}
+
 // Effect is one recorded thing the bound turn did, kept with the state a move
 // needs to undo or repeat it.
 type Effect struct {
-	InputEvent     string `json:"input_event"`
-	TurnID         string `json:"turn_id"`
-	CallID         string `json:"call_id"`
-	Ordinal        int    `json:"ordinal"`
-	Kind           string `json:"kind"`
-	Target         string `json:"target"`
-	RecordID       string `json:"record_id,omitempty"`
-	BeforeBody     []byte `json:"-"`
-	BeforeRevision string `json:"before_revision,omitempty"`
-	AfterRevision  string `json:"after_revision,omitempty"`
-	Payload        []byte `json:"payload"`
-	LeftPerson     bool   `json:"left_person,omitempty"`
+	InputEvent     string       `json:"input_event"`
+	TurnID         string       `json:"turn_id"`
+	CallID         string       `json:"call_id"`
+	Ordinal        int          `json:"ordinal"`
+	Kind           string       `json:"kind"`
+	Target         string       `json:"target"`
+	RecordID       string       `json:"record_id,omitempty"`
+	BeforeBody     []byte       `json:"-"`
+	BeforeRevision string       `json:"before_revision,omitempty"`
+	AfterRevision  string       `json:"after_revision,omitempty"`
+	Payload        []byte       `json:"payload"`
+	LeftPerson     bool         `json:"left_person,omitempty"`
+	Folded         []EffectCall `json:"-"`
 }
 
 // Outcome is what a move did with one effect.

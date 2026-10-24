@@ -4,7 +4,9 @@ package webex_test
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -519,7 +521,7 @@ func TestAttachmentsStayOnWebexHosts(t *testing.T) {
 	defer srv.Close()
 	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
 	signIn(t, adapter)
-	if _, err := adapter.FetchAttachment(t.Context(), source, "room-1", "https://example.com/file.png"); err == nil {
+	if _, err := adapter.FetchAttachment(t.Context(), source, "room-1", "message-1", "https://example.com/file.png"); err == nil {
 		t.Fatal("an attachment from another host was fetched")
 	}
 }
@@ -696,4 +698,347 @@ func TestPartialPageFollowsHistoryLink(t *testing.T) {
 	if err != nil || !page.HasMore {
 		t.Fatalf("older history lost: %+v %v", page, err)
 	}
+}
+
+// An empty first read stores an unanchored tail. A later burst larger than one
+// page must still reach the room's beginning before that anchor moves.
+func TestEmptyRoomBurstBackfillsToTheBeginning(t *testing.T) {
+	rec := &recorder{}
+	c := &clock{at: time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)}
+	var newestReads int
+	srv := signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.URL.Query().Get("beforeMessage") {
+		case "":
+			newestReads++
+			if newestReads > 1 {
+				w.Write([]byte(`{"items":[{"id":"m-3","roomId":"room-1","text":"third","personId":"person-2","created":"2026-10-20T12:03:00.000Z"},{"id":"m-2","roomId":"room-1","text":"second","personId":"person-2","created":"2026-10-20T12:02:00.000Z"}]}`))
+				return
+			}
+			w.Write([]byte(`{"items":[]}`))
+		case "m-2":
+			w.Write([]byte(`{"items":[{"id":"m-1","roomId":"room-1","text":"first","personId":"person-2","created":"2026-10-20T12:01:00.000Z"}]}`))
+		default:
+			w.Write([]byte(`{"items":[]}`))
+		}
+	})
+	defer srv.Close()
+	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
+	signIn(t, adapter)
+
+	empty, err := adapter.Page(t.Context(), source, "room-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(empty.Messages) != 0 || empty.HasMore || empty.Next != webex.TailCursorForTest("") {
+		t.Fatalf("empty room = %+v", empty)
+	}
+	var got []string
+	cursor := empty.Next
+	for range 4 {
+		page, err := adapter.Page(t.Context(), source, "room-1", cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, messageIDs(page.Messages)...)
+		cursor = page.Next
+		if !page.HasMore {
+			break
+		}
+	}
+	if strings.Join(got, ",") != "m-2,m-3,m-1" {
+		t.Fatalf("burst messages = %v, want the newest page then the older message", got)
+	}
+	if cursor != webex.TailCursorForTest("m-3") {
+		t.Fatalf("tail after the burst = %q, want the newest message", cursor)
+	}
+}
+
+// A reply on a newer history page and its parent on the next older page have
+// to be admitted together. The store links a reply only to a parent already
+// admitted or present in the same page, and a later read of an unchanged reply
+// does not repair the relation.
+func TestReplyParentOnOlderPageSharesThePage(t *testing.T) {
+	rec := &recorder{}
+	c := &clock{at: time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)}
+	srv := signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.URL.Query().Get("beforeMessage") {
+		case "":
+			w.Write([]byte(`{"items":[{"id":"m-4","roomId":"room-1","text":"fourth","personId":"person-2","created":"2026-10-20T12:04:00.000Z"},{"id":"m-3","roomId":"room-1","text":"reply","personId":"person-2","parentId":"m-1","created":"2026-10-20T12:03:00.000Z"}]}`))
+		case "m-3":
+			w.Write([]byte(`{"items":[{"id":"m-2","roomId":"room-1","text":"second","personId":"person-2","created":"2026-10-20T12:02:00.000Z"},{"id":"m-1","roomId":"room-1","text":"root","personId":"person-2","created":"2026-10-20T12:01:00.000Z"}]}`))
+		default:
+			w.Write([]byte(`{"items":[]}`))
+		}
+	})
+	defer srv.Close()
+	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
+	signIn(t, adapter)
+
+	page, err := adapter.Page(t.Context(), source, "room-1", "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := messageIDs(page.Messages); strings.Join(ids, ",") != "m-1,m-2,m-3,m-4" {
+		t.Fatalf("history page = %v, want the parent and the reply together", ids)
+	}
+	if page.Messages[0].ID != "m-1" || page.Messages[2].ReplyTo != "m-1" {
+		t.Fatalf("reply = %#v", page.Messages)
+	}
+	if !page.HasMore {
+		t.Fatal("a full older page did not keep the backfill open")
+	}
+}
+
+// Catch-up walks back toward the previous anchor. A reply in that burst whose
+// parent is also in the burst stays on the same page as its parent, and the
+// anchor itself is not read again.
+func TestCatchUpKeepsReplyParentBeforeTheStop(t *testing.T) {
+	rec := &recorder{}
+	c := &clock{at: time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)}
+	srv := signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path != "/v1/messages" {
+			http.NotFound(w, r)
+			return
+		}
+		switch r.URL.Query().Get("beforeMessage") {
+		case "":
+			w.Write([]byte(`{"items":[{"id":"m-4","roomId":"room-1","text":"reply","personId":"person-2","parentId":"m-2","created":"2026-10-20T12:04:00.000Z"},{"id":"m-3","roomId":"room-1","text":"third","personId":"person-2","created":"2026-10-20T12:03:00.000Z"}]}`))
+		case "m-3":
+			w.Write([]byte(`{"items":[{"id":"m-2","roomId":"room-1","text":"root","personId":"person-2","created":"2026-10-20T12:02:00.000Z"},{"id":"m-1","roomId":"room-1","text":"anchor","personId":"person-2","created":"2026-10-20T12:01:00.000Z"}]}`))
+		default:
+			w.Write([]byte(`{"items":[]}`))
+		}
+	})
+	defer srv.Close()
+	adapter, _ := newAdapter(t, srv.URL, c, rec, nil)
+	signIn(t, adapter)
+
+	page, err := adapter.Page(t.Context(), source, "room-1", webex.TailCursorForTest("m-1"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if ids := messageIDs(page.Messages); strings.Join(ids, ",") != "m-2,m-3,m-4" {
+		t.Fatalf("catch-up page = %v, want the parent and the reply, not the anchor", ids)
+	}
+	if page.Messages[2].ReplyTo != "m-2" {
+		t.Fatalf("reply = %#v", page.Messages[2])
+	}
+	if page.HasMore || page.Next != webex.TailCursorForTest("m-4") {
+		t.Fatalf("catch-up cursor = %q hasMore=%v", page.Next, page.HasMore)
+	}
+}
+
+// A reply whose parent is far behind the newest page must not be glued into one
+// page larger than the admission query. The reply stays uncommitted until the
+// walk has returned its parent, including when the two no longer fit together.
+func TestCombinedHistoryStaysWithinTheAdmissionLimit(t *testing.T) {
+	cases := []struct {
+		name     string
+		limit    int
+		pageSize int
+		count    int
+		reply    string // "newest" replies to m-1; "all" does except m-1; "gone" replies to an absent id
+		samePage bool
+	}{
+		{name: "far parent", limit: 4, pageSize: 2, count: 8, reply: "newest"},
+		{name: "parent fits with the reply", limit: 8, pageSize: 2, count: 4, reply: "newest", samePage: true},
+		{name: "replies overflow the parent page", limit: 3, pageSize: 2, count: 7, reply: "all"},
+		{name: "reply chain stays behind its parents", limit: 3, pageSize: 2, count: 5, reply: "chain"},
+		{name: "missing parent still finishes", limit: 4, pageSize: 2, count: 6, reply: "gone"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			msgs := make([]histMessage, tc.count)
+			parents := map[string]string{}
+			for i := range msgs {
+				id := fmt.Sprintf("m-%d", i+1)
+				msgs[i] = histMessage{id: id, text: id}
+				switch tc.reply {
+				case "newest":
+					if i == tc.count-1 {
+						msgs[i].parent = "m-1"
+					}
+				case "all":
+					if i > 0 {
+						msgs[i].parent = "m-1"
+					}
+				case "chain":
+					switch i {
+					case 1:
+						msgs[i].parent = "m-1"
+					case 2:
+						msgs[i].parent = "m-2"
+					case 4:
+						msgs[i].parent = "m-3"
+					}
+				case "gone":
+					msgs[i].parent = "gone"
+				}
+				parents[id] = msgs[i].parent
+			}
+			rec := &recorder{}
+			c := &clock{at: time.Date(2026, 10, 24, 8, 0, 0, 0, time.UTC)}
+			srv := serveHistory(t, rec, msgs, tc.pageSize)
+			defer srv.Close()
+			adapter, _ := newAdapter(t, srv.URL, c, rec, func(cfg *webex.Config) { cfg.PageSize = tc.pageSize })
+			webex.SetCombinedLimitForTest(adapter, tc.limit)
+			signIn(t, adapter)
+
+			pages, tail := walkHistory(t, adapter, tc.limit, tc.count)
+			seen := map[string]int{}
+			for pi, page := range pages {
+				for _, message := range page {
+					if _, ok := seen[message.ID]; ok {
+						t.Fatalf("duplicate %s", message.ID)
+					}
+					seen[message.ID] = pi
+					if message.ReplyTo != parents[message.ID] {
+						t.Fatalf("%s reply = %q, want %q", message.ID, message.ReplyTo, parents[message.ID])
+					}
+				}
+			}
+			if len(seen) != tc.count {
+				t.Fatalf("walk returned %d messages, want %d", len(seen), tc.count)
+			}
+			newest := fmt.Sprintf("m-%d", tc.count)
+			if tail != webex.TailCursorForTest(newest) {
+				t.Fatalf("tail = %q, want %q", tail, webex.TailCursorForTest(newest))
+			}
+			if tc.reply == "gone" {
+				return
+			}
+			for id, page := range seen {
+				parent := parents[id]
+				if parent == "" {
+					continue
+				}
+				parentPage, ok := seen[parent]
+				if !ok {
+					t.Fatalf("%s parent %s was not admitted", id, parent)
+				}
+				if page < parentPage {
+					t.Fatalf("%s admitted on page %d before its parent on page %d", id, page, parentPage)
+				}
+				if tc.samePage && page != parentPage {
+					t.Fatalf("%s on page %d, want the parent's page %d", id, page, parentPage)
+				}
+			}
+		})
+	}
+}
+
+type histMessage struct {
+	id, parent, text string
+}
+
+func serveHistory(t *testing.T, rec *recorder, msgs []histMessage, pageSize int) *httptest.Server {
+	t.Helper()
+	index := map[string]histMessage{}
+	for _, message := range msgs {
+		index[message.id] = message
+	}
+	return signInServer(t, rec, func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/v1/messages" {
+			end := len(msgs)
+			if before := r.URL.Query().Get("beforeMessage"); before != "" {
+				end = -1
+				for i, message := range msgs {
+					if message.id == before {
+						end = i
+						break
+					}
+				}
+				if end < 0 {
+					w.Write([]byte(`{"items":[]}`))
+					return
+				}
+			}
+			start := end - pageSize
+			if start < 0 {
+				start = 0
+			}
+			items := make([]histMessage, 0, end-start)
+			for i := end - 1; i >= start; i-- {
+				items = append(items, msgs[i])
+			}
+			writeHistory(w, items)
+			return
+		}
+		if id, ok := strings.CutPrefix(r.URL.Path, "/v1/messages/"); ok {
+			id, err := url.PathUnescape(id)
+			if err != nil {
+				http.NotFound(w, r)
+				return
+			}
+			message, found := index[id]
+			if !found {
+				http.NotFound(w, r)
+				return
+			}
+			raw, _ := json.Marshal(historyItem(message))
+			w.Write(raw)
+			return
+		}
+		http.NotFound(w, r)
+	})
+}
+
+func writeHistory(w http.ResponseWriter, items []histMessage) {
+	wire := make([]historyWire, len(items))
+	for i, item := range items {
+		wire[i] = historyItem(item)
+	}
+	raw, _ := json.Marshal(struct {
+		Items []historyWire `json:"items"`
+	}{Items: wire})
+	w.Write(raw)
+}
+
+type historyWire struct {
+	ID       string `json:"id"`
+	RoomID   string `json:"roomId"`
+	Text     string `json:"text"`
+	PersonID string `json:"personId"`
+	Created  string `json:"created"`
+	ParentID string `json:"parentId,omitempty"`
+}
+
+func historyItem(message histMessage) historyWire {
+	n := 0
+	fmt.Sscanf(message.id, "m-%d", &n)
+	created := time.Date(2026, 10, 20, 12, 0, n, 0, time.UTC).Format(time.RFC3339Nano)
+	return historyWire{ID: message.id, RoomID: "room-1", Text: message.text, PersonID: "person-2", Created: created, ParentID: message.parent}
+}
+
+func walkHistory(t *testing.T, adapter *webex.Adapter, limit, count int) ([][]messenger.Message, messenger.Cursor) {
+	t.Helper()
+	var pages [][]messenger.Message
+	cursor := messenger.Cursor("")
+	for range count*4 + 8 {
+		page, err := adapter.Page(t.Context(), source, "room-1", cursor)
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(page.Messages) > limit {
+			t.Fatalf("page has %d messages, limit %d: %v", len(page.Messages), limit, messageIDs(page.Messages))
+		}
+		pages = append(pages, page.Messages)
+		if !page.HasMore {
+			return pages, page.Next
+		}
+		if page.Next == "" || page.Next == cursor {
+			t.Fatalf("cursor did not advance from %q", cursor)
+		}
+		cursor = page.Next
+	}
+	t.Fatal("walk did not finish")
+	return nil, ""
 }

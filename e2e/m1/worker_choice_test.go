@@ -134,6 +134,13 @@ func waitForAreaRelease(t *testing.T, h *harness) {
 	}
 }
 
+// The first dispatch publishes its running claim and area lease before Core
+// creates the workspace and starts the worker, so the launch marker trails the
+// durable claim. The fixture creates and fills that marker in two steps, and a
+// loaded host can deschedule it between them. An absent, empty or partial marker
+// is therefore a pending observation, not a second launch. The final launch
+// count is still asserted after both deliveries, and more than one marker line
+// fails immediately.
 func waitForAreaClaim(t *testing.T, h *harness, fixture string) {
 	t.Helper()
 	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon", "canon.sqlite"))
@@ -147,25 +154,23 @@ func waitForAreaClaim(t *testing.T, h *harness, fixture string) {
 	defer tick.Stop()
 	for {
 		var waiting, active int
-		err = db.Read(h.ctx, func(tx *canon.Tx) error {
+		readErr := db.Read(h.ctx, func(tx *canon.Tx) error {
 			return tx.QueryRowContext(h.ctx, `SELECT sum(state='queued' AND json_extract(record,'$.wait')='area'),sum(state IN ('running','finished')) FROM worker_dispatch`).Scan(&waiting, &active)
 		})
-		if err == nil && waiting == 1 && active == 1 {
-			launches, err := os.ReadFile(filepath.Join(fixture, "launches"))
-			if err == nil {
-				if string(launches) != "worker\n" {
-					t.Fatalf("overlap launched: %q", launches)
-				}
-				return
-			}
-			if !os.IsNotExist(err) {
-				t.Fatal(err)
-			}
+		launches, launchErr := workerLaunches(fixture)
+		if launchErr != nil {
+			t.Fatal(launchErr)
+		}
+		if strings.Count(launches, "worker\n") > 1 {
+			t.Fatalf("overlap launched: %q", launches)
+		}
+		if readErr == nil && waiting == 1 && active == 1 && launches == "worker\n" {
+			return
 		}
 		select {
 		case <-deadline.C:
 			logWorkerQuotaState(t, h)
-			t.Fatalf("area reservation not observed: waiting=%d active=%d err=%v", waiting, active, err)
+			t.Fatalf("area reservation not observed: waiting=%d active=%d launches=%q err=%v", waiting, active, launches, readErr)
 		case <-tick.C:
 		}
 	}

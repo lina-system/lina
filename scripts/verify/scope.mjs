@@ -54,7 +54,7 @@ const goObjects = text => JSON.parse(`[${text.trim().replace(/^}\s*\n{/gm, '},{'
 
 export function kind(path) {
   if (['scripts/verify/test-times.json', 'scripts/verify/bwrap.apparmor'].includes(path)) return 'automation';
-  if (path.startsWith('adapters/claude/') || path.startsWith('adapters/claude-acp/')) return 'automation';
+  if (path.startsWith('adapters/claude/') || path.startsWith('adapters/claude-acp/') || path.startsWith('adapters/messenger/')) return 'automation';
   // Native parts carry their own portable tests; the automation check compiles
   // and runs them, so a change under native/ selects it.
   if (path.startsWith('native/')) return 'automation';
@@ -69,6 +69,7 @@ export function kind(path) {
   if (modules.has(path)) return 'modules';
   if (path === 'DESIGN.md' || /^design\/tokens\/[^/]+\.(?:json|css|svg|swift)$/.test(path)) return 'automation';
   if (/^evidence\/(?:brand|generated-ui)\/[^/]+\.png$/.test(path)) return 'docs';
+  if (/^evidence\/tui-spike\/terminal-qa\/(?:[a-z0-9-]+\.txt|[a-z0-9-]+\/[a-z0-9-]+\.png)$/.test(path)) return 'docs';
   if (componentOf(path)) return 'components';
   if (documents.has(path) || /^docs\/(?:policy|design|research)\/[^/]+\.md$/.test(path)
       || /^evidence\/.+\.(?:json|md)$/.test(path)) return 'docs';

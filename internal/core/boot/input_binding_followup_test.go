@@ -11,8 +11,10 @@ import (
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/inbox"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -330,7 +332,11 @@ func TestFollowWorkKeepsAgentBudget(t *testing.T) {
 		t.Fatal(err)
 	}
 	for i := range 13 {
-		got := questionCall(t, tools, "follow_work", fmt.Sprintf("follow-%d", i), map[string]string{"id": "task:" + task.ID + ":1", "text": "Continue the task"})
+		id := "task:" + task.ID + ":1"
+		if i == 0 {
+			id = task.ID
+		}
+		got := questionCall(t, tools, "follow_work", fmt.Sprintf("follow-%d", i), map[string]string{"id": id, "text": "Continue the task"})
 		if i < 12 && got.Code != loop.OK {
 			t.Fatalf("follow %d: %+v", i, got)
 		}
@@ -616,6 +622,33 @@ func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
 	})
 	if prefixedChosen.Code != loop.OK {
 		t.Fatalf("record id of project A stayed blocked: %+v", prefixedChosen)
+	}
+}
+
+// A card action replies to the agent event that presented the card, not to a
+// person input. That reply has no binding row to inherit a tie from.
+func TestCardActionToolSkipsAgentReplyTie(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	card, err := r.journal().Admit(t.Context(), guard.EntryAgent, ledger.Input{
+		ID: "agent-card", AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Choose a time.",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	press, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "card-press", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: card.ID, Card: "card-1"}, OccurredAt: now.Add(time.Second), RecordedAt: now.Add(time.Second), TimeQuality: "observed",
+		Body: "Dentist appointment\nchoose: {\"slot\":[\"wed-1500\"]}",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	tools := modelBindingTools(t, r, press)
+	saved := questionCall(t, tools, "write_record", "save-choice", map[string]any{"kind": "memo", "title": "Appointment choice", "note": "Wednesday at 15:00"})
+	if saved.Code != loop.OK {
+		t.Fatalf("card action tool failed: %+v", saved)
 	}
 }
 
@@ -1151,6 +1184,507 @@ func TestBindingActionClassifiesEveryWrappedTool(t *testing.T) {
 		if got[name] != action {
 			t.Errorf("%s action = %q, want %q", name, got[name], action)
 		}
+	}
+}
+
+func TestStartRunKeepsChannelSteeringReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app, inboxID := admitTurnInput(t, r, "app-turn")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "start_run", "from-app", map[string]any{
+		"Goal": "Research the draft", "Scope": "Read the catalog", "NotTouch": "Do not send",
+		"Done": "A short note exists", "Result": "summary", "Allow": []string{},
+		"Checks":        []map[string]string{{"Name": "note", "Kind": "claimed"}},
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel steering start: %+v", got)
+	}
+	var receipt struct{ ID string }
+	if json.Unmarshal(got.Output, &receipt) != nil || receipt.ID == "" {
+		t.Fatalf("receipt: %s", got.Output)
+	}
+	record, err := r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Origin.Turn != s.turnID || record.Origin.ChannelReceipt != steering.ID {
+		t.Fatalf("origin turn %s receipt %s", record.Origin.Turn, record.Origin.ChannelReceipt)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err != nil {
+		t.Fatal(err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err == nil {
+		t.Fatal("revoked channel still authorized the queued run")
+	}
+	revoked.Scope.Tools = true
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	turns := turn.New(r.db)
+	if err = turns.Claim(t.Context(), s.turnID, r.conversation, inboxID); err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "from-app", Name: "start_run", Arguments: "{}"}
+	if err = turns.Journal(s.turnID).Calls(t.Context(), 0, []provider.ToolCall{call}); err != nil {
+		t.Fatal(err)
+	}
+	if err = turns.Journal(s.turnID).Result(t.Context(), 0, 0, got); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.syncRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, err = r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil || !record.Released {
+		t.Fatalf("committed channel start was not released: %+v %v", record, err)
+	}
+}
+
+// A selected channel input keeps its receipt for authorization. The run still
+// records the turn that called start_run, so recovery and mock lookup can
+// find that turn after a restart.
+func TestStartRunKeepsExecutionTurnWithChannelReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app, inboxID := admitTurnInput(t, r, "app-exec")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("exec", "exec-native")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	turns := turn.New(r.db)
+	if err := turns.Claim(t.Context(), s.turnID, r.conversation, inboxID); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO turn_control(turn_id,input_event) VALUES(?,?)", s.turnID, app.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "exec-start", Name: "start_run", Arguments: `{"Goal":"Research the draft","Scope":"Read the catalog","NotTouch":"Do not send","Done":"A short note exists","Result":"summary","Allow":[],"Checks":[{"Name":"note","Kind":"claimed"}]}`}
+	if err := turns.Journal(s.turnID).Calls(t.Context(), 0, []provider.ToolCall{call}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "start_run", "exec-start", map[string]any{
+		"Goal": "Research the draft", "Scope": "Read the catalog", "NotTouch": "Do not send",
+		"Done": "A short note exists", "Result": "summary", "Allow": []string{},
+		"Checks":        []map[string]string{{"Name": "note", "Kind": "claimed"}},
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel steering start: %+v", got)
+	}
+	var receipt struct{ ID string }
+	if json.Unmarshal(got.Output, &receipt) != nil || receipt.ID == "" {
+		t.Fatalf("receipt: %s", got.Output)
+	}
+	record, err := r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Origin.Turn != s.turnID || record.Origin.ChannelReceipt != steering.ID {
+		t.Errorf("origin turn %s receipt %s, want turn %s receipt %s", record.Origin.Turn, record.Origin.ChannelReceipt, s.turnID, steering.ID)
+	}
+	var inputID string
+	err = r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT input_event FROM turn_control WHERE turn_id=?", record.Origin.Turn).Scan(&inputID)
+	})
+	if err != nil || inputID != app.ID {
+		t.Errorf("mock lookup for turn %s input %q: %v", record.Origin.Turn, inputID, err)
+	}
+	if err = recoverConversationTurns(t.Context(), r.db); err != nil {
+		t.Fatal(err)
+	}
+	recovered, err := turns.Read(t.Context(), s.turnID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(recovered.Results) != 1 || recovered.Results[0].Code != loop.OK || !strings.Contains(string(recovered.Results[0].Output), receipt.ID) {
+		t.Errorf("recovery = %+v, want the admitted receipt", recovered.Results)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err != nil {
+		t.Fatal(err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err == nil {
+		t.Error("revoked channel still authorized the queued run")
+	}
+}
+
+func TestWorkerInputKeepsChannelSteeringReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app := questionPersonInput(t, r, "app-turn", "Tell the worker to continue")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	th := worker.Thread{ID: "session-c", TaskID: "channel-worker", AttemptID: "attempt", TurnID: "turn-1", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Active}}, tier: "turn"}
+	session := &workerSession{origin: r, thread: th, adapter: probe}
+	r.workers.mu.Lock()
+	r.workers.sessions[th.ID] = session
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, th.ID)
+		r.workers.mu.Unlock()
+	})
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "worker_input", "steer", map[string]any{
+		"session": th.ID, "turn": th.TurnID, "generation": th.ProcessGeneration, "binding": th.BindingEpoch,
+		"text": "Keep the channel scope.", "input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel worker input: %+v", got)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), probe.Name()+":"+th.ID)
+	if err != nil || len(messages) != 1 || len(messages[0].Source) == 0 {
+		t.Fatalf("worker input lost its channel receipt: %+v %v", messages, err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	event := worker.Event{Thread: th, ToolCall: &worker.ToolCall{ID: "inbox", Namespace: "lina", Name: "check_inbox", Arguments: json.RawMessage(`{}`)}}
+	raw, _, err := session.mailboxReply(t.Context(), event, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "Keep the channel scope.") {
+		t.Fatal("revoked channel delivered the worker input")
+	}
+}
+
+func TestFollowWorkKeepsChannelTaskReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dir := t.TempDir()
+	reserve := t.TempDir()
+	task := work.Task{ID: "channel-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Channel task", Done: "Done", ArtifactRoots: []string{dir}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "channel-task-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "channel-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "channel-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "channel-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, tier: "turn"}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "channel-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	app := questionPersonInput(t, r, "app-follow", "Continue the channel task")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("task-source", "task-native")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "follow_work", "task-note", map[string]any{"id": "task:" + task.ID + ":1", "text": "Keep the channel scope.", "input_binding": map[string]any{"input_event_id": steering.ID}})
+	if got.Code != loop.OK {
+		t.Fatalf("channel task follow-up: %+v", got)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), probe.Name()+":"+thread.ID)
+	if err != nil || len(messages) != 1 || len(messages[0].Source) == 0 {
+		t.Fatalf("task follow-up lost its channel receipt: %+v %v", messages, err)
+	}
+}
+
+func TestSteeredPresentResultKeepsReplyShapes(t *testing.T) {
+	r, _ := turnRuntime(t)
+	input := questionPersonInput(t, r, "owner-result", "Show the note")
+	steering := questionPersonInput(t, r, "steered-result", "Show this note")
+	s := &turnState{runtime: r, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: r}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		receipt, err := inbox.Insert(t.Context(), tx, inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "test", NativeID: input.ID}})
+		if err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'active')`, s.turnID, r.conversation, receipt.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	draft := map[string]any{
+		"type": "document_draft", "title": "Note", "summary": "Noted.",
+		"body": json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+	}
+	if got := questionCall(t, s.bindings, "present_result", "owner-card", draft); got.Code != loop.OK {
+		t.Fatalf("current input: %+v", got)
+	}
+	steered := map[string]any{
+		"type": "document_draft", "title": "Steered note", "summary": "Noted.",
+		"body":          json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	}
+	got := questionCall(t, s.bindings, "present_result", "steered-card", steered)
+	if got.Code != loop.OK {
+		t.Fatalf("steered present_result: %+v", got)
+	}
+	var parent, check string
+	err := r.db.Read(t.Context(), func(tx *canon.Tx) error {
+		if err := tx.QueryRowContext(t.Context(), `SELECT parent_id FROM conv_event WHERE scaffold_kind='result' AND json_extract(body,'$.title')='Steered note'`).Scan(&parent); err != nil {
+			return err
+		}
+		return tx.QueryRowContext(t.Context(), `SELECT c.body FROM conv_event c JOIN conv_event result ON result.id=c.parent_id WHERE c.scaffold_kind='reply_check' AND result.parent_id=?`, steering.ID).Scan(&check)
+	})
+	if err != nil || parent != steering.ID {
+		t.Fatalf("parent=%q err=%v", parent, err)
+	}
+	var recorded struct {
+		Shapes *reply.Shapes `json:"shapes"`
+	}
+	if json.Unmarshal([]byte(check), &recorded) != nil || recorded.Shapes == nil || recorded.Shapes.Status != s.replyShapes.Status || recorded.Shapes.Candidates != s.replyShapes.Candidates {
+		t.Fatalf("reply check lost the turn shapes: %s", check)
+	}
+}
+
+// A private turn can consume steering that belongs to a channel conversation.
+// The rebuilt result tool creates under that conversation, so its grant has to
+// name the channel conversation's turn rather than the private turn.
+func TestSteeredPresentResultUsesChannelTurn(t *testing.T) {
+	private, _ := turnRuntime(t)
+	channel := newConversationView(private, private.agent, "channel:room")
+	if channel.conversation == private.conversation {
+		t.Fatal("channel fixture reused the private conversation")
+	}
+	input := questionPersonInput(t, private, "private-turn", "Show the note")
+	channelInput := questionPersonInput(t, channel, "channel-turn", "The room is open")
+	now := time.Now()
+	steering, err := channel.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "channel-steer", PersonID: channel.person, AgentID: channel.agent, ConversationID: channel.conversation,
+		Surface: ledger.Surface{Kind: "channel", Platform: "discord", ChatID: "room"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed",
+		Body: "Show this note in the room",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	channelTurn := "turn:" + channelInput.ID
+	s := &turnState{runtime: private, input: input, turnID: "turn:" + input.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: channel}}}
+	if _, err = s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	if err = private.db.Write(t.Context(), func(tx *canon.Tx) error {
+		privateReceipt, err := inbox.Insert(t.Context(), tx, inbox.Input{Key: inbox.Key{Conversation: private.conversation, Source: "test", NativeID: input.ID}})
+		if err != nil {
+			return err
+		}
+		channelReceipt, err := inbox.Insert(t.Context(), tx, inbox.Input{Key: inbox.Key{Conversation: channel.conversation, Source: "test", NativeID: channelInput.ID}})
+		if err != nil {
+			return err
+		}
+		if _, err = tx.ExecContext(t.Context(), `INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'active')`, s.turnID, private.conversation, privateReceipt.ID); err != nil {
+			return err
+		}
+		_, err = tx.ExecContext(t.Context(), `INSERT INTO turn_runs(id,conversation,inbox_id,state) VALUES(?,?,?,'active')`, channelTurn, channel.conversation, channelReceipt.ID)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "present_result", "channel-card", map[string]any{
+		"type": "document_draft", "title": "Channel note", "summary": "Noted.",
+		"body":          json.RawMessage(`{"blocks":[{"kind":"paragraph","text":"Hello."}],"from_summary":null}`),
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("steered present_result: %+v", got)
+	}
+	var conversation, turnID string
+	err = private.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), `SELECT conversation_id, json_extract(body,'$.provenance.turn_id') FROM conv_event WHERE scaffold_kind='result' AND json_extract(body,'$.title')='Channel note'`).Scan(&conversation, &turnID)
+	})
+	if err != nil || conversation != channel.conversation || turnID != channelTurn {
+		t.Fatalf("conversation=%q turn=%q err=%v", conversation, turnID, err)
+	}
+}
+
+func TestCreatedCodeGoalStaysOnSelectedProject(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	otherInput := questionPersonInput(t, r, "other-project", "Leave the other library alone.")
+	otherTools := modelBindingTools(t, r, otherInput)
+	input := questionPersonInput(t, r, "new-project", "Start the library work.")
+	tools := modelBindingTools(t, r, input)
+	admit := func(bindings map[string]loop.Tool, id, outcome string) (goalID, recordID, revision string) {
+		t.Helper()
+		got := questionCall(t, bindings, "dispatch_code_goal", id, map[string]any{
+			"outcome": outcome, "done": "checks pass",
+			"scope":             map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+			"criteria":          []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+			"no_service_reason": "library",
+			"tasks":             []any{},
+		})
+		if got.Code != loop.OK {
+			t.Fatalf("admit %s: %+v", id, got)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(got.Output, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields["goal_id"], fields["record_id"], fields["revision"]
+	}
+	otherID, _, otherRevision := admit(otherTools, "other-goal", "other library")
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:new-project", []binding.Choice{{
+		Quote:  input.Body.Text(),
+		Target: binding.Target{Class: "new", Kind: "project"},
+	}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	chosenID, chosenRecord, chosenRevision := admit(tools, "created-goal", "library work")
+	wantRecord, ok := goaleng.ProjectRecordID(chosenID)
+	if !ok || chosenRecord != wantRecord {
+		t.Fatalf("record id = %s", chosenRecord)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || len(choices) != 1 || choices[0].CreatedID != chosenRecord || choices[0].Target.Kind != "project" {
+		t.Fatalf("created identity: %+v %v", choices, err)
+	}
+	read := questionCall(t, tools, "read_record", "read-created", map[string]any{"id": chosenRecord})
+	if read.Code != loop.OK {
+		t.Fatalf("created record stayed blocked: %+v", read)
+	}
+	revised := questionCall(t, tools, "revise_code_goal", "revise-created", map[string]any{
+		"goal_id": chosenID, "revision": chosenRevision,
+		"outcome": "corrected library work", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if revised.Code != loop.OK {
+		t.Fatalf("created goal stayed blocked: %+v", revised)
+	}
+	blocked := questionCall(t, tools, "revise_code_goal", "revise-other", map[string]any{
+		"goal_id": otherID, "revision": otherRevision,
+		"outcome": "hijacked library", "done": "checks pass",
+		"scope":    map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+		"criteria": []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+	})
+	if blocked.Code != loop.Denied || !strings.Contains(string(blocked.Output), "input_target_pending") {
+		t.Fatalf("other goal was reachable: %+v", blocked)
+	}
+}
+
+func TestProgressLookupKeepsLiteralGoalID(t *testing.T) {
+	rows := []protocol.ProgressRow{
+		{Ref: "foo", Line: protocol.ProgressLine{Name: "bare"}},
+		{Ref: "goal:foo", Line: protocol.ProgressLine{Name: "literal"}},
+	}
+	line, ok := progressLineForID(rows, "goal:foo")
+	if !ok {
+		t.Fatal("goal:foo had no progress line")
+	}
+	got, _ := line.(protocol.ProgressLine)
+	if got.Name != "literal" {
+		t.Fatalf("lookup stripped goal:foo and returned %q", got.Name)
+	}
+	record, ok := progressLineForID([]protocol.ProgressRow{{Ref: "library", Line: protocol.ProgressLine{Name: "library work"}}}, "goal:library")
+	if !ok {
+		t.Fatal("project record id lost the goal line")
+	}
+	if got, _ := record.(protocol.ProgressLine); got.Name != "library work" {
+		t.Fatalf("record fallback: %q", got.Name)
+	}
+}
+
+func TestReadWorkProgressResolvesCodeGoalRecord(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dev := workAgentFixture(t, r)
+	r.agent, r.conversation = dev, "main:"+dev
+	if err := r.startWork(t.Context(), &WorkConfig{Driver: func(*goaleng.Engine) (goaleng.Driver, error) { return parkedWorkDriver{}, nil }}); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.workEngine.close(t.Context()) })
+	input := questionPersonInput(t, r, "progress-choice", "How is the library work going?")
+	tools := modelBindingTools(t, r, input)
+	admit := func(bindings map[string]loop.Tool, id, outcome string) (goalID, recordID string) {
+		t.Helper()
+		got := questionCall(t, bindings, "dispatch_code_goal", id, map[string]any{
+			"outcome": outcome, "done": "checks pass",
+			"scope":             map[string]any{"repositories": []string{"repo"}, "includes": "library", "excludes": "service"},
+			"criteria":          []any{map[string]any{"id": "checked", "statement": "library works", "check": map[string]string{"kind": "check", "method": "acceptance", "target": "repo"}}},
+			"no_service_reason": "library",
+			"tasks":             []any{},
+		})
+		if got.Code != loop.OK {
+			t.Fatalf("admit %s: %+v", id, got)
+		}
+		var fields map[string]string
+		if err := json.Unmarshal(got.Output, &fields); err != nil {
+			t.Fatal(err)
+		}
+		return fields["goal_id"], fields["record_id"]
+	}
+	chosenID, chosenRecord := admit(tools, "progress-goal", "library work")
+	wantRecord, ok := goaleng.ProjectRecordID(chosenID)
+	if !ok || chosenRecord != wantRecord {
+		t.Fatalf("record id = %s", chosenRecord)
+	}
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:progress-choice", []binding.Choice{{
+		Quote:  input.Body.Text(),
+		Target: binding.Target{Class: "existing", ID: chosenRecord, Kind: "project"},
+	}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	read := questionCall(t, tools, "read_work_progress", "record-progress", map[string]string{"id": chosenRecord})
+	if read.Code != loop.OK {
+		t.Fatalf("progress read denied: %+v", read)
+	}
+	var body struct {
+		ID       string `json:"id"`
+		Progress struct {
+			Name  string `json:"name"`
+			State string `json:"state"`
+		} `json:"progress"`
+	}
+	if err := json.Unmarshal(read.Output, &body); err != nil {
+		t.Fatal(err)
+	}
+	if body.ID != chosenRecord {
+		t.Fatalf("response id = %s, want the record id used for the binding check", body.ID)
+	}
+	if body.Progress.State == "unknown" || body.Progress.Name != "library work" {
+		t.Fatalf("record id missed the progress line: %s", read.Output)
+	}
+	otherInput := questionPersonInput(t, r, "other-progress", "Leave the other library alone.")
+	otherTools := modelBindingTools(t, r, otherInput)
+	_, otherRecord := admit(otherTools, "other-progress-goal", "other library")
+	blocked := questionCall(t, tools, "read_work_progress", "other-record", map[string]string{"id": otherRecord})
+	if blocked.Code != loop.Denied || !strings.Contains(string(blocked.Output), "input_target_pending") {
+		t.Fatalf("other record bypassed the chosen project: %+v", blocked)
 	}
 }
 

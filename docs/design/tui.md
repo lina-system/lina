@@ -76,7 +76,7 @@ acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `/extension` and `/extension/ast` for table parsing, and `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -628,8 +628,9 @@ and 100x34, including 1, 5, 20 and 50 cards. The latter launches the Codex proto
 fixture through Core, observes the same start and changing person-request activity
 in a real 120x34 PTY, and checks the resulting artifact and restart. The deterministic
 TUI matrix checks two-row clipping, folded/overflow counts and 50 streamed changes
-with a retained draft, focus and reading anchor. Stage-list and scheduling-control
-evaluations remain with their corresponding implementation issues.
+with a retained draft, focus and reading anchor. The scheduling controls are
+checked by `TestM3WorkPanelAdjust`, which sends the panel's own keys to the real
+TUI at 120x34 and reads the pass Core records for each choice.
 
 **Views.** Ctrl+P on the focused panel switches between cards and a compact view of one row per 일: the name, then Now, then the elapsed time right-aligned; Now shrinks first. Left and Right change the state filter: all, needs you, running, waiting, done. The title shows the filter when it is not all, and fold and count rows then count only that state.
 
@@ -649,7 +650,7 @@ The panel boundary and elapsed-time column stay fixed even when a terminal joins
 emoji without mode 2027; correcting those columns preserves the composer cursor
 and emits nothing for an unchanged frame.
 
-**Adjusting.** On a selected card, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
+**Adjusting.** On a selected card whose row names its goal, Shift+Up and Shift+Down move the 일 up or down in priority, Space pauses or resumes it, and Delete asks to stop it: the card's second row asks for Enter to confirm, and any other key cancels. The TUI sends the goal the row names, never the card's ref. A card without a goal, such as a background run or a conversation worker, takes none of these keys and the footer omits them. Space and Delete are Toggle keys here, so a held key cannot resume the pause it just set or cancel its own stop ask; Shift+Up, Shift+Down and the limit keys may repeat (T-10). `-` and `+` lower and raise the run limit by one, and `0` returns it to automatic; the title shows the limit only when the person set one. These keys are not letters, so they work while a Korean input method is on. The TUI sends each choice to Core and changes nothing locally: a card moves, pauses or shows its place only when Core's update arrives ([work-and-delegation.md](work-and-delegation.md#order-pause-and-run-limit)). While the panel has focus, the footer shows these keys as whole hints (T-10).
 
 **Stage list.** Enter on a card opens the 일 view in the panel: a row with the 일's name and a back mark (`‹`, or `<` in ASCII), then one row per entry of its stage list ([work-and-delegation.md](work-and-delegation.md#stages)):
 
@@ -751,8 +752,21 @@ stage list must match the corpus graph in steps, depth and parallel groups, so a
 lost blocker fails the run — and records every settled 120x34 frame in both
 languages and glyph modes. A check whose input a recording does not supply is
 reported as missing and never as a pass. E6 and E7 run separately in
-`TestM3WorkPanelStages`; E11 to E14 need scheduling-pass recordings from #772
-and #773. E4 and E8 to E9
+`TestM3WorkPanelStages`. E11 to E14 run in `TestM3WorkPanelAdjust`: Core runs in
+a child process, because a run limit is one of the person's choices and Core
+grants it only to a decider outside its own tree. The fixture manager admits the
+corpus 일 and the person's limit before that run starts, a stub worker holds each
+step until the run releases it, and the host report carries the load the run
+sets. Each key goes to the real TUI at 120x34; the run waits for the pass Core
+commits after the key and reads it from the ledger — the rank order it placed,
+the steps it started, each goal's rank, pause, state, queue place and reason,
+and the applied limit with its reason. A pass is marked with the command that
+produced it, so a move, a pause, a resume, a confirmed stop, a cancelled stop and
+a limit change are each read where Core recorded them. The frame that follows
+that pass is recorded beside it. The pause, resume, stop and limit cases run
+under a person's number; the shortage case runs with the automatic limit and a
+host that carries nothing, which is the reason each waiting card shows.
+E4 and E8 to E9
 also run in `TestM3WorkPanelEventLatency`: 50 live corpus graphs remain in
 progress while 50 of the fan-out graph’s 82 parallel steps land. Each stub
 worker writes a result before Core accepts its observation. Eight PTYs observe
@@ -1133,8 +1147,8 @@ type Stream interface {
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - The conversation Markdown subset is bold, italic, inline code, ordered and
-  unordered lists (including nesting), fenced and indented code blocks, and
-  links. The UI adapter uses the pinned Goldmark parser, also used by Glamour,
+  unordered lists (including nesting), fenced and indented code blocks, links
+  and pipe tables. The UI adapter uses the pinned Goldmark parser, also used by Glamour,
   to produce semantic spans for closed blocks; `render` receives a parser
   callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
   the UI adds terminal styles. List continuations align under their content;
@@ -1144,7 +1158,15 @@ type Stream interface {
   with multiple syntax spans or no tokens; message-boundary trimming removes
   only paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
-  Tables use our own renderer.
+  Tables use our own renderer. A closed conversation table measures its visible
+  cells with the shared `Measurer`, aligns each column at its natural width and
+  honors left, center and right alignment from the delimiter row. Headers are
+  bold; cells retain inline styles. The delimiter row is not displayed. Wide
+  tables clip at the transcript's right edge with the typed clipped flag,
+  never wrapping a cell into another row or splitting a grapheme cluster.
+  Resizing reveals the retained content. An open table stays in the unstyled
+  streaming preview until a blank line or `item_done` closes it. Structured
+  result-table cards retain their separate horizontal-scroll contract.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
   retain their attributes, code uses the surface background, and links use
   underlined accent text. Lists reuse the theme's action glyph (including the
@@ -1429,6 +1451,11 @@ LN-85 delivers the harness and scenario validation. [#86](https://github.com/lin
 records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
 A confirmed matrix records each terminal's observed product version and `TERM`;
 a proposed entry cannot carry either field.
+The matrix's `automated_qa` record and `evidence/tui-spike/terminal-qa/` are the
+alpha evidence for the terminal list: the built TUI run in six Linux terminals
+and one SSH PTY, with each observed product version, `TERM` and transport.
+A product name alone is not a version. The SSH run records the OpenSSH and tmux
+versions it observed.
 Owner confirmation of that list is still pending and is the first Done-when item
 of [follow-up #371](https://github.com/lina-system/lina/issues/371), which also
 owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final
@@ -1621,6 +1648,7 @@ rendering checks; they do not replace the physical terminal and IME spike.
 - Contrast checks require at least 4.5:1 for text, muted text and accent on canvas and surface, in light, dark and high contrast. The source also specifies tested 256-colour and 16-colour mappings. Dark ANSI16 uses bright white for the accent where standard blue cannot pass; user-redefined ANSI palettes can change physical contrast. Hairlines are decorative, never the only state indicator.
 - No state is shown by colour alone: each has a mark and a word. Glyph sets are tokens, in plain Unicode and ASCII, and none needs a private-use glyph.
 - Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
+- Colour output fills every cell of each styled region, including empty rows and trailing spaces. The full-screen shell fills the viewport with the chosen theme's canvas, including after resize and in overlays, while preserving explicit surface backgrounds such as code. A light terminal without `COLORFGBG` therefore gets a consistent dark canvas rather than dark text blocks on its default background. This requires no terminal background query and does not change `NO_COLOR` output.
 - On Linux (Omarchy) the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
 

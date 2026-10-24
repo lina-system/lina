@@ -1,0 +1,18 @@
+{
+  "$comment": "SPDX-License-Identifier: Apache-2.0",
+  "platform": "discord",
+  "account": "123456",
+  "owner": "200",
+  "guild": "g1",
+  "chat": "100",
+  "token": "synthetic.discord.token",
+  "first": [
+    {"id": "900000000000000001", "author": "200", "text": "ship it"},
+    {"id": "900000000000000002", "author": "500", "bot": true, "text": "build is green"},
+    {"id": "900000000000000003", "author": "600", "text": "me too"}
+  ],
+  "edit": {"id": "900000000000000001", "text": "ship it after review"},
+  "delete": {"id": "900000000000000002"},
+  "next": {"id": "900000000000000004", "author": "600", "text": "weekends too"},
+  "owner_message": {"id": "900000000000000005", "text": "hello from the owner"}
+}

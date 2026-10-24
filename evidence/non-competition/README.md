@@ -69,7 +69,7 @@ The template defines the fields consumed by the checker:
 | --- | --- |
 | `id`, `tier`, `column` | Record identity and cell. Columns: `focus`, `input`, `clipboard`, `file_scope`, `resources`, `lock_unlock`, `sleep_resume`, `disconnect`. |
 | `host`, `session`, `hardware` | Installation alias, Linux version and mode; user/session/profile aliases and task/grant/lease; CPU, physical memory in bytes, relevant devices. |
-| `artifacts` | Version and release manifest SHA-256 for every involved artifact. `core`, `node`, `app`, `os`, `claude_adapter` are explicit; additional artifacts such as `moirai_worker` use the same shape. An absent optional artifact has only `absent_reason`. Device-OS requires Core and OS; desktop requires Node and app. Claude-account sessions require the adapter. |
+| `artifacts` | Version and release manifest SHA-256 for every involved artifact. `core`, `node`, `app`, `os`, `claude_adapter` are explicit; additional artifacts such as `moirai_worker` use the same shape. An absent optional artifact has only `absent_reason`. Device-OS requires Core (with OS optional and checked when present); desktop requires Node and app. Claude-account sessions require the adapter. |
 | `workload` | Human, LINA and LIFE work descriptions, agent and background-run counts, whether Claude served the session, process inventory and normal-load process ids. The three true declarations attest human work, LINA work and full background load. |
 | `observation` | `manual_linux`, an observer alias, and UTC start/end timestamps. A headless scenario is not this observation method. |
 | `traces` | Four relative attachment paths, SHA-256 digests, task/grant ids and whole-session start/end coverage. Paths cannot escape the set directory, including through symlinks. |

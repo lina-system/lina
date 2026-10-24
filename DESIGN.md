@@ -45,14 +45,17 @@ keep their command diagnostics.
 
 ## Tokens and terminal profiles
 
-The three DTCG files in [design/tokens](design/tokens/) are the source of truth.
+The three DTCG theme files, common `app.json` and `icons.json` in
+[design/tokens](design/tokens/) are the source of truth. The
+[shared-source procedure](design/tokens/README.md) records the app import and
+how a merged Core revision is adopted by the app without overwriting newer roles.
 `node scripts/tokens.mjs` generates the Go data, CSS custom properties, the
 launcher panel's Swift constants, SVG mark and the following tables.
 `node scripts/tokens.mjs --check` compares without writing,
 checks text contrast, and rejects raw presentation colours and glyphs in TUI
 production source. Foundation runs the same check.
 
-The launcher's Swift file holds the six colors as dynamic `NSColor` values that
+The launcher's Swift file holds the colors as dynamic `NSColor` values that
 pick light, dark or high contrast from the panel's appearance, plus spacing,
 radius and motion constants. Glass, materials and corner shape stay the
 system's. The high-contrast set is dark, reaches 7:1 against canvas and surface,
@@ -62,6 +65,12 @@ they differ, because the Swift file holds one value per role.
 
 All text roles (text, muted and accent) must reach 4.5:1 on both canvas and
 surface, including the standard 16-colour and 256-colour fallback palettes.
+Semantic success, warning, error, unknown, working, waiting, disabled, focus and
+border roles follow the same rule. Diff and selected text meet 4.5:1 on their
+paired backgrounds; selection differs from both surfaces by at least 3:1.
+These roles are available in the Lip Gloss palette without changing the quiet
+connection screen or replacing text labels with color. Shared icons retain
+Unicode and ASCII equivalents; tool lifecycle rows consume that source.
 The separator is decorative and does not carry information. Actual ANSI palettes
 are user configurable; their physical colours cannot be guaranteed by the app.
 On dark 16-colour terminals the active accent becomes bright white: readable
@@ -81,12 +90,31 @@ of app pixels. Duration values are milliseconds.
 
 | Role | Light | Dark | High contrast |
 | --- | --- | --- | --- |
+| border.focusWidth | `2px` | `2px` | `2px` |
+| border.width | `1px` | `1px` | `1px` |
 | color.accent | `#2F4BDB` (26 / 4) | `#5685FF` (69 / 15) | `#6795FF` (69 / 15) |
+| color.border | `#626978` (241 / 0) | `#A6ADBD` (249 / 7) | `#DDDDDD` (253 / 7) |
 | color.canvas | `#F8F9FC` (231 / 15) | `#17191F` (234 / 0) | `#000000` (16 / 0) |
+| color.diffAdded | `#17633D` (22 / 0) | `#8FE0B4` (114 / 10) | `#8FE0B4` (114 / 10) |
+| color.diffAddedBackground | `#E2F1E8` (231 / 15) | `#15281F` (16 / 0) | `#000000` (16 / 0) |
+| color.diffRemoved | `#AD2940` (124 / 1) | `#FFACB8` (217 / 9) | `#FFACB8` (217 / 9) |
+| color.diffRemovedBackground | `#FCE7EC` (231 / 15) | `#301B24` (16 / 0) | `#000000` (16 / 0) |
+| color.disabled | `#626978` (241 / 0) | `#A6ADBD` (249 / 7) | `#DDDDDD` (253 / 7) |
+| color.error | `#AD2940` (124 / 1) | `#FFACB8` (217 / 9) | `#FFACB8` (217 / 9) |
+| color.focus | `#2F4BDB` (26 / 4) | `#5685FF` (69 / 15) | `#6795FF` (69 / 15) |
 | color.line | `#CFD3DE` (252 / 7) | `#383E4C` (238 / 8) | `#FFFFFF` (231 / 15) |
 | color.muted | `#626978` (241 / 0) | `#A6ADBD` (249 / 7) | `#DDDDDD` (253 / 7) |
+| color.onAccent | `#FFFFFF` (231 / 15) | `#000000` (16 / 0) | `#000000` (16 / 0) |
+| color.onSelection | `#20232D` (16 / 15) | `#F4F5F9` (231 / 0) | `#FFFFFF` (231 / 0) |
+| color.selection | `#838A9B` (243 / 0) | `#626D82` (243 / 8) | `#626D82` (243 / 8) |
+| color.success | `#17633D` (22 / 0) | `#8FE0B4` (114 / 10) | `#8FE0B4` (114 / 10) |
 | color.surface | `#EEF0F6` (255 / 7) | `#20232B` (235 / 0) | `#000000` (16 / 0) |
 | color.text | `#20232D` (234 / 0) | `#F4F5F9` (255 / 15) | `#FFFFFF` (231 / 15) |
+| color.unknown | `#626978` (241 / 0) | `#DDDDDD` (253 / 7) | `#DDDDDD` (253 / 7) |
+| color.waiting | `#2F4BDB` (26 / 4) | `#5685FF` (69 / 15) | `#6795FF` (69 / 15) |
+| color.warning | `#805000` (94 / 1) | `#F6D58C` (222 / 11) | `#F6D58C` (222 / 11) |
+| color.working | `#2F4BDB` (26 / 4) | `#5685FF` (69 / 15) | `#6795FF` (69 / 15) |
+| control.minimum | `48px` | `48px` | `48px` |
 | glyph.ascii.action | `">"` | `">"` | `">"` |
 | glyph.ascii.activityFrames | `"|/-\\"` | `"|/-\\"` | `"|/-\\"` |
 | glyph.ascii.activitySeparator | `"-"` | `"-"` | `"-"` |
@@ -94,6 +122,14 @@ of app pixels. Duration values are milliseconds.
 | glyph.ascii.back | `"<"` | `"<"` | `"<"` |
 | glyph.ascii.connecting | `"~"` | `"~"` | `"~"` |
 | glyph.ascii.failed | `"x"` | `"x"` | `"x"` |
+| glyph.ascii.iconCitation | `"[doc]"` | `"[doc]"` | `"[doc]"` |
+| glyph.ascii.iconError | `"x"` | `"x"` | `"x"` |
+| glyph.ascii.iconIdentity | `"@"` | `"@"` | `"@"` |
+| glyph.ascii.iconMemory | `"[m]"` | `"[m]"` | `"[m]"` |
+| glyph.ascii.iconSuccess | `"+"` | `"+"` | `"+"` |
+| glyph.ascii.iconUnknown | `"?"` | `"?"` | `"?"` |
+| glyph.ascii.iconWaiting | `"!"` | `"!"` | `"!"` |
+| glyph.ascii.iconWorking | `"~"` | `"~"` | `"~"` |
 | glyph.ascii.live | `"*"` | `"*"` | `"*"` |
 | glyph.ascii.mark | `"."` | `"."` | `"."` |
 | glyph.ascii.overflow | `"..."` | `"..."` | `"..."` |
@@ -123,6 +159,14 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.back | `"‹"` | `"‹"` | `"‹"` |
 | glyph.unicode.connecting | `"◌"` | `"◌"` | `"◌"` |
 | glyph.unicode.failed | `"×"` | `"×"` | `"×"` |
+| glyph.unicode.iconCitation | `"▤"` | `"▤"` | `"▤"` |
+| glyph.unicode.iconError | `"×"` | `"×"` | `"×"` |
+| glyph.unicode.iconIdentity | `"●"` | `"●"` | `"●"` |
+| glyph.unicode.iconMemory | `"▥"` | `"▥"` | `"▥"` |
+| glyph.unicode.iconSuccess | `"✓"` | `"✓"` | `"✓"` |
+| glyph.unicode.iconUnknown | `"?"` | `"?"` | `"?"` |
+| glyph.unicode.iconWaiting | `"!"` | `"!"` | `"!"` |
+| glyph.unicode.iconWorking | `"◐"` | `"◐"` | `"◐"` |
 | glyph.unicode.live | `"●"` | `"●"` | `"●"` |
 | glyph.unicode.mark | `"."` | `"."` | `"."` |
 | glyph.unicode.overflow | `"…"` | `"…"` | `"…"` |
@@ -145,20 +189,26 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.toolRunning | `"◐"` | `"◐"` | `"◐"` |
 | glyph.unicode.unknown | `"?"` | `"?"` | `"?"` |
 | glyph.unicode.waiting | `"?"` | `"?"` | `"?"` |
+| icon.grid | `24px` | `24px` | `24px` |
 | icon.size | `20px` | `20px` | `20px` |
+| icon.stroke | `2px` | `2px` | `2px` |
 | motion.activityElapsed | `1000ms` | `1000ms` | `1000ms` |
 | motion.activityFrame | `100ms` | `100ms` | `100ms` |
 | motion.reduced | `0ms` | `0ms` | `0ms` |
 | motion.settle | `160ms` | `160ms` | `160ms` |
 | radius.card | `12px` | `12px` | `12px` |
+| space.compact | `4px` (1 cells) | `4px` (1 cells) | `4px` (1 cells) |
 | space.gutter | `24px` (3 cells) | `24px` (3 cells) | `24px` (3 cells) |
 | space.inline | `8px` (1 cells) | `8px` (1 cells) | `8px` (1 cells) |
 | space.page | `32px` (2 cells) | `32px` (2 cells) | `32px` (2 cells) |
 | space.section | `24px` (1 cells) | `24px` (1 cells) | `24px` (1 cells) |
 | type.body | `"Pretendard", sans-serif` | `"Pretendard", sans-serif` | `"Pretendard", sans-serif` |
 | type.code | `ui-monospace, monospace` | `ui-monospace, monospace` | `ui-monospace, monospace` |
+| type.codeNative | `"JetBrainsMono", monospace` | `"JetBrainsMono", monospace` | `"JetBrainsMono", monospace` |
+| type.labelSize | `14px` | `14px` | `14px` |
 | type.lineHeight | `1.5` | `1.5` | `1.5` |
 | type.size | `16px` | `16px` | `16px` |
+| type.titleSize | `28px` | `28px` | `28px` |
 | type.titleWeight | `700` | `700` | `700` |
 | type.weight | `400` | `400` | `400` |
 

@@ -197,7 +197,7 @@ func (d *codeGoalDriver) Execute(ctx context.Context, a goal.Action) (goal.Obser
 		return d.libraryProof(ctx, s, g, a)
 	case goal.CheckCriterion:
 		return d.checkCriterion(ctx, s, g, t, a, repo)
-	case goal.Observe, goal.Decide, goal.PlanGoal:
+	case goal.Observe, goal.Decide, goal.PlanGoal, goal.ReadSource:
 		return goal.Observation{}, goal.ErrNeedsPerson
 	}
 	return goal.Observation{}, goal.ErrInvalid
@@ -303,6 +303,8 @@ func (d *codeGoalDriver) checkCriterion(ctx context.Context, s goal.State, g goa
 			return o, goal.ErrInvalid
 		}
 		o, err = d.libraryProof(ctx, s, g, a)
+	case "research.citations", "research.rubric":
+		o, collected, err = d.researchCriterion(ctx, s, g, t, a)
 	case "step.read":
 		if a.Check.Kind != goal.ReadEvidence || a.Check.TaskID == "" || a.Check.Target != t.ID {
 			return o, goal.ErrInvalid

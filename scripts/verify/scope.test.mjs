@@ -698,6 +698,14 @@ test('generated UI captures are evidence and other evidence images stay unmapped
   assert.equal(kind('evidence/other/capture.png'), 'unmapped');
 });
 
+test('terminal QA captures are evidence in their terminal directory', () => {
+  assert.equal(kind('evidence/tui-spike/terminal-qa/foot/typed.png'), 'docs');
+  assert.equal(kind('evidence/tui-spike/terminal-qa/gnome-terminal/resize-small.png'), 'docs');
+  assert.equal(kind('evidence/tui-spike/terminal-qa/ssh-tmux-capture.txt'), 'docs');
+  assert.equal(kind('evidence/tui-spike/terminal-qa/typed.png'), 'unmapped');
+  assert.equal(kind('evidence/tui-spike/terminal-qa/foot/run.py'), 'unmapped');
+});
+
 test('vector rebuilds select automation and their notices remain documents', () => {
   assert.equal(kind('packaging/sqlite-vec/build.sh'), 'automation');
   assert.equal(kind('packaging/sqlite-vec/NOTICE.md'), 'docs');
@@ -734,8 +742,8 @@ test('the Apple helper belongs to the lina component', () => {
   assert.equal(kind('adapters/applefm/README.md'), 'components');
 });
 
-test('Claude adapter and npm configuration select automation and dependency verification', () => {
-  for (const path of ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json', 'adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
+test('Claude and messenger adapters and npm configuration select automation and dependency verification', () => {
+  for (const path of ['adapters/claude-acp/package.json', 'adapters/claude-acp/package-lock.json', 'adapters/messenger/package.json', 'adapters/messenger/package-lock.json', 'adapters/messenger/main.ts', 'adapters/claude/adapter.ts', 'adapters/claude/package.json', 'adapters/claude/package-lock.json', '.npmrc', '.node-version', 'package.json', 'package-lock.json']) {
     assert.equal(kind(path), 'automation', path);
   }
 });

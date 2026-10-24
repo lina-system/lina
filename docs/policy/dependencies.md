@@ -11,17 +11,27 @@ This policy covers:
 - npm packages in the root `package.json` and lockfile: repository tooling that needs an npm package
 - the Claude ACP worker program's independent lockfile in `adapters/claude-acp/`
 - the Claude adapter's lockfile, which pins the Claude Agent SDK package that LINA installs on the person's machine on first use of a Claude account ([runtime.md](../design/runtime.md))
+- the messenger add-on's lockfile in `adapters/messenger/`, which pins the agent-messenger SDK the add-on runs on the person's Node.js ([integrations.md](../design/integrations.md#the-messenger-add-on))
 - binaries that LINA ships or downloads, and external components
 - upstream source and generated upstream code under `third_party/`
 - the `dependencies` check that enforces these rules
 
 Tools the user installs are outside this policy: workers such as Codex, the command-line tools that plugins rely on, and the plugins the user adds with their servers. They are not LINA dependencies. LINA records the version and source it observed for them and never pins them ([runtime.md](../design/runtime.md), [integrations.md](../design/integrations.md)). First-party plugins are LINA code and follow this policy. Tools that only the developers of LINA run during development are outside this policy as well; they are recorded under Development-time tools.
 
-Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the provider adapters, external components, the packaging, and the release manifest. The [foundation policy](foundation.md) owns path mapping and check layout.
+Other documents cover what each component uses and why. [runtime.md](../design/runtime.md) names the vendored upstream, the provider adapters, external components, the packaging, and the release manifest. The [foundation policy](foundation.md) owns path mapping and check layout. The Flutter/Dart LINA app lives in its own repository, [`lina-system/lina-app`](https://github.com/lina-system/lina-app) ([surfaces.md](../design/surfaces.md#app-front-end)): its Flutter SDK pin (`.flutter-version`), Dart and Flutter pub packages (`pubspec.yaml` and committed `pubspec.lock` enforced with `flutter pub get --enforce-lockfile`), bundled app fonts, and pinned theme and Dart protocol generators (`scripts/verify/generators.json`) are governed by `lina-system/lina-app`'s `docs/policy/dependencies.md` and `docs/policy/foundation.md` ([lina-app#3](https://github.com/lina-system/lina-app/issues/3), [lina-app#5](https://github.com/lina-system/lina-app/issues/5), [lina-app#6](https://github.com/lina-system/lina-app/issues/6)), which consume this repository's canonical `design/tokens/`, `protocol/schema/` and `protocol/fixtures/` files at an immutable `lina-system/lina` release tag (`v0.0.1-alpha.YYYYMMDD.N`) or 40-character commit SHA verified by SHA-256 file digests.
 
 ## Go modules
 
 LINA's components are Go. Their outside code comes in as Go modules.
+
+The personal Telegram source uses `github.com/gotd/td v0.163.0` (MIT), including
+its MTProto transport, authentication and generated Telegram API types. It
+uses no TDLib binary. Its transitive modules and notices are recorded in
+`go.mod`, `go.sum` and `THIRD-PARTY-NOTICES.md`. The replacement of
+`github.com/segmentio/asm` with `v1.2.0` retains the MIT release; later releases
+use a license this policy does not admit. The narrowly versioned OpenPGP
+advisory exception covers code outside LINA's import closure; it does not
+waive MTProto vulnerability checks.
 
 ### Toolchain and configuration
 
@@ -49,7 +59,7 @@ LINA's components are Go. Their outside code comes in as Go modules.
 
 ## npm packages
 
-npm is used only for packages that run on Node.js: the Claude Agent SDK package that the Claude adapter installs from its own lockfile, the pinned Claude ACP worker program with its own lockfile, and repository tooling that needs an npm package. LINA ships no Node.js runtime: the Claude adapter runs on the Node.js the person installed ([runtime.md](../design/runtime.md)). LINA's other components use no npm package.
+npm is used only for packages that run on Node.js: the Claude Agent SDK package that the Claude adapter installs from its own lockfile, the pinned Claude ACP worker program with its own lockfile, the messenger add-on's agent-messenger SDK with its own lockfile, and repository tooling that needs an npm package. LINA ships no Node.js runtime: the Claude adapter, the add-on and their programs run on the Node.js the person installed ([runtime.md](../design/runtime.md)). LINA's other components use no npm package.
 
 ### Package manager and configuration
 
@@ -73,9 +83,10 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 
 ### Lockfile
 
-- The root `package-lock.json` covers repository tooling. Each external Claude program has its own `package-lock.json` beside its manifest. It is committed and changes only through npm, in the same change as the manifest change that causes it.
+- The root `package-lock.json` covers repository tooling. Each external program — the Claude adapter, the Claude ACP worker and the messenger add-on — has its own `package-lock.json` beside its manifest. It is committed and changes only through npm, in the same change as the manifest change that causes it.
 - `foundation` and release builds install with `npm ci --ignore-scripts`, which fails if the lockfile and manifests disagree. Use `npm install` only to change dependencies, never to verify them.
 - The Claude adapter's lockfile is committed with the adapter. On first use LINA Core installs from it with `npm ci --ignore-scripts --omit=dev`, from the public registry, and verifies the installed packages against the lockfile's integrity values; nothing new is resolved.
+- The messenger add-on ships with the release and runs on the person's Node.js, so nothing is installed on the person's machine. The dependency check copies the adapter to an isolated directory and runs `npm ci --ignore-scripts --omit=dev --omit=optional` there, then its tests, so the committed lockfile stays installable without optional native packages.
 - The Claude ACP worker program is installed on first selected use with `npm ci --ignore-scripts --omit=dev --omit=optional`. npm verifies tarballs against the committed SHA-512 values, including cache hits. Core uses an isolated npm home and configuration, publishes only a complete installation, checks that optional packages are absent, and verifies the installed file inventory before reuse. The program runs the person's installed `claude`; Core never installs its optional Claude Code binary.
 - Install and build steps run in a clean worktree with no credentials. The publication stage is a separate stage that installs no packages and uses the owner's local credentials ([releases.md](releases.md)).
 
@@ -104,7 +115,7 @@ Run tools from the lockfile through package scripts or `npx --no-install`. Scrip
 ## Runtime and binaries
 
 - The `toolchain` line of `go.mod` records the Go release that `foundation` and release builds use.
-- `.node-version` records one exact Node.js version for repository tooling and for testing the Claude adapter. Releases ship no Node.js runtime.
+- `.node-version` records one exact Node.js version for repository tooling and for testing the Claude adapter and the messenger add-on. Releases ship no Node.js runtime.
 - Pin every other binary that LINA ships or downloads, including sqlite-vec platform binaries and [external components](../design/runtime.md), by version and SHA-256 digest. Verify each download against its digest before extraction or execution, every time, including after a cache hit.
 - An external component ships with its license and notices.
 - The release manifest in [runtime.md](../design/runtime.md) records each pinned version and digest.

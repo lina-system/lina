@@ -69,6 +69,7 @@ type shellModel struct {
 	conversation  conversationView
 	talk          talkView
 	channels      channelView
+	telegram      telegramView
 	web           webView
 	accounts      accountView
 	accountRows   []protocol.AccountSummary
@@ -157,6 +158,10 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		if m.talk.open {
 			return m, nil
 		}
+		if m.telegram.open {
+			m.telegramPaste(msg.Content)
+			return m, nil
+		}
 		if m.channels.open {
 			m.channelPaste(msg.Content)
 			return m, nil
@@ -178,6 +183,9 @@ func (m *shellModel) Update(message tea.Msg) (tea.Model, tea.Cmd) {
 		}
 		if m.talk.open {
 			return m, m.talkKey(msg)
+		}
+		if m.telegram.open {
+			return m, m.telegramKey(msg)
 		}
 		if m.channels.open {
 			return m, m.channelKey(msg)
@@ -221,6 +229,7 @@ func (m *shellModel) beginGeneration(msg shellBegin) {
 		m.conversation.workFocused = false
 		m.talk = talkView{attempt: m.talk.attempt + 1}
 		m.channels = channelView{attempt: m.channels.attempt + 1}
+		m.telegram = telegramView{attempt: m.telegram.attempt + 1}
 		m.web = webView{attempt: m.web.attempt + 1}
 		m.accounts = accountView{}
 		m.accountRows = nil

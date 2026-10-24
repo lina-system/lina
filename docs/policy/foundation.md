@@ -10,7 +10,7 @@ node scripts/foundation.mjs [--range <base>..<head>] [--full] [--no-note] [--job
 
 - `--range <base>..<head>` classifies the diff between two commits. The head must resolve to the checked-out commit; otherwise selection fails and no checks run. Check out the candidate first. Without the option, the base is the commit the checked-out change was developed on: its merge base with `dev`, or the previous `dev` head when the checkout is `dev` itself.
 - `--full` runs every current check, regardless of changed paths.
-- `--event pull_request` excludes e2e from a range plan unless `--e2e` is also given. CI supplies the event and derives the opt-in from the PR label `e2e`. Local selection is unchanged and `--full` always includes all acceptance scenarios.
+- `--event pull_request` excludes e2e from a range plan unless `--e2e` is also given. CI supplies the event and derives the opt-in from the PR label `e2e`. Local selection is unchanged. `--full` includes all acceptance scenarios except with `--event push`, which selects the post-merge sanity checks without e2e.
 - `--no-note` skips writing the evidence note.
 - `--jobs <count>` bounds local child processes; the default is at most four and never more than the available CPUs. At most one local e2e shard runs at a time, retaining the four-scenario Core/PTY bound while other checks overlap it.
 
@@ -49,9 +49,9 @@ foundation gate passed in 697 seconds within the original budget.
 
 ## Pull request CI
 
-The [CI workflow](../../.github/workflows/ci.yml) checks pull requests targeting `dev` (and the owner-requested `codex/ln-369-*` stack), pushes to `dev`, a nightly schedule, and manual runs. Every job checks out the event's `github.sha` with full history and without persisting Git credentials. A pull request selects the diff from its base SHA to its merge commit from `refs/pull/<number>/merge`. PRs exclude e2e by default; the `e2e` label selects reached scenarios, and adding or removing it starts a fresh selection. Pushes, nightly runs and manual runs select the full suite. Post-merge runs have distinct concurrency groups so a newer push does not cancel running or pending verification.
+The [CI workflow](../../.github/workflows/ci.yml) checks pull requests targeting `dev` (and the owner-requested `codex/ln-369-*` stack), pushes to `dev`, a nightly schedule, and manual runs. Every job checks out the event's `github.sha` with full history and without persisting Git credentials. A pull request selects the diff from its base SHA to its merge commit from `refs/pull/<number>/merge`. PRs exclude e2e by default; the `e2e` label selects reached scenarios, and adding or removing it starts a fresh selection. Pushes select all docs, automation, dependencies, build and unit checks without e2e. Nightly runs and manual runs select the full suite; routine post-merge e2e runs on an operator-managed Linux machine. Post-merge runs have distinct concurrency groups so a newer push does not cancel running or pending verification.
 
-Selection runs once and publishes a plan bound to the candidate head, tree and a digest of the entire plan. Independent jobs read that same artifact: docs, automation, dependencies, build/vet/exhaustive, unit packages balanced by measured time, and e2e scenarios balanced by source file. The growing m1 corpus is split further; m2 and m3 tests that share the m1 harness are grouped by their milestone test names. The default plan has up to four unit shards. Each milestone keeps its floor of six m1, two m2 and two m3 acceptance shards, up to one shard per scenario file, and gains another shard whenever its measured work exceeds 240 seconds, so a slow or failing sibling cannot consume the six-minute package timeout before the remaining scenarios start. Empty shards are omitted. The final job keeps the single required check name `foundation` and aggregates results without rerunning any command. Shard artifact names include the workflow run attempt and download into separate directories. The gate reads the highest numbered attempt available for each shard, retaining earlier results for jobs that were not rerun. An earlier failure cannot overwrite a newer success, and a newer failure cannot fall back to an earlier success. A missing, failed, cancelled, skipped, stale or duplicate selected result fails the gate, as does a failed upstream job.
+Selection runs once and publishes a plan bound to the candidate head, tree and a digest of the entire plan. Independent jobs read that same artifact: docs, automation, dependencies, build/vet/exhaustive, unit packages balanced by measured time, and e2e scenarios balanced by source file. The growing m1 corpus is split further; m2 and m3 tests that share the m1 harness are grouped by their milestone test names. The default plan has up to four unit shards. Each milestone keeps its floor of six m1, two m2 and two m3 acceptance shards, up to one shard per scenario file, and gains another shard whenever its measured work exceeds 240 seconds, so a slow or failing sibling cannot consume the ten-minute e2e package watchdog before the remaining scenarios start. Empty shards are omitted. The final job keeps the single required check name `foundation` and aggregates results without rerunning any command. Shard artifact names include the workflow run attempt and download into separate directories. The gate reads the highest numbered attempt available for each shard, retaining earlier results for jobs that were not rerun. An earlier failure cannot overwrite a newer success, and a newer failure cannot fall back to an earlier success. A missing, failed, cancelled, skipped, stale or duplicate selected result fails the gate, as does a failed upstream job.
 
 A documentation-only plan invokes no Go work. Node comes from `.node-version` when present, otherwise Node 24. Selection uses the exact workspace Go toolchain when Go inventory is needed; Go jobs also install the `toolchain` named in `go.mod`. Missing or inconsistent toolchain declarations fail verification. Actions are pinned to commit SHAs. Only automation installs checksum-verified actionlint 1.7.12. Its unsupported-key diagnostic for GitHub's `concurrency.queue` is narrowly excluded; the QA workflow regression checks `queue: max` and keeps cancellation disabled. Verification jobs have read-only repository permissions, write no evidence note, and never publish or integrate a change. Only the separate post-merge QA job has issue-write permission; PRs never execute its reporter.
 
@@ -59,11 +59,15 @@ Jobs that exercise Linux sandboxing install Ubuntu's Bubblewrap package and the 
 
 ## Post-merge QA issues
 
-After a full run on `dev` (push, nightly or manual), the independent QA job
-reads the exact plan and newest shard result artifacts, including failures.
+Routine post-merge e2e runs on an operator-managed Linux machine through
+`scripts/verify/local-qa.mjs`. The nightly and manual Actions runs retain the
+full suite and independent QA job as a fallback. Pushes to `dev` run the sanity
+checks only and skip the QA job. Both reporters read the exact plan and shard
+results, including failures, and call the same `reconcileQA` implementation.
 `scripts/verify/post-merge-qa.mjs` opens or updates a `qa` issue for each failing
 Go top-level test, with nested failure lines, the tested head, first failing
-commit range and workflow run. A package timeout or panic also fails each
+commit range and run identity (workflow URL, or local machine, head, start time
+and log path). A package timeout or panic also fails each
 unfinished test with an active leaf, an explicit nested failure, or a test named
 in Go's timeout running-test diagnostics, with bounded package diagnostics.
 The running-test list distinguishes a parent still executing after starting a
@@ -81,31 +85,136 @@ instead of assigning findings to a guessed milestone.
 Before opening the first issue for a test, the reporter checks retained artifacts
 from completed later CI runs on the same branch. It validates each plan and result
 against the run head and plan digest, selects the newest attempt per shard, and
-compares commit ancestry. A latest terminal pass on a descendant head prevents
-an older failure from creating an already recovered finding, even when the pass
-was reported before any issue existed. A same-head failure takes precedence over
+compares commit ancestry. Three consecutive passing descendant heads prevent
+an older failure from creating an already recovered finding, even when those passes
+were reported before any issue existed. A shorter streak is stored on the new
+finding, and a descendant failure limits that streak, so a later pass can
+complete the same threshold. The same configurable recovery count
+applies to existing findings. A same-head failure takes precedence over
 a pass. Missing, expired or skipped results cannot establish recovery; malformed
-results fail reporting. This uses existing Actions artifacts within their retention
-period, without creating issues for tests that have only passed. The reporter
-needs `actions: read` for cross-run artifacts and `unzip` to read their JSON members.
+results fail reporting. Actions reporting uses existing Actions artifacts within their retention
+period, without creating issues for tests that have only passed. It needs
+`actions: read` for cross-run artifacts and `unzip` to read their JSON members.
+Local reporting instead reads the runner's stored plans and results, validates
+their digest and commit tree, and never queries Actions history. Both sources
+use the same ancestry ordering and recovery calculation.
 
 Issue identity includes branch, package and test name in a machine-readable
-body marker. Repeated failures update the same issue, including reopening a
-resolved finding. An explicit pass on a later descendant head closes it.
+body marker. Repeated failures update the same issue. Recovery requires passes on
+three consecutive distinct descendant heads that ran the test, configurable with
+the positive integer repository variable `QA_RECOVERY_PASSES` (default `3`).
+Each failure resets the pass count. A failure, pass and another failure within
+48 hours of the first failure marks the issue `flaky`; it stays open until the
+same recovery threshold is met. Commit order decides that sequence: a pass
+reported after both failures still counts when it sits between them. The
+observation window is the span of those three plan start times, at most 48
+hours. The reporter keeps the newest failure heads, at most 16, even when the
+stored heads are more than 48 hours apart, so a delayed failure between them
+can still complete the sequence.
+The label remains as history after recovery. The reporter creates the label if
+it is missing and preserves other labels.
+An unfinished test resets the recovery streak without creating a failure;
+skipped or absent tests do not count. Same-head passes can establish flakiness
+if another failure follows, but never advance the recovery count.
+
+A closed finding reopens at most once per 24 hours, measured from the reporter's
+last reopen. Further failures during that window update its body and one reusable
+status comment without changing the issue's closed state. A later failure report
+after the cooldown can reopen it, including a report of the same failing head.
+State changes and recovery progress edit that same comment instead of posting
+new comments. The issue body persists the pass count, recent failure times, flaky
+classification and last reopen timestamp across reporter runs.
+Recovery retains the most recent passing head identities, bounded by the
+configured threshold, and orders them by commit ancestry. A late intervening
+failure or unfinished observation removes earlier passes from the streak, even
+when a newer head has already reported. A failure can reopen a prematurely
+closed finding through the same cooldown; a failure followed by enough known
+passing heads leaves it closed. The latest tested head never moves backward.
+
+The first run with this policy migrates existing QA markers on its branch even
+when a test is absent from today's artifacts. It uses the Actions bot's close and
+reopen timeline to preserve the reopen cooldown and recognize prior flapping
+(including #1228), while retaining the original failure range and diagnostics.
+Legacy pass counts start at zero because the old marker did not retain that
+evidence; migration alone does not change an issue's open or closed state.
 Same-head reruns, skipped or missing tests, invalid artifacts and older heads
 do not prove recovery. Each test is reconciled independently of unrelated test
 failures. The first failing range survives updates. Reporting is serialized
 with `queue: max`, preserving up to 100 pending jobs in GitHub's FIFO queue.
 The queue is bounded: GitHub cancels additional jobs when those slots are full.
 Its token is available only to the reporter step, never to verification.
-PR runs perform only the QA job's scope check and cannot write issues.
+Push runs skip the QA job. PR runs retain the existing scope-only job, which
+succeeds without running the reporter or writing issues.
 
 For validation before landing, dispatch CI on an explicitly named
 `qa/e2e-*` branch. It uses the same full plan and reporter, with issue identity
-isolated from `dev`. A temporary push trigger on that validation branch can
-exercise the push path; it is not part of the production workflow. Retain the
+isolated from `dev`. Retain the
 failure and recovery run links as acceptance evidence. Post-merge findings
 never enter another PR's foundation selection or gate.
+
+## Local post-merge runner
+
+Run from a maintained checkout with an `origin` remote on Linux:
+
+```sh
+node scripts/verify/local-qa.mjs --repository lina-system/lina --milestone 1 \
+  --state /var/lib/lina-qa/state.json --jobs 2 --interval-minutes 30
+```
+
+Replace the example milestone with the current milestone number (or provide
+`QA_MILESTONE`). Supply an issue-write `GH_TOKEN` only in the operator's
+reporting environment. `--recovery-passes` or `QA_RECOVERY_PASSES` configures
+the same positive recovery count, default three. Node, Git, Go, actionlint
+1.7.12, `flock` and working Bubblewrap namespaces must be installed. Use the
+same checked AppArmor profile and namespace setup described for CI above.
+The runner fails if sandbox setup is unavailable; it never falls back to
+running verification on the host.
+
+An operator schedules this one command with a systemd timer and a `Type=oneshot`
+service whose `WorkingDirectory` is that maintained checkout. A five-minute
+timer is sufficient: the command enforces its own default 30-minute minimum
+between starts. No service, timer, webhook or daemon is installed by the script.
+Use one persistent state location and one active operator for each repository.
+Pause that timer when deliberately running the Actions fallback so reporters
+do not update the same issues concurrently.
+
+Each invocation takes a nonblocking `flock`, retries any pending report from
+stored results, fetches `origin/dev`, and checks the interval and tested head.
+Unchanged heads do no verification work. Merges arriving inside the interval
+are skipped until a later invocation selects the newest head. It consumes the
+head before executing candidate code, so a failure or interruption never reruns
+that head. A failed GitHub report is retried on the next invocation without
+rerunning shards. A failed or interrupted check is not a successful QA result;
+inspect the retained logs and let the next dev head run. Repeating the command
+returns `unchanged`, `interval` or `busy` when no new execution is due.
+
+The runner creates a clean, detached worktree in an independent temporary Git
+clone, preserving the caller's files and keeping its Git metadata outside the
+sandbox. Selection uses `foundation.mjs --full --event schedule --select`;
+every selected shard runs with `--plan --shard --out`, including shards after
+another shard fails. `--jobs` bounds simultaneous shards (default two) and each
+gets a share of the available CPUs. Each command retains a bounded deadline.
+Bubblewrap exposes only the candidate, tools, public dependency caches and the
+command's temporary output directory, with isolated home, temporary files and
+PID namespace. Host-owned state, run metadata, logs and retained results are
+not mounted into the sandbox. Shards receive a read-only sealed plan. After
+each command exits, the host imports only bounded regular output files through
+no-follow file descriptors; links and special files are rejected. Host writes
+use exclusive file creation and atomic replacement.
+Network access remains available for dependency checks as in CI. The reporting
+token and operator home are not exposed to verification. The temporary checkout
+is removed on normal completion or error; the operator's systemd service should
+kill the entire control group on interruption.
+
+The small atomic state file lives outside the checkout. Sibling `runs/<head>/`
+directories retain a run identity, sealed `plan.json`, shard `results/`, per-shard
+logs and `foundation.json`; `run.log` indexes the result and logs. Separate
+`cache/` directories hold public Go downloads and build outputs. Keep the state
+and per-head run records across invocations: they prevent duplicate execution,
+allow report retries and supply local recovery history. Interrupted runs never
+supply passing history. Do not commit these operational files. Machine labels
+and log paths appear in QA issues, so use an operator identity and location
+suitable for the repository's visibility.
 
 ## Execution
 
@@ -113,16 +222,18 @@ never enter another PR's foundation selection or gate.
 selection ----+---- docs / automation / dependencies ----+---- foundation
               +---- build / vet / exhaustive ------------+
               +---- unit package shards -----------------+
-              +---- e2e (post-merge / PR opt-in) ---------+
+              +---- e2e (local QA / nightly / manual / PR opt-in) ---------+
 ```
 
-`node scripts/foundation.mjs` remains the single local entry point. It selects the same plan and starts bounded child processes, giving each Go process a share of the available CPUs through `GOMAXPROCS`. The shared e2e harness passes its current Go CPU budget to child commands when constructing their isolated environment, so parallel Core processes retain that share. Locally, one e2e process at a time uses `-parallel=4`; in CI, each e2e shard has its own runner. All local checks share a 1200-second execution deadline. Each Go shard also keeps the existing component command budget, and `go test -timeout=6m` bounds package execution and emits stuck-test diagnostics. A unit shard runs one test package at a time (`-p=1`), so its test binaries together stay within the shard's `GOMAXPROCS` share instead of multiplying it; every selected package and test still runs once. Individual operation and scenario deadlines are unchanged. A failed shard does not cancel independent shards.
+`node scripts/foundation.mjs` remains the single local entry point. It selects the same plan and starts bounded child processes, giving each Go process a share of the available CPUs through `GOMAXPROCS`. The shared e2e harness passes its current Go CPU budget to child commands when constructing their isolated environment, so parallel Core processes retain that share. Locally, one e2e process at a time uses `-parallel=4`; in CI, each e2e shard has its own runner. All local checks share a 1200-second execution deadline. Each Go shard also keeps the existing component command budget, and `go test -timeout=6m` bounds a unit package's execution while e2e shards use `-timeout=10m`; both emit stuck-test diagnostics. An acceptance scenario's own deadline reaches four minutes, so the e2e watchdog outlives one scenario overrunning to that deadline plus the shard's 240 seconds of measured work. A unit shard runs one test package at a time (`-p=1`), so its test binaries together stay within the shard's `GOMAXPROCS` share instead of multiplying it; every selected package and test still runs once. Individual operation and scenario deadlines are unchanged. A failed shard does not cancel independent shards.
 
 QA issue #1232's changed-range run exhausted the six-minute package watchdog while `internal/core/boot` and `internal/core/records` were progressing in unit shards 1 and 2: the active tests had run for one and two seconds, and no assertion failed. Both tests pass in isolation. On a host carrying other verification work, the store writer waited in SQLite's `Fdatasync` while four shards each ran four test packages with four parallel tests. Unit shards now run one package at a time, retaining the package and shared deadlines and every selected test.
 
+QA issue #1645's post-merge `e2e-m3-3` shard planned 218 seconds and ran 388: `TestM3WorkPanelEventLatency` overran its 42-second weight to its own four-minute deadline, and the six-minute watchdog then killed `TestM3WorkPanelInstalledCoreMatrix` after it had started, so a healthy scenario was reported as failing. The matrix test passed whenever its sibling stayed inside its weight. E2e shards now retain a ten-minute package watchdog — one four-minute scenario deadline plus the 240-second shard budget — while unit shards keep six minutes; the overrunning scenario still fails its own shard.
+
 Selection records the exact base and candidate commits, changed paths, selected components, checks and shards, and the selection reason. It checks Git whitespace with `git diff --check` over the range, or `git show --check` on `HEAD` with `--full`. CI uses the same entry point with `--select <plan.json>`, `--plan <plan.json> --shard <id> --out <result.json>`, and `--plan <plan.json> --results <directory> --upstream <status> --no-note`. Worker results must match the selected head, tree and plan digest. Go JSON results must account for every selected package and e2e test; a zero exit code cannot hide an omitted test.
 
-Package and scenario weights in [test-times.json](../../scripts/verify/test-times.json) come from uncached `go test -json` measurements. They affect placement and the number of shards a milestone receives. New packages and scenarios receive a default weight, and stale timing entries never omit work or cache a passing result. A scenario file stays together. Files with identical Go test names are joined only where `-run` cannot distinguish them; unrelated files remain separate. TestMain-only packages still receive an invocation.
+Package and scenario weights in [test-times.json](../../scripts/verify/test-times.json) come from uncached `go test -json` measurements. Scenario weights are measured in the CI e2e shards, because each shard runs under the e2e package watchdog there; a milestone gains a shard while a shard's measured work exceeds its budget. A scenario file's weight is the sum of its top-level tests' occupied time: from the test's start until it finishes, excluding only the time that test spent paused in `t.Parallel` while other tests ran, and including the wait for its own parallel subtests. Go's top-level `Elapsed` omits that wait, so a parent that only launches parallel subtests would otherwise contribute nothing. Package weights come from a local full run. Weights affect placement and the number of shards a milestone receives. New packages and scenarios receive a default weight, and stale timing entries never omit work or cache a passing result. A scenario file stays together. Files with identical Go test names are joined only where `-run` cannot distinguish them; unrelated files remain separate. TestMain-only packages still receive an invocation.
 
 The Go parser discovers active Test, Example and Fuzz declarations and follows helper declarations and package initialization. Before executing acceptance tests, selection rejects a package importing Core boot or `kit/proc` unless its `TestMain` dispatches `proc-supervise` to `os.Exit(proc.SuperviseMain(...))` before `m.Run()`. This prevents supervisor re-execution from recursively running the suite. Scenario imports and explicitly launched command packages are connected to the dependency graph from `go list -deps -test`. Changes to a source file, fixture, package testdata or embedded input select its consumers. An input without a known consumer that maps to an acceptance package selects every scenario in that package, including when a runtime fixture was deleted or renamed. Shared harness changes, unresolved dynamic commands and unmapped inputs select all scenarios. Go package build constraints determine the active source files. Full mode always runs the entire corpus, exactly once per top-level declaration, including subtests and fuzz seeds. The shared command-build cache inside each e2e process is locked and cleaned after its scenarios finish.
 
@@ -138,7 +249,7 @@ The executable path map is `scripts/verify/scope.mjs`. All paths under `internal
 
 | Change | Selection |
 | --- | --- |
-| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, JSON and Markdown records under `evidence/`, or PNG captures directly under `evidence/brand/` or `evidence/generated-ui/` | `docs`; no automation installation or test run. |
+| Only explicitly listed root documents, Markdown directly under `docs/policy/`, `docs/design/` or `docs/research/`, JSON and Markdown records under `evidence/`, PNG captures directly under `evidence/brand/`, `evidence/generated-ui/` or a terminal directory under `evidence/tui-spike/terminal-qa/`, or text captures directly under `evidence/tui-spike/terminal-qa/` | `docs`; no automation installation or test run. |
 | A verification script, `.github/workflows/*.yml` or `*.yaml`, `.node-version`, shared repository configuration, or a file under `native/` | `docs`, `automation`, and every registered Go component. |
 | Empty or unavailable diff | `docs`, `automation`, and every registered Go component; never assume documentation-only. |
 | An unmapped path in the changed paths or candidate tree | `docs`, `automation`, and every registered Go component, but the gate refuses to pass until its verification is registered. |
@@ -176,7 +287,7 @@ A run above its bound is investigated before the bound is changed. A bound chang
 
 The gate (`scripts/verify/gate.mjs`) evaluates the selection and the check results in process, after the selected checks finish. Selection must succeed, every selected check must report `success`, and an unselected check must report `skipped`. Missing, failed, cancelled, malformed, or unexpectedly skipped results fail the gate.
 
-The output names the candidate, the selection reason, and each check's result. Successful runs also print Go's package timings for the executed shards; CI result artifacts retain package and top-level test timings. A passing `foundation` means the registered checks passed, not that unimplemented product behavior or model quality was established.
+The output names the candidate, the selection reason, and each check's result. Successful runs also print Go's package timings for the executed shards; CI result artifacts retain package timings and each top-level test's occupied time, including the wait for its parallel subtests. A passing `foundation` means the registered checks passed, not that unimplemented product behavior or model quality was established.
 
 ## Iteration and extension
 
@@ -197,7 +308,9 @@ Register a component in `scripts/verify/scope.mjs` in the change that adds it. I
 
 Core package families belong to `lina`. Add each new `internal/core/<package>/` family to `coreDirectories` in `scripts/verify/scope.mjs`, keeping entries sorted by path with one entry per line. This lets additions at separate positions merge without editing a shared line; registration still selects only the listed families and their descendants.
 
-The protocol JSON Schema in `protocol/schema/` and the conformance fixtures in `protocol/fixtures/` are registered with the component that generates types from them, so a schema or fixture change runs type regeneration and the fixtures ([host-protocol.md](../design/host-protocol.md)).
+The protocol JSON Schema in `protocol/schema/` and the conformance fixtures in `protocol/fixtures/` are owned by this repository and registered with `kit` in `scripts/verify/scope.mjs`, so a schema or fixture change runs Go type regeneration (`kit/protocol/client.gen.go`) and the Go conformance fixtures (`kit/protocol/conformance`) ([host-protocol.md](../design/host-protocol.md#schema-and-generated-types)). Likewise, the canonical DTCG design token files in `design/tokens/`, `DESIGN.md` and `scripts/tokens.mjs` are owned by this repository and mapped to `lina` and `automation`; `node scripts/tokens.mjs --check` verifies `internal/design/tokens_gen.go` (the TUI's Lip Gloss palette), `design/tokens/tokens.css`, `design/tokens/tokens.swift`, `design/tokens/mark.svg`, the token tables in `DESIGN.md`, WCAG 2.2 AA contrast (and 7:1 on `high-contrast` canvas and surface), and the absence of hardcoded presentation colours and glyphs in `internal/tui` ([surfaces.md](../design/surfaces.md#one-design-language)).
+
+The LINA app (`packages/lina_design` and `packages/lina_app` in [`lina-system/lina-app`](https://github.com/lina-system/lina-app)) runs its own repository-local `node scripts/foundation.mjs` gate ([lina-app#3](https://github.com/lina-system/lina-app/issues/3)). Its theme generator ([lina-app#5](https://github.com/lina-system/lina-app/issues/5)) and Dart protocol generator ([lina-app#6](https://github.com/lina-system/lina-app/issues/6)) consume this repository's canonical `design/tokens/` and versioned `protocol/schema/` and `protocol/fixtures/` exports from a pinned, immutable `lina-system/lina` release tag (`v0.0.1-alpha.YYYYMMDD.N`) or 40-character commit SHA verified by SHA-256 file digests, and the app repository's `foundation` gate runs Flutter/Dart regeneration drift checks, widget visual-value linting and Dart conformance round-trip tests there.
 
 The initial registry is:
 
@@ -231,7 +344,7 @@ Diagnostics name the source file, line and violated rule. Behavioral fixtures ex
 
 [V7](../../evidence/v7-dev-loop.json) records budgets declared before measurement, an edit followed by `go build`, `go vet` and uncached `go test` for the affected Go package, and `node scripts/foundation.mjs --full`. The initial budgets are 20 seconds for the affected-package loop and 60 seconds for full verification including vulnerability and license scans. Records identify the source, tool versions, cache conditions, commands, durations and outcomes. An over-budget measurement remains a failure; it is not hidden by raising the budget after the run.
 
-JSON and Markdown under `evidence/`, and PNG captures directly under `evidence/brand/` and `evidence/generated-ui/`, are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
+JSON and Markdown under `evidence/`, PNG captures directly under `evidence/brand/`, `evidence/generated-ui/` and a terminal directory under `evidence/tui-spike/terminal-qa/`, and text captures directly under `evidence/tui-spike/terminal-qa/` are documents paths. Updating an evidence record alone selects `docs`; the record is historical evidence, not a replacement for running checks on a changed candidate. Executable files in that directory remain unmapped.
 
 ### Path mapping
 

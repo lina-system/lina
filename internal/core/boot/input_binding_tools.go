@@ -2,12 +2,14 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/binding"
@@ -15,9 +17,14 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/work/goal"
+	"github.com/thisisjun786/lina/internal/core/worker"
+	"github.com/thisisjun786/lina/internal/core/worker/recovery"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/protocol"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -27,7 +34,78 @@ import (
 type toolBindingRef struct {
 	InputEventID string `json:"input_event_id,omitempty"`
 	Input        string `json:"input,omitempty"`
+	Text         string `json:"text,omitempty"`
 	Request      int    `json:"request"`
+	Ordinal      bool   `json:"-"`
+}
+
+// UnmarshalJSON accepts the shapes a model uses for the optional work binding:
+// an object, an ordinal, or a selector string holding a request or input text.
+func (t *toolBindingRef) UnmarshalJSON(raw []byte) error {
+	if ordinal, ok := flexIntRef(raw); ok {
+		t.Request, t.Ordinal = ordinal, true
+		return t.valid()
+	}
+	var text string
+	if json.Unmarshal(raw, &text) == nil {
+		if ordinal, err := strconv.Atoi(strings.TrimSpace(text)); err == nil {
+			t.Request, t.Ordinal = ordinal, true
+		} else {
+			t.Input = text
+		}
+		return t.valid()
+	}
+	var obj struct {
+		InputEventID string          `json:"input_event_id"`
+		EventID      string          `json:"event_id"`
+		Input        string          `json:"input"`
+		Text         string          `json:"text"`
+		Request      json.RawMessage `json:"request"`
+		Index        json.RawMessage `json:"index"`
+	}
+	if err := json.Unmarshal(raw, &obj); err != nil {
+		return binding.ErrChoice
+	}
+	t.InputEventID = firstString(obj.InputEventID, obj.EventID)
+	t.Input = firstString(obj.Input, obj.Text)
+	ordinal, ok := flexIntRef(obj.Request)
+	if !ok {
+		ordinal, ok = flexIntRef(obj.Index)
+	}
+	if ok {
+		t.Request, t.Ordinal = ordinal, true
+	}
+	return t.valid()
+}
+
+func (t *toolBindingRef) valid() error {
+	if t.Request < 0 || t.Request >= 32 {
+		return binding.ErrChoice
+	}
+	return nil
+}
+
+func firstString(values ...string) string {
+	for _, value := range values {
+		if strings.TrimSpace(value) != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func flexIntRef(raw []byte) (int, bool) {
+	var number json.Number
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	if decoder.Decode(&number) != nil {
+		return 0, false
+	}
+	value, err := number.Int64()
+	if err != nil {
+		return 0, false
+	}
+	return int(value), true
 }
 
 func stripToolBinding(c provider.ToolCall) (provider.ToolCall, toolBindingRef, error) {
@@ -37,7 +115,7 @@ func stripToolBinding(c provider.ToolCall) (provider.ToolCall, toolBindingRef, e
 		return c, ref, binding.ErrChoice
 	}
 	if raw, ok := args["input_binding"]; ok {
-		if decodeQuestionJSON(string(raw), &ref) != nil || ref.Request < 0 || ref.Request >= 32 {
+		if json.Unmarshal(raw, &ref) != nil {
 			return c, ref, binding.ErrChoice
 		}
 		delete(args, "input_binding")
@@ -78,6 +156,23 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				}
 				return tool.Validate(clean)
 			},
+			Gate: func(c provider.ToolCall) string {
+				_, ref, err := stripToolBinding(c)
+				if err != nil {
+					return ""
+				}
+				// Only a call that names a consumed steering input or a request
+				// ordinal waits for a binding when the turn has no person input
+				// of its own.
+				if ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal && !s.defaultBindingInput() {
+					return ""
+				}
+				input, _, err := s.selectedBindingInput(ref.InputEventID, ref.Input)
+				if err != nil {
+					return ""
+				}
+				return bindingBarrier(input.ID)
+			},
 			Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 				clean, ref, err := stripToolBinding(c)
 				if err != nil {
@@ -86,7 +181,14 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if _, err = tool.Validate(clean); err != nil {
 					return loop.Result{ID: c.ID, Code: loop.Invalid}
 				}
-				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" {
+				// A system turn with no held request has no person input to
+				// bind, so an unqualified call runs as the turn's own tool even
+				// when it consumed steering. A call that names the steering
+				// input or a request ordinal is still bound.
+				if ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal && !s.defaultBindingInput() {
+					return tool.Execute(ctx, clean)
+				}
+				if s.bindingSource != nil && ref.Input == "" && ref.InputEventID == "" && !ref.Ordinal {
 					ref.Request = s.bindingRequest
 				}
 				input, r, err := s.selectedBindingInput(ref.InputEventID, ref.Input)
@@ -108,17 +210,32 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				exec := tool
 				// A selected steering input keeps its runtime and channel source
 				// through execution, not only through the binding gate.
-				if (name == "follow_work" || name == "read_work_progress") && (r != s.runtime || input.ID != s.input.ID) {
-					prepared := map[string]loop.Tool{}
-					if _, err := r.prepareBindingWorkTools(s.turnID, &toolPreparation{event: input}, prepared); err != nil {
+				if r != s.runtime || input.ID != s.input.ID {
+					alt, err := r.steeringTool(ctx, s.turnID, input, s.replyShapes, clean.Name)
+					if err != nil {
 						return bindingFailure(c.ID, err)
 					}
-					exec = prepared[name]
+					if alt.Execute != nil {
+						exec = alt
+					}
 				}
 				var args map[string]json.RawMessage
 				_ = json.Unmarshal([]byte(clean.Arguments), &args)
 				before := r.captureEffectBefore(ctx, clean, args)
-				result := exec.Execute(ctx, clean)
+				callCtx := ctx
+				if clean.Name == "worker_input" && r.channelBinding != nil {
+					source, err := r.channelSteeringSource(ctx, input)
+					if err != nil {
+						return bindingFailure(c.ID, err)
+					}
+					callCtx = context.WithValue(ctx, channelSteeringSourceKey{}, source)
+				}
+				var result loop.Result
+				if clean.Name == "start_run" && r.channelBinding != nil {
+					result = r.submitStartRun(callCtx, clean, input, s.turnID)
+				} else {
+					result = exec.Execute(callCtx, clean)
+				}
 				if result.Code == loop.OK {
 					if err := r.recordCreatedBinding(ctx, input, ref.Request, s.turnID, clean, result); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_receipt_failed"}`)}
@@ -136,6 +253,75 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 	}
 	return declarations
 }
+
+// steeringTool rebuilds a tool on the runtime that owns the selected input.
+// Families that close over the runtime or the event are prepared again so a
+// channel follow-up, record write, or work preparation keeps that channel.
+// Result tools keep the speaking turn's prepared reply shapes, and their grant
+// uses the selected conversation's turn so a new result is checked there.
+// Persona preparation needs the turn's persona and stays on the original tool.
+func (r *conversationRuntime) steeringTool(ctx context.Context, turnID string, event ledger.Event, shapes reply.Shapes, name string) (loop.Tool, error) {
+	if name == "present_result" || name == "present_surface" || name == "read_result" {
+		selected, err := r.selectedResultTurn(ctx, turnID)
+		if err != nil {
+			return loop.Tool{}, err
+		}
+		turnID = selected
+	}
+	prep := &toolPreparation{event: event, replyShapes: shapes}
+	var found loop.Tool
+	for _, prepare := range []toolPreparer{
+		r.prepareRecordTools,
+		r.prepareBindingWorkTools,
+		r.prepareResultTools,
+		r.prepareGoalWorkTools,
+		r.prepareRunTools,
+		r.prepareWebTools,
+		r.prepareA2ATools,
+		r.prepareDispatchTools,
+		r.prepareWorkTools,
+		r.prepareWorkerTools,
+		r.prepareDelegationTools,
+		r.prepareTimerTools,
+		r.prepareExchangeTools,
+	} {
+		family := map[string]loop.Tool{}
+		_, err := prepare(turnID, prep, family)
+		tool, ok := family[name]
+		if err != nil && ok && tool.Execute != nil {
+			return loop.Tool{}, err
+		}
+		if err != nil || !ok || tool.Execute == nil {
+			continue
+		}
+		found = tool
+	}
+	return found, nil
+}
+
+// selectedResultTurn is the turn whose conversation matches the runtime that
+// owns the selected input. A private turn consuming channel steering would
+// otherwise keep its own id, and the result grant would look up the private
+// conversation while the tool creates under result:new: on the channel.
+func (r *conversationRuntime) selectedResultTurn(ctx context.Context, turnID string) (string, error) {
+	var conversation string
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		err := tx.QueryRowContext(ctx, `SELECT conversation FROM turn_runs WHERE id=?`, turnID).Scan(&conversation)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		return err
+	})
+	if err != nil || conversation == r.conversation {
+		return turnID, err
+	}
+	var id string
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT id FROM turn_runs WHERE conversation=? AND state='active' ORDER BY rowid DESC LIMIT 1`, r.conversation).Scan(&id)
+	})
+	return id, err
+}
+
 func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Event, index int, turnID string, c provider.ToolCall) *loop.Result {
 	// Explicit steering provenance cannot borrow the original turn's tools.
 	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || r.channelBinding != nil && (!r.channelBinding.Scope.Tools || r.validateChannel(ctx) != nil) {
@@ -179,6 +365,11 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 			}
 			var err error
 			parent, err = readInputChoices(ctx, tx, ledger.Event{ID: id})
+			// A card action replies to the agent event that presented the card,
+			// which holds no choices.
+			if errors.Is(err, sql.ErrNoRows) {
+				return nil
+			}
 			return err
 		})
 		if err != nil {
@@ -254,24 +445,18 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		}
 	case "read_work_progress", "follow_work":
 		id = str("id")
-		// task:id:generation is the same item as id. Check the binding before delivery.
-		if taskID, ok := workerFollowTask(id); ok && taskID != id {
-			if _, err := r.work.Get(ctx, taskID); err == nil {
+		if c.Name == "follow_work" {
+			id, err = r.followTaskID(ctx, id)
+		} else if taskID, ok := workerFollowTask(id); ok && taskID != id {
+			if _, lookupErr := r.work.Get(ctx, taskID); lookupErr == nil {
 				id = taskID
 			}
 		}
 	case "worker_input", "worker_interrupt":
 		// These tools name a session, not a work item. The session's task is
-		// the binding identity, so a settled choice still applies.
-		session := str("session")
-		if r.workers != nil {
-			for _, entry := range r.workers.entries() {
-				if entry.thread.ID == session && entry.thread.TaskID != "" {
-					id = entry.thread.TaskID
-					break
-				}
-			}
-		}
+		// the binding identity, so a settled choice still applies, including a
+		// session retained in the recovery record after a restart.
+		id, err = r.workerSessionTask(ctx, str("session"))
 	case "schedule_work":
 		var tasks []struct {
 			What string `json:"what"`
@@ -317,6 +502,10 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		kind = "task"
 	}
 
+	if err != nil {
+		result := bindingFailure(c.ID, err)
+		return &result
+	}
 	if id == "" && title == "" && len(choice.Tied) < 2 {
 		return nil
 	}
@@ -433,39 +622,22 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if preparation != nil {
 						event = preparation.event
 					}
-					if taskID, ok := workerFollowTask(a.ID); ok {
-						if _, err := r.work.Get(ctx, taskID); err == nil {
-							return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
-						}
-					}
-					var source json.RawMessage
-					if r.channelBinding != nil {
-						var e gateway.Inbound
-						if preparation == nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						receiptID, err := r.channelReceiptEventID(ctx, preparation.event)
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						err = r.db.Read(ctx, func(tx *canon.Tx) error {
-							var raw []byte
-							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
-							if err != nil {
-								return err
-							}
-							return json.Unmarshal(raw, &e)
-						})
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
-					}
-					_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: a.ID, Text: a.Text}}, source)
+					// Deliver to the identity the chosen-target gate checked.
+					taskID, err := r.followCallTask(ctx, event.ID, turnID, c.ID, a.ID)
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
-					return loop.Result{ID: c.ID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
+					// A session kept after restart still names a task card, but
+					// its worker is not registered. Sending that card to the
+					// live path drops the follow-up. Keep the offline mailbox,
+					// unless the reference resolved as a literal task id.
+					if session, ok := strings.CutPrefix(a.ID, "session:"); ok && taskID != a.ID && !r.workerSessionLive(session) {
+						return r.followOfflineSession(ctx, event, turnID, c.ID, session, a.Text)
+					}
+					if _, err := r.work.Get(ctx, taskID); err == nil {
+						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
+					}
+					return r.followSubmitted(ctx, preparation, turnID, c.ID, taskID, a.Text)
 				}
 				projection, err := r.ownerSnapshot(ctx)
 				if err != nil {
@@ -473,11 +645,8 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 				}
 				var line any = map[string]string{"state": "unknown"}
 				if projection.Rows != nil {
-					for _, row := range *projection.Rows {
-						if row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
-							line = row.Line
-							break
-						}
+					if matched, ok := progressLineForID(*projection.Rows, a.ID); ok {
+						line = matched
 					}
 				}
 				raw, _ := json.Marshal(map[string]any{"id": a.ID, "progress": line})
@@ -489,6 +658,31 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 		provider.ToolDecl(`{"type":"function","name":"read_work_progress","description":"Answer progress questions from the current item's progress line, never remembered status. Unknown stays unknown. Names the input's work target.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"follow_work","description":"Send a follow-up to the named running task or background run under its existing controls. Resolve a risky target tie with bind_input first; a pending instruction must not be sent. This does not cancel work.","parameters":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}`),
 	}, nil
+}
+
+// progressLineForID reads the line for the id the caller named. A project
+// record id has no line of its own, so it may fall back to the bare goal id.
+// An item whose id is already goal:<name> keeps that id: stripping it would
+// read a different item named <name>.
+func progressLineForID(rows []protocol.ProgressRow, id string) (any, bool) {
+	if line, ok := matchProgressLine(rows, id); ok {
+		return line, true
+	}
+	// A project record is stored as goal:<bare> while its line uses <bare>.
+	// Only use that fallback when the given id itself has no line.
+	if rest, ok := strings.CutPrefix(id, "goal:"); ok && rest != "" {
+		return matchProgressLine(rows, rest)
+	}
+	return nil, false
+}
+
+func matchProgressLine(rows []protocol.ProgressRow, id string) (any, bool) {
+	for _, row := range rows {
+		if row.Ref == id || row.Ref == "run:"+id || row.Ref == "task:"+id || row.Ref == "record:"+id {
+			return row.Line, true
+		}
+	}
+	return nil, false
 }
 
 func workerFollowTask(id string) (string, bool) {
@@ -507,6 +701,93 @@ func workerFollowTask(id string) (string, bool) {
 		return raw, raw != ""
 	}
 	return id, id != ""
+}
+
+func (r *conversationRuntime) workerSessionLive(session string) bool {
+	if r.workers == nil || session == "" {
+		return false
+	}
+	r.workers.mu.Lock()
+	defer r.workers.mu.Unlock()
+	_, ok := r.workers.sessions[session]
+	return ok
+}
+
+// followOfflineSession stores a model follow-up for a session that is only in
+// the recovery record. The message keeps agent provenance and the same
+// per-input coordination allowance as a live follow-up.
+func (r *conversationRuntime) followOfflineSession(ctx context.Context, input ledger.Event, turnID, callID, session, text string) loop.Result {
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	var rec recovery.Record
+	found := false
+	for _, candidate := range records {
+		if candidate.Thread.ID == session && candidate.Person == r.person && candidate.Agent == r.agent && candidate.Conversation == r.conversation {
+			rec = candidate
+			found = true
+			break
+		}
+	}
+	if !found || rec.Thread.TaskID == "" {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	// reconcileWorkers skips a finished record, so held mail would never be
+	// delivered or refused. State finished with Canceled false cannot resume:
+	// refuse before AdmitMessage or StoreSteering queues offline mail.
+	if rec.State == "finished" && !rec.Canceled {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	name := rec.Worker
+	if name == "" {
+		name = "codex"
+	}
+	id := "binding-follow:" + turnID + ":" + callID
+	if input.SpeakerKind == guard.Person && input.ID != "" {
+		if err = worker.ResetMessages(ctx, r.db, rec.Thread.TaskID, "person:"+input.ID); err != nil {
+			return loop.Result{ID: callID, Code: loop.Denied}
+		}
+	}
+	if err = worker.AdmitMessage(ctx, r.db, rec.Thread.TaskID, id, text); err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	source, err := r.channelSteeringSource(ctx, input)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	mailbox := name + ":" + session
+	message := work.SteeringMessage{Sender: r.agent, SpeakerKind: string(guard.Agent), ID: steeringID(r.person, mailbox, id), Session: mailbox, TaskID: rec.Thread.TaskID, Person: r.person, Agent: r.agent, Conversation: r.conversation, Text: text, Tier: offlineDelivery(name).Tier, Mechanism: offlineDelivery(name).Mechanism, SentAt: time.Now().UTC(), Source: source}
+	if _, err = r.work.StoreSteering(ctx, message); err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	reason := "session_down"
+	state := "held"
+	if rec.Canceled {
+		reason = "session_gone"
+		state = "refused"
+	}
+	if err = r.work.SteeringState(ctx, mailbox, message.ID, state, reason, message.SentAt); err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
+}
+
+// followSubmitted stores a follow-up through the scoped run controls.
+func (r *conversationRuntime) followSubmitted(ctx context.Context, preparation *toolPreparation, turnID, callID, runID, text string) loop.Result {
+	event := ledger.Event{}
+	if preparation != nil {
+		event = preparation.event
+	}
+	source, err := r.channelSteeringSource(ctx, event)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	_, err = r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + callID, Payload: protocol.FollowUp{RunID: runID, Text: text}}, source)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
 }
 
 // followWorkerTask delivers a model follow-up as an agent message. The
@@ -539,6 +820,13 @@ func (r *conversationRuntime) followWorkerTask(ctx context.Context, input ledger
 	// unrelated conversation cannot steer or speak as the owner.
 	if !entry.origin.workerConversation(r) {
 		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	source, err := r.channelSteeringSource(ctx, input)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	if len(source) > 0 {
+		ctx = context.WithValue(ctx, channelSteeringSourceKey{}, source)
 	}
 	ctx = context.WithValue(ctx, workerCallIdentityKey{}, "binding-follow:"+turnID+":"+callID)
 	result, err := r.workerOperation(ctx, "worker_input", turnID, input, in)
@@ -656,6 +944,49 @@ func (r *conversationRuntime) channelReceiptEventID(ctx context.Context, event l
 	}
 }
 
+// channelSteeringSource is the selected channel input's delivery receipt.
+// A runtime without a channel binding returns no receipt.
+func (r *conversationRuntime) channelSteeringSource(ctx context.Context, event ledger.Event) (json.RawMessage, error) {
+	if r.channelBinding == nil {
+		return nil, nil
+	}
+	receiptID, err := r.channelReceiptEventID(ctx, event)
+	if err != nil {
+		return nil, err
+	}
+	var inbound gateway.Inbound
+	err = r.db.Read(ctx, func(tx *canon.Tx) error {
+		var raw []byte
+		err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
+		if err != nil {
+			return err
+		}
+		return json.Unmarshal(raw, &inbound)
+	})
+	if err != nil {
+		return nil, err
+	}
+	return json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: inbound.Sender, Direct: inbound.Direct, Addressed: inbound.Addressed})
+}
+
+// submitStartRun admits a run on the selected channel runtime. The requesting
+// turn stays the turn that called start_run. A different selected channel
+// input is kept beside it so later checks still use that channel's permission.
+func (r *conversationRuntime) submitStartRun(ctx context.Context, call provider.ToolCall, event ledger.Event, turnID string) loop.Result {
+	if r.channelBinding == nil || r.background == nil || turnID == "" {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	receiptID, err := r.channelReceiptEventID(ctx, event)
+	if err != nil {
+		return loop.Result{ID: call.ID, Code: loop.Denied}
+	}
+	origin := r.runOrigin(turnID)
+	if turnID != "turn:"+receiptID {
+		origin.ChannelReceipt = receiptID
+	}
+	return r.background.service.StartTool(origin).Execute(ctx, call)
+}
+
 func bindingAction(name string) string {
 	switch name {
 	case "follow_work", "worker_input":
@@ -670,4 +1001,81 @@ func bindingAction(name string) string {
 		return "delete"
 	}
 	return ""
+}
+
+// workerSessionTask resolves a worker session to the work item it controls.
+// An owner-started session carries a conversation turn as its task id and names
+// no work item, so the original tool keeps its own checks. Recovery records
+// retain the task identity when the session is absent after a restart.
+func (r *conversationRuntime) workerSessionTask(ctx context.Context, session string) (string, error) {
+	if session == "" {
+		return "", nil
+	}
+	if r.workers != nil {
+		r.workers.mu.Lock()
+		entry := r.workers.sessions[session]
+		r.workers.mu.Unlock()
+		if entry != nil {
+			entry.control.Lock()
+			defer entry.control.Unlock()
+			return entry.thread.TaskID, nil
+		}
+	}
+	records, err := (recovery.Recovery{DB: r.db}).Records(ctx)
+	if err != nil {
+		return "", err
+	}
+	for _, record := range records {
+		if record.Thread.ID == session {
+			return record.Thread.TaskID, nil
+		}
+	}
+	return "", nil
+}
+
+// followTaskID resolves a follow_work id to the task the follow-up reaches.
+// The chosen-target gate and execution share it, so the identity that is
+// checked is the identity that receives the instruction. A literal task id
+// wins over session/task prefixes and generation suffixes: a task named "a:1"
+// is not generation 1 of "a".
+func (r *conversationRuntime) followTaskID(ctx context.Context, ref string) (string, error) {
+	if card, err := r.work.Get(ctx, ref); err == nil {
+		return card.Task.ID, nil
+	}
+	if session, ok := strings.CutPrefix(ref, "session:"); ok {
+		return r.workerSessionTask(ctx, session)
+	}
+	if task, ok := strings.CutPrefix(ref, "task:"); ok {
+		var card work.Card
+		err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			var err error
+			card, err = work.ReadReference(ctx, tx, task)
+			return err
+		})
+		return card.Task.ID, err
+	}
+	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
+		if _, err := r.work.Get(ctx, taskID); err == nil {
+			return taskID, nil
+		}
+	}
+	return ref, nil
+}
+
+// followCallTask returns the task the gate checked for this call. It reads the
+// saved binding so execution does not resolve the reference a second time; a
+// call the gate left unbound (no settled choice) resolves once here.
+func (r *conversationRuntime) followCallTask(ctx context.Context, inputID, turnID, callID, ref string) (string, error) {
+	if inputID != "" {
+		event, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+callID)
+		if err == nil && event.ParentID == inputID {
+			var batch bindingBatch
+			if json.Unmarshal([]byte(event.Body.Text()), &batch) == nil && len(batch.Bindings) == 1 {
+				if target := batch.Bindings[0].Target; target.Class == "existing" && target.ID != "" {
+					return target.ID, nil
+				}
+			}
+		}
+	}
+	return r.followTaskID(ctx, ref)
 }

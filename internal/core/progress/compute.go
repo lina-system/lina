@@ -9,23 +9,28 @@ import (
 // Line is display data only. Identity and navigation belong to Entry, never to
 // the line. A nil percentage is unobserved, including an empty denominator.
 type Line struct {
-	StartedAt    time.Time `json:"started_at,omitzero"`
-	FinishedAt   time.Time `json:"finished_at,omitzero"`
-	Now          string    `json:"now,omitempty"`
-	Name         string    `json:"name"`
-	Kind         string    `json:"kind"`
-	Stage        string    `json:"stage"`
-	State        string    `json:"state,omitempty"`
-	Percent      *int      `json:"percent"`
-	JustFinished string    `json:"just_finished"`
-	Next         string    `json:"next"`
-	Waiting      int       `json:"waiting"`
-	Depth        int       `json:"depth"`
-	Stages       []Stage   `json:"stages,omitempty"`
+	StartedAt  time.Time `json:"started_at,omitzero"`
+	FinishedAt time.Time `json:"finished_at,omitzero"`
+	Now        string    `json:"now,omitempty"`
+	Name       string    `json:"name"`
+	Kind       string    `json:"kind"`
+	Stage      string    `json:"stage"`
+	State      string    `json:"state,omitempty"`
+	// Paused is the person's pause on a goal line, as Core recorded it.
+	Paused       bool    `json:"paused,omitempty"`
+	Percent      *int    `json:"percent"`
+	JustFinished string  `json:"just_finished"`
+	Next         string  `json:"next"`
+	Waiting      int     `json:"waiting"`
+	Depth        int     `json:"depth"`
+	Stages       []Stage `json:"stages,omitempty"`
 }
 type Entry struct {
-	Ref  string
-	Line Line
+	Ref string
+	// GoalID names the goal of a line built from a 목표 record, the only line a
+	// goal command can address.
+	GoalID string
+	Line   Line
 	// Row marks a row of a line: a task or run drawn inside an 일 or 목표. A row
 	// is not a line and the running count never counts it.
 	Row bool
@@ -41,13 +46,15 @@ type Unit struct {
 	Now                    string
 	ID, Parent, Kind, Name string
 	State                  string // Optional observed execution state, independent of plan stage.
-	Done                   *bool
-	Active, Seen, Landed   bool
-	JustFinished           string
-	Next                   string
-	Waiting                int
-	Updated                int64
-	Percent                *int
+	// Paused is the person's pause on a goal line.
+	Paused               bool
+	Done                 *bool
+	Active, Seen, Landed bool
+	JustFinished         string
+	Next                 string
+	Waiting              int
+	Updated              int64
+	Percent              *int
 	// GoalLine marks a line built from a 목표 record, whose Rank is the
 	// person's order among goals.
 	GoalLine bool
@@ -95,20 +102,8 @@ func Compute(units []Unit) []Entry {
 	}
 	rows := make(map[string]*row, len(units))
 	for _, u := range units {
-		line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
-		if u.JustFinished != "" {
-			line.JustFinished = u.JustFinished
-		}
-		if u.Next != "" {
-			line.Next = u.Next
-		}
-		// The line's stage word is its current stage entry: the lowest-numbered
-		// entry that is not done.
-		if current, ok := currentStage(u.Stages); ok {
-			line.Stage = current.Label
-		}
 		landed := u.Landed || u.Done != nil && *u.Done
-		rows[u.ID] = &row{unit: u, line: line, visible: (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
+		rows[u.ID] = &row{unit: u, line: UnitLine(u), visible: (u.Active || u.Waiting > 0 || landed && !u.Seen) && !(landed && u.Seen)}
 	}
 	// A 목표 is visible through its own work, live children or a pending decision.
 	// Its children are 일 lines, so they stay lines and are counted; only the
@@ -168,17 +163,42 @@ func Compute(units []Unit) []Entry {
 		children[at.parent] = append(children[at.parent], r)
 	}
 	sort.Slice(roots, func(i, j int) bool { return less(roots[i], roots[j]) })
+	entry := func(r *row) Entry {
+		e := Entry{Ref: r.unit.ID, Line: r.line, Row: r.row}
+		if r.unit.GoalLine {
+			e.GoalID = r.unit.ID
+		}
+		return e
+	}
 	out := []Entry{}
 	for _, r := range roots {
-		out = append(out, Entry{Ref: r.unit.ID, Line: r.line, Row: r.row})
+		out = append(out, entry(r))
 		group := children[r.unit.ID]
 		sort.Slice(group, func(i, j int) bool { return less(group[i], group[j]) })
 		for _, child := range group {
 			child.line.Depth = 1
-			out = append(out, Entry{Ref: child.unit.ID, Line: child.line, Row: child.row})
+			out = append(out, entry(child))
 		}
 	}
 	return out
+}
+
+// UnitLine is one unit's current projection before the running list drops a
+// landed unit the person has already seen. Unobserved stage words stay unknown.
+func UnitLine(u Unit) Line {
+	line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Paused: u.Paused, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
+	if u.JustFinished != "" {
+		line.JustFinished = u.JustFinished
+	}
+	if u.Next != "" {
+		line.Next = u.Next
+	}
+	// The line's stage word is its current stage entry: the lowest-numbered
+	// entry that is not done.
+	if current, ok := currentStage(u.Stages); ok {
+		line.Stage = current.Label
+	}
+	return line
 }
 
 // currentStage is the line's stage word: the lowest-numbered entry that is not

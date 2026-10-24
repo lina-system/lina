@@ -16,10 +16,32 @@ is retained. Current choices overlay those events, and a created receipt supplie
 the next focus identity. `input-choice-v1` context sources reconstruct immutable
 choice bytes for request replay.
 
+`NormalizeChoices` decodes a model's binding arguments before validation:
+ordinals are optional and placed in message order, a target may be an object, an
+id, an exact title, `new` or `none`, an absent or inexact excerpt becomes the
+input text, and kind and parent words are mapped to stored values. An exact
+candidate id is bound before a leading kind name and colon are read as new work.
+A name that matches no open item and exactly one offered item, including a
+finished item, binds that item. A stored call is compared before the current
+snapshot can drop a parent that has since completed.
+Only a target
+naming no open item, or more than one, returns a correction with the allowed ids.
+A tied alternative that cannot be resolved returns that correction instead of
+being dropped.
+
+A work tool that names its target appends the same kind of choice, so the
+message's item follows what the tool acts on. A worker session resolves to the
+work item it controls, which keeps a person's chosen target authoritative for
+`worker_input` and `worker_interrupt`: a session for another task in the same
+conversation is refused while a chosen target is in effect.
+
 A person-selected new target keeps that decider. Once its created id is recorded,
 a later read, progress check, or follow-up may name that existing item; any
 other item stays pending. A model follow-up to a worker task uses the agent
-message path and the requesting conversation. An unrelated conversation is
+message path and the requesting conversation. A follow-up to a session retained
+after restart is stored as an agent message for offline delivery when that
+worker is not running, even though its task card still exists. It uses the
+same per-input coordination allowance as a live follow-up. An unrelated conversation is
 refused before delivery. `worker_input` and `worker_interrupt` resolve their session to
 that task before the person's choice is checked. `worker_interrupt` is a stop:
 a retained tie asks which task before cancellation. `submit_step_graph` starts
@@ -31,7 +53,10 @@ send. Cancelling a timer stops. Reads stay unclassified. A code goal tool resolv
 `goal_id` through the goal package's project record id before the same check.
 The binding snapshot includes that record as a project. A goal id that does
 not resolve is refused. Steering execution uses the selected input's runtime, so a
-channel follow-up keeps that channel source. A retained tie is not a settled
+channel follow-up keeps that channel source. Result tools rebuilt for that
+input keep the turn's prepared reply shapes, so the work-method check commits
+with the revision. When the selected input belongs to another conversation, the
+result grant uses that conversation's active turn. A retained tie is not a settled
 reply target or the next focus. A reply that stays unresolved keeps that tie,
 so a later control asks before it runs.
 

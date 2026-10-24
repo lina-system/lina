@@ -6,6 +6,16 @@ selection runs it once; there is no recursive test runner. Builds are shared,
 state roots are private, children are joined and temporary state is removed.
 Existing persona-growth extensions still use this harness and `../m2/` fixtures.
 
+Harness children own a process group (or a PTY session); cancellation, cleanup
+and leader exit kill any remaining group members. Linux also sets a parent-death
+signal on a dedicated spawning thread kept alive until `Wait`, covering test
+process exit, SIGKILL and the Go test watchdog. macOS retains group cleanup but
+has no parent-death signal. Inherited descriptors stay open in the test owner
+with close-on-exec set, so verification-slot locks cannot reach Core; explicit
+`ExtraFiles` remain supported. `TestHarnessCoreLifetime` exercises actual Core
+readiness, parent death and synthetic lock release on Linux;
+`TestHarnessProcessGroupCleanup` checks descendant termination on both platforms.
+
 The shared conversation client checks admission before subscribing, so its
 readiness receive loop cannot consume live conversation events. It still
 correlates each probe reply and retries only an explicit recovery refusal.
@@ -197,3 +207,19 @@ scenario checks the ledger records and their speaker kinds, the supersession and
 retraction relations, the tombstone that keeps the legacy reference, the
 coverage and cursor rows, the one index's documents with origin `messenger`, and
 that a URL secret is masked while the URL's public text stays.
+
+`TestM3TelegramSourceInstalledCore` signs a Telegram source in with a phone code
+and a 2FA password against an in-process MTProto server, then runs installed
+Core over that source. Core lists the account's dialogs, reads their history
+through a rate-limited first request, admits the person's own and other people's
+messages with their speaker kinds, and applies a pushed edit and deletion. The
+scenario checks the committed cursor and coverage, the tombstones, that the
+session exists only in the secret store with mode 0600, and that no read-state or
+presence request was ever sent.
+
+Telegram source acceptance signs in through the owner socket using the person's
+application credentials, phone code and 2FA password. A child Core hosts the
+fake MTProto server, preserving the real owner/worker process boundary. A live
+subscription barrier precedes a single edit and deletion; request recording
+rejects read acknowledgements, presence and typing. The adapter package also
+covers session resume, multi-page catch-up and namespace-scoped deletion.

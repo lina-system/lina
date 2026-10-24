@@ -56,6 +56,24 @@ test('complete tiers require all eight cells and count agents and background run
   assert.deepEqual(result.tiers.map(tier => tier.status), ['pass', 'pass']);
 });
 
+test('device-os allows an absent LINA OS artifact and still validates it when present', () => {
+  const withoutOS = fixture();
+  for (const r of withoutOS.records) r.artifacts.os = { absent_reason: 'Core-only Linux main install' };
+  const result = validateEvidence(withoutOS);
+  assert.equal(result.valid, true, result.errors.join('\n'));
+  assert.equal(result.passed, true);
+
+  for (const badOS of [
+    { absent_reason: '' },
+    { absent_reason: 'not installed', version: 'fixture-version' },
+    { version: 'fixture-version', manifest_sha256: 'unknown' },
+  ]) {
+    const invalid = fixture();
+    invalid.records[0].artifacts.os = badOS;
+    assert.equal(validateEvidence(invalid).valid, false);
+  }
+});
+
 test('every contract field is required, including explicit none', () => {
   for (const path of [
     'host.installation_id', 'host.version', 'host.install_mode', 'session.os_user', 'session.gui_session', 'session.profile',

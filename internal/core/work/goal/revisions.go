@@ -70,6 +70,7 @@ func applyCorrectionPlan(g *Goal, o Observation) error {
 	proposed.AssessedFailure = ""
 	proposed.AttentionID = ""
 	proposed.BlockedReason = ""
+	proposed.DecisionRow = ""
 	proposed.State = GoalRunning
 	*g = proposed
 	return nil

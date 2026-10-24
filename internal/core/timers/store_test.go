@@ -36,6 +36,27 @@ func timerFixture(id, kind string) Timer {
 	return Timer{ID: id, Person: "person", Agent: "agent", Conversation: "main:agent", Schedule: Schedule{Cron: "* * * * *", Zone: "UTC"}, Action: Action{Kind: kind, Text: "Read the saved result", Record: "record"}}
 }
 
+func TestGoalWaitFiresOnce(t *testing.T) {
+	t.Parallel()
+	s, _ := openTimers(t, t.TempDir(), 1)
+	at := instant("2026-01-01T12:00:00Z")
+	tm := Timer{ID: "goal-wait:g:mail.changed", Person: "person", Agent: "agent", Conversation: "main:agent", Schedule: Schedule{At: at}, Action: Action{Kind: "goal_wait", Text: "mail.changed", Record: "g"}}
+	if _, err := s.Create(t.Context(), tm, at.Add(-time.Minute)); err != nil {
+		t.Fatal(err)
+	}
+	fires, err := s.ClaimDue(t.Context(), at, "1")
+	if err != nil || len(fires) != 1 || fires[0].Timer.Action.Kind != "goal_wait" {
+		t.Fatalf("fires=%v err=%v", fires, err)
+	}
+	if err = s.Finish(t.Context(), fires[0]); err != nil {
+		t.Fatal(err)
+	}
+	fires, err = s.ClaimDue(t.Context(), at.Add(time.Hour), "1")
+	if err != nil || len(fires) != 0 {
+		t.Fatalf("deadline fired again: %v %v", fires, err)
+	}
+}
+
 func TestClaimAndSignature(t *testing.T) {
 	s, _ := openTimers(t, t.TempDir(), 1)
 	ctx := t.Context()

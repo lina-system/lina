@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -22,6 +23,14 @@ var (
 	ErrInvalid      = errors.New("invalid_messenger_source")
 	ErrNotFound     = sql.ErrNoRows
 	ErrNotConnected = errors.New("messenger_source_not_connected")
+	// ErrTextUnavailable reports that the platform will not give this adapter
+	// message text, such as Discord without the message-content intent. The
+	// source states the cause instead of storing records whose bodies are empty.
+	ErrTextUnavailable = errors.New("messenger_text_unavailable")
+	// ErrChatUnavailable reports a chat this account can no longer read, such
+	// as a channel it left. Sync skips that chat, keeping its cursor and
+	// records, and reads the source's other chats.
+	ErrChatUnavailable = errors.New("messenger_chat_unavailable")
 )
 
 // Removals is the one retraction path. Deleted records are hidden through it and
@@ -32,17 +41,33 @@ type Removals interface {
 
 // Store owns the source registry and messenger admission.
 type Store struct {
-	db        *canon.Store
-	materials ledger.Materials
-	removals  Removals
-	now       func() time.Time
+	// admissionGate orders scheduled and live admission against switches and
+	// disconnection, including deletions that use a separate retraction transaction.
+	admissionGate chan struct{}
+	db            *canon.Store
+	materials     ledger.Materials
+	removals      Removals
+	now           func() time.Time
 }
 
 // Open composes the store. materials carries bodies above the ledger's inline
 // size; removals hides deleted records. Core supplies both.
 func Open(db *canon.Store, materials ledger.Materials, removals Removals) *Store {
-	return &Store{db: db, materials: materials, removals: removals, now: time.Now}
+	return &Store{db: db, materials: materials, removals: removals, now: time.Now, admissionGate: make(chan struct{}, 1)}
 }
+
+// lockAdmission waits for a complete admission, including retraction, while
+// allowing a cancelled reader to leave without waiting for another source.
+func (s *Store) lockAdmission(ctx context.Context) error {
+	select {
+	case s.admissionGate <- struct{}{}:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
+func (s *Store) unlockAdmission() { <-s.admissionGate }
 
 // WithClock replaces the clock for deterministic tests.
 func (s *Store) WithClock(now func() time.Time) *Store { s.now = now; return s }
@@ -74,10 +99,10 @@ func (s *Store) Connect(ctx context.Context, source Source) error {
 		at = s.now()
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
-ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
-			source.Person, source.Platform, source.Account, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
+		_, err := tx.ExecContext(ctx, `INSERT INTO messenger_source(person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account) DO UPDATE SET person=excluded.person,owner=excluded.owner,mode=excluded.mode,adapter=excluded.adapter,state=excluded.state,failure=excluded.failure,learning_watermark=excluded.learning_watermark,accepted_terms=excluded.accepted_terms`,
+			source.Person, source.Platform, source.Account, source.Owner, string(source.Mode), source.Adapter, string(source.State), source.Failure, source.LearningWatermark, terms, at.UTC().Format(time.RFC3339Nano))
 		return err
 	})
 }
@@ -93,6 +118,10 @@ func (s State) valid() bool {
 // Disconnect stops sync for a source and marks it disconnected. Its records
 // stay; the caller deletes the credentials it holds.
 func (s *Store) Disconnect(ctx context.Context, person, platform, account string) error {
+	if err := s.lockAdmission(ctx); err != nil {
+		return err
+	}
+	defer s.unlockAdmission()
 	return s.setState(ctx, person, platform, account, StateDisconnected, "")
 }
 
@@ -112,7 +141,7 @@ func (s *Store) setState(ctx context.Context, person, platform, account string, 
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
-		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET state=?,failure=? WHERE person=? AND platform=? AND account=?", string(state), cause, person, platform, account)
+		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET state=?,failure=? WHERE person=? AND platform=? AND account=? AND (state<>'disconnected' OR ?='disconnected')", string(state), cause, person, platform, account, string(state))
 		if err != nil {
 			return err
 		}
@@ -132,7 +161,7 @@ func (s *Store) Sources(ctx context.Context, person string) ([]Source, error) {
 	}
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 		if err != nil {
 			return err
@@ -153,7 +182,7 @@ FROM messenger_source WHERE person=? ORDER BY platform,account`, person)
 func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 	var source Source
 	var mode, state, terms, connected string
-	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
+	if err := rows.Scan(&source.Person, &source.Platform, &source.Account, &source.Owner, &mode, &source.Adapter, &state, &source.Failure, &source.LearningWatermark, &terms, &connected); err != nil {
 		return Source{}, err
 	}
 	source.Mode, source.State = Mode(mode), State(state)
@@ -183,7 +212,7 @@ func scanSource(rows interface{ Scan(...any) error }) (Source, error) {
 func (s *Store) allSources(ctx context.Context) ([]Source, error) {
 	var sources []Source
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
+		rows, err := tx.QueryContext(ctx, `SELECT person,platform,account,owner,mode,adapter,state,failure,learning_watermark,accepted_terms,connected_at
 FROM messenger_source ORDER BY platform,account`)
 		if err != nil {
 			return err
@@ -268,6 +297,10 @@ ON CONFLICT(platform,account,chat) DO UPDATE SET name=excluded.name,kind=exclude
 
 // SetSwitches leaves a chat out of sync, learning or embedding.
 func (s *Store) SetSwitches(ctx context.Context, person, platform, account, chat string, switches Switches) error {
+	if err := s.lockAdmission(ctx); err != nil {
+		return err
+	}
+	defer s.unlockAdmission()
 	if !validName(person) || !validName(platform) || !validName(account) || !validName(chat) {
 		return ErrInvalid
 	}
@@ -407,12 +440,22 @@ type effectRow struct {
 	agent, state string
 }
 
+// MaxAdmitMessages is the largest page effectsFor can bind. That statement
+// uses two placeholders per message id plus the platform, account and chat.
+// The linked SQLite build allows 32766 variables, so one more id fails with
+// "too many SQL variables" and the cursor never commits.
+const (
+	sqliteMaxVariables     = 32766
+	effectQueryFixedParams = 3
+	effectQueryParamsPerID = 2
+	MaxAdmitMessages       = (sqliteMaxVariables - effectQueryFixedParams) / effectQueryParamsPerID
+)
+
 func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids []string) (map[string]effectRow, error) {
 	effects := map[string]effectRow{}
 	if len(ids) == 0 {
 		return effects, nil
 	}
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
 	args := []any{source.Platform, source.Account, chat}
 	// The two IN lists take the same ids in the same order: the first list
 	// matches the client id and the second the platform's message id.
@@ -423,8 +466,7 @@ func (s *Store) effectsFor(ctx context.Context, source Source, chat string, ids 
 		args = append(args, id)
 	}
 	err := s.db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT client_id,message,agent,state FROM messenger_effect
-WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN (`+placeholders+`) OR message IN (`+placeholders+`))`, args...)
+		rows, err := tx.QueryContext(ctx, effectLookupSQL(len(ids)), args...)
 		if err != nil {
 			return err
 		}
@@ -445,9 +487,69 @@ WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN 
 	return effects, err
 }
 
+// effectLookupSQL is the effectsFor statement. MaxAdmitMessages is the largest
+// n this statement can bind on the linked SQLite build.
+func effectLookupSQL(n int) string {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", n), ",")
+	return `SELECT client_id,message,agent,state FROM messenger_effect
+WHERE platform=? AND account=? AND chat=? AND state<>'failed' AND (client_id IN (` + placeholders + `) OR message IN (` + placeholders + `))`
+}
+
 // PageResult reports one committed page.
 type PageResult struct {
 	Added, Updated, Deleted, Waiting int
+}
+
+// AdmitEvent commits one live event without moving the chat's cursor or its
+// coverage: a live event is newer than the last page, and the next page read
+// admits it again through the ordinary path, which adds nothing twice.
+func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (PageResult, error) {
+	if !validName(event.Chat) && !(event.Chat == "" && event.Deletion != nil && event.Message == nil) {
+		return PageResult{}, ErrInvalid
+	}
+	if (event.Message == nil) == (event.Deletion == nil) {
+		return PageResult{}, ErrInvalid
+	}
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
+	connected, err := s.liveConnected(ctx, source)
+	if err != nil {
+		return PageResult{}, err
+	}
+	if !connected {
+		return PageResult{}, ErrNotConnected
+	}
+	if event.Chat == "" {
+		deleted, err := s.deleteSourceMessages(ctx, source, []string{event.Deletion.Message}, deletionTime(*event.Deletion, s.now()), event.ChatPrefixes...)
+		return PageResult{Deleted: deleted}, err
+	}
+	var enabled bool
+	if err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messenger_chat WHERE platform=? AND account=? AND chat=? AND sync=1)", source.Platform, source.Account, event.Chat).Scan(&enabled)
+	}); err != nil {
+		return PageResult{}, err
+	}
+	if !enabled {
+		return PageResult{}, nil
+	}
+	page := Page{HasMore: true}
+	if event.Message != nil {
+		page.Messages = []Message{*event.Message}
+	}
+	if event.Deletion != nil {
+		page.Deletions = []Deletion{*event.Deletion}
+	}
+	return s.admit(ctx, source, event.Chat, "", page, false)
+}
+
+func (s *Store) liveConnected(ctx context.Context, source Source) (bool, error) {
+	var connected bool
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM messenger_source WHERE person=? AND platform=? AND account=? AND state IN ('connected','failing'))", source.Person, source.Platform, source.Account).Scan(&connected)
+	})
+	return connected, err
 }
 
 // ErrPageWaiting reports a page held back because an own-account message matches
@@ -471,13 +573,39 @@ func (s *Store) pendingEffects(ctx context.Context, source Source, chat string) 
 // cursor and coverage in one canon transaction. Reading the same messages again
 // adds nothing. A message missing from a page changes nothing.
 func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from Cursor, page Page) (PageResult, error) {
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
+	return s.admit(ctx, source, chat, from, page, true)
+}
+
+// AdmitMessages admits pushed messages without moving history progress.
+func (s *Store) AdmitMessages(ctx context.Context, source Source, chat string, messages []Message) (PageResult, error) {
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
+	return s.admit(ctx, source, chat, "", Page{Messages: messages}, false)
+}
+
+// admit commits one page. advance is false for live admission, which stores the
+// records but leaves the cursor and coverage to the scheduled read: a live event
+// is newer than the last page, and a cursor moved from a stale read would rewind
+// a chat whose scheduled page committed in the meantime.
+func (s *Store) admit(ctx context.Context, source Source, chat string, from Cursor, page Page, advance bool) (PageResult, error) {
 	if !validName(source.Person) || !validName(source.Platform) || !validName(source.Account) || !validName(chat) {
 		return PageResult{}, ErrInvalid
 	}
 	ids := make([]string, 0, len(page.Messages))
 	for _, message := range page.Messages {
-		if !validName(message.ID) || !message.Route.Valid() {
+		if !validName(message.ID) || !message.Route.Valid() || (message.DecryptionFailed && message.Text != "") {
 			return PageResult{}, ErrInvalid
+		}
+		for _, attachment := range message.Attachments {
+			if !validName(attachment.ID) || attachment.Size < 0 {
+				return PageResult{}, ErrInvalid
+			}
 		}
 		ids = append(ids, message.ID)
 	}
@@ -499,6 +627,21 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 			return PageResult{}, ErrInvalid
 		}
 		deleting[deletion.Message] = true
+	}
+	retained, err := s.pendingDeletions(ctx, source, chat, ids)
+	if err != nil {
+		return PageResult{}, err
+	}
+	var consumed []string
+	if len(retained) > 0 {
+		page.Deletions = append([]Deletion(nil), page.Deletions...)
+		for _, deletion := range retained {
+			consumed = append(consumed, deletion.Message)
+			if !deleting[deletion.Message] {
+				page.Deletions = append(page.Deletions, deletion)
+				deleting[deletion.Message] = true
+			}
+		}
 	}
 	var result PageResult
 	var plans []recordPlan
@@ -554,8 +697,24 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}
 		result.Deleted = deleted
 	}
+	if len(consumed) > 0 {
+		placeholders := strings.TrimSuffix(strings.Repeat("?,", len(consumed)), ",")
+		args := []any{source.Platform, source.Account}
+		for _, id := range consumed {
+			args = append(args, id)
+		}
+		if err := s.db.Write(ctx, func(tx *canon.Tx) error {
+			_, err := tx.ExecContext(ctx, "DELETE FROM messenger_deletion_pending WHERE platform=? AND account=? AND message IN ("+placeholders+")", args...)
+			return err
+		}); err != nil {
+			return PageResult{}, err
+		}
+	}
 	if len(plans) == 0 && len(repairs) == 0 {
-		// Nothing new: still record the completed read and advance the cursor.
+		// Nothing new: only a scheduled read advances progress.
+		if !advance {
+			return result, nil
+		}
 		return result, s.commitProgress(ctx, source, chat, from, page, 0)
 	}
 	if len(plans) == 0 {
@@ -564,6 +723,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 				if _, err := tx.ExecContext(ctx, `UPDATE messenger_record SET state='deleted',deleted_at=? WHERE platform=? AND account=? AND chat=? AND message=? AND state='live'`, s.now().UTC().Format(time.RFC3339Nano), source.Platform, source.Account, chat, id); err != nil {
 					return err
 				}
+			}
+			if !advance {
+				return nil
 			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, 0)
 		}); err != nil {
@@ -597,6 +759,9 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 					return err
 				}
 			}
+			if !advance {
+				return nil
+			}
 			return s.writeProgress(ctx, tx, source, chat, from, page, len(plans))
 		}
 		return nil
@@ -621,6 +786,9 @@ type recordPlan struct {
 	ownWrite  bool
 	effect    effectRow
 	relations []ledger.Relation
+	// waiting names reply and thread targets that are neither stored nor in
+	// this batch, by platform message id. They are linked when admitted.
+	waiting []ledger.Relation
 }
 
 // relationNode is one record in a page or an import run, before placement.
@@ -632,6 +800,7 @@ type relationNode struct {
 	revision  int
 	previous  string
 	relations []ledger.Relation
+	waiting   []ledger.Relation
 }
 
 // placeRelations writes each record after the records in this batch it replies
@@ -664,6 +833,12 @@ func (s *Store) placeRelations(ctx context.Context, source Source, chat string, 
 		relations, err := s.importRelations(ctx, source, chat, Message{ID: node.id, ReplyTo: node.replyTo, Thread: node.thread}, admitted)
 		if err != nil {
 			return err
+		}
+		for _, target := range []ledger.Relation{{TargetID: node.replyTo, Kind: "replies_to"}, {TargetID: node.thread, Kind: "in_thread"}} {
+			if _, inBatch := index[target.TargetID]; target.TargetID == "" || target.TargetID == node.id || inBatch || hasRelation(relations, target.Kind) {
+				continue
+			}
+			node.waiting = append(node.waiting, target)
 		}
 		if node.previous != "" {
 			relations = append(relations, ledger.Relation{TargetID: node.previous, Kind: "supersedes"})
@@ -700,10 +875,19 @@ func (s *Store) orderRecordPlans(ctx context.Context, source Source, chat string
 	out := make([]recordPlan, len(ordered))
 	for i, node := range ordered {
 		plan := plans[node.index]
-		plan.relations = node.relations
+		plan.relations, plan.waiting = node.relations, node.waiting
 		out[i] = plan
 	}
 	return out, nil
+}
+
+func hasRelation(relations []ledger.Relation, kind string) bool {
+	for _, relation := range relations {
+		if relation.Kind == kind {
+			return true
+		}
+	}
+	return false
 }
 
 // admission builds the trusted entry and ledger input of one record.
@@ -775,16 +959,91 @@ ON CONFLICT(platform,account,author) DO UPDATE SET name=excluded.name,email=excl
 	if !message.Edited.IsZero() {
 		edited = message.Edited.UTC().Format(time.RFC3339Nano)
 	}
-	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at)
-VALUES(?,?,?,?,?,?,?,?,?,?)
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record(platform,account,chat,message,revision,event,author,author_name,occurred_at,edited_at,decryption_failed)
+VALUES(?,?,?,?,?,?,?,?,?,?,?)
 ON CONFLICT(platform,account,chat,message) DO UPDATE SET revision=excluded.revision,event=excluded.event,
- author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at`,
-		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited); err != nil {
+ author=excluded.author,author_name=excluded.author_name,edited_at=excluded.edited_at,decryption_failed=excluded.decryption_failed`,
+		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID, message.Author.ID, message.Author.Name, occurred, edited, boolInt(message.DecryptionFailed)); err != nil {
 		return err
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
-		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID)
-	return err
+	// The platform's attachment metadata commits with the record, so the
+	// cursor never passes a page whose attachments were not stored. The bytes
+	// stay outside LINA until the person asks for them.
+	for ordinal, attachment := range message.Attachments {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_attachment(event,platform,account,chat,message,ordinal,attachment,name,mime,size)
+VALUES(?,?,?,?,?,?,?,?,?,?)
+ON CONFLICT(event,ordinal) DO UPDATE SET attachment=excluded.attachment,name=excluded.name,mime=excluded.mime,size=excluded.size`,
+			event.ID, source.Platform, source.Account, chat, message.ID, ordinal, attachment.ID, attachment.Name, attachment.MIMEType, attachment.Size); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_record_revision(platform,account,chat,message,revision,event) VALUES(?,?,?,?,?,?)`,
+		source.Platform, source.Account, chat, message.ID, plan.revision, event.ID); err != nil {
+		return err
+	}
+	return s.writeWaiting(ctx, tx, source, chat, plan, event.ID)
+}
+
+// writeWaiting links the live replies and thread members admitted before this
+// message to its new event, then records the targets this message still
+// waits for. A backward first fill reaches a reply before its parent.
+func (s *Store) writeWaiting(ctx context.Context, tx *canon.Tx, source Source, chat string, plan recordPlan, event string) error {
+	id := plan.message.ID
+	rows, err := tx.QueryContext(ctx, `SELECT r.event,p.kind FROM messenger_relation_pending p
+JOIN messenger_record r ON r.platform=p.platform AND r.account=p.account AND r.chat=p.chat AND r.message=p.message
+WHERE p.platform=? AND p.account=? AND p.chat=? AND p.target=? AND p.message<>? AND r.state='live' AND r.event<>''
+ORDER BY r.event,p.kind`, source.Platform, source.Account, chat, id, id)
+	if err != nil {
+		return err
+	}
+	var links []struct{ from, kind string }
+	for rows.Next() {
+		var link struct{ from, kind string }
+		if err := rows.Scan(&link.from, &link.kind); err != nil {
+			rows.Close()
+			return err
+		}
+		links = append(links, link)
+	}
+	err = rows.Err()
+	rows.Close()
+	if err != nil {
+		return err
+	}
+	for _, link := range links {
+		if err := ledger.AppendStructure(ctx, tx, link.from, ledger.Relation{TargetID: event, Kind: link.kind}); err != nil {
+			return err
+		}
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM messenger_relation_pending WHERE platform=? AND account=? AND chat=? AND (target=? OR message=?)`,
+		source.Platform, source.Account, chat, id, id); err != nil {
+		return err
+	}
+	for _, waiting := range plan.waiting {
+		if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_relation_pending(platform,account,chat,message,kind,target) VALUES(?,?,?,?,?,?)
+ON CONFLICT(platform,account,chat,message,kind) DO UPDATE SET target=excluded.target`,
+			source.Platform, source.Account, chat, id, waiting.Kind, waiting.TargetID); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// attachmentMessage names the message a visible record's current revision
+// carries the attachment with.
+func (s *Store) attachmentMessage(ctx context.Context, source Source, chat, attachment string) (string, error) {
+	if !validName(chat) || !validName(attachment) {
+		return "", ErrInvalid
+	}
+	var message string
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, `SELECT a.message FROM messenger_attachment a
+JOIN messenger_record r ON r.platform=a.platform AND r.account=a.account AND r.chat=a.chat AND r.message=a.message AND r.event=a.event
+WHERE a.platform=? AND a.account=? AND a.chat=? AND a.attachment=? AND r.state='live'
+ AND EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=a.event)
+ORDER BY a.message LIMIT 1`, source.Platform, source.Account, chat, attachment).Scan(&message)
+	})
+	return message, err
 }
 
 func (s *Store) commitProgress(ctx context.Context, source Source, chat string, from Cursor, page Page, messages int) error {
@@ -812,10 +1071,18 @@ func (s *Store) writeProgress(ctx context.Context, tx *canon.Tx, source Source, 
 	if through.IsZero() {
 		through = s.now()
 	}
-	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages)
-VALUES(?,?,?,?,?,?,?)
-ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages`,
-		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages)
+	// A page whose adapter states no coverage keeps the default: an opaque
+	// cursor that survives a restart and history as deep as the platform serves.
+	depth, durable := "", 1
+	if page.Coverage != nil {
+		depth = page.Coverage.HistoryDepth
+		durable = boolInt(page.Coverage.CursorSurvivesRestart)
+	}
+	_, err := tx.ExecContext(ctx, `INSERT INTO messenger_coverage(platform,account,chat,read_from,read_through,read_at,messages,history_depth,cursor_survives_restart)
+VALUES(?,?,?,?,?,?,?,?,?)
+ON CONFLICT(platform,account,chat,read_from,read_through) DO UPDATE SET read_at=excluded.read_at,messages=excluded.messages,
+ history_depth=excluded.history_depth,cursor_survives_restart=excluded.cursor_survives_restart`,
+		source.Platform, source.Account, chat, string(from), through.UTC().Format(time.RFC3339Nano), readAt, messages, depth, durable)
 	return err
 }
 
@@ -886,6 +1153,164 @@ func (s *Store) DeleteRecords(ctx context.Context, source Source, chat string, m
 		deletions = append(deletions, Deletion{Message: message, At: s.now()})
 	}
 	return s.deleteRecords(ctx, source, chat, deletions)
+}
+
+// DeleteSourceMessages applies a deletion the platform pushed without naming a
+// chat, such as updateDeleteMessages. Telegram keeps one message-id sequence
+// for the account's private chats and basic groups, so a pushed id belongs to
+// at most one of them; every chat the id is live in is cleared, as TDLib does.
+// An id no record in those chats holds yet is retained, and a later admission
+// of that message in such a chat writes its tombstone instead.
+func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
+	if err := s.lockAdmission(ctx); err != nil {
+		return 0, err
+	}
+	defer s.unlockAdmission()
+	return s.deleteSourceMessages(ctx, source, messages, s.now(), chatPrefixes...)
+}
+
+func (s *Store) deleteSourceMessages(ctx context.Context, source Source, messages []string, at time.Time, chatPrefixes ...string) (int, error) {
+	if len(messages) == 0 {
+		return 0, nil
+	}
+	for _, message := range messages {
+		if !validName(message) {
+			return 0, ErrInvalid
+		}
+	}
+	for _, prefix := range chatPrefixes {
+		if !validName(prefix) || strings.Contains(prefix, "\n") {
+			return 0, ErrInvalid
+		}
+	}
+	chats, known, err := s.chatMessagesByID(ctx, source, messages, chatPrefixes)
+	if err != nil {
+		return 0, err
+	}
+	var unmatched []string
+	for _, message := range messages {
+		if !known[message] {
+			unmatched = append(unmatched, message)
+		}
+	}
+	if len(unmatched) > 0 {
+		if err := s.db.Write(ctx, func(tx *canon.Tx) error {
+			for _, message := range unmatched {
+				if _, err := tx.ExecContext(ctx, `INSERT INTO messenger_deletion_pending(platform,account,message,chat_prefixes,deleted_at) VALUES(?,?,?,?,?)
+ON CONFLICT(platform,account,message) DO NOTHING`, source.Platform, source.Account, message, strings.Join(chatPrefixes, "\n"), at.UTC().Format(time.RFC3339Nano)); err != nil {
+					return err
+				}
+			}
+			return nil
+		}); err != nil {
+			return 0, err
+		}
+	}
+	total := 0
+	ordered := make([]string, 0, len(chats))
+	for chat := range chats {
+		ordered = append(ordered, chat)
+	}
+	sort.Strings(ordered)
+	for _, chat := range ordered {
+		ids := chats[chat]
+		n, err := s.DeleteRecords(ctx, source, chat, ids)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+func chatAllowed(chat string, prefixes []string) bool {
+	if len(prefixes) == 0 {
+		return true
+	}
+	for _, prefix := range prefixes {
+		if strings.HasPrefix(chat, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+// chatMessagesByID finds the named messages in the chats the prefixes allow:
+// the live ones by chat, and every id any record there holds, tombstones
+// included.
+func (s *Store) chatMessagesByID(ctx context.Context, source Source, messages []string, prefixes []string) (map[string][]string, map[string]bool, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messages)), ",")
+	args := []any{source.Platform, source.Account}
+	for _, message := range messages {
+		args = append(args, message)
+	}
+	found := map[string][]string{}
+	known := map[string]bool{}
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT chat,message,state FROM messenger_record
+WHERE platform=? AND account=? AND message IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var chat, message, state string
+			if err := rows.Scan(&chat, &message, &state); err != nil {
+				return err
+			}
+			if !chatAllowed(chat, prefixes) {
+				continue
+			}
+			known[message] = true
+			if state == "live" {
+				found[chat] = append(found[chat], message)
+			}
+		}
+		return rows.Err()
+	})
+	return found, known, err
+}
+
+// pendingDeletions lists retained source-wide deletions of the named messages
+// whose chat scope includes chat.
+func (s *Store) pendingDeletions(ctx context.Context, source Source, chat string, ids []string) ([]Deletion, error) {
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
+	args := []any{source.Platform, source.Account}
+	for _, id := range ids {
+		args = append(args, id)
+	}
+	var deletions []Deletion
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT message,chat_prefixes,deleted_at FROM messenger_deletion_pending
+WHERE platform=? AND account=? AND message IN (`+placeholders+`) ORDER BY message`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var message, prefixes, at string
+			if err := rows.Scan(&message, &prefixes, &at); err != nil {
+				return err
+			}
+			var scope []string
+			if prefixes != "" {
+				scope = strings.Split(prefixes, "\n")
+			}
+			if !chatAllowed(chat, scope) {
+				continue
+			}
+			deleted, err := parseTime(at)
+			if err != nil {
+				return err
+			}
+			deletions = append(deletions, Deletion{Message: message, At: deleted})
+		}
+		return rows.Err()
+	})
+	return deletions, err
 }
 
 // DeleteChat is the person's deletion of one chat's records.

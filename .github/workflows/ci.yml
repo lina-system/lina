@@ -209,7 +209,7 @@ jobs:
 
   post-merge-qa:
     name: post-merge QA
-    if: always()
+    if: always() && github.event_name != 'push'
     needs: [selection, checks]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
@@ -230,7 +230,7 @@ jobs:
           SELECTION_RESULT: ${{ needs.selection.result }}
         run: |
           enabled=false
-          if [[ "$EVENT_NAME" != pull_request && "$SELECTION_RESULT" == success && ( "$REF_NAME" == dev || "$REF_NAME" == qa/e2e-* ) ]]; then
+          if [[ ( "$EVENT_NAME" == schedule || "$EVENT_NAME" == workflow_dispatch ) && "$SELECTION_RESULT" == success && ( "$REF_NAME" == dev || "$REF_NAME" == qa/e2e-* ) ]]; then
             enabled=true
           fi
           echo "enabled=$enabled" >> "$GITHUB_OUTPUT"
@@ -264,4 +264,5 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           QA_MILESTONE: ${{ vars.QA_MILESTONE }}
+          QA_RECOVERY_PASSES: ${{ vars.QA_RECOVERY_PASSES }}
         run: node scripts/verify/post-merge-qa.mjs --plan "$RUNNER_TEMP/foundation-plan.json" --results "$RUNNER_TEMP/foundation-results"

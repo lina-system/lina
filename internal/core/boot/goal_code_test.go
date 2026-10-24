@@ -187,7 +187,7 @@ func TestCodeGoalRoutesTasksAndChecksWithinServiceScope(t *testing.T) {
 	}
 	defer r.workEngine.close(t.Context())
 	task := goal.Task{ID: "docs", Repository: "docs", Base: "dev", Worker: "antigravity", Done: "Document the service", Area: "docs/*", Stage: goal.TaskReady, Resources: goal.Resources{CPU: 1, MemoryMB: 1, DiskMB: 1}}
-	g := goal.Goal{ID: "scope", Person: r.person, Agent: agent, Conversation: r.conversation, Turn: "turn:scope", Summary: "Ship the service and docs", Done: "Service and docs work", Scope: goal.GoalScope{Repositories: []string{"code", "docs"}, Includes: "service and docs"}, ServiceTarget: "service", ServiceRepository: "code", Tasks: []goal.Task{task}, Criteria: []goal.Criterion{{ID: "docs", Statement: "Documentation checked", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "docs", Target: "docs"}}}}
+	g := goal.Goal{ID: "scope", Person: r.person, Agent: agent, Conversation: r.conversation, Turn: "turn:scope", Summary: "Ship the service and the guide", Done: "The service and the guide work", Scope: goal.GoalScope{Repositories: []string{"code", "docs"}, Includes: "service and guide"}, ServiceTarget: "service", ServiceRepository: "code", Tasks: []goal.Task{task}, Criteria: []goal.Criterion{{ID: "docs", Statement: "Documentation checked", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "docs", Target: "docs"}}}}
 	if err = r.workEngine.engine.Admit(t.Context(), g); err != nil {
 		t.Fatal(err)
 	}

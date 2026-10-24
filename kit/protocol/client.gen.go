@@ -126,6 +126,8 @@ const (
 	KindTeamsResult          Kind = "teams_result"
 	KindWebexRequest         Kind = "webex_request"
 	KindWebexResult          Kind = "webex_result"
+	KindTelegramRequest      Kind = "telegram_request"
+	KindTelegramResult       Kind = "telegram_result"
 )
 
 type A2aCallStatus struct {
@@ -873,6 +875,7 @@ type ProgressLine struct {
 	Name         string           `json:"name"`
 	Next         string           `json:"next"`
 	Now          *string          `json:"now,omitempty"`
+	Paused       *bool            `json:"paused,omitempty"`
 	Percent      *json.Number     `json:"percent,omitempty"`
 	Row          *bool            `json:"row,omitempty"`
 	Stage        string           `json:"stage"`
@@ -882,6 +885,7 @@ type ProgressLine struct {
 	Waiting      json.Number      `json:"waiting"`
 }
 type ProgressRow struct {
+	GoalID    *string              `json:"goal_id,omitempty"`
 	Line      ProgressLine         `json:"line"`
 	Ref       string               `json:"ref"`
 	StageRefs *[]ProgressStageRefs `json:"stage_refs,omitempty"`
@@ -1591,6 +1595,22 @@ type TeamsResult struct {
 	Connections *[]TeamsConnectionStatus `json:"connections,omitempty"`
 	Operation   string                   `json:"operation"`
 }
+type TelegramRequest struct {
+	Account   *string `json:"account,omitempty"`
+	Answer    *string `json:"answer,omitempty"`
+	APIHash   *string `json:"api_hash,omitempty"`
+	APIID     *string `json:"api_id,omitempty"`
+	Operation string  `json:"operation"`
+	Phone     *string `json:"phone,omitempty"`
+}
+type TelegramResult struct {
+	Sources []TelegramSource `json:"sources"`
+	Stage   string           `json:"stage"`
+}
+type TelegramSource struct {
+	Account string `json:"account"`
+	State   string `json:"state"`
+}
 type ToolActivity struct {
 	AgentID    *string              `json:"agent_id,omitempty"`
 	CallID     string               `json:"call_id"`
@@ -1906,6 +1926,8 @@ func (TeamsRequest) isPayload()         {}
 func (TeamsResult) isPayload()          {}
 func (WebexRequest) isPayload()         {}
 func (WebexResult) isPayload()          {}
+func (TelegramRequest) isPayload()      {}
+func (TelegramResult) isPayload()       {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -2385,6 +2407,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p WebexResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindTelegramRequest:
+		var p TelegramRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindTelegramResult:
+		var p TelegramResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2542,7 +2572,9 @@ const clientSchemaJSON = `{
         "teams_request",
         "teams_result",
         "webex_request",
-        "webex_result"
+        "webex_result",
+        "telegram_request",
+        "telegram_result"
       ]
     },
     "message_id": {
@@ -4703,6 +4735,38 @@ const clientSchemaJSON = `{
           }
         }
       }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "telegram_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/telegram_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "telegram_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/telegram_result"
+          }
+        }
+      }
     }
   ],
   "$defs": {
@@ -6387,21 +6451,21 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "waiting_answer": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details_get": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "details": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -6879,14 +6943,14 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "memory_import_progress": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "memory_promotion_batch": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -7067,7 +7131,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "agent_talk_subscribe": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -7129,7 +7193,7 @@ const clientSchemaJSON = `{
       "additionalProperties": false
     },
     "task_cancel": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The payload fields of the client 1.0 kinds are set by the implementation issue that ships the first conversation product.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -7628,14 +7692,14 @@ const clientSchemaJSON = `{
       ]
     },
     "saved_reference": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
       "additionalProperties": false
     },
     "save_destination": {
-      "$comment": "Reserved: docs/design/host-protocol.md#deferred \u2014 The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
+      "$comment": "Reserved: docs/design/host-protocol.md#deferred — The JSON Schema of the result bodies, their size limits and the payload fields of the result kinds are set by the implementation issue that ships results.",
       "type": "object",
       "properties": {},
       "required": [],
@@ -9227,6 +9291,9 @@ const clientSchemaJSON = `{
         "state": {
           "$ref": "#/$defs/running_state"
         },
+        "paused": {
+          "type": "boolean"
+        },
         "stage": {
           "type": "string"
         },
@@ -9370,6 +9437,9 @@ const clientSchemaJSON = `{
         },
         "line": {
           "$ref": "#/$defs/progress_line"
+        },
+        "goal_id": {
+          "type": "string"
         },
         "stage_refs": {
           "type": "array",
@@ -11903,6 +11973,81 @@ const clientSchemaJSON = `{
           }
         }
       ]
+    },
+    "telegram_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "start",
+            "answer",
+            "cancel",
+            "disconnect"
+          ]
+        },
+        "api_id": {
+          "type": "string"
+        },
+        "api_hash": {
+          "type": "string"
+        },
+        "phone": {
+          "type": "string"
+        },
+        "answer": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "telegram_source": {
+      "type": "object",
+      "properties": {
+        "account": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "account",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "telegram_result": {
+      "type": "object",
+      "properties": {
+        "stage": {
+          "type": "string",
+          "enum": [
+            "idle",
+            "code",
+            "password",
+            "connected"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/telegram_source"
+          }
+        }
+      },
+      "required": [
+        "stage",
+        "sources"
+      ],
+      "additionalProperties": false
     }
   }
 }

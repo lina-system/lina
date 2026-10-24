@@ -9,6 +9,7 @@ import (
 	"fmt"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"syscall"
 
 	"github.com/thisisjun786/lina/internal/core/boot"
@@ -16,6 +17,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/ctlfiles"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
+	"github.com/thisisjun786/lina/internal/core/messenger/addon"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/update"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -90,6 +92,7 @@ func runCore(args []string) int {
 		}
 	}
 	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, Local: local, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
+	cfg.Messenger = &boot.MessengerConfig{Addon: messengerAddon(*root, *socket)}
 	if *tailnet != "" {
 		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}
 	}
@@ -104,4 +107,13 @@ func runCore(args []string) int {
 		return 78
 	}
 	return 0
+}
+
+// messengerAddon keeps missing or partial configuration local to its sources.
+func messengerAddon(root, socket string) *addon.Manager {
+	node, program := os.Getenv("LINA_MESSENGER_NODE"), os.Getenv("LINA_MESSENGER_ADDON")
+	if !filepath.IsAbs(node) || !filepath.IsAbs(program) {
+		node, program = "", ""
+	}
+	return addon.NewManager(addon.Config{Node: node, Program: program, StateRoot: root, Socket: socket})
 }

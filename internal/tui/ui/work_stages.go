@@ -170,7 +170,7 @@ func (m *shellModel) stageMark(status string) string {
 	}
 	mark, ok := marks[status]
 	if !ok {
-		mark = [2]string{t.GlyphUnicodeUnknown, t.GlyphAsciiUnknown}
+		mark = [2]string{t.Icon("unknown", false), t.Icon("unknown", true)}
 	}
 	if m.styles.options.ASCII {
 		return mark[1]

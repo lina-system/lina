@@ -147,7 +147,10 @@ type panelSchedulePass struct {
 	Moved    string
 	State    string
 	Limit    int
-	Running  []string
+	// Automatic marks a pass that applied the automatic limit, so "the limit
+	// set to automatic" is an input the check can read.
+	Automatic bool
+	Running   []string
 	Rank     []string
 	Started  []string
 	Reasons  map[string]string
@@ -259,6 +262,9 @@ func expandPanelGraph(g panelGraphFixture) ([]panelStep, error) {
 func TestM3WorkPanelEvaluation(t *testing.T) {
 	fixture := loadPanelFixture(t)
 	recording := recordWorkPanel(t, fixture)
+	// The scheduling controls of E11 to E14 are recorded by the panel's own
+	// keys against a Core in a child process, which can grant the person's
+	// choices; TestM3WorkPanelAdjust reads those recordings.
 	for _, verdict := range evaluateWorkPanel(recording) {
 		word := "pending"
 		if verdict.Input {

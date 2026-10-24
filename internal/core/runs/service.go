@@ -108,6 +108,10 @@ func (s *Service) Start(ctx context.Context, o Origin, b Brief) (string, State, 
 
 // The native origin and call identity are bound outside the model arguments.
 // Epoch is excluded: a lost receipt is still the same call after Core restarts.
+// CallKey is the durable identity of one start call. Goal landings use it to
+// recognise a run that belongs to a goal task and must not send a notice.
+func CallKey(o Origin, call string) string { return startIdentity(o, call) }
+
 func startIdentity(o Origin, call string) string {
 	o.Epoch = 0
 	raw, _ := json.Marshal(struct {

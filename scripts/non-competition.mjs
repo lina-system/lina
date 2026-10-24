@@ -88,7 +88,7 @@ function validateCell(r) {
   requireValue(number(hardware.memory_bytes, 'hardware.memory_bytes', true) > 0, 'hardware.memory_bytes: must be positive');
   array(hardware.devices, 'hardware.devices').forEach(d => text(d, 'hardware device'));
   const artifacts = object(r.artifacts, 'artifacts');
-  const required = r.host.install_mode === 'device-os' ? ['core', 'os'] : ['node', 'app'];
+  const required = r.host.install_mode === 'device-os' ? ['core'] : ['node', 'app'];
   for (const name of new Set(['core', 'node', 'app', 'os', 'claude_adapter', ...Object.keys(artifacts)])) {
     const artifact = object(artifacts[name], `artifacts.${name}`);
     if ('absent_reason' in artifact) {
