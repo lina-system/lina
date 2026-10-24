@@ -64,6 +64,21 @@ func family(name, prefix string) string {
 	return strings.Split(strings.TrimPrefix(name, prefix+"/"), "/")[0]
 }
 
+// explicitImporterCommand reports whether an installed command is the one entry
+// point of the memory importer add-on it imports: each source adapter has its
+// own command, and no default package may reach any of them.
+func explicitImporterCommand(name, imported, rootModule string) bool {
+	for command, adapter := range map[string]string{
+		"cmd/lina/import_hermes.go": "hermes",
+		"cmd/lina/import_murmur.go": "murmur",
+	} {
+		if name == command && imported == rootModule+"/internal/addons/importer/"+adapter {
+			return true
+		}
+	}
+	return false
+}
+
 // violations checks production sources under root against the C-40 import rules.
 // Parse every build variant: a Linux run must also catch a forbidden Windows import.
 // Test harnesses and fixture/vendor trees are not LINA production packages.
@@ -135,7 +150,7 @@ func violations(root string, standard map[string]bool) ([]string, error) {
 			if testSource {
 				continue
 			}
-			if !within(owner, "internal/addons") && !(name == "cmd/lina/import_hermes.go" && imported == rootModule+"/internal/addons/importer/hermes") && within(imported, rootModule+"/internal/addons/importer") {
+			if !within(owner, "internal/addons") && !explicitImporterCommand(name, imported, rootModule) && within(imported, rootModule+"/internal/addons/importer") {
 				report(spec.Pos(), "importer", "memory importer add-ons must not be dependencies of Core or default packages: "+imported)
 			}
 			if within(imported, rootModule+"/internal/core") {
