@@ -97,7 +97,9 @@ about freshness is stored.
 admitted person or external-participant record observes its author inside the
 page's transaction, so a record and the identity it was seen with commit
 together; the person's own account is recorded as `Self` and never linked as
-another person. The identity scope is the source's `workspace`, which the
+another person, including when the message is a write LINA sent in that
+account's name. A later observation that omits the mark does not change it.
+The identity scope is the source's `workspace`, which the
 platform's ids are scoped by. After each sync pass the service asks identity to
 rematch identities that have no link, so a people record the person creates
 after the messages arrive still links without a restart.

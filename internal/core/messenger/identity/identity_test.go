@@ -3,6 +3,7 @@ package identity_test
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"os"
 	"path/filepath"
@@ -110,9 +111,14 @@ func usable(t *testing.T, f *fixture, id identity.Identity) []identity.Link {
 
 func (f *fixture) item(t *testing.T, subject, content string) memory.Item {
 	t.Helper()
+	return f.itemIn(t, subject, content, "native:agent")
+}
+
+func (f *fixture) itemIn(t *testing.T, subject, content, conversation string) memory.Item {
+	t.Helper()
 	event := "event-" + content
 	if _, err := f.events.Admit(t.Context(), guard.EntryOwner, ledger.Input{
-		ID: event, ConversationID: "native:agent", AgentID: "agent", PersonID: "person",
+		ID: event, ConversationID: conversation, AgentID: "agent", PersonID: "person",
 		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: f.now, RecordedAt: f.now,
 		TimeQuality: "recorded", Body: content, Locator: event,
 	}); err != nil {
@@ -737,4 +743,115 @@ func TestStoreRejectsAnIncompleteObservation(t *testing.T) {
 	if err := f.store.Observe(t.Context(), identity.Observation{Identity: identity.Identity{Platform: "discord"}}); !errors.Is(err, identity.ErrInvalid) {
 		t.Fatalf("error = %v, want ErrInvalid", err)
 	}
+}
+
+// TestLaterObservationDoesNotMatchASelfAccount proves an account already
+// recorded as the person's own stays that way. A later observation that omits
+// the self mark must not match the account to a people record.
+func TestLaterObservationDoesNotMatchASelfAccount(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{{
+		Record: "person-anna",
+		Identifiers: []identity.SeenIdentifier{
+			{Kind: identity.Phone, Value: "+821012340001", Source: "contacts"},
+		},
+	}}
+	f := newFixture(t, people)
+	f.now = at(9)
+	account := imessage("+821099990001")
+	if err := f.store.Observe(t.Context(), identity.Observation{Identity: account, At: f.now, Self: true}); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.store.Observe(t.Context(), identity.Observation{
+		Identity: account, At: f.now.Add(time.Minute),
+		Identifiers: []identity.SeenIdentifier{phone("+821012340001", "profile")},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if got := links(t, f, account); len(got) != 0 {
+		t.Fatalf("a self account gained a third-party link: %+v", got)
+	}
+}
+
+// TestUndoMergeAfterAnItemIsForgottenOrDeleted proves ordinary memory removal
+// does not make a merge impossible to undo, and does not bring a removed item
+// back.
+func TestUndoMergeAfterAnItemIsForgottenOrDeleted(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-a", Names: []string{"Anna"}, Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340001", Source: "iMessage profile"}}},
+		{Record: "person-b", Names: []string{"Ann"}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	observe(t, f, imessage("+821012340001"), "Anna", phone("+821012340001", "iMessage profile"))
+	// Each item has its own conversation. Forgetting one must not block the
+	// others through the conversation exclusion.
+	kept := f.itemIn(t, "person-a", "still here", "native:kept")
+	forgotten := f.itemIn(t, "person-a", "please forget", "native:forgotten")
+	deleted := f.itemIn(t, "person-a", "please delete", "native:deleted")
+	merge, err := f.store.Merge(t.Context(), "person-a", "person-b")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if subject(t, f, kept.ID) != "person-b" || subject(t, f, forgotten.ID) != "person-b" {
+		t.Fatal("the merge did not move the items")
+	}
+	ref := func(id string) retract.Request {
+		return retract.Request{Person: "person", Targets: []retract.Ref{{Kind: retract.Memory, ID: id}}}
+	}
+	if err := f.removal.Forget(t.Context(), ref(forgotten.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if err := f.removal.Delete(t.Context(), ref(deleted.ID)); err != nil {
+		t.Fatal(err)
+	}
+	if visible(t, f, forgotten.ID) || visible(t, f, deleted.ID) {
+		t.Fatal("a removed item stayed visible")
+	}
+	if err := f.store.UndoMerge(t.Context(), merge); err != nil {
+		t.Fatalf("undo after ordinary removal: %v", err)
+	}
+	restored := links(t, f, imessage("+821012340001"))
+	if len(restored) != 1 || restored[0].Record != "person-a" || restored[0].State != identity.Active {
+		t.Fatalf("restored link = %+v", restored)
+	}
+	if subject(t, f, kept.ID) != "person-a" || !visible(t, f, kept.ID) {
+		t.Fatal("the surviving item did not return")
+	}
+	state, subj, ok := itemRow(t, f, forgotten.ID)
+	if !ok || state != "trashed" || subj != "person-a" || visible(t, f, forgotten.ID) {
+		t.Fatalf("forgotten item = state %q subject %q present %t", state, subj, ok)
+	}
+	if _, _, ok := itemRow(t, f, deleted.ID); ok {
+		t.Fatal("a permanently deleted item was resurrected")
+	}
+	var mergeState string
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT state FROM identity_merge WHERE id=?", merge).Scan(&mergeState)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if mergeState != "undone" {
+		t.Fatalf("merge state = %q", mergeState)
+	}
+}
+
+func itemRow(t *testing.T, f *fixture, id string) (state, subject string, ok bool) {
+	t.Helper()
+	err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		err := tx.QueryRowContext(t.Context(), "SELECT state,subject_id FROM memory_item WHERE id=?", id).Scan(&state, &subject)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil
+		}
+		if err != nil {
+			return err
+		}
+		ok = true
+		return nil
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return state, subject, ok
 }

@@ -82,7 +82,9 @@ that identity. `Correct` moves the identity to the right record, retracts what
 the old link produced and requeues that identity.
 
 `Merge` records both record ids, moves the links and the items of the first
-record to the second, and `UndoMerge` puts each back on the record it came from.
+record to the second, and `UndoMerge` puts each link and each item that still
+exists back on the record it came from. A forgotten item moves back still
+forgotten. A permanently deleted item stays gone, and neither blocks the undo.
 `Split` moves the identities the person chooses and the items their evidence
 produced. Item moves run through `memory.ReassignSubject` in the same
 transaction, so an item keeps its evidence, holder and scope.
@@ -117,8 +119,11 @@ inside the contact section is refused rather than guessed at.
 ## Evaluation
 
 `testdata/identity/synthetic.json` holds the hard cases; `lina identity-eval`
-runs it and prints the measures. `--private <dir>` runs the owner's labelled
-export and writes `counts.json` with counts and rates only. The files are
+runs it and prints the measures. The synthetic gate is no wrong usable link and
+every planted ambiguity. `--private <dir>` runs the owner's labelled export and
+writes `counts.json` with counts and rates only. Its `gate` is the owner-sample
+gate: the synthetic conditions plus at least 300 usable links. A shorter sample
+records `gate` false and the command exits unsuccessfully. The files are
 `people.json` (the same shape as the set's `people`), `identities.json` (`SetIdentity`
 without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>"|"unknown"|"self"}`).
 

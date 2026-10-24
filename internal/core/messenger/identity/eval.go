@@ -125,10 +125,21 @@ func (m Measures) WrongRateBound() float64 {
 	return 3 / float64(m.UsableLinks)
 }
 
-// Gate reports whether the matcher may be used for learning: no wrong usable
-// link and every planted ambiguity flagged.
+// OwnerSampleTrials is the least number of usable links an owner sample must
+// check. The research note's rule of three needs 300 to bound a wrong link
+// below one percent.
+const OwnerSampleTrials = 300
+
+// Gate reports the synthetic gate: no wrong usable link and every planted
+// ambiguity flagged. An owner sample uses OwnerGate.
 func (m Measures) Gate() bool {
 	return m.WrongLinks == 0 && m.AmbiguitiesFlagged == m.Ambiguities
+}
+
+// OwnerGate reports the owner-sample gate. It adds the trial minimum to the
+// synthetic conditions. Fewer usable links do not certify the matcher.
+func (m Measures) OwnerGate() bool {
+	return m.Gate() && m.UsableLinks >= OwnerSampleTrials
 }
 
 // LoadSet reads an evaluation set.
@@ -415,14 +426,15 @@ type Counts struct {
 	Gate               bool    `json:"gate"`
 }
 
-// CountsOf projects measures without identifiers.
+// CountsOf projects measures without identifiers. Gate is the owner-sample
+// gate, because counts are what the private run writes.
 func CountsOf(m Measures) Counts {
 	return Counts{
 		Identities: m.Identities, UsableLinks: m.UsableLinks, WrongLinks: m.WrongLinks,
 		Precision: m.Precision(), LinkedShare: m.LinkedShare(),
 		Ambiguities: m.Ambiguities, AmbiguitiesFlagged: m.AmbiguitiesFlagged,
 		Proposals: m.Proposals, ProposalTop1: m.ProposalTop1Rate(),
-		RepairClean: m.Repair.Clean, RuleOfThree: m.WrongRateBound(), Gate: m.Gate(),
+		RepairClean: m.Repair.Clean, RuleOfThree: m.WrongRateBound(), Gate: m.OwnerGate(),
 	}
 }
 
@@ -479,8 +491,13 @@ func WriteCounts(path string, measures Measures) error {
 }
 
 // Report is the person-facing one-line summary of a synthetic run.
-func Report(m Measures) string {
+func Report(m Measures) string { return formatReport(m, m.Gate()) }
+
+// ReportOwner is the same summary with the owner-sample gate.
+func ReportOwner(m Measures) string { return formatReport(m, m.OwnerGate()) }
+
+func formatReport(m Measures, gate bool) string {
 	return fmt.Sprintf("usable links %d, wrong %d, precision %.3f; linked automatically %.3f; ambiguities %d/%d flagged; proposals %d, top-1 %.3f; repair clean %t; bound 3/n %.4f; gate %t",
 		m.UsableLinks, m.WrongLinks, m.Precision(), m.LinkedShare(), m.AmbiguitiesFlagged, m.Ambiguities,
-		m.Proposals, m.ProposalTop1Rate(), m.Repair.Clean, m.WrongRateBound(), m.Gate())
+		m.Proposals, m.ProposalTop1Rate(), m.Repair.Clean, m.WrongRateBound(), gate)
 }

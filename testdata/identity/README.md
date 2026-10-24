@@ -50,5 +50,7 @@ lina identity-eval --private <dir> [--counts <file>]
 ```
 
 `counts.json` carries counts, rates and the rule-of-three bound, never a name, an
-id or a text. Learning about other people stays off until at least 300 usable
-links are checked with none wrong.
+id or a text. Its `gate` is false, and the command exits unsuccessfully, until
+at least 300 usable links are checked with none wrong. The synthetic run does
+not use that sample-size threshold. Learning about other people stays off until
+the owner-sample gate holds.

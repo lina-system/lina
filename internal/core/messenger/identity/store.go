@@ -368,8 +368,15 @@ ON CONFLICT(platform,scope,user,kind,value,source) DO UPDATE SET
 			return err
 		}
 	}
-	if observation.Self {
-		// The person's own account is the person, never another person.
+	var storedSelf int
+	if err := tx.QueryRowContext(ctx, `SELECT self FROM identity_sender WHERE platform=? AND scope=? AND user=?`,
+		observation.Identity.Platform, observation.Identity.Scope, observation.Identity.User).Scan(&storedSelf); err != nil {
+		return err
+	}
+	if storedSelf == 1 {
+		// The person's own account is the person, never another person. The
+		// flag sticks: a later observation that omits it does not match the
+		// account to a people record.
 		return nil
 	}
 	stored, err := s.identifiersTx(ctx, tx, observation.Identity)
@@ -1226,7 +1233,9 @@ func (s *Store) MergeAliases(ctx context.Context, merge string) (map[string][]st
 	return aliases, err
 }
 
-// UndoMerge puts every link and every item back on the record it came from.
+// UndoMerge puts every link and every item that still exists back on the
+// record it came from. A forgotten item moves back still forgotten. A
+// permanently deleted item stays gone, and neither blocks the undo.
 func (s *Store) UndoMerge(ctx context.Context, merge string) error {
 	if merge == "" {
 		return ErrInvalid
@@ -1292,6 +1301,9 @@ func (s *Store) UndoMerge(ctx context.Context, merge string) error {
 		}
 		for _, item := range items {
 			if _, err := memory.ReassignSubject(ctx, tx, s.person, item.item, into, item.record); err != nil {
+				if errors.Is(err, memory.ErrNotFound) {
+					continue
+				}
 				return err
 			}
 		}

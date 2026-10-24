@@ -668,7 +668,10 @@ func senderObservation(source Source, plan recordPlan) (identity.Observation, bo
 	observation := identity.Observation{
 		Identity: identity.Identity{Platform: source.Platform, Scope: source.Workspace, User: message.Author.ID},
 		At:       message.At,
-		Self:     message.Route == RoutePerson && !plan.ownWrite,
+		// The platform account is the person's own whether or not LINA composed
+		// the message. A returned write stays an agent record in the ledger and
+		// must not match this account to another person.
+		Self: message.Route == RoutePerson,
 	}
 	if message.At.IsZero() {
 		observation.At = time.Now()

@@ -76,7 +76,13 @@ func runIdentityEval(args []string) int {
 		fmt.Fprintln(os.Stderr, "lina identity-eval: the run failed")
 		return 70
 	}
-	fmt.Println(identity.Report(measures))
+	passed := measures.Gate()
+	report := identity.Report(measures)
+	if *private != "" {
+		passed = measures.OwnerGate()
+		report = identity.ReportOwner(measures)
+	}
+	fmt.Println(report)
 	if *private != "" {
 		target := *counts
 		if target == "" {
@@ -88,7 +94,7 @@ func runIdentityEval(args []string) int {
 		}
 		fmt.Printf("counts: %s\n", target)
 	}
-	if !measures.Gate() {
+	if !passed {
 		return 1
 	}
 	return 0

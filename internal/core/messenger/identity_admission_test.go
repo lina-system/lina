@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/messenger/identity"
 )
@@ -101,5 +102,54 @@ func TestAdmittedPageUsesTheProfileEmailAsEvidence(t *testing.T) {
 	}
 	if len(links) != 1 || links[0].Record != "person-ben" || links[0].Class != identity.Exact || !links[0].Usable(f.now) {
 		t.Fatalf("links = %+v", links)
+	}
+}
+
+// TestOwnWriteKeepsThePersonsAccountSelf proves a message LINA sent in the
+// person's name does not match that platform account to another people record.
+// The platform author is still the person's account, including when this
+// returned write is the first time the account is seen.
+func TestOwnWriteKeepsThePersonsAccountSelf(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{{
+		Record:      "person-other",
+		Identifiers: []identity.SeenIdentifier{{Kind: identity.Email, Value: "me@example.com", Source: "contacts"}},
+	}}
+	f := newFixture(t)
+	sender := identity.Open(f.db, "person", people, f.removal).WithClock(func() time.Time { return f.now })
+	f.store = f.store.WithIdentities(sender)
+	source := f.connect(t)
+	effect := messenger.Effect{ID: "effect-1", Platform: source.Platform, Account: source.Account, Chat: "dm-1",
+		Agent: "agent:main", Verb: "send", ClientID: "client-1", Message: "m-1", State: messenger.EffectSent, CreatedAt: f.now}
+	if err := f.store.RecordEffect(t.Context(), effect); err != nil {
+		t.Fatal(err)
+	}
+	page := messenger.Page{Messages: []messenger.Message{{
+		ID: "m-1", Route: messenger.RoutePerson, At: f.now, Text: "sent by LINA",
+		Author: messenger.Author{ID: "U-me", Name: "Me", Email: "me@example.com"},
+	}}, Next: "c2"}
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", page); err != nil {
+		t.Fatal(err)
+	}
+	event := f.eventsFor(t, source, "dm-1", "m-1")
+	if event.SpeakerKind != guard.Agent || event.AgentID != "agent:main" {
+		t.Fatalf("own write = %+v", event)
+	}
+	account := identity.Identity{Platform: source.Platform, User: "U-me"}
+	got, err := sender.Links(t.Context(), account)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(got) != 0 {
+		t.Fatalf("a returned LINA write linked the person's account: %+v", got)
+	}
+	var self int
+	if err := f.db.Read(t.Context(), func(tx *canon.Tx) error {
+		return tx.QueryRowContext(t.Context(), "SELECT self FROM identity_sender WHERE platform=? AND user=?", source.Platform, "U-me").Scan(&self)
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if self != 1 {
+		t.Fatalf("self = %d, want the person's own account", self)
 	}
 }

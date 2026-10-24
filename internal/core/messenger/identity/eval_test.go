@@ -35,6 +35,9 @@ func TestSyntheticSetHasNoWrongUsableLinkAndFlagsEveryAmbiguity(t *testing.T) {
 	if !measures.Gate() {
 		t.Fatal("the synthetic set does not pass the gate")
 	}
+	if measures.OwnerGate() {
+		t.Fatal("the synthetic set must not pass the owner-sample gate")
+	}
 	if measures.UsableLinks == 0 || measures.Precision() != 1 {
 		t.Fatalf("usable links = %d precision = %v", measures.UsableLinks, measures.Precision())
 	}
@@ -107,8 +110,8 @@ func TestOwnerSampleWritesCountsOnly(t *testing.T) {
 			t.Fatalf("counts are missing %q: %s", key, data)
 		}
 	}
-	if written["gate"] != true || written["wrong_links"] != float64(0) {
-		t.Fatalf("counts = %s", data)
+	if written["gate"] != false || written["wrong_links"] != float64(0) || written["usable_links"] != float64(1) {
+		t.Fatalf("a one-link sample must not pass the owner gate: %s", data)
 	}
 	info, err := os.Stat(counts)
 	if err != nil {
@@ -116,6 +119,26 @@ func TestOwnerSampleWritesCountsOnly(t *testing.T) {
 	}
 	if info.Mode().Perm() != 0o600 {
 		t.Fatalf("counts mode = %v, want 0600", info.Mode().Perm())
+	}
+}
+
+func TestOwnerSampleGateNeedsThreeHundredTrials(t *testing.T) {
+	t.Parallel()
+	short := identity.CountsOf(identity.Measures{UsableLinks: 1})
+	if short.Gate {
+		t.Fatal("one usable link passed the owner-sample gate")
+	}
+	enough := identity.CountsOf(identity.Measures{UsableLinks: 300})
+	if !enough.Gate || enough.WrongLinks != 0 {
+		t.Fatalf("counts = %+v", enough)
+	}
+	wrong := identity.CountsOf(identity.Measures{UsableLinks: 300, WrongLinks: 1})
+	if wrong.Gate {
+		t.Fatal("a wrong link passed the owner-sample gate")
+	}
+	shortfall := identity.CountsOf(identity.Measures{UsableLinks: 299})
+	if shortfall.Gate {
+		t.Fatal("299 usable links passed the owner-sample gate")
 	}
 }
 
