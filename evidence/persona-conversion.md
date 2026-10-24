@@ -85,16 +85,35 @@ through installed Core, replaces stale layers, observes the prepared request
 and exercises a real skill tool and its conversation result. These tests prove
 publication and preparation; the content comparison above establishes fidelity.
 
-`TestM4StarterPersonaRevision` guards the M4 revision itself for every preset. A
-requirement is the contract's concept set, each group listing alternative
-wordings, and it is met when one paragraph carries one member of every group.
-The test requires each preset's core changes, Arin's honorific correction
-example, and each persona's name, character and voice markers. It also rejects a
-topic-dependent register switch and a fixed nothing-to-decide line in either
-layer. `TestM4RequirementMatcher` proves that rewritten text still passes, that a
-dropped or separated change fails, and that both negative checks distinguish a
-switch or closing from stable voice and open decisions. The test guards content,
-not model behaviour; the replay evaluation stays #590. A mutation run against
-the shipped layers (dropped claim rule, added closing line, added topic switch,
-removed voice marker) failed each check and passed again after restoring the
-files.
+The persona tests guard the M4 revision structurally, against the layer the #584
+conversion shipped (`persona/testdata/m4-baseline`, copied from that revision):
+
+- `TestM4StarterRevisionCarriesTheDocumentedChanges` requires, for each preset,
+  that the core gained at least one rule paragraph the #584 core did not have,
+  that dev's and life's default voices gained one where the design lists a voice
+  change, and that nothing was dropped without a replacement. It compares
+  paragraphs, not sentences, so a rule that is reworded still passes.
+- `TestM4StarterIdentityAndVoice` requires the persona name in both titles, the
+  character marker, the address terms and register markers, four examples and
+  the line for agent exchanges.
+- `TestM4StarterLayersHaveNoTopicSwitchOrClosing` rejects a sentence that ties a
+  register to a topic and any sentence that reports a decision with nothing left
+  in it, in either layer. Register chosen by what a sentence does stays allowed.
+- `TestM4ChecksCatchRegressions` drives each helper with synthetic fixtures: a
+  reworded rule and a rule replaced by another pass; an unchanged layer, a
+  dropped rule, a core change landing in an example and a stubbed core fail; a
+  topic switch and a nothing-to-decide line are found while stable voice,
+  role-based register and open decisions are not.
+
+A check without a wording list cannot tell whether a changed paragraph still
+says what the design asks; a word list can, but it fails a legitimate rewrite,
+which the repository forbids. The tests therefore verify that the revision
+happened and that its two prohibitions hold, and the meaning of each change is
+established by the per-preset comparison above and measured by the M4-4 replay
+(#590). A partial edit inside an already changed paragraph is invisible to the
+structural check for the same reason.
+
+Mutation run against the shipped layers: rewording Lina's source-reading rule
+(묻기 전에 → 질문하기에 앞서, with the rest of the sentence rewritten) passed;
+reverting the knowledge core to its #584 text failed; an added topic register
+switch in Arin's voice failed; the suite passed again after restoring the files.
