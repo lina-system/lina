@@ -47,7 +47,7 @@ A change that lets an internal term into the default view is a defect.
 **C-01 One main (changed).**
 One `lina core` runs per state root, as a user service under the person's OS user ([runtime.md](runtime.md#processes)).
 Inside it run these goroutine families: one lane per conversation, the background-run supervisor, the gateway adapters, the scheduler, the completion-event reactor, the client hub and the job API for `moirai-worker`.
-Children are created through `kit/proc` with owned process lifetimes and process groups (inheriting a cgroup where the service manager has one): the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
+Children are created through `kit/proc` with owned process lifetimes — a subreaper helper on Linux, a launchd job coalition on macOS, a Job Object on Windows — inheriting a cgroup where the service manager has one: the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
 There is no process per agent and no model proxy.
 A foreground `lina core` for development runs only where install created the main id file.
 
@@ -82,9 +82,9 @@ Doctor never mints an epoch, creates a lock or socket, migrates canon, repairs c
 Layout: `cmd/lina`, `cmd/lina-node`, `cmd/moirai-worker`, `protocol/schema`, `protocol/fixtures`, `persona/<preset>/`, `skills/` (built-in, embedded), `catalog/` (plan and plugin catalog sources), `adapters/claude/` (TypeScript, lockfile), and `internal/` with `core`, `node`, `tui`, `clientapi`, `buildinfo` (shared binary metadata), `design` (generated from the token source) and `fakecore`.
 Builds are static; cgo follows the SQLite binding chosen by [V2](runtime.md#runtime-acceptance).
 The kit wrapper starts bubblewrap through the explicit process supervisor ([runtime.md](runtime.md#sandbox)).
-Listed helper subcommands such as `file-tool` and `proc-supervise` are allowed; hidden re-exec modes and initialization hooks are not.
-Both `lina` and `lina-node` register `proc.SuperviseMain` and list `proc-supervise` in usage.
-The supervisor needs no additional binary or cgroup delegation.
+Listed helper subcommands such as `file-tool`, `proc-supervise` and `proc-job` are allowed; hidden re-exec modes and initialization hooks are not.
+Both `lina` and `lina-node` register `proc.SuperviseMain` and `proc.JobMain` and list `proc-supervise` and `proc-job` in usage.
+The helpers need no additional binary or cgroup delegation.
 
 Kit seams, following [runtime.md](runtime.md#lina-kit):
 
@@ -1457,11 +1457,10 @@ Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
-macOS denies `setsid` and `setpgid` in the command's Seatbelt policy, applied by the owner or by the sandbox launcher, so no descendant can leave its process group; a host without the launcher fails closed.
-While the command runs, the owner watches `EVFILT_PROC` fork notifications for the leader and every recorded descendant, so a descendant is recorded even when its parent was already reaped.
-The owner then kills the group while the leader is unreaped, and sweeps kernel-recorded parent identities and the inherited owner token as defence in depth.
-The sweep keeps the identities it discovered in earlier scans, and it reads the full short BSD info record so an unreaped zombie is never signalled again.
-The native macOS tests cover a refused escape and a cleared-environment descendant that outlives its intermediate parent.
+macOS runs each command as its own launchd job through the explicit per-command `proc-job` helper, and owns it through the resource coalition launchd creates for that job.
+Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
+Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
+The sandbox's Seatbelt policy keeps its `setsid`/`setpgid` denial, which matches the Linux seccomp filter but is no longer what owns a command's descendants.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.
@@ -2029,7 +2028,7 @@ The embedded meta-skill describes this procedure.
 **C-28 Importing a Hermes install (changed).**
 Contract: [memory importer add-ons](conversation-and-memory.md#memory-importer-add-ons), [Hermes import](conversation-and-memory.md#importing-a-hermes-install), [filesystem.md](filesystem.md#importing-another-memory-system), [integrations.md](integrations.md#memory-importers).
 The optional Hermes adapter lives in `internal/addons/importer/hermes`, outside the Core layers.
-Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`.
+Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception per adapter: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`, and `cmd/lina/import_murmur.go` the exact murmur adapter package for `lina import-murmur`.
 Core, onboarding and other commands remain independent of adapter execution.
 Foundation registers the adapter and `testdata/hermes/` for build, vet, analyzer and test checks.
 An installed adapter runs as a background job started by the person, with no model call and deterministic classification.

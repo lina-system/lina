@@ -38,6 +38,14 @@ func (t Tokens) Valid(refresh bool) bool {
 	r := t.value()
 	return r.Access != "" && (!refresh || r.Refresh != "") && !strings.ContainsAny(r.Access+r.Refresh, "\x00\r\n") && len(r.Access)+len(r.Refresh) < maxCredentialBytes/2
 }
+
+// Access supplies the opaque bearer to a destination-bound service adapter.
+func (t Tokens) Access() secret.Secret {
+	if t.value == nil {
+		return secret.Secret{}
+	}
+	return secret.New(t.value().Access)
+}
 func (t Tokens) Refresh() secret.Secret {
 	if t.value == nil {
 		return secret.Secret{}

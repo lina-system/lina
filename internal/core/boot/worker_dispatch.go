@@ -177,6 +177,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 	// Dispatch owns cancellation and the task reservation. Owner steering is
 	// restricted to the active turn, independently of scheduled-card ownership.
 	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
+	if record.Goal {
+		e.goalSession, e.goalPerson, e.goalAgent, e.goalWorker = record.GoalAction, record.Origin.Person, record.Origin.Agent, record.WorkerName()
+	}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
 	r.workers.mu.Unlock()

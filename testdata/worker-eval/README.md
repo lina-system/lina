@@ -17,8 +17,8 @@ Nothing here is product code and no test imports it.
 - `task-cancel.md` is the cancel packet: run the long-tagged test, then the
   suite. Nothing is written or committed.
 - `setup.sh seed <dir>` copies the fixture into a fresh Git repository and
-  prints the seed commit. `setup.sh run <seed> <worktree> <branch>` adds one
-  run's worktree from that commit.
+  prints the seed commit recorded in the evaluation. `setup.sh run <seed>
+  <worktree> <branch>` adds one run's worktree from that commit.
 
 Each run works in its own worktree and is driven directly through one worker
 adapter, not through Core, so the measurement is of the connection rather than
