@@ -49,6 +49,10 @@ func (r *conversationRuntime) bindInput(ctx context.Context, tx *canon.Tx, input
 		}
 	}
 	decision := binding.Resolve(state, facts)
+	// Replay retains admission facts, excluding personal name memories.
+	snapshot := state
+	snapshot.Items = decision.Candidates
+	decision.Snapshot = &snapshot
 	raw, err := json.Marshal(decision)
 	if err != nil {
 		return err
@@ -74,8 +78,7 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 	}
 	// Read the latest binding and exchange before this input, using ledger order.
 	// A withdrawn input must not restore its focus or refresh its age.
-	var raw, at, previousID string
-	err := tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at,p.id FROM conv_event b JOIN retract_visible_event vb ON vb.id=b.id JOIN conv_event p ON p.id=b.parent_id JOIN retract_visible_event vp ON vp.id=p.id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND p.id='channel-input:'||receipt.inbox_id)) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID, address, address).Scan(&raw, &at, &previousID)
+	raw, at, previousID, err := r.previousInputBinding(ctx, tx, input)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return s, err
 	}
@@ -91,19 +94,9 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		if e != nil {
 			return s, e
 		}
-		for _, c := range choices {
-			// A retained tie or a pending question is still ambiguous. Clear the
-			// admission target so that fallback cannot become the next focus.
-			if c.Question != "" || len(c.Tied) > 1 {
-				s.Focus = binding.Target{Class: "none"}
-				continue
-			}
-			if !c.Cancelled {
-				s.Focus = c.Target
-				if c.CreatedID != "" {
-					s.Focus = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
-				}
-			}
+		s.Focus = overlayChoiceTarget(previous.Target, choices)
+		if s.Focus.Class == "" {
+			s.Focus = binding.Target{Class: "none"}
 		}
 		// Agent replies also keep an exchange fresh; tool/system traffic does not.
 		var latest string
@@ -341,6 +334,16 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 		}
 	}
 	return s, nil
+}
+
+// Focus and inherited ambiguity use the same visible, scoped predecessor.
+func (r *conversationRuntime) previousInputBinding(ctx context.Context, tx *canon.Tx, input ledger.Event) (raw, at, id string, err error) {
+	address := ""
+	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
+		address = r.channelAddress.Key()
+	}
+	err = tx.QueryRowContext(ctx, `SELECT b.body,p.recorded_at,p.id FROM conv_event b JOIN retract_visible_event vb ON vb.id=b.id JOIN conv_event p ON p.id=b.parent_id JOIN retract_visible_event vp ON vp.id=p.id WHERE b.conversation_id=? AND b.agent_id=? AND p.person_id=? AND b.scaffold_kind=? AND p.rowid<(SELECT rowid FROM conv_event WHERE id=?) AND (?='' OR EXISTS(SELECT 1 FROM channel_receipts receipt WHERE receipt.address=? AND p.id='channel-input:'||receipt.inbox_id)) ORDER BY p.rowid DESC LIMIT 1`, input.ConversationID, input.AgentID, input.PersonID, inputBindingKind, input.ID, address, address).Scan(&raw, &at, &id)
+	return
 }
 
 // Resolve an event or its reply's parent only inside the current conversation.

@@ -22,11 +22,23 @@ import (
 // durable card through unrelated work and a Core process restart.
 func TestM2ModelBindingInstalledCore(t *testing.T) {
 	t.Parallel()
+	testModelBindingInstalledCore(t, false)
+}
+
+// A plain follow-up after two settled requests must ask before a worker
+// interrupt, even when the model supplies a session without binding a target.
+func TestM2MultiTargetFocusInstalledCore(t *testing.T) {
+	t.Parallel()
+	testModelBindingInstalledCore(t, true)
+}
+
+func testModelBindingInstalledCore(t *testing.T, implicit bool) {
+	t.Helper()
 	var foreground atomic.Int32
 	started := make(chan struct{}, 8)
 	var mu sync.Mutex
 	var first, second, question string
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	server := httptest.NewServer(toolCatalogModel(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		var request struct {
 			Instructions string
 			Input        []json.RawMessage
@@ -72,17 +84,25 @@ func TestM2ModelBindingInstalledCore(t *testing.T) {
 			}
 			emitResponse(w, "Both analyses have started.", true)
 		case 5:
+			if implicit {
+				emitPersonaCall(w, "tie", "worker_interrupt", map[string]any{"session": "unselected-worker", "turn": "turn", "generation": 1, "binding": 1, "quote": "stop it"})
+				break
+			}
 			a, b := binding.Target{Class: "existing", ID: first, Kind: "run"}, binding.Target{Class: "existing", ID: second, Kind: "run"}
 			emitPersonaCall(w, "tie", "bind_input", map[string]any{"bindings": []binding.Choice{{Quote: "Change its format.", Target: a, Tied: []binding.Target{a, b}, Action: "steer"}}})
 		case 6:
 			var batch struct {
 				Bindings []binding.Choice `json:"bindings"`
 			}
-			_ = json.Unmarshal(assertAskResult(t, request.Input, "tie", "ok", ""), &batch)
-			if len(batch.Bindings) != 1 {
-				t.Error("tie binding missing")
+			if implicit {
+				assertAskResult(t, request.Input, "tie", "denied", "input_target_pending")
 			} else {
-				question = batch.Bindings[0].Question
+				_ = json.Unmarshal(assertAskResult(t, request.Input, "tie", "ok", ""), &batch)
+				if len(batch.Bindings) != 1 {
+					t.Error("tie binding missing")
+				} else {
+					question = batch.Bindings[0].Question
+				}
 			}
 			emitPersonaCall(w, "premature", "follow_work", map[string]string{"id": first, "text": "Use a table."})
 		case 7:
@@ -107,7 +127,7 @@ func TestM2ModelBindingInstalledCore(t *testing.T) {
 			t.Error("unexpected model round")
 			emitResponse(w, "Finished.", true)
 		}
-	}))
+	})))
 	defer server.Close()
 	h, start := installedConversationHarness(t, server.URL)
 	core := start(true)
@@ -121,7 +141,24 @@ func TestM2ModelBindingInstalledCore(t *testing.T) {
 			t.Fatal("background analyses did not start")
 		}
 	}
-	admittedTurn(t, h, c, conversation, "tie", "Change its format.")
+	text := "Change its format."
+	if implicit {
+		text = "stop it"
+	}
+	admittedTurn(t, h, c, conversation, "tie", text)
+	if implicit {
+		db, err := canon.OpenSQLiteReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+		if err != nil {
+			t.Fatal(err)
+		}
+		mu.Lock()
+		err = db.QueryRowContext(h.ctx, "SELECT id FROM conversation_questions").Scan(&question)
+		mu.Unlock()
+		db.Close()
+		if err != nil {
+			t.Fatal(err)
+		}
+	}
 	admittedTurn(t, h, c, conversation, "independent", "Tell me a prime number.")
 	inspect := func(wantResolved bool) waiting.ConversationQuestion {
 		t.Helper()
@@ -140,6 +177,9 @@ func TestM2ModelBindingInstalledCore(t *testing.T) {
 		var q waiting.ConversationQuestion
 		if json.Unmarshal(raw, &q) != nil || q.Binding == nil || len(q.Choices) != 2 || (len(resolution) > 0) != wantResolved {
 			t.Fatalf("question persistence: %s resolution=%s", raw, resolution)
+		}
+		if implicit && q.Binding.Action != "stop" {
+			t.Fatalf("interrupt did not ask the target question: %+v", q.Binding)
 		}
 		for _, id := range []string{a, b} {
 			if err = db.QueryRowContext(h.ctx, "SELECT record FROM background_runs WHERE id=?", id).Scan(&raw); err != nil {

@@ -356,6 +356,7 @@ Every input of the person is bound to one target: the focus, another 목표, 일
 
 **Focus and candidates.**
 
+- An input sets the next focus only when all its current choices settle on the same item, including a single created identity. Distinct targets, a retained tie, a pending target question or a cancelled choice leave no focus; request order never selects a winner.
 - The focus ages. After 60 minutes without an exchange (a starting value) it is no longer the default and is offered as one candidate among the rest. In the owner's data a message sent within ten minutes continued the current topic about 70 percent of the time; after an hour, about 20 percent.
 - Core ranks at most eight candidates: the focus; items with a question to the person open in this conversation; tasks and runs started from it that are running or waiting; items the message names; then the person's most recently active 목표, 일 and 할 일. Each carries its id, title, kind, state and last activity, and they enter item 7.3 of the request layout.
 
@@ -404,6 +405,9 @@ candidate does not resolve the original ambiguity. A retained tie, including a
 read that has not asked a question, does not settle a reply or the next focus.
 A reply that stays unresolved keeps that tie, so a later control asks before it
 runs.
+An unresolved follow-up after an input with several settled targets also keeps
+those targets for the control check. A tool's session argument alone does not
+choose between them: stopping a worker asks which item before any interrupt.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 
@@ -432,7 +436,9 @@ Core checks a retained tie again when a later tool would make it irreversible.
 
 - A binding that leaves the focus, returns to an aged focus or creates an item shows as a one-line chip on the person's message, naming the item. A binding to a fresh focus shows nothing.
 - One tap on the chip lists the other candidates, "new" and "none". Choosing one moves the binding: Core appends a rebinding event and moves what the turn did to the right item ([work-and-delegation.md](work-and-delegation.md#messages-about-work)). The move is the label of that choice in Jev's material and in the replay set.
-- An effect that already left the person cannot be moved, which is why the agent asks first for those.
+- An effect that already left the person cannot be moved, which is why the agent asks first for those. A move lists such an effect as not moved, with the reason.
+- The chip is available wherever the message is shown, including channel replies, and it follows a later choice. A surface without a pointer reaches the same list with one key or one short reply.
+- Core counts moves per hundred bindings by the decider that made the original pick, and each move becomes a Jev label and one exportable replay case. Both are canon: they survive a restart. A retry returns the original move receipt. The corrected choice becomes the active binding in the same commit as the move. Replay keeps the original input and admission facts, excluding personal name memories.
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
