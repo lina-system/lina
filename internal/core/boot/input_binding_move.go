@@ -98,6 +98,13 @@ func (r *conversationRuntime) recordBindingEffect(ctx context.Context, input led
 	if kind == binding.EffectStart && target == "" {
 		target = receipt.ID
 	}
+	// worker_input names a session. The session's task is the steer target,
+	// the same identity bindWorkCall checks before the call runs.
+	if kind == binding.EffectSteer && call.Name == "worker_input" {
+		if task := r.workerTaskID(str("session")); task != "" {
+			target, recordID = task, task
+		}
+	}
 	if target == "" && recordID == "" {
 		return nil
 	}
@@ -161,6 +168,7 @@ func combineBindingEdits(effects []binding.Effect) []binding.Effect {
 			if previous.Kind == binding.EffectEdit && previous.AfterRevision == effect.BeforeRevision {
 				previous.AfterRevision = effect.AfterRevision
 				previous.Payload = effect.Payload
+				previous.Folded = append(previous.Folded, binding.EffectCall{TurnID: effect.TurnID, CallID: effect.CallID})
 				continue
 			}
 		}
@@ -400,10 +408,16 @@ func (r *conversationRuntime) moveBinding(ctx context.Context, inputID string, t
 	if err != nil {
 		return binding.Move{}, err
 	}
+	var relocated []binding.Effect
 	for _, effect := range effects {
-		outcome, e := r.applyBindingEffect(ctx, moveID, effect, target)
+		outcome, next, e := r.applyBindingEffect(ctx, moveID, effect, target)
 		if e != nil {
 			outcome.Moved, outcome.Reason = false, "failed"
+			next = nil
+		}
+		if next != nil {
+			next.Folded = effect.Folded
+			relocated = append(relocated, *next)
 		}
 		move.Effects = append(move.Effects, outcome)
 	}
@@ -421,7 +435,15 @@ func (r *conversationRuntime) moveBinding(ctx context.Context, inputID string, t
 			return err
 		}
 		choice := binding.Choice{Request: current.Request, Quote: current.Quote, Target: target, Decider: "person"}
-		return appendInputChoices(ctx, tx, input, "binding-move-choice:"+moveID, []binding.Choice{choice})
+		if err = appendInputChoices(ctx, tx, input, "binding-move-choice:"+moveID, []binding.Choice{choice}); err != nil {
+			return err
+		}
+		for _, effect := range relocated {
+			if err = storeRelocatedEffect(ctx, tx, effect); err != nil {
+				return err
+			}
+		}
+		return nil
 	})
 	if err != nil {
 		return binding.Move{}, err
@@ -440,23 +462,55 @@ func shortKey(key string) string {
 	return hex.EncodeToString(sum[:8])
 }
 
-// applyBindingEffect re-attaches one recorded effect at the new target.
-func (r *conversationRuntime) applyBindingEffect(ctx context.Context, moveID string, effect binding.Effect, to binding.Target) (binding.Outcome, error) {
+// applyBindingEffect re-attaches one recorded effect at the new target. A
+// non-nil effect is that effect at its new location, ready to store.
+func (r *conversationRuntime) applyBindingEffect(ctx context.Context, moveID string, effect binding.Effect, to binding.Target) (binding.Outcome, *binding.Effect, error) {
 	outcome := binding.Outcome{Kind: effect.Kind, Item: effect.Target}
 	if effect.LeftPerson || !binding.Movable(effect.Kind) {
 		outcome.Reason = "left"
-		return outcome, nil
+		return outcome, nil, nil
 	}
 	switch effect.Kind {
 	case binding.EffectCreate:
-		return r.moveCreatedRecord(ctx, effect, to, outcome)
+		moved, err := r.moveCreatedRecord(ctx, effect, to, outcome)
+		return moved, nil, err
 	case binding.EffectEdit:
 		return r.moveEditedRecord(ctx, effect, to, outcome)
 	case binding.EffectSteer:
 		return r.moveSteer(ctx, moveID, effect, to, outcome)
 	}
 	outcome.Reason = "left"
-	return outcome, nil
+	return outcome, nil, nil
+}
+
+// workerTaskID resolves a worker session to the task it is running. Tool
+// binding and effect recording share this lookup.
+func (r *conversationRuntime) workerTaskID(session string) string {
+	if r == nil || r.workers == nil || session == "" {
+		return ""
+	}
+	for _, entry := range r.workers.entries() {
+		if entry != nil && entry.thread.ID == session && entry.thread.TaskID != "" {
+			return entry.thread.TaskID
+		}
+	}
+	return ""
+}
+
+// storeRelocatedEffect keeps a moved effect at its new location so the next
+// move restores and withdraws from there. Folded calls belonged to the same
+// edit chain and must not be replayed against the old record.
+func storeRelocatedEffect(ctx context.Context, tx *canon.Tx, effect binding.Effect) error {
+	if _, err := tx.ExecContext(ctx, `UPDATE binding_effects SET target=?, record_id=?, before_body=?, before_revision=?, after_revision=?, payload=? WHERE input_event=? AND turn_id=? AND call_id=?`,
+		effect.Target, effect.RecordID, effect.BeforeBody, effect.BeforeRevision, effect.AfterRevision, effect.Payload, effect.InputEvent, effect.TurnID, effect.CallID); err != nil {
+		return err
+	}
+	for _, call := range effect.Folded {
+		if _, err := tx.ExecContext(ctx, `DELETE FROM binding_effects WHERE input_event=? AND turn_id=? AND call_id=?`, effect.InputEvent, call.TurnID, call.CallID); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func (r *conversationRuntime) moveCreatedRecord(ctx context.Context, effect binding.Effect, to binding.Target, outcome binding.Outcome) (binding.Outcome, error) {
@@ -519,43 +573,64 @@ func (r *conversationRuntime) confirmTodoParent(ctx context.Context, id string) 
 	return nil
 }
 
-func (r *conversationRuntime) moveEditedRecord(ctx context.Context, effect binding.Effect, to binding.Target, outcome binding.Outcome) (binding.Outcome, error) {
+func (r *conversationRuntime) moveEditedRecord(ctx context.Context, effect binding.Effect, to binding.Target, outcome binding.Outcome) (binding.Outcome, *binding.Effect, error) {
 	if r.records == nil || effect.RecordID == "" || len(effect.BeforeBody) == 0 {
 		outcome.Reason = "missing_record"
-		return outcome, nil
+		return outcome, nil, nil
 	}
 	record, revision, err := r.records.Read(ctx, effect.RecordID)
 	if err != nil {
 		outcome.Reason = "missing_record"
-		return outcome, nil
+		return outcome, nil, nil
 	}
 	if effect.AfterRevision != "" && revision != effect.AfterRevision {
 		outcome.Reason = "changed_since"
-		return outcome, nil
+		return outcome, nil, nil
 	}
 	changes := []records.Change{{ID: effect.RecordID, Base: revision, Path: record.Path, Data: effect.BeforeBody}}
 	receipt := "restored"
+	var applied *records.Change
+	var beforeBody []byte
+	var beforeRev string
 	if to.Class == "existing" {
 		if to.ID == effect.RecordID {
 			outcome.Reason = "same_target"
-			return outcome, nil
+			return outcome, nil, nil
 		}
-		next, reason := r.reapplyEdit(ctx, effect, to.ID)
+		var reason string
+		applied, beforeBody, beforeRev, reason = r.reapplyEdit(ctx, effect, to.ID)
 		if reason != "" {
 			outcome.Reason = reason
-			return outcome, nil
+			return outcome, nil, nil
 		}
-		if next != nil {
-			changes = append(changes, *next)
+		if applied != nil {
+			changes = append(changes, *applied)
 			receipt = "restored+applied"
 		}
 	}
 	if _, err = r.records.CommitBatch(ctx, changes, records.Actor{Person: r.person, Agent: r.agent}); err != nil {
 		outcome.Reason = "stale"
-		return outcome, nil
+		return outcome, nil, nil
 	}
 	outcome.Moved, outcome.Receipt = true, receipt
-	return outcome, nil
+	next := effect
+	if applied != nil {
+		_, rev, err := r.records.Read(ctx, to.ID)
+		if err != nil {
+			return outcome, nil, nil
+		}
+		next.Target, next.RecordID = to.ID, to.ID
+		next.BeforeBody, next.BeforeRevision, next.AfterRevision = beforeBody, beforeRev, rev
+		if payload := relocatedEditPayload(to.ID, applied.Data); len(payload) > 0 {
+			next.Payload = payload
+		}
+		return outcome, &next, nil
+	}
+	if _, rev, err := r.records.Read(ctx, effect.RecordID); err == nil {
+		next.AfterRevision = rev
+		return outcome, &next, nil
+	}
+	return outcome, nil, nil
 }
 
 // moveEditRepo stages the validated target write for the same publication as
@@ -578,22 +653,22 @@ func (s *moveEditRepo) Read(ctx context.Context, id records.ID) (records.Record,
 
 // reapplyEdit prepares the changed fields on the right item while preserving
 // its other fields. WriteRecord performs the ordinary ownership/field checks.
-func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Effect, target string) (*records.Change, string) {
+func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Effect, target string) (*records.Change, []byte, string, string) {
 	var write coreexec.RecordWrite
 	if json.Unmarshal(effect.Payload, &write) != nil {
-		return nil, "missing_payload"
+		return nil, nil, "", "missing_payload"
 	}
 	right, rightRevision, err := r.records.Read(ctx, target)
 	if err != nil {
-		return nil, "not_a_record"
+		return nil, nil, "", "not_a_record"
 	}
 	beforeKind, beforeTitle, beforeNote, _, _ := recordParts(effect.BeforeBody)
 	kind, title, note, _, _ := recordParts(right.Data)
 	if kind != write.Kind {
-		return nil, "target_kind"
+		return nil, nil, "", "target_kind"
 	}
 	if write.Title == beforeTitle && write.Note == beforeNote && write.Todo == nil {
-		return nil, ""
+		return nil, nil, "", ""
 	}
 	if write.Title != beforeTitle {
 		title = write.Title
@@ -616,12 +691,28 @@ func (r *conversationRuntime) reapplyEdit(ctx context.Context, effect binding.Ef
 	}
 	staged := &moveEditRepo{Repo: r.records}
 	if _, err = coreexec.WriteRecord(ctx, staged, records.Actor{Person: r.person, Agent: r.agent}, coreexec.RecordWrite{ID: target, Revision: rightRevision, Kind: kind, Title: title, Note: note, Todo: todo}); err != nil {
-		return nil, "target_refused"
+		return nil, nil, "", "target_refused"
 	}
-	return staged.change, ""
+	return staged.change, right.Data, rightRevision, ""
 }
 
-// mergeTodo copies only the fields the edit changed onto the right item.
+// relocatedEditPayload describes the edit as it now sits on the destination,
+// so a later move diffs against that item rather than the original one.
+func relocatedEditPayload(id string, data []byte) []byte {
+	kind, title, note, _, _ := recordParts(data)
+	write := coreexec.RecordWrite{ID: id, Kind: kind, Title: title, Note: note}
+	if todo, _, _, err := records.ReadTodo(data); err == nil && todo != nil {
+		write.Todo = todo
+	}
+	raw, err := json.Marshal(write)
+	if err != nil {
+		return nil
+	}
+	return raw
+}
+
+// mergeTodo copies fields the edit changed and drops fields the edit cleared.
+// A cleared optional field is absent after marshalling because Todo uses omitempty.
 func mergeTodo(before, edit, right *records.Todo) *records.Todo {
 	b, _ := json.Marshal(before)
 	e, _ := json.Marshal(edit)
@@ -630,9 +721,16 @@ func mergeTodo(before, edit, right *records.Todo) *records.Todo {
 	if json.Unmarshal(b, &bm) != nil || json.Unmarshal(e, &em) != nil || json.Unmarshal(current, &rm) != nil {
 		return right
 	}
+	kept := map[string]bool{}
 	for key, value := range em {
+		kept[key] = true
 		if string(bm[key]) != string(value) {
 			rm[key] = value
+		}
+	}
+	for key := range bm {
+		if !kept[key] {
+			delete(rm, key)
 		}
 	}
 	raw, _ := json.Marshal(rm)
@@ -667,25 +765,32 @@ func recordParts(data []byte) (kind, title, note, front, body string) {
 	return kind, title, note, front, body
 }
 
-func (r *conversationRuntime) moveSteer(ctx context.Context, moveID string, effect binding.Effect, to binding.Target, outcome binding.Outcome) (binding.Outcome, error) {
+func (r *conversationRuntime) moveSteer(ctx context.Context, moveID string, effect binding.Effect, to binding.Target, outcome binding.Outcome) (binding.Outcome, *binding.Effect, error) {
 	effectKey := moveID + ":" + shortKey(effect.TurnID+":"+effect.CallID)
-	withdrawal, err := r.withdrawSteer(ctx, effectKey, effect)
-	if err != nil {
-		outcome.Reason = "withdrawal_refused"
-		return outcome, nil
+	withdrawal := ""
+	if effect.Target != "" {
+		var err error
+		withdrawal, err = r.withdrawSteer(ctx, effectKey, effect)
+		if err != nil {
+			outcome.Reason = "withdrawal_refused"
+			return outcome, nil, nil
+		}
 	}
+	relocated := effect
 	if to.Class == "none" || to.Class == "new" {
 		// The withdrawal still runs; there is nowhere to deliver the note.
 		outcome.Reason, outcome.Receipt = "no_target", withdrawal
-		return outcome, nil
+		relocated.Target, relocated.RecordID = "", ""
+		return outcome, &relocated, nil
 	}
 	delivery, err := r.followMove(ctx, effectKey, to.ID, steerText(effect.Payload), "deliver")
 	if err != nil {
 		outcome.Reason, outcome.Receipt = "delivery_refused", withdrawal
-		return outcome, nil
+		return outcome, nil, nil
 	}
 	outcome.Moved, outcome.Receipt = true, withdrawal+","+delivery
-	return outcome, nil
+	relocated.Target, relocated.RecordID = to.ID, to.ID
+	return outcome, &relocated, nil
 }
 
 func steerText(payload []byte) string {
