@@ -713,6 +713,14 @@ func TestOrdinaryQuestionAnswerKeepsBindingForSteering(t *testing.T) {
 	if got := gate(bound, `{"id":"worker-1","input_binding":{"input_event_id":"`+steering.ID+`"}}`); got != barrier {
 		t.Fatalf("work call did not gate on the steering binding: %q", got)
 	}
+	// Consumed steering does not make the hosting system event the default:
+	// an unqualified work call stays this turn's own tool.
+	if got := gate(bound, `{"id":"worker-1"}`); got != "" {
+		t.Fatalf("consumed steering gated unqualified work on %q", got)
+	}
+	if got := questionCall(t, bound.bindings, "read_work_progress", "progress", map[string]string{"id": "worker-1"}); got.Code == loop.Denied {
+		t.Fatalf("consumed steering denied the turn's work call: %+v", got)
+	}
 	bare := prepare(nil)
 	// The hosting system event is not a person input, so binding it by default
 	// is refused and a call that names no input runs without a gate.

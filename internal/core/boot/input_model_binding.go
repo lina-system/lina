@@ -236,6 +236,13 @@ func (s *turnState) hostedBindingInput() bool {
 	return s.input.SpeakerKind == guard.Person || s.bindingSource != nil || len(s.bindingInputs) > 0
 }
 
+// Whether an unqualified work call has a person input to bind. Consumed
+// steering is named explicitly, so it does not make the hosting system event
+// the default; without a default the call stays the turn's own tool.
+func (s *turnState) defaultBindingInput() bool {
+	return s.input.SpeakerKind == guard.Person || s.bindingSource != nil
+}
+
 // The input a binding call may select. Outside a person input the hosting
 // system event is never bindable by default; a consumed steering input or the
 // restored request must be named.
