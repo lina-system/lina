@@ -13,6 +13,7 @@ import (
 )
 
 func TestFollowSourceIsCheckedAfterDrainBeforeToolDispatch(t *testing.T) {
+	t.Parallel()
 	var revoked atomic.Bool
 	var calls, effects atomic.Int32
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
@@ -50,6 +51,7 @@ func TestFollowSourceIsCheckedAfterDrainBeforeToolDispatch(t *testing.T) {
 	}
 }
 func TestFollowSourceNeedsItsAuthorizer(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Fatal("unreleased run dispatched")
 		return nil, nil

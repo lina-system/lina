@@ -27,6 +27,7 @@ func gathered() budget.Handoff {
 }
 
 func TestHardTurnStartsRealBackgroundRunFromDurableInput(t *testing.T) {
+	t.Parallel()
 	var requests atomic.Int64
 	service, db, _ := setupWith(t, func(_ context.Context, req provider.Request) (provider.Stream, error) {
 		if requests.Add(1) == 1 {
@@ -85,6 +86,7 @@ func TestHardTurnStartsRealBackgroundRunFromDurableInput(t *testing.T) {
 }
 
 func TestSoftTurnCanUseRealStartRunTool(t *testing.T) {
+	t.Parallel()
 	service, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("start tool ran background work before receipt")
 		return answer(runs.Artifact{}), nil
@@ -120,6 +122,7 @@ func TestSoftTurnCanUseRealStartRunTool(t *testing.T) {
 }
 
 func TestStartFromTurnPreservesGatheredStateAndReturnsBeforeModel(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int64
 	h := gathered()
 	s, _, _ := setup(t, func(_ context.Context, req provider.Request) (provider.Stream, error) {
@@ -158,6 +161,7 @@ func TestStartFromTurnPreservesGatheredStateAndReturnsBeforeModel(t *testing.T) 
 }
 
 func TestPromotedEffectsKeepQuestionAndUnknownReceiptWhileReadsContinue(t *testing.T) {
+	t.Parallel()
 	for _, code := range []loop.Code{loop.OK, loop.Unknown} {
 		t.Run(string(code), func(t *testing.T) {
 			h := gathered()
@@ -204,6 +208,7 @@ func TestPromotedEffectsKeepQuestionAndUnknownReceiptWhileReadsContinue(t *testi
 }
 
 func TestStartFromTurnRejectsMismatchedIdentityAndChangedReplay(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Fatal("unreleased promotion called a model")
 		return nil, nil
@@ -224,6 +229,7 @@ func TestStartFromTurnRejectsMismatchedIdentityAndChangedReplay(t *testing.T) {
 }
 
 func TestCommittedPromotionSurvivesLaterBudgetHold(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(map[bool]string{false: "live", true: "restart"}[restart], func(t *testing.T) {
 			var held atomic.Bool
@@ -296,6 +302,7 @@ func TestCommittedPromotionSurvivesLaterBudgetHold(t *testing.T) {
 }
 
 func TestPromotionReplaySurvivesPersistenceMasking(t *testing.T) {
+	t.Parallel()
 	var cfg runs.Config
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("unreleased promotion called a model")
@@ -330,6 +337,7 @@ func TestPromotionReplaySurvivesPersistenceMasking(t *testing.T) {
 }
 
 func TestPromotionPublicationFailureRollsBackRunAdmission(t *testing.T) {
+	t.Parallel()
 	failure := errors.New("publication failed")
 	service, db, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		t.Error("failed promotion reached a model")

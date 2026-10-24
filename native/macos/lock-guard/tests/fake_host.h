@@ -30,6 +30,7 @@ struct fake_file {
   char path[LINA_PATH_MAX];
   char content[FAKE_FILE_BYTES];
   size_t length;
+  uint64_t written_ms;
 };
 
 struct fake_write {
@@ -54,12 +55,18 @@ struct fake_host {
   int measured_count;
   bool eval_test_mac;
 
-  // Bundle and code.
+  // Bundle and code. The first bundle is the installed one, or the only one; a
+  // copy made while it is present lands in the second, the staged bundle. The
+  // text names where a bundle's content came from.
   bool bundle_present;
   char bundle_text[128];
   char bundle_path[LINA_PATH_MAX];
+  bool staged_present;
+  char staged_text[128];
+  char staged_path[LINA_PATH_MAX];
   int verify_result;       // 1 valid, 0 invalid, -1 unreadable
   int copy_status;
+  int move_status;         // -1 fails every rename and swap of a bundle
   int guard_install_status;
   int guard_installed;
   int read_right_status;   // -1 forces an unreadable rule

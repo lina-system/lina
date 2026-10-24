@@ -10,6 +10,7 @@
 
 #include "engine_callbacks.h"
 #include "fake_host.h"
+#include "fake_log.h"
 #include "lina_unlock.h"
 #include "test.h"
 
@@ -18,8 +19,6 @@ static int allow_results;
 static int deny_results;
 static int undefined_results;
 static AuthorizationResult last_result;
-static int log_lines;
-static char last_log[512];
 static int forbidden_calls;
 
 static OSStatus record_result(AuthorizationEngineRef engine, AuthorizationResult result) {
@@ -32,61 +31,54 @@ static OSStatus record_result(AuthorizationEngineRef engine, AuthorizationResult
   return 0;
 }
 
-static void record_log(AuthorizationEngineRef engine, const char *format, ...) {
+static OSStatus forbidden(AuthorizationEngineRef engine) {
   (void)engine;
-  va_list arguments;
-  va_start(arguments, format);
-  vsnprintf(last_log, sizeof last_log, format, arguments);
-  va_end(arguments);
-  log_lines++;
-}
-
-static OSStatus forbidden_context(AuthorizationEngineRef engine, const char *key, const void **value) {
-  (void)engine;
-  (void)key;
-  (void)value;
   forbidden_calls++;
   return 0;
 }
 
-static OSStatus forbidden_set_context(AuthorizationEngineRef engine, const char *key, const void *value) {
-  (void)engine;
+static OSStatus forbidden_context(AuthorizationEngineRef engine, AuthorizationString key,
+                                  AuthorizationContextFlags *flags, const AuthorizationValue **value) {
   (void)key;
+  (void)flags;
   (void)value;
-  forbidden_calls++;
-  return 0;
+  return forbidden(engine);
 }
 
-static OSStatus forbidden_hint(AuthorizationEngineRef engine, const char *key, const void **value) {
-  (void)engine;
+static OSStatus forbidden_set_context(AuthorizationEngineRef engine, AuthorizationString key,
+                                      AuthorizationContextFlags flags, const AuthorizationValue *value) {
   (void)key;
+  (void)flags;
   (void)value;
-  forbidden_calls++;
-  return 0;
+  return forbidden(engine);
 }
 
-static OSStatus forbidden_set_hint(AuthorizationEngineRef engine, const char *key, const void *value) {
-  (void)engine;
+static OSStatus forbidden_hint(AuthorizationEngineRef engine, AuthorizationString key,
+                               const AuthorizationValue **value) {
   (void)key;
   (void)value;
-  forbidden_calls++;
-  return 0;
+  return forbidden(engine);
+}
+
+static OSStatus forbidden_set_hint(AuthorizationEngineRef engine, AuthorizationString key,
+                                   const AuthorizationValue *value) {
+  (void)key;
+  (void)value;
+  return forbidden(engine);
 }
 
 static OSStatus forbidden_arguments(AuthorizationEngineRef engine, const AuthorizationValueVector **arguments) {
-  (void)engine;
   (void)arguments;
-  forbidden_calls++;
-  return 0;
+  return forbidden(engine);
 }
 
 static const AuthorizationCallbacks callbacks = {
+  .version = 4,
   .SetResult = record_result,
-  .WriteLog = record_log,
   .GetContextValue = forbidden_context,
   .SetContextValue = forbidden_set_context,
-  .GetHint = forbidden_hint,
-  .SetHint = forbidden_set_hint,
+  .GetHintValue = forbidden_hint,
+  .SetHintValue = forbidden_set_hint,
   .GetArguments = forbidden_arguments,
 };
 
@@ -96,8 +88,7 @@ static void reset_counters(void) {
   deny_results = 0;
   undefined_results = 0;
   last_result = -1;
-  log_lines = 0;
-  last_log[0] = '\0';
+  fake_log_reset();
   forbidden_calls = 0;
 }
 
@@ -121,10 +112,10 @@ static void test_allow_answer(void) {
   CHECK(deny_results == 0);
   CHECK(undefined_results == 0);
   CHECK(last_result == kAuthorizationResultAllow);
-  CHECK(log_lines == 1);
-  CHECK(strstr(last_log, "ticket=") != NULL);
-  CHECK(strstr(last_log, "decision=allow") != NULL);
-  CHECK(strstr(last_log, "101112131415161718191a1b1c1d1e1f") != NULL);
+  CHECK(fake_log_lines() == 1);
+  CHECK(strstr(fake_log_last(), "ticket=") != NULL);
+  CHECK(strstr(fake_log_last(), "decision=allow") != NULL);
+  CHECK(strstr(fake_log_last(), "101112131415161718191a1b1c1d1e1f") != NULL);
   CHECK(forbidden_calls == 0);
 }
 
@@ -137,9 +128,9 @@ static void test_deny_answer(void) {
   CHECK(allow_results == 0);
   CHECK(undefined_results == 0);
   CHECK(last_result == kAuthorizationResultDeny);
-  CHECK(log_lines == 1);
-  CHECK(strstr(last_log, "decision=deny:not-enabled") != NULL);
-  CHECK(strstr(last_log, "ticket=-") != NULL);
+  CHECK(fake_log_lines() == 1);
+  CHECK(strstr(fake_log_last(), "decision=deny:not-enabled") != NULL);
+  CHECK(strstr(fake_log_last(), "ticket=-") != NULL);
   CHECK(forbidden_calls == 0);
 }
 
