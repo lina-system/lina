@@ -112,6 +112,9 @@ identity, revision and citations during episode loading and before dispatch.
 It walks canonical summary/record dependencies and retains checks for recorded
 citations that a current source no longer carries. Legacy episodes bind missing
 owner metadata through their canonical input rather than exported text.
+Live replay recall sets the shared search's projection scope and checks each
+result and citation through `replay.Source.RecallVisible`, reusing the export
+source validator. Excluded results are dropped; storage errors fail the read.
 
 `conversation_recall.go` binds one live family in the ordered tool preparation
 table. It uses ordinary Core read grants, checks channel memory/tool scope and

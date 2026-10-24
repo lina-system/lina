@@ -103,6 +103,22 @@ func callReferences(ctx context.Context, tx *canon.Tx, scope Scope, call Call) e
 	return nil
 }
 
+// RecallVisible checks a live recall result and its citations with the same
+// source and dependency validation used for recorded results during export.
+func (s Source) RecallVisible(ctx context.Context, scope Scope, kind, id, revision string, citations []canon.Citation) error {
+	return s.DB.Read(ctx, func(tx *canon.Tx) error {
+		if err := recallReference(ctx, tx, scope, kind, id, revision, map[string]bool{}); err != nil {
+			return err
+		}
+		for _, ref := range citations {
+			if err := recallReference(ctx, tx, scope, ref.TargetKind, ref.TargetID, ref.TargetRevision, map[string]bool{}); err != nil {
+				return err
+			}
+		}
+		return nil
+	})
+}
+
 // Validate current identity/revision and the canonical citation graph. Neither
 // an index row nor an old tool excerpt authorizes exporting a removed source.
 func recallReference(ctx context.Context, tx *canon.Tx, scope Scope, kind, id, revision string, visiting map[string]bool) error {

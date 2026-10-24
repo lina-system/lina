@@ -134,6 +134,29 @@ func TestLiveTopicReplay(t *testing.T) {
 	}
 }
 
+func TestReplayRecallKeepsReplayVisibility(t *testing.T) {
+	r, _ := turnRuntime(t)
+	own := queuedContextEvent(t, r, "own-source", "The aurora plan is ready.", guard.EntryOwner, "")
+	hidden := queuedContextEvent(t, r, "private-source", "The aurora private fact.", guard.EntryOwner, "")
+	item, err := coreexec.NewMemory(r.db, r.materials, nil).Remember(t.Context(), memory.Write{Person: r.person, Agent: r.agent, Item: memory.Item{Kind: memory.Fact, Content: "The aurora private memory.", Scope: memory.Private, Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated, Evidence: []memory.Evidence{{Kind: memory.Event, ID: hidden.ID, Precision: memory.Exact}}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	source := r.replaySource()
+	epoch, err := source.Epoch(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads, err := r.replayReads(source, replay.Episode{TurnID: "replayed", RevocationEpoch: epoch})
+	if err != nil {
+		t.Fatal(err)
+	}
+	out := reads["recall"].Execute(t.Context(), provider.ToolCall{ID: "search", Name: "recall", Arguments: `{"query":"aurora"}`})
+	if out.Code != loop.OK || !strings.Contains(string(out.Output), own.ID) || strings.Contains(string(out.Output), hidden.ID) || strings.Contains(string(out.Output), item.ID) {
+		t.Fatalf("replay recall: %+v", out)
+	}
+}
+
 func TestLiveRecallScopeAndExpansion(t *testing.T) {
 	r, _ := turnRuntime(t)
 	own := queuedContextEvent(t, r, "own-source", "The aurora plan is ready.", guard.EntryOwner, "")
