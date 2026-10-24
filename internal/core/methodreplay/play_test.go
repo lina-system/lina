@@ -95,6 +95,16 @@ func TestPlayerSendsLayersAndDropsInjectedTurns(t *testing.T) {
 	}
 }
 
+func TestInstructionsUseTheStarterName(t *testing.T) {
+	text, err := Instructions(Preset{Layers: agents.Layers{Core: "core text"}}, "dev")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(text, `"name":"Sion"`) || strings.Contains(text, `"name":"dev"`) {
+		t.Fatalf("instructions identify the role key: %s", text)
+	}
+}
+
 func TestPlayerRefusesAnUnknownRole(t *testing.T) {
 	player := Player{Adapter: &fakeAdapter{}, Model: "fixture"}
 	c := Case{ID: "dev-001", Role: "dev", Turns: []Turn{{Role: "user", Text: "상태"}}}
