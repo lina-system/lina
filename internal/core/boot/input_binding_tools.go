@@ -184,6 +184,12 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		}
 	case "read_work_progress", "follow_work":
 		id = str("id")
+		// task:id:generation is the same item as id. Check the binding before delivery.
+		if taskID, ok := workerFollowTask(id); ok && taskID != id {
+			if _, err := r.work.Get(ctx, taskID); err == nil {
+				id = taskID
+			}
+		}
 	case "schedule_work":
 		var tasks []struct {
 			What string `json:"what"`

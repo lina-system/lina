@@ -288,6 +288,50 @@ func TestFollowWorkKeepsAgentBudget(t *testing.T) {
 	}
 }
 
+func TestFollowWorkNormalizesChosenWorker(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dir := t.TempDir()
+	reserve := t.TempDir()
+	chosen := work.Task{ID: "chosen-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Chosen task", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	other := work.Task{ID: "other-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Other task", Done: "Done", ArtifactRoots: []string{dir}}
+	for _, task := range []work.Task{chosen, other} {
+		if err := r.work.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "other-run", TaskID: other.ID, Generation: 1, Worker: "codex", ThreadID: "other-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "other-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "other-thread", TaskID: other.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "other-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	input := questionPersonInput(t, r, "chosen-worker", "Stay with the chosen task.")
+	tools := modelBindingTools(t, r, input)
+	if _, err := r.saveModelBinding(t.Context(), input, "binding-person:chosen-worker", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "existing", ID: chosen.ID, Kind: "task"}}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, tools, "follow_work", "other-spelling", map[string]string{"id": "task:" + other.ID + ":1", "text": "Steer the other task"})
+	if got.Code != loop.Denied || !strings.Contains(string(got.Output), "input_target_pending") {
+		t.Fatalf("worker spelling bypassed the chosen task: %+v", got)
+	}
+	if probe.inputs != 0 {
+		t.Fatalf("other task received %d follow-ups", probe.inputs)
+	}
+}
+
 func TestFollowWorkUsesSelectedChannelSource(t *testing.T) {
 	r, _ := turnRuntime(t)
 	now := time.Now().UTC()
