@@ -14,6 +14,7 @@ const ledgerFixture = `INSERT INTO conv_event
  INSERT INTO ev_span(event_id,start,end,sensitivity) VALUES('first',0,3,'personal_id');`
 
 func TestLedgerMigrationPreservesPriorData(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	index := -1
@@ -58,6 +59,7 @@ func TestLedgerMigrationPreservesPriorData(t *testing.T) {
 }
 
 func TestLedgerFieldsAndImmutableRows(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	s := openStore(t, cfg)
