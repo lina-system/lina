@@ -48,8 +48,13 @@ type Scope struct {
 	Conversation string
 	Since, Until time.Time
 	SpeakerKind  guard.SpeakerKind
-	Origin       string
-	CommonOnly   bool
+	// EventSpeakerKind restricts event candidates only. Memory items and
+	// records carry no speaker of their own, so recall_person uses this to keep
+	// agent and tool words out of the evidence about the person while items
+	// stay eligible.
+	EventSpeakerKind guard.SpeakerKind
+	Origin           string
+	CommonOnly       bool
 	// PersonOnly restricts person-model queries to person-authored events and
 	// person-subject memory items, before ranking and the result limit.
 	PersonOnly bool
@@ -191,10 +196,9 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	restricted := scope.Projection || scope.ExternalModel
 	var with []string
 	var withArgs []any
-	if restricted {
-		fragment, args := restrictedSources(scope)
-		with = append(with, fragment)
-		withArgs = append(withArgs, args...)
+	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+		with = append(with, cte)
+		withArgs = append(withArgs, cteArgs...)
 	}
 	if len(pairPhrases) > 0 {
 		with = append(with, `pair AS MATERIALIZED (SELECT rowid AS doc, bm25(recall_pair) AS score FROM recall_pair WHERE recall_pair MATCH ?)`)
@@ -382,13 +386,10 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 		"NOT EXISTS(SELECT 1 FROM recall_doc x WHERE x.kind=s.kind AND x.source_id=s.source_id)",
 		"s.body IS NULL")
 	prefix := ""
-	var prefixArgs []any
-	if restricted {
-		fragment, values := restrictedSources(scope)
-		prefix = "WITH RECURSIVE " + fragment + " "
-		prefixArgs = values
+	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+		prefix = "WITH RECURSIVE " + cte + " "
+		args = append(cteArgs, args...)
 	}
-	args = append(prefixArgs, args...)
 	var queued []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, prefix+`SELECT s.source_id,s.revision,s.occurred_at,s.holder
@@ -454,6 +455,15 @@ func lineageFilter(enabled bool) string {
 		return ""
 	}
 	return ` WHERE c.kind<>'event' OR c.source_id NOT IN (SELECT x.id FROM derived x)`
+}
+
+// restrictedCTE lists protected sources and their citation dependents for the
+// caller's person. Empty when the scope reads everything.
+func restrictedCTE(scope Scope) (string, []any) {
+	if !scope.Projection && !scope.ExternalModel {
+		return "", nil
+	}
+	return restrictedSources(scope)
 }
 
 func holderCondition(scope Scope, alias string) string {
@@ -523,6 +533,10 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if scope.SpeakerKind != "" {
 		where = append(where, alias+".speaker_kind=?")
 		args = append(args, string(scope.SpeakerKind))
+	}
+	if scope.EventSpeakerKind != "" {
+		where = append(where, "("+alias+".kind<>'event' OR "+alias+".speaker_kind=?)")
+		args = append(args, string(scope.EventSpeakerKind))
 	}
 	if scope.PersonOnly {
 		where = append(where, `((`+alias+`.kind='event' AND `+alias+`.speaker_kind='person')
@@ -692,8 +706,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		args = append(args, olderArgs...)
 	}
 	prefix := ""
-	if restricted {
-		fragment, prefixArgs := restrictedSources(scope)
+	if fragment, prefixArgs := restrictedCTE(scope); fragment != "" {
 		prefix = "WITH RECURSIVE " + fragment + " "
 		args = append(prefixArgs, args...)
 	}
@@ -857,7 +870,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return "", err
 		}
-		if material.Valid {
+		if material.Valid || !body.Valid {
 			if readEvent == nil {
 				return "", ErrBytesUnavailable
 			}
@@ -866,9 +879,6 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 				return "", ErrBytesUnavailable
 			}
 			return text, nil
-		}
-		if !body.Valid {
-			return "", ErrBytesUnavailable
 		}
 		return maskDerived(body.String, spans)
 	case Memory:

@@ -116,7 +116,12 @@ export function checkComponents({ cwd = process.cwd(), components, execute: run 
       ] : []) {
         if (invoke('go', args, directory).status !== 0) return { status: 1, output };
       }
-      const testArgs = ['test', '-count=1', '-timeout=6m', '-mod=readonly'];
+      // An acceptance scenario's own deadline reaches four minutes. A shard
+      // budgets 240 seconds of measured work, so the e2e watchdog must outlive
+      // one scenario overrunning to that deadline plus the remaining
+      // scenarios; otherwise a package timeout reports healthy siblings as
+      // failures. Unit shards keep the six-minute package watchdog.
+      const testArgs = ['test', '-count=1', '-timeout=' + (phase === 'e2e' ? '10m' : '6m'), '-mod=readonly'];
       if (json) testArgs.push('-json');
       // GOMAXPROCS bounds one test binary's goroutines. Running GOMAXPROCS
       // packages at once would square that demand, starving progressing
