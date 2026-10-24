@@ -486,6 +486,38 @@ func TestSearchKoreanFixtureEventParity(t *testing.T) {
 	}
 }
 
+func TestSearchVectorCandidatesKeepScope(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "public", "conversation", "owner", "agent", "도서관 공개", base, "")
+	// The never-leaves item cites a different event. External scope hides both
+	// the item and the event it rests on, so the in-scope event stays visible.
+	admitAt(t, db, "basis", "conversation", "owner", "agent", "도서관 근거", base.Add(time.Second), "")
+	admitAt(t, db, "later", "conversation", "owner", "agent", "도서관 나중", base.Add(2*time.Hour), "")
+	admitAt(t, db, "copy", "conversation", "owner", "agent", "도서관 사본", base.Add(time.Minute), "public")
+	secret := remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "basis")
+	vectors := func(context.Context, recall.Scope, string) ([]string, error) {
+		return []string{secret, "later", "copy", "basis", "public"}, nil
+	}
+	scope := recall.Scope{
+		Person: "owner", Agent: "agent", ExternalModel: true,
+		Until: base.Add(time.Hour),
+	}
+	hits, err := recall.Match(t.Context(), db, scope, recall.Query{Text: "은하", Limit: 10, Vectors: vectors})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ids := hitIDs(hits)
+	for _, id := range ids {
+		if id == secret || id == "later" || id == "copy" || id == "basis" {
+			t.Fatalf("vector candidate bypassed scope: %v", ids)
+		}
+	}
+	if !reflect.DeepEqual(ids, []string{"public"}) {
+		t.Fatalf("in-scope vector candidate: %v", ids)
+	}
+}
+
 func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)

@@ -779,6 +779,8 @@ func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) (
 	return lineage(ctx, db, scope, out)
 }
 
+// byIDs loads vector candidates. They pass the same scope and validity
+// filters as a full-text match, then keep the vector order.
 func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, error) {
 	if len(ids) == 0 {
 		return nil, nil
@@ -788,15 +790,33 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		return nil, err
 	}
 	kinds := kindsOf(scope)
-	where := []string{"d.person=?", holderCondition(scope, "d"), "d.source_id IN (SELECT value FROM json_each(?))", "d.kind IN (" + placeholders(len(kinds)) + ")"}
-	args := []any{scope.Person}
-	if !scope.CommonOnly && scope.Agent != "" {
-		args = append(args, scope.Agent)
+	at := scope.At
+	if at == 0 {
+		at = time.Now().Unix()
 	}
-	args = append(args, encoded)
-	for _, kind := range kinds {
-		args = append(args, string(kind))
+	restricted := scope.Projection || scope.ExternalModel
+	where, whereArgs := scopeWhere(scope, kinds, at, restricted, "d")
+	where = append(where, "d.source_id IN (SELECT value FROM json_each(?))")
+	whereArgs = append(whereArgs, encoded)
+	// History keeps a past or superseded item and marks it Older. Otherwise the
+	// same predicate drops it, matching a full-text match.
+	older, olderArgs := olderExpr(kinds, at, "d")
+	if !scope.History {
+		where = append(where, older+"=0")
+		whereArgs = append(whereArgs, olderArgs...)
 	}
+	prefix := ""
+	var args []any
+	if restricted {
+		prefix = `WITH restricted AS (
+  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
+  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
+   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))),
+` + restrictedSummaries + ` `
+		args = append(args, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+	}
+	args = append(args, olderArgs...)
+	args = append(args, whereArgs...)
 	order := map[string]int{}
 	for i, id := range ids {
 		if _, ok := order[id]; !ok {
@@ -805,7 +825,7 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 	}
 	var hits []Hit
 	err = db.Read(ctx, func(tx *canon.Tx) error {
-		rows, err := tx.QueryContext(ctx, `SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder FROM recall_doc d
+		rows, err := tx.QueryContext(ctx, prefix+`SELECT d.source_id,d.kind,d.revision,d.occurred_at,d.holder,`+older+` FROM recall_doc d
    WHERE `+strings.Join(where, " AND "), args...)
 		if err != nil {
 			return err
@@ -814,10 +834,12 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		for rows.Next() {
 			var h Hit
 			var occurred string
-			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder); err != nil {
+			var past int
+			if err := rows.Scan(&h.ID, &h.Kind, &h.Revision, &occurred, &h.Holder, &past); err != nil {
 				return err
 			}
 			h.OccurredAt, _ = time.Parse(time.RFC3339Nano, occurred)
+			h.Older = past == 1
 			hits = append(hits, h)
 		}
 		return rows.Err()

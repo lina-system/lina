@@ -62,6 +62,8 @@ cites a protected event or a summary that reaches one at any depth.
 `recall.Search` adds the bounded excerpt of derived text, applying an inline
 event's stored secret spans so the display placeholder is removed, and the
 citations in force at the result's revision. `VectorQuery` is the fusion hook for #874.
+Its candidates pass the same scope and validity filters as a full-text match
+before they join the list.
 
 Memory items, events and records are the same list: `exec.Memory` asks `Match`
 for events and items together, materializes the item set in one scoped read, and
