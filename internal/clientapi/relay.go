@@ -6,6 +6,7 @@ import (
 	"context"
 	"net"
 	"net/http"
+	"strconv"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -26,7 +27,12 @@ type SignInListener struct {
 }
 
 func ListenSignIn(ctx context.Context) (*SignInListener, error) {
-	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", "127.0.0.1:0")
+	return ListenSignInPort(ctx, 0)
+}
+
+// ListenSignInPort binds a registered callback port; zero requests an ephemeral port.
+func ListenSignInPort(ctx context.Context, port int) (*SignInListener, error) {
+	listener, err := (&net.ListenConfig{}).Listen(ctx, "tcp4", net.JoinHostPort("127.0.0.1", strconv.Itoa(port)))
 	if err != nil {
 		return nil, err
 	}

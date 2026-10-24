@@ -1,0 +1,17 @@
+{
+  "side": "server",
+  "input": [
+    "normal/webex_request.json"
+  ],
+  "output": [
+    "normal/webex_request.json"
+  ],
+  "errors": [
+    ""
+  ],
+  "outcome": {
+    "accepted": 1,
+    "malformed": 0,
+    "unknown_kinds": 0
+  }
+}

@@ -65,7 +65,10 @@ func (s *Service) SyncAll(ctx context.Context, now *time.Time) map[string]Result
 		return results
 	}
 	for _, source := range sources {
-		if source.State != StateConnected {
+		if _, owned := s.adapterFor(source); !owned {
+			continue
+		}
+		if source.State != StateConnected && source.State != StateFailing {
 			continue
 		}
 		key := source.Platform + "\x00" + source.Account
@@ -110,7 +113,12 @@ func sourceID(source Source) SourceID {
 }
 
 // Sync reads one source: its chat list, then every chat that is in sync.
-func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
+func (s *Service) Sync(ctx context.Context, source Source) (result Result, err error) {
+	defer func() {
+		if errors.Is(err, ErrNeedsSignIn) {
+			err = s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
+		}
+	}()
 	adapter, ok := s.adapterFor(source)
 	if !ok {
 		return Result{}, ErrInvalid
@@ -137,7 +145,6 @@ func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 	if err != nil {
 		return Result{}, err
 	}
-	var result Result
 	for _, chat := range records {
 		if !chat.Sync {
 			continue
