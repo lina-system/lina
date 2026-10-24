@@ -34,8 +34,8 @@ func kakaoRuntime(t *testing.T) *conversationRuntime {
 func TestKakaoTalkControlRequiresTheOwnerDeciderAndCurrentEpoch(t *testing.T) {
 	r := kakaoRuntime(t)
 	op := r.identity.Operations[protocol.KindKakaotalkRequest]
-	if op.Handle == nil || op.Disconnect != nil {
-		t.Fatal("KakaoTalk not registered, or it took a disconnect hook")
+	if op.Handle == nil || op.Disconnect == nil {
+		t.Fatal("KakaoTalk handler or sign-in disconnect hook not registered")
 	}
 	list := protocol.KakaotalkRequest{Operation: "list"}
 	for _, s := range []clientsrv.Session{
