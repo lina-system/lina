@@ -4,7 +4,10 @@ package boot
 import (
 	"context"
 	"errors"
+	"time"
+
 	"github.com/thisisjun786/lina/internal/core/records"
+	"github.com/thisisjun786/lina/internal/core/timers"
 	"github.com/thisisjun786/lina/internal/core/worker"
 
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
@@ -24,6 +27,9 @@ type WorkConfig struct {
 	// Sessions owns worker processes between turns. Core ends a session whose
 	// step has landed or been closed; a fixture driver may adopt its own.
 	Sessions *worker.Live
+	// Now is the engine clock. Production leaves it unset. A headless scenario
+	// sets it so a deadline can pass without waiting on the wall clock.
+	Now func() time.Time
 }
 type workRuntime struct {
 	sessions *worker.Live
@@ -57,7 +63,9 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 	if sessions == nil {
 		sessions = r.liveWorkers
 	}
-	e, err := work.NewEngine(work.Config{DB: r.db, Records: workDefinitions{r.records}, Epoch: r.epoch, DriverFactory: cfg.Driver, Changed: cfg.Changed, Sessions: sessions,
+	e, err := work.NewEngine(work.Config{DB: r.db, Records: workDefinitions{r.records}, Epoch: r.epoch, Now: cfg.Now, DriverFactory: cfg.Driver, Changed: cfg.Changed, Sessions: sessions,
+		ArmWait:       r.armGoalWait,
+		LinkWaitingOn: r.linkGoalWaitingOn,
 		AuthorizeGoal: func(ctx context.Context, g work.Goal) error {
 			if g.Person != r.person {
 				return work.ErrInvalid
@@ -119,6 +127,45 @@ func (r *conversationRuntime) startWork(ctx context.Context, cfg *WorkConfig) er
 	}
 	go func() { w.err = e.Run(runCtx); close(w.done) }()
 	return nil
+}
+
+func (r *conversationRuntime) armGoalWait(ctx context.Context, g work.Goal, w work.Wait) error {
+	if r.db == nil || r.conversation == "" || g.Person != r.person || w.Until <= 0 || w.Wake == "" {
+		return nil
+	}
+	_, err := timers.New(r.db).Create(ctx, timers.Timer{
+		ID: "goal-wait:" + g.ID + ":" + w.Wake, Person: r.person, Agent: r.agent, Conversation: r.conversation,
+		Schedule: timers.Schedule{At: time.Unix(w.Until, 0).UTC()},
+		Action:   timers.Action{Kind: "goal_wait", Text: w.Wake, Record: g.ID},
+	}, time.Now())
+	if errors.Is(err, timers.ErrConflict) {
+		return nil
+	}
+	return err
+}
+
+func (r *conversationRuntime) linkGoalWaitingOn(ctx context.Context, g work.Goal, w work.Wait) error {
+	if r.records == nil || w.TodoID == "" || g.Person != r.person {
+		return nil
+	}
+	rec, rev, err := r.records.Read(ctx, w.TodoID)
+	if err != nil {
+		return err
+	}
+	todo, front, body, err := records.ReadTodo(rec.Data)
+	if err != nil {
+		return err
+	}
+	if todo.WaitingOn != nil && todo.WaitingOn.Who == w.Who && todo.WaitingOn.Since == w.Since && todo.WaitingOn.NextCheck == w.NextCheck {
+		return nil
+	}
+	todo.WaitingOn = &records.WaitingOn{Who: w.Who, Since: w.Since, NextCheck: w.NextCheck}
+	front, err = records.WithTodo(front, *todo)
+	if err != nil {
+		return err
+	}
+	_, err = r.records.Commit(ctx, records.Change{ID: rec.ID, Base: rev, Path: rec.Path, Data: []byte("---\n" + front + "\n---\n" + body)}, records.Actor{Person: g.Person, Agent: g.Agent})
+	return err
 }
 
 type workDefinitions struct{ repo *records.Store }

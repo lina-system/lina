@@ -157,7 +157,9 @@ func TestChangeSignalReadsTheSourceOnce(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(s.Goals[0].Waits) != 0 || s.Goals[0].DecisionRow != "" || s.Goals[0].State == GoalBlocked {
+	// The read closed the wait and did not apply the expiry row. Open criteria
+	// with nothing left to run still follow the liveness rule.
+	if len(s.Goals[0].Waits) != 0 || s.Goals[0].DecisionRow != "" || strings.Contains(s.Goals[0].BlockedReason, outsideWait().Draft) {
 		t.Fatalf("closed read did not end the wait: %+v", s.Goals[0])
 	}
 	for _, a := range s.Actions {

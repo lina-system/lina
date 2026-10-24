@@ -52,11 +52,11 @@ type Observation struct {
 	Tasks      []Task             `json:"tasks,omitempty"`
 	// Wait and Decision are what a liveness manager turn can record besides tasks.
 	// A turn that records none of the three leaves the goal blocked.
-	Wait           *Wait   `json:"wait,omitempty"`
-	Decision       string  `json:"decision,omitempty"`
+	Wait     *Wait  `json:"wait,omitempty"`
+	Decision string `json:"decision,omitempty"`
 	// SourceOpen is the result of one source read. Nil is not an answer.
 	// True means the wait is still open; false closes it.
-	SourceOpen *bool `json:"source_open,omitempty"`
+	SourceOpen     *bool   `json:"source_open,omitempty"`
 	Status         Outcome `json:"status"`
 	Handle         string  `json:"handle,omitempty"`
 	Head           string  `json:"head,omitempty"`
@@ -488,10 +488,11 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 		}
 		return nil
 	})
-	if errors.Is(err, errNoChange) {
-		return nil
+	if err != nil && !errors.Is(err, errNoChange) {
+		return err
 	}
-	return err
+	e.syncWaits(ctx)
+	return nil
 }
 
 // Claim is durable before any authorization or external dispatch. A claimed
@@ -597,7 +598,11 @@ func (e *Engine) Report(ctx context.Context, id string, epoch uint64, o Observat
 	if errors.Is(err, errNoChange) {
 		return nil
 	}
-	return err
+	if err != nil {
+		return err
+	}
+	e.syncWaits(ctx)
+	return nil
 }
 func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observation) error {
 	return e.journal.Update(ctx, ev, func(v *View) error {
@@ -737,6 +742,10 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			a.State = "finished"
 			t.Stage = TaskConflicted
 		case OutcomeFailed:
+			if a.Kind == ReadSource {
+				a.State = "finished"
+				break
+			}
 			if a.Kind == Verify {
 				if t != nil || !o.Proof.fails(a.Revision) {
 					return ErrInvalid
@@ -848,7 +857,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 			return ErrInvalid
 		}
 		liveness := t == nil && a.FailureKey == ""
-		if liveness && o.Wait != nil && !namedWait(*o.Wait) {
+		if liveness && o.Wait != nil && !validRecordedWait(*o.Wait) {
 			return ErrInvalid
 		}
 		if t == nil {
@@ -886,6 +895,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 			w := *o.Wait
 			w.GoalID = g.ID
 			w.Recorded = true
+			w.PendingSignal, w.DeadlineRead, w.Linked, w.Armed = "", false, false, false
 			g.Waits = append(g.Waits, w)
 		}
 		if liveness && len(o.Tasks) == 0 && strings.TrimSpace(o.Decision) != "" {
@@ -992,6 +1002,8 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		g.Evidence = append(g.Evidence, o.Proof)
 	case Observe, Decide:
 		return ErrInvalid
+	case ReadSource:
+		return applyWaitRead(g, a, o)
 	}
 	return nil
 }
