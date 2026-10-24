@@ -644,18 +644,9 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					return bindingFailure(c.ID, err)
 				}
 				var line any = map[string]string{"state": "unknown"}
-				// The binding check keeps the project record id. The progress
-				// line uses the bare goal id, so resolve that reference here.
-				progressID := a.ID
-				if ref, ok := goal.GoalID(a.ID); ok && ref != a.ID {
-					progressID = ref
-				}
 				if projection.Rows != nil {
-					for _, row := range *projection.Rows {
-						if row.Ref == progressID || row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
-							line = row.Line
-							break
-						}
+					if matched, ok := progressLineForID(*projection.Rows, a.ID); ok {
+						line = matched
 					}
 				}
 				raw, _ := json.Marshal(map[string]any{"id": a.ID, "progress": line})
@@ -667,6 +658,31 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 		provider.ToolDecl(`{"type":"function","name":"read_work_progress","description":"Answer progress questions from the current item's progress line, never remembered status. Unknown stays unknown. Names the input's work target.","parameters":{"type":"object","properties":{"id":{"type":"string"}},"required":["id"],"additionalProperties":false}}`),
 		provider.ToolDecl(`{"type":"function","name":"follow_work","description":"Send a follow-up to the named running task or background run under its existing controls. Resolve a risky target tie with bind_input first; a pending instruction must not be sent. This does not cancel work.","parameters":{"type":"object","properties":{"id":{"type":"string"},"text":{"type":"string"}},"required":["id","text"],"additionalProperties":false}}`),
 	}, nil
+}
+
+// progressLineForID reads the line for the id the caller named. A project
+// record id has no line of its own, so it may fall back to the bare goal id.
+// An item whose id is already goal:<name> keeps that id: stripping it would
+// read a different item named <name>.
+func progressLineForID(rows []protocol.ProgressRow, id string) (any, bool) {
+	if line, ok := matchProgressLine(rows, id); ok {
+		return line, true
+	}
+	// A project record is stored as goal:<bare> while its line uses <bare>.
+	// Only use that fallback when the given id itself has no line.
+	if rest, ok := strings.CutPrefix(id, "goal:"); ok && rest != "" {
+		return matchProgressLine(rows, rest)
+	}
+	return nil, false
+}
+
+func matchProgressLine(rows []protocol.ProgressRow, id string) (any, bool) {
+	for _, row := range rows {
+		if row.Ref == id || row.Ref == "run:"+id || row.Ref == "task:"+id || row.Ref == "record:"+id {
+			return row.Line, true
+		}
+	}
+	return nil, false
 }
 
 func workerFollowTask(id string) (string, bool) {
