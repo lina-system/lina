@@ -16,7 +16,6 @@ package messenger
 
 import (
 	"context"
-	"errors"
 	"io"
 	"time"
 )
@@ -67,8 +66,9 @@ func (r Route) Valid() bool {
 // Author identifies a message's writer on the platform. It never becomes a LINA
 // person or agent id.
 type Author struct {
-	ID   string
-	Name string
+	ID    string
+	Name  string
+	Email string // Profile evidence; never an identity key.
 }
 
 // Attachment is metadata only; its bytes enter LINA when the person asks.
@@ -142,12 +142,6 @@ type Capabilities struct {
 	Interval   time.Duration
 	ReadWindow time.Duration
 }
-
-// ErrNeedsSignIn is what an adapter returns when its credentials stopped
-// working and only the person signing in again can restore them. The service
-// then marks the source needs sign-in instead of failing it, and reads nothing
-// more from that source until the person signs in.
-var ErrNeedsSignIn = errors.New("messenger_needs_sign_in")
 
 // SignInState is the adapter's current sign-in state.
 type SignInState string

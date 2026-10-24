@@ -9,7 +9,6 @@ import (
 	"io"
 	"log/slog"
 	"strings"
-	"time"
 
 	"github.com/thisisjun786/lina/kit/provider"
 	"github.com/thisisjun786/lina/kit/secret"
@@ -21,50 +20,10 @@ type Tokens struct{ value func() tokenRecord }
 type tokenRecord struct {
 	Access  string `json:"access"`
 	Refresh string `json:"refresh"`
-	// Expires is the access token's own expiry, when its issuer states one. A
-	// record without it is read as "unknown", which is how account records
-	// that keep expiry in their metadata are stored.
-	Expires string `json:"expires,omitempty"`
 }
 
 func NewTokens(access, refresh string) Tokens {
-	return Tokens{value: func() tokenRecord { return tokenRecord{Access: access, Refresh: refresh} }}
-}
-
-// NewTokensUntil also records when the access token stops working, so a caller
-// can refresh shortly before that instead of only after a rejection.
-func NewTokensUntil(access, refresh string, expires time.Time) Tokens {
-	record := tokenRecord{Access: access, Refresh: refresh}
-	if !expires.IsZero() {
-		record.Expires = expires.UTC().Format(time.RFC3339Nano)
-	}
-	return Tokens{value: func() tokenRecord { return record }}
-}
-
-// Expires reports the recorded access-token expiry, or the zero time when the
-// issuer did not state one.
-func (t Tokens) Expires() time.Time {
-	if t.value == nil {
-		return time.Time{}
-	}
-	record := t.value()
-	if record.Expires == "" {
-		return time.Time{}
-	}
-	expires, err := time.Parse(time.RFC3339Nano, record.Expires)
-	if err != nil {
-		return time.Time{}
-	}
-	return expires
-}
-
-// Access supplies the access token to the request that carries it. It is the
-// same plaintext exit as Refresh.
-func (t Tokens) Access() secret.Secret {
-	if t.value == nil {
-		return secret.Secret{}
-	}
-	return secret.New(t.value().Access)
+	return Tokens{value: func() tokenRecord { return tokenRecord{access, refresh} }}
 }
 func (Tokens) String() string               { return secret.Placeholder }
 func (Tokens) GoString() string             { return secret.Placeholder }
@@ -78,6 +37,14 @@ func (t Tokens) Valid(refresh bool) bool {
 	}
 	r := t.value()
 	return r.Access != "" && (!refresh || r.Refresh != "") && !strings.ContainsAny(r.Access+r.Refresh, "\x00\r\n") && len(r.Access)+len(r.Refresh) < maxCredentialBytes/2
+}
+
+// Access supplies the opaque bearer to a destination-bound service adapter.
+func (t Tokens) Access() secret.Secret {
+	if t.value == nil {
+		return secret.Secret{}
+	}
+	return secret.New(t.value().Access)
 }
 func (t Tokens) Refresh() secret.Secret {
 	if t.value == nil {
@@ -117,7 +84,7 @@ func (s *Store) readTokens(key Key) (Tokens, error) {
 	if json.Unmarshal(raw, &record) != nil {
 		return Tokens{}, ErrInvalid
 	}
-	t := Tokens{value: func() tokenRecord { return record }}
+	t := NewTokens(record.Access, record.Refresh)
 	if !t.Valid(false) {
 		return Tokens{}, ErrInvalid
 	}

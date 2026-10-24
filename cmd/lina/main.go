@@ -16,8 +16,12 @@ func main() {
 		switch os.Args[1] {
 		case "proc-supervise":
 			os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
+		case "proc-job":
+			os.Exit(proc.JobMain(os.Args[2:], os.Stderr))
 		case "import-hermes":
 			os.Exit(runImportHermes(os.Args[2:]))
+		case "import-murmur":
+			os.Exit(runImportMurmur(os.Args[2:]))
 		case "restore":
 			os.Exit(runRestore(os.Args[2:]))
 		case "backup":
@@ -38,6 +42,8 @@ func main() {
 			os.Exit(runReplay(os.Args[2:]))
 		case "intake-replay":
 			os.Exit(runIntakeReplay(os.Args[2:]))
+		case "teams":
+			os.Exit(runTeams(os.Args[2:]))
 		case "a2a":
 			os.Exit(runA2A(os.Args[2:]))
 		case "mock-export":
@@ -58,6 +64,6 @@ func main() {
 			os.Exit(tools.Main(context.Background(), os.Args[2:], os.Stdin, os.Stdout, os.Stderr))
 		}
 	}
-	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|doctor|replay|provider-replay|intake-replay|export|a2a|version|file-tool|worker-tools|proc-supervise>")
+	fmt.Fprintln(os.Stderr, "usage: lina <core|tui|install|update|backup|restore|import-hermes|import-murmur|doctor|replay|provider-replay|intake-replay|export|a2a|teams|version|file-tool|worker-tools|proc-supervise|proc-job>")
 	os.Exit(64)
 }

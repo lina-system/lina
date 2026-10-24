@@ -18,6 +18,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "proc-job" {
+		os.Exit(proc.JobMain(os.Args[2:], os.Stderr))
+	}
 	os.Exit(m.Run())
 }
 func areaGit(t *testing.T, dir string, args ...string) string {

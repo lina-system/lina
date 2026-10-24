@@ -32,6 +32,7 @@ func filter(t *testing.T, c reply.Config) *reply.Filter {
 }
 
 func TestCounting(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, text, language string
 		ratios               map[string]float64
@@ -64,6 +65,7 @@ func TestCounting(t *testing.T) {
 }
 
 func TestCeilingsAndCards(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, text, visible string
 		cut                 bool
@@ -113,6 +115,7 @@ func TestCeilingsAndCards(t *testing.T) {
 }
 
 func TestStreamingCutAndRetention(t *testing.T) {
+	t.Parallel()
 	f := filter(t, config())
 	first := "끝. " + strings.Repeat("가", 290)
 	v, err := f.Push(first)
@@ -130,6 +133,7 @@ func TestStreamingCutAndRetention(t *testing.T) {
 }
 
 func TestRenderedLines(t *testing.T) {
+	t.Parallel()
 	c := config()
 	// Synthetic surface wraps every four scalar values; physical line breaks
 	// alone cannot establish the rendered-line budget.
@@ -142,6 +146,7 @@ func TestRenderedLines(t *testing.T) {
 }
 
 func TestChunkBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, s := range []string{
 		"끝. " + strings.Repeat("\u1100\u1161 ", 301),
 		"첫 문장! 다음 문장? " + strings.Repeat("가", 301),
@@ -182,6 +187,7 @@ func TestChunkBoundaries(t *testing.T) {
 }
 
 func TestInvalidConfigurationAndInput(t *testing.T) {
+	t.Parallel()
 	for _, edit := range []func(*reply.Config){
 		func(c *reply.Config) { c.Budget.Lines = 0 },
 		func(c *reply.Config) { c.Budget.Chars = -1 },

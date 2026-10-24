@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestConversationQuestionsMigration(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	for i, migration := range all {

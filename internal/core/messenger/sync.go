@@ -95,9 +95,7 @@ func (s *Service) intervalOf(source Source) time.Duration {
 	return s.interval
 }
 
-// Sync reads one source: its chat list, then every chat that is in sync. An
-// adapter that reports lost credentials marks the source needs sign-in and
-// returns no error, because only the person can restore them.
+// Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 	adapter, ok := s.adapters[source.Platform]
 	if !ok {
@@ -105,7 +103,7 @@ func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 	}
 	state, err := adapter.SignIn(ctx)
 	if err != nil {
-		return Result{}, s.classify(ctx, source, err)
+		return Result{}, err
 	}
 	if state == NeedsSignIn {
 		if err := s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, ""); err != nil {
@@ -115,7 +113,7 @@ func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 	}
 	chats, err := adapter.ListChats(ctx)
 	if err != nil {
-		return Result{}, s.classify(ctx, source, err)
+		return Result{}, err
 	}
 	if err := s.store.UpsertChats(ctx, source, chats); err != nil {
 		return Result{}, err
@@ -132,19 +130,10 @@ func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
 		outcome, err := s.syncChat(ctx, source, adapter, chat)
 		result.add(outcome)
 		if err != nil {
-			return result, s.classify(ctx, source, err)
+			return result, err
 		}
 	}
 	return result, s.store.MarkConnected(ctx, source.Person, source.Platform, source.Account)
-}
-
-// classify records a source whose credentials stopped working as needs sign-in
-// and lets the other causes reach the caller as a failure.
-func (s *Service) classify(ctx context.Context, source Source, err error) error {
-	if !errors.Is(err, ErrNeedsSignIn) {
-		return err
-	}
-	return s.store.setState(ctx, source.Person, source.Platform, source.Account, StateNeedsSignIn, "")
 }
 
 // syncChat reads pages oldest first from the committed cursor until the platform

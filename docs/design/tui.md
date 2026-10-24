@@ -670,6 +670,33 @@ and emits nothing for an unchanged frame.
 - When the entries do not fit, the leading done entries fold into one row that keeps the last done entry visible, and the entries after the first next one fold into a count. The current stage never folds. Expanded steps fold like cards: waiting on the person first, then working, waiting and done, then a count row.
 - Ctrl+O opens the Details of the selected card, entry or step in the pager. Esc goes back one level: from the steps to the stage list, from the stage list to the cards, and from the cards to the composer with its draft.
 
+Opening a card selects its first unfinished entry without expanding it. The
+selection follows Core's stage number (or the kind of an unnumbered entry)
+across updates. Enter toggles expansion only for an entry with ready or started
+steps; an entry that becomes done or next loses its expansion. A missing stage
+list shows the unknown word, without inventing entries from the Now line.
+Folded entries remain reachable with Up and Down, with the current and selected
+entries kept visible. Details returns to the same panel level in both widths.
+Panel labels stay on one physical line; control, arrow and box-drawing characters
+in supplied text cannot draw a graph. Removing the opened work returns to cards
+without moving focus or changing the draft.
+
+Within an expanded entry, Up and Down visit its steps before the next entry.
+Step selection follows the opaque ref supplied beside the display line, even
+when the name or position changes. Ctrl+O on a step shows that step's Details.
+While Details stay open, that ref is read from the stage that currently holds
+it. Closing the pager returns to the same selection. Expanded steps put person
+waits first, then working, waiting and remaining history. A step and its worker
+rows stay together when scrolling, with a count of steps hidden on either side.
+Worker state words use the client's language; worker rows disappear on collapse
+or when Core closes the step. A fold that would replace just one entry keeps
+that entry, since a count would save no row.
+
+`TestM3WorkPanelStages` uses the graphs and evaluators of `work-panel.json`,
+with `e2e/m3/work-panel-stages.json` selecting both widths, languages and glyph
+sets. It records collapsed and expanded views with real stub worker processes,
+then checks their artifacts and the removal of worker rows after landing.
+
 **Keys.** Ctrl+P focuses the panel in the wide tier and opens the overlay otherwise. Up and Down move between cards and entries; the keys of Views and Adjusting act on the selection. Selection keys on the 일 or step id and survives reordering; when its card leaves, the selection moves to the card that takes its place. In the focused card view, the selected name starts with the action mark (`›`, or `>` in ASCII); its width comes from the name budget so elapsed time stays intact.
 
 In both the sidebar and overlay, card navigation scrolls just enough to keep
@@ -1399,6 +1426,8 @@ its terminal-restoration paths.
 
 LN-85 delivers the harness and scenario validation. [#86](https://github.com/thisisjun786/lina/issues/86)
 records the proposed terminal matrix in `evidence/tui-spike/terminals.json`.
+A confirmed matrix records each terminal's observed product version and `TERM`;
+a proposed entry cannot carry either field.
 Owner confirmation of that list is still pending and is the first Done-when item
 of [follow-up #371](https://github.com/thisisjun786/lina/issues/371), which also
 owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final

@@ -25,7 +25,6 @@
     "normal/account_request.json",
     "normal/memory_request.json",
     "normal/channel_request.json",
-    "normal/messenger_request.json",
     "normal/agent_talk_get.json",
     "normal/agent_talk_expand.json",
     "normal/agent_talk_subscribe.json",
@@ -72,7 +71,6 @@
     "normal/account_request.json",
     "normal/memory_request.json",
     "normal/channel_request.json",
-    "normal/messenger_request.json",
     "normal/agent_talk_get.json",
     "normal/agent_talk_expand.json",
     "normal/agent_talk_subscribe.json",
@@ -138,11 +136,10 @@
     "",
     "",
     "",
-    "",
     ""
   ],
   "outcome": {
-    "accepted": 45,
+    "accepted": 44,
     "malformed": 0,
     "unknown_kinds": 0
   }

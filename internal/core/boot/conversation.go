@@ -29,7 +29,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
-	"github.com/thisisjun786/lina/internal/core/messenger/webex"
+	"github.com/thisisjun786/lina/internal/core/messenger/teams"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
@@ -44,6 +44,7 @@ import (
 	"github.com/thisisjun786/lina/kit/grant"
 	"github.com/thisisjun786/lina/kit/proc"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider/applefm"
 	builtin "github.com/thisisjun786/lina/skills"
 )
 
@@ -83,9 +84,8 @@ type conversationRuntime struct {
 	replaySocket    string
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
+	teams           *teams.Service
 	messenger       *messenger.Service
-	messengerStore  *messenger.Store
-	messengerWebex  *webex.Adapter
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
 	channels        *channelRuntime
@@ -137,6 +137,8 @@ type conversationRuntime struct {
 	lanes                       *lane.Manager
 	topics                      *clientsrv.Topics
 	route                       *modelpath.ResponsesConfig
+	onDevice                    *applefm.Adapter
+	onDeviceProfile             applefm.Profile
 	activities                  *lifecycle.ActivityRegistry
 	person, agent, conversation string
 	identity                    clientsrv.Identity
@@ -299,6 +301,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initTeams(relay, channelTransport); err != nil {
+		return nil, err
+	}
 	if err = r.initA2A(relay); err != nil {
 		return nil, err
 	}
@@ -359,9 +364,6 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	if err := addOperations(&r.identity, clientsrv.ChannelOperations(r.channels)); err != nil {
-		return nil, err
-	}
-	if err := addOperations(&r.identity, clientsrv.MessengerOperations(r, relay)); err != nil {
 		return nil, err
 	}
 	if err := addOperations(&r.identity, clientsrv.TalkOperations(r)); err != nil {
@@ -435,6 +437,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.teams != nil {
+		r.teams.Close()
+	}
 	if r.miniApps != nil {
 		r.miniApps.host.Close()
 		r.miniApps = nil

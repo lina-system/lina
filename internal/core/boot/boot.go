@@ -28,7 +28,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/recover"
+	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider/applefm"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
@@ -111,12 +113,14 @@ type Config struct {
 	// Boot always supplies the durable main id, epoch and recovery state itself.
 	Client       clientsrv.Identity
 	Conversation *modelpath.ResponsesConfig
+	// Local is the on-device helper, when the person configured one.
+	Local *modelpath.LocalConfig
 	// Messenger supplies the platform adapters Core reads messenger sources
 	// with. Core owns the registry, admission and the sync loop.
 	Messenger *MessengerConfig
 	// SignInTransport is an in-process test seam; production uses the fixed issuer.
 	SignInTransport http.RoundTripper
-	// ChannelTransport is an in-process platform test seam; production uses the fixed Telegram and Discord origins.
+	// ChannelTransport is an in-process platform test seam; production uses the fixed messaging and Teams sign-in origins.
 	ChannelTransport http.RoundTripper
 	// WebTransport is an in-process test seam; production uses the fixed Firecrawl origin.
 	WebTransport http.RoundTripper
@@ -352,6 +356,26 @@ func Run(ctx context.Context, cfg Config) (result error) {
 			return err
 		}
 		conversation = runtime
+		if cfg.Local != nil {
+			helper, helperErr := applefm.New(applefm.Settings{Helper: cfg.Local.Helper, Model: cfg.Local.Model, PrivateCloud: cfg.Local.PrivateCloud, Env: cfg.Local.Env})
+			if helperErr != nil {
+				return helperErr
+			}
+			held, holdErr := activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "on-device model"})
+			if holdErr != nil {
+				return holdErr
+			}
+			profile, probeErr := helper.Probe(ctx, held)
+			held.Release()
+			// A helper that cannot serve stays unused. Core keeps running and
+			// the short-task route uses the person's main model.
+			if probeErr == nil && profile.Model == cfg.Local.Model && profile.PrivateCloud == cfg.Local.PrivateCloud && profile.ContextTokens > 0 {
+				runtime.onDevice = helper
+				runtime.onDeviceProfile = profile
+			} else {
+				fmt.Fprintln(os.Stderr, "lina core: on-device model unavailable")
+			}
+		}
 		runtime.replaySocket = cfg.Socket
 		runtime.webTransport = cfg.WebTransport
 		supported := cfg.Client.Supported
@@ -378,6 +402,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	stack = append(stack, github.Close)
 	if err := addOperations(&cfg.Client, clientsrv.GitHubOperations(githubService{client: github, merges: mergeAuthority, agentExists: mergeAgentExists})); err != nil {
 		return err
+	}
+	if conversation != nil {
+		if err := addOperations(&cfg.Client, localModelOperation(conversation)); err != nil {
+			return err
+		}
 	}
 	if err := boundary(CanonOpened); err != nil {
 		return err

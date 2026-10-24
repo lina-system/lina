@@ -44,7 +44,9 @@ func TestCommandResults(t *testing.T) {
 		Path: exe, Args: []string{"-test.run=^TestCommandResultProcess$"}, Dir: dir,
 		Env: []string{"LINA_PROC_RESULT_TEST=1", "LINA_PROC_VALUE=child-value"}, Stdout: &output,
 	})
-	var exit *exec.ExitError
+	// macOS commands run as launchd jobs, so their status arrives as
+	// proc.ExitError rather than *exec.ExitError. Both report ExitCode.
+	var exit interface{ ExitCode() int }
 	if !errors.As(err, &exit) || exit.ExitCode() != 47 {
 		t.Fatalf("exit status = %v", err)
 	}

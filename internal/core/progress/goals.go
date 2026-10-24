@@ -45,6 +45,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 	}
 	visible := goals[:0]
 	ids := map[string]bool{}
+	turns := map[string]string{}
 	for _, g := range goals {
 		if g.Person != person {
 			continue
@@ -58,11 +59,16 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 		}
 		visible = append(visible, g)
 		ids[g.ID] = true
+		turns[g.ID] = g.Turn
 	}
 	if len(visible) == 0 {
 		return nil, nil
 	}
 	history, err := stepGraphRevisions(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	cards, err := stepCards(ctx, tx, turns)
 	if err != nil {
 		return nil, err
 	}
@@ -77,12 +83,12 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			name = title(g.ID)
 		}
 		language := design.ConversationLanguage(name, design.English)
-		stages, err := stagesForGoal(g, history[g.ID], started, language)
+		stages, err := stagesForGoal(g, history[g.ID], cards[g.ID], started, language)
 		if err != nil {
 			return nil, err
 		}
 		// One manager runs one 일, so a managed goal is the 일 the person reads.
-		u := Unit{ID: g.ID, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages)}
+		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages)}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}

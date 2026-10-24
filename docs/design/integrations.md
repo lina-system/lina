@@ -92,7 +92,7 @@ The adapter set is:
 | oh-my-opencode | Person-selected session records and memory artifacts from the prior tool's workspace or export. | Future. |
 | Honcho | Person-selected workspace peers, cards, conclusions, sessions, summaries and messages through a verified read API or export. | Future standalone adapter. |
 | Hermes | Per-profile lossless-context and host message databases, large-output sidecars and the install's Honcho person data. | First adapter; the owner's M1 continuity test for existing memory and work patterns. |
-| murmur | A stopped murmur data home: its spool and config. Its messages become messenger records, not sealed imported conversations ([conversation-and-memory.md](conversation-and-memory.md#importing-a-murmur-store)). | Planned; the owner's move off murmur. |
+| murmur | A stopped murmur data home: its spool and config. Its messages become messenger records, not sealed imported conversations ([conversation-and-memory.md](conversation-and-memory.md#importing-a-murmur-store)). | Implemented in `internal/addons/importer/murmur`, with `lina import-murmur` as its installed entry point; the owner's move off murmur. |
 | OpenClaw | Person-selected conversation/session records and memory files from a prior install or export. | Future. |
 
 These entries define intended sources, not accepted schemas or available readers. Work now covers Hermes only. Its embedded Honcho reader remains schema-gated; listing a future standalone Honcho adapter does not enable it. Each future adapter must independently verify its formats and implement the common contract before it can be offered.
@@ -731,6 +731,35 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 - An official platform signs in with the person's own app or client, as Google does (see Google). LINA ships no Slack app, Entra app, Webex integration or Telegram `api_id`; the setup guide walks the person through making one. Tokens live in the secret store under the person's id. An administrator's policy is never worked around.
 - The connect card of an unofficial platform says in plain words that the platform's terms forbid automating a personal account, links the term, says that even reading may get the account limited, and says that LINA will only read. The person accepts before connecting, and LINA records the acceptance with the person and the date.
 - LINA never takes tokens, cookies or passwords from other apps or browsers, never signs in as an official client with that client's id or secret, never scripts a developer portal and never evicts the person's other devices. Reading never marks a message read, shows presence or typing, or joins or leaves a chat.
+
+### Microsoft Teams source
+
+Teams reads work and school accounts through Microsoft Graph v1.0 with the
+person's public Entra app and tenant ID. Core requests delegated chat, channel,
+member and basic profile read scopes plus offline access; it requests no write
+permission. The client browser relay uses authorization code with PKCE S256,
+one-use state and a ten-minute, connection-bound attempt. The tenant-specific
+Entra authority is fixed before sign-in. A supplied response issuer must match
+that authority; Entra responses without `iss` remain bound to that one authority.
+Tokens live in the person's secret store and refresh before expiry or once after
+a 401. There is no fallback account or Microsoft-owned client registration.
+
+Core polls each account independently and resumes it after restart. Graph paging
+links must stay on the same collection, and HTTP redirects are refused. Core
+contacts only `graph.microsoft.com` and `login.microsoftonline.com`; browser
+consent and the client's loopback callback are outside the Core HTTP client.
+Chat-message reads pair `lastModifiedDateTime` filters with matching descending
+ordering. Channel-message and reply endpoints do not support those filters, so
+Core pages them and filters locally. A complete traversal advances the durable
+watermark; a failed page advances neither records nor cursor. Explicit soft
+deletions retract records, and absent messages do not imply deletion.
+
+Senders use tenant-qualified platform IDs. Profile emails are retained as
+identity evidence, never a replacement key or a name-based merge. A tenant that
+blocks the app or withholds delegated consent reports `unsupported` with a short
+reason; it is not retried through another service. Transient failures retain the
+cursor and obey Retry-After. Disconnect cancels the account worker before deleting
+its tokens and leaves the previously read history available.
 
 ### Messenger adapter boundary
 

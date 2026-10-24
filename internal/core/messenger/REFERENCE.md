@@ -55,6 +55,18 @@ deletion and stays visible.
 origin is `messenger`, because deletion of a native conversation has its own
 owner; the event row itself is never rewritten, since the ledger is append-only.
 
+## Imported records
+
+`AdmitImport` takes one chat of a memory importer's run through the same
+transaction as a platform page: masking, speaker entries, relations and
+materials. A source row's own reference is `messenger_legacy_ref`, keyed
+`(system, instance, kind, key)` and pointing at the record; the platform
+reference on the event stays the live one, so a source connected later joins the
+imported records. One run admits one row per platform key, murmur's archive value
+wins over a live value, a changed row without a later edit is reported as a
+conflict, and a record whose stored speaker kind differs from the confirmed map
+gets a new revision that supersedes it.
+
 ## Coverage
 
 `messenger_coverage` records each complete read's range and time. Intermediate
@@ -62,14 +74,13 @@ pages advance the cursor only. `Store.Freshness` derives fresh, stale or gap fro
 the newest read and the adapter's declared interval and read window; nothing
 about freshness is stored.
 
-## Adapters
+## Not in this increment
 
-Webex is the first platform adapter (`messenger/webex`): the person's own
-integration, plain HTTPS, `beforeMessage` paging and a tail read. Live events
-remain on the adapter boundary for platforms that push them. Writes are
+Live events are on the adapter boundary and the service can deliver them, and the [Teams adapter](teams/README.md) polls Graph through Core. Other
+platforms are tracked by #1070 and the per-platform issues. Writes are
 recorded and matched here; the write verbs, grants and approvals belong to
 #1084. Learning from the person's own records is #1075.
 
-An adapter reports lost credentials with `messenger.ErrNeedsSignIn`; the service
-records `needs_sign_in` for that source and returns no error, so a dead token
-never reads as a source failure.
+Sender profile emails, when supplied by an adapter, are stored as evidence in
+`messenger_author` with the source account and platform author ID. They do not
+change ledger attribution or create an automatic person merge.

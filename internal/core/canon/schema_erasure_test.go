@@ -10,6 +10,7 @@ import (
 // permanent deletion makes: clearing the text and the spans it indexed once the
 // event is erased. Every other change still aborts.
 func TestEventErasureAllowsOnlyTheClearingRewrite(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	db := openStore(t, cfg)

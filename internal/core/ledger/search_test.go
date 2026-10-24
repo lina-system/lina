@@ -18,6 +18,7 @@ import (
 )
 
 func TestKoreanSearch(t *testing.T) {
+	t.Parallel()
 	var corpus struct {
 		Documents []struct{ ID, Origin, Body string }
 		Queries   []struct {
@@ -90,6 +91,7 @@ func TestKoreanSearch(t *testing.T) {
 }
 
 func TestKoreanSearchExcludesSecretSpansAndRollbacks(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	in := input("secret")
@@ -115,6 +117,7 @@ func TestKoreanSearchExcludesSecretSpansAndRollbacks(t *testing.T) {
 }
 
 func TestKoreanSearchMigrationAndMetadata(t *testing.T) {
+	t.Parallel()
 	all := canon.Migrations()
 	index := -1
 	for i, migration := range all {
@@ -169,6 +172,7 @@ func TestKoreanSearchMigrationAndMetadata(t *testing.T) {
 }
 
 func TestKoreanSearchFiltersBeforeLimitAndKeepsReplayOptIn(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	for _, id := range []string{"foreign", "original", "replay"} {
@@ -203,6 +207,7 @@ func TestKoreanSearchFiltersBeforeLimitAndKeepsReplayOptIn(t *testing.T) {
 }
 
 func TestKoreanSearchPublishesOnlyAtCommit(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	observed := false
@@ -227,6 +232,7 @@ func TestKoreanSearchPublishesOnlyAtCommit(t *testing.T) {
 }
 
 func TestKoreanSearchIsolatesPeopleAndTheirReplies(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	s := ledger.New(db, nil)
 	for _, person := range []string{"owner", "other-person"} {
@@ -280,6 +286,7 @@ func TestKoreanSearchIsolatesPeopleAndTheirReplies(t *testing.T) {
 }
 
 func TestSearchReturnsLongReplyOnceIncludingLegacyCards(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	store := ledger.New(db, nil)
 	owner := input("question")
