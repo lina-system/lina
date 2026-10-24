@@ -404,8 +404,17 @@ func Derive(state State, now time.Time) (Plan, error) {
 		}
 		plan.RunLimits[g.Person] = runLimitFor(state.Limits[g.Person], nodes, now, len(runningGoals[g.Person]))
 	}
-	queuedGoals := map[string]int{}
-	places := map[string]int{}
+	// Held goals in rank order with their first reason. Places are counted after
+	// placement, because a later step of the same goal can still take a slot.
+	type hold struct{ goal, person, reason string }
+	var holds []hold
+	held := map[string]bool{}
+	queue := func(g Goal, reason string) {
+		if !held[g.ID] {
+			held[g.ID] = true
+			holds = append(holds, hold{g.ID, g.Person, reason})
+		}
+	}
 	type candidate struct {
 		goal  Goal
 		task  Task
@@ -732,12 +741,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		// limit fell to. A step of a goal that already holds a slot is not new
 		// work for the person's count, so it proceeds.
 		if workerAction(kind) && !runningGoals[g.Person][g.ID] && len(runningGoals[g.Person]) >= plan.RunLimits[g.Person].Current {
-			// One place per queued goal: its later ready steps share it.
-			if _, done := queuedGoals[g.ID]; !done {
-				places[g.Person]++
-				queuedGoals[g.ID] = places[g.Person]
-				plan.Queues = append(plan.Queues, QueuePlace{GoalID: g.ID, Reason: plan.RunLimits[g.Person].Reason, Place: places[g.Person]})
-			}
+			queue(g, plan.RunLimits[g.Person].Reason)
 			wait(g, t, "run_limit", "run_limit.changed")
 			continue
 		}
@@ -777,6 +781,14 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		if best == "" {
+			// No host can take this step. Unless the goal holds a run slot, it
+			// keeps its place in rank order and names the report that held it
+			// back: a worker's quota, or the load that left no room.
+			reason := ReasonLoad
+			if available && !quota {
+				reason = ReasonQuota
+			}
+			queue(g, reason)
 			if available && !quota {
 				wait(g, t, "worker_quota", "quota.changed")
 			} else {
@@ -794,6 +806,14 @@ func Derive(state State, now time.Time) (Plan, error) {
 			runningGoals[g.Person][g.ID] = true
 		}
 		occupied = append(occupied, areaLease{g.ID, t})
+	}
+	places := map[string]int{}
+	for _, h := range holds {
+		if runningGoals[h.person][h.goal] {
+			continue
+		}
+		places[h.person]++
+		plan.Queues = append(plan.Queues, QueuePlace{GoalID: h.goal, Reason: h.reason, Place: places[h.person]})
 	}
 	return plan, nil
 }
