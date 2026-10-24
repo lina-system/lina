@@ -16,13 +16,14 @@ import (
 	"strings"
 	"time"
 
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/kit/secret"
 )
 
 const DefaultModel = "BAAI/bge-m3"
 const DefaultDimension = 1024
-const BatchSize = 32
+const BatchSize = recall.EmbeddingBatchSize
 const MaxTextRunes = 4096
 
 var ErrInvalid = errors.New("invalid_embedding_configuration")
@@ -153,4 +154,8 @@ func (a *Adapter) Embed(ctx context.Context, texts []string) ([][]float32, error
 		vectors[row.Index] = row.Embedding
 	}
 	return vectors, nil
+}
+
+func (a *Adapter) VectorConfig() recall.VectorConfig {
+	return recall.VectorConfig{Endpoint: a.config.Endpoint, Model: a.config.Model, Dimension: a.config.Dimension}
 }
