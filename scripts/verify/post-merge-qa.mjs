@@ -3,7 +3,7 @@
 import { execFileSync } from 'node:child_process';
 import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { isAbsolute, join } from 'node:path';
 import { parseArgs } from 'node:util';
 import { pathToFileURL } from 'node:url';
 import { git, gitOut, toplevel } from '../git.mjs';
@@ -29,12 +29,48 @@ export async function readArtifactJSON(artifact, name, { api, repository }) {
   }
 }
 
-async function laterPassingTests({ plan, observations, repository, branch, runId, api, readArtifact, isAncestor, requiredPasses }) {
+const failureMarkLimit = 16;
+
+// A delayed failure can land between heads that are not yet within 48 hours
+// of each other. Keep the newest heads and apply the window when the pass arrives.
+function pruneFailureMarks(marks) {
+  return marks.slice(-failureMarkLimit);
+}
+
+function withinFlakyWindow(times) {
+  let earliest = Infinity;
+  let latest = -Infinity;
+  for (const time of times) {
+    if (!Number.isFinite(time)) return false;
+    if (time < earliest) earliest = time;
+    if (time > latest) latest = time;
+  }
+  return latest - earliest <= 48 * hour;
+}
+
+// Retain failure heads so a pass reported later can still sit between them.
+async function rememberFailure(marks, head, at, isAncestor) {
+  const next = marks.map(mark => ({ ...mark }));
+  const known = next.find(mark => mark.head === head);
+  if (known) known.at = Math.max(known.at, at);
+  else {
+    let index = 0;
+    while (index < next.length && await isAncestor(next[index].head, head)) index++;
+    next.splice(index, 0, { head, at });
+  }
+  return pruneFailureMarks(next);
+}
+
+function failureMarksOf(previous) {
+  if (!Array.isArray(previous?.failureMarks)) return [];
+  return previous.failureMarks.flatMap(mark => sha(mark?.head) && Number.isFinite(mark.at)
+    ? [{ head: mark.head, at: mark.at }] : []);
+}
+
+async function* actionsHistory({ plan, repository, branch, runId, api, readArtifact, isAncestor, wanted }) {
   const route = `/repos/${repository}/actions`;
   const current = await api('GET', `${route}/runs/${runId}`);
   if (!Number.isFinite(Date.parse(current.created_at))) throw new Error('Missing QA run creation time');
-  const wanted = new Set(observations.filter(item => item.result === 'fail').map(item => key({ branch, ...item })));
-  const histories = new Map();
   // Reruns retain their original creation time. Include completed descendants
   // even when their reporters finished before this older run's reporter.
   for (let page = 1;; page++) {
@@ -70,34 +106,56 @@ async function laterPassingTests({ plan, observations, repository, branch, runId
         if (candidates[0].attempt === candidates[1]?.attempt) throw new Error('Duplicate historical QA shard');
         records.push(await readArtifact(candidates[0].artifact, task.id + '.json', { api, repository }));
       }
-      for (const observation of collectObservations(historical, records)) {
-        const id = key({ branch, ...observation });
-        if (!wanted.has(id) || !['pass', 'fail', 'unknown'].includes(observation.result)) continue;
-        const history = histories.get(id) ?? [];
-        const previous = history.find(item => item.head === historical.head);
-        if (previous) {
-          if (observation.result === 'fail' || previous.result === 'unknown') previous.result = observation.result;
-        } else {
-          let index = 0;
-          while (index < history.length && await isAncestor(history[index].head, historical.head)) index++;
-          history.splice(index, 0, { head: historical.head, result: observation.result });
-        }
-        histories.set(id, history);
-      }
+      yield { plan: historical, records };
     }
     if (runs.length < 100) break;
   }
-  const recovered = new Set();
-  for (const [id, history] of histories) {
-    let passes = 0;
-    let previous = plan.head;
-    for (const item of history) {
-      passes = item.result === 'pass' && await isAncestor(previous, item.head) ? passes + 1 : 0;
-      previous = item.head;
-    }
-    if (passes >= requiredPasses) recovered.add(id);
+}
+
+function validateLocalRun(localRun, plan) {
+  const text = value => typeof value === 'string' && value.length > 0 && value.length <= 4096
+    && !/[\x00-\x1f\x7f`<>]/.test(value);
+  if (!localRun || localRun.head !== plan.head || localRun.started !== plan.started
+      || !text(localRun.machine) || !text(localRun.logPath) || !isAbsolute(localRun.logPath)
+      || plan.schema !== 2 || !sha(plan.head) || !sha(plan.tree) || plan.scope?.head !== plan.head
+      || plan.digest !== sealPlan(plan).digest) throw new Error('Invalid local QA run identity or plan');
+}
+
+async function* localRuns(history, { plan, repository, branch, isAncestor }) {
+  for (const run of history) {
+    if (run.repository !== repository || run.branch !== branch) continue;
+    validateLocalRun(run.localRun, run.plan);
+    if (run.plan.head === plan.head || !await isAncestor(plan.head, run.plan.head)) continue;
+    yield run;
   }
-  return recovered;
+}
+
+async function descendantHistory(options) {
+  const { plan, observations, branch, isAncestor, localRun, localHistory } = options;
+  const wanted = new Set(observations.filter(item => item.result === 'fail').map(item => key({ branch, ...item })));
+  const histories = new Map();
+  const source = localRun ? localRuns(localHistory, options) : actionsHistory({ ...options, wanted });
+  for await (const { plan: historical, records } of source) {
+    for (const observation of collectObservations(historical, records)) {
+      const id = key({ branch, ...observation });
+      if (!wanted.has(id) || !['pass', 'fail', 'unknown'].includes(observation.result)) continue;
+      const history = histories.get(id) ?? [];
+      const previous = history.find(item => item.head === historical.head);
+      const started = Number.isFinite(historical.started) ? historical.started : 0;
+      if (previous) {
+        if (observation.result === 'fail' || previous.result === 'unknown') {
+          previous.result = observation.result;
+          previous.started = started;
+        }
+      } else {
+        let index = 0;
+        while (index < history.length && await isAncestor(history[index].head, historical.head)) index++;
+        history.splice(index, 0, { head: historical.head, result: observation.result, started });
+      }
+      histories.set(id, history);
+    }
+  }
+  return histories;
 }
 
 export function collectObservations(plan, records) {
@@ -147,7 +205,7 @@ function stateOf(issue) {
     && (['fail', 'pass'].includes(state.result) || state.schema === 2 && state.result === 'unknown') ? state : null;
 }
 
-function bodyOf(state, observation, repository, runUrl, requiredPasses) {
+function bodyOf(state, observation, repository, runReference, requiredPasses) {
   const range = `${state.firstBase}..${state.firstHead}`;
   const lines = observation.output.replaceAll('```', '` ` `').replace(/[\x00-\x08\x0b-\x1f\x7f]/g, '').slice(-16000);
   return `<!-- foundation-qa:${JSON.stringify(state)} -->\n`
@@ -159,7 +217,7 @@ function bodyOf(state, observation, repository, runUrl, requiredPasses) {
     + `- Result: ${{ fail: 'failed', pass: 'passed on a later head', unknown: 'unfinished; recovery not established' }[state.result]}\n`
     + `- Consecutive passing heads: ${state.passes}/${requiredPasses}\n`
     + (state.flaky ? '- Flaky: failure, pass and failure observed within 48 hours\n' : '')
-    + `- [Workflow run](${runUrl})\n\n`
+    + runReference + '\n'
     + (observation.result === 'fail' ? `Failure lines:\n\n\`\`\`text\n${lines}\n\`\`\`\n`
       : state.result === 'unknown' ? 'The unfinished test resets the recovery streak without establishing a failure.\n'
         : state.passes >= requiredPasses ? 'The selected test has met the recovery threshold.\n'
@@ -181,7 +239,8 @@ async function advanceState(previous, observation, { plan, before, identity, req
     lastFailureHead: previous?.lastFailureHead ?? (previous?.result === 'fail' ? previous.lastHead : null),
     lastFailureAt: previous?.lastFailureAt ?? 0, firstPassHead: previous?.firstPassHead ?? null,
     passedSinceFailure: previous?.passedSinceFailure ?? false,
-    flaky: previous?.flaky ?? false, lastReopenedAt: previous?.lastReopenedAt ?? 0 };
+    flaky: previous?.flaky ?? false, lastReopenedAt: previous?.lastReopenedAt ?? 0,
+    failureMarks: failureMarksOf(previous) };
   if (observation.result === 'pass') {
     if (sameHead && previous.result === 'fail') state.result = 'fail';
     if (state.lastFailureHead === plan.head) state.passedSinceFailure = true;
@@ -195,7 +254,17 @@ async function advanceState(previous, observation, { plan, before, identity, req
       state.recoveryHeads.splice(index, 0, plan.head);
       state.recoveryHeads = state.recoveryHeads.slice(-requiredPasses);
     }
+    // Commit order, not arrival order: a late pass can sit between two failures.
+    for (let index = 0; index < state.failureMarks.length - 1 && !state.flaky; index++) {
+      const earlier = state.failureMarks[index];
+      const later = state.failureMarks[index + 1];
+      if (plan.head === later.head || !withinFlakyWindow([earlier.at, later.at, plan.started])) continue;
+      if (await isAncestor(earlier.head, plan.head) && await isAncestor(plan.head, later.head)) state.flaky = true;
+    }
   } else {
+    if (observation.result === 'fail' && Number.isFinite(plan.started)) {
+      state.failureMarks = await rememberFailure(state.failureMarks, plan.head, plan.started, isAncestor);
+    }
     if (observation.result === 'fail' && (!state.lastFailureHead
         || await isAncestor(state.lastFailureHead, plan.head))) {
       const passed = state.lastFailureHead === plan.head ? state.passedSinceFailure
@@ -251,10 +320,10 @@ async function legacyState(issue, state, { api, route }) {
     barrierHead: state.lastHead, recoveryHeads: [], firstPassHead: null,
     lastFailureHead: state.result === 'fail' ? state.lastHead : null,
     lastFailureAt: state.result === 'fail' ? Date.parse(issue.updated_at) || lastFailureAt : lastFailureAt,
-    passedSinceFailure: state.result === 'pass', lastReopenedAt };
+    passedSinceFailure: state.result === 'pass', lastReopenedAt, failureMarks: [] };
 }
 
-async function updateStatus({ issue, state, issueState, requiredPasses, runUrl, route, api }) {
+async function updateStatus({ issue, state, issueState, requiredPasses, runReference, route, api }) {
   const body = `${statusMarker}\nPost-merge QA: **${issueState}**.\n\n`
     + `- Latest tested head: \`${state.lastHead}\` (${state.result})\n`
     + (state.reportHead ? `- Reported head: \`${state.reportHead}\` (${state.reportResult})\n` : '')
@@ -262,7 +331,7 @@ async function updateStatus({ issue, state, issueState, requiredPasses, runUrl, 
     + (state.flaky ? '- Flaky: failure, pass and failure within 48 hours.\n' : '')
     + (issueState === 'closed' && state.reportResult === 'fail' && state.passes < requiredPasses
       ? '- Reopening deferred: this finding was already reopened within the last 24 hours.\n' : '')
-    + (runUrl ? `- [Workflow run](${runUrl})\n` : '');
+    + runReference;
   for (let page = 1;; page++) {
     const comments = await api('GET', `${route}/${issue.number}/comments?per_page=100&page=${page}`);
     const comment = comments.find(item => item.body?.startsWith(statusMarker));
@@ -276,17 +345,26 @@ async function updateStatus({ issue, state, issueState, requiredPasses, runUrl, 
 }
 
 export async function reconcileQA({ plan, records, repository, milestone, branch = 'dev', before,
-  runUrl, runId, api, isAncestor, readArtifact = readArtifactJSON, requiredPasses = 3, now = Date.now }) {
+  runUrl, runId, localRun, localHistory = [], api, isAncestor, readArtifact = readArtifactJSON, requiredPasses = 3, now = Date.now }) {
   const observations = collectObservations(plan, records);
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository) || !sha(plan.head) || !sha(before)
       || !Number.isInteger(milestone) || milestone < 1
-      || !Number.isSafeInteger(runId) || runId < 1
-      || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/[0-9]+(?:\/attempts\/[0-9]+)?$/.test(runUrl)) {
+      || (!localRun && (!Number.isSafeInteger(runId) || runId < 1
+      || !/^https:\/\/github\.com\/[\w.-]+\/[\w.-]+\/actions\/runs\/[0-9]+(?:\/attempts\/[0-9]+)?$/.test(runUrl)))) {
     throw new Error('QA needs a repository, milestone, commit range and workflow run');
   }
   if (!Number.isSafeInteger(requiredPasses) || requiredPasses < 1 || !Number.isFinite(plan.started)) {
     throw new Error('QA needs a positive recovery pass count and plan start time');
   }
+  if (localRun) {
+    validateLocalRun(localRun, plan);
+    if (!Array.isArray(localHistory) || runId !== undefined || runUrl !== undefined) {
+      throw new Error('Local QA needs stored history and cannot also identify an Actions run');
+    }
+  }
+  const runReference = localRun
+    ? `- Local run: \`${localRun.machine}\` at ${new Date(localRun.started).toISOString()}\n- Logs: \`${localRun.logPath}\`\n`
+    : `- [Workflow run](${runUrl})\n`;
   const time = now();
   if (!Number.isFinite(time)) throw new Error('Invalid QA clock');
   const route = `/repos/${repository}/issues`;
@@ -306,23 +384,25 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
   }
   const changes = [];
   let flakyLabel;
-  const updateIssue = async (previous, state, body, issueState, url = runUrl) => {
+  const ensureFlaky = async labels => {
+    if (labels.includes('flaky')) return;
+    // Creating an existing label is harmless; githubAPI exposes the status
+    // so only GitHub's already-exists response can be ignored.
+    flakyLabel ??= api('POST', `/repos/${repository}/labels`, { name: 'flaky', color: 'FBCA04',
+      description: 'QA test failed, passed and failed again within 48 hours' }).catch(error => {
+      if (error.status !== 422 || !Array.isArray(error.errors)
+          || !error.errors.some(item => item.code === 'already_exists')) throw error;
+    });
+    await flakyLabel;
+    labels.push('flaky');
+  };
+  const updateIssue = async (previous, state, body, issueState, reference = runReference) => {
     const { issue } = previous;
     const labels = (issue.labels ?? []).map(label => typeof label === 'string' ? label : label.name);
-    if (state.flaky && !labels.includes('flaky')) {
-      // Creating an existing label is harmless; githubAPI exposes the status
-      // so only GitHub's already-exists response can be ignored.
-      flakyLabel ??= api('POST', `/repos/${repository}/labels`, { name: 'flaky', color: 'FBCA04',
-        description: 'QA test failed, passed and failed again within 48 hours' }).catch(error => {
-        if (error.status !== 422 || !Array.isArray(error.errors)
-            || !error.errors.some(item => item.code === 'already_exists')) throw error;
-      });
-      await flakyLabel;
-      labels.push('flaky');
-    }
+    if (state.flaky) await ensureFlaky(labels);
     // Write the reusable comment first: a retry after a failed issue update
     // finds and edits it instead of posting another notification.
-    await updateStatus({ issue, state, issueState, requiredPasses, runUrl: url, route, api });
+    await updateStatus({ issue, state, issueState, requiredPasses, runReference: reference, route, api });
     await api('PATCH', `${route}/${issue.number}`, { body,
       ...(state.flaky ? { labels } : {}),
       ...(issueState !== issue.state ? { state: issueState,
@@ -339,20 +419,31 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
     const state = await legacyState(previous.issue, previous.state, { api, route });
     const body = previous.issue.body.replace(marker, `<!-- foundation-qa:${JSON.stringify(state)} -->`);
     const url = /\[Workflow run\]\(([^)]+)\)/.exec(body)?.[1];
-    await updateIssue(previous, state, body, previous.issue.state, url);
+    await updateIssue(previous, state, body, previous.issue.state, url ? `- [Workflow run](${url})\n` : runReference);
     changes.push({ number: previous.issue.number, action: 'migrated', test: state.test });
   }
-  let laterPasses;
+  let descendantHistories;
   for (const observation of observations) {
     if (!['fail', 'pass', 'unknown'].includes(observation.result)) continue;
     const identity = { branch, package: observation.package, test: observation.test };
     const previous = existing.get(key(identity));
     if (observation.result !== 'fail' && !previous) continue;
+    let seeded;
     if (observation.result === 'fail' && !previous) {
-      laterPasses ??= await laterPassingTests({ plan, observations, repository, branch, runId, api, readArtifact, isAncestor, requiredPasses });
-      if (laterPasses.has(key(identity))) continue;
+      descendantHistories ??= await descendantHistory({ plan, observations, repository, branch, runId, api, readArtifact, isAncestor, localRun, localHistory });
+      seeded = await advanceState(null, observation, { plan, before, identity, requiredPasses, isAncestor });
+      for (const item of descendantHistories.get(key(identity)) ?? []) {
+        const next = await advanceState(seeded, { ...observation, result: item.result }, {
+          plan: { head: item.head, started: item.started }, before, identity, requiredPasses, isAncestor,
+        });
+        if (next) seeded = next;
+      }
+      // A complete descendant streak never opens an already recovered finding.
+      if (seeded.passes >= requiredPasses) continue;
+      seeded.reportHead = plan.head;
+      seeded.reportResult = observation.result;
     }
-    const state = await advanceState(previous?.state, observation, { plan, before, identity, requiredPasses, isAncestor });
+    const state = seeded ?? await advanceState(previous?.state, observation, { plan, before, identity, requiredPasses, isAncestor });
     if (!state) continue;
     let issueState = previous?.issue.state ?? 'open';
     if (state.passes >= requiredPasses) issueState = 'closed';
@@ -362,10 +453,12 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
       issueState = 'open';
       state.lastReopenedAt = time;
     }
-    const body = bodyOf(state, observation, repository, runUrl, requiredPasses);
+    const body = bodyOf(state, observation, repository, runReference, requiredPasses);
     if (!previous) {
+      const labels = ['qa'];
+      if (state.flaky) await ensureFlaky(labels);
       const issue = await api('POST', route, { title: `qa: e2e ${observation.test} (${branch})`.slice(0, 240),
-        body, labels: ['qa'], milestone });
+        body, labels, milestone });
       existing.set(key(identity), { issue, state });
       changes.push({ number: issue.number, action: 'opened', test: observation.test });
     } else {
@@ -377,7 +470,7 @@ export async function reconcileQA({ plan, records, repository, milestone, branch
   return changes;
 }
 
-async function githubAPI(method, path, body) {
+export async function githubAPI(method, path, body) {
   const token = process.env.GH_TOKEN;
   if (!token) throw new Error('GH_TOKEN is required for QA reporting');
   const response = await fetch('https://api.github.com' + path, { method,

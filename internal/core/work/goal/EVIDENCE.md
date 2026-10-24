@@ -32,3 +32,23 @@ success receipt, an event moved between collection and closure, and a completed
 goal reopened after a target changes while Core is offline. Citation and rubric
 checks read the worker's real artifact. The goal unit tests cover evidence types,
 source retention, idempotent change hints and a concurrent change during closure.
+
+Outside waits and decision rows hold final verification and closure after tasks
+land. They do not hold independent task dispatch. A manager observation can
+carry `waits` together with the legacy `wait`; Core validates the combined set
+before committing any task or wait, rejecting duplicate wake identities.
+Each retained wait has its own source, durable deadline and read receipt.
+Several expiries append their recommendations and drafts to the same retained
+row without replacing its identity or dropping an earlier unresolved proposal.
+
+`e2e/trip_goal_test.go` drives real Core with calendar and mail service stubs.
+It prepares an itinerary, reads the calendar and sent item, retains independent
+host and booking waits, and restarts during the wait. A source signal closes
+only the host wait. The booking either arrives by signal or expires while Core
+is down into a draft row; a person correction then continues the same goal.
+Final checking re-reads the records, and neither restart nor expiry sends again.
+The existing `e2e/m1/work_waiting_deadlines_test.go` exercises payment/outward
+defaults and late answers through Core's waiting-round service;
+`e2e/m2/research_partial_test.go` covers the partial research follow-up and
+citation hold. `e2e/run_to_done_test.go` covers the five-task code lifecycle,
+worker death, conflict recovery and evidence summary.
