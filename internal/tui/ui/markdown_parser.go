@@ -11,6 +11,8 @@ import (
 	"github.com/thisisjun786/lina/internal/tui/sanitize"
 	"github.com/yuin/goldmark"
 	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	tableast "github.com/yuin/goldmark/extension/ast"
 	"github.com/yuin/goldmark/parser"
 	"github.com/yuin/goldmark/text"
 	"github.com/yuin/goldmark/util"
@@ -56,7 +58,7 @@ func (p closedFenceParser) Continue(node ast.Node, reader text.Reader, context p
 	return state
 }
 
-var markdownParser = goldmark.New(goldmark.WithParserOptions(parser.WithBlockParsers(
+var markdownParser = goldmark.New(goldmark.WithExtensions(extension.Table), goldmark.WithParserOptions(parser.WithBlockParsers(
 	// The default fenced-code parser has priority 700.
 	util.Prioritized(closedFenceParser{parser.NewFencedCodeBlockParser()}, 699),
 ))).Parser()
@@ -109,6 +111,32 @@ func parseMarkdown(source, bullet string) []render.MarkdownBlock {
 	var visit func(ast.Node, string, int)
 	visit = func(n ast.Node, prefix string, indent int) {
 		switch node := n.(type) {
+		case *tableast.Table:
+			table := &render.MarkdownTable{Alignments: make([]render.TableAlignment, len(node.Alignments))}
+			for i, alignment := range node.Alignments {
+				switch alignment {
+				case tableast.AlignNone, tableast.AlignLeft:
+					table.Alignments[i] = render.TableLeft
+				case tableast.AlignCenter:
+					table.Alignments[i] = render.TableCenter
+				case tableast.AlignRight:
+					table.Alignments[i] = render.TableRight
+				}
+			}
+			for row := node.FirstChild(); row != nil; row = row.NextSibling() {
+				_, header := row.(*tableast.TableHeader)
+				var cells [][]render.Span
+				for cell := row.FirstChild(); cell != nil; cell = cell.NextSibling() {
+					spans := inline(cell, render.InlineStyle{Bold: header})
+					for i := range spans {
+						// Decoded entities cannot create a second physical cell row.
+						spans[i].Text = strings.ReplaceAll(spans[i].Text, "\n", " ")
+					}
+					cells = append(cells, spans)
+				}
+				table.Cells = append(table.Cells, cells)
+			}
+			blocks = append(blocks, render.MarkdownBlock{Table: table, Prefix: prefix, Indent: indent})
 		case *ast.List:
 			number := node.Start
 			for item := node.FirstChild(); item != nil; item = item.NextSibling() {
