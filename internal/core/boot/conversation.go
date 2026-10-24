@@ -462,6 +462,10 @@ func (r *conversationRuntime) Close(ctx context.Context) error {
 			return ctx.Err()
 		}
 	}
+	if r.messenger != nil {
+		r.messenger.Close()
+		r.messenger = nil
+	}
 	if r.publications != nil && r.publications.stop != nil {
 		r.publications.stop()
 		select {

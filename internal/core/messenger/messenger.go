@@ -100,8 +100,12 @@ type Deletion struct {
 	At      time.Time
 }
 
-// Event is one live event the platform pushed: a message or a deletion.
+// Event is one live event the platform pushed: a message or a deletion. Chat
+// names the chat the platform put the event in, in the adapter's own chat id
+// form; a deletion the platform sends without a chat leaves it empty, and
+// DeleteSourceMessages then resolves the id.
 type Event struct {
+	Chat     string
 	Message  *Message
 	Deletion *Deletion
 }

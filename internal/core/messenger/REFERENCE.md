@@ -91,13 +91,23 @@ pages advance the cursor only. `Store.Freshness` derives fresh, stale or gap fro
 the newest read and the adapter's declared interval and read window; nothing
 about freshness is stored.
 
-## Not in this increment
+## Live events
 
-Live events are on the adapter boundary and the service can deliver them, and the [Teams adapter](teams/README.md) polls Graph through Core. Other
-platforms are tracked by #1070 and the per-platform issues. Writes are
-recorded and matched here; the write verbs, grants and approvals belong to
-#1084. Learning from the person's own records is #1075.
+An adapter's pushed event reaches `Service.Apply`: an edit or new message is
+admitted with `AdmitMessages` without moving a cursor or coverage. Deletions
+travel through the retraction path. A deletion without a chat is resolved by
+`DeleteSourceMessages` across chats where the id is live. `Service.RunLive`
+subscribes connected sources. One per-source adapter serves sync and events.
+
+## Adapters
+
+The [Telegram adapter](telegram/REFERENCE.md) ships with Core, using its secret
+store through an account-specific factory. The [Teams adapter](teams/README.md)
+polls Graph through its installed service. Other platforms are tracked by #1070
+and the per-platform issues. Writes are recorded and matched here; write verbs,
+grants and approvals belong to #1084. Learning from the person's records is #1075.
 
 Sender profile emails, when supplied by an adapter, are stored as evidence in
 `messenger_author` with the source account and platform author ID. They do not
 change ledger attribution or create an automatic person merge.
+
