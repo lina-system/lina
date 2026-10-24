@@ -2876,7 +2876,8 @@ A retraction or material trash during that read prevents publication.
 The kit loop runs in a network-blocked subprocess with a fresh scratch directory.
 Core brokers provider streams through pipes without sending a credential into the child.
 The journal is empty; the read registry has a discarding gate that refuses writes, outward calls and network tools.
-`expand` and deterministic `recall_person` use existing local services, with the original clock and current scope/revocation checks.
+`expand`, `recall` and deterministic `recall_person` use existing local services, with the original clock and current scope/revocation checks.
+A replayed `recall` returns only results whose source and citations pass the export visibility checks, and an episode is left out when a recorded `recall` result no longer does; records have no replay rule and count as unreadable.
 Other calls require an exact recorded name/argument match; a current effect receipt is selected by the original scope/tool/target/call key, never by matching reply text.
 
 Native preparation records the ordered ledger event ids and content revisions actually projected into the model request, leaving generated result-card scaffolds out, along with model, effort, tool declarations, requested fields, turn-time agent name/owner and instruction format alongside its existing assembly references and digest.

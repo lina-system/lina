@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strconv"
 	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
@@ -64,6 +65,21 @@ func callReferences(ctx context.Context, tx *canon.Tx, scope Scope, call Call) e
 				}
 			}
 		}
+	case "recall":
+		var result struct {
+			Results []struct {
+				Kind, ID, Revision string
+				Citations          []canon.Citation
+			} `json:"results"`
+		}
+		if json.Unmarshal(call.Result.Output, &result) != nil {
+			return Exclusion("missing_source")
+		}
+		for _, r := range result.Results {
+			if err := recallReference(ctx, tx, scope, r.Kind, r.ID, r.Revision, r.Citations); err != nil {
+				return err
+			}
+		}
 	case "expand":
 		var result struct {
 			Events []Event `json:"events"`
@@ -78,6 +94,63 @@ func callReferences(ctx context.Context, tx *canon.Tx, scope Scope, call Call) e
 		}
 	}
 	return nil
+}
+
+// RecallVisible checks one recall result and its citations under the same
+// rules as an exported episode. Records have no replay rule and are excluded.
+func (s Source) RecallVisible(ctx context.Context, scope Scope, kind, id, revision string, citations []canon.Citation) error {
+	return s.DB.Read(ctx, func(tx *canon.Tx) error {
+		return recallReference(ctx, tx, scope, kind, id, revision, citations)
+	})
+}
+
+func recallReference(ctx context.Context, tx *canon.Tx, scope Scope, kind, id, revision string, citations []canon.Citation) error {
+	if err := sourceReference(ctx, tx, scope, kind, id, revision, map[string]bool{}); err != nil {
+		return err
+	}
+	for _, c := range citations {
+		if err := sourceReference(ctx, tx, scope, c.TargetKind, c.TargetID, c.TargetRevision, map[string]bool{}); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func sourceReference(ctx context.Context, tx *canon.Tx, scope Scope, kind, id, revision string, visiting map[string]bool) error {
+	switch kind {
+	case "event":
+		return visible(ctx, tx, scope, id)
+	case "memory", "summary":
+		n, err := strconv.ParseInt(revision, 10, 64)
+		if err != nil || n <= 0 {
+			return Exclusion("missing_source")
+		}
+		if kind == "memory" {
+			return memoryReference(ctx, tx, scope, id, n, visiting)
+		}
+		// A summary is readable only while every source it cites at that
+		// revision is, down to the events it covers.
+		key := "summary:" + id
+		if visiting[key] {
+			return Exclusion("missing_source")
+		}
+		visiting[key] = true
+		defer delete(visiting, key)
+		citations, err := canon.CitationsAt(ctx, tx, "summary", id, n)
+		if err != nil {
+			return err
+		}
+		if len(citations) == 0 {
+			return Exclusion("missing_source")
+		}
+		for _, c := range citations {
+			if err := sourceReference(ctx, tx, scope, c.TargetKind, c.TargetID, c.TargetRevision, visiting); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return Exclusion("missing_source")
 }
 func memoryReference(ctx context.Context, tx *canon.Tx, scope Scope, id string, revision int64, visiting map[string]bool) error {
 	if revision <= 0 || visiting[id] {

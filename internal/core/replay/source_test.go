@@ -337,6 +337,48 @@ func TestExportExcludesTurnDependingOnForgottenRecallResult(t *testing.T) {
 	}
 }
 
+func TestExportChecksRecallResultSources(t *testing.T) {
+	t.Parallel()
+	for _, tc := range []struct {
+		name, output string
+		exported     int
+	}{
+		{"visible event", `{"results":[{"Kind":"event","ID":"input","Excerpt":"input"}]}`, 1},
+		{"visible summary", `{"results":[{"Kind":"summary","ID":"node","Revision":"1","Excerpt":"summary"}]}`, 1},
+		{"forgotten memory", `{"results":[{"Kind":"memory","ID":"forgotten","Revision":"1","Excerpt":"revoked synthetic detail"}]}`, 0},
+		{"forgotten citation", `{"results":[{"Kind":"summary","ID":"node","Revision":"1","Excerpt":"summary","Citations":[{"TargetKind":"memory","TargetID":"forgotten","TargetRevision":"1"}]}]}`, 0},
+		{"record", `{"results":[{"Kind":"record","ID":"note","Revision":"1","Excerpt":"note"}]}`, 0},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			db, source, _ := fixture(t)
+			id := seed(t, db, "input", guard.EntryOwner)
+			call := provider.ToolCall{ID: "recall", Name: "recall", Arguments: `{"query":"violet"}`}
+			raw, _ := json.Marshal(call)
+			answer, _ := json.Marshal(loop.Result{ID: call.ID, Code: loop.OK, Output: json.RawMessage(tc.output)})
+			err := db.Write(t.Context(), func(tx *canon.Tx) error {
+				if _, err := tx.ExecContext(t.Context(), "INSERT INTO turn_calls(turn_id,round,ordinal,call_id,call,result) VALUES(?,0,0,?,?,?)", id, call.ID, raw, answer); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(t.Context(), "INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,precision,role) VALUES('summary','node','1',0,'event','input','','event','covers')"); err != nil {
+					return err
+				}
+				if _, err := tx.ExecContext(t.Context(), "INSERT INTO removal_applied VALUES(1,'removal','digest')"); err != nil {
+					return err
+				}
+				_, err := tx.ExecContext(t.Context(), "INSERT INTO retract_target VALUES('memory','forgotten','person','agent','agent','erased',0,'{}','removal')")
+				return err
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			_, m, err := source.Episodes(t.Context(), replay.Scope{Person: "person", Agent: "agent"}, selection())
+			if err != nil || m.Exported != tc.exported {
+				t.Fatalf("exported %d, want %d: %+v %v", m.Exported, tc.exported, m, err)
+			}
+		})
+	}
+}
+
 func TestExportExcludesRetractedReplyEvenWhenInputRemainsVisible(t *testing.T) {
 	t.Parallel()
 	db, source, _ := fixture(t)
