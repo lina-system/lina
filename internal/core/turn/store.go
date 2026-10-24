@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/budget"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/textcall"
 	"github.com/thisisjun786/lina/kit/loop"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -459,6 +460,7 @@ func (s *Store) Run(ctx context.Context, o Options) (out loop.Outcome, err error
 	}
 	cfg = b.configure(cfg, o.Report)
 	cfg.Journal = observeTools(cfg.Journal, o.ToolActivity)
+	cfg.Stream = textcall.Guard(cfg.Stream)
 	out, err = loop.Run(ctx, cfg)
 	// Only the active turn's additions belong in promotion. Prepared history,
 	// persona and memory packets remain scoped to the conversation request.

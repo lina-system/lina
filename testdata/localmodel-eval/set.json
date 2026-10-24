@@ -1,0 +1,587 @@
+{
+  "version": 1,
+  "note": "Fixed set for the short-task route. line is what the person typed; prompt is the exact input the caller sends and defaults to line. Dates are absolute so the model needs no clock. A schema of plain strings carries no vocabulary, so a prompt that needs one names it. Scoring compares date and time as calendar values and every other field as lower-case trimmed text. A case is correct when every check passes. Autocomplete checks the continuation stays on the task and stays short; they do not judge style.",
+  "cases": [
+    {
+      "id": "intent-01",
+      "kind": "intent",
+      "line": "사파리 열어",
+      "prompt": "Action must be one of: open_app, ask_agent, create_todo, search. Target is the app, agent, title or query the line names.\nLine: 사파리 열어",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "target"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "action": "open_app"
+        },
+        "field_any": {
+          "target": [
+            "safari",
+            "사파리"
+          ]
+        }
+      }
+    },
+    {
+      "id": "intent-02",
+      "kind": "intent",
+      "line": "시온한테 CI 왜 깨졌는지 물어봐",
+      "prompt": "Action must be one of: open_app, ask_agent, create_todo, search. Target is the app, agent, title or query the line names.\nLine: 시온한테 CI 왜 깨졌는지 물어봐",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "target"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "action": "ask_agent"
+        },
+        "field_any": {
+          "target": [
+            "시온",
+            "sion"
+          ]
+        }
+      }
+    },
+    {
+      "id": "intent-03",
+      "kind": "intent",
+      "line": "2026년 10월 25일 오후 3시까지 RAON 가사 초안 보내기",
+      "prompt": "Action must be one of: open_app, ask_agent, create_todo, search. Target is the app, agent, title or query the line names.\nLine: 2026년 10월 25일 오후 3시까지 RAON 가사 초안 보내기",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "target"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "action": "create_todo"
+        },
+        "field_any": {
+          "target": [
+            "raon"
+          ]
+        }
+      }
+    },
+    {
+      "id": "intent-04",
+      "kind": "intent",
+      "line": "이번 주 회의록 찾아줘",
+      "prompt": "Action must be one of: open_app, ask_agent, create_todo, search. Target is the app, agent, title or query the line names.\nLine: 이번 주 회의록 찾아줘",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "target": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "action",
+          "target"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "action": "search"
+        },
+        "field_any": {
+          "target": [
+            "회의록",
+            "meeting"
+          ]
+        }
+      }
+    },
+    {
+      "id": "autocomplete-01",
+      "kind": "autocomplete",
+      "line": "내일 오후 3시까지 RAON 가사 초안",
+      "expect": {
+        "any_of": [
+          "보내",
+          "전달",
+          "제출",
+          "작성",
+          "완성",
+          "공유",
+          "send"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "autocomplete-02",
+      "kind": "autocomplete",
+      "line": "다음 주 월요일 오전 10시에 디자인 리뷰",
+      "expect": {
+        "any_of": [
+          "미팅",
+          "회의",
+          "리뷰",
+          "진행",
+          "예정",
+          "review",
+          "meeting"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "autocomplete-03",
+      "kind": "autocomplete",
+      "line": "김민수에게 견적서",
+      "expect": {
+        "any_of": [
+          "보내",
+          "요청",
+          "회신",
+          "전달"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "autocomplete-04",
+      "kind": "autocomplete",
+      "line": "The deploy failed because",
+      "expect": {
+        "any_of": [
+          "the",
+          "a",
+          "tests",
+          "build",
+          "config"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "rewrite-01",
+      "kind": "rewrite",
+      "line": "내일까지 끝내야 하는데 시간이 없어서 힘들어",
+      "expect": {
+        "must_include": [
+          "내일"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "rewrite-02",
+      "kind": "rewrite",
+      "line": "we need to fix the login bug before friday",
+      "expect": {
+        "must_include": [
+          "login"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "rewrite-03",
+      "kind": "rewrite",
+      "line": "회의는 3시로 바꿔줘",
+      "expect": {
+        "must_include": [
+          "3"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "rewrite-04",
+      "kind": "rewrite",
+      "line": "그거 그냥 나중에 하자",
+      "expect": {
+        "must_include": [
+          "나중"
+        ],
+        "max_chars": 200
+      }
+    },
+    {
+      "id": "title-01",
+      "kind": "title",
+      "line": "RAON 가사 초안을 이번 주 금요일까지 보내기로 했다. 시온이 확인한다.",
+      "expect": {
+        "any_of": [
+          "raon",
+          "가사"
+        ],
+        "max_chars": 80
+      }
+    },
+    {
+      "id": "title-02",
+      "kind": "title",
+      "line": "쿠버네티스 클러스터 업그레이드 계획 정리",
+      "expect": {
+        "any_of": [
+          "쿠버네티스",
+          "k8s",
+          "kubernetes"
+        ],
+        "max_chars": 80
+      }
+    },
+    {
+      "id": "title-03",
+      "kind": "title",
+      "line": "Q4 예산 검토 회의록",
+      "expect": {
+        "any_of": [
+          "예산",
+          "q4"
+        ],
+        "max_chars": 80
+      }
+    },
+    {
+      "id": "title-04",
+      "kind": "title",
+      "line": "Notes from the design review of the launcher panel",
+      "expect": {
+        "any_of": [
+          "design review",
+          "launcher",
+          "디자인"
+        ],
+        "max_chars": 80
+      }
+    },
+    {
+      "id": "classify-01",
+      "kind": "classify",
+      "line": "내일 고객사 미팅 준비 자료 만들기",
+      "prompt": "Label must be one of: work, personal, admin, health.\nText: 내일 고객사 미팅 준비 자료 만들기",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "label": "work"
+        }
+      }
+    },
+    {
+      "id": "classify-02",
+      "kind": "classify",
+      "line": "엄마 생신 선물 사기",
+      "prompt": "Label must be one of: work, personal, admin, health.\nText: 엄마 생신 선물 사기",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "label": "personal"
+        }
+      }
+    },
+    {
+      "id": "classify-03",
+      "kind": "classify",
+      "line": "주민등록등본 발급받기",
+      "prompt": "Label must be one of: work, personal, admin, health.\nText: 주민등록등본 발급받기",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "label": "admin"
+        }
+      }
+    },
+    {
+      "id": "classify-04",
+      "kind": "classify",
+      "line": "달리기 5km 기록 정리",
+      "prompt": "Label must be one of: work, personal, admin, health.\nText: 달리기 5km 기록 정리",
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "label"
+        ]
+      },
+      "expect": {
+        "fields": {
+          "label": "health"
+        }
+      }
+    },
+    {
+      "id": "extract-01",
+      "kind": "extract",
+      "line": "2026년 10월 25일 오후 3시까지 RAON 가사 초안 보내기",
+      "expect": {
+        "fields": {
+          "date": "2026-10-25",
+          "time": "15:00"
+        },
+        "field_any": {
+          "title": [
+            "raon",
+            "가사"
+          ]
+        }
+      },
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "date",
+          "time"
+        ]
+      }
+    },
+    {
+      "id": "extract-02",
+      "kind": "extract",
+      "line": "2026-11-03 09:30 김민수와 계약 검토",
+      "expect": {
+        "fields": {
+          "date": "2026-11-03",
+          "time": "09:30"
+        },
+        "field_any": {
+          "title": [
+            "계약",
+            "김민수"
+          ]
+        }
+      },
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "date",
+          "time"
+        ]
+      }
+    },
+    {
+      "id": "extract-03",
+      "kind": "extract",
+      "line": "2026년 12월 1일 오전 10시에 치과 예약",
+      "expect": {
+        "fields": {
+          "date": "2026-12-01",
+          "time": "10:00"
+        },
+        "field_any": {
+          "title": [
+            "치과"
+          ]
+        }
+      },
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "date",
+          "time"
+        ]
+      }
+    },
+    {
+      "id": "extract-04",
+      "kind": "extract",
+      "line": "Send the invoice to Acme on 2026-10-30 at 14:00",
+      "expect": {
+        "fields": {
+          "date": "2026-10-30",
+          "time": "14:00"
+        },
+        "field_any": {
+          "title": [
+            "invoice",
+            "acme"
+          ]
+        }
+      },
+      "schema": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "title": {
+            "type": "string"
+          },
+          "date": {
+            "type": "string"
+          },
+          "time": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "title",
+          "date",
+          "time"
+        ]
+      }
+    },
+    {
+      "id": "summary-01",
+      "kind": "summary",
+      "line": "어제 밤 배포가 실패했다. 원인은 데이터베이스 마이그레이션 누락이었고, 시온이 오늘 아침에 롤백했다. 다음 배포는 금요일로 미뤘다.",
+      "expect": {
+        "must_include": [
+          "배포"
+        ],
+        "any_of": [
+          "마이그레이션",
+          "migration"
+        ],
+        "max_chars": 400
+      }
+    },
+    {
+      "id": "summary-02",
+      "kind": "summary",
+      "line": "The launcher team shipped the new panel on Monday. Two bugs remain: the clipboard history misses images, and the search index lags by a minute. The next release is planned for Thursday.",
+      "expect": {
+        "must_include": [
+          "launcher"
+        ],
+        "any_of": [
+          "clipboard",
+          "search"
+        ],
+        "max_chars": 400
+      }
+    },
+    {
+      "id": "summary-03",
+      "kind": "summary",
+      "line": "디자인 리뷰에서 버튼 색을 파란색에서 회색으로 바꾸기로 했다. 접근성 검토는 다음 주에 한다. 민수가 시안을 다시 만든다.",
+      "expect": {
+        "any_of": [
+          "접근성",
+          "accessibility"
+        ],
+        "max_chars": 400
+      }
+    },
+    {
+      "id": "summary-04",
+      "kind": "summary",
+      "line": "We decided to ship the local model route first and delay the private cloud option until the license review finishes. Support stays on the main model in the meantime.",
+      "expect": {
+        "any_of": [
+          "private cloud",
+          "프라이빗"
+        ],
+        "max_chars": 400
+      }
+    }
+  ]
+}

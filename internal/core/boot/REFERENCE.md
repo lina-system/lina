@@ -97,3 +97,53 @@ by decider, and `exportBindingCases` writes one valid intake case per move under
 `derived/intake-cases/`; both read only canon, so a restart keeps them. The move and corrected input choice
 commit together; retries return the retained receipt. Replay uses the original
 input and the admission snapshot, without personal name memories.
+
+### Live topic recall (#873)
+
+`conversation_memory.go` collects ranked memory ids through `recall.Match`, then
+loads their current scoped items and evidence in one `memory.Store.Items` read.
+This runs in Atropos' existing optional collector with relationship context.
+Standing profile/name/relationship items win duplicate identities. Only selected
+topic references join pre-dispatch revision validation; `topic-memory-v1`
+reconstructs the same projection on replay without a new search.
+
+Replay also validates structured `recall` results against current source
+identity, revision and citations during episode loading and before dispatch.
+It walks canonical summary/record dependencies and retains checks for recorded
+citations that a current source no longer carries. Legacy episodes bind missing
+owner metadata through their canonical input rather than exported text.
+Live replay recall sets the shared search's projection scope and checks each
+result and citation through `replay.Source.RecallVisible`, reusing the export
+source validator. Excluded results are dropped; storage errors fail the read.
+
+`conversation_recall.go` binds one live family in the ordered tool preparation
+table. It uses ordinary Core read grants, checks channel memory/tool scope and
+agent availability on execution, and fences reads with the revocation epoch.
+Expansion uses `compaction.Expansion` and the shared restriction set from
+`recall.RestrictionCTE`. It rejects protected event chains, copies and summary
+roots before returning a page, as well as missing material bytes. Replay
+reads (including `recall_person`) use projection scope. New declarations remain present
+through tool follow-ups. Old replay layouts and source tags stay unchanged.
+
+Reference inspected before implementation: LCM-X `tools.py` at
+`709099b3a397a7893a7abae8802ebe7bf605f79e`.
+
+- **Seen**, `lcm_recall` at 3812: cross-conversation retrieval, positive bounded
+  limits, explicit hard session exclusions before fusion, and a query deadline.
+- **Seen**, `lcm_expand` at 4400: raw-message or summary-source expansion, explicit
+  cross-session node scope, offsets and limits.
+- **Inferred mapping**: LINA uses its shared deterministic search, person/agent
+  authorization, exact source reader and immutable request evidence. It does
+  not copy the reference's optional model reranker or eight-second budget.
+- **Unknown**: the installed Hermes/plugin revision and owner-history retrieval
+  quality on this machine. Local reference checkouts were absent; the pinned
+  public source was inspected read-only. No reference code was copied.
+
+`TestLiveTopicRecall`, `TestLiveTopicReplay` and
+`TestLiveRecallScopeAndExpansion` cover preparation, negative matches, channel
+scope, exact reconstruction, source revocation and tool authorization.
+`TestM1LiveTopicRecallInstalledCore` drives a real installed Core with a scripted
+provider through topic selection, recall, summary expansion, restart, export and
+replay. Storebench's `topic_memory_read` reports the shared ranked-id and scoped
+item retrieval latency; it does not measure full turn preparation or claim
+owner-question recall quality.

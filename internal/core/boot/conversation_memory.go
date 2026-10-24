@@ -6,12 +6,15 @@ import (
 	"context"
 	"encoding/json"
 	"strconv"
+	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/thisisjun786/lina/internal/core/assemble"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
+	"github.com/thisisjun786/lina/internal/core/recall"
 	"github.com/thisisjun786/lina/internal/core/retract"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/kit/provider"
@@ -143,4 +146,98 @@ func (r *conversationRuntime) validateModelContext(ctx context.Context, epoch ui
 // memoryStore resolves evidence through the same ledger/material reader as turns.
 func (r *conversationRuntime) memoryStore() *memory.Store {
 	return memory.New(r.db).WithQuotes(ledger.New(r.db, r.materials).Citation)
+}
+
+// Topic memory is optional and collected only inside Atropos' deadline. The
+// shared entry ranks ids; the memory reader resolves their current evidence.
+func (r *conversationRuntime) topicPacket(ctx context.Context, input ledger.Event, at time.Time) (assemble.ContextPacket, error) {
+	if r.channelBinding != nil && !r.channelBinding.Scope.Memory {
+		return nil, nil
+	}
+	query := input.Body.DerivedText()
+	// Recall accepts 512 UTF-8 bytes. Preserve the sentence's leading terms and
+	// never split a rune when a person supplies a longer input.
+	if len(query) > 512 {
+		query = query[:512]
+		for !utf8.ValidString(query) {
+			query = query[:len(query)-1]
+		}
+	}
+	hits, err := recall.Match(ctx, r.db, recall.Scope{Person: r.person, Agent: r.agent, Kinds: []recall.Kind{recall.Memory}, ExternalModel: true, At: at.Unix()}, recall.Query{Text: query, Limit: 12})
+	if err != nil {
+		return nil, err
+	}
+	ids := make([]string, 0, len(hits))
+	for _, hit := range hits {
+		ids = append(ids, hit.ID)
+	}
+	if len(ids) == 0 {
+		return nil, nil
+	}
+	items, err := r.memoryStore().Items(ctx, memory.RecallScope{Person: r.person, Agent: r.agent, ExternalModel: true}, ids, at.Unix(), false)
+	if err != nil {
+		return nil, err
+	}
+	byID := make(map[string]memory.Item, len(items))
+	for _, hit := range items {
+		byID[hit.ID] = hit.Item
+	}
+	var packet assemble.ContextPacket
+	for rank, hit := range hits {
+		item, ok := byID[hit.ID]
+		if !ok || strconv.FormatInt(item.Revision, 10) != hit.Revision {
+			continue
+		}
+		contextItem := topicContext(item, r.agent)
+		contextItem.Rank = len(hits) - rank
+		packet = append(packet, contextItem)
+	}
+	return packet, nil
+}
+
+func topicContext(item memory.Item, agent string) assemble.ContextItem {
+	raw, _ := json.Marshal(struct {
+		Kind        memory.Kind   `json:"kind"`
+		Content     string        `json:"content"`
+		Holder      memory.Holder `json:"holder"`
+		SourceAgent string        `json:"source_agent"`
+		Basis       memory.Basis  `json:"basis"`
+	}{item.Kind, item.Content, item.Holder, item.SourceAgent, item.Basis})
+	out := assemble.ContextItem{ID: "memory:" + item.ID, Revision: strconv.FormatInt(item.Revision, 10), AgentID: agent, Kind: assemble.Memory, Origin: "topic-memory:" + item.ID, Text: string(raw)}
+	for _, ref := range item.Evidence {
+		out.Evidence = append(out.Evidence, assemble.Ref{ID: ref.ID})
+	}
+	if item.Supersedes != "" {
+		out.Supersedes = []string{"memory:" + item.Supersedes}
+	}
+	return out
+}
+
+func uniqueMemoryPacket(packet assemble.ContextPacket, minimum assemble.ContextPacket, profile []turn.Reference) assemble.ContextPacket {
+	seen := map[string]bool{}
+	for _, ref := range profile {
+		seen["memory:"+ref.ID] = true
+	}
+	for _, item := range minimum {
+		seen[item.ID] = true
+	}
+	out := make(assemble.ContextPacket, 0, len(packet))
+	for _, item := range packet {
+		if seen[item.ID] {
+			continue
+		}
+		seen[item.ID] = true
+		out = append(out, item)
+	}
+	return out
+}
+
+func topicReferences(contexts []ledger.ContextSource) []turn.Reference {
+	var refs []turn.Reference
+	for _, item := range contexts {
+		if item.Source == "topic-memory-v1" {
+			refs = append(refs, turn.Reference{ID: strings.TrimPrefix(item.ID, "memory:"), Revision: item.Revision})
+		}
+	}
+	return refs
 }
