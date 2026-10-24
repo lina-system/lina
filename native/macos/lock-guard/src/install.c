@@ -56,7 +56,9 @@ static void cleanup(const struct lina_host *host, const struct lina_paths *paths
     host->remove_right(host->context, LINA_RIGHT_SELFTEST);
   }
   if (attempt->bundle && !keep) host->remove_bundle(host->context, paths->bundle);
-  if (attempt->guard) host->remove_guard(host->context, paths->guard, paths->guard_plist);
+  // The guard is what retries a failed restore and watches a rule that still
+  // names LINA, so it stays for either.
+  if (attempt->guard && restored && !keep) host->remove_guard(host->context, paths->guard, paths->guard_plist);
   if (attempt->enabled) host->remove_file(host->context, paths->enabled);
   if (attempt->pending) host->remove_file(host->context, paths->pending);
   if (attempt->measured) host->remove_file(host->context, paths->measured);
@@ -130,6 +132,11 @@ struct lina_outcome lina_install(const struct lina_host *host, const struct lina
   if (!host->eval_test_mac(host->context) && !measured) {
     return fail(host, paths, &attempt, LINA_INSTALL_BUILD, "build-unmeasured");
   }
+  // A restore the guard has not managed yet would undo this install, so the
+  // install waits for it.
+  if (host->exists(host->context, paths->restore_retry) != 0) {
+    return fail(host, paths, &attempt, LINA_INSTALL_STATE, "restore-pending");
+  }
   struct lina_right rule;
   if (host->read_right(host->context, LINA_RIGHT_SCREENSAVER, &rule) != 0) {
     return fail(host, paths, &attempt, LINA_INSTALL_RULE, "rule-unreadable");
@@ -174,11 +181,16 @@ struct lina_outcome lina_install(const struct lina_host *host, const struct lina
     return fail(host, paths, &attempt, LINA_INSTALL_SIGNATURE,
                 verified == 0 ? "signature-invalid" : "signature-unreadable");
   }
-  if (host->exists(host->context, paths->bundle) == 1
-      && host->remove_bundle(host->context, paths->bundle) != 0) {
-    return fail(host, paths, &attempt, LINA_INSTALL_BUNDLE, "bundle-replace");
-  }
-  if (host->rename_path(host->context, staged, paths->bundle) != 0) {
+  // An earlier install's rule may name the installed bundle, so it is swapped
+  // out in the same step that puts the new one in, never removed first.
+  int installed = host->exists(host->context, paths->bundle);
+  if (installed < 0) return fail(host, paths, &attempt, LINA_INSTALL_BUNDLE, "bundle-replace");
+  if (installed == 1) {
+    if (host->swap_paths(host->context, staged, paths->bundle) != 0) {
+      return fail(host, paths, &attempt, LINA_INSTALL_BUNDLE, "bundle-replace");
+    }
+    host->remove_bundle(host->context, staged);
+  } else if (host->rename_path(host->context, staged, paths->bundle) != 0) {
     return fail(host, paths, &attempt, LINA_INSTALL_BUNDLE, "bundle-copy");
   }
   if (input->guard_binary != NULL && input->guard_plist != NULL) {
@@ -259,6 +271,9 @@ int lina_uninstall(const struct lina_host *host, const struct lina_paths *paths,
   host->remove_right(host->context, LINA_RIGHT_SELFTEST);
   host->remove_bundle(host->context, paths->bundle);
   host->remove_guard(host->context, paths->guard, paths->guard_plist);
+  // The rule no longer names LINA here, so nothing is left for a retry, and
+  // without the guard nothing would clear it before the next install.
+  host->remove_file(host->context, paths->restore_retry);
   host->remove_file(host->context, paths->backup);
   host->remove_file(host->context, paths->measured);
   host->log_line(host->context, "uninstalled");

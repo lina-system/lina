@@ -96,3 +96,31 @@ Reference: the same pinned LCM-X revision above, inspected before this fix.
   restore, reconstruct exclusions from canonical replay/scaffold metadata so
   restoring visibility cannot turn a replay, scaffold or summary echo into
   summary input. Native provider items remain eligible as conversation content.
+
+## Cache-aware timing and a summary that reuses the cached prefix
+
+Reference: the pinned LCM-X revision above, plus the provider measurements in
+[provider-optimization.md](../../../docs/research/provider-optimization.md#compaction-summary).
+These files were inspected before this change; no source or prompt is copied.
+
+- **Seen** — `engine.py:2263-2275`: a boundary skip arms a 60-second
+  no-compress window, so the reference times its own compaction around recent
+  boundary decisions rather than only around token counts.
+- **Seen** — `compaction.py:1228-1240,1327-1340`: a leaf summary input is the
+  selected messages themselves, with the previous node's text carried
+  separately; the summariser never receives the retained tail.
+- **Inferred / LINA mapping** — LINA's timing is provider-cache timing, not a
+  wall-clock cooldown: a boundary whose conversation cache has expired may
+  compact at P (70%) because the rewrite costs no cache, and a warm cache keeps
+  the 90% trigger. The age comes from the recorded request time and the
+  lifetime the route's capability set admits; an unadmitted or undeclared
+  lifetime leaves the expiry unknown, which never counts as expired.
+- **Inferred / LINA mapping** — the summary request is the conversation's own
+  request truncated at its segment: fixed instructions, tool declarations,
+  cache identity and the marks inside the prefix are carried unchanged, the
+  segment's items follow, and the summary instruction comes last. Tools and
+  tool choice are untouched and Core runs no tool call from that response.
+- **Unknown upstream / specified by LINA** — LCM-X has no provider cache
+  lifetime, cache identity or cache-mark concept, and no tool-call-free summary
+  guard. Those rules come from LINA's capability set and request layout, and the
+  measured gain is the provider replay's summary row, not an upstream test.

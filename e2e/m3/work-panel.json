@@ -3,7 +3,73 @@
   "counts": [1, 5, 20, 50],
   "widths": [120, 100],
   "height": 34,
-  "names": ["Login repair", "로그인 수정", "자료 조사", "éééééééééééééééééééé", "👩‍💻 자료 조사 👩‍💻 자료 조사 👩‍💻 자료 조사 👩‍💻 자료 조사"],
+  "cases": [
+    {"n": 1, "waiting": 1},
+    {"n": 5, "waiting": 1},
+    {"n": 20, "waiting": 1},
+    {"n": 50, "waiting": 1},
+    {"n": 50, "waiting": 3}
+  ],
+  "states": ["in_progress", "waiting", "done"],
+  "names": [
+    "일",
+    "자료 조사",
+    "로그인 수정",
+    "e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301e\u0301",
+    "資料",
+    "👩‍💻",
+    "👩‍💻 자료 조사 👩‍💻 자료 조사",
+    "資料資料資料資料資料資料資料資料資料資料",
+    "가나다라마바사아자차카타파하가나다라마바사아자차카타파하",
+    "가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가가"
+  ],
+  "graphs": [
+    {
+      "id": "single",
+      "steps": [
+        {"name": "숙소 고르기"}
+      ]
+    },
+    {
+      "id": "chain",
+      "steps": [
+        {"name": "원인 찾기"},
+        {"name": "로그인 화면 수정", "after": [0]},
+        {"name": "가입 화면 수정", "after": [1]},
+        {"name": "통합 확인", "after": [2]},
+        {"name": "다시 확인", "after": [3]},
+        {"name": "정리", "after": [4]}
+      ]
+    },
+    {
+      "id": "diamond",
+      "steps": [
+        {"name": "자료 모으기"},
+        {"name": "왼쪽 정리", "after": [0]},
+        {"name": "오른쪽 정리", "after": [0]},
+        {"name": "하나로 합치기", "after": [1, 2]}
+      ]
+    },
+    {
+      "id": "fan",
+      "steps": [
+        {"name": "준비"},
+        {"name": "항목 확인", "after": [0], "count": 82},
+        {"name": "마무리", "after_all": true}
+      ]
+    },
+    {
+      "id": "two-chains",
+      "steps": [
+        {"name": "조사 시작"},
+        {"name": "조사 정리", "after": [0]},
+        {"name": "조사 확인", "after": [1]},
+        {"name": "작성 시작"},
+        {"name": "작성 정리", "after": [3]},
+        {"name": "작성 확인", "after": [4]}
+      ]
+    }
+  ],
   "input": "Build sample",
   "task_packet": "Write result.txt after reading the assigned task projection and receiving command approval.",
   "question": "Choose the sample label",

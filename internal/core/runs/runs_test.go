@@ -104,6 +104,7 @@ func answer(a runs.Artifact) provider.Stream {
 	return &stream{[]provider.Event{{Kind: provider.ItemDone, Item: item}, {Kind: provider.Terminal}}}
 }
 func TestStartReturnsBeforeFirstCallAndScopeIsNotDeclared(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int64
 	s, _, _ := setup(t, func(ctx context.Context, r provider.Request) (provider.Stream, error) {
 		calls.Add(1)
@@ -140,6 +141,7 @@ func TestStartReturnsBeforeFirstCallAndScopeIsNotDeclared(t *testing.T) {
 	}
 }
 func TestSecondInterruptionLandsAndCancelledNeverResumes(t *testing.T) {
+	t.Parallel()
 	var cfg runs.Config
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		return nil, errors.New("interrupted")
@@ -186,6 +188,7 @@ func TestSecondInterruptionLandsAndCancelledNeverResumes(t *testing.T) {
 	}
 }
 func TestUnresolvedCitationLandsPartialMaterial(t *testing.T) {
+	t.Parallel()
 	s, _, store := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		return answer(runs.Artifact{Body: "cited report", Done: true, Citations: []materials.Anchor{{AssetID: "missing", Revision: 1, Start: 0, End: 1, Hash: "missing"}}}), nil
 	})
@@ -211,6 +214,7 @@ func TestUnresolvedCitationLandsPartialMaterial(t *testing.T) {
 }
 
 func TestStartToolReturnsDurableReceiptBeforeExecution(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int64
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		calls.Add(1)

@@ -307,7 +307,7 @@ Regions:
   rows when idle.
 - Composer, with its attachment strip and a full-width hairline immediately above the input.
 - Card row above the composer, on Home (T-12).
-- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints.
+- Status line below the composer: connection mark and word first, agent, the running count ("2 running, 1 waiting for you"), restart pending, Core messages, then key hints. The count is Core's count of progress lines, sent with them; the TUI draws it and counts no rows. It is hidden when Core reports zero and, for a Core that sends no count, drawn from the cards the TUI shows.
 
 Once the focused conversation's snapshot is known to have no items, its header
 shows the token-based `lina.` wordmark, the agent name and the connection word.
@@ -617,7 +617,7 @@ overlay in Korean and English with Unicode and ASCII glyphs.
 - The diagram is schematic: it fixes order and content, not glyphs or widths.
 - The first row is the name and, right-aligned, the elapsed time since its work started, from Core's start time and the clock offset of T-06 rule 4: `0m` to `59m`, then `1h 05m`, then `2d 04h`. A done card stops at its finish. The elapsed time is never cut; the name is truncated at a grapheme boundary with an ellipsis.
 - The second row, indented two cells, is Core's Now: what the 일 is doing right now, in a few words ([work-and-delegation.md](work-and-delegation.md#progress-line)). It is truncated the same way and never wraps.
-- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too.
+- A 목표 has no card of its own; each of its 일 has one. A goal that is a single 할 일, or a background run outside any 일, is a card too. The tasks and runs of an 일 are its rows, drawn in its stage list or its Details, and never cards of their own (Core marks them `row`).
 - Cards keep Core's order: waiting on the person, running, waiting on something outside, done. Done cards fold into one row. When the cards do not fit, the last row (`…`, or `...` in ASCII) gives the number of hidden cards and, when any of them waits on the person, how many. Cards that wait on the person are hidden last. The numbers always equal the hidden cards.
 - The panel redraws only when a shown value changes, so a running card costs at most one redraw a minute for its elapsed time. Its timer uses the next elapsed-minute boundary and the existing Core clock offset. An absent start stays unknown. Snapshot replacement and live updates share the same typed card projection; neither changes conversation focus or the reading anchor.
 
@@ -701,6 +701,22 @@ that order, the conversation's reading position or the draft.
 | E14 shortage | When a stub worker reports its quota exhausted, or the host report shows no free capacity, the next pass lowers the automatic limit and starts no step past it, healthy running steps continue, and each card past the limit with no step in progress shows the quota or load reason with its place. |
 
 E11 to E14 read the pass from Core's ledger, not from timing. The run records N, the frames, the measured times and each result. A miss is investigated before a bound changes. The evaluation does not establish whether Core's Now lines and the manager's step names are good words for the person, which needs a check against human labels, or whether the person asks "what is running" less often; the research note names the field measurement for that.
+
+The harness and its self-test live in `TestM3WorkPanelEvaluation` and
+`TestM3WorkPanelChecksRejectWrongFrames`. The fixture carries the fixed cases,
+the graph corpus and the name corpus. The driver acts as the fixture manager: it
+admits each 일's graph through Core's goal engine as a step-graph revision, then
+records the 일's work with a stub worker session against that goal. It reads
+Core's own card order, card fields and projected stage list as its oracle — the
+stage list must match the corpus graph in steps, depth and parallel groups, so a
+lost blocker fails the run — and records every settled 120x34 frame in both
+languages and glyph modes. A check whose input the build does not publish yet is
+reported as missing and never as a pass: E4 and E8 to E9 need the injected step
+transitions of #771, E6 and E7 the opened 일 view of #770, and E11 to E14 the
+scheduling passes of #772 and #773. The self-test
+builds a well-formed recording, changes one thing per check, and requires that
+check to fail and the others to stay green except where they read the same
+evidence.
 
 E10 also uses `e2e/m3/work-panel-views.json` and
 `TestM3WorkPanelViewsInstalledCore`: installed Core replays a mixed-state work
