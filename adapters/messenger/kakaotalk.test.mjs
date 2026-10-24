@@ -187,6 +187,45 @@ test('sign-in runs on the tablet slot through the passcode the person confirms o
   assert.deepEqual(fixture.calls.filter(call => call === 'attemptLogin').length, 2);
 });
 
+test('a live subscription that cannot start reports its end', async () => {
+  const { driver } = open(signedIn({ session: { error: 'session refused' } }));
+  const events = [];
+  let ended = null;
+  const stop = driver.live(
+    event => events.push(event),
+    error => { ended = error; },
+  );
+  await new Promise(resolve => setTimeout(resolve, 20));
+  stop();
+  assert.equal(events.length, 0);
+  assert.match(String(ended?.message ?? ended), /session refused/);
+});
+
+test('a rejected password starts a new attempt instead of staying failed', async () => {
+  const { driver, fixture } = open({
+    login: {
+      attempts: [
+        { authenticated: false, error: 'invalid_password' },
+        { authenticated: true, account_id: '7788', user_id: '7788' },
+      ],
+    },
+    profile: { user_id: '7788', nickname: 'Me' },
+    chats: [],
+  });
+  await driver.beginSignIn();
+  await driver.answer('email', 'person@example.test');
+  assert.deepEqual(await driver.answer('password', 'typo'), { state: 'failing' });
+  assert.equal(await driver.signInState(), 'failing');
+
+  // The person corrects the password: a new begin offers the prompt again.
+  const again = await driver.beginSignIn();
+  assert.deepEqual(again.prompt, { key: 'email', kind: 'text', text: 'KakaoTalk email' });
+  await driver.answer('email', 'person@example.test');
+  const step = await driver.answer('password', 'synthetic-password');
+  assert.deepEqual(step, { state: 'signed_in' });
+  assert.equal(fixture.calls.filter(call => call === 'attemptLogin').length, 2);
+});
+
 test('a stored session the platform rejects asks for sign-in instead of failing', async () => {
   const { driver } = open(signedIn({ expire: true }));
   assert.equal(await driver.signInState(), 'needs_sign_in');

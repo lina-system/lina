@@ -11,6 +11,7 @@
 //	{
 //	  "accounts": { "<account id>": <credentials> },  // stored session
 //	  "expire": true,                                  // stored token rejected
+//	  "session": { "error": "..." },                    // live session refused
 //	  "login": { "attempts": [<login result>], "passcode": "4821",
 //             "registration": { "delayMs": 0, "error": null } },
 //	  "profile": { "user_id": "...", "nickname": "..." },
@@ -26,6 +27,8 @@ import type { KakaoSDK } from './src/kakaotalk.ts';
 export type Recorded = {
   accounts?: Record<string, RecordedAccount>;
   expire?: boolean;
+  // session: an injected failure of acquireSession, for the live path.
+  session?: { error?: string };
   login?: { attempts?: RecordedLogin[]; passcode?: string; registration?: { error?: string; delayMs?: number } };
   profile?: { user_id: string; nickname: string };
   chats?: RecordedChat[];
@@ -147,6 +150,7 @@ export function fixtureSDK(script: Recorded, configDir: string): Fixture {
     }
     async acquireSession() {
       calls.push('acquireSession');
+      if (script.session?.error) throw new Error(script.session.error);
       return {};
     }
     async getChats() {

@@ -306,7 +306,10 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
         // A stored session the platform rejected asks for sign-in again.
       }
       if (signedIn) return { state: 'signed_in' };
-      if (failure !== '' && failure !== 'needs_sign_in') return { state: 'failing' };
+      // A begin is an explicit request for a sign-in step, so a rejected
+      // password or a lost session starts over rather than staying failed: the
+      // person corrects the value instead of restarting the add-on.
+      failure = '';
       if (confirming) {
         // The phone confirmation is still in flight; show the same code.
         return { state: 'needs_sign_in', show: { kind: 'code', value: shown } };
@@ -389,13 +392,15 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
       return { id: String(profile.user_id), name: profile.nickname ?? '' };
     },
 
-    live(deliver: (event: LiveEvent) => void): () => void {
+    // A subscription that cannot start is reported rather than dropped: Core
+    // retries it on its own schedule, and a lost session asks for sign-in.
+    live(deliver: (event: LiveEvent) => void, ended: (error: unknown) => void): () => void {
       void (async () => {
         try {
           const live = await requireClient();
           await live.acquireSession();
-        } catch {
-          // The source's sign-in state reports the cause; no push arrives.
+        } catch (error) {
+          ended(error);
         }
       })();
       return client.onPush(packet => {
