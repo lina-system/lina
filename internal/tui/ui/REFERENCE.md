@@ -80,3 +80,17 @@ Read before implementing #452; no upstream code is copied.
   not claims of identical upstream behaviour. Esc retains LINA's turn interrupt.
 - **Unknown:** the issue author's reference revision, upstream terminal repeat
   handling, restoration and hint expiry. Upstream was read, not executed.
+
+## Work panel stages (#770)
+
+The stage view consumes Core's `stages` display data and keeps navigation refs
+separate. `work_stages.go` owns entry selection, folding and pager context;
+`work_steps.go` keeps a selected step and its live worker rows together while
+scrolling. Snapshot replacement preserves the card/stage/step selection by its
+refs and drops expansion when the entry closes. Old Core projections without
+step refs remain readable without guessing an identity from a name.
+
+`work_panel_stages_test.go` covers the stream projection, both widths and glyph
+sets, closed-entry disclosure, replacement, 82-step scrolling and step Details.
+The installed-state Core/PTY acceptance is `TestM3WorkPanelStages`, using the
+fixed work-panel corpus and its E6/E7 evaluators with real stub worker processes.

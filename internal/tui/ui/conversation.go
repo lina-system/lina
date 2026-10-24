@@ -21,6 +21,7 @@ type conversationView struct {
 	workOffset   int
 	workCompact  bool
 	workFilter   protocol.RunningState
+	workStages   workStageView
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
