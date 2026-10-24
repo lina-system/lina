@@ -12,6 +12,7 @@ import (
 )
 
 func TestNoticeTransferAcknowledgesOnlyDurableEnqueue(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		return answer(runs.Artifact{Body: "report", Done: true}), nil
 	})
@@ -51,6 +52,7 @@ func TestNoticeTransferAcknowledgesOnlyDurableEnqueue(t *testing.T) {
 	}
 }
 func TestNoticeGenerationChangesAtSameClockInstant(t *testing.T) {
+	t.Parallel()
 	ctx := t.Context()
 	var allowed atomic.Bool
 	var calls atomic.Int64

@@ -46,7 +46,15 @@ type Block struct {
 }
 
 // WorkCard carries Core's ordered display values, without deriving work state.
-type WorkSummary struct{ Cards []WorkCard }
+// Counts is Core's running count by line state; an older Core sends none.
+type WorkSummary struct {
+	Cards  []WorkCard
+	Counts *WorkCount
+}
+
+// WorkCount is the number of lines that are running and of lines waiting for
+// the person, as Core counted them.
+type WorkCount struct{ Running, Waiting int }
 
 type WorkCard struct {
 	ID, Name, Now     string

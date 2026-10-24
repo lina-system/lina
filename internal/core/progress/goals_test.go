@@ -67,7 +67,7 @@ func TestGoalLineCarriesNowStartAndStages(t *testing.T) {
 		t.Fatalf("goal units = %+v", units)
 	}
 	u := units[0]
-	if u.ID != "g" || u.Kind != "goal" || u.Name != "Prepare the trip" || !u.Active {
+	if u.ID != "g" || u.Kind != "project" || u.Name != "Prepare the trip" || !u.Active {
 		t.Fatalf("goal unit = %+v", u)
 	}
 	if !u.StartedAt.Equal(time.Unix(100, 0)) {
