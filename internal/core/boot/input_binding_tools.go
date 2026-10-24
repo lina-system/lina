@@ -3,7 +3,9 @@ package boot
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"strconv"
 	"strings"
 
@@ -13,7 +15,6 @@ import (
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
-	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reply"
 	"github.com/thisisjun786/lina/internal/core/waiting"
@@ -76,16 +77,7 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if err != nil {
 					return "", err
 				}
-				key, err := tool.Validate(clean)
-				if err != nil {
-					return "", err
-				}
-				// The newline barrier makes this call wait for bind_input on the
-				// same input. The remainder keeps this target's own order.
-				if key == "" {
-					key = c.ID
-				}
-				return "input-binding:" + s.input.ID + "\n" + key, nil
+				return tool.Validate(clean)
 			},
 			Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 				clean, ref, err := stripToolBinding(c)
@@ -109,12 +101,6 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				if createsBindingItem(clean.Name) {
 					root.inputCreationMu.Lock()
 					defer root.inputCreationMu.Unlock()
-				}
-				// A system turn can host person steering. Calls that stay on the
-				// system event keep their own path; a selected person input
-				// still passes the binding gate.
-				if input.SpeakerKind != guard.Person {
-					return tool.Execute(ctx, clean)
 				}
 				// Gate and bind before the original tool's own effect/authority path.
 				if result := r.bindWorkCall(ctx, input, ref.Request, s.turnID, clean); result != nil {
@@ -203,20 +189,55 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		result := bindingFailure(c.ID, errBindingPending)
 		return &result
 	}
-	// A reply that did not settle still has the parent's retained tie. A control
-	// action must ask before it uses the recommendation.
-	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") && input.Surface.ReplyTo != "" {
-		parent, err := r.currentInputChoices(ctx, ledger.Event{ID: input.Surface.ReplyTo})
+	// An unresolved reply keeps the referenced input's ambiguity. Without a
+	// reply reference, a no-rule follow-up keeps the previous input's targets.
+	// Naming a worker in a tool call must not silently choose between them.
+	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") {
+		var parent []binding.Choice
+		err := r.db.Read(ctx, func(tx *canon.Tx) error {
+			id := input.Surface.ReplyTo
+			action := bindingAction(c.Name)
+			if id == "" && choice.Decider == "no-rule" && (action == "stop" || action == "steer") {
+				_, _, previous, err := r.previousInputBinding(ctx, tx, input)
+				if errors.Is(err, sql.ErrNoRows) {
+					return nil
+				}
+				if err != nil {
+					return err
+				}
+				id = previous
+			}
+			if id == "" {
+				return nil
+			}
+			var err error
+			parent, err = readInputChoices(ctx, tx, ledger.Event{ID: id})
+			return err
+		})
 		if err != nil {
 			result := bindingFailure(c.ID, err)
 			return &result
 		}
+		var targets []binding.Target
+		seen := map[binding.Target]bool{}
 		for _, earlier := range parent {
-			if len(earlier.Tied) > 1 && earlier.Question == "" && !earlier.Cancelled {
-				choice.Tied = earlier.Tied
-				choice.Target = earlier.Tied[0]
-				break
+			if earlier.Question != "" || earlier.Cancelled {
+				continue
 			}
+			candidates := earlier.Tied
+			if len(candidates) == 0 {
+				candidates = []binding.Target{overlayChoiceTarget(binding.Target{}, []binding.Choice{earlier})}
+			}
+			for _, target := range candidates {
+				if (target.Class == "existing" || target.Class == "new") && !seen[target] {
+					targets = append(targets, target)
+					seen[target] = true
+				}
+			}
+		}
+		if len(targets) > 1 {
+			choice.Tied = targets
+			choice.Target = targets[0]
 		}
 	}
 	if _, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+c.ID); err == nil {
@@ -478,19 +499,9 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					return bindingFailure(c.ID, err)
 				}
 				var line any = map[string]string{"state": "unknown"}
-				// The binding check keeps the project record id. The progress
-				// line uses the bare goal id, so resolve that reference here.
-				progressID := a.ID
-				if ref, ok := goal.GoalID(a.ID); ok && ref != a.ID {
-					progressID = ref
-				} else if taskID, ok := workerFollowTask(a.ID); ok && taskID != a.ID {
-					if _, err := r.work.Get(ctx, taskID); err == nil {
-						progressID = taskID
-					}
-				}
 				if projection.Rows != nil {
 					for _, row := range *projection.Rows {
-						if row.Ref == progressID || row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
+						if row.Ref == a.ID || row.Ref == "run:"+a.ID || row.Ref == "task:"+a.ID || row.Ref == "record:"+a.ID {
 							line = row.Line
 							break
 						}
