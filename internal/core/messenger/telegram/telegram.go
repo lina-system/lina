@@ -319,6 +319,13 @@ func codeOf(sent *tg.AuthSentCode) Code {
 	return code
 }
 
+// inaccessible reports a refusal that lasts until the account can read the
+// channel again: it left or was banned, or the channel became private or was
+// deleted.
+func inaccessible(err error) bool {
+	return tgerr.Is(err, "CHANNEL_PRIVATE", "CHANNEL_INVALID", "CHANNEL_PUBLIC_GROUP_NA", "USER_BANNED_IN_CHANNEL")
+}
+
 // retry honours the platform's FLOOD_WAIT before repeating the same request.
 func (a *Adapter) retry(ctx context.Context, call func() error) error {
 	for attempt := 0; ; attempt++ {
@@ -450,9 +457,13 @@ func (a *Adapter) Page(ctx context.Context, source messenger.SourceID, chat stri
 	if err != nil {
 		return messenger.Page{}, err
 	}
+	if _, ok := parseChat(chat); !ok {
+		return messenger.Page{}, ErrInvalid
+	}
 	peer, ok := a.inputPeer(chat)
 	if !ok {
-		return messenger.Page{}, ErrInvalid
+		// The dialog listing that precedes every read no longer has this chat.
+		return messenger.Page{}, messenger.ErrChatUnavailable
 	}
 	pos := decode(string(cursor))
 	offset := 0
@@ -469,6 +480,9 @@ func (a *Adapter) Page(ctx context.Context, source messenger.SourceID, chat stri
 		})
 		return callErr
 	})
+	if inaccessible(err) {
+		return messenger.Page{}, errors.Join(messenger.ErrChatUnavailable, err)
+	}
 	if err != nil {
 		return messenger.Page{}, err
 	}
@@ -758,8 +772,10 @@ func (a *Adapter) publish(event messenger.Event) error {
 	return nil
 }
 
-// FetchAttachment reads one attachment on the person's request.
-func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID, chat, attachment string) (io.ReadCloser, error) {
+// FetchAttachment reads one attachment on the person's request. A location
+// this adapter has not seen, as after a restart, is read again from the
+// message the attachment came with.
+func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID, chat, message, attachment string) (io.ReadCloser, error) {
 	if source.Platform != Platform || source.Account != a.cfg.Account {
 		return nil, ErrInvalid
 	}
@@ -772,7 +788,9 @@ func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID
 	location, ok := a.attachments[attachment]
 	a.mu.Unlock()
 	if !ok {
-		return nil, ErrAttachmentUnknown
+		if location, err = a.refetchAttachment(ctx, client.API(), chat, message, attachment); err != nil {
+			return nil, err
+		}
 	}
 	reader, writer := io.Pipe()
 	go func() {
@@ -780,6 +798,67 @@ func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID
 		_ = writer.CloseWithError(err)
 	}()
 	return reader, nil
+}
+
+// refetchAttachment reads one message of chat again and returns the location
+// of the named attachment when that message still carries it.
+func (a *Adapter) refetchAttachment(ctx context.Context, api *tg.Client, chat, message, attachment string) (tg.InputFileLocationClass, error) {
+	key, ok := parseChat(chat)
+	if !ok {
+		return nil, ErrInvalid
+	}
+	id, err := strconv.Atoi(message)
+	if err != nil || id <= 0 {
+		return nil, ErrAttachmentUnknown
+	}
+	ids := []tg.InputMessageClass{&tg.InputMessageID{ID: id}}
+	var response tg.MessagesMessagesClass
+	call := func() error {
+		var callErr error
+		response, callErr = api.MessagesGetMessages(ctx, ids)
+		return callErr
+	}
+	if key.kind == "channel" {
+		// A channel numbers its messages on its own, so the read names it.
+		a.mu.Lock()
+		channel := a.channels[key.id]
+		a.mu.Unlock()
+		if channel == nil {
+			return nil, messenger.ErrChatUnavailable
+		}
+		call = func() error {
+			var callErr error
+			response, callErr = api.ChannelsGetMessages(ctx, &tg.ChannelsGetMessagesRequest{
+				Channel: &tg.InputChannel{ChannelID: channel.ID, AccessHash: channel.AccessHash}, ID: ids,
+			})
+			return callErr
+		}
+	}
+	if err := a.retry(ctx, call); err != nil {
+		if inaccessible(err) {
+			return nil, errors.Join(messenger.ErrChatUnavailable, err)
+		}
+		return nil, err
+	}
+	raw, err := a.history(response)
+	if err != nil {
+		return nil, err
+	}
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, item := range raw {
+		if item.ID != id {
+			continue
+		}
+		if peer, _, _, known := a.chatLocked(item.PeerID); known && peer == chat {
+			a.attachmentsLocked(item)
+		}
+	}
+	location, ok := a.attachments[attachment]
+	if !ok {
+		return nil, ErrAttachmentUnknown
+	}
+	return location, nil
 }
 
 // Capabilities describes this source. Writes arrive with the write-grant

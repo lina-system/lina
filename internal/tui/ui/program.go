@@ -24,6 +24,11 @@ import (
 // concrete conversation/results subscriptions after welcome.
 var shellCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "telegram_source", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}, {Name: "work", Version: "1.0"}}
 
+// ShellCapabilities returns the offers the shell sends in its hello. A peer
+// that scripts the handshake, such as the e2e fake Core, must read this list
+// instead of copying it, so a new offer cannot desynchronize the two sides.
+func ShellCapabilities() []protocol.Capability { return slices.Clone(shellCapabilities) }
+
 // shellClient is the request surface used by the shell and its sessions.
 // Transport negotiation and validated receives remain in clientapi.
 type shellClient interface {

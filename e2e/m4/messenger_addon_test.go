@@ -300,7 +300,7 @@ func (*otherSource) Members(context.Context, messenger.SourceID, string) ([]mess
 func (*otherSource) Live(context.Context, messenger.SourceID, func(messenger.Event) error) error {
 	return nil
 }
-func (*otherSource) FetchAttachment(context.Context, messenger.SourceID, string, string) (io.ReadCloser, error) {
+func (*otherSource) FetchAttachment(context.Context, messenger.SourceID, string, string, string) (io.ReadCloser, error) {
 	return nil, errors.New("no attachments")
 }
 func (*otherSource) Capabilities() messenger.Capabilities {
