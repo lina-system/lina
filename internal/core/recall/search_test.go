@@ -321,3 +321,24 @@ func TestSearchVectorsFuseIntoTheRankedList(t *testing.T) {
 		t.Fatalf("fusion: %+v %v", hits, err)
 	}
 }
+
+func TestSearchMasksExplicitSecretSpans(t *testing.T) {
+	for _, indexed := range []bool{false, true} {
+		t.Run(map[bool]string{false: "pending", true: "indexed"}[indexed], func(t *testing.T) {
+			db := database(t)
+			const body = "도서관 비공개문구 다음 일정"
+			write(t, db, eventSQL, "flagged-source", body)
+			write(t, db, "INSERT INTO ev_span VALUES('flagged-source',?,?,'secret')", len("도서관 "), len("도서관 비공개문구"))
+			if indexed {
+				drain(t, db)
+			}
+			results, err := recall.Search(t.Context(), db, nil, recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}}, recall.Query{Text: "도서관"})
+			if err != nil || len(results) != 1 {
+				t.Fatalf("search: count=%d error=%v", len(results), err)
+			}
+			if strings.Contains(results[0].Excerpt, "비공개문구") || !strings.Contains(results[0].Excerpt, "다음 일정") {
+				t.Fatal("explicit secret span was not masked independently of surrounding text")
+			}
+		})
+	}
+}

@@ -72,3 +72,9 @@ ranking, identical-text collapse, lineage, scope and visibility classes,
 retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.
+
+Inline event excerpts apply the canonical `ev_span` secret flags before returning
+text, for both pending and indexed sources. Material-backed events keep the
+canonical reader's already-masked text; source-byte spans are not applied again
+to that derived representation. `TestSearchMasksExplicitSecretSpans` covers a
+synthetic secret that shape-based detection alone cannot recognize.
