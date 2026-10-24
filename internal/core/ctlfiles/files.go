@@ -260,6 +260,11 @@ func namesInode(name string, opened os.FileInfo, lstat func(string) (os.FileInfo
 	if err != nil {
 		return false, err
 	}
+	// Lookup can resolve the entry, then the rename can unlink it before
+	// Lstat copies the metadata. That snapshot is a replacement, not a link.
+	if unlinked(current) {
+		return false, nil
+	}
 	if err := private(current, false); err != nil {
 		return false, err
 	}

@@ -79,6 +79,24 @@ func TestReadDuringAtomicReplacement(t *testing.T) {
 			},
 		},
 		{
+			name: "entry-observed-unlinked",
+			want: "new",
+			entry: func(t *testing.T, root *os.Root, path, name string, _ os.FileInfo, attempt int) (os.FileInfo, error) {
+				if attempt == 1 {
+					file, err := root.Open(name)
+					if err != nil {
+						t.Fatal(err)
+					}
+					defer file.Close()
+					publishPrivate(t, root, name)
+					// Lstat resolved the entry, then the rename unlinked it
+					// before the metadata copy.
+					return file.Stat()
+				}
+				return root.Lstat(name)
+			},
+		},
+		{
 			name: "replaced-by-public",
 			publish: func(t *testing.T, root *os.Root, path, name string, attempt int) {
 				if attempt == 1 {
