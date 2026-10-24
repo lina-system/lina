@@ -300,10 +300,10 @@ func TestAttachmentBytesStayUntilAsked(t *testing.T) {
 	if attachment.ID != "document:99" || attachment.Name != "notes.txt" || attachment.MIMEType != "text/plain" || attachment.Size != 4 {
 		t.Fatalf("attachment = %+v", attachment)
 	}
-	if _, err := adapter.FetchAttachment(t.Context(), sourceID, "user:2002", "document:404"); !errors.Is(err, telegram.ErrAttachmentUnknown) {
+	if _, err := adapter.FetchAttachment(t.Context(), sourceID, "user:2002", "", "document:404"); !errors.Is(err, telegram.ErrAttachmentUnknown) {
 		t.Fatalf("unknown attachment error = %v", err)
 	}
-	reader, err := adapter.FetchAttachment(t.Context(), sourceID, "user:2002", attachment.ID)
+	reader, err := adapter.FetchAttachment(t.Context(), sourceID, "user:2002", last.ID, attachment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
