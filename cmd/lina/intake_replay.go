@@ -12,16 +12,28 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/intakereplay"
+	"github.com/thisisjun786/lina/internal/core/modelpath"
 )
 
 func runIntakeReplay(args []string) int {
 	var routers []string
+	var route *modelpath.Config
+	if len(args) > 0 && args[0] == "--model" {
+		var err error
+		route, err = modelpath.FromEnv(os.Getenv)
+		if err != nil || route == nil {
+			fmt.Fprintln(os.Stderr, "intake replay requires an explicit model route")
+			return 64
+		}
+		routers = []string{"core-model"}
+		args = args[1:]
+	}
 	if len(args) > 0 && args[0] == "--core" {
 		routers = []string{"core-rules"}
 		args = args[1:]
 	}
 	if len(args) != 1 || args[0] == "--help" || args[0] == "-h" {
-		fmt.Fprintln(os.Stderr, "usage: lina intake-replay [--core] <cases.jsonl>")
+		fmt.Fprintln(os.Stderr, "usage: lina intake-replay [--core|--model] <cases.jsonl>")
 		if len(args) == 1 {
 			return 0
 		}
@@ -30,8 +42,15 @@ func runIntakeReplay(args []string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	report := intakereplay.File(ctx, args[0], func(ctx context.Context, c intakereplay.Case, router string) ([]intakereplay.Binding, error) {
-		deadline, stop := context.WithTimeout(ctx, 30*time.Second)
+		limit := 30 * time.Second
+		if route != nil {
+			limit = 2 * time.Minute
+		}
+		deadline, stop := context.WithTimeout(ctx, limit)
 		defer stop()
+		if route != nil {
+			return boot.ReplayIntakeModelCase(deadline, c, route)
+		}
 		return boot.ReplayIntakeCase(deadline, c, router)
 	}, routers...)
 	encoder := json.NewEncoder(os.Stdout)

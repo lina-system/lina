@@ -4,11 +4,39 @@ package intakereplay
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"reflect"
 	"strings"
 	"testing"
 )
+
+func TestRuntimeExclusionReasons(t *testing.T) {
+	raw, err := os.ReadFile("testdata/synthetic.jsonl")
+	if err != nil {
+		t.Fatal(err)
+	}
+	first := strings.Split(string(raw), "\n")[0]
+	for _, tc := range []struct {
+		err    error
+		reason string
+	}{
+		{context.DeadlineExceeded, "runtime_timeout"},
+		{context.Canceled, "runtime_cancelled"},
+		{errors.Join(ErrModelReplay, ErrModelRoundLimit), "runtime_model_round_limit"},
+		{errors.Join(ErrModelReplay, errors.New("untrusted provider detail")), "runtime_model_failure"},
+		{errors.New("untrusted runtime detail"), "runtime_error"},
+	} {
+		report := Run(t.Context(), strings.NewReader(first), func(context.Context, Case, string) ([]Binding, error) { return nil, tc.err }, "core-model")
+		if report.Scored != 0 || report.ExclusionReasons[tc.reason] != 1 {
+			t.Fatalf("lost exclusion reason: %+v", report.ExclusionReasons)
+		}
+		raw, _ := json.Marshal(report)
+		if strings.Contains(string(raw), "untrusted") {
+			t.Fatal("raw error leaked into report")
+		}
+	}
+}
 
 func TestSyntheticScores(t *testing.T) {
 	f, err := os.Open("testdata/synthetic.jsonl")
