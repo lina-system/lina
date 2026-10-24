@@ -587,37 +587,16 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 					if err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Denied}
 					}
+					// A session kept after restart still names a task card, but
+					// its worker is not registered. Sending that card to the
+					// live path drops the follow-up. Keep the offline mailbox.
+					if session, ok := strings.CutPrefix(a.ID, "session:"); ok && !r.workerSessionLive(session) {
+						return r.followSubmitted(ctx, preparation, turnID, c.ID, a.ID, a.Text)
+					}
 					if _, err := r.work.Get(ctx, taskID); err == nil {
 						return r.followWorkerTask(ctx, event, turnID, c.ID, taskID, a.Text)
 					}
-					var source json.RawMessage
-					if r.channelBinding != nil {
-						var e gateway.Inbound
-						if preparation == nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						receiptID, err := r.channelReceiptEventID(ctx, preparation.event)
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						err = r.db.Read(ctx, func(tx *canon.Tx) error {
-							var raw []byte
-							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
-							if err != nil {
-								return err
-							}
-							return json.Unmarshal(raw, &e)
-						})
-						if err != nil {
-							return loop.Result{ID: c.ID, Code: loop.Denied}
-						}
-						source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
-					}
-					_, err = r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + c.ID, Payload: protocol.FollowUp{RunID: taskID, Text: a.Text}}, source)
-					if err != nil {
-						return loop.Result{ID: c.ID, Code: loop.Denied}
-					}
-					return loop.Result{ID: c.ID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
+					return r.followSubmitted(ctx, preparation, turnID, c.ID, taskID, a.Text)
 				}
 				projection, err := r.ownerSnapshot(ctx)
 				if err != nil {
@@ -665,6 +644,50 @@ func workerFollowTask(id string) (string, bool) {
 		return raw, raw != ""
 	}
 	return id, id != ""
+}
+
+func (r *conversationRuntime) workerSessionLive(session string) bool {
+	if r.workers == nil || session == "" {
+		return false
+	}
+	r.workers.mu.Lock()
+	defer r.workers.mu.Unlock()
+	_, ok := r.workers.sessions[session]
+	return ok
+}
+
+// followSubmitted stores a follow-up through the scoped run controls. A
+// session reference reaches the worker mailbox, including one retained only
+// in recovery after restart.
+func (r *conversationRuntime) followSubmitted(ctx context.Context, preparation *toolPreparation, turnID, callID, runID, text string) loop.Result {
+	var source json.RawMessage
+	if r.channelBinding != nil {
+		var e gateway.Inbound
+		if preparation == nil {
+			return loop.Result{ID: callID, Code: loop.Denied}
+		}
+		receiptID, err := r.channelReceiptEventID(ctx, preparation.event)
+		if err != nil {
+			return loop.Result{ID: callID, Code: loop.Denied}
+		}
+		err = r.db.Read(ctx, func(tx *canon.Tx) error {
+			var raw []byte
+			err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
+			if err != nil {
+				return err
+			}
+			return json.Unmarshal(raw, &e)
+		})
+		if err != nil {
+			return loop.Result{ID: callID, Code: loop.Denied}
+		}
+		source, _ = json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: e.Sender, Direct: e.Direct, Addressed: e.Addressed})
+	}
+	_, err := r.followRunWithSource(ctx, clientsrv.Session{PersonID: r.person, Epoch: r.epoch}, protocol.Envelope{MessageID: "binding-follow:" + turnID + ":" + callID, Payload: protocol.FollowUp{RunID: runID, Text: text}}, source)
+	if err != nil {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
+	return loop.Result{ID: callID, Code: loop.OK, Output: json.RawMessage(`{"state":"submitted"}`)}
 }
 
 // followWorkerTask delivers a model follow-up as an agent message. The
