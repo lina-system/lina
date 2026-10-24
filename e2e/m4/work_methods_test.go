@@ -359,7 +359,12 @@ UNION ALL SELECT 'failure', id, cast(body AS TEXT) FROM conv_event WHERE convers
 	mu.Lock()
 	defer mu.Unlock()
 	if !reflect.DeepEqual(catalogs["lina"], catalogs["dev"]) || len(catalogs["dev"]) == 0 {
-		t.Error("tool reachability differs by agent")
+		t.Errorf("tool reachability differs by agent: lina=%v dev=%v", catalogs["lina"], catalogs["dev"])
+	}
+	for _, key := range []string{"lina", "dev"} {
+		if !slices.Contains(catalogs[key], "mini_app") {
+			t.Errorf("%s cannot reach the shared mini app runtime", key)
+		}
 	}
 	if rounds["lina"] != 4 || rounds["dev"] != 4 {
 		t.Errorf("rounds=%v", rounds)
