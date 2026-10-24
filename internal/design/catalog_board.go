@@ -20,6 +20,12 @@ func init() {
 		"work.expand":     {"Expand", "펼치기"},
 		"work.stages":     {"Stages", "단계"},
 		"work.details":    {"Details", "자세히"},
+		"work.move":       {"Move", "순서"},
+		"work.pause":      {"Pause", "일시정지"},
+		"work.stop":       {"Stop", "중단"},
+		"work.limit":      {"Limit %d", "한도 %d"},
+		// The card's second row asks before a stop.
+		"work.stop_confirm": {"Stop? Enter to confirm", "중단할까요? Enter 확인"},
 
 		"work.filter.needs_input": {"Needs you", "확인 필요"},
 		"work.filter.in_progress": {"Running", "진행 중"},
