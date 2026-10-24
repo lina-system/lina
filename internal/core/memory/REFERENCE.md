@@ -129,7 +129,13 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   switch, the chat switch and a `never-leaves` chat narrow it further.
 - A source or chat with learning off is not read: its cursor passes the records
   that arrived in that window, so turning learning back on does not learn them
-  late. A `never-leaves` chat is skipped the same way.
+  late. `messenger_learning_skip` states that window when the switch moves, so a
+  switch that returns before the next scan still excludes it. A `never-leaves`
+  chat is skipped and states the same interval.
+- Material-backed bodies are loaded before preparation takes its read
+  transaction (`MessengerEvidenceCandidates` plus the writer's preload), because
+  canon serves one reader and a material read inside the transaction would wait
+  on the connection it holds. Core's `readMessengerEvidence` does this.
 - A burst is consecutive records in one chat within the configurable window.
   Up to three earlier visible records of that chat travel as `Context`; their
   ids are not in the allowed evidence set.
@@ -137,8 +143,9 @@ per-agent conversation job. It has its own budget, cadence and adoption record
   one agent holds (shared history, relationship, emotion observation) are
   refused, as are non-stated bases and a nonempty holder, scope or source agent.
 - `ApplyMessengerExtraction` rechecks the epoch, every prepared record, the
-  chat switch and scope, the source watermark and cursor, and that each
-  prepared record is still the live record of its message, before writing. A
+  chat switch and scope, the source watermark and cursor, that each prepared
+  record is still the live record of its message, and that no learning switch
+  has excluded it since preparation, before writing. A
   source that supplied no utterance may be learning-off; it only contributes
   skip progress. It commits the items and the scanned source cursors together.
   An obsolete batch is consumed without writing or advancing cursors.

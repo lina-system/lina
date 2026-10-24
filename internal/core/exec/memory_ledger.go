@@ -164,13 +164,6 @@ func PrepareMemoryEvidence(ctx context.Context, db *canon.Store, materials ledge
 	}, nil
 }
 
-// ReadOrigin resolves one event inside a read transaction with the read-only
-// materials store. Background preparation uses it; a writer preloads bodies
-// with PrepareMemoryEvidence instead.
-func ReadOrigin(ctx context.Context, tx *canon.Tx, materials ledger.Materials, id, person string) (memory.Origin, error) {
-	return originFromEvent(ctx, ledger.New(transactionReader{tx}, materials), id, person)
-}
-
 func originFromEvent(ctx context.Context, events *ledger.Store, id, fallback string) (memory.Origin, error) {
 	event, err := canonicalEvent(ctx, events, id, nil)
 	if err != nil {

@@ -30,13 +30,16 @@ type MessengerMessage struct {
 
 // MessengerUtterance is one burst of the person's records in one chat.
 type MessengerUtterance struct {
-	Platform string             `json:"platform"`
-	Account  string             `json:"account"`
-	Chat     string             `json:"chat"`
-	Scope    Scope              `json:"scope"`
-	Text     string             `json:"text"`
-	Events   []Evidence         `json:"events"`
-	Context  []MessengerMessage `json:"context,omitempty"`
+	Platform string `json:"platform"`
+	Account  string `json:"account"`
+	Chat     string `json:"chat"`
+	Scope    Scope  `json:"scope"`
+	// From is the chat's excluded-through position at preparation. Apply
+	// rebuilds the batch when the chat's switch moved it since.
+	From    int64              `json:"from,omitempty"`
+	Text    string             `json:"text"`
+	Events  []Evidence         `json:"events"`
+	Context []MessengerMessage `json:"context,omitempty"`
 }
 
 // MessengerSourceProgress is one source's committed ledger position and its
@@ -58,6 +61,44 @@ type MessengerBatch struct {
 	Revocation int64                     `json:"revocation"`
 	Sources    []MessengerSourceProgress `json:"sources"`
 	Utterances []MessengerUtterance      `json:"utterances"`
+}
+
+// MessengerEvidenceCandidates lists this person's live messenger records whose
+// bodies are material-backed. Preparation resolves quotes inside one read
+// transaction, and canon serves a single reader, so a material read there would
+// wait on the connection the transaction holds. A caller loads these first.
+func (s *Store) MessengerEvidenceCandidates(ctx context.Context, person string) ([]Evidence, error) {
+	if s == nil || s.db == nil || !present(person) {
+		return nil, ErrInvalid
+	}
+	var ids []string
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT e.id FROM messenger_record m
+JOIN conv_event e ON e.id=m.event
+JOIN messenger_source s ON s.platform=m.platform AND s.account=m.account
+WHERE s.person=? AND m.state='live' AND e.material_id IS NOT NULL
+ORDER BY e.rowid`, person)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return nil, err
+	}
+	refs := make([]Evidence, 0, len(ids))
+	for _, id := range ids {
+		refs = append(refs, Evidence{Kind: Event, ID: id, Precision: Exact})
+	}
+	return refs, nil
 }
 
 func messengerHolder(platform, account string) string {
@@ -162,6 +203,9 @@ WHERE m.platform=? AND m.account=? AND m.state='live' AND e.rowid>?
  AND json_extract(e.origin,'$.kind')='messenger' AND e.speaker_kind='person' AND coalesce(e.person_id,'')=?
  AND c.learn=1 AND c.scope<>?
  AND (CASE WHEN ? THEN julianday(e.occurred_at)>julianday(?) ELSE julianday(e.occurred_at)>=julianday(?) END)
+ AND NOT EXISTS(SELECT 1 FROM messenger_learning_skip k
+  WHERE k.platform=m.platform AND k.account=m.account AND (k.chat='' OR k.chat=m.chat)
+   AND e.rowid>k.from_rowid AND (k.to_rowid=0 OR e.rowid<=k.to_rowid))
  AND EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id)
  AND e.replay_of IS NULL AND NOT EXISTS(SELECT 1 FROM ev_rel r WHERE r.event_id=e.id AND r.kind='view_of')
 ORDER BY e.rowid LIMIT ?`, source.platform, source.account, source.after, person, string(NeverLeaves), source.exclusive, floorText, floorText, limit)
@@ -169,9 +213,8 @@ ORDER BY e.rowid LIMIT ?`, source.platform, source.account, source.after, person
 				return fmt.Errorf("messenger records %s/%s: %w", source.platform, source.account, err)
 			}
 			type row struct {
-				sequence int64
-				id, chat string
-				scope    string
+				sequence        int64
+				id, chat, scope string
 			}
 			var scanned []row
 			for rows.Next() {
@@ -279,7 +322,8 @@ WHERE m.platform=? AND m.account=? AND m.state='live' AND e.rowid>? AND json_ext
 }
 
 // messengerContext reads at most limit earlier records of one chat as untrusted
-// context. They are visible, canonical and not excluded by retraction.
+// context. They are visible, canonical, not excluded by retraction and not in
+// an interval a learning switch excluded.
 func (s *Store) messengerContext(ctx context.Context, tx *canon.Tx, platform, account, chat string, before int64, limit int, blocked map[string]bool, resolve ResolveEvidence) ([]MessengerMessage, error) {
 	if limit == 0 {
 		return nil, nil
@@ -290,6 +334,9 @@ func (s *Store) messengerContext(ctx context.Context, tx *canon.Tx, platform, ac
 FROM messenger_record m JOIN conv_event e ON e.id=m.event
 WHERE m.platform=? AND m.account=? AND m.chat=? AND m.state='live' AND e.rowid<?
  AND json_extract(e.origin,'$.kind')='messenger'
+ AND NOT EXISTS(SELECT 1 FROM messenger_learning_skip k
+  WHERE k.platform=m.platform AND k.account=m.account AND (k.chat='' OR k.chat=m.chat)
+   AND e.rowid>k.from_rowid AND (k.to_rowid=0 OR e.rowid<=k.to_rowid))
 ORDER BY e.occurred_at DESC,e.rowid DESC LIMIT ?`, platform, account, chat, before, limit)
 	if err != nil {
 		return nil, err
@@ -489,8 +536,13 @@ FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batc
 			// An edit replaces the record's event and leaves the old revision
 			// visible. A prepared event that is no longer the live record was
 			// superseded after preparation, so the batch rebuilds from the edit.
+			// A learning switch that went off since preparation excludes it too.
 			var current int
-			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM messenger_record WHERE event=? AND state='live'", ref.ID).Scan(&current); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM messenger_record m JOIN conv_event e ON e.id=m.event
+WHERE e.id=? AND m.state='live'
+ AND NOT EXISTS(SELECT 1 FROM messenger_learning_skip k
+  WHERE k.platform=m.platform AND k.account=m.account AND (k.chat='' OR k.chat=m.chat)
+   AND e.rowid>k.from_rowid AND (k.to_rowid=0 OR e.rowid<=k.to_rowid))`, ref.ID).Scan(&current); err != nil {
 				return err
 			}
 			if current != 1 {
@@ -526,7 +578,12 @@ FROM messenger_source s WHERE s.person=? AND s.platform=? AND s.account=?`, batc
 				return ErrJobConflict
 			}
 			var visible int
-			if err := tx.QueryRowContext(ctx, "SELECT count(*) FROM retract_visible_event WHERE id=?", message.ID).Scan(&visible); err != nil {
+			if err := tx.QueryRowContext(ctx, `SELECT count(*) FROM messenger_record m JOIN conv_event e ON e.id=m.event
+WHERE e.id=? AND m.state='live'
+ AND NOT EXISTS(SELECT 1 FROM messenger_learning_skip k
+  WHERE k.platform=m.platform AND k.account=m.account AND (k.chat='' OR k.chat=m.chat)
+   AND e.rowid>k.from_rowid AND (k.to_rowid=0 OR e.rowid<=k.to_rowid))
+ AND EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id)`, message.ID).Scan(&visible); err != nil {
 				return err
 			}
 			if visible != 1 {

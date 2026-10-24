@@ -377,6 +377,45 @@ func TestMessengerExtractionRebuildsOnEditedRecord(t *testing.T) {
 	}
 }
 
+// Turning a source's learning off states the excluded interval in the same
+// transaction, so a record that arrives while it is off is not learned when the
+// person turns it back on before the next scan.
+func TestMessengerExtractionSourceSwitchExcludesItsInterval(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	if err := store.SetSourceLearn(t.Context(), messengerTestPerson, source.Platform, source.Account, false); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, store, source,
+		messengerMessage("off", messenger.RoutePerson, start.Add(time.Minute), "I live on Mars."),
+	)
+	if err := store.SetSourceLearn(t.Context(), messengerTestPerson, source.Platform, source.Account, true); err != nil {
+		t.Fatal(err)
+	}
+	if batch := prepareMessenger(t, db); len(batch.Utterances) != 0 {
+		t.Fatalf("record from the disabled interval was read: %+v", batch.Utterances)
+	}
+}
+
+// The chat switch states the same interval for that chat, so re-enabling it
+// does not learn the window it covered.
+func TestMessengerExtractionChatSwitchExcludesItsInterval(t *testing.T) {
+	db, store, source, start := messengerRecords(t)
+	off := messenger.Switches{Sync: true, Learn: false, Embed: true}
+	if err := store.SetSwitches(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm", off); err != nil {
+		t.Fatal(err)
+	}
+	admitMessages(t, store, source,
+		messengerMessage("off", messenger.RoutePerson, start.Add(time.Minute), "I live on Mars."),
+	)
+	if err := store.SetSwitches(t.Context(), messengerTestPerson, source.Platform, source.Account, "dm",
+		messenger.Switches{Sync: true, Learn: true, Embed: true}); err != nil {
+		t.Fatal(err)
+	}
+	if batch := prepareMessenger(t, db); len(batch.Utterances) != 0 {
+		t.Fatalf("record from the disabled interval was read: %+v", batch.Utterances)
+	}
+}
+
 // An import the person started with learning on moves the watermark back and
 // resets progress, so older history becomes input once.
 func TestMessengerExtractionImportWithLearning(t *testing.T) {

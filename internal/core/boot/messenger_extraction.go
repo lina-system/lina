@@ -124,7 +124,10 @@ func (r *conversationRuntime) queueMessengerExtraction(ctx context.Context) erro
 	if err != nil {
 		return err
 	}
-	resolve := r.readMessengerEvidence()
+	resolve, err := r.readMessengerEvidence(ctx)
+	if err != nil {
+		return err
+	}
 	for limit := messengerExtractionBatchLimit; limit >= 1; limit /= 2 {
 		batch, err := memory.New(r.db).PrepareMessengerExtraction(ctx, r.person, limit, messengerExtractionContextLimit, messengerExtractionWindow, resolve)
 		if err != nil {
@@ -142,12 +145,16 @@ func (r *conversationRuntime) queueMessengerExtraction(ctx context.Context) erro
 	return jobapi.ErrInvalid
 }
 
-// readMessengerEvidence resolves events inside the read transaction with the
-// read-only materials store, so preparation needs no ref list up front.
-func (r *conversationRuntime) readMessengerEvidence() memory.ResolveEvidence {
-	return func(ctx context.Context, tx *canon.Tx, ref memory.Evidence) (memory.Origin, error) {
-		return coreexec.ReadOrigin(ctx, tx, r.materials, ref.ID, r.person)
+// readMessengerEvidence loads material-backed bodies before preparation takes
+// its read transaction, then resolves prepared events from that cache inside
+// it. A material read opens its own canon transaction, and canon serves one
+// reader, so reading bytes inside preparation would wait on itself.
+func (r *conversationRuntime) readMessengerEvidence(ctx context.Context) (memory.ResolveEvidence, error) {
+	refs, err := memory.New(r.db).MessengerEvidenceCandidates(ctx, r.person)
+	if err != nil {
+		return nil, err
 	}
+	return coreexec.PrepareMemoryEvidence(ctx, r.db, r.materials, memory.Write{Person: r.person, Item: memory.Item{Evidence: refs}})
 }
 
 // messengerEvidence preloads every batch body before the writer takes the

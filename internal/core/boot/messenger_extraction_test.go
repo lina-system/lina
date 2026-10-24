@@ -11,6 +11,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/jobs"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/moirai/jobapi"
@@ -156,6 +157,31 @@ func TestMessengerExtractionInstalledPath(t *testing.T) {
 	}
 	if len(p.requests) != 1 {
 		t.Fatalf("repeat scan called the model: %d", len(p.requests))
+	}
+}
+
+// A person's message above the inline limit lives in material bytes. Its body
+// is read before preparation takes the canon read transaction, so a material
+// read cannot wait on the connection preparation holds.
+func TestMessengerExtractionReadsMaterialBackedRecord(t *testing.T) {
+	r, p, service, store, source, start := messengerExtractionFixture(t)
+	text := "I prefer jasmine tea. " + strings.Repeat("synthetic detail ", ledger.InlineBytes/8)
+	admitMessenger(t, store, source, messengerRecord("long", messenger.RoutePerson, start.Add(time.Minute), text))
+	ctx, cancel := context.WithTimeout(t.Context(), 60*time.Second)
+	defer cancel()
+	if err := r.queueMessengerExtraction(ctx); err != nil {
+		t.Fatalf("preparation: %v", err)
+	}
+	p.steps = []turnStep{{events: turnText("[]"), before: func(req provider.Request) {
+		if !strings.Contains(string(req.Items[1]), "synthetic detail") {
+			t.Fatal("material-backed record was not read")
+		}
+	}}}
+	if _, err := service.Aux(ctx, messengerDue(t, r, service)); err != nil {
+		t.Fatal(err)
+	}
+	if len(p.requests) != 1 {
+		t.Fatalf("calls=%d, want 1", len(p.requests))
 	}
 }
 

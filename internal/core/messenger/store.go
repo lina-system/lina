@@ -328,6 +328,15 @@ func (s *Store) SetSwitches(ctx context.Context, person, platform, account, chat
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		var was bool
+		err := tx.QueryRowContext(ctx, "SELECT learn FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
+			platform, account, chat).Scan(&was)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE messenger_chat SET sync=?,learn=?,embed=? WHERE platform=? AND account=? AND chat=?
 AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? AND o.person=?)`,
 			boolInt(switches.Sync), boolInt(switches.Learn), boolInt(switches.Embed), platform, account, chat, platform, account, person)
@@ -339,8 +348,41 @@ AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? A
 		} else if n == 0 {
 			return ErrNotFound
 		}
-		return nil
+		if was == switches.Learn {
+			return nil
+		}
+		// The switch states the interval it excludes in the same transaction,
+		// so a record from that window is not learned when the switch returns
+		// before the next scan.
+		return s.stateLearningInterval(ctx, tx, platform, account, chat, switches.Learn)
 	})
+}
+
+// learningMark is the newest ledger position a source has admitted.
+func learningMark(ctx context.Context, tx *canon.Tx, platform, account string) (int64, error) {
+	var mark int64
+	err := tx.QueryRowContext(ctx, `SELECT coalesce(max(e.rowid),0)
+FROM messenger_record m JOIN conv_event e ON e.id=m.event
+WHERE m.platform=? AND m.account=? AND m.state='live' AND json_extract(e.origin,'$.kind')='messenger'`,
+		platform, account).Scan(&mark)
+	return mark, err
+}
+
+// stateLearningInterval opens the excluded interval when a switch goes off and
+// closes it when the switch returns. chat="" covers a whole source.
+func (s *Store) stateLearningInterval(ctx context.Context, tx *canon.Tx, platform, account, chat string, learn bool) error {
+	mark, err := learningMark(ctx, tx, platform, account)
+	if err != nil {
+		return err
+	}
+	if learn {
+		_, err = tx.ExecContext(ctx, `UPDATE messenger_learning_skip SET to_rowid=?
+WHERE platform=? AND account=? AND chat=? AND to_rowid=0`, mark, platform, account, chat)
+		return err
+	}
+	_, err = tx.ExecContext(ctx, `INSERT INTO messenger_learning_skip(platform,account,chat,from_rowid) VALUES(?,?,?,?)
+ON CONFLICT(platform,account,chat,from_rowid) DO UPDATE SET to_rowid=0`, platform, account, chat, mark)
+	return err
 }
 
 // SetChatScope assigns a chat's sensitivity class. A never-leaves chat remains
@@ -351,6 +393,15 @@ func (s *Store) SetChatScope(ctx context.Context, person, platform, account, cha
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		var previous string
+		err := tx.QueryRowContext(ctx, "SELECT scope FROM messenger_chat WHERE platform=? AND account=? AND chat=?",
+			platform, account, chat).Scan(&previous)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, `UPDATE messenger_chat SET scope=? WHERE platform=? AND account=? AND chat=?
 AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? AND o.person=?)`,
 			scope, platform, account, chat, platform, account, person)
@@ -361,6 +412,14 @@ AND EXISTS(SELECT 1 FROM messenger_source o WHERE o.platform=? AND o.account=? A
 			return err
 		} else if n == 0 {
 			return ErrNotFound
+		}
+		// Entering never-leaves closes learning input for the interval it
+		// covers, the same way the learning switch does.
+		if entered := scope == ChatNeverLeaves && previous != ChatNeverLeaves; entered {
+			return s.stateLearningInterval(ctx, tx, platform, account, chat, false)
+		}
+		if left := previous == ChatNeverLeaves && scope != ChatNeverLeaves; left {
+			return s.stateLearningInterval(ctx, tx, platform, account, chat, true)
 		}
 		return nil
 	})
@@ -373,6 +432,15 @@ func (s *Store) SetSourceLearn(ctx context.Context, person, platform, account st
 		return ErrInvalid
 	}
 	return s.db.Write(ctx, func(tx *canon.Tx) error {
+		var was bool
+		err := tx.QueryRowContext(ctx, "SELECT learn FROM messenger_source WHERE person=? AND platform=? AND account=?",
+			person, platform, account).Scan(&was)
+		if errors.Is(err, sql.ErrNoRows) {
+			return ErrNotFound
+		}
+		if err != nil {
+			return err
+		}
 		result, err := tx.ExecContext(ctx, "UPDATE messenger_source SET learn=? WHERE person=? AND platform=? AND account=?",
 			boolInt(learn), person, platform, account)
 		if err != nil {
@@ -383,7 +451,10 @@ func (s *Store) SetSourceLearn(ctx context.Context, person, platform, account st
 		} else if n == 0 {
 			return ErrNotFound
 		}
-		return nil
+		if was == learn {
+			return nil
+		}
+		return s.stateLearningInterval(ctx, tx, platform, account, "", learn)
 	})
 }
 
