@@ -14,6 +14,7 @@ func testEntry() entry {
 }
 
 func TestRemovalJournalSurvivesReopen(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	j, err := openJournal(root)
 	if err != nil {
@@ -49,8 +50,10 @@ func TestRemovalJournalSurvivesReopen(t *testing.T) {
 }
 
 func TestRemovalJournalRefusesTornOrChangedRecords(t *testing.T) {
+	t.Parallel()
 	for _, damage := range []string{"torn", "changed", "duplicate", "unknown-field"} {
 		t.Run(damage, func(t *testing.T) {
+			t.Parallel()
 			root := t.TempDir()
 			j, err := openJournal(root)
 			if err != nil {
@@ -88,8 +91,10 @@ func TestRemovalJournalRefusesTornOrChangedRecords(t *testing.T) {
 }
 
 func TestRemovalJournalRejectsEscapingPaths(t *testing.T) {
+	t.Parallel()
 	for _, dir := range []bool{false, true} {
 		t.Run(map[bool]string{false: "file", true: "directory"}[dir], func(t *testing.T) {
+			t.Parallel()
 			root, outside := t.TempDir(), t.TempDir()
 			var path, target string
 			if dir {
@@ -116,6 +121,7 @@ func TestRemovalJournalRejectsEscapingPaths(t *testing.T) {
 }
 
 func TestRemovalJournalSyncFailureIsNotAcknowledged(t *testing.T) {
+	t.Parallel()
 	j, err := openJournal(t.TempDir())
 	if err != nil {
 		t.Fatal(err)

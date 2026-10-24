@@ -80,8 +80,10 @@ func visibleProtocol(t *testing.T, db *canon.Store) int {
 }
 
 func TestDurableIntentReplaysBeforeReads(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"after_sync", "after_apply"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			db, root := fixture(t)
 			seedProtocol(t, db)
 			s := protocolStore(t, db, root)
@@ -138,6 +140,7 @@ func TestDurableIntentReplaysBeforeReads(t *testing.T) {
 }
 
 func TestMissingOrTruncatedRemovalListRefusesReads(t *testing.T) {
+	t.Parallel()
 	db, root := fixture(t)
 	seedProtocol(t, db)
 	s := protocolStore(t, db, root)
@@ -156,6 +159,7 @@ func TestMissingOrTruncatedRemovalListRefusesReads(t *testing.T) {
 }
 
 func TestInvalidRemovalDoesNotCloseReads(t *testing.T) {
+	t.Parallel()
 	db, root := fixture(t)
 	seedProtocol(t, db)
 	s := protocolStore(t, db, root)
@@ -172,8 +176,10 @@ func TestInvalidRemovalDoesNotCloseReads(t *testing.T) {
 }
 
 func TestTrashRecoveryAndExpiryBoundaries(t *testing.T) {
+	t.Parallel()
 	for _, atBoundary := range []bool{false, true} {
 		t.Run(map[bool]string{false: "before_deadline", true: "at_deadline"}[atBoundary], func(t *testing.T) {
+			t.Parallel()
 			db, root := fixture(t)
 			seedProtocol(t, db)
 			s := protocolStore(t, db, root)
@@ -232,8 +238,10 @@ func TestTrashRecoveryAndExpiryBoundaries(t *testing.T) {
 }
 
 func TestJournalSyncPrecedesTombstoneAndFailureClosesAccess(t *testing.T) {
+	t.Parallel()
 	for _, failSync := range []bool{false, true} {
 		t.Run(map[bool]string{false: "synced", true: "sync_failed"}[failSync], func(t *testing.T) {
+			t.Parallel()
 			db, root := fixture(t)
 			seedProtocol(t, db)
 			s := protocolStore(t, db, root)

@@ -34,6 +34,9 @@ func prepare(launcher string, c Config, command Command) (proc.Command, func(), 
 (allow file-write-data (literal "/dev/null"))
 (deny system-fcntl (fcntl-command 80 110))
 `)
+	// The command cannot leave its process group, so teardown reaches every
+	// descendant. kit/proc skips its own copy of this rule for this launcher.
+	policy.WriteString(proc.EscapeDenial + "\n")
 	for _, path := range c.WriteRoots {
 		fmt.Fprintf(&policy, "(allow file-write* (subpath %q))\n", path)
 		fmt.Fprintf(&policy, "(deny file-write-unlink (literal %q))\n", path)
@@ -54,5 +57,5 @@ func prepare(launcher string, c Config, command Command) (proc.Command, func(), 
 	}
 	args := []string{"-p", policy.String(), command.Path}
 	args = append(args, command.Args...)
-	return proc.Command{Path: launcher, Args: args, Dir: c.WorkDir, Env: c.Env, Stdin: command.Stdin, Stdout: command.Stdout, Stderr: command.Stderr}, func() {}, nil
+	return proc.Command{Path: launcher, Args: args, Dir: c.WorkDir, Env: c.Env, Confined: true, Stdin: command.Stdin, Stdout: command.Stdout, Stderr: command.Stderr}, func() {}, nil
 }

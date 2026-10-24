@@ -85,10 +85,13 @@ func criterionRevision(g Goal, c Criterion) string {
 				if stepKind(t.Kind) != TaskStep {
 					return t.Result.Revision
 				}
-				if c.Check.Method == "qa.read" {
-					return taskResultRevision(t)
+				// merge.read keeps the historical merge. QA and any other
+				// task-bound outcome read the current result, which a passing
+				// repair advances past the failed commit.
+				if c.Check.Method == "merge.read" {
+					return t.Merge.Revision
 				}
-				return t.Merge.Revision
+				return taskResultRevision(t)
 			}
 		}
 		return ""

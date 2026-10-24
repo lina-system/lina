@@ -99,9 +99,13 @@ func hasHeading(body, anchor string) bool {
 			if !entering {
 				return ast.WalkContinue, nil
 			}
-			switch part.(type) {
-			case *ast.Text, *ast.String, *ast.AutoLink:
-				title.Write(part.Text(source))
+			switch part := part.(type) {
+			case *ast.Text:
+				title.Write(part.Segment.Value(source))
+			case *ast.String:
+				title.Write(part.Value)
+			case *ast.AutoLink:
+				title.Write(part.Label(source))
 			}
 			return ast.WalkContinue, nil
 		})
