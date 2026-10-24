@@ -257,9 +257,9 @@ defect: a head without the unwrap fails every attempt.
 
 ### Verification on the merged head
 
-The pull-request head adds this document to `origin/dev` at `fec22685`, so its
+The pull-request head adds this document to `origin/dev` at `1fbda9fb`, so its
 code is that commit. The same first-shard command run on the merged head
-(`a6f6244b`) passed all 90 repetitions in 475.97 seconds of package execution,
+(`be257e76`) passed all 90 repetitions in 511.39 seconds of package execution,
 with no failure, skip or missing observation: `TestM2WorkerChoice` 30/30,
 `TestM2WorkerQuotaWindows` 30/30 and `TestM2WorkerQuotaPartialRecovery` 30/30.
 The two audited `internal/core/boot` tests also passed 5/5 on that head.
