@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"time"
 
@@ -183,12 +184,12 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 	if !found || latest.Material.ID == "" {
 		return goal.Observation{}, nil, goal.ErrNeedsPerson
 	}
-	body, citations, err := d.researchDocument(ctx, latest)
+	doc, err := d.researchDocument(ctx, latest)
 	if err != nil {
 		return goal.Observation{}, nil, err
 	}
 	proof := goal.Proof{Revision: a.Revision, Ref: latest.Material.ID, Passed: false}
-	read := goal.EvidenceRead{Target: a.Check.Target, Revision: a.Revision, Content: body}
+	read := goal.EvidenceRead{Target: a.Check.Target, Revision: a.Revision, Content: doc.body}
 	if strings.TrimSpace(read.Content) == "" {
 		read.Content = "result"
 	}
@@ -198,7 +199,7 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 		if a.Check.Kind != goal.CitationEvidence {
 			return goal.Observation{}, nil, goal.ErrInvalid
 		}
-		checked, err := materials.Check(ctx, d.runtime.assets, citations)
+		checked, err := materials.Check(ctx, d.runtime.assets, doc.citations)
 		if err != nil {
 			return goal.Observation{}, nil, err
 		}
@@ -223,7 +224,7 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 		if a.Check.Kind != goal.JudgmentEvidence || strings.TrimSpace(a.Check.Rubric) == "" {
 			return goal.Observation{}, nil, goal.ErrInvalid
 		}
-		proof.Passed = goal.QuestionsHandled(t.ResearchGap, latest.Artifact.Missing, researchOpen(latest), body)
+		proof.Passed = goal.QuestionsHandled(t.ResearchGap, doc.missing, doc.open, doc.body)
 		collected.Rubric = a.Check.Rubric
 		if proof.Passed {
 			collected.Judgment = "each question is answered or marked open with its reason"
@@ -237,41 +238,100 @@ func (d *codeGoalDriver) researchCriterion(ctx context.Context, s goal.State, g 
 	return goal.Observation{Status: goal.OutcomeSucceeded, Proof: proof}, collected, nil
 }
 
-func (d *codeGoalDriver) researchDocument(ctx context.Context, latest runs.Record) (string, []materials.Anchor, error) {
+type researchDoc struct {
+	body      string
+	missing   []string
+	open      []goal.ResearchOpen
+	citations []materials.Anchor
+}
+
+// researchDocument reads each run's stored material at its current revision.
+// A later edit or removal of that material is what the criterion sees.
+func (d *codeGoalDriver) researchDocument(ctx context.Context, latest runs.Record) (researchDoc, error) {
 	records := []runs.Record{latest}
 	id := latest.Brief.FollowOf
 	for id != "" && len(records) < 3 {
 		prior, err := d.runtime.background.service.Get(ctx, id)
 		if err != nil {
-			return "", nil, err
+			return researchDoc{}, err
 		}
 		records = append(records, prior)
 		id = prior.Brief.FollowOf
 	}
-	var body strings.Builder
-	for i := len(records) - 1; i >= 0; i-- {
-		text := strings.TrimSpace(records[i].Artifact.Body)
+	parsed := make([]researchDoc, len(records))
+	for i, record := range records {
+		artifact, citations, err := d.readStoredMaterial(ctx, record.Material)
+		if err != nil {
+			return researchDoc{}, err
+		}
+		open := make([]goal.ResearchOpen, 0, len(artifact.Open))
+		for _, item := range artifact.Open {
+			open = append(open, goal.ResearchOpen{Question: item.Question, Reason: item.Reason})
+		}
+		parsed[i] = researchDoc{body: artifact.Body, missing: artifact.Missing, open: open, citations: citations}
+	}
+	var doc researchDoc
+	for i := len(parsed) - 1; i >= 0; i-- {
+		text := strings.TrimSpace(parsed[i].body)
 		if text == "" {
 			continue
 		}
-		if body.Len() > 0 {
-			body.WriteByte('\n')
+		if doc.body != "" {
+			doc.body += "\n"
 		}
-		body.WriteString(text)
+		doc.body += text
 	}
+	doc.missing = parsed[0].missing
+	doc.open = parsed[0].open
 	seen := map[string]bool{}
-	var citations []materials.Anchor
-	for _, record := range records {
-		for _, cite := range record.Artifact.Citations {
-			key := fmt.Sprintf("%s:%d:%d:%d", cite.AssetID, cite.Revision, cite.Start, cite.End)
+	for _, part := range parsed {
+		for _, cite := range part.citations {
+			key := fmt.Sprintf("%s:%d:%d:%d:%s", cite.AssetID, cite.Revision, cite.Start, cite.End, cite.Hash)
 			if seen[key] {
 				continue
 			}
 			seen[key] = true
-			citations = append(citations, cite)
+			doc.citations = append(doc.citations, cite)
 		}
 	}
-	return body.String(), citations, nil
+	return doc, nil
+}
+
+func (d *codeGoalDriver) readStoredMaterial(ctx context.Context, ref runs.Ref) (runs.Artifact, []materials.Anchor, error) {
+	if d.runtime.assets == nil || ref.ID == "" || ref.Revision < 1 {
+		return runs.Artifact{}, nil, goal.ErrNeedsPerson
+	}
+	asset, err := d.runtime.assets.Get(ctx, ref.ID)
+	if err != nil {
+		return runs.Artifact{}, nil, err
+	}
+	rev := asset.Revision
+	if rev < ref.Revision {
+		rev = ref.Revision
+	}
+	reader, err := d.runtime.assets.OpenRead(ctx, ref.ID, rev)
+	if err != nil {
+		return runs.Artifact{}, nil, err
+	}
+	defer reader.Close()
+	data, err := io.ReadAll(reader)
+	if err != nil {
+		return runs.Artifact{}, nil, err
+	}
+	var saved struct {
+		Artifact  runs.Artifact        `json:"Artifact"`
+		Citations []materials.Citation `json:"Citations"`
+	}
+	if err = json.Unmarshal(data, &saved); err != nil {
+		return runs.Artifact{}, nil, err
+	}
+	anchors := append([]materials.Anchor{}, saved.Artifact.Citations...)
+	if len(anchors) == 0 {
+		for _, cite := range saved.Citations {
+			anchors = append(anchors, cite.Anchor)
+		}
+	}
+	return saved.Artifact, anchors, nil
 }
 
 func researchOpen(r runs.Record) []goal.ResearchOpen {

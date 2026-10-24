@@ -2,6 +2,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -178,6 +179,42 @@ func TestGoalStepPartialFollowUpMarksTheQuestionOpen(t *testing.T) {
 	proof, err := d.readStepResult(t.Context(), goal.State{Actions: []goal.Action{{ID: "follow", GoalID: g.ID, TaskID: task.ID, Kind: goal.Assign, State: "finished"}}}, g, task)
 	if err != nil || !proof.Passed || proof.Revision != second.Proof.Revision {
 		t.Fatalf("partial result was not readable: %+v %v", proof, err)
+	}
+	check := goal.CriterionCheck{Kind: goal.JudgmentEvidence, Method: "research.rubric", Target: "document", Rubric: "answered or marked open with a reason", TaskID: task.ID}
+	state := goal.State{Actions: []goal.Action{{ID: "follow", GoalID: g.ID, TaskID: task.ID, Kind: goal.Assign, State: "finished", Attempt: 2}}}
+	observed, _, err := d.researchCriterion(t.Context(), state, g, task, goal.Action{Revision: "1", Check: &check, GoalRevision: 1, CheckRound: 1})
+	if err != nil || !observed.Proof.Passed {
+		t.Fatalf("stored material did not satisfy the rubric: %+v %v", observed, err)
+	}
+	current, err := r.assets.Get(t.Context(), second.Partial.MaterialID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	data, err := r.assets.Read(t.Context(), current.ID, current.Revision)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var saved map[string]any
+	if err = json.Unmarshal(data, &saved); err != nil {
+		t.Fatal(err)
+	}
+	saved["Artifact"] = map[string]any{"body": "unrelated notes", "done": false}
+	edited, err := json.Marshal(saved)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.assets.Edit(t.Context(), current.ID, current.Revision, bytes.NewReader(edited), assets.Actor{PersonID: r.person, AgentID: r.agent}); err != nil {
+		t.Fatal(err)
+	}
+	observed, _, err = d.researchCriterion(t.Context(), state, g, task, goal.Action{Revision: "1", Check: &check, GoalRevision: 1, CheckRound: 1})
+	if err != nil || observed.Proof.Passed {
+		t.Fatalf("edited material still passed: %+v %v", observed, err)
+	}
+	if err = r.assets.Trash(t.Context(), current.ID, assets.Actor{PersonID: r.person, AgentID: r.agent}); err != nil {
+		t.Fatal(err)
+	}
+	if _, _, err = d.researchCriterion(t.Context(), state, g, task, goal.Action{Revision: "1", Check: &check, GoalRevision: 1, CheckRound: 1}); err == nil {
+		t.Fatal("trashed material was still accepted")
 	}
 }
 
