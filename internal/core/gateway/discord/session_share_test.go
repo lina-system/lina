@@ -737,3 +737,30 @@ func TestCheckpointNeverRewinds(t *testing.T) {
 		t.Fatalf("checkpoint = %+v, want seq 5", got)
 	}
 }
+
+// A dispatch a subscriber could not store is not accepted when the session
+// stops: the checkpoint stays before it, so the next session replays it.
+func TestStoppingSessionDoesNotAcceptAnUnstoredDispatch(t *testing.T) {
+	f := setup(t, nil)
+	h := testHub(f.a.bot, f.db)
+	attempted := make(chan struct{}, 1)
+	h.addMember(0, func(context.Context, string, json.RawMessage, string) error {
+		select {
+		case attempted <- struct{}{}:
+		default:
+		}
+		return channels.Retry(errors.New("write pending"))
+	})
+	h.broadcast(t.Context(), "MESSAGE_CREATE", json.RawMessage(`{"id":"1","channel_id":"100"}`), cursor{Session: "session-1", Seq: 2, Intents: baseIntents})
+	select {
+	case <-attempted:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the subscriber never received the dispatch")
+	}
+	// The session stops while the subscriber is still retrying the dispatch.
+	h.stopOnce.Do(func() { close(h.stop) })
+	h.settle()
+	if got := (&hub{bot: f.a.bot, db: f.db}).resume(t.Context()); got.Seq >= 2 {
+		t.Fatalf("checkpoint = %+v, want it before the unstored dispatch", got)
+	}
+}

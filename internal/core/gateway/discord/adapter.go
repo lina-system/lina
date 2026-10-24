@@ -179,7 +179,13 @@ func (a *Adapter) Fetch(context.Context, gateway.AttachmentRef) (io.ReadCloser, 
 	return nil, channels.ErrDenied
 }
 
+// RecoveryDelay classifies the errors a channel worker retries. A backlog
+// stops the shared session so the next one replays from the last accepted
+// checkpoint, and the worker reconnects instead of staying stopped.
 func RecoveryDelay(err error) (time.Duration, bool) {
+	if errors.Is(err, ErrBacklog) {
+		return time.Second, true
+	}
 	return time.Second, errors.Is(err, errUnavailable)
 }
 

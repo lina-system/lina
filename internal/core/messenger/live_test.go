@@ -400,3 +400,42 @@ func TestLiveEditDuringPendingWriteIsRetried(t *testing.T) {
 		t.Fatalf("the replayed edit was not applied: %q", got.Body.Text())
 	}
 }
+
+// A source disconnected and reconnected with a replacement token before the
+// next schedule must not keep reading with the previous credentials.
+func TestReconnectedSourceResolvesAFreshAdapter(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	started := make(chan struct{}, 4)
+	stopped := make(chan struct{}, 4)
+	var resolved atomic.Int32
+	service := messenger.NewServiceWithResolver(f.store, func(messenger.Source) (messenger.Adapter, bool) {
+		resolved.Add(1)
+		return &liveAdapter{chats: []messenger.Chat{{ID: "dm-1", Name: "Direct", Kind: "direct"}},
+			events: make(chan messenger.Event), started: started, stopped: stopped}, true
+	}, time.Millisecond)
+	t.Cleanup(service.Close)
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	service.SyncAll(ctx, nil)
+	select {
+	case <-started:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the live reader never started")
+	}
+	if err := f.store.Disconnect(t.Context(), "person", source.Platform, source.Account); err != nil {
+		t.Fatal(err)
+	}
+	select {
+	case <-stopped:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the live reader did not stop on disconnect")
+	}
+	if err := f.store.Connect(t.Context(), source); err != nil {
+		t.Fatal(err)
+	}
+	service.SyncAll(ctx, nil)
+	if got := resolved.Load(); got != 2 {
+		t.Fatalf("adapter resolutions = %d, want a fresh adapter after the reconnect", got)
+	}
+}

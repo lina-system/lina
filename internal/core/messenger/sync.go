@@ -212,7 +212,11 @@ func (s *Service) watch(ctx context.Context, source Source) {
 				changed := s.store.db.Changed()
 				connected, err := s.store.liveConnected(reader, source)
 				if err != nil || !connected {
-					cancel()
+					// A disconnect is a committed change, so it is observed
+					// here even when the person reconnects before the next
+					// schedule. Releasing the adapter at once keeps a
+					// replacement token from being ignored.
+					s.release(key)
 					return
 				}
 				select {
@@ -226,6 +230,23 @@ func (s *Service) watch(ctx context.Context, source Source) {
 		cancel()
 		<-done
 	}()
+}
+
+// release stops one account's live reader and releases its adapter, so a
+// reconnect with replacement credentials resolves a new adapter.
+func (s *Service) release(key string) {
+	s.mu.Lock()
+	w := s.watching[key]
+	delete(s.watching, key)
+	adapter := s.resolved[key]
+	delete(s.resolved, key)
+	s.mu.Unlock()
+	if w != nil {
+		w.cancel()
+	}
+	if adapter != nil {
+		closeAdapter(adapter)
+	}
 }
 
 // retain stops the live readers of sources that are no longer connected and

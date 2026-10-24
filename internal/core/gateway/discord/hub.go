@@ -261,7 +261,13 @@ func (m *member) push(item delivery) (queued, full bool) {
 
 // accepted drops a dispatch this subscriber just accepted from the list its
 // worker settles on exit, so it is never counted twice.
-func (m *member) accepted(held *held) {
+func (m *member) accepted(held *held) { m.forget(held) }
+
+// abandon drops a dispatch this subscriber never stored from the same list, so
+// the exit path does not count an interrupted delivery as accepted.
+func (m *member) abandon(held *held) { m.forget(held) }
+
+func (m *member) forget(held *held) {
 	m.mu.Lock()
 	for i, x := range m.outstanding {
 		if x == held {
@@ -560,10 +566,17 @@ func (h *hub) work(m *member) {
 		item := m.queue[0]
 		m.queue = m.queue[1:]
 		m.mu.Unlock()
-		if err := h.hand(m, item); err != nil {
+		accepted, err := h.hand(m, item)
+		if err != nil {
 			h.fail(err)
 			h.interrupt()
 			return
+		}
+		if !accepted {
+			// The session ended before this subscriber stored the dispatch.
+			// It is never counted as accepted, so the next session replays it.
+			m.abandon(item.held)
+			continue
 		}
 		m.accepted(item.held)
 		h.accepted(context.Background(), item.held)
@@ -571,22 +584,27 @@ func (h *hub) work(m *member) {
 }
 
 // hand passes one dispatch to one subscriber, replaying it while the
-// subscriber reports that it can store it later.
-func (h *hub) hand(m *member, item delivery) error {
+// subscriber reports that it can store it later. It reports whether the
+// subscriber stored the dispatch: an interrupted delivery is not acceptance,
+// so the checkpoint never moves past a dispatch that was not stored.
+func (h *hub) hand(m *member, item delivery) (bool, error) {
 	backoff := dispatchRetryMin
 	for {
 		err := m.handle(context.Background(), item.kind, item.data, item.held.cursor())
-		if err == nil || !channels.Retryable(err) {
-			return err
+		if err == nil {
+			return true, nil
+		}
+		if !channels.Retryable(err) {
+			return false, err
 		}
 		if item.held.dropped.Load() {
 			// The socket ended before this subscriber could store the
 			// dispatch, so the next session replays it.
-			return nil
+			return false, nil
 		}
 		select {
 		case <-h.stop:
-			return nil
+			return false, nil
 		case <-time.After(backoff):
 		}
 		backoff = min(2*backoff, dispatchRetryMax)
