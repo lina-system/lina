@@ -59,7 +59,7 @@ func decodeRecall(raw json.RawMessage) (recallArguments, error) {
 	return a, nil
 }
 
-func (r *conversationRuntime) recallTool() (tools.Spec, tools.Handler) {
+func (r *conversationRuntime) recallTool(projection bool) (tools.Spec, tools.Handler) {
 	spec := tools.Spec{Name: "recall", Classify: tools.Class(tools.Research), Placement: tools.Core, Conc: 1, Deadline: 15 * time.Second, Schema: func(raw json.RawMessage) (tools.Input, error) {
 		a, err := decodeRecall(raw)
 		if err != nil {
@@ -87,7 +87,7 @@ func (r *conversationRuntime) recallTool() (tools.Spec, tools.Handler) {
 			}
 			return e.Body.DerivedText(), nil
 		}
-		hits, err := recall.Search(ctx, r.db, read, recall.Scope{Person: r.person, Agent: r.agent, ExternalModel: true, Kinds: a.Kinds, Since: a.Since, Until: a.Until, SpeakerKind: a.Speaker, Origin: a.Origin, History: a.History, IncludeReplay: a.IncludeReplay}, recall.Query{Text: a.Query, Limit: a.Limit, EventText: read})
+		hits, err := recall.Search(ctx, r.db, read, recall.Scope{Person: r.person, Agent: r.agent, ExternalModel: true, Projection: projection, Kinds: a.Kinds, Since: a.Since, Until: a.Until, SpeakerKind: a.Speaker, Origin: a.Origin, History: a.History, IncludeReplay: a.IncludeReplay}, recall.Query{Text: a.Query, Limit: a.Limit, EventText: read})
 		if err == nil {
 			err = r.removals.Validate(ctx, snapshot.Epoch)
 		}
@@ -168,7 +168,7 @@ func (r *conversationRuntime) prepareRecallTools(turnID string, _ *toolPreparati
 		}}
 		return nil
 	}
-	spec, handler := r.recallTool()
+	spec, handler := r.recallTool(false)
 	if err := add(spec, handler); err != nil {
 		return nil, err
 	}

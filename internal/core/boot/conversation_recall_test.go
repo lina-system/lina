@@ -189,3 +189,47 @@ func TestLiveRecallScopeAndExpansion(t *testing.T) {
 		t.Fatalf("changed scope still executes: %+v", out)
 	}
 }
+
+func TestReplayRecallExcludesPrivateEvidenceOutsideEpisode(t *testing.T) {
+	r, p := turnRuntime(t)
+	conversation := r.conversation
+	r.conversation = "unrelated-history"
+	public := queuedContextEvent(t, r, "public-aurora", "aurora public history", guard.EntryOwner, "")
+	hidden := queuedContextEvent(t, r, "private-aurora", "aurora", guard.EntryOwner, "")
+	_, err := coreexec.NewMemory(r.db, r.materials, nil).Remember(t.Context(), memory.Write{Person: r.person, Agent: r.agent, Item: memory.Item{
+		Kind: memory.Fact, Content: "private aurora fact", Scope: memory.Private, Subject: memory.Subject{Kind: memory.Person, ID: r.person}, Basis: memory.Stated,
+		Evidence: []memory.Evidence{{Kind: memory.Event, ID: hidden.ID, Precision: memory.Exact}},
+	}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	r.conversation = conversation
+	p.steps = []turnStep{{events: turnText("Hello.")}}
+	input, inboxID := admitTurnInput(t, r, "hello")
+	if err := r.run(t.Context(), &loop.Inputs{}, input, inboxID); err != nil {
+		t.Fatal(err)
+	}
+	source := r.replaySource()
+	ep, err := source.Load(t.Context(), replay.Scope{Person: r.person, Agent: r.agent}, "turn:"+input.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	bindings, err := r.replayReads(source, ep)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// The private event is outside the episode and expansion already denies it.
+	denied := bindings["expand"].Execute(t.Context(), provider.ToolCall{ID: "expand-private", Name: "expand", Arguments: `{"id":"event:private-aurora"}`})
+	if denied.Code == loop.OK {
+		t.Fatal("private expansion accepted")
+	}
+	for _, args := range []string{`{"query":"aurora","kinds":["event"],"limit":1}`, `{"query":"aurora","kinds":["memory"]}`} {
+		out := bindings["recall"].Execute(t.Context(), provider.ToolCall{ID: "recall", Name: "recall", Arguments: args})
+		if out.Code != loop.OK || strings.Contains(string(out.Output), hidden.ID) || strings.Contains(string(out.Output), "private aurora fact") {
+			t.Fatalf("replay recall leaked private evidence: %+v", out)
+		}
+		if strings.Contains(args, `"event"`) && !strings.Contains(string(out.Output), public.ID) {
+			t.Fatalf("restricted hit consumed result limit: %+v", out)
+		}
+	}
+}

@@ -71,7 +71,8 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 	if err := add(spec, handler); err != nil {
 		return nil, err
 	}
-	spec, handler = r.recallTool()
+	// Replay exports obey the source reader's private and never-leaves fence.
+	spec, handler = r.recallTool(true)
 	if err := add(spec, handler); err != nil {
 		return nil, err
 	}
