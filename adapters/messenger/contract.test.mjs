@@ -7,7 +7,7 @@ import { test } from 'node:test';
 import { PassThrough } from 'node:stream';
 import { readFileSync, readdirSync, existsSync } from 'node:fs';
 import { serve, describe as describeError } from './src/serve.ts';
-import { parseRequest, OPS } from './src/protocol.ts';
+import { parseRequest, OPS, Refusal } from './src/protocol.ts';
 import { PLATFORMS } from './src/platforms.ts';
 import { READ_METHODS, FORBIDDEN_METHODS } from './src/allowlist.ts';
 import { fixtureDriver } from './fixture-driver.ts';
@@ -17,7 +17,7 @@ const sources = () => readdirSync(sourceDir)
   .filter(name => name.endsWith('.ts'))
   .map(name => [name, readFileSync(new URL(name, sourceDir), 'utf8')]);
 
-function harness(t, driver = fixtureDriver()) {
+function harness(t, driver = fixtureDriver(), runtime = {}) {
   const input = new PassThrough(), output = new PassThrough();
   let buffer = '', lines = [];
   output.on('data', chunk => {
@@ -29,7 +29,7 @@ function harness(t, driver = fixtureDriver()) {
       buffer = buffer.slice(end + 1);
     }
   });
-  const finished = serve(input, output, { open: async () => driver }, { platform: 'fixture', account: 'account-1' });
+  const finished = serve(input, output, { open: async () => driver, ...runtime }, { platform: 'fixture', account: 'account-1' });
   t.after(async () => {
     input.end();
     await finished;
@@ -129,6 +129,22 @@ test('a decryption failure that carries text is refused', async t => {
   const h = harness(t, fixtureDriver({ page: { messages: [message], deletions: [], next: '', hasMore: false } }));
   const [frame] = await h.send({ id: 'p', op: 'page', chat: 'dm-1', cursor: '' });
   assert.deepEqual(frame, { id: 'p', ok: false, error: 'upstream_changed' });
+});
+
+test('opening an unregistered platform keeps unsupported_platform', async t => {
+  let opens = 0;
+  const h = harness(t, fixtureDriver(), {
+    open: async () => {
+      opens += 1;
+      throw new Refusal('unsupported_platform', 'no driver for this platform');
+    },
+  });
+  const [first] = await h.send({ id: 'a', op: 'signIn' });
+  assert.deepEqual(first, { id: 'a', ok: false, error: 'unsupported_platform' });
+  const [second] = await h.send({ id: 'b', op: 'listChats' });
+  assert.deepEqual(second, { id: 'b', ok: false, error: 'unsupported_platform' });
+  assert.equal(opens, 1);
+  assert.deepEqual(h.driver.calls, []);
 });
 
 test('a driver failure names the platform code, never the SDK message', async t => {

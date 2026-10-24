@@ -101,9 +101,14 @@ is a source failure and is retried on the next read.
 
 A fill walks back through a room's first read. When the room has no older
 messages left it hands over to the tail, anchored on the newest message the
-fill saw. A tail read that overflows one page catches up backwards until it
+fill saw. An empty first read stores a tail with no anchor. The next burst
+fills to the beginning before that anchor moves, including a burst larger than
+one page. A tail read that overflows one page catches up backwards until it
 reaches the message the last read stopped at, so a burst of more than one page
-skips nothing. Message ids are base64 themselves, so cursor fields are
+skips nothing. While filling, a reply whose parent is on an older page of the
+same walk is held and returned with that parent, so admission can record the
+reply. A parent older than the previous anchor is already stored and is not
+fetched again. Message ids are base64 themselves, so cursor fields are
 base64url-encoded.
 
 ## Rate limits
