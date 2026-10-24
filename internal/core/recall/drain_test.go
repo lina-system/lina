@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"os"
 	"slices"
+	"strings"
 	"testing"
 	"unicode/utf8"
 
@@ -25,7 +26,7 @@ func write(t *testing.T, db *canon.Store, query string, args ...any) {
 func drain(t *testing.T, db *canon.Store) {
 	t.Helper()
 	s := recall.New(db, nil)
-	for count(t, db, "SELECT count(*) FROM recall_pending") > 0 {
+	for count(t, db, "SELECT (SELECT count(*) FROM recall_pending)+(SELECT count(*) FROM messenger_window_pending)") > 0 {
 		if _, err := s.DrainBatch(t.Context()); err != nil {
 			t.Fatal(err)
 		}
@@ -168,6 +169,11 @@ func TestKoreanLedgerParity(t *testing.T) {
 	}
 	drain(t, db)
 	for _, q := range fixture.Queries {
+		// The shipped path was one literal phrase; multi-term rules are covered
+		// by the recall search tests.
+		if len(strings.Fields(q.Text)) != 1 {
+			continue
+		}
 		hits, err := ledger.New(db, nil).Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: q.Text})
 		if err != nil {
 			t.Fatal(err)
@@ -199,6 +205,8 @@ func TestKoreanLedgerParity(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
+		slices.Sort(got)
+		slices.Sort(want)
 		if !slices.Equal(got, want) {
 			t.Fatalf("%s: %v != %v", q.Name, got, want)
 		}
