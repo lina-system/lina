@@ -43,6 +43,7 @@ func durabilityStore(t *testing.T, options ...Option) *Store {
 // Core opens records without options, so a repository write must reach the
 // file sync and report its failure.
 func TestDurableStoreSyncsRepositoryWrites(t *testing.T) {
+	t.Parallel()
 	s := durabilityStore(t)
 	failure := errors.New("sync failed")
 	calls := 0
@@ -61,6 +62,7 @@ func TestDurableStoreSyncsRepositoryWrites(t *testing.T) {
 
 // A throwaway root records the same content without paying for each fsync.
 func TestNoSyncStoreSkipsRepositoryWrites(t *testing.T) {
+	t.Parallel()
 	s := durabilityStore(t, NoSync())
 	calls := 0
 	s.syncFile = func(*os.File) error {
