@@ -121,6 +121,45 @@ func TestDisconnectStopsTheLiveReader(t *testing.T) {
 	}
 }
 
+// A live subscription the platform ends because the session was revoked asks
+// the person to sign in, and the reader stops instead of retrying.
+func TestRevokedLiveSubscriptionNeedsSignIn(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		f := newFixture(t)
+		f.connect(t)
+		hold := make(chan struct{})
+		adapter := &liveAdapter{chats: []messenger.Chat{{ID: "dm-1", Kind: "direct"}}, events: make(chan messenger.Event), started: make(chan struct{}, 4), end: messenger.ErrNeedsSignIn, hold: hold}
+		service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+		ctx, cancel := context.WithCancel(t.Context())
+		defer cancel()
+		t.Cleanup(service.Close)
+
+		// The scheduled read completes first, so only the live end can change
+		// the source's state.
+		service.SyncAll(ctx, &f.now)
+		select {
+		case <-adapter.started:
+		case <-time.After(10 * time.Second):
+			t.Fatal("the live reader never started")
+		}
+		close(hold)
+		synctest.Wait()
+
+		sources, err := f.store.Sources(ctx, "person")
+		if err != nil {
+			t.Fatal(err)
+		}
+		if len(sources) != 1 || sources[0].State != messenger.StateNeedsSignIn || sources[0].Failure != "" {
+			t.Fatalf("source after a revoked live session: %+v", sources)
+		}
+		// A retry would open a second subscription after the first backoff.
+		time.Sleep(2 * time.Second)
+		if got := adapter.calls.Load(); got != 1 {
+			t.Fatalf("the revoked source subscribed %d times", got)
+		}
+	})
+}
+
 // Without message text the source states the cause and stores nothing.
 func TestTextUnavailableIsReportedOnTheSource(t *testing.T) {
 	f := newFixture(t)
@@ -140,12 +179,17 @@ func TestTextUnavailableIsReportedOnTheSource(t *testing.T) {
 }
 
 // liveAdapter lists one chat and delivers scripted live events until ctx ends.
+// end is returned by the first subscription; a later one waits for ctx, so a
+// test can tell a retried subscription from a stopped reader.
 type liveAdapter struct {
 	chats   []messenger.Chat
 	events  chan messenger.Event
 	started chan struct{}
 	stopped chan struct{}
 	fail    error
+	end     error
+	hold    chan struct{}
+	calls   atomic.Int32
 }
 
 func (a *liveAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
@@ -171,11 +215,26 @@ func (a *liveAdapter) Members(context.Context, messenger.SourceID, string) ([]me
 }
 
 func (a *liveAdapter) Live(ctx context.Context, _ messenger.SourceID, deliver func(messenger.Event) error) error {
+	a.calls.Add(1)
 	if a.started != nil {
 		a.started <- struct{}{}
 	}
 	if a.stopped != nil {
 		defer func() { a.stopped <- struct{}{} }()
+	}
+	if a.end != nil {
+		if a.hold != nil {
+			select {
+			case <-a.hold:
+			case <-ctx.Done():
+				return ctx.Err()
+			}
+		}
+		if a.calls.Load() == 1 {
+			return a.end
+		}
+		<-ctx.Done()
+		return ctx.Err()
 	}
 	for {
 		select {

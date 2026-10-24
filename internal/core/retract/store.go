@@ -184,7 +184,8 @@ func (s *Store) Epoch(ctx context.Context) (uint64, error) {
 	return epoch, err
 }
 
-func (s *Store) Forget(ctx context.Context, r Request) error  { return s.change(ctx, r, forget) }
+func (s *Store) Forget(ctx context.Context, r Request) error { return s.change(ctx, r, forget) }
+
 func (s *Store) Restore(ctx context.Context, r Request) error { return s.change(ctx, r, restore) }
 
 // ForgetDuring runs fn inside the fenced writer that journals a forget.

@@ -6,6 +6,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"errors"
+	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/compaction"
 	coreexec "github.com/thisisjun786/lina/internal/core/exec"
@@ -40,15 +41,16 @@ func (r *conversationRuntime) replayReads(source replay.Source, ep replay.Episod
 		reads[spec.Name] = tool
 		return nil
 	}
+	expansion := compaction.Expansion{DB: r.db, Events: r.journal(), NodeEvents: compaction.New(r.db).ExpandEvents}
 	spec, handler := coreexec.ExpandTool(r.agent, func(ctx context.Context, agent, id string, offset, limit int) (json.RawMessage, error) {
-		ids, next, err := compaction.New(r.db).ExpandEvents(ctx, agent, id, offset, limit)
-		if errors.Is(err, sql.ErrNoRows) {
-			ids = nil
-			next = 0
-			err = nil
-			if offset == 0 {
-				ids = []string{id}
-			}
+		ref := id
+		prefixed := strings.ContainsRune(id, ':')
+		if !prefixed {
+			ref = "node:" + id
+		}
+		ids, next, err := expansion.Page(ctx, agent, ref, offset, limit)
+		if errors.Is(err, sql.ErrNoRows) && !prefixed {
+			ids, next, err = expansion.Page(ctx, agent, "event:"+id, offset, limit)
 		}
 		if err != nil {
 			return nil, err
