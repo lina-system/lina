@@ -33,6 +33,15 @@ var ErrInvalid = errors.New("invalid_recall_query")
 // expand; the excerpt exists so a caller can choose without reading everything.
 const ExcerptRunes = 240
 
+// restrictedSummaries follows the restricted CTE: every summary that reaches a
+// restricted event through its citations, at any depth of the summary tree.
+const restrictedSummaries = `restricted_summary(id) AS (
+  SELECT c.view_id FROM cite c JOIN restricted r ON r.id=c.target_id
+  WHERE c.view_kind='summary' AND c.target_kind='event' AND c.dropped_revision IS NULL
+  UNION
+  SELECT c.view_id FROM cite c JOIN restricted_summary s ON s.id=c.target_id
+  WHERE c.view_kind='summary' AND c.target_kind='summary' AND c.dropped_revision IS NULL)`
+
 // FusionConstant is the reciprocal-rank constant used when vectors join the
 // full-text list. The value is fixed by measurement (#1040, #874).
 const FusionConstant = 60
@@ -195,7 +204,7 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 		with = append(with, `restricted AS (
   SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
   WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`)
+   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`, restrictedSummaries)
 		withArgs = append(withArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
 	}
 	if len(pairPhrases) > 0 {
@@ -353,7 +362,8 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 		prefix = `WITH restricted AS (
   SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
   WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))) `
+   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))),
+` + restrictedSummaries + ` `
 		prefixArgs = append(prefixArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
 	}
 	args = append(prefixArgs, args...)
@@ -488,8 +498,9 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	}
 	if restricted {
 		where = append(where, `(`+alias+`.kind<>'event' OR NOT EXISTS(SELECT 1 FROM restricted r WHERE r.id=`+alias+`.source_id))`)
-		where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3 JOIN restricted r3 ON r3.id=c3.target_id
-   WHERE c3.view_kind=`+alias+`.kind AND c3.view_id=`+alias+`.source_id AND c3.dropped_revision IS NULL))`)
+		where = append(where, `(`+alias+`.kind NOT IN ('summary','record') OR NOT EXISTS(SELECT 1 FROM cite c3
+   WHERE c3.view_kind=`+alias+`.kind AND c3.view_id=`+alias+`.source_id AND c3.dropped_revision IS NULL
+   AND (c3.target_kind='event' AND c3.target_id IN (SELECT id FROM restricted) OR c3.target_kind='summary' AND c3.target_id IN (SELECT id FROM restricted_summary))))`)
 	}
 	return where, args
 }

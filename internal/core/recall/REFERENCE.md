@@ -56,6 +56,8 @@ an index row collapses the same way. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
+Under `Projection` or `ExternalModel`, a summary or record is out when it
+cites a protected event or a summary that reaches one at any depth.
 `recall.Search` adds the bounded masked excerpt and the citations in force at
 the result's revision. `VectorQuery` is the fusion hook for #874.
 

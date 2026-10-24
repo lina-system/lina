@@ -293,6 +293,27 @@ func TestSearchSummaryHitCarriesItsEvents(t *testing.T) {
 	}
 }
 
+func TestSearchParentSummaryOfProtectedEventStaysOut(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "event", "conversation", "owner", "agent", "도서관에서 공부했다.", base, "")
+	write(t, db, `INSERT INTO sum_node(id,conversation_id,level,model,prompt_version,built_at,start_at,end_at,epoch,status,text,dropped,revision)
+ VALUES('child','conversation',0,'fixture','1','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',0,'ready','도서관 하위','',1),
+ ('parent','conversation',1,'fixture','1','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z',0,'ready','상위 요약문','',1);
+ INSERT INTO cite(view_kind,view_id,added_revision,ordinal,target_kind,target_id,target_revision,span_start,span_end,precision,role)
+ VALUES('summary','child','1',0,'event','event','0',NULL,NULL,'event','covers'),
+ ('summary','parent','1',0,'summary','child','1',NULL,NULL,'session','covers')`)
+	drain(t, db)
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Summary}, ExternalModel: true}
+	if ids := searchIDs(t, db, scope, "요약문", 0); !reflect.DeepEqual(ids, []string{"parent"}) {
+		t.Fatalf("parent summary before protection: %v", ids)
+	}
+	remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "event")
+	if ids := searchIDs(t, db, scope, "요약문", 0); len(ids) != 0 {
+		t.Fatalf("parent of protected event reached external scope: %v", ids)
+	}
+}
+
 func TestSearchExcerptIsBoundedAndMasked(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)
