@@ -2,6 +2,7 @@
 package goal
 
 import (
+	"reflect"
 	"testing"
 	"time"
 )
@@ -247,5 +248,46 @@ func TestCapacityPrefersDependencyDepthAcrossGoalsAndPersonalNodesLast(t *testin
 	}
 	if len(p.Actions) != 2 || p.Actions[0].TaskID != "shallow" || p.Actions[0].NodeID != "worker" || p.Actions[1].TaskID != "deep" {
 		t.Fatalf("wrong ordering/headroom preference: %+v", p.Actions)
+	}
+}
+
+// A goal within the run limit whose step no host can take keeps its queue
+// place, with the capacity reason: quota when its worker is installed but every
+// row is blocked, load for any other shortage. Places follow rank.
+func TestDeriveQueuesCapacityHeldGoalsByReason(t *testing.T) {
+	t.Parallel()
+	now := time.Unix(100, 0)
+	first, second := readyTask("a"), readyTask("b")
+	a, b := oneGoal(first), oneGoal(second)
+	a.ID, b.ID = "a", "b"
+	a.Rank, b.Rank = 2, 1
+	plan := func(n Node) Plan {
+		t.Helper()
+		n.LoadCPU = n.CPUCores
+		derived, err := Derive(State{Goals: []Goal{a, b}, Nodes: []Node{n}}, now)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return derived
+	}
+	full := readyNode("n")
+	full.CPUCores, full.CPULimit, full.ObservedAt = 1, 1, now.Unix()
+	got := plan(full)
+	want := []QueuePlace{{GoalID: "b", Reason: ReasonLoad, Place: 1}, {GoalID: "a", Reason: ReasonLoad, Place: 2}}
+	if !reflect.DeepEqual(got.Queues, want) {
+		t.Fatalf("queues = %+v, want %+v", got.Queues, want)
+	}
+	if len(got.Actions) != 0 {
+		t.Fatalf("placed a step on a full host: %+v", got.Actions)
+	}
+	blocked := full
+	blocked.QuotaReset = map[string]int64{"stub": now.Unix() + 60}
+	got = plan(blocked)
+	want = []QueuePlace{{GoalID: "b", Reason: ReasonQuota, Place: 1}, {GoalID: "a", Reason: ReasonQuota, Place: 2}}
+	if !reflect.DeepEqual(got.Queues, want) {
+		t.Fatalf("quota queues = %+v, want %+v", got.Queues, want)
+	}
+	if len(got.Actions) != 0 {
+		t.Fatalf("placed a step with every quota row blocked: %+v", got.Actions)
 	}
 }
