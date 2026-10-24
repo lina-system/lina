@@ -20,12 +20,15 @@ const sources = () => readdirSync(sourceDir)
 function harness(t, driver = fixtureDriver(), runtime = {}) {
   const input = new PassThrough(), output = new PassThrough();
   let buffer = '', lines = [];
+  const all = [];
   output.on('data', chunk => {
     buffer += chunk;
     for (;;) {
       const end = buffer.indexOf('\n');
       if (end < 0) break;
-      lines.push(JSON.parse(buffer.slice(0, end)));
+      const line = JSON.parse(buffer.slice(0, end));
+      lines.push(line);
+      all.push(line);
       buffer = buffer.slice(end + 1);
     }
   });
@@ -43,6 +46,7 @@ function harness(t, driver = fixtureDriver(), runtime = {}) {
       return lines;
     },
     lines: () => lines,
+    all: () => all,
   };
 }
 
@@ -164,6 +168,17 @@ test('live events reach the caller until the subscription stops', async t => {
   assert.deepEqual(h.lines().find(line => line.event === 'message').message.id, 'm-9');
   await h.send({ id: 's', op: 'stop' });
   assert.equal(h.driver.delivered.length, 1);
+});
+
+test('a live subscription that ends on its own is reported once, by code', async t => {
+  const h = harness(t);
+  await h.send({ id: 'l', op: 'live' });
+  h.driver.end(Object.assign(new Error('socket hang up at /synthetic/host'), { code: 'ECONNRESET' }));
+  h.driver.end(new Refusal('needs_sign_in', 'a second end'));
+  await h.send({ id: 's', op: 'stop' });
+  for (let i = 0; i < 400 && !h.all().some(line => line.id === 's'); i++) await new Promise(resolve => setTimeout(resolve, 5));
+  assert.deepEqual(h.all().filter(line => line.event === 'ended'), [{ event: 'ended', error: 'failed:ECONNRESET' }]);
+  assert.deepEqual(h.driver.calls.filter(call => call === 'stop'), [], 'an ended subscription is not stopped again');
 });
 
 test('no add-on source names an SDK method outside the read allowlist', () => {

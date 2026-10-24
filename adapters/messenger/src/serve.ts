@@ -101,7 +101,28 @@ export function serve(input: NodeJS.ReadableStream, output: NodeJS.WriteStream |
       case 'live': {
         const value = await driverOrOpen();
         stopLive();
-        liveStop = value.live((event: LiveEvent) => write(event));
+        // current is false once this subscription is stopped, replaced or
+        // ended, so a late event or a second end from the driver is dropped.
+        let current = true;
+        let unsubscribe: (() => void) | null = null;
+        const stop = value.live(
+          (event: LiveEvent) => {
+            if (current) write(event);
+          },
+          (error: unknown) => {
+            if (!current) return;
+            current = false;
+            if (unsubscribe && liveStop === unsubscribe) liveStop = null;
+            write({ event: 'ended', error: describe(error) });
+          },
+        );
+        if (current) {
+          unsubscribe = () => {
+            current = false;
+            stop();
+          };
+          liveStop = unsubscribe;
+        }
         return { live: true };
       }
       default:
