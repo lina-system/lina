@@ -37,7 +37,7 @@ func TestSmallCorpusReport(t *testing.T) {
 			t.Fatalf("invalid distribution: %s", name)
 		}
 	}
-	for _, name := range []string{"admit_turn", "remember", "publish_summary", "ledger_search", "memory_recall", "recall_person", "forget"} {
+	for _, name := range []string{"admit_turn", "remember", "publish_summary", "ledger_search", "memory_recall", "recall_person", "recall_person_early", "recall_person_miss", "recall_person_miss_early", "recall_person_miss_more_person", "forget"} {
 		if r.Latency[name].Count == 0 {
 			t.Fatalf("missing metric: %s", name)
 		}
@@ -50,7 +50,7 @@ func TestSmallCorpusReport(t *testing.T) {
 	if r.RecallDocuments != r.Corpus.Events+r.Corpus.Summaries+r.MemoryItems || r.RecallParity != 60 || r.RecallTextBytes == 0 || r.RecallPairBytes == 0 || r.SourceBytes == 0 {
 		t.Fatal("missing recall measurements")
 	}
-	if r.Hits["ledger_search"] == 0 || r.Hits["memory_recall"] == 0 || r.Hits["recall_person"] == 0 || r.ForgetHidden != 3 {
+	if r.Hits["ledger_search"] == 0 || r.Hits["memory_recall"] == 0 || r.Hits["recall_person"] == 0 || r.Hits["recall_person_early"] == 0 || r.PersonEventsEarly == 0 || r.ForgetHidden != 3 {
 		t.Fatal("paths were not exercised")
 	}
 	data, err := json.Marshal(r)
@@ -110,6 +110,11 @@ func BenchmarkStore(b *testing.B) {
 	b.ReportMetric(float64(r.IndexBytes), "index-B")
 	b.ReportMetric(float64(r.Latency["admit_turn"].P50NS), "admit-p50-ns/turn")
 	b.ReportMetric(float64(r.Latency["recall_person"].P95NS), "recall-person-p95-ns")
+	b.ReportMetric(float64(r.Latency["recall_person_early"].P50NS), "recall-person-early-p50-ns")
+	b.ReportMetric(float64(r.Latency["recall_person"].P50NS), "recall-person-p50-ns")
+	b.ReportMetric(float64(r.Latency["recall_person_miss_early"].P50NS), "recall-person-miss-early-p50-ns")
+	b.ReportMetric(float64(r.Latency["recall_person_miss"].P50NS), "recall-person-miss-p50-ns")
+	b.ReportMetric(float64(r.Latency["recall_person_miss_more_person"].P50NS), "recall-person-miss-more-persons-p50-ns")
 	data, err := json.Marshal(r)
 	if err != nil {
 		b.Fatal("storebench_report_failed")

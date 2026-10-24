@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/thisisjun786/lina/internal/addons/importer/hermes"
@@ -153,11 +154,15 @@ func TestM1ImportOwnerChannels(t *testing.T) {
 	}
 	defer client.Close()
 	for _, tc := range []struct {
-		text string
-		want int
+		text, present, absent string
 	}{
-		{"Synthetic citrus preference", 1}, {"Synthetic cycling preference", 1}, {"Synthetic desktop preference", 1}, {"Synthetic web preference", 1},
-		{"Synthetic external preference", 0}, {"Synthetic notification preference", 0}, {"Synthetic group preference", 0},
+		{"Synthetic citrus preference", "Synthetic citrus preference", ""},
+		{"Synthetic cycling preference", "Synthetic cycling preference", ""},
+		{"Synthetic desktop preference", "Synthetic desktop preference", ""},
+		{"Synthetic web preference", "Synthetic web preference", ""},
+		{"Synthetic external preference", "", "Synthetic external preference"},
+		{"Synthetic notification preference", "", "Synthetic notification preference"},
+		{"Synthetic group preference", "", "Synthetic group preference"},
 	} {
 		op := "list"
 		if _, err = client.Memory(ctx, protocol.MemoryRequest{Operation: &op, AgentID: &agent, Text: &tc.text}); err != nil {
@@ -168,8 +173,26 @@ func TestM1ImportOwnerChannels(t *testing.T) {
 			t.Fatal(err)
 		}
 		result, ok := reply.Payload.(protocol.MemoryResult)
-		if !ok || result.Items == nil || len(*result.Items) != tc.want {
+		if !ok || result.Items == nil {
 			t.Fatalf("recall %q: %+v", tc.text, reply)
+		}
+		// Any term may match, so a query shares "Synthetic preference" with the
+		// person's other items. The check is the item named in the query and that
+		// the excluded speakers never reach the result.
+		var present, leaked bool
+		for _, item := range *result.Items {
+			if tc.present != "" && strings.Contains(item.Content, tc.present) {
+				present = true
+			}
+			if tc.absent != "" && strings.Contains(item.Content, tc.absent) {
+				leaked = true
+			}
+		}
+		if tc.present != "" && !present {
+			t.Fatalf("recall %q missing %q: %+v", tc.text, tc.present, reply)
+		}
+		if leaked {
+			t.Fatalf("recall %q exposed %q: %+v", tc.text, tc.absent, reply)
 		}
 	}
 	after, err := os.ReadFile(path)

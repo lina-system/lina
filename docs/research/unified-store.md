@@ -62,13 +62,14 @@ The same query means different things per index: "abc" finds the substring in co
 | --- | --- | --- |
 | Standing profile | up to 32 standing memory items, newest first, with no query | every live turn (`boot/conversation_memory.go:53`) |
 | `query_records` | records index, ordered by id | live turns (`exec/records.go:128`) |
-| `ledger.Store.Search` | ledger index | tests only; no production caller |
-| `recall_person` | memory index, then a scan of every person event of the agent, read one at a time and matched in Go (`exec/memory_ledger.go:57-103`) | replay only (`boot/replay_reads.go:73`) |
-| `expand` | summary coverage and events | replay only (`boot/replay_reads.go:43`); `compaction.Expansion.Read` (`compaction/expansion.go:49`) has no production caller |
-| Memory management | `memory.Store.Recall` | TUI memory screens (`boot/management.go:146-202`) |
+| `ledger.Store.Search` | the shared recall index, event kind | tests only; no production caller |
+| `recall_person` | the shared recall index over memory items and events, one ranked list | replay only (`boot/replay_reads.go:73`) |
+| `expand` | `compaction.Expansion` over summary coverage and events | replay only (`boot/replay_reads.go:43`) |
+| Memory management | `memory.Store.Recall`, text match through the shared index | TUI memory screens (`boot/management.go:146-202`) |
 | Agent exchange | common memory items, no query | exchange turns (`boot/exchange_runtime.go:44`) |
 
-A live turn today recalls nothing by topic: no ledger search, no expand, no `recall_person`, and no query against the memory index. [Recall with evidence](../design/conversation-and-memory.md#recall-with-evidence) describes all four.
+After #871 every one of these reads goes through the shared index; a live turn
+still recalls nothing by topic until #873 ([Recall with evidence](../design/conversation-and-memory.md#recall-with-evidence)).
 
 ### Findings
 

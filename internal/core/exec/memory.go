@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/memory"
 	"github.com/thisisjun786/lina/kit/provider"
 )
@@ -25,21 +26,27 @@ const RecallItemLimit = 12
 const RecallTimeout = 10 * time.Second
 
 type Memory struct {
+	db      *canon.Store
 	store   *memory.Store
+	events  *ledger.Store
 	write   func(context.Context, func(*canon.Tx) error) error
 	resolve memory.ResolveEvidence
 	prepare func(context.Context, memory.Write) (memory.ResolveEvidence, error)
-	ledger  LedgerSearch
+	search  RecallSearch
 	aux     Auxiliary
 }
 
 // newMemory is bound by the trusted Core flow. Resolve and ledger must read
 // canonical sources, and auxiliary must use the configured model/budget path,
 // honor cancellation and make exactly one request without tools or retries.
-func newMemory(db *canon.Store, resolve memory.ResolveEvidence, ledger LedgerSearch, aux Auxiliary) *Memory {
-	m := &Memory{store: memory.New(db), resolve: resolve, ledger: ledger, aux: aux}
+func newMemory(db *canon.Store, resolve memory.ResolveEvidence, search RecallSearch, aux Auxiliary) *Memory {
+	m := &Memory{db: db, store: memory.New(db), resolve: resolve, search: search, aux: aux}
 	if db != nil {
 		m.write = db.Write
+		m.events = ledger.New(db, nil)
+		if m.search == nil {
+			m.search = m.recallSources
+		}
 	}
 	return m
 }
@@ -108,7 +115,10 @@ type RecallRequest struct {
 	Sources  []RecallSource
 }
 type Auxiliary func(context.Context, RecallRequest) ([]Sentence, error)
-type LedgerSearch func(context.Context, memory.RecallScope, memory.Query) ([]RecallSource, error)
+
+// RecallSearch resolves a person query through the one recall entry. Its
+// sources are ranked together and already carry one result per lineage.
+type RecallSearch func(context.Context, memory.RecallScope, PersonRecall) ([]RecallSource, error)
 
 func (m *Memory) RecallPerson(ctx context.Context, scope memory.RecallScope, in PersonRecall) (PersonAnswer, error) {
 	if m == nil || strings.TrimSpace(in.Question) == "" || in.Depth < 0 {
@@ -123,39 +133,13 @@ func (m *Memory) RecallPerson(ctx context.Context, scope memory.RecallScope, in 
 	if in.Depth == 1 {
 		scope.ExternalModel = true
 	}
-	q := memory.Query{Text: in.Query, At: in.At, Limit: RecallItemLimit, History: in.History, PersonOnly: true}
-	hits, err := m.store.Recall(ctx, scope, q)
-	if err != nil {
-		return PersonAnswer{}, err
-	}
 	result := PersonAnswer{}
-	for _, hit := range hits {
-		result.Sources = append(result.Sources, RecallSource{Citation: Citation{ID: "memory:" + hit.ID, Revision: hit.Revision}, Text: hit.Content, Holder: hit.Holder, Evidence: hit.Evidence, Older: hit.Older})
-	}
-	if m.ledger != nil && len(result.Sources) < RecallItemLimit {
-		q.Limit = RecallItemLimit
-		sources, err := m.ledger(ctx, scope, q)
+	if m.search != nil {
+		sources, err := m.search(ctx, scope, in)
 		if err != nil {
 			return PersonAnswer{}, err
 		}
-		seen := map[Citation]bool{}
-		for _, source := range result.Sources {
-			for _, ref := range source.Evidence {
-				if ref.Kind == memory.Event {
-					seen[Citation{ID: "event:" + ref.ID, Revision: ref.Revision}] = true
-				}
-			}
-		}
-		for _, source := range sources {
-			if seen[source.Citation] {
-				continue
-			}
-			result.Sources = append(result.Sources, source)
-			seen[source.Citation] = true
-			if len(result.Sources) == RecallItemLimit {
-				break
-			}
-		}
+		result.Sources = sources
 	}
 	if err := ctx.Err(); err != nil {
 		return PersonAnswer{}, err
