@@ -78,6 +78,21 @@ func TestNormalizeChoicesCorrectsOnlyTargets(t *testing.T) {
 	}
 }
 
+// An ambiguous tied alternative is a correction, not a settled recommendation.
+func TestAmbiguousTiedTargetIsNotDropped(t *testing.T) {
+	s := decodeState()
+	s.Items = append(s.Items, Item{ID: "beds-a", Title: "Beds", Kind: "project", State: "active", LastActivity: s.Clock}, Item{ID: "beds-b", Title: "Beds", Kind: "project", State: "active", LastActivity: s.Clock})
+	_, err := NormalizeChoices(s, "Stop the garden work.", []json.RawMessage{json.RawMessage(`{"target":"garden","tied":["garden","Beds"],"action":"stop"}`)})
+	var detail *ChoiceError
+	if !errors.As(err, &detail) || detail.Field != "bindings[0].target" || detail.Reason != "ambiguous_target" || !slices.Equal(detail.Allowed, []string{"beds-a", "beds-b"}) {
+		t.Fatalf("error %+v", err)
+	}
+	got, err := NormalizeChoices(s, "Stop the garden work.", []json.RawMessage{json.RawMessage(`{"target":"garden","tied":["garden","library"],"action":"stop"}`)})
+	if err != nil || len(got) != 1 || len(got[0].Tied) != 2 || got[0].Action != "stop" {
+		t.Fatalf("resolvable tie: %+v %v", got, err)
+	}
+}
+
 // Close matches that are not open items never reach the duplicate check, and a
 // difference is bounded so one message cannot store unbounded text.
 func TestNormalizeChoicesBoundsMetadata(t *testing.T) {

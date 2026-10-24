@@ -103,8 +103,8 @@ func normalizeChoice(state State, text string, raw json.RawMessage) (Choice, err
 	for _, rawTied := range in.Tied {
 		other, err := NormalizeTarget(state, rawTied)
 		if err != nil {
-			// A target Core cannot authorize is never offered as an option.
-			continue
+			// Dropping an alternative would leave the recommendation settled.
+			return Choice{}, err
 		}
 		if !slices.Contains(tied, other) {
 			tied = append(tied, other)

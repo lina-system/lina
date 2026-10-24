@@ -381,7 +381,8 @@ candidate id is bound before a leading kind name and colon are read as new work.
 word is mapped to the stored kinds, an unknown kind becomes a to-do, and a parent
 that is not an open initiative or project is dropped. Only a target naming no
 candidate, or more than one, returns `field` and `reason` with the allowed ids so
-the model can correct the next call. A work tool may name `input_binding` to
+the model can correct the next call. A tied alternative that cannot be resolved
+returns that same correction instead of being dropped. A work tool may name `input_binding` to
 select a request or consumed steering input. Both tools accept the selector under
 `input_event_id`, `input` or `text`: absent means the current input, `current`
 means the turn's own input, and an exact copy of an input's text means that input.

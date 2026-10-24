@@ -23,6 +23,8 @@ input text, and kind and parent words are mapped to stored values. An exact
 candidate id is bound before a leading kind name and colon are read as new work.
 Only a target
 naming no open item, or more than one, returns a correction with the allowed ids.
+A tied alternative that cannot be resolved returns that correction instead of
+being dropped.
 
 A person-selected new target keeps that decider. Once its created id is recorded,
 a later read, progress check, or follow-up may name that existing item; any
