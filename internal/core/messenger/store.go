@@ -911,7 +911,7 @@ func (s *Store) DeleteRecords(ctx context.Context, source Source, chat string, m
 // chat, such as updateDeleteMessages. Telegram keeps one message-id sequence
 // for the account's private chats and basic groups, so a pushed id belongs to
 // at most one of them; every chat the id is live in is cleared, as TDLib does.
-func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, messages []string) (int, error) {
+func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
 	if len(messages) == 0 {
 		return 0, nil
 	}
@@ -926,6 +926,18 @@ func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, message
 	}
 	sort.Strings(ordered)
 	for _, chat := range ordered {
+		if len(chatPrefixes) > 0 {
+			allowed := false
+			for _, prefix := range chatPrefixes {
+				if strings.HasPrefix(chat, prefix) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
 		ids := chats[chat]
 		n, err := s.DeleteRecords(ctx, source, chat, ids)
 		if err != nil {

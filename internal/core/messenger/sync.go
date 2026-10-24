@@ -19,9 +19,13 @@ type Service struct {
 	factory  Factory
 	interval time.Duration
 
-	mu        sync.Mutex
-	lastSync  map[string]time.Time
-	perSource map[string]Adapter
+	activity   sync.RWMutex
+	wake       chan struct{}
+	liveWake   chan struct{}
+	liveCancel map[string]context.CancelFunc
+	mu         sync.Mutex
+	lastSync   map[string]time.Time
+	perSource  map[string]Adapter
 }
 
 // Factory opens the adapter of one source. It returns false when it does not
@@ -35,7 +39,7 @@ func NewService(store *Store, adapters map[string]Adapter, interval time.Duratio
 	if interval <= 0 {
 		interval = DefaultInterval
 	}
-	return &Service{store: store, adapters: adapters, interval: interval, lastSync: map[string]time.Time{}, perSource: map[string]Adapter{}}
+	return &Service{store: store, adapters: adapters, interval: interval, wake: make(chan struct{}, 1), liveWake: make(chan struct{}, 1), liveCancel: map[string]context.CancelFunc{}, lastSync: map[string]time.Time{}, perSource: map[string]Adapter{}}
 }
 
 // WithFactory adds the per-source adapter factory.
@@ -91,7 +95,9 @@ func (s *Service) Store() *Store { return s.store }
 // Run reads every connected source until ctx ends. It never returns an error:
 // a failing source is recorded in its own registry row.
 func (s *Service) Run(ctx context.Context) {
-	go s.RunLive(ctx)
+	liveDone := make(chan struct{})
+	go func() { defer close(liveDone); s.RunLive(ctx) }()
+	defer func() { <-liveDone }()
 	s.SyncAll(ctx, nil)
 	ticker := time.NewTicker(s.interval)
 	defer ticker.Stop()
@@ -99,6 +105,8 @@ func (s *Service) Run(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.wake:
+			s.SyncAll(ctx, nil)
 		case <-ticker.C:
 			s.SyncAll(ctx, nil)
 		}
@@ -156,6 +164,11 @@ func sourceID(source Source) SourceID {
 
 // Sync reads one source: its chat list, then every chat that is in sync.
 func (s *Service) Sync(ctx context.Context, source Source) (Result, error) {
+	s.activity.RLock()
+	defer s.activity.RUnlock()
+	if !s.connected(ctx, source) {
+		return Result{}, nil
+	}
 	adapter, ok := s.adapterFor(source)
 	if !ok {
 		return Result{}, ErrInvalid
@@ -256,6 +269,29 @@ func failureCause(err error) string {
 // a record without moving the chat's cursor, and a deletion travels through the
 // retraction path. An event for a chat this source does not hold is ignored.
 func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result, error) {
+	s.activity.RLock()
+	defer s.activity.RUnlock()
+	if !s.connected(ctx, source) {
+		return Result{}, nil
+	}
+	if event.Message != nil {
+		if event.Chat == "" || !validName(event.Chat) {
+			return Result{}, ErrInvalid
+		}
+		chats, err := s.store.Chats(ctx, source.Person, source.Platform, source.Account)
+		if err != nil {
+			return Result{}, err
+		}
+		allowed := false
+		for _, chat := range chats {
+			if chat.Chat == event.Chat && chat.Sync {
+				allowed = true
+			}
+		}
+		if !allowed {
+			return Result{}, nil
+		}
+	}
 	var result Result
 	switch {
 	case event.Message != nil:
@@ -274,7 +310,7 @@ func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result
 		if event.Chat != "" {
 			deleted, err = s.store.DeleteRecords(ctx, source, event.Chat, []string{event.Deletion.Message})
 		} else {
-			deleted, err = s.store.DeleteSourceMessages(ctx, source, []string{event.Deletion.Message})
+			deleted, err = s.store.DeleteSourceMessages(ctx, source, []string{event.Deletion.Message}, event.ChatPrefixes...)
 		}
 		result.Deleted = deleted
 		return result, err
@@ -288,6 +324,8 @@ func (s *Service) Apply(ctx context.Context, source Source, event Event) (Result
 func (s *Service) RunLive(ctx context.Context) {
 	subscribed := map[string]bool{}
 	var mu sync.Mutex
+	var workers sync.WaitGroup
+	defer workers.Wait()
 	subscribe := func() {
 		sources, err := s.store.allSources(ctx)
 		if err != nil {
@@ -309,10 +347,17 @@ func (s *Service) RunLive(ctx context.Context) {
 			}
 			subscribed[key] = true
 			mu.Unlock()
+			liveCtx, cancel := context.WithCancel(ctx)
+			s.mu.Lock()
+			s.liveCancel[key] = cancel
+			s.mu.Unlock()
+			workers.Add(1)
 			go func(source Source, adapter Adapter) {
-				_ = adapter.Live(ctx, sourceID(source), func(event Event) error {
-					_, _ = s.Apply(ctx, source, event)
-					return nil
+				defer workers.Done()
+				defer cancel()
+				_ = adapter.Live(liveCtx, sourceID(source), func(event Event) error {
+					_, err := s.Apply(liveCtx, source, event)
+					return err
 				})
 				mu.Lock()
 				delete(subscribed, key)
@@ -327,8 +372,54 @@ func (s *Service) RunLive(ctx context.Context) {
 		select {
 		case <-ctx.Done():
 			return
+		case <-s.liveWake:
+			subscribe()
 		case <-ticker.C:
 			subscribe()
 		}
 	}
+}
+
+// Wake schedules newly connected sources without waiting for the next tick.
+func (s *Service) Wake() {
+	select {
+	case s.wake <- struct{}{}:
+	default:
+	}
+	select {
+	case s.liveWake <- struct{}{}:
+	default:
+	}
+}
+func (s *Service) connected(ctx context.Context, source Source) bool {
+	rows, err := s.store.Sources(ctx, source.Person)
+	if err != nil {
+		return false
+	}
+	for _, row := range rows {
+		if row.Platform == source.Platform && row.Account == source.Account {
+			return row.State == StateConnected
+		}
+	}
+	return false
+}
+
+// Disconnect stops reading before removing the source's authentication.
+func (s *Service) Disconnect(ctx context.Context, source Source) error {
+	s.activity.Lock()
+	defer s.activity.Unlock()
+	key := source.Platform + "\x00" + source.Account
+	s.mu.Lock()
+	if cancel := s.liveCancel[key]; cancel != nil {
+		cancel()
+		delete(s.liveCancel, key)
+	}
+	adapter := s.perSource[key]
+	delete(s.perSource, key)
+	delete(s.lastSync, key)
+	s.mu.Unlock()
+	if closer, ok := adapter.(interface{ Close() error }); ok {
+		_ = closer.Close()
+	}
+	return s.store.Disconnect(ctx, source.Person, source.Platform, source.Account)
 }

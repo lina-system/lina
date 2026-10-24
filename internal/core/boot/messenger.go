@@ -28,8 +28,14 @@ type MessengerConfig struct {
 // reads connected sources on their schedule and from their live events until
 // Core stops.
 func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *MessengerConfig) error {
-	if cfg == nil || r.messenger != nil {
+	if r.messenger != nil {
 		return nil
+	}
+	if cfg == nil {
+		cfg = &MessengerConfig{}
+	}
+	if r.telegram != nil {
+		r.telegram.factory = r.messengerFactory(cfg.Factory)
 	}
 	store := messenger.Open(r.db, r.materials, r.removals)
 	service := messenger.NewService(store, cfg.Adapters, cfg.Interval).WithFactory(r.messengerFactory(cfg.Factory))
@@ -54,7 +60,7 @@ func (r *conversationRuntime) messengerFactory(override messenger.Factory) messe
 				return adapter, ok, err
 			}
 		}
-		if source.Platform != telegram.Platform {
+		if source.Platform != telegram.Platform || source.Adapter != telegram.Platform {
 			return nil, false, nil
 		}
 		adapter, err := telegram.New(telegram.Config{Person: source.Person, Account: source.Account, Vault: vault})

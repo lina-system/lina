@@ -801,3 +801,14 @@ The TUI accepts the committed text the terminal's input method delivers, renders
 - Whether LINA Core can render a chart or a diagram to an image for channels without a headless browser, and the scheme of the deep link: until Core can, channels receive text and files; set during implementation of the channel adapters.
 - The order, grouping and size of "Waiting for me", the wording of the "At a glance" card, and the reply budgets: starting values set in this contract and in Reply shape, tuned by use and recorded in the implementation issue.
 - The order of the progress lines, the stage rule for a 목표, the line cap of the digest in a channel and the scheme of its link: starting values set in Progress at a glance and in [work-and-delegation.md](work-and-delegation.md#progress-line), tuned by use.
+
+### Telegram account settings
+
+`/telegram` opens personal Telegram source settings in the TUI. It shows the
+person's connected account IDs and their source states. Connect walks through
+creating an application at `https://my.telegram.org`, entering its `api_id` and
+`api_hash`, a phone number, the Telegram sign-in code and an optional two-step
+verification password. Inputs are masked and are never conversation drafts or
+undo history. Escape cancels the attempt; reconnect clears the form. Disconnect
+stops reads and removes the session while retaining imported records. Telegram
+bot connections remain in `/channels`.

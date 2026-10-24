@@ -19,13 +19,15 @@ import (
 // TestSignInKeepsTheSessionInTheSecretStore signs in with a phone code and a
 // 2FA password, then proves the next start needs no prompt and that the
 // session is only in the secret store.
+var sourceID = messenger.SourceID{Platform: "telegram", Account: "1001"}
+
 func TestSignInKeepsTheSessionInTheSecretStore(t *testing.T) {
 	t.Parallel()
 	s := newServer(t)
 	vault := newVault(t)
 	adapter := newAdapter(t, s, vault, nil)
 
-	state, err := adapter.SignIn(t.Context())
+	state, err := adapter.SignIn(t.Context(), sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -47,7 +49,7 @@ func TestSignInKeepsTheSessionInTheSecretStore(t *testing.T) {
 	if askedCode.Kind != "app" || askedCode.Length != 5 || askedCode.Next != "sms" {
 		t.Fatalf("code prompt = %+v", askedCode)
 	}
-	state, err = adapter.SignIn(t.Context())
+	state, err = adapter.SignIn(t.Context(), sourceID)
 	if err != nil || state != messenger.SignedIn {
 		t.Fatalf("state after sign-in = %q, %v", state, err)
 	}
@@ -71,7 +73,7 @@ func TestSignInKeepsTheSessionInTheSecretStore(t *testing.T) {
 
 	// A second adapter over the same vault resumes without a prompt.
 	second := newAdapter(t, s, vault, nil)
-	state, err = second.SignIn(t.Context())
+	state, err = second.SignIn(t.Context(), sourceID)
 	if err != nil || state != messenger.SignedIn {
 		t.Fatalf("resumed state = %q, %v", state, err)
 	}
@@ -87,7 +89,7 @@ func TestFirstFillPagingHonoursFloodWait(t *testing.T) {
 	adapter := newAdapter(t, s, vault, &waits)
 	signIn(t, adapter)
 
-	chats, err := adapter.ListChats(t.Context())
+	chats, err := adapter.ListChats(t.Context(), sourceID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -98,7 +100,7 @@ func TestFirstFillPagingHonoursFloodWait(t *testing.T) {
 		t.Fatalf("second chat = %+v", chats[1])
 	}
 
-	page, err := adapter.Page(t.Context(), "user:2002", "")
+	page, err := adapter.Page(t.Context(), sourceID, "user:2002", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -126,7 +128,7 @@ func TestFirstFillPagingHonoursFloodWait(t *testing.T) {
 
 	// The next read is the steady one: it asks for the newest page and adds
 	// nothing already read.
-	page, err = adapter.Page(t.Context(), "user:2002", page.Next)
+	page, err = adapter.Page(t.Context(), sourceID, "user:2002", page.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -150,10 +152,10 @@ func TestFillPagingByMessageID(t *testing.T) {
 	// A page size of two forces the fill to walk backwards.
 	adapter := newSizedAdapter(t, s, vault, nil, 2)
 	signIn(t, adapter)
-	if _, err := adapter.ListChats(t.Context()); err != nil {
+	if _, err := adapter.ListChats(t.Context(), sourceID); err != nil {
 		t.Fatal(err)
 	}
-	page, err := adapter.Page(t.Context(), "user:2002", "")
+	page, err := adapter.Page(t.Context(), sourceID, "user:2002", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -166,7 +168,7 @@ func TestFillPagingByMessageID(t *testing.T) {
 	s.mu.Lock()
 	firstOffset := s.gets[0].offset
 	s.mu.Unlock()
-	page, err = adapter.Page(t.Context(), "user:2002", page.Next)
+	page, err = adapter.Page(t.Context(), sourceID, "user:2002", page.Next)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -189,10 +191,10 @@ func TestLiveEditAndDeletionUpdate(t *testing.T) {
 	vault := newVault(t)
 	adapter := newAdapter(t, s, vault, nil)
 	signIn(t, adapter)
-	if _, err := adapter.ListChats(t.Context()); err != nil {
+	if _, err := adapter.ListChats(t.Context(), sourceID); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adapter.Page(t.Context(), "user:2002", ""); err != nil {
+	if _, err := adapter.Page(t.Context(), sourceID, "user:2002", ""); err != nil {
 		t.Fatal(err)
 	}
 
@@ -200,7 +202,7 @@ func TestLiveEditAndDeletionUpdate(t *testing.T) {
 	defer cancel()
 	events := make(chan messenger.Event, 4)
 	go func() {
-		_ = adapter.Live(ctx, func(event messenger.Event) error {
+		_ = adapter.Live(ctx, sourceID, func(event messenger.Event) error {
 			events <- event
 			return nil
 		})
@@ -239,17 +241,17 @@ func TestReadsNeverTouchReadStateOrPresence(t *testing.T) {
 	vault := newVault(t)
 	adapter := newAdapter(t, s, vault, nil)
 	signIn(t, adapter)
-	if _, err := adapter.ListChats(t.Context()); err != nil {
+	if _, err := adapter.ListChats(t.Context(), sourceID); err != nil {
 		t.Fatal(err)
 	}
-	page, err := adapter.Page(t.Context(), "user:2002", "")
+	page, err := adapter.Page(t.Context(), sourceID, "user:2002", "")
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adapter.Members(t.Context(), "chat:3003"); err != nil {
+	if _, err := adapter.Members(t.Context(), sourceID, "chat:3003"); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := adapter.Page(t.Context(), "user:2002", page.Next); err != nil {
+	if _, err := adapter.Page(t.Context(), sourceID, "user:2002", page.Next); err != nil {
 		t.Fatal(err)
 	}
 	forbidden := map[uint32]string{
@@ -277,10 +279,10 @@ func TestAttachmentBytesStayUntilAsked(t *testing.T) {
 	vault := newVault(t)
 	adapter := newAdapter(t, s, vault, nil)
 	signIn(t, adapter)
-	if _, err := adapter.ListChats(t.Context()); err != nil {
+	if _, err := adapter.ListChats(t.Context(), sourceID); err != nil {
 		t.Fatal(err)
 	}
-	page, err := adapter.Page(t.Context(), "user:2002", "")
+	page, err := adapter.Page(t.Context(), sourceID, "user:2002", "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -292,10 +294,10 @@ func TestAttachmentBytesStayUntilAsked(t *testing.T) {
 	if attachment.ID != "document:99" || attachment.Name != "notes.txt" || attachment.MIMEType != "text/plain" || attachment.Size != 4 {
 		t.Fatalf("attachment = %+v", attachment)
 	}
-	if _, err := adapter.FetchAttachment(t.Context(), "user:2002", "document:404"); !errors.Is(err, telegram.ErrAttachmentUnknown) {
+	if _, err := adapter.FetchAttachment(t.Context(), sourceID, "user:2002", "document:404"); !errors.Is(err, telegram.ErrAttachmentUnknown) {
 		t.Fatalf("unknown attachment error = %v", err)
 	}
-	reader, err := adapter.FetchAttachment(t.Context(), "user:2002", attachment.ID)
+	reader, err := adapter.FetchAttachment(t.Context(), sourceID, "user:2002", attachment.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -318,17 +320,17 @@ func TestMembersListsBothChatKinds(t *testing.T) {
 	vault := newVault(t)
 	adapter := newAdapter(t, s, vault, nil)
 	signIn(t, adapter)
-	if _, err := adapter.ListChats(t.Context()); err != nil {
+	if _, err := adapter.ListChats(t.Context(), sourceID); err != nil {
 		t.Fatal(err)
 	}
-	members, err := adapter.Members(t.Context(), "user:2002")
+	members, err := adapter.Members(t.Context(), sourceID, "user:2002")
 	if err != nil {
 		t.Fatal(err)
 	}
 	if len(members) != 1 || members[0].ID != "user:2002" || members[0].Name != "Friend" {
 		t.Fatalf("direct members = %+v", members)
 	}
-	members, err = adapter.Members(t.Context(), "chat:3003")
+	members, err = adapter.Members(t.Context(), sourceID, "chat:3003")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -347,7 +349,7 @@ func TestSignInRefusesMissingCredentials(t *testing.T) {
 		t.Fatal(err)
 	}
 	defer adapter.Close()
-	state, err := adapter.SignIn(t.Context())
+	state, err := adapter.SignIn(t.Context(), sourceID)
 	if err != nil || state != messenger.NeedsSignIn {
 		t.Fatalf("state = %q, %v", state, err)
 	}

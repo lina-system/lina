@@ -165,6 +165,9 @@ func displayName(user *tg.User) string {
 // platform's own fields: the connected account wrote it, a bot wrote it, the
 // platform wrote it as a service notice, or someone else did.
 func (a *Adapter) messageLocked(message *tg.Message) (messenger.Message, bool) {
+	if message.PeerID == nil {
+		return messenger.Message{}, false
+	}
 	out := messenger.Message{ID: strconv.Itoa(message.ID)}
 	if message.Date > 0 {
 		out.At = time.Unix(int64(message.Date), 0).UTC()
@@ -175,20 +178,16 @@ func (a *Adapter) messageLocked(message *tg.Message) (messenger.Message, bool) {
 	out.Text = message.Message
 	out.Author = a.authorLocked(senderKey(message))
 	switch {
-	case message.Out || message.FromID != nil && a.isSelfLocked(message.FromID):
-		// The platform marks the account's own copies outgoing, and the
-		// connected user is the other proof.
-		out.Route = messenger.RoutePerson
+	case message.ViaBotID != 0 || a.botLocked(message.FromID):
+		out.Route = messenger.RouteAutomation
 	case message.Post:
-		// A channel post is the channel's own voice, not a person's.
 		out.Route = messenger.RouteParticipant
-	case message.ViaBotID != 0:
-		out.Route = messenger.RouteAutomation
-	case a.botLocked(message.FromID):
-		out.Route = messenger.RouteAutomation
+	case message.Out || message.FromID != nil && a.isSelfLocked(message.FromID):
+		out.Route = messenger.RoutePerson
 	default:
 		out.Route = messenger.RouteParticipant
 	}
+
 	if reply := replyTo(message.ReplyTo); reply != "" {
 		out.ReplyTo = reply
 	}
@@ -378,7 +377,11 @@ func (a *Adapter) publishDeleted(chat string, ids []int) error {
 	at := a.now()
 	for _, id := range ids {
 		deletion := messenger.Deletion{Message: strconv.Itoa(id), At: at}
-		if err := a.publish(messenger.Event{Deletion: &deletion, Chat: chat}); err != nil {
+		event := messenger.Event{Deletion: &deletion, Chat: chat}
+		if chat == "" {
+			event.ChatPrefixes = []string{"user:", "chat:"}
+		}
+		if err := a.publish(event); err != nil {
 			return err
 		}
 	}

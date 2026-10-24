@@ -123,6 +123,8 @@ type Adapter struct {
 	startErr    error
 	runErr      error
 	closed      bool
+	liveReady   chan struct{}
+	liveOnce    sync.Once
 	listeners   map[int]func(messenger.Event) error
 	nextID      int
 	deliverMu   sync.Mutex
@@ -153,6 +155,7 @@ func New(cfg Config) (*Adapter, error) {
 	}
 	return &Adapter{
 		cfg: cfg, size: size, wait: wait,
+		liveReady:   make(chan struct{}),
 		listeners:   map[int]func(messenger.Event) error{},
 		users:       map[int64]*tg.User{},
 		chats:       map[int64]*tg.Chat{},
@@ -175,7 +178,11 @@ func sleep(ctx context.Context, d time.Duration) error {
 
 // SignIn reports whether the source has a usable session. It never prompts: a
 // person's sign-in runs through Authenticate from the app or the TUI.
-func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
+func (a *Adapter) SignIn(ctx context.Context, source messenger.SourceID) (messenger.SignInState, error) {
+	if source.Platform != Platform || source.Account != a.cfg.Account {
+		return messenger.Failing, ErrInvalid
+	}
+
 	if _, _, err := a.credentials(); err != nil {
 		return messenger.NeedsSignIn, nil
 	}
@@ -194,6 +201,9 @@ func (a *Adapter) SignIn(ctx context.Context) (messenger.SignInState, error) {
 		return messenger.NeedsSignIn, nil
 	}
 	if status.User != nil {
+		if status.User.Bot || strconv.FormatInt(status.User.ID, 10) != a.cfg.Account {
+			return messenger.NeedsSignIn, ErrInvalid
+		}
 		a.mu.Lock()
 		a.selfID = status.User.ID
 		a.rememberLocked([]tg.UserClass{status.User}, nil)
@@ -324,12 +334,16 @@ func (a *Adapter) retry(ctx context.Context, call func() error) error {
 }
 
 // ListChats lists the account's dialogs.
-func (a *Adapter) ListChats(ctx context.Context) ([]messenger.Chat, error) {
+func (a *Adapter) ListChats(ctx context.Context, source messenger.SourceID) ([]messenger.Chat, error) {
+	if source.Platform != Platform || source.Account != a.cfg.Account {
+		return nil, ErrInvalid
+	}
+
 	api, err := a.api(ctx)
 	if err != nil {
 		return nil, err
 	}
-	if _, err := a.SignIn(ctx); err != nil {
+	if _, err := a.SignIn(ctx, messenger.SourceID{Platform: Platform, Account: a.cfg.Account}); err != nil {
 		return nil, err
 	}
 	var chats []messenger.Chat
@@ -417,7 +431,11 @@ func (a *Adapter) dialogs(response tg.MessagesDialogsClass) ([]dialogItem, int, 
 }
 
 // Page reads one page of a chat.
-func (a *Adapter) Page(ctx context.Context, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+func (a *Adapter) Page(ctx context.Context, source messenger.SourceID, chat string, cursor messenger.Cursor) (messenger.Page, error) {
+	if source.Platform != Platform || source.Account != a.cfg.Account {
+		return messenger.Page{}, ErrInvalid
+	}
+
 	api, err := a.api(ctx)
 	if err != nil {
 		return messenger.Page{}, err
@@ -472,8 +490,19 @@ func (a *Adapter) history(response tg.MessagesMessagesClass) ([]*tg.Message, err
 	a.rememberLocked(users, chats)
 	out := make([]*tg.Message, 0, len(items))
 	for _, item := range items {
-		if message, ok := item.(*tg.Message); ok && message != nil {
-			out = append(out, message)
+		switch message := item.(type) {
+		case *tg.Message:
+			if message != nil {
+				out = append(out, message)
+			}
+		case *tg.MessageService:
+			if message != nil {
+				out = append(out, &tg.Message{ID: message.ID, Date: message.Date})
+			}
+		case *tg.MessageEmpty:
+			if message != nil {
+				out = append(out, &tg.Message{ID: message.ID})
+			}
 		}
 	}
 	return out, nil
@@ -520,7 +549,8 @@ func (a *Adapter) steadyPage(raw []*tg.Message, pos position) messenger.Page {
 	page := messenger.Page{}
 	minID := 0
 	a.mu.Lock()
-	for _, message := range raw {
+	for i := len(raw) - 1; i >= 0; i-- {
+		message := raw[i]
 		if minID == 0 || message.ID < minID {
 			minID = message.ID
 		}
@@ -528,8 +558,8 @@ func (a *Adapter) steadyPage(raw []*tg.Message, pos position) messenger.Page {
 		if message.ID <= pos.newest {
 			continue
 		}
-		if message.ID > next.newest {
-			next.newest = message.ID
+		if message.ID > next.pending {
+			next.pending = message.ID
 		}
 		if at.After(next.newestAt) {
 			next.newestAt = at
@@ -545,6 +575,8 @@ func (a *Adapter) steadyPage(raw []*tg.Message, pos position) messenger.Page {
 	a.mu.Unlock()
 	page.HasMore = hasMore
 	if !hasMore {
+		next.newest = max(next.newest, next.pending)
+		next.pending = 0
 		page.Through = next.newestAt
 	}
 	page.Next = messenger.Cursor(next.encode())
@@ -552,7 +584,11 @@ func (a *Adapter) steadyPage(raw []*tg.Message, pos position) messenger.Page {
 }
 
 // Members lists a chat's members as the platform reports them.
-func (a *Adapter) Members(ctx context.Context, chat string) ([]messenger.Author, error) {
+func (a *Adapter) Members(ctx context.Context, source messenger.SourceID, chat string) ([]messenger.Author, error) {
+	if source.Platform != Platform || source.Account != a.cfg.Account {
+		return nil, ErrInvalid
+	}
+
 	api, err := a.api(ctx)
 	if err != nil {
 		return nil, err
@@ -669,7 +705,11 @@ func channelParticipantID(item tg.ChannelParticipantClass) (int64, bool) {
 }
 
 // Live delivers edits and deletions the platform pushes until ctx ends.
-func (a *Adapter) Live(ctx context.Context, deliver func(messenger.Event) error) error {
+func (a *Adapter) Live(ctx context.Context, source messenger.SourceID, deliver func(messenger.Event) error) error {
+	if source.Platform != Platform || source.Account != a.cfg.Account {
+		return ErrInvalid
+	}
+
 	if deliver == nil {
 		return ErrInvalid
 	}
@@ -681,6 +721,7 @@ func (a *Adapter) Live(ctx context.Context, deliver func(messenger.Event) error)
 	a.nextID++
 	a.listeners[id] = deliver
 	a.mu.Unlock()
+	a.liveOnce.Do(func() { close(a.liveReady) })
 	defer func() {
 		a.mu.Lock()
 		delete(a.listeners, id)
@@ -708,7 +749,11 @@ func (a *Adapter) publish(event messenger.Event) error {
 }
 
 // FetchAttachment reads one attachment on the person's request.
-func (a *Adapter) FetchAttachment(ctx context.Context, chat, attachment string) (io.ReadCloser, error) {
+func (a *Adapter) FetchAttachment(ctx context.Context, source messenger.SourceID, chat, attachment string) (io.ReadCloser, error) {
+	if source.Platform != Platform || source.Account != a.cfg.Account {
+		return nil, ErrInvalid
+	}
+
 	client, err := a.ensure(ctx)
 	if err != nil {
 		return nil, err
@@ -741,3 +786,13 @@ func (a *Adapter) Capabilities() messenger.Capabilities {
 }
 
 var _ messenger.Adapter = (*Adapter)(nil)
+
+// WaitLive waits until the adapter has installed its first event subscriber.
+func (a *Adapter) WaitLive(ctx context.Context) error {
+	select {
+	case <-a.liveReady:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}

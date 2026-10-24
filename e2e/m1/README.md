@@ -206,3 +206,10 @@ messages with their speaker kinds, and applies a pushed edit and deletion. The
 scenario checks the committed cursor and coverage, the tombstones, that the
 session exists only in the secret store with mode 0600, and that no read-state or
 presence request was ever sent.
+
+Telegram source acceptance signs in through the owner socket using the person's
+application credentials, phone code and 2FA password. A child Core hosts the
+fake MTProto server, preserving the real owner/worker process boundary. A live
+subscription barrier precedes a single edit and deletion; request recording
+rejects read acknowledgements, presence and typing. The adapter package also
+covers session resume, multi-page catch-up and namespace-scoped deletion.

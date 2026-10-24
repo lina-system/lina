@@ -45,6 +45,8 @@ func concretePayloads() map[string]any {
 		"restart_status":     map[string]any{"owed": false},
 		"record_request":     map[string]any{"operation": "query", "view": "memos"},
 		"record_result":      map[string]any{"operation": "query", "rows": []any{}},
+		"telegram_request":   map[string]any{"operation": "list"},
+		"telegram_result":    map[string]any{"stage": "idle", "sources": []any{}},
 		"teams_request":      map[string]any{"operation": "list"},
 		"teams_result":       map[string]any{"operation": "list", "connections": []any{}},
 		"a2a_request":        map[string]any{"operation": "list"},

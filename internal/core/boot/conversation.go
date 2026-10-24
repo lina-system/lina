@@ -88,6 +88,7 @@ type conversationRuntime struct {
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
 	teams           *teams.Service
+	telegram        *telegramControl
 	messenger       *messenger.Service
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
@@ -304,6 +305,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	relay := clientsrv.NewSignInRelay(r.person, r.signin)
+	if err = r.initTelegram(); err != nil {
+		return nil, err
+	}
 	if err = r.initTeams(relay, channelTransport); err != nil {
 		return nil, err
 	}
@@ -447,6 +451,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 }
 func (r *conversationRuntime) Close(ctx context.Context) error {
 	var err error
+	if r.telegram != nil {
+		r.telegram.close()
+	}
 	if r.teams != nil {
 		r.teams.Close()
 	}

@@ -3,9 +3,16 @@ package e2e_test
 
 import (
 	"context"
+	"encoding/json"
+	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
+	"os/signal"
 	"path/filepath"
+	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -17,11 +24,13 @@ import (
 	"github.com/gotd/td/tgtest/cluster"
 	"github.com/gotd/td/transport"
 
+	"github.com/thisisjun786/lina/internal/clientapi"
 	"github.com/thisisjun786/lina/internal/core/boot"
 	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	"github.com/thisisjun786/lina/internal/core/messenger/telegram"
 	"github.com/thisisjun786/lina/internal/core/secrets"
+	"github.com/thisisjun786/lina/kit/protocol"
 )
 
 // TestM3TelegramSourceInstalledCore proves the Telegram source inside a running
@@ -32,7 +41,6 @@ import (
 // ever sent.
 func TestM3TelegramSourceInstalledCore(t *testing.T) {
 
-	server := newFakeTelegram(t)
 	const (
 		person  = "person:telegram-host"
 		account = "1001"
@@ -59,77 +67,91 @@ func TestM3TelegramSourceInstalledCore(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	// The person signs in before Core starts, as the app or the TUI does.
-	vault, err := secrets.OpenFiles(h.root)
+	prior := h.binary
+	h.binary = executable
+	child := h.command("-test.run=^TestTelegramBootHelper$")
+	h.binary = prior
+	child.command.Env = append(child.command.Env, "LINA_TEST_TELEGRAM_ROOT="+h.root, "LINA_TEST_TELEGRAM_SOCKET="+h.socket)
+	child.start(t)
+	var stopOnce sync.Once
+	stop := func() { stopOnce.Do(func() { h.stopCore(child) }) }
+	t.Cleanup(stop)
+	done := make(chan error)
+
+	client := telegramClient(t, h)
+	defer client.Close()
+	exchange := func(p protocol.TelegramRequest) protocol.TelegramResult {
+		t.Helper()
+		id, err := client.Telegram(h.ctx, p)
+		if err != nil {
+			t.Fatal(err)
+		}
+		for {
+			e, err := client.Receive(h.ctx)
+			if err != nil {
+				t.Fatal(err)
+			}
+			if e.ReplyTo == nil || *e.ReplyTo != id {
+				continue
+			}
+			if e.Error != nil {
+				t.Fatalf("Telegram settings: %s", e.Error.Code)
+			}
+			return e.Payload.(protocol.TelegramResult)
+		}
+	}
+	apiID, hash, phone := "12345", "synthetic-api-hash", "+10000000001"
+	if result := exchange(protocol.TelegramRequest{Operation: "start", APIID: &apiID, APIHash: &hash, Phone: &phone}); result.Stage != "code" {
+		t.Fatalf("sign-in stage %s", result.Stage)
+	}
+	code := "12345"
+	if result := exchange(protocol.TelegramRequest{Operation: "answer", Answer: &code}); result.Stage != "password" {
+		t.Fatalf("sign-in stage %s", result.Stage)
+	}
+	password := "synthetic-2fa"
+	if result := exchange(protocol.TelegramRequest{Operation: "answer", Answer: &password}); result.Stage != "connected" || len(result.Sources) != 1 || result.Sources[0].Account != account {
+		t.Fatalf("signed-in source %+v", result)
+	}
+	url, err := os.ReadFile(filepath.Join(h.root, "telegram-fixture-url"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err := telegram.PutCredentials(vault, person, 12345, "synthetic-api-hash"); err != nil {
-		t.Fatal(err)
+	call := func(path string) []byte {
+		t.Helper()
+		req, err := http.NewRequestWithContext(h.ctx, "GET", string(url)+path, nil)
+		if err != nil {
+			t.Fatal(err)
+		}
+		resp, err := http.DefaultClient.Do(req)
+		if err != nil {
+			t.Fatal(err)
+		}
+		defer resp.Body.Close()
+		body, err := io.ReadAll(resp.Body)
+		if err != nil || resp.StatusCode != 200 {
+			t.Fatalf("fixture request: %d %v", resp.StatusCode, err)
+		}
+		return body
 	}
-	signedIn, err := telegram.New(telegram.Config{Person: person, Account: account, Vault: vault, Options: server.options()})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := signedIn.Authenticate(h.ctx, telegram.PromptFuncs{
-		PhoneFunc:    func(context.Context) (string, error) { return "+10000000001", nil },
-		CodeFunc:     func(context.Context, telegram.Code) (string, error) { return "12345", nil },
-		PasswordFunc: func(context.Context) (string, error) { return "synthetic-2fa", nil },
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if err := signedIn.Close(); err != nil {
-		t.Fatal(err)
-	}
-
-	// Connecting a source is the person's act; Core never connects one itself.
-	source := messenger.Source{Person: person, Platform: telegram.Platform, Account: account,
-		Mode: messenger.ModeOfficial, Adapter: "telegram", State: messenger.StateConnected, ConnectedAt: time.Now()}
-	db, closeStore := installedAcceptanceStore(t, h)
-	if err := messenger.Open(db, nil, nil).Connect(h.ctx, source); err != nil {
-		t.Fatal(err)
-	}
-	closeStore()
-
-	ctx, cancel := context.WithCancel(h.ctx)
-	defer cancel()
-	done := make(chan error, 1)
-	go func() {
-		done <- boot.Run(ctx, boot.Config{StateRoot: h.root, Socket: h.socket, Messenger: &boot.MessengerConfig{
-			Interval: 25 * time.Millisecond,
-			Factory: func(source messenger.Source) (messenger.Adapter, bool, error) {
-				if source.Platform != telegram.Platform {
-					return nil, false, nil
-				}
-				adapter, err := telegram.New(telegram.Config{
-					Person: source.Person, Account: source.Account, Vault: server.vault(t, h.root), Options: server.options(),
-				})
-				return adapter, err == nil, err
-			},
-		}})
-	}()
+	call("/ready")
 
 	// The account's messages arrive from the running Core's sync loop.
 	waitForRows(t, h, done, 3, "SELECT count(*) FROM conv_event WHERE origin LIKE '%telegram%'")
 
-	// A platform edit and deletion reach the ledger through the live path. The
-	// platform may deliver an edit before the source's subscription starts, so
-	// the scenario repeats the push until the record appears; admitting the
-	// same revision twice adds nothing.
-	server.editUntil(t, h, done, 2, "second, edited", "SELECT count(*) FROM conv_event WHERE body LIKE '%second, edited%'")
-	server.deleteUntil(t, h, done, 1, "SELECT count(*) FROM removal_applied")
+	// The subscription barrier makes each update a single delivery.
+	call("/edit")
+	waitForRows(t, h, done, 1, "SELECT count(*) FROM conv_event WHERE body LIKE '%second, edited%'")
+	call("/delete")
+	waitForRows(t, h, done, 1, "SELECT count(*) FROM removal_applied")
+	client.Close()
 
-	cancel()
-	select {
-	case err := <-done:
-		if err != nil {
-			t.Fatalf("telegram Core stopped with %v", err)
-		}
-	case <-time.After(operationTimeout):
-		t.Fatal("telegram Core shutdown timed out")
+	var stats telegramStats
+	if err := json.Unmarshal(call("/stats"), &stats); err != nil {
+		t.Fatal(err)
 	}
+	stop()
 
-	db, closeStore = installedAcceptanceStore(t, h)
+	db, closeStore := installedAcceptanceStore(t, h)
 	defer closeStore()
 	count := func(query string, args ...any) int {
 		t.Helper()
@@ -156,14 +178,14 @@ func TestM3TelegramSourceInstalledCore(t *testing.T) {
 	if n := count("SELECT count(*) FROM messenger_coverage WHERE platform='telegram'"); n < 2 {
 		t.Fatalf("coverage rows = %d", n)
 	}
-	if !server.honouredFloodWait() {
+	if !stats.Waited {
 		t.Fatal("the adapter did not honour the platform's FLOOD_WAIT")
 	}
-	for _, id := range server.invokedTypes() {
+	for _, id := range stats.Invoked {
 		switch id {
 		case tg.MessagesReadHistoryRequestTypeID, tg.ChannelsReadHistoryRequestTypeID,
 			tg.AccountUpdateStatusRequestTypeID, tg.MessagesSetTypingRequestTypeID,
-			tg.MessagesReadMentionsRequestTypeID, tg.MessagesReadReactionsRequestTypeID:
+			tg.MessagesReadMentionsRequestTypeID, tg.MessagesReadReactionsRequestTypeID, tg.MessagesReadMessageContentsRequestTypeID, tg.ChannelsReadMessageContentsRequestTypeID:
 			t.Fatalf("the source sent a read-state or presence request: %#x", id)
 		}
 	}
@@ -236,14 +258,15 @@ func bootFailed(t *testing.T, h *harness, done <-chan error) {
 // fakeTelegram is an in-process MTProto server for the scenario.
 type fakeTelegram struct {
 	*cluster.Cluster
-	dispatch *tgtest.Dispatcher
-	mu       sync.Mutex
-	session  tgtest.Session
-	server   *tgtest.Server
-	invoked  []uint32
-	reads    int
-	flooded  bool
-	deletion bool
+	dispatch   *tgtest.Dispatcher
+	mu         sync.Mutex
+	session    tgtest.Session
+	server     *tgtest.Server
+	invoked    []uint32
+	reads      int
+	flooded    bool
+	deletion   bool
+	authorized bool
 }
 
 var fakePrime = []byte{
@@ -298,12 +321,19 @@ func newFakeTelegram(t *testing.T) *fakeTelegram {
 		})
 	})
 	f.dispatch.HandleFunc(tg.AuthCheckPasswordRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
+		f.mu.Lock()
+		f.authorized = true
+		f.mu.Unlock()
 		return server.SendResult(req, &tg.AuthAuthorization{User: fakeSelf})
 	})
 	f.dispatch.HandleFunc(tg.UsersGetUsersRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
 		f.mu.Lock()
 		f.session, f.server = req.Session, server
+		authorized := f.authorized
 		f.mu.Unlock()
+		if !authorized {
+			return server.SendErr(req, tgerr.New(401, "AUTH_KEY_UNREGISTERED"))
+		}
 		return server.SendVector(req, fakeSelf)
 	})
 	f.dispatch.HandleFunc(tg.MessagesGetDialogsRequestTypeID, func(server *tgtest.Server, req *tgtest.Request) error {
@@ -381,15 +411,6 @@ func (r recorder) Handle(next tg.Invoker) gotelegram.InvokeFunc {
 	}
 }
 
-func (f *fakeTelegram) vault(t *testing.T, root string) *secrets.Store {
-	t.Helper()
-	store, err := secrets.OpenFiles(root)
-	if err != nil {
-		t.Fatal(err)
-	}
-	return store
-}
-
 func (f *fakeTelegram) invokedTypes() []uint32 {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -402,54 +423,6 @@ func (f *fakeTelegram) honouredFloodWait() bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	return f.flooded
-}
-
-func (f *fakeTelegram) editUntil(t *testing.T, h *harness, done <-chan error, id int, text, query string) {
-	t.Helper()
-	deadline := time.Now().Add(operationTimeout)
-	for {
-		f.edit(t, id, text)
-		if rowsEnabled(h, query) {
-			return
-		}
-		bootFailed(t, h, done)
-		if time.Now().After(deadline) {
-			t.Fatalf("the platform edit never reached the ledger: %q", query)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-func (f *fakeTelegram) deleteUntil(t *testing.T, h *harness, done <-chan error, id int, query string) {
-	t.Helper()
-	deadline := time.Now().Add(operationTimeout)
-	for {
-		f.delete(t, id)
-		if rowsEnabled(h, query) {
-			return
-		}
-		bootFailed(t, h, done)
-		if time.Now().After(deadline) {
-			t.Fatalf("the platform deletion never reached the ledger: %q", query)
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-}
-
-// rowsEnabled reports whether the lock-free inspection path sees a row.
-func rowsEnabled(h *harness, query string) bool {
-	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
-	if err != nil {
-		return false
-	}
-	defer db.Close(context.Background())
-	var n int
-	if err := db.Read(h.ctx, func(tx *canon.Tx) error {
-		return tx.QueryRowContext(h.ctx, query).Scan(&n)
-	}); err != nil {
-		return false
-	}
-	return n >= 1
 }
 
 func (f *fakeTelegram) edit(t *testing.T, id int, text string) {
@@ -477,6 +450,109 @@ func (f *fakeTelegram) delete(t *testing.T, id int) {
 		t.Fatal("the source never established a session")
 	}
 	if err := server.SendUpdates(context.Background(), session, &tg.UpdateDeleteMessages{Messages: []int{id}, Pts: 3, PtsCount: 1}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func telegramVault(t *testing.T, root string) *secrets.Store {
+	t.Helper()
+	v, err := secrets.OpenFiles(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { v.Close() })
+	return v
+}
+func telegramClient(t *testing.T, h *harness) *clientapi.Client {
+	t.Helper()
+	ctx, cancel := context.WithTimeout(h.ctx, operationTimeout)
+	defer cancel()
+	for {
+		c, err := clientapi.DialWithCapabilities(ctx, h.socket, "test", []protocol.Capability{{Name: "telegram_source", Version: "1.0"}})
+		if err == nil {
+			for {
+				id, err := c.Telegram(ctx, protocol.TelegramRequest{Operation: "list"})
+				if err != nil {
+					t.Fatal(err)
+				}
+				e, err := c.Receive(ctx)
+				if err != nil {
+					t.Fatal(err)
+				}
+				if e.ReplyTo == nil || *e.ReplyTo != id {
+					t.Fatal("uncorrelated response")
+				}
+				if e.Kind == protocol.KindTelegramResult {
+					return c
+				}
+				if e.Error == nil || e.Error.Code != protocol.ErrorUnavailable {
+					t.Fatalf("settings readiness: %+v", e.Error)
+				}
+				select {
+				case <-ctx.Done():
+					t.Fatal(ctx.Err())
+				case <-time.After(10 * time.Millisecond):
+				}
+			}
+		}
+		select {
+		case <-ctx.Done():
+			t.Fatal(err)
+		case <-time.After(10 * time.Millisecond):
+		}
+	}
+}
+
+type telegramStats struct {
+	Waited  bool
+	Invoked []uint32
+}
+
+func TestTelegramBootHelper(t *testing.T) {
+	root := os.Getenv("LINA_TEST_TELEGRAM_ROOT")
+	if root == "" {
+		return
+	}
+	fixture := newFakeTelegram(t)
+	live := make(chan *telegram.Adapter, 4)
+	httpServer := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/ready":
+			select {
+			case a := <-live:
+				if err := a.WaitLive(r.Context()); err != nil {
+					http.Error(w, "not ready", 503)
+				}
+			case <-r.Context().Done():
+				http.Error(w, "not ready", 503)
+			}
+		case "/edit":
+			fixture.edit(t, 2, "second, edited")
+		case "/delete":
+			fixture.delete(t, 1)
+		case "/stats":
+			json.NewEncoder(w).Encode(telegramStats{fixture.honouredFloodWait(), fixture.invokedTypes()})
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer httpServer.Close()
+	if err := os.WriteFile(filepath.Join(root, "telegram-fixture-url"), []byte(httpServer.URL), 0600); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := signal.NotifyContext(t.Context(), syscall.SIGTERM)
+	defer cancel()
+	err := boot.Run(ctx, boot.Config{StateRoot: root, Socket: os.Getenv("LINA_TEST_TELEGRAM_SOCKET"), Messenger: &boot.MessengerConfig{Interval: 25 * time.Millisecond, Factory: func(source messenger.Source) (messenger.Adapter, bool, error) {
+		if source.Platform != telegram.Platform {
+			return nil, false, nil
+		}
+		a, err := telegram.New(telegram.Config{Person: source.Person, Account: source.Account, Vault: telegramVault(t, root), Options: fixture.options()})
+		if err == nil && !strings.HasPrefix(source.Account, "pending:") {
+			live <- a
+		}
+		return a, err == nil, err
+	}}})
+	if err != nil {
 		t.Fatal(err)
 	}
 }

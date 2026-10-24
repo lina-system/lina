@@ -38,6 +38,7 @@ const (
 // more new messages than one page continues where the last page stopped.
 type position struct {
 	newest, oldest int
+	pending        int
 	newestAt       time.Time
 	before         int
 	phase          phase
@@ -54,7 +55,7 @@ func (p position) encode() string {
 	if phase == "" {
 		phase = phaseFill
 	}
-	return strings.Join([]string{cursorVersion, strconv.Itoa(p.newest), strconv.Itoa(p.oldest), string(phase), strconv.FormatInt(at, 10), strconv.Itoa(p.before)}, ":")
+	return strings.Join([]string{cursorVersion, strconv.Itoa(p.newest), strconv.Itoa(p.oldest), string(phase), strconv.FormatInt(at, 10), strconv.Itoa(p.before), strconv.Itoa(p.pending)}, ":")
 }
 
 // decode reads a cursor. An absent or unrecognised cursor starts a first fill;
@@ -64,7 +65,7 @@ func decode(cursor string) position {
 		return position{phase: phaseFill}
 	}
 	parts := strings.Split(cursor, ":")
-	if len(parts) != 6 || parts[0] != cursorVersion {
+	if (len(parts) != 6 && len(parts) != 7) || parts[0] != cursorVersion {
 		return position{phase: phaseFill}
 	}
 	newest, err := strconv.Atoi(parts[1])
@@ -89,6 +90,9 @@ func decode(cursor string) position {
 	}
 	if before, err := strconv.Atoi(parts[5]); err == nil && before > 0 && p.phase == phaseSteady {
 		p.before = before
+	}
+	if len(parts) == 7 {
+		p.pending, _ = strconv.Atoi(parts[6])
 	}
 	return p
 }

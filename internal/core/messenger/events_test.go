@@ -111,3 +111,24 @@ func TestApplyAdmitsAnEditAndADeletion(t *testing.T) {
 		t.Fatal("an event without a chat was accepted")
 	}
 }
+
+func TestAccountWideDeletionPreservesChannelIDs(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	for _, id := range []string{"user:1", "chat:2", "channel:3"} {
+		if err := f.store.UpsertChats(t.Context(), source, []messenger.Chat{{ID: id, Name: id, Kind: "group"}}); err != nil {
+			t.Fatal(err)
+		}
+		if _, err := f.store.AdmitPage(t.Context(), source, id, "", messenger.Page{Messages: []messenger.Message{message("7", messenger.RouteParticipant, f.now, "retained")}, Next: "next"}); err != nil {
+			t.Fatal(err)
+		}
+	}
+	service := messenger.NewService(f.store, nil, time.Hour)
+	result, err := service.Apply(t.Context(), source, messenger.Event{ChatPrefixes: []string{"user:", "chat:"}, Deletion: &messenger.Deletion{Message: "7", At: f.now}})
+	if err != nil || result.Deleted != 2 {
+		t.Fatalf("account-wide deletion crossed namespaces: %+v %v", result, err)
+	}
+	if n := count(t, f.db, "SELECT count(*) FROM messenger_record WHERE chat='channel:3' AND state='live'"); n != 1 {
+		t.Fatal("channel record deleted")
+	}
+}

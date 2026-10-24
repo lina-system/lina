@@ -732,6 +732,30 @@ A messenger source is one of the person's own messenger accounts that LINA reads
 - The connect card of an unofficial platform says in plain words that the platform's terms forbid automating a personal account, links the term, says that even reading may get the account limited, and says that LINA will only read. The person accepts before connecting, and LINA records the acceptance with the person and the date.
 - LINA never takes tokens, cookies or passwords from other apps or browsers, never signs in as an official client with that client's id or secret, never scripts a developer portal and never evicts the person's other devices. Reading never marks a message read, shows presence or typing, or joins or leaves a chat.
 
+### Telegram source
+
+The person connects their own account from `/telegram` in the TUI. The setup
+form links to `https://my.telegram.org` and asks for the person's own `api_id`
+and `api_hash`, phone number, sign-in code, and optional two-step verification
+password. LINA never creates an application or account. Inputs go through the
+owner settings route and never enter conversation history or a model request.
+Sign-in is bound to that client connection, expires after five minutes, and is
+cancelled when the client closes it or disconnects.
+
+Core derives the account ID from Telegram's authenticated user. Application
+credentials and MTProto sessions stay in the person's secret store; code and
+password are transient. Restart resumes connected sources from those sessions.
+Disconnect stops source reads and removes that account's saved session while
+retaining its imported records.
+
+The source reads dialogs and pages history by message ID, with at most 100
+messages per page and a one-minute poll interval. First fill walks backwards;
+catch-up retains the last completed watermark until every newer page commits.
+Live edits supersede stored records and explicit deletion updates retract them.
+Reads send no read acknowledgement, presence or typing request. A Telegram
+channel bot remains a separate channel connection. This increment reads only;
+write verbs remain subject to the messenger write-grant implementation.
+
 ### Microsoft Teams source
 
 Teams reads work and school accounts through Microsoft Graph v1.0 with the

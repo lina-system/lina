@@ -106,6 +106,41 @@ func DeleteSession(store *secrets.Store, person, account string) error {
 	return store.Delete(credentialKey(person, sessionPrefix+account))
 }
 
+// Account returns the signed-in user's platform identity, never a client claim.
+func (a *Adapter) Account(ctx context.Context) (string, error) {
+	client, err := a.ensure(ctx)
+	if err != nil {
+		return "", err
+	}
+	status, err := client.Auth().Status(ctx)
+	if err != nil {
+		return "", err
+	}
+	if !status.Authorized || status.User == nil || status.User.Bot {
+		return "", ErrInvalid
+	}
+	return strconv.FormatInt(status.User.ID, 10), nil
+}
+
+// SaveSession copies the authenticated session under the verified account ID.
+func (a *Adapter) SaveSession(ctx context.Context) (string, error) {
+	account, err := a.Account(ctx)
+	if err != nil {
+		return "", err
+	}
+	if err := a.Close(); err != nil {
+		return "", err
+	}
+	blob, err := a.cfg.Vault.GetBlob(credentialKey(a.cfg.Person, sessionPrefix+a.cfg.Account))
+	if err != nil {
+		return "", err
+	}
+	if err := a.cfg.Vault.PutBlob(credentialKey(a.cfg.Person, sessionPrefix+account), blob.Bytes()); err != nil {
+		return "", err
+	}
+	return account, nil
+}
+
 func (a *Adapter) open() error {
 	apiID, apiHash, err := a.credentials()
 	if err != nil {

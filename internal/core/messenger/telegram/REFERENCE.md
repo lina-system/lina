@@ -17,10 +17,8 @@ members. LINA ports the same shape onto gotd/td `v0.163.0`, the maintained Go
 MTProto client, as [the research note](../../../../docs/research/messengers.md)
 decides.
 
-The upstream snapshot named in the issue (`~/.hermes/hermes-agent`,
-`~/.hermes/plugins`, `~/code/codex-relay-workflow`) is not present on this
-machine, so this spec uses the research note's reading of agent-messenger and
-the platform's own documentation.
+The port uses the research note's recorded agent-messenger reading and the
+pinned gotd API types. No Hermes, Honcho, LCM-X or CRW behavior is ported here.
 
 ### Seen
 
@@ -51,8 +49,8 @@ the platform's own documentation.
   a person's words.
 - A channel's message ids are per channel; private chats and basic groups share
   one account-wide id sequence, so `updateDeleteMessages` ids can match more than
-  one chat. Every chat where the id is live is cleared, which is what TDLib
-  effectively does with its own pts state.
+  one chat. The deletion is restricted to private chats and basic groups; channel and
+  supergroup IDs are separate namespaces.
 - "First fill reads back as far as the platform allows": history paging walks
   backwards until a short page, then the steady read follows new ids above the
   newest id seen.
@@ -76,8 +74,8 @@ the platform's own documentation.
 `Authenticate` drives the platform's code and 2FA flow through a `Prompt`
 supplied by the app or the TUI. The adapter keeps neither the code nor the
 password; the session it keeps is the MTProto auth key, stored as an opaque blob
-in the secret store under `<person, telegram, session:<account>>`. No plaintext
-file is written. `DeleteSession` removes it when the source disconnects.
+in the secret store under `<person, telegram, session:<account>>`. No standalone session file is written; the secret store uses the existing
+0600 file fallback where an OS keychain is unavailable. `DeleteSession` removes it when the source disconnects.
 
 The person's `api_id` and `api_hash` live under `<person, telegram, api_id>` and
 `api_hash`. LINA never creates them, never scripts my.telegram.org, and a source
@@ -92,7 +90,8 @@ each peer's input form; `Page` reads history from the cursor:
 - steady: read the newest page and keep only ids above the newest id the fill
   recorded, continuing below the page's oldest id when it was full.
 
-The cursor is `tgc1:<newest>:<oldest>:<phase>:<newestUnix>:<before>`. It carries
+The cursor is `tgc1:<newest>:<oldest>:<phase>:<newestUnix>:<before>:<pending>`.
+The pending high watermark is promoted only when catch-up finishes. It carries
 only platform message ids and a time, no names or text. An unrecognised cursor
 starts a first fill, so a cursor from another adapter is never misread.
 
@@ -121,3 +120,17 @@ subscription of a source, and `Service.Close` closes it.
 
 Writes, grants and approvals belong to #1084; this adapter declares no write
 verb.
+
+## Installed sign-in
+
+`boot.telegramControl` serves the owner-only `telegram_source` protocol route.
+The `/telegram` TUI form masks every input and clears secrets on submission,
+cancellation and reconnect. An attempt has a random temporary session key and
+a five-minute, connection-bound lifetime. Core copies the session under the
+platform-returned account ID only after authentication, removes the temporary
+key, connects the source, and wakes sync and live-event workers. Core starts
+the messenger loop even when no test configuration is supplied.
+
+Acceptance uses a child Core process and an in-process fake MTProto server.
+The owner client performs the full code/2FA exchange through the socket; an
+explicit subscription barrier precedes one edit and one deletion push.
