@@ -52,8 +52,9 @@ func TestM1MessengerStoreInstalledCore(t *testing.T) {
 			Next: "c1", HasMore: true}}},
 		"c1": {{block: true}},
 	}}
+	first.arm(t, h, "c1")
 	stop := runMessengerCore(t, h, first)
-	first.waitFor(t, "c1")
+	first.waitFor(t, h, "c1")
 	stop()
 
 	second := &scriptedAdapter{pages: map[string][]scriptedPage{
@@ -67,8 +68,9 @@ func TestM1MessengerStoreInstalledCore(t *testing.T) {
 		}}},
 		"c2": {{page: messenger.Page{Next: "c2"}}},
 	}}
+	second.arm(t, h, "c2")
 	stop = runMessengerCore(t, h, second)
-	second.waitFor(t, "c2")
+	second.waitFor(t, h, "c2")
 	stop()
 
 	// A later run re-serving the newest page adds nothing and starts at the
@@ -78,8 +80,9 @@ func TestM1MessengerStoreInstalledCore(t *testing.T) {
 			Messages: []messenger.Message{message("m-3", messenger.RouteParticipant, start.Add(2*time.Minute), "third")},
 			Next:     "c2"}}},
 	}}
+	third.arm(t, h, "c2")
 	stop = runMessengerCore(t, h, third)
-	third.waitFor(t, "c2")
+	third.waitFor(t, h, "c2")
 	stop()
 
 	if first.requested[0] != "" {
@@ -196,8 +199,9 @@ func TestM1MessengerStoreRetriesAFailingSource(t *testing.T) {
 	recovered := message("m-1", messenger.RouteParticipant, start, "after the retry")
 	recovered.Attachments = []messenger.Attachment{{ID: "a-1", Name: "report.pdf", MIMEType: "application/pdf", Size: 1200}}
 	adapter := &retryAdapter{failures: 2, page: messenger.Page{Messages: []messenger.Message{recovered}, Next: "c1"}}
+	adapter.arm(t, h, "c1")
 	stop := runMessengerCore(t, h, adapter)
-	adapter.waitFor(t, "c1")
+	adapter.waitFor(t, h, "c1")
 	stop()
 
 	if adapter.failuresLeft() != 0 || len(adapter.seen()) < 3 {
@@ -232,10 +236,12 @@ func TestM1MessengerStoreRetriesAFailingSource(t *testing.T) {
 // retryAdapter refuses the first reads and then serves one page, recording every
 // cursor it was asked for.
 type retryAdapter struct {
-	mu       sync.Mutex
-	failures int
-	page     messenger.Page
-	asked    []messenger.Cursor
+	mu             sync.Mutex
+	failures       int
+	page           messenger.Page
+	asked          []messenger.Cursor
+	awaitCursor    messenger.Cursor
+	coverageBefore int
 }
 
 func (a *retryAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
@@ -282,20 +288,31 @@ func (a *retryAdapter) seen() []messenger.Cursor {
 	return append([]messenger.Cursor(nil), a.asked...)
 }
 
-// waitFor waits until the adapter has been asked for the named cursor.
-func (a *retryAdapter) waitFor(t *testing.T, cursor messenger.Cursor) {
+// arm samples canon before Core starts so waitFor can tell this run's commit
+// from a coverage row an earlier run already stored.
+func (a *retryAdapter) arm(t *testing.T, h *harness, cursor messenger.Cursor) {
 	t.Helper()
-	deadline := time.Now().Add(operationTimeout)
-	for time.Now().Before(deadline) {
-		for _, asked := range a.seen() {
-			if asked == cursor {
-				time.Sleep(50 * time.Millisecond)
-				return
-			}
-		}
-		time.Sleep(5 * time.Millisecond)
+	a.awaitCursor = cursor
+	a.coverageBefore = countRows(t, h, `SELECT count(*) FROM messenger_coverage WHERE chat='dm-1' AND read_from=?`, string(cursor))
+}
+
+// waitFor returns when the page read at cursor has committed. That page
+// completes the read, so a new coverage row keyed by the cursor is the commit.
+func (a *retryAdapter) waitFor(t *testing.T, h *harness, cursor messenger.Cursor) {
+	t.Helper()
+	if a.awaitCursor != cursor {
+		t.Fatalf("waitFor %q, armed for %q", cursor, a.awaitCursor)
 	}
-	t.Fatalf("adapter was not asked for cursor %q", cursor)
+	waitForCommit(t, h, cursor, a.wasAsked, false, a.coverageBefore)
+}
+
+func (a *retryAdapter) wasAsked(cursor messenger.Cursor) bool {
+	for _, asked := range a.seen() {
+		if asked == cursor {
+			return true
+		}
+	}
+	return false
 }
 
 func message(id string, route messenger.Route, at time.Time, text string) messenger.Message {
@@ -339,9 +356,12 @@ type scriptedPage struct {
 
 // scriptedAdapter serves scripted pages per cursor and records every request.
 type scriptedAdapter struct {
-	mu        sync.Mutex
-	pages     map[string][]scriptedPage
-	requested []messenger.Cursor
+	mu             sync.Mutex
+	pages          map[string][]scriptedPage
+	requested      []messenger.Cursor
+	awaitCursor    messenger.Cursor
+	awaitBlock     bool
+	coverageBefore int
 }
 
 func (a *scriptedAdapter) SignIn(context.Context, messenger.SourceID) (messenger.SignInState, error) {
@@ -383,22 +403,68 @@ func (a *scriptedAdapter) Capabilities() messenger.Capabilities {
 	return messenger.Capabilities{Edits: true, Deletions: true}
 }
 
-// waitFor waits until the adapter has been asked for the named cursor.
-func (a *scriptedAdapter) waitFor(t *testing.T, cursor messenger.Cursor) {
+// arm samples canon before Core starts so waitFor can tell this run's commit
+// from a coverage row an earlier run already stored. A blocked page never
+// commits; the cursor row written by the page before it is the commit.
+func (a *scriptedAdapter) arm(t *testing.T, h *harness, cursor messenger.Cursor) {
+	t.Helper()
+	a.mu.Lock()
+	block := false
+	for _, page := range a.pages[string(cursor)] {
+		if page.block {
+			block = true
+		}
+	}
+	a.awaitCursor = cursor
+	a.awaitBlock = block
+	a.mu.Unlock()
+	if block {
+		return
+	}
+	a.coverageBefore = countRows(t, h, `SELECT count(*) FROM messenger_coverage WHERE chat='dm-1' AND read_from=?`, string(cursor))
+}
+
+// waitFor returns when the page read at cursor has committed.
+func (a *scriptedAdapter) waitFor(t *testing.T, h *harness, cursor messenger.Cursor) {
+	t.Helper()
+	if a.awaitCursor != cursor {
+		t.Fatalf("waitFor %q, armed for %q", cursor, a.awaitCursor)
+	}
+	waitForCommit(t, h, cursor, a.wasAsked, a.awaitBlock, a.coverageBefore)
+}
+
+func (a *scriptedAdapter) wasAsked(cursor messenger.Cursor) bool {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for _, requested := range a.requested {
+		if requested == cursor {
+			return true
+		}
+	}
+	return false
+}
+
+// waitForCommit polls canon until the page read at cursor is visible. A blocked
+// read never commits: the chat cursor from the page before it must be visible,
+// and the adapter must already have been asked so that read is the one in
+// progress. A page that returns writes a coverage row keyed by the cursor it
+// was read with. coverageBefore is the count of those rows before Core starts.
+func waitForCommit(t *testing.T, h *harness, cursor messenger.Cursor, asked func(messenger.Cursor) bool, blocked bool, coverageBefore int) {
 	t.Helper()
 	deadline := time.Now().Add(operationTimeout)
 	for time.Now().Before(deadline) {
-		a.mu.Lock()
-		for _, requested := range a.requested {
-			if requested == cursor {
-				a.mu.Unlock()
-				// Give the page one commit interval to land before Core stops.
-				time.Sleep(50 * time.Millisecond)
+		if blocked {
+			if asked(cursor) && countRows(t, h, `SELECT count(*) FROM messenger_chat WHERE chat='dm-1' AND cursor=?`, string(cursor)) == 1 {
 				return
 			}
+		} else if countRows(t, h, `SELECT count(*) FROM messenger_coverage WHERE chat='dm-1' AND read_from=?`, string(cursor)) > coverageBefore {
+			return
 		}
-		a.mu.Unlock()
 		time.Sleep(5 * time.Millisecond)
 	}
-	t.Fatalf("adapter was not asked for cursor %q", cursor)
+	if blocked {
+		t.Fatalf("cursor %q was not committed", cursor)
+	}
+	got := countRows(t, h, `SELECT count(*) FROM messenger_coverage WHERE chat='dm-1' AND read_from=?`, string(cursor))
+	t.Fatalf("coverage for cursor %q = %d, want more than %d", cursor, got, coverageBefore)
 }
