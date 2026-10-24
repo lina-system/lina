@@ -801,5 +801,12 @@ func (r *conversationRuntime) followTargetTask(ctx context.Context, ref string) 
 		})
 		return card.Task.ID, err
 	}
+	// Execution strips an unprefixed generation too, so the gate must check the
+	// task the follow-up reaches rather than the raw reference.
+	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
+		if _, err := r.work.Get(ctx, taskID); err == nil {
+			return taskID, nil
+		}
+	}
 	return ref, nil
 }

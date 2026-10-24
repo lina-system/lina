@@ -50,7 +50,7 @@ func TestModelBindingSessionReferencesFollowTheChosenTask(t *testing.T) {
 		raw, _ := json.Marshal(map[string]string{"id": id, "text": "Change the format."})
 		return r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: "follow-" + id, Name: "follow_work", Arguments: string(raw)})
 	}
-	for _, ref := range []string{"session:session-a", "session:session-retained", "task-a", "task:task-a:7"} {
+	for _, ref := range []string{"session:session-a", "session:session-retained", "task-a", "task:task-a:7", "task-a:7"} {
 		// Any non-nil result means the follow-up was refused; the gate denies a
 		// resolved target, and an unresolvable reference fails in the tool.
 		if result := follow(ref); result == nil || result.Code == loop.OK {
