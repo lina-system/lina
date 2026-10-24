@@ -52,9 +52,16 @@ when that union changes; a Resume keeps the intents it identified with.
 A close 4014 (disallowed intents) removes only the subscribers that asked for
 the refused privileged intent: each is told `ErrIntentsDenied`, so its source
 reports text unavailable, and the session reconnects with the remaining
-subscribers' intents so a channel worker on the same token keeps running. A
-socket this hub interrupts for an intent change reconnects with the current
-union instead of failing every subscriber.
+subscribers' intents so a channel worker on the same token keeps running.
+A socket this hub interrupts for an intent change reconnects with the current
+union instead of failing every subscriber. The replaced socket ends with a close
+handshake before the next Identify, so the platform has ended the old session
+before the new one starts and a token never shows two sessions, even briefly.
+A subscriber that leaves without changing the union leaves the running socket
+in place, and the hub keeps its handle, so the next intent change or stop still
+reaches that socket. A handover that arrives while the socket is still dialing
+cancels that attempt instead of waiting for it, and the next attempt identifies
+with the current union.
 A subscriber that cannot store a dispatch yet returns `channels.Retry`. Each
 subscriber has its own delivery worker, so the socket's read loop and the other
 subscribers keep running while that dispatch waits: later messages arrive and

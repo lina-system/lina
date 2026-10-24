@@ -42,11 +42,20 @@ test('the e2e opt-in selects reached scenarios, while local and full post-merge 
     assert.equal(plan.selection.result, 'success');
     assert.deepEqual(plan.tasks.filter(task => task.kind === 'e2e').flatMap(task => task.tests), ['TestOne']);
   }
-  for (const event of ['push', 'schedule', 'workflow_dispatch']) {
+  for (const event of ['schedule', 'workflow_dispatch']) {
     const { plan } = selectFoundation({ cwd: work, full: true, event });
     assert.equal(plan.selection.result, 'success');
     assert.deepEqual(plan.tasks.filter(task => task.kind === 'e2e').flatMap(task => task.tests).sort(), ['TestOne', 'TestTwo']);
   }
+});
+
+test('dev push selects every sanity check and no e2e shards', t => {
+  const { work } = fixture(t);
+  const { plan } = selectFoundation({ cwd: work, full: true, event: 'push' });
+  assert.equal(plan.selection.result, 'success');
+  assert.deepEqual([...new Set(plan.tasks.map(task => task.kind))].sort(),
+    ['automation', 'build', 'dependencies', 'docs', 'unit']);
+  assert.deepEqual(plan.scenarios, []);
 });
 
 test('the CLI carries PR selection into a saved plan', t => {
