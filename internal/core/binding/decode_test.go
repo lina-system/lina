@@ -78,6 +78,27 @@ func TestNormalizeChoicesCorrectsOnlyTargets(t *testing.T) {
 	}
 }
 
+// A unique exact title of a finished offered item is that item. An id already
+// binds it; the title must not become an unknown target after the open filter.
+func TestCompletedExactTitleBinds(t *testing.T) {
+	s := decodeState()
+	got, err := NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(`{"target":"Done"}`)})
+	if err != nil || len(got) != 1 || got[0].Target != (Target{Class: "existing", ID: "finished", Kind: "project"}) {
+		t.Fatalf("completed title: %+v %v", got, err)
+	}
+	s.Items = append(s.Items, Item{ID: "also-done", Title: "Done", Kind: "project", State: "completed", LastActivity: s.Clock})
+	_, err = NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(`{"target":"Done"}`)})
+	var detail *ChoiceError
+	if !errors.As(err, &detail) || detail.Reason != "ambiguous_target" || !slices.Equal(detail.Allowed, []string{"finished", "also-done"}) {
+		t.Fatalf("two finished titles: %+v", err)
+	}
+	s.Items = append(s.Items, Item{ID: "open-done", Title: "Done", Kind: "project", State: "active", LastActivity: s.Clock})
+	got, err = NormalizeChoices(s, "Water the garden", []json.RawMessage{json.RawMessage(`{"target":"Done"}`)})
+	if err != nil || len(got) != 1 || got[0].Target.ID != "open-done" {
+		t.Fatalf("open title: %+v %v", got, err)
+	}
+}
+
 // An ambiguous tied alternative is a correction, not a settled recommendation.
 func TestAmbiguousTiedTargetIsNotDropped(t *testing.T) {
 	s := decodeState()

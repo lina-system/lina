@@ -2,6 +2,7 @@
 package boot
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/guard"
 	"github.com/thisisjun786/lina/internal/core/intakereplay"
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/turn"
 	"github.com/thisisjun786/lina/internal/core/waiting"
 	"github.com/thisisjun786/lina/internal/core/work"
@@ -677,5 +679,48 @@ func TestSelectedNewTargetResolvesToCreatedIdentity(t *testing.T) {
 	run, err := r.background.service.Get(t.Context(), "spawned-run")
 	if err != nil || len(run.FollowUps) != 1 {
 		t.Fatalf("follow-up missing: notes=%d err=%v", len(run.FollowUps), err)
+	}
+}
+
+func TestModelBindingRetryKeepsCompletedParent(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "beds", Title: "Beds", Kind: "project", State: "active", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "under-project", "Add a bed task.")
+	tools := modelBindingTools(t, r, input)
+	args := map[string]any{"bindings": []any{map[string]any{"target": map[string]string{"class": "new", "kind": "todo", "parent": "beds"}}}}
+	first := questionCall(t, tools, "bind_input", "under-beds", args)
+	var saved struct {
+		Bindings []binding.Choice `json:"bindings"`
+	}
+	if first.Code != loop.OK || json.Unmarshal(first.Output, &saved) != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Target.Parent != "beds" {
+		t.Fatalf("first call: %+v", first)
+	}
+	record, rev, err := r.records.Read(t.Context(), "beds")
+	if err != nil {
+		t.Fatal(err)
+	}
+	record.Data = bytes.Replace(record.Data, []byte("state: active"), []byte("state: completed"), 1)
+	if _, err = r.records.Commit(t.Context(), records.Change{ID: record.ID, Path: record.Path, Base: rev, Data: record.Data}, records.Actor{Person: r.person, Agent: r.agent}); err != nil {
+		t.Fatal(err)
+	}
+	again := questionCall(t, tools, "bind_input", "under-beds", args)
+	saved = struct {
+		Bindings []binding.Choice `json:"bindings"`
+	}{}
+	if again.Code != loop.OK || json.Unmarshal(again.Output, &saved) != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Target.Parent != "beds" {
+		t.Fatalf("retry after the parent completed: %+v", again)
+	}
+	fresh := questionCall(t, tools, "bind_input", "new-after-close", args)
+	saved = struct {
+		Bindings []binding.Choice `json:"bindings"`
+	}{}
+	if fresh.Code != loop.OK || json.Unmarshal(fresh.Output, &saved) != nil || len(saved.Bindings) != 1 || saved.Bindings[0].Target.Parent != "" {
+		t.Fatalf("new call kept a completed parent: %+v", fresh)
 	}
 }

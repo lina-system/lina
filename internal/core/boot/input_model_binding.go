@@ -355,23 +355,23 @@ func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input led
 		return nil, binding.ErrChoice
 	}
 	err = r.db.Write(ctx, func(tx *canon.Tx) error {
-		state, e := r.bindingState(ctx, tx, input)
-		if e != nil {
-			return e
-		}
-		choices, e := binding.NormalizeChoices(state, input.Body.Text(), raws)
-		if e != nil {
-			return e
-		}
 		// An immutable call is idempotent, including its originally pending card.
-		// Compare before request placement so a retry without an ordinal resolves
-		// to the same stored request.
+		// The stored batch is compared before a fresh normalization, so a parent
+		// that completed after the call does not rewrite it.
 		var raw string
-		e = tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND parent_id=? AND scaffold_kind=?`, id, input.ID, modelBindingKind).Scan(&raw)
+		e := tx.QueryRowContext(ctx, `SELECT body FROM conv_event WHERE id=? AND parent_id=? AND scaffold_kind=?`, id, input.ID, modelBindingKind).Scan(&raw)
 		if e == nil {
 			var batch bindingBatch
 			if err := json.Unmarshal([]byte(raw), &batch); err != nil {
 				return err
+			}
+			state, e := r.bindingState(ctx, tx, input)
+			if e != nil {
+				return e
+			}
+			choices, e := binding.NormalizeChoices(retainStoredParents(state, batch.Bindings), input.Body.Text(), raws)
+			if e != nil {
+				return e
 			}
 			if len(batch.Bindings) != len(choices) {
 				return binding.ErrChoice
@@ -385,6 +385,14 @@ func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input led
 			return nil
 		}
 		if !errors.Is(e, sql.ErrNoRows) {
+			return e
+		}
+		state, e := r.bindingState(ctx, tx, input)
+		if e != nil {
+			return e
+		}
+		choices, e := binding.NormalizeChoices(state, input.Body.Text(), raws)
+		if e != nil {
 			return e
 		}
 		visible, e := waiting.ConversationQuestionVisible(ctx, tx, waiting.ConversationQuestion{Input: input.ID, Agent: r.agent})
@@ -522,6 +530,27 @@ func admissionDecider(decider string) bool {
 		return true
 	}
 	return false
+}
+
+// retainStoredParents keeps a stored call's parent eligible for that comparison.
+// A project that completes later must not drop the parent the call recorded.
+func retainStoredParents(state binding.State, saved []binding.Choice) binding.State {
+	parents := map[string]bool{}
+	for _, choice := range saved {
+		if choice.Target.Class == "new" && choice.Target.Parent != "" {
+			parents[choice.Target.Parent] = true
+		}
+	}
+	if len(parents) == 0 {
+		return state
+	}
+	state.Items = slices.Clone(state.Items)
+	for n, item := range state.Items {
+		if parents[item.ID] && !binding.Open(item) && (item.Kind == "initiative" || item.Kind == "project") {
+			state.Items[n].State = "active"
+		}
+	}
+	return state
 }
 
 // sameChoice compares a retry with its stored batch. An omitted ordinal is

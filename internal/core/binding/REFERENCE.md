@@ -21,6 +21,9 @@ ordinals are optional and placed in message order, a target may be an object, an
 id, an exact title, `new` or `none`, an absent or inexact excerpt becomes the
 input text, and kind and parent words are mapped to stored values. An exact
 candidate id is bound before a leading kind name and colon are read as new work.
+A name that matches no open item and exactly one offered item, including a
+finished item, binds that item. A stored call is compared before the current
+snapshot can drop a parent that has since completed.
 Only a target
 naming no open item, or more than one, returns a correction with the allowed ids.
 A tied alternative that cannot be resolved returns that correction instead of

@@ -248,18 +248,17 @@ func resolveReference(state State, ref string) (Target, error) {
 			matches = append(matches, item)
 		}
 	}
-	// The rules prefer unfinished work when one such item matches; a name the
-	// model gave explicitly still decides between two open items.
+	// Unfinished work wins when any open item matches. With none, one offered
+	// item, including a finished one, is that target. Its id already binds.
 	var open []Item
 	for _, item := range matches {
 		if Open(item) {
 			open = append(open, item)
 		}
 	}
-	if len(open) == 1 {
-		return Target{Class: "existing", ID: open[0].ID, Kind: open[0].Kind}, nil
+	if len(open) > 0 {
+		matches = open
 	}
-	matches = open
 	switch len(matches) {
 	case 1:
 		return Target{Class: "existing", ID: matches[0].ID, Kind: matches[0].Kind}, nil
