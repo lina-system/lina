@@ -11,7 +11,7 @@ func TestTableClipsClustersAcrossStyles(t *testing.T) {
 	table := MarkdownTable{
 		Alignments: []TableAlignment{TableLeft, TableRight},
 		Cells: [][][]Span{{
-			{{Text: "👩", Style: InlineStyle{Bold: true}}, {Text: "‍💻"}},
+			{{Text: "👩", Style: InlineStyle{Bold: true}}, {Text: "\u200d💻"}},
 			{{Text: "e"}, {Text: "́", Style: InlineStyle{Italic: true}}},
 		}},
 	}

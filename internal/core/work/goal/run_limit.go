@@ -172,18 +172,6 @@ func (e *Engine) SetRunLimit(ctx context.Context, person string, limit RunLimit,
 	return out, changed, err
 }
 
-// runLimit reads one person's durable limit. An absent record is automatic.
-func (e *Engine) runLimit(ctx context.Context, person string) (RunLimit, error) {
-	var out RunLimit
-	err := e.cfg.DB.Read(ctx, func(tx *canon.Tx) error {
-		if r, ok := readLimited(ctx, tx, person); ok {
-			out = r.RunLimit
-		}
-		return nil
-	})
-	return out, err
-}
-
 // CurrentRunLimit reports the limit the last pass applied, including the reason
 // an automatic limit fell below what one host alone would carry.
 func (e *Engine) CurrentRunLimit(ctx context.Context, person string) (RunLimitRecord, error) {
