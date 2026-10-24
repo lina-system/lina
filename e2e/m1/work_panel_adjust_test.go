@@ -134,9 +134,14 @@ func (w *adjustWorkers) Execute(ctx context.Context, a goal.Action) (goal.Observ
 
 // release lets every step of the goal finish and keeps later steps of that goal
 // from holding again, so the scenario can end its work on demand.
+// The child rereads the release list on a 20ms tick. A goal already released
+// stays released; calling again only repeats the log until the child exits.
 func (w *adjustWorkers) release(goalID string) {
 	w.mu.Lock()
 	defer w.mu.Unlock()
+	if w.released[goalID] {
+		return
+	}
 	adjustLog(w.root, "release "+goalID)
 	w.released[goalID] = true
 	for key, hold := range w.held {
@@ -160,18 +165,18 @@ func (w *adjustWorkers) running() []string {
 
 // adjustPass is one committed scheduling pass, replayed from the ledger.
 type adjustPass struct {
-	Seq         int64
-	At          time.Time
-	Rank        []string
-	Running     []string
-	Started     []string
-	Reasons     map[string]string
-	Places      map[string]int
-	Limit       int
-	Auto        bool
-	LimitKey    string
-	States      map[string]string
-	Paused      map[string]bool
+	Seq      int64
+	At       time.Time
+	Rank     []string
+	Running  []string
+	Started  []string
+	Reasons  map[string]string
+	Places   map[string]int
+	Limit    int
+	Auto     bool
+	LimitKey string
+	States   map[string]string
+	Paused   map[string]bool
 }
 
 // adjustGoal is the goal projection after a pass.
