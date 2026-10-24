@@ -9,6 +9,7 @@ import (
 )
 
 func TestPublicProviderFixture(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../testdata/provider-replay/fixture.json")
 	if err != nil {
 		t.Fatal(err)
@@ -28,6 +29,7 @@ func TestPublicProviderFixture(t *testing.T) {
 // The baseline arm measures the request Core sent before it carried the
 // conversation's cache boundary, so a fixture can select it explicitly.
 func TestFixtureAcceptsTheSummaryBaseline(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../testdata/provider-replay/fixture.json")
 	if err != nil {
 		t.Fatal(err)
@@ -41,6 +43,7 @@ func TestFixtureAcceptsTheSummaryBaseline(t *testing.T) {
 }
 
 func TestFixtureSummarySegmentMustEndACompleteTurn(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("../../../testdata/provider-replay/fixture.json")
 	if err != nil {
 		t.Fatal(err)

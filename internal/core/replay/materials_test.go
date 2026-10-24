@@ -27,6 +27,7 @@ type observedReader struct {
 }
 
 func TestRequestAssemblyMaterialReleasesSnapshotAndRechecksRetraction(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"read", "retracted", "trashed"} {
 		t.Run(mode, func(t *testing.T) {
 			db, source, root := fixture(t)
@@ -122,6 +123,7 @@ func (m *materialBytes) Read(ctx context.Context, ref ledger.Material) (string, 
 	return string(data), err
 }
 func TestMaterialReadReleasesSnapshotAndRechecksRetraction(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"large event", "revoked during read", "material trashed during read"} {
 		revoke := mode != "large event"
 		t.Run(mode, func(t *testing.T) {
@@ -197,6 +199,7 @@ func seedRequestMaterial(t *testing.T, db *canon.Store, materials ledger.Materia
 }
 
 func TestUnavailableRequestMaterialExcludesOnlyItsTurn(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"trashed", "missing file", "no reader", "cancelled", "deadline"} {
 		t.Run(mode, func(t *testing.T) {
 			db, source, root := fixture(t)
