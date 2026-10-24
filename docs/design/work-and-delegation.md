@@ -949,6 +949,14 @@ Every worker adapter offers the work engine the same operations:
 
 **Text-form tool calls.** Across LINA's own model routes ([go-core.md](go-core.md#model-path-and-accounts)) and coding workers (ACP and Codex adapters), one rule governs a turn that ends with a text-form tool call (`[tool_use …]`, `<tool_use>`, `<function_calls><invoke>`, `<antml:invoke>`, `<tool_call>`) and no real tool call ([text-tool-calls.md](../research/text-tool-calls.md)): Core detects it at the end of the turn, never shows it as progress or a completed reply, and handles it by (1) parsing it into a real call when the arguments are complete valid JSON (or complete named parameters) and the tool is allowed in the active declaration set (matching the declared name, or the declared name after stripping one leading `_`), else (2) starting a fresh session on the same worker (in the same worktree and branch) with a short state summary. There is no nudging loop in the contaminated session and no silent hand-off to another worker.
 
+The shared detector is evaluated before it is connected to worker adapters. Its
+replay covers each observed format, exact and single-underscore tool names,
+malformed arguments, and prose or structured-call negatives. Missing or invalid
+cases are failures, never passing samples. Replay dispatch and restart counts are
+proposals; only the running adapter can establish actual tool effects and session
+starts. See the [shared parsing boundary](go-core.md#model-path-and-accounts) and
+[replay command](../../internal/core/textcall/README.md).
+
 ### Delivery tiers
 
 Every worker connection records its effective delivery tier and mechanism in
