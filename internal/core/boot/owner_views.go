@@ -250,19 +250,26 @@ func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progr
 func (r *conversationRuntime) ownerProjection(ctx context.Context) (protocol.Progress, string, error) {
 	return r.ownerProjectionOrder(ctx, waiting.Priority)
 }
-func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order waiting.Order) (protocol.Progress, string, error) {
+
+type progressObservation struct {
+	units   []progress.Unit
+	workers map[string][]protocol.ProgressStageWorker
+	list    waiting.List
+}
+
+func (r *conversationRuntime) progressObservation(ctx context.Context, order waiting.Order) (progressObservation, error) {
 	names, err := r.ownerAgentNames(ctx)
 	if err != nil {
-		return protocol.Progress{}, "", err
+		return progressObservation{}, err
 	}
 	list, err := r.ownerProjectionWaiting(ctx, names, waiting.Options{Now: time.Now(), Order: order})
 	if err != nil {
-		return protocol.Progress{}, "", err
+		return progressObservation{}, err
 	}
 	var units []progress.Unit
 	titles, err := r.goalTitles(ctx)
 	if err != nil {
-		return protocol.Progress{}, "", err
+		return progressObservation{}, err
 	}
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
 		var err error
@@ -284,7 +291,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		return nil
 	})
 	if err != nil {
-		return protocol.Progress{}, "", err
+		return progressObservation{}, err
 	}
 	present := map[string]int{}
 	for i, u := range units {
@@ -292,7 +299,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	}
 	live, err := r.liveProgress(ctx, names, list)
 	if err != nil {
-		return protocol.Progress{}, "", err
+		return progressObservation{}, err
 	}
 	for _, u := range live {
 		if i, exists := present[u.ID]; !exists {
@@ -305,14 +312,44 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	}
 	background, err := r.backgroundProgress(ctx, names)
 	if err != nil {
-		return protocol.Progress{}, "", err
+		return progressObservation{}, err
 	}
 	units = append(units, background...)
 	workers, err := r.stageWorkers(ctx, units)
 	if err != nil {
-		return protocol.Progress{}, "", err
+		return progressObservation{}, err
 	}
-	entries := progress.Compute(units)
+	return progressObservation{units: units, workers: workers, list: list}, nil
+}
+
+// workProgress answers one item from the current projection. The running list
+// hides a landed unit the person has already seen; asking again still reads
+// that unit. An id with no unit stays unknown.
+func (r *conversationRuntime) workProgress(ctx context.Context, id string) (any, error) {
+	observed, err := r.progressObservation(ctx, waiting.Priority)
+	if err != nil {
+		return nil, err
+	}
+	for _, row := range wireProgressRows(progress.Compute(observed.units), observed.workers) {
+		if progressRefMatches(row.Ref, id) {
+			return row.Line, nil
+		}
+	}
+	for _, unit := range observed.units {
+		if !progressRefMatches(unit.ID, id) {
+			continue
+		}
+		rows := wireProgressRows([]progress.Entry{{Ref: unit.ID, Line: progress.UnitLine(unit)}}, observed.workers)
+		return rows[0].Line, nil
+	}
+	return map[string]string{"state": "unknown"}, nil
+}
+
+func progressRefMatches(ref, id string) bool {
+	return ref == id || ref == "run:"+id || ref == "task:"+id || ref == "record:"+id
+}
+
+func wireProgressRows(entries []progress.Entry, workers map[string][]protocol.ProgressStageWorker) []protocol.ProgressRow {
 	rows := []protocol.ProgressRow{}
 	for _, entry := range entries {
 		v := entry.Line
@@ -390,6 +427,17 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		}
 		rows = append(rows, row)
 	}
+	return rows
+}
+
+func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order waiting.Order) (protocol.Progress, string, error) {
+	observed, err := r.progressObservation(ctx, order)
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
+	entries := progress.Compute(observed.units)
+	rows := wireProgressRows(entries, observed.workers)
+	list := observed.list
 	cardOrder := workCardOrder(rows)
 	// The running count counts these lines, never their rows, so Core publishes
 	// it instead of leaving a client to count tasks (work-and-delegation.md#running-list).

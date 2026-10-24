@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/runs"
 	"github.com/thisisjun786/lina/internal/core/work"
 	"github.com/thisisjun786/lina/internal/core/worker"
 	workeracp "github.com/thisisjun786/lina/internal/core/worker/acp"
@@ -27,11 +28,11 @@ func steeringID(person, session, key string) string {
 }
 func (e *workerSession) mailboxKey() string { return e.adapter.Name() + ":" + e.thread.ID }
 func (e *workerSession) storeSteering(ctx context.Context, key, text string) (work.SteeringMessage, error) {
-	return e.storeSteeringFrom(ctx, key, text, e.origin.agent, "agent")
+	return e.storeSteeringFrom(ctx, key, text, e.origin.agent, "agent", nil)
 }
-func (e *workerSession) storeSteeringFrom(ctx context.Context, key, text, sender, kind string) (work.SteeringMessage, error) {
+func (e *workerSession) storeSteeringFrom(ctx context.Context, key, text, sender, kind string, source json.RawMessage) (work.SteeringMessage, error) {
 	p := worker.Delivery(e.adapter)
-	return e.origin.work.StoreSteering(ctx, work.SteeringMessage{Sender: sender, SpeakerKind: kind, ID: steeringID(e.origin.person, e.mailboxKey(), key), Session: e.mailboxKey(), TaskID: e.thread.TaskID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Text: text, Tier: p.Tier, Mechanism: p.Mechanism, SentAt: time.Now().UTC()})
+	return e.origin.work.StoreSteering(ctx, work.SteeringMessage{Sender: sender, SpeakerKind: kind, ID: steeringID(e.origin.person, e.mailboxKey(), key), Session: e.mailboxKey(), TaskID: e.thread.TaskID, Person: e.origin.person, Agent: e.origin.agent, Conversation: e.origin.conversation, Text: text, Tier: p.Tier, Mechanism: p.Mechanism, SentAt: time.Now().UTC(), Source: source})
 }
 func (e *workerSession) steeringState(ctx context.Context, m work.SteeringMessage, state, reason string) error {
 	if err := e.origin.work.SteeringState(ctx, m.Session, m.ID, state, reason, time.Now().UTC()); err != nil {
@@ -61,6 +62,12 @@ func (e *workerSession) deliverSteering(ctx context.Context, m work.SteeringMess
 	if m.State == "refused" {
 		activity.Release()
 		return tools.Failed, worker.ErrInputRefused
+	}
+	if len(m.Source) > 0 {
+		if err := e.origin.authorizeRunFollowSource(ctx, runs.Record{Origin: runs.Origin{Person: m.Person}}, m.Source); err != nil {
+			activity.Release()
+			return tools.Applied, e.steeringState(ctx, m, "held", "channel_revoked")
+		}
 	}
 	if m.Reason == "delivery_uncertain" {
 		activity.Release()
@@ -117,10 +124,10 @@ func (e *workerSession) deliverSteering(ctx context.Context, m work.SteeringMess
 	}
 	return tools.Applied, nil
 }
-func (e *workerSession) ownerSteering(ctx context.Context, key, text string) error {
+func (e *workerSession) ownerSteering(ctx context.Context, key, text string, source json.RawMessage) error {
 	e.control.Lock()
 	defer e.control.Unlock()
-	m, err := e.storeSteeringFrom(ctx, key, text, e.origin.person, "person")
+	m, err := e.storeSteeringFrom(ctx, key, text, e.origin.person, "person", source)
 	if err != nil {
 		return err
 	}
@@ -241,6 +248,11 @@ func (e *workerSession) mailboxReply(ctx context.Context, event worker.Event, ra
 		if m.State == "read" || m.State == "refused" {
 			continue
 		}
+		if len(m.Source) > 0 {
+			if err := e.origin.authorizeRunFollowSource(ctx, runs.Record{Origin: runs.Origin{Person: m.Person}}, m.Source); err != nil {
+				continue
+			}
+		}
 		unread++
 		if mayDeliver && (m.State == "stored" || m.State == "held" && m.Reason != "delivery_uncertain") {
 			if err = e.origin.work.SteeringState(ctx, m.Session, m.ID, "held", "delivery_uncertain", time.Now().UTC()); err != nil {
@@ -272,7 +284,7 @@ func (e *workerSession) mailboxReply(ctx context.Context, event worker.Event, ra
 
 // A disconnected session retains its address. Only authoritative owner records
 // can resolve it; knowing a session id never authorizes a mailbox write.
-func (r *conversationRuntime) offlineSteering(ctx context.Context, person, session string, card *work.Card, conversation *string, key, text string) error {
+func (r *conversationRuntime) offlineSteering(ctx context.Context, person, session string, card *work.Card, conversation *string, key, text string, source json.RawMessage) error {
 	var message work.SteeringMessage
 	reason := "session_down"
 	if card != nil && card.Run != nil {
@@ -308,6 +320,7 @@ func (r *conversationRuntime) offlineSteering(ctx context.Context, person, sessi
 	}
 	message.ID = steeringID(person, message.Session, key)
 	message.Text = text
+	message.Source = source
 	message.Sender, message.SpeakerKind = person, "person"
 	message.SentAt = time.Now().UTC()
 	saved, err := r.work.StoreSteering(ctx, message)

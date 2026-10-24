@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -514,7 +515,7 @@ type PageResult struct {
 // coverage: a live event is newer than the last page, and the next page read
 // admits it again through the ordinary path, which adds nothing twice.
 func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (PageResult, error) {
-	if !validName(event.Chat) {
+	if !validName(event.Chat) && !(event.Chat == "" && event.Deletion != nil && event.Message == nil) {
 		return PageResult{}, ErrInvalid
 	}
 	if (event.Message == nil) == (event.Deletion == nil) {
@@ -530,6 +531,10 @@ func (s *Store) AdmitEvent(ctx context.Context, source Source, event Event) (Pag
 	}
 	if !connected {
 		return PageResult{}, ErrNotConnected
+	}
+	if event.Chat == "" {
+		deleted, err := s.deleteSourceMessages(ctx, source, []string{event.Deletion.Message}, event.ChatPrefixes...)
+		return PageResult{Deleted: deleted}, err
 	}
 	var enabled bool
 	if err := s.db.Read(ctx, func(tx *canon.Tx) error {
@@ -584,6 +589,15 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 	}
 	defer s.unlockAdmission()
 	return s.admit(ctx, source, chat, from, page, true)
+}
+
+// AdmitMessages admits pushed messages without moving history progress.
+func (s *Store) AdmitMessages(ctx context.Context, source Source, chat string, messages []Message) (PageResult, error) {
+	if err := s.lockAdmission(ctx); err != nil {
+		return PageResult{}, err
+	}
+	defer s.unlockAdmission()
+	return s.admit(ctx, source, chat, "", Page{Messages: messages}, false)
 }
 
 // admit commits one page. advance is false for live admission, which stores the
@@ -1100,6 +1114,81 @@ func (s *Store) DeleteRecords(ctx context.Context, source Source, chat string, m
 		deletions = append(deletions, Deletion{Message: message, At: s.now()})
 	}
 	return s.deleteRecords(ctx, source, chat, deletions)
+}
+
+// DeleteSourceMessages applies a deletion the platform pushed without naming a
+// chat, such as updateDeleteMessages. Telegram keeps one message-id sequence
+// for the account's private chats and basic groups, so a pushed id belongs to
+// at most one of them; every chat the id is live in is cleared, as TDLib does.
+func (s *Store) DeleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
+	if err := s.lockAdmission(ctx); err != nil {
+		return 0, err
+	}
+	defer s.unlockAdmission()
+	return s.deleteSourceMessages(ctx, source, messages, chatPrefixes...)
+}
+
+func (s *Store) deleteSourceMessages(ctx context.Context, source Source, messages []string, chatPrefixes ...string) (int, error) {
+	if len(messages) == 0 {
+		return 0, nil
+	}
+	chats, err := s.chatMessagesByID(ctx, source, messages)
+	if err != nil {
+		return 0, err
+	}
+	total := 0
+	ordered := make([]string, 0, len(chats))
+	for chat := range chats {
+		ordered = append(ordered, chat)
+	}
+	sort.Strings(ordered)
+	for _, chat := range ordered {
+		if len(chatPrefixes) > 0 {
+			allowed := false
+			for _, prefix := range chatPrefixes {
+				if strings.HasPrefix(chat, prefix) {
+					allowed = true
+					break
+				}
+			}
+			if !allowed {
+				continue
+			}
+		}
+		ids := chats[chat]
+		n, err := s.DeleteRecords(ctx, source, chat, ids)
+		if err != nil {
+			return total, err
+		}
+		total += n
+	}
+	return total, nil
+}
+
+func (s *Store) chatMessagesByID(ctx context.Context, source Source, messages []string) (map[string][]string, error) {
+	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(messages)), ",")
+	args := []any{source.Platform, source.Account}
+	for _, message := range messages {
+		args = append(args, message)
+	}
+	found := map[string][]string{}
+	err := s.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT chat,message FROM messenger_record
+WHERE platform=? AND account=? AND state='live' AND message IN (`+placeholders+`)`, args...)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var chat, message string
+			if err := rows.Scan(&chat, &message); err != nil {
+				return err
+			}
+			found[chat] = append(found[chat], message)
+		}
+		return rows.Err()
+	})
+	return found, err
 }
 
 // DeleteChat is the person's deletion of one chat's records.

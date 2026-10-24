@@ -14,6 +14,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/messenger"
 	messengerdiscord "github.com/thisisjun786/lina/internal/core/messenger/discord"
 	"github.com/thisisjun786/lina/internal/core/messenger/identity"
+	"github.com/thisisjun786/lina/internal/core/messenger/telegram"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/secrets"
 )
@@ -36,10 +37,14 @@ func (c goneClient) Get(ctx context.Context, path string, query url.Values, out 
 // platform boundary. An explicitly configured adapter, such as a test's, takes
 // the recorded adapter's place; a Discord bot source is resolved from the token
 // the person stored for that account.
+// Account-specific Telegram adapters are opened through Factory.
 type MessengerConfig struct {
 	// Adapters are keyed by the name recorded on each source. Every read also
 	// receives its SourceID. Addon resolves a separate session per account.
 	Adapters map[string]messenger.Adapter
+	// Factory opens a per-source adapter before Core's own. A test points it at
+	// an in-process platform; production leaves it nil.
+	Factory messenger.Factory
 	// Addon starts one add-on session per account of an unofficial platform. A
 	// nil Addon leaves those sources without an adapter, so Core starts an idle
 	// loop.
@@ -85,18 +90,25 @@ func (p peopleRecords) People(ctx context.Context, person string) ([]identity.Pe
 }
 
 // startMessenger opens the messenger store on this conversation's canon and
-// reads connected sources on their schedule until Core stops. Sender identity
-// is composed here so every admitted author is matched to a people record.
+// reads connected sources on their schedule and from their live events until
+// Core stops. Sender identity is composed here so every admitted author is
+// matched to a people record.
 func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *MessengerConfig) error {
-	if cfg == nil || r.messenger != nil {
+	if r.messenger != nil {
 		return nil
+	}
+	if cfg == nil {
+		cfg = &MessengerConfig{}
+	}
+	if r.telegram != nil {
+		r.telegram.factory = r.messengerFactory(cfg.Factory)
 	}
 	r.senderIdentity = identity.Open(r.db, r.person, peopleRecords{store: r.records}, r.removals)
 	if _, err := r.senderIdentity.Rematch(ctx); err != nil {
 		return err
 	}
 	store := messenger.Open(r.db, r.materials, r.removals).WithIdentities(r.senderIdentity)
-	service := messenger.NewServiceWithResolver(store, r.messengerResolver(cfg), cfg.Interval)
+	service := messenger.NewServiceWithResolver(store, r.messengerResolver(cfg), cfg.Interval).WithFactory(r.messengerFactory(cfg.Factory))
 	runCtx, stop := context.WithCancel(ctx)
 	r.messenger, r.messengerAddon, r.messengerStop, r.messengerDone = service, cfg.Addon, stop, make(chan struct{})
 	go func() {
@@ -107,6 +119,26 @@ func (r *conversationRuntime) startMessenger(ctx context.Context, cfg *Messenger
 		close(r.messengerDone)
 	}()
 	return nil
+}
+
+// messengerFactory opens a source's adapter. The shipped Telegram adapter is
+// available for every installed Core; an override serves a platform whose
+// transport a test replaces.
+func (r *conversationRuntime) messengerFactory(override messenger.Factory) messenger.Factory {
+	vault := r.vault
+	return func(source messenger.Source) (messenger.Adapter, bool, error) {
+		if override != nil {
+			adapter, ok, err := override(source)
+			if ok || err != nil {
+				return adapter, ok, err
+			}
+		}
+		if source.Platform != telegram.Platform || source.Adapter != telegram.Platform {
+			return nil, false, nil
+		}
+		adapter, err := telegram.New(telegram.Config{Person: source.Person, Account: source.Account, Vault: vault})
+		return adapter, err == nil, err
+	}
 }
 
 // messengerResolver composes the registered adapters and the add-on sessions
