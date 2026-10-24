@@ -18,6 +18,98 @@ import (
 func TestRunLimitHoldsAcrossGeneratedPasses(t *testing.T) {
 	for seed := uint64(0); seed < 80; seed++ {
 		t.Run(fmt.Sprint(seed), func(t *testing.T) { runLimitPasses(t, seed) })
+		t.Run(fmt.Sprintf("capacity/%d", seed), func(t *testing.T) { runCapacityHeldPasses(t, seed) })
+	}
+}
+
+// Keep both kinds of capacity hold in every generated case, including when a
+// person's explicit limit has room. Queue places belong to each person, not
+// the fleet, and recover as soon as a new report can carry the ready steps.
+func runCapacityHeldPasses(t *testing.T, seed uint64) {
+	t.Helper()
+	rng := rand.New(rand.NewPCG(seed, 0xcafe))
+	now := time.Unix(100, 0)
+	var goals []Goal
+	for _, person := range []string{"person-a", "person-b"} {
+		for _, g := range runLimitGoals(rng) {
+			g.Person = person
+			g.ID = person + "/" + g.ID
+			g.Tasks = g.Tasks[:1]
+			for i := range g.Tasks {
+				g.Tasks[i].Area = person + "/" + g.Tasks[i].Area
+			}
+			goals = append(goals, g)
+		}
+	}
+	rng.Shuffle(len(goals), func(i, j int) { goals[i], goals[j] = goals[j], goals[i] })
+	for _, automatic := range []bool{true, false} {
+		t.Run(fmt.Sprintf("automatic=%t", automatic), func(t *testing.T) {
+			choice := RunLimit{Automatic: true}
+			if !automatic {
+				choice = RunLimit{Value: len(goals)}
+			}
+			nodes := runLimitNodes(rng, now)
+			for i := range nodes {
+				nodes[i].CPUCores = float64(len(goals))
+				nodes[i].CPULimit = nodes[i].CPUCores
+			}
+			for _, reason := range []string{ReasonQuota, ReasonLoad, "recovered"} {
+				t.Run(reason, func(t *testing.T) {
+					for i := range nodes {
+						nodes[i].LoadCPU = 0
+						nodes[i].QuotaReset["stub"] = 0
+						if reason == ReasonQuota {
+							nodes[i].QuotaReset["stub"] = now.Unix() + 60
+						} else if reason == ReasonLoad {
+							nodes[i].LoadCPU = nodes[i].CPUCores
+						}
+					}
+					plan, err := Derive(State{Goals: goals, Nodes: nodes, Limits: map[string]RunLimit{"person-a": choice, "person-b": choice}}, now)
+					if err != nil {
+						t.Fatal(err)
+					}
+					if reason == "recovered" {
+						started := map[string]bool{}
+						for _, a := range plan.Actions {
+							if a.Kind == Assign {
+								started[a.GoalID] = true
+							}
+						}
+						if len(started) != len(goals) || len(plan.Queues) != 0 || len(plan.Waits) != 0 {
+							t.Fatalf("recovered: started %v, queues %+v, waits %+v", started, plan.Queues, plan.Waits)
+						}
+						return
+					}
+					want := map[string]QueuePlace{}
+					places := map[string]int{}
+					for _, g := range rankOrderedGoals(goals) {
+						places[g.Person]++
+						want[g.ID] = QueuePlace{GoalID: g.ID, Reason: reason, Place: places[g.Person]}
+					}
+					got := map[string]QueuePlace{}
+					for _, q := range plan.Queues {
+						got[q.GoalID] = q
+					}
+					if len(plan.Queues) != len(want) || !reflect.DeepEqual(got, want) {
+						t.Fatalf("queues = %+v, want %+v", plan.Queues, want)
+					}
+					waitReason, wake := "host_capacity", "node.changed"
+					if reason == ReasonQuota {
+						waitReason, wake = "worker_quota", "quota.changed"
+					}
+					waiting := map[string]bool{}
+					for _, w := range plan.Waits {
+						if w.Reason != waitReason || w.Wake != wake {
+							t.Fatalf("wait = %+v, want %s / %s", w, waitReason, wake)
+						}
+						waiting[w.GoalID] = true
+					}
+					if len(waiting) != len(goals) || len(plan.Actions) != 0 {
+						t.Fatalf("held goals: waits %+v, actions %+v", plan.Waits, plan.Actions)
+					}
+				})
+			}
+		})
 	}
 }
 
