@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -159,6 +160,9 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			if rec.Person != r.person {
 				continue
 			}
+			if r.settleRecordedWorker(ctx, &rec) {
+				continue
+			}
 			input, err := r.journal().Get(ctx, rec.Input)
 			if err != nil {
 				continue
@@ -226,6 +230,66 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			fmt.Fprintf(os.Stderr, "worker mailbox recovery: %v\n", err)
 		}
 	}
+}
+
+// A committed successful completion is its exact turn's terminal observation.
+// Core admits it before it stores the matching recovery state, so a crash in
+// between would otherwise restart a finished session as an unknown live
+// placeholder. The newest owned completion is authoritative: an older one
+// cannot settle a turn that kept running after it. Failed and transport-loss
+// notices stay unknown; cancellation alone does not make them terminal.
+func (r *conversationRuntime) settleRecordedWorker(ctx context.Context, rec *recovery.Record) bool {
+	if rec.Thread.TurnID == "" || rec.State == "decision" || rec.State == "parked" {
+		return false
+	}
+	var ids []string
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM conv_event WHERE scaffold_kind='worker_completion' AND json_extract(origin,'$.locator')=? ORDER BY rowid DESC`, "worker-session:"+rec.ID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return false
+	}
+	for _, id := range ids {
+		event, err := r.journal().Get(ctx, id)
+		if err != nil {
+			return false
+		}
+		var completion workerCompletion
+		if json.Unmarshal([]byte(event.Body.Text()), &completion) != nil {
+			return false
+		}
+		if completion.Manager != rec.Conversation || completion.Owner != rec.Agent {
+			continue
+		}
+		if completion.Turn != rec.Thread.TurnID || completion.Status != worker.Done {
+			return false
+		}
+		if rec.Reservation != "" {
+			if r.work == nil {
+				return false
+			}
+			if err := r.work.ReleaseWorker(ctx, rec.Reservation); err != nil {
+				return false
+			}
+			rec.Reservation = ""
+		}
+		rec.Finish = &worker.Finish{Status: completion.Status, Failure: completion.Failure}
+		rec.State = "finished"
+		return (recovery.Recovery{DB: r.db}).Put(ctx, *rec) == nil
+	}
+	return false
 }
 
 func (e *workerSession) reconcileWorker(ctx context.Context) {

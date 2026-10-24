@@ -899,7 +899,9 @@ work ledger has not recorded. Unassigned tasks have no worker lane yet.
   contains, so one reported window is that limit. Each stopped limit keeps the
   reset its own row reported, including when usage is still under the cap.
   The worker stays blocked until every stopped limit reaches its own reset or
-  a later measurement shows that same limit below the cap. A newer row for
+  a later measurement shows that same limit below the cap. A recovered limit
+  stays recovered for that stop, even when a later snapshot lacks its newer
+  row. A newer row for
   another window or limit does not clear the stop, and a healthy window's
   reset cannot extend an exhausted one. The snapshot that missed the failure,
   and any older or unknown snapshot, does not clear the stop. Rows from
@@ -1064,6 +1066,10 @@ worker notices. `worker_snapshot` can return the recorded terminal outcome when
 no live session remains, explicitly marked non-live; that record cannot authorize
 worker control. Unstarted completion follow-ups resume from canon after restart;
 a claimed turn is never replayed and a committed reply is not duplicated.
+A successful completion committed before the restart settles that exact turn's
+recovery record, so a restart never presents the finished session as an unknown
+live placeholder or recovers it again. Failed and transport-loss notices stay
+unknown until the thread is read.
 Channel replies follow the completion back to its original input, retaining that
 input's address and the existing outbound delivery identity across restart.
 Recovery resolves the retained channel inbox address and its current most-specific

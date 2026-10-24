@@ -21,6 +21,7 @@ func todoDocument(id, fields string) []byte {
 }
 
 func TestTodoAmbiguousDateDoesNotPublish(t *testing.T) {
+	t.Parallel()
 	for _, value := range []string{"next Friday", "다음 금요일", "10/11", "2026-02-30", "2026-10-22T09:00:00"} {
 		t.Run(value, func(t *testing.T) {
 			s, _, _ := setup(t)
@@ -41,6 +42,7 @@ func TestTodoAmbiguousDateDoesNotPublish(t *testing.T) {
 }
 
 func TestTodoDependencyCycleDoesNotPublish(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := Change{ID: "a", Path: "inbox/a.md", Data: todoDocument("a", "")}
 	a.Base = commit(t, s, a)
@@ -63,6 +65,7 @@ func TestTodoDependencyCycleDoesNotPublish(t *testing.T) {
 }
 
 func TestTodoTodayFixtureAndViews(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("testdata/today.json")
 	if err != nil {
 		t.Fatal(err)
@@ -168,6 +171,7 @@ func TestTodoTodayFixtureAndViews(t *testing.T) {
 }
 
 func TestTodoDatesAndDependencyValidation(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	for _, fields := range []string{
 		"deadline: \"2026-10-22\"\n", // no source
@@ -210,6 +214,7 @@ func TestTodoDatesAndDependencyValidation(t *testing.T) {
 }
 
 func TestTodoTodayDSTBounds(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct{ day, start, end string }{{"2026-03-08", "2026-03-08T05:00:00Z", "2026-03-09T04:00:00Z"}, {"2026-11-01", "2026-11-01T04:00:00Z", "2026-11-02T05:00:00Z"}} {
 		bounds, err := viewBounds(Params{View: "today", Day: tc.day, Zone: "America/New_York"})
 		if err != nil || bounds[1] != tc.start || bounds[2] != tc.end {
@@ -219,6 +224,7 @@ func TestTodoTodayDSTBounds(t *testing.T) {
 }
 
 func TestTodoConcurrentCyclesSerialize(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := Change{ID: "a", Path: "inbox/a.md", Data: todoDocument("a", "")}
 	a.Base = commit(t, s, a)
@@ -242,6 +248,7 @@ func TestTodoConcurrentCyclesSerialize(t *testing.T) {
 }
 
 func TestTodoFieldsRoundTrip(t *testing.T) {
+	t.Parallel()
 	v := Todo{State: "started", When: "2026-10-22", Important: true, Tags: []string{"work"}, Source: "mail:1", Checklist: []ChecklistItem{{Text: "Read", Checked: true}}, WaitingOn: &WaitingOn{Who: "supplier", Since: "2026-10-20T10:00:00+09:00", NextCheck: "2026-10-23"}, Assignee: &Assignee{Kind: "person", ID: "person"}, Issue: "https://example.invalid/issues/1", Priority: "high"}
 	front, err := WithTodo("---\nid: \"task\"\nkind: todo\nperson_id: \"person\"\ncustom: \"keep\"", v)
 	if err != nil {
@@ -264,6 +271,7 @@ func TestTodoFieldsRoundTrip(t *testing.T) {
 }
 
 func TestTodoProjectionUpgrade(t *testing.T) {
+	t.Parallel()
 	testTodoUpgrade(t, todoDocument("existing", "when: \"2026-10-22\"\n"), "open", "")
 }
 
@@ -314,6 +322,7 @@ func testTodoUpgrade(t *testing.T, data []byte, wantState, wantSource string) {
 }
 
 func TestTodoLegacyImportedProjectionUpgrade(t *testing.T) {
+	t.Parallel()
 	hash := strings.Repeat("a", 64)
 	source := "snapshot:" + hash + ":tracker:milestone:old"
 	for _, state := range []string{"active", "done"} {
