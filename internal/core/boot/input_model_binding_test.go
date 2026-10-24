@@ -478,6 +478,34 @@ func TestModelBindingRecoveredSteeringTargets(t *testing.T) {
 	}
 }
 
+func TestModelBindingBareGenerationFollowsChosenTask(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task-a", Title: "First task", Kind: "task", State: "running", LastActivity: now},
+		{ID: "task-b", Title: "Second task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "bare-generation", "Change the format.")
+	chosen := binding.Target{Class: "existing", ID: "task-b", Kind: "task"}
+	if _, err := r.saveModelBinding(t.Context(), input, "person-choice", []binding.Choice{{Quote: input.Body.Text(), Target: chosen}}, "person"); err != nil {
+		t.Fatal(err)
+	}
+	call := func(id string) *loop.Result {
+		t.Helper()
+		raw, _ := json.Marshal(map[string]any{"id": id, "text": "Change the format."})
+		return r.bindWorkCall(t.Context(), input, 0, "turn:"+input.ID, provider.ToolCall{ID: id, Name: "follow_work", Arguments: string(raw)})
+	}
+	if got := call("task-a:1"); got == nil || got.Code != loop.Denied {
+		t.Fatalf("bare generation steered the other task: %+v", got)
+	}
+	if got := call("task-b:1"); got != nil {
+		t.Fatalf("bare generation refused the chosen task: %+v", got)
+	}
+}
+
 func TestModelBindingReplyUsesEffectiveTarget(t *testing.T) {
 	for _, creation := range []string{"model", "prepare_work", "schedule_work"} {
 		t.Run(creation, func(t *testing.T) {

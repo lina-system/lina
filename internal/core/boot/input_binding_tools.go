@@ -741,5 +741,12 @@ func (r *conversationRuntime) followTargetTask(ctx context.Context, ref string) 
 		})
 		return card.Task.ID, err
 	}
+	// Execution accepts a bare "<id>:<generation>" and delivers to that task.
+	// Resolve it here so the chosen target is checked before delivery.
+	if taskID, ok := workerFollowTask(ref); ok && taskID != ref {
+		if card, err := r.work.Get(ctx, taskID); err == nil {
+			return card.Task.ID, nil
+		}
+	}
 	return ref, nil
 }
