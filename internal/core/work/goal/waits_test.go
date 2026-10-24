@@ -18,7 +18,7 @@ func outsideWait() Wait {
 		TodoID:         "host-reply",
 		Who:            "host",
 		Since:          "2026-10-20",
-		NextCheck:      "2026-10-23",
+		NextCheck:      "1970-01-01",
 		Source:         "mail:thread-1",
 	}
 }
@@ -83,7 +83,7 @@ func TestOutsideWaitIsNotReadOnAnInterval(t *testing.T) {
 		t.Fatalf("interval read: state %s reads %+v", s.Goals[0].State, sourceReads(s))
 	}
 	w := s.Goals[0].Waits[0]
-	if w.TodoID != "host-reply" || w.Who != "host" || w.Since != "2026-10-20" || w.NextCheck != "2026-10-23" || w.Until != 500 {
+	if w.TodoID != "host-reply" || w.Who != "host" || w.Since != "2026-10-20" || w.NextCheck != "1970-01-01" || w.Until != 500 {
 		t.Fatalf("waiting_on link: %+v", w)
 	}
 }
@@ -91,7 +91,8 @@ func TestOutsideWaitIsNotReadOnAnInterval(t *testing.T) {
 func TestChangeSignalReadsTheSourceOnce(t *testing.T) {
 	t.Parallel()
 	_, db := testJournal(t)
-	now := func() time.Time { return time.Unix(100, 0) }
+	clock := time.Unix(100, 0)
+	now := func() time.Time { return clock }
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: now})
 	if err != nil {
 		t.Fatal(err)
@@ -101,6 +102,7 @@ func TestChangeSignalReadsTheSourceOnce(t *testing.T) {
 	if err = e.Signal(t.Context(), signal); err != nil {
 		t.Fatal(err)
 	}
+	clock = clock.Add(time.Second)
 	if err = e.Signal(t.Context(), signal); err != nil {
 		t.Fatal(err)
 	}
@@ -190,7 +192,7 @@ func TestExpiryBecomesARowAndFiresOnceAfterDowntime(t *testing.T) {
 		t.Fatal(err)
 	}
 	recordOutsideWait(t, e, outsideWait())
-	if len(armed) != 1 || armed[0].Until != 500 || len(linked) != 1 || linked[0].TodoID != "host-reply" || linked[0].NextCheck != "2026-10-23" {
+	if len(armed) != 1 || armed[0].Until != 500 || len(linked) != 1 || linked[0].TodoID != "host-reply" || linked[0].NextCheck != "1970-01-01" {
 		t.Fatalf("timer or waiting_on: armed %+v linked %+v", armed, linked)
 	}
 	clock = time.Unix(500, 0)
@@ -349,5 +351,72 @@ func TestPartialExpiryActionIsRefused(t *testing.T) {
 	w.Draft = ""
 	if err = e.Report(t.Context(), s.Actions[0].ID, 1, Observation{Status: OutcomeSucceeded, Wait: &w}); err == nil {
 		t.Fatal("expiry without a draft was recorded")
+	}
+}
+
+func TestFailedDeadlineReadBecomesTheExpiryRow(t *testing.T) {
+	t.Parallel()
+	_, db := testJournal(t)
+	clock := time.Unix(100, 0)
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return clock }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	recordOutsideWait(t, e, outsideWait())
+	clock = time.Unix(500, 0)
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	reads := sourceReads(s)
+	if len(reads) != 1 {
+		t.Fatalf("deadline read: %+v", reads)
+	}
+	if _, err = e.Claim(t.Context(), reads[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Report(t.Context(), reads[0].ID, 1, Observation{Status: OutcomeFailed}); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err = e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	g := s.Goals[0]
+	if g.State != GoalBlocked || len(g.Waits) != 0 || !strings.Contains(g.BlockedReason, outsideWait().Draft) || len(sourceReads(s)) != 1 {
+		t.Fatalf("failed deadline read left the wait: %+v reads %+v", g, sourceReads(s))
+	}
+}
+
+func TestMismatchedNextCheckIsRefused(t *testing.T) {
+	t.Parallel()
+	_, db := testJournal(t)
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Admit(t.Context(), oneGoal()); err != nil {
+		t.Fatal(err)
+	}
+	if err = e.Reconcile(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	s, err := e.Snapshot(t.Context())
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = e.Claim(t.Context(), s.Actions[0].ID); err != nil {
+		t.Fatal(err)
+	}
+	w := outsideWait()
+	w.NextCheck = "2026-10-23"
+	if err = e.Report(t.Context(), s.Actions[0].ID, 1, Observation{Status: OutcomeSucceeded, Wait: &w}); err == nil {
+		t.Fatal("next check that is not the deadline date was recorded")
 	}
 }

@@ -34,7 +34,7 @@ func (e *Engine) Signal(ctx context.Context, s Signal) error {
 		return ErrInvalid
 	}
 	if s.Wake != "" {
-		err := e.journal.Update(ctx, Transition{ID: "signal:" + s.ID, Kind: "integration.changed", At: e.cfg.Now().Unix(), Data: encode(s)}, func(v *View) error {
+		err := e.journal.Update(ctx, Transition{ID: "signal:" + s.ID, Kind: "integration.changed", At: 1, Data: encode(s)}, func(v *View) error {
 			return e.applyWaitSignal(v, s)
 		})
 		if errors.Is(err, errNoChange) {

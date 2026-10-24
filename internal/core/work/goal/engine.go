@@ -751,6 +751,15 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 		case OutcomeFailed:
 			if a.Kind == ReadSource {
 				a.State = "finished"
+				// A failed deadline read did not close the wait. Apply the same
+				// row a still-open read would, so the only deadline read cannot
+				// leave the goal waiting with no further signal.
+				if a.ReadCause == "deadline" {
+					open := true
+					if err := applyWaitRead(&g, a, Observation{SourceOpen: &open}); err != nil {
+						return err
+					}
+				}
 				break
 			}
 			if a.Kind == Verify {

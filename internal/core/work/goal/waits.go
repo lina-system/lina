@@ -26,7 +26,7 @@ func validRecordedWait(w Wait) bool {
 		return false
 	}
 	linked := w.TodoID != "" || w.Who != "" || w.Since != "" || w.NextCheck != ""
-	if linked && (strings.TrimSpace(w.TodoID) == "" || strings.TrimSpace(w.Who) == "" || strings.TrimSpace(w.Since) == "" || strings.TrimSpace(w.NextCheck) == "") {
+	if linked && (strings.TrimSpace(w.TodoID) == "" || strings.TrimSpace(w.Who) == "" || strings.TrimSpace(w.Since) == "" || w.NextCheck != time.Unix(w.Until, 0).UTC().Format(time.DateOnly)) {
 		return false
 	}
 	return true
