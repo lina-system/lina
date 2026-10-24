@@ -63,15 +63,14 @@ func proseLines(text string) []string {
 	var out []string
 	fence := ""
 	for _, line := range strings.Split(text, "\n") {
-		trimmed := strings.TrimSpace(line)
 		if fence != "" {
-			if closesFence(trimmed, fence) {
+			if closesFence(line, fence) {
 				fence = ""
 			}
 			continue
 		}
-		if run := fenceRun(trimmed); run != "" {
-			fence = run
+		if open, ok := openingFence(line); ok {
+			fence = open
 			continue
 		}
 		out = append(out, line)
@@ -79,28 +78,31 @@ func proseLines(text string) []string {
 	return out
 }
 
-// fenceRun is an opening fence: three or more backticks or tildes.
-func fenceRun(trimmed string) string {
+// openingFence returns the full run of backticks or tildes that opens a fence.
+// A longer fence can contain a shorter one, so the run length is the close rule.
+func openingFence(line string) (string, bool) {
+	trimmed := strings.TrimSpace(line)
 	if len(trimmed) < 3 {
-		return ""
+		return "", false
 	}
 	mark := trimmed[0]
 	if mark != '`' && mark != '~' {
-		return ""
+		return "", false
 	}
-	n := 1
+	n := 0
 	for n < len(trimmed) && trimmed[n] == mark {
 		n++
 	}
 	if n < 3 {
-		return ""
+		return "", false
 	}
-	return trimmed[:n]
+	return trimmed[:n], true
 }
 
-// closesFence reports a closing line that is only the opening mark and at least
-// as long. A shorter fence, or a fence with an info string, stays inside.
-func closesFence(trimmed, open string) bool {
+// closesFence reports a closing fence of at least the opening length whose line
+// holds only that fence character.
+func closesFence(line, open string) bool {
+	trimmed := strings.TrimSpace(line)
 	if open == "" || len(trimmed) < len(open) {
 		return false
 	}
@@ -112,7 +114,7 @@ func closesFence(trimmed, open string) bool {
 	return true
 }
 
-var questionEnding = regexp.MustCompile(`(까요|까|나요|니까|가요|을까|ㄹ까|인가요)[.!]*$`)
+var questionEnding = regexp.MustCompile(`(까요|인가요|나요|니까|가요|을까|ㄹ까|까)[.!]*$`)
 
 // asks reports a question put to the person: an interrogative mark or a Korean
 // sentence-final question form.
@@ -159,12 +161,11 @@ func internal(lines []string, aliases []string) bool {
 }
 
 var (
-	// Korean completion stems match inside a word: "마쳤습니다" is a done claim.
-	// English markers are whole words, so "present" is not "sent" and
-	// "abandoned" is not "done".
 	koreanDoneMarkers = []string{
 		"완료", "끝냈", "마쳤", "처리했", "보냈", "올렸", "병합", "배포", "반영했", "설치했", "고쳤",
 	}
+	// English markers are whole words. "present" contains "sent", and
+	// "abandoned" contains "done", but neither is a completion claim.
 	englishDone     = regexp.MustCompile(`\b(?:done|merged|deployed|shipped|sent|fixed|completed|pushed|installed)\b`)
 	evidenceMarkers = []string{
 		"확인", "검증", "읽어", "열어", "재현", "로그", "결과", "미확인", "추정", "가정",
@@ -174,18 +175,18 @@ var (
 
 // doneEvidence requires a done statement to carry an evidence or not-verified
 // clause in the same reply. The design forbids a bare completion claim.
-func doneEvidence(lines []string) bool {
-	text := strings.ToLower(strings.Join(lines, "\n"))
-	done := englishDone.MatchString(text)
-	if !done {
-		for _, marker := range koreanDoneMarkers {
-			if strings.Contains(text, marker) {
-				done = true
-				break
-			}
+func claimsDone(text string) bool {
+	for _, marker := range koreanDoneMarkers {
+		if strings.Contains(text, marker) {
+			return true
 		}
 	}
-	if !done {
+	return englishDone.MatchString(text)
+}
+
+func doneEvidence(lines []string) bool {
+	text := strings.ToLower(strings.Join(lines, "\n"))
+	if !claimsDone(text) {
 		return true
 	}
 	for _, marker := range evidenceMarkers {

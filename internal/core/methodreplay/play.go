@@ -35,8 +35,8 @@ func Instructions(preset Preset, role string) (string, error) {
 	return assemble.TUIInstructions(p, nil)
 }
 
-// starterName is the display name the installed starter is created with.
-// Identity-sensitive cases measure that persona, not the preset key.
+// starterName is the display name the shipped persona introduces itself as.
+// A role that is not a starter keeps its key, so an unknown case stays answerable.
 func starterName(role string) string {
 	for _, starter := range persona.Starters() {
 		if starter.Key == role {

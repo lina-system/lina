@@ -183,8 +183,8 @@ func complete(c CaseResult, repeat int) bool {
 }
 
 // ship applies the design's rule. It names why a change must not ship so the
-// finding can go back to M4-2 instead of a silent revert. A model answer varies
-// between runs, so fewer than three repeats never ships.
+// finding can go back to M4-2 instead of a silent revert. A ship needs the
+// configured three repeats; fewer runs can still be scored, but they do not decide.
 func ship(changed []string, agents []AgentSummary, repeat int) Ship {
 	result := Ship{Changed: append([]string(nil), changed...)}
 	if repeat < 3 {

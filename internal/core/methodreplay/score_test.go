@@ -52,6 +52,10 @@ func TestScoreChecks(t *testing.T) {
 		{"abandoned is not an english done claim", caseFor(DoneEvidence), "The task was abandoned.", DoneEvidence, true},
 		{"english done without evidence", caseFor(DoneEvidence), "The deploy is done.", DoneEvidence, false},
 		{"english done with evidence", caseFor(DoneEvidence), "The deploy is done. I checked the running screen.", DoneEvidence, true},
+		{"present is not a completion claim", caseFor(DoneEvidence), "I can present the options.", DoneEvidence, true},
+		{"abandoned is not a completion claim", caseFor(DoneEvidence), "The attempt was abandoned.", DoneEvidence, true},
+		{"sent without evidence", caseFor(DoneEvidence), "I sent the patch.", DoneEvidence, false},
+		{"sent with an evidence clause", caseFor(DoneEvidence), "I sent the patch. It is not verified.", DoneEvidence, true},
 		{"person's language", caseFor(Language), "확인했습니다. 결과는 정상입니다.", Language, true},
 		{"another language in a visible line", caseFor(Language), "확인했습니다.\nThe deployment finished without errors.", Language, false},
 		{"another language inside a code block", caseFor(Language), "확인했습니다.\n\n```\nthe deployment finished without errors\n```\n", Language, true},
@@ -93,5 +97,38 @@ func TestScoreEmptyReplyFails(t *testing.T) {
 	got := Score(caseFor(Length), "   \n")
 	if got.Passed || got.Chars != 0 {
 		t.Fatalf("empty reply scored: %+v", got)
+	}
+}
+
+func TestScoreKeepsALongerOpeningFence(t *testing.T) {
+	// A three-backtick sample inside a four-backtick fence is still code.
+	text := "확인했습니다.\n\n````md\n```\nprintf '?'\nLN-590\n```\n````\n"
+	if got := Score(caseFor(NoQuestion), text); got.Passed != true {
+		t.Fatalf("question inside the outer fence counted: %+v", got)
+	}
+	if got := Score(caseFor(NoInternal), text); got.Passed != true {
+		t.Fatalf("identifier inside the outer fence counted: %+v", got)
+	}
+	got := Score(caseFor(Length), text)
+	if !got.Passed || got.Chars != len([]rune("확인했습니다.")) {
+		t.Fatalf("fenced sample spent the budget: chars=%d %+v", got.Chars, got)
+	}
+}
+
+func TestScoreEnglishRejectsNonLatinLines(t *testing.T) {
+	c := caseFor(Language)
+	c.Language = "en"
+	if got := Score(c, "The deployment finished without errors."); !got.Passed {
+		t.Fatalf("English prose failed: %+v", got)
+	}
+	for _, text := range []string{
+		"これは日本語の文章ですよ",
+		"这是中文的一行说明文字",
+		"Это русская строка текста",
+		"확인했습니다. 결과는 정상입니다.",
+	} {
+		if got := Score(c, text); got.Passed {
+			t.Fatalf("non-Latin line passed %q: %+v", text, got)
+		}
 	}
 }
