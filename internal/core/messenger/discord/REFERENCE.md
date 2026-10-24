@@ -34,6 +34,8 @@ read again for this increment.
 - **Inferred for LINA:** the person's own numeric user id is the only proof of
   `person`, exactly as channel pairing records it. Any bot author is
   `automation`, and everyone else is an external participant.
+- **Inferred for LINA:** content-free type 21 thread starters are references,
+  not evidence of a missing content intent; history advances past them.
 - **Unknown:** live Discord behaviour with the intent disabled in the
   developer portal, limits for very large guilds, and archived-thread
   retention. Synthetic Gateway and REST fixtures establish LINA's protocol and

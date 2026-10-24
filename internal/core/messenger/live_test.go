@@ -293,3 +293,40 @@ func TestScheduledPageCannotOutrunLiveDeletion(t *testing.T) {
 		}
 	})
 }
+
+// Production Discord has Close() with no error result. Both registry eviction
+// and explicit service cleanup must release that adapter's transport.
+func TestServiceClosesAdaptersWithoutErrorResult(t *testing.T) {
+	for _, action := range []string{"shutdown", "disconnect"} {
+		t.Run(action, func(t *testing.T) {
+			f := newFixture(t)
+			source := f.connect(t)
+			stop := errors.New("stop before starting the reader")
+			adapter := &voidCloseAdapter{liveAdapter: &liveAdapter{fail: stop}}
+			service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+			t.Cleanup(service.Close)
+			// Resolve and cache the adapter, but stop before starting any live reader.
+			if _, err := service.Sync(t.Context(), source); !errors.Is(err, stop) {
+				t.Fatalf("sync=%v", err)
+			}
+			if action == "shutdown" {
+				service.Close()
+			} else {
+				if err := f.store.Disconnect(t.Context(), "person", source.Platform, source.Account); err != nil {
+					t.Fatal(err)
+				}
+				service.SyncAll(t.Context(), &f.now)
+			}
+			if calls := adapter.closed.Load(); calls != 1 {
+				t.Fatalf("adapter closed %d times, want once", calls)
+			}
+		})
+	}
+}
+
+type voidCloseAdapter struct {
+	*liveAdapter
+	closed atomic.Int32
+}
+
+func (a *voidCloseAdapter) Close() { a.closed.Add(1) }

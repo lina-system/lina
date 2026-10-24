@@ -133,13 +133,14 @@ func (a *Adapter) record(m message, person string) (messenger.Message, error) {
 // missingText reports a message whose words the platform withheld. Discord
 // answers with empty content when the privileged message-content intent is not
 // granted; a message that genuinely has no words carries attachments, a
-// sticker, embed, poll or components.
+// sticker, embed, poll or components. Type 21 thread starters are references
+// and never have content, embeds or attachments, even with the intent granted.
 func missingText(m message) bool {
 	if m.Content != "" {
 		return false
 	}
 	switch m.Type {
-	case messageDefault, messageReply, messageThreadStart, messageThreadCreate:
+	case messageDefault, messageReply, messageThreadCreate:
 	default:
 		return false
 	}

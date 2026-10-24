@@ -610,3 +610,16 @@ func TestPollAndComponentOnlyMessagesHaveAvailableContent(t *testing.T) {
 		})
 	}
 }
+
+func TestThreadStarterMessagesDoNotRequireContent(t *testing.T) {
+	f := newFixture(t, func(r *http.Request) *http.Response {
+		return reply(r, 200, `[{"id":"901","channel_id":"400","type":21,"referenced_message":{"id":"800"}}]`)
+	})
+	page, err := f.adapter.Page(t.Context(), messenger.SourceID{Platform: "discord", Account: "123456"}, "400", "")
+	if err != nil || len(page.Messages) != 1 {
+		t.Fatalf("thread starter page=%+v err=%v", page, err)
+	}
+	if page.Next != `{"after":"901"}` || page.Messages[0].ReplyTo != "800" {
+		t.Fatalf("thread starter did not advance with its reference: %+v", page)
+	}
+}

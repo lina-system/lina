@@ -98,9 +98,17 @@ func (s *Service) Close() {
 	s.resolved = map[string]Adapter{}
 	s.mu.Unlock()
 	for _, adapter := range adapters {
-		if closer, ok := adapter.(io.Closer); ok {
-			_ = closer.Close()
-		}
+		closeAdapter(adapter)
+	}
+}
+
+// closeAdapter supports the cleanup signatures of the platform adapters.
+func closeAdapter(adapter Adapter) {
+	switch closer := adapter.(type) {
+	case io.Closer:
+		_ = closer.Close()
+	case interface{ Close() }:
+		closer.Close()
 	}
 }
 
@@ -228,9 +236,7 @@ func (s *Service) retain(connected map[string]bool) {
 		w.cancel()
 	}
 	for _, adapter := range released {
-		if closer, ok := adapter.(io.Closer); ok {
-			_ = closer.Close()
-		}
+		closeAdapter(adapter)
 	}
 }
 

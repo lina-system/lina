@@ -588,6 +588,8 @@ survive; other transport closes retain the cursor for Resume.
 The privileged message-content intent is requested only for an explicit
 `all_messages` binding or a bot-mode messenger source, which cannot read a
 guild's words without it; changing that requirement reconnects the session.
+A source advances past content-free thread-starter references without reporting
+that message text is unavailable.
 Native message and interaction IDs remain deduplicated across sessions and
 restarts. Bot-authored input cannot begin a conversation. Guild thread ancestry
 comes from channel metadata, so the most specific thread binding wins.
@@ -764,7 +766,7 @@ its tokens and leaves the previously read history available.
 
 ### Messenger adapter boundary
 
-Each way of reaching a platform has one adapter. Discord's bot and Discord's personal account are two adapters of one platform; every other platform in the table has one. A source records the adapter it uses. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Every operation except the capability descriptor names the source account it acts for, so two accounts of one platform never share a read. Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
+Each way of reaching a platform has one adapter. Discord's bot and Discord's personal account are two adapters of one platform; every other platform in the table has one. A source records the adapter it uses. An adapter offers: its sign-in state; listing chats; reading a page of a chat from a cursor, oldest first; members; live events where the platform has them; fetching one attachment on request; and a static capability descriptor (history depth, cursor kind, edit and deletion signals, live events and write verbs). Every operation except the capability descriptor names the source account it acts for, so two accounts of one platform never share a read. Core releases the adapter's transport resources when it evicts the adapter or closes its service. Only adapters of official platforms have write verbs. A ported adapter is LINA's own Go code, and its client library is a Go dependency under [dependencies.md](../policy/dependencies.md).
 
 ### The messenger add-on
 
