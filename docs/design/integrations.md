@@ -768,6 +768,11 @@ to be a deletion. A channel the account left or can no longer read drops its
 checkpoint, and a later dialog listing sets a new one; it never stops the
 account's other chats. An attachment is fetched from the message it came with,
 so after a restart the source reads that message again for a current location.
+A channel read needs that channel's access hash. When the entity is not
+cached, including after a restart before dialog listing finishes, the source
+resolves it from the account's dialogs and then reads the message. A missing
+cache entry is not loss of access. The chat is unavailable only when those
+dialogs do not include it, or the platform refuses the read.
 Reads send no read acknowledgement, presence or typing request. A Telegram
 channel bot remains a separate channel connection. This increment reads only;
 write verbs remain subject to the messenger write-grant implementation.
@@ -857,7 +862,7 @@ Unofficial personal platforms are read through the messenger add-on: LINA's own 
 - It runs in the OS sandbox with network on, and writes only in its data directory ([filesystem.md](filesystem.md#state-root-and-layout)).
 - The person signs in through the add-on's own flow, such as KakaoTalk's passcode or Discord's QR code, typing into it through the app or the TUI. LINA relays and keeps nothing. The session stays in the add-on's data directory, outside backups; after a restore or on a new main the person signs in again.
 - One process runs for each account and stays running, so the platform sees one session. Core starts these children after binding its client socket, which their sandbox hides. Each read carries the source platform and account; a session refuses any other source. Core retries failed sources on their schedule, preserving the committed cursor, and bounds consecutive add-on restarts. A malformed or oversized response refuses the batch with "upstream changed".
-- A live subscription that ends without being stopped, such as after a lost connection or a revoked session, is reported to Core with its cause; it never stays shown as active. A revoked session needs sign-in; any other cause leaves the source to be read again on its schedule. The add-on keeps serving its other reads.
+- A live subscription that ends without being stopped, such as after a lost connection or a revoked session, is reported to Core with its cause; it never stays shown as active. A revoked session needs sign-in; any other cause leaves the source to be read again on its schedule. The add-on keeps serving its other reads. Core stops a subscription when the reader that asked for it stops, and the account's process keeps running for its other reads. A stop that arrives while a subscription is still starting ends it instead of leaving it to install.
 - A pinned version changes only through a reviewed update that reads upstream's changes to the platforms LINA uses.
 - When the add-on or its runtime is missing or failing, only its sources fail. A platform with no registered driver is refused as `unsupported_platform`; that code is not rewritten as a generic source failure.
 

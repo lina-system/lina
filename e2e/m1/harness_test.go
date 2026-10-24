@@ -12,6 +12,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"syscall"
@@ -22,6 +23,12 @@ import (
 )
 
 const operationTimeout = 10 * time.Second
+
+// Installed Core compiles its embedded SQLite Wasm module before it binds the
+// socket, so a boot costs more than one protocol operation on a loaded shard.
+// Every Core start waits with this budget; the retry loop still ends at the
+// first successful connection rather than on elapsed time.
+const startupTimeout = time.Minute
 
 var commandBuilds struct {
 	sync.Mutex
@@ -55,6 +62,10 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "proc-job" {
 		os.Exit(proc.JobMain(os.Args[2:], os.Stderr))
 	}
+	if err := isolateHarnessDescriptors(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
 	closeCache, err := prepareSQLiteCache()
 	if err != nil {
 		fmt.Fprintln(os.Stderr, err)
@@ -73,6 +84,28 @@ func TestMain(m *testing.M) {
 		code = 1
 	}
 	os.Exit(code)
+}
+
+// Go-created descriptors are close-on-exec, but descriptors inherited from a
+// shell (including a verification-slot lock) need not be. Keep them open in
+// the test owner, without passing them to Core or its workers. Explicit
+// Cmd.ExtraFiles are still duplicated into children by os/exec as requested.
+func isolateHarnessDescriptors() error {
+	directory := "/dev/fd"
+	if runtime.GOOS == "linux" {
+		directory = "/proc/self/fd"
+	}
+	entries, err := os.ReadDir(directory)
+	if err != nil {
+		return fmt.Errorf("list inherited test descriptors: %w", err)
+	}
+	for _, entry := range entries {
+		fd, err := strconv.Atoi(entry.Name())
+		if err == nil && fd > 2 {
+			syscall.CloseOnExec(fd)
+		}
+	}
+	return nil
 }
 
 // Build each real command once per test run. Only verified Go caches and
@@ -200,10 +233,22 @@ func (h *harness) command(args ...string) *process {
 
 func (p *process) start(t *testing.T) {
 	t.Helper()
+	if p.command.SysProcAttr == nil {
+		p.command.SysProcAttr = &syscall.SysProcAttr{}
+	}
+	// A PTY already creates its own session and process group. Combining
+	// Setsid with Setpgid would fail; retain its controlling-terminal setup.
+	if !p.command.SysProcAttr.Setsid {
+		p.command.SysProcAttr.Setpgid = true
+	}
+	setHarnessParentDeathSignal(p.command.SysProcAttr)
+	if p.command.Cancel != nil {
+		p.command.Cancel = p.killGroup
+	}
 	started := make(chan error, 1)
 	go func() {
 		// Linux parent-death signals track the spawning OS thread. A
-		// Bubblewrap child must outlive the goroutine that requested it,
+		// harness child must outlive the goroutine that requested it,
 		// while still dying if this test process exits. Keep its parent
 		// thread alive through Wait instead of relying on Go's thread pool.
 		runtime.LockOSThread()
@@ -214,6 +259,9 @@ func (p *process) start(t *testing.T) {
 			return
 		}
 		p.err = p.command.Wait()
+		// The group may still contain descendants after the leader exits.
+		// Stop them before publishing done, including successful commands.
+		_ = p.killGroup()
 		close(p.done)
 	}()
 	if err := <-started; err != nil {
@@ -222,12 +270,20 @@ func (p *process) start(t *testing.T) {
 	t.Cleanup(func() { p.killAndWait() })
 }
 
+func (p *process) killGroup() error {
+	err := syscall.Kill(-p.command.Process.Pid, syscall.SIGKILL)
+	if errors.Is(err, syscall.ESRCH) {
+		return os.ErrProcessDone
+	}
+	return err
+}
+
 func (p *process) killAndWait() {
 	select {
 	case <-p.done:
 		return
 	default:
-		_ = p.command.Process.Kill()
+		_ = p.killGroup()
 		<-p.done
 	}
 }
@@ -268,7 +324,9 @@ func (h *harness) startCore() *process {
 
 func (h *harness) connect(core *process) net.Conn {
 	h.t.Helper()
-	return h.connectWithin(core, operationTimeout)
+	// Every caller waits for a just-started or restarted Core, so the socket
+	// bound is a startup cost, not the protocol operation deadline.
+	return h.connectWithin(core, startupTimeout)
 }
 func (h *harness) connectWithin(core *process, budget time.Duration) net.Conn {
 	h.t.Helper()

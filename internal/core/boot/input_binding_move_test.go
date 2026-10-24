@@ -398,7 +398,12 @@ func TestChannelMoveListsAndAppliesChoice(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if !strings.Contains(list, "2. Lamps") || !strings.Contains(list, "new item") || !strings.Contains(list, "no item") || strings.Contains(list, "1. Plants") || !strings.Contains(list, "Now: Plants") {
+	// The list offers the other candidates with "new" and "no item", and never
+	// the current item. Rank order is not asserted here: record activity comes
+	// from the Git revision in whole seconds, so two records saved in the same
+	// second tie and id order decides. Ordering itself is covered in the
+	// binding package, where the snapshot is supplied directly.
+	if !strings.Contains(list, "Lamps") || !strings.Contains(list, "Garden") || !strings.Contains(list, "new item") || !strings.Contains(list, "no item") || strings.Contains(list, ". Plants") || !strings.Contains(list, "Now: Plants") {
 		t.Fatalf("move list = %q", list)
 	}
 	choice, err := inbox.New(r.db).Admit(t.Context(), inbox.Input{Key: inbox.Key{Conversation: r.conversation, Source: "channel-fixture", NativeID: "person-3"}, Body: []byte(`{"message_id":"person-3","text":"/move 1"}`)})

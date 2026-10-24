@@ -126,3 +126,30 @@ func TestFollowWorkRetainedSessionKeepsOfflineDelivery(t *testing.T) {
 		t.Fatalf("offline delivery: %+v %v", messages, err)
 	}
 }
+
+// A completed worker leaves a recovery record with State finished and
+// Canceled false after its registry entry is gone. That session cannot
+// resume, so follow_work must refuse before it stores offline mail.
+func TestFollowWorkFinishedRecoveryRefusesBeforeOfflineMail(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "task-a", Title: "First task", Kind: "task", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	if err := (recovery.Recovery{DB: r.db}).Put(t.Context(), recovery.Record{ID: "session-finished", Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: "input-finished", Thread: worker.Thread{ID: "session-finished", TaskID: "task-a"}, State: "finished"}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "finished-follow", "Change the format.")
+	tools := modelBindingTools(t, r, input)
+	got := questionCall(t, tools, "follow_work", "finished-follow", map[string]string{"id": "session:session-finished", "text": "Change the format."})
+	if got.Code != loop.Denied {
+		t.Fatalf("finished recovery accepted follow-up: %+v", got)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), "codex:session-finished")
+	if err != nil || len(messages) != 0 {
+		t.Fatalf("offline mail queued for a finished session: %+v %v", messages, err)
+	}
+}
