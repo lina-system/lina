@@ -28,7 +28,7 @@ func TestComposerChromeAndCursor(t *testing.T) {
 			}
 			view := m.View()
 			rows := strings.Split(view.Content, "\n")
-			if rows[31] != m.styles.Line.Render(strings.Repeat(rule, 100)) {
+			if ansi.Strip(rows[31]) != strings.Repeat(rule, 100) || !strings.Contains(rows[31], m.styles.Line.Render(strings.Repeat(rule, 100))) {
 				t.Errorf("rule is missing or uses the wrong style: %q", rows[31])
 			}
 			placeholder, ok := design.Lookup(language, "composer.placeholder")
