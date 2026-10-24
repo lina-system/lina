@@ -39,6 +39,9 @@ import (
 
 // turnState holds the inputs and mutable state shared by a conversation turn's callbacks.
 type turnState struct {
+	bindingSource      *ledger.Event
+	bindingRequest     int
+	bindingInputs      map[string]acceptedSteering
 	activity           lease.Lease
 	runtime            *conversationRuntime
 	input              ledger.Event
@@ -118,13 +121,13 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 		SelectCapabilities: r.selectProviderCapabilities,
 		Account:            func(context.Context) (provider.Credential, error) { return r.route.Account() },
 		Resolve: func(context.Context) (turn.ModelPolicy, error) {
-			return turn.ModelPolicy{Model: r.route.Model, Revision: "configured", Class: r.route.Adapter.Class()}, nil
+			return turn.ModelPolicy{Model: r.route.Model, Effort: r.route.Effort, Revision: "configured", Class: r.route.Adapter.Class()}, nil
 		},
 		Context:     s.prepare,
 		Acknowledge: evidence.Acknowledge, RecordRequest: evidence.RecordRequest,
 		Digest: assemble.Digest,
 	}
-	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions, retainBinding: func(input string, index int, item provider.Item) {
+	inputQueue := &conversationInputs{runtime: r, inputs: inputs, questions: s.questions, bindingTurn: &s, retainBinding: func(input string, index int, item provider.Item) {
 		if s.compaction == nil {
 			return
 		}
@@ -468,6 +471,9 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 	s.items = s.items[:len(s.items)-1]
 	at := time.Now().UTC()
 	minimum := assemble.ContextPacket{{ID: "clock:" + turnID, Kind: assemble.Clock, Text: at.Format(time.RFC3339Nano)}}
+	if err := r.judgeInput(ctx, input); err != nil {
+		return turn.PreparedRequest{}, err
+	}
 	bound, err := r.inputBindingPacket(ctx, input)
 	if err != nil {
 		return turn.PreparedRequest{}, err
@@ -489,7 +495,9 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		r.preparePersonaTools,
 		r.prepareSkillTools,
 		r.prepareRecordTools,
+		r.prepareBindingWorkTools,
 		r.prepareResultTools,
+		r.prepareMiniAppTools,
 		r.prepareGoalWorkTools,
 		r.prepareMethodologyTools,
 		r.preparePlanningTools,
@@ -537,6 +545,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		catalog = nil
 	}
 	if r.coding == nil && (r.channelBinding == nil || r.channelBinding.Scope.Tools) {
+		declarations = s.prepareInputBinding(declarations)
 		state, err := r.agents.State(ctx, r.agent)
 		if err != nil {
 			return turn.PreparedRequest{}, err

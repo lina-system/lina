@@ -114,6 +114,15 @@ func (s *measuredStream) Meta() provider.Meta {
 	}
 	return s.stream.Meta()
 }
+
+// Reject fails the row a stream is measuring without discarding its tokens. A
+// caller that drives a stream itself uses it when a completed response breaks
+// the request's purpose, such as a compaction summary that calls a tool.
+func Reject(stream provider.Stream, reason string) {
+	if s, ok := stream.(*measuredStream); ok && s.row.Failure == "" {
+		s.row.Failure = reason
+	}
+}
 func (s *measuredStream) Close() error {
 	if s.closed {
 		return nil

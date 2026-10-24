@@ -3,10 +3,66 @@ package goal
 
 import (
 	"bytes"
+	"fmt"
 	"testing"
 )
 
+// Active and settled actions cannot retire. Their reconciliation cost must
+// not multiply the size of a parallel graph by the number of worker actions.
+func TestRetirementSkipsUnchangedParallelGraphs(t *testing.T) {
+	for _, action := range []Action{
+		{State: "claimed"},
+		{State: "running"},
+		{State: "unknown"},
+		{State: "awaiting_authorization"},
+		{State: "needs_person"},
+		{State: "finished"},
+		{State: "finished", Superseded: true, RetirementReconciled: true},
+	} {
+		t.Run(fmt.Sprintf("%s/reconciled=%t", action.State, action.RetirementReconciled), func(t *testing.T) {
+			measure := func(steps int) float64 {
+				t.Helper()
+				v := &View{records: map[string]Record{}, changes: map[string]Record{}}
+				g := Goal{ID: "goal", RecordID: "definition", RecordRevision: "revision", Revision: 1}
+				for i := range steps {
+					g.Tasks = append(g.Tasks, Task{ID: fmt.Sprintf("step-%d", i), Stage: TaskBuilding, Session: fmt.Sprintf("worker-%d", i)})
+				}
+				if err := put(v, "goal", g.ID, g); err != nil {
+					t.Fatal(err)
+				}
+				for i := range 82 {
+					a := action
+					a.ID, a.GoalID, a.TaskID = fmt.Sprintf("worker-%d", i), g.ID, "step-0"
+					if err := put(v, "action", a.ID, a); err != nil {
+						t.Fatal(err)
+					}
+				}
+				v.changes = map[string]Record{}
+				e := &Engine{}
+				e.definitions.Store(definitionKey{g.RecordID, g.RecordRevision}, savedDefinition{revision: g.RecordRevision})
+				allocs := testing.AllocsPerRun(3, func() {
+					if err := e.reconcileRetired(v); err != nil {
+						t.Fatal(err)
+					}
+				})
+				if len(v.changes) != 0 {
+					t.Fatal("unchanged actions modified the ledger")
+				}
+				return allocs
+			}
+			small, fanout := measure(1), measure(82)
+			t.Logf("82 unchanged actions: one-step graph %.0f allocations, 82-step graph %.0f", small, fanout)
+			// Leave room for runtime bookkeeping without allowing every action
+			// to decode the whole goal again. This is independent of CPU speed.
+			if fanout > 2*small {
+				t.Fatalf("retirement cost grows with an unchanged graph: %.0f -> %.0f allocations", small, fanout)
+			}
+		})
+	}
+}
+
 func TestRetirementKeepsAssessmentRulesAtEachSite(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name           string
 		revision       bool
@@ -61,6 +117,7 @@ func TestRetirementKeepsAssessmentRulesAtEachSite(t *testing.T) {
 }
 
 func TestRetireSignaledMergeKeepsDispatchedEffects(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		action Action

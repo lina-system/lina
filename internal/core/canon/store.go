@@ -60,6 +60,9 @@ type Config struct {
 	Epoch      uint64
 	Controls   ControlFiles
 	Migrations []Migration
+	// NoSync skips SQLite's commit sync for a test state root that is discarded.
+	// Core must never set it: a crash may then lose committed rows.
+	NoSync bool
 }
 
 // Tx exposes queries but no commit, rollback or raw connection. Callbacks run
@@ -225,7 +228,7 @@ func Open(ctx context.Context, cfg Config) (*Store, error) {
 		s.cancel()
 		return nil, err
 	}
-	s.db, err = OpenSQLite(ctx, cfg.Path)
+	s.db, err = openSQLite(ctx, cfg.Path, false, !cfg.NoSync)
 	if err != nil {
 		s.cancel()
 		return nil, s.storageError(err)

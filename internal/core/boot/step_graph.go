@@ -8,6 +8,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"strings"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
 	work "github.com/thisisjun786/lina/internal/core/work/goal"
@@ -35,6 +36,18 @@ func decodeStepGraph(raw string, target any) error {
 	}
 	return nil
 }
+
+// stepGraphGoalID accepts the bare goal id or its project record id.
+func stepGraphGoalID(id string) (string, bool) {
+	if strings.HasPrefix(id, "goal:") {
+		id = strings.TrimPrefix(id, "goal:")
+	}
+	if id == "" {
+		return "", false
+	}
+	return id, true
+}
+
 func graphResult(id string, graph work.StepGraph, err error) loop.Result {
 	if err != nil {
 		code := work.GraphUnavailable
@@ -60,18 +73,27 @@ func (r *conversationRuntime) prepareStepGraphTools(engine *work.Engine, binding
 	bindings["submit_step_graph"] = loop.Tool{
 		Validate: func(c provider.ToolCall) (string, error) {
 			in, err := decode(c.Arguments)
-			return "goal:" + in.GoalID, err
+			id, ok := stepGraphGoalID(in.GoalID)
+			recordID, recordOK := work.ProjectRecordID(id)
+			if err == nil && (!ok || !recordOK) {
+				err = work.ErrInvalid
+			}
+			return recordID, err
 		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
 			in, err := decode(c.Arguments)
 			if err != nil {
 				return graphResult(c.ID, work.StepGraph{}, err)
 			}
-			owner, conversation, err := r.stepGraphOwner(ctx, in.GoalID)
+			id, ok := stepGraphGoalID(in.GoalID)
+			if !ok {
+				return graphResult(c.ID, work.StepGraph{}, work.ErrInvalid)
+			}
+			owner, conversation, err := r.stepGraphOwner(ctx, id)
 			if err != nil {
 				return graphResult(c.ID, work.StepGraph{}, err)
 			}
-			graph, err := engine.SubmitStepGraph(ctx, in.GoalID, r.person, owner, conversation, *in.Expected, in.Steps)
+			graph, err := engine.SubmitStepGraph(ctx, id, r.person, owner, conversation, *in.Expected, in.Steps)
 			return graphResult(c.ID, graph, err)
 		},
 	}
@@ -86,11 +108,23 @@ func (r *conversationRuntime) prepareStepGraphTools(engine *work.Engine, binding
 		return in.GoalID, err
 	}
 	bindings["read_step_graph"] = loop.Tool{
-		Validate: func(c provider.ToolCall) (string, error) { id, err := read(c.Arguments); return "goal:" + id, err },
+		Validate: func(c provider.ToolCall) (string, error) {
+			rawID, err := read(c.Arguments)
+			id, ok := stepGraphGoalID(rawID)
+			recordID, recordOK := work.ProjectRecordID(id)
+			if err == nil && (!ok || !recordOK) {
+				err = work.ErrInvalid
+			}
+			return recordID, err
+		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
-			id, err := read(c.Arguments)
+			rawID, err := read(c.Arguments)
 			if err != nil {
 				return graphResult(c.ID, work.StepGraph{}, err)
+			}
+			id, ok := stepGraphGoalID(rawID)
+			if !ok {
+				return graphResult(c.ID, work.StepGraph{}, work.ErrInvalid)
 			}
 			owner, conversation, err := r.stepGraphOwner(ctx, id)
 			if err != nil {

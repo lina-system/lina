@@ -4,6 +4,7 @@ package canon
 import "testing"
 
 func TestRecallUpgradeQueuesOnlyEligibleSources(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = migrationsBefore(t, recallSchema)
 	db := openStore(t, cfg)

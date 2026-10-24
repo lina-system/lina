@@ -76,6 +76,14 @@ func payloadRule(rule *schema.Node) *schema.Node {
 // frame increments UnknownKinds and never becomes conversation content. Invalid
 // envelopes increment Malformed and return an error without a partial message.
 func (d *ClientDecoder) Decode(data []byte) (*Envelope, error) {
+	// Current-schema frames already satisfy every envelope and payload rule.
+	// Avoid rebuilding large progress snapshots solely to remove fields that
+	// are not present. New fields/kinds still use the compatibility path below.
+	var current Envelope
+	if err := json.Unmarshal(data, &current); err == nil {
+		d.stats.Accepted++
+		return &current, nil
+	}
 	if err := clientReceiveSchema.Validate(data, clientSchema); err != nil {
 		d.stats.Malformed++
 		return nil, err

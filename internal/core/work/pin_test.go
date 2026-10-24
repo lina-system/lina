@@ -11,6 +11,7 @@ import (
 )
 
 func TestPinnedManifestIdentity(t *testing.T) {
+	t.Parallel()
 	manifest := []Artifact{{Path: "/b", SHA256: strings.Repeat("b", 64)}, {Path: "/a", SHA256: strings.Repeat("a", 64)}}
 	// Independent MANIFEST-CANON-01 vector, including sorting and no final newline.
 	const revision = "7044905c744e86fcf06e6e08c2f312d5bd21f5c9b5a18627fbc256a21ea3eb9f"
@@ -24,6 +25,7 @@ func TestPinnedManifestIdentity(t *testing.T) {
 }
 
 func TestReceiptExtendsPinnedShape(t *testing.T) {
+	t.Parallel()
 	raw, err := os.ReadFile("pin/pin.json")
 	if err != nil {
 		t.Fatal(err)

@@ -47,6 +47,9 @@ type workerRuntime struct {
 	starting     sync.WaitGroup
 }
 type workerSession struct {
+	stageSnapshot                                  worker.SnapshotCache
+	goalSession, goalPerson, goalAgent, goalWorker string
+
 	cancelTask          func(context.Context) error
 	recoveryMu          sync.Mutex
 	recovery            recovery.Record
@@ -666,6 +669,7 @@ func (e *workerSession) observe() {
 	// Interleaved messages and finishes must only consume their own output.
 	outputs := make(map[worker.Thread]string)
 	defer func() {
+		e.stageSnapshot.Close()
 		close(e.done)
 		e.origin.workers.wakeRecovery()
 		e.origin.notifyWorkerRunning()
@@ -818,6 +822,7 @@ func (b *workerRuntime) close() {
 	// processes before Close returns. Waiting never holds the registry mutex.
 	b.starting.Wait()
 	for _, e := range entries {
+		e.stageSnapshot.Close()
 		e.close()
 		<-e.done
 		e.process.Release()

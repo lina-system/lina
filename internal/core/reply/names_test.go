@@ -7,6 +7,7 @@ import (
 )
 
 func TestRetiredNameMatches(t *testing.T) {
+	t.Parallel()
 	names := []memory.Item{{Name: &memory.NameValue{Current: "Birch", RetiredAliases: []string{"Cedar", "카페", "Café", "Ann"}}}}
 	for _, tc := range []struct {
 		text string

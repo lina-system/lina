@@ -16,6 +16,8 @@ import (
 
 var escapeModes = []string{"group", "detached"}
 
+var escapeFinishes = []string{"close", "cancel", "exit"}
+
 func configureEscape(cmd *exec.Cmd, escape string) {
 	flags := uint32(syscall.CREATE_NEW_PROCESS_GROUP)
 	if escape == "detached" {

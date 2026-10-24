@@ -8,6 +8,7 @@ import (
 )
 
 func TestSteeringMailboxReceiptsAndResume(t *testing.T) {
+	t.Parallel()
 	for _, tier := range []string{"push", "turn", "pull"} {
 		t.Run(tier, func(t *testing.T) {
 			s, db := testStore(t)
@@ -60,6 +61,7 @@ func TestSteeringMailboxReceiptsAndResume(t *testing.T) {
 }
 
 func TestSteeringReceiptsProjectIntoTaskLedger(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	m := SteeringMessage{ID: "mail", Session: "fake:thread-1", TaskID: "task-1", Person: "p", Agent: "a", Conversation: "c", Text: "amend result", Tier: "turn", SentAt: time.Now().UTC()}
@@ -83,6 +85,7 @@ func TestSteeringReceiptsProjectIntoTaskLedger(t *testing.T) {
 }
 
 func TestSteeringRestoreAndInvalidAcknowledgement(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	m := SteeringMessage{ID: "mail", Session: "fake:thread", Person: "p", Agent: "a", Conversation: "c", Text: "amend result", Tier: "pull", SentAt: time.Now().UTC()}
 	if _, err := s.StoreSteering(t.Context(), m); err != nil {
@@ -107,6 +110,7 @@ func TestSteeringRestoreAndInvalidAcknowledgement(t *testing.T) {
 }
 
 func TestSteeringSourceSurvivesResumeAndCannotBeReattributed(t *testing.T) {
+	t.Parallel()
 	s, db := testStore(t)
 	m := SteeringMessage{ID: "source", Session: "fake:thread", Person: "owner", Agent: "manager", Conversation: "work", Text: "continue", Tier: "turn", SentAt: time.Now().UTC(), Sender: "manager", SpeakerKind: "agent"}
 	if _, err := s.StoreSteering(t.Context(), m); err != nil {

@@ -12,6 +12,7 @@ import (
 )
 
 func TestGitApplicationRetainsAcceptedCompletion(t *testing.T) {
+	t.Parallel()
 	for _, mode := range []string{"observed", "missing", "wrong-kind", "extended-policy", "moved-head"} {
 		t.Run(mode, func(t *testing.T) {
 			s, db := testStore(t)
@@ -95,6 +96,7 @@ func TestGitApplicationRetainsAcceptedCompletion(t *testing.T) {
 }
 
 func TestTaskCompletionWithoutDoneEvidenceIsClaimed(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	startFixture(t, s)
 	r := receiptFixture()
@@ -120,6 +122,7 @@ func TestTaskCompletionWithoutDoneEvidenceIsClaimed(t *testing.T) {
 }
 
 func TestChangedDeliveryClearsCurrentCompletion(t *testing.T) {
+	t.Parallel()
 	s, _, receipt, _ := fileFixture(t)
 	card := submitFiles(t, s, receipt)
 	proof := result.CompletionRequest{WorkKind: "document", Evidence: []result.EvidenceReference{{Kind: "source_reopened", TurnID: "turn", CallID: "read"}}}
@@ -152,6 +155,7 @@ func TestChangedDeliveryClearsCurrentCompletion(t *testing.T) {
 }
 
 func TestTaskCompletionEvidenceSurvivesReplay(t *testing.T) {
+	t.Parallel()
 	for _, verified := range []bool{false, true} {
 		t.Run(map[bool]string{false: "missing", true: "observed"}[verified], func(t *testing.T) {
 			s, db := testStore(t)

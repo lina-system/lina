@@ -13,6 +13,10 @@ import (
 	"github.com/thisisjun786/lina/kit/proc"
 )
 
+// escapeDenial refuses the two calls with which a command leaves its process
+// group. The rule is inherited across fork and exec and cannot be removed.
+const escapeDenial = "(deny syscall-unix (syscall-number SYS_setsid SYS_setpgid))"
+
 func findLauncher() (string, error) {
 	return resolveHostLauncher(runtime.GOOS, runtime.GOARCH, exec.LookPath)
 }
@@ -34,6 +38,9 @@ func prepare(launcher string, c Config, command Command) (proc.Command, func(), 
 (allow file-write-data (literal "/dev/null"))
 (deny system-fcntl (fcntl-command 80 110))
 `)
+	// Linux denies the same calls in its seccomp policy, so a sandboxed command
+	// cannot start a new session or process group on either platform.
+	policy.WriteString(escapeDenial + "\n")
 	for _, path := range c.WriteRoots {
 		fmt.Fprintf(&policy, "(allow file-write* (subpath %q))\n", path)
 		fmt.Fprintf(&policy, "(deny file-write-unlink (literal %q))\n", path)

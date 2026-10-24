@@ -76,7 +76,7 @@ func (r *conversationRuntime) publishCompactionFailure(ctx context.Context, noti
 		return false, err
 	}
 	s := record.Sizes
-	text := fmt.Sprintf("Request: %d\nThreshold: %d\nContext window: %d\nFixed: %d\nSummary: %d\nHistory: %d\nContext: %d\nInput: %d\nCurrent turn: %d", s.Total, s.Threshold, s.Window, s.Fixed, s.Summary, s.History, s.Packet, s.Input, s.Active)
+	text := fmt.Sprintf("Request: %d\nThreshold: %d\nTrigger: %d\nContext window: %d\nFixed: %d\nSummary: %d\nHistory: %d\nContext: %d\nInput: %d\nCurrent turn: %d", s.Total, s.Threshold, s.Trigger, s.Window, s.Fixed, s.Summary, s.History, s.Packet, s.Input, s.Active)
 	summary, speaker := notice.Body.Text(), protocol.ConversationSpeakerSystem
 	return true, r.publish(ctx, protocol.KindItemDone, notice.ID, protocol.ItemDone{Text: &summary, Speaker: &speaker, Details: &text})
 }

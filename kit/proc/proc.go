@@ -20,11 +20,15 @@ var ErrClosed = errors.New("process owner is closed")
 
 // Command has no implicit environment or descriptors. Path must be absolute.
 // ExtraFiles are reserved for trusted launchers, such as bubblewrap's BPF FD.
+// Confined reports that the caller already starts Path under a launcher that
+// denies session and process-group escape, as kit/sandbox does on macOS. Only a
+// verified launcher sets it; the owner then does not add its own policy.
 type Command struct {
 	Path           string
 	Args           []string
 	Dir            string
 	Env            []string
+	Confined       bool
 	Stdin          io.Reader
 	Stdout, Stderr io.Writer
 	ExtraFiles     []*os.File
@@ -58,8 +62,8 @@ type Owner struct {
 }
 
 // NewOwner owns commands independently of their process groups. Linux hosts
-// must register SuperviseMain as the explicit proc-supervise subcommand of the
-// current executable. macOS token tracking is best effort (see runtime.md).
+// register SuperviseMain as the explicit proc-supervise subcommand and macOS
+// hosts register JobMain as proc-job (see runtime.md).
 func NewOwner() *Owner { return &Owner{children: make(map[*child]struct{})} }
 
 // Run retains the supplied lease until the command has been reaped. Cancellation

@@ -12,7 +12,7 @@ const fields = {
   space: ['inline', 'gutter', 'section', 'page'], radius: ['card'],
   motion: ['settle', 'reduced', 'activityFrame', 'activityElapsed'], icon: ['size'],
 };
-const glyphs = ['mark', 'connecting', 'live', 'resyncing', 'retrying', 'refused', 'recovering', 'stopped', 'failed', 'quit', 'rule', 'action', 'waiting', 'unknown', 'activityFrames', 'activitySeparator', 'person', 'agent', 'toolRunning', 'toolOk', 'toolFailed'];
+const glyphs = ['mark', 'connecting', 'live', 'resyncing', 'retrying', 'refused', 'recovering', 'stopped', 'failed', 'quit', 'rule', 'action', 'waiting', 'unknown', 'activityFrames', 'activitySeparator', 'person', 'agent', 'toolRunning', 'toolOk', 'toolFailed', 'stageDone', 'stageWorking', 'stageWaiting', 'stageNeedsInput', 'stageFailed', 'stageNext', 'back', 'overflow'];
 const expected = [...Object.entries(fields).flatMap(([group, roles]) => roles.map(role => `${group}.${role}`)),
   ...['unicode', 'ascii'].flatMap(set => glyphs.map(role => `glyph.${set}.${role}`))].sort();
 const identifier = path => path.split(/[.-]/).map(word => word[0].toUpperCase() + word.slice(1)).join('');
