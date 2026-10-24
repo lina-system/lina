@@ -9,6 +9,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/authority"
 	"github.com/thisisjun786/lina/internal/core/binding"
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 	"github.com/thisisjun786/lina/internal/core/ledger"
@@ -323,9 +324,13 @@ func (r *conversationRuntime) prepareBindingWorkTools(turnID string, preparation
 						if preparation == nil {
 							return loop.Result{ID: c.ID, Code: loop.Denied}
 						}
-						err := r.db.Read(ctx, func(tx *canon.Tx) error {
+						receiptID, err := r.channelReceiptEventID(ctx, preparation.event)
+						if err != nil {
+							return loop.Result{ID: c.ID, Code: loop.Denied}
+						}
+						err = r.db.Read(ctx, func(tx *canon.Tx) error {
 							var raw []byte
-							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", preparation.event.ID).Scan(&raw)
+							err := tx.QueryRowContext(ctx, "SELECT i.body FROM inbox i WHERE 'channel-input:'||i.id=?", receiptID).Scan(&raw)
 							if err != nil {
 								return err
 							}
@@ -400,22 +405,82 @@ func (r *conversationRuntime) recordCreatedBinding(ctx context.Context, input le
 		if c.Target.Class != "new" {
 			return nil
 		}
-		var receipt struct {
-			ID       string `json:"id"`
-			RecordID string `json:"record_id"`
-		}
-		if json.Unmarshal(result.Output, &receipt) != nil {
-			return nil
-		}
-		c.CreatedID = receipt.ID
-		if receipt.RecordID != "" {
-			c.CreatedID = receipt.RecordID
-		}
+		c.CreatedID = createdBindingID(result.Output)
 		if c.CreatedID == "" {
 			return nil
 		}
 		return appendInputChoices(ctx, tx, input, "binding-created:"+turnID+":"+call.ID, []binding.Choice{c})
 	})
+}
+
+// prepare_work returns a workspace with task_id. schedule_work returns task
+// ids under result. One id becomes the focus; several stay unresolved.
+func createdBindingID(output json.RawMessage) string {
+	var receipt struct {
+		ID       string          `json:"id"`
+		RecordID string          `json:"record_id"`
+		TaskID   string          `json:"task_id"`
+		Result   json.RawMessage `json:"result"`
+	}
+	if json.Unmarshal(output, &receipt) != nil {
+		return ""
+	}
+	if receipt.RecordID != "" {
+		return receipt.RecordID
+	}
+	if receipt.ID != "" {
+		return receipt.ID
+	}
+	if receipt.TaskID != "" {
+		return receipt.TaskID
+	}
+	if len(receipt.Result) == 0 {
+		return ""
+	}
+	var one string
+	if json.Unmarshal(receipt.Result, &one) == nil && one != "" {
+		return one
+	}
+	var many []string
+	if json.Unmarshal(receipt.Result, &many) == nil && len(many) == 1 && many[0] != "" {
+		return many[0]
+	}
+	return ""
+}
+
+// An answer event keeps the original channel receipt on its parent chain.
+func (r *conversationRuntime) channelReceiptEventID(ctx context.Context, event ledger.Event) (string, error) {
+	current := event
+	seen := map[string]bool{}
+	for {
+		if strings.HasPrefix(current.ID, "channel-input:") {
+			return current.ID, nil
+		}
+		if current.ID != "" {
+			if seen[current.ID] {
+				return "", channels.ErrDenied
+			}
+			seen[current.ID] = true
+		}
+		parentID := current.ParentID
+		if parentID == "" || seen[parentID] {
+			return "", channels.ErrDenied
+		}
+		if strings.HasPrefix(parentID, "channel-input:") {
+			return parentID, nil
+		}
+		parent, err := r.journal().Get(ctx, parentID)
+		if err != nil {
+			return "", err
+		}
+		if parent.AgentID != event.AgentID || parent.ConversationID != event.ConversationID || parent.Surface.Kind != "channel" || parent.Origin.Kind != "native" || parent.ReplayOf != "" {
+			return "", channels.ErrDenied
+		}
+		if parent.ScaffoldKind != "question_answer" && parent.ScaffoldKind != "worker_completion" {
+			return "", channels.ErrDenied
+		}
+		current = parent
+	}
 }
 
 func bindingAction(name string) string {

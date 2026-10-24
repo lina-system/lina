@@ -1,0 +1,330 @@
+// SPDX-License-Identifier: Apache-2.0
+package boot
+
+import (
+	"encoding/json"
+	"strings"
+	"testing"
+	"time"
+
+	"github.com/thisisjun786/lina/internal/core/binding"
+	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/guard"
+	"github.com/thisisjun786/lina/internal/core/ledger"
+	"github.com/thisisjun786/lina/internal/core/waiting"
+	"github.com/thisisjun786/lina/internal/core/work"
+	"github.com/thisisjun786/lina/kit/loop"
+	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider"
+)
+
+func insertWorkCard(t *testing.T, r *conversationRuntime, task work.Task) {
+	t.Helper()
+	raw, err := json.Marshal(work.Card{Task: task, State: "pending"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		_, err := tx.ExecContext(t.Context(), "INSERT INTO work_cards(task_id,record) VALUES(?,?)", task.ID, raw)
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestLegacyPreparedTaskStaysInPersonScope(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now().UTC()
+	insertWorkCard(t, r, work.Task{ID: "legacy-task", AgentID: r.agent, ConversationID: r.conversation, Title: "Legacy draft", Done: "Draft exists"})
+	insertWorkCard(t, r, work.Task{ID: "other-agent-task", AgentID: "other-agent", ConversationID: r.conversation, Title: "Foreign agent", Done: "Hidden"})
+	insertWorkCard(t, r, work.Task{ID: "other-person-task", PersonID: "someone-else", AgentID: r.agent, ConversationID: r.conversation, Title: "Foreign person", Done: "Hidden"})
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "mention-legacy", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed",
+		Body: "Please check legacy-task other-agent-task and other-person-task",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(t.Context(), inputBindingID(input.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Target.ID != "legacy-task" || decision.Decider != "exact-reference" {
+		t.Fatalf("legacy task excluded: %+v", decision)
+	}
+}
+
+func TestReplyFollowsSingleCreatedTarget(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "project-a", Title: "Alpha Project", Kind: "project", State: "active", LastActivity: now},
+		{ID: "run-b", Title: "Spawned run", Kind: "run", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "created-parent", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Alpha Project",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		return appendInputChoices(t.Context(), tx, input, "binding-created:one", []binding.Choice{{
+			Request: 0, Quote: input.Body.Text(), Target: binding.Target{Class: "new", Kind: "run"}, CreatedID: "run-b",
+		}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "created-reply", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: input.ID}, OccurredAt: now.Add(time.Second), RecordedAt: now.Add(time.Second), TimeQuality: "observed", Body: "thanks",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(t.Context(), inputBindingID(reply.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Target.ID != "run-b" || decision.Decider != "reply-or-card" {
+		t.Fatalf("reply kept the admission target: %+v", decision)
+	}
+}
+
+func TestReplyLeavesMultipleTargetsUnresolved(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "project-a", Title: "Alpha Project", Kind: "project", State: "active", LastActivity: now},
+		{ID: "run-b", Title: "Spawned run", Kind: "run", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "split-parent", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Alpha Project",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = r.db.Write(t.Context(), func(tx *canon.Tx) error {
+		return appendInputChoices(t.Context(), tx, input, "binding-created:split", []binding.Choice{
+			{Request: 0, Quote: "Alpha", Target: binding.Target{Class: "existing", ID: "project-a", Kind: "project"}},
+			{Request: 1, Quote: "Project", Target: binding.Target{Class: "existing", ID: "run-b", Kind: "run"}},
+		})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	reply, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "split-reply", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: input.ID}, OccurredAt: now.Add(time.Second), RecordedAt: now.Add(time.Second), TimeQuality: "observed", Body: "thanks",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(t.Context(), inputBindingID(reply.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Rule == "reply-or-card" {
+		t.Fatalf("several targets still settled the reply: %+v", decision)
+	}
+}
+
+func TestCreatedReceiptBecomesNextFocus(t *testing.T) {
+	r := controlRuntime(t)
+	now := time.Now().UTC()
+	input, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "prepare-focus", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "Prepare the draft",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.saveModelBinding(t.Context(), input, "binding-tool:turn:prep", []binding.Choice{{Quote: input.Body.Text(), Target: binding.Target{Class: "new", Kind: "task"}}}, "tool:prepare_work"); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.recordCreatedBinding(t.Context(), input, 0, "turn", provider.ToolCall{ID: "prep", Name: "prepare_work"}, loop.Result{Code: loop.OK, Output: json.RawMessage(`{"task_id":"prepared-1","path":"/work","spec":{}}`)}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err = r.saveModelBinding(t.Context(), input, "binding-tool:turn:sched", []binding.Choice{{Request: 1, Quote: "draft", Target: binding.Target{Class: "new", Kind: "task"}}}, "tool:schedule_work"); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.recordCreatedBinding(t.Context(), input, 1, "turn", provider.ToolCall{ID: "sched", Name: "schedule_work"}, loop.Result{Code: loop.OK, Output: json.RawMessage(`{"result":["scheduled-1"]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(choices) < 2 || choices[0].CreatedID != "prepared-1" || choices[1].CreatedID != "scheduled-1" {
+		t.Fatalf("single receipts were not recorded: %+v", choices)
+	}
+	if err = r.recordCreatedBinding(t.Context(), input, 1, "turn", provider.ToolCall{ID: "sched", Name: "schedule_work"}, loop.Result{Code: loop.OK, Output: json.RawMessage(`{"result":["one","two"]}`)}); err != nil {
+		t.Fatal(err)
+	}
+	choices, err = r.currentInputChoices(t.Context(), input)
+	if err != nil || choices[1].CreatedID != "scheduled-1" {
+		t.Fatalf("several tasks became one focus: %+v %v", choices, err)
+	}
+	insertWorkCard(t, r, work.Task{ID: "scheduled-1", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Scheduled", Done: "Done"})
+	next, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "after-create", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui"}, OccurredAt: now.Add(time.Second), RecordedAt: now.Add(time.Second), TimeQuality: "observed", Body: "continue",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(t.Context(), inputBindingID(next.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Target.ID != "scheduled-1" {
+		t.Fatalf("next input missed the created task: %+v", decision)
+	}
+}
+
+func TestNewTargetQuestionLabelsStayDistinct(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "proj-a", Title: "Alpha", Kind: "project", State: "active", LastActivity: now},
+		{ID: "proj-b", Title: "Beta", Kind: "project", State: "active", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "new-tie", "Start a run under one of the projects.")
+	tools := modelBindingTools(t, r, input)
+	first := binding.Target{Class: "new", Kind: "run", Parent: "proj-a"}
+	second := binding.Target{Class: "new", Kind: "run", Parent: "proj-b"}
+	got := questionCall(t, tools, "bind_input", "ask", bindingRequest{Bindings: []binding.Choice{{
+		Quote: input.Body.Text(), Target: first, Tied: []binding.Target{first, second}, Action: "start",
+	}}})
+	if got.Code != loop.OK {
+		t.Fatalf("new-target question was not saved: %+v", got)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || choices[0].Question == "" {
+		t.Fatalf("question missing: %+v %v", choices, err)
+	}
+	q, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), choices[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(q.Choices) != 2 || q.Choices[0] == q.Choices[1] || !strings.Contains(q.Choices[0], "run") || !strings.Contains(q.Choices[0], "proj-a") || !strings.Contains(q.Choices[1], "proj-b") {
+		t.Fatalf("labels: %+v", q.Choices)
+	}
+}
+
+func TestBindInputAcceptsMessageSelectorAndExtraTargetFields(t *testing.T) {
+	r, _ := turnRuntime(t)
+	text := "Start a fresh checklist"
+	input := questionPersonInput(t, r, "usable-args", text)
+	tools := modelBindingTools(t, r, input)
+	spaced := questionCall(t, tools, "bind_input", "spaced", map[string]any{
+		"input_event_id": "  start a fresh   checklist ",
+		"bindings": []any{map[string]any{
+			"request": 0, "quote": text,
+			"target": map[string]any{"class": "new", "kind": "todo", "title": "ignored metadata"},
+		}},
+	})
+	if spaced.Code != loop.OK {
+		t.Fatalf("message text in input_event_id rejected the binding: %+v", spaced)
+	}
+	prose := questionCall(t, tools, "bind_input", "prose", map[string]any{
+		"input_event_id": "the person's message, not an event id",
+		"bindings": []any{map[string]any{
+			"request": 0, "quote": text, "target": map[string]string{"class": "none"},
+		}},
+	})
+	if prose.Code != loop.OK {
+		t.Fatalf("prose selector rejected the only input: %+v", prose)
+	}
+	unknown := questionCall(t, tools, "bind_input", "unknown-id", map[string]any{
+		"input_event_id": "evt-not-admitted",
+		"bindings": []any{map[string]any{
+			"request": 0, "quote": text, "target": map[string]string{"class": "none"},
+		}},
+	})
+	if unknown.Code == loop.OK {
+		t.Fatal("an unknown event id was accepted")
+	}
+}
+
+func TestResumedChannelFollowRecoversReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "chan-first", Title: "First channel run", Kind: "run", State: "running", LastActivity: now},
+		{ID: "chan-second", Title: "Second channel run", Kind: "run", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	channel := questionChannelInputs(t, r)
+	view, input := channel("held", "held-native")
+	tools := modelBindingTools(t, view, input)
+	first := binding.Target{Class: "existing", ID: "chan-first", Kind: "run"}
+	second := binding.Target{Class: "existing", ID: "chan-second", Kind: "run"}
+	if got := questionCall(t, tools, "bind_input", "tie", bindingRequest{Bindings: []binding.Choice{{
+		Quote: input.Body.Text(), Target: first, Tied: []binding.Target{first, second}, Action: "steer",
+	}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	choices, err := view.currentInputChoices(t.Context(), input)
+	if err != nil || choices[0].Question == "" {
+		t.Fatalf("not held: %+v %v", choices, err)
+	}
+	q, err := waiting.NewConversationQuestions(view.db).Get(t.Context(), choices[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	view.route = nil
+	revision, value := "1", q.Choices[1]
+	values := protocol.FormValues{"answer": {String: &value}}
+	answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if outcome, err := view.answerConversationQuestion(t.Context(), view.person, answer, "channel-answer"); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("answer: %s %v", outcome, err)
+	}
+	resumed, err := view.journal().Get(t.Context(), q.ID+":answer")
+	if err != nil {
+		t.Fatal(err)
+	}
+	s := &turnState{runtime: view, input: resumed, turnID: "turn:" + resumed.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}}
+	if _, err = view.prepareBindingWorkTools(s.turnID, &toolPreparation{event: resumed}, s.bindings); err != nil {
+		t.Fatal(err)
+	}
+	s.prepareInputBinding(nil)
+	if _, ok := s.bindings["follow_work"]; !ok {
+		t.Fatal("resumed turn dropped follow_work")
+	}
+	if got := questionCall(t, s.bindings, "follow_work", "resume", map[string]string{"id": second.ID, "text": "Change format"}); got.Code != loop.OK {
+		t.Fatalf("resumed channel follow denied: %+v", got)
+	}
+	run, err := view.background.service.Get(t.Context(), second.ID)
+	if err != nil || len(run.FollowUps) != 1 {
+		t.Fatalf("follow-up missing: notes=%d err=%v", len(run.FollowUps), err)
+	}
+}

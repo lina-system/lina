@@ -361,7 +361,7 @@ Every input of the person is bound to one target: the focus, another 목표, 일
 
 **Core rules.** The first rule that holds decides, and the binding records it. Rules read surface facts and state, never meaning.
 
-1. **Reply or card.** Input sent as a reply to a message, notice or card that belongs to an item, or typed in an item's thread or card, binds to that item.
+1. **Reply or card.** Input sent as a reply to a message, notice or card that belongs to an item, or typed in an item's thread or card, binds to that item. The item is that message's one current choice, including a single task or run created after admission. Several targets, or a target still waiting on the person, leave the reply unresolved.
 2. **Exact reference.** The message holds the id or link of exactly one open candidate, or its exact title or one of the person's names for it ([Names](preset-work-methods.md#names)), matched after NFC and case folding with Korean particles allowed. When two or more match, or the match is a finished item, the model chooses.
 3. **Offered option.** Exactly one open question to the person offered options, and the message is one of them by number or label, or a yes or no to a yes-or-no question. The binding goes to that question's item.
 
@@ -376,10 +376,18 @@ system events to the admission binding; retries retain the same event and questi
 A work tool may name `input_binding` to select a request or consumed steering input.
 Both tools use optional `input_event_id`: omit it for the current input, or name
 an admitted event consumed by this turn. It is never an arbitrary ledger lookup.
-The legacy `input` field remains readable; an exact copy of the current input's
-text means that current input. Conflicting selectors are rejected. Invalid new
-targets return the field and reason, allowed kinds, and for a parent error the
-authorized open initiative/project IDs, so the model can correct the next call.
+The legacy `input` field remains readable. The current input's text, ignoring
+case and spacing, means that input. When the turn has only that input, other
+prose in the selector means it too. An event-shaped id the turn did not consume
+is rejected. Conflicting selectors are rejected. Unknown binding fields are
+ignored. Invalid new targets return the field and reason, allowed kinds, and
+for a parent error the authorized open initiative/project IDs, so the model can
+correct the next call. A question about two new targets labels each choice with
+its kind and parent, so the options stay distinct.
+A single `prepare_work` or `schedule_work` receipt records the created task as
+that request's focus. Several created tasks stay unresolved. A resumed channel
+request recovers the original channel receipt through the answer's parent chain
+before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. Reading a tied candidate does not resolve the original ambiguity.
@@ -409,7 +417,7 @@ Core checks a retained tie again when a later tool would make it irreversible.
 
 **Admission and context.** Native person input and its initial system binding event commit together, before acknowledgement or turn dispatch. The binding is structured canon metadata stored inline, including full candidate titles; large work metadata must not prevent admission or require filesystem I/O inside the transaction. Admission reads the prior binding and the last exchange through the retraction-visible projection, so a withdrawn input neither restores focus nor refreshes its age. A notice's run identity comes from its durable delivery record, never from a notice body that may be stored as a material. Retrying an input reuses that event; input admitted during a turn keeps its own event and supplies its binding at the next model round. A binding records `no-rule` and an unresolved choice when no Core rule holds, alongside a fresh-focus or none default. It does not authorize an action. Existing pending input from an earlier Core version receives a binding before preparation resumes.
 
-Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
+Candidates are deduplicated by item id. Within each priority group, newer last activity comes first and id breaks ties. Record activity comes from the record's own Git revision, including after index rebuild; task and run activity comes from their durable work state. The snapshot includes the person's records across managing agents. A prepared task whose record has no person id is included when its agent and conversation belong to that person. A task recorded for someone else is not. A channel’s tool scope governs its work context. Without memory scope, its focus and conversation questions stay within that channel address and no personal name memories enter the snapshot. Names otherwise follow ordinary memory visibility and retraction rules. Candidate metadata in the binding contains id, title, kind, state and last activity, without copying name memories.
 
 Client input may carry optional `reply_to`, `card` and `thread` references. Core resolves them within the authenticated conversation and the person's work queue. Platform reply ids are resolved within their channel address. An unresolved or foreign reference supplies no rule. General questions may explicitly mark a yes-or-no form; free text is never inferred to be that form.
 

@@ -147,7 +147,7 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 	if err = errors.Join(rows.Err(), rows.Close()); err != nil {
 		return s, err
 	}
-	rows, err = tx.QueryContext(ctx, `SELECT c.record,coalesce((SELECT json_extract(e.record,'$.recorded_at') FROM work_ledger e WHERE e.task_id=c.task_id ORDER BY e.seq DESC LIMIT 1),'') FROM work_cards c WHERE json_extract(c.record,'$.task.person_id')=?`, input.PersonID)
+	rows, err = tx.QueryContext(ctx, `SELECT c.record,coalesce((SELECT json_extract(e.record,'$.recorded_at') FROM work_ledger e WHERE e.task_id=c.task_id ORDER BY e.seq DESC LIMIT 1),'') FROM work_cards c WHERE json_extract(c.record,'$.task.person_id')=? OR (coalesce(json_extract(c.record,'$.task.person_id'),'')='' AND EXISTS (SELECT 1 FROM conv_event e WHERE e.speaker_kind='person' AND e.person_id=? AND e.agent_id=json_extract(c.record,'$.task.agent_id') AND e.conversation_id=json_extract(c.record,'$.task.conversation_id')))`, input.PersonID, input.PersonID)
 	if err != nil {
 		return s, err
 	}
@@ -346,8 +346,8 @@ func bindingTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, ref st
 	if !errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, err
 	}
-	var raw string
-	err = tx.QueryRowContext(ctx, `SELECT b.body FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&raw)
+	var raw, personEvent string
+	err = tx.QueryRowContext(ctx, `SELECT b.body, CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END FROM conv_event e JOIN conv_event b ON b.parent_id=CASE WHEN e.speaker_kind='person' THEN e.id ELSE e.parent_id END AND b.scaffold_kind=? WHERE e.id=? AND e.conversation_id=? AND e.agent_id=?`, inputBindingKind, ref, input.ConversationID, input.AgentID).Scan(&raw, &personEvent)
 	if errors.Is(err, sql.ErrNoRows) {
 		return binding.Target{}, nil
 	}
@@ -355,8 +355,45 @@ func bindingTarget(ctx context.Context, tx *canon.Tx, input ledger.Event, ref st
 		return binding.Target{}, err
 	}
 	var d binding.Decision
-	err = json.Unmarshal([]byte(raw), &d)
-	return d.Target, err
+	if err = json.Unmarshal([]byte(raw), &d); err != nil {
+		return binding.Target{}, err
+	}
+	choices, err := readInputChoices(ctx, tx, ledger.Event{ID: personEvent})
+	if err != nil {
+		return binding.Target{}, err
+	}
+	return overlayChoiceTarget(d.Target, choices), nil
+}
+
+// A later choice replaces the admission target. One created identity is that
+// target. Several targets, or a target still waiting on the person, do not
+// settle a reply.
+func overlayChoiceTarget(base binding.Target, choices []binding.Choice) binding.Target {
+	if len(choices) == 0 {
+		return base
+	}
+	var settled binding.Target
+	have := false
+	for _, c := range choices {
+		if c.Cancelled || c.Question != "" {
+			return binding.Target{}
+		}
+		target := c.Target
+		if c.CreatedID != "" {
+			target = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
+		}
+		if target.Class == "" {
+			return binding.Target{}
+		}
+		if have && target != settled {
+			return binding.Target{}
+		}
+		settled, have = target, true
+	}
+	if !have {
+		return binding.Target{}
+	}
+	return settled
 }
 
 // Several bundled runs remain unresolved, even when they share a delivery.

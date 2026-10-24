@@ -100,10 +100,11 @@ func (r *conversationRuntime) currentInputChoices(ctx context.Context, input led
 // The input identity is supplied by the live turn or its consumed steering,
 // never by an arbitrary ledger id the model invents.
 func (s *turnState) bindingInput(id string) (ledger.Event, *conversationRuntime, error) {
-	if s.bindingSource != nil && (id == "" || id == s.bindingSource.ID || id == s.bindingSource.Body.Text()) {
+	id = strings.TrimSpace(id)
+	if s.bindingSource != nil && (id == "" || sameBindingSelector(id, *s.bindingSource)) {
 		return *s.bindingSource, s.runtime, nil
 	}
-	if id == "" || id == s.input.ID || id == s.input.Body.Text() {
+	if id == "" || sameBindingSelector(id, s.input) {
 		return s.input, s.runtime, nil
 	}
 	if s.bindingInputs != nil {
@@ -114,8 +115,36 @@ func (s *turnState) bindingInput(id string) (ledger.Event, *conversationRuntime,
 			}
 			return a.event, r, nil
 		}
+		for _, a := range s.bindingInputs {
+			if sameBindingSelector(id, a.event) {
+				r := a.runner
+				if r == nil {
+					r = s.runtime
+				}
+				return a.event, r, nil
+			}
+		}
+	}
+	// Prose in the selector names the only input this turn has. An event-shaped
+	// id the turn did not consume stays unknown.
+	if !bindingSelectorIsEventID(id) && s.bindingSource == nil && len(s.bindingInputs) == 0 {
+		return s.input, s.runtime, nil
 	}
 	return ledger.Event{}, nil, &binding.ChoiceError{Field: "input_event_id", Reason: "unknown_input_event"}
+}
+
+func sameBindingSelector(selector string, event ledger.Event) bool {
+	if selector == event.ID {
+		return true
+	}
+	normalize := func(value string) string {
+		return binding.Fold(strings.Join(strings.Fields(strings.TrimSpace(value)), " "))
+	}
+	return selector != "" && normalize(selector) == normalize(event.Body.Text())
+}
+
+func bindingSelectorIsEventID(id string) bool {
+	return id != "" && !strings.ContainsAny(id, " \t\r\n") && len(id) <= 256
 }
 
 // Keep the old input spelling readable for in-flight calls. Both selectors must
@@ -162,17 +191,13 @@ func (s *turnState) prepareInputBinding(declarations []provider.ToolDecl) []prov
 	}
 	s.bindings["bind_input"] = loop.Tool{
 		Validate: func(c provider.ToolCall) (string, error) {
-			var in bindingRequest
-			err := decodeQuestionJSON(c.Arguments, &in)
-			if err == nil && (len(in.Bindings) == 0 || len(in.Bindings) > 32) {
-				err = binding.ErrChoice
-			}
+			_, err := decodeBindingRequest(c.Arguments)
 			return "input-binding:" + s.input.ID, err
 		},
 		Execute: func(ctx context.Context, c provider.ToolCall) loop.Result {
-			var in bindingRequest
-			if decodeQuestionJSON(c.Arguments, &in) != nil || len(in.Bindings) == 0 || len(in.Bindings) > 32 {
-				return bindingFailure(c.ID, binding.ErrChoice)
+			in, err := decodeBindingRequest(c.Arguments)
+			if err != nil {
+				return bindingFailure(c.ID, err)
 			}
 			input, r, err := s.selectedBindingInput(in.InputEventID, in.Input)
 			if err != nil {
@@ -308,12 +333,7 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 				qid := fmt.Sprintf("%starget:%s:%d", conversationQuestionPrefix, input.ID, c.Request)
 				labels := make([]string, len(c.Tied))
 				for j, target := range c.Tied {
-					labels[j] = target.Class
-					for _, item := range state.Items {
-						if item.ID == target.ID {
-							labels[j] = item.Title + " (" + item.ID + ")"
-						}
-					}
+					labels[j] = bindingChoiceLabel(state, target)
 				}
 				draft := waiting.QuestionDraft{Question: "Which item should this apply to?", Recommendation: labels[0], Choices: labels, Default: labels[0]}
 				q := waiting.ConversationQuestion{ID: qid, Person: r.person, Agent: r.agent, Conversation: r.conversation, Input: input.ID, Turn: "binding:" + input.ID, AskedAt: time.Now().UTC(), QuestionDraft: draft, Binding: c}
@@ -331,6 +351,39 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 	})
 	return
 }
+
+// Unknown binding fields are ignored. A missing or oversized call is still rejected.
+func decodeBindingRequest(raw string) (bindingRequest, error) {
+	var in bindingRequest
+	if len(raw) > 32<<10 || json.Unmarshal([]byte(raw), &in) != nil || len(in.Bindings) == 0 || len(in.Bindings) > 32 {
+		return in, binding.ErrChoice
+	}
+	return in, nil
+}
+
+func bindingChoiceLabel(state binding.State, target binding.Target) string {
+	if target.Class == "new" {
+		label := "new " + target.Kind
+		if target.Parent != "" {
+			parent := target.Parent
+			for _, item := range state.Items {
+				if item.ID == target.Parent {
+					parent = item.Title + " (" + item.ID + ")"
+					break
+				}
+			}
+			label += " under " + parent
+		}
+		return label
+	}
+	for _, item := range state.Items {
+		if item.ID == target.ID {
+			return item.Title + " (" + item.ID + ")"
+		}
+	}
+	return target.Class
+}
+
 func bindInputDeclaration() provider.ToolDecl {
 	target := map[string]any{"type": "object", "properties": map[string]any{"class": map[string]any{"type": "string", "enum": []string{"existing", "new", "none"}}, "id": map[string]string{"type": "string", "description": "Required for existing: copy the candidate ID. Omit for new or none."}, "kind": map[string]string{"type": "string", "description": "For existing: copy the candidate kind. For new: initiative, project, todo, task or run. Omit for none."}, "parent": map[string]string{"type": "string", "description": "For new only: optional ID of an open initiative or project; omit for no parent."}}, "required": []string{"class"}, "additionalProperties": false}
 	properties := map[string]any{"request": map[string]any{"type": "integer", "minimum": 0, "maximum": 31}, "quote": map[string]string{"type": "string"}, "target": target, "tied": map[string]any{"type": "array", "items": target, "minItems": 2, "maxItems": 5}, "action": map[string]any{"type": "string", "enum": []string{"read", "edit", "steer", "start", "send", "pay", "delete"}}, "close_matches": map[string]any{"type": "array", "items": map[string]string{"type": "string"}}, "difference": map[string]string{"type": "string"}}
