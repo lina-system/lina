@@ -27,6 +27,23 @@ func admitAt(t *testing.T, db *canon.Store, id, conversation, person, agent, bod
 	}
 }
 
+func rememberAt(t *testing.T, db *canon.Store, content, event string, at time.Time) string {
+	t.Helper()
+	resolve := func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
+		return memory.Origin{Person: "owner", Agent: "agent", Speaker: guard.Person, Quote: content, Scope: memory.Local}, nil
+	}
+	var id string
+	write := memory.Write{Agent: "agent", Person: "owner", Item: memory.Item{Kind: memory.Fact, Scope: memory.Local, Subject: memory.Subject{Kind: memory.Person, ID: "owner"}, Content: content, Basis: memory.Stated, ValidFrom: at.Unix(), Evidence: []memory.Evidence{{Kind: memory.Event, ID: event, Precision: memory.Exact}}}}
+	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
+		item, err := memory.Insert(t.Context(), tx, write, resolve)
+		id = item.ID
+		return err
+	}); err != nil {
+		t.Fatal(err)
+	}
+	return id
+}
+
 func remember(t *testing.T, db *canon.Store, agent, holder, content string, scope memory.Scope, event string) string {
 	t.Helper()
 	resolve := func(context.Context, *canon.Tx, memory.Evidence) (memory.Origin, error) {
@@ -396,6 +413,20 @@ func TestSearchReadsMaterialBackedEventBody(t *testing.T) {
 	}
 	if !strings.Contains(results[0].Excerpt, "도서관") {
 		t.Fatalf("material excerpt: %q", results[0].Excerpt)
+	}
+}
+
+func TestSearchLimitFollowsMemoryEvidenceDedup(t *testing.T) {
+	db := database(t)
+	base := time.Unix(1700000000, 0)
+	admitAt(t, db, "other", "conversation", "owner", "agent", "도서관 곁글", base, "")
+	admitAt(t, db, "evidence", "conversation", "owner", "agent", "도서관 원문", base.Add(time.Second), "")
+	item := rememberAt(t, db, "도서관 기억", "evidence", base.Add(2*time.Second))
+	scope := recall.Scope{Person: "owner", Agent: "agent"}
+	ids := searchIDs(t, db, scope, "도서관", 2)
+	sort.Strings(ids)
+	if !reflect.DeepEqual(ids, []string{item, "other"}) {
+		t.Fatalf("limit consumed by evidence: %v", ids)
 	}
 }
 

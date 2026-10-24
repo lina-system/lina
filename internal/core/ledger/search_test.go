@@ -4,6 +4,7 @@ package ledger_test
 import (
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"reflect"
 	"sort"
@@ -110,6 +111,31 @@ func TestKoreanSearch(t *testing.T) {
 				}
 			})
 		}
+	}
+}
+
+func TestSearchDefaultsOmittedLimitToTwenty(t *testing.T) {
+	t.Parallel()
+	db, _ := database(t)
+	s := ledger.New(db, nil)
+	base := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
+	for i := 0; i < 21; i++ {
+		in := input(fmt.Sprintf("event-%02d", i))
+		in.OccurredAt = base.Add(time.Duration(i) * time.Second)
+		in.RecordedAt = in.OccurredAt
+		in.Body = fmt.Sprintf("uniqueledgerneedle %02d", i)
+		admit(t, s, guard.EntryOwner, in)
+	}
+	hits, err := s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "uniqueledgerneedle"})
+	if err != nil || len(hits) != 20 {
+		t.Fatalf("default limit: %d %v", len(hits), err)
+	}
+	if hits[len(hits)-1].ID == "event-00" {
+		t.Fatal("oldest event replaced a newer hit")
+	}
+	hits, err = s.Search(t.Context(), ledger.SearchQuery{AgentID: "agent", PersonID: "owner", Text: "uniqueledgerneedle", Limit: 1})
+	if err != nil || len(hits) != 1 || hits[0].ID != "event-20" {
+		t.Fatalf("explicit limit: %+v %v", hits, err)
 	}
 }
 

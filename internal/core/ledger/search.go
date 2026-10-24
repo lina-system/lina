@@ -55,7 +55,7 @@ func indexText(ctx context.Context, tx *canon.Tx, id, text string) error {
 
 // Search is the ledger view of the one recall entry. Scope, matching and
 // ranking come from recall; this function keeps the ledger's source identity
-// and secret-free derived text.
+// and secret-free derived text. An omitted limit is 20. The maximum is 100.
 func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) {
 	if !safeID(q.AgentID) || !safeID(q.PersonID) || !utf8.ValidString(q.Text) || strings.ContainsRune(q.Text, 0) || q.Limit < 0 || q.Limit > 100 {
 		return nil, ErrInvalid
@@ -63,6 +63,9 @@ func (s *Store) Search(ctx context.Context, q SearchQuery) ([]SearchHit, error) 
 	text := strings.TrimSpace(q.Text)
 	if text == "" {
 		return nil, nil
+	}
+	if q.Limit == 0 {
+		q.Limit = 20
 	}
 	hits, err := recall.Match(ctx, s.db, recall.Scope{
 		Person: q.PersonID, Agent: q.AgentID, Kinds: []recall.Kind{recall.Event},

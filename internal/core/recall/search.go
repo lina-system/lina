@@ -53,8 +53,11 @@ type Scope struct {
 	// agent and tool words out of the evidence about the person while items
 	// stay eligible.
 	EventSpeakerKind guard.SpeakerKind
-	Origin           string
-	CommonOnly       bool
+	// PersonSubject keeps memory candidates whose subject is the person.
+	// recall_person uses it so a third-party or world item cannot take a result.
+	PersonSubject bool
+	Origin        string
+	CommonOnly    bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -289,11 +292,6 @@ dedup AS (
 SELECT kind,source_id,revision,occurred_at,holder,older FROM dedup WHERE twin=1 AND (?=1 OR older=0)
 ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianday(occurred_at) DESC, source_id`
 	args = append(args, boolInt(scope.History))
-	limit := query.Limit
-	if limit > 0 {
-		statement += " LIMIT ?"
-		args = append(args, limit+len(external))
-	}
 	var hits []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, statement, args...)
@@ -320,13 +318,10 @@ ORDER BY CASE WHEN paired THEN 0 WHEN trigram THEN 1 ELSE 2 END, score, julianda
 		return nil, err
 	}
 	hits = append(hits, external...)
-	if limit > 0 && len(hits) > limit {
-		hits = hits[:limit]
-	}
 	if query.Vectors != nil {
 		return fuse(ctx, db, scope, query, hits)
 	}
-	return lineage(ctx, db, scope, hits)
+	return limitAfterLineage(ctx, db, scope, hits, query.Limit)
 }
 
 // pendingEventText reads the derived text of queued events whose body lives in
@@ -485,6 +480,9 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
    AND coalesce(e.scaffold_kind,'')<>'reply_check'
    AND NOT (coalesce(e.scaffold_kind,'')='result' AND EXISTS(SELECT 1 FROM ev_rel view WHERE view.event_id=e.id AND view.kind='view_of'))))`)
 	}
+	if scope.PersonSubject && containsKind(kinds, Memory) {
+		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item person_subject WHERE person_subject.id=`+alias+`.source_id AND person_subject.subject_kind='person'))`)
+	}
 	if containsKind(kinds, Memory) {
 		where = append(where, `(`+alias+`.kind<>'memory' OR EXISTS(SELECT 1 FROM memory_item v WHERE v.id=`+alias+`.source_id AND v.valid_from<=?))`)
 		args = append(args, at)
@@ -576,6 +574,35 @@ func lineage(ctx context.Context, db Canon, scope Scope, hits []Hit) ([]Hit, err
 	return out, nil
 }
 
+// limitAfterLineage applies the caller's limit after an evidence event of a
+// returned memory item is removed. Truncating first would let that event take
+// a place another result could fill.
+func limitAfterLineage(ctx context.Context, db Canon, scope Scope, hits []Hit, limit int) ([]Hit, error) {
+	if limit <= 0 {
+		return lineage(ctx, db, scope, hits)
+	}
+	prefix := limit
+	if prefix > len(hits) {
+		prefix = len(hits)
+	}
+	for {
+		deduped, err := lineage(ctx, db, scope, hits[:prefix])
+		if err != nil {
+			return nil, err
+		}
+		if len(deduped) >= limit || prefix == len(hits) {
+			if len(deduped) > limit {
+				deduped = deduped[:limit]
+			}
+			return deduped, nil
+		}
+		prefix += limit - len(deduped)
+		if prefix > len(hits) {
+			prefix = len(hits)
+		}
+	}
+}
+
 // fuse merges the full-text list and the vector hook by reciprocal rank.
 func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) ([]Hit, error) {
 	ids, err := query.Vectors(ctx, scope, query.Text)
@@ -618,10 +645,7 @@ func fuse(ctx context.Context, db Canon, scope Scope, query Query, text []Hit) (
 		}
 		return out[i].ID < out[j].ID
 	})
-	if query.Limit > 0 && len(out) > query.Limit {
-		out = out[:query.Limit]
-	}
-	return lineage(ctx, db, scope, out)
+	return limitAfterLineage(ctx, db, scope, out, query.Limit)
 }
 
 func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, error) {

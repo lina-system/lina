@@ -45,6 +45,7 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 		EventSpeakerKind: guard.Person,
 		CommonOnly:       scope.CommonOnly, History: in.History, At: in.At,
 		Projection: scope.Projection, ExternalModel: scope.ExternalModel,
+		PersonSubject: true,
 	}
 	if in.At > 0 {
 		query.Until = time.Unix(in.At, 0).Add(time.Second)
@@ -59,7 +60,7 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 			memoryIDs = append(memoryIDs, hit.ID)
 		}
 	}
-	items, err := m.store.Items(ctx, scope, memoryIDs, in.At, in.History)
+	items, err := m.store.Items(ctx, scope, memoryIDs, in.At, in.History, true)
 	if err != nil {
 		return nil, err
 	}
