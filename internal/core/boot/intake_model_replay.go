@@ -60,7 +60,7 @@ func (r *conversationRuntime) replayModelBinding(ctx context.Context, event ledg
 		if rounds > maxIntakeModelRounds {
 			return nil, intakereplay.ErrModelRoundLimit
 		}
-		return route.Adapter.Stream(ctx, activity, req)
+		return route.Stream(ctx, activity, req)
 	}})
 	if err != nil {
 		return errors.Join(intakereplay.ErrModelReplay, err)

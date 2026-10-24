@@ -203,7 +203,7 @@ func (r *conversationRuntime) run(ctx context.Context, inputs *loop.Inputs, inpu
 				if _, err := r.agents.Get(ctx, r.agent); err != nil {
 					return nil, err
 				}
-				return r.route.Adapter.Stream(ctx, activity, request)
+				return r.route.Stream(ctx, activity, request)
 			},
 			Observe: s.observe,
 		}})
@@ -618,7 +618,7 @@ func (s *turnState) prepare(ctx context.Context, policy turn.ModelPolicy) (turn.
 		if meter != nil {
 			meter.called = true
 		}
-		stream, err := r.route.Adapter.Stream(ctx, activity, request)
+		stream, err := r.route.Stream(ctx, activity, request)
 		if err != nil {
 			activity.Release()
 			return nil, err
