@@ -1453,7 +1453,9 @@ A confirmed matrix records each terminal's observed product version and `TERM`;
 a proposed entry cannot carry either field.
 The matrix's `automated_qa` record and `evidence/tui-spike/terminal-qa/` are the
 alpha evidence for the terminal list: the built TUI run in six Linux terminals
-and one SSH PTY, with each observed product, version, `TERM` and transport.
+and one SSH PTY, with each observed product version, `TERM` and transport.
+A product name alone is not a version. The SSH run records the OpenSSH and tmux
+versions it observed.
 Owner confirmation of that list is still pending and is the first Done-when item
 of [follow-up #371](https://github.com/lina-system/lina/issues/371), which also
 owns the confirmed matrix, owner-run S1–S7 and S9–S11 evidence and the final

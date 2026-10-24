@@ -82,7 +82,7 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 		if err = s.Create(h.ctx, task); err != nil {
 			t.Fatal(err)
 		}
-		for _, suffix := range []string{"draft", "send", "independent"} {
+		for _, suffix := range []string{"draft", "send", "payment", "independent"} {
 			child := task
 			child.ID = goal + ":" + suffix
 			child.GoalID = goal
@@ -93,6 +93,7 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 		questions := append([]waiting.Question(nil), script.Questions...)
 		questions[0].Dependents = []string{goal + ":draft"}
 		questions[1].Dependents = []string{goal + ":send"}
+		questions[2].Dependents = []string{goal + ":payment"}
 		r := waiting.Round{ID: goal, Goal: goal, Person: task.PersonID, Agent: task.AgentID, Conversation: task.ConversationID, Deadline: script.Deadline, Questions: questions}
 		invalid := r
 		invalid.Deadline = time.Time{}
@@ -136,6 +137,10 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 		}
 		draft, _ := read.Get(h.ctx, goal+":draft")
 		send, _ := read.Get(h.ctx, goal+":send")
+		payment, err := read.Get(h.ctx, goal+":payment")
+		if err != nil || payment.State != "input_needed" || r.Decisions[0].Values["booking"] != waiting.DoNotAct {
+			t.Fatalf("payment default acted or lost its hold: %+v %+v %v", payment, r.Decisions, err)
+		}
 		independent, _ := read.Get(h.ctx, goal+":independent")
 		wantDraft := "working"
 		if goal == script.StoppedGoal {
@@ -218,7 +223,7 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 	goal := script.Goals[0]
 	id, revision := "work:"+goal, "1"
 	a, b := "B", waiting.DoNotAct
-	values := protocol.FormValues{"route": {String: &a}, "send": {String: &b}}
+	values := protocol.FormValues{"route": {String: &a}, "send": {String: &b}, "booking": {String: &b}}
 	request, err := client.AnswerQuestion(h.ctx, protocol.QuestionAnswer{CardID: &id, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values})
 	if err != nil {
 		t.Fatal(err)
@@ -284,10 +289,12 @@ func TestM2WorkWaitingDeadlines(t *testing.T) {
 		}
 		workerCalls++
 		// The plugin is behind the real work admission gate, for both goal kinds.
-		if err = start(s, goal+":send"); err == nil {
-			pluginCalls++
-		} else if !errors.Is(err, work.ErrState) {
-			t.Fatal(err)
+		for _, effect := range []string{"send", "payment"} {
+			if err = start(s, goal+":"+effect); err == nil {
+				pluginCalls++
+			} else if !errors.Is(err, work.ErrState) {
+				t.Fatal(err)
+			}
 		}
 	}
 	if workerCalls != len(script.Goals) || pluginCalls != 0 {

@@ -75,6 +75,39 @@ func TestRecallPersonReadsOwnLedgerAndExcludesSecretSpans(t *testing.T) {
 	}
 }
 
+func TestRecallPersonKeepsOtherSpeakersOutOfPersonEvidence(t *testing.T) {
+	db := memoryDB(t)
+	events := ledger.New(db, nil)
+	flow := NewMemory(db, nil, nil)
+	base := time.Unix(10, 0)
+	for _, in := range []struct {
+		entry guard.Entry
+		input ledger.Input
+	}{
+		{guard.EntryOwner, ledger.Input{ID: "person-event", ConversationID: "conversation", AgentID: "A", PersonID: "person", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: base, RecordedAt: base, TimeQuality: "observed", Body: "I like tea", Locator: "synthetic-source"}},
+		{guard.EntryAgent, ledger.Input{ID: "agent-event", ConversationID: "conversation", AgentID: "A", Surface: ledger.Surface{Kind: "tui"}, OccurredAt: base.Add(time.Second), RecordedAt: base.Add(time.Second), TimeQuality: "observed", Body: "You said you like tea", Locator: "synthetic-source"}},
+	} {
+		if _, err := events.Admit(t.Context(), in.entry, in.input); err != nil {
+			t.Fatal(err)
+		}
+	}
+	scope := memory.RecallScope{Agent: "A", Person: "person"}
+	answer, err := flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
+	if err != nil || len(answer.Sources) != 1 || answer.Sources[0].ID != "event:person-event" {
+		t.Fatalf("person evidence: %+v %v", answer, err)
+	}
+	// A memory item stays eligible; only event candidates take the restriction.
+	write := rememberInput("likes tea")
+	write.Item.Evidence[0].ID = "person-event"
+	if _, err := flow.Remember(t.Context(), write); err != nil {
+		t.Fatal(err)
+	}
+	answer, err = flow.RecallPerson(t.Context(), scope, PersonRecall{Question: "What drink?", Query: "tea", At: 100})
+	if err != nil || len(answer.Sources) != 1 || !strings.HasPrefix(answer.Sources[0].ID, "memory:") {
+		t.Fatalf("memory evidence: %+v %v", answer, err)
+	}
+}
+
 type sourceMaterials struct {
 	bodies map[ledger.Material]string
 	reads  int

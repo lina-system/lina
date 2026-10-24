@@ -42,10 +42,9 @@ func (m *Memory) recallSources(ctx context.Context, scope memory.RecallScope, in
 	}
 	query := recall.Scope{
 		Person: scope.Person, Agent: scope.Agent, Kinds: kinds,
-		CommonOnly: scope.CommonOnly, History: in.History, At: in.At,
+		EventSpeakerKind: guard.Person,
+		CommonOnly:       scope.CommonOnly, History: in.History, At: in.At,
 		Projection: scope.Projection, ExternalModel: scope.ExternalModel,
-		// Memory rows have an empty speaker. This predicate applies to events only.
-		EventSpeaker: guard.Person,
 	}
 	if in.At > 0 {
 		query.Until = time.Unix(in.At, 0).Add(time.Second)

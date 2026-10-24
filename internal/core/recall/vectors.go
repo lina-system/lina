@@ -355,13 +355,17 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 	}
 	restricted := scope.Projection || scope.ExternalModel
 	where, args := scopeWhere(scope, kindsOf(scope), at, restricted, "d")
-	prefix, prefixArgs := restrictedCTE(scope)
+	prefix := "WITH "
+	cte, prefixArgs := restrictedCTE(scope)
+	if cte != "" {
+		prefix += cte + ", "
+	}
 	if !scope.History {
 		older, olderArgs := olderExpr(kindsOf(scope), at, "d")
 		where = append(where, "("+older+")=0")
 		args = append(args, olderArgs...)
 	}
-	prefix += `, candidates AS MATERIALIZED (SELECT d.*,vec_distance_cosine(v.embedding,?) AS distance FROM recall_embed_eligible d JOIN recall_vec v ON v.rowid=d.id WHERE ` + strings.Join(where, " AND ") + `), ` + lineageCTE(containsKind(kindsOf(scope), Event)) + `
+	prefix += `candidates AS MATERIALIZED (SELECT d.*,vec_distance_cosine(v.embedding,?) AS distance FROM recall_embed_eligible d JOIN recall_vec v ON v.rowid=d.id WHERE ` + strings.Join(where, " AND ") + `), ` + lineageCTE(containsKind(kindsOf(scope), Event)) + `
  unique_docs AS (SELECT c.*,row_number() OVER(PARTITION BY CASE WHEN kind='event' THEN conversation||':'||text_hash ELSE kind||':'||source_id END ORDER BY julianday(occurred_at),source_id) AS twin FROM candidates c` + lineageFilter(containsKind(kindsOf(scope), Event)) + `) SELECT kind,source_id FROM unique_docs WHERE twin=1 ORDER BY distance,julianday(occurred_at) DESC,source_id LIMIT ?`
 	args = append(append(append(prefixArgs, vectorBytes(vectors[0])), args...), VectorCandidates)
 	var ids []string
@@ -388,12 +392,6 @@ func (v *Vectors) Query(ctx context.Context, scope Scope, text string) ([]string
 		return rows.Err()
 	})
 	return ids, err
-}
-func restrictedCTE(scope Scope) (string, []any) {
-	return `WITH restricted AS (
- SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
- WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
- AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
 }
 
 // SetImportConsent is called only after the import flow has presented its
