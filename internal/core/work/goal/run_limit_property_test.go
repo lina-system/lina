@@ -89,11 +89,15 @@ func runLimitPasses(t *testing.T, seed uint64) {
 			}
 		}
 		// Place the ready steps without Derive: rank order, the limit first,
-		// then what the reports can still carry.
+		// then what the reports can still carry. A goal within the limit that
+		// no host can take still keeps a place, with quota or load as its one
+		// reason.
 		count := len(running)
 		free := freeSteps(nodes, actions, now)
 		wantStarted := map[string]bool{}
 		wantQueued := map[string]int{}
+		wantReasonOf := map[string]string{}
+		wantWaitOf := map[string]string{}
 		place := 0
 		for _, g := range rankOrderedGoals(goals) {
 			if running[g.ID] || !hasReadyTask(g) {
@@ -102,9 +106,14 @@ func runLimitPasses(t *testing.T, seed uint64) {
 			if count >= wantLimit {
 				place++
 				wantQueued[g.ID] = place
+				wantReasonOf[g.ID] = wantReason
+				wantWaitOf[g.ID] = "run_limit"
 				continue
 			}
 			if free <= 0 {
+				place++
+				wantQueued[g.ID] = place
+				wantReasonOf[g.ID], wantWaitOf[g.ID] = capacityHold(nodes, readyTaskOf(g).Worker, now)
 				continue
 			}
 			free--
@@ -130,21 +139,22 @@ func runLimitPasses(t *testing.T, seed uint64) {
 		if len(plan.Queues) != len(wantQueued) {
 			t.Fatalf("pass %d: queues = %+v, want %v", pass, plan.Queues, wantQueued)
 		}
-		limited := map[string]bool{}
+		held := map[string]map[string]bool{}
 		for _, w := range plan.Waits {
-			if w.Reason == "run_limit" {
-				limited[w.GoalID] = true
+			if held[w.GoalID] == nil {
+				held[w.GoalID] = map[string]bool{}
 			}
+			held[w.GoalID][w.Reason] = true
 		}
 		for _, q := range plan.Queues {
 			if q.Place == 0 || wantQueued[q.GoalID] != q.Place {
 				t.Fatalf("pass %d: queue = %+v, want %v", pass, plan.Queues, wantQueued)
 			}
-			if q.Reason != wantReason {
-				t.Fatalf("pass %d: queue reason = %q, want %q", pass, q.Reason, wantReason)
+			if q.Reason != wantReasonOf[q.GoalID] {
+				t.Fatalf("pass %d: queue reason = %q, want %q", pass, q.Reason, wantReasonOf[q.GoalID])
 			}
-			if !limited[q.GoalID] {
-				t.Fatalf("pass %d: queued %s has no run limit wait: %+v", pass, q.GoalID, plan.Waits)
+			if !held[q.GoalID][wantWaitOf[q.GoalID]] {
+				t.Fatalf("pass %d: queued %s has no %s wait: %+v", pass, q.GoalID, wantWaitOf[q.GoalID], plan.Waits)
 			}
 		}
 		// Apply the pass, then land some of the steps in progress.
@@ -282,6 +292,11 @@ func rankOrderedGoals(goals []Goal) []Goal {
 // hasReadyTask reports a step whose blockers landed. Generated goals chain
 // their steps, so at most one is ready at a time.
 func hasReadyTask(g Goal) bool {
+	return readyTaskOf(g).ID != ""
+}
+
+// readyTaskOf returns the first step whose blockers landed, or a zero Task.
+func readyTaskOf(g Goal) Task {
 	done := map[string]bool{}
 	for _, task := range g.Tasks {
 		done[task.ID] = taskDone(task)
@@ -295,10 +310,28 @@ func hasReadyTask(g Goal) bool {
 			blocked = blocked || !done[dep]
 		}
 		if !blocked {
-			return true
+			return task
 		}
 	}
-	return false
+	return Task{}
+}
+
+// capacityHold names why no host can take a ready step for this worker: quota
+// when the worker is installed somewhere but every row is blocked, load for
+// any other capacity shortage. It also names the wait that reason writes.
+func capacityHold(nodes []Node, worker string, now time.Time) (reason, wait string) {
+	available, quota := false, false
+	for _, n := range nodes {
+		if !n.Workers[worker] {
+			continue
+		}
+		available = true
+		quota = quota || n.QuotaReset[worker] <= now.Unix()
+	}
+	if available && !quota {
+		return ReasonQuota, "worker_quota"
+	}
+	return ReasonLoad, "host_capacity"
 }
 
 func runLimitGoals(rng *rand.Rand) []Goal {

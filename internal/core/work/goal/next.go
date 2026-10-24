@@ -777,10 +777,24 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		if best == "" {
+			// No host can take this step now. The goal keeps its place in rank
+			// order like one past the run limit, with the capacity reason:
+			// quota when its worker is installed but every row is blocked, load
+			// for any other shortage. A goal already holding a slot is not
+			// waiting for one, so it carries no place.
+			reason := ReasonLoad
 			if available && !quota {
+				reason = ReasonQuota
 				wait(g, t, "worker_quota", "quota.changed")
 			} else {
 				wait(g, t, "host_capacity", "node.changed")
+			}
+			if workerAction(kind) && !runningGoals[g.Person][g.ID] {
+				if _, done := queuedGoals[g.ID]; !done {
+					places[g.Person]++
+					queuedGoals[g.ID] = places[g.Person]
+					plan.Queues = append(plan.Queues, QueuePlace{GoalID: g.ID, Reason: reason, Place: places[g.Person]})
+				}
 			}
 			continue
 		}
