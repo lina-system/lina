@@ -97,6 +97,10 @@
     "card_order": [
       "goal:prepare-workshop"
     ],
+    "counts": {
+      "running": 1,
+      "waiting": 0
+    },
     "waiting": [],
     "waiting_more": 0,
     "stream": {

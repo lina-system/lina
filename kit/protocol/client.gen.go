@@ -735,12 +735,17 @@ type PlanResponse struct {
 	Revision    *string      `json:"revision,omitempty"`
 }
 type Progress struct {
-	CardOrder   *[]string      `json:"card_order,omitempty"`
-	Lanes       *[]WorkerLane  `json:"lanes,omitempty"`
-	NextCursor  *string        `json:"next_cursor,omitempty"`
-	Rows        *[]ProgressRow `json:"rows,omitempty"`
-	Waiting     *[]WaitingRow  `json:"waiting,omitempty"`
-	WaitingMore *json.Number   `json:"waiting_more,omitempty"`
+	CardOrder   *[]string       `json:"card_order,omitempty"`
+	Counts      *ProgressCounts `json:"counts,omitempty"`
+	Lanes       *[]WorkerLane   `json:"lanes,omitempty"`
+	NextCursor  *string         `json:"next_cursor,omitempty"`
+	Rows        *[]ProgressRow  `json:"rows,omitempty"`
+	Waiting     *[]WaitingRow   `json:"waiting,omitempty"`
+	WaitingMore *json.Number    `json:"waiting_more,omitempty"`
+}
+type ProgressCounts struct {
+	Running json.Number `json:"running"`
+	Waiting json.Number `json:"waiting"`
 }
 type ProgressDigest struct {
 	Lines []string    `json:"lines"`
@@ -764,6 +769,7 @@ type ProgressLine struct {
 	Next         string           `json:"next"`
 	Now          *string          `json:"now,omitempty"`
 	Percent      *json.Number     `json:"percent,omitempty"`
+	Row          *bool            `json:"row,omitempty"`
 	Stage        string           `json:"stage"`
 	Stages       *[]ProgressStage `json:"stages,omitempty"`
 	StartedAt    *string          `json:"started_at,omitempty"`
@@ -799,6 +805,7 @@ type ProgressStageWorker struct {
 }
 type ProgressUpdate struct {
 	CardOrder   *[]string       `json:"card_order,omitempty"`
+	Counts      *ProgressCounts `json:"counts,omitempty"`
 	Rows        *[]ProgressRow  `json:"rows,omitempty"`
 	Stream      *StreamMetadata `json:"stream,omitempty"`
 	Text        *string         `json:"text,omitempty"`
@@ -5299,6 +5306,9 @@ const clientSchemaJSON = `{
     "progress": {
       "type": "object",
       "properties": {
+        "counts": {
+          "$ref": "#/$defs/progress_counts"
+        },
         "lanes": {
           "type": "array",
           "items": {
@@ -5337,6 +5347,9 @@ const clientSchemaJSON = `{
     "progress_update": {
       "type": "object",
       "properties": {
+        "counts": {
+          "$ref": "#/$defs/progress_counts"
+        },
         "stream": {
           "$ref": "#/$defs/stream_metadata"
         },
@@ -5367,6 +5380,24 @@ const clientSchemaJSON = `{
         }
       },
       "required": [],
+      "additionalProperties": false
+    },
+    "progress_counts": {
+      "type": "object",
+      "properties": {
+        "running": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "waiting": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
+      "required": [
+        "running",
+        "waiting"
+      ],
       "additionalProperties": false
     },
     "progress_digest_get": {
@@ -8283,6 +8314,9 @@ const clientSchemaJSON = `{
     "progress_line": {
       "type": "object",
       "properties": {
+        "row": {
+          "type": "boolean"
+        },
         "started_at": {
           "type": "string",
           "format": "date-time"

@@ -845,6 +845,21 @@ follow row order; unknown or repeated refs are ignored, and any unlisted cards
 follow in row order. These fields are additive in client 1.0; old clients ignore
 them and new clients accept their absence.
 
+An optional `row` on a line marks a row of a line: a task or a run drawn inside
+the 일 or 목표 that owns it. A row is not a line. It is indented under its line by
+`depth`, it is never a card, and neither the running count nor the digest counts
+it. A client that receives no `row` treats every non-goal row as a card, which is
+what an older Core means.
+
+An optional `counts` object in `progress` and `progress_update` carries Core's
+running count: `running` and `waiting` are the numbers of lines in those states,
+never the number of rows. A row counts for the 일 or run it belongs to, so the
+count follows the 일 the person reads and not the workers. A line whose row waits
+on the person counts as waiting for them. A client draws this count where it
+shows progress and does not recount the rows; a client that receives no count
+counts the cards it draws, which is all an older Core allows. These fields are
+additive in client 1.0.
+
 A `progress_update` replaces the overview atomically, retaining the normal topic
 cursor and snapshot/replay behavior. A changed full waiting list advances this
 cursor even when the five Home rows and remaining count are unchanged; a client

@@ -356,7 +356,7 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	// after the last revision was committed.
 	last := graphs[len(graphs)-1]
 	revisions[len(revisions)-1].Steps = graphSteps(last.Graph.Steps, current.Tasks)
-	started, err := cardStarts(ctx, tx, goalID)
+	started, err := cardStarts(ctx, tx)
 	if err != nil {
 		return nil, err
 	}
@@ -383,9 +383,10 @@ func GoalStages(ctx context.Context, tx *canon.Tx, goalID, person string, langua
 	return stages, nil
 }
 
-// cardStarts reads when each step of this goal started, which orders a parallel
-// stage's label. A step that has not started has no start and sorts by id.
-func cardStarts(ctx context.Context, tx *canon.Tx, goalID string) (map[string]time.Time, error) {
+// cardStarts reads when each step started, which orders a parallel stage's
+// label. A step's card carries the step id, so the ledger needs no goal link on
+// the card. A step that has not started has no start and sorts by id.
+func cardStarts(ctx context.Context, tx *canon.Tx) (map[string]time.Time, error) {
 	rows, err := tx.QueryContext(ctx, "SELECT record FROM work_cards ORDER BY task_id")
 	if err != nil {
 		return nil, err
@@ -401,7 +402,7 @@ func cardStarts(ctx context.Context, tx *canon.Tx, goalID string) (map[string]ti
 		if json.Unmarshal(raw, &card) != nil {
 			return nil, ErrStageGraph
 		}
-		if card.Task.GoalID == goalID && !card.StartedAt.IsZero() {
+		if !card.StartedAt.IsZero() {
 			out[card.Task.ID] = card.StartedAt
 		}
 	}

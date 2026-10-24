@@ -2,6 +2,7 @@
 // Uninstall ordering: no moment leaves a rule naming a missing plug-in.
 #include <string.h>
 
+#include "guard.h"
 #include "install.h"
 #include "rule.h"
 #include "state.h"
@@ -98,4 +99,26 @@ void test_uninstall(void) {
   CHECK_STR(outcome.reason, "rule-unreadable");
   CHECK(unreadable.bundle_present);
   CHECK(fake_right_find(&unreadable, LINA_RIGHT_UNLOCK) != NULL);
+
+  // A restore that wrote the stock rule but could not read it back leaves a
+  // retry. An uninstall that removes the guard removes the retry with it, so a
+  // later install is not left waiting for a guard that is gone.
+  struct fake_host unconfirmed;
+  installed(&unconfirmed);
+  unconfirmed.read_fails_after_write = true;
+  CHECK(lina_guard_restore(&unconfirmed.host, &paths, "rollback").action == LINA_GUARD_FAILED);
+  CHECK(unconfirmed.host.exists(unconfirmed.host.context, paths.restore_retry) == 1);
+  unconfirmed.read_fails_after_write = false;
+  unconfirmed.read_right_status = 0;
+  CHECK(rule_is(&unconfirmed, &stock));
+  CHECK(lina_uninstall(&unconfirmed.host, &paths, &outcome) == LINA_UNINSTALL_OK);
+  CHECK(!unconfirmed.guard_installed);
+  CHECK(unconfirmed.host.exists(unconfirmed.host.context, paths.restore_retry) == 0);
+  struct lina_install_input again = {
+      .bundle_source = "/release/LinaUnlock.bundle",
+      .broker_socket = "/var/run/lina/broker.sock",
+      .person_uid = 501,
+      .deadline_ms = 500,
+  };
+  CHECK(lina_install(&unconfirmed.host, &paths, &again).code == LINA_INSTALL_OK);
 }
