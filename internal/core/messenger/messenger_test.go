@@ -881,6 +881,32 @@ func (a *accountAdapter) FetchAttachment(context.Context, messenger.SourceID, st
 }
 func (a *accountAdapter) Capabilities() messenger.Capabilities { return messenger.Capabilities{} }
 
+func TestFailedSourceRetriesWithoutAdvancingCursor(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	adapter := &fakeAdapter{fail: errors.New("add-on exited")}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Second)
+	service.SyncAll(t.Context(), &f.now)
+	adapter.fail = nil
+	later := f.now.Add(2 * time.Second)
+	service.SyncAll(t.Context(), &later)
+	sources, err := f.store.Sources(t.Context(), "person")
+	if err != nil || len(sources) != 1 || sources[0].State != messenger.StateConnected {
+		t.Fatalf("retry source %s: %+v, %v", source.Account, sources, err)
+	}
+}
+
+func TestSyncLeavesSourcesOwnedByOtherServicesUntouched(t *testing.T) {
+	f := newFixture(t)
+	f.connect(t)
+	service := messenger.NewService(f.store, nil, time.Second)
+	service.SyncAll(t.Context(), &f.now)
+	rows, err := f.store.Sources(t.Context(), "person")
+	if err != nil || len(rows) != 1 || rows[0].State != messenger.StateConnected {
+		t.Fatalf("unregistered source changed: %+v, %v", rows, err)
+	}
+}
+
 // Revocation can be discovered after SignIn, during any authenticated read.
 type revokedReadAdapter struct {
 	fakeAdapter

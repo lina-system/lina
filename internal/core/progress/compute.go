@@ -9,19 +9,21 @@ import (
 // Line is display data only. Identity and navigation belong to Entry, never to
 // the line. A nil percentage is unobserved, including an empty denominator.
 type Line struct {
-	StartedAt    time.Time `json:"started_at,omitzero"`
-	FinishedAt   time.Time `json:"finished_at,omitzero"`
-	Now          string    `json:"now,omitempty"`
-	Name         string    `json:"name"`
-	Kind         string    `json:"kind"`
-	Stage        string    `json:"stage"`
-	State        string    `json:"state,omitempty"`
-	Percent      *int      `json:"percent"`
-	JustFinished string    `json:"just_finished"`
-	Next         string    `json:"next"`
-	Waiting      int       `json:"waiting"`
-	Depth        int       `json:"depth"`
-	Stages       []Stage   `json:"stages,omitempty"`
+	StartedAt  time.Time `json:"started_at,omitzero"`
+	FinishedAt time.Time `json:"finished_at,omitzero"`
+	Now        string    `json:"now,omitempty"`
+	Name       string    `json:"name"`
+	Kind       string    `json:"kind"`
+	Stage      string    `json:"stage"`
+	State      string    `json:"state,omitempty"`
+	// Paused is the person's pause on a goal line, as Core recorded it.
+	Paused       bool    `json:"paused,omitempty"`
+	Percent      *int    `json:"percent"`
+	JustFinished string  `json:"just_finished"`
+	Next         string  `json:"next"`
+	Waiting      int     `json:"waiting"`
+	Depth        int     `json:"depth"`
+	Stages       []Stage `json:"stages,omitempty"`
 }
 type Entry struct {
 	Ref  string
@@ -41,13 +43,15 @@ type Unit struct {
 	Now                    string
 	ID, Parent, Kind, Name string
 	State                  string // Optional observed execution state, independent of plan stage.
-	Done                   *bool
-	Active, Seen, Landed   bool
-	JustFinished           string
-	Next                   string
-	Waiting                int
-	Updated                int64
-	Percent                *int
+	// Paused is the person's pause on a goal line.
+	Paused               bool
+	Done                 *bool
+	Active, Seen, Landed bool
+	JustFinished         string
+	Next                 string
+	Waiting              int
+	Updated              int64
+	Percent              *int
 	// GoalLine marks a line built from a 목표 record, whose Rank is the
 	// person's order among goals.
 	GoalLine bool
@@ -172,7 +176,7 @@ func Compute(units []Unit) []Entry {
 // UnitLine is one unit's current projection before the running list drops a
 // landed unit the person has already seen. Unobserved stage words stay unknown.
 func UnitLine(u Unit) Line {
-	line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
+	line := Line{StartedAt: u.StartedAt, FinishedAt: u.FinishedAt, Now: u.Now, Name: u.Name, Kind: u.Kind, Stage: "unknown", State: u.State, Paused: u.Paused, Percent: u.Percent, JustFinished: "unknown", Next: "unknown", Waiting: u.Waiting, Stages: u.Stages}
 	if u.JustFinished != "" {
 		line.JustFinished = u.JustFinished
 	}

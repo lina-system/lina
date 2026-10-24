@@ -35,7 +35,7 @@ export function validateNpm(manifest, lock, exceptions = []) {
 export function checkNpm({ cwd = process.cwd(), execute: run = execute, exceptions = [] } = {}) {
   let temporary, output = '';
   try {
-    const directories = ['.', 'adapters/claude', 'adapters/claude-acp'].filter(dir => existsSync(join(cwd, dir, 'package.json')) || existsSync(join(cwd, dir, 'package-lock.json')));
+    const directories = ['.', 'adapters/claude', 'adapters/claude-acp', 'adapters/messenger'].filter(dir => existsSync(join(cwd, dir, 'package.json')) || existsSync(join(cwd, dir, 'package-lock.json')));
     if (!directories.length) return { status: 0, output: '' };
     if (readFileSync(join(cwd, '.npmrc'), 'utf8') !== npmrc) throw new Error('root .npmrc must use the public registry, exact pins and ignore-scripts');
     const nodeVersion = readFileSync(join(cwd, '.node-version'), 'utf8').trim();
@@ -53,7 +53,9 @@ export function checkNpm({ cwd = process.cwd(), execute: run = execute, exceptio
       writeFileSync(join(target, '.npmrc'), npmrc);
       const commands = dir === 'adapters/claude-acp'
         ? [['ci', '--ignore-scripts', '--omit=dev', '--omit=optional'], ['audit', 'signatures']]
-        : [['ci', '--ignore-scripts'], ['audit', 'signatures'], ['test']];
+        : dir === 'adapters/messenger'
+          ? [['ci', '--ignore-scripts', '--omit=dev', '--omit=optional'], ['audit', 'signatures'], ['test']]
+          : [['ci', '--ignore-scripts'], ['audit', 'signatures'], ['test']];
       for (const args of commands) {
         const result = run('npm', args, { cwd: target, env, timeoutMs: 180_000 });
         output += `$ npm ${args.join(' ')} (${dir})\n${result.stdout}${result.stderr}`;
