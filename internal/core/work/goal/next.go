@@ -777,6 +777,18 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		if best == "" {
+			// No host can take this step. The goal still holds no run slot, so it
+			// keeps its place in rank order and names the report that held it
+			// back: a worker's quota, or the load that left no room.
+			reason := ReasonLoad
+			if available && !quota {
+				reason = ReasonQuota
+			}
+			if _, done := queuedGoals[g.ID]; !done {
+				places[g.Person]++
+				queuedGoals[g.ID] = places[g.Person]
+				plan.Queues = append(plan.Queues, QueuePlace{GoalID: g.ID, Reason: reason, Place: places[g.Person]})
+			}
 			if available && !quota {
 				wait(g, t, "worker_quota", "quota.changed")
 			} else {
