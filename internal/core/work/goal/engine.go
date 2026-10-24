@@ -54,6 +54,9 @@ type Observation struct {
 	// A turn that records none of the three leaves the goal blocked.
 	Wait           *Wait   `json:"wait,omitempty"`
 	Decision       string  `json:"decision,omitempty"`
+	// SourceOpen is the result of one source read. Nil is not an answer.
+	// True means the wait is still open; false closes it.
+	SourceOpen *bool `json:"source_open,omitempty"`
 	Status         Outcome `json:"status"`
 	Handle         string  `json:"handle,omitempty"`
 	Head           string  `json:"head,omitempty"`
@@ -80,6 +83,10 @@ type Config struct {
 	// Changed publishes a committed projection. A delivery failure does not
 	// revoke the state; startup and subsequent events can publish it again.
 	Changed func(context.Context, State) error
+	// ArmWait schedules the wait's durable deadline. LinkWaitingOn writes the
+	// same waiting_on onto the 할 일. Both run after the ledger commit.
+	ArmWait       func(context.Context, Goal, Wait) error
+	LinkWaitingOn func(context.Context, Goal, Wait) error
 }
 type Engine struct {
 	definitions   sync.Map

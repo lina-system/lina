@@ -68,6 +68,7 @@ func TestActionKindClassification(t *testing.T) {
 		Decide:         {},
 		PlanGoal:       {},
 		CheckCriterion: {},
+		ReadSource:     {},
 	}
 	if len(kindSpecs) != len(want) {
 		t.Errorf("kindSpecs has %d entries, want %d", len(kindSpecs), len(want))

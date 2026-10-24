@@ -186,6 +186,8 @@ const (
 	Observe        ActionKind = "observe"
 	Decide         ActionKind = "decide"
 	PlanGoal       ActionKind = "plan_goal"
+	// ReadSource is the one read of an outside wait's source.
+	ReadSource ActionKind = "read_source"
 )
 
 const CheckCriterion ActionKind = "check_criterion"
@@ -200,6 +202,10 @@ type Action struct {
 	RetirementReconciled bool            `json:"retirement_reconciled,omitempty"`
 	ObserveActionID      string          `json:"observe_action_id,omitempty"`
 	Signal               string          `json:"signal,omitempty"`
+	// ReadCause is "signal" or "deadline" for a source read.
+	ReadCause string `json:"read_cause,omitempty"`
+	// WaitSource is the source that one read observes.
+	WaitSource string `json:"wait_source,omitempty"`
 	FailureKey           string          `json:"failure_key,omitempty"`
 	CriterionID          string          `json:"criterion_id,omitempty"`
 	Check                *CriterionCheck `json:"check,omitempty"`
@@ -239,6 +245,24 @@ type Wait struct {
 	Wake     string `json:"wake"`
 	Until    int64  `json:"until"`
 	Recorded bool   `json:"recorded,omitempty"`
+	// Recommendation and Draft are the expiry row. Both empty keeps the
+	// liveness row; a wait that names only one of them is refused.
+	Recommendation string `json:"recommendation,omitempty"`
+	Draft          string `json:"draft,omitempty"`
+	// TodoID is the 할 일 whose waiting_on is this wait. Who, Since and
+	// NextCheck are that waiting_on; NextCheck is the deadline.
+	TodoID    string `json:"todo_id,omitempty"`
+	Who       string `json:"who,omitempty"`
+	Since     string `json:"since,omitempty"`
+	NextCheck string `json:"next_check,omitempty"`
+	// Source is what the one read observes. A date wait may leave it empty.
+	Source string `json:"source,omitempty"`
+	// PendingSignal is a change signal that arrived while a read was open.
+	PendingSignal string `json:"pending_signal,omitempty"`
+	// DeadlineRead is set when the one deadline read is queued.
+	DeadlineRead bool `json:"deadline_read,omitempty"`
+	// Linked is set after the 할 일's waiting_on is written.
+	Linked bool `json:"linked,omitempty"`
 }
 type Plan struct {
 	// RunLimits is the limit this pass applied to each person, and Queues holds

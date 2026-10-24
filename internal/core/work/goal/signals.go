@@ -14,6 +14,8 @@ type Signal struct {
 	ActionID string `json:"action_id,omitempty"`
 	GoalID   string `json:"goal_id,omitempty"`
 	TaskID   string `json:"task_id,omitempty"`
+	// Wake is a plugin change signal for one outside wait.
+	Wake string `json:"wake,omitempty"`
 }
 
 // Signal persists an integration's change hint. It carries no instructions or

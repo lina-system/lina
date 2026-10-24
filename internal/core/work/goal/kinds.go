@@ -25,6 +25,7 @@ var kindSpecs = map[ActionKind]kindSpec{
 	PlanGoal:       {},
 	CheckCriterion: {},
 	ContinueWorker: {worker: true, externalEffect: true, priorStage: TaskNoReceipt, counter: func(t *Task) *int { return &t.Continuations }},
+	ReadSource:     {},
 }
 
 // WorkerAction reports whether kind runs a worker and reserves worker capacity.
