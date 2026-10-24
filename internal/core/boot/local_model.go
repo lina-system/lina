@@ -9,6 +9,7 @@ import (
 
 	"github.com/thisisjun786/lina/internal/core/clientsrv"
 	"github.com/thisisjun786/lina/internal/core/localmodel"
+	"github.com/thisisjun786/lina/internal/core/secrets"
 	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
@@ -25,7 +26,13 @@ func (r *conversationRuntime) localTask(ctx context.Context, s clientsrv.Session
 	if !ok || request.Text == "" {
 		return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
 	}
-	task := localmodel.Task{Kind: request.Task, Text: request.Text}
+	// The same admission mask and model-bound projection as conversation input.
+	// Both the helper and the main model see the projection, never the value.
+	masked, err := secrets.Mask(request.Text)
+	if err != nil {
+		return clientsrv.Result{}, &clientsrv.OperationError{Code: protocol.ErrorMalformed}
+	}
+	task := localmodel.Task{Kind: request.Task, Text: masked.DerivedText()}
 	if request.Preference != nil {
 		task.Preference = *request.Preference
 	}
