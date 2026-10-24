@@ -179,11 +179,11 @@ func (r *conversationRuntime) Replay(ctx context.Context, s clientsrv.Session, p
 	defer activity.Release()
 	ctx, cancel := context.WithTimeout(ctx, 5*time.Minute)
 	defer cancel()
-	reads, err := r.replayReads(source, ep)
+	usage := []provider.Meta{}
+	reads, err := r.replayReads(source, ep, func(meta provider.Meta) { usage = append(usage, meta) })
 	if err != nil {
 		return protocol.ReplayResult{}, replayFailure(err)
 	}
-	usage := []provider.Meta{}
 	report := replay.ProviderReport{Version: 1, Provider: r.route.Adapter.Provider(), Route: r.route.Route, Model: request.Model, Source: replaySourceDigest(ep.Evidence.Hash), Requests: []replay.RequestReport{}}
 	round := 0
 	out, err := replay.Sandboxed(ctx, replay.SandboxConfig{Reads: reads, Executable: executable, Denied: r.replayDenied(), Environment: []string{"PATH=" + os.Getenv("PATH")}, Stream: func(ctx context.Context, request provider.Request) (provider.Stream, error) {

@@ -66,9 +66,21 @@ for events and items together, materializes the item set in one scoped read, and
 reads an event's text only for the results that remain. Its cost follows the
 hits, not the number of person events.
 
+Person-model queries set `EventSpeakerKind` to person and `PersonMemory` to
+true, filtering person-authored events and person-subject memory items before
+ranking and the limit, including queued sources. General recall keeps its wider
+kind/speaker filters. Event bodies in materials have a nullable inline body; search resolves those through the bound
+reader or reports unavailable bytes without failing the whole result list.
+
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term
 ranking, identical-text collapse, lineage, scope and visibility classes,
 retraction, summary navigation, excerpt bounds and the vector hook. The opt-in
 store benchmark Core test proves startup fill and socket memory writes/forget
 with the normal running Core.
+
+Inline event excerpts apply the canonical `ev_span` secret flags before returning
+text, for both pending and indexed sources. Material-backed events keep the
+canonical reader's already-masked text; source-byte spans are not applied again
+to that derived representation. `TestSearchMasksExplicitSecretSpans` covers a
+synthetic secret that shape-based detection alone cannot recognize.

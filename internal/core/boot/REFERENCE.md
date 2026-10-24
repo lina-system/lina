@@ -97,3 +97,72 @@ by decider, and `exportBindingCases` writes one valid intake case per move under
 `derived/intake-cases/`; both read only canon, so a restart keeps them. The move and corrected input choice
 commit together; retries return the retained receipt. Replay uses the original
 input and the admission snapshot, without personal name memories.
+
+### Live topic recall (#873)
+
+`conversation_memory.go` collects ranked memory ids through `recall.Match`, then
+loads their current scoped items and evidence in one `memory.Store.Items` read.
+This runs in Atropos' existing optional collector with relationship context.
+Standing profile/name/relationship items win duplicate identities. Only selected
+topic references join pre-dispatch revision validation; `topic-memory-v1`
+reconstructs the same projection on replay without a new search.
+
+`conversation_recall.go` binds one live family in the ordered tool preparation
+table. It uses ordinary Core read grants, checks channel memory/tool scope and
+agent availability on execution, and fences reads with the revocation epoch.
+Expansion uses `compaction.Expansion` and rejects evidence protected by
+never-leaves memory and missing material bytes. New declarations remain present
+through tool follow-ups. Old replay layouts and source tags stay unchanged.
+
+Reference inspected before implementation: LCM-X `tools.py` at
+`709099b3a397a7893a7abae8802ebe7bf605f79e`.
+
+- **Seen**, `lcm_recall` at 3812: cross-conversation retrieval, positive bounded
+  limits, explicit hard session exclusions before fusion, and a query deadline.
+- **Seen**, `lcm_expand` at 4400: raw-message or summary-source expansion, explicit
+  cross-session node scope, offsets and limits.
+- **Inferred mapping**: LINA uses its shared deterministic search, person/agent
+  authorization, exact source reader and immutable request evidence. It does
+  not copy the reference's optional model reranker or eight-second budget.
+- **Unknown**: the installed Hermes/plugin revision and owner-history retrieval
+  quality on this machine. Local reference checkouts were absent; the pinned
+  public source was inspected read-only. No reference code was copied.
+
+`TestLiveTopicRecall`, `TestLiveTopicReplay` and
+`TestLiveRecallScopeAndExpansion` cover preparation, negative matches, channel
+scope, exact reconstruction, source revocation and tool authorization.
+`TestM1LiveTopicRecallInstalledCore` drives a real installed Core with a scripted
+provider through topic selection, recall, summary expansion, restart, export and
+replay. Storebench's `topic_memory_read` reports the shared ranked-id and scoped
+item retrieval latency; it does not measure full turn preparation or claim
+owner-question recall quality.
+
+
+## Person recall auxiliary
+
+The live read family and replay both bind `recall_person` to the configured
+conversation route. `exec.NewRecallAuxiliary` uses one fixed instruction and a
+separate source pack, requires a terminal structured response, and closes the
+stream on every outcome. The memory flow still filters unknown citations and
+mismatched revisions; only sentences with a remaining citation reach the caller.
+Live requests use the shared budget with a conservative input reservation plus
+4,096 output tokens and the existing 1,048,576-token auxiliary allowance. Missing
+usage retains the reservation charge. Replay records metadata without budget
+writes. Source visibility is checked before model dispatch and after completion.
+
+Behavioral reference, read before implementation: the supplied Hermes Honcho
+`dialectic.py` (`_run_dialectic_depth`, `_consume_pending_dialectic`) and
+`client.py` (`dialectic_depth`).
+
+- Seen: depth one uses one reasoning pass; deeper levels can combine multiple
+  passes. Background results are consumed only when ready and expire by turn age.
+- Inferred mapping: LINA makes one foreground request over permitted sources,
+  with structured sentence citations, and creates no memory fact as a read effect.
+- Unknown: Honcho server reasoning and relative answer quality. Its deeper
+  passes and background cadence are outside this change.
+
+`TestM1RecallPersonAuxiliaryInstalledCore` runs an installed Core against a
+fixture HTTP provider. It checks live registration, actual model dispatch,
+citation filtering, and cancellation of a silent auxiliary with preserved
+sources in the failed tool receipt. Virtual-clock unit coverage tests the exact
+auxiliary deadline without sleeping; boot coverage checks replay and accounting.
