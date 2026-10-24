@@ -55,7 +55,10 @@ type Observation struct {
 	Tasks      []Task             `json:"tasks,omitempty"`
 	// Wait and Decision are what a liveness manager turn can record besides tasks.
 	// A turn that records none of the three leaves the goal blocked.
-	Wait     *Wait  `json:"wait,omitempty"`
+	Wait *Wait `json:"wait,omitempty"`
+	// Waits lets one plan retain independent outside waits together. Wait is
+	// retained for existing drivers; wake identities must be unique across both.
+	Waits    []Wait `json:"waits,omitempty"`
 	Decision string `json:"decision,omitempty"`
 	// SourceOpen is the result of one source read. Nil is not an answer.
 	// True means the wait is still open; false closes it.
@@ -465,7 +468,7 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 					g.State = GoalRunning
 				case failedEvidence(*g):
 					g.State = GoalRunning
-				case allLanded:
+				case allLanded && len(waits) == 0:
 					g.State = GoalChecking
 				case active:
 					g.State = GoalRunning
@@ -884,8 +887,13 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 			return ErrInvalid
 		}
 		liveness := t == nil && a.FailureKey == ""
-		if liveness && o.Wait != nil && !validRecordedWait(*o.Wait) {
-			return ErrInvalid
+		var waits []Wait
+		if liveness {
+			var err error
+			waits, err = plannedWaits(*g, o)
+			if err != nil {
+				return err
+			}
 		}
 		if t == nil {
 			g.ManagerTurns++
@@ -918,8 +926,7 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 				return err
 			}
 		}
-		if liveness && o.Wait != nil {
-			w := *o.Wait
+		for _, w := range waits {
 			w.GoalID = g.ID
 			w.Recorded = true
 			w.PendingSignal, w.DeadlineRead, w.Linked, w.Armed = "", false, false, false

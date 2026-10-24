@@ -36,6 +36,26 @@ func expiryRow(w Wait) string {
 	return strings.TrimSpace(w.Recommendation) + "\n\n" + strings.TrimSpace(w.Draft)
 }
 
+func plannedWaits(g Goal, o Observation) ([]Wait, error) {
+	waits := append([]Wait(nil), o.Waits...)
+	if o.Wait != nil {
+		waits = append(waits, *o.Wait)
+	}
+	seen := map[string]bool{}
+	for _, w := range g.Waits {
+		if w.Recorded {
+			seen[w.Wake] = true
+		}
+	}
+	for _, w := range waits {
+		if !validRecordedWait(w) || seen[w.Wake] {
+			return nil, ErrInvalid
+		}
+		seen[w.Wake] = true
+	}
+	return waits, nil
+}
+
 func waitTaskID(wake string) string { return "wait:" + wake }
 
 func readAction(g Goal, w Wait, cause, signal string, now time.Time) Action {
@@ -70,7 +90,8 @@ func readSeen(actions []Action, goal, wake, cause, signal string) bool {
 	return false
 }
 
-func holdRecordedWaits(plan *Plan, state State, g Goal, now time.Time) {
+func holdRecordedWaits(plan *Plan, state State, g Goal, now time.Time) bool {
+	held := false
 	for _, w := range g.Waits {
 		if !w.Recorded || !namedWait(w) {
 			continue
@@ -81,7 +102,9 @@ func holdRecordedWaits(plan *Plan, state State, g Goal, now time.Time) {
 		}
 		queueDueRead(plan, state, g, &w, now)
 		plan.Waits = append(plan.Waits, w)
+		held = true
 	}
+	return held
 }
 
 func queueDueRead(plan *Plan, state State, g Goal, w *Wait, now time.Time) {

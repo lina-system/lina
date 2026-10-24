@@ -565,7 +565,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		// A recorded wait without an expiry row still drops at its deadline so
 		// liveness can block. A wait with an expiry row stays until its one
 		// deadline read settles.
-		holdRecordedWaits(&plan, state, g, now)
+		outsideWait := holdRecordedWaits(&plan, state, g, now)
 		tasks := map[string]Task{}
 		for _, t := range g.Tasks {
 			tasks[t.ID] = t
@@ -675,7 +675,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 		}
 		// No tasks is not "everything landed". The liveness pass below asks the
 		// manager, instead of waiting on a merge that does not exist.
-		if len(g.Tasks) == 0 || !allDone || pending(state.Actions, g.ID, "") {
+		if len(g.Tasks) == 0 || !allDone || pending(state.Actions, g.ID, "") || outsideWait || g.DecisionRow != "" {
 			continue
 		}
 		if g.TargetRevision == "" {
