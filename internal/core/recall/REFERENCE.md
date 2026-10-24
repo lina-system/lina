@@ -56,8 +56,6 @@ an index row collapses the same way. A
 returned memory item hides its own evidence events, so lineage counts once. A
 replay copy is a candidate only when the scope asks for copies, and even then
 its lineage counts once: a copy appears when its original is out of scope.
-Under `Projection` or `ExternalModel`, a summary or record is out when it
-cites a protected event or a summary that reaches one at any depth.
 `recall.Search` adds the bounded masked excerpt and the citations in force at
 the result's revision. `VectorQuery` is the fusion hook for #874.
 
@@ -71,6 +69,13 @@ person-subject memory items before ranking and the limit, including queued
 sources. General recall keeps its wider kind/speaker filters. Event bodies in
 materials have a nullable inline body; search resolves those through the bound
 reader or reports unavailable bytes without failing the whole result list.
+
+Restricted-source selection follows protected memory to its evidence, then
+walks current citations back to every dependent memory, record and summary.
+Typed source identities preserve the boundary across nested summary children.
+The same scope predicate applies before limiting indexed, queued and vector-hook
+candidates. Internal reads retain their scope, while projection also excludes
+private evidence. The recursive union terminates citation cycles.
 
 Tests cover atomic native writes, queued sources and exclusions, generation
 fencing, batch bounds, migrations, records revisions, Korean parity, any-term

@@ -246,5 +246,28 @@ func (s Source) ValidateEpisode(ctx context.Context, ep Episode) error {
 			return err
 		}
 	}
+	if err := s.DB.Read(ctx, func(tx *canon.Tx) error {
+		scope := Scope{Person: a.OwnerPersonID, Agent: a.AgentID}
+		// Legacy assembly records lack OwnerPersonID. Bind their read checks
+		// to the canonical input's conversation owner, never exported prose.
+		if len(ep.Calls) > 0 && scope.Person == "" {
+			var agent string
+			err := tx.QueryRowContext(ctx, `SELECT person,holder FROM recall_source WHERE kind='event' AND source_id=?`, ep.Input.ID).Scan(&scope.Person, &agent)
+			if errors.Is(err, sql.ErrNoRows) || err == nil && (scope.Person == "" || agent != scope.Agent) {
+				return Exclusion("restricted_content")
+			}
+			if err != nil {
+				return err
+			}
+		}
+		for _, call := range ep.Calls {
+			if err := callReferences(ctx, tx, scope, call); err != nil {
+				return err
+			}
+		}
+		return nil
+	}); err != nil {
+		return err
+	}
 	return s.Validate(ctx, ep.RevocationEpoch)
 }
