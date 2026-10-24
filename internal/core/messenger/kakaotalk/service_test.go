@@ -145,6 +145,7 @@ const (
 	failing        = `{"id":"","ok":true,"result":{"state":"failing"}}`
 	cancelled      = `{"id":"","ok":true,"result":{"cancelled":true}}`
 	me             = `{"id":"","ok":true,"result":{"author":{"id":"7788","name":"Me"}}}`
+	otherMe        = `{"id":"","ok":true,"result":{"author":{"id":"7799","name":"Other"}}}`
 	// The driver's descriptor travels with the sign-in state Core already asks for.
 	withDescriptor = `{"id":"","ok":true,"result":{"state":"signed_in","capabilities":{"historyDepth":"platform-window","cursorKind":"log-id","edits":false,"deletions":false,"liveEvents":true,"intervalSeconds":900,"readWindowSeconds":172800}}}`
 )
@@ -365,6 +366,108 @@ func TestDisconnectStopsReadsBeforeTheSession(t *testing.T) {
 	}
 	if sources, _ := failing.Sources(t.Context()); len(sources) != 1 || sources[0].State != messenger.StateConnected {
 		t.Fatalf("a failed stop changed the source: %+v", sources)
+	}
+}
+
+// One add-on session and one data directory serve the whole platform, so they
+// belong to the account the platform named. Disconnecting an account that is
+// already gone must not end the session the next account signed in to.
+func TestDisconnectKeepsTheConnectedAccountsSession(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn": {signedIn, signedIn},
+		"whoami":      {me, otherMe},
+	})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.service.Disconnect(t.Context(), "7788"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
+		t.Fatal(err)
+	}
+	if err := h.service.Disconnect(t.Context(), "7788"); err != nil {
+		t.Fatalf("repeating the old account's disconnect: %v", err)
+	}
+	sources, err := h.service.Sources(t.Context())
+	if err != nil || len(sources) != 2 {
+		t.Fatalf("sources %+v, %v", sources, err)
+	}
+	for _, source := range sources {
+		switch source.Account {
+		case "7788":
+			if source.State != messenger.StateDisconnected {
+				t.Fatalf("the old account was reconnected: %+v", source)
+			}
+		case "7799":
+			if source.State != messenger.StateConnected {
+				t.Fatalf("the connected account was disconnected: %+v", source)
+			}
+		default:
+			t.Fatalf("unexpected source %+v", source)
+		}
+	}
+	if _, err := os.Stat(addon.DataDir(h.root, kakaotalk.Platform, kakaotalk.Platform)); err != nil {
+		t.Fatalf("the connected account's session directory was removed: %v", err)
+	}
+}
+
+// A disconnect that lands while the platform is still answering wins: the
+// suspended sign-in records nothing, however late its answer arrives.
+func TestDisconnectEndsASignInStillInFlight(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn":  {signedIn, signedIn},
+		"whoami":       {me, me},
+		"cancelSignIn": {cancelled},
+	})
+	if _, err := h.service.Connect(t.Context(), "connect", true); err != nil {
+		t.Fatal(err)
+	}
+	inFlight := make(chan struct{})
+	release := make(chan struct{})
+	var once sync.Once
+	h.script.setHold(func(op string) {
+		if op != "whoami" {
+			return
+		}
+		once.Do(func() { close(inFlight) })
+		<-release
+	})
+	stopped := make(chan struct{})
+	var stopOnce sync.Once
+	service := kakaotalk.NewService(kakaotalk.Config{
+		Person: person, Store: h.store, Sessions: h.manager,
+		Now: func() time.Time { return h.now },
+		Stop: func(ctx context.Context, source messenger.Source) error {
+			stopOnce.Do(func() { close(stopped) })
+			return h.store.Disconnect(ctx, source.Person, source.Platform, source.Account)
+		},
+	})
+	type outcome struct {
+		step kakaotalk.Step
+		err  error
+	}
+	signed := make(chan outcome, 1)
+	go func() {
+		step, err := service.SignIn(context.Background(), "again", "7788")
+		signed <- outcome{step: step, err: err}
+	}()
+	<-inFlight
+	disconnected := make(chan error, 1)
+	go func() { disconnected <- service.Disconnect(context.Background(), "7788") }()
+	// The disconnect holds the flow and has stopped the source before the
+	// platform answers, so the sign-in cannot commit after it.
+	<-stopped
+	close(release)
+	if err := <-disconnected; err != nil {
+		t.Fatal(err)
+	}
+	if got := <-signed; !errors.Is(got.err, kakaotalk.ErrNoAttempt) {
+		t.Fatalf("a sign-in finished after its disconnect: %+v, %v", got.step, got.err)
+	}
+	sources, err := service.Sources(t.Context())
+	if err != nil || len(sources) != 1 || sources[0].State != messenger.StateDisconnected {
+		t.Fatalf("source after the race: %+v, %v", sources, err)
 	}
 }
 

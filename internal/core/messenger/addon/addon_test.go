@@ -491,6 +491,54 @@ func TestSingleAccountPlatformKeepsOneSessionUntilStopped(t *testing.T) {
 	}
 }
 
+// One session and one data directory serve a single-account platform. Removing
+// it for an account the platform never named leaves the owner's session alone.
+func TestRemoveLeavesTheOwnersSessionAlone(t *testing.T) {
+	t.Parallel()
+	chats := `{"id":"","ok":true,"result":{"chats":[{"id":"chat-1","name":"Direct","kind":"direct"}]}}`
+	s := &script{responses: map[string][]string{"listChats": {chats, chats}}}
+	root := t.TempDir()
+	manager := addon.NewManager(addon.Config{
+		Node: "/usr/bin/node", Program: "/addon/main.ts", StateRoot: root,
+		Runner: s, RestartDelay: time.Millisecond, MaxRestarts: 2, RequestTimeout: 2 * time.Second,
+		SingleAccount: []string{"kakaotalk"},
+	})
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
+	first, err := manager.Start("kakaotalk", "pending")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := first.Adapter().ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "pending"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := manager.Start("kakaotalk", "7788"); err != nil {
+		t.Fatal(err)
+	}
+	dir := addon.DataDir(root, "kakaotalk", "kakaotalk")
+	if err := manager.Remove(t.Context(), "kakaotalk", "pending"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); err != nil {
+		t.Fatalf("removing another account ended the owner's session: %v", err)
+	}
+	owner, err := manager.Addon("kakaotalk", "7788")
+	if err != nil {
+		t.Fatal(err)
+	}
+	if _, err := owner.ListChats(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "7788"}); err != nil {
+		t.Fatal(err)
+	}
+	if s.exits != 1 {
+		t.Fatalf("the owner's session started %d times, want 1", s.exits)
+	}
+	if err := manager.Remove(t.Context(), "kakaotalk", "7788"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("the owner's session survived its own removal: %v", err)
+	}
+}
+
 // The platform driver's descriptor reaches Core with the sign-in state every
 // read asks for, so the schedule and the read window come from the platform
 // rather than from the add-on's general bound.
