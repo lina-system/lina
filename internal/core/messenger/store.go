@@ -536,14 +536,13 @@ func (s *Store) AdmitPage(ctx context.Context, source Source, chat string, from 
 		}
 		plan.ownWrite = message.Route == RoutePerson && hasEffect && (effect.state == EffectSent || effect.state == EffectUnknown)
 		plan.effect = effect
-		plan.relations, err = s.relations(ctx, source, chat, message, existing)
-		if err != nil {
-			return PageResult{}, err
-		}
-		if seen {
-			plan.relations = append(plan.relations, ledger.Relation{TargetID: row.event, Kind: "supersedes"})
-		}
 		plans = append(plans, plan)
+	}
+	// A root and its replies often arrive together. The same placement an import
+	// uses writes the target first and links the reply to that event.
+	plans, err = s.orderRecordPlans(ctx, source, chat, plans, existing)
+	if err != nil {
+		return PageResult{}, err
 	}
 	if len(page.Deletions) > 0 {
 		// A deletion is durable before the cursor passes it: a crash after the
@@ -623,30 +622,87 @@ type recordPlan struct {
 	relations []ledger.Relation
 }
 
-func (s *Store) relations(ctx context.Context, source Source, chat string, message Message, existing map[string]recordRow) ([]ledger.Relation, error) {
-	var ids []string
-	for _, id := range []string{message.ReplyTo, message.Thread} {
-		if id != "" {
-			ids = append(ids, id)
+// relationNode is one record in a page or an import run, before placement.
+type relationNode struct {
+	index     int
+	id        string
+	replyTo   string
+	thread    string
+	revision  int
+	previous  string
+	relations []ledger.Relation
+}
+
+// placeRelations writes each record after the records in this batch it replies
+// to or joins the thread of. A relation can name only an event that already
+// exists, so a target still being placed, as in a cycle or a self-reply, gets
+// no relation. AdmitPage and AdmitImport both use this placement.
+func (s *Store) placeRelations(ctx context.Context, source Source, chat string, nodes []relationNode) ([]relationNode, error) {
+	index := make(map[string]int, len(nodes))
+	for i, node := range nodes {
+		index[node.id] = i
+	}
+	const placing, placed = 1, 2
+	state := make([]int, len(nodes))
+	admitted := make(map[string]string, len(nodes))
+	ordered := make([]relationNode, 0, len(nodes))
+	var place func(int) error
+	place = func(i int) error {
+		if state[i] != 0 {
+			return nil
+		}
+		state[i] = placing
+		node := nodes[i]
+		for _, target := range []string{node.replyTo, node.thread} {
+			if j, ok := index[target]; ok {
+				if err := place(j); err != nil {
+					return err
+				}
+			}
+		}
+		relations, err := s.importRelations(ctx, source, chat, Message{ID: node.id, ReplyTo: node.replyTo, Thread: node.thread}, admitted)
+		if err != nil {
+			return err
+		}
+		if node.previous != "" {
+			relations = append(relations, ledger.Relation{TargetID: node.previous, Kind: "supersedes"})
+		}
+		node.relations = relations
+		state[i] = placed
+		admitted[node.id] = eventID(source, chat, node.id, node.revision)
+		ordered = append(ordered, node)
+		return nil
+	}
+	for i := range nodes {
+		if err := place(i); err != nil {
+			return nil, err
 		}
 	}
-	if len(ids) == 0 {
-		return nil, nil
+	return ordered, nil
+}
+
+// orderRecordPlans is AdmitPage's use of placeRelations. An edit supersedes
+// the committed event of that message.
+func (s *Store) orderRecordPlans(ctx context.Context, source Source, chat string, plans []recordPlan, existing map[string]recordRow) ([]recordPlan, error) {
+	nodes := make([]relationNode, len(plans))
+	for i, plan := range plans {
+		previous := ""
+		if !plan.added {
+			previous = existing[plan.message.ID].event
+		}
+		nodes[i] = relationNode{index: i, id: plan.message.ID, replyTo: plan.message.ReplyTo, thread: plan.message.Thread, revision: plan.revision, previous: previous}
 	}
-	rows, err := s.recordRows(ctx, source, chat, ids)
+	ordered, err := s.placeRelations(ctx, source, chat, nodes)
 	if err != nil {
 		return nil, err
 	}
-	var relations []ledger.Relation
-	for _, target := range []struct{ id, kind string }{{message.ReplyTo, "replies_to"}, {message.Thread, "in_thread"}} {
-		if target.id == "" {
-			continue
-		}
-		if row, ok := rows[target.id]; ok && row.state == "live" && row.visible && row.event != "" {
-			relations = append(relations, ledger.Relation{TargetID: row.event, Kind: target.kind})
-		}
+	out := make([]recordPlan, len(ordered))
+	for i, node := range ordered {
+		plan := plans[node.index]
+		plan.relations = node.relations
+		out[i] = plan
 	}
-	return relations, nil
+	return out, nil
 }
 
 // admission builds the trusted entry and ledger input of one record.

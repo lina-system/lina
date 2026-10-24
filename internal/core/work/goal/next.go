@@ -142,26 +142,32 @@ type Goal struct {
 	CheckRound        int64               `json:"check_round"`
 	State             GoalState           `json:"state"`
 	Revision          int64               `json:"revision"`
-	ManagerTurns      int                 `json:"manager_turns"`
-	AttentionID       string              `json:"attention_id,omitempty"`
-	BlockedReason     string              `json:"blocked_reason,omitempty"`
-	CreatedAt         int64               `json:"created_at"`
-	Deadline          int64               `json:"deadline,omitempty"`
-	ID                string              `json:"id"`
-	Person            string              `json:"person"`
-	Agent             string              `json:"agent"`
-	Summary           string              `json:"-"`
-	Done              string              `json:"-"`
-	ServiceTarget     string              `json:"service_target"`
-	ServiceRepository string              `json:"service_repository,omitempty"`
-	NoServiceReason   string              `json:"no_service_reason"`
-	Tasks             []Task              `json:"tasks"`
-	TargetRevision    string              `json:"target_revision"`
-	MergedRevisions   map[string]string   `json:"merged_revisions,omitempty"`
-	Deployment        Proof               `json:"deployment"`
-	Verification      Proof               `json:"verification"`
-	Waits             []Wait              `json:"waits,omitempty"`
-	Evidence          []Proof             `json:"evidence,omitempty"`
+	Rank              int                 `json:"rank,omitempty"`
+	Paused            bool                `json:"paused,omitempty"`
+	// QueuePlace and QueueReason are the goal's last derived place among the
+	// goals waiting for a run slot, and that one reason. Zero means not queued.
+	QueuePlace        int               `json:"queue_place,omitempty"`
+	QueueReason       string            `json:"queue_reason,omitempty"`
+	ManagerTurns      int               `json:"manager_turns"`
+	AttentionID       string            `json:"attention_id,omitempty"`
+	BlockedReason     string            `json:"blocked_reason,omitempty"`
+	CreatedAt         int64             `json:"created_at"`
+	Deadline          int64             `json:"deadline,omitempty"`
+	ID                string            `json:"id"`
+	Person            string            `json:"person"`
+	Agent             string            `json:"agent"`
+	Summary           string            `json:"-"`
+	Done              string            `json:"-"`
+	ServiceTarget     string            `json:"service_target"`
+	ServiceRepository string            `json:"service_repository,omitempty"`
+	NoServiceReason   string            `json:"no_service_reason"`
+	Tasks             []Task            `json:"tasks"`
+	TargetRevision    string            `json:"target_revision"`
+	MergedRevisions   map[string]string `json:"merged_revisions,omitempty"`
+	Deployment        Proof             `json:"deployment"`
+	Verification      Proof             `json:"verification"`
+	Waits             []Wait            `json:"waits,omitempty"`
+	Evidence          []Proof           `json:"evidence,omitempty"`
 }
 
 type ActionKind string
@@ -219,6 +225,9 @@ type State struct {
 	Goals   []Goal   `json:"goals"`
 	Nodes   []Node   `json:"nodes"`
 	Actions []Action `json:"actions"`
+	// Limits holds each person's recorded run limit. A person with no record is
+	// automatic.
+	Limits map[string]RunLimit `json:"limits,omitempty"`
 }
 type Wait struct {
 	GoalID string `json:"goal_id"`
@@ -228,11 +237,15 @@ type Wait struct {
 	Until  int64  `json:"until"`
 }
 type Plan struct {
-	Frontier []FrontierStep
-	Actions  []Action
-	Waits    []Wait
-	Close    []string
-	Block    []string
+	// RunLimits is the limit this pass applied to each person, and Queues holds
+	// every goal waiting for a run slot with its place and one reason.
+	RunLimits map[string]LimitState
+	Frontier  []FrontierStep
+	Actions   []Action
+	Waits     []Wait
+	Queues    []QueuePlace
+	Close     []string
+	Block     []string
 }
 
 func finite(n float64) bool { return !math.IsNaN(n) && !math.IsInf(n, 0) }
@@ -335,6 +348,16 @@ func validateGoalState(g Goal, pendingCorrection bool) error {
 	return nil
 }
 
+// goalRank orders ready placement. A goal admitted before ranks existed has no
+// rank; it is older than every ranked goal, because a new goal takes the last
+// rank, so it sorts first until a person's move gives it one.
+func goalRank(g Goal) int {
+	if g.Rank < 0 {
+		return 0
+	}
+	return g.Rank
+}
+
 func pending(actions []Action, goal, task string) bool {
 	for _, a := range actions {
 		if a.GoalID == goal && a.TaskID == task && a.State != "finished" {
@@ -366,11 +389,38 @@ func Derive(state State, now time.Time) (Plan, error) {
 	sort.Slice(goals, func(i, j int) bool { return goals[i].ID < goals[j].ID })
 	nodes := append([]Node(nil), state.Nodes...)
 	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	// The run limit is one value per person for the whole pass, read from the
+	// reports as they stand before this pass places anything. Goals already
+	// holding a run slot stay counted, so a lower limit stops nothing running.
+	personOf := map[string]string{}
+	plan.RunLimits = map[string]LimitState{}
+	for _, g := range goals {
+		personOf[g.ID] = g.Person
+	}
+	runningGoals := inProgressGoals(state.Actions, personOf)
+	for _, g := range goals {
+		if _, ok := plan.RunLimits[g.Person]; ok {
+			continue
+		}
+		plan.RunLimits[g.Person] = runLimitFor(state.Limits[g.Person], nodes, now, len(runningGoals[g.Person]))
+	}
+	// Held goals in rank order with their first reason. Places are counted after
+	// placement, because a later step of the same goal can still take a slot.
+	type hold struct{ goal, person, reason string }
+	var holds []hold
+	held := map[string]bool{}
+	queue := func(g Goal, reason string) {
+		if !held[g.ID] {
+			held[g.ID] = true
+			holds = append(holds, hold{g.ID, g.Person, reason})
+		}
+	}
 	type candidate struct {
 		goal  Goal
 		task  Task
 		kind  ActionKind
 		depth int
+		rank  int
 	}
 	var ready []candidate
 	type areaLease struct {
@@ -389,12 +439,19 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		for _, t := range g.Tasks {
+			mergePending := false
 			for _, a := range state.Actions {
 				if a.GoalID == g.ID && a.TaskID == t.ID && a.Kind == Merge && a.State != "finished" {
+					mergePending = true
 					mergeSlots[t.Repository+"\x00"+t.Base] = true
 				}
 			}
 			if t.Stage != TaskReady && t.Stage != TaskDone && t.Stage != TaskMerged && t.Stage != TaskQAFailed {
+				// A stopped task releases its area only after both its worker
+				// and any already-dispatched merge have settled.
+				if g.State == GoalStopped && t.EffectsSettled && !mergePending {
+					continue
+				}
 				occupied = append(occupied, areaLease{g.ID, t})
 			}
 		}
@@ -432,6 +489,11 @@ func Derive(state State, now time.Time) (Plan, error) {
 	}
 	for _, g := range goals {
 		if g.State == GoalDone || g.State == GoalStopped {
+			continue
+		}
+		// A paused goal keeps its waits and its in-progress step, but derives no
+		// new step and no further input until the person resumes it.
+		if g.Paused {
 			continue
 		}
 		if g.DefinitionPending {
@@ -569,7 +631,7 @@ func Derive(state State, now time.Time) (Plan, error) {
 			default:
 				return Plan{}, ErrInvalid
 			}
-			ready = append(ready, candidate{g, t, kind, depth(t.ID)})
+			ready = append(ready, candidate{g, t, kind, depth(t.ID), goalRank(g)})
 		}
 		if !allDone || pending(state.Actions, g.ID, "") {
 			continue
@@ -648,6 +710,9 @@ func Derive(state State, now time.Time) (Plan, error) {
 	}
 	sort.SliceStable(ready, func(i, j int) bool {
 		a, b := ready[i], ready[j]
+		if a.rank != b.rank {
+			return a.rank < b.rank
+		}
 		if deadline(a.goal) != deadline(b.goal) {
 			return deadline(a.goal) < deadline(b.goal)
 		}
@@ -669,6 +734,15 @@ func Derive(state State, now time.Time) (Plan, error) {
 		}
 		if stepKind(t.Kind) == WaitStep {
 			add(g, t, kind, "", "")
+			continue
+		}
+		// A goal past the run limit starts no new step. Its place is the rank
+		// order of the goals waiting for a slot, and its reason is the one the
+		// limit fell to. A step of a goal that already holds a slot is not new
+		// work for the person's count, so it proceeds.
+		if workerAction(kind) && !runningGoals[g.Person][g.ID] && len(runningGoals[g.Person]) >= plan.RunLimits[g.Person].Current {
+			queue(g, plan.RunLimits[g.Person].Reason)
+			wait(g, t, "run_limit", "run_limit.changed")
 			continue
 		}
 		overlaps := false
@@ -707,6 +781,14 @@ func Derive(state State, now time.Time) (Plan, error) {
 			}
 		}
 		if best == "" {
+			// No host can take this step. Unless the goal holds a run slot, it
+			// keeps its place in rank order and names the report that held it
+			// back: a worker's quota, or the load that left no room.
+			reason := ReasonLoad
+			if available && !quota {
+				reason = ReasonQuota
+			}
+			queue(g, reason)
 			if available && !quota {
 				wait(g, t, "worker_quota", "quota.changed")
 			} else {
@@ -715,7 +797,23 @@ func Derive(state State, now time.Time) (Plan, error) {
 			continue
 		}
 		add(g, t, kind, t.Head, best)
+		if workerAction(kind) {
+			// The goal now holds a run slot for this pass, so its own later
+			// steps stay within the count and no other goal takes its place.
+			if runningGoals[g.Person] == nil {
+				runningGoals[g.Person] = map[string]bool{}
+			}
+			runningGoals[g.Person][g.ID] = true
+		}
 		occupied = append(occupied, areaLease{g.ID, t})
+	}
+	places := map[string]int{}
+	for _, h := range holds {
+		if runningGoals[h.person][h.goal] {
+			continue
+		}
+		places[h.person]++
+		plan.Queues = append(plan.Queues, QueuePlace{GoalID: h.goal, Reason: h.reason, Place: places[h.person]})
 	}
 	return plan, nil
 }

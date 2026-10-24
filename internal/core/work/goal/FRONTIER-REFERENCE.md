@@ -36,3 +36,13 @@ Generated graph/event tests compare each derivation with independent dependency,
 area and integer-capacity accounting. The installed Core scenario is
 `e2e/m3/ready-frontier.json`; its Go harness uses the shared m1 installation
 helpers and exercises real run tools, worker execution and stored results.
+
+Retirement reconciliation decodes a goal only for queued actions or finished,
+superseded actions whose retirement is pending. Active actions and settled
+history cannot change in this pass; decoding their whole graph for every
+worker made a wide frontier compete with progress publication. Queued target
+checks and unsettled-effect recovery retain their existing paths.
+`TestRetirementSkipsUnchangedParallelGraphs` bounds allocation growth across
+one-step and 82-step goals without an elapsed-time assertion. The running-Core
+`TestM3WorkPanelEventLatency` scenario retains all 50 transitions across eight
+PTYs and the unchanged T-16 E8/E9 bounds.

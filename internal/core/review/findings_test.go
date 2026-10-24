@@ -2,6 +2,7 @@
 package review
 
 import (
+	"encoding/json"
 	"testing"
 )
 
@@ -22,6 +23,22 @@ func TestFindingsRequireCompleteSchema(t *testing.T) {
 				t.Fatalf("invalid reply retained findings: %+v, %v", got, err)
 			}
 		})
+	}
+}
+
+func TestFindingsSchemaLimitMatchesCoreCap(t *testing.T) {
+	var doc struct {
+		Properties struct {
+			Findings struct {
+				MaxItems int `json:"maxItems"`
+			} `json:"findings"`
+		} `json:"properties"`
+	}
+	if err := json.Unmarshal([]byte(FindingsSchema), &doc); err != nil {
+		t.Fatal(err)
+	}
+	if doc.Properties.Findings.MaxItems != maxFindings {
+		t.Fatalf("schema maxItems %d != core cap %d", doc.Properties.Findings.MaxItems, maxFindings)
 	}
 }
 
