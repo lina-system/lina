@@ -115,6 +115,9 @@ func TestM4KakaoTalkSource(t *testing.T) {
 			"1": map[string]any{"messages": []any{message(big, "", 18, map[string]any{"k": "file-key", "name": "report.pdf", "mt": "application/pdf", "s": 2048})}, "next_cursor": big, "complete": true},
 		},
 		"members": []any{map[string]any{"user_id": "42", "nickname": "Someone"}},
+		"push": []any{map[string]any{"method": "MSG", "body": map[string]any{"chatId": "dm-1", "chatLog": map[string]any{
+			"logId": "9007199254740993125", "type": 1, "authorId": "42", "authorName": "Someone", "message": "live", "sendAt": time.Now().Unix(),
+		}}}},
 	}
 	dir := kakaoFixture(t, root, script)
 	defer func() {
@@ -201,7 +204,7 @@ func TestM4KakaoTalkSource(t *testing.T) {
 		t.Fatalf("sign-in: %+v", step)
 	}
 	waitFor(t, "first fill through the sandboxed KakaoTalk driver", func() bool {
-		return readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE platform='kakaotalk'`) == 2
+		return readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE platform='kakaotalk'`) == 3
 	})
 	if got := readString(t, root, `SELECT cursor FROM messenger_chat WHERE platform='kakaotalk'`); got != big {
 		t.Fatalf("cursor: %s", got)
@@ -222,11 +225,11 @@ func TestM4KakaoTalkSource(t *testing.T) {
 	// Age coverage in the stopped fixture, then catch up from the committed id.
 	kakaoSQL(t, root, `UPDATE messenger_coverage SET read_at=? WHERE platform='kakaotalk'`, time.Now().Add(-49*time.Hour).UTC().Format(time.RFC3339Nano))
 	script["chats"] = chat("9007199254740993124")
-	script["pages"] = map[string]any{big: map[string]any{"messages": []any{message("9007199254740993124", "new", 1, nil)}, "next_cursor": "9007199254740993124", "complete": true}}
+	script["pages"] = map[string]any{big: map[string]any{"messages": []any{message("1", "edited upstream without an edit signal", 1, nil), message("9007199254740993124", "new", 1, nil)}, "next_cursor": "9007199254740993124", "complete": true}}
 	kakaoFixture(t, root, script)
 	stop = start()
 	waitFor(t, "incremental read after restart", func() bool {
-		return readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE platform='kakaotalk'`) == 3
+		return readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE platform='kakaotalk'`) == 4
 	})
 	waitFor(t, "one gap notice", func() bool {
 		return readCanon(t, root, `SELECT count(*) FROM conv_event WHERE json_extract(origin,'$.locator') LIKE 'background-notice:%' AND body LIKE '%kakaotalk%'`) == 1
@@ -273,9 +276,25 @@ func TestM4KakaoTalkSource(t *testing.T) {
 	waitFor(t, "another source continues", func() bool {
 		return readCanon(t, root, `SELECT count(*) FROM messenger_coverage WHERE platform='other'`) > 0
 	})
-	if got := readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE platform='kakaotalk'`); got != 3 {
+	if got := readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE platform='kakaotalk'`); got != 4 {
 		t.Fatalf("expired source records: %d", got)
 	}
+	client, err = clientapi.DialWithCapabilities(t.Context(), cfg.Socket, "kakao-fixture", []protocol.Capability{{Name: "kakaotalk", Version: "1.0"}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer client.Close()
+	kakaoRequest(t, client, protocol.KakaotalkRequest{Operation: "disconnect", Account: new("7788")})
+	if _, err := os.Stat(dir); !os.IsNotExist(err) {
+		t.Fatalf("disconnect retained session: %v", err)
+	}
+	if got := readCanon(t, root, `SELECT count(*) FROM messenger_record WHERE platform='kakaotalk'`); got != 4 {
+		t.Fatalf("disconnect lost history: %d", got)
+	}
+	if got := readString(t, root, `SELECT e.body FROM conv_event e JOIN messenger_record r ON r.event=e.id WHERE r.platform='kakaotalk' AND r.message='1'`); got != "first" {
+		t.Fatalf("invented an unsupported edit: %q", got)
+	}
+
 }
 
 // Core runs in a child, so the parent client is an independent eligible owner

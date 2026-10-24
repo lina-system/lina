@@ -444,3 +444,15 @@ test('an empty message retains its platform type even without a file attachment'
   assert.equal(page.messages[0].messageType, '71');
   assert.equal(page.messages[0].text, '');
 });
+
+test('a session revoked after login stops reads and asks for sign-in', async () => {
+  const { driver } = open(signedIn(), sdk => {
+    const Client = sdk.KakaoTalkClient;
+    sdk.KakaoTalkClient = class extends Client {
+      async getChats() { throw Object.assign(new Error('revoked'), { code: 'login_rejected' }); }
+    };
+  });
+  assert.equal(await driver.signInState(), 'signed_in');
+  await assert.rejects(driver.listChats(), error => error.code === 'needs_sign_in');
+  assert.equal(await driver.signInState(), 'needs_sign_in');
+});

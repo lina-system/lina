@@ -269,6 +269,8 @@ func (p *process) call(ctx context.Context, op string, arguments map[string]any,
 		p.mu.Unlock()
 		if !response.OK {
 			switch response.Error {
+			case "needs_sign_in":
+				return messenger.ErrNeedsSignIn
 			case "unsupported_platform":
 				return ErrUnsupportedPlatform
 			case "upstream_changed":

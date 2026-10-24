@@ -192,6 +192,22 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     return client;
   };
 
+  const sourceError = (error: unknown): unknown => {
+    const code = error instanceof Error && Object.hasOwn(error, 'code') ? String(Reflect.get(error, 'code')) : '';
+    if (NEEDS_SIGN_IN[code]) {
+      signedIn = false;
+      failure = 'needs_sign_in';
+      retryLogin = false;
+      return new Refusal('needs_sign_in', 'session rejected');
+    }
+    return error;
+  };
+
+  const read = async <T>(operation: (value: KakaoClient) => Promise<T>): Promise<T> => {
+    try { return await operation(await requireClient()); }
+    catch (error) { throw sourceError(error); }
+  };
+
   const keep = async (login: KakaoLogin, mine: number): Promise<void> => {
     current(mine);
     if (!login.credentials?.access_token) {
@@ -425,8 +441,7 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     },
 
     async listChats(): Promise<Chat[]> {
-      const live = await requireClient();
-      const chats = await live.getChats();
+      const chats = await read(value => value.getChats());
       const out: Chat[] = [];
       for (const chat of chats) {
         const id = typeof chat.chat_id === 'string' ? chat.chat_id : String(chat.chat_id ?? '');
@@ -449,8 +464,7 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     },
 
     async page(chat: string, cursor: string): Promise<Page> {
-      const live = await requireClient();
-      const page = await live.getMessagePage(chat, { count: 100, from: cursor === '' ? undefined : cursor });
+      const page = await read(value => value.getMessagePage(chat, { count: 100, from: cursor === '' ? undefined : cursor }));
       const messages = page.messages.map(message);
       const last = messages.at(-1);
       return {
@@ -463,14 +477,12 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
     },
 
     async members(chat: string): Promise<Author[]> {
-      const live = await requireClient();
-      const members = await live.getMembers(chat);
+      const members = await read(value => value.getMembers(chat));
       return members.map(member => ({ id: String(member.user_id), name: member.nickname ?? '' }));
     },
 
     async whoami(): Promise<Author> {
-      const live = await requireClient();
-      const profile = await live.getProfile();
+      const profile = await read(value => value.getProfile());
       return { id: String(profile.user_id), name: profile.nickname ?? '' };
     },
 
@@ -482,7 +494,7 @@ export function openKakaoTalk(sdk: KakaoSDK, options: DriverOptions): Driver {
           const live = await requireClient();
           await live.acquireSession();
         } catch (error) {
-          ended(error);
+          ended(sourceError(error));
         }
       })();
       return client.onPush(packet => {

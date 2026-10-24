@@ -732,7 +732,7 @@ func TestStoppingALiveReaderStopsItsSubscription(t *testing.T) {
 			"live":   {`{"id":"","ok":true,"result":{"live":true}}`},
 			"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
 		},
-		liveEvent: `{"event":"message","message":{"id":"m-1","author":{"id":"u1","name":"Someone"},"route":"external_participant","at":"2026-10-24T09:00:00Z","text":"hi"}}`,
+		liveEvent: `{"event":"message","chat":"dm-1","message":{"id":"m-1","author":{"id":"u1","name":"Someone"},"route":"external_participant","at":"2026-10-24T09:00:00Z","text":"hi"}}`,
 		stopSeen:  make(chan struct{}),
 	}
 	adapter := session(t, s).Adapter()
@@ -763,5 +763,13 @@ func TestStoppingALiveReaderStopsItsSubscription(t *testing.T) {
 	}
 	if got := s.count("signIn"); got != 1 {
 		t.Fatalf("sign-in requests = %d, want the same session", got)
+	}
+}
+
+func TestAReadReportsARevokedSession(t *testing.T) {
+	s := &script{responses: map[string][]string{"page": {`{"id":"","ok":false,"error":"needs_sign_in"}`}}}
+	_, err := session(t, s).Adapter().Page(t.Context(), messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}, "chat-1", "")
+	if !errors.Is(err, messenger.ErrNeedsSignIn) {
+		t.Fatalf("revoked read: %v", err)
 	}
 }
