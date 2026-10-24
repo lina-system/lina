@@ -7,6 +7,7 @@ import (
 )
 
 func TestApplicationMigrationsIncludeAssetsAndInbox(t *testing.T) {
+	t.Parallel()
 	for _, upgrade := range []bool{false, true} {
 		t.Run(map[bool]string{false: "fresh", true: "from_assets_v1"}[upgrade], func(t *testing.T) {
 			cfg := storeConfig(t)
@@ -33,6 +34,7 @@ func TestApplicationMigrationsIncludeAssetsAndInbox(t *testing.T) {
 }
 
 func TestAssetMigrationUpgradesAndReopensExistingCanon(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = nil
 	s := openStore(t, cfg)
