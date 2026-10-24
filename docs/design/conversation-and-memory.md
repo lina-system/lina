@@ -419,7 +419,7 @@ Target questions use the existing question card and Waiting for me. Their
 recommendation is the first option, with no default action. A card answer or an
 exact offered label or number resolves only that request; declining or cancelling
 records its cancellation. An unrelated turn can proceed without resolving it.
-Core checks a retained tie again when a later tool would make it irreversible.
+Core checks a retained tie again when a later tool would make it irreversible. On an answer continuation, a work call that omits a request ordinal uses the answered request. An explicit ordinal keeps the request it names. Starting a run for a selected channel input keeps that channel receipt on the run, so a later check still uses the channel's tool permission. A follow-up sent with `worker_input` for a selected channel input keeps the same receipt and is not delivered after that channel loses tool permission.
 
 **Showing and moving.**
 

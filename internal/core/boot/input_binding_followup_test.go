@@ -1153,3 +1153,157 @@ func TestBindingActionClassifiesEveryWrappedTool(t *testing.T) {
 		}
 	}
 }
+
+func TestStartRunKeepsChannelSteeringReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app, inboxID := admitTurnInput(t, r, "app-turn")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "start_run", "from-app", map[string]any{
+		"Goal": "Research the draft", "Scope": "Read the catalog", "NotTouch": "Do not send",
+		"Done": "A short note exists", "Result": "summary", "Allow": []string{},
+		"Checks":        []map[string]string{{"Name": "note", "Kind": "claimed"}},
+		"input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel steering start: %+v", got)
+	}
+	var receipt struct{ ID string }
+	if json.Unmarshal(got.Output, &receipt) != nil || receipt.ID == "" {
+		t.Fatalf("receipt: %s", got.Output)
+	}
+	record, err := r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if record.Origin.Turn != "turn:"+steering.ID {
+		t.Fatalf("run kept the app origin %s", record.Origin.Turn)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err != nil {
+		t.Fatal(err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.authorizeRun(t.Context(), record.Origin, record.Brief); err == nil {
+		t.Fatal("revoked channel still authorized the queued run")
+	}
+	revoked.Scope.Tools = true
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	turns := turn.New(r.db)
+	if err = turns.Claim(t.Context(), s.turnID, r.conversation, inboxID); err != nil {
+		t.Fatal(err)
+	}
+	call := provider.ToolCall{ID: "from-app", Name: "start_run", Arguments: "{}"}
+	if err = turns.Journal(s.turnID).Calls(t.Context(), 0, []provider.ToolCall{call}); err != nil {
+		t.Fatal(err)
+	}
+	if err = turns.Journal(s.turnID).Result(t.Context(), 0, 0, got); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.syncRuns(t.Context()); err != nil {
+		t.Fatal(err)
+	}
+	record, err = r.background.service.Get(t.Context(), receipt.ID)
+	if err != nil || !record.Released {
+		t.Fatalf("committed channel start was not released: %+v %v", record, err)
+	}
+}
+
+func TestWorkerInputKeepsChannelSteeringReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	app := questionPersonInput(t, r, "app-turn", "Tell the worker to continue")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	th := worker.Thread{ID: "session-c", TaskID: "channel-worker", AttemptID: "attempt", TurnID: "turn-1", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: th, State: worker.Active}}, tier: "turn"}
+	session := &workerSession{origin: r, thread: th, adapter: probe}
+	r.workers.mu.Lock()
+	r.workers.sessions[th.ID] = session
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, th.ID)
+		r.workers.mu.Unlock()
+	})
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "worker_input", "steer", map[string]any{
+		"session": th.ID, "turn": th.TurnID, "generation": th.ProcessGeneration, "binding": th.BindingEpoch,
+		"text": "Keep the channel scope.", "input_binding": map[string]any{"input_event_id": steering.ID},
+	})
+	if got.Code != loop.OK {
+		t.Fatalf("channel worker input: %+v", got)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), probe.Name()+":"+th.ID)
+	if err != nil || len(messages) != 1 || len(messages[0].Source) == 0 {
+		t.Fatalf("worker input lost its channel receipt: %+v %v", messages, err)
+	}
+	revoked := *view.channelBinding
+	revoked.Scope.Tools = false
+	if err = r.channels.store.Bind(t.Context(), revoked); err != nil {
+		t.Fatal(err)
+	}
+	event := worker.Event{Thread: th, ToolCall: &worker.ToolCall{ID: "inbox", Namespace: "lina", Name: "check_inbox", Arguments: json.RawMessage(`{}`)}}
+	raw, _, err := session.mailboxReply(t.Context(), event, json.RawMessage(`{}`))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(string(raw), "Keep the channel scope.") {
+		t.Fatal("revoked channel delivered the worker input")
+	}
+}
+
+func TestFollowWorkKeepsChannelTaskReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	dir := t.TempDir()
+	reserve := t.TempDir()
+	task := work.Task{ID: "channel-task", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Channel task", Done: "Done", ArtifactRoots: []string{dir}}
+	if err := r.work.Create(t.Context(), task); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "channel-task-run", TaskID: task.ID, Generation: 1, Worker: "codex", ThreadID: "channel-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "channel-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "channel-thread", TaskID: task.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &mailboxProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, tier: "turn"}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "channel-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	app := questionPersonInput(t, r, "app-follow", "Continue the channel task")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("task-source", "task-native")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "follow_work", "task-note", map[string]any{"id": "task:" + task.ID + ":1", "text": "Keep the channel scope.", "input_binding": map[string]any{"input_event_id": steering.ID}})
+	if got.Code != loop.OK {
+		t.Fatalf("channel task follow-up: %+v", got)
+	}
+	messages, err := r.work.SteeringMessages(t.Context(), probe.Name()+":"+thread.ID)
+	if err != nil || len(messages) != 1 || len(messages[0].Source) == 0 {
+		t.Fatalf("task follow-up lost its channel receipt: %+v %v", messages, err)
+	}
+}

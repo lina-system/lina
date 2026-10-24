@@ -407,7 +407,9 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 		if !record.Released && record.Promotion == nil && (record.State == runs.Working || record.State == runs.Waiting && record.Reason == "") {
 			var committed int
 			err = r.db.Read(ctx, func(tx *canon.Tx) error {
-				return tx.QueryRowContext(ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='start_run' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, record.Origin.Turn, record.ID).Scan(&committed)
+				// A channel receipt is the run's origin even when an app turn selected
+				// that input and committed the tool result on its own turn.
+				return tx.QueryRowContext(ctx, `SELECT count(*) FROM turn_calls WHERE json_extract(call,'$.Name')='start_run' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=? AND (turn_id=? OR ? LIKE 'turn:channel-input:%')`, record.ID, record.Origin.Turn, record.Origin.Turn).Scan(&committed)
 			})
 			if err != nil {
 				return err
