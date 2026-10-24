@@ -464,6 +464,52 @@ func TestBackfilledSightingMovesTheCutoffBack(t *testing.T) {
 	}
 }
 
+// TestCutoffRepairRetractsDirectCitations covers an item that cites the link as
+// external evidence without an artifact row: when a backfilled move invalidates
+// the window the item falls in, the item is retracted like one the link
+// produced.
+func TestCutoffRepairRetractsDirectCitations(t *testing.T) {
+	t.Parallel()
+	const number = "+821066660005"
+	people := identity.StaticPeople{{Record: "person-old", Identifiers: []identity.SeenIdentifier{
+		{Kind: identity.Phone, Value: number, Source: "Discord profile 2020"},
+	}}}
+	f := newFixture(t, people)
+	jan := time.Date(2026, 1, 10, 9, 0, 0, 0, time.UTC)
+	feb := time.Date(2026, 2, 10, 9, 0, 0, 0, time.UTC)
+	apr := time.Date(2026, 4, 10, 9, 0, 0, 0, time.UTC)
+	may := time.Date(2026, 5, 10, 9, 0, 0, 0, time.UTC)
+	f.now = jan
+	observe(t, f, discord("d-old"), "Old owner", phone(number, "Discord profile"))
+	got := links(t, f, discord("d-old"))
+	if len(got) != 1 {
+		t.Fatalf("links = %d, want the Discord link", len(got))
+	}
+	// A person's note from April cites the link as its external evidence.
+	f.now = apr
+	item := f.item(t, "person-old", "a note citing the link")
+	if err := f.db.Write(t.Context(), func(tx *canon.Tx) error {
+		return canon.ReplaceCitations(t.Context(), tx, "memory", item.ID, "2", []canon.Citation{{
+			Ordinal: 1, TargetKind: "external", TargetID: got[0].ID,
+			TargetRevision: "1", Precision: "event", Role: "cites",
+		}})
+	}); err != nil {
+		t.Fatal(err)
+	}
+	if !visible(t, f, item.ID) {
+		t.Fatal("the note is not visible before the repair")
+	}
+	f.now = may
+	observeAt(t, f, imessage(number), feb, "New owner", phone(number, "iMessage profile"))
+
+	if after := links(t, f, discord("d-old")); len(after) != 1 || !after[0].ValidThrough.Equal(feb) {
+		t.Fatalf("links = %+v, want the Discord link ended at February", after)
+	}
+	if visible(t, f, item.ID) {
+		t.Fatal("a note citing the link inside the invalid window stayed visible")
+	}
+}
+
 // TestConfirmedLinkIsUnusableAfterTheNumberMoves pins the person's word to the
 // identifier's lifetime: a confirmed phone link ends when the number moves to
 // another identity, and nothing the link produced after the cutoff stays

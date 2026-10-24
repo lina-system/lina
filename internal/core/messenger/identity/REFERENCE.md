@@ -72,11 +72,12 @@ identity at Core start (`Rematch`).
    `moved` change; nothing moves the end later. Items the earlier link produced
    inside the newly invalid window are retracted through the one retraction
    path after the transaction commits, and only that identity's messages from
-   the window's start are queued again. A link that had no end yet is ended the
-   same way: the first cutoff invalidates every moment from the move on, so an
-   item it produced afterwards is retracted and that identity is queued from the
-   cutoff. One `identity_requeue` row per identity remains, at the earliest
-   start any repair needs.
+   the window's start are queued again. An item cites the link either as an
+   artifact it produced or as external evidence, and the repair covers both. A
+   link that had no end yet is ended the same way: the first cutoff invalidates
+   every moment from the move on, so an item it produced afterwards is retracted
+   and that identity is queued from the cutoff. One `identity_requeue` row per
+   identity remains, at the earliest start any repair needs.
 4. Otherwise exactly one candidate makes an `exact` link with every shared
    identifier as a signal; a contact-card source adds a `contact_card` signal.
 

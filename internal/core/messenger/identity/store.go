@@ -727,9 +727,14 @@ func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, ide
 // that had no cutoff yet becomes when the first one is set. An item with no
 // evidence time cannot be placed in the window and is left alone.
 func (s *Store) citingItemsBetween(ctx context.Context, tx *canon.Tx, linkID string, from, through time.Time) ([]string, error) {
-	rows, err := tx.QueryContext(ctx, `SELECT a.id, m.record FROM identity_artifact a
-JOIN retract_visible_memory m ON m.id=a.id AND m.person=?
-WHERE a.link=? AND a.kind='item'`, s.person, linkID)
+	// An item cites the link either as an artifact it produced or as external
+	// evidence, and both are retracted when the window becomes invalid.
+	rows, err := tx.QueryContext(ctx, `SELECT m.id, m.record FROM retract_visible_memory m
+WHERE m.person=? AND m.id IN (
+  SELECT id FROM identity_artifact WHERE link=? AND kind='item'
+  UNION
+  SELECT view_id FROM cite WHERE view_kind='memory' AND target_kind='external' AND target_id=? AND dropped_revision IS NULL)`,
+		s.person, linkID, linkID)
 	if err != nil {
 		return nil, err
 	}
