@@ -14,6 +14,18 @@ import (
 // reconcile that finds a deadline missed while Core was down. Nothing in that
 // path sends in the person's name.
 
+func queueClear(g *Goal, w Wait) {
+	if w.TodoID == "" {
+		return
+	}
+	for _, c := range g.ClearTodos {
+		if c.TodoID == w.TodoID {
+			return
+		}
+	}
+	g.ClearTodos = append(g.ClearTodos, ClearedWait{TodoID: w.TodoID, Who: w.Who, Since: w.Since, NextCheck: w.NextCheck})
+}
+
 func expiryWait(w Wait) bool {
 	return strings.TrimSpace(w.Recommendation) != "" && strings.TrimSpace(w.Draft) != ""
 }
@@ -34,6 +46,26 @@ func validRecordedWait(w Wait) bool {
 
 func expiryRow(w Wait) string {
 	return strings.TrimSpace(w.Recommendation) + "\n\n" + strings.TrimSpace(w.Draft)
+}
+
+func plannedWaits(g Goal, o Observation) ([]Wait, error) {
+	waits := append([]Wait(nil), o.Waits...)
+	if o.Wait != nil {
+		waits = append(waits, *o.Wait)
+	}
+	seen := map[string]bool{}
+	for _, w := range g.Waits {
+		if w.Recorded {
+			seen[w.Wake] = true
+		}
+	}
+	for _, w := range waits {
+		if !validRecordedWait(w) || seen[w.Wake] {
+			return nil, ErrInvalid
+		}
+		seen[w.Wake] = true
+	}
+	return waits, nil
 }
 
 func waitTaskID(wake string) string { return "wait:" + wake }
@@ -70,7 +102,8 @@ func readSeen(actions []Action, goal, wake, cause, signal string) bool {
 	return false
 }
 
-func holdRecordedWaits(plan *Plan, state State, g Goal, now time.Time) {
+func holdRecordedWaits(plan *Plan, state State, g Goal, now time.Time) bool {
+	held := false
 	for _, w := range g.Waits {
 		if !w.Recorded || !namedWait(w) {
 			continue
@@ -81,7 +114,9 @@ func holdRecordedWaits(plan *Plan, state State, g Goal, now time.Time) {
 		}
 		queueDueRead(plan, state, g, &w, now)
 		plan.Waits = append(plan.Waits, w)
+		held = true
 	}
+	return held
 }
 
 func queueDueRead(plan *Plan, state State, g Goal, w *Wait, now time.Time) {
@@ -158,6 +193,17 @@ func (e *Engine) applyWaitSignal(v *View, s Signal) error {
 	return put(v, "goal", g.ID, g)
 }
 
+// finishFailedSourceRead turns a failed deadline read into the expiry row.
+// The read did not show that the source had closed, so the wait must not stay
+// open with its only deadline read already consumed.
+func finishFailedSourceRead(g *Goal, a Action) error {
+	if a.ReadCause != "deadline" {
+		return nil
+	}
+	open := true
+	return applyWaitRead(g, a, Observation{SourceOpen: &open})
+}
+
 func applyWaitRead(g *Goal, a Action, o Observation) error {
 	if o.SourceOpen == nil || a.ReadCause != "signal" && a.ReadCause != "deadline" {
 		return ErrInvalid
@@ -178,14 +224,18 @@ func applyWaitRead(g *Goal, a Action, o Observation) error {
 	}
 	w := g.Waits[idx]
 	if *o.SourceOpen {
-		g.DecisionRow = expiryRow(w)
-		g.AttentionID = "goal:" + g.ID + ":wait:" + w.Wake
+		if g.DecisionRow == "" {
+			g.DecisionRow = expiryRow(w)
+			g.AttentionID = "goal:" + g.ID + ":wait:" + w.Wake
+		} else {
+			// Independent expiries share the goal's row. Keep every proposal
+			// and its draft; a later source must not replace an earlier one.
+			g.DecisionRow += "\n\n" + expiryRow(w)
+		}
 		g.BlockedReason = g.DecisionRow
 		g.State = GoalBlocked
 	}
-	if w.TodoID != "" {
-		g.ClearTodos = append(g.ClearTodos, w.TodoID)
-	}
+	queueClear(g, w)
 	g.Waits = append(g.Waits[:idx], g.Waits[idx+1:]...)
 	return nil
 }
@@ -207,9 +257,9 @@ func (e *Engine) syncWaits(ctx context.Context) {
 					live[w.TodoID] = true
 				}
 			}
-			for _, id := range g.ClearTodos {
-				if live[id] || e.cfg.LinkWaitingOn(ctx, g, Wait{TodoID: id}) == nil {
-					_ = e.dropClearTodo(ctx, g.ID, id)
+			for _, c := range g.ClearTodos {
+				if live[c.TodoID] || e.cfg.LinkWaitingOn(ctx, g, Wait{TodoID: c.TodoID, Who: c.Who, Since: c.Since, NextCheck: c.NextCheck}) == nil {
+					_ = e.dropClearTodo(ctx, g.ID, c.TodoID)
 				}
 			}
 		}
@@ -237,10 +287,10 @@ func (e *Engine) dropClearTodo(ctx context.Context, goalID, todoID string) error
 		if err != nil {
 			return err
 		}
-		next := make([]string, 0, len(g.ClearTodos))
+		next := make([]ClearedWait, 0, len(g.ClearTodos))
 		found := false
 		for _, id := range g.ClearTodos {
-			if id == todoID && !found {
+			if id.TodoID == todoID && !found {
 				found = true
 				continue
 			}

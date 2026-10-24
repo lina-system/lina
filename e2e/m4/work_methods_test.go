@@ -94,6 +94,9 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 	rounds := map[string]int{}
 	catalogs := map[string][]string{}
 	first := map[string][]string{}
+	// The preset key is also the task id. It cannot label the outcome: "dev" is
+	// the base branch, and a start line refuses branch names in person-facing prose.
+	presetWord := map[string]string{"lina": "lina", "dev": "coding"}
 	var lastState []byte
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		mu.Lock()
@@ -189,7 +192,7 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 			}
 			// Each preset requests its own artifact. Identical outcomes would
 			// correctly match the first goal in the person's shared work queue.
-			args := map[string]any{"outcome": fmt.Sprintf("Create the %s fixture result", key), "done": "Result is inspected", "scope": map[string]any{"repositories": []string{"fixture-repo"}, "includes": "fixture output", "excludes": "publishing"}, "no_service_reason": "Local fixture", "criteria": []any{map[string]any{"id": "result", "statement": "Output exists", "check": map[string]any{"kind": "check", "method": "read", "target": "fixture-repo"}}}, "tasks": []any{map[string]any{"id": key, "done": "Output exists", "repository": "fixture-repo", "base": "dev", "area": key, "worker": "fixture", "resources": map[string]any{"cpu": 1, "memory_mb": 1, "disk_mb": 1}}}}
+			args := map[string]any{"outcome": fmt.Sprintf("Create the %s fixture result", presetWord[key]), "done": "Result is inspected", "scope": map[string]any{"repositories": []string{"fixture-repo"}, "includes": "fixture output", "excludes": "publishing"}, "no_service_reason": "Local fixture", "criteria": []any{map[string]any{"id": "result", "statement": "Output exists", "check": map[string]any{"kind": "check", "method": "read", "target": "fixture-repo"}}}, "tasks": []any{map[string]any{"id": key, "done": "Output exists", "repository": "fixture-repo", "base": "dev", "area": key, "worker": "fixture", "resources": map[string]any{"cpu": 1, "memory_mb": 1, "disk_mb": 1}}}}
 			call(w, "goal", "dispatch_code_goal", args)
 		case 3:
 			answer(w)
@@ -272,7 +275,7 @@ func TestWorkMethodsThroughRunningCore(t *testing.T) {
 		if _, err = c.Receive(ctx); err != nil {
 			t.Fatal(err)
 		}
-		text := fmt.Sprintf("Create the %s fixture result.", key)
+		text := fmt.Sprintf("Create the %s fixture result.", presetWord[key])
 		message, err := c.Input(ctx, protocol.Input{ConversationID: &conversation, InputID: &key, Text: &text})
 		if err != nil {
 			t.Fatal(err)
