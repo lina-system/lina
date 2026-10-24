@@ -46,10 +46,19 @@ keep their command diagnostics.
 ## Tokens and terminal profiles
 
 The three DTCG files in [design/tokens](design/tokens/) are the source of truth.
-`node scripts/tokens.mjs` generates the Go data, CSS custom properties, SVG mark and the
-following tables. `node scripts/tokens.mjs --check` compares without writing,
+`node scripts/tokens.mjs` generates the Go data, CSS custom properties, the
+launcher panel's Swift constants, SVG mark and the following tables.
+`node scripts/tokens.mjs --check` compares without writing,
 checks text contrast, and rejects raw presentation colours and glyphs in TUI
 production source. Foundation runs the same check.
+
+The launcher's Swift file holds the six colors as dynamic `NSColor` values that
+pick light, dark or high contrast from the panel's appearance, plus spacing,
+radius and motion constants. Glass, materials and corner shape stay the
+system's. The high-contrast set is dark, reaches 7:1 against canvas and surface,
+and applies in either appearance while Increase Contrast is on. Spacing, radius
+and motion are the same in every theme, and the loader rejects a theme where
+they differ, because the Swift file holds one value per role.
 
 All text roles (text, muted and accent) must reach 4.5:1 on both canvas and
 surface, including the standard 16-colour and 256-colour fallback palettes.
@@ -82,10 +91,12 @@ of app pixels. Duration values are milliseconds.
 | glyph.ascii.activityFrames | `"|/-\\"` | `"|/-\\"` | `"|/-\\"` |
 | glyph.ascii.activitySeparator | `"-"` | `"-"` | `"-"` |
 | glyph.ascii.agent | `"*"` | `"*"` | `"*"` |
+| glyph.ascii.back | `"<"` | `"<"` | `"<"` |
 | glyph.ascii.connecting | `"~"` | `"~"` | `"~"` |
 | glyph.ascii.failed | `"x"` | `"x"` | `"x"` |
 | glyph.ascii.live | `"*"` | `"*"` | `"*"` |
 | glyph.ascii.mark | `"."` | `"."` | `"."` |
+| glyph.ascii.overflow | `"..."` | `"..."` | `"..."` |
 | glyph.ascii.person | `">"` | `">"` | `">"` |
 | glyph.ascii.quit | `"+"` | `"+"` | `"+"` |
 | glyph.ascii.recovering | `":"` | `":"` | `":"` |
@@ -93,6 +104,12 @@ of app pixels. Duration values are milliseconds.
 | glyph.ascii.resyncing | `"="` | `"="` | `"="` |
 | glyph.ascii.retrying | `">"` | `">"` | `">"` |
 | glyph.ascii.rule | `"-"` | `"-"` | `"-"` |
+| glyph.ascii.stageDone | `"+"` | `"+"` | `"+"` |
+| glyph.ascii.stageFailed | `"x"` | `"x"` | `"x"` |
+| glyph.ascii.stageNeedsInput | `"!"` | `"!"` | `"!"` |
+| glyph.ascii.stageNext | `"."` | `"."` | `"."` |
+| glyph.ascii.stageWaiting | `"o"` | `"o"` | `"o"` |
+| glyph.ascii.stageWorking | `"*"` | `"*"` | `"*"` |
 | glyph.ascii.stopped | `"o"` | `"o"` | `"o"` |
 | glyph.ascii.toolFailed | `"x"` | `"x"` | `"x"` |
 | glyph.ascii.toolOk | `"+"` | `"+"` | `"+"` |
@@ -103,10 +120,12 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.activityFrames | `"◐◓◑◒"` | `"◐◓◑◒"` | `"◐◓◑◒"` |
 | glyph.unicode.activitySeparator | `"·"` | `"·"` | `"·"` |
 | glyph.unicode.agent | `"●"` | `"●"` | `"●"` |
+| glyph.unicode.back | `"‹"` | `"‹"` | `"‹"` |
 | glyph.unicode.connecting | `"◌"` | `"◌"` | `"◌"` |
 | glyph.unicode.failed | `"×"` | `"×"` | `"×"` |
 | glyph.unicode.live | `"●"` | `"●"` | `"●"` |
 | glyph.unicode.mark | `"."` | `"."` | `"."` |
+| glyph.unicode.overflow | `"…"` | `"…"` | `"…"` |
 | glyph.unicode.person | `"›"` | `"›"` | `"›"` |
 | glyph.unicode.quit | `"✓"` | `"✓"` | `"✓"` |
 | glyph.unicode.recovering | `"◐"` | `"◐"` | `"◐"` |
@@ -114,6 +133,12 @@ of app pixels. Duration values are milliseconds.
 | glyph.unicode.resyncing | `"↻"` | `"↻"` | `"↻"` |
 | glyph.unicode.retrying | `"↗"` | `"↗"` | `"↗"` |
 | glyph.unicode.rule | `"─"` | `"─"` | `"─"` |
+| glyph.unicode.stageDone | `"✓"` | `"✓"` | `"✓"` |
+| glyph.unicode.stageFailed | `"×"` | `"×"` | `"×"` |
+| glyph.unicode.stageNeedsInput | `"!"` | `"!"` | `"!"` |
+| glyph.unicode.stageNext | `"·"` | `"·"` | `"·"` |
+| glyph.unicode.stageWaiting | `"○"` | `"○"` | `"○"` |
+| glyph.unicode.stageWorking | `"●"` | `"●"` | `"●"` |
 | glyph.unicode.stopped | `"○"` | `"○"` | `"○"` |
 | glyph.unicode.toolFailed | `"×"` | `"×"` | `"×"` |
 | glyph.unicode.toolOk | `"✓"` | `"✓"` | `"✓"` |
@@ -130,8 +155,8 @@ of app pixels. Duration values are milliseconds.
 | space.inline | `8px` (1 cells) | `8px` (1 cells) | `8px` (1 cells) |
 | space.page | `32px` (2 cells) | `32px` (2 cells) | `32px` (2 cells) |
 | space.section | `24px` (1 cells) | `24px` (1 cells) | `24px` (1 cells) |
-| type.body | `"Pretendard", "sans-serif"` | `"Pretendard", "sans-serif"` | `"Pretendard", "sans-serif"` |
-| type.code | `"ui-monospace", "monospace"` | `"ui-monospace", "monospace"` | `"ui-monospace", "monospace"` |
+| type.body | `"Pretendard", sans-serif` | `"Pretendard", sans-serif` | `"Pretendard", sans-serif` |
+| type.code | `ui-monospace, monospace` | `ui-monospace, monospace` | `ui-monospace, monospace` |
 | type.lineHeight | `1.5` | `1.5` | `1.5` |
 | type.size | `16px` | `16px` | `16px` |
 | type.titleWeight | `700` | `700` | `700` |

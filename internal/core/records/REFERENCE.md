@@ -68,3 +68,7 @@ Migration 45 adds the canonical `record_operations` and `record_candidates` mach
 Operation membership, undo handles and candidate admission results travel in the records publication intent and commit with its index checkpoint.
 Recovery therefore cannot publish a promotion or automatic addition without its undo receipt.
 Durable operation notices are projected into the owning agent's conversation independently of a model reply and recovered on startup; existing notices are not republished.
+
+### Throwaway-root durability option
+
+`Open` takes variadic options, and `NoSync()` is the only one. Core opens the repository without options, so every object, index and directory sync goes through `os.File.Sync`. Tests that open a private root they discard pass `NoSync()` and keep the same write, link and recovery path while the sync becomes a no-op. `durability_test.go` checks both: the default store surfaces an injected sync failure from `Commit`, and the throwaway store reads its record back without calling the sync hook.

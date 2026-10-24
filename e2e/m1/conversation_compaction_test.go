@@ -19,7 +19,7 @@ import (
 
 func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 	t.Parallel()
-	const turnCount = 24
+	const turnCount = 40
 	var turns, summaries atomic.Int32
 	var relationshipCalls atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -37,11 +37,13 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 			_ = json.Unmarshal(req.Input[len(req.Input)-1], &last)
 		}
 		if last.Role == "developer" && strings.Contains(last.Content, "unanswered_requests") && strings.Contains(last.Content, "omitted_detail") {
-			summaries.Add(1)
+			n := summaries.Add(1)
 			if req.Instructions == "" || len(req.Tools) == 0 || !strings.Contains(string(raw), "receipt 42") {
 				t.Error("summary lost its exact earlier segment or gained tools/current input")
 			}
-			emitResponse(w, `{"unanswered_requests":"none","topics_and_conclusions":"Archives","completed_actions":"First archive recorded.","specific_values":"receipt 42","omitted_detail":"Repeated archive material"}`, true)
+			// Deliberately forget earlier receipts in every model reply. Core
+			// must carry them through successive summaries itself.
+			emitResponse(w, fmt.Sprintf(`{"unanswered_requests":"none","topics_and_conclusions":"Archives","completed_actions":"Archive recorded.","specific_values":"receipt %d","omitted_detail":"Repeated archive material"}`, 41+n), true)
 			return
 		}
 		if relationshipCalls.Load() < 2 {
@@ -84,7 +86,7 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 				var summary struct {
 					Values string `json:"specific_values"`
 				}
-				if json.Unmarshal([]byte(item.Content[start:]), &summary) == nil && summary.Values == "receipt 42" {
+				if json.Unmarshal([]byte(item.Content[start:]), &summary) == nil && strings.Contains(summary.Values, "receipt 42") && strings.Contains(summary.Values, fmt.Sprintf("receipt %d", 41+summaries.Load())) {
 					hasSummary = true
 				}
 			}
@@ -102,6 +104,11 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 	h, start := installedConversationHarness(t, server.URL)
+	// Forty retained turns and two Core boots exceed the shared 30-second
+	// default; size this scenario to its work like other multi-boot cases.
+	ctx, cancel := context.WithTimeout(t.Context(), 12*operationTimeout)
+	t.Cleanup(cancel)
+	h.ctx = ctx
 	core := start(true)
 	c, conversation := conversationClient(t, h)
 	admittedTurn(t, h, c, conversation, "relationship", "We are study partners.")
@@ -123,8 +130,8 @@ func TestM1ConversationCompactsRetainedHistory(t *testing.T) {
 		}
 	}
 	beforeRestart := summaries.Load()
-	if beforeRestart == 0 {
-		t.Error("long history was never compacted")
+	if beforeRestart < 2 {
+		t.Error("long history did not exercise successive compactions")
 	}
 	c.Close()
 	h.stopCore(core)

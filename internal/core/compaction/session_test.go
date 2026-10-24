@@ -12,6 +12,7 @@ import (
 )
 
 func TestLoopTransformBlocksDispatchOnSummaryFailure(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	failed := errors.New("summary failed")
 	p.Summarize = func(context.Context, PassSegment) (Text, error) { return Text{}, failed }
@@ -29,6 +30,7 @@ func TestLoopTransformBlocksDispatchOnSummaryFailure(t *testing.T) {
 	}
 }
 func TestSessionPreservesCompactedPrefixAcrossAppends(t *testing.T) {
+	t.Parallel()
 	p, v := fixturePass()
 	calls := 0
 	p.Summarize = func(context.Context, PassSegment) (Text, error) {
@@ -56,5 +58,18 @@ func TestSessionPreservesCompactedPrefixAcrossAppends(t *testing.T) {
 	}
 	if calls != 1 || !reflect.DeepEqual(first.Items, second.Items[:len(second.Items)-1]) || !reflect.DeepEqual(second.Items[len(second.Items)-1], message("steering")) {
 		t.Fatalf("changed prefix calls=%d", calls)
+	}
+}
+
+func TestFollowUpRequestKeepsTheOrdinaryTrigger(t *testing.T) {
+	p, v := fixturePass()
+	p.Cold = true
+	p.Policy.EarlyPercent = 70
+	s, err := NewSession(p, v, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if sizes, err := s.Sizes(); err != nil || sizes.Trigger != sizes.Threshold {
+		t.Fatalf("follow-up request kept the early boundary: %+v %v", sizes, err)
 	}
 }

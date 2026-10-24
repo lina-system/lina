@@ -9,6 +9,7 @@ import (
 )
 
 func TestCompletionUpgradePreservesPublishedWorkReviews(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	all := Migrations()
 	// Version 48 is the published dev catalog, before completion evidence.
@@ -58,6 +59,7 @@ func TestCompletionUpgradePreservesPublishedWorkReviews(t *testing.T) {
 }
 
 func TestCompletionCounterIsAtomicAndPerAgent(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	db := openStore(t, cfg)

@@ -28,6 +28,7 @@ func narrowRepositories(t *testing.T, e *Engine, records Definitions, repository
 }
 
 func TestScopeCorrectionReplansAndPreservesLandedResults(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	cfg := Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }}
 	e, err := NewEngine(cfg)
@@ -88,6 +89,7 @@ func TestScopeCorrectionReplansAndPreservesLandedResults(t *testing.T) {
 }
 
 func TestScopeCorrectionWaitsForEffectsWithoutBlockingOtherGoals(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -154,6 +156,7 @@ func TestScopeCorrectionWaitsForEffectsWithoutBlockingOtherGoals(t *testing.T) {
 }
 
 func TestCorrectionRestoresUndispatchedWork(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -182,6 +185,7 @@ func TestCorrectionRestoresUndispatchedWork(t *testing.T) {
 }
 
 func TestScopeCorrectionReplansDependentsWithoutInputs(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -212,6 +216,7 @@ func TestScopeCorrectionReplansDependentsWithoutInputs(t *testing.T) {
 }
 
 func TestAdmissionCannotInjectCorrectionFence(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1})
 	if err != nil {

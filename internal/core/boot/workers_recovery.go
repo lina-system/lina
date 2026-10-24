@@ -6,10 +6,12 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"os"
 	"strings"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/authority"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/reactor"
 	"github.com/thisisjun786/lina/internal/core/secrets"
@@ -143,10 +145,11 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 		r.workers.mu.Lock()
 		e := r.workers.sessions[rec.ID]
 		r.workers.mu.Unlock()
+		var stale *workerSession
 		if e != nil && rec.State != "decision" {
 			select {
 			case <-e.done:
-				e = nil
+				stale, e = e, nil
 			default:
 			}
 		}
@@ -156,6 +159,10 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			}
 			attempted[rec.ID] = true
 			if rec.Person != r.person {
+				continue
+			}
+			if r.settleRecordedWorker(ctx, &rec) {
+				r.workers.retire(rec.ID, stale)
 				continue
 			}
 			input, err := r.journal().Get(ctx, rec.Input)
@@ -189,7 +196,7 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			if err != nil {
 				continue
 			}
-			adapter, err := codex.Open(ctx, process, codex.Config{Bind: e.bindRecovery})
+			adapter, err := codex.Open(ctx, process, codex.Config{Bind: e.bindRecovery, ApprovalKey: e.origin.personaAuthority.WorkerApprovalKey()})
 			if err != nil {
 				process.Release()
 				continue
@@ -221,7 +228,90 @@ func (r *conversationRuntime) reconcileWorkers(ctx context.Context, attempted ma
 			go e.observe()
 		}
 		e.reconcileWorker(ctx)
+		if err := e.resumeSteering(ctx); err != nil {
+			fmt.Fprintf(os.Stderr, "worker mailbox recovery: %v\n", err)
+		}
 	}
+}
+
+// A committed successful completion is its exact turn's terminal observation.
+// Core admits it before it stores the matching recovery state, so a crash in
+// between would otherwise restart a finished session as an unknown live
+// placeholder. The newest owned completion is authoritative: an older one
+// cannot settle a turn that kept running after it. Failed and transport-loss
+// notices stay unknown; cancellation alone does not make them terminal.
+func (r *conversationRuntime) settleRecordedWorker(ctx context.Context, rec *recovery.Record) bool {
+	if rec.Thread.TurnID == "" || rec.State == "decision" || rec.State == "parked" {
+		return false
+	}
+	var ids []string
+	err := r.db.Read(ctx, func(tx *canon.Tx) error {
+		rows, err := tx.QueryContext(ctx, `SELECT id FROM conv_event WHERE scaffold_kind='worker_completion' AND json_extract(origin,'$.locator')=? ORDER BY rowid DESC`, "worker-session:"+rec.ID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var id string
+			if err := rows.Scan(&id); err != nil {
+				return err
+			}
+			ids = append(ids, id)
+		}
+		return rows.Err()
+	})
+	if err != nil {
+		return false
+	}
+	for _, id := range ids {
+		event, err := r.journal().Get(ctx, id)
+		if err != nil {
+			return false
+		}
+		var completion workerCompletion
+		if json.Unmarshal([]byte(event.Body.Text()), &completion) != nil {
+			return false
+		}
+		if completion.Manager != rec.Conversation || completion.Owner != rec.Agent {
+			continue
+		}
+		if completion.Turn != rec.Thread.TurnID || completion.Status != worker.Done {
+			return false
+		}
+		if rec.Reservation != "" {
+			if r.work == nil {
+				return false
+			}
+			if err := r.work.ReleaseWorker(ctx, rec.Reservation); err != nil {
+				return false
+			}
+			rec.Reservation = ""
+		}
+		rec.Finish = &worker.Finish{Status: completion.Status, Failure: completion.Failure}
+		rec.State = "finished"
+		return (recovery.Recovery{DB: r.db}).Put(ctx, *rec) == nil
+	}
+	return false
+}
+
+// retire removes a closed session whose record has settled. Views then read
+// the recorded outcome. A replacement registered meanwhile stays.
+func (b *workerRuntime) retire(id string, e *workerSession) {
+	if e == nil {
+		return
+	}
+	b.mu.Lock()
+	if b.sessions[id] != e {
+		b.mu.Unlock()
+		return
+	}
+	delete(b.sessions, id)
+	b.mu.Unlock()
+	e.stageSnapshot.Close()
+	if e.close != nil {
+		_ = e.close()
+	}
+	e.process.Release()
 }
 
 func (e *workerSession) reconcileWorker(ctx context.Context) {
@@ -340,7 +430,7 @@ func (e *workerSession) reconcileWorker(ctx context.Context) {
 	e.active["recovery:"+next.RetryFrom] = activity
 	e.mu.Unlock()
 	sendCtx, stop := context.WithTimeout(ctx, 30*time.Second)
-	err = e.adapter.Input(sendCtx, snap.Thread, worker.Input{Text: recoveryContinuation})
+	err = e.adapter.Input(sendCtx, snap.Thread, worker.Input{Text: worker.FrameMessage("core", "system", snap.Thread.TaskID, "", recoveryContinuation)})
 	stop()
 	if err != nil {
 		return

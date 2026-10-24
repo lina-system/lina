@@ -42,6 +42,11 @@ External components (document parsers, OCR, the local transcription component, t
 LINA uses some tools that the user installs and that LINA neither ships nor pins: coding tools such as Codex, Claude Code, Cursor, Gemini CLI, Grok or Antigravity, which LINA runs as workers ([work-and-delegation.md](work-and-delegation.md)), the command-line tools that plugins rely on, such as `gh`, the local server commands of third-party plugins ([integrations.md](integrations.md)), the official `grok` command that the Grok adapter drives, and the Node.js that the Claude adapter runs on. Each is a separate project with its own releases and repository.
 
 - LINA uses the installed tool found on `PATH` or at a path the user configured, and records the version it observed.
+- Gemini CLI is probed with `gemini --acp`; its version comes from
+  `initialize.agentInfo.version`, without creating a session. A successful
+  handshake with no version is recorded as unknown and unverified. A failed
+  handshake makes the tool unavailable. This worker uses its own login,
+  separate from the Gemini API-key provider.
 - Grok's installed version is probed with `grok --version`. The worker's separate
   ACP handshake observation never replaces that CLI version or retains host
   details from its metadata ([ACP adapter](work-and-delegation.md#acp-adapter)).
@@ -127,7 +132,7 @@ Core's `turn.Store` claims the inbox and creates the turn atomically, records pr
 
 The lane's steering and stop controls target only its active turn. Steering is consumed at the next round boundary; queue closure or cancellation returns ownership of later input to admission for a follow-up. The conversation question tool receives the authenticated ledger event at that boundary, so an answer can resolve its pending card within the active turn. Questions created during the turn become eligible only when later owner input is consumed; the decision keeps the answering event as its source. While a question remains open, work and successful completion require an assessment of the latest consumed input; reprocessing an older related input cannot release that gate. A stop preserves the typed issuer and waits for started tools to return before releasing the lane. Preparation failure also closes steering admission and returns its pending input.
 
-For a turn bound to its input ledger event, the stop or restart interruption is one plain system line in that conversation. The ledger append and terminal turn state commit together, so a failed append leaves recovery retryable. Recovery after a process kill closes open calls, keeps completed receipts, records the restart line once and never reissues the accepted input. The surface and speaking agent come from the durable input event. This is exercised through the real lane, turn store, ledger and a killed child process; client conversation routing remains with the client-service increment.
+For a turn bound to its input ledger event, the stop or restart interruption is one plain system line in that conversation. The ledger append and terminal turn state commit together, so a failed append leaves recovery retryable. Publication reads that committed outcome independently of the cancelled turn context; optional diagnostic lookup cannot suppress the stop notice. Recovery after a process kill closes open calls, keeps completed receipts, records the restart line once and never reissues the accepted input. The surface and speaking agent come from the durable input event. This is exercised through the real lane, turn store, ledger and a killed child process; client conversation routing remains with the client-service increment.
 
 When a streaming reply is stopped, its visible partials in the existing turn store commit with the aborted state and interruption line through the same atomic completion transaction as successful replies. Core seals the streamed block identities from that stored outcome and restores them before the interruption line after a restart. These partials are masked before storage and remain display-only aborted history, outside subsequent model requests. A failed terminal transaction cannot acknowledge a durable stop. The installed Core and headless TUI scenario `e2e/m1/tui-interrupted-reply.json` checks Esc, client reopen, graceful and forced Core restart, and no model request replay.
 
@@ -197,7 +202,7 @@ LINA Core can re-run a recorded turn, sandboxed and without effects, so that a c
 - Remembered statements preserve the recorded profile order and use the live profile's single-line whitespace projection of the masked content. A correction successor also excludes the original memory as `source_changed`, even if its recorded revision remains available. Replay never substitutes the correction into the original request.
 - Request assembly evidence that exceeds the ledger's inline limit is read from its exact material revision outside the canon read snapshot. Replay then rechecks current scope, retraction and material visibility before accepting it, as it does for other material-backed sources. If that material cannot be read, the turn is excluded as `missing_assembly` and export continues with valid turns. Cancellation and deadline failures still stop the operation.
 - A replay uses the kit's loop core with the candidate files, on the model and effort that the turn used unless the caller names others. It runs in the sandbox with network blocked and with a scratch directory of its own, and it never touches the working directory of a conversation.
-- A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
+- A turn that only answered replays in full. A turn that read replays with LINA's local read tools live and the results of its network reads taken from the ledger. An agent-runtime provider issues those calls through Core's bridge into the sandbox. While that bridge waits for the runtime result, a nested `expand` or `recall_person` read is dispatched live on the same exchange and must finish before the result is accepted. Any other nested read fails the replay. A turn whose tool call had an effect replays with that call answered by the recorded result, and is left out of the replay when no result was recorded. A replay never runs an effect and never writes the effect ledger or the conversation ledger.
 - A replay's usage is recorded in its output as a run kind of its own, with the model account it used and each provider round. The installed development command writes no canon state, including budget reservations or settlements; its usage artifacts are separate from the install's budget totals ([Usage and cost](#usage-and-cost)).
 
 The installed invocation is `lina replay <episode-file|turn-id> --socket <path>
@@ -222,7 +227,8 @@ The Core client protocol adds `export_request`, `export_result`,
 `replay_request` and `replay_result` under the optional `replay/1.0` capability.
 These operations are unavailable during recovery. The CLI owns external input
 and output paths; Core owns export staging and never accepts a replay output
-path or a candidate directory from the wire. No command starts Core implicitly.
+path or a candidate directory from the wire. No command starts Core implicitly. The provider measurement variant and its
+private report format are defined under [Provider capabilities](#provider-capabilities).
 
 
 ## Model path
@@ -231,24 +237,40 @@ Every model call of LINA's own engines goes through a provider adapter. A provid
 
 ### Providers
 
-The person signs in to each service themself, one account per service ([Accounts and sign-in](#accounts-and-sign-in)). There are four providers, in two fidelity classes.
+The person signs in to each service themself, one account per service ([Accounts and sign-in](#accounts-and-sign-in)). There are five providers, in two fidelity classes. The Apple provider has no account.
 
 | Provider | Class | Adapter | Account |
 | --- | --- | --- | --- |
 | ChatGPT | Model API | Go, in LINA Core: the Responses API with the person's ChatGPT plan | Sign in with ChatGPT (OAuth). It is also LINA's login and the default provider. |
-| Claude | Agent runtime | The Claude adapter, an external component on the Claude Agent SDK ([Provider adapters](#provider-adapters)) | The person's Claude subscription |
+| Claude | Model API or Agent runtime | Two routes: Go, in LINA Core over the Messages API for an API-key account; the Claude adapter, an external component on the Claude Agent SDK ([Provider adapters](#provider-adapters)) for a subscription | The person's Claude API key, or their Claude subscription |
 | Grok | Agent runtime | Go, in LINA Core, driving the official `grok` command the person installed. Best effort. | The person's Grok account, signed in through that command's OAuth login |
 | Gemini | Model API | Go, in LINA Core: the Gemini API through the Go genai client | An API key the person enters |
+| Apple | Model API | A helper on the Mac that calls Apple Foundation Models ([On-device Apple model](#on-device-apple-model)) | None. The on-device model needs no sign-in, cost, or network. |
 
-- **Model-API providers** (ChatGPT, Gemini). LINA Core owns the loop, request assembly, tool dispatch, the ledger and compaction. Every request carries the full input it needs, and the ledger records the exact request input.
-- **Agent-runtime providers** (Claude, Grok). The vendor's process runs the inner tool loop of a turn, and LINA Core can only constrain it. Core still owns the turn, the ledger, the persona and context, compaction, and the authority of every tool. For each turn the adapter:
+- **Model-API providers** (ChatGPT, Gemini, the Claude API-key route, and Apple for the short tasks below). LINA Core owns the loop, request assembly, tool dispatch, the ledger and compaction. Every request carries the full input it needs, and the ledger records the exact request input. Apple serves only the short-task route; it is not a conversation engine.
+- **Agent-runtime providers** (the Claude subscription route, Grok). The vendor's process runs the inner tool loop of a turn, and LINA Core can only constrain it. Core still owns the turn, the ledger, the persona and context, compaction, and the authority of every tool. For each turn the adapter:
   - turns the runtime's built-in tools off and offers LINA's tools to it as MCP tools, so every tool call comes back to LINA Core and runs under the checks, approvals and effect ledger of this contract;
   - replaces the runtime's system prompt with LINA's, and loads no settings, skills, hooks, memory or MCP servers from the person's own setup of that tool;
   - turns off the runtime's own session persistence and compaction, or treats them as opaque;
   - records what the runtime reports with the request: usage, an estimated cost and a session id.
   The guarantees that need the whole request in LINA's hands are not available from a runtime: the exact request input as sent, and encrypted reasoning carried back unchanged. The ledger names the class that served each request. Claude and Grok may serve as the conversation engine and as background sub-agent engines, with this reduced fidelity.
+- **Claude's two routes.** A Claude API-key account is served as a Model API and a Claude subscription as an agent runtime; only the route's class decides the guarantees, never the provider name. Batching, cache marks and the full request are available on the API-key route and stay unavailable on the subscription route.
 
 Providers differ in what cuts cost and waiting time: prompt caches, cache marks and lifetimes, reasoning state, server state and discounted batch work. Each adapter declares which of these it can use for each model, and Core uses them under [Provider capabilities](#provider-capabilities). A request is never reduced to what every provider shares, and no provider feature is required for a request to succeed.
+
+### On-device Apple model
+
+Apple Foundation Models run on the Mac for small tasks, with no account, cost, or network. The helper is on-device. Private Cloud Compute is used only when the person turns it on. The public framework has no third-party Private Cloud Compute session, so the helper reports that model unavailable. Core still starts. Short tasks then use the person's main model, and the ledger records that the on-device model was unavailable. A partial setting or a helper path that is not absolute still refuses startup.
+
+Core sees the helper as a provider with a capability row the helper reports: context size, tool calling, guided generation, and image input. The on-device model is `apple-foundation-on-device`. Its row is a context of 4096 tokens, tool calling, guided generation, and no image input. The private-cloud model id is `apple-foundation-private-cloud`. The route is `LINA_APPLEFM_HELPER` (an absolute path), an optional `LINA_APPLEFM_MODEL`, and `LINA_APPLEFM_PRIVATE_CLOUD=1`. A partial setting is refused. The helper's environment is only the home, temporary directory, and locale; it never receives an API key.
+
+The short tasks are intent parsing of a launcher line, autocomplete, a short rewrite, a title or file name, classification, extraction into a schema, and a short-text summary. A secret-shaped value is masked, and the model-bound projection drops that span, before the helper or the main model sees the task. Routing is decided before any call. An unknown kind, any tool, any image, a schema when guided generation is off, a task larger than the context, or a helper that is not ready goes to the person's main model. The person can force local or main. A force to local does not override those limits. `mac_local` is part of the task digest. It does not keep a tool task on the device. This route does not run a tool loop, even when the model reports tool calling.
+
+Every structured result uses guided generation. The schema is a closed object whose fields are strings, integers, or booleans. A schema miss discards the object, sends the task once to the main model, and never fills a missing field. If the main model also misses, the ledger records that model and the result has no object. An invalid schema is refused before either call.
+
+`model_served` records the provider, model, route, reason, a digest of the task, and the token counts the helper reported. An unreported count stays unknown. The row does not store the task text. On-device tokens are not charged to the shared job budget. The measured samples are in [apple-foundation-models.md](../research/apple-foundation-models.md).
+
+The client capability is `local_model` 1.0 ([Local model capability](host-protocol.md#local-model-capability)).
 
 ### Requests
 
@@ -277,21 +299,28 @@ durable input acknowledgement, live deltas, completed reply and turn completion.
 Restarting Core must restore the same canon conversation and item identities,
 order and text. A loopback fixture runs these assertions in CI and holds completion
 until the client observes a delta. The real journey skips only when opt-in or the
-API key is absent; configured failures fail acceptance. A provider probe alone
-does not establish this client-level journey.
+API key is absent, or when the host cannot install Core; configured failures fail
+acceptance. A provider probe alone does not establish this client-level journey.
 
 - `store` is `false` and `stream` is `true`, as the Sign in with ChatGPT surface requires. Every request carries the full input it needs.
 - The adapter sends only fields that the Sign in with ChatGPT request surface accepts. `input` is an array. Instructions go in `instructions` or in developer-role items, never in system-role items. The fields that surface lists as unsupported (among them output limits, sampling parameters, truncation, `user`, `metadata`, `prompt_cache_retention`, and `previous_response_id` over HTTP) are not sent on it. Function and custom tools are declared in the form that surface requires. A field the surface does not document enters the request field list only after V1 shows it is accepted.
 - Each request carries its conversation's cache identity as `prompt_cache_key` once V1 shows the surface accepts it ([Provider capabilities](#provider-capabilities)).
-- Stateless requests include `reasoning.encrypted_content` regardless of whether an explicit reasoning effort is set. The [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) requires at least every reasoning item, tool call and tool output since the last user message to go back in the next request unchanged. LINA never sends an item of the current turn altered or dropped. When compacting earlier turns does not bring a follow-up request below the compaction threshold, LINA ends that turn and continues in a continuation turn whose request carries a compaction summary and the person's input once, so the round trip starts fresh ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)). When no compaction runs, LINA sends every earlier item back unchanged as well, because the conversation history carries them all ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
+- A stateless request asks for `reasoning.encrypted_content` when Core selected the reasoning-state capability for it, regardless of whether an explicit reasoning effort is set. The [reasoning guide](https://developers.openai.com/api/docs/guides/reasoning) requires at least every reasoning item, tool call and tool output since the last user message to go back in the next request unchanged. LINA never sends an item of the current turn altered or dropped. When compacting earlier turns does not bring a follow-up request below the compaction threshold, LINA ends that turn and continues in a continuation turn whose request carries a compaction summary and the person's input once, so the round trip starts fresh ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)). When no compaction runs, LINA sends every earlier item back unchanged as well, because the conversation history carries them all ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
 - Server state (`previous_response_id`, `store: true`, a provider's conversation or interaction objects), provider-side compaction, WebSocket mode and batch or flex tiers are provider capabilities. Each is used only when [Provider capabilities](#provider-capabilities) admits it for the route: LINA can recover without it, the ledger records its use, and the provider replay shows a gain. None is admitted today.
 - The request fields LINA sends form a list per model-API provider in the release manifest. A new field enters the list before it is sent.
 - Auxiliary reasoning (internal inference without tools) is a separate request with no tool list and no persona. It runs as its own run kind, can cause no external effect, and its output is never recorded as part of the conversation. A compaction summary is the one exception. It carries the conversation's fixed instructions and tool declarations unchanged, so it reuses the cached prefix, and Core runs none of its tool calls ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
 - The Gemini adapter follows the same rules wherever the Gemini API has an equivalent: stateless requests, every provider state item (such as thought parts) returned as received, and the same typed failures.
+- The Claude API-key adapter calls the Messages API at `https://api.anthropic.com/v1` with an `x-api-key` credential and a pinned API version, with Go's standard-library HTTP client and SSE reader and zero retries. It sends `model`, `max_tokens`, `stream`, `system`, `messages`, `tools` and `thinking` only. Core's items are mapped one way: a conversation message is one text block, a reasoning item is a thinking block with its signature, a tool call is `tool_use` and its result is `tool_result`. Roles are `user` and `assistant`; a developer or context message is sent as user text. The route refuses a subscription token, a custom tool declaration and an item it cannot map, before sending.
 
 ### Provider capabilities
 
 Each provider adapter declares a capability set for each model it serves: the provider features that can cut billed input or waiting time. Core decides which to use, by fixed rules, from the request layout, the capability set, the ledger's times and the usage that providers report. No model makes this choice. The measurements behind these rules are in [provider-optimization.md](../research/provider-optimization.md).
+
+The model boundary exposes a named capability set per model. A missing name is
+unsupported, including for models absent from an adapter's declarations. The
+model list provides no capability defaults. Core intersects the declaration with
+the build's route admission set and any narrower adapter configuration before choosing values. Adapters refuse a
+requested capability outside either set before starting HTTP or a runtime.
 
 A capability is used only under all of these rules:
 
@@ -303,28 +332,65 @@ A capability is used only under all of these rules:
 | --- | --- | --- | --- | --- | --- |
 | Prefix cache | Reuses the unchanged start of a request | Automatic, written at the end of the latest user message or tool result | Only where marked | Automatic | Automatic, inside the `grok` command |
 | Cache identity | Keeps one conversation on one cache | `prompt_cache_key`, after V1 | None | None | The command's own |
-| Cache marks | Says where to cache | None on the plan surface | Up to four. On the runtime, on prompt blocks | None | None |
-| Cache lifetime | How long an entry lives | The route's default | 5 minutes or 1 hour per mark. On the runtime, one setting per query | The provider's | The provider's |
-| Reasoning state | Opaque state to return | Encrypted reasoning | The runtime's own | Thought signatures | The runtime's own |
+| Cache marks | Says where to cache | None on the plan surface | Up to four. On the runtime, on prompt blocks; on the API key, on the content blocks at Core's boundaries | None | None |
+| Cache lifetime | How long an entry lives | The route's default | 5 minutes or 1 hour per mark. On the runtime, one setting per query; on the API key, 1 hour per mark | The provider's | The provider's |
+| Reasoning state | Opaque state to return | Encrypted reasoning | The runtime's own; on the API key, thinking blocks and their signatures | Thought signatures | The runtime's own |
 | Server state | The provider keeps the conversation | Not offered on the plan route | Runtime session, not used | Interactions, not used | Runtime session, not used |
-| Batch and flex | Deferred work at a discount | Not offered on the plan route | Not offered on the runtime | Batch and flex on the API key | Not offered on the command |
+| Batch and flex | Deferred work at a discount | Not offered on the plan route | Batch on the API key; not offered on the runtime | Batch and flex on the API key | Not offered on the command |
 
 The rules for each capability:
 
 - **Request order.** Requests follow the [request layout](conversation-and-memory.md#request-layout): fixed parts first, history, the person's input, then the ContextPacket. Within a conversation the tools and tool choice stay unchanged, apart from tools loaded on demand. A failed-worker notice retains those declarations while Core disables its tool execution; declaration presence grants no permission. Compaction preserves the input-before-packet order; its summary request excludes both the current input and packet, including the standing profile.
-- **Cache identity.** Core derives one identity per conversation: a digest of the main id, the agent id and the conversation id. A background run uses its run id. The identity holds no name or text, and it stays for the life of the conversation, across compactions.
+- **Cache identity.** Core derives one identity per conversation: a SHA-256 digest of a versioned, unambiguous tuple of the main id, the agent id and the conversation id. A background run hashes its run id under a separate domain. The identity holds no name or text, and it stays for the life of the conversation, across compactions and restarts. Epochs and request contents never enter it. Deriving and recording this identity does not admit its transmission to a provider.
 - **Cache marks.** Core marks four boundaries of every request:
   - after the fixed part (items 1 to 4 of the request layout, without plugin tools loaded on demand);
   - after the person's input of the previous turn;
   - after the person's input of the current turn;
   - in a follow-up request, after the newest item of the turn.
-  An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket.
-- **Cache lifetime.** Claude marks use 1 hour, set once per query on the runtime. A 1-hour write costs more only on the tokens added since the last request, while an expired 5-minute mark makes the next request write the whole history again. ChatGPT, Gemini and Grok keep their route's default, and LINA sends no lifetime field that V1 or V4 has not accepted.
-- **Reasoning state.** Every reasoning item, thinking block and thought signature returns unchanged in later requests, earlier turns included. Removing one changes the cached prefix as well as the model's state.
+  An adapter whose provider needs explicit marks places them there; the others ignore them. The Claude adapter sends each earlier turn as its own text block of the runtime prompt and marks the last one, then sends the person's input and the ContextPacket. On the Claude API-key route the last content block derived from each boundary's item carries the mark, with the 1-hour lifetime; no mark is placed on the ContextPacket. A compaction summary request marks only the boundaries inside its segment ([Compaction and resume](conversation-and-memory.md#compaction-and-resume)).
+  Boundaries are exclusive counts in the request's item and tool arrays. The
+  fixed boundary excludes tools loaded on demand. A missing previous input or
+  newest follow-up item has no boundary; Core does not substitute external
+  user-role evidence for a person's input. Follow-ups retain the initial
+  boundaries and update the newest position after transforms. The request
+  digest covers these positions and all selected capability values.
+- **Cache lifetime.** Claude marks use 1 hour: once per query on the runtime, and on every mark on the API-key route. A 1-hour write costs more only on the tokens added since the last request, while an expired 5-minute mark makes the next request write the whole history again. ChatGPT, Gemini and Grok keep their route's default, and LINA sends no lifetime field that V1 or V4 has not accepted.
+- **Reasoning state.** Every reasoning item, thinking block and thought signature returns unchanged in later requests, earlier turns included. Removing one changes the cached prefix as well as the model's state. The Responses adapter asks for the encrypted form with `include: ["reasoning.encrypted_content"]` only when Core selected this capability; a route that narrows it away sends the request without that option and still returns whatever reasoning items the provider gives.
 - **Compaction.** Compaction and its summary request reuse the cache as [Compaction and resume](conversation-and-memory.md#compaction-and-resume) says.
 - **Server state and provider compaction.** Neither is admitted today. The plan routes refuse server state. On OpenAI's API, a chained request is billed for all earlier input again. xAI refuses instructions together with a chained request, so the chain cannot carry LINA's instructions on every request. A provider's own compaction returns a summary LINA cannot read, expand, check against retraction or delete with its sources.
-- **Batch and flex.** A background job (not a turn, a continuation or a background run) may use a provider's batch or flex tier when its account's route offers one and the job's deadline is longer than the tier's window. Each submission is recorded. A batch that fails or passes its window runs as a normal request.
-- **Provider replay.** One fixed, synthetic replay of LINA-shaped turns runs on each provider, with real accounts on opt-in. It reports, for every request, the input, read, written and plain tokens and the time to the first token. A change to a capability or to these rules carries its before and after from this replay. The episode export can feed the same replay from the person's own conversations on their machine, and those results stay off the repository.
+- **Batch and flex.** A background job (not a turn, a continuation or a background run) may use a provider's batch or flex tier when its account's route offers one and the job's deadline is longer than the tier's window. Each submission is recorded. A batch that is refused, fails, expires or is cancelled runs once as a normal request. Needs sign-in and cancellation do not.
+- **Provider replay.** One fixed, synthetic replay of LINA-shaped turns runs on each provider, with real accounts on opt-in. It reports, for every request, the input, read, written and plain tokens and the time to the first token. A change to a capability or to these rules carries its before and after from this replay, which also measures one compaction summary request so its plain tokens compare beside the conversation's; the fixture can select the summary shape from before the conversation's cache boundary, so both readings come from the same command. The episode export can feed the same replay from the person's own conversations on their machine, and those results stay off the repository.
+
+The development command is `lina provider-replay --provider <name> --socket
+<path> --fixture <file> --out <new-directory>`. Both caller and running Core
+require `LINA_QA_REAL_MODEL=1`, including scripted loopback tests. The named
+provider must match Core's configured adapter; there is no account fallback.
+The fixed public fixture contains the shipped persona and tool declarations,
+40 public history turns and four live turns, two with recorded tool results.
+Core uses its request assembler, capability admission and sandboxed loop. Each
+run has a fresh cache identity that stays stable across its turns. Ephemeral
+ContextPackets leave the history; returned reasoning items remain unchanged.
+
+`--episode <export.jsonl>` replaces `--fixture` and reuses the connected
+install's live ownership, reconstruction and removal checks. No effect runs,
+and neither mode writes canon or budget usage. Reports go only to a new private
+directory outside Git worktrees; symlinked parents receive the same check.
+
+`report.json` records every adapter request by turn and round: total input,
+cache reads, total writes, writes by reported lifetime, ordinary-rate input,
+and milliseconds from transport start to the first visible text or ready tool
+call. Reasoning-only items are not visible output. Unreported values and
+unobserved first output remain null. Provider-specific input accounting is
+normalized only when the required counters are known. Internal native-runtime
+requests that the adapter does not expose remain unmeasured. A failed or
+incomplete replay retains observed request measurements and exits nonzero;
+it is never retried automatically. Model replies and prompts stay out of the
+measurement report.
+
+`lina provider-replay compare <before.json> <after.json>` displays each request
+side by side, including missing requests, failures and unknown values. It
+refuses different source digests. The existing `replay_request` gains optional
+`provider` and `fixture` fields; ordinary episode replay remains compatible.
 
 ### Stream assembly
 
@@ -337,11 +403,13 @@ The Responses adapter assembles the server-sent event stream itself:
 
 The Gemini adapter assembles its own stream by the same rules: deltas drive live display only, an item is final only when the provider marks it done, tool calls are dispatched from final items only, and a completed response is never evidence that a product effect happened.
 
+The Claude API-key adapter does the same with Messages events: only text deltas enter the visible stream, thinking and signature deltas stay inside their block, a block becomes the recorded item at its own stop event, tool calls become ready only at `message_stop`, and a stream that ends without it fails.
+
 ### Failures and retries
 
 - Automatic retries of an SDK are 0 for model-API providers, and the value is recorded in the release manifest. An agent runtime retries on its own and cannot be told not to; LINA Core records the retries the runtime reports and sets the runtime's turn and budget limits.
 - Once output has started, a request is never sent again. An accepted turn is never replayed automatically; a turn whose outcome is unknown stays unknown.
-- Failures are typed from the provider's own answer: account needs sign-in (authentication failed, refresh failed), not eligible, usage cap reached, provider unavailable (a failed connection, 503, 529), and request not accepted (an unsupported field or capability). A usage cap names no reset time that the provider did not give. None of these makes LINA retry on another account, another provider or another billing path.
+- Failures are typed from the provider's own answer: account needs sign-in (authentication failed, refresh failed), not eligible, usage cap reached, provider unavailable (a failed connection, 503, 529), and request not accepted (an unsupported field or capability). A usage cap names no reset time that the provider did not give. None of these makes LINA retry on another account, another provider or another billing path. The short-task route in [On-device Apple model](#on-device-apple-model) is the one exception: when the on-device model misses a schema or is unavailable, Core sends that task once to the person's main model. That call is a new request. The helper call is not sent again. A conversation turn still does not change provider.
 - LINA Core reads the request id, the error type and the usage that the provider reports from every response and records them in the ledger with the agent id of the request.
 
 ### Models and roles
@@ -355,6 +423,7 @@ The Gemini adapter assembles its own stream by the same rules: deltas drive live
 ### Usage and cost
 
 - Usage comes from what each provider reports: the `usage` of a model-API response, the usage an agent runtime reports with a turn, and the usage events a worker reports, such as Codex's `thread/tokenUsage/updated`. It keeps the tokens read from and written to the provider's cache, with writes split by lifetime where the provider reports that. An unreported value is unknown, never zero.
+- Usage may additionally carry `cache_by_lifetime`, keyed by the reported lifetime, with independent optional `read` and `write` counts. Missing buckets or counts remain unknown. Existing aggregate cache counts remain independent reported totals; budget settlement does not add the buckets to input or output again. This is an optional addition to stored usage JSON, with no table migration or backfill.
 - The total budget covers conversation requests (turns in external channels and turns of agent exchanges included), background runs, the model calls of background jobs, worker threads, the sub-threads a worker starts, auxiliary reasoning. Development replays report their usage in output artifacts without changing canon or its budget totals. Every agent draws on the one budget, and each usage record names the agent it served, the account it used and, for a background run, the run.
 - Budget totals count tokens. A cost figure is shown only when the provider or runtime reports one, and is labelled an estimate when it is computed on the client (the Claude runtime's is). A plan route has no cost. Catalog prices and zero values are not actual cost.
 - LINA Core reserves and settles the budget. At the limit the conversation stops sending requests, a background run waits with its checkpoint and says what is done and what is not instead of being wrapped up, and workers are interrupted under the budget policy of [work-and-delegation.md](work-and-delegation.md). The Codex goal token budget is not used. This budget is the person's usage; it is not the turn budget, which only decides where work runs ([Turn budget](#turn-budget)).
@@ -457,14 +526,22 @@ ChatGPT is the default provider and LINA's login. The sign-in is the documented 
 
 ### Claude
 
-Claude is the person's Claude subscription, used through the Claude Agent SDK. The SDK exists for TypeScript and Python only, so the Claude adapter ([Provider adapters](#provider-adapters)) is a small Node.js process that wraps it. It serves one account, speaks LINA's provider-adapter protocol over its standard input and output with one JSON message per line, and passes no credential on. It is an adapter, not a proxy.
+Claude is the person's Claude account, in either of two forms: a subscription used through the Claude Agent SDK, or an API key used through the Messages API by a Go adapter in LINA Core. The subscription text below keeps the SDK route unchanged. The API-key route is the one this section adds.
+
+The SDK exists for TypeScript and Python only, so the subscription adapter ([Provider adapters](#provider-adapters)) is a small Node.js process that wraps it. It serves one account, speaks LINA's provider-adapter protocol over its standard input and output with one JSON message per line, and passes no credential on. It is an adapter, not a proxy.
 
 - Sign-in, in this order. LINA first looks for the login that the person already has with the vendor's command, by the command's status report; if there is one, the adapter uses it and LINA stores nothing. Otherwise LINA guides the person through the vendor's token command, which prints a one-year token for model requests only. The person pastes it, LINA keeps it in the secret store and gives it to the adapter as `CLAUDE_CODE_OAUTH_TOKEN`. LINA runs no OAuth client of its own against claude.ai. LINA records the day the token was made and warns before the year ends; a failed call shows needs sign-in.
 - The adapter's environment holds none of the variables that outrank the subscription token: an API key, an auth token, a key helper, and the cloud-provider variables.
 - The vendor's bare mode never reads a subscription login, so the adapter cannot use it. Isolation is explicit instead: the options named under Providers, an empty working directory of the adapter's own, a pinned version, and a check of the runtime's start-up message, which lists the tools, MCP servers and plugins it loaded. The adapter refuses to serve a turn when that list holds anything LINA did not put there.
 - The product names it "Claude" or "Claude Agent", never "Claude Code" or in that tool's styling.
 - Quota comes from the rate-limit events the runtime emits (window, utilization, reset) and from the SDK's usage report where it returns one for the token the adapter holds. The cost the runtime reports is an estimate.
-- A Claude API-key account can stand in for the token without any change to this contract.
+- A Claude API-key account can stand in for the token without any change to the subscription contract. On that route LINA Core is the adapter:
+  - The account is an API key the person enters, kept in the secret store and sent only as the request's `x-api-key` header. It never enters a log, the sandbox, a worker or another adapter, and it is consumed from Core's environment before workers start. A missing or refused key shows needs sign-in on that account; no request moves to the subscription or to another account.
+  - The route is one explicitly configured model with the Messages API base, and an optional reasoning effort. Partial or ambiguous configuration is refused, and a route counts as configured only once with its model. A conversation turn copies that effort into its model policy. An empty effort leaves the model's default.
+  - Thinking blocks and their signatures return with the item the loop records and go back unchanged in later requests, inside a tool loop included, as the API requires. Every reasoning item is kept; none is rewritten or dropped.
+  - Cache marks sit at Core's four boundaries, at most four per request, each with the 1-hour lifetime. Usage keeps the input, cache read and cache write counts the API reports, with writes split by the lifetime buckets it reports; an unreported count stays unknown.
+  - A background job whose deadline lies beyond the batch window may use Message Batches. Each submission is recorded with its batch id. A submission that is refused, fails, expires or is cancelled runs once as a normal request. Needs sign-in and cancellation stop the job instead of starting that request. A turn never uses a batch.
+  - A route-level refusal is typed from the API's own error: authentication is needs sign-in, permission is not eligible, rate limit and billing are usage capped, overload and server errors are unavailable, and a rejected field is not accepted.
 
 The #167 adapter is in [adapters/claude](../../adapters/claude/README.md), pinned
 to SDK 0.3.308 with a separate npm lockfile. Node 24.20.0 runs its TypeScript
@@ -575,18 +652,24 @@ Core passes the canon, secrets, system, version, backup, materials, derived and 
 
 `kit/proc` captures Core's environment, removes known provider credential families and any additional provider variable names supplied by the caller, and preserves the user's remaining tool configuration. It also removes loader and shell-startup injection variables. Each command has an explicit environment and requires a live activity lease. Cancellation, shutdown and leader exit clean up owned descendants before the command returns and releases its activity lease. Commands still inherit the service manager's cgroup when one exists; cgroup delegation is not an install requirement.
 
-On Linux, `kit/proc` starts commands through the explicit `proc-supervise` subcommand of the current host executable, registered by both `lina` and `lina-node`. The helper sets `PR_SET_CHILD_SUBREAPER` before starting the command. It discovers immediate children through the parent PID in ordinary `/proc/<pid>/stat` records, kills and waits for them, and repeats for reparented descendants until `wait4` reports `ECHILD`. It does not require the optional per-thread `children` interface or `CONFIG_CHECKPOINT_RESTORE`. Session and process-group changes, intermediate-parent exit and a cleared environment cannot detach a descendant from this lifetime. The helper receives command arguments and environment over a private control descriptor, preserves the command's stdio and extra descriptors, and reports startup errors separately from exit status. Closing control, including when the owner process dies, requests cleanup. Each command has its own supervisor, so owners do not reap one another's commands or unrelated children. Hosts embedding the kit register `proc.SuperviseMain` explicitly; there is no automatic initialization hook.
+On Linux, `kit/proc` starts commands through the explicit `proc-supervise` subcommand of the current host executable, registered by both `lina` and `lina-node`. The helper sets `PR_SET_CHILD_SUBREAPER` before starting the command. It discovers immediate children through the parent PID in ordinary `/proc/<pid>/stat` records, kills and waits for them, and repeats for reparented descendants until `wait4` reports `ECHILD`. It does not require the optional per-thread `children` interface or `CONFIG_CHECKPOINT_RESTORE`. Session and process-group changes, intermediate-parent exit and a cleared environment cannot detach a descendant from this lifetime. The helper receives command arguments and environment over a private control descriptor, preserves the command's stdio and extra descriptors, and reports startup errors separately from exit status. The supervisor itself runs with only the host's race-detector options and a zero exit sleep, so a race-instrumented host does not add the detector's one-second exit interval to every command; the command's own environment is unaffected. Closing control, including when the owner process dies, requests cleanup. Each command has its own supervisor, so owners do not reap one another's commands or unrelated children. Hosts embedding the kit register `proc.SuperviseMain` explicitly; there is no automatic initialization hook.
 
-On macOS, cleanup is best effort. Each command receives a random `LINA_PROC_OWNER` environment token inherited by ordinary descendants. The owner retains the unreaped leader until cleanup finishes, so its PID and group id cannot be recycled. It signals the group while the leader is live, then scans same-user processes with `KERN_PROCARGS2` and kills processes carrying that exact environment entry, rechecking process identity and credentials before signalling. It repeats the scan while tagged processes remain, with a bounded cleanup deadline. A Darwin `EPERM` is ignored only after reinspection proves that the same identity has ended or become a zombie; permission failure on a live child remains an error. A child which clears its environment or makes its token unreadable can escape. This is an acknowledged gap, not an unprivileged equivalent of a subreaper or Job Object. Seatbelt still inherits confinement across children and denies protected file and Unix-socket access even with network enabled.
+On macOS, `kit/proc` runs every command as a launchd job of its own. The owner writes a private LaunchAgent definition in a temporary directory and loads it with `launchctl bootstrap`, in the person's GUI domain when the host has a console session and in the per-user domain otherwise. The job runs the explicit `proc-job` subcommand of the current host executable, registered by both `lina` and `lina-node`. launchd places a job in a resource coalition, and the kernel fixes coalition membership when a process is created: it is inherited across fork, exec and posix_spawn and no process can change it. A descendant therefore stays in the job's coalition even when it starts its own session, outlives a reaped intermediate parent and clears its environment. The helper reports the job's coalition to the owner and holds the job open.
+
+launchd passes paths to a job, not descriptors, so the standard streams cross over Unix sockets in the job's private directory, one socket per stream. The helper connects them and hands them to the command as descriptors 0, 1 and 2. A socket reports end of file only after every copy is closed, so a descendant that keeps a stream open keeps the call from returning, as on Linux. A reader or writer the caller supplied that is not a file is relayed through a pipe in the owner. The exit status arrives as a record on the control socket rather than through `os/exec`: the owner returns `*proc.ExitError` carrying the command's exit code, or -1 with the signal that ended it, and a command that could not start reports the same operation, path and error the Linux helper reports.
+
+Teardown kills every live member of the coalition, including processes that left the command's process group, and then removes the job with `launchctl bootout`. The owner does not discard a job until its registration is gone, and every path that loads a job boots it out, so a failed load, a start error and a normal exit leave no job behind. Closing the control socket is also the owner-death signal: the helper then kills the coalition and removes its own job from a detached process. Commands that run in the sandbox keep the Seatbelt policy, which also refuses `setsid` and `setpgid` as the Linux seccomp filter does; ownership does not depend on that refusal. Seatbelt still inherits confinement across children and denies protected file and Unix-socket access even with network enabled.
 
 On Windows, the process owner creates each command suspended, assigns it to a Job Object, and only then resumes its initial thread. Assignment failure kills and joins the suspended command before returning an error. The job disallows breakaway and is not inherited as a handle; descendants remain members even when they change console groups or detach from the console. Cancellation, owner shutdown and leader exit terminate the job. The call retains its lease until the leader is joined and the job reports no active processes, including descendants holding stdio open. Job handles use kill-on-close as a final resource cleanup guard. This process lifetime mechanism grants no filesystem or network confinement; Windows sandboxed commands remain unsupported until the separate sandbox acceptance passes.
 
+
+### Files
 
 The explicit internal `lina file-tool --root <directory> --versions <private-directory>` subcommand runs the importable `kit/tools.Main` implementation. Core invokes it directly with argv through the sandbox wrapper for one JSON request and reply; there is no hidden re-exec mode or additional binary. The file sandbox grants access to a dedicated private version directory while the command sandbox denies it. Existing protected Core paths stay denied in both instances. File operations and commands share one executor per workspace.
 
 File requests select no host root, environment or network policy. Core supplies the sandbox's file root and a separate private directory for retained versions. Reads return a revision of the bytes and mode. Writes, deletes and restores compare the expected revision immediately before the filesystem operation; creation requires absence. Every changed path gets a receipt and a synced, recoverable before/after copy, including files removed by `apply_patch`. Restore checks retained digests and the current destination, so recovering a deleted file preserves its bytes without replacing a newer file. Patch context is exact rather than whitespace-fuzzy, and every hunk is checked before the first destination changes. An interruption during a multi-file commit is reported as unknown with retained recovery information.
 
-For an existing file, publication first captures its inode in a reserved `.lina-recovery-*` directory on the same filesystem. The private saved-version record names this slot before the capture, and the worker verifies the captured bytes against the checked revision. New bytes are linked into place only while the destination is absent; an external replacement is never clobbered. A changed capture is restored only into an absent destination and the result is unknown. Any observed concurrent change or uncertain publication returns unknown with the retained version and recovery path. No cooperating-writer lock is required. The captured inode is kept even after success so later writes through an already-open editor descriptor remain recoverable; successful receipts describe the completion-time observation. Capture directories are excluded from workspace manifests and share workspace access, while immutable before/after versions remain in the separate private store. File reads can inspect a capture after the worker restarts; the retention workflow owns its eventual purge.
+For an existing file, publication first captures its inode in a reserved `.lina-recovery-*` directory on the same filesystem. The private saved-version record names this slot before the capture, and the worker verifies the captured bytes against the checked revision. New bytes are linked into place only while the destination is absent; an external replacement is never clobbered. A changed capture is restored only into an absent destination and the result is unknown. Any observed concurrent change or uncertain publication returns unknown with the retained version and recovery path. No cooperating-writer lock is required. The captured inode is kept even after success so later writes through an already-open editor descriptor remain recoverable; successful receipts describe the completion-time observation. Captures and recovery-like user directories are part of workspace manifests and command receipts, matching [go-core.md](go-core.md): a recovery-like directory name is not proof of worker ownership, so neither user directories with that prefix nor later writes through captured open inodes are hidden from receipts. Worker-reserved captures are tracked in the private version store and accounted separately from the 10,000-entry workspace manifest limit, so retained captures cannot push a workspace past that limit on their own. Live captures share workspace access while immutable before/after versions remain in the separate private store. File reads can inspect a capture after the worker restarts; the retention workflow owns its eventual purge.
 
 The network executor normalizes the installed command prefix and target into the approval scope. Neither a model-supplied prefix nor an outward-policy override is accepted. A pending request returns to the conversation without starting a command; the authenticated once, always-allow or deny answer goes through Core's durable approval service. A new dispatch after the answer receives a fresh tool deadline. Standing permission does not survive revocation at the next admission.
 
@@ -640,7 +723,7 @@ Supported platforms are defined in [product-families.md](product-families.md). A
 
 `lina import-hermes` is an explicit optional-import entry point. It takes a source directory and confirmed profile/agent/person maps, prints rehearsal without a model call, and separately confirms import and promotion. Core must be stopped for canon writes. `--rehearse` writes nothing to canon; successful completion includes verified backup generations. Its arguments and boundaries are defined under [Importing a Hermes install](conversation-and-memory.md#importing-a-hermes-install).
 
-The command recognizes `lina core`, `lina tui`, `lina install`, `lina update --prepare`, `lina version` and `lina-node version`. Both hosts also list the internal `proc-supervise --control-fd <fd> --status-fd <fd> --files <count>` helper used by `kit/proc` on Linux. Command descriptor numbers start at 3; control and startup status follow them. The helper is not a user shell or a new shipped binary. Missing or unknown subcommands print usage on stderr and exit 64.
+The command recognizes `lina core`, `lina tui`, `lina install`, `lina update --prepare`, `lina version` and `lina-node version`. Both hosts also list the internal `proc-supervise --control-fd <fd> --status-fd <fd> --files <count>` helper that `kit/proc` uses on Linux, and the `proc-job --request <path>` helper its launchd jobs run on macOS. Command descriptor numbers start at 3; control and startup status follow them. The helper is not a user shell or a new shipped binary. Missing or unknown subcommands print usage on stderr and exit 64.
 
 LINA Core and the TUI are one executable, `lina`. Its subcommands cover these uses:
 
@@ -745,7 +828,7 @@ preparation or sign-in implementation.
 
 ### Provider adapters
 
-The ChatGPT, Gemini and Grok adapters are Go inside LINA Core. The Claude adapter is the only provider adapter that is a separate program.
+The ChatGPT, Gemini, Grok and Claude API-key adapters are Go inside LINA Core. The Claude subscription adapter is the only provider adapter that is a separate program. The Messages adapter shares the Responses adapter's shape: standard-library HTTP and SSE, no redirects, zero retries, and the same stream rules, so only final items reach the loop and tool calls become ready only at the terminal event.
 
 - The Claude adapter is LINA's own TypeScript, an external component ([Language and build](#language-and-build)) that runs on Node.js. LINA Core starts it on first use of a Claude account, as a stdio child, and stops it after an idle period. It is never started at boot and never kept warm, because the vendor runtime it wraps is large: a binary of about 270 to 290 MB per platform, and a parked process of about 230 to 260 MB. Each concurrent turn on a Claude account holds its own runtime process, so the number of concurrent turns per account is limited (see Deferred).
 - LINA does not ship a Node.js runtime. The adapter runs on the Node.js that the person has installed, found on `PATH` or at a path the person configured, as an installed tool ([Installed tools](#installed-tools)). Without a usable Node.js, only Claude accounts are unsupported, and the account says why.
@@ -797,10 +880,14 @@ The initial JSON object contains these required fields; later implementation iss
 | `kitVersion` | Positive integer read from `kit/VERSION`, initially `1`. |
 | `sqlite` | Object with binding `module`, exact `version`, Go `moduleSum` (`h1:`), `sqliteVersion`, `wasmSHA256` (64 lowercase hex characters), `execution: "wazero"`, and `sqliteVec` (exact `version` and `sha256` of the complete custom Wasm engine; older manifests may have null). |
 | `providers.chatgpt` | `adapter: "responses"`, `retryCount: 0`, and `requestFields`, the explicit array of allowed top-level request fields. |
+| `providers.claude_api_key` | `adapter: "messages"`, `retryCount: 0`, `maxOutputTokens`, `requestFields` and the admitted `capabilities`. Optional in older manifests; when present, the adapter identity and retry policy are checked. |
+| `providerCapabilities` | Route names mapped to admitted capability-name arrays. New builds include every implemented route, including empty sets. Older manifests without this optional field remain readable; absence grants no capability. |
 | `verifiedWorkerVersions` | Optional object mapping worker names to verified version arrays; `codex` uses bare versions from the adapter's `versions.json`, such as `["0.163.0"]`. |
 | `binaries` | Array of objects with `name` (basename), `size` (positive byte count), and `sha256` (64 lowercase hexadecimal characters). Includes both `lina` and `lina-node`, with platform suffixes. |
 
-The writer copies `providers` from `kit/provider/responses/manifest.json` and checks its adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.
+The writer copies route admission sets from `kit/provider/capabilities.json`. The Responses descriptor also records its admitted `capabilities`; a per-request choice cannot widen that set. Unrecognized or unadmitted capabilities fail validation.
+
+The writer copies `providers` from `kit/provider/responses/manifest.json` and `kit/provider/messages/manifest.json` and checks each adapter identity and zero retry count. The Responses adapter reads that configuration from the generated manifest, validates required and forbidden fields, and permits per-request narrowing only. The initial list is exercised by scripted wires; live V1 acceptance remains required before conversation acceptance.
 
 The writer removes an old manifest before building and writes a new one atomically after both binaries succeed. It obtains SQLite metadata by running `internal/core/manifest/sqliteinfo` on the build host with the same toolchain, `CGO_ENABLED=0` and readonly module inputs: Go build information supplies the binding version and checksum, while in-memory SQLite and sqlite-vec queries and a hash of the embedded bytes identify the engine. The Wasm bytes are platform-independent; the metadata probe is never executed as a foreign-target binary. Uncommitted tracked, staged or nonignored untracked changes still permit a development build but suppress the manifest. A source change or a different `HEAD` detected during the build or metadata probe also suppresses it. The three generated output files do not count as untracked source changes; tracked files cannot be used as output artifacts.
 
@@ -980,7 +1067,7 @@ These runtime failures must end as their rules require:
 | --- | --- |
 | Digest mismatch of sqlite-vec, or of the lockfile or a package of the Claude adapter | The component doesn't start and reports the mismatch |
 | Sandbox unavailable | Conversation continues; shell and file tools are unsupported, local plugin servers added by command do not start, and the reason is shown |
-| Provider unavailable (a failed connection, 503 or 529) | No request is sent after the failure; the surface shows the typed cause; nothing moves to another provider |
+| Provider unavailable (a failed connection, 503 or 529) | No request is sent after the failure; the surface shows the typed cause; nothing moves to another provider. The short-task route may send that task once to the main model, as a new request |
 | Account token expired, revoked or reused | The account shows needs sign-in, no request is sent with it, no other account is used in its place, and conversation on other accounts is unaffected |
 | Usage cap reached | The account shows usage cap reached with no invented reset time; new requests go to another connected account only by the quota-aware routing, never to a pay-per-use path the person did not allow; otherwise the person is offered the switch |
 | Claude adapter killed with a turn in flight | The turn's outcome is unknown and is not replayed; late output from the old process is fenced |
@@ -1033,10 +1120,10 @@ Foundation keeps one local command and one required CI result. PRs select docs, 
 - Publishing binaries and their manifests: added to [releases.md](../policy/releases.md) when LINA is first packaged.
 - The default embedding model: chosen by the implementation issue that brings memory recall into answers.
 - Whether LINA qualifies as a Sign in with ChatGPT client, including a LINA Core on a remote host the person owns: confirmed with the issuer before the release that depends on it.
-- Whether the Claude subscription route through the Agent SDK is allowed for LINA: the SDK's overview says third-party products may not offer claude.ai login without approval ([research](../research/provider-optimization.md#result)). Confirmed with the vendor before the release that depends on it. A Claude API-key route over the Messages API is planned as its own implementation.
+- Whether the Claude subscription route through the Agent SDK is allowed for LINA: the SDK's overview says third-party products may not offer  login without approval ([research](../research/provider-optimization.md#result)). Confirmed with the vendor before the release that depends on it. The API-key route over the Messages API is implemented separately and is not that confirmation.
 - The keep-alive interval of an idle ChatGPT refresh token, the warning period before a Claude token's year ends, the idle period after which the Claude adapter stops, and the number of concurrent turns per Claude account: set during implementation acceptance of the provider adapters.
 - Which quota source a Claude token supports (the runtime's events, the usage report, or both): decided by a live test in V4.
-- Where a model's context window comes from when its adapter reports none: set by the implementation issue that ships the provider adapters.
+- Model-specific tokenizers and authoritative context-window metadata for the remaining provider routes. Until both are available, the adapter uses the conservative byte budget in [Compaction and resume](conversation-and-memory.md#compaction-and-resume).
 - Narrowing a plugin server's network to named hosts: needs a filter in the sandbox wrapper; chosen at implementation acceptance of the plugin system, and until then the allowance is network on or off.
 - The starting values of the turn budget (acknowledgement, soft and hard budget, tool deadline), which only set the hand-off point: tuned by measurement during implementation acceptance of the conversation engine, on waiting time and completion quality together (rework, corrections and "that is not what I asked"), never on waiting time alone.
 - Replay uses immutable history references, pinned persona and recorded request configuration; missing reconstructible assembly excludes the turn. Raw ContextPackets remain unstored.

@@ -11,6 +11,7 @@ import (
 	"math"
 	"os"
 	"strconv"
+	"time"
 )
 
 var ErrLocked = errors.New("another Core holds the state root lock")
@@ -172,11 +173,17 @@ func (s *Store) acquire(name string) error {
 
 func record(name string) bool {
 	switch name {
-	case "epoch", "run.sentinel", "halt.json", "lifecycle.json", "main.json", "config.json", "update.json":
+	case "epoch", "run.sentinel", "halt.json", "lifecycle.json", "main.json", "config.json", "update.json", "a2a.json":
 		return true
 	}
 	return false
 }
+
+// readAttempts bounds reopening while a writer atomically replaces a record.
+// A stale lookup can repeat across consecutive opens, so retries pause briefly.
+const readAttempts = 8
+
+const readRetryDelay = time.Millisecond
 
 func (s *Store) Read(name string) ([]byte, error) {
 	return readRecord(name, s.dir.OpenFile, s.dir.Lstat)
@@ -192,6 +199,7 @@ func readRecord(name string, open func(string, int, os.FileMode) (*os.File, erro
 		if err != nil {
 			return nil, err
 		}
+		retry := attempt+1 < readAttempts
 		info, err := file.Stat()
 		if err != nil {
 			file.Close()
@@ -201,7 +209,8 @@ func readRecord(name string, open func(string, int, os.FileMode) (*os.File, erro
 			file.Close()
 			// Write may replace the record between open and fstat. Never read
 			// the unlinked inode; reopen and validate the replacement in full.
-			if attempt < 7 && unlinked(info) {
+			if retry && unlinked(info) {
+				time.Sleep(readRetryDelay)
 				continue
 			}
 			return nil, err
@@ -214,20 +223,22 @@ func readRecord(name string, open func(string, int, os.FileMode) (*os.File, erro
 		}
 		if err != nil {
 			file.Close()
-			if attempt < 7 && current != nil && unlinked(current) {
+			if retry && current != nil && unlinked(current) {
+				time.Sleep(readRetryDelay)
 				continue
 			}
 			return nil, err
 		}
 		if !os.SameFile(info, current) {
 			file.Close()
-			if attempt < 7 {
+			if retry {
+				time.Sleep(readRetryDelay)
 				continue
 			}
 			return nil, errors.New("control record changed during read")
 		}
-		defer file.Close()
 		data, err := io.ReadAll(io.LimitReader(file, 65537))
+		file.Close()
 		if err != nil {
 			return nil, err
 		}

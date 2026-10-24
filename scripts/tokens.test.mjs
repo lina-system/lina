@@ -31,19 +31,79 @@ test('every theme has the same complete role set', () => {
   }
 });
 
-test('drift in Go, CSS and the documentation tables fails without rewriting', t => {
+test('drift in Go, CSS, Swift, the SVG mark and the documentation tables fails without rewriting', t => {
   const dir = fixture(t);
   generate(dir);
-  for (const file of ['internal/design/tokens_gen.go', 'design/tokens/tokens.css', 'design/tokens/mark.svg', 'DESIGN.md']) {
+  for (const [file, before, after] of [
+    ['internal/design/tokens_gen.go', '#2F4BDB', '#2244dd'],
+    ['design/tokens/tokens.css', '#2F4BDB', '#2244dd'],
+    ['design/tokens/tokens.swift', '0x2F4BDB', '0x2244DD'],
+    ['design/tokens/mark.svg', '#2F4BDB', '#2244dd'],
+    ['DESIGN.md', '#2F4BDB', '#2244dd'],
+  ]) {
     const path = join(dir, file);
     const original = readFileSync(path, 'utf8');
-    const changed = original.replace(/#2[Ff]4[Bb][Dd][Bb]/g, '#2244dd');
-    assert.notEqual(original, changed);
+    const changed = original.replaceAll(before, after);
+    assert.notEqual(original, changed, file);
     writeFileSync(path, changed);
-    assert.ok(check(dir).some(error => error.includes(file)));
+    assert.ok(check(dir).some(error => error.includes(file)), file);
     assert.equal(readFileSync(path, 'utf8'), changed);
     writeFileSync(path, original);
   }
+});
+
+test('Swift output has dynamic AppKit colors and layout constants from the source', t => {
+  const dir = fixture(t);
+  generate(dir);
+  const swift = readFileSync(join(dir, 'design/tokens/tokens.swift'), 'utf8');
+  const themes = Object.fromEntries(loadTokens(dir).map(theme => [theme.name, theme.tokens]));
+  const hex = (name, role) => `0x${themes[name][`color.${role}`].$value.hex.slice(1).toUpperCase()}`;
+  assert.match(swift, /^\/\/ SPDX-License-Identifier: Apache-2\.0\n/);
+  assert.match(swift, /import AppKit/);
+  for (const role of ['canvas', 'surface', 'text', 'muted', 'accent', 'line']) {
+    assert.match(swift, new RegExp(`static let ${role}: NSColor = dynamic\\(light: ${hex('light', role)}, `
+      + `dark: ${hex('dark', role)}, highContrast: ${hex('high-contrast', role)}\\)`));
+  }
+  for (const name of ['inline', 'gutter', 'section', 'page']) {
+    assert.match(swift, new RegExp(`static let ${name}: CGFloat = ${themes.light[`space.${name}`].$value.value}\\b`));
+  }
+  assert.match(swift, new RegExp(`static let card: CGFloat = ${themes.light['radius.card'].$value.value}\\b`));
+  // Durations arrive as milliseconds and leave as seconds.
+  for (const [name, value] of [['settle', '0.16'], ['reduced', '0'], ['activityFrame', '0.1'], ['activityElapsed', '1']]) {
+    assert.match(swift, new RegExp(`static let ${name}: TimeInterval = ${value}\\b`));
+  }
+  assert.match(swift, /accessibilityHighContrastAqua/);
+  assert.match(swift, /accessibilityHighContrastDarkAqua/);
+  assert.match(swift, /bestMatch\(from:/);
+});
+
+test('a light high-contrast set fails because the launcher needs a dark one', t => {
+  const dir = fixture(t);
+  const path = join(dir, 'design/tokens/high-contrast.json');
+  const data = JSON.parse(readFileSync(path, 'utf8'));
+  const set = (role, hex, ansi256, ansi16) => {
+    const token = data.color[role];
+    const components = [1, 3, 5].map(i => parseInt(hex.slice(i, i + 2), 16) / 255);
+    token.$value = { colorSpace: 'srgb', components, alpha: 1, hex };
+    token.$extensions = { 'lina.terminal': { ansi256, ansi16 } };
+  };
+  set('canvas', '#FFFFFF', 231, 15);
+  set('surface', '#FFFFFF', 231, 15);
+  set('text', '#000000', 16, 0);
+  set('muted', '#000000', 16, 0);
+  set('accent', '#000080', 17, 4);
+  set('line', '#000000', 16, 0);
+  writeFileSync(path, JSON.stringify(data));
+  assert.throws(() => generate(dir), /high-contrast.*dark/i);
+});
+
+test('spacing, radius and motion must match across themes because the Swift file holds one value', t => {
+  const dir = fixture(t);
+  const path = join(dir, 'design/tokens/dark.json');
+  const data = JSON.parse(readFileSync(path, 'utf8'));
+  data.space.gutter.$value.value = 16;
+  writeFileSync(path, JSON.stringify(data));
+  assert.throws(() => generate(dir), /dark: space\.gutter must match the light theme/);
 });
 
 test('low contrast, absent roles and missing terminal fallbacks fail closed', t => {
@@ -77,4 +137,12 @@ test('TUI guard rejects raw color, ANSI colors and presentation glyphs', () => {
     'var mark = tokens.GlyphUnicodeLive', 'var text = "연결됨"',
     'var wire = "\\x1b]52;c;payload\\a"',
   ]) assert.deepEqual(lintGo(source), [], source);
+});
+
+test('CSS font stacks keep generic fallbacks unquoted', t => {
+  const dir = fixture(t);
+  generate(dir);
+  const css = readFileSync(join(dir, 'design/tokens/tokens.css'), 'utf8');
+  assert.match(css, /--lina-type-body: "Pretendard", sans-serif;/);
+  assert.doesNotMatch(css, /"(?:sans-serif|monospace|serif)"/);
 });

@@ -23,7 +23,7 @@ import (
 // parent has already exited when the owner is asked to clean up an orphan.
 func TestOwnerReapsEscapedDescendants(t *testing.T) {
 	for _, escape := range escapeModes {
-		for _, finish := range []string{"close", "cancel", "exit"} {
+		for _, finish := range escapeFinishes {
 			t.Run(escape+"/"+finish, func(t *testing.T) {
 				ctx, cancel := context.WithTimeout(t.Context(), 10*time.Second)
 				defer cancel()
@@ -52,7 +52,7 @@ func TestOwnerReapsEscapedDescendants(t *testing.T) {
 				defer stop()
 				done := make(chan error, 1)
 				go func() {
-					done <- owner.Run(runCtx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestEscapingProcess$", "--", "root", escape}, Env: []string{"LINA_PROC_ESCAPE_TEST=1"}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
+					done <- owner.Run(runCtx, l, proc.Command{Path: exe, Args: []string{"-test.run=^TestEscapingProcess$", "--", "root", escape}, Env: []string{}, Stdin: input, Stdout: writer, Stderr: os.Stderr})
 					writer.Close()
 				}()
 				ready := make(chan []string, 1)
@@ -125,12 +125,20 @@ func TestOwnerReapsEscapedDescendants(t *testing.T) {
 	}
 }
 
+// TestEscapingProcess runs only for the explicit modes below. The marker is an
+// argument rather than an environment entry, so the "cleared" escape can start
+// its descendant with an empty environment.
 func TestEscapingProcess(t *testing.T) {
-	if os.Getenv("LINA_PROC_ESCAPE_TEST") != "1" {
+	mode, escape := "", ""
+	args := os.Args
+	for i := range len(args) - 2 {
+		if args[i] == "--" {
+			mode, escape = args[i+1], args[i+2]
+		}
+	}
+	if mode != "root" && mode != "fork" && mode != "leaf" {
 		return
 	}
-	args := os.Args[len(os.Args)-2:]
-	mode, escape := args[0], args[1]
 	if mode == "leaf" {
 		fmt.Printf("pid=%s\n", strconv.Itoa(os.Getpid()))
 		time.Sleep(time.Hour)
@@ -141,7 +149,13 @@ func TestEscapingProcess(t *testing.T) {
 		next = "fork"
 	}
 	cmd := exec.Command(os.Args[0], "-test.run=^TestEscapingProcess$", "--", next, escape)
-	cmd.Env = os.Environ() // Preserve the Darwin owner token through both forks.
+	if escape == "cleared" && mode == "fork" {
+		// The descendant inherits nothing at all, so no record the environment
+		// carries can reach it.
+		cmd.Env = []string{}
+	} else {
+		cmd.Env = os.Environ()
+	}
 	cmd.Stdout, cmd.Stderr = os.Stdout, os.Stderr
 	configureEscape(cmd, escape)
 	if err := cmd.Start(); err != nil {

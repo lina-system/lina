@@ -15,6 +15,31 @@ import (
 
 var ErrJobConflict = errors.New("memory_job_conflict")
 
+// ValidateExtraction rejects malformed proposals before caching an Aux result.
+// Canonical availability and scope are still rechecked at dispatch and Apply.
+func ValidateExtraction(batch ExtractionBatch, items []Item) error {
+	if len(items) > 100 {
+		return ErrInvalid
+	}
+	allowed := map[string]bool{}
+	for _, u := range batch.Utterances {
+		for _, e := range u.Events {
+			allowed[e.ID] = true
+		}
+	}
+	for _, item := range items {
+		if _, err := validateWrite(Write{Agent: batch.Agent, Person: batch.Person, Item: item}, false); err != nil {
+			return err
+		}
+		for _, e := range item.Evidence {
+			if e.Kind != Event || e.Precision != Exact || e.Revision != 0 || !allowed[e.ID] {
+				return ErrEvidence
+			}
+		}
+	}
+	return nil
+}
+
 type Utterance struct {
 	Conversation string     `json:"conversation"`
 	Text         string     `json:"text"`
@@ -53,6 +78,7 @@ func (s *Store) PrepareExtraction(ctx context.Context, scope RecallScope, after 
 			return err
 		}
 		rows, err := tx.QueryContext(ctx, `SELECT e.rowid,e.id,e.conversation_id,e.speaker_kind,coalesce(e.person_id,''),
+   (e.speaker_kind='system' AND coalesce(e.scaffold_kind,'')='input_binding' AND json_extract(e.origin,'$.kind')='native'),
    (EXISTS(SELECT 1 FROM retract_visible_event v WHERE v.id=e.id)
     AND json_extract(e.origin,'$.kind')='native' AND e.replay_of IS NULL AND NOT EXISTS(SELECT 1 FROM ev_rel r WHERE r.event_id=e.id AND r.kind='view_of'))
    FROM conv_event e WHERE e.agent_id=? AND e.rowid>? ORDER BY e.rowid LIMIT ?`, scope.Agent, after, limit)
@@ -63,11 +89,12 @@ func (s *Store) PrepareExtraction(ctx context.Context, scope RecallScope, after 
 			sequence                          int64
 			id, conversation, speaker, person string
 			visible                           bool
+			inputBinding                      bool
 		}
 		var sources []source
 		for rows.Next() {
 			var v source
-			if err := rows.Scan(&v.sequence, &v.id, &v.conversation, &v.speaker, &v.person, &v.visible); err != nil {
+			if err := rows.Scan(&v.sequence, &v.id, &v.conversation, &v.speaker, &v.person, &v.inputBinding, &v.visible); err != nil {
 				rows.Close()
 				return err
 			}
@@ -81,6 +108,11 @@ func (s *Store) PrepareExtraction(ctx context.Context, scope RecallScope, after 
 		var started, last int64
 		for _, v := range sources {
 			batch.Through = v.sequence
+			// Core appends binding metadata to each native input. It is not
+			// speech and neither contributes evidence nor interrupts a burst.
+			if v.inputBinding {
+				continue
+			}
 			if !v.visible || v.speaker != string(guard.Person) || v.person != scope.Person || blocked[v.id] {
 				previous = ""
 				continue
@@ -246,6 +278,12 @@ func checkPreparedExtraction(ctx context.Context, tx *canon.Tx, batch Extraction
 		}
 	}
 	return nil
+}
+
+// CheckExtractionTx lets the job owner commit its source cursor only when the
+// same transaction still accepts the prepared evidence.
+func CheckExtractionTx(ctx context.Context, tx *canon.Tx, batch ExtractionBatch, resolve ResolveEvidence) error {
+	return checkPreparedExtraction(ctx, tx, batch, resolve)
 }
 
 // ExtractionApply binds the job to its agent and person at registration, and

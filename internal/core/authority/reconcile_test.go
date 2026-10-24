@@ -14,6 +14,7 @@ import (
 )
 
 func TestCancelInterruptedRequiresRecoveryAndEvidence(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	definition := spec(false)
 	input, err := definition.Schema(f.call.Args)
@@ -106,6 +107,7 @@ func TestCancelInterruptedRequiresRecoveryAndEvidence(t *testing.T) {
 }
 
 func TestCancelInterruptedDoesNotReleaseAnotherReservation(t *testing.T) {
+	t.Parallel()
 	f := setup(t)
 	definition := spec(false)
 	input, err := definition.Schema(f.call.Args)
@@ -151,8 +153,10 @@ func TestCancelInterruptedDoesNotReleaseAnotherReservation(t *testing.T) {
 }
 
 func TestAppliedObservationReleasesOnlyItsReservedTarget(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(fmt.Sprint(restart), func(t *testing.T) {
+			t.Parallel()
 			f := setup(t)
 			definition := spec(false)
 			input, err := definition.Schema(f.call.Args)

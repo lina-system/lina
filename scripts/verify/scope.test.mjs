@@ -147,6 +147,39 @@ for (const path of [
   });
 }
 
+for (const path of [
+  'internal/addons/importer/murmur/events.go',
+  'internal/addons/importer/murmur/import_test.go',
+]) {
+  test(`murmur change ${path} selects its consumer checks`, t => {
+    const r = repository(t);
+    const files = {
+      'go.mod': 'module example.invalid/lina\ngo 1.27\ntoolchain go1.27.3\n',
+      'kit/go.mod': 'module example.invalid/lina/kit\ngo 1.27\ntoolchain go1.27.3\n',
+      'go.work': 'go 1.27\ntoolchain go1.27.3\nuse (\n.\n./kit\n)\n',
+      'doc.go': 'package lina\n', 'kit/doc.go': 'package kit\n',
+      'cmd/lina/main.go': 'package main\nfunc main() {}\n',
+      'internal/addons/importer/murmur/events.go': 'package murmur\n',
+      'internal/addons/importer/murmur/import_test.go': 'package murmur\n',
+    };
+    mkdirSync(join(r.cwd, 'cmd/lina'), { recursive: true });
+    mkdirSync(join(r.cwd, 'kit'), { recursive: true });
+    mkdirSync(join(r.cwd, 'internal/addons/importer/murmur'), { recursive: true });
+    for (const [name, content] of Object.entries(files)) {
+      writeFileSync(join(r.cwd, name), content);
+    }
+    const base = r.commit();
+    writeFileSync(join(r.cwd, path), `${files[path]}// changed\n`);
+    const scope = r.classify(r.commit(), { base });
+    assert.deepEqual(scope.unmapped, []);
+    assert.deepEqual(scope.selectedComponents, ['lina']);
+    assert.equal(scope.components, true);
+    assert.equal(scope.automation, false);
+    assert.equal(kind(path), 'components');
+    assert.ok(componentRegistry.find(c => c.name === 'lina').packages.includes('./internal/addons/importer/murmur/...'));
+  });
+}
+
 test('Hermes readers and synthetic fixtures select their consumer checks', t => {
   const r = repository(t);
   const base = r.git('rev-parse', 'HEAD');
@@ -653,7 +686,7 @@ for (const path of ['scripts/verify/dependency-exceptions.json', 'THIRD-PARTY-NO
 }
 
 test('brand tokens and generated data select verification while PNGs remain evidence', () => {
-  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'DESIGN.md']) assert.equal(kind(path), 'automation');
+  for (const path of ['design/tokens/light.json', 'design/tokens/tokens.css', 'design/tokens/tokens.swift', 'DESIGN.md']) assert.equal(kind(path), 'automation');
   assert.equal(kind('internal/design/tokens_gen.go'), 'components');
   assert.equal(kind('evidence/brand/dark-connected.png'), 'docs');
   assert.equal(kind('evidence/brand/unregistered.py'), 'unmapped');
@@ -672,9 +705,33 @@ test('vector rebuilds select automation and their notices remain documents', () 
   assert.equal(kind('packaging/sqlite-vec/unregistered.py'), 'unmapped');
 });
 
+test('the macOS package is documentation with its build inputs', () => {
+  assert.equal(kind('packaging/macos/README.md'), 'docs');
+  assert.equal(kind('packaging/macos/build.sh'), 'automation');
+});
+
+test('native parts select automation and carry their own tests', t => {
+  for (const path of ['native/macos/unlock-plugin/src/lina_unlock.c', 'native/macos/unlock-plugin/README.md', 'native/macos/unlock-plugin/Info.plist']) {
+    assert.equal(kind(path), 'automation', path);
+  }
+  const r = repository(t);
+  const base = r.git('rev-parse', 'HEAD');
+  mkdirSync(join(r.cwd, 'native/macos/unlock-plugin/src'), { recursive: true });
+  writeFileSync(join(r.cwd, 'native/macos/unlock-plugin/src/lina_unlock.c'), 'int main(void) { return 0; }\n');
+  const scope = r.classify(r.commit(), { base });
+  assert.equal(scope.reason, 'automation-change');
+  assert.equal(scope.automation, true);
+  assert.deepEqual(scope.unmapped, []);
+});
+
 test('QA guide and repository opt-in have registered verification', () => {
   assert.equal(kind('docs/qa.md'), 'docs');
   assert.equal(kind('.devflow'), 'automation');
+});
+
+test('the Apple helper belongs to the lina component', () => {
+  assert.equal(kind('adapters/applefm/main.swift'), 'components');
+  assert.equal(kind('adapters/applefm/README.md'), 'components');
 });
 
 test('Claude adapter and npm configuration select automation and dependency verification', () => {
@@ -734,4 +791,11 @@ test('one-time takeover operator is verified separately from release commands', 
   const operator = componentRegistry.find(c => c.name === 'crw-takeover');
   assert.deepEqual(operator.packages, ['./tools/crw-takeover/...']);
   assert.equal(operator.binary, undefined);
+});
+
+test('shared generated UI template and embedded font belong to the Core build', () => {
+  for (const path of ['design/template.go', 'design/template/base.css', 'design/template/mock.js', 'design/fonts/PretendardVariable.woff2']) {
+    assert.equal(kind(path), 'components');
+  }
+  assert.equal(kind('design/tokens/tokens.css'), 'automation');
 });

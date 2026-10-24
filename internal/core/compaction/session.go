@@ -28,9 +28,16 @@ func NewSession(p Pass, v View, resolve ResolveItems) (*Session, error) {
 	if err != nil {
 		return nil, err
 	}
+	// The boundary already decided whether to compact early. Follow-up requests
+	// inside the turn keep the ordinary trigger.
+	p.Cold = false
 	return &Session{pass: p, view: copyView(v), original: v.request().Items, resolve: resolve}, nil
 }
 func (s *Session) View() View { return copyView(s.view) }
+
+// Sizes measures the current projection without another fitting or model pass.
+func (s *Session) Sizes() (Sizes, error) { return s.pass.measure(s.view) }
+
 func (s *Session) Transform(ctx context.Context, r provider.Request) (provider.Request, error) {
 	if s.pending {
 		return provider.Request{}, ErrContinuation

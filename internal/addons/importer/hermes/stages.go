@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"sync"
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/assets"
@@ -70,18 +71,26 @@ type TableCount struct {
 	Omitted                 string
 }
 type Plan struct {
-	batch         string
-	rehearsal     bool
-	people        map[string]string
-	mappings      []ProfileMapping
-	profiles      []string
-	conversations []*conversation
-	inventory     []TableCount
+	rehearse        func() (RehearsalReport, error)
+	rehearsalOnce   sync.Once
+	rehearsalReport RehearsalReport
+	rehearsalJSON   string
+	rehearsalErr    error
+	batch           string
+	rehearsal       bool
+	people          map[string]string
+	mappings        []ProfileMapping
+	profiles        []string
+	conversations   []*conversation
+	inventory       []TableCount
+	uidLineages     []UIDLineageMapping
 }
 type Report struct {
 	AddedEvents, AddedRecords, AddedReferences int
 	Tables                                     []TableCount
 	Speakers                                   []SpeakerReport
+	AmbiguousUIDRows                           int
+	UIDLineageMappings                         []UIDLineageMapping
 }
 type Reconciliation struct {
 	System, Instance, Table                               string
@@ -120,6 +129,7 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 		return nil, invalidSnapshot("confirmed maps, batch and profiles required")
 	}
 	p := &Plan{batch: req.BatchID, rehearsal: req.Rehearsal, people: map[string]string{}}
+	p.rehearse = p.rehearseSnapshot
 	defer func() {
 		if err != nil {
 			err = errors.Join(err, p.Close())
@@ -128,7 +138,11 @@ func prepare(ctx context.Context, req Request, honcho []honchoWorkspace) (_ *Pla
 	for _, profile := range req.Profiles {
 		p.profiles = append(p.profiles, profile.ID)
 		p.people[profile.ID] = profile.PersonID
-		p.mappings = append(p.mappings, ProfileMapping{Profile: profile.ID, Agent: profile.AgentID, Person: profile.PersonID, OwnerChannels: profile.OwnerChannels})
+		candidates, err := DiscoverOwnerChannels(ctx, profile.StatePath)
+		if err != nil {
+			return nil, err
+		}
+		p.mappings = append(p.mappings, ProfileMapping{Profile: profile.ID, Agent: profile.AgentID, Person: profile.PersonID, OwnerChannels: profile.OwnerChannels, CandidateOwnerChannels: candidates})
 	}
 	seen := map[string]bool{}
 	builders := map[string]*profileBuilder{}
@@ -190,7 +204,7 @@ func (p *Plan) Import(ctx context.Context, db Canon) (Report, error) {
 		return Report{}, invalidSnapshot("rehearsal plan cannot import")
 	}
 	defer p.Close() // durable markers preserve cleanup failures for restart recovery
-	report := Report{Tables: append([]TableCount(nil), p.inventory...)}
+	report := Report{Tables: append([]TableCount(nil), p.inventory...), AmbiguousUIDRows: len(p.uidLineages), UIDLineageMappings: p.uidLineages}
 	byProfile := map[string]int{}
 	for _, profile := range p.profiles {
 		byProfile[profile] = len(report.Speakers)

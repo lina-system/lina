@@ -64,18 +64,25 @@ type Config struct {
 	Now           func() time.Time
 	Driver        Driver
 	Sweep         <-chan time.Time
+	// Sessions owns the worker processes of goal steps. After every committed
+	// event, a session whose step has landed or been closed is ended, so live
+	// sessions follow the frontier and not the history of the goal. The work
+	// layer names only what it calls; the worker registry implements it.
+	Sessions SessionOwner
 	// Changed publishes a committed projection. A delivery failure does not
 	// revoke the state; startup and subsequent events can publish it again.
 	Changed func(context.Context, State) error
 }
 type Engine struct {
-	definitions sync.Map
-	journal     *Journal
-	cfg         Config
-	mu          sync.Mutex
-	running     map[string]bool
-	wg          sync.WaitGroup
-	failures    chan error
+	definitions   sync.Map
+	journal       *Journal
+	cfg           Config
+	mu            sync.Mutex
+	running       map[string]bool
+	wg            sync.WaitGroup
+	failures      chan error
+	evidenceCtx   context.Context
+	evidenceReads map[string]*evidenceRead
 }
 
 func NewEngine(cfg Config) (*Engine, error) {
@@ -85,7 +92,7 @@ func NewEngine(cfg Config) (*Engine, error) {
 	if cfg.Now == nil {
 		cfg.Now = time.Now
 	}
-	e := &Engine{journal: NewJournal(cfg.DB), cfg: cfg, running: map[string]bool{}, failures: make(chan error, 1)}
+	e := &Engine{journal: NewJournal(cfg.DB), cfg: cfg, running: map[string]bool{}, failures: make(chan error, 1), evidenceReads: map[string]*evidenceRead{}}
 	if cfg.DriverFactory != nil {
 		if cfg.Driver != nil {
 			return nil, ErrInvalid
@@ -275,8 +282,12 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 	if err := e.RefreshDefinitions(ctx); err != nil {
 		return err
 	}
+	verified, err := e.closingEvidence(ctx)
+	if err != nil {
+		return err
+	}
 	now := e.cfg.Now()
-	err := e.journal.Update(ctx, Transition{ID: "derive:" + rand.Text(), Kind: "work.derived", At: now.Unix()}, func(v *View) error {
+	err = e.journal.Update(ctx, Transition{ID: "derive:" + rand.Text(), Kind: "work.derived", At: now.Unix()}, func(v *View) error {
 		if err := e.reconcileRetired(v); err != nil {
 			return err
 		}
@@ -316,10 +327,14 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				if t != nil && a.Kind == PlanGoal {
 					t.RepairAsked = true
 				}
-				if t != nil && reserves(a) && a.ObserveActionID == "" {
+				if t != nil && workerAction(a.Kind) && a.ObserveActionID == "" {
 					t.Stage = TaskBuilding
 					t.Attempt = a.Attempt
 					t.NodeID = a.NodeID
+					// The worker action of this reservation owns the step's
+					// session. Recording its key here, in the same transaction,
+					// keeps the live set derivable before any process exists.
+					t.Session = a.ID
 					t.PR = PRState{}
 					t.EffectsSettled = false
 					if counter := kindSpecs[a.Kind].counter; counter != nil {
@@ -370,13 +385,15 @@ func (e *Engine) Reconcile(ctx context.Context) error {
 				switch {
 				case g.DefinitionPending && g.AssessedFailure == "definition:"+g.RecordRevision:
 					g.State = GoalBlocked
-				case has(p.Close, g.ID):
+				case has(p.Close, g.ID) && (verified == nil || verified[g.ID] == evidenceToken(*g)):
 					g.State = GoalDone
 				case has(p.Block, g.ID) || person:
 					g.State = GoalBlocked
 					g.AttentionID = fmt.Sprintf("goal:%s:%d:attention", g.ID, g.Revision)
 					g.BlockedReason = "LINA could not find a way to finish the remaining done condition; a decision is needed."
 				case g.DefinitionPending:
+					g.State = GoalRunning
+				case failedEvidence(*g):
 					g.State = GoalRunning
 				case allLanded:
 					g.State = GoalChecking
@@ -585,6 +602,11 @@ func (e *Engine) report(ctx context.Context, ev Transition, id string, o Observa
 			a.State = "unknown"
 		case OutcomeNeedsPerson:
 			a.State = "needs_person"
+			if t != nil && stepKind(t.Kind) != TaskStep && o.EffectsSettled {
+				a.State = "finished"
+				t.Stage = TaskNeedsPerson
+				t.EffectsSettled = true
+			}
 			if o.Handle != "" {
 				a.Handle = o.Handle
 			}
@@ -701,6 +723,8 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		if !currentEvidence(*g, criterion, *o.Criterion) || o.Criterion.Revision != a.Revision {
 			return ErrConflict
 		}
+		// A connector's success flag cannot override a mismatched readback.
+		o.Criterion.Passed = o.Criterion.Passed && o.Criterion.Collected.Matches(criterion.Check)
 		for i, old := range g.Checks {
 			if old.Criterion == a.CriterionID {
 				g.Checks[i] = *o.Criterion
@@ -745,12 +769,28 @@ func applySuccess(g *Goal, t *Task, a Action, o Observation, now int64) error {
 		}
 
 	case Assign, Resume, RepairConflict, RepairQA, ContinueWorker:
+		if t != nil && stepKind(t.Kind) != TaskStep {
+			if !o.EffectsSettled || !o.Proof.proves(o.Proof.Revision) {
+				return ErrInvalid
+			}
+			t.Result = o.Proof
+			t.Stage = TaskDone
+			t.EffectsSettled = true
+			g.Evidence = append(g.Evidence, o.Proof)
+			return nil
+		}
 		if t == nil || o.Head == "" || !o.EffectsSettled {
 			return ErrInvalid
 		}
 		t.Head = o.Head
 		t.Stage = TaskDelivered
 		t.EffectsSettled = true
+		if o.Handle != "" {
+			// The handle names the worker session that stays live while this
+			// step is under pull-request operation. It is Core's record key,
+			// never a worker claim.
+			t.ThreadHandle = o.Handle
+		}
 	case InspectPR:
 		if t == nil || o.PR.Head == "" {
 			return ErrInvalid
@@ -835,11 +875,16 @@ func (e *Engine) Run(ctx context.Context) error {
 	}
 	ctx, cancel := context.WithCancel(ctx)
 	defer cancel()
+	e.mu.Lock()
+	e.evidenceCtx = ctx
+	e.mu.Unlock()
 	r := startReconciler(ctx, e.journal, func(ctx context.Context) error { return e.step(ctx) }, e.cfg.Sweep, func(ctx context.Context) error {
 		if e.cfg.Refresh != nil {
-			return e.cfg.Refresh(ctx, e)
+			if err := e.cfg.Refresh(ctx, e); err != nil {
+				return err
+			}
 		}
-		return nil
+		return e.RefreshEvidence(ctx)
 	})
 	var last error
 	for {
@@ -894,6 +939,9 @@ func (e *Engine) awaitAuthorization(ctx context.Context, claimed Action) error {
 			return err
 		}
 		// A definition/repair revision can commit while Authorize runs.
+		if err = retireEvidenceWaits(v, g); err != nil {
+			return err
+		}
 		if err = retireUndispatchedActions(v, &g); err != nil {
 			return err
 		}
@@ -943,6 +991,9 @@ func (e *Engine) step(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	// A step that has landed or been closed no longer justifies a process. A
+	// failed join stays live and is retried by the next event or sweep.
+	_ = e.reapSessions(ctx, s)
 	if e.cfg.Changed != nil {
 		if err := e.cfg.Changed(ctx, s); err != nil {
 			return err

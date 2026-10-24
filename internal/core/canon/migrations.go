@@ -67,6 +67,20 @@ func Migrations() []Migration {
 		{Version: 53, SQL: retractSearchDeltaSchema},
 		{Version: 54, SQL: citeSchema},
 		{Version: 55, SQL: inputBindingSchema},
+		{Version: 56, SQL: MemoryExtractionSchema},
+		{Version: 57, SQL: A2ASchema},
+		{Version: 58, SQL: recallSchema},
+		{Version: 59, SQL: steeringSchema},
+
+		{Version: 60, SQL: recallScopeSchema},
+		{Version: 61, SQL: workerMessagesSchema},
+		{Version: 62, SQL: a2aSchema},
+		{Version: 63, SQL: retractCiteSchema},
+		{Version: 64, SQL: MiniAppsSchema},
+		{Version: 65, SQL: MessengerSchema},
+		{Version: 66, SQL: EventErasureSchema},
+		{Version: 67, SQL: ModelServedSchema},
+		{Version: 68, SQL: MessengerImportSchema},
 	}
 }
 
@@ -75,6 +89,9 @@ var publishedMigrationTables = []struct {
 	version int
 	table   string
 }{
+	{59, "work_steering"}, {59, "work_steering_receipts"},
+	{56, "memory_extraction_cursor"},
+	{61, "worker_message_decisions"}, {61, "worker_message_budget"}, {61, "worker_message_admissions"},
 	{11, "retract_meta"}, {12, "turn_runs"}, {12, "turn_items"}, {12, "turn_calls"}, {12, "turn_partials"}, {13, "turn_control"}, {14, "turn_outcome"}, {15, "sum_node"}, {15, "sum_edge"}, {15, "sum_cover"},
 	{16, "owner_binding"}, {16, "sign_in_host"}, {16, "sign_in_identities"},
 	{17, "channel_connections"}, {17, "channel_bindings"}, {17, "channel_actions"}, {17, "channel_receipts"}, {17, "channel_outbound"},
@@ -83,6 +100,8 @@ var publishedMigrationTables = []struct {
 	{20, "conversation_order"},
 	{21, "agent_growth_steps"}, {22, "moirai_jobs"}, {22, "budget_usage"},
 	{23, "skill_versions"}, {23, "skill_heads"}, {23, "skill_undone"}, {23, "skill_repo"},
+	{57, "a2a_connections"}, {57, "a2a_calls"},
+	{62, "a2a_tasks"}, {62, "a2a_messages"},
 	{31, "worker_dispatch"}, {52, "worker_recovery"},
 	{41, "timer"}, {41, "timer_fire"}, {40, "work_completion_origins"}, {43, "worker_quota"}, {40, "work_completions"}, {40, "work_completion_claims"},
 	{34, "waiting_decisions"},
@@ -104,7 +123,14 @@ var publishedMigrationTables = []struct {
 	{45, "record_operations"}, {45, "record_candidates"},
 	{54, "cite"},
 	{55, "records_activity"},
+	{58, "recall_doc"}, {58, "recall_text"}, {58, "recall_pair"}, {58, "recall_pending"},
+	{60, "recall_conversation_scope"},
 	{51, "conversation_questions"}, {51, "conversation_question_resolutions"},
+	{64, "mini_app"}, {64, "mini_app_revision"}, {64, "mini_app_change"}, {64, "mini_app_event"},
+	{65, "messenger_source"}, {65, "messenger_chat"}, {65, "messenger_coverage"},
+	{65, "messenger_record"}, {65, "messenger_record_revision"}, {65, "messenger_effect"},
+	{67, "model_served"},
+	{68, "messenger_import"}, {68, "messenger_legacy_ref"},
 }
 
 // Reject incompatible pre-release layouts before opening the writer. There is

@@ -17,6 +17,7 @@ import (
 )
 
 func TestImportedSpeakersAtPersonMemoryBoundary(t *testing.T) {
+	t.Parallel()
 	state, host := hermesFixture(t, "state")
 	if _, err := host.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
 		t.Fatal(err)
@@ -96,6 +97,7 @@ func TestImportedSpeakersAtPersonMemoryBoundary(t *testing.T) {
 }
 
 func TestSpeakerMetadataAndOwnerProof(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name, change string
 		want         guard.SpeakerKind
@@ -138,6 +140,7 @@ func TestSpeakerMetadataAndOwnerProof(t *testing.T) {
 }
 
 func TestSpeakerReportsAreProfileLocalAndReadOnly(t *testing.T) {
+	t.Parallel()
 	state, host := hermesFixture(t, "state")
 	if _, err := host.Exec(string(fixture(t, "speakers-state.sql"))); err != nil {
 		t.Fatal(err)
@@ -185,6 +188,7 @@ func TestSpeakerReportsAreProfileLocalAndReadOnly(t *testing.T) {
 }
 
 func TestSpeakerInputsFailClosed(t *testing.T) {
+	t.Parallel()
 	for _, tc := range []struct {
 		name   string
 		events []SpeakerSources

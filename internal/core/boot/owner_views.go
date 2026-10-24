@@ -21,7 +21,13 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
-const ownerViewRefreshInterval = 5 * time.Second
+const (
+	ownerViewRefreshInterval = 5 * time.Second
+	// ownerViewSettle coalesces a burst of commits into one projection. The
+	// publish must land within 250 ms of the commit (work-and-delegation.md#stages),
+	// so the settle window leaves room for the projection itself.
+	ownerViewSettle = 100 * time.Millisecond
+)
 
 var progressCapability = protocol.Capability{Name: "progress", Version: "1.0"}
 
@@ -149,7 +155,7 @@ func (r *conversationRuntime) runOwnerViews(watch context.Context, refresh <-cha
 				pending = r.topics.HasSubscribers("progress")
 			}
 		}
-		timer := time.NewTimer(250 * time.Millisecond)
+		timer := time.NewTimer(ownerViewSettle)
 		select {
 		case <-watch.Done():
 			timer.Stop()
@@ -189,7 +195,7 @@ func (r *conversationRuntime) ownerWaiting(ctx context.Context, names map[string
 		}
 		sources["outside"] = outsideWaitingSource{r.person, r.agent, name(r.agent)}
 	}
-	return waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}}).Build(ctx, r.person, opts)
+	return waiting.NewWithLive(r.db, sources, map[string]waiting.LiveSource{"worker": workerWaitingSource{r, names}, "a2a": a2aWaitingSource{r, names}}).Build(ctx, r.person, opts)
 }
 func waitingRows(list waiting.List) []protocol.WaitingRow {
 	rows := []protocol.WaitingRow{}
@@ -205,6 +211,18 @@ func waitingRows(list waiting.List) []protocol.WaitingRow {
 	return rows
 }
 func number(n int) json.Number { return json.Number(strconv.Itoa(n)) }
+
+// goalTitles reads each goal's own sentence. The execution ledger never holds
+// the goal's prose. A definition the person removed, or that no longer parses,
+// leaves that goal's name unknown and does not change the other names. A
+// failed ledger read still fails the projection.
+func (r *conversationRuntime) goalTitles(ctx context.Context) (map[string]string, error) {
+	if r.workEngine == nil || r.workEngine.engine == nil {
+		return map[string]string{}, nil
+	}
+	return r.workEngine.engine.GoalSentences(ctx)
+}
+
 func (r *conversationRuntime) ownerSnapshot(ctx context.Context) (protocol.Progress, error) {
 	p, _, err := r.ownerProjection(ctx)
 	return p, err
@@ -222,10 +240,28 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		return protocol.Progress{}, "", err
 	}
 	var units []progress.Unit
+	titles, err := r.goalTitles(ctx)
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
 	err = r.db.Read(ctx, func(tx *canon.Tx) error {
 		var err error
 		units, err = progress.WorkUnits(ctx, tx, r.person, names)
-		return err
+		if err != nil {
+			return err
+		}
+		goals, err := progress.Goals(ctx, tx, r.person, names, func(id string) string { return titles[id] })
+		if err != nil {
+			return err
+		}
+		if err := r.dispatchedStageSources(ctx, tx, units, names); err != nil {
+			return err
+		}
+		if err := progress.AttachCardStages(ctx, tx, r.person, units, goals); err != nil {
+			return err
+		}
+		units = append(units, goals...)
+		return nil
 	})
 	if err != nil {
 		return protocol.Progress{}, "", err
@@ -252,10 +288,15 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 		return protocol.Progress{}, "", err
 	}
 	units = append(units, background...)
+	workers, err := r.stageWorkers(ctx, units)
+	if err != nil {
+		return protocol.Progress{}, "", err
+	}
 	entries := progress.Compute(units)
 	rows := []protocol.ProgressRow{}
 	for _, entry := range entries {
 		v := entry.Line
+		refs := []protocol.ProgressStageRefs{}
 		line := protocol.ProgressLine{Name: v.Name, Kind: v.Kind, Stage: v.Stage, JustFinished: v.JustFinished, Next: v.Next, Waiting: number(v.Waiting), Depth: number(v.Depth)}
 		if !v.StartedAt.IsZero() {
 			value := v.StartedAt.UTC().Format(time.RFC3339Nano)
@@ -273,13 +314,57 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 			state := protocol.RunningState(v.State)
 			line.State = &state
 		}
+		if entry.Row {
+			row := true
+			line.Row = &row
+		}
 		if v.Percent != nil {
 			percent := number(*v.Percent)
 			line.Percent = &percent
 		}
-		rows = append(rows, protocol.ProgressRow{Ref: entry.Ref, Line: line})
+		if len(v.Stages) > 0 {
+			stages := make([]protocol.ProgressStage, 0, len(v.Stages))
+			for _, entry := range v.Stages {
+				stage := protocol.ProgressStage{Kind: string(entry.Kind), Label: entry.Label, State: string(entry.State)}
+				ref := protocol.ProgressStageRefs{Kind: stage.Kind, Steps: []string{}}
+				if entry.Number > 0 {
+					value := number(entry.Number)
+					stage.Number = &value
+					ref.Number = &value
+				}
+				if len(entry.Steps) > 0 {
+					steps := make([]protocol.ProgressStageStep, 0, len(entry.Steps))
+					for _, step := range entry.Steps {
+						wire := protocol.ProgressStageStep{Name: step.Name, State: string(step.State)}
+						ref.Steps = append(ref.Steps, step.ID)
+						if (step.State == progress.StepWorking || step.State == progress.StepNeedsInput) && len(workers[step.Session]) > 0 {
+							value := workers[step.Session]
+							wire.Workers = &value
+						}
+						if !step.StartedAt.IsZero() {
+							value := step.StartedAt.UTC().Format(time.RFC3339Nano)
+							wire.StartedAt = &value
+						}
+						steps = append(steps, wire)
+					}
+					stage.Steps = &steps
+				}
+				stages = append(stages, stage)
+				refs = append(refs, ref)
+			}
+			line.Stages = &stages
+		}
+		row := protocol.ProgressRow{Ref: entry.Ref, Line: line}
+		if len(refs) > 0 {
+			row.StageRefs = &refs
+		}
+		rows = append(rows, row)
 	}
 	cardOrder := workCardOrder(rows)
+	// The running count counts these lines, never their rows, so Core publishes
+	// it instead of leaving a client to count tasks (work-and-delegation.md#running-list).
+	counted := progress.CountLines(entries)
+	counts := protocol.ProgressCounts{Running: number(counted.Running), Waiting: number(counted.Waiting)}
 	// Track the complete list before the Home limit. A change below that limit
 	// must invalidate an open full waiting view even when Home looks identical.
 	full, err := json.Marshal(waitingRows(list))
@@ -291,7 +376,7 @@ func (r *conversationRuntime) ownerProjectionOrder(ctx context.Context, order wa
 	list.Entries = list.Entries[:count]
 	waiting := waitingRows(list)
 	more := number(list.More)
-	return protocol.Progress{Rows: &rows, CardOrder: &cardOrder, Waiting: &waiting, WaitingMore: &more}, string(full), nil
+	return protocol.Progress{Rows: &rows, CardOrder: &cardOrder, Counts: &counts, Waiting: &waiting, WaitingMore: &more}, string(full), nil
 }
 func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	v := r.ownerViews
@@ -301,7 +386,7 @@ func (r *conversationRuntime) publishOwnerViews(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	update := protocol.ProgressUpdate{Rows: p.Rows, CardOrder: p.CardOrder, Waiting: p.Waiting, WaitingMore: p.WaitingMore}
+	update := protocol.ProgressUpdate{Rows: p.Rows, CardOrder: p.CardOrder, Counts: p.Counts, Waiting: p.Waiting, WaitingMore: p.WaitingMore}
 	text := ownerText(p)
 	update.Text = &text
 	raw, err := json.Marshal(update)
@@ -417,11 +502,12 @@ func (r *conversationRuntime) liveProgress(ctx context.Context, names map[string
 		if !session.started.IsZero() && (u.StartedAt.IsZero() || session.started.Before(u.StartedAt)) {
 			u.StartedAt = session.started
 		}
+		current := session.progressTurn()
 		session.mu.Lock()
 		if !exists && session.activity != "" && observation.View.State == "in_progress" {
 			u.Now = design.Text(eventLanguage(session.input), session.activity)
 		}
-		if !exists && session.doing != "" && observation.View.State == "in_progress" {
+		if !exists && session.doing != "" && session.doingTurn == current.TurnID && observation.View.State == "in_progress" {
 			u.Now = session.doing
 		}
 		owned := map[string]bool{}

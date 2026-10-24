@@ -57,9 +57,12 @@ func TestM2InstalledCodeGoalDriver(t *testing.T) {
 }
 
 func installedCodeGoal(t *testing.T, mode string) {
+	evidenceMode := strings.HasPrefix(mode, "evidence-")
+	expectEvidenceFailure := mode == "evidence-mismatch" || mode == "evidence-changed"
 	var graph *stepGraphScenario
-	if mode == "step-graph" {
+	if mode == "step-graph" || mode == "ready-frontier" {
 		graph = newStepGraphScenario(t)
+		graph.mixed = mode == "ready-frontier"
 	}
 	fixture := t.TempDir()
 	repo := filepath.Join(fixture, "repo")
@@ -98,7 +101,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if err = os.WriteFile(filepath.Join(bin, "agy"), worker, 0700); err != nil {
 		t.Fatal(err)
 	}
-	for _, name := range []string{"gh", "qa", "acceptance", "deploy", "probe", "host-report"} {
+	for _, name := range []string{"gh", "qa", "acceptance", "deploy", "probe", "host-report", "calendar", "citations", "rubric"} {
 		if err = os.WriteFile(filepath.Join(bin, name), services, 0700); err != nil {
 			t.Fatal(err)
 		}
@@ -183,6 +186,10 @@ func installedCodeGoal(t *testing.T, mode string) {
 			}
 			completion = &result.CompletionRequest{WorkKind: "code", Evidence: []result.EvidenceReference{{Kind: kind, CallID: "owner-path-observation"}}}
 		}
+		if graph != nil && graph.mixed && strings.Contains(request.Instructions, "self-contained background brief") {
+			graph.respond(t, w, request)
+			return
+		}
 		if scriptedCodingManager(t, w, request, completion) {
 			return
 		}
@@ -197,7 +204,11 @@ func installedCodeGoal(t *testing.T, mode string) {
 				emitResponse(w, "Unavailable.", true)
 				return
 			}
-			emitPersonaCall(w, "code-goal", "dispatch_code_goal", map[string]any{"outcome": "Produce and run the result", "done": "The running service returns the result", "scope": map[string]any{"repositories": []string{"fixture/project"}, "includes": "result.txt", "excludes": "design.md"}, "criteria": []any{map[string]any{"id": "result", "statement": "The result matches the request", "check": map[string]any{"kind": "check", "method": "acceptance", "target": "fixture/project"}}}, "service_target": "fixture-service", "tasks": []any{map[string]any{"id": "change", "done": "Produce result.txt", "repository": "fixture/project", "base": "dev", "area": "result.txt", "worker": "antigravity", "resources": map[string]any{"cpu": 0.01, "memory_mb": 1, "disk_mb": 1}}}})
+			args := map[string]any{"outcome": "Produce and run the result", "done": "The running service returns the result", "scope": map[string]any{"repositories": []string{"fixture/project"}, "includes": "result.txt", "excludes": "design.md"}, "criteria": []any{map[string]any{"id": "result", "statement": "The result matches the request", "check": map[string]any{"kind": "check", "method": "acceptance", "target": "fixture/project"}}}, "service_target": "fixture-service", "tasks": []any{map[string]any{"id": "change", "done": "Produce result.txt", "repository": "fixture/project", "base": "dev", "area": "result.txt", "worker": "antigravity", "resources": map[string]any{"cpu": 0.01, "memory_mb": 1, "disk_mb": 1}}}}
+			if evidenceMode {
+				args["criteria"] = evidenceScenario(t).Criteria
+			}
+			emitPersonaCall(w, "code-goal", "dispatch_code_goal", args)
 		} else {
 			methodologyOutput(t, request, "ok", nil)
 			emitResponse(w, "Work started.", true)
@@ -208,6 +219,13 @@ func installedCodeGoal(t *testing.T, mode string) {
 	seedCodingFixture(t, h, bootstrap)
 	command := func(name string) map[string]any { return map[string]any{"path": filepath.Join(bin, name)} }
 	config := map[string]any{"host_report": command("host-report"), "limits": map[string]any{"cpu": 1, "memory_mb": 4096, "disk_mb": 16384}, "repositories": map[string]any{"fixture/project": map[string]any{"clone": repo, "base": "dev", "design_refs": []string{"design.md#result"}, "qa": command("qa"), "checks": map[string]any{"acceptance": command("acceptance")}, "service": map[string]any{"target": "fixture-service", "public": mode == "public", "deploy": command("deploy"), "probe": command("probe")}}}}
+	if evidenceMode {
+		config["evidence_checks"] = map[string]any{
+			"calendar.read":      map[string]any{"repository": "fixture/project", "kind": "read", "target": "calendar:event", "command": command("calendar")},
+			"document.citations": map[string]any{"repository": "fixture/project", "kind": "citation", "target": "document", "command": command("citations")},
+			"document.judge":     map[string]any{"repository": "fixture/project", "kind": "judgment", "target": "document", "command": command("rubric")},
+		}
+	}
 	raw, _ := json.Marshal(config)
 	if err = os.WriteFile(filepath.Join(h.root, "system", "code-work.json"), raw, 0600); err != nil {
 		t.Fatal(err)
@@ -308,7 +326,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		c.Close()
 		h.stopCore(core)
 		core = start()
-		c, conversation = conversationClient(t, h)
+		c, _ = conversationClient(t, h)
 		events = nil
 	}
 	if restarting {
@@ -320,7 +338,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		c.Close()
 		h.stopCore(core)
 		core = start()
-		c, conversation = conversationClient(t, h)
+		c, _ = conversationClient(t, h)
 		close(releaseProbe)
 		events = nil
 		if mode == "restart-unhealthy-probe" {
@@ -328,7 +346,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 			c.Close()
 			h.stopCore(core)
 			core = start()
-			c, conversation = conversationClient(t, h)
+			c, _ = conversationClient(t, h)
 		}
 	}
 	if strings.HasPrefix(mode, "worker-recovery") {
@@ -349,7 +367,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		c.Close()
 		h.stopCore(core)
 		core = start()
-		c, conversation = conversationClient(t, h)
+		c, _ = conversationClient(t, h)
 		events = nil
 	}
 	done := false
@@ -357,7 +375,7 @@ func installedCodeGoal(t *testing.T, mode string) {
 		if item, ok := e.Payload.(protocol.ItemDone); ok && item.Text != nil {
 			done = done || strings.HasPrefix(*item.Text, "Done.")
 			if strings.HasPrefix(*item.Text, "This work needs attention.") {
-				if mode != "public" && mode != "failed-deploy" && mode != "worker-recovery-failed" {
+				if mode != "public" && mode != "failed-deploy" && mode != "worker-recovery-failed" && !expectEvidenceFailure {
 					t.Error("goal blocked: " + *item.Text)
 				}
 				done = true
@@ -452,7 +470,21 @@ func installedCodeGoal(t *testing.T, mode string) {
 		}
 		return
 	}
-	if g.State != goal.GoalDone || len(g.Checks) != 5 || !g.Deployment.Passed || !g.Verification.Passed {
+	if expectEvidenceFailure {
+		closeDB()
+		if g.State != goal.GoalBlocked || len(g.Checks) != 1 || g.Checks[0].Passed || g.Checks[0].Collected == nil {
+			t.Fatalf("plugin claim closed the goal: %+v", g)
+		}
+		if mode == "evidence-changed" && g.CheckRound < 2 {
+			t.Fatal("changed evidence did not reopen checking")
+		}
+		return
+	}
+	wantChecks := 5
+	if evidenceMode {
+		wantChecks = 7
+	}
+	if g.State != goal.GoalDone || len(g.Checks) != wantChecks || !g.Deployment.Passed || !g.Verification.Passed {
 		var debug []string
 		_ = db.Read(t.Context(), func(tx *canon.Tx) error {
 			rows, e := tx.QueryContext(t.Context(), "SELECT body FROM work_records WHERE kind IN ('action','node')")
@@ -523,12 +555,28 @@ func installedCodeGoal(t *testing.T, mode string) {
 			t.Fatalf("observation repeated merge: %s", before)
 		}
 	}
-	for _, name := range []string{"worker-pr", mergeEvent, "qa", "deploy", "probe", "acceptance"} {
+	requiredEvents := []string{"worker-pr", mergeEvent, "qa", "deploy", "probe", "acceptance"}
+	if evidenceMode {
+		requiredEvents = []string{"worker-pr", mergeEvent, "qa", "deploy", "probe", "calendar", "citations", "rubric"}
+	}
+	for _, name := range requiredEvents {
 		if !strings.Contains(string(before), name+"\n") {
 			t.Fatalf("stage %s never ran: %s", name, before)
 		}
 	}
+	if mode == "evidence-later" {
+		if err := os.WriteFile(filepath.Join(fixture, "calendar.json"), []byte(`{"id":"event","time":"10:00","place":"A"}`), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
 	core = start()
+	if evidenceMode {
+		waitCodeGoalState(t, h, func(tx *canon.Tx) (bool, error) {
+			var state string
+			err := tx.QueryRowContext(h.ctx, "SELECT json_extract(body,'$.state') FROM work_records WHERE kind='goal'").Scan(&state)
+			return state == "blocked", err
+		})
+	}
 	if graph != nil {
 		client, conversation := conversationClient(t, h)
 		admittedTurn(t, h, client, conversation, "read-step-graph", "Read the saved steps.")
@@ -540,8 +588,13 @@ func installedCodeGoal(t *testing.T, mode string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if string(before) != string(after) || graph == nil && calls.Load() != 2 {
-		t.Fatalf("restart replayed work: %s -> %s; calls=%d", before, after, calls.Load())
+	for _, effect := range []string{"worker-pr", mergeEvent, "qa", "deploy"} {
+		if strings.Count("\n"+string(before), "\n"+effect+"\n") != strings.Count("\n"+string(after), "\n"+effect+"\n") {
+			t.Fatalf("restart replayed %s: %s -> %s", effect, before, after)
+		}
+	}
+	if graph == nil && calls.Load() != 2 {
+		t.Fatalf("restart requested another conversation: %d", calls.Load())
 	}
 	if strings.HasPrefix(mode, "completion-") {
 		if strings.Count(string(after), "owner-path-check\n") != 1 {

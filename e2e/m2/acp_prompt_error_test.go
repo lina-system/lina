@@ -31,6 +31,10 @@ func TestACPPromptErrorsThroughRunningCore(t *testing.T) {
 			afterFinish: assertACPPromptErrorReceipt,
 		})
 	}
+	scenarios = append(scenarios, acpScenario{
+		name: "invalid-stop-exit", worker: "gemini", binary: "gemini", mode: "invalid-stop-exit",
+		afterFinish: assertACPInvalidStopReceipt,
+	})
 	runACPWorkersThroughRunningCore(t, scenarios)
 }
 
@@ -93,5 +97,31 @@ func assertACPPromptErrorReceipt(t *testing.T, h *harness, _ string, record disp
 	}
 	if record.State != "unknown" || record.Snapshot.EffectsKnown || reservations != 1 {
 		t.Fatalf("prompt error falsely established effect safety: state=%s effects_known=%v reservations=%d", record.State, record.Snapshot.EffectsKnown, reservations)
+	}
+}
+
+func assertACPInvalidStopReceipt(t *testing.T, h *harness, _ string, record dispatch.Record) {
+	t.Helper()
+	// An unrecognized completion reply cannot settle effects, so dispatch keeps
+	// the attempt unknown and never starts a replacement.
+	if record.State != "unknown" || record.Attempt != 1 || record.Recoveries != 0 || record.Code != "prompt_failed" {
+		t.Fatalf("invalid completion authorized a replacement: state=%s code=%s attempt=%d recoveries=%d", record.State, record.Code, record.Attempt, record.Recoveries)
+	}
+	if record.Snapshot != nil && record.Snapshot.EffectsKnown {
+		t.Fatalf("invalid completion established effect safety: %+v", record.Snapshot)
+	}
+	db, err := canon.OpenReader(h.ctx, filepath.Join(h.root, "canon/canon.sqlite"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close(context.Background())
+	card, err := work.New(db).Get(h.ctx, record.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	// Incomplete protocol evidence keeps the turn unknown: no receipt, and the
+	// directory reservation is retained for a person.
+	if card.Receipt != nil || !card.Active {
+		t.Fatalf("invalid completion claimed a settled turn: active=%v receipt=%+v", card.Active, card.Receipt)
 	}
 }

@@ -31,6 +31,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "proc-job" {
+		os.Exit(proc.JobMain(os.Args[2:], os.Stderr))
+	}
 	os.Exit(m.Run())
 }
 
@@ -174,6 +177,11 @@ func (h *coreHarness) await(query string, want int, args ...any) {
 	ticker := time.NewTicker(10 * time.Millisecond)
 	defer ticker.Stop()
 	for {
+		// The read runs under h.ctx, so a spent deadline would otherwise
+		// surface as an interrupted query instead of the failed condition.
+		if err := h.ctx.Err(); err != nil {
+			h.t.Fatalf("condition timed out: %s want=%d", query, want)
+		}
 		var n int
 		h.read(func(tx *canon.Tx) error { return tx.QueryRowContext(h.ctx, query, args...).Scan(&n) })
 		if n == want {
@@ -242,16 +250,29 @@ func reply(w http.ResponseWriter, text string) {
 
 type lastItem struct{ Type, Role, CallID, Output, Content string }
 
+// last returns the item the fixture has to answer: the newest tool result once
+// tools ran, otherwise the input of this turn. Core places the input before
+// retrieved context, and context evidence reaches the model as a wrapped user
+// message, so the input is the newest unwrapped user item.
 func last(q modelRequest) lastItem {
-	var v struct {
-		Type, Role      string
-		CallID          string `json:"call_id"`
-		Output, Content string
+	for i := len(q.Input) - 1; i >= 0; i-- {
+		var v struct {
+			Type, Role      string
+			CallID          string `json:"call_id"`
+			Output, Content string
+		}
+		if json.Unmarshal(q.Input[i], &v) != nil {
+			continue
+		}
+		item := lastItem{v.Type, v.Role, v.CallID, v.Output, v.Content}
+		switch {
+		case item.Type == "function_call_output" || item.Type == "custom_tool_call_output":
+			return item
+		case item.Role == "user" && !strings.HasSuffix(item.Content, "</external_evidence>"):
+			return item
+		}
 	}
-	if len(q.Input) > 0 {
-		_ = json.Unmarshal(q.Input[len(q.Input)-1], &v)
-	}
-	return lastItem{v.Type, v.Role, v.CallID, v.Output, v.Content}
+	return lastItem{}
 }
 
 // This in-process Core uses the test executable. Pin its actual bytes through
@@ -277,7 +298,11 @@ func writeManifest(t *testing.T, root string) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := manifest.Manifest{Version: "0.0.1-alpha.dev", Commit: strings.Repeat("a", 40), Date: "2026-10-23", Target: runtime.GOOS + "/" + runtime.GOARCH, GoToolchain: runtime.Version(), KitVersion: 1, SupportedCombinations: []manifest.Combination{}, Providers: map[string]responses.Config{"chatgpt": policy}, Binaries: []manifest.Binary{{Name: "lina", Size: size, SHA256: digest}, {Name: "lina-node", Size: 1, SHA256: strings.Repeat("b", 64)}}, SQLite: manifest.SQLite{Module: "github.com/ncruces/go-sqlite3", Version: "v0.30.5", ModuleSum: "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", SQLiteVersion: "3.51.2", WasmSHA256: strings.Repeat("d", 64), Execution: "wazero"}}
+	policyJSON, err := json.Marshal(policy)
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := manifest.Manifest{Version: "0.0.1-alpha.dev", Commit: strings.Repeat("a", 40), Date: "2026-10-23", Target: runtime.GOOS + "/" + runtime.GOARCH, GoToolchain: runtime.Version(), KitVersion: 1, SupportedCombinations: []manifest.Combination{}, Providers: map[string]json.RawMessage{"chatgpt": policyJSON}, Binaries: []manifest.Binary{{Name: "lina", Size: size, SHA256: digest}, {Name: "lina-node", Size: 1, SHA256: strings.Repeat("b", 64)}}, SQLite: manifest.SQLite{Module: "github.com/ncruces/go-sqlite3", Version: "v0.30.5", ModuleSum: "h1:6usmTQ6khriL8oWilkAZSJM/AIpAlVL2zFrlcpDldCE=", SQLiteVersion: "3.51.2", WasmSHA256: strings.Repeat("d", 64), Execution: "wazero"}}
 	if err = m.Validate(); err != nil {
 		t.Fatal(err)
 	}

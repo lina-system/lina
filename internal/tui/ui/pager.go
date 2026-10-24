@@ -15,6 +15,9 @@ import (
 )
 
 type textPager struct {
+	workCard, workStage, workStep string
+
+	surface                  *surfacePager
 	result                   *resultPager
 	board                    *boardView
 	records                  *recordPager
@@ -45,8 +48,11 @@ func (m *shellModel) openPager(text string) {
 }
 
 func (m *shellModel) pagerText() string {
+	if m.conversation.pager.workCard != "" {
+		return m.workDetails()
+	}
 	if !m.conversation.pager.transcript {
-		return m.conversation.pager.text
+		return m.conversation.pager.text + m.conversation.pager.surface.status(m.styles.options.Language)
 	}
 	// Read the current projection, without retaining another history copy that
 	// could outlive authoritative replacements, revocation or a focus change.
@@ -85,6 +91,10 @@ func (m *shellModel) refreshOpenCard() {
 	}
 	for _, card := range m.resultCards() {
 		if card.ID == p.cardID {
+			if p.surface != nil && (p.surface.id != card.ResultID || string(p.surface.revision) != card.ResultRevision) {
+				*p = textPager{}
+				return
+			}
 			if p.result != nil {
 				if card.ResultID != p.result.request.ResultID || card.ResultRevision != string(*p.result.request.Revision) {
 					*p = textPager{}
@@ -141,6 +151,11 @@ func (m *shellModel) refreshResultStreams(message state.Msg) {
 
 func (m *shellModel) pagerKey(msg tea.KeyMsg, name string) tea.Cmd {
 	p := &m.conversation.pager
+	if p.surface != nil && !p.searching {
+		if handled, cmd := m.surfaceKey(msg, name); handled {
+			return cmd
+		}
+	}
 	if p.board != nil && !p.searching {
 		if handled, cmd := m.boardKey(name); handled {
 			return cmd
@@ -248,7 +263,7 @@ func (m *shellModel) pagerRows() []render.StyledRow {
 	}
 	config := render.Config{Width: max(1, width)}
 	stream := m.resultStreams[m.conversation.pager.cardID].stream
-	if stream == nil || m.conversation.pager.result != nil {
+	if stream == nil || m.conversation.pager.result != nil || m.conversation.pager.surface != nil {
 		stream = render.NewStream("pager", config, nil)
 		stream.Seal(1, m.pagerText())
 	}

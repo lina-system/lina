@@ -8,6 +8,7 @@ import (
 )
 
 func TestCitationMergeStoresOnlyNewEvidence(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	var item Item
 	for i := 0; i < 200; i++ {
@@ -16,6 +17,15 @@ func TestCitationMergeStoresOnlyNewEvidence(t *testing.T) {
 		item = commit(t, db, in)
 	}
 	err := db.Read(t.Context(), func(tx *canon.Tx) error {
+		for _, table := range []string{"memory_item", "memory_revision"} {
+			var copied int
+			if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM "+table+" r,json_each(r.record,'$.evidence') e WHERE json_extract(e.value,'$.quote') IS NOT NULL").Scan(&copied); err != nil {
+				return err
+			}
+			if copied != 0 {
+				t.Errorf("%s retained %d event quotes after 200 merges", table, copied)
+			}
+		}
 		var rows int
 		if err := tx.QueryRowContext(t.Context(), "SELECT count(*) FROM cite WHERE view_kind='memory' AND view_id=?", item.ID).Scan(&rows); err != nil {
 			return err
@@ -75,6 +85,7 @@ func assertMemoryCitations(t *testing.T, db *canon.Store) {
 }
 
 func TestCitationFailureRollsBackMemoryAndRevision(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	err := db.Write(t.Context(), func(tx *canon.Tx) error {
 		_, err := tx.ExecContext(t.Context(), `CREATE TRIGGER fail_cite BEFORE INSERT ON cite BEGIN SELECT RAISE(ABORT,'injected_citation_failure'); END;`)
@@ -107,6 +118,7 @@ func TestCitationFailureRollsBackMemoryAndRevision(t *testing.T) {
 }
 
 func TestCitationBriefGenerationRetiresPreviousSentences(t *testing.T) {
+	t.Parallel()
 	db := jobDatabase(t)
 	store := New(db)
 	scope := RecallScope{Agent: "A", Person: "person"}

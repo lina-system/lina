@@ -48,9 +48,12 @@ func runPlanInvalidResponseScenario(t *testing.T, fixture string) {
 	var root string
 	var turns, auxiliary atomic.Int64
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		var req struct{ Tools []json.RawMessage }
+		var req struct{ Tools, Input []json.RawMessage }
 		if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 			t.Error(err)
+			return
+		}
+		if answerEmptyMemoryExtraction(w, req.Input) {
 			return
 		}
 		if len(req.Tools) != 0 {
@@ -130,7 +133,7 @@ func runPlanInvalidResponseScenario(t *testing.T, fixture string) {
 	conv.Close()
 	h.stopCore(core)
 	core = start()
-	conv, conversation = conversationClient(t, h)
+	conv, _ = conversationClient(t, h)
 	request.Epoch = epoch()
 	again, err := api.Aux(ctx, request)
 	if err != nil || string(again.Output) != string(first.Output) || auxiliary.Load() != 1 {
@@ -186,14 +189,14 @@ func runPlanInvalidResponseScenario(t *testing.T, fixture string) {
 		}
 	}
 	for query, want := range map[string]int{
-		"SELECT count(*) FROM plan_rejections":                                    len(scenario.Invalid),
-		"SELECT count(*) FROM conv_event WHERE scaffold_kind='plan_rejection'":    len(scenario.Invalid),
-		"SELECT count(*) FROM result_heads":                                       1,
-		"SELECT count(*) FROM plan_confirmations":                                 0,
-		"SELECT count(*) FROM moirai_aux WHERE output IS NOT NULL":                len(scenario.Invalid) + 1,
-		"SELECT count(*) FROM moirai_applied WHERE job='" + job + "'":             len(scenario.Invalid) + 1,
-		"SELECT count(*) FROM budget_usage WHERE run='" + job + "' AND settled=1": len(scenario.Invalid) + 1,
-		"SELECT sum(charged) FROM budget_usage WHERE run='" + job + "'":           8192 * (len(scenario.Invalid) + 1),
+		"SELECT count(*) FROM plan_rejections":                                           len(scenario.Invalid),
+		"SELECT count(*) FROM conv_event WHERE scaffold_kind='plan_rejection'":           len(scenario.Invalid),
+		"SELECT count(*) FROM result_heads":                                              1,
+		"SELECT count(*) FROM plan_confirmations":                                        0,
+		"SELECT count(*) FROM moirai_aux WHERE job='" + job + "' AND output IS NOT NULL": len(scenario.Invalid) + 1,
+		"SELECT count(*) FROM moirai_applied WHERE job='" + job + "'":                    len(scenario.Invalid) + 1,
+		"SELECT count(*) FROM budget_usage WHERE run='" + job + "' AND settled=1":        len(scenario.Invalid) + 1,
+		"SELECT sum(charged) FROM budget_usage WHERE run='" + job + "'":                  8192 * (len(scenario.Invalid) + 1),
 	} {
 		var got int
 		if err := db.QueryRowContext(ctx, query).Scan(&got); err != nil || got != want {

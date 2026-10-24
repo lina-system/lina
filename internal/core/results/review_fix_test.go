@@ -14,6 +14,7 @@ import (
 )
 
 func TestRejectedContainerDoesNotClaimPreview(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
@@ -47,6 +48,7 @@ func TestRejectedContainerDoesNotClaimPreview(t *testing.T) {
 }
 
 func TestResolvedDestinationIsNotLookedUpAgainAfterClaim(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	os.Chmod(root, 0700)
@@ -95,6 +97,7 @@ func (f failPublicationCanon) Write(ctx context.Context, fn func(*canon.Tx) erro
 	return f.Canon.Write(ctx, fn)
 }
 func TestReopenRecoversPublishedRecordBeforeCheckpoint(t *testing.T) {
+	t.Parallel()
 	_, db, _, _ := setup(t)
 	root := t.TempDir()
 	os.Chmod(root, 0700)
@@ -139,8 +142,10 @@ func TestReopenRecoversPublishedRecordBeforeCheckpoint(t *testing.T) {
 }
 
 func TestRecoveryAtEveryPublicationBoundary(t *testing.T) {
+	t.Parallel()
 	for _, stage := range []string{"lock", "intent", "file", "index", "ref", "checkpoint"} {
 		t.Run(stage, func(t *testing.T) {
+			t.Parallel()
 			_, db, _, _ := setup(t)
 			root := t.TempDir()
 			os.Chmod(root, 0700)
@@ -202,8 +207,10 @@ func TestRecoveryAtEveryPublicationBoundary(t *testing.T) {
 	}
 }
 func TestRecoveryPreservesOutsideEditAndForeignLock(t *testing.T) {
+	t.Parallel()
 	for _, external := range []string{"file", "lock"} {
 		t.Run(external, func(t *testing.T) {
+			t.Parallel()
 			_, db, _, _ := setup(t)
 			root := t.TempDir()
 			os.Chmod(root, 0700)

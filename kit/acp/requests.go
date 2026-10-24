@@ -28,9 +28,14 @@ type Permission struct {
 }
 
 func (p *Permission) Answer(ctx context.Context, option PermissionOptionID) error {
+	return p.AnswerWithMeta(ctx, option, nil)
+}
+
+// AnswerWithMeta carries protocol extension metadata with the selected option.
+func (p *Permission) AnswerWithMeta(ctx context.Context, option PermissionOptionID, meta *map[string]json.RawMessage) error {
 	for _, o := range p.Request.Options {
 		if o.OptionID == option {
-			return p.request.Answer(ctx, RequestPermissionResponse{Outcome: RequestPermissionOutcome{Selected: &RequestPermissionOutcomeSelected{OptionID: option}}})
+			return p.request.Answer(ctx, RequestPermissionResponse{Meta: meta, Outcome: RequestPermissionOutcome{Selected: &RequestPermissionOutcomeSelected{OptionID: option}}})
 		}
 	}
 	return errors.New("ACP permission option was not offered")

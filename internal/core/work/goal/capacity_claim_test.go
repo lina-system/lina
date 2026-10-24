@@ -8,6 +8,7 @@ import (
 )
 
 func TestClaimRevalidatesQueuedHost(t *testing.T) {
+	t.Parallel()
 	changes := map[string]func(*Node){
 		"disconnected":   func(n *Node) { n.Connected = false },
 		"yielding":       func(n *Node) { n.Yielding = true },
@@ -62,7 +63,11 @@ func TestClaimRevalidatesQueuedHost(t *testing.T) {
 					t.Fatal(err)
 				}
 				g := revisionSnapshot(t, e).Goals[0]
-				if len(g.Waits) != 1 || g.Waits[0].Reason != "host_capacity" {
+				reason := "host_capacity"
+				if name == "quota" {
+					reason = "worker_quota"
+				}
+				if len(g.Waits) != 1 || g.Waits[0].Reason != reason {
 					t.Fatalf("missing capacity wait: %+v", g)
 				}
 				// A fresh alternative can take an unstarted assignment without
@@ -85,6 +90,7 @@ func TestClaimRevalidatesQueuedHost(t *testing.T) {
 }
 
 func TestClaimCapacityCountsOtherReservationsOnly(t *testing.T) {
+	t.Parallel()
 	e := revisionEngine(t, readyTask("a"), readyTask("b"))
 	a := revisionAction(t, e, "a", Assign)
 	b := revisionAction(t, e, "b", Assign)
@@ -118,6 +124,7 @@ func TestClaimCapacityCountsOtherReservationsOnly(t *testing.T) {
 }
 
 func TestClaimCapacityReturnsRecoveryAllowances(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []ActionKind{Resume, RepairConflict, ContinueWorker} {
 		t.Run(string(kind), func(t *testing.T) {
 			e := revisionEngine(t, readyTask("a"))
@@ -164,6 +171,7 @@ func TestClaimCapacityReturnsRecoveryAllowances(t *testing.T) {
 }
 
 func TestClaimCapacityPreservesExistingEffectObservation(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(map[bool]string{false: "running", true: "restart"}[restart], func(t *testing.T) {
 			e, original := claimedAssignment(t)

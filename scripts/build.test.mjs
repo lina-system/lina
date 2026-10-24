@@ -190,8 +190,9 @@ test('cross-builds Linux and macOS binaries with target metadata and an explicit
     assert.equal(result.status, 0, `${target}: ${result.stderr ?? ''}${result.error?.message ?? ''}`);
     const manifest = JSON.parse(readFileSync(join(out, 'manifest.json'), 'utf8'));
     assert.equal(manifest.target, target);
-    assert.equal(manifest.supportedCombinations.length, 1);
-    assert.equal(manifest.supportedCombinations[0].platform, target);
+    assert.deepEqual(manifest.supportedCombinations.map(row => row.protocolVersion).sort(), ['1.0', '1.1']);
+    for (const row of manifest.supportedCombinations) assert.equal(row.platform, target);
+    assert.ok(manifest.supportedCombinations.find(row => row.protocolVersion === '1.1').capabilities.some(cap => cap.name === 'mocks'));
     assert.equal(manifest.version, '0.0.1-alpha.20261021.1');
     for (const binary of manifest.binaries) {
       const path = join(out, binary.name);
@@ -264,8 +265,13 @@ test('clean builds record hashes and the same commit and metadata as both versio
     assert.match(manifest.sqlite.sqliteVersion, /^3\.\d+\.\d+$/);
     assert.equal(manifest.sqlite.execution, 'wazero');
     assert.deepEqual(manifest.sqlite.sqliteVec, { version: 'v0.1.6', sha256: manifest.sqlite.wasmSHA256 });
-    const providerConfig = JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8'));
+    const providerConfig = {
+      ...JSON.parse(readFileSync(join(f.cwd, 'kit/provider/responses/manifest.json'), 'utf8')),
+      ...JSON.parse(readFileSync(join(f.cwd, 'kit/provider/messages/manifest.json'), 'utf8')),
+    };
     assert.deepEqual(manifest.providers, providerConfig);
+    assert.equal(manifest.providers.claude_api_key.adapter, 'messages');
+    assert.deepEqual(manifest.providerCapabilities, JSON.parse(readFileSync(join(f.cwd, 'kit/provider/capabilities.json'), 'utf8')));
     assert.equal(manifest.providers.chatgpt.adapter, 'responses');
     assert.equal(manifest.providers.chatgpt.retryCount, 0);
     assert.deepEqual(manifest.crwPin, JSON.parse(readFileSync(join(f.cwd, 'internal/core/work/pin/pin.json'), 'utf8')));

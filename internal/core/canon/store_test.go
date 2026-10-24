@@ -79,6 +79,7 @@ func itemCount(t *testing.T, s *Store) int {
 }
 
 func TestWriterFenceIsFirstAndLatches(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	s := openStore(t, cfg)
 	var statements []string
@@ -121,6 +122,7 @@ func TestWriterFenceIsFirstAndLatches(t *testing.T) {
 }
 
 func TestUnrecoverableIOHalts(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	s := openStore(t, cfg)
 	if err := s.Write(t.Context(), insertItem); err != nil {
@@ -142,6 +144,7 @@ func TestUnrecoverableIOHalts(t *testing.T) {
 }
 
 func TestHaltMarkerFailureStaysLatched(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	s := openStore(t, cfg)
 	if err := s.Write(t.Context(), insertItem); err != nil {
@@ -167,6 +170,7 @@ func TestHaltMarkerFailureStaysLatched(t *testing.T) {
 }
 
 func TestCorruptOpenWritesHalt(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	if err := os.WriteFile(cfg.Path, []byte("not a SQLite database"), 0600); err != nil {
 		t.Fatal(err)
@@ -180,6 +184,7 @@ func TestCorruptOpenWritesHalt(t *testing.T) {
 }
 
 func TestMalformedControlAndEpochMetadataAreRefusedUnchanged(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"halt", "epoch", "schema"} {
 		t.Run(kind, func(t *testing.T) {
 			cfg := storeConfig(t)
@@ -214,6 +219,7 @@ func TestMalformedControlAndEpochMetadataAreRefusedUnchanged(t *testing.T) {
 }
 
 func TestInspectAndNewerSchemaInLiveWALLeaveAllFilesUnchanged(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	s := openStore(t, cfg)
 	if err := s.Write(t.Context(), insertItem); err != nil {
@@ -243,6 +249,7 @@ func TestInspectAndNewerSchemaInLiveWALLeaveAllFilesUnchanged(t *testing.T) {
 }
 
 func TestCloseCancelsActiveWriter(t *testing.T) {
+	t.Parallel()
 	s := openStore(t, storeConfig(t))
 	entered := make(chan struct{})
 	result := make(chan error, 1)
@@ -259,6 +266,7 @@ func TestCloseCancelsActiveWriter(t *testing.T) {
 }
 
 func TestCallbacksCannotBypassTransactionOwnership(t *testing.T) {
+	t.Parallel()
 	s := openStore(t, storeConfig(t))
 	for _, query := range []string{"COMMIT", "ROLLBACK", "SAVEPOINT bypass", "UPDATE canon_meta SET epoch='0'", "DROP TABLE canon_meta", "PRAGMA user_version=999"} {
 		if err := s.Write(t.Context(), func(tx *Tx) error { _, err := tx.ExecContext(t.Context(), query); return err }); err == nil {
@@ -271,6 +279,7 @@ func TestCallbacksCannotBypassTransactionOwnership(t *testing.T) {
 }
 
 func TestReaderRejectsWritesWithClosedCode(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	s := openStore(t, cfg)
 	if err := s.Write(t.Context(), insertItem); err != nil {
@@ -293,6 +302,7 @@ func TestReaderRejectsWritesWithClosedCode(t *testing.T) {
 }
 
 func TestMigrationsAreNumberedAtomicAndForwardOnly(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = append(cfg.Migrations, Migration{Version: 2, SQL: "CREATE TABLE halfway(id INTEGER); INSERT INTO missing VALUES (1)"})
 	if s, err := Open(t.Context(), cfg); err == nil {
@@ -314,7 +324,7 @@ func TestMigrationsAreNumberedAtomicAndForwardOnly(t *testing.T) {
 	s := openStore(t, cfg)
 	s.Close(context.Background())
 	// Opening an already migrated store must not replay CREATE TABLE.
-	s = openStore(t, cfg)
+	_ = openStore(t, cfg)
 	if version, epoch, err := Inspect(t.Context(), cfg.Path); err != nil || version != 2 || epoch != cfg.Epoch {
 		t.Fatalf("inspect=%d,%d,%v", version, epoch, err)
 	}
@@ -327,6 +337,7 @@ func TestMigrationsAreNumberedAtomicAndForwardOnly(t *testing.T) {
 }
 
 func TestCorruptionHaltsDurablyAndPreservesReads(t *testing.T) {
+	t.Parallel()
 	for _, code := range []sqlite3.ErrorCode{sqlite3.CORRUPT, sqlite3.NOTADB} {
 		t.Run(code.Error(), func(t *testing.T) {
 			cfg := storeConfig(t)
@@ -371,6 +382,7 @@ func TestCorruptionHaltsDurablyAndPreservesReads(t *testing.T) {
 }
 
 func TestHaltedStoreMirrorsMatchingEpochWithoutWriting(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	s := openStore(t, cfg)
 	if err := s.Write(t.Context(), insertItem); err != nil {
@@ -407,6 +419,7 @@ func TestHaltedStoreMirrorsMatchingEpochWithoutWriting(t *testing.T) {
 }
 
 func TestFullAndRecoverableIOErrorsDoNotHalt(t *testing.T) {
+	t.Parallel()
 	for _, failure := range []error{sqlite3.FULL, sqlite3.IOERR_READ} {
 		cfg := storeConfig(t)
 		s := openStore(t, cfg)
@@ -423,6 +436,7 @@ func TestFullAndRecoverableIOErrorsDoNotHalt(t *testing.T) {
 }
 
 func TestWriterSerializesAndRollsBackCancellation(t *testing.T) {
+	t.Parallel()
 	s := openStore(t, storeConfig(t))
 	var wg sync.WaitGroup
 	for range 12 {
@@ -462,6 +476,7 @@ func TestWriterSerializesAndRollsBackCancellation(t *testing.T) {
 }
 
 func TestEpochUsesFullUnsignedRange(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Epoch = math.MaxUint64 - 1
 	s := openStore(t, cfg)

@@ -70,6 +70,11 @@ func runCore(args []string) int {
 		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
 		return 78
 	}
+	local, err := modelpath.LocalFromEnv(os.Getenv)
+	if err != nil {
+		fmt.Fprintln(os.Stderr, "lina core: invalid model configuration")
+		return 78
+	}
 	// The adapter now owns the configured credential. Consume it before boot
 	// captures environments for workers, which keep their own provider setup.
 	if route != nil && route.Adapter.Provider() == provider.Claude {
@@ -78,7 +83,13 @@ func runCore(args []string) int {
 			return 78
 		}
 	}
-	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
+	if route != nil && route.Route == "claude_api_key" {
+		if err := os.Unsetenv("LINA_CLAUDE_API_KEY"); err != nil {
+			fmt.Fprintln(os.Stderr, "lina core: cannot isolate model credential")
+			return 78
+		}
+	}
+	cfg := boot.Config{StateRoot: *root, Socket: *socket, Conversation: route, Local: local, ClientManifest: *metadata, Work: &boot.WorkConfig{Installed: true}}
 	if *tailnet != "" {
 		cfg.Tailnet = &clientsrv.TailnetConfig{Address: *tailnet, Socket: *tailscaleSocket}
 	}

@@ -28,6 +28,7 @@ func (*stream) Close() error        { return nil }
 func (*stream) Meta() provider.Meta { return provider.Meta{Class: provider.ModelAPI} }
 
 func TestReplayUsesExactRecordedResultAndNeverAnEffectExecutor(t *testing.T) {
+	t.Parallel()
 	call := provider.ToolCall{ID: "original", Name: "write_file", Arguments: `{"path":"note","content":"violet"}`}
 	answer := loop.Result{ID: call.ID, Code: loop.OK, Output: json.RawMessage(`{"receipt":"recorded"}`)}
 	for _, changed := range []bool{false, true} {
@@ -66,6 +67,7 @@ func TestReplayUsesExactRecordedResultAndNeverAnEffectExecutor(t *testing.T) {
 	}
 }
 func TestUnrecordedEffectExcludesBeforeModelCall(t *testing.T) {
+	t.Parallel()
 	called := false
 	_, err := Run(t.Context(), RunConfig{Calls: []Call{{Call: provider.ToolCall{Name: "send", ID: "call", Arguments: `{}`}}}, Stream: func(context.Context, provider.Request) (provider.Stream, error) { called = true; return nil, nil }})
 	if !errors.Is(err, ErrExcluded) || called {
@@ -74,6 +76,7 @@ func TestUnrecordedEffectExcludesBeforeModelCall(t *testing.T) {
 }
 
 func TestExportMasksSecretKeysInRecordedJSON(t *testing.T) {
+	t.Parallel()
 	raw, err := maskJSON([]byte(`{"api_key":"syntheticcredential","nested":{"password":"anothercredential"},"output":"token=thirdcredential"}`))
 	if err != nil {
 		t.Fatal(err)
@@ -89,6 +92,7 @@ func TestExportMasksSecretKeysInRecordedJSON(t *testing.T) {
 }
 
 func TestReplayLocalReadRunsLiveWithoutRecordedResult(t *testing.T) {
+	t.Parallel()
 	readCalls, rounds := 0, 0
 	call := provider.ToolCall{ID: "read", Name: "expand", Arguments: `{"id":"event"}`}
 	tool := loop.Tool{Validate: func(provider.ToolCall) (string, error) { return "", nil }, Execute: func(context.Context, provider.ToolCall) loop.Result {
@@ -112,7 +116,26 @@ func TestReplayLocalReadRunsLiveWithoutRecordedResult(t *testing.T) {
 	}
 }
 
+func TestReplayRuntimeUsesRecordedBridgeResults(t *testing.T) {
+	t.Parallel()
+	call := provider.ToolCall{ID: "runtime", Name: "lookup", Arguments: `{}`}
+	out, err := Run(t.Context(), RunConfig{RuntimeTools: true, Request: provider.Request{Tools: []provider.ToolDecl{[]byte(`{"type":"function","name":"lookup"}`)}}, Calls: []Call{{Call: call, Result: &loop.Result{Code: loop.OK, Output: []byte(`{"recorded":true}`)}}}, Stream: func(ctx context.Context, r provider.Request) (provider.Stream, error) {
+		if r.Bridge == nil {
+			t.Fatal("missing runtime bridge")
+		}
+		result, err := r.Bridge.Call(ctx, call)
+		if err != nil || !strings.Contains(string(result.Output), "recorded") {
+			t.Fatalf("%s %v", result.Output, err)
+		}
+		return &stream{[]provider.Event{{Kind: provider.Terminal}}}, nil
+	}})
+	if err != nil || len(out.Results) != 1 {
+		t.Fatalf("%+v %v", out, err)
+	}
+}
+
 func TestReplayRestoresLoadedDeclarationsAndEnabledTools(t *testing.T) {
+	t.Parallel()
 	initial := []provider.ToolDecl{[]byte(`{"name":"load_tools"}`)}
 	load := provider.ToolCall{ID: "load", Name: "load_tools", Arguments: `{"tools":["web_search"]}`}
 	result := loop.Result{ID: load.ID, Code: loop.OK, Output: []byte(`{"loaded_tools":["web_search"],"declarations":[{"name":"web_search","parameters":{"type":"object"}}],"declaration_order":["web_search"]}`)}
@@ -134,6 +157,7 @@ func TestReplayRestoresLoadedDeclarationsAndEnabledTools(t *testing.T) {
 }
 
 func TestReplayLoadsOnlyCurrentSuccessfulResultsInRegistryOrder(t *testing.T) {
+	t.Parallel()
 	initial := []provider.ToolDecl{[]byte(`{"name":"load_tools"}`)}
 	makeCall := func(id, args string, code loop.Code, output string) Call {
 		return Call{Call: provider.ToolCall{ID: id, Name: "load_tools", Arguments: args}, Result: &loop.Result{ID: id, Code: code, Output: []byte(output)}}
@@ -173,6 +197,7 @@ func TestReplayLoadsOnlyCurrentSuccessfulResultsInRegistryOrder(t *testing.T) {
 }
 
 func TestReplayExcludesAmbiguousLegacyCatalog(t *testing.T) {
+	t.Parallel()
 	called := false
 	_, err := Run(t.Context(), RunConfig{Calls: []Call{{Call: provider.ToolCall{Name: "load_tools", Arguments: `{"tools":["z","a"]}`}, Result: &loop.Result{Code: loop.OK, Output: []byte(`{"loaded_tools":["z","a"],"declarations":[{"name":"z"},{"name":"a"}]}`)}}}, Stream: func(context.Context, provider.Request) (provider.Stream, error) { called = true; return nil, nil }})
 	if !errors.Is(err, ErrExcluded) || called {

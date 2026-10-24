@@ -10,6 +10,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/work/goal"
 	"github.com/thisisjun786/lina/kit/lease"
 	"math"
+	"os"
 	"path/filepath"
 	"runtime"
 
@@ -35,9 +36,15 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	binary, _ := proc.LookPath("agy")
 	codexBinary, _ := proc.LookPath("codex")
 	claude, _ := proc.LookPath("claude")
-	acpFactories := dispatch.InstalledACPFactories(dispatch.Config{Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities, PrepareClaudeACP: func(ctx context.Context, l lease.Lease) (string, error) {
+	acpConfig := dispatch.Config{Root: r.root, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities, PrepareClaudeACP: func(ctx context.Context, l lease.Lease) (string, error) {
 		return install.ClaudeACP(ctx, l, filepath.Join(r.root, "system/adapters/claude-acp"))
-	}})
+	}}
+	acpFactories := dispatch.InstalledACPFactories(acpConfig)
+	addedFactories, problems := dispatch.AddedACPFactories(acpConfig)
+	for _, problem := range problems {
+		fmt.Fprintln(os.Stderr, problem)
+	}
+	acpFactories = append(acpFactories, addedFactories...)
 	if binary == "" && codexBinary == "" && claude == "" && len(acpFactories) == 0 {
 		return nil
 	}
@@ -58,7 +65,7 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 		factories = append(factories, dispatch.AntigravityFactory(dispatch.Config{Binary: binary, Environment: proc.WorkerEnvironment(), Epoch: r.epoch, Activities: r.activities}))
 	}
 	if codexBinary != "" {
-		factories = append(factories, dispatch.CodexFactory(codexBinary))
+		factories = append(factories, dispatch.CodexFactory(codexBinary, r.personaAuthority.WorkerApprovalKey()))
 	}
 	// Keep the established order when quota and choice rules are tied.
 	factories = append(factories, acpFactories...)
@@ -66,13 +73,13 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
+	r.workerDispatch, err = dispatch.Open(ctx, dispatch.Config{ApprovalKey: r.personaAuthority.WorkerApprovalKey(), ExecutionDeadline: r.publishedWorkerDeadline, AuthorizeExecution: r.authorizePublishedWorker, AuthorizeRecovery: r.authorizeWorkerRecovery, Rules: rules, Workers: factories, Bind: r.bindDispatchedWorker, Capacity: func(ctx context.Context) int {
 		host, err := goal.MainHost(ctx, r.main, r.root, goal.Resources{CPU: float64(runtime.NumCPU()), MemoryMB: math.MaxInt32, DiskMB: math.MaxInt32}, nil)
 		if err != nil {
 			return 0
 		}
 		return goal.Slots(host, nil, goal.Resources{CPU: 1, MemoryMB: 512, DiskMB: 1024}, time.Now())
-	}, DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, ClaudeBinary: claude, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
+	}, DB: r.db, Work: r.work, Area: r.workArea, Skills: r.skills, Root: r.root, Main: r.main, Epoch: r.epoch, Binary: binary, ClaudeBinary: claude, Git: git, PR: r.workerGitHub, Environment: proc.WorkerEnvironment(), Activities: r.activities, Sessions: r.liveWorkers, Manage: func(ctx context.Context, record dispatch.Record) (dispatch.Record, error) {
 		raw, _ := json.Marshal(record.TaskDefinition())
 		a, err := r.assignCoding(ctx, record.Origin, record.ID, "dispatch_work", record.Definition.Repository, raw)
 		if err != nil {
@@ -117,6 +124,18 @@ func (r *conversationRuntime) startWorkerDispatch(ctx context.Context) error {
 				}
 			}
 		}
+
+		// The existing completion reactor has just reopened PR evidence and run the
+		// manager. Publication must use that observation, not a stale cached scan.
+		if task, external := strings.CutPrefix(record.Origin.Turn, "turn:a2a-input:"); external {
+			rec, err := r.publications.store.Read(ctx, task)
+			if err != nil {
+				return err
+			}
+			if err = r.publications.observeWork(ctx, rec, record, true); err != nil {
+				return err
+			}
+		}
 		text := record.WorkerName() + ": " + record.Code
 		if record.Version != "" {
 			text += " (" + record.Version + "; unverified version)"
@@ -153,15 +172,24 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 		return func(worker.Event) {}, func() {}
 	}
 	owner := newConversationView(r.router.root, record.Owner, record.Manager)
-	owner.codingDelivery = delivery
+	owner.codingDelivery = delivery.workerDelivery()
+	owner.externalTask = delivery.externalTask
 	// Dispatch owns cancellation and the task reservation. Owner steering is
 	// restricted to the active turn, independently of scheduled-card ownership.
 	e := &workerSession{cancelTask: func(ctx context.Context) error { return r.workerDispatch.Cancel(ctx, record.ID) }, adapter: adapter, close: func() error { return adapter.Interrupt(context.Background(), thread, worker.UserCancel) }, origin: owner, input: input, thread: thread, executionGeneration: record.Attempt, packet: packet, workdir: workdir, started: time.Now(), done: make(chan struct{}), approvals: map[string]worker.Event{}, questions: map[string]*workerQuestion{}, active: map[string]lease.Lease{}}
+	if record.Goal {
+		e.goalSession, e.goalPerson, e.goalAgent, e.goalWorker = record.GoalAction, record.Origin.Person, record.Origin.Agent, record.WorkerName()
+	}
 	r.workers.mu.Lock()
 	r.workers.sessions[thread.ID] = e
 	r.workers.mu.Unlock()
 	handle := func(event worker.Event) {
 		e.observeActivity(event)
+		if event.Kind == worker.ProgressEvent && event.Progress.Phase == "started" {
+			if err := e.resumeSteering(e.origin.ctx); err != nil {
+				e.bridgeFailure(err)
+			}
+		}
 		defer e.origin.notifyOwnerViews()
 		switch event.Kind {
 		case worker.ApprovalEvent:
@@ -173,8 +201,12 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 		case worker.ProgressEvent:
 			if event.Progress.Phase == "server_request_resolved" {
 				e.stopRequest(event.Progress.ItemID)
+				e.answerDelivered(e.origin.ctx, event.Thread)
 			}
 		case worker.FinishEvent:
+			if err := e.finishSteering(e.origin.ctx, event); err != nil {
+				e.bridgeFailure(err)
+			}
 			e.stopRequests(event.Thread.TurnID)
 		case worker.UsageEvent:
 		}
@@ -189,6 +221,9 @@ func (r *conversationRuntime) bindDispatchedWorker(record dispatch.Record, adapt
 }
 
 func (r *conversationRuntime) authorizeWorkerRecovery(ctx context.Context, record dispatch.Record) (bool, error) {
+	if allowed, err := r.authorizePublishedWorker(ctx, record); err != nil || !allowed {
+		return allowed, err
+	}
 	if !record.Goal {
 		view, _, err := r.dispatchRecoveryView(ctx, record)
 		if err != nil {

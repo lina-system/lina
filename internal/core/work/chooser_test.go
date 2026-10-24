@@ -8,6 +8,7 @@ import (
 )
 
 func TestChooserQuotaAndSituation(t *testing.T) {
+	t.Parallel()
 	now := time.Unix(100, 0)
 	reset := now.Add(time.Minute)
 	candidates := []WorkerCandidate{

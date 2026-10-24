@@ -48,6 +48,7 @@ func enqueuePreparation(t *testing.T, b *Builder, v View, s *jobs.Service, j job
 	return PassSegment{Records: v.History, Protected: []Record{v.Input}}
 }
 func TestWorkerPreparationCommitsWithoutPublishingAndRestartFallsBack(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	calls := 0
 	generate := b.Generate
@@ -103,6 +104,7 @@ func TestWorkerPreparationCommitsWithoutPublishingAndRestartFallsBack(t *testing
 	}
 }
 func TestWorkerPreparationRejectsRacesAndForgedOutput(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"epoch", "append", "competing root", "forged", "rollback"} {
 		t.Run(kind, func(t *testing.T) {
 			b, v, db := builderFixture(t)
@@ -163,6 +165,7 @@ func TestWorkerPreparationRejectsRacesAndForgedOutput(t *testing.T) {
 	}
 }
 func TestWorkerPreparedReceiptRejectsChangedSourcesEpochAndConfiguration(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"source selection", "epoch", "model", "generation revision", "root revision"} {
 		t.Run(kind, func(t *testing.T) {
 			b, v, db := builderFixture(t)
@@ -214,6 +217,7 @@ func TestWorkerPreparedReceiptRejectsChangedSourcesEpochAndConfiguration(t *test
 	}
 }
 func TestAfterDeliveryPreparationUsesForegroundSelectionAndNoPeriodicRollup(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	b.PreparationJob = "prepare"
 	p := Pass{Policy: Policy{ContextWindow: 1500, KeepUserTokens: 100}, Count: countBytes, Summarize: b.Summarize, Prepared: b.Prepared, Publish: b.Publish}
@@ -236,8 +240,24 @@ func TestAfterDeliveryPreparationUsesForegroundSelectionAndNoPeriodicRollup(t *t
 	if queued, err = b.QueuePreparation(t.Context(), p, v, func(context.Context, json.RawMessage) error { t.Fatal("below threshold enqueued"); return nil }); err != nil || queued {
 		t.Fatalf("queued=%v %v", queued, err)
 	}
+	// A cold turn boundary compacts early, but the request that just completed
+	// refreshed the cache. After delivery only the configured threshold queues,
+	// so a size between P and the threshold must not enqueue.
+	sizes, err := p.measure(v)
+	if err != nil {
+		t.Fatal(err)
+	}
+	p.Policy.ContextWindow = sizes.Total * 100 / 80
+	p.Cold = true
+	if queued, err = b.QueuePreparation(t.Context(), p, v, func(context.Context, json.RawMessage) error {
+		t.Fatal("a cold boundary lowered the preparation threshold")
+		return nil
+	}); err != nil || queued {
+		t.Fatalf("queued=%v %v", queued, err)
+	}
 }
 func TestInFlightWorkerNeverHoldsForeground(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	service, job := preparationService(t, b, db)
 	segment := enqueuePreparation(t, b, v, service, job)
@@ -268,6 +288,7 @@ func TestInFlightWorkerNeverHoldsForeground(t *testing.T) {
 }
 
 func TestObsoletePreparationDoesNotBlockNextTask(t *testing.T) {
+	t.Parallel()
 	b, v, db := builderFixture(t)
 	service, job := preparationService(t, b, db)
 	segment := enqueuePreparation(t, b, v, service, job)

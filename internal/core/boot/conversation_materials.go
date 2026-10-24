@@ -24,6 +24,14 @@ type conversationMaterials struct {
 }
 type conversationMaterial struct{ *assets.PreparedMaterial }
 
+// LedgerMaterials adapts the asset store and its writer to the ledger's material
+// boundary. Core composes it for its own writes; a command that runs Core's
+// admission with Core stopped uses the same adapter, so both paths store bodies
+// alike.
+func LedgerMaterials(store *assets.Store, writer *assets.MaterialWriter, actor assets.Actor) ledger.Materials {
+	return &conversationMaterials{store: store, writer: writer, actor: actor}
+}
+
 func (p conversationMaterial) Insert(ctx context.Context, tx *canon.Tx) (ledger.Material, error) {
 	asset, err := p.PreparedMaterial.Insert(ctx, tx)
 	return ledger.Material{ID: asset.ID, Revision: asset.Revision}, err
@@ -51,6 +59,7 @@ var errAdmittedInput = errors.New("input already admitted")
 // handles after Write returns. This adapter adds inbox admission to that same
 // transaction without moving filesystem preparation or cleanup under its lock.
 type conversationAdmission struct {
+	check         func(context.Context, *canon.Tx) error
 	db            *canon.Store
 	input         inbox.Input
 	receipt       inbox.Receipt
@@ -69,6 +78,11 @@ func (a *conversationAdmission) Write(ctx context.Context, fn func(*canon.Tx) er
 		}
 		if !a.receipt.Inserted {
 			return errAdmittedInput
+		}
+		if a.check != nil {
+			if err := a.check(ctx, tx); err != nil {
+				return err
+			}
 		}
 		if err := fn(tx); err != nil {
 			return err

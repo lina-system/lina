@@ -34,7 +34,7 @@ func TestBootUsesClientManifest(t *testing.T) {
 			socket := filepath.Join(root, "run", "client.sock")
 			ctx, cancel := context.WithCancel(t.Context())
 			defer cancel()
-			cfg := boot.Config{StateRoot: root, Socket: socket, ClientManifest: manifest, Client: clientsrv.Identity{MainID: "untrusted-main", Epoch: "900", PersonID: "owner-test"}}
+			cfg := boot.Config{NoSync: true, StateRoot: root, Socket: socket, ClientManifest: manifest, Client: clientsrv.Identity{MainID: "untrusted-main", Epoch: "900", PersonID: "owner-test"}}
 			cfg.AfterStep = func(step boot.Step, _ boot.Snapshot) error {
 				if step != boot.Ready {
 					return nil

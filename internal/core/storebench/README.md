@@ -25,17 +25,22 @@ Go's `ns/op` covers the complete measurement run, including store setup.
 Size is measured before forgetting. `table_bytes` lists every `dbstat` B-tree,
 including SQLite indexes and FTS shadow tables. `database_bytes` includes free
 pages; `free_bytes` identifies them. `index_bytes` sums trees whose owning table
-contains `search`, `fts` or `bigram`, including duplicated index text and postings
+contains `search`, `fts`, `bigram` or `recall`, including duplicated index text and postings
 in the current schema. Keep this classification current when adding a new index;
 the per-tree report remains the authoritative breakdown. `material_bytes` counts
-large event bodies outside the database.
+large event bodies outside the database. `source_bytes` sums event, summary and
+active memory text bytes. `recall_text_bytes` and `recall_pair_bytes` sum their
+FTS shadow trees. `recall_documents` checks one row per eligible source, and
+`recall_parity_queries` counts exact event ID/order comparisons against ledger
+search on the same 60 queries; these comparisons are outside latency samples.
 
 The packaged SQLite engine does not expose `dbstat`. Page inspection requires
 Python 3 with SQLite's `ENABLE_DBSTAT_VTAB` (available on the Linux CI runners).
-Its standard library opens the committed scratch database read-only; it neither
-loads the corpus nor times queries. All timed operations use Core's pinned
-embedded engine. An unavailable inspector fails the run rather than reporting
-zero bytes.
+Its standard library opens the committed scratch database read-only; the
+inspector passes `uri=True`, because a `file:` URI is only parsed by default on
+builds compiled with `SQLITE_USE_URI`. It neither loads the corpus nor times
+queries. All timed operations use Core's pinned embedded engine. An unavailable
+inspector fails the run rather than reporting zero bytes.
 
 ## Corpus
 
@@ -87,7 +92,9 @@ No private source is needed for the committed tests.
 
 The opt-in headless test loads a small corpus, closes its writer, starts normal
 Core on that scratch state, and uses the client socket to list and forget the
-remaining memory. It verifies recovery and real handlers without adding a
+remaining memory. It queues the shared index before startup and verifies Core
+drains every source without a search request, then verifies socket remember and
+forget update the shared index. It verifies recovery and real handlers without adding a
 benchmark endpoint to the product.
 
 ```sh

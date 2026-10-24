@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // SPDX-License-Identifier: Apache-2.0
-// Check local file targets and Markdown heading anchors in tracked Markdown and LICENSE.
+// Check local file targets and Markdown heading anchors in tracked Markdown and LICENSE,
+// and reject tracked paths that differ only by case.
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, realpathSync } from 'node:fs';
 import path from 'node:path';
@@ -13,6 +14,9 @@ const tracked = new Set(execFileSync('git', ['ls-files', '--cached', '-z'], { cw
 const documents = [...tracked].filter((name) => /\.md$/i.test(name) || name === 'LICENSE').sort();
 const failures = [];
 const anchorCache = new Map();
+// A link reference definition is not paragraph text, so a setext underline after one belongs to the remaining lines.
+const referenceDefinition = /^ {0,3}\[([^\]]+)\]:\s*(<[^>]+>|\S+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/;
+const referenceDefinitions = new RegExp(referenceDefinition.source, 'gm');
 
 function insideRoot(target) {
   const relative = path.relative(root, target);
@@ -93,17 +97,25 @@ function headingAnchors(text) {
   const anchors = new Set();
   const lines = visibleMarkdown(text.replace(/<!--[\s\S]*?-->/g, ''), true).split('\n');
   let paragraph = [];
+  let definitions = true;
   for (const line of lines) {
     const atx = /^ {0,3}#{1,6}(?:[\t ]+(.*)|$)/.exec(line);
     let title;
     if (atx) title = (atx[1] ?? '').replace(/[\t ]+#+[\t ]*$/, '').trim();
     else if (paragraph.length && /^ {0,3}(?:=+|-+)[\t ]*$/.test(line)) title = paragraph.join('\n');
     else {
-      if (!line.trim() || /^ {0,3}(?:(?:-[\t ]*){3,}|(?:\*[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(line)) paragraph = [];
-      else paragraph.push(line.trim());
+      if (!line.trim() || /^ {0,3}(?:(?:-[\t ]*){3,}|(?:\*[\t ]*){3,}|(?:_[\t ]*){3,})$/.test(line)) {
+        paragraph = [];
+        definitions = true;
+      } else if (definitions && referenceDefinition.test(line)) continue;
+      else {
+        paragraph.push(line.trim());
+        definitions = false;
+      }
       continue;
     }
     paragraph = [];
+    definitions = true;
     // GitHub lowercases heading text, removes punctuation and replaces spaces.
     const base = headingText(title).toLowerCase().replace(/[^\p{L}\p{M}\p{N}_\- ]/gu, '').replace(/ /g, '-');
     let anchor = base;
@@ -115,7 +127,7 @@ function headingAnchors(text) {
 
 function links(text) {
   const refs = new Map();
-  const body = visibleMarkdown(text).replace(/^ {0,3}\[([^\]]+)\]:\s*(<[^>]+>|\S+)(?:\s+(?:"[^"]*"|'[^']*'|\([^)]*\)))?\s*$/gm, (_, label, url) => {
+  const body = visibleMarkdown(text).replace(referenceDefinitions, (_, label, url) => {
     refs.set(label.trim().replace(/\s+/g, ' ').toLowerCase(), url.replace(/^<|>$/g, ''));
     return '';
   });
@@ -132,6 +144,22 @@ function links(text) {
   return destinations;
 }
 
+// A case-insensitive filesystem (default macOS APFS) holds only one of two paths that differ
+// only by case, so such a tree cannot be checked out cleanly. ASCII folding matches the
+// `tr A-Z a-z` diagnostic that found the first collision.
+const folded = new Map();
+for (const name of tracked) {
+  const key = name.replace(/[A-Z]/g, (letter) => letter.toLowerCase());
+  const paths = folded.get(key);
+  if (paths) paths.push(name);
+  else folded.set(key, [name]);
+}
+for (const paths of folded.values()) {
+  if (paths.length < 2) continue;
+  paths.sort();
+  for (const name of paths.slice(1)) failures.push(`${paths[0]} and ${name}: tracked paths differ only by case`);
+}
+
 for (const source of documents) {
   if (!existsSync(path.join(root, source))) {
     failures.push(`${source}: tracked document is missing`);
@@ -143,5 +171,5 @@ if (failures.length) {
   console.error(failures.join('\n'));
   process.exitCode = 1;
 } else {
-  console.log(`Checked ${documents.length} tracked documents: local file targets and Markdown heading anchors OK (external URLs not checked).`);
+  console.log(`Checked ${documents.length} tracked documents and ${tracked.size} tracked paths: local file targets and Markdown heading anchors OK, no case-only path collisions (external URLs not checked).`);
 }

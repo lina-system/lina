@@ -79,6 +79,7 @@ func crashStore(t *testing.T, root string, crash bool) (*canon.Store, loop.Tool)
 	return db, turn.Tool(registry, spec, tools.Call{Auth: auth}, "turn")
 }
 func TestProcessCrashAfterEffectBeforeReceipt(t *testing.T) {
+	t.Parallel()
 	root := os.Getenv("LINA_TURN_CRASH_ROOT")
 	if root != "" {
 		db, tool := crashStore(t, root, true)

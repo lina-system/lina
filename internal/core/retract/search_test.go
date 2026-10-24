@@ -16,6 +16,7 @@ import (
 )
 
 func TestForgetPurgesKoreanIndexesAndRestoreDoesNotResurrectThem(t *testing.T) {
+	t.Parallel()
 	db, s, flow, root, close := memoryFixture(t)
 	receipt := seedMemory(t, db, flow, "source-1", "conversation-1", "도서관에서 커피를 마신다")
 	scope := memory.RecallScope{Agent: "agent-1", Person: "person-1"}
@@ -79,7 +80,7 @@ INSERT INTO memory_search_bigram(gram,item_id) SELECT '커피',id FROM memory_it
 		t.Fatal(err)
 	}
 	snapshotCanon(t, generation, filepath.Join(root, "canon.sqlite"))
-	db, s, flow, _, _ = memoryAt(t, root)
+	db, _, _, _, _ = memoryAt(t, root)
 	assertNoSearchRows(t, db)
 	search(0)
 }
@@ -112,6 +113,7 @@ func assertNoSearchRows(t *testing.T, db *canon.Store) {
 }
 
 func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
+	t.Parallel()
 	db, s, flow, root, close := memoryFixture(t)
 	receipt := seedMemory(t, db, flow, "source-1", "conversation-1", forgotten)
 	events := ledger.New(db, nil)
@@ -183,7 +185,7 @@ func TestForgetExcludesExistingAndFutureLedgerCopies(t *testing.T) {
 		t.Fatal(err)
 	}
 	snapshotCanon(t, generation, filepath.Join(root, "canon.sqlite"))
-	db, s, flow, _, _ = memoryAt(t, root)
+	db, _, _, _, _ = memoryAt(t, root)
 	events = ledger.New(db, nil)
 	if hits, err := events.Search(t.Context(), ledger.SearchQuery{AgentID: "agent-1", PersonID: "person-1", Text: "violet", IncludeReplay: true}); err != nil || len(hits) != 0 {
 		t.Fatalf("restored copies exposed: %+v %v", hits, err)

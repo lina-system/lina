@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"reflect"
 	"slices"
 	"strings"
@@ -40,6 +41,8 @@ func Validate(kind Type, raw json.RawMessage, lim Limits) (Body, error) {
 	}
 	var b Body
 	switch kind {
+	case SurfaceType:
+		return validateSurface(raw)
 	case SummaryType:
 		b = &Summary{}
 	case TableType:
@@ -56,6 +59,8 @@ func Validate(kind Type, raw json.RawMessage, lim Limits) (Body, error) {
 		b = &Plan{}
 	case FileType:
 		b = &File{}
+	case MockType:
+		b = &Mock{}
 	default:
 		return nil, fmt.Errorf("%w: result type", ErrMalformed)
 	}
@@ -341,9 +346,11 @@ func check(b Body, l Limits) error {
 			seen[e.ID] = true
 		}
 	case *File:
-		if !asset(&v.Asset) || !nonempty(v.Name) || !one(v.MediaType, "application/pdf", "application/vnd.openxmlformats-officedocument.presentationml.presentation", "application/vnd.oasis.opendocument.presentation") || v.Size < 0 {
+		if !asset(&v.Asset) || !nonempty(v.Name) || !fileMediaType(v.MediaType) || v.Size < 0 {
 			return bad()
 		}
+	case *Mock:
+		return v.validate()
 	default:
 		return bad()
 	}
@@ -508,7 +515,7 @@ func blockShapes(raw []byte) error {
 			return err
 		}
 		allowed := map[string]bool{"kind": true, "audience": true}
-		required := []string{}
+		var required []string
 		switch kind {
 		case "heading":
 			required = []string{"text", "level"}
@@ -542,4 +549,11 @@ func blockShapes(raw []byte) error {
 		}
 	}
 	return nil
+}
+
+// A file result is an opaque material reference. MIME metadata selects a viewer
+// or download; it never authorizes execution or remote URL loading.
+func fileMediaType(value string) bool {
+	media, params, err := mime.ParseMediaType(value)
+	return err == nil && len(params) == 0 && strings.Contains(media, "/") && media == value
 }

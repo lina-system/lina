@@ -13,6 +13,7 @@ func passingInspection() Observation {
 }
 
 func TestInputVersionFencesInspectionAcrossSignalAndReplay(t *testing.T) {
+	t.Parallel()
 	for _, restart := range []bool{false, true} {
 		t.Run(fmt.Sprint(restart), func(t *testing.T) {
 			task := readyTask("a")
@@ -79,6 +80,7 @@ func TestInputVersionFencesInspectionAcrossSignalAndReplay(t *testing.T) {
 }
 
 func TestInputVersionJudgmentsUseTheSameSignalFence(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []ActionKind{PlanGoal, CheckCriterion} {
 		t.Run(string(kind), func(t *testing.T) {
 			g := finishedGoal()
@@ -95,7 +97,7 @@ func TestInputVersionJudgmentsUseTheSameSignalFence(t *testing.T) {
 				repair.Repairs = "a"
 				old.Tasks = []Task{repair}
 			} else {
-				old.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "old-output", Passed: true}
+				old.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "old-output", Passed: true}
 			}
 			if err := e.Signal(t.Context(), Signal{ID: "new-task-input", GoalID: "g", TaskID: "a"}); err != nil {
 				t.Fatal(err)
@@ -125,6 +127,7 @@ func TestInputVersionJudgmentsUseTheSameSignalFence(t *testing.T) {
 }
 
 func TestInputVersionStaleWorkerIsReadAgainWithoutRedispatch(t *testing.T) {
+	t.Parallel()
 	e, a := claimedAssignment(t)
 	if err := e.Signal(t.Context(), Signal{ID: "worker-changed", GoalID: "g", TaskID: "a"}); err != nil {
 		t.Fatal(err)
@@ -162,6 +165,7 @@ func TestInputVersionStaleWorkerIsReadAgainWithoutRedispatch(t *testing.T) {
 }
 
 func TestInputVersionRetainsLateWorkerHandleAcrossRestart(t *testing.T) {
+	t.Parallel()
 	e, a := claimedAssignment(t)
 	if err := e.Signal(t.Context(), Signal{ID: "worker-changed", GoalID: "g", TaskID: "a"}); err != nil {
 		t.Fatal(err)
@@ -192,6 +196,7 @@ func TestInputVersionRetainsLateWorkerHandleAcrossRestart(t *testing.T) {
 }
 
 func TestInputVersionOriginalEffectSignalFencesItsReplacementRead(t *testing.T) {
+	t.Parallel()
 	e, original := claimedAssignment(t)
 	if err := e.Signal(t.Context(), Signal{ID: "first-change", ActionID: original.ID}); err != nil {
 		t.Fatal(err)
@@ -217,6 +222,7 @@ func TestInputVersionOriginalEffectSignalFencesItsReplacementRead(t *testing.T) 
 }
 
 func TestInputVersionRetiresSettledEffectsForObsoleteTargets(t *testing.T) {
+	t.Parallel()
 	g := finishedGoal()
 	g.ServiceTarget, g.NoServiceReason = "private-service", ""
 	e := reviewEngine(t, g)
@@ -254,6 +260,7 @@ func TestInputVersionRetiresSettledEffectsForObsoleteTargets(t *testing.T) {
 }
 
 func TestInputVersionWaitsForUnknownObsoleteEffectsWithoutPolling(t *testing.T) {
+	t.Parallel()
 	g := finishedGoal()
 	g.ServiceTarget, g.NoServiceReason = "private-service", ""
 	e := reviewEngine(t, g)

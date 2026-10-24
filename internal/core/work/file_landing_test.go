@@ -91,6 +91,7 @@ func landFiles(t *testing.T, s *Service, c Card) (FileEvidence, error) {
 	return s.LandFiles(t.Context(), c.Task.ID, c.Receipt.EventID, c.FileSnapshot.Fingerprint, "Read output and report; the result answers the task.")
 }
 func TestFileDoneKeepsFingerprintAndSnapshot(t *testing.T) {
+	t.Parallel()
 	s, w, r, writer := fileFixture(t)
 	c := submitFiles(t, s, r)
 	if c.FileSnapshot == nil || len(c.Materials) != 2 || c.Applied || c.FileEvidence != nil {
@@ -121,6 +122,7 @@ func TestFileDoneKeepsFingerprintAndSnapshot(t *testing.T) {
 }
 
 func TestFileDoneAfterDirectoryOnlyChanges(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"add", "remove", "rename"} {
 		t.Run(kind, func(t *testing.T) {
 			s, w, r, writer := fileFixture(t)
@@ -190,6 +192,7 @@ func TestFileDoneAfterDirectoryOnlyChanges(t *testing.T) {
 }
 
 func TestFileLandingFreshBundleEvidenceAndReplay(t *testing.T) {
+	t.Parallel()
 	s, _, r, _ := fileFixture(t)
 	c := submitFiles(t, s, r)
 	existing := filepath.Join(c.Task.Destination, c.Task.ID)
@@ -237,6 +240,7 @@ func TestFileLandingFreshBundleEvidenceAndReplay(t *testing.T) {
 	}
 }
 func TestFileDoneRejectsChangesAndSpecialFiles(t *testing.T) {
+	t.Parallel()
 	for _, kind := range []string{"report", "extra", "deleted", "symlink", "empty-report"} {
 		t.Run(kind, func(t *testing.T) {
 			s, w, r, _ := fileFixture(t)
@@ -287,11 +291,12 @@ func replaceRootWithSymlink(t *testing.T, root, name string) {
 }
 
 func TestFileDoneRejectsRootSymlinks(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"out", "report.md"} {
 		t.Run(name, func(t *testing.T) {
-			s, w, r, _ := fileFixture(t)
+			s, w, _, _ := fileFixture(t)
 			writeFixture(t, filepath.Join(w.Path, "report.md"), "result")
-			r = fileReceipt(t, w)
+			r := fileReceipt(t, w)
 			// Keep the exact bytes and receipt; only the root entry becomes a link
 			// to a directory or regular file inside the task directory.
 			replaceRootWithSymlink(t, w.Path, name)
@@ -334,11 +339,12 @@ func (r *readbackSymlinkReader) Open(ctx context.Context, m Material) (io.ReadCl
 }
 
 func TestFileLandingReadbackRejectsRootSymlinks(t *testing.T) {
+	t.Parallel()
 	for _, name := range []string{"out", "report.md"} {
 		t.Run(name, func(t *testing.T) {
-			s, w, r, writer := fileFixture(t)
+			s, w, _, writer := fileFixture(t)
 			writeFixture(t, filepath.Join(w.Path, "report.md"), "result")
-			r = fileReceipt(t, w)
+			r := fileReceipt(t, w)
 			c := submitFiles(t, s, r)
 			bundle := filepath.Join(c.Task.Destination, c.Task.ID)
 			// The final material closes after both output files have been written,
@@ -377,6 +383,7 @@ func (r *faultMaterialReader) Open(ctx context.Context, m Material) (io.ReadClos
 	return r.retentionWriter.Open(ctx, m)
 }
 func TestFileLandingReadbackMismatchKeepsPartial(t *testing.T) {
+	t.Parallel()
 	s, _, r, writer := fileFixture(t)
 	c := submitFiles(t, s, r)
 	// Corrupt the just-written output when the next snapshot file is read. This
@@ -399,6 +406,7 @@ func TestFileLandingReadbackMismatchKeepsPartial(t *testing.T) {
 	}
 }
 func TestFileLandingCrashRecoveryRetainsAndReportsPartial(t *testing.T) {
+	t.Parallel()
 	s, _, r, writer := fileFixture(t)
 	c := submitFiles(t, s, r)
 	crashed := errors.New("simulated process loss")
@@ -459,6 +467,7 @@ func TestFileLandingCrashRecoveryRetainsAndReportsPartial(t *testing.T) {
 	}
 }
 func TestFileLandingCannotUseApplyOrStaleJudgment(t *testing.T) {
+	t.Parallel()
 	s, _, r, _ := fileFixture(t)
 	c := submitFiles(t, s, r)
 	if err := s.Judge(t.Context(), c.Task.ID, r.EventID, "verified", "manager checked"); err != nil {
@@ -473,6 +482,7 @@ func TestFileLandingCannotUseApplyOrStaleJudgment(t *testing.T) {
 }
 
 func TestFileDoneCanReturnToEarlierContent(t *testing.T) {
+	t.Parallel()
 	s, w, r, _ := fileFixture(t)
 	first := submitFiles(t, s, r)
 	writeFixture(t, filepath.Join(w.Path, "out/result.txt"), "revision two")
@@ -500,6 +510,7 @@ func (w *changingSnapshotWriter) Prepare(ctx context.Context, r io.Reader, path,
 	return p, e
 }
 func TestFileDoneChangesDuringSnapshotLeaveNoRecord(t *testing.T) {
+	t.Parallel()
 	s, w, r, writer := fileFixture(t)
 	s.materials = &changingSnapshotWriter{retentionWriter: writer, change: func() { writeFixture(t, filepath.Join(w.Path, "out/result.txt"), "raced") }}
 	if err := s.Submit(t.Context(), "run-1", r); !errors.Is(err, ErrFilesChanged) {

@@ -23,10 +23,12 @@ type Tokens struct {
 	GlyphAsciiActivityFrames      string
 	GlyphAsciiActivitySeparator   string
 	GlyphAsciiAgent               string
+	GlyphAsciiBack                string
 	GlyphAsciiConnecting          string
 	GlyphAsciiFailed              string
 	GlyphAsciiLive                string
 	GlyphAsciiMark                string
+	GlyphAsciiOverflow            string
 	GlyphAsciiPerson              string
 	GlyphAsciiQuit                string
 	GlyphAsciiRecovering          string
@@ -34,6 +36,12 @@ type Tokens struct {
 	GlyphAsciiResyncing           string
 	GlyphAsciiRetrying            string
 	GlyphAsciiRule                string
+	GlyphAsciiStageDone           string
+	GlyphAsciiStageFailed         string
+	GlyphAsciiStageNeedsInput     string
+	GlyphAsciiStageNext           string
+	GlyphAsciiStageWaiting        string
+	GlyphAsciiStageWorking        string
 	GlyphAsciiStopped             string
 	GlyphAsciiToolFailed          string
 	GlyphAsciiToolOk              string
@@ -44,10 +52,12 @@ type Tokens struct {
 	GlyphUnicodeActivityFrames    string
 	GlyphUnicodeActivitySeparator string
 	GlyphUnicodeAgent             string
+	GlyphUnicodeBack              string
 	GlyphUnicodeConnecting        string
 	GlyphUnicodeFailed            string
 	GlyphUnicodeLive              string
 	GlyphUnicodeMark              string
+	GlyphUnicodeOverflow          string
 	GlyphUnicodePerson            string
 	GlyphUnicodeQuit              string
 	GlyphUnicodeRecovering        string
@@ -55,6 +65,12 @@ type Tokens struct {
 	GlyphUnicodeResyncing         string
 	GlyphUnicodeRetrying          string
 	GlyphUnicodeRule              string
+	GlyphUnicodeStageDone         string
+	GlyphUnicodeStageFailed       string
+	GlyphUnicodeStageNeedsInput   string
+	GlyphUnicodeStageNext         string
+	GlyphUnicodeStageWaiting      string
+	GlyphUnicodeStageWorking      string
 	GlyphUnicodeStopped           string
 	GlyphUnicodeToolFailed        string
 	GlyphUnicodeToolOk            string
@@ -91,10 +107,12 @@ func Light() Tokens {
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
 		GlyphAsciiAgent:               "*",
+		GlyphAsciiBack:                "<",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
+		GlyphAsciiOverflow:            "...",
 		GlyphAsciiPerson:              ">",
 		GlyphAsciiQuit:                "+",
 		GlyphAsciiRecovering:          ":",
@@ -102,6 +120,12 @@ func Light() Tokens {
 		GlyphAsciiResyncing:           "=",
 		GlyphAsciiRetrying:            ">",
 		GlyphAsciiRule:                "-",
+		GlyphAsciiStageDone:           "+",
+		GlyphAsciiStageFailed:         "x",
+		GlyphAsciiStageNeedsInput:     "!",
+		GlyphAsciiStageNext:           ".",
+		GlyphAsciiStageWaiting:        "o",
+		GlyphAsciiStageWorking:        "*",
 		GlyphAsciiStopped:             "o",
 		GlyphAsciiToolFailed:          "x",
 		GlyphAsciiToolOk:              "+",
@@ -112,10 +136,12 @@ func Light() Tokens {
 		GlyphUnicodeActivityFrames:    "◐◓◑◒",
 		GlyphUnicodeActivitySeparator: "·",
 		GlyphUnicodeAgent:             "●",
+		GlyphUnicodeBack:              "‹",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
+		GlyphUnicodeOverflow:          "…",
 		GlyphUnicodePerson:            "›",
 		GlyphUnicodeQuit:              "✓",
 		GlyphUnicodeRecovering:        "◐",
@@ -123,6 +149,12 @@ func Light() Tokens {
 		GlyphUnicodeResyncing:         "↻",
 		GlyphUnicodeRetrying:          "↗",
 		GlyphUnicodeRule:              "─",
+		GlyphUnicodeStageDone:         "✓",
+		GlyphUnicodeStageFailed:       "×",
+		GlyphUnicodeStageNeedsInput:   "!",
+		GlyphUnicodeStageNext:         "·",
+		GlyphUnicodeStageWaiting:      "○",
+		GlyphUnicodeStageWorking:      "●",
 		GlyphUnicodeStopped:           "○",
 		GlyphUnicodeToolFailed:        "×",
 		GlyphUnicodeToolOk:            "✓",
@@ -160,10 +192,12 @@ func Dark() Tokens {
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
 		GlyphAsciiAgent:               "*",
+		GlyphAsciiBack:                "<",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
+		GlyphAsciiOverflow:            "...",
 		GlyphAsciiPerson:              ">",
 		GlyphAsciiQuit:                "+",
 		GlyphAsciiRecovering:          ":",
@@ -171,6 +205,12 @@ func Dark() Tokens {
 		GlyphAsciiResyncing:           "=",
 		GlyphAsciiRetrying:            ">",
 		GlyphAsciiRule:                "-",
+		GlyphAsciiStageDone:           "+",
+		GlyphAsciiStageFailed:         "x",
+		GlyphAsciiStageNeedsInput:     "!",
+		GlyphAsciiStageNext:           ".",
+		GlyphAsciiStageWaiting:        "o",
+		GlyphAsciiStageWorking:        "*",
 		GlyphAsciiStopped:             "o",
 		GlyphAsciiToolFailed:          "x",
 		GlyphAsciiToolOk:              "+",
@@ -181,10 +221,12 @@ func Dark() Tokens {
 		GlyphUnicodeActivityFrames:    "◐◓◑◒",
 		GlyphUnicodeActivitySeparator: "·",
 		GlyphUnicodeAgent:             "●",
+		GlyphUnicodeBack:              "‹",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
+		GlyphUnicodeOverflow:          "…",
 		GlyphUnicodePerson:            "›",
 		GlyphUnicodeQuit:              "✓",
 		GlyphUnicodeRecovering:        "◐",
@@ -192,6 +234,12 @@ func Dark() Tokens {
 		GlyphUnicodeResyncing:         "↻",
 		GlyphUnicodeRetrying:          "↗",
 		GlyphUnicodeRule:              "─",
+		GlyphUnicodeStageDone:         "✓",
+		GlyphUnicodeStageFailed:       "×",
+		GlyphUnicodeStageNeedsInput:   "!",
+		GlyphUnicodeStageNext:         "·",
+		GlyphUnicodeStageWaiting:      "○",
+		GlyphUnicodeStageWorking:      "●",
 		GlyphUnicodeStopped:           "○",
 		GlyphUnicodeToolFailed:        "×",
 		GlyphUnicodeToolOk:            "✓",
@@ -229,10 +277,12 @@ func HighContrast() Tokens {
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
 		GlyphAsciiAgent:               "*",
+		GlyphAsciiBack:                "<",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
+		GlyphAsciiOverflow:            "...",
 		GlyphAsciiPerson:              ">",
 		GlyphAsciiQuit:                "+",
 		GlyphAsciiRecovering:          ":",
@@ -240,6 +290,12 @@ func HighContrast() Tokens {
 		GlyphAsciiResyncing:           "=",
 		GlyphAsciiRetrying:            ">",
 		GlyphAsciiRule:                "-",
+		GlyphAsciiStageDone:           "+",
+		GlyphAsciiStageFailed:         "x",
+		GlyphAsciiStageNeedsInput:     "!",
+		GlyphAsciiStageNext:           ".",
+		GlyphAsciiStageWaiting:        "o",
+		GlyphAsciiStageWorking:        "*",
 		GlyphAsciiStopped:             "o",
 		GlyphAsciiToolFailed:          "x",
 		GlyphAsciiToolOk:              "+",
@@ -250,10 +306,12 @@ func HighContrast() Tokens {
 		GlyphUnicodeActivityFrames:    "◐◓◑◒",
 		GlyphUnicodeActivitySeparator: "·",
 		GlyphUnicodeAgent:             "●",
+		GlyphUnicodeBack:              "‹",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
+		GlyphUnicodeOverflow:          "…",
 		GlyphUnicodePerson:            "›",
 		GlyphUnicodeQuit:              "✓",
 		GlyphUnicodeRecovering:        "◐",
@@ -261,6 +319,12 @@ func HighContrast() Tokens {
 		GlyphUnicodeResyncing:         "↻",
 		GlyphUnicodeRetrying:          "↗",
 		GlyphUnicodeRule:              "─",
+		GlyphUnicodeStageDone:         "✓",
+		GlyphUnicodeStageFailed:       "×",
+		GlyphUnicodeStageNeedsInput:   "!",
+		GlyphUnicodeStageNext:         "·",
+		GlyphUnicodeStageWaiting:      "○",
+		GlyphUnicodeStageWorking:      "●",
 		GlyphUnicodeStopped:           "○",
 		GlyphUnicodeToolFailed:        "×",
 		GlyphUnicodeToolOk:            "✓",

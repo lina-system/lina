@@ -28,7 +28,9 @@ import (
 	"github.com/thisisjun786/lina/internal/core/manifest"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/recover"
+	"github.com/thisisjun786/lina/kit/lease"
 	"github.com/thisisjun786/lina/kit/protocol"
+	"github.com/thisisjun786/lina/kit/provider/applefm"
 	"github.com/thisisjun786/lina/kit/sandbox"
 )
 
@@ -103,6 +105,7 @@ type Services struct {
 	Lifecycle func(*lifecycle.Restarter)
 }
 type Config struct {
+	A2A  *A2AOptions
 	Work *WorkConfig
 	// SandboxLauncher pins an optional trusted absolute OS launcher.
 	SandboxLauncher string
@@ -110,6 +113,11 @@ type Config struct {
 	// Boot always supplies the durable main id, epoch and recovery state itself.
 	Client       clientsrv.Identity
 	Conversation *modelpath.ResponsesConfig
+	// Local is the on-device helper, when the person configured one.
+	Local *modelpath.LocalConfig
+	// Messenger supplies the platform adapters Core reads messenger sources
+	// with. Core owns the registry, admission and the sync loop.
+	Messenger *MessengerConfig
 	// SignInTransport is an in-process test seam; production uses the fixed issuer.
 	SignInTransport http.RoundTripper
 	// ChannelTransport is an in-process platform test seam; production uses the fixed Telegram and Discord origins.
@@ -129,6 +137,10 @@ type Config struct {
 	// AfterStep observes a completed boundary. It is used by deterministic crash
 	// tests and is never configured through command arguments or the environment.
 	AfterStep func(Step, Snapshot) error
+	// NoSync is a test seam: a test that runs Core over a state root it deletes
+	// opens canon and persona files without fsync. Production leaves it false,
+	// and no command argument or environment variable sets it.
+	NoSync bool
 }
 
 // Run owns one Core for an installed state root, until cancellation. It never
@@ -332,11 +344,38 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	var canon Canon
 	var conversation *conversationRuntime
 	if ownsConversation && len(recovery.Halt) == 0 {
-		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport)
+		var options []runtimeOption
+		if cfg.NoSync {
+			options = append(options, throwawayState())
+		}
+		runtime, openErr := startConversation(ctx, cfg.StateRoot, recovery.MainID, snapshot.Epoch, store, cfg.Conversation, activities, cfg.Client.PersonID, cfg.SignInTransport, cfg.ChannelTransport, tailnetIP(cfg.Tailnet), options...)
 		if openErr != nil {
 			return openErr
 		}
+		if err := runtime.startMessenger(ctx, cfg.Messenger); err != nil {
+			return err
+		}
 		conversation = runtime
+		if cfg.Local != nil {
+			helper, helperErr := applefm.New(applefm.Settings{Helper: cfg.Local.Helper, Model: cfg.Local.Model, PrivateCloud: cfg.Local.PrivateCloud, Env: cfg.Local.Env})
+			if helperErr != nil {
+				return helperErr
+			}
+			held, holdErr := activities.Acquire(ctx, lease.Activity{Class: lease.Live, Reason: "on-device model"})
+			if holdErr != nil {
+				return holdErr
+			}
+			profile, probeErr := helper.Probe(ctx, held)
+			held.Release()
+			// A helper that cannot serve stays unused. Core keeps running and
+			// the short-task route uses the person's main model.
+			if probeErr == nil && profile.Model == cfg.Local.Model && profile.PrivateCloud == cfg.Local.PrivateCloud && profile.ContextTokens > 0 {
+				runtime.onDevice = helper
+				runtime.onDeviceProfile = profile
+			} else {
+				fmt.Fprintln(os.Stderr, "lina core: on-device model unavailable")
+			}
+		}
 		runtime.replaySocket = cfg.Socket
 		runtime.webTransport = cfg.WebTransport
 		supported := cfg.Client.Supported
@@ -363,6 +402,11 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	stack = append(stack, github.Close)
 	if err := addOperations(&cfg.Client, clientsrv.GitHubOperations(githubService{client: github, merges: mergeAuthority, agentExists: mergeAgentExists})); err != nil {
 		return err
+	}
+	if conversation != nil {
+		if err := addOperations(&cfg.Client, localModelOperation(conversation)); err != nil {
+			return err
+		}
 	}
 	if err := boundary(CanonOpened); err != nil {
 		return err
@@ -480,6 +524,9 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		}
 		return err
 	}
+	if conversation != nil {
+		conversation.startRecall(ctx)
+	}
 	var workDone <-chan struct{}
 	if conversation != nil && cfg.Work != nil {
 		if err := conversation.startWork(ctx, cfg.Work); err != nil {
@@ -494,6 +541,13 @@ func Run(ctx context.Context, cfg Config) (result error) {
 		if err := cfg.Services.Reconcile(ctx, recovery); err != nil {
 			return err
 		}
+	}
+	a2aClose, a2aDone, err := startA2AListener(serving, conversation, cfg.A2A, func() bool { return !recovering.Load() })
+	if err != nil {
+		return err
+	}
+	if a2aClose != nil {
+		stack = append(stack, a2aClose)
 	}
 	if err := boundary(Reconciled); err != nil && !errors.Is(err, context.Canceled) {
 		return err
@@ -538,6 +592,14 @@ func Run(ctx context.Context, cfg Config) (result error) {
 	// Join the observer before closing any of the stores it uses.
 	defer func() { stopRestart(); <-restartDone }()
 	select {
+	case err := <-a2aDone:
+		if ctx.Err() != nil {
+			return nil
+		}
+		if err == nil && ctx.Err() == nil {
+			return errors.New("A2A service stopped before shutdown")
+		}
+		return err
 	case <-workDone:
 		if ctx.Err() != nil {
 			return nil

@@ -92,7 +92,7 @@ The adapter set is:
 | oh-my-opencode | Person-selected session records and memory artifacts from the prior tool's workspace or export. | Future. |
 | Honcho | Person-selected workspace peers, cards, conclusions, sessions, summaries and messages through a verified read API or export. | Future standalone adapter. |
 | Hermes | Per-profile lossless-context and host message databases, large-output sidecars and the install's Honcho person data. | First adapter; the owner's M1 continuity test for existing memory and work patterns. |
-| murmur | A stopped murmur data home: its spool and config. Its messages become messenger records, not sealed imported conversations ([conversation-and-memory.md](conversation-and-memory.md#importing-a-murmur-store)). | Planned; the owner's move off murmur. |
+| murmur | A stopped murmur data home: its spool and config. Its messages become messenger records, not sealed imported conversations ([conversation-and-memory.md](conversation-and-memory.md#importing-a-murmur-store)). | Implemented in `internal/addons/importer/murmur`, with `lina import-murmur` as its installed entry point; the owner's move off murmur. |
 | OpenClaw | Person-selected conversation/session records and memory files from a prior install or export. | Future. |
 
 These entries define intended sources, not accepted schemas or available readers. Work now covers Hermes only. Its embedded Honcho reader remains schema-gated; listing a future standalone Honcho adapter does not enable it. Each future adapter must independently verify its formats and implement the common contract before it can be offered.
@@ -222,7 +222,10 @@ with **1.0** on the wire. Its versioned
 [a2a.proto](https://github.com/a2aproject/A2A/blob/v1.0.1/specification/a2a.proto)
 defines message shapes and ProtoJSON representation; this section defines
 LINA's admission and behavior. The [research note](../research/a2a.md) records
-source findings and limits. This design adds no running endpoint or dependency.
+source findings and limits. Core implements publication and outbound connections
+through its existing conversation, effect, work and result paths. Both use the
+standard library without an SDK dependency. The Node relay remains a separate
+implementation scope.
 
 A2A is a separate Core integration, not an MCP plugin, channel, worker adapter
 or `node` connection. An A2A peer does not become a LINA person, client, Node
@@ -331,7 +334,74 @@ Artifacts have stable ids and media types, with provenance retained in Core.
 Downloads require task authorization; they never expose local paths or ambient
 credentials. Result delivery is deduplicated across restart. Core emits
 `COMPLETED` only after verifying the task's done condition, not merely from
-model text, a tool exit or a worker's completion claim.
+model text, a tool exit or a worker's completion claim. Deleting the published
+persona rejects a task that has not started. Its terminal owner notice cannot
+be delivered to the trashed conversation; that notice stays pending for the
+task and does not fail publication recovery or stop other publications.
+Restoring the persona before trash expiry delivers the notice.
+
+#### Publication setup and task profile
+
+The owner configures publication with `lina a2a publish --state-root <root> --config
+<file>` while Core is stopped. `--credential-stdin` supplies the external
+issuer's introspection client secret to Core's existing secret store. The
+private `system/core/a2a.json` control record names the TLS certificate/key,
+exact Tailscale bind, issuer, audience, introspection endpoint, required scopes
+and publications. Missing or disabled configuration opens no A2A listener.
+Changing listener or issuer setup requires a restart; binding and definition
+changes are rechecked during execution and before disclosure. The configured
+HTTPS introspection endpoint must share the issuer's origin, refuse redirects
+and identify active Bearer access tokens with issuer, audience, expiry,
+subject, client identity and scopes. Token bytes are never persisted in tasks.
+
+Each publication uses `/a2a/<publication>` for JSON-RPC and
+`/a2a/<publication>/.well-known/agent-card.json` for discovery. The initial task
+profile accepts one JSON data part with `task` (an offered definition id) and
+`input` (bounded task data). The card advertises `application/json` input.
+This application data is not a protocol-level skill selector. Owner definitions
+pin exact Core record/web tool operations, a complete worker definition, an
+execution deadline, a tool-call ceiling and a committed-file output rule.
+Caller data can fill the work description; it cannot choose tools, paths,
+worker configuration, write area, branch, effects or budget.
+
+Each configured tool operation and the worker dispatch may run once. The
+published task uses an isolated conversation with forwarded input and no
+personal history or recall. Preset checks, tool effects, worker admission,
+local approvals and manager verification remain the existing Core paths.
+An incoming binding authorizes task admission and permitted replies; it does
+not by itself authorize the installed worker's OS-user permissions. Before any
+provider, tool or worker execution, Core shows the owner the exact caller input,
+task definition, tools, repository, write area and deadline. The approval states
+that the installed worker uses the owner's files, login and integrations. Only
+an authenticated owner can allow that request once or deny it. No eligible
+surface means refusal. The answer is bound to the request and current Core
+epoch; a caller message, another task or a restart cannot reuse it. Pending
+execution approval is `INPUT_REQUIRED`. Approval does not remove the preset
+ceiling or the worker's own later approval requirements. A denied worker
+approval stops that published task and cannot trigger an automatic worker retry.
+Core reports cancellation only from a recorded terminal observation; missing
+or uncertain evidence remains unknown.
+The publication does not authorize the manager to merge or close a PR.
+Supplementary messages on an authorized nonterminal task retain their origin
+and reach the owner's conversation as untrusted input. They do not change the
+accepted definition, extend its budget, restart execution or answer an approval.
+
+The committed output must be among the worker's in-scope changed files, match
+the configured content condition and size limit, and belong to the exact head
+of a verified manager decision and worker receipt. Core reopens those commit
+bytes before exposing an artifact, retaining its content hash and commit.
+The owner receives the same permitted content through the existing typed result
+path. Its result head, ledger revision and delivery marker commit atomically.
+The task projection contains no private conversation, credential or local path.
+
+Limits are 64 KiB per request and per task's retained input, 16 input messages,
+256 KiB per artifact, 32 active admissions per Core, and a binding's lower
+active-task limit. Owner deadlines are at most one hour and tool-call ceilings
+at most 32. Streams and blocking sends have a five-minute observation limit;
+ending observation does not cancel execution. List cursors are bound to the
+caller and query and expire on server restart. Downloads at
+`/a2a/<publication>/artifacts/<task>/<artifact>` require the same current
+access-token and task authorization as RPC reads.
 
 ### Calling a remote agent
 
@@ -373,6 +443,43 @@ to the originating conversation and any still-authorized Node command.
 Remote `COMPLETED` is a claim checked against the local done condition, not a
 LINA receipt or automatic acceptance of an external effect.
 
+### Outbound connection controls
+
+The owner uses the `a2a` client capability to configure, inspect, revoke and
+sign in to remote connections. The installed `lina a2a` command accepts settings
+on standard input. Credentials are transient settings fields and never enter a
+conversation. Task profiles bind an effect class, input prefix and byte limit,
+output media type and byte limit, and either an expected artifact SHA256 or
+explicit owner review (an empty hash). In review mode, Core retains an unverified
+preview; only an eligible owner confirming the inspected artifact hash can
+produce a verified result revision. Model tools cannot perform that confirmation.
+This local done condition verifies the requested content; it does not certify unrelated
+remote effects. Unknown classification still asks, and preset ceilings apply.
+
+The `remote_agent` conversation tool lists configured task definitions, sends a
+bounded message, observes a retained call or requests cancellation. The initial
+scope is the owner's direct Core conversation. Channel delegation, publication
+and Node relay are not admitted by this tool. Material or history upload is not
+implicit: only the validated text argument becomes a message part.
+
+The running list exposes retained remote work. A bounded Core observer polls
+known tasks after the model turn ends and after restart under fresh observation
+authority. It never replays an unknown initial send. Current-epoch recorded
+answers resume a follow-up through ordinary authority and approval; answers
+left unused across restart cannot send work.
+
+Input questions require the owner's recorded answer before a follow-up. A sign-in
+wait points to connection settings. OAuth uses authorization code with PKCE,
+configured issuer/client endpoints, a session-bound browser relay, issuer/state
+checks and bounded token lifetime. Expiry requires another sign-in; no model
+provider credential or refresh-token fallback is used.
+
+Artifacts may arrive as text, structured data, bytes or same-origin HTTPS URLs.
+Core retains bounded permitted content and checks the expected hash against
+assembled artifact parts. Verified text and binary file results use the existing
+result journal and material store, with the original conversation and remote
+source, identity, time and hash. Other remote completion claims remain unverified.
+
 ### Recovery and failures
 
 Published sends require a nonempty `messageId`. Before dispatch, Core stores
@@ -382,7 +489,9 @@ id with changed input is invalid. JSON-RPC ids are correlation ids only.
 Outbound message ids are stable, but A2A makes remote send deduplication
 optional. An uncertain send is **unknown**, never an automatic replay or a
 reason to try another agent. Read or resubscribe to a known remote task;
-otherwise the owner must resolve the uncertainty.
+otherwise the owner must resolve the uncertainty. Unresolved work also reserves
+its exact input within the originating conversation, so a new model call id or
+a different connection cannot silently repeat it.
 
 Revocation, epoch change or Node disconnect blocks new sends and follow-ups.
 Accepted remote work may continue. Core reconciles it through narrowly

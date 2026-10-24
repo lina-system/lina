@@ -41,7 +41,7 @@ func topicReadCursor(wire protocol.StreamCursor) (rpc.Cursor, error) {
 
 func topicNotification(identity Identity, kind protocol.Kind, payload protocol.Payload) protocol.Envelope {
 	return protocol.Envelope{
-		Protocol: protocol.Protocol{Name: "client", Version: "1.0"},
+		Protocol: protocol.Protocol{Name: "client", Version: "1.1"},
 		Kind:     kind, MessageID: rand.Text(), AttemptID: rand.Text(),
 		Sender: protocol.Sender{Party: protocol.PartyCore, ID: identity.MainID},
 		Epoch:  identity.Epoch, SentAt: time.Now().UTC().Format(time.RFC3339Nano),

@@ -50,6 +50,9 @@ func failedWorkerReaction(input ledger.Event) bool {
 }
 
 func (e *workerSession) finish(ctx context.Context, event worker.Event) error {
+	if err := e.finishSteering(ctx, event); err != nil {
+		return err
+	}
 	return e.finishOutcome(ctx, event, e.output, true)
 }
 
@@ -207,6 +210,12 @@ func (r *conversationRuntime) resumeWorkerCompletions(ctx context.Context) error
 }
 
 func (r *conversationRuntime) workerCompletionView(ctx context.Context, event ledger.Event) (*conversationRuntime, error) {
+	if event.Surface.Kind == "a2a" {
+		if r.publications == nil {
+			return nil, channels.ErrDenied
+		}
+		return r.publications.view(ctx, strings.TrimPrefix(event.ConversationID, "a2a:"))
+	}
 	if event.Surface.Kind != "channel" {
 		return r.router.view(ctx, clientsrv.Session{PersonID: r.person}, event.AgentID)
 	}

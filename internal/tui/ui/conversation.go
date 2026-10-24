@@ -21,6 +21,7 @@ type conversationView struct {
 	workOffset   int
 	workCompact  bool
 	workFilter   protocol.RunningState
+	workStages   workStageView
 	undo         []state.Draft
 	history      *inputHistory
 	scroll       int
@@ -61,7 +62,7 @@ func (m *shellModel) conversationKey(msg tea.KeyMsg) tea.Cmd {
 		cards := m.resultCards()
 		if len(cards) > 0 {
 			if m.conversation.selected < 0 {
-				m.conversation.selected = len(cards) - 1
+				m.conversation.selected = m.selectedCardIndex(cards)
 			}
 			if key.Name == "up" {
 				m.conversation.selected = max(0, m.conversation.selected-1)

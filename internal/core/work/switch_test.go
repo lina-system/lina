@@ -12,6 +12,7 @@ func switchFixture() Switch {
 	return Switch{ID: "switch-1", Owner: "person-1", Approval: "approval-1", Snapshot: strings.Repeat("a", 64), Tasks: []string{"task-1"}}
 }
 func TestSwitchRequiresApprovalAndFencesExecution(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	task := taskFixture()
 	task.PersonID = "person-1"
@@ -86,6 +87,7 @@ func TestSwitchRequiresApprovalAndFencesExecution(t *testing.T) {
 }
 
 func TestSwitchSerializesOwnersAndPreservesReceipt(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	task := taskFixture()
 	task.PersonID = "person-1"

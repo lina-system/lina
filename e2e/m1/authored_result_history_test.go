@@ -62,6 +62,9 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 			var live protocol.Result
 			for _, frame := range frames {
 				if card, ok := frame.Payload.(protocol.Result); ok {
+					if live.ResultID != "" {
+						t.Fatal("authored result published twice or replaced by a diagnostic")
+					}
 					live = card
 				}
 			}
@@ -110,6 +113,9 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 			if live.Stream == nil {
 				t.Fatal("no live result stream")
 			}
+			if tc.kind != result.PlanType && live.Next == nil {
+				t.Fatal("large authored result did not require pagination")
+			}
 			provePager := func() {
 				t.Helper()
 				if tc.kind != result.DraftType {
@@ -120,7 +126,7 @@ func TestAuthoredResultContentAndHistoryInstalledCore(t *testing.T) {
 				waitScreen(t, h, terminal, design.Text(design.English, "live"))
 				waitScreen(t, h, terminal, "Authored result")
 				h.keys(terminal, "\x0f\x1b[F") // Open the card and follow its end as pages load.
-				waitScreen(t, h, terminal, "RESULT-END")
+				t.Logf("Authored result pager capture:\n%s", screenText(waitScreen(t, h, terminal, "RESULT-END")))
 				h.keys(terminal, "\x04")
 				terminal.process.wait(t, 0)
 				h.expectTerminalRestored(terminal)

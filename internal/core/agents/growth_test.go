@@ -14,6 +14,7 @@ import (
 )
 
 func TestGrowthNextTurnUndoAndSuppression(t *testing.T) {
+	t.Parallel()
 	s, db, root := setup(t)
 	a, other := create(t, s, ""), create(t, s, "")
 	ctx := t.Context()
@@ -102,6 +103,7 @@ func TestGrowthNextTurnUndoAndSuppression(t *testing.T) {
 }
 
 func TestGrowthAtomicFailuresAndStaleUndo(t *testing.T) {
+	t.Parallel()
 	s, db, _ := setup(t)
 	a := create(t, s, "")
 	ctx := t.Context()
@@ -162,6 +164,7 @@ func TestGrowthAtomicFailuresAndStaleUndo(t *testing.T) {
 }
 
 func TestGrowthFailedPublicationReturnsNoNotice(t *testing.T) {
+	t.Parallel()
 	s, db, _ := setup(t)
 	a := create(t, s, "")
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
@@ -180,6 +183,7 @@ func TestGrowthFailedPublicationReturnsNoNotice(t *testing.T) {
 }
 
 func TestGrowthUndoCannotSkipLaterStepWithSameSnapshot(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	var first agents.GrowthNotice
@@ -198,6 +202,7 @@ func TestGrowthUndoCannotSkipLaterStepWithSameSnapshot(t *testing.T) {
 }
 
 func TestGrowthUndoCanRestoreBaselineAfterUndoingClearStep(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t)
 	a := create(t, s, "")
 	first, err := s.AdoptGrowth(t.Context(), a.ID, "person", agents.GrowthCandidate{ID: "fixture-first", Expected: 1, Snapshot: "fixture-growth", Notice: "fixture-notice"})
@@ -224,6 +229,7 @@ func TestGrowthUndoCanRestoreBaselineAfterUndoingClearStep(t *testing.T) {
 }
 
 func TestGrowthRepeatedUndoReturnsCurrentAgent(t *testing.T) {
+	t.Parallel()
 	s, db, _ := setup(t)
 	a := create(t, s, "")
 	ctx := t.Context()

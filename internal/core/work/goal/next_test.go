@@ -17,6 +17,7 @@ func oneGoal(tasks ...Task) Goal {
 }
 
 func TestDeriveFillsLoadSizedSlotsAndReleasesDependenciesAtMerge(t *testing.T) {
+	t.Parallel()
 	a, b, c := readyTask("a"), readyTask("b"), readyTask("c")
 	c.DependsOn = []string{"a"}
 	n := readyNode("n")
@@ -49,6 +50,7 @@ func TestDeriveFillsLoadSizedSlotsAndReleasesDependenciesAtMerge(t *testing.T) {
 }
 
 func TestDeriveNeverMergesWithoutExactHeadProof(t *testing.T) {
+	t.Parallel()
 	task := readyTask("a")
 	task.Stage = TaskDelivered
 	task.Head = "head"
@@ -84,6 +86,7 @@ func TestDeriveNeverMergesWithoutExactHeadProof(t *testing.T) {
 }
 
 func TestDeriveRequiresQADeployAndVerificationBeforeClose(t *testing.T) {
+	t.Parallel()
 	task := readyTask("a")
 	task.Stage = TaskDone
 	task.Merge = Proof{Revision: "merged", Ref: "merge", Passed: true}
@@ -114,7 +117,7 @@ func TestDeriveRequiresQADeployAndVerificationBeforeClose(t *testing.T) {
 	s.Goals[0].Revision = 1
 	s.Goals[0].CheckRound = 1
 	for _, c := range goalCriteria(s.Goals[0]) {
-		s.Goals[0].Checks = append(s.Goals[0].Checks, CriterionEvidence{Criterion: c.ID, GoalRevision: 1, Round: 1, Target: c.Check.Target, Revision: criterionRevision(s.Goals[0], c), Kind: c.Check.Kind, Ref: "read", Passed: true})
+		s.Goals[0].Checks = append(s.Goals[0].Checks, CriterionEvidence{Criterion: c.ID, GoalRevision: 1, Round: 1, Target: c.Check.Target, Revision: criterionRevision(s.Goals[0], c), Kind: c.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "read", Passed: true})
 	}
 	p, _ = Derive(s, time.Unix(100, 0))
 	if len(p.Close) != 1 || p.Close[0] != "g" {
@@ -128,6 +131,7 @@ func TestDeriveRequiresQADeployAndVerificationBeforeClose(t *testing.T) {
 }
 
 func TestCapacityCountsReservationsWithoutDoubleCountingObservedWork(t *testing.T) {
+	t.Parallel()
 	n := readyNode("n")
 	n.LoadCPU = 2
 	n.ObservedActions = []string{"running"}
@@ -147,6 +151,7 @@ func TestCapacityCountsReservationsWithoutDoubleCountingObservedWork(t *testing.
 }
 
 func TestDeriveDoesNotResumeAnUnreconciledDeadWorker(t *testing.T) {
+	t.Parallel()
 	task := readyTask("a")
 	task.Stage = TaskWorkerLost
 	task.Attempt = 1
@@ -160,6 +165,7 @@ func TestDeriveDoesNotResumeAnUnreconciledDeadWorker(t *testing.T) {
 }
 
 func TestDeriveSerializesMergesIntoTheSameBase(t *testing.T) {
+	t.Parallel()
 	a, b := readyTask("a"), readyTask("b")
 	for _, task := range []*Task{&a, &b} {
 		task.Stage = TaskDelivered
@@ -176,6 +182,7 @@ func TestDeriveSerializesMergesIntoTheSameBase(t *testing.T) {
 }
 
 func TestDeriveRejectsCyclesAndMissingDoneConditions(t *testing.T) {
+	t.Parallel()
 	a, b := readyTask("a"), readyTask("b")
 	a.DependsOn = []string{"b"}
 	b.DependsOn = []string{"a"}
@@ -187,6 +194,7 @@ func TestDeriveRejectsCyclesAndMissingDoneConditions(t *testing.T) {
 }
 
 func TestCapacityUsesDiskAndGoalDeadlineBeforeAge(t *testing.T) {
+	t.Parallel()
 	older := oneGoal(readyTask("old"))
 	older.ID = "a-older"
 	older.CreatedAt = 1
@@ -215,6 +223,7 @@ func TestCapacityUsesDiskAndGoalDeadlineBeforeAge(t *testing.T) {
 }
 
 func TestCapacityPrefersDependencyDepthAcrossGoalsAndPersonalNodesLast(t *testing.T) {
+	t.Parallel()
 	root := readyTask("root")
 	root.Stage = TaskDone
 	root.Merge = Proof{Revision: "r", Ref: "m", Passed: true}

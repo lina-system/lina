@@ -43,6 +43,7 @@ func reviewStore(t *testing.T) (*Store, *canon.Store, string) {
 }
 
 func TestReviewInterruptedObjectAllowsSameRevisionRetry(t *testing.T) {
+	t.Parallel()
 	s, _, _ := reviewStore(t)
 	a, err := s.Create(t.Context(), Create{Name: "Synthetic", PersonID: "person", Layers: Layers{Core: "initial"}})
 	if err != nil {
@@ -88,6 +89,7 @@ func TestReviewInterruptedObjectAllowsSameRevisionRetry(t *testing.T) {
 }
 
 func TestReviewConcurrentSameObjectNeverReadsPartialBytes(t *testing.T) {
+	// Serial: it holds the package versionFiles read lock while a second call waits for that lock, so a concurrent Open write lock deadlocks.
 	s, _, _ := reviewStore(t)
 	path := filepath.Join("versions", "agents", newID(), "objects", "ab", "object")
 	data := []byte("same complete object bytes")
@@ -128,13 +130,14 @@ func TestReviewConcurrentSameObjectNeverReadsPartialBytes(t *testing.T) {
 }
 
 func TestReviewOpenRemovesInterruptedTemporaryFiles(t *testing.T) {
+	t.Parallel()
 	s, db, root := reviewStore(t)
 	a, err := s.Create(t.Context(), Create{Name: "Synthetic", PersonID: "person", Layers: Layers{Core: "kept"}})
 	if err != nil {
 		t.Fatal(err)
 	}
 	dir := filepath.Join(repoPath(a.ID), "objects", "ab")
-	if err := privateDirs(s.root, dir); err != nil {
+	if err := s.privateDirs(dir); err != nil {
 		t.Fatal(err)
 	}
 	stale := filepath.Join(dir, ".persona-tmp-"+newID())
@@ -162,6 +165,7 @@ func TestReviewOpenRemovesInterruptedTemporaryFiles(t *testing.T) {
 }
 
 func TestReviewExpiryRemovesActionsAtomically(t *testing.T) {
+	t.Parallel()
 	s, db, _ := reviewStore(t)
 	a, err := s.Create(t.Context(), Create{Name: "Deleted", PersonID: "person"})
 	if err != nil {

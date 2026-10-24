@@ -12,25 +12,28 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/manifest/crwpin"
+	"github.com/thisisjun786/lina/kit/provider"
+	messageconfig "github.com/thisisjun786/lina/kit/provider/messages/config"
 	responseconfig "github.com/thisisjun786/lina/kit/provider/responses/config"
 )
 
 // Manifest identifies a clean source commit and the binaries produced from it.
 // Additional JSON fields are allowed as later components add their metadata.
 type Manifest struct {
-	VerifiedWorkerVersions map[string][]string `json:"verifiedWorkerVersions,omitempty"`
+	ProviderCapabilities   map[string]provider.CapabilitySet `json:"providerCapabilities,omitempty"`
+	VerifiedWorkerVersions map[string][]string               `json:"verifiedWorkerVersions,omitempty"`
 	// CRWPin is absent only in artifacts built before the work-ledger start gate.
-	CRWPin                *crwpin.Record                   `json:"crwPin,omitempty"`
-	SupportedCombinations []Combination                    `json:"supportedCombinations"`
-	Version               string                           `json:"version"`
-	Commit                string                           `json:"commit"`
-	Date                  string                           `json:"date"`
-	Target                string                           `json:"target"`
-	GoToolchain           string                           `json:"goToolchain"`
-	KitVersion            int64                            `json:"kitVersion"`
-	Binaries              []Binary                         `json:"binaries"`
-	SQLite                SQLite                           `json:"sqlite"`
-	Providers             map[string]responseconfig.Config `json:"providers"`
+	CRWPin                *crwpin.Record             `json:"crwPin,omitempty"`
+	SupportedCombinations []Combination              `json:"supportedCombinations"`
+	Version               string                     `json:"version"`
+	Commit                string                     `json:"commit"`
+	Date                  string                     `json:"date"`
+	Target                string                     `json:"target"`
+	GoToolchain           string                     `json:"goToolchain"`
+	KitVersion            int64                      `json:"kitVersion"`
+	Binaries              []Binary                   `json:"binaries"`
+	SQLite                SQLite                     `json:"sqlite"`
+	Providers             map[string]json.RawMessage `json:"providers"`
 }
 
 // Binary describes one artifact next to manifest.json. SHA256 is lowercase hex.
@@ -67,6 +70,20 @@ func Read(path string) (Manifest, error) {
 
 // Validate checks the required metadata and artifact records.
 func (m Manifest) Validate() error {
+	for route, capabilities := range m.ProviderCapabilities {
+		if route != "chatgpt" && route != "responses_api_key" && route != "claude" && route != "claude_api_key" && route != "apple" {
+			return fmt.Errorf("unknown provider route")
+		}
+		if !capabilities.Valid() {
+			return fmt.Errorf("invalid provider capabilities")
+		}
+		for _, capability := range capabilities {
+			if !provider.Admitted(route).Has(capability) {
+				return fmt.Errorf("unadmitted provider capability")
+			}
+		}
+	}
+
 	if m.CRWPin != nil {
 		if err := m.CRWPin.Validate(); err != nil {
 			return fmt.Errorf("crwPin: %w", err)
@@ -88,8 +105,28 @@ func (m Manifest) Validate() error {
 	if !ok {
 		return fmt.Errorf("providers must include chatgpt")
 	}
-	if err := chatgpt.Validate(); err != nil {
+	var chatgptConfig responseconfig.Config
+	if err := json.Unmarshal(chatgpt, &chatgptConfig); err != nil {
 		return fmt.Errorf("chatgpt: %w", err)
+	}
+	if err := chatgptConfig.Validate(); err != nil {
+		return fmt.Errorf("chatgpt: %w", err)
+	}
+	for route := range m.Providers {
+		if route != "chatgpt" && route != "claude_api_key" {
+			return fmt.Errorf("unknown provider route")
+		}
+	}
+	// The Claude API-key route is optional in older manifests; when present its
+	// adapter identity and zero retry policy must match the shipped settings.
+	if claudeAPIKey, ok := m.Providers["claude_api_key"]; ok {
+		var messagesConfig messageconfig.Config
+		if err := json.Unmarshal(claudeAPIKey, &messagesConfig); err != nil {
+			return fmt.Errorf("claude_api_key: %w", err)
+		}
+		if err := messagesConfig.Validate(); err != nil {
+			return fmt.Errorf("claude_api_key: %w", err)
+		}
 	}
 	if err := m.SQLite.Validate(); err != nil {
 		return fmt.Errorf("SQLite: %w", err)

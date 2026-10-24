@@ -127,8 +127,23 @@ func NewCredential(account AccountID, kind AuthKind, bearer string) Credential {
 }
 func (Credential) String() string   { return "[credential]" }
 func (Credential) GoString() string { return "[credential]" }
+
+// Ready reports whether the credential holds a usable value. A caller that
+// finds it empty reports needs sign-in before preparing a request.
+func (c Credential) Ready() bool { return c.bearer.Ready() }
 func (c Credential) Authorize(r *http.Request) error {
-	if err := secret.InjectHeader(r.Header, "Authorization", "Bearer ", c.bearer); err != nil {
+	return c.ApplyHeader(r, "Authorization", "Bearer ")
+}
+
+// ApplyHeader writes the credential into a provider's own header, such as
+// x-api-key. The header name and prefix are fixed by the adapter, and the
+// value never leaves this call. A missing or unusable credential is a sign-in
+// failure, so no adapter can send an empty key.
+func (c Credential) ApplyHeader(r *http.Request, name, prefix string) error {
+	if r == nil {
+		return &Failure{Kind: NeedsSignIn}
+	}
+	if err := secret.InjectHeader(r.Header, name, prefix, c.bearer); err != nil {
 		return &Failure{Kind: NeedsSignIn}
 	}
 	return nil
@@ -137,6 +152,7 @@ func (c Credential) Authorize(r *http.Request) error {
 type Adapter interface {
 	Provider() ProviderID
 	Class() Class
+	Capabilities(ModelRef) CapabilitySet
 	Models(context.Context, lease.Lease, Credential) (ModelList, error)
 	Quota(context.Context, Credential) ([]QuotaRow, error)
 	Stream(context.Context, lease.Lease, Request) (Stream, error)
@@ -151,15 +167,18 @@ type Item = json.RawMessage
 type ToolDecl = json.RawMessage
 type FieldList []string
 type Request struct {
-	Credential   Credential
-	Model        ModelRef
-	Effort       Effort
-	Instructions string
-	Items        []Item
-	Tools        []ToolDecl
-	Fields       FieldList
-	Purpose      RunKind
-	Bridge       ToolBridge
+	CacheIdentity string
+	Layout        *RequestLayout
+	Capabilities  CapabilityUse
+	Credential    Credential
+	Model         ModelRef
+	Effort        Effort
+	Instructions  string
+	Items         []Item
+	Tools         []ToolDecl
+	Fields        FieldList
+	Purpose       RunKind
+	Bridge        ToolBridge
 }
 type ToolBridge interface {
 	Call(context.Context, ToolCall) (ToolResult, error)
@@ -199,6 +218,9 @@ type Meta struct {
 	Class            Class
 	Usage            Usage
 	RuntimeSessionID string
+	// Batch is the deferred submission id when a provider served the request
+	// through a batch tier. Empty means no batch was used.
+	Batch string
 }
 
 // Money is a reported estimate in millionths of the named currency.
@@ -207,15 +229,21 @@ type Money struct {
 	Micros   int64  `json:"micros"`
 }
 type Usage struct {
-	Input        *int64 `json:"input"`
-	Cached       *int64 `json:"cached"`
-	CacheWrite   *int64 `json:"cache_write"`
-	Output       *int64 `json:"output"`
-	Reasoning    *int64 `json:"reasoning"`
-	CostEstimate *Money `json:"cost_estimate"`
+	CacheByLifetime map[CacheLifetime]CacheUsage `json:"cache_by_lifetime,omitempty"`
+	Input           *int64                       `json:"input"`
+	Cached          *int64                       `json:"cached"`
+	CacheWrite      *int64                       `json:"cache_write"`
+	Output          *int64                       `json:"output"`
+	Reasoning       *int64                       `json:"reasoning"`
+	CostEstimate    *Money                       `json:"cost_estimate"`
 }
 
 func (u Usage) Valid() bool {
+	for lifetime, counts := range u.CacheByLifetime {
+		if lifetime == "" || counts.Read != nil && *counts.Read < 0 || counts.Write != nil && *counts.Write < 0 {
+			return false
+		}
+	}
 	for _, n := range []*int64{u.Input, u.Cached, u.CacheWrite, u.Output, u.Reasoning} {
 		if n != nil && *n < 0 {
 			return false

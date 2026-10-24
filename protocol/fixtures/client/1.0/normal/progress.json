@@ -5,7 +5,7 @@
   },
   "kind": "progress",
   "message_id": "progress-example",
-  "attempt_id": "progress-attempt-1",
+  "attempt_id": "progress-example-attempt",
   "reply_to": null,
   "sender": {
     "party": "core",
@@ -18,5 +18,90 @@
   "receipt_ref": null,
   "source_refs": [],
   "error": null,
-  "payload": {}
+  "payload": {
+    "rows": [
+      {
+        "ref": "goal:prepare-workshop",
+        "line": {
+          "started_at": "2026-01-01T00:00:05Z",
+          "now": "Draft workshop",
+          "name": "Prepare workshop",
+          "kind": "goal",
+          "stage": "Draft workshop",
+          "percent": 50,
+          "just_finished": "Choose venue",
+          "next": "Check",
+          "waiting": 0,
+          "depth": 0,
+          "stages": [
+            {
+              "number": 1,
+              "kind": "stage",
+              "label": "Draft workshop",
+              "state": "working",
+              "steps": [
+                {
+                  "name": "Draft workshop",
+                  "state": "working",
+                  "started_at": "2026-01-01T00:00:05Z",
+                  "workers": [
+                    {
+                      "name": "Codex",
+                      "state": "in_progress"
+                    }
+                  ]
+                }
+              ]
+            },
+            {
+              "number": 2,
+              "kind": "stage",
+              "label": "Choose venue",
+              "state": "next",
+              "steps": [
+                {
+                  "name": "Choose venue",
+                  "state": "next"
+                }
+              ]
+            },
+            {
+              "kind": "checking",
+              "label": "Check",
+              "state": "next"
+            }
+          ]
+        },
+        "stage_refs": [
+          {
+            "kind": "stage",
+            "steps": [
+              "step:0:0"
+            ],
+            "number": 1
+          },
+          {
+            "kind": "stage",
+            "steps": [
+              "step:1:0"
+            ],
+            "number": 2
+          },
+          {
+            "kind": "checking",
+            "steps": []
+          }
+        ]
+      }
+    ],
+    "card_order": [
+      "goal:prepare-workshop"
+    ],
+    "counts": {
+      "running": 1,
+      "waiting": 0
+    },
+    "waiting": [],
+    "waiting_more": 0
+  }
 }

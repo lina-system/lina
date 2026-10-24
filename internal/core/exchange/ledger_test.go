@@ -21,6 +21,7 @@ import (
 )
 
 func TestDeliveryCommitsSharedConversationLedger(t *testing.T) {
+	t.Parallel()
 	db := database(t)
 	s := exchange.New(db)
 	r := start(t, s)
@@ -102,6 +103,7 @@ func (m materialStore) Read(ctx context.Context, ref ledger.Material) (string, e
 	return string(data), err
 }
 func TestLargeExchangeUsesSharedMaterialsAndMasksSecrets(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
@@ -151,6 +153,7 @@ func TestLargeExchangeUsesSharedMaterialsAndMasksSecrets(t *testing.T) {
 }
 
 func TestLargeMailboxRollbackDoesNotRetainMaterialMetadata(t *testing.T) {
+	t.Parallel()
 	root := filepath.Join(t.TempDir(), "state")
 	if err := os.Mkdir(root, 0700); err != nil {
 		t.Fatal(err)
@@ -165,7 +168,7 @@ func TestLargeMailboxRollbackDoesNotRetainMaterialMetadata(t *testing.T) {
 	req := request()
 	req.HandOff.Wanted = strings.Repeat("detail ", 4000)
 	receipt, err := exchange.NewWithMaterials(rollback{db}, material).Start(t.Context(), req, now)
-	if !errors.Is(err, rollbackError) || receipt.ID != "" {
+	if !errors.Is(err, errRollback) || receipt.ID != "" {
 		t.Fatalf("rollback receipt: %+v %v", receipt, err)
 	}
 	for _, table := range []string{"assets", "asset_revisions", "conv_event", "exch_msg", "exchanges"} {

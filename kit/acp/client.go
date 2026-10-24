@@ -214,8 +214,14 @@ func (c *Client) awaitCall(ctx context.Context, method string, ch <-chan envelop
 	return nil
 }
 func (c *Client) Initialize(ctx context.Context, info Implementation) (InitializeResponse, error) {
+	return c.InitializeWithMeta(ctx, info, nil)
+}
+
+// InitializeWithMeta adds explicitly supported client extension metadata while
+// preserving the shared client's standard capabilities. It changes no defaults.
+func (c *Client) InitializeWithMeta(ctx context.Context, info Implementation, meta *map[string]json.RawMessage) (InitializeResponse, error) {
 	var result InitializeResponse
-	err := c.call(ctx, "initialize", InitializeRequest{ProtocolVersion: 1, ClientInfo: &info, ClientCapabilities: &ClientCapabilities{Elicitation: &ElicitationCapabilities{Form: &ElicitationFormCapabilities{}}}}, &result, "")
+	err := c.call(ctx, "initialize", InitializeRequest{ProtocolVersion: 1, ClientInfo: &info, ClientCapabilities: &ClientCapabilities{Meta: meta, Elicitation: &ElicitationCapabilities{Form: &ElicitationFormCapabilities{}}}}, &result, "")
 	if err == nil && result.ProtocolVersion != 1 {
 		err = fmt.Errorf("ACP protocol version %d is unsupported", result.ProtocolVersion)
 	}

@@ -39,6 +39,7 @@ func (d *fixtureDriver) Observe(_ context.Context, a Action) (Observation, error
 }
 
 func TestEngineCommitsBeforeDispatchAndReconcilesInterruptedEffects(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	now := func() time.Time { return time.Unix(100, 0) }
 	first, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: now})
@@ -104,6 +105,7 @@ func TestEngineCommitsBeforeDispatchAndReconcilesInterruptedEffects(t *testing.T
 }
 
 func TestEngineGoalCannotBeAdmittedWithFabricatedCompletion(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(100, 0) }})
 	if err != nil {
@@ -122,6 +124,7 @@ func TestEngineGoalCannotBeAdmittedWithFabricatedCompletion(t *testing.T) {
 }
 
 func TestEngineCompletionReplayAfterClockAdvance(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	at := int64(100)
 	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: func() time.Time { return time.Unix(at, 0) }})
@@ -153,6 +156,7 @@ func TestEngineCompletionReplayAfterClockAdvance(t *testing.T) {
 }
 
 func TestEngineObservesRecoveredHandleOnceUntilDeadline(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	now := func() time.Time { return time.Unix(100, 0) }
 	e, _ := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: now})
@@ -185,6 +189,7 @@ func TestEngineObservesRecoveredHandleOnceUntilDeadline(t *testing.T) {
 }
 
 func TestEngineRunsCodeGoalThroughRuntimeEvidence(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	closed := make(chan Goal, 1)
 	driver := &fixtureDriver{run: func(a Action) (Observation, error) {
@@ -205,7 +210,7 @@ func TestEngineRunsCodeGoalThroughRuntimeEvidence(t *testing.T) {
 		case Verify:
 			out.Proof = Proof{Revision: "merged", Ref: "runtime-probe", Passed: true}
 		case CheckCriterion:
-			out.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Ref: "read:" + a.CriterionID, Passed: true}
+			out.Criterion = &CriterionEvidence{Criterion: a.CriterionID, GoalRevision: a.GoalRevision, Round: a.CheckRound, Target: a.Check.Target, Revision: a.Revision, Kind: a.Check.Kind, Collected: &CollectedEvidence{Record: []byte(`{"observed":true}`), Output: "fixture check output"}, Ref: "read:" + a.CriterionID, Passed: true}
 		case ContinueWorker, Resume, RepairConflict, RepairQA, Observe, Decide, PlanGoal:
 			return Observation{}, fmt.Errorf("unexpected action %s", a.Kind)
 		default:
@@ -280,6 +285,7 @@ func TestEngineRunsCodeGoalThroughRuntimeEvidence(t *testing.T) {
 }
 
 func TestEngineOrphanGetsOneManagerTurnThenBlocks(t *testing.T) {
+	t.Parallel()
 	_, db := testJournal(t)
 	blocked := make(chan Goal, 1)
 	driver := &fixtureDriver{run: func(a Action) (Observation, error) {

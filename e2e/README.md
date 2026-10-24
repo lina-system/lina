@@ -115,7 +115,7 @@ kit changes and the documents-only exclusion in a disposable Git repository.
 
 ## Real model mode
 
-For QA and acceptance, use the intended real model (currently `claude-opus-5-5`),
+For QA and acceptance, use the intended real model (`claude-opus-5-5`),
 not a cheaper substitute. Configure these variables outside the repository:
 
 | Variable | Meaning |
@@ -139,11 +139,22 @@ API keys only; ChatGPT OAuth credentials cannot be redirected to them. No reques
 retries, redirects or substitute billing paths are enabled.
 
 Real tests skip when the opt-in switch or key is absent, including credential-free
-CI and foundation. With both present, invalid configuration, an unavailable
-endpoint or a broken stream fails the journey. Ordinary fixture tests still run.
+CI and foundation, and where Core cannot be installed. With both present,
+invalid configuration, an unavailable endpoint or a broken stream fails the
+journey. Ordinary fixture tests still run.
 Builds and ordinary product subprocesses retain their isolated environment;
 only the opted-in probe and the headless journey's Core receive the explicit
 provider configuration.
+
+`TestRealModelHeadlessConversation` installs Core in private temporary state,
+sends one message through the headless client over Core's socket, and requires a
+durable input acknowledgement, live deltas, completed assistant items replacing
+the streamed identities, and an inactive turn. It then restarts Core and
+requires the same canon history, text and item identities under the same
+conversation id in a new epoch. `TestHeadlessConversationFixture` runs the same
+client journey against a loopback server with no external credential. Both
+install real binaries, so hosts other than Linux skip with the same reason as
+the other installed scenarios; a skip is not a passing journey.
 
 ## Alpha owner-use acceptance
 
@@ -157,13 +168,70 @@ provides the separate account-free paste regression; `TestAlphaWorkerCrashInstal
 checks that killing Core does not erase an acknowledged worker from its public
 lane snapshot.
 
+`TestAlphaOwnerWorkerCrash` delegates to the installed Codex through the real
+model and kills Core after observing a bound active turn and its work card.
+It reads the recovery contract's persisted thread, attempt, binding and
+observation, requires the original task to finish with at most one continuation,
+and checks that another Core restart preserves the result without another
+delivery. An unresolved snapshot fails this scenario; retaining an unknown
+worker is not reported as successful recovery.
+The result screen must show text from the completed agent reply attributed to
+the original conversation, input and recovered worker turn. Request-only and
+streaming frames do not qualify. The same reply ID and text must survive the
+second restart; a failed check retains delivery metadata and its terminal frame.
+
+A conversation body above the ledger's inline size is stored as a material and
+its event keeps a null body column. Attribution, the worker-output check and
+the failure diagnostic read those bodies through the ledger's own reader; a raw
+`conv_event.body` query silently returns an empty string and drops a delivered
+reply. `TestAlphaRecoveredReplyReadsSpilledBodies` holds that boundary for both
+a spilled worker completion and a spilled reply.
+
+The task's own corpus crosses that boundary when the worker answers it in full:
+40 situations in three Korean sentences each are 18,551 bytes, and the retained
+completion with its task packet is 19,065 bytes.
+`TestAlphaRecoveredReplySpilledCompletionEndToEnd` drives that size through the
+installed Core, a killed turn and the recovery continuation with the synthetic
+worker, and requires the completed delivery, the material-backed completion and
+the attributed reply. The same run reads the completion by raw column and shows
+the empty result the acceptance used to return. Barriers that decide a wait
+while Core runs read through a normal read-only connection: the inspection
+connection only promises a stable snapshot while writers are excluded, and it
+has reported a completed worker delivery that the committed database did not
+hold. The wait also names the delivery under test rather than counting any
+completed worker delivery.
+
+Every acceptance run logs each stored completion candidate with its session,
+turn, status, delivery state, material flag and body size, so a failure is
+measured rather than guessed. With `LINA_ALPHA_CAPTURES` set, the same record is
+written to `recovery-delivery.json` in that test's capture directory.
+
+To keep a measured product fixed while changing only the test harness, set
+`LINA_ALPHA_BUILD` to a private directory containing `binaries/lina`,
+`binaries/lina-node` and `pinned-binaries.json`. The manifest records
+`source_commit`, `source_dirty: false` and `binaries.<name>.sha256` for both
+commands. Each digest and each command's clean Go VCS build information must
+match before installation. Ordinary fixture and foundation builds ignore this
+option. Record the harness revision separately from the pinned product commit.
+
 The coding journey checks the delivered answer, result file, executable function
 and original worker session after either a form answer or a spoken continuation.
-It does not require a card during that transition: the worker may still be idle
-or already finished. `TestM3WorkPanelLiveCodexWorker` checks the card while Core's
-worker is held at an unanswered approval or question, then verifies its artifact
-and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and its activity
-in separate recorder frames, without relying on execution speed.
+`TestAlphaOwnerCodingAndSpokenQuestion` requests a final-text worker question
+explicitly so that a form-only run cannot leave that continuation path untested.
+For a spoken question, the response must belong to that worker completion and
+its turn must be committed before the test answers; a failed response fails the
+journey immediately. The capture must contain that response, not just the
+original request or handoff acknowledgement. Screen comparison removes
+Markdown quote prefixes while retaining the question and literal operators
+inside its sentences. `TestAlphaSpokenQuestionInstalledCore` holds the handoff
+and response boundaries in an account-free journey through installed Core and
+a worker process.
+It watches the real worker throughout the task and retains a card showing both
+elapsed time and current activity; the worker may already be idle at the answer
+transition. `TestM3WorkPanelLiveCodexWorker` separately checks the fixture worker's
+card while it is held at an unanswered approval or question, then verifies its
+artifact and restart. `TestAlphaWorkCardWaitsForProgress` holds back the card and
+its activity in separate recorder frames, without relying on execution speed.
 
 Set `LINA_ALPHA_CAPTURES` to a private absolute output directory to retain
 rendered text, ANSI output and terminal cells at each observed transition.
@@ -185,7 +253,10 @@ On Linux, the residency collector samples the installed Core's RSS and
 high-water mark once per second and checks its public protocol every minute.
 It rejects a process/epoch change, an exit, a missing counter, a sample gap over
 two seconds, or a peak above the predeclared 256 MiB budget. It records the source
-commit, source cleanliness and installed binary digest. The full run requires a
+commit, source cleanliness and installed binary digest. Samples reach
+`resident.jsonl` on a separate goroutine, so a slow or stalled filesystem appears
+as `maximum_write_seconds` rather than as a sampling gap; the gap limit and the
+RSS budget are unchanged. The full run requires a
 clean source commit, the real model opt-in and 86,400 measured seconds; its TUI
 stays attached. The 65-second collector probe exercises a periodic health request and is always recorded as incomplete
 acceptance, even when the probe test succeeds. These are Linux Core measurements,

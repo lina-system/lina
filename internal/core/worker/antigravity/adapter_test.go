@@ -19,6 +19,9 @@ func TestMain(m *testing.M) {
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}
+	if len(os.Args) > 1 && os.Args[1] == "proc-job" {
+		os.Exit(proc.JobMain(os.Args[2:], os.Stderr))
+	}
 	os.Exit(m.Run())
 }
 
@@ -73,9 +76,9 @@ func finish(t *testing.T, ctx context.Context, a *Adapter) worker.Finish {
 	}
 }
 func TestResultEndsTurnBeforeProcessExit(t *testing.T) {
-	a, ctx, l, dir := fixture(t, recorded(t, "success")+"mkfifo hold\nread line < hold\n")
+	a, ctx, _, dir := fixture(t, recorded(t, "success")+"mkfifo hold\nread line < hold\n")
 	released := make(chan struct{})
-	l = lease.New(func() { close(released) })
+	l := lease.New(func() { close(released) })
 	thread, err := a.Start(ctx, l, worker.StartSpec{TaskID: "task", AttemptID: "attempt", Workdir: dir, TaskPacket: "perform task"})
 	if err != nil {
 		t.Fatal(err)

@@ -47,7 +47,7 @@ A change that lets an internal term into the default view is a defect.
 **C-01 One main (changed).**
 One `lina core` runs per state root, as a user service under the person's OS user ([runtime.md](runtime.md#processes)).
 Inside it run these goroutine families: one lane per conversation, the background-run supervisor, the gateway adapters, the scheduler, the completion-event reactor, the client hub and the job API for `moirai-worker`.
-Children are created through `kit/proc` with owned process lifetimes and process groups (inheriting a cgroup where the service manager has one): the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
+Children are created through `kit/proc` with owned process lifetimes — a subreaper helper on Linux, a launchd job coalition on macOS, a Job Object on Windows — inheriting a cgroup where the service manager has one: the Claude adapter (started on first use, stopped after idle), the `grok` command, workers, plugin servers and sandboxed commands.
 There is no process per agent and no model proxy.
 A foreground `lina core` for development runs only where install created the main id file.
 
@@ -82,9 +82,9 @@ Doctor never mints an epoch, creates a lock or socket, migrates canon, repairs c
 Layout: `cmd/lina`, `cmd/lina-node`, `cmd/moirai-worker`, `protocol/schema`, `protocol/fixtures`, `persona/<preset>/`, `skills/` (built-in, embedded), `catalog/` (plan and plugin catalog sources), `adapters/claude/` (TypeScript, lockfile), and `internal/` with `core`, `node`, `tui`, `clientapi`, `buildinfo` (shared binary metadata), `design` (generated from the token source) and `fakecore`.
 Builds are static; cgo follows the SQLite binding chosen by [V2](runtime.md#runtime-acceptance).
 The kit wrapper starts bubblewrap through the explicit process supervisor ([runtime.md](runtime.md#sandbox)).
-Listed helper subcommands such as `file-tool` and `proc-supervise` are allowed; hidden re-exec modes and initialization hooks are not.
-Both `lina` and `lina-node` register `proc.SuperviseMain` and list `proc-supervise` in usage.
-The supervisor needs no additional binary or cgroup delegation.
+Listed helper subcommands such as `file-tool`, `proc-supervise` and `proc-job` are allowed; hidden re-exec modes and initialization hooks are not.
+Both `lina` and `lina-node` register `proc.SuperviseMain` and `proc.JobMain` and list `proc-supervise` and `proc-job` in usage.
+The helpers need no additional binary or cgroup delegation.
 
 Kit seams, following [runtime.md](runtime.md#lina-kit):
 
@@ -103,9 +103,9 @@ Layers under `internal/core/`:
 | Layer | Packages |
 | --- | --- |
 | L1 | `canon` (writer, fence, migrations), `eventstore`, `secrets`, `ctlfiles`, `guard` (masking), `ids` |
-| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction) |
+| L2 | `authority` (gate, grants, approvals, effect ledger), `lifecycle`, `budget`, `manifest`, `binding` (pure input rules and candidate ranking), `toolcatalog` (pure declaration reconstruction), `recall` (shared derived index writer and queued fill) |
 | L3 | One store per table group: `ledger`, `inbox`, `agents`, `memory`, `retract`, `skills`, `records`, `assets`, `work`, `timers`, `plugins`, `channels`, `accounts` |
-| L4 | Flows: `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `exec`, `exchange`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install` |
+| L4 | Flows: `a2a`, `lane`, `assemble`, `compaction`, `turn`, `runs`, `replay`, `intakereplay`, `reply`, `results`, `modelpath`, `localmodel`, `exec`, `exchange`, `messenger`, `gateway`, `worker`, `reactor`, `review`, `ghclient`, `progress`, `waiting`, `backup`, `update`, `recover`, `clientsrv`, `jobs`, `mcphost`, `install`, `miniapps` |
 | L5 | `boot`, `supervise` |
 
 The separate worker has its own downward import layers.
@@ -266,7 +266,7 @@ If the filesystem context cannot be isolated, startup refuses before binding.
 The root, `system/` and `system/core/` must be owned by the current user and private (0700); existing unsafe paths are refused, not chmodded.
 Control records must be regular files at 0600, owned by that user, without symbolic or hard links.
 A read validates both the opened file and its directory entry before consuming bytes.
-If an atomic replacement unlinks the opened inode or changes the entry, the reader closes it and reopens the record, with at most eight attempts and all checks repeated.
+If an atomic replacement unlinks the opened inode or changes the entry, the reader closes it and reopens the record after a short pause, with at most eight attempts and all checks repeated.
 An unsafe replacement or continuous replacement fails closed.
 Records larger than 64 KiB, malformed JSON objects and invalid epochs stop startup with exit 78.
 The epoch file contains only its canonical decimal digits, with no whitespace; overflow refuses the start and preserves the record.
@@ -332,7 +332,7 @@ The reconcile table follows [runtime.md](runtime.md#recovery) and [main-authorit
 | Model request or partial stream | Discarded; the turn is `interrupted` and not replayed; one plain line in the conversation |
 | Tool intent with no receipt | `unknown`; never run again; an irreversible one waits for the person |
 | Node effect, Node not back | `unknown` until the Node reports |
-| Worker turn cut by the restart | `unknown`; settled by reading the thread |
+| Worker turn cut by the restart | `unknown`; settled by reading the thread, or by a completion committed for that exact turn before the cut |
 | Pending approval | Stopped; a late button is answered stale |
 | Background run that was working | Resumed once from its checkpoint; a second cut lands it failed or partial |
 | Outbound channel send, outcome unknown | Not sent again |
@@ -686,6 +686,7 @@ It saves each set of four layers and its work-method record as a Git commit in a
 Immutable `refs/revisions/<commit>` retain saved versions; `HEAD` anchors the first version and canon selects the current one.
 Each immutable file is written and synced in a private temporary file beside its destination, then installed without replacing an existing file and followed by a directory sync.
 Opening the store removes abandoned temporary files; concurrent writers compare only fully published bytes.
+Core opens the store without options, so every saved file is synced. A test may open a throwaway root with `agents.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Unpublished objects after a failed write are never applied.
 `Prepare(turn, agent)` verifies the saved bytes and durably pins one revision to that turn; repeating it after a restart returns that revision, while a later turn selects the latest published revision.
 This is the persona part of preparation, not evidence that account, context or model-policy preparation succeeded.
@@ -1107,7 +1108,7 @@ Each complete result revision is one append-only `conv_event`; even a preview ab
 A rejected body or stale replacement appends nothing.
 `present_result` returns only the card fields and an initial text excerpt (2,048 Unicode scalar values by default); `read_result` is the explicit body-reading operation.
 A saved result keeps its revision and appends a status event pointing to `saved_as`.
-Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages.
+Request assembly skips every `result` scaffold (creation, replacement and saved-status events), so these storage bodies never become model messages. It also projects a completed `present_result` call with a bounded reference in place of its arguments, while a refused or unfinished call keeps them; the recorded call keeps its bytes.
 The separate `provider_item` tool acknowledgement remains byte-for-byte history; only an explicit `read_result` output includes the body.
 
 Save resolves and authorizes its destination without publishing, then commits its CP-05 claim and allocated record id, creates the record outside the canon transaction using that same resolved destination, and finally commits the receipt and saved status.
@@ -1119,6 +1120,7 @@ Container ids are resolved by a trusted ownership-checking lookup, never treated
 The initial records writer saves one Markdown file with typed result data and provenance under `versions/records/`, and one Git commit for saved version 1.
 Names are human slugs with collision suffixes, never record ids.
 Before changing a tracked file, index or ref, the records writer journals the intended parent/commit, file and blob ids in canon and retains a durable token for its Git index lock.
+Core opens the repository without options, so every object, index and ref write is synced. A test may open a throwaway root with `records.NoSync()` to skip those fsyncs; it never changes what Core writes.
 Reopening completes only that exact interrupted publication, checks all other working files, and releases only a lock with its own token; different target bytes, a different ref or a foreign lock are refused.
 Recovery repairs repository consistency so later saves can proceed, while the original unknown effect remains for reconciliation without redispatch.
 It checks the repository head against a canon checkpoint and verifies tracked working files; it refuses both committed and uncommitted outside changes instead of silently incorporating them.
@@ -1156,6 +1158,7 @@ type Class uint8       // ModelAPI, AgentRuntime
 type Adapter interface {
 	Provider() ProviderID
 	Class() Class
+	Capabilities(model ModelRef) CapabilitySet // missing names are unsupported
 	Models(ctx context.Context, l lease.Lease, c Credential) (ModelList, error) // display data, not entitlement
 	Quota(ctx context.Context, c Credential) ([]QuotaRow, error)  // unknown is a value
 	Stream(ctx context.Context, l lease.Lease, r Request) (Stream, error)
@@ -1166,6 +1169,9 @@ type Credential struct { // handed in for one call
 	// The private bearer prints as a placeholder and only Authorize can apply it.
 }
 type Request struct {
+	CacheIdentity string // versioned digest, not a provider field by itself
+	Layout *RequestLayout // exclusive item/tool positions
+	Capabilities CapabilityUse // Core-selected values, checked before sending
 	Credential Credential // supplied for this call, never read from a store
 	Model   ModelRef
 	Effort  Effort
@@ -1183,7 +1189,7 @@ type Stream interface {
 	Meta() Meta                              // request id, fidelity class, usage, runtime session id
 	Close() error                            // cancel and join the request
 }
-type Usage struct{ Input, Cached, CacheWrite, Output, Reasoning *int64; CostEstimate *Money } // nil is unknown
+type Usage struct{ Input, Cached, CacheWrite, Output, Reasoning *int64; CostEstimate *Money; CacheByLifetime map[CacheLifetime]CacheUsage } // nil is unknown
 type QuotaRow struct { // the fields of runtime.md#usage-and-cost; a nil value is unknown, a reset time is never invented
 	Provider ProviderID; Account AccountID; Window Window
 	UsedPct *float64; ResetsAt *time.Time; State QuotaState; Source QuotaSource; Observed time.Time
@@ -1200,10 +1206,16 @@ The ledger names the class per request.
   An adapter only applies what Core chose.
   It never chooses a capability itself and never needs one to succeed.
 
+Request evidence carries optional `CacheIdentity`, `Layout` and `Capabilities`
+JSON fields. The digest covers them when present; records predating these fields
+keep their original digest interpretation. No evidence or usage table changes
+or backfills are required. Background runs retain request assembly evidence in
+their existing durable run JSON before sending.
+
 Implementation notes: [C-43 provider increment](../../kit/provider/REFERENCE.md#c-43-provider-increment).
 
 **C-44 Responses and Gemini adapters (new).**
-Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
+Responses adapter: Go standard-library HTTP and a bounded SSE reader, `store` false, `stream` true, the request field list from the build manifest, `reasoning.encrypted_content` requested when Core selected the reasoning-state capability, and tools declared in the form the sign-in request surface requires (`apply_patch` as a custom tool or a one-string function).
 Done items come from `response.output_item.done` only, and tool calls dispatch from done items only.
 Current-turn items are never sent altered or dropped.
 [V1](runtime.md#runtime-acceptance) decides the open fields.
@@ -1445,8 +1457,10 @@ Implementation notes: [C-14 sandbox acceptance](../../kit/sandbox/REFERENCE.md#c
 Linux process ownership uses the explicit per-command `proc-supervise` helper with `PR_SET_CHILD_SUBREAPER`.
 It kills and waits for the whole descendant tree, including `setsid`/`setpgid` escapes and orphans, before returning.
 The tests cover owner shutdown, cancellation, normal leader exit and owner process death.
-macOS first kills the process group, then scans same-user processes for an inherited owner token using `KERN_PROCARGS2`.
-This macOS cleanup is best effort: a child that clears its environment can escape, and this remaining limitation is not accepted as complete unescapable supervision.
+macOS runs each command as its own launchd job through the explicit per-command `proc-job` helper, and owns it through the resource coalition launchd creates for that job.
+Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
+Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
+The sandbox's Seatbelt policy keeps its `setsid`/`setpgid` denial, which matches the Linux seccomp filter but is no longer what owns a command's descendants.
 
 Windows process ownership uses a Job Object assigned before the suspended leader runs.
 Descendants cannot break away by changing their console/process group, and cleanup waits for an empty job as well as the leader's exit.
@@ -1489,6 +1503,7 @@ An observed concurrent change returns unknown and keeps the recovery information
 A completed receipt describes the final observation, not future writes through another process's open descriptor.
 Captures remain readable through file reads after reopening and participate in workspace manifest revisions.
 A recovery-like directory name is not proof of worker ownership and never hides its files from a command receipt; this also keeps later writes through captured open inodes observable.
+Worker-reserved capture slots are recorded in the private version store and accounted separately from the 10,000-entry workspace manifest limit, so retained captures cannot exhaust workspace manifest snapshots on their own.
 These live captures share the workspace's access scope, whereas the immutable before/after version store remains private to the file worker.
 Restore from a saved-version id uses its immutable bytes and the current destination revision.
 A multi-file patch is prevalidated but is not a filesystem transaction: an interrupted commit is unknown with retained recovery information.
@@ -1550,6 +1565,7 @@ It has three classes of data: canonical rows; FTS tables written in the same tra
 One writer goroutine owns one write connection.
 Readers open `query_only`.
 WAL and `synchronous=FULL`.
+Core always opens canon that way; only a test that opens its own throwaway state root may set `Config.NoSync`, which keeps WAL but drops commit sync through `synchronous=OFF`.
 No transaction spans a model, tool, Node or network call.
 Migrations are forward-only.
 The SQLite binding is chosen by [V2](runtime.md#runtime-acceptance) against four needs: FTS5, the online backup API, an optional sqlite-vec load verified against a manifest digest, and static builds.
@@ -1729,7 +1745,7 @@ Stream failure, incomplete output or publication failure leaves the unresolved e
 Continuations durably record the ended turn and original input reference before fitting, rebuild the packet and send the original input once.
 An oversized continuation returns `request_too_large`, sends nothing, and records complete and per-part sizes.
 These APIs attach through the loop transform and composition callbacks; no new client-protocol or TUI endpoint is introduced.
-`compaction.Builder` resolves authorized, masked canonical event bodies and the immediate child root before invoking the auxiliary summarizer.
+`compaction.Builder` resolves authorized, masked canonical event bodies and the immediate child root before invoking the auxiliary summarizer. The conversation composition reprojects those sources as provider items and applies the same bounded result reference as request assembly before that call, including when a stale root is rebuilt from visible events. A refused or unfinished presentation keeps its arguments.
 A completed preparation can be reused after new verbatim/current-turn events arrive only when its summarized sources, root and revocation epoch are unchanged; its publication frontier is refreshed and checked again at commit.
 The new node and its content-free compaction audit event commit together.
 `Expansion.Read`, exposed through the agent-bound `exec.ExpandTool`, pages source events in ledger order across a node’s descendants, reads full material revisions, preserves secret masks and refuses retracted, foreign or unavailable sources.
@@ -2012,7 +2028,7 @@ The embedded meta-skill describes this procedure.
 **C-28 Importing a Hermes install (changed).**
 Contract: [memory importer add-ons](conversation-and-memory.md#memory-importer-add-ons), [Hermes import](conversation-and-memory.md#importing-a-hermes-install), [filesystem.md](filesystem.md#importing-another-memory-system), [integrations.md](integrations.md#memory-importers).
 The optional Hermes adapter lives in `internal/addons/importer/hermes`, outside the Core layers.
-Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`.
+Production packages outside `internal/addons/` must not import memory importer add-ons, with one explicit entry-point exception per adapter: `cmd/lina/import_hermes.go` may import the exact Hermes adapter package for `lina import-hermes`, and `cmd/lina/import_murmur.go` the exact murmur adapter package for `lina import-murmur`.
 Core, onboarding and other commands remain independent of adapter execution.
 Foundation registers the adapter and `testdata/hermes/` for build, vet, analyzer and test checks.
 An installed adapter runs as a background job started by the person, with no model call and deterministic classification.
@@ -2346,7 +2362,7 @@ type Adapter interface {
 - Adapters: Codex over `codex app-server` on stdio (Go types generated for each verified version; exhaustive switches).
   Claude Code, Cursor, Gemini CLI, Grok and added agents through the one ACP adapter of C-60.
   Antigravity as a headless child with streaming output.
-  The Claude Code headless adapter below remains until the worker evaluation chooses between it and the ACP profile.
+  The Claude Code headless adapter below stays an explicit selection; the worker evaluation kept the ACP profile ([worker-evaluation.md](../../evidence/worker-evaluation.md)).
 - Implementation notes: [C-29 session integration](../../internal/core/worker/REFERENCE.md#c-29-session-integration).
 - Workers run with the user's own setup and get no LINA sandbox, credential, hook or skill ([work-and-delegation.md](work-and-delegation.md#workers)).
   Approvals go to the originating conversation.
@@ -2394,6 +2410,31 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   Malformed frames, EOF and overflowing the bounded event queues fail the connection.
   Consumers drain updates and requests while calls run and apply Core's authorization and approval policy.
 - Implementation notes: [C-60 worker profiles](../../internal/core/worker/acp/REFERENCE.md#c-60-worker-profiles).
+- Added worker settings are read once at Core startup from
+  `system/core/worker-profiles.json` under the state root:
+
+  ```json
+  {"version":1,"profiles":[{"name":"my-agent","command":"my-acp-agent","args":["acp"]}]}
+  ```
+
+  Version 1 accepts only `version` and `profiles`; each profile accepts only
+  `name`, `command` and optional `args` (an array of strings, empty by default).
+  Names match `[a-z][a-z0-9-]{0,63}`. All built-in worker names are reserved even
+  when absent, and every entry sharing a duplicate added name is refused.
+  A command is an executable on PATH or an absolute executable path; Core
+  resolves it at startup and passes arguments directly, without a shell.
+  The file is a regular file of at most 64 KiB with at most 128 profiles;
+  commands and each argument have at most 4096 bytes, with at most 128 arguments
+  and no NUL bytes. Commands cannot be blank or have outer whitespace.
+  Missing settings add no workers. Invalid JSON, envelope fields or version
+  refuse the added file; an invalid profile or unavailable executable refuses
+  only that entry. Startup reports the file, entry number or valid worker name, and cause
+  without echoing commands or arguments. Other workers remain available.
+  Valid added profiles follow installed built-ins in the chooser and are also
+  explicit selections in that Core's `dispatch_work` declaration and admission.
+  Changes take effect on restart. Settings confer no execution authority and
+  cannot supply environment, model, login, version probes or verified versions.
+  Each attempt uses `agentInfo.version` or `unknown` and remains unverified.
 - `kit/acp.StartPrompt` returns after writing `session/prompt` and supplies one buffered result.
   The adapter starts each turn through that barrier, so an immediate `session/cancel` cannot precede the prompt.
   `Prompt` retains its blocking convenience API; cancelling its wait sends no protocol cancel.
@@ -2403,7 +2444,8 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   A terminal snapshot retains the failed turn and unresolved-effect evidence;
   only a settled attempt may start the replacement in its existing worktree.
   Session restoration prefers advertised resume over load, preserves the recorded
-  session id and excludes replay from progress and output. The next process has a
+  session id and excludes replay from progress and output. Live updates received
+  after the restore response belong to the next turn. The next process has a
   fresh binding and work-tool server. Restore failure and Core-crash uncertainty
   do not authorize another prompt or a fresh-session fallback.
   It changes no storage schema and never claims completion.
@@ -2419,7 +2461,10 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   The Cursor installed-Core scenario in `e2e/m2/cursor_worker_test.go` exercises this path.
 - ACP approval and form events use the existing `boot` worker bridge. The
   adapter retains single-use request handles and validates offered once options
-  and form values before sending. Snapshots expose pending requests as waiting;
+  and form values before sending. Field names the waiting-card bridge refuses
+  are declined before a card is published. Optional schema properties may be
+  omitted, multi-select values and labels are shown on the question, and a
+  schema-invalid submission leaves the card open. Snapshots expose pending requests as waiting;
   cancel and prompt completion invalidate them. Core's existing authority claim
   consumes approval answers before delivery and stops unused answers on restart.
   No new storage format or migration is introduced. The headless scenario in
@@ -2437,7 +2482,9 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
 | `session/update`: message, thought, tool call, tool-call update, plan | progress |
 | `usage_update`, usage in the `session/prompt` reply | usage |
 | `session/prompt` reply | finish: `end_turn` done; `cancelled` interrupted; `refusal`, `max_tokens`, `max_turn_requests` failed as a worker error naming the stop reason |
-| JSON-RPC error on a request; session-failure extension | finish failed: -32000 login expiry; extension kinds map to quota, rate limit, login or connection |
+| `session/new` JSON-RPC error -32000 | readiness refusal: needs sign-in |
+| `session/prompt` JSON-RPC error | finish failed: worker error with `prompt_failed`; effects remain unknown |
+| Advertised session-failure extension | finish failed: quota, rate limit, login or connection |
 | `session/request_permission` | approval |
 | `elicitation/create` (form) | question |
 | A tool call on LINA's session MCP server | work-tool call |
@@ -2450,6 +2497,16 @@ Evidence: [worker-protocols.md](../research/worker-protocols.md).
   It returns Core's record of the session: state, pending requests and the last message.
   After a Core restart the state is unknown until once-only recovery loads the session again.
 - `Quota` returns rows only from the session-failure extension and a profile's named rate-limit key; with neither, it returns none and the chooser treats the worker as unknown.
+  Worker initialization opts into AIR v1 session failures without changing the
+  shared client's provider defaults. Only advertised, error-severity machine
+  categories/actions are classified. Prompt RPC errors and stop reasons retain
+  precedence; warning updates and unknown metadata cannot finish a turn.
+  A terminal ACP snapshot carries its observed finish; transport loss leaves
+  effects unknown, as do prompt errors and native tool calls without a reported
+  terminal outcome. A later prompt does not reconcile an earlier error.
+  Dispatch persists streamed quota measurements before session
+  teardown and uses that snapshot to fence the one allowed replacement.
+  The synthetic installed-Core scenario is `e2e/m2/acp_quota_test.go`.
 - Every child is owned through `kit/proc` and reaped with its process tree; LINA's own model credential is removed from its environment.
 
 **C-57 Work definition, choice and splitting (new).**
@@ -2747,14 +2804,18 @@ Package tests cover civil-time transitions, concurrent claims and SIGKILL at bot
   They remain answerable through the existing authenticated question/approval forms.
   Implementation notes: [C-55 waiting migration](../../internal/core/waiting/REFERENCE.md#c-55-waiting-migration).
 - Canon closes its change notification only after a committed mutation; read callbacks and rollbacks remain quiet.
-  Core coalesces those events and live worker changes for 250 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
+  Core coalesces those events and live worker changes for 100 ms, rereads the sources, and publishes the replaced overview when its contents or the full waiting list change.
+  The coalescing window leaves room inside the 250 ms (P) bound from a goal commit to its changed line, so the projection itself still fits.
   A change below Home's five-row limit still advances the overview cursor, causing an open full waiting view to reread its sources.
   Subscriptions reread before their snapshot.
-  While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same 250 ms coalescing.
+  While the progress topic has observers, a five-second reconciliation tick also rereads filesystem-backed sources, using the same coalescing.
   This detects outside record edits and restoration without unrelated canon writes.
   The timer stops with Core; idle installs without observers do not perform these periodic source reads, and unchanged snapshots still publish no frame.
   The headless `e2e/m2/progress-waiting.json` scenario covers installed Core, an actual stdio child, approval and question disappearance, a worker-created artifact and restart without provider replay.
 - Implementation notes: [C-55 progress digest increment](../../internal/core/progress/REFERENCE.md#c-55-progress-digest-increment).
+- The stage list is projected from the admitted step graph revisions and the step states observed with them, with no separate stage record; a done stage keeps its number and its steps.
+  A goal line reaches the progress view with its Now, start instant and stage entries, and its stage word is the current entry.
+  Implementation notes: [C-55 stage list increment](../../internal/core/progress/REFERENCE.md#c-55-stage-list-increment) and [C-55 progress line increment](../../internal/core/progress/REFERENCE.md#c-55-progress-line-increment).
 - Explicit TUI and paired-channel commands use the same Core operations: `/progress`, `/waiting priority|lightest`, `/stop <run>`, `/stop all` and `/note <run> <text>`.
   Bare `/stop` interrupts the current conversation.
   Targeted controls recheck the person and optional conversation; stop-all captures the person's live background runs and worker sessions in private surfaces, and only the bound conversation in a shared channel.

@@ -7,6 +7,7 @@ import (
 )
 
 func TestApprovalMigrationPreservesExistingEffectClaims(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	migrations := Migrations()
 	approvalIndex := -1
@@ -64,6 +65,7 @@ func TestApprovalMigrationPreservesExistingEffectClaims(t *testing.T) {
 }
 
 func TestMigrationsInstallAssetsInboxAndAuthorityTables(t *testing.T) {
+	t.Parallel()
 	cfg := storeConfig(t)
 	cfg.Migrations = Migrations()
 	s := openStore(t, cfg)

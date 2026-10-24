@@ -19,6 +19,7 @@ type Msg interface{ isMsg() }
 type Cmd func(context.Context) Msg
 
 type Block struct {
+	SurfaceControls          *protocol.SurfaceControls
 	ResultID, ResultRevision string
 	ResultPaged              bool
 	Work                     *WorkSummary
@@ -45,13 +46,40 @@ type Block struct {
 }
 
 // WorkCard carries Core's ordered display values, without deriving work state.
-type WorkSummary struct{ Cards []WorkCard }
+// Counts is Core's running count by line state; an older Core sends none.
+type WorkSummary struct {
+	Cards  []WorkCard
+	Counts *WorkCount
+}
+
+// WorkCount is the number of lines that are running and of lines waiting for
+// the person, as Core counted them.
+type WorkCount struct{ Running, Waiting int }
 
 type WorkCard struct {
 	ID, Name, Now     string
 	Started, Finished time.Time
 	State             protocol.RunningState
 	Waiting           int
+	Stages            []WorkStage
+}
+
+// Stage numbers, labels and states are Core's display projection. The client
+// never reconstructs a graph or a stage from the card's activity.
+type WorkStage struct {
+	Kind, Number, Label, State string
+	Steps                      []WorkStageStep
+}
+
+type WorkStageStep struct {
+	ID, Name, State string
+	Started         time.Time
+	Workers         []WorkStageWorker
+}
+
+type WorkStageWorker struct {
+	Name  string
+	State protocol.RunningState
 }
 
 // WaitingSummary is display-only. Answer identities remain on decision cards.
