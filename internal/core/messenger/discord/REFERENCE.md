@@ -34,8 +34,15 @@ read again for this increment.
 - **Inferred for LINA:** the person's own numeric user id is the only proof of
   `person`, exactly as channel pairing records it. Any bot author is
   `automation`, and everyone else is an external participant.
-- **Inferred for LINA:** content-free type 21 thread starters are references,
-  not evidence of a missing content intent; history advances past them.
+- **Inferred for LINA:** reference-only messages are not evidence of a missing
+  content intent. A content-free type 21 thread starter points at the message
+  that began its thread, and a forward carries the copied words and media in
+  `message_snapshots`; history reads both and advances past them.
+- **Inferred for LINA:** a live event the store cannot admit yet, such as an
+  edit held behind an unsettled write, comes back as a retryable dispatch. The
+  shared session replays it on the same socket after a bounded backoff, so the
+  event is neither acknowledged nor lost, and other subscribers keep their
+  session.
 - **Unknown:** live Discord behaviour with the intent disabled in the
   developer portal, limits for very large guilds, and archived-thread
   retention. Synthetic Gateway and REST fixtures establish LINA's protocol and

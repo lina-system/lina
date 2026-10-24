@@ -3,7 +3,9 @@ package discord
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
+	"errors"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -13,6 +15,7 @@ import (
 
 	"github.com/coder/websocket"
 	"github.com/coder/websocket/wsjson"
+	"github.com/thisisjun786/lina/internal/core/canon"
 	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/gateway"
 )
@@ -231,4 +234,139 @@ func members(db channels.Canon, bot channels.Bot) int {
 	h.mu.Lock()
 	defer h.mu.Unlock()
 	return len(h.members)
+}
+
+// A subscriber that cannot store a dispatch yet asks the session to replay it.
+// The replay must neither acknowledge the dispatch early nor fail the session:
+// a later dispatch still arrives on the same socket.
+func TestRetryableDispatchReplaysWithoutFailingTheSession(t *testing.T) {
+	ready := make(chan struct{}, 1)
+	frames := make(chan any, 4)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx, cancel := context.WithTimeout(r.Context(), 10*time.Second)
+		defer cancel()
+		if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 60000}}) != nil {
+			return
+		}
+		var first struct {
+			Op int `json:"op"`
+		}
+		if wsjson.Read(ctx, conn, &first) != nil {
+			return
+		}
+		if wsjson.Write(ctx, conn, map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": "session-1", "user": map[string]any{"id": "123456", "bot": true}}}) != nil {
+			return
+		}
+		ready <- struct{}{}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame := <-frames:
+				if wsjson.Write(ctx, conn, frame) != nil {
+					return
+				}
+			}
+		}
+	}))
+	defer server.Close()
+	endpoint, _ := url.Parse(server.URL)
+	transport := transportFunc(func(r *http.Request) (*http.Response, error) {
+		wire := r.Clone(r.Context())
+		wire.URL.Scheme = endpoint.Scheme
+		wire.URL.Host = endpoint.Host
+		return http.DefaultTransport.RoundTrip(wire)
+	})
+	f := setup(t, transport)
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	var attempts atomic.Int32
+	refused := make(chan struct{}, 1)
+	got := make(chan string, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- Listen(ctx, Listener{Bot: f.a.bot, Token: f.a.token, DB: f.db, Transport: transport, Intents: 0,
+			Handle: func(_ context.Context, kind string, data json.RawMessage, _ string) error {
+				if kind != "MESSAGE_CREATE" {
+					return nil
+				}
+				var m struct {
+					ID string `json:"id"`
+				}
+				_ = json.Unmarshal(data, &m)
+				if m.ID == "1" && attempts.Add(1) < 3 {
+					refused <- struct{}{}
+					return channels.Retry(errors.New("write pending"))
+				}
+				got <- kind + ":" + m.ID
+				return nil
+			}})
+	}()
+	select {
+	case <-ready:
+	case err := <-done:
+		t.Fatalf("session stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("session never connected")
+	}
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_CREATE", "s": 2, "d": map[string]any{"id": "1", "channel_id": "100"}}
+	select {
+	case <-refused:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the handler never saw the dispatch")
+	}
+	// The refusal must not move the checkpoint past the dispatch.
+	var saved string
+	if err := f.db.Read(ctx, func(tx *canon.Tx) error {
+		return tx.QueryRowContext(ctx, "SELECT cursor FROM discord_sessions WHERE bot=?", f.a.bot.Key()).Scan(&saved)
+	}); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		t.Fatal(err)
+	}
+	var at cursor
+	if saved != "" && json.Unmarshal([]byte(saved), &at) != nil {
+		t.Fatalf("checkpoint = %q", saved)
+	}
+	if at.Seq != 1 {
+		t.Fatalf("a refused dispatch advanced the checkpoint to %q", saved)
+	}
+	select {
+	case g := <-got:
+		if g != "MESSAGE_CREATE:1" {
+			t.Fatalf("replayed dispatch = %q", g)
+		}
+	case err := <-done:
+		t.Fatalf("the shared session failed on a retryable refusal: %v", err)
+	case <-time.After(10 * time.Second):
+		t.Fatal("the dispatch was not replayed")
+	}
+	if attempts.Load() != 3 {
+		t.Fatalf("handler attempts = %d, want 3", attempts.Load())
+	}
+	// The session is still alive for the next dispatch.
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_CREATE", "s": 3, "d": map[string]any{"id": "2", "channel_id": "100"}}
+	select {
+	case g := <-got:
+		if g != "MESSAGE_CREATE:2" {
+			t.Fatalf("next dispatch = %q", g)
+		}
+	case err := <-done:
+		t.Fatalf("the shared session stopped after a replay: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the next dispatch never arrived")
+	}
+	cancel()
+	select {
+	case err := <-done:
+		if err != nil && !errors.Is(err, context.Canceled) {
+			t.Fatalf("session stopped with %v", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("session did not stop")
+	}
 }

@@ -263,7 +263,7 @@ func (h *hub) deliver(ctx context.Context, kind string, data json.RawMessage, cu
 	members := append([]*member(nil), h.members...)
 	h.mu.Unlock()
 	for _, m := range members {
-		if err := m.handle(ctx, kind, data, cursor); err != nil {
+		if err := h.hand(ctx, m, kind, data, cursor); err != nil {
 			return err
 		}
 	}
@@ -274,6 +274,33 @@ func (h *hub) deliver(ctx context.Context, kind string, data json.RawMessage, cu
 		_, err := tx.ExecContext(ctx, "UPDATE channel_connections SET cursor=? WHERE bot=?", cursor, h.bot.Key())
 		return err
 	})
+}
+
+// dispatchRetry bounds the wait before a subscriber's retryable refusal is
+// replayed. A held dispatch is replayed on this socket, so it neither advances
+// the checkpoint nor stops the session other subscribers share.
+const (
+	dispatchRetryMin = 100 * time.Millisecond
+	dispatchRetryMax = 2 * time.Second
+)
+
+// hand passes one dispatch to one subscriber, replaying it while the
+// subscriber reports that it can store it later. Anything else stops the
+// session as before.
+func (h *hub) hand(ctx context.Context, m *member, kind string, data json.RawMessage, cursor string) error {
+	backoff := dispatchRetryMin
+	for {
+		err := m.handle(ctx, kind, data, cursor)
+		if err == nil || !channels.Retryable(err) {
+			return err
+		}
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case <-time.After(backoff):
+		}
+		backoff = min(2*backoff, dispatchRetryMax)
+	}
 }
 
 // resume reads the shared durable checkpoint, including source-only sessions.

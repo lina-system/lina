@@ -623,3 +623,125 @@ func TestThreadStarterMessagesDoNotRequireContent(t *testing.T) {
 		t.Fatalf("thread starter did not advance with its reference: %+v", page)
 	}
 }
+
+// A forward carries its words and media in message_snapshots, not in content.
+// The message is readable, so it must never be reported as withheld text.
+func TestForwardedMessagesReadTheirSnapshot(t *testing.T) {
+	f := newFixture(t, func(r *http.Request) *http.Response {
+		return reply(r, 200, `[{"id":"901","channel_id":"100","type":0,"message_reference":{"type":1},
+			"message_snapshots":[{"message":{"content":"the forwarded words","timestamp":"2026-10-23T08:00:00.000000+00:00",
+			"attachments":[{"id":"att-9","filename":"plan.txt","content_type":"text/plain","size":42}]}}],
+			"author":{"id":"200","username":"owner"}}]`)
+	})
+	page, err := f.adapter.Page(t.Context(), messenger.SourceID{Platform: "discord", Account: "123456"}, "100", "")
+	if err != nil {
+		t.Fatalf("a forward must not report withheld text: %v", err)
+	}
+	if len(page.Messages) != 1 {
+		t.Fatalf("page=%+v", page)
+	}
+	m := page.Messages[0]
+	if m.Text != "the forwarded words" || len(m.Attachments) != 1 || m.Attachments[0].Name != "plan.txt" {
+		t.Fatalf("forward snapshot not read: %+v", m)
+	}
+	if page.Next != `{"after":"901"}` {
+		t.Fatalf("forward did not advance the cursor: %q", page.Next)
+	}
+}
+
+// A forward arriving live carries its words in message_snapshots too. The live
+// reader must deliver it instead of failing the shared Gateway session.
+func TestLiveForwardedMessageReadsItsSnapshot(t *testing.T) {
+	frames := make(chan any, 4)
+	identified := make(chan int, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		conn, err := websocket.Accept(w, r, nil)
+		if err != nil {
+			return
+		}
+		defer conn.CloseNow()
+		ctx, cancel := context.WithTimeout(r.Context(), 5*time.Second)
+		defer cancel()
+		if wsjson.Write(ctx, conn, map[string]any{"op": 10, "d": map[string]any{"heartbeat_interval": 60000}}) != nil {
+			return
+		}
+		var auth struct {
+			Op int `json:"op"`
+		}
+		if wsjson.Read(ctx, conn, &auth) != nil {
+			return
+		}
+		identified <- 1
+		if wsjson.Write(ctx, conn, map[string]any{"op": 0, "t": "READY", "s": 1, "d": map[string]any{"session_id": "session-1", "user": map[string]any{"id": "123456", "bot": true}}}) != nil {
+			return
+		}
+		for {
+			select {
+			case <-ctx.Done():
+				return
+			case frame := <-frames:
+				if wsjson.Write(ctx, conn, frame) != nil {
+					return
+				}
+			}
+		}
+	}))
+	defer server.Close()
+	endpoint, _ := url.Parse(server.URL)
+	a := mustAdapter(t, fixtureDB(t), transportFunc(func(r *http.Request) (*http.Response, error) {
+		if r.URL.Host == "discord.com" {
+			switch apiRequest(r).URL.Path {
+			case "/users/@me/guilds":
+				return reply(r, 200, guilds), nil
+			case "/guilds/g1/channels":
+				return reply(r, 200, guildChannels), nil
+			case "/guilds/g1/threads/active":
+				return reply(r, 200, activeThreads), nil
+			}
+			return reply(r, 200, `{"threads":[],"has_more":false}`), nil
+		}
+		wire := r.Clone(r.Context())
+		wire.URL.Scheme = endpoint.Scheme
+		wire.URL.Host = endpoint.Host
+		return http.DefaultTransport.RoundTrip(wire)
+	}))
+	if _, err := a.ListChats(context.Background(), messenger.SourceID{Platform: "discord", Account: "123456"}); err != nil {
+		t.Fatal(err)
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	events := make(chan messenger.Event, 4)
+	done := make(chan error, 1)
+	go func() {
+		done <- a.Live(ctx, messenger.SourceID{Platform: "discord", Account: "123456"}, func(e messenger.Event) error { events <- e; return nil })
+	}()
+	select {
+	case <-identified:
+	case err := <-done:
+		t.Fatalf("live stopped: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("live never identified")
+	}
+	frames <- map[string]any{"op": 0, "t": "MESSAGE_CREATE", "s": 2, "d": map[string]any{
+		"id": "901", "channel_id": "100", "guild_id": "g1", "type": 0,
+		"message_reference": map[string]any{"type": 1},
+		"message_snapshots": []any{map[string]any{"message": map[string]any{"content": "the forwarded words", "timestamp": "2026-10-23T08:00:00.000000+00:00"}}},
+		"timestamp":         "2026-10-24T08:00:00.000000+00:00",
+		"author":            map[string]any{"id": "200", "username": "owner"}}}
+	select {
+	case e := <-events:
+		if e.Message == nil || e.Message.Text != "the forwarded words" {
+			t.Fatalf("live forward = %+v", e)
+		}
+	case err := <-done:
+		t.Fatalf("the shared session failed on a forward: %v", err)
+	case <-time.After(5 * time.Second):
+		t.Fatal("the live reader never delivered the forward")
+	}
+	cancel()
+	select {
+	case <-done:
+	case <-time.After(5 * time.Second):
+		t.Fatal("live did not stop")
+	}
+}

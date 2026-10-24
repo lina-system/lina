@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/core/canon"
+	"github.com/thisisjun786/lina/internal/core/channels"
 	"github.com/thisisjun786/lina/internal/core/messenger"
 )
 
@@ -330,3 +331,72 @@ type voidCloseAdapter struct {
 }
 
 func (a *voidCloseAdapter) Close() { a.closed.Add(1) }
+
+// resultAdapter reports what the service's live delivery returned, so a test
+// can tell an acknowledged event from a replayable one.
+type resultAdapter struct {
+	*liveAdapter
+	results chan error
+}
+
+func (a *resultAdapter) Live(ctx context.Context, _ messenger.SourceID, deliver func(messenger.Event) error) error {
+	for {
+		select {
+		case <-ctx.Done():
+			return ctx.Err()
+		case event := <-a.events:
+			a.results <- deliver(event)
+		}
+	}
+}
+
+// A live edit that arrives while the chat has an unsettled write is not
+// acknowledged: the service asks the session to replay it, and once the write
+// settles the same edit is admitted instead of being lost.
+func TestLiveEditDuringPendingWriteIsRetried(t *testing.T) {
+	f := newFixture(t)
+	source := f.connect(t)
+	if _, err := f.store.AdmitPage(t.Context(), source, "dm-1", "", messenger.Page{
+		Messages: []messenger.Message{message("m-1", messenger.RoutePerson, f.now, "first")},
+		Next:     "cursor-1",
+	}); err != nil {
+		t.Fatal(err)
+	}
+	effect := messenger.Effect{ID: "effect-1", Platform: source.Platform, Account: source.Account, Chat: "dm-1",
+		Agent: "agent:main", Verb: "send", ClientID: "client-1", State: messenger.EffectPending, CreatedAt: f.now}
+	if err := f.store.RecordEffect(t.Context(), effect); err != nil {
+		t.Fatal(err)
+	}
+	events := make(chan messenger.Event, 4)
+	results := make(chan error, 4)
+	adapter := &resultAdapter{liveAdapter: &liveAdapter{chats: []messenger.Chat{{ID: "dm-1", Kind: "direct"}}, events: events}, results: results}
+	service := messenger.NewService(f.store, map[string]messenger.Adapter{"discord": adapter}, time.Hour)
+	ctx, cancel := context.WithCancel(t.Context())
+	done := make(chan struct{})
+	go func() { defer close(done); service.Run(ctx) }()
+	t.Cleanup(func() { cancel(); <-done })
+
+	edit := messenger.Event{Chat: "dm-1", Message: &messenger.Message{
+		ID: "m-1", Route: messenger.RoutePerson, At: f.now.Add(time.Minute), Edited: f.now.Add(time.Minute), Text: "edited",
+		Author: messenger.Author{ID: "person", Name: "Jun"},
+	}}
+	events <- edit
+	select {
+	case err := <-results:
+		if err == nil || !channels.Retryable(err) {
+			t.Fatalf("a live edit during an unsettled write was acknowledged: %v", err)
+		}
+	case <-time.After(10 * time.Second):
+		t.Fatal("the live reader never reported the admission")
+	}
+	// The write settles; the replayed dispatch is admitted instead of lost.
+	if err := f.store.SettleEffect(t.Context(), "effect-1", messenger.EffectSent, "platform-9"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := f.store.AdmitEvent(t.Context(), source, edit); err != nil {
+		t.Fatal(err)
+	}
+	if got := f.eventsFor(t, source, "dm-1", "m-1"); got.Body.Text() != "edited" {
+		t.Fatalf("the replayed edit was not applied: %q", got.Body.Text())
+	}
+}

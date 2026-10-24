@@ -31,6 +31,29 @@ type message struct {
 	Referenced *struct {
 		ID string `json:"id"`
 	} `json:"referenced_message"`
+	// Reference is the reply or forward this message carries. A forward names
+	// the message it copies; its words travel in Snapshots instead of Content.
+	Reference *struct {
+		Type      int    `json:"type"`
+		MessageID string `json:"message_id"`
+		ChannelID string `json:"channel_id"`
+	} `json:"message_reference"`
+	Snapshots []struct {
+		Message struct {
+			Content     string `json:"content"`
+			Timestamp   string `json:"timestamp"`
+			Attachments []struct {
+				ID       string `json:"id"`
+				Filename string `json:"filename"`
+				Type     string `json:"content_type"`
+				Size     int64  `json:"size"`
+			} `json:"attachments"`
+			Stickers   []json.RawMessage `json:"sticker_items"`
+			Embeds     []json.RawMessage `json:"embeds"`
+			Components []json.RawMessage `json:"components"`
+			Poll       *json.RawMessage  `json:"poll"`
+		} `json:"message"`
+	} `json:"message_snapshots"`
 	Attachments []struct {
 		ID       string `json:"id"`
 		Filename string `json:"filename"`
@@ -108,10 +131,17 @@ func mustCursor(p position) messenger.Cursor {
 }
 
 // record maps one platform message to a messenger record. A message whose
-// words the platform withheld is refused rather than stored empty.
+// words the platform withheld is refused rather than stored empty. A forward's
+// words and media come from its snapshot, which is what the platform stores
+// instead of the message's own content.
 func (a *Adapter) record(m message, person string) (messenger.Message, error) {
 	if missingText(m) {
 		return messenger.Message{}, messenger.ErrTextUnavailable
+	}
+	text, attachments := m.Content, m.Attachments
+	if isForward(m) && len(m.Snapshots) > 0 {
+		snapshot := m.Snapshots[0].Message
+		text, attachments = snapshot.Content, snapshot.Attachments
 	}
 	record := messenger.Message{
 		ID:     m.ID,
@@ -119,24 +149,40 @@ func (a *Adapter) record(m message, person string) (messenger.Message, error) {
 		Route:  a.route(m, person),
 		At:     parseTime(m.Timestamp),
 		Edited: parseTime(m.Edited),
-		Text:   m.Content,
+		Text:   text,
 	}
-	if m.Referenced != nil {
+	switch {
+	case m.Referenced != nil:
 		record.ReplyTo = m.Referenced.ID
+	case m.Reference != nil && snowflake.MatchString(m.Reference.MessageID):
+		record.ReplyTo = m.Reference.MessageID
 	}
-	for _, attachment := range m.Attachments {
+	for _, attachment := range attachments {
 		record.Attachments = append(record.Attachments, messenger.Attachment{ID: attachment.ID, Name: attachment.Filename, MIMEType: attachment.Type, Size: attachment.Size})
 	}
 	return record, nil
 }
 
+// forwardReference is the message reference a forward carries. A reply carries
+// type 0 and keeps its own words.
+const forwardReference = 1
+
+func isForward(m message) bool {
+	return m.Reference != nil && m.Reference.Type == forwardReference
+}
+
 // missingText reports a message whose words the platform withheld. Discord
 // answers with empty content when the privileged message-content intent is not
 // granted; a message that genuinely has no words carries attachments, a
-// sticker, embed, poll or components. Type 21 thread starters are references
-// and never have content, embeds or attachments, even with the intent granted.
+// sticker, embed, poll or components. A reference-only message is not withheld
+// text: a type 21 thread starter points at the message that started its thread,
+// and a forward carries the copied words in its snapshot. Neither has content
+// of its own, even with the intent granted, so neither may abort a read.
 func missingText(m message) bool {
 	if m.Content != "" {
+		return false
+	}
+	if m.Type == messageThreadStart || isForward(m) {
 		return false
 	}
 	switch m.Type {

@@ -7,6 +7,8 @@ import (
 	"io"
 	"sync"
 	"time"
+
+	"github.com/thisisjun786/lina/internal/core/channels"
 )
 
 // DefaultInterval is the schedule for a source whose adapter states none.
@@ -262,15 +264,18 @@ func (s *Service) follow(ctx context.Context, source Source, key string, w *watc
 		err = adapter.Live(ctx, sourceID(source), func(event Event) error {
 			_, err := s.store.AdmitEvent(ctx, source, event)
 			if errors.Is(err, ErrPageWaiting) {
-				// The page read admits the event once the chat's write settles.
-				return nil
+				// The event belongs to a write whose outcome is not known yet.
+				// Acknowledging it here would drop it: the scheduled read starts
+				// past this cursor and cannot see an edit or a deletion again.
+				// The session replays the dispatch once the write settles.
+				return channels.Retry(err)
 			}
 			return err
 		})
 		if ctx.Err() != nil || errors.Is(err, ErrNotConnected) {
 			return
 		}
-		if err != nil && !errors.Is(err, ErrPageWaiting) {
+		if err != nil && !channels.Retryable(err) && !errors.Is(err, ErrPageWaiting) {
 			_ = s.store.MarkFailure(ctx, source.Person, source.Platform, source.Account, failureCause(err))
 		}
 		timer := time.NewTimer(backoff)

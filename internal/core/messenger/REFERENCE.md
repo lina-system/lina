@@ -100,6 +100,11 @@ last complete read, and the next page admits it again without adding anything.
 sync, and re-joins the platform's session with bounded backoff after a failure.
 A source that needs a new sign-in gets no live reader.
 
+An event held behind an unsettled write (`ErrPageWaiting`) is returned to the
+session as `channels.Retry`, not acknowledged: the scheduled read resumes past
+its cursor and cannot see that edit or deletion again. The session replays the
+dispatch after a bounded backoff and keeps the source connected.
+
 `NewServiceWith` resolves an adapter per source, so two accounts on one platform
 never share an adapter's read state. `NewService` keeps the map form for
 platforms with one account.
