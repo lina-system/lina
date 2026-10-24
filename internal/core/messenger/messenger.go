@@ -70,6 +70,16 @@ type Author struct {
 	ID    string
 	Name  string
 	Email string // Profile evidence; never an identity key.
+	// Identifiers are the phone numbers and email addresses the platform shows
+	// for this author, with where each was seen. Sender identity normalizes them.
+	Identifiers []Identifier
+}
+
+// Identifier is one contact value a platform shows for an author.
+type Identifier struct {
+	Kind   string // phone or email
+	Value  string
+	Source string
 }
 
 // Attachment is metadata only; its bytes enter LINA when the person asks.
@@ -187,9 +197,12 @@ type Terms struct {
 
 // Source is one account on one platform.
 type Source struct {
-	Person            string
-	Platform          string
-	Account           string
+	Person   string
+	Platform string
+	Account  string
+	// Workspace is the workspace or tenant the platform scopes its user ids
+	// by. It is empty where the platform's ids are global.
+	Workspace         string
 	Mode              Mode
 	Adapter           string
 	State             State
