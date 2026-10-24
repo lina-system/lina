@@ -142,7 +142,7 @@ function toolPath(name) {
 export function sandboxArguments({ worktree, runDirectory, cacheDirectory, goRoot, node, actionlint, jobs }, args) {
   return [
     '--unshare-all', '--share-net', '--die-with-parent', '--new-session', '--cap-drop', 'ALL', '--clearenv',
-    ...['/usr', '/bin', '/lib', '/lib64', '/etc/ssl', '/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ld.so.cache']
+    ...['/usr', '/bin', '/lib', '/lib64', '/etc/ssl', '/etc/resolv.conf', '/etc/hosts', '/etc/nsswitch.conf', '/etc/ld.so.cache', '/etc/apparmor.d']
       .filter(existsSync).flatMap(path => ['--ro-bind', path, path]),
     '--proc', '/proc', '--dev', '/dev', '--tmpfs', '/tmp', '--dir', '/home/qa', '--dir', '/tools',
     '--ro-bind', node, '/tools/node', '--ro-bind', actionlint, '/tools/actionlint',

@@ -153,9 +153,13 @@ test('the real sandbox selects and runs a clean synthetic candidate without host
   f.sb.commit(f.work, 'test: sandbox boundary', { 'scripts/boundary.test.mjs': `// SPDX-License-Identifier: Apache-2.0
 import assert from 'node:assert/strict';
 import { existsSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 assert.equal(process.env.GH_TOKEN, undefined);
 assert.equal(existsSync(${JSON.stringify(secret)}), false);
 assert.equal(process.env.HOME, '/home/qa');
+const profile = spawnSync('apparmor_parser', ['--skip-kernel-load', '--skip-cache',
+  'scripts/verify/bwrap.apparmor'], { encoding: 'utf8' });
+assert.equal(profile.status, 0, profile.stderr);
 ` });
   f.sb.g(f.work, 'push', '-q', 'origin', 'dev');
   const result = await runLocalQA({ ...f.options, execute: executeLocalRun, report: async ({ root, runDirectory }) => {
@@ -165,7 +169,8 @@ assert.equal(process.env.HOME, '/home/qa');
     assert.equal(history[0].plan.scope.reason, 'manual-full');
     assert.equal(history[0].localRun.started, history[0].plan.started);
     assert.deepEqual(history[0].records.map(record => record.id).sort(), history[0].plan.tasks.map(task => task.id).sort());
-    assert.ok(history[0].records.every(record => record.result === 'success'));
+    assert.ok(history[0].records.every(record => record.result === 'success'),
+      readFileSync(join(runDirectory, 'automation.log'), 'utf8'));
     return [];
   } });
   assert.equal(result.result, 'success', readFileSync(result.logPath, 'utf8'));
