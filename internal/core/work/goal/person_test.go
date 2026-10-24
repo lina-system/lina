@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/thisisjun786/lina/internal/core/results"
+	"github.com/thisisjun786/lina/internal/core/work"
 )
 
 func TestStartLineNamesTheHandover(t *testing.T) {
@@ -42,7 +42,7 @@ func TestStartLineOmitsATechnicalAssumption(t *testing.T) {
 func TestStartLineRejectsTechnicalProse(t *testing.T) {
 	g := oneGoal()
 	g.Summary = "Fix issue #500"
-	if _, err := StartLine(g); !errors.Is(err, results.ErrPersonLine) {
+	if _, err := StartLine(g); !errors.Is(err, work.ErrPersonLine) {
 		t.Fatalf("err = %v", err)
 	}
 }

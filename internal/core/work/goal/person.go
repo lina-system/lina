@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/thisisjun786/lina/internal/core/results"
+	"github.com/thisisjun786/lina/internal/core/work"
 )
 
 // StartLine is the one line said when a goal is handed over: what will be
@@ -18,7 +18,7 @@ func StartLine(g Goal) (string, error) {
 	}
 	tokens := personTokens(g)
 	line := fmt.Sprintf("Starting: %s. Done means %s. Assumptions: %s. I will ask: %s.", outcome, done, speakList(g.Assumptions, tokens, "none", "kept with the goal"), speakList(g.Asks, tokens, "nothing yet", "kept with the goal"))
-	if err := results.RejectPersonLine(line, tokens); err != nil {
+	if err := work.RejectPersonLine(line, tokens); err != nil {
 		return "", err
 	}
 	return line, nil
@@ -77,7 +77,7 @@ func CloseLine(g Goal) (string, error) {
 		parts = append(parts, "For you: "+yours+".")
 	}
 	line := strings.Join(parts, " ")
-	if err := results.RejectPersonLine(line, personTokens(g)); err != nil {
+	if err := work.RejectPersonLine(line, personTokens(g)); err != nil {
 		return "", err
 	}
 	return line, nil
@@ -87,7 +87,7 @@ func CloseLine(g Goal) (string, error) {
 // state and keeps the person-facing name. A technical name is not shown.
 func RunningRow(t Task) (summary, state string) {
 	summary = oneLine(t.Name)
-	if summary == "" || results.RejectPersonLine(summary, nil) != nil {
+	if summary == "" || work.RejectPersonLine(summary, nil) != nil {
 		summary = "In progress"
 	}
 	switch t.Stage {
@@ -112,12 +112,12 @@ func AcceptProse(g Goal) error {
 		return err
 	}
 	for _, c := range checked.Criteria {
-		if err := results.RejectPersonLine(c.Statement, personTokens(checked)); err != nil {
+		if err := work.RejectPersonLine(c.Statement, personTokens(checked)); err != nil {
 			return err
 		}
 	}
 	for _, task := range g.PersonTasks {
-		if err := results.RejectPersonLine(task, personTokens(checked)); err != nil {
+		if err := work.RejectPersonLine(task, personTokens(checked)); err != nil {
 			return err
 		}
 	}
@@ -139,7 +139,7 @@ func speakList(items []string, tokens []string, empty, omitted string) string {
 		if item == "" {
 			continue
 		}
-		if results.RejectPersonLine(item, tokens) != nil {
+		if work.RejectPersonLine(item, tokens) != nil {
 			dropped = true
 			continue
 		}
@@ -219,5 +219,5 @@ func technicalToken(token string) bool {
 }
 
 func personTechnicalToken(token string) bool {
-	return results.RejectPersonLine("x "+token+" y", nil) != nil
+	return work.RejectPersonLine("x "+token+" y", nil) != nil
 }
