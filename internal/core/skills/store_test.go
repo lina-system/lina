@@ -63,6 +63,7 @@ func apply(t *testing.T, s *Store, rev int64, body string) Applied {
 	return out
 }
 func TestAdoptUndoReopenAndPin(t *testing.T) {
+	t.Parallel()
 	s, db, root := fixture(t, nil)
 	a := apply(t, s, 0, "Check the input.\n")
 	if a.Version.Revision != 1 || a.Notice == "" || strings.ContainsAny(a.Notice, "\r\n") {
@@ -110,6 +111,7 @@ func TestAdoptUndoReopenAndPin(t *testing.T) {
 	}
 }
 func TestUndoCreationHidesSkillAndPreservesVersion(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, nil)
 	a := apply(t, s, 0, "Procedure.\n")
 	u, err := s.Undo(t.Context(), a.Undo)
@@ -125,6 +127,7 @@ func TestUndoCreationHidesSkillAndPreservesVersion(t *testing.T) {
 	}
 }
 func TestExecutableAndPermissionSurfacesNeverAdopt(t *testing.T) {
+	t.Parallel()
 	for name, files := range map[string]Bundle{
 		"script":     {"SKILL.md": {Text: document("Run helper.")}, "run.sh": {Text: "echo hi"}},
 		"mode":       {"SKILL.md": {Text: document("Run helper."), Executable: true}},
@@ -153,6 +156,7 @@ func TestExecutableAndPermissionSurfacesNeverAdopt(t *testing.T) {
 	}
 }
 func TestIndexDoesNotReadVersionBodies(t *testing.T) {
+	t.Parallel()
 	s, _, root := fixture(t, nil)
 	a := apply(t, s, 0, "Only load on demand.")
 	// Index still works when immutable objects are unavailable; an actual read fails.
@@ -168,6 +172,7 @@ func TestIndexDoesNotReadVersionBodies(t *testing.T) {
 	}
 }
 func TestFailedCommitPublishesNoNoticeOrVersion(t *testing.T) {
+	t.Parallel()
 	s, db, _ := fixture(t, nil)
 	a := apply(t, s, 0, "Original.")
 	if err := db.Write(t.Context(), func(tx *canon.Tx) error {
@@ -187,6 +192,7 @@ func TestFailedCommitPublishesNoNoticeOrVersion(t *testing.T) {
 }
 
 func TestUndoCannotReintroduceAnUndoneHash(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, nil)
 	apply(t, s, 0, "First.")
 	second := apply(t, s, 1, "Second.")
@@ -199,6 +205,7 @@ func TestUndoCannotReintroduceAnUndoneHash(t *testing.T) {
 	}
 }
 func TestPathCannotBeBothFileAndDirectory(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, nil)
 	out, err := s.Patch(t.Context(), Patch{ID: "example", Files: Bundle{"SKILL.md": {Text: document("Instructions.")}, "notes.md": {Text: "Text"}, "notes.md/more.md": {Text: "More"}}})
 	if !errors.Is(err, ErrInvalid) || out.Notice != "" {
@@ -206,6 +213,7 @@ func TestPathCannotBeBothFileAndDirectory(t *testing.T) {
 	}
 }
 func TestConcurrentPatchesHaveOneWinner(t *testing.T) {
+	t.Parallel()
 	s, db, root := fixture(t, nil)
 	apply(t, s, 0, "Original.")
 	other, err := Open(root, db, nil)
@@ -229,6 +237,7 @@ func TestConcurrentPatchesHaveOneWinner(t *testing.T) {
 	}
 }
 func TestFailedFileWriteDoesNotPublishAndCanRecover(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, nil)
 	a := apply(t, s, 0, "Original.")
 	s.writeFile = func(*os.File, []byte) (int, error) { return 0, errors.New("injected file failure") }
@@ -244,6 +253,7 @@ func TestFailedFileWriteDoesNotPublishAndCanRecover(t *testing.T) {
 	apply(t, s, 1, "Changed.")
 }
 func TestGitSnapshotPreservesOtherSkillAndUndoBuiltin(t *testing.T) {
+	t.Parallel()
 	builtin := fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Built in."))}}
 	s, _, root := fixture(t, builtin)
 	a := apply(t, s, 0, "Updated.")
@@ -267,6 +277,7 @@ func TestGitSnapshotPreservesOtherSkillAndUndoBuiltin(t *testing.T) {
 }
 
 func TestCommittedVersionAndSuppressionSurviveDatabaseReopen(t *testing.T) {
+	t.Parallel()
 	root := t.TempDir()
 	if err := os.Chmod(root, 0700); err != nil {
 		t.Fatal(err)
@@ -349,6 +360,7 @@ func (f *headerOnlyFile) Read(p []byte) (int, error) {
 	return n, err
 }
 func TestBuiltinIndexReadsOnlyFrontMatter(t *testing.T) {
+	t.Parallel()
 	text := document("Never load this body during indexing.")
 	boundary := len(text) - len("Never load this body during indexing.")
 	s, _, _ := fixture(t, headerOnlyFS{FS: fstest.MapFS{"example/SKILL.md": {Data: []byte(text)}}, boundary: boundary})
@@ -359,6 +371,7 @@ func TestBuiltinIndexReadsOnlyFrontMatter(t *testing.T) {
 }
 
 func TestNameMustIdentifyItsFolder(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, nil)
 	_, err := s.Patch(t.Context(), Patch{ID: "different", Files: Bundle{"SKILL.md": {Text: document("Instructions.")}}})
 	if !errors.Is(err, ErrInvalid) {
@@ -374,6 +387,7 @@ type versionedFS struct {
 
 func (f versionedFS) SkillRevision() string { return f.revision }
 func TestBuiltinHandleCannotReadAnotherGeneration(t *testing.T) {
+	t.Parallel()
 	original := versionedFS{FS: fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Release A."))}}, revision: "release-a"}
 	s, db, root := fixture(t, original)
 	entries, err := s.Catalog(t.Context())
@@ -392,6 +406,7 @@ func TestBuiltinHandleCannotReadAnotherGeneration(t *testing.T) {
 }
 
 func TestNULPathCannotPublishAnUnreadableVersion(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, nil)
 	out, err := s.Patch(t.Context(), Patch{ID: "example", Files: Bundle{"SKILL.md": {Text: document("Instructions.")}, "notes\x00.md": {Text: "Notes."}}})
 	if !errors.Is(err, ErrInvalid) || out.Notice != "" {
@@ -399,6 +414,7 @@ func TestNULPathCannotPublishAnUnreadableVersion(t *testing.T) {
 	}
 }
 func TestBuiltinNoOpCannotPoisonUndo(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, fstest.MapFS{"example/SKILL.md": {Data: []byte(document("Original."))}})
 	out, err := s.Patch(t.Context(), Patch{ID: "example", Files: Bundle{"SKILL.md": {Text: document("Original.")}}})
 	if !errors.Is(err, ErrConflict) || out.Notice != "" {
@@ -416,6 +432,7 @@ func TestBuiltinNoOpCannotPoisonUndo(t *testing.T) {
 }
 
 func TestReadCommitKeepsHistoricalSkillBody(t *testing.T) {
+	t.Parallel()
 	s, _, _ := fixture(t, fstest.MapFS{"example/SKILL.md": {Data: []byte(document("builtin instruction"))}})
 	old, err := s.ReadCommit(t.Context(), "example", "builtin:fixture")
 	if err != nil {

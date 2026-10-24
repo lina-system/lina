@@ -15,6 +15,7 @@ import (
 )
 
 func TestResultPagesReadPinnedMaterialAndEnforceOwner(t *testing.T) {
+	t.Parallel()
 	body := strings.Repeat("가나다🙂", 4000) + "END-OF-RESULT"
 	s, _, store := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		return answer(runs.Artifact{Body: body, Done: true}), nil

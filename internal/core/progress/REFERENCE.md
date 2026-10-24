@@ -34,3 +34,45 @@ The stage word is the lowest-numbered stage entry that is not done.
 `Line.Stages` carries the entries, and the line holds no step id; `StageStep.ID` stays on the projection side.
 `e2e/m3/progress-line.json` drives a headless Core whose first step lands from an injected worker result: the subscribed topic carries the entries, the changed line arrives within 250 ms of the commit, exactly one line changes, and a recomputation that changes no line publishes no frame.
 `internal/core/boot/progress_line_test.go` checks the same projection and wire shape without a socket.
+
+### Work-card stage projection (#770)
+
+`AttachCardStages` attaches the same scoped goal list to a work card. Core reuses
+the goal projection in the current canon snapshot and reads closed goals only
+when that projection is absent. Boot also resolves manager-owned dispatch cards
+through the saved worker action and its original owner, conversation and turn.
+Neither path joins by a display name or changes the card's owner or state.
+
+StageStep keeps the canonical step and session identities internally. Boot emits
+step refs beside the line, and display-only worker names/states inside its steps.
+Active dispatch bindings and retained worker.Live sessions each own a snapshot
+cache. Progress reads the cache without waiting for adapter I/O; a cold, expired
+or different-turn entry is unknown while one bounded read refreshes it. Read
+completion wakes the publisher. The session owns and joins the read, so ended
+or replaced sessions cannot reuse an old observation.
+
+### Event-to-card latency
+
+#771 uses the managed project lines and row membership from #767. The
+execution state and Now both come from observed steps.
+
+A progress overview reads graph revision history and work-card start times
+once per canon snapshot, indexing history by goal and start times by step. `GoalStages` and the overview
+share the same stage projection. This removes repeated decoding of every
+other goal's history without retaining a cache across transactions.
+
+`TestM3WorkPanelEventLatency` uses the fixed graph/name corpus, actual Core
+step reports and eight TUI PTYs. Each sample joins the durable work-engine
+event's precise admission time to the first complete renderer write showing
+its changed card. The scenario logs every sample and enforces the T-16 budget
+per language, glyph and width combination.
+
+### C-55 running count increment
+
+#767 makes the running count follow lines, not rows.
+`progress.CountLines` counts the visible lines of a projection: a row at depth 0 belongs to its own line, a goal's step cards are rows under it, and a line whose row waits on the person counts as waiting for them. Core publishes the result as `counts.running` and `counts.waiting` beside the overview rows, so a client draws Core's number and never recounts the cards it folds.
+`progress.Compute` marks each entry as a line or a row: a step card is a row of the 일 that runs it, and a task handed under a 목표 is that 목표's 일, a line of its own. A line carries `row` on the wire so a client never draws a row as a card.
+A step's card carries the id of the dispatch that started it, not the step id: `runGoalWorker` passes the action id to `RunGoal`, and dispatch keys the record and the card by `work.DispatchID(turn, action)`. `progress.GoalStages` reads the goal's worker actions from `work_records` and puts each step's card ids on `StageStep.Cards`, off the wire; an action that observes another after a restart leads to that action's card. `Compute` links a card to its 일 through those ids, and a step's start is the earliest start among its cards. Background and wait steps start no dispatch and have no cards; a background step's run is still published as a line of its own.
+A managed goal is one 일, so `progress.Goals` publishes it as a project line; a card that groups others stays a 목표 line.
+A goal line carries the running list's state word, projected by `progress.goalState` in the order the stage list uses: input needed, failed, stopped, working, waiting, then the goal's own state.
+`e2e/m3/running-count.json` drives installed Core with three 일 of four steps and one background run outside any 일: four lines by state, thirteen rows in the running list, and the TUI status line prints Core's number.

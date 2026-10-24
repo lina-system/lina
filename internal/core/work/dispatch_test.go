@@ -9,6 +9,7 @@ import (
 )
 
 func TestWorkerDispatchUsesTransferGateAndHoldsRollback(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	dir := t.TempDir()
 	task := taskFixture()
@@ -58,6 +59,7 @@ func TestWorkerDispatchUsesTransferGateAndHoldsRollback(t *testing.T) {
 }
 
 func TestExternalTaskImportRefusesAnExistingWorker(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	dir := t.TempDir()
 	if err := s.ReserveWorker(t.Context(), "existing-worker", dir); err != nil {
@@ -121,6 +123,7 @@ func missingAliasTask(t *testing.T, dir string) Task {
 }
 
 func TestWorkerDispatchMissingAliasRootUsesTransferGate(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	dir := t.TempDir()
 	if err := s.Create(t.Context(), missingAliasTask(t, dir)); err != nil {
@@ -156,6 +159,7 @@ func TestWorkerDispatchMissingAliasRootUsesTransferGate(t *testing.T) {
 }
 
 func TestWorkerDispatchMissingAliasRootCannotAdoptActiveWorker(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	dir := t.TempDir()
 	if err := s.ReserveWorker(t.Context(), "worker", dir); err != nil {
@@ -167,6 +171,7 @@ func TestWorkerDispatchMissingAliasRootCannotAdoptActiveWorker(t *testing.T) {
 }
 
 func TestWorkerDispatchMissingAliasRootRefusesDanglingLink(t *testing.T) {
+	t.Parallel()
 	s, _ := testStore(t)
 	dir := t.TempDir()
 	if err := s.Create(t.Context(), missingAliasTask(t, filepath.Join(dir, "absent"))); err != nil {

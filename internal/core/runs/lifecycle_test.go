@@ -49,6 +49,7 @@ func receive(t *testing.T, ch <-chan struct{}) {
 }
 
 func TestNoAgeOrCallCapAndSteeringStaysInLaterRounds(t *testing.T) {
+	t.Parallel()
 	var s *runs.Service
 	var id string
 	var rounds atomic.Int64
@@ -83,12 +84,23 @@ func TestNoAgeOrCallCapAndSteeringStaysInLaterRounds(t *testing.T) {
 		t.Fatal(err)
 	}
 	release(t, s, id)
-	r := wait(t, s, id)
+	// 130 model rounds. The shared two-minute wait expires when the race
+	// detector runs the rest of this package at the same time.
+	ctx, cancel := context.WithTimeout(t.Context(), 5*time.Minute)
+	defer cancel()
+	if err := s.Wait(ctx, id); err != nil {
+		t.Fatal(err)
+	}
+	r, err := s.Get(ctx, id)
+	if err != nil {
+		t.Fatal(err)
+	}
 	if r.Outcome != runs.Complete || rounds.Load() != 130 || len(r.Calls) != 129 || len(r.Checks) != 2 || !r.Checks[1].Verified {
 		t.Fatalf("rounds=%d record=%+v", rounds.Load(), r)
 	}
 }
 func TestRetryResumesAfterToolRoundTrip(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int64
 	s, _, _ := setup(t, func(_ context.Context, req provider.Request) (provider.Stream, error) {
 		n := calls.Add(1)
@@ -112,6 +124,7 @@ func TestRetryResumesAfterToolRoundTrip(t *testing.T) {
 	}
 }
 func TestSecondFailureKeepsUsefulCheckpoint(t *testing.T) {
+	t.Parallel()
 	var calls atomic.Int64
 	s, _, store := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		if calls.Add(1) == 1 {
@@ -131,6 +144,7 @@ func TestSecondFailureKeepsUsefulCheckpoint(t *testing.T) {
 	}
 }
 func TestCancellationWinsLateCompletion(t *testing.T) {
+	t.Parallel()
 	entered, finish := make(chan struct{}), make(chan struct{})
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		close(entered)
@@ -167,6 +181,7 @@ func TestCancellationWinsLateCompletion(t *testing.T) {
 	}
 }
 func TestConcurrencyReservationsWaitInOrder(t *testing.T) {
+	t.Parallel()
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		return answer(runs.Artifact{Body: "report", Done: true}), nil
 	})
@@ -206,6 +221,7 @@ func TestConcurrencyReservationsWaitInOrder(t *testing.T) {
 	}
 }
 func TestBudgetAndAccountHoldDoNotRetryOrLand(t *testing.T) {
+	t.Parallel()
 	called := make(chan struct{}, 2)
 	s, _, _ := setup(t, func(context.Context, provider.Request) (provider.Stream, error) {
 		called <- struct{}{}
@@ -235,6 +251,7 @@ func TestBudgetAndAccountHoldDoNotRetryOrLand(t *testing.T) {
 	}
 }
 func TestPerCallAuthorizationAndVerificationCannotBeClaimedByModel(t *testing.T) {
+	t.Parallel()
 	var executions atomic.Int64
 	var calls atomic.Int64
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {
@@ -265,6 +282,7 @@ func TestPerCallAuthorizationAndVerificationCannotBeClaimedByModel(t *testing.T)
 }
 
 func TestInFlightRequestIsActivityAndCheckInIsNotDeadline(t *testing.T) {
+	t.Parallel()
 	entered, finish := make(chan struct{}), make(chan struct{})
 	s, _, _ := setup(t, func(ctx context.Context, _ provider.Request) (provider.Stream, error) {
 		select {
@@ -301,6 +319,7 @@ func TestInFlightRequestIsActivityAndCheckInIsNotDeadline(t *testing.T) {
 }
 
 func TestNeedsInputNoticeAndFollowUpReachOnlyThatRun(t *testing.T) {
+	t.Parallel()
 	var allowed atomic.Bool
 	var calls atomic.Int64
 	s, _, _ := setupWith(t, func(context.Context, provider.Request) (provider.Stream, error) {

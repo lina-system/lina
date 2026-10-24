@@ -62,7 +62,7 @@ func TestPlanAndCompletionHistoryKeepCurrentCards(t *testing.T) {
 	if err := r.db.Close(t.Context()); err != nil {
 		t.Fatal(err)
 	}
-	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(r.root, "canon.sqlite"), Epoch: r.epoch + 1, Controls: r.controls, Migrations: ApplicationMigrations()})
+	db, err := canon.Open(t.Context(), canon.Config{Path: filepath.Join(r.root, "canon.sqlite"), Epoch: r.epoch + 1, Controls: r.controls, Migrations: ApplicationMigrations(), NoSync: true})
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -60,6 +60,7 @@ func openListDB(t *testing.T, cfg canon.Config) *canon.Store {
 	return db
 }
 func TestRunningListRanksBothRunsAndTasksAndRetainsUnseenLandings(t *testing.T) {
+	t.Parallel()
 	db, cfg := listDB(t)
 	base := runs.ListItem{Person: "person", Agent: "agent", Summary: "Compare the options", AgentName: "Guide", Started: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)}
 	runSource, taskSource := listSource{}, listSource{}
@@ -129,6 +130,7 @@ func TestRunningListRanksBothRunsAndTasksAndRetainsUnseenLandings(t *testing.T) 
 	}
 }
 func TestRunningListRejectsUnknownStateAndUnexplainedWaiting(t *testing.T) {
+	t.Parallel()
 	db, _ := listDB(t)
 	source := listSource{"x": {Person: "person", Agent: "agent", Summary: "Read sources", State: "invented"}}
 	list := runs.NewRunningList(db, map[string]runs.ListSource{"run": source})
@@ -144,6 +146,7 @@ func TestRunningListRejectsUnknownStateAndUnexplainedWaiting(t *testing.T) {
 }
 
 func TestRunListSourceReadsNativeRunRecords(t *testing.T) {
+	t.Parallel()
 	db, _ := listDB(t)
 	record := runs.Record{ID: "run", Origin: runs.Origin{Person: "person", Agent: "agent"}, Brief: runs.Brief{Goal: "Compare the options"}, State: runs.Working, Created: 1}
 	save := func() {

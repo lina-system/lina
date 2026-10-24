@@ -83,22 +83,23 @@ func CarriedSlots(nodes []Node, now time.Time) (slots int, quotaBlocked bool) {
 	return slots, quotaBlocked
 }
 
-// runLimitFor is one pass's reading of a person's choice. Automatic takes what
-// the reports carry, never below one; the reason names the report that held it
-// down, and a number the person set is always the run limit itself.
-func runLimitFor(choice RunLimit, nodes []Node, now time.Time) LimitState {
+// runLimitFor is one pass's reading of a person's choice. Automatic takes the
+// goals already running plus the additional goals the free slots and quota rows
+// of Capacity can carry, never below one: a slot already held by a running step
+// never lowers the limit while capacity remains, and when the reports can carry
+// no additional goal the limit admits no new start and falls as the running
+// steps end. The reason names the report that held it down, and a number the
+// person set is always the run limit itself.
+func runLimitFor(choice RunLimit, nodes []Node, now time.Time, running int) LimitState {
 	if !choice.Automatic && choice.Value > 0 {
 		return LimitState{Current: choice.Value, Reason: ReasonSlot}
 	}
-	slots, quotaBlocked := CarriedSlots(nodes, now)
-	if slots < 1 {
-		slots = 1
-	}
+	carried, quotaBlocked := CarriedSlots(nodes, now)
 	reason := ReasonLoad
 	if quotaBlocked {
 		reason = ReasonQuota
 	}
-	return LimitState{Current: slots, Reason: reason, Automatic: true}
+	return LimitState{Current: max(running, carried, 1), Reason: reason, Automatic: true}
 }
 
 // inProgressGoals maps each person to the goals whose worker step already holds
@@ -238,5 +239,5 @@ func runLimitBlocks(state State, person, goalID, actionID string, now time.Time)
 	if held[goalID] {
 		return false
 	}
-	return len(held) >= runLimitFor(state.Limits[person], state.Nodes, now).Current
+	return len(held) >= runLimitFor(state.Limits[person], state.Nodes, now, len(held)).Current
 }

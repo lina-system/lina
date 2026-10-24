@@ -249,15 +249,17 @@ func TestM3RunLimitInstalledCore(t *testing.T) {
 	if got := workStarts(t, root); len(got) != 2 {
 		t.Fatalf("a lower limit started or stopped work: %v", got)
 	}
-	// Automatic on a loaded host: the limit falls to what the host carries and
-	// the waiting goal's reason becomes the host load. Steps in progress run on.
+	// Automatic on a loaded host: the limit becomes the goals already running
+	// plus what the host carries, so with two running and one carried it stays
+	// two and admits no new start, while the waiting goal's reason becomes the
+	// host load. Steps in progress run on.
 	writeWorkLoad(t, root, 2)
 	awaitHostLoad(t, ctx, root, 2)
 	if result := limit("limit_auto", nil); !result.Automatic {
 		t.Fatalf("limit_auto = %+v", result)
 	}
 	awaitNow(gamma.ID, "Waiting for host load · #1")
-	awaitLimit(t, ctx, c, next, protocol.RunLimitState{Automatic: true, Value: "1", Reason: protocol.RunLimitReasonLoad})
+	awaitLimit(t, ctx, c, next, protocol.RunLimitState{Automatic: true, Value: "2", Reason: protocol.RunLimitReasonLoad})
 	if got := workStarts(t, root); len(got) != 2 {
 		t.Fatalf("the automatic limit stopped or started work: %v", got)
 	}
@@ -313,6 +315,7 @@ func awaitHostLoad(t *testing.T, ctx context.Context, root string, load int) {
 // awaitLimit waits for the progress payload to carry the applied limit.
 func awaitLimit(t *testing.T, ctx context.Context, c *clientapi.Client, next func(time.Duration) (protocol.Envelope, error), want protocol.RunLimitState) {
 	t.Helper()
+	var seen *protocol.RunLimitState
 	for {
 		view := "overview"
 		if _, err := c.Progress(ctx, protocol.ProgressGet{View: &view}); err != nil {
@@ -327,14 +330,21 @@ func awaitLimit(t *testing.T, ctx context.Context, c *clientapi.Client, next fun
 			if !ok {
 				continue
 			}
-			if p.Limit != nil && *p.Limit == want {
-				return
+			if p.Limit != nil {
+				value := *p.Limit
+				seen = &value
+				if value == want {
+					return
+				}
 			}
 			break
 		}
 		select {
 		case <-ctx.Done():
-			t.Fatalf("limit never became %+v", want)
+			if seen == nil {
+				t.Fatalf("limit never became %+v; no limit was reported", want)
+			}
+			t.Fatalf("limit never became %+v; last seen %+v", want, *seen)
 		case <-time.After(20 * time.Millisecond):
 		}
 	}

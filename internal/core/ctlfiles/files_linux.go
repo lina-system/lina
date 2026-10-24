@@ -16,6 +16,11 @@ func owned(info os.FileInfo, directory bool) bool {
 	return ok && stat.Uid == uint32(os.Geteuid()) && (directory || stat.Nlink == 1)
 }
 
+func unlinked(info os.FileInfo) bool {
+	stat, ok := info.Sys().(*syscall.Stat_t)
+	return ok && stat.Nlink == 0
+}
+
 func checkLocal(file *os.File) error {
 	var stat syscall.Statfs_t
 	if err := syscall.Fstatfs(int(file.Fd()), &stat); err != nil {

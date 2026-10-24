@@ -62,6 +62,7 @@ func recording() reply.Recording {
 }
 
 func TestRecordFullReplyAndPreviewSurviveRestart(t *testing.T) {
+	t.Parallel()
 	for _, full := range []string{"A short reply.", "끝. " + strings.Repeat("가", 301), "one.\ntwo.\nthree.\nfour.\nfive.\nsix."} {
 		t.Run(full[:min(8, len(full))], func(t *testing.T) {
 			db, cfg := database(t)
@@ -138,6 +139,7 @@ func (s *failWrite) Write(ctx context.Context, fn func(*canon.Tx) error) error {
 	})
 }
 func TestRecordFailureRollsBackPairAndRetries(t *testing.T) {
+	t.Parallel()
 	for _, after := range []bool{false, true} {
 		t.Run(fmt.Sprint(after), func(t *testing.T) {
 			db, _ := database(t)
@@ -204,6 +206,7 @@ func (m materialStore) Read(ctx context.Context, ref ledger.Material) (string, e
 	return string(data), err
 }
 func TestLargeReplyAndMaskedCardSurviveRestart(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	root := filepath.Dir(cfg.Path)
 	a, err := assets.Open(t.Context(), root, db)
@@ -261,6 +264,7 @@ func TestLargeReplyAndMaskedCardSurviveRestart(t *testing.T) {
 }
 
 func TestRecordEmptySlicesAreStable(t *testing.T) {
+	t.Parallel()
 	db, _ := database(t)
 	store := ledger.New(db, nil)
 	f := filter(t, config())
@@ -277,6 +281,7 @@ func TestRecordEmptySlicesAreStable(t *testing.T) {
 }
 
 func TestRecordedPreviewPreservesJSONMaskingAcrossRestart(t *testing.T) {
+	t.Parallel()
 	for _, tail := range []string{
 		"Enter the password: ",
 		`The password="synthetic-private" is set.`,
@@ -332,6 +337,7 @@ func TestRecordedPreviewPreservesJSONMaskingAcrossRestart(t *testing.T) {
 }
 
 func TestRecordedPreviewDoesNotDuplicateModelHistory(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	f := filter(t, config())
 	full := "Done. " + strings.Repeat("가", 301)
@@ -369,6 +375,7 @@ func TestRecordedPreviewDoesNotDuplicateModelHistory(t *testing.T) {
 }
 
 func TestLargeReplyBatchRollbackRemovesBothMaterials(t *testing.T) {
+	t.Parallel()
 	db, cfg := database(t)
 	a, err := assets.Open(t.Context(), filepath.Dir(cfg.Path), db)
 	if err != nil {

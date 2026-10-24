@@ -396,12 +396,14 @@ func Derive(state State, now time.Time) (Plan, error) {
 	plan.RunLimits = map[string]LimitState{}
 	for _, g := range goals {
 		personOf[g.ID] = g.Person
+	}
+	runningGoals := inProgressGoals(state.Actions, personOf)
+	for _, g := range goals {
 		if _, ok := plan.RunLimits[g.Person]; ok {
 			continue
 		}
-		plan.RunLimits[g.Person] = runLimitFor(state.Limits[g.Person], nodes, now)
+		plan.RunLimits[g.Person] = runLimitFor(state.Limits[g.Person], nodes, now, len(runningGoals[g.Person]))
 	}
-	runningGoals := inProgressGoals(state.Actions, personOf)
 	queuedGoals := map[string]int{}
 	places := map[string]int{}
 	type candidate struct {

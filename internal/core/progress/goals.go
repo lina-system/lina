@@ -43,9 +43,11 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 	if err != nil {
 		return nil, err
 	}
-	units := make([]Unit, 0, len(goals))
+	visible := goals[:0]
+	ids := map[string]bool{}
+	turns := map[string]string{}
 	for _, g := range goals {
-		if g.Person != "" && g.Person != person {
+		if g.Person != person {
 			continue
 		}
 		if _, ok := agents[g.Agent]; !ok {
@@ -55,16 +57,38 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 		if g.State == goal.GoalDone || g.State == goal.GoalStopped {
 			continue
 		}
+		visible = append(visible, g)
+		ids[g.ID] = true
+		turns[g.ID] = g.Turn
+	}
+	if len(visible) == 0 {
+		return nil, nil
+	}
+	history, err := stepGraphRevisions(ctx, tx, ids)
+	if err != nil {
+		return nil, err
+	}
+	cards, err := stepCards(ctx, tx, turns)
+	if err != nil {
+		return nil, err
+	}
+	started, err := cardStarts(ctx, tx)
+	if err != nil {
+		return nil, err
+	}
+	units := make([]Unit, 0, len(visible))
+	for _, g := range visible {
 		name := ""
 		if title != nil {
 			name = title(g.ID)
 		}
 		language := design.ConversationLanguage(name, design.English)
-		stages, err := GoalStages(ctx, tx, g.ID, person, language)
+		stages, err := stagesForGoal(g, history[g.ID], cards[g.ID], started, language)
 		if err != nil {
 			return nil, err
 		}
-		u := Unit{ID: g.ID, Kind: "goal", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), Rank: g.Rank}
+		// One manager runs one 일, so a managed goal is the 일 the person reads.
+		u := Unit{ID: g.ID, Agent: g.Agent, GoalLine: true, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages), Rank: g.Rank}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}
@@ -158,6 +182,41 @@ func queuePlace(g goal.Goal, language design.Language) string {
 		return ""
 	}
 	return fmt.Sprintf(text, g.QueuePlace)
+}
+
+// goalState is the 일 line's state in the running list words, which the count
+// reads. It is the most urgent step state in the order the stage list uses —
+// input needed, failed, stopped, working, waiting — then the goal's own state.
+// A line says landed only when the goal is done.
+func goalState(g goal.Goal, stages []Stage) string {
+	if g.State == goal.GoalBlocked || g.AttentionID != "" {
+		return "needs_input"
+	}
+	for _, observed := range []struct {
+		state StepState
+		word  string
+	}{
+		{StepNeedsInput, "needs_input"},
+		{StepFailed, "failed"},
+		{StepStopped, "stopped"},
+		{StepWorking, "in_progress"},
+		{StepWaiting, "waiting"},
+	} {
+		if len(stepsInState(stages, observed.state)) > 0 {
+			return observed.word
+		}
+	}
+	switch g.State {
+	case goal.GoalDone:
+		return "done"
+	case goal.GoalChecking:
+		return "ready_for_review"
+	case goal.GoalDefining, goal.GoalRunning, goal.GoalWaiting, goal.GoalStopped, goal.GoalBlocked:
+		// A blocked or stopped line is caught above or reads as waiting; neither
+		// invents a plan outcome the ledger does not hold.
+		return "waiting"
+	}
+	return "unknown"
 }
 
 // goalNext names the entry after the current one. The current entry is what the

@@ -62,6 +62,9 @@ func runLimitPasses(t *testing.T, seed uint64) {
 			nodes[i].ObservedAt = now.Unix()
 		}
 		state := State{Goals: append([]Goal(nil), goals...), Nodes: nodes, Actions: append([]Action(nil), actions...), Limits: map[string]RunLimit{"person": choice}}
+		// A goal holds a run slot from its committed award, so the count the
+		// pass reads is the awards already in the ledger.
+		running := runLimitRunning(actions)
 		before := encode(state)
 		plan, err := Derive(state, now)
 		if err != nil {
@@ -70,7 +73,7 @@ func runLimitPasses(t *testing.T, seed uint64) {
 		if !reflect.DeepEqual(before, encode(state)) {
 			t.Fatalf("pass %d mutated the ledger", pass)
 		}
-		wantLimit, wantCause := runLimitOracle(choice, nodes, now)
+		wantLimit, wantCause := runLimitOracle(choice, nodes, now, len(running))
 		limit, ok := plan.RunLimits["person"]
 		if !ok || limit.Current != wantLimit {
 			t.Fatalf("pass %d: limit = %+v, want %d", pass, limit, wantLimit)
@@ -87,7 +90,6 @@ func runLimitPasses(t *testing.T, seed uint64) {
 		}
 		// Place the ready steps without Derive: rank order, the limit first,
 		// then what the reports can still carry.
-		running := runLimitRunning(actions)
 		count := len(running)
 		free := freeSteps(nodes, actions, now)
 		wantStarted := map[string]bool{}
@@ -120,7 +122,7 @@ func runLimitPasses(t *testing.T, seed uint64) {
 		}
 		// Steps already running continue, so the count can exceed a limit that
 		// just fell, but never by more than those running goals.
-		if inProgress := len(running) + len(wantStarted); inProgress > max(wantLimit, len(running)) {
+		if inProgress := len(running) + len(gotStarted); inProgress > max(wantLimit, len(running)) {
 			t.Fatalf("pass %d: %d goals in progress, want at most %d", pass, inProgress, max(wantLimit, len(running)))
 		}
 		// Every queued goal has its place in rank order and its one reason, and
@@ -185,8 +187,10 @@ func runLimitPasses(t *testing.T, seed uint64) {
 
 // runLimitOracle counts each report's steps without calling Slots or
 // runLimitFor. Generated steps cost one core and their memory and disk fit, so
-// a host carries as many steps as its cores allow after load and its cap.
-func runLimitOracle(choice RunLimit, nodes []Node, now time.Time) (int, string) {
+// a host carries as many steps as its cores allow after load and its cap. The
+// automatic limit is the goals already running plus the goals those reports can
+// still carry, never below one.
+func runLimitOracle(choice RunLimit, nodes []Node, now time.Time, running int) (int, string) {
 	if !choice.Automatic && choice.Value > 0 {
 		return choice.Value, ReasonSlot
 	}
@@ -215,7 +219,7 @@ func runLimitOracle(choice RunLimit, nodes []Node, now time.Time) (int, string) 
 	if quotaBlocked {
 		reason = ReasonQuota
 	}
-	return max(1, total), reason
+	return max(1, total, running), reason
 }
 
 // freeSteps is what the reports can still place, in the same step units.
