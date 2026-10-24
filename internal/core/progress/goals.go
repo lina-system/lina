@@ -91,7 +91,7 @@ func Goals(ctx context.Context, tx *canon.Tx, person string, agents map[string]s
 			return nil, err
 		}
 		// One manager runs one 일, so a managed goal is the 일 the person reads.
-		u := Unit{ID: g.ID, Agent: g.Agent, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages), Rank: g.Rank}
+		u := Unit{ID: g.ID, Agent: g.Agent, GoalLine: true, Kind: "project", Name: name, Stages: stages, Active: true, Percent: goalPercent(g), Waiting: goalWaiting(g), Now: goalNow(g, stages, language), Next: goalNext(stages), State: goalState(g, stages), Rank: g.Rank}
 		if u.Name == "" {
 			u.Name = design.Text(language, "progress.untitled")
 		}
@@ -156,6 +156,10 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 		}
 		return working[0].Name
 	}
+	// A goal waiting for a run slot says why and which place it holds.
+	if place := queuePlace(g, language); place != "" {
+		return place
+	}
 	switch g.State {
 	case goal.GoalDefining:
 		return design.Text(language, "progress.design")
@@ -169,6 +173,18 @@ func goalNow(g goal.Goal, stages []Stage, language design.Language) string {
 		return design.Text(language, "progress.waiting_word")
 	}
 	return design.Text(language, "progress.waiting_word")
+}
+
+// queuePlace is a queued goal's one reason and its place in rank order.
+func queuePlace(g goal.Goal, language design.Language) string {
+	if g.QueuePlace <= 0 {
+		return ""
+	}
+	text, ok := design.Lookup(language, "progress.queue."+g.QueueReason)
+	if !ok {
+		return ""
+	}
+	return fmt.Sprintf(text, g.QueuePlace)
 }
 
 // goalState is the 일 line's state in the running list words, which the count

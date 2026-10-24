@@ -79,9 +79,10 @@ func Migrations() []Migration {
 		{Version: 64, SQL: MiniAppsSchema},
 		{Version: 65, SQL: MessengerSchema},
 		{Version: 66, SQL: EventErasureSchema},
-		{Version: 67, SQL: ModelServedSchema},
+{Version: 67, SQL: ModelServedSchema},
 		{Version: 68, SQL: MessengerImportSchema},
 		{Version: 69, SQL: TeamsSchema},
+		{Version: 70, SQL: workRunLimitSchema},
 	}
 }
 

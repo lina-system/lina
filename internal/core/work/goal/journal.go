@@ -65,7 +65,7 @@ func (j *Journal) notify() {
 
 func key(kind, id string) string { return kind + "\x00" + id }
 func validKey(kind, id string) bool {
-	return (kind == "goal" || kind == "node" || kind == "action") && strings.TrimSpace(id) != "" && !strings.ContainsRune(id, 0)
+	return (kind == "goal" || kind == "node" || kind == "action" || kind == "limit") && strings.TrimSpace(id) != "" && !strings.ContainsRune(id, 0)
 }
 func copyRecord(r Record) Record { r.Body = bytes.Clone(r.Body); return r }
 

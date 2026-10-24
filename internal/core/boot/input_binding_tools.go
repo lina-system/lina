@@ -200,6 +200,22 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		result := bindingFailure(c.ID, errBindingPending)
 		return &result
 	}
+	// A reply that did not settle still has the parent's retained tie. A control
+	// action must ask before it uses the recommendation.
+	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") && input.Surface.ReplyTo != "" {
+		parent, err := r.currentInputChoices(ctx, ledger.Event{ID: input.Surface.ReplyTo})
+		if err != nil {
+			result := bindingFailure(c.ID, err)
+			return &result
+		}
+		for _, earlier := range parent {
+			if len(earlier.Tied) > 1 && earlier.Question == "" && !earlier.Cancelled {
+				choice.Tied = earlier.Tied
+				choice.Target = earlier.Tied[0]
+				break
+			}
+		}
+	}
 	if _, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+c.ID); err == nil {
 		return nil
 	}
@@ -522,8 +538,13 @@ func (r *conversationRuntime) followWorkerTask(ctx context.Context, input ledger
 	if err != nil {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
+	// The registry is shared. Check and deliver as the requester so an
+	// unrelated conversation cannot steer or speak as the owner.
+	if !entry.origin.workerConversation(r) {
+		return loop.Result{ID: callID, Code: loop.Denied}
+	}
 	ctx = context.WithValue(ctx, workerCallIdentityKey{}, "binding-follow:"+turnID+":"+callID)
-	result, err := entry.origin.workerOperation(ctx, "worker_input", turnID, input, in)
+	result, err := r.workerOperation(ctx, "worker_input", turnID, input, in)
 	if err != nil || result.State != tools.Applied {
 		return loop.Result{ID: callID, Code: loop.Denied}
 	}
@@ -642,9 +663,11 @@ func bindingAction(name string) string {
 	switch name {
 	case "follow_work", "worker_input":
 		return "steer"
-	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start":
+	case "worker_interrupt", "cancel_timer":
+		return "stop"
+	case "start_run", "dispatch_code_goal", "dispatch_work", "schedule_work", "worker_start", "submit_step_graph", "build_mock", "revise_code_goal", "call_tool", "refresh_work":
 		return "start"
-	case "send_handoff":
+	case "send_handoff", "remote_agent", "begin_artifact_change":
 		return "send"
 	case "trash_record":
 		return "delete"
