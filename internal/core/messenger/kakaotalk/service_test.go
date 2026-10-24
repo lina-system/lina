@@ -128,6 +128,7 @@ const (
 	emailPrompt    = `{"id":"","ok":true,"result":{"state":"needs_sign_in","prompt":{"key":"email","kind":"text","text":"KakaoTalk email"}}}`
 	passwordPrompt = `{"id":"","ok":true,"result":{"state":"needs_sign_in","prompt":{"key":"password","kind":"secret","text":"KakaoTalk password"}}}`
 	passcode       = `{"id":"","ok":true,"result":{"state":"needs_sign_in","show":{"kind":"code","value":"4821"}}}`
+	failing        = `{"id":"","ok":true,"result":{"state":"failing"}}`
 	me             = `{"id":"","ok":true,"result":{"author":{"id":"7788","name":"Me"}}}`
 	// The driver's descriptor travels with the sign-in state Core already asks for.
 	withDescriptor = `{"id":"","ok":true,"result":{"state":"signed_in","capabilities":{"historyDepth":"platform-window","cursorKind":"log-id","edits":false,"deletions":false,"liveEvents":true,"intervalSeconds":900,"readWindowSeconds":172800}}}`
@@ -247,6 +248,52 @@ func TestAnswerNeedsALiveAttempt(t *testing.T) {
 	h.now = h.now.Add(11 * time.Minute)
 	if _, err := h.service.Answer(t.Context(), "connection", "email", "person@example.test"); !errors.Is(err, kakaotalk.ErrNoAttempt) {
 		t.Fatal("a relay past its lifetime kept accepting answers")
+	}
+}
+
+// The add-on runs one pending sign-in per platform, so only the connection that
+// began it may resume or answer it. Another connection is refused instead of
+// being shown the first one's prompt; a failed attempt frees the flow.
+func TestOneConnectionHoldsTheSignIn(t *testing.T) {
+	h := newHarness(t, map[string][]string{
+		"beginSignIn": {emailPrompt, emailPrompt},
+		"answer":      {passwordPrompt, failing},
+	})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := h.service.Connect(t.Context(), "second", true); !errors.Is(err, kakaotalk.ErrSignInBusy) {
+		t.Fatalf("a second connection began the shared flow: %v", err)
+	}
+	if _, err := h.service.Answer(t.Context(), "second", "email", "person@example.test"); !errors.Is(err, kakaotalk.ErrNoAttempt) {
+		t.Fatalf("a second connection answered the shared flow: %v", err)
+	}
+	if _, err := h.service.Answer(t.Context(), "first", "email", "person@example.test"); err != nil {
+		t.Fatal(err)
+	}
+	step, err := h.service.Answer(t.Context(), "first", "password", "wrong-password")
+	if err != nil || step.State != messenger.Failing {
+		t.Fatalf("rejected password %+v, %v", step, err)
+	}
+	step, err = h.service.Connect(t.Context(), "second", true)
+	if err != nil || step.State != messenger.NeedsSignIn || step.Prompt == nil || step.Prompt.Key != "email" {
+		t.Fatalf("second connection after a failed attempt %+v, %v", step, err)
+	}
+	if ops := h.script.ops(); len(ops) != 4 || ops[0] != "beginSignIn" || ops[3] != "beginSignIn" {
+		t.Fatalf("refused connections reached the add-on: %v", ops)
+	}
+}
+
+// A flow past its lifetime stops holding the platform, so the next connection
+// begins rather than waiting for a relay nobody will answer.
+func TestAnExpiredSignInFreesTheFlow(t *testing.T) {
+	h := newHarness(t, map[string][]string{"beginSignIn": {emailPrompt, emailPrompt}})
+	if _, err := h.service.Connect(t.Context(), "first", true); err != nil {
+		t.Fatal(err)
+	}
+	h.now = h.now.Add(11 * time.Minute)
+	if _, err := h.service.Connect(t.Context(), "second", true); err != nil {
+		t.Fatalf("an expired flow kept holding the platform: %v", err)
 	}
 }
 

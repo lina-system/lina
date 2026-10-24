@@ -855,8 +855,11 @@ Sign-in runs in the add-on's own flow and Core relays it: the email, the
 password read without echo, and the passcode Kakao displays for the person to
 enter on the phone while the tablet registration finishes in the background.
 Core keeps no prompt, answer, passcode or password, and the session lives in the
-add-on's data directory. A stored session the platform rejects marks only that
-source as needing sign-in; other sources keep reading.
+add-on's data directory. The add-on runs one pending sign-in per account, so the
+connection that began it holds the flow: another connection's connect or sign-in
+is refused while it runs, and the flow expires after ten minutes. A stored
+session the platform rejects marks only that source as needing sign-in; other
+sources keep reading.
 
 The adapter lists chats, reads a chat forward from a `log_id` cursor, reads
 members, follows live message pushes, and reports a 64-bit log id as an opaque

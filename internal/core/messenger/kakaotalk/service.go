@@ -51,6 +51,9 @@ var (
 	ErrConnected = errors.New("kakaotalk account already connected")
 	// ErrNoAttempt reports a sign-in answer without a live attempt.
 	ErrNoAttempt = errors.New("kakaotalk sign-in attempt expired")
+	// ErrSignInBusy reports a sign-in begun while another connection still
+	// holds the platform's one pending flow.
+	ErrSignInBusy = errors.New("kakaotalk sign-in is held by another connection")
 )
 
 // Prompt is one typed answer the add-on asks for. Its text is the add-on's own
@@ -97,6 +100,11 @@ type Service struct {
 
 	mu       sync.Mutex
 	attempts map[string]*attempt
+	// holder is the connection whose sign-in the add-on is running. The
+	// platform keeps one pending flow per account, so a second connection must
+	// not resume or answer it: it would receive the first person's prompt or
+	// passcode. The holder is live while its attempt is.
+	holder string
 }
 
 type attempt struct {
@@ -189,32 +197,34 @@ func (s *Service) SignIn(ctx context.Context, connection, account string) (Step,
 }
 
 // begin starts or resumes the add-on's own sign-in flow for this connection.
+// Only the connection that holds the platform's pending flow may begin, resume
+// or answer it; another connection is refused until it ends or expires.
 func (s *Service) begin(ctx context.Context, connection string, pending *attempt, fresh bool) (Step, error) {
+	s.mu.Lock()
+	s.expireLocked()
+	if s.holder != "" && s.holder != connection {
+		s.mu.Unlock()
+		return Step{}, ErrSignInBusy
+	}
+	resumed := false
+	if !fresh {
+		if live, ok := s.attempts[connection]; ok && live.account == pending.account {
+			pending, resumed = live, true
+		}
+	}
+	if !resumed && fresh && len(s.attempts) >= maxAttempts {
+		s.mu.Unlock()
+		return Step{}, messenger.ErrInvalid
+	}
+	if !resumed {
+		pending.expires = s.now().Add(attemptLifetime)
+		s.attempts[connection] = pending
+	}
+	s.holder = connection
+	s.mu.Unlock()
 	session, err := s.cfg.Sessions.Start(Platform, pending.account)
 	if err != nil {
 		return Step{}, err
-	}
-	if fresh {
-		pending.expires = s.now().Add(attemptLifetime)
-		s.mu.Lock()
-		s.expireLocked()
-		if len(s.attempts) >= maxAttempts {
-			s.mu.Unlock()
-			return Step{}, messenger.ErrInvalid
-		}
-		s.attempts[connection] = pending
-		s.mu.Unlock()
-	} else {
-		s.mu.Lock()
-		s.expireLocked()
-		live, ok := s.attempts[connection]
-		if ok && live.account == pending.account {
-			pending = live
-		} else {
-			pending.expires = s.now().Add(attemptLifetime)
-			s.attempts[connection] = pending
-		}
-		s.mu.Unlock()
 	}
 	step, err := session.BeginSignIn(ctx)
 	if err != nil {
@@ -228,8 +238,9 @@ func (s *Service) Answer(ctx context.Context, connection, prompt, value string) 
 	s.mu.Lock()
 	s.expireLocked()
 	pending, ok := s.attempts[connection]
+	held := s.holder == connection
 	s.mu.Unlock()
-	if !ok || !s.now().Before(pending.expires) {
+	if !ok || !held || !s.now().Before(pending.expires) {
 		return Step{}, ErrNoAttempt
 	}
 	session, err := s.cfg.Sessions.Start(Platform, pending.account)
@@ -256,7 +267,7 @@ func (s *Service) finish(ctx context.Context, connection string, pending *attemp
 	if step.State != messenger.SignedIn {
 		if step.State == messenger.Failing {
 			s.mu.Lock()
-			delete(s.attempts, connection)
+			s.releaseLocked(connection)
 			s.mu.Unlock()
 		}
 		return out, nil
@@ -291,7 +302,7 @@ func (s *Service) finish(ctx context.Context, connection string, pending *attemp
 		return Step{}, err
 	}
 	s.mu.Lock()
-	delete(s.attempts, connection)
+	s.releaseLocked(connection)
 	s.mu.Unlock()
 	out.Account = author.ID
 	return out, nil
@@ -322,7 +333,7 @@ func (s *Service) Disconnect(ctx context.Context, account string) error {
 	s.mu.Lock()
 	for connection, pending := range s.attempts {
 		if pending.account == account {
-			delete(s.attempts, connection)
+			s.releaseLocked(connection)
 		}
 	}
 	s.mu.Unlock()
@@ -334,7 +345,16 @@ func (s *Service) expireLocked() {
 	current := s.now()
 	for connection, pending := range s.attempts {
 		if !current.Before(pending.expires) {
-			delete(s.attempts, connection)
+			s.releaseLocked(connection)
 		}
+	}
+}
+
+// releaseLocked ends one relay and, when it held the platform's flow, frees it
+// for the next connection. It requires s.mu.
+func (s *Service) releaseLocked(connection string) {
+	delete(s.attempts, connection)
+	if s.holder == connection {
+		s.holder = ""
 	}
 }

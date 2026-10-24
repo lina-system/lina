@@ -34,7 +34,7 @@ func kakaotalkError(err error) error {
 	if errors.Is(err, messenger.ErrInvalid) || errors.Is(err, messenger.ErrNotFound) || errors.Is(err, kakaotalk.ErrConnected) {
 		code = protocol.ErrorMalformed
 	}
-	if errors.Is(err, kakaotalk.ErrNoAttempt) {
+	if errors.Is(err, kakaotalk.ErrNoAttempt) || errors.Is(err, kakaotalk.ErrSignInBusy) {
 		code = protocol.ErrorNotAuthorized
 	}
 	return &clientsrv.OperationError{Code: code}
