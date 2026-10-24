@@ -170,7 +170,7 @@ func TestChangeSignalReadsTheSourceOnce(t *testing.T) {
 	}
 	cleared := false
 	for _, w := range linked {
-		cleared = cleared || w.TodoID == "host-reply" && w.Who == "" && w.Since == "" && w.NextCheck == ""
+		cleared = cleared || w.Wake == "" && w.TodoID == "host-reply" && w.Who == "host" && w.Since == "2026-10-20" && w.NextCheck == "1970-01-01"
 	}
 	if !cleared {
 		t.Fatalf("closed read left waiting_on: %+v", linked)

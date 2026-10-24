@@ -156,8 +156,8 @@ func (r *conversationRuntime) linkGoalWaitingOn(ctx context.Context, g work.Goal
 	if err != nil {
 		return err
 	}
-	if w.Who == "" && w.Since == "" && w.NextCheck == "" {
-		if todo.WaitingOn == nil {
+	if w.Wake == "" {
+		if todo.WaitingOn == nil || todo.WaitingOn.Who != w.Who || todo.WaitingOn.Since != w.Since || todo.WaitingOn.NextCheck != w.NextCheck {
 			return nil
 		}
 		todo.WaitingOn = nil

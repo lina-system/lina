@@ -176,8 +176,14 @@ type Goal struct {
 	Verification      Proof             `json:"verification"`
 	Waits             []Wait            `json:"waits,omitempty"`
 	// ClearTodos are linked 할 일 whose waiting_on must be cleared after the wait ends.
-	ClearTodos []string `json:"clear_todos,omitempty"`
-	Evidence   []Proof  `json:"evidence,omitempty"`
+	// The fields are the wait's own values, so a later edit of the to-do is left in place.
+	ClearTodos []ClearedWait `json:"clear_todos,omitempty"`
+	Evidence   []Proof       `json:"evidence,omitempty"`
+}
+
+// ClearedWait is one linked 할 일 to clear after its outside wait ends.
+type ClearedWait struct {
+	TodoID, Who, Since, NextCheck string
 }
 
 type ActionKind string
