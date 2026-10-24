@@ -202,6 +202,8 @@ func (w *livenessWorld) Execute(ctx context.Context, a work.Action) (work.Observ
 			return out, fmt.Errorf("inspection without the worker head")
 		}
 		out.PR = work.PRState{Head: head, Mergeable: false}
+	case work.Resume, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Verify, work.Observe, work.Decide, work.CheckCriterion, work.ContinueWorker:
+		return out, fmt.Errorf("unexpected action %s", a.Kind)
 	default:
 		return out, fmt.Errorf("unexpected action %s", a.Kind)
 	}
@@ -254,7 +256,7 @@ func (w *livenessWorld) note(s work.State) {
 			}
 		}
 	}
-	planned, assigned, inspected := 0, 0, 0
+	planned, assigned, inspected, other := 0, 0, 0, 0
 	for _, a := range w.calls {
 		switch a.Kind {
 		case work.PlanGoal:
@@ -263,9 +265,11 @@ func (w *livenessWorld) note(s work.State) {
 			assigned++
 		case work.InspectPR:
 			inspected++
+		case work.Resume, work.Merge, work.RunQA, work.RepairConflict, work.RepairQA, work.Deploy, work.Verify, work.Observe, work.Decide, work.CheckCriterion, work.ContinueWorker:
+			other++
 		}
 	}
-	if !w.signaled && w.idle.AttentionID != "" && w.delivered && planned == 1 && assigned == 1 && inspected == 1 {
+	if !w.signaled && other == 0 && w.idle.AttentionID != "" && w.delivered && planned == 1 && assigned == 1 && inspected == 1 {
 		w.signaled = true
 		close(w.ready)
 	}
