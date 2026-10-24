@@ -335,3 +335,77 @@ func TestModelBindingSteeringKeepsToolScope(t *testing.T) {
 		t.Fatalf("steering borrowed the original turn's tool scope: code=%s", got.Code)
 	}
 }
+
+func TestSelectedNewTargetResolvesToCreatedIdentity(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{
+		{ID: "spawned-run", Title: "Spawned run", Kind: "run", State: "running", LastActivity: now},
+		{ID: "other-run", Title: "Other run", Kind: "run", State: "running", LastActivity: now},
+	}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	input := questionPersonInput(t, r, "new-created", "Start one and then check it.")
+	tools := modelBindingTools(t, r, input)
+	fresh := binding.Target{Class: "new", Kind: "run"}
+	other := binding.Target{Class: "existing", ID: "other-run", Kind: "run"}
+	if got := questionCall(t, tools, "bind_input", "ask", bindingRequest{Bindings: []binding.Choice{{
+		Quote: input.Body.Text(), Target: fresh, Tied: []binding.Target{fresh, other}, Action: "start",
+	}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	choices, err := r.currentInputChoices(t.Context(), input)
+	if err != nil || choices[0].Question == "" {
+		t.Fatalf("question: %+v %v", choices, err)
+	}
+	q, err := waiting.NewConversationQuestions(r.db).Get(t.Context(), choices[0].Question)
+	if err != nil {
+		t.Fatal(err)
+	}
+	route := r.route
+	r.route = nil
+	defer func() { r.route = route }()
+	revision, value := "1", q.Choices[0]
+	values := protocol.FormValues{"answer": {String: &value}}
+	answer := protocol.QuestionAnswer{CardID: &q.ID, Revision: &revision, Answer: protocol.QuestionAnswerActionAccept, Values: &values}
+	if outcome, err := r.answerConversationQuestion(t.Context(), r.person, answer, "answer"); err != nil || outcome != protocol.DecisionOutcomeResolved {
+		t.Fatalf("answer: %s %v", outcome, err)
+	}
+	turnID := "turn:" + input.ID
+	if _, err = r.saveModelBinding(t.Context(), input, "binding-tool:"+turnID+":create", []binding.Choice{{
+		Quote: input.Body.Text(), Target: fresh,
+	}}, "tool:start_run"); err != nil {
+		t.Fatal(err)
+	}
+	if err = r.recordCreatedBinding(t.Context(), input, 0, turnID, provider.ToolCall{ID: "create", Name: "start_run"}, loop.Result{Code: loop.OK, Output: json.RawMessage(`{"id":"spawned-run"}`)}); err != nil {
+		t.Fatal(err)
+	}
+	choices, err = r.currentInputChoices(t.Context(), input)
+	if err != nil || choices[0].Decider != "person" || choices[0].Target != fresh || choices[0].CreatedID != "spawned-run" {
+		t.Fatalf("created choice: %+v %v", choices, err)
+	}
+	if got := questionCall(t, tools, "read_work_progress", "other-progress", map[string]string{"id": other.ID}); got.Code != loop.Denied || !strings.Contains(string(got.Output), "input_target_pending") {
+		t.Fatalf("other item was accepted: %+v", got)
+	}
+	if got := questionCall(t, tools, "read_record", "created-record", map[string]string{"id": "spawned-run"}); strings.Contains(string(got.Output), "input_target_pending") {
+		t.Fatalf("record read of the created identity stayed pending: %+v", got)
+	}
+	if got := questionCall(t, tools, "read_work_progress", "created-progress", map[string]string{"id": "spawned-run"}); got.Code != loop.OK {
+		t.Fatalf("progress read of the created identity stayed pending: %+v", got)
+	}
+	if got := questionCall(t, tools, "follow_work", "created-follow", map[string]string{"id": "spawned-run", "text": "Check the result"}); got.Code != loop.OK {
+		t.Fatalf("follow-up on the created identity: %+v", got)
+	}
+	if got := questionCall(t, tools, "follow_work", "other-follow", map[string]string{"id": other.ID, "text": "Change the other run"}); got.Code != loop.Denied || !strings.Contains(string(got.Output), "input_target_pending") {
+		t.Fatalf("other follow-up was accepted: %+v", got)
+	}
+	choices, err = r.currentInputChoices(t.Context(), input)
+	if err != nil || choices[0].Decider != "person" || choices[0].CreatedID != "spawned-run" || choices[0].Target.ID != "spawned-run" {
+		t.Fatalf("creation record dropped: %+v %v", choices, err)
+	}
+	run, err := r.background.service.Get(t.Context(), "spawned-run")
+	if err != nil || len(run.FollowUps) != 1 {
+		t.Fatalf("follow-up missing: notes=%d err=%v", len(run.FollowUps), err)
+	}
+}

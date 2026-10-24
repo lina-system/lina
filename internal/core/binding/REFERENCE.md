@@ -16,6 +16,10 @@ is retained. Current choices overlay those events, and a created receipt supplie
 the next focus identity. `input-choice-v1` context sources reconstruct immutable
 choice bytes for request replay.
 
+A person-selected new target keeps that decider. Once its created id is recorded,
+a later read, progress check, or follow-up may name that existing item; any
+other item stays pending.
+
 Target questions store their choice with the existing durable question record.
 Their resolution appends the selected or cancelled binding in the same transaction
 as the answer inbox event. General skipped-question defaults never resolve them.

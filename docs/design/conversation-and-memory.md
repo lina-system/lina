@@ -385,9 +385,12 @@ for a parent error the authorized open initiative/project IDs, so the model can
 correct the next call. A question about two new targets labels each choice with
 its kind and parent, so the options stay distinct.
 A single `prepare_work` or `schedule_work` receipt records the created task as
-that request's focus. Several created tasks stay unresolved. A resumed channel
-request recovers the original channel receipt through the answer's parent chain
-before a follow-up is delivered.
+that request's focus. Several created tasks stay unresolved. When the person
+has selected a new target and creation has recorded its id, a later record
+read, progress read, or follow-up of that created item stays on the same
+request. Naming a different item does not replace the person's choice.
+A resumed channel request recovers the original channel receipt through the
+answer's parent chain before a follow-up is delivered.
 Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. Reading a tied candidate does not resolve the original ambiguity.

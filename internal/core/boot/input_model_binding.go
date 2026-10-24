@@ -250,6 +250,32 @@ func bindingFailure(id string, err error) loop.Result {
 
 var errBindingPending = errors.New("input_target_pending")
 
+// personTargetBlocked keeps a person's settled target. A selected new target
+// may later be read or followed as the item creation recorded.
+func personTargetBlocked(old binding.Choice, next binding.Target) bool {
+	if old.Question != "" || old.Cancelled {
+		return true
+	}
+	if old.Decider != "person" || old.Target == next {
+		return false
+	}
+	return !createdIdentity(old, next)
+}
+
+func createdIdentity(old binding.Choice, next binding.Target) bool {
+	if old.CreatedID == "" || next.Class != "existing" || next.ID != old.CreatedID || next.Parent != "" {
+		return false
+	}
+	switch old.Target.Class {
+	case "new":
+		return next.Kind == old.Target.Kind
+	case "existing":
+		return old.Target.ID == next.ID && old.Target.Kind == next.Kind
+	default:
+		return false
+	}
+}
+
 func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger.Event, id string, choices []binding.Choice, decider string) (out []binding.Choice, err error) {
 	if input.PersonID != r.person || input.AgentID != r.agent || input.ConversationID != r.conversation || input.SpeakerKind != guard.Person || r.channelBinding != nil && (!r.channelBinding.Scope.Tools || r.validateChannel(ctx) != nil) {
 		return nil, binding.ErrChoice
@@ -319,7 +345,7 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 			if c.Request > len(old) {
 				return binding.ErrChoice
 			}
-			if c.Request < len(old) && (old[c.Request].Question != "" || old[c.Request].Cancelled || old[c.Request].Decider == "person" && old[c.Request].Target != c.Target) {
+			if c.Request < len(old) && personTargetBlocked(old[c.Request], c.Target) {
 				return errBindingPending
 			}
 			if c.Request == len(old) {
@@ -328,6 +354,9 @@ func (r *conversationRuntime) saveModelBinding(ctx context.Context, input ledger
 			c.Decider = decider
 			if c.Request < len(old) && old[c.Request].Decider == "person" {
 				c.Decider = "person"
+				if createdIdentity(old[c.Request], c.Target) {
+					c.CreatedID = old[c.Request].CreatedID
+				}
 			}
 			if binding.NeedsQuestion(state, *c) {
 				qid := fmt.Sprintf("%starget:%s:%d", conversationQuestionPrefix, input.ID, c.Request)
