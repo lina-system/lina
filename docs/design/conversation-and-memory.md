@@ -395,7 +395,10 @@ Its ordinary authority and state checks still run. A steering input retains its
 own tool scope and current channel binding; it cannot borrow the original turn's
 permissions. A tool executed for that steering input uses the steering runtime
 and event, so a channel follow-up keeps that channel's source. Reading a tied
-candidate does not resolve the original ambiguity.
+candidate does not resolve the original ambiguity. A retained tie, including a
+read that has not asked a question, does not settle a reply or the next focus.
+A reply that stays unresolved keeps that tie, so a later control asks before it
+runs.
 Current choices enter the
 ContextPacket and remain reconstructible from their ledger sources.
 

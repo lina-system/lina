@@ -92,7 +92,8 @@ func (r *conversationRuntime) bindingState(ctx context.Context, tx *canon.Tx, in
 			return s, e
 		}
 		for _, c := range choices {
-			if c.Question == "" && !c.Cancelled {
+			// A retained tie is still ambiguous. Its recommendation is not focus.
+			if c.Question == "" && !c.Cancelled && len(c.Tied) < 2 {
 				s.Focus = c.Target
 				if c.CreatedID != "" {
 					s.Focus = binding.Target{Class: "existing", ID: c.CreatedID, Kind: c.Target.Kind}
@@ -379,7 +380,7 @@ func overlayChoiceTarget(base binding.Target, choices []binding.Choice) binding.
 	var settled binding.Target
 	have := false
 	for _, c := range choices {
-		if c.Cancelled || c.Question != "" {
+		if c.Cancelled || c.Question != "" || len(c.Tied) > 1 {
 			return binding.Target{}
 		}
 		target := c.Target

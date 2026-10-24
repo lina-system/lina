@@ -145,6 +145,22 @@ func (r *conversationRuntime) bindWorkCall(ctx context.Context, input ledger.Eve
 		result := bindingFailure(c.ID, errBindingPending)
 		return &result
 	}
+	// A reply that did not settle still has the parent's retained tie. A control
+	// action must ask before it uses the recommendation.
+	if len(choice.Tied) < 2 && (choice.Target.Class == "" || choice.Target.Class == "none") && input.Surface.ReplyTo != "" {
+		parent, err := r.currentInputChoices(ctx, ledger.Event{ID: input.Surface.ReplyTo})
+		if err != nil {
+			result := bindingFailure(c.ID, err)
+			return &result
+		}
+		for _, earlier := range parent {
+			if len(earlier.Tied) > 1 && earlier.Question == "" && !earlier.Cancelled {
+				choice.Tied = earlier.Tied
+				choice.Target = earlier.Tied[0]
+				break
+			}
+		}
+	}
 	if _, err := r.journal().Get(ctx, "binding-tool:"+turnID+":"+c.ID); err == nil {
 		return nil
 	}

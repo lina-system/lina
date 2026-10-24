@@ -567,6 +567,92 @@ func TestReviseCodeGoalChecksChosenRecord(t *testing.T) {
 	}
 }
 
+func TestReplyToReadTieStaysUnresolved(t *testing.T) {
+	r, _ := turnRuntime(t)
+	reserve := t.TempDir()
+	first := work.Task{ID: "reply-a", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "First task", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	second := work.Task{ID: "reply-b", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation, Title: "Second task", Done: "Done", ArtifactRoots: []string{t.TempDir()}}
+	for _, task := range []work.Task{first, second} {
+		if err := r.work.Create(t.Context(), task); err != nil {
+			t.Fatal(err)
+		}
+	}
+	if err := r.work.Start(t.Context(), work.Run{ID: "reply-b-run", TaskID: second.ID, Generation: 1, Worker: "codex", ThreadID: "reply-b-thread", TurnID: "old", NodeID: "node"}); err != nil {
+		t.Fatal(err)
+	}
+	if err := r.work.ReserveWorker(t.Context(), "reply-b-worker", reserve); err != nil {
+		t.Fatal(err)
+	}
+	thread := worker.Thread{ID: "reply-b-thread", TaskID: second.ID, TurnID: "old", ProcessGeneration: 1, BindingEpoch: 1}
+	probe := &messageProbe{transferProbe: &transferProbe{workerProbe: workerProbe{snapshot: worker.ThreadSnapshot{Thread: thread, State: worker.Active}}, events: make(chan worker.Event, 1), next: "old"}}
+	done := make(chan struct{})
+	close(done)
+	entry := &workerSession{adapter: probe, origin: r, input: ledger.Event{Surface: ledger.Surface{Kind: "tui"}}, thread: thread, workdir: reserve, reservation: "reply-b-worker", process: lease.New(func() {}), done: done, active: map[string]lease.Lease{}, close: func() error { return nil }}
+	r.workers.mu.Lock()
+	r.workers.sessions[thread.ID] = entry
+	r.workers.mu.Unlock()
+	t.Cleanup(func() {
+		r.workers.mu.Lock()
+		delete(r.workers.sessions, thread.ID)
+		r.workers.mu.Unlock()
+	})
+	text := "check its progress and stop it"
+	parent := questionPersonInput(t, r, "reply-tie", text)
+	tools := modelBindingTools(t, r, parent)
+	a := binding.Target{Class: "existing", Kind: "task", ID: first.ID}
+	b := binding.Target{Class: "existing", Kind: "task", ID: second.ID}
+	if got := questionCall(t, tools, "bind_input", "read-tie", bindingRequest{Bindings: []binding.Choice{{Quote: text, Target: a, Tied: []binding.Target{a, b}, Action: "read"}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	now := time.Now().UTC()
+	reply, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "reply-stop", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: parent.ID}, OccurredAt: now, RecordedAt: now, TimeQuality: "observed", Body: "stop it",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err := r.journal().Get(t.Context(), inputBindingID(reply.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decision binding.Decision
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if !decision.Unresolved || decision.Rule == "reply-or-card" || decision.Target.ID == first.ID || decision.Target.ID == second.ID {
+		t.Fatalf("read tie settled the reply: %+v", decision)
+	}
+	replyTools := modelBindingTools(t, r, reply)
+	stopped := questionCall(t, replyTools, "worker_interrupt", "stop-reply", map[string]any{"session": thread.ID, "turn": "old", "generation": 1, "binding": 1, "quote": "stop it"})
+	if stopped.Code != loop.Denied || !strings.Contains(string(stopped.Output), "input_target_pending") || probe.interrupts != 0 {
+		t.Fatalf("reply interrupt skipped the tie: %+v interrupts=%d", stopped, probe.interrupts)
+	}
+	oneText := "stay with the first task"
+	one := questionPersonInput(t, r, "reply-one", oneText)
+	oneTools := modelBindingTools(t, r, one)
+	if got := questionCall(t, oneTools, "bind_input", "one-target", bindingRequest{Bindings: []binding.Choice{{Quote: oneText, Target: a}}}); got.Code != loop.OK {
+		t.Fatal(got)
+	}
+	settled, err := r.journal().Admit(t.Context(), guard.EntryOwner, ledger.Input{
+		ID: "reply-settled", PersonID: r.person, AgentID: r.agent, ConversationID: r.conversation,
+		Surface: ledger.Surface{Kind: "tui", ReplyTo: one.ID}, OccurredAt: now.Add(time.Second), RecordedAt: now.Add(time.Second), TimeQuality: "observed", Body: "continue",
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	saved, err = r.journal().Get(t.Context(), inputBindingID(settled.ID))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err = json.Unmarshal([]byte(saved.Body.Text()), &decision); err != nil {
+		t.Fatal(err)
+	}
+	if decision.Target.ID != first.ID || decision.Decider != "reply-or-card" {
+		t.Fatalf("untied choice did not settle the reply: %+v", decision)
+	}
+}
+
 func TestInterruptTieAsksBeforeCancel(t *testing.T) {
 	r, _ := turnRuntime(t)
 	reserve := t.TempDir()
