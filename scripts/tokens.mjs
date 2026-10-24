@@ -7,15 +7,20 @@ import { pathToFileURL } from 'node:url';
 
 const names = ['light', 'dark', 'high-contrast'];
 const fields = {
-  color: ['canvas', 'surface', 'text', 'muted', 'accent', 'line'],
-  type: ['body', 'code', 'size', 'lineHeight', 'weight', 'titleWeight'],
-  space: ['inline', 'gutter', 'section', 'page'], radius: ['card'],
-  motion: ['settle', 'reduced', 'activityFrame', 'activityElapsed'], icon: ['size'],
+  color: ['canvas', 'surface', 'text', 'muted', 'accent', 'line', 'onAccent', 'success', 'warning', 'error',
+    'unknown', 'diffAdded', 'diffRemoved', 'diffAddedBackground', 'diffRemovedBackground',
+    'focus', 'border', 'selection', 'onSelection', 'working', 'waiting', 'disabled'],
+  type: ['body', 'code', 'codeNative', 'size', 'titleSize', 'labelSize', 'lineHeight', 'weight', 'titleWeight'],
+  space: ['inline', 'gutter', 'section', 'page', 'compact'], radius: ['card'],
+  border: ['width', 'focusWidth'], control: ['minimum'],
+  motion: ['settle', 'reduced', 'activityFrame', 'activityElapsed'], icon: ['size', 'grid', 'stroke'],
 };
+const iconRoles = ['citation', 'success', 'error', 'working', 'waiting', 'unknown', 'memory', 'identity'];
 const glyphs = ['mark', 'connecting', 'live', 'resyncing', 'retrying', 'refused', 'recovering', 'stopped', 'failed', 'quit', 'rule', 'action', 'waiting', 'unknown', 'activityFrames', 'activitySeparator', 'person', 'agent', 'toolRunning', 'toolOk', 'toolFailed', 'stageDone', 'stageWorking', 'stageWaiting', 'stageNeedsInput', 'stageFailed', 'stageNext', 'back', 'overflow'];
-const expected = [...Object.entries(fields).flatMap(([group, roles]) => roles.map(role => `${group}.${role}`)),
-  ...['unicode', 'ascii'].flatMap(set => glyphs.map(role => `glyph.${set}.${role}`))].sort();
 const identifier = path => path.split(/[.-]/).map(word => word[0].toUpperCase() + word.slice(1)).join('');
+const expected = [...Object.entries(fields).flatMap(([group, roles]) => roles.map(role => `${group}.${role}`)),
+  ...['unicode', 'ascii'].flatMap(set => [...glyphs, ...iconRoles.map(role => `icon${identifier(role)}`)]
+    .map(role => `glyph.${set}.${role}`))].sort();
 const cssName = path => path.replaceAll('.', '-').replace(/[A-Z]/g, c => `-${c.toLowerCase()}`);
 const ansi16 = ['#000000', '#800000', '#008000', '#808000', '#000080', '#800080', '#008080', '#c0c0c0',
   '#808080', '#ff0000', '#00ff00', '#ffff00', '#0000ff', '#ff00ff', '#00ffff', '#ffffff'];
@@ -75,25 +80,66 @@ function validate(path, token) {
     default: fail();
   }
   const type = path.startsWith('color.') ? 'color' : path.startsWith('glyph.') ? 'string'
-    : path.startsWith('motion.') ? 'duration' : /^(space|radius|icon)\./.test(path) || path === 'type.size' ? 'dimension'
-      : /type\.(body|code)$/.test(path) ? 'fontFamily' : path.endsWith('Weight') || path === 'type.weight' ? 'fontWeight' : 'number';
+    : path.startsWith('motion.') ? 'duration' : /^(space|radius|icon|border|control)\./.test(path) || /^type\.(size|titleSize|labelSize)$/.test(path) ? 'dimension'
+      : /type\.(body|code|codeNative)$/.test(path) ? 'fontFamily' : path.endsWith('Weight') || path === 'type.weight' ? 'fontWeight' : 'number';
   if (type !== token.$type) fail();
 }
+
+function resolveAliases(tokens) {
+  const resolved = {}, active = new Set();
+  const resolve = path => {
+    if (active.has(path)) throw new Error(`Cyclic token alias: ${path}`);
+    if (resolved[path]) return resolved[path];
+    const token = tokens[path];
+    if (!token) throw new Error(`Missing token alias: ${path}`);
+    const alias = typeof token.$value === 'string' && /^\{([^{}]+)\}$/.exec(token.$value);
+    if (!alias) return resolved[path] = token;
+    active.add(path);
+    const target = resolve(alias[1]);
+    if (target.$type !== token.$type) throw new Error(`Token alias type mismatch: ${path}`);
+    active.delete(path);
+    return resolved[path] = { ...token, $value: target.$value,
+      $extensions: { ...target.$extensions, ...token.$extensions } };
+  };
+  for (const path of Object.keys(tokens)) resolve(path);
+  return resolved;
+}
+
+function sharedTokens(root) {
+  const app = JSON.parse(readFileSync(join(root, 'design/tokens/app.json'), 'utf8'));
+  const spring = app.$extensions?.['lina.spring'];
+  if (app.$extensions?.['lina.wordWrap'] !== 'word-phrase'
+    || !spring || ['mass', 'stiffness', 'damping'].some(key => !Number.isFinite(spring[key]) || spring[key] <= 0)) {
+    throw new Error('Invalid app motion or word-wrap extension');
+  }
+  const tokens = flatten(app);
+  const icons = JSON.parse(readFileSync(join(root, 'design/tokens/icons.json'), 'utf8')).$extensions?.['lina.iconSource'];
+  if (!icons || icons.grid !== tokens['icon.grid'].$value.value || icons.stroke !== tokens['icon.stroke'].$value.value
+    || JSON.stringify(Object.keys(icons.icons ?? {}).sort()) !== JSON.stringify([...iconRoles].sort())) {
+    throw new Error('Invalid shared icon source or roles');
+  }
+  for (const role of iconRoles) {
+    for (const set of ['unicode', 'ascii']) {
+      const path = `glyph.${set}.icon${identifier(role)}`;
+      tokens[path] = { $type: 'string', $value: icons.icons[role][set] };
+      validate(path, tokens[path]);
+    }
+  }
+  return tokens;
+}
+
 export function loadTokens(root) {
+  const shared = sharedTokens(root);
   const themes = names.map(name => {
     const data = JSON.parse(readFileSync(join(root, `design/tokens/${name}.json`), 'utf8'));
     if (data.$extensions?.['lina.theme'] !== name) throw new Error(`Invalid theme: ${name}`);
-    const tokens = flatten(data);
+    const own = flatten(data);
+    for (const path of Object.keys(shared)) {
+      if (path in own) throw new Error(`Duplicate shared token: ${name} ${path}`);
+    }
+    const tokens = resolveAliases({ ...own, ...shared });
     if (JSON.stringify(Object.keys(tokens).sort()) !== JSON.stringify(expected)) throw new Error(`Incomplete roles: ${name}`);
     for (const [path, token] of Object.entries(tokens)) validate(path, token);
-    for (const foreground of ['text', 'muted', 'accent']) for (const background of ['canvas', 'surface']) {
-      for (const profile of ['hex', 'ansi256', 'ansi16']) {
-        const color = role => profile === 'hex' ? tokens[`color.${role}`].$value.hex
-          : terminalColor(tokens[`color.${role}`].$extensions['lina.terminal'][profile]);
-        const ratio = contrast(color(foreground), color(background));
-        if (ratio < 4.5) throw new Error(`${name} ${profile}: ${foreground}/${background} contrast ${ratio.toFixed(2)} < 4.5`);
-      }
-    }
     // The native launcher panel switches to the high-contrast set under
     // Increase Contrast, so that set must stay dark and reach AAA.
     if (name === 'high-contrast') {
@@ -104,6 +150,19 @@ export function loadTokens(root) {
       for (const foreground of ['text', 'muted', 'accent']) for (const background of ['canvas', 'surface']) {
         const ratio = contrast(tokens[`color.${foreground}`].$value.hex, tokens[`color.${background}`].$value.hex);
         if (ratio < 7) throw new Error(`high-contrast: ${foreground}/${background} contrast ${ratio.toFixed(2)} < 7`);
+      }
+    }
+    const pairs = ['text', 'muted', 'accent', 'success', 'warning', 'error', 'unknown', 'diffAdded', 'diffRemoved',
+      'focus', 'border', 'working', 'waiting', 'disabled'].flatMap(fg => ['canvas', 'surface'].map(bg => [fg, bg, 4.5]));
+    pairs.push(['onAccent', 'accent', 4.5], ['onSelection', 'selection', 4.5],
+      ['selection', 'canvas', 3], ['selection', 'surface', 3],
+      ...['Added', 'Removed'].flatMap(kind => [[`diff${kind}`, `diff${kind}Background`, 4.5], ['text', `diff${kind}Background`, 4.5]]));
+    for (const [foreground, background, minimum] of pairs) {
+      for (const profile of ['hex', 'ansi256', 'ansi16']) {
+        const color = role => profile === 'hex' ? tokens[`color.${role}`].$value.hex
+          : terminalColor(tokens[`color.${role}`].$extensions['lina.terminal'][profile]);
+        const ratio = contrast(color(foreground), color(background));
+        if (ratio < minimum) throw new Error(`${name} ${profile}: ${foreground}/${background} contrast ${ratio.toFixed(2)} < ${minimum}`);
       }
     }
     return { name, tokens };
@@ -222,6 +281,13 @@ function outputs(root) {
     go += `\nfunc ${identifier(theme.name)}() Tokens { return Tokens{\n`;
     go += expected.map(path => `${identifier(path)}: ${goValue(theme.tokens[path])},`).join('\n') + '\n} }\n';
   }
+  go += '\n// Icon returns the shared text equivalent, falling back to the visible unknown mark.\n';
+  go += 'func (t Tokens) Icon(role string, ascii bool) string {\nswitch role {\n';
+  for (const role of iconRoles) {
+    const suffix = `Icon${identifier(role)}`;
+    go += `case ${JSON.stringify(role)}: if ascii { return t.GlyphAscii${suffix} }; return t.GlyphUnicode${suffix}\n`;
+  }
+  go += '}\nif ascii { return t.GlyphAsciiIconUnknown }; return t.GlyphUnicodeIconUnknown\n}\n';
   const formatted = spawnSync('gofmt', [], { input: go, encoding: 'utf8' });
   if (formatted.status !== 0) throw new Error(`gofmt: ${formatted.stderr || formatted.error}`);
   const css = '/* SPDX-License-Identifier: Apache-2.0 */\n/* Generated by scripts/tokens.mjs; DO NOT EDIT. */\n' + themes.map(theme =>

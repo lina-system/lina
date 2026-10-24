@@ -2,7 +2,10 @@
 package ui
 
 import (
+	"charm.land/lipgloss/v2"
 	"github.com/charmbracelet/x/ansi"
+	"image/color"
+	"reflect"
 	"regexp"
 	"strconv"
 	"strings"
@@ -10,6 +13,88 @@ import (
 
 	"github.com/thisisjun786/lina/internal/design"
 )
+
+func TestSemanticPaletteProfiles(t *testing.T) {
+	for _, theme := range []string{"light", "dark", "high-contrast"} {
+		for _, profile := range []Profile{Monochrome, ANSI16, ANSI256, TrueColor} {
+			s := NewStyles(Options{Theme: theme, Profile: profile})
+			tokens := s.tokens
+			paint := func(c design.Color) color.Color {
+				switch profile {
+				case ANSI16:
+					return lipgloss.Color(strconv.Itoa(c.ANSI16))
+				case ANSI256:
+					return lipgloss.Color(strconv.Itoa(c.ANSI256))
+				case TrueColor:
+					return lipgloss.Color(c.Hex)
+				default:
+					return lipgloss.NoColor{}
+				}
+			}
+			for _, tc := range []struct {
+				name   string
+				style  lipgloss.Style
+				fg, bg design.Color
+			}{
+				{"success", s.Success, tokens.ColorSuccess, tokens.ColorCanvas},
+				{"warning", s.Warning, tokens.ColorWarning, tokens.ColorCanvas},
+				{"error", s.Error, tokens.ColorError, tokens.ColorCanvas},
+				{"unknown", s.Unknown, tokens.ColorUnknown, tokens.ColorCanvas},
+				{"working", s.Working, tokens.ColorWorking, tokens.ColorCanvas},
+				{"waiting", s.Waiting, tokens.ColorWaiting, tokens.ColorCanvas},
+				{"disabled", s.Disabled, tokens.ColorDisabled, tokens.ColorCanvas},
+				{"focus", s.Focus, tokens.ColorFocus, tokens.ColorCanvas},
+				{"border", s.Border, tokens.ColorBorder, tokens.ColorCanvas},
+				{"selection", s.Selection, tokens.ColorOnSelection, tokens.ColorSelection},
+				{"onAccent", s.OnAccent, tokens.ColorOnAccent, tokens.ColorAccent},
+				{"diffAdded", s.DiffAdded, tokens.ColorDiffAdded, tokens.ColorDiffAddedBackground},
+				{"diffRemoved", s.DiffRemoved, tokens.ColorDiffRemoved, tokens.ColorDiffRemovedBackground},
+			} {
+				if !reflect.DeepEqual(tc.style.GetForeground(), paint(tc.fg)) {
+					t.Errorf("%s/%d/%s: wrong foreground", theme, profile, tc.name)
+				}
+				if profile != Monochrome && !reflect.DeepEqual(tc.style.GetBackground(), paint(tc.bg)) {
+					t.Errorf("%s/%d/%s: wrong background", theme, profile, tc.name)
+				}
+				out := tc.style.Render("? Unknown + added - removed")
+				if profile == Monochrome && strings.Contains(out, "\x1b") {
+					t.Errorf("%s/%s: NO_COLOR has escape styling", theme, tc.name)
+				}
+			}
+		}
+	}
+}
+
+func TestSharedIconsAndToolRows(t *testing.T) {
+	for _, tokens := range []design.Tokens{design.Light(), design.Dark(), design.HighContrast()} {
+		for _, role := range []string{"citation", "success", "error", "working", "waiting", "unknown", "memory", "identity"} {
+			for _, ascii := range []bool{false, true} {
+				mark := tokens.Icon(role, ascii)
+				if mark == "" || strings.Contains(mark, "\x1b") {
+					t.Fatalf("missing or unsafe icon %s", role)
+				}
+				if ascii && strings.IndexFunc(mark, func(r rune) bool { return r < 32 || r > 126 }) >= 0 {
+					t.Fatalf("non-ASCII fallback for %s: %q", role, mark)
+				}
+				if tokens.Icon("unrecognized", ascii) != tokens.Icon("unknown", ascii) {
+					t.Fatal("unknown role lost its visible mark")
+				}
+			}
+		}
+	}
+	for _, ascii := range []bool{false, true} {
+		m := toolShell(t)
+		m.styles.options.ASCII = ascii
+		// Distinguish the shared icon from the retained legacy tool glyph.
+		m.styles.tokens.GlyphUnicodeIconWorking = "shared-running"
+		m.styles.tokens.GlyphAsciiIconWorking = "shared-ascii-running"
+		applyToolProjection(t, m, toolTurn(t, 1, "tool", "Reading"))
+		applyToolProjection(t, m, rowEvent(t, 2, "one", "Reading file", "started", "", "", ""))
+		if !strings.Contains(m.View().Content, m.styles.tokens.Icon("working", ascii)) {
+			t.Fatal("tool row did not consume the shared icon source")
+		}
+	}
+}
 
 func TestThemeProfiles(t *testing.T) {
 	for _, theme := range []string{"light", "dark", "high-contrast"} {

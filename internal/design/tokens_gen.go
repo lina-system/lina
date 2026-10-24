@@ -13,12 +13,31 @@ type Dimension struct {
 }
 
 type Tokens struct {
+	BorderFocusWidth              Dimension
+	BorderWidth                   Dimension
 	ColorAccent                   Color
+	ColorBorder                   Color
 	ColorCanvas                   Color
+	ColorDiffAdded                Color
+	ColorDiffAddedBackground      Color
+	ColorDiffRemoved              Color
+	ColorDiffRemovedBackground    Color
+	ColorDisabled                 Color
+	ColorError                    Color
+	ColorFocus                    Color
 	ColorLine                     Color
 	ColorMuted                    Color
+	ColorOnAccent                 Color
+	ColorOnSelection              Color
+	ColorSelection                Color
+	ColorSuccess                  Color
 	ColorSurface                  Color
 	ColorText                     Color
+	ColorUnknown                  Color
+	ColorWaiting                  Color
+	ColorWarning                  Color
+	ColorWorking                  Color
+	ControlMinimum                Dimension
 	GlyphAsciiAction              string
 	GlyphAsciiActivityFrames      string
 	GlyphAsciiActivitySeparator   string
@@ -26,6 +45,14 @@ type Tokens struct {
 	GlyphAsciiBack                string
 	GlyphAsciiConnecting          string
 	GlyphAsciiFailed              string
+	GlyphAsciiIconCitation        string
+	GlyphAsciiIconError           string
+	GlyphAsciiIconIdentity        string
+	GlyphAsciiIconMemory          string
+	GlyphAsciiIconSuccess         string
+	GlyphAsciiIconUnknown         string
+	GlyphAsciiIconWaiting         string
+	GlyphAsciiIconWorking         string
 	GlyphAsciiLive                string
 	GlyphAsciiMark                string
 	GlyphAsciiOverflow            string
@@ -55,6 +82,14 @@ type Tokens struct {
 	GlyphUnicodeBack              string
 	GlyphUnicodeConnecting        string
 	GlyphUnicodeFailed            string
+	GlyphUnicodeIconCitation      string
+	GlyphUnicodeIconError         string
+	GlyphUnicodeIconIdentity      string
+	GlyphUnicodeIconMemory        string
+	GlyphUnicodeIconSuccess       string
+	GlyphUnicodeIconUnknown       string
+	GlyphUnicodeIconWaiting       string
+	GlyphUnicodeIconWorking       string
 	GlyphUnicodeLive              string
 	GlyphUnicodeMark              string
 	GlyphUnicodeOverflow          string
@@ -77,32 +112,57 @@ type Tokens struct {
 	GlyphUnicodeToolRunning       string
 	GlyphUnicodeUnknown           string
 	GlyphUnicodeWaiting           string
+	IconGrid                      Dimension
 	IconSize                      Dimension
+	IconStroke                    Dimension
 	MotionActivityElapsed         float64
 	MotionActivityFrame           float64
 	MotionReduced                 float64
 	MotionSettle                  float64
 	RadiusCard                    Dimension
+	SpaceCompact                  Dimension
 	SpaceGutter                   Dimension
 	SpaceInline                   Dimension
 	SpacePage                     Dimension
 	SpaceSection                  Dimension
 	TypeBody                      string
 	TypeCode                      string
+	TypeCodeNative                string
+	TypeLabelSize                 Dimension
 	TypeLineHeight                float64
 	TypeSize                      Dimension
+	TypeTitleSize                 Dimension
 	TypeTitleWeight               int
 	TypeWeight                    int
 }
 
 func Light() Tokens {
 	return Tokens{
+		BorderFocusWidth:              Dimension{PX: 2, Cells: 0},
+		BorderWidth:                   Dimension{PX: 1, Cells: 0},
 		ColorAccent:                   Color{Hex: "#2F4BDB", ANSI256: 26, ANSI16: 4},
+		ColorBorder:                   Color{Hex: "#626978", ANSI256: 241, ANSI16: 0},
 		ColorCanvas:                   Color{Hex: "#F8F9FC", ANSI256: 231, ANSI16: 15},
+		ColorDiffAdded:                Color{Hex: "#17633D", ANSI256: 22, ANSI16: 0},
+		ColorDiffAddedBackground:      Color{Hex: "#E2F1E8", ANSI256: 231, ANSI16: 15},
+		ColorDiffRemoved:              Color{Hex: "#AD2940", ANSI256: 124, ANSI16: 1},
+		ColorDiffRemovedBackground:    Color{Hex: "#FCE7EC", ANSI256: 231, ANSI16: 15},
+		ColorDisabled:                 Color{Hex: "#626978", ANSI256: 241, ANSI16: 0},
+		ColorError:                    Color{Hex: "#AD2940", ANSI256: 124, ANSI16: 1},
+		ColorFocus:                    Color{Hex: "#2F4BDB", ANSI256: 26, ANSI16: 4},
 		ColorLine:                     Color{Hex: "#CFD3DE", ANSI256: 252, ANSI16: 7},
 		ColorMuted:                    Color{Hex: "#626978", ANSI256: 241, ANSI16: 0},
+		ColorOnAccent:                 Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
+		ColorOnSelection:              Color{Hex: "#20232D", ANSI256: 16, ANSI16: 15},
+		ColorSelection:                Color{Hex: "#838A9B", ANSI256: 243, ANSI16: 0},
+		ColorSuccess:                  Color{Hex: "#17633D", ANSI256: 22, ANSI16: 0},
 		ColorSurface:                  Color{Hex: "#EEF0F6", ANSI256: 255, ANSI16: 7},
 		ColorText:                     Color{Hex: "#20232D", ANSI256: 234, ANSI16: 0},
+		ColorUnknown:                  Color{Hex: "#626978", ANSI256: 241, ANSI16: 0},
+		ColorWaiting:                  Color{Hex: "#2F4BDB", ANSI256: 26, ANSI16: 4},
+		ColorWarning:                  Color{Hex: "#805000", ANSI256: 94, ANSI16: 1},
+		ColorWorking:                  Color{Hex: "#2F4BDB", ANSI256: 26, ANSI16: 4},
+		ControlMinimum:                Dimension{PX: 48, Cells: 0},
 		GlyphAsciiAction:              ">",
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
@@ -110,6 +170,14 @@ func Light() Tokens {
 		GlyphAsciiBack:                "<",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
+		GlyphAsciiIconCitation:        "[doc]",
+		GlyphAsciiIconError:           "x",
+		GlyphAsciiIconIdentity:        "@",
+		GlyphAsciiIconMemory:          "[m]",
+		GlyphAsciiIconSuccess:         "+",
+		GlyphAsciiIconUnknown:         "?",
+		GlyphAsciiIconWaiting:         "!",
+		GlyphAsciiIconWorking:         "~",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
 		GlyphAsciiOverflow:            "...",
@@ -139,6 +207,14 @@ func Light() Tokens {
 		GlyphUnicodeBack:              "‹",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
+		GlyphUnicodeIconCitation:      "▤",
+		GlyphUnicodeIconError:         "×",
+		GlyphUnicodeIconIdentity:      "●",
+		GlyphUnicodeIconMemory:        "▥",
+		GlyphUnicodeIconSuccess:       "✓",
+		GlyphUnicodeIconUnknown:       "?",
+		GlyphUnicodeIconWaiting:       "!",
+		GlyphUnicodeIconWorking:       "◐",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
 		GlyphUnicodeOverflow:          "…",
@@ -161,20 +237,26 @@ func Light() Tokens {
 		GlyphUnicodeToolRunning:       "◐",
 		GlyphUnicodeUnknown:           "?",
 		GlyphUnicodeWaiting:           "?",
+		IconGrid:                      Dimension{PX: 24, Cells: 0},
 		IconSize:                      Dimension{PX: 20, Cells: 0},
+		IconStroke:                    Dimension{PX: 2, Cells: 0},
 		MotionActivityElapsed:         1000,
 		MotionActivityFrame:           100,
 		MotionReduced:                 0,
 		MotionSettle:                  160,
 		RadiusCard:                    Dimension{PX: 12, Cells: 0},
+		SpaceCompact:                  Dimension{PX: 4, Cells: 1},
 		SpaceGutter:                   Dimension{PX: 24, Cells: 3},
 		SpaceInline:                   Dimension{PX: 8, Cells: 1},
 		SpacePage:                     Dimension{PX: 32, Cells: 2},
 		SpaceSection:                  Dimension{PX: 24, Cells: 1},
 		TypeBody:                      "Pretendard, sans-serif",
 		TypeCode:                      "ui-monospace, monospace",
+		TypeCodeNative:                "JetBrainsMono, monospace",
+		TypeLabelSize:                 Dimension{PX: 14, Cells: 0},
 		TypeLineHeight:                1.5,
 		TypeSize:                      Dimension{PX: 16, Cells: 0},
+		TypeTitleSize:                 Dimension{PX: 28, Cells: 0},
 		TypeTitleWeight:               700,
 		TypeWeight:                    400,
 	}
@@ -182,12 +264,31 @@ func Light() Tokens {
 
 func Dark() Tokens {
 	return Tokens{
+		BorderFocusWidth:              Dimension{PX: 2, Cells: 0},
+		BorderWidth:                   Dimension{PX: 1, Cells: 0},
 		ColorAccent:                   Color{Hex: "#5685FF", ANSI256: 69, ANSI16: 15},
+		ColorBorder:                   Color{Hex: "#A6ADBD", ANSI256: 249, ANSI16: 7},
 		ColorCanvas:                   Color{Hex: "#17191F", ANSI256: 234, ANSI16: 0},
+		ColorDiffAdded:                Color{Hex: "#8FE0B4", ANSI256: 114, ANSI16: 10},
+		ColorDiffAddedBackground:      Color{Hex: "#15281F", ANSI256: 16, ANSI16: 0},
+		ColorDiffRemoved:              Color{Hex: "#FFACB8", ANSI256: 217, ANSI16: 9},
+		ColorDiffRemovedBackground:    Color{Hex: "#301B24", ANSI256: 16, ANSI16: 0},
+		ColorDisabled:                 Color{Hex: "#A6ADBD", ANSI256: 249, ANSI16: 7},
+		ColorError:                    Color{Hex: "#FFACB8", ANSI256: 217, ANSI16: 9},
+		ColorFocus:                    Color{Hex: "#5685FF", ANSI256: 69, ANSI16: 15},
 		ColorLine:                     Color{Hex: "#383E4C", ANSI256: 238, ANSI16: 8},
 		ColorMuted:                    Color{Hex: "#A6ADBD", ANSI256: 249, ANSI16: 7},
+		ColorOnAccent:                 Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
+		ColorOnSelection:              Color{Hex: "#F4F5F9", ANSI256: 231, ANSI16: 0},
+		ColorSelection:                Color{Hex: "#626D82", ANSI256: 243, ANSI16: 8},
+		ColorSuccess:                  Color{Hex: "#8FE0B4", ANSI256: 114, ANSI16: 10},
 		ColorSurface:                  Color{Hex: "#20232B", ANSI256: 235, ANSI16: 0},
 		ColorText:                     Color{Hex: "#F4F5F9", ANSI256: 255, ANSI16: 15},
+		ColorUnknown:                  Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
+		ColorWaiting:                  Color{Hex: "#5685FF", ANSI256: 69, ANSI16: 15},
+		ColorWarning:                  Color{Hex: "#F6D58C", ANSI256: 222, ANSI16: 11},
+		ColorWorking:                  Color{Hex: "#5685FF", ANSI256: 69, ANSI16: 15},
+		ControlMinimum:                Dimension{PX: 48, Cells: 0},
 		GlyphAsciiAction:              ">",
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
@@ -195,6 +296,14 @@ func Dark() Tokens {
 		GlyphAsciiBack:                "<",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
+		GlyphAsciiIconCitation:        "[doc]",
+		GlyphAsciiIconError:           "x",
+		GlyphAsciiIconIdentity:        "@",
+		GlyphAsciiIconMemory:          "[m]",
+		GlyphAsciiIconSuccess:         "+",
+		GlyphAsciiIconUnknown:         "?",
+		GlyphAsciiIconWaiting:         "!",
+		GlyphAsciiIconWorking:         "~",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
 		GlyphAsciiOverflow:            "...",
@@ -224,6 +333,14 @@ func Dark() Tokens {
 		GlyphUnicodeBack:              "‹",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
+		GlyphUnicodeIconCitation:      "▤",
+		GlyphUnicodeIconError:         "×",
+		GlyphUnicodeIconIdentity:      "●",
+		GlyphUnicodeIconMemory:        "▥",
+		GlyphUnicodeIconSuccess:       "✓",
+		GlyphUnicodeIconUnknown:       "?",
+		GlyphUnicodeIconWaiting:       "!",
+		GlyphUnicodeIconWorking:       "◐",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
 		GlyphUnicodeOverflow:          "…",
@@ -246,20 +363,26 @@ func Dark() Tokens {
 		GlyphUnicodeToolRunning:       "◐",
 		GlyphUnicodeUnknown:           "?",
 		GlyphUnicodeWaiting:           "?",
+		IconGrid:                      Dimension{PX: 24, Cells: 0},
 		IconSize:                      Dimension{PX: 20, Cells: 0},
+		IconStroke:                    Dimension{PX: 2, Cells: 0},
 		MotionActivityElapsed:         1000,
 		MotionActivityFrame:           100,
 		MotionReduced:                 0,
 		MotionSettle:                  160,
 		RadiusCard:                    Dimension{PX: 12, Cells: 0},
+		SpaceCompact:                  Dimension{PX: 4, Cells: 1},
 		SpaceGutter:                   Dimension{PX: 24, Cells: 3},
 		SpaceInline:                   Dimension{PX: 8, Cells: 1},
 		SpacePage:                     Dimension{PX: 32, Cells: 2},
 		SpaceSection:                  Dimension{PX: 24, Cells: 1},
 		TypeBody:                      "Pretendard, sans-serif",
 		TypeCode:                      "ui-monospace, monospace",
+		TypeCodeNative:                "JetBrainsMono, monospace",
+		TypeLabelSize:                 Dimension{PX: 14, Cells: 0},
 		TypeLineHeight:                1.5,
 		TypeSize:                      Dimension{PX: 16, Cells: 0},
+		TypeTitleSize:                 Dimension{PX: 28, Cells: 0},
 		TypeTitleWeight:               700,
 		TypeWeight:                    400,
 	}
@@ -267,12 +390,31 @@ func Dark() Tokens {
 
 func HighContrast() Tokens {
 	return Tokens{
+		BorderFocusWidth:              Dimension{PX: 2, Cells: 0},
+		BorderWidth:                   Dimension{PX: 1, Cells: 0},
 		ColorAccent:                   Color{Hex: "#6795FF", ANSI256: 69, ANSI16: 15},
+		ColorBorder:                   Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
 		ColorCanvas:                   Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
+		ColorDiffAdded:                Color{Hex: "#8FE0B4", ANSI256: 114, ANSI16: 10},
+		ColorDiffAddedBackground:      Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
+		ColorDiffRemoved:              Color{Hex: "#FFACB8", ANSI256: 217, ANSI16: 9},
+		ColorDiffRemovedBackground:    Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
+		ColorDisabled:                 Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
+		ColorError:                    Color{Hex: "#FFACB8", ANSI256: 217, ANSI16: 9},
+		ColorFocus:                    Color{Hex: "#6795FF", ANSI256: 69, ANSI16: 15},
 		ColorLine:                     Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
 		ColorMuted:                    Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
+		ColorOnAccent:                 Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
+		ColorOnSelection:              Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 0},
+		ColorSelection:                Color{Hex: "#626D82", ANSI256: 243, ANSI16: 8},
+		ColorSuccess:                  Color{Hex: "#8FE0B4", ANSI256: 114, ANSI16: 10},
 		ColorSurface:                  Color{Hex: "#000000", ANSI256: 16, ANSI16: 0},
 		ColorText:                     Color{Hex: "#FFFFFF", ANSI256: 231, ANSI16: 15},
+		ColorUnknown:                  Color{Hex: "#DDDDDD", ANSI256: 253, ANSI16: 7},
+		ColorWaiting:                  Color{Hex: "#6795FF", ANSI256: 69, ANSI16: 15},
+		ColorWarning:                  Color{Hex: "#F6D58C", ANSI256: 222, ANSI16: 11},
+		ColorWorking:                  Color{Hex: "#6795FF", ANSI256: 69, ANSI16: 15},
+		ControlMinimum:                Dimension{PX: 48, Cells: 0},
 		GlyphAsciiAction:              ">",
 		GlyphAsciiActivityFrames:      "|/-\\",
 		GlyphAsciiActivitySeparator:   "-",
@@ -280,6 +422,14 @@ func HighContrast() Tokens {
 		GlyphAsciiBack:                "<",
 		GlyphAsciiConnecting:          "~",
 		GlyphAsciiFailed:              "x",
+		GlyphAsciiIconCitation:        "[doc]",
+		GlyphAsciiIconError:           "x",
+		GlyphAsciiIconIdentity:        "@",
+		GlyphAsciiIconMemory:          "[m]",
+		GlyphAsciiIconSuccess:         "+",
+		GlyphAsciiIconUnknown:         "?",
+		GlyphAsciiIconWaiting:         "!",
+		GlyphAsciiIconWorking:         "~",
 		GlyphAsciiLive:                "*",
 		GlyphAsciiMark:                ".",
 		GlyphAsciiOverflow:            "...",
@@ -309,6 +459,14 @@ func HighContrast() Tokens {
 		GlyphUnicodeBack:              "‹",
 		GlyphUnicodeConnecting:        "◌",
 		GlyphUnicodeFailed:            "×",
+		GlyphUnicodeIconCitation:      "▤",
+		GlyphUnicodeIconError:         "×",
+		GlyphUnicodeIconIdentity:      "●",
+		GlyphUnicodeIconMemory:        "▥",
+		GlyphUnicodeIconSuccess:       "✓",
+		GlyphUnicodeIconUnknown:       "?",
+		GlyphUnicodeIconWaiting:       "!",
+		GlyphUnicodeIconWorking:       "◐",
 		GlyphUnicodeLive:              "●",
 		GlyphUnicodeMark:              ".",
 		GlyphUnicodeOverflow:          "…",
@@ -331,21 +489,77 @@ func HighContrast() Tokens {
 		GlyphUnicodeToolRunning:       "◐",
 		GlyphUnicodeUnknown:           "?",
 		GlyphUnicodeWaiting:           "?",
+		IconGrid:                      Dimension{PX: 24, Cells: 0},
 		IconSize:                      Dimension{PX: 20, Cells: 0},
+		IconStroke:                    Dimension{PX: 2, Cells: 0},
 		MotionActivityElapsed:         1000,
 		MotionActivityFrame:           100,
 		MotionReduced:                 0,
 		MotionSettle:                  160,
 		RadiusCard:                    Dimension{PX: 12, Cells: 0},
+		SpaceCompact:                  Dimension{PX: 4, Cells: 1},
 		SpaceGutter:                   Dimension{PX: 24, Cells: 3},
 		SpaceInline:                   Dimension{PX: 8, Cells: 1},
 		SpacePage:                     Dimension{PX: 32, Cells: 2},
 		SpaceSection:                  Dimension{PX: 24, Cells: 1},
 		TypeBody:                      "Pretendard, sans-serif",
 		TypeCode:                      "ui-monospace, monospace",
+		TypeCodeNative:                "JetBrainsMono, monospace",
+		TypeLabelSize:                 Dimension{PX: 14, Cells: 0},
 		TypeLineHeight:                1.5,
 		TypeSize:                      Dimension{PX: 16, Cells: 0},
+		TypeTitleSize:                 Dimension{PX: 28, Cells: 0},
 		TypeTitleWeight:               700,
 		TypeWeight:                    400,
 	}
+}
+
+// Icon returns the shared text equivalent, falling back to the visible unknown mark.
+func (t Tokens) Icon(role string, ascii bool) string {
+	switch role {
+	case "citation":
+		if ascii {
+			return t.GlyphAsciiIconCitation
+		}
+		return t.GlyphUnicodeIconCitation
+	case "success":
+		if ascii {
+			return t.GlyphAsciiIconSuccess
+		}
+		return t.GlyphUnicodeIconSuccess
+	case "error":
+		if ascii {
+			return t.GlyphAsciiIconError
+		}
+		return t.GlyphUnicodeIconError
+	case "working":
+		if ascii {
+			return t.GlyphAsciiIconWorking
+		}
+		return t.GlyphUnicodeIconWorking
+	case "waiting":
+		if ascii {
+			return t.GlyphAsciiIconWaiting
+		}
+		return t.GlyphUnicodeIconWaiting
+	case "unknown":
+		if ascii {
+			return t.GlyphAsciiIconUnknown
+		}
+		return t.GlyphUnicodeIconUnknown
+	case "memory":
+		if ascii {
+			return t.GlyphAsciiIconMemory
+		}
+		return t.GlyphUnicodeIconMemory
+	case "identity":
+		if ascii {
+			return t.GlyphAsciiIconIdentity
+		}
+		return t.GlyphUnicodeIconIdentity
+	}
+	if ascii {
+		return t.GlyphAsciiIconUnknown
+	}
+	return t.GlyphUnicodeIconUnknown
 }

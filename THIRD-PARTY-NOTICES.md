@@ -4482,3 +4482,12 @@ The external messenger add-on pins [agent-messenger](https://github.com/agent-me
 Its npm distribution includes its license. The add-on's lockfile records the
 transitive packages; release packaging retains their license files. Optional
 native dependencies and lifecycle scripts are not used.
+
+## Shared design icons
+
+`design/tokens/icons.json` includes a Lucide 0.468.0 subset from
+[lucide-icons/lucide](https://github.com/lucide-icons/lucide), revision
+`f12b0de177fbc2a6795e99be065887e72b237123`, imported through the LINA app.
+The citation path is adapted. The [ISC notice](design/tokens/LUCIDE-LICENSE.txt)
+and inherited Feather [MIT notice](design/tokens/FEATHER-LICENSE.txt) are retained.
+The original LINA icons in the same file are Apache-2.0.

@@ -131,9 +131,11 @@ func localizedConnectionView(state Connection, t design.Tokens, ascii bool, lang
 
 // Styles converts generated semantic data into Lip Gloss styles in one place.
 type Styles struct {
-	tokens                                         design.Tokens
-	options                                        Options
-	Text, Muted, Accent, Title, Canvas, Code, Line lipgloss.Style
+	tokens                                                       design.Tokens
+	options                                                      Options
+	Text, Muted, Accent, Title, Canvas, Code, Line               lipgloss.Style
+	Success, Warning, Error, Unknown, Working, Waiting, Disabled lipgloss.Style
+	Focus, Border, Selection, OnAccent, DiffAdded, DiffRemoved   lipgloss.Style
 }
 
 func NewStyles(options Options) Styles {
@@ -169,6 +171,19 @@ func NewStyles(options Options) Styles {
 	s.Muted = base.Foreground(paint(tokens.ColorMuted))
 	s.Line = base.Foreground(paint(tokens.ColorLine))
 	s.Accent = base.Foreground(paint(tokens.ColorAccent))
+	s.Success = base.Foreground(paint(tokens.ColorSuccess))
+	s.Warning = base.Foreground(paint(tokens.ColorWarning))
+	s.Error = base.Foreground(paint(tokens.ColorError))
+	s.Unknown = base.Foreground(paint(tokens.ColorUnknown))
+	s.Working = base.Foreground(paint(tokens.ColorWorking))
+	s.Waiting = base.Foreground(paint(tokens.ColorWaiting))
+	s.Disabled = base.Foreground(paint(tokens.ColorDisabled))
+	s.Focus = base.Foreground(paint(tokens.ColorFocus))
+	s.Border = base.Foreground(paint(tokens.ColorBorder))
+	s.Selection = base.Foreground(paint(tokens.ColorOnSelection)).Background(paint(tokens.ColorSelection))
+	s.OnAccent = base.Foreground(paint(tokens.ColorOnAccent)).Background(paint(tokens.ColorAccent))
+	s.DiffAdded = base.Foreground(paint(tokens.ColorDiffAdded)).Background(paint(tokens.ColorDiffAddedBackground))
+	s.DiffRemoved = base.Foreground(paint(tokens.ColorDiffRemoved)).Background(paint(tokens.ColorDiffRemovedBackground))
 	s.Title = s.Text.Bold(tokens.TypeTitleWeight > tokens.TypeWeight && options.Profile != Monochrome)
 	s.Code = s.Text
 	if options.Profile != Monochrome {

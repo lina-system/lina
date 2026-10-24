@@ -31,6 +31,100 @@ test('every theme has the same complete role set', () => {
   }
 });
 
+test('app semantic, layout and icon roles reach every generated target', t => {
+  const dir = fixture(t);
+  generate(dir);
+  const go = readFileSync(join(dir, 'internal/design/tokens_gen.go'), 'utf8');
+  const css = readFileSync(join(dir, 'design/tokens/tokens.css'), 'utf8');
+  const swift = readFileSync(join(dir, 'design/tokens/tokens.swift'), 'utf8');
+  for (const { tokens } of loadTokens(dir)) {
+    for (const role of ['onAccent', 'success', 'warning', 'error', 'unknown', 'working', 'waiting', 'disabled',
+      'diffAdded', 'diffRemoved', 'diffAddedBackground', 'diffRemovedBackground', 'focus', 'border', 'selection', 'onSelection']) {
+      const token = tokens[`color.${role}`];
+      assert.ok(token, `missing color.${role}`);
+      assert.ok(token.$extensions['lina.terminal']);
+      assert.ok(go.includes(token.$value.hex));
+      assert.ok(css.includes(token.$value.hex));
+      assert.ok(swift.includes(`static let ${role}: NSColor`));
+    }
+    for (const path of ['type.titleSize', 'type.labelSize', 'type.codeNative', 'space.compact',
+      'border.width', 'border.focusWidth', 'control.minimum', 'icon.grid', 'icon.stroke']) assert.ok(tokens[path], path);
+    for (const role of ['Citation', 'Success', 'Error', 'Working', 'Waiting', 'Unknown', 'Memory', 'Identity']) {
+      for (const set of ['unicode', 'ascii']) {
+        const path = `glyph.${set}.icon${role}`;
+        assert.ok(tokens[path], path);
+        assert.ok(go.includes(`Glyph${set === 'unicode' ? 'Unicode' : 'Ascii'}Icon${role}`));
+        assert.ok(css.includes(`--lina-glyph-${set}-icon-${role.toLowerCase()}:`));
+      }
+    }
+  }
+});
+
+test('semantic aliases inherit values and fallbacks while retaining explicit overrides', () => {
+  for (const { tokens } of loadTokens(root)) {
+    assert.deepEqual(tokens['color.focus'].$value, tokens['color.accent'].$value);
+    assert.deepEqual(tokens['color.focus'].$extensions, tokens['color.accent'].$extensions);
+    assert.deepEqual(tokens['color.onSelection'].$value, tokens['color.text'].$value);
+    assert.notDeepEqual(tokens['color.onSelection'].$extensions, tokens['color.text'].$extensions);
+  }
+});
+
+test('invalid aliases and duplicate shared roles fail closed', t => {
+  for (const [mutate, expected] of [
+    [data => { data.color.focus.$value = '{color.missing}'; }, /Missing token alias/],
+    [data => { data.color.focus.$value = '{color.waiting}'; data.color.waiting.$value = '{color.focus}'; }, /Cyclic token alias/],
+    [data => { data.color.focus.$value = '{type.body}'; }, /alias type mismatch/],
+    [data => { data.space.compact = data.space.inline; }, /Duplicate shared token/],
+  ]) {
+    const dir = fixture(t), path = join(dir, 'design/tokens/light.json');
+    const data = JSON.parse(readFileSync(path, 'utf8'));
+    mutate(data);
+    writeFileSync(path, JSON.stringify(data));
+    assert.throws(() => generate(dir), expected);
+  }
+});
+
+test('semantic contrast checks cover RGB, indexed fallbacks and selection and diff pairs', t => {
+  for (const mutate of [
+    data => { data.color.success.$value = data.color.canvas.$value; },
+    data => { data.color.warning.$extensions['lina.terminal'].ansi16 = 15; },
+    data => { data.color.error.$extensions['lina.terminal'].ansi256 = 231; },
+    data => { delete data.color.unknown.$extensions; },
+    data => { data.color.onSelection.$value = '{color.selection}'; },
+    data => { data.color.selection.$value = data.color.surface.$value; },
+    data => { data.color.diffAddedBackground.$value = data.color.diffAdded.$value; },
+  ]) {
+    const dir = fixture(t), path = join(dir, 'design/tokens/light.json');
+    const data = JSON.parse(readFileSync(path, 'utf8'));
+    mutate(data);
+    writeFileSync(path, JSON.stringify(data));
+    assert.throws(() => generate(dir), /contrast|Invalid token/);
+  }
+});
+
+test('the single icon source drives generation and rejects unsafe or missing mappings', t => {
+  const dir = fixture(t), path = join(dir, 'design/tokens/icons.json');
+  const source = JSON.parse(readFileSync(path, 'utf8'));
+  source.$extensions['lina.iconSource'].icons.citation.ascii = '[source]';
+  writeFileSync(path, JSON.stringify(source));
+  generate(dir);
+  for (const file of ['internal/design/tokens_gen.go', 'design/tokens/tokens.css', 'DESIGN.md']) {
+    assert.ok(readFileSync(join(dir, file), 'utf8').includes('[source]'), file);
+  }
+  for (const mutate of [
+    data => { delete data.icons.unknown; },
+    data => { data.icons.citation.ascii = '▤'; },
+    data => { data.icons.identity.unicode = '\ue000'; },
+    data => { data.icons.error.unicode = '\x1b[31m'; },
+    data => { data.grid = 16; },
+  ]) {
+    const data = structuredClone(source);
+    mutate(data.$extensions['lina.iconSource']);
+    writeFileSync(path, JSON.stringify(data));
+    assert.throws(() => generate(dir), /Invalid/);
+  }
+});
+
 test('drift in Go, CSS, Swift, the SVG mark and the documentation tables fails without rewriting', t => {
   const dir = fixture(t);
   generate(dir);
