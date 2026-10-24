@@ -436,3 +436,100 @@ func TestChildExitUnblocksPendingRead(t *testing.T) {
 		t.Fatalf("child exited but pending read did not stop: %v", err)
 	}
 }
+
+// countingRunner runs the program with the caller's context, so a cancelled
+// request kills the child exactly as the sandbox does.
+type countingRunner struct {
+	mu     sync.Mutex
+	starts int
+}
+
+func (r *countingRunner) Run(ctx context.Context, _ lease.Lease, command sandbox.Command, env []string) error {
+	r.mu.Lock()
+	r.starts++
+	r.mu.Unlock()
+	cmd := exec.CommandContext(ctx, command.Path, command.Args...)
+	cmd.Env = env
+	cmd.Stdin, cmd.Stdout, cmd.Stderr = command.Stdin, command.Stdout, io.Discard
+	return cmd.Run()
+}
+
+func (r *countingRunner) count() int {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	return r.starts
+}
+
+// TestFinishedRequestKeepsTheAccountProcess proves a request's context ends
+// with that request. The account's process belongs to the session: a read that
+// was cancelled, such as a scheduled sync that completed, must not stop the
+// child that also serves the account's live subscription.
+func TestFinishedRequestKeepsTheAccountProcess(t *testing.T) {
+	t.Parallel()
+	node, err := exec.LookPath("node")
+	if err != nil {
+		t.Skip("node is absent")
+	}
+	runner := &countingRunner{}
+	value := addon.NewSession("fixture", "account-1", addon.Config{
+		Node: node, Program: fixtureProgram(t), StateRoot: t.TempDir(), Runner: runner,
+		RestartDelay: time.Millisecond, MaxRestarts: 1, RequestTimeout: 5 * time.Second,
+	})
+	t.Cleanup(func() { _ = value.Close(context.Background()) })
+	adapter := value.Adapter()
+	id := messenger.SourceID{Platform: "fixture", Account: "account-1"}
+
+	request, cancel := context.WithCancel(t.Context())
+	if _, err := adapter.ListChats(request, id); err != nil {
+		t.Fatal(err)
+	}
+	cancel()
+	// The cancelled request's child exits before the next read asks for one.
+	time.Sleep(100 * time.Millisecond)
+	if _, err := adapter.ListChats(t.Context(), id); err != nil {
+		t.Fatalf("the next read failed after a cancelled request: %v", err)
+	}
+	if got := runner.count(); got != 1 {
+		t.Fatalf("child started %d times, want the one process of the account", got)
+	}
+}
+
+// TestStoppingALiveReaderStopsItsSubscription proves Core tells the add-on to
+// end a subscription it no longer reads, and that the account's process keeps
+// serving afterwards.
+func TestStoppingALiveReaderStopsItsSubscription(t *testing.T) {
+	t.Parallel()
+	s := &script{responses: map[string][]string{
+		"live":   {`{"id":"","ok":true,"result":{"live":true}}`},
+		"signIn": {`{"id":"","ok":true,"result":{"state":"signed_in"}}`},
+	}}
+	adapter := session(t, s).Adapter()
+	id := messenger.SourceID{Platform: "kakaotalk", Account: "account-1"}
+	ctx, cancel := context.WithCancel(t.Context())
+	defer cancel()
+	// The reader leaves once its subscription is running.
+	go func() {
+		deadline := time.Now().Add(10 * time.Second)
+		for s.count("live") == 0 && time.Now().Before(deadline) {
+			time.Sleep(5 * time.Millisecond)
+		}
+		time.Sleep(20 * time.Millisecond)
+		cancel()
+	}()
+	if err := adapter.Live(ctx, id, func(messenger.Event) error { return nil }); err != nil {
+		t.Fatalf("live returned %v", err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for s.count("stop") != 1 {
+		if time.Now().After(deadline) {
+			t.Fatalf("subscription stop requests = %d, want 1", s.count("stop"))
+		}
+		time.Sleep(10 * time.Millisecond)
+	}
+	if state, err := adapter.SignIn(t.Context(), id); err != nil || state != messenger.SignedIn {
+		t.Fatalf("the add-on stopped serving after the reader left: %v, %v", state, err)
+	}
+	if got := s.count("signIn"); got != 1 {
+		t.Fatalf("sign-in requests = %d, want the same session", got)
+	}
+}
