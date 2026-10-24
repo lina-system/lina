@@ -49,6 +49,8 @@ func concretePayloads() map[string]any {
 		"webex_result":       map[string]any{"operation": "list", "sources": []any{}},
 		"kakaotalk_request":  map[string]any{"operation": "list"},
 		"kakaotalk_result":   map[string]any{"operation": "list", "sources": []any{}},
+		"telegram_request":   map[string]any{"operation": "list"},
+		"telegram_result":    map[string]any{"stage": "idle", "sources": []any{}},
 		"teams_request":      map[string]any{"operation": "list"},
 		"teams_result":       map[string]any{"operation": "list", "connections": []any{}},
 		"a2a_request":        map[string]any{"operation": "list"},

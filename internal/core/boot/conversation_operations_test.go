@@ -187,7 +187,8 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				protocol.KindWebexRequest:     "webex",
 				protocol.KindKakaotalkRequest: "kakaotalk",
 				protocol.KindRecordRequest:    "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
-				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
+				protocol.KindTelegramRequest: "telegram_source",
+				protocol.KindExportRequest:   "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
 				protocol.KindWorkSwitchRequest: "work", protocol.KindWorkControlRequest: "work",
 				protocol.KindWorkLimitRequest: "work",
@@ -233,7 +234,7 @@ func TestConversationRegistrationSurface(t *testing.T) {
 				if !ok || op.Handle == nil || op.Capability != (protocol.Capability{Name: capability, Version: "1.0"}) || !reflect.DeepEqual(op.AdditionalCapabilities, additional[kind]) {
 					t.Errorf("operation %s: %+v", kind, op)
 				}
-				if (op.Disconnect != nil) != (kind == protocol.KindAccountRequest) {
+				if (op.Disconnect != nil) != (kind == protocol.KindAccountRequest || kind == protocol.KindTelegramRequest) {
 					t.Errorf("disconnect changed for %s", kind)
 				}
 				if (op.CapabilityFor != nil) != (kind == protocol.KindAgentRequest || kind == protocol.KindProgressGet) {
