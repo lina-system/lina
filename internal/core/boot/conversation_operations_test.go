@@ -184,13 +184,14 @@ func TestConversationRegistrationSurface(t *testing.T) {
 			want := map[protocol.Kind]string{
 				protocol.KindAccountRequest: "accounts", protocol.KindSignInListening: "sign_in_relay", protocol.KindSignInRedirect: "sign_in_relay",
 				protocol.KindTeamsRequest:  "teams",
+				protocol.KindWebexRequest:  "webex",
 				protocol.KindRecordRequest: "records", protocol.KindWebRequest: "web", protocol.KindA2aRequest: "a2a",
 				protocol.KindExportRequest: "replay", protocol.KindReplayRequest: "replay",
 				protocol.KindApprovalAnswer: "waiting", protocol.KindQuestionAnswer: "waiting", protocol.KindWaitingGet: "waiting",
 				protocol.KindWorkSwitchRequest: "work", protocol.KindWorkControlRequest: "work",
 				protocol.KindWorkLimitRequest: "work",
-				protocol.KindProgressGet: "worker_lanes",
-				protocol.KindChannelRequest: "channels", protocol.KindAgentTalkGet: "exchanges", protocol.KindAgentTalkExpand: "exchanges",
+				protocol.KindProgressGet:      "worker_lanes",
+				protocol.KindChannelRequest:   "channels", protocol.KindAgentTalkGet: "exchanges", protocol.KindAgentTalkExpand: "exchanges",
 				protocol.KindAgentRequest: "agents", protocol.KindMemoryRequest: "memory",
 				protocol.KindPlanRequest: "planning", protocol.KindProgressDigestGet: "progress",
 				protocol.KindMiniAppRequest: "mini_apps",
@@ -210,6 +211,9 @@ func TestConversationRegistrationSurface(t *testing.T) {
 					want[kind] = "conversation"
 				}
 				want[protocol.KindLauncherRequest] = "launcher"
+				for _, kind := range []protocol.Kind{protocol.KindBindingGet, protocol.KindBindingMove, protocol.KindBindingStatsGet, protocol.KindBindingExport} {
+					want[kind] = "conversation"
+				}
 				for _, kind := range []protocol.Kind{protocol.KindStop, protocol.KindRunningGet, protocol.KindFollowUp, protocol.KindMultiTaskControl} {
 					want[kind] = "running"
 				}

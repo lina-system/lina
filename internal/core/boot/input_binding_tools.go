@@ -188,9 +188,18 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 					}
 					exec = prepared[name]
 				}
+				var args map[string]json.RawMessage
+				_ = json.Unmarshal([]byte(clean.Arguments), &args)
+				before := r.captureEffectBefore(ctx, clean, args)
 				result := exec.Execute(ctx, clean)
 				if result.Code == loop.OK {
 					if err := r.recordCreatedBinding(ctx, input, ref.Request, s.turnID, clean, result); err != nil {
+						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_receipt_failed"}`)}
+					}
+					if err := r.recordBindingEffect(ctx, input, s.turnID, clean, before, result); err != nil {
+						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_effect_failed"}`)}
+					}
+					if err := r.publishBindingChip(ctx, input); err != nil {
 						return loop.Result{ID: c.ID, Code: loop.Unknown, Output: json.RawMessage(`{"code":"input_binding_receipt_failed"}`)}
 					}
 				}

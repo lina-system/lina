@@ -464,6 +464,10 @@ func (r *conversationRuntime) saveModelRawBinding(ctx context.Context, input led
 		out = choices
 		return nil
 	})
+	if err == nil && len(out) > 0 {
+		// A choice the person or the model made updates the visible chip.
+		err = r.publishBindingChip(ctx, input)
+	}
 	return
 }
 
