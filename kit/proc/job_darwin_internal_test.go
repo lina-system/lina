@@ -11,6 +11,7 @@ import (
 	"encoding/json"
 	"io"
 	"io/fs"
+	"net"
 	"os"
 	"path/filepath"
 	"strings"
@@ -92,6 +93,110 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	}
 	if got := ownerEnvironment([]string{"A=1"}); len(got) != 1 || got[0] != "A=1" {
 		t.Fatalf("explicit environment = %#v", got)
+	}
+}
+
+// TestDrainJoinsFileStdinWithoutClosingIt is the launchd owner's half of the
+// file relay. After drain, a pipe whose writer is still open is not copied to
+// the finished command, and the caller can read what it writes next.
+func TestDrainJoinsFileStdinWithoutClosingIt(t *testing.T) {
+	process, reader, writer, client := startFileInput(t)
+	deliverInput(t, writer, client, "one")
+	if err := process.drain(); err != nil {
+		t.Fatal(err)
+	}
+	assertInputStaysWithCaller(t, reader, writer, client)
+}
+
+// TestReleaseJoinsFileStdinWithoutClosingIt covers a start that fails after
+// the relay is running. Run returns through release without calling drain.
+func TestReleaseJoinsFileStdinWithoutClosingIt(t *testing.T) {
+	process, reader, writer, client := startFileInput(t)
+	deliverInput(t, writer, client, "one")
+	process.release()
+	assertInputStaysWithCaller(t, reader, writer, client)
+}
+
+func startFileInput(t *testing.T) (*jobProcess, *os.File, *os.File, *net.UnixConn) {
+	t.Helper()
+	reader, writer, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { reader.Close(); writer.Close() })
+	dir, err := os.MkdirTemp("/tmp", "lina-stdin-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { os.RemoveAll(dir) })
+	listener, err := net.ListenUnix("unix", &net.UnixAddr{Name: filepath.Join(dir, "in.sock"), Net: "unix"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { listener.Close() })
+	accepted := make(chan *net.UnixConn, 1)
+	go func() {
+		conn, err := listener.AcceptUnix()
+		if err != nil {
+			return
+		}
+		accepted <- conn
+	}()
+	client, err := net.DialUnix("unix", nil, listener.Addr().(*net.UnixAddr))
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { client.Close() })
+	var server *net.UnixConn
+	select {
+	case server = <-accepted:
+	case <-time.After(2 * time.Second):
+		t.Fatal("input socket was not accepted")
+	}
+	t.Cleanup(func() { server.Close() })
+	process := &jobProcess{
+		dir:     dir,
+		stdin:   reader,
+		streams: map[string]*jobStream{"in": {conn: server, pump: make(chan error, 1)}},
+		stopped: make(chan struct{}),
+	}
+	process.relayInput(server, process.streams["in"])
+	return process, reader, writer, client
+}
+
+func deliverInput(t *testing.T, writer *os.File, client *net.UnixConn, text string) {
+	t.Helper()
+	if _, err := writer.Write([]byte(text)); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(2 * time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, len(text))
+	n, err := client.Read(buf)
+	if err != nil || string(buf[:n]) != text {
+		t.Fatalf("command read %q, %v", buf[:n], err)
+	}
+}
+
+func assertInputStaysWithCaller(t *testing.T, reader, writer *os.File, client *net.UnixConn) {
+	t.Helper()
+	if _, err := writer.Write([]byte("two")); err != nil {
+		t.Fatal(err)
+	}
+	if err := client.SetReadDeadline(time.Now().Add(200 * time.Millisecond)); err != nil {
+		t.Fatal(err)
+	}
+	buf := make([]byte, 4)
+	if n, err := client.Read(buf); err == nil {
+		t.Fatalf("finished relay delivered %q", buf[:n])
+	}
+	if err := reader.SetReadDeadline(time.Now().Add(time.Second)); err != nil {
+		t.Fatal(err)
+	}
+	n, err := reader.Read(buf)
+	if err != nil || string(buf[:n]) != "two" {
+		t.Fatalf("caller read %q, %v", buf[:n], err)
 	}
 }
 

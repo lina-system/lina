@@ -1460,6 +1460,7 @@ The tests cover owner shutdown, cancellation, normal leader exit and owner proce
 macOS runs each command as its own launchd job through the explicit per-command `proc-job` helper, and owns it through the resource coalition launchd creates for that job.
 Coalition membership is fixed at process creation and inherited by every descendant, so teardown reaches a child that changes session, outlives its parent and clears its environment.
 Streams and the exit status cross the job boundary over a private Unix socket; teardown kills the coalition and boots the job out.
+The owner stops and joins a file-backed input relay when the command returns, and it does not close the caller's file.
 If the owner disappears before the helper connects, the helper still boots the job out and removes its directory.
 A relative command directory is prefixed with the owner's working directory and left uncleaned, so the kernel resolves a symlink followed by `..`.
 The sandbox's Seatbelt policy keeps its `setsid`/`setpgid` denial, which matches the Linux seccomp filter but is no longer what owns a command's descendants.
