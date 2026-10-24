@@ -106,7 +106,9 @@
         "mock_request",
         "mock_response",
         "mini_app_request",
-        "mini_app_result"
+        "mini_app_result",
+        "messenger_request",
+        "messenger_result"
       ]
     },
     "message_id": {
@@ -1977,6 +1979,38 @@
               }
             }
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "messenger_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/messenger_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "messenger_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/messenger_result"
+          }
         }
       }
     }
@@ -8257,6 +8291,185 @@
         "apps"
       ],
       "additionalProperties": false
+    },
+    "messenger_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "webex"
+          ]
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "client_secret": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "configure"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform",
+              "client_id",
+              "client_secret"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "disconnect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account"
+            ]
+          }
+        }
+      ]
+    },
+    "messenger_source": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs_sign_in",
+            "failing",
+            "unreachable",
+            "import_only",
+            "disconnected"
+          ]
+        },
+        "failure": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "account",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "messenger_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "configured",
+            "connected",
+            "needs_sign_in",
+            "disconnected"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/messenger_source"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sources"
+            ]
+          }
+        }
+      ]
     }
   }
 }

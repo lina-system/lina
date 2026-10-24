@@ -62,9 +62,14 @@ pages advance the cursor only. `Store.Freshness` derives fresh, stale or gap fro
 the newest read and the adapter's declared interval and read window; nothing
 about freshness is stored.
 
-## Not in this increment
+## Adapters
 
-Live events are on the adapter boundary and the service can deliver them, but no
-platform adapter ships yet (#1070 and the per-platform issues). Writes are
+Webex is the first platform adapter (`messenger/webex`): the person's own
+integration, plain HTTPS, `beforeMessage` paging and a tail read. Live events
+remain on the adapter boundary for platforms that push them. Writes are
 recorded and matched here; the write verbs, grants and approvals belong to
 #1084. Learning from the person's own records is #1075.
+
+An adapter reports lost credentials with `messenger.ErrNeedsSignIn`; the service
+records `needs_sign_in` for that source and returns no error, so a dead token
+never reads as a source failure.

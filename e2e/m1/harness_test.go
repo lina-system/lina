@@ -49,6 +49,10 @@ func TestMain(m *testing.M) {
 		codexSessionFixture()
 		return
 	}
+	if os.Getenv("LINA_MESSENGER_OP") != "" {
+		messengerClientFixture()
+		return
+	}
 	if len(os.Args) > 1 && os.Args[1] == "proc-supervise" {
 		os.Exit(proc.SuperviseMain(os.Args[2:], os.Stderr))
 	}

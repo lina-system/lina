@@ -28,6 +28,7 @@
     "normal/memory_promotion_batch.json",
     "normal/channel_result.json",
     "normal/channel_state.json",
+    "normal/messenger_result.json",
     "normal/agent_talk.json",
     "normal/agent_talk_entry.json",
     "normal/connected.json",
@@ -91,6 +92,7 @@
     "normal/memory_promotion_batch.json",
     "normal/channel_result.json",
     "normal/channel_state.json",
+    "normal/messenger_result.json",
     "normal/agent_talk.json",
     "normal/agent_talk_entry.json",
     "normal/connected.json",
@@ -187,10 +189,11 @@
     "",
     "",
     "",
+    "",
     ""
   ],
   "outcome": {
-    "accepted": 61,
+    "accepted": 62,
     "malformed": 0,
     "unknown_kinds": 0
   }

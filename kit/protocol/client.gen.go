@@ -108,6 +108,8 @@ const (
 	KindMockResponse         Kind = "mock_response"
 	KindMiniAppRequest       Kind = "mini_app_request"
 	KindMiniAppResult        Kind = "mini_app_result"
+	KindMessengerRequest     Kind = "messenger_request"
+	KindMessengerResult      Kind = "messenger_result"
 )
 
 type A2aCallStatus struct {
@@ -632,6 +634,26 @@ type MemoryTombstone struct {
 	Agent  string      `json:"agent"`
 	At     json.Number `json:"at"`
 	Person string      `json:"person"`
+}
+type MessengerRequest struct {
+	Account      *string `json:"account,omitempty"`
+	ClientID     *string `json:"client_id,omitempty"`
+	ClientSecret *string `json:"client_secret,omitempty"`
+	Operation    *string `json:"operation,omitempty"`
+	Platform     *string `json:"platform,omitempty"`
+}
+type MessengerResult struct {
+	Account   *string            `json:"account,omitempty"`
+	Operation *string            `json:"operation,omitempty"`
+	Platform  *string            `json:"platform,omitempty"`
+	Sources   *[]MessengerSource `json:"sources,omitempty"`
+	Status    *string            `json:"status,omitempty"`
+}
+type MessengerSource struct {
+	Account  string  `json:"account"`
+	Failure  *string `json:"failure,omitempty"`
+	Platform string  `json:"platform"`
+	State    string  `json:"state"`
 }
 type MiniApp struct {
 	Agent           string      `json:"agent"`
@@ -1686,6 +1708,8 @@ func (MockRequest) isPayload()          {}
 func (MockResponse) isPayload()         {}
 func (MiniAppRequest) isPayload()       {}
 func (MiniAppResult) isPayload()        {}
+func (MessengerRequest) isPayload()     {}
+func (MessengerResult) isPayload()      {}
 
 type message[P any] struct {
 	AttemptID      string      `json:"attempt_id"`
@@ -2093,6 +2117,14 @@ func decodePayload(kind Kind, data json.RawMessage) (Payload, error) {
 		var p MiniAppResult
 		err := json.Unmarshal(data, &p)
 		return p, err
+	case KindMessengerRequest:
+		var p MessengerRequest
+		err := json.Unmarshal(data, &p)
+		return p, err
+	case KindMessengerResult:
+		var p MessengerResult
+		err := json.Unmarshal(data, &p)
+		return p, err
 	default:
 		return nil, fmt.Errorf("unknown kind %q", kind)
 	}
@@ -2232,7 +2264,9 @@ const clientSchemaJSON = `{
         "mock_request",
         "mock_response",
         "mini_app_request",
-        "mini_app_result"
+        "mini_app_result",
+        "messenger_request",
+        "messenger_result"
       ]
     },
     "message_id": {
@@ -4103,6 +4137,38 @@ const clientSchemaJSON = `{
               }
             }
           ]
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "messenger_request"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/messenger_request"
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "kind": {
+            "const": "messenger_result"
+          }
+        }
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "$ref": "#/$defs/messenger_result"
+          }
         }
       }
     }
@@ -10383,6 +10449,185 @@ const clientSchemaJSON = `{
         "apps"
       ],
       "additionalProperties": false
+    },
+    "messenger_request": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string",
+          "enum": [
+            "webex"
+          ]
+        },
+        "client_id": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "client_secret": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        },
+        "account": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 512
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "configure"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform",
+              "client_id",
+              "client_secret"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "sign_in"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "platform"
+            ]
+          }
+        },
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "disconnect"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "account"
+            ]
+          }
+        }
+      ]
+    },
+    "messenger_source": {
+      "type": "object",
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "state": {
+          "type": "string",
+          "enum": [
+            "connected",
+            "needs_sign_in",
+            "failing",
+            "unreachable",
+            "import_only",
+            "disconnected"
+          ]
+        },
+        "failure": {
+          "type": "string"
+        }
+      },
+      "required": [
+        "platform",
+        "account",
+        "state"
+      ],
+      "additionalProperties": false
+    },
+    "messenger_result": {
+      "type": "object",
+      "properties": {
+        "operation": {
+          "type": "string",
+          "enum": [
+            "list",
+            "configure",
+            "sign_in",
+            "disconnect"
+          ]
+        },
+        "platform": {
+          "type": "string"
+        },
+        "account": {
+          "type": "string"
+        },
+        "status": {
+          "type": "string",
+          "enum": [
+            "configured",
+            "connected",
+            "needs_sign_in",
+            "disconnected"
+          ]
+        },
+        "sources": {
+          "type": "array",
+          "items": {
+            "$ref": "#/$defs/messenger_source"
+          }
+        }
+      },
+      "required": [],
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "required": [
+              "operation"
+            ],
+            "properties": {
+              "operation": {
+                "const": "list"
+              }
+            }
+          },
+          "then": {
+            "required": [
+              "sources"
+            ]
+          }
+        }
+      ]
     }
   }
 }

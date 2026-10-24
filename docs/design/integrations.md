@@ -945,6 +945,6 @@ When a token fails, LINA Core marks that account as needing sign-in and tells th
 - A webhook mode for a channel, which would need a public listener: never provided.
 - Rich messages and components of a platform, such as Telegram rich messages: shown only after the adapter's capability probe, with plain text as the fallback.
 - The sync interval, page size, read window and use of live events of each messenger platform: measured and set during implementation acceptance of its adapter.
-- Whether Slack and Webex accept the loopback redirect of the client relay: set by their first implementation; the fallback is pasting the redirected URL.
+- Whether Slack accepts the loopback redirect of the client relay: set by its first implementation; the fallback is pasting the redirected URL. Webex registrations accept a loopback redirect: its first implementation registers `http://127.0.0.1:<port>/auth/callback` with the port the client reports, and pasting the redirected URL remains the fallback for a client that cannot listen.
 - Whether Discord's developer policy allows learning from the owner's own messages that a bot-mode messenger source reads: confirmed before that source learns. Until then it is searchable and not learned from.
 - The progress digest of a channel: its line cap, whether a regular digest can be set, and the scheme of its link: set during implementation acceptance of the channel gateway.

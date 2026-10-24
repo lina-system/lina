@@ -29,6 +29,7 @@ import (
 	"github.com/thisisjun786/lina/internal/core/ledger"
 	"github.com/thisisjun786/lina/internal/core/lifecycle"
 	"github.com/thisisjun786/lina/internal/core/messenger"
+	"github.com/thisisjun786/lina/internal/core/messenger/webex"
 	"github.com/thisisjun786/lina/internal/core/modelpath"
 	"github.com/thisisjun786/lina/internal/core/records"
 	"github.com/thisisjun786/lina/internal/core/results"
@@ -83,6 +84,8 @@ type conversationRuntime struct {
 	dispatchMu      *sync.RWMutex
 	removals        *retract.Store
 	messenger       *messenger.Service
+	messengerStore  *messenger.Store
+	messengerWebex  *webex.Adapter
 	messengerStop   context.CancelFunc
 	messengerDone   chan struct{}
 	channels        *channelRuntime
@@ -356,6 +359,9 @@ func startConversation(ctx context.Context, root, main string, epoch uint64, con
 		return nil, err
 	}
 	if err := addOperations(&r.identity, clientsrv.ChannelOperations(r.channels)); err != nil {
+		return nil, err
+	}
+	if err := addOperations(&r.identity, clientsrv.MessengerOperations(r, relay)); err != nil {
 		return nil, err
 	}
 	if err := addOperations(&r.identity, clientsrv.TalkOperations(r)); err != nil {
