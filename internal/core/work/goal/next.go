@@ -175,7 +175,9 @@ type Goal struct {
 	Deployment        Proof             `json:"deployment"`
 	Verification      Proof             `json:"verification"`
 	Waits             []Wait            `json:"waits,omitempty"`
-	Evidence          []Proof           `json:"evidence,omitempty"`
+	// ClearTodos are linked 할 일 whose waiting_on must be cleared after the wait ends.
+	ClearTodos []string `json:"clear_todos,omitempty"`
+	Evidence   []Proof  `json:"evidence,omitempty"`
 }
 
 type ActionKind string

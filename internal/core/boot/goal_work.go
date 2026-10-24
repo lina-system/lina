@@ -156,10 +156,16 @@ func (r *conversationRuntime) linkGoalWaitingOn(ctx context.Context, g work.Goal
 	if err != nil {
 		return err
 	}
-	if todo.WaitingOn != nil && todo.WaitingOn.Who == w.Who && todo.WaitingOn.Since == w.Since && todo.WaitingOn.NextCheck == w.NextCheck {
+	if w.Who == "" && w.Since == "" && w.NextCheck == "" {
+		if todo.WaitingOn == nil {
+			return nil
+		}
+		todo.WaitingOn = nil
+	} else if todo.WaitingOn != nil && todo.WaitingOn.Who == w.Who && todo.WaitingOn.Since == w.Since && todo.WaitingOn.NextCheck == w.NextCheck {
 		return nil
+	} else {
+		todo.WaitingOn = &records.WaitingOn{Who: w.Who, Since: w.Since, NextCheck: w.NextCheck}
 	}
-	todo.WaitingOn = &records.WaitingOn{Who: w.Who, Since: w.Since, NextCheck: w.NextCheck}
 	front, err = records.WithTodo(front, *todo)
 	if err != nil {
 		return err

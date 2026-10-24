@@ -93,7 +93,11 @@ func TestChangeSignalReadsTheSourceOnce(t *testing.T) {
 	_, db := testJournal(t)
 	clock := time.Unix(100, 0)
 	now := func() time.Time { return clock }
-	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: now})
+	var linked []Wait
+	e, err := NewEngine(Config{DB: db, Records: db.Definitions, Epoch: 1, Now: now, LinkWaitingOn: func(_ context.Context, _ Goal, w Wait) error {
+		linked = append(linked, w)
+		return nil
+	}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -163,6 +167,13 @@ func TestChangeSignalReadsTheSourceOnce(t *testing.T) {
 	// with nothing left to run still follow the liveness rule.
 	if len(s.Goals[0].Waits) != 0 || s.Goals[0].DecisionRow != "" || strings.Contains(s.Goals[0].BlockedReason, outsideWait().Draft) {
 		t.Fatalf("closed read did not end the wait: %+v", s.Goals[0])
+	}
+	cleared := false
+	for _, w := range linked {
+		cleared = cleared || w.TodoID == "host-reply" && w.Who == "" && w.Since == "" && w.NextCheck == ""
+	}
+	if !cleared {
+		t.Fatalf("closed read left waiting_on: %+v", linked)
 	}
 	for _, a := range s.Actions {
 		if a.Kind != PlanGoal && a.Kind != ReadSource {

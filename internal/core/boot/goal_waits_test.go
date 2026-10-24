@@ -42,4 +42,18 @@ func TestGoalWaitWritesTodoWaitingOn(t *testing.T) {
 	if todo.WaitingOn == nil || todo.WaitingOn.Who != "host" || todo.WaitingOn.Since != "2026-10-20" || todo.WaitingOn.NextCheck != "2026-10-23" {
 		t.Fatalf("waiting_on: %+v", todo.WaitingOn)
 	}
+	if err = r.linkGoalWaitingOn(t.Context(), work.Goal{Person: r.person, Agent: agent}, work.Wait{TodoID: id}); err != nil {
+		t.Fatal(err)
+	}
+	rec, _, err = repo.Read(t.Context(), id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	todo, _, _, err = records.ReadTodo(rec.Data)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if todo.WaitingOn != nil {
+		t.Fatalf("closed wait left waiting_on: %+v", todo.WaitingOn)
+	}
 }

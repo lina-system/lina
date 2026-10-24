@@ -176,12 +176,15 @@ func applyWaitRead(g *Goal, a Action, o Observation) error {
 	if *o.SourceOpen && a.ReadCause != "deadline" {
 		return nil
 	}
+	w := g.Waits[idx]
 	if *o.SourceOpen {
-		w := g.Waits[idx]
 		g.DecisionRow = expiryRow(w)
 		g.AttentionID = "goal:" + g.ID + ":wait:" + w.Wake
 		g.BlockedReason = g.DecisionRow
 		g.State = GoalBlocked
+	}
+	if w.TodoID != "" {
+		g.ClearTodos = append(g.ClearTodos, w.TodoID)
 	}
 	g.Waits = append(g.Waits[:idx], g.Waits[idx+1:]...)
 	return nil
@@ -197,6 +200,19 @@ func (e *Engine) syncWaits(ctx context.Context) {
 	}
 	now := e.cfg.Now().Unix()
 	for _, g := range s.Goals {
+		if e.cfg.LinkWaitingOn != nil {
+			live := map[string]bool{}
+			for _, w := range g.Waits {
+				if w.TodoID != "" {
+					live[w.TodoID] = true
+				}
+			}
+			for _, id := range g.ClearTodos {
+				if live[id] || e.cfg.LinkWaitingOn(ctx, g, Wait{TodoID: id}) == nil {
+					_ = e.dropClearTodo(ctx, g.ID, id)
+				}
+			}
+		}
 		for _, w := range g.Waits {
 			if !w.Recorded || !namedWait(w) {
 				continue
@@ -213,6 +229,33 @@ func (e *Engine) syncWaits(ctx context.Context) {
 			}
 		}
 	}
+}
+
+func (e *Engine) dropClearTodo(ctx context.Context, goalID, todoID string) error {
+	err := e.journal.Update(ctx, Transition{ID: "wait.clear:" + rand.Text(), Kind: "wait.cleared", At: e.cfg.Now().Unix()}, func(v *View) error {
+		g, err := loadGoal(v, goalID)
+		if err != nil {
+			return err
+		}
+		next := make([]string, 0, len(g.ClearTodos))
+		found := false
+		for _, id := range g.ClearTodos {
+			if id == todoID && !found {
+				found = true
+				continue
+			}
+			next = append(next, id)
+		}
+		if !found {
+			return errNoChange
+		}
+		g.ClearTodos = next
+		return put(v, "goal", g.ID, g)
+	})
+	if err == errNoChange {
+		return nil
+	}
+	return err
 }
 
 func (e *Engine) markWait(ctx context.Context, goalID, wake string, mark func(*Wait)) error {
