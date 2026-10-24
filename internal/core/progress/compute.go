@@ -59,20 +59,21 @@ func Compute(units []Unit) []Entry {
 		row     bool
 	}
 	// A step's card is a row of the 일 that runs it, not a line of its own. The
-	// ledger links them by the step id the line's stage list already carries, so
-	// one manager with twelve steps adds one line and twelve rows.
+	// card carries its dispatch's id, which the step resolves from the goal's
+	// worker actions, so one manager with twelve steps adds one line and twelve
+	// rows.
 	owner := map[string]string{}
 	for _, u := range units {
 		for _, stage := range u.Stages {
 			for _, step := range stage.Steps {
-				if step.ID != "" {
-					owner[step.ID] = u.ID
+				for _, card := range step.Cards {
+					owner[card] = u.ID
 				}
 			}
 		}
 	}
-	// A step's card belongs to its 일 through the step id; a task card's own
-	// parent link belongs to the 목표 or 일 it was handed under.
+	// A step's card belongs to its 일 through the step; a task card's own parent
+	// link belongs to the 목표 or 일 it was handed under.
 	type link struct {
 		parent string
 		step   bool
