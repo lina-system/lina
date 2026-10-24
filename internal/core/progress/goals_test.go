@@ -205,6 +205,11 @@ func TestPausedGoalLineAndRankOrder(t *testing.T) {
 	if lines[0].Line.Now != design.Text(design.English, "progress.paused") {
 		t.Fatalf("now = %q, want the paused word", lines[0].Line.Now)
 	}
+	// The pause is also a typed field, so a client offers resume without
+	// reading the word it localized.
+	if !lines[0].Line.Paused {
+		t.Fatal("a paused goal's line does not carry its pause")
+	}
 	// Two ranked goals of one person follow rank, whatever their ids say.
 	second := goal.Goal{ID: "a", Person: "person", Agent: "agent", Conversation: "conversation", Summary: "Book the venue", Done: "The venue is booked", NoServiceReason: "plan", Scope: goal.GoalScope{Repositories: []string{"repo"}, Includes: "plan.md"}, Criteria: []goal.Criterion{{ID: "outcome", Statement: "The venue is booked", Check: goal.CriterionCheck{Kind: goal.RunEvidence, Method: "acceptance", Target: "repo"}}}}
 	if err = engine.Admit(t.Context(), second); err != nil {

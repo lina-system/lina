@@ -57,6 +57,16 @@ for (const stage of ['ci', 'audit', 'test']) test(`${stage} failure fails the ga
   assert.equal(existsSync(f.calls[0].cwd), false);
 });
 
+test('Messenger add-on installs without optional native packages and runs its contract tests', t => {
+  const f = fixture(t);
+  f.write(f.dir, 'adapters/messenger/package.json', JSON.stringify(f.manifest));
+  f.write(f.dir, 'adapters/messenger/package-lock.json', JSON.stringify(f.lock));
+  const result = f.check();
+  assert.equal(result.status, 0, result.output);
+  const calls = f.calls.slice(3);
+  assert.deepEqual(calls.map(c => c.args), [['ci', '--ignore-scripts', '--omit=dev', '--omit=optional'], ['audit', 'signatures'], ['test']]);
+});
+
 test('Claude ACP has its own verified install without optional packages or npm test', t => {
   const f = fixture(t);
   const manifest = {...f.manifest, scripts: undefined};
