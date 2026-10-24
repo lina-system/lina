@@ -45,6 +45,8 @@ func concretePayloads() map[string]any {
 		"restart_status":     map[string]any{"owed": false},
 		"record_request":     map[string]any{"operation": "query", "view": "memos"},
 		"record_result":      map[string]any{"operation": "query", "rows": []any{}},
+		"webex_request":      map[string]any{"operation": "list"},
+		"webex_result":       map[string]any{"operation": "list", "sources": []any{}},
 		"teams_request":      map[string]any{"operation": "list"},
 		"teams_result":       map[string]any{"operation": "list", "connections": []any{}},
 		"a2a_request":        map[string]any{"operation": "list"},
@@ -104,6 +106,24 @@ func concretePayloads() map[string]any {
 		"resync":               map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 		"resync_required":      map[string]any{"topic": "conversation:example", "cursor": map[string]any{"epoch": "7", "seq": float64(2)}},
 		"plan_request":         map[string]any{"operation": "get", "agent_id": "agent", "result_id": "plan"},
+		"binding_get":          map[string]any{"input_id": "input-example"},
+		"binding": map[string]any{
+			"input_id": "input-example",
+			"chip":     map[string]any{"input_id": "input-example", "show": true, "name": "Garden", "target": map[string]any{"class": "existing", "id": "garden", "kind": "project"}},
+			"target":   map[string]any{"class": "existing", "id": "garden", "kind": "project"},
+			"candidates": []any{
+				map[string]any{"id": "lamps", "title": "Lamps", "kind": "todo", "state": "existing"},
+				map[string]any{"id": "new", "title": "", "kind": "todo", "state": "new"},
+				map[string]any{"id": "none", "title": "", "kind": "", "state": "none"},
+			},
+			"moves": []any{},
+		},
+		"binding_move":          map[string]any{"input_id": "input-example", "target": map[string]any{"class": "none"}},
+		"binding_move_result":   map[string]any{"move_id": "move-example", "input_id": "input-example", "from": map[string]any{"class": "existing", "id": "plants", "kind": "todo"}, "to": map[string]any{"class": "none"}, "decider": "exact-reference", "effects": []any{map[string]any{"kind": "edit", "item": "plants", "moved": true, "receipt": "restored+applied"}}},
+		"binding_stats_get":     map[string]any{},
+		"binding_stats":         map[string]any{"bindings": float64(2), "moves": float64(1), "per_hundred": float64(50), "deciders": []any{map[string]any{"decider": "exact-reference", "bindings": float64(1), "moves": float64(1), "per_hundred": float64(100)}}},
+		"binding_export":        map[string]any{},
+		"binding_export_result": map[string]any{"directory": "derived/intake-cases", "cases": float64(1)},
 	}
 }
 
