@@ -1,6 +1,6 @@
 # Terminal canvas
 
-![Before and after on a white default background](canvas-before-after.png)
+![Before and after on a white default background](../generated-ui/tui-canvas-before-after.png)
 
 These captures render cells recorded from the Bubble Tea output writer at 80×24,
 with the default dark theme and truecolor output. Unstyled cells are shown on a
