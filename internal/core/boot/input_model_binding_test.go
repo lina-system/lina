@@ -657,6 +657,38 @@ func TestFollowWorkRecoversChannelReceipt(t *testing.T) {
 	}
 }
 
+func TestFollowWorkKeepsChannelSteeringReceipt(t *testing.T) {
+	r, _ := turnRuntime(t)
+	now := time.Now().UTC()
+	const runID = "steered-run"
+	state := binding.State{Clock: now, Focus: binding.Target{Class: "none"}, Items: []binding.Item{{ID: runID, Title: "Shared draft", Kind: "run", State: "running", LastActivity: now}}, Surfaces: map[string]string{}}
+	if err := r.seedIntakeReplay(t.Context(), state, binding.Input{}); err != nil {
+		t.Fatal(err)
+	}
+	app := questionPersonInput(t, r, "app-turn", "Keep going in the app")
+	channel := questionChannelInputs(t, r)
+	view, steering := channel("one", "first")
+	s := &turnState{runtime: r, input: app, turnID: "turn:" + app.ID, bindings: map[string]loop.Tool{}, questions: &questionTurn{}, bindingInputs: map[string]acceptedSteering{steering.ID: {event: steering, runner: view}}}
+	if _, err := s.prepare(t.Context(), turn.ModelPolicy{Model: "turn-fixture"}); err != nil {
+		t.Fatal(err)
+	}
+	got := questionCall(t, s.bindings, "follow_work", "from-app", map[string]any{"id": runID, "text": "Keep the channel scope.", "input_binding": map[string]any{"input_event_id": steering.ID}})
+	if got.Code != loop.OK {
+		t.Fatalf("app turn did not accept the channel follow-up: %+v", got)
+	}
+	record, err := r.background.service.Get(t.Context(), runID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(record.FollowSources) != 1 {
+		t.Fatalf("channel steering follow-up lost its receipt: sources=%d ups=%v", len(record.FollowSources), record.FollowUps)
+	}
+	var source channelFollowSource
+	if json.Unmarshal(record.FollowSources[0], &source) != nil || source.Sender != "42" || source.Address != view.channelAddress || !source.Addressed {
+		t.Fatalf("receipt: %s", record.FollowSources[0])
+	}
+}
+
 func TestModelBindingSteeringKeepsToolScope(t *testing.T) {
 	r, _ := turnRuntime(t)
 	input := questionPersonInput(t, r, "owner-turn", "Read available skills")
