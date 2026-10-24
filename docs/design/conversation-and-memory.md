@@ -237,7 +237,7 @@ LINA learns about another person from their messages only when it knows who sent
 | `proposed` | The matcher | Weak signals only: the same or a similar display name, a nickname, a photo, shared chats, writing style or timing |
 
 - A link is usable for learning when it is `confirmed`, or when it is `exact` and unambiguous.
-- A link is ambiguous when its identifier points to more than one people record (a shared family phone, a team mailbox), when the identity has links to two records, or when the people record has another link that conflicts with it. An ambiguous link is not usable, and the person is asked once, with the other matches by number.
+- A link is ambiguous when any identifier the identity currently shows points at more than one people record, or when those identifiers point at more than one record between them (a shared family phone, a team mailbox, or a later identifier that belongs to someone else), when the identity has links to two records, or when the people record has another link that conflicts with it. An earlier exact link stays unusable while that conflict is open. An ambiguous link is not usable, and the person is asked once, with the other matches by number.
 - A phone or email link holds for the time the identifier was seen with the identity. A number that moves to another identity ends the earlier link's validity at that time.
 - Weak signals never make a usable link. A `proposed` link only asks the person, in batches of three to five ([Learning the person](#learning-the-person)). A rejected proposal is kept so that it does not return.
 

@@ -666,19 +666,29 @@ func (s *Store) endValidity(ctx context.Context, tx *canon.Tx, links []Link, kin
 	return nil
 }
 
-// assess derives an exact link's ambiguity from the identity's current
-// identifiers and links. Confirmed links are the person's word.
+// assess derives an exact link's ambiguity from every identifier the identity
+// currently shows and from its links. A later identifier that belongs to
+// another record makes the earlier exact link ambiguous while that conflict is
+// open. Confirmed links are the person's word.
 func (s *Store) assess(ctx context.Context, tx *canon.Tx, people []Person, link Link) (string, error) {
 	if link.State != Active || link.Class == Confirmed || !link.ValidThrough.IsZero() {
 		// A link whose identifier moved elsewhere has ended; it is not ambiguous.
 		return "", nil
 	}
-	for _, signal := range link.Signals {
-		if signal.Kind != string(Phone) && signal.Kind != string(Email) {
-			continue
-		}
-		if len(recordsListing(people, Kind(signal.Kind), signal.Value)) > 1 {
-			return ReasonSharedIdentifier, nil
+	stored, err := s.identifiersTx(ctx, tx, link.Identity)
+	if err != nil {
+		return "", err
+	}
+	byRecord, err := candidates(people, stored)
+	if err != nil {
+		return "", err
+	}
+	if len(byRecord) > 1 {
+		return ReasonSharedIdentifier, nil
+	}
+	for record := range byRecord {
+		if record != link.Record {
+			return ReasonTwoLinks, nil
 		}
 	}
 	links, err := s.linksTx(ctx, tx, link.Identity)
@@ -694,11 +704,11 @@ func (s *Store) assess(ctx context.Context, tx *canon.Tx, people []Person, link 
 	if len(records) > 1 {
 		return ReasonTwoLinks, nil
 	}
-	for _, signal := range link.Signals {
-		if signal.Kind != string(Phone) && signal.Kind != string(Email) {
+	for _, identifier := range stored {
+		if identifier.Kind != Phone && identifier.Kind != Email {
 			continue
 		}
-		others, err := s.otherIdentities(ctx, tx, link.Identity, Kind(signal.Kind), signal.Value)
+		others, err := s.otherIdentities(ctx, tx, link.Identity, identifier.Kind, identifier.Value)
 		if err != nil {
 			return "", err
 		}

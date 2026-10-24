@@ -54,7 +54,10 @@ identity at Core start (`Rematch`).
 
 1. Candidate records are the people records that list one of the identity's
    identifiers. More than one candidate is ambiguous (`shared_identifier`): a
-   family phone, a team mailbox, or a contact card listing two people's numbers.
+   family phone, a team mailbox, a contact card listing two people's numbers,
+   or a later identifier that belongs to a different record. Ambiguity is read
+   from every identifier the identity currently shows, so an earlier exact link
+   stops being usable while that conflict is open.
 2. An identity with an active exact or confirmed link to another record is
    ambiguous (`two_links`).
 3. An identifier another identity already showed is a move. Both platforms
@@ -122,7 +125,8 @@ inside the contact section is refused rather than guessed at.
 runs it and prints the measures. The synthetic gate is no wrong usable link and
 every planted ambiguity. `--private <dir>` runs the owner's labelled export and
 writes `counts.json` with counts and rates only. Its `gate` is the owner-sample
-gate: the synthetic conditions plus at least 300 usable links. A shorter sample
+gate: the synthetic conditions plus at least 300 usable links. Each sender
+identity counts once, so repeated observations of one sender are one trial. A shorter sample
 records `gate` false and the command exits unsuccessfully. The files are
 `people.json` (the same shape as the set's `people`), `identities.json` (`SetIdentity`
 without `expect`) and `labels.json` (`{"<platform>/<scope>/<user>": "<record id>"|"unknown"|"self"}`).

@@ -243,9 +243,17 @@ func Evaluate(ctx context.Context, store *Store, set Set) (Measures, error) {
 		}
 	}
 	now := latest.Add(time.Second)
-	measures := Measures{Identities: len(identities), Ambiguities: len(set.Ambiguities)}
+	measures := Measures{Ambiguities: len(set.Ambiguities)}
+	// One sender identity is one trial. Repeated observations of that identity
+	// read the same link and must not multiply the usable-link count.
+	seen := map[string]bool{}
 	for _, identity := range identities {
 		id := Identity{Platform: identity.Platform, Scope: identity.Scope, User: identity.User}
+		if seen[id.Key()] {
+			continue
+		}
+		seen[id.Key()] = true
+		measures.Identities++
 		links, err := run.Links(ctx, id)
 		if err != nil {
 			return Measures{}, err

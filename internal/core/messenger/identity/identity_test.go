@@ -277,6 +277,33 @@ func TestObservationDropsAnIdentifierItCannotNormalize(t *testing.T) {
 	}
 }
 
+func TestLaterIdentifierMakesTheExactLinkAmbiguous(t *testing.T) {
+	t.Parallel()
+	people := identity.StaticPeople{
+		{Record: "person-a", Identifiers: []identity.SeenIdentifier{{Kind: identity.Email, Value: "a@example.com", Source: "profile"}}},
+		{Record: "person-b", Identifiers: []identity.SeenIdentifier{{Kind: identity.Phone, Value: "+821012340002", Source: "profile"}}},
+	}
+	f := newFixture(t, people)
+	f.now = at(9)
+	id := discord("d-split")
+	observe(t, f, id, "Split", mail("a@example.com", "Discord profile"))
+	if got := usable(t, f, id); len(got) != 1 || got[0].Record != "person-a" {
+		t.Fatalf("first identifier = %+v, want one usable link to person-a", got)
+	}
+	f.now = at(10)
+	observe(t, f, id, "Split", mail("a@example.com", "Discord profile"), phone("+821012340002", "Discord profile"))
+	if got := usable(t, f, id); len(got) != 0 {
+		t.Fatalf("a later identifier for another record left a usable link: %+v", got)
+	}
+	question, found, err := f.store.Question(t.Context(), id)
+	if err != nil || !found || question.State != "open" {
+		t.Fatalf("question = %+v found=%v err=%v", question, found, err)
+	}
+	if len(question.Candidates) != 2 || question.Candidates[0] != "person-a" || question.Candidates[1] != "person-b" {
+		t.Fatalf("candidates = %v, want both records", question.Candidates)
+	}
+}
+
 func TestFamilyPhoneIsAmbiguousAndAskedOnce(t *testing.T) {
 	t.Parallel()
 	people := identity.StaticPeople{
