@@ -238,14 +238,35 @@ type backgroundStream struct {
 
 func (s *backgroundStream) Close() error { defer s.activity.Release(); return s.Stream.Close() }
 
+// channelRunInbox is the inbox id behind a channel-started run. A selected
+// receipt is used when the requesting turn is a different input.
+func channelRunInbox(o runs.Origin) (int64, bool, error) {
+	eventID := o.ChannelReceipt
+	if eventID == "" {
+		rest, ok := strings.CutPrefix(o.Turn, "turn:")
+		if !ok || !strings.HasPrefix(rest, "channel-input:") {
+			return 0, false, nil
+		}
+		eventID = rest
+	}
+	raw, ok := strings.CutPrefix(eventID, "channel-input:")
+	if !ok || raw == "" {
+		return 0, false, runs.ErrScope
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0, false, runs.ErrScope
+	}
+	return id, true, nil
+}
+
 func (r *conversationRuntime) authorizeRun(ctx context.Context, o runs.Origin, b runs.Brief) error {
 	if o.Person != r.person || o.Epoch != r.epoch || o.Job != "" || r.route == nil {
 		return runs.ErrScope
 	}
-	if strings.HasPrefix(o.Turn, "turn:channel-input:") {
-		id, err := strconv.ParseInt(strings.TrimPrefix(o.Turn, "turn:channel-input:"), 10, 64)
+	if id, ok, err := channelRunInbox(o); ok || err != nil {
 		if err != nil {
-			return runs.ErrScope
+			return err
 		}
 		if err = r.db.Read(ctx, func(tx *canon.Tx) error {
 			var raw []byte
@@ -277,13 +298,26 @@ func (r *conversationRuntime) authorizeRun(ctx context.Context, o runs.Origin, b
 	if err != nil {
 		return err
 	}
-	// These installed adapters read only the shared instruction catalog. Material
-	// references and write-capable adapters require their own authority wiring.
-	if len(b.Refs) != 0 {
-		return runs.ErrScope
+	// A follow-up may name the partial result it continues. That material must
+	// belong to this person. Write-capable adapters stay unwired.
+	if err = r.authorizeMaterialRefs(ctx, o.Person, b.Refs); err != nil {
+		return err
 	}
 	for _, name := range b.Allow {
 		if name != "skill_index" && name != "read_skill" {
+			return runs.ErrScope
+		}
+	}
+	return nil
+}
+
+func (r *conversationRuntime) authorizeMaterialRefs(ctx context.Context, person string, refs []runs.Ref) error {
+	for _, ref := range refs {
+		if ref.ID == "" || ref.Revision < 1 || r.assets == nil {
+			return runs.ErrScope
+		}
+		asset, err := r.assets.Get(ctx, ref.ID)
+		if err != nil || asset.Actor.PersonID != person || asset.TrashedAt != 0 || ref.Revision > asset.Revision {
 			return runs.ErrScope
 		}
 	}
@@ -409,9 +443,7 @@ func (r *conversationRuntime) syncRuns(ctx context.Context) error {
 		if !record.Released && record.Promotion == nil && (record.State == runs.Working || record.State == runs.Waiting && record.Reason == "") {
 			var committed int
 			err = r.db.Read(ctx, func(tx *canon.Tx) error {
-				// A channel receipt is the run's origin even when an app turn selected
-				// that input and committed the tool result on its own turn.
-				return tx.QueryRowContext(ctx, `SELECT count(*) FROM turn_calls WHERE json_extract(call,'$.Name')='start_run' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=? AND (turn_id=? OR ? LIKE 'turn:channel-input:%')`, record.ID, record.Origin.Turn, record.Origin.Turn).Scan(&committed)
+				return tx.QueryRowContext(ctx, `SELECT count(*) FROM turn_calls WHERE turn_id=? AND json_extract(call,'$.Name')='start_run' AND json_extract(result,'$.code')='ok' AND json_extract(result,'$.output.id')=?`, record.Origin.Turn, record.ID).Scan(&committed)
 			})
 			if err != nil {
 				return err

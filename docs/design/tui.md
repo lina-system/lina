@@ -76,7 +76,7 @@ acceptance remains the T-08 spike gate.
 - It never opens canon, never runs `lina core` and never holds the lock. Every message it sends is a request that Core accepts or refuses, and when the two disagree Core wins and the TUI refreshes.
 - It uses only the client connection. Its types are the Go types generated from the schema ([host-protocol.md](host-protocol.md#schema-and-generated-types)).
 - Protocol errors and Core logs go to the status line and a log, never into the conversation ([host-protocol.md](host-protocol.md#client-connection)). `TEA_TRACE` and `TEA_DEBUG` stay unset, and panic output is masked.
-- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
+- Import rule: `internal/tui/...` imports only `internal/clientapi`, `internal/design`, `kit/protocol`, the shared masking primitives in `kit/secret`, and other `internal/tui` packages. Charm packages are imported only in `tui/term` and `tui/ui`. The Markdown UI adapter may additionally import the already pinned `github.com/yuin/goldmark`, `/ast`, `/parser`, `/text` and `/util` packages, plus `/extension` and `/extension/ast` for table parsing, and `github.com/alecthomas/chroma/v2` and `/lexers` for code token roles; this exception does not extend to `render`, `state`, `layout`, `term` or other Goldmark/Chroma packages. The one architecture `go test` of [go-core.md](go-core.md) (C-40) checks it.
 - Trust: the socket's user check and the rule for who may decide an approval are Core's ([go-core.md](go-core.md), C-42). The TUI shows a refusal as a refusal and adds no rule of its own.
 - Parity with the LINA app comes from the shared conformance fixtures ([host-protocol.md](host-protocol.md#conformance-fixtures)). The app is not designed here.
 
@@ -1147,8 +1147,8 @@ type Stream interface {
 - A block that closes is painted once, off the UI goroutine. A stale result is dropped. The visible change from plain to styled at close is accepted: rendering the whole tail on every flush grows quadratically.
 - `Seal()` at `item_done` replaces the stitched render once.
 - The conversation Markdown subset is bold, italic, inline code, ordered and
-  unordered lists (including nesting), fenced and indented code blocks, and
-  links. The UI adapter uses the pinned Goldmark parser, also used by Glamour,
+  unordered lists (including nesting), fenced and indented code blocks, links
+  and pipe tables. The UI adapter uses the pinned Goldmark parser, also used by Glamour,
   to produce semantic spans for closed blocks; `render` receives a parser
   callback and remains free of external dependencies. The shared `Measurer` wraps the visible text before
   the UI adds terminal styles. List continuations align under their content;
@@ -1158,7 +1158,15 @@ type Stream interface {
   with multiple syntax spans or no tokens; message-boundary trimming removes
   only paragraph spacing. Escaped syntax remains literal.
   Unsupported HTML blocks and inline HTML display their literal source text.
-  Tables use our own renderer.
+  Tables use our own renderer. A closed conversation table measures its visible
+  cells with the shared `Measurer`, aligns each column at its natural width and
+  honors left, center and right alignment from the delimiter row. Headers are
+  bold; cells retain inline styles. The delimiter row is not displayed. Wide
+  tables clip at the transcript's right edge with the typed clipped flag,
+  never wrapping a cell into another row or splitting a grapheme cluster.
+  Resizing reveals the retained content. An open table stays in the unstyled
+  streaming preview until a blank line or `item_done` closes it. Structured
+  result-table cards retain their separate horizontal-scroll contract.
 - Conversation spans use theme text, accent and surface tokens: bold and italic
   retain their attributes, code uses the surface background, and links use
   underlined accent text. Lists reuse the theme's action glyph (including the
@@ -1635,6 +1643,7 @@ rendering checks; they do not replace the physical terminal and IME spike.
 - Contrast checks require at least 4.5:1 for text, muted text and accent on canvas and surface, in light, dark and high contrast. The source also specifies tested 256-colour and 16-colour mappings. Dark ANSI16 uses bright white for the accent where standard blue cannot pass; user-redefined ANSI palettes can change physical contrast. Hairlines are decorative, never the only state indicator.
 - No state is shown by colour alone: each has a mark and a word. Glyph sets are tokens, in plain Unicode and ASCII, and none needs a private-use glyph.
 - Connection-screen display overrides are `LINA_THEME=light|dark|high-contrast` and `LINA_GLYPHS=ascii`. Otherwise `COLORFGBG` selects a light or dark background (dark by default); terminal capability selects RGB, 256 or 16 colours. Nonempty `NO_COLOR` preserves the layout, marks, labels and actions without escapes; subsequent states append compact lines. These overrides persist no preferences.
+- Colour output fills every cell of each styled region, including empty rows and trailing spaces. The full-screen shell fills the viewport with the chosen theme's canvas, including after resize and in overlays, while preserving explicit surface backgrounds such as code. A light terminal without `COLORFGBG` therefore gets a consistent dark canvas rather than dark text blocks on its default background. This requires no terminal background query and does not change `NO_COLOR` output.
 - On Linux (Omarchy) the complete TUI follows the active Omarchy theme file ([surfaces.md](surfaces.md#platform-adaptation)); theme-file discovery remains part of platform preferences work.
 - Every code in the closed lists has an entry in both the Korean and English catalogs, checked by id and never by wording.
 

@@ -205,7 +205,7 @@ func (s *turnState) wrapInputTools(declarations []provider.ToolDecl) []provider.
 				}
 				var result loop.Result
 				if clean.Name == "start_run" && r.channelBinding != nil {
-					result = r.submitStartRun(callCtx, clean, input)
+					result = r.submitStartRun(callCtx, clean, input, s.turnID)
 				} else {
 					result = exec.Execute(callCtx, clean)
 				}
@@ -840,17 +840,22 @@ func (r *conversationRuntime) channelSteeringSource(ctx context.Context, event l
 	return json.Marshal(channelFollowSource{Address: r.channelAddress, Binding: *r.channelBinding, Sender: inbound.Sender, Direct: inbound.Direct, Addressed: inbound.Addressed})
 }
 
-// submitStartRun admits a run on the selected channel runtime. The origin turn
-// is the channel receipt, including when an app turn only selected that input.
-func (r *conversationRuntime) submitStartRun(ctx context.Context, call provider.ToolCall, event ledger.Event) loop.Result {
-	if r.channelBinding == nil || r.background == nil {
+// submitStartRun admits a run on the selected channel runtime. The requesting
+// turn stays the turn that called start_run. A different selected channel
+// input is kept beside it so later checks still use that channel's permission.
+func (r *conversationRuntime) submitStartRun(ctx context.Context, call provider.ToolCall, event ledger.Event, turnID string) loop.Result {
+	if r.channelBinding == nil || r.background == nil || turnID == "" {
 		return loop.Result{ID: call.ID, Code: loop.Denied}
 	}
 	receiptID, err := r.channelReceiptEventID(ctx, event)
 	if err != nil {
 		return loop.Result{ID: call.ID, Code: loop.Denied}
 	}
-	return r.background.service.StartTool(r.runOrigin("turn:"+receiptID)).Execute(ctx, call)
+	origin := r.runOrigin(turnID)
+	if turnID != "turn:"+receiptID {
+		origin.ChannelReceipt = receiptID
+	}
+	return r.background.service.StartTool(origin).Execute(ctx, call)
 }
 
 func bindingAction(name string) string {
