@@ -43,16 +43,21 @@ type Scope struct {
 	Person string
 	// Agent selects the agent's own holder and conversation set. An empty agent
 	// sees only common items and records.
-	Agent                           string
-	Kinds                           []Kind
-	Conversation                    string
-	Since, Until                    time.Time
-	SpeakerKind                     guard.SpeakerKind
-	Origin                          string
-	Platform, Account, Chat, Author string
-	CommonOnly                      bool
+	Agent        string
+	Kinds        []Kind
+	Conversation string
+	Since, Until time.Time
+	SpeakerKind  guard.SpeakerKind
+	// EventSpeakerKind restricts event candidates only. Memory items and
+	// records carry no speaker of their own, so recall_person uses this to keep
+	// agent and tool words out of the evidence about the person while items
+	// stay eligible.
+	EventSpeakerKind guard.SpeakerKind
 	// PersonOnly selects person-authored events and person-subject memory items.
-	PersonOnly bool
+	PersonOnly                      bool
+	Platform, Account, Chat, Author string
+	Origin                          string
+	CommonOnly                      bool
 	// IncludeReplay makes replay copies candidates. A copy still counts once
 	// with its lineage, so it surfaces only when its original is not a
 	// candidate: a copy appears only when asked, through its original.
@@ -204,12 +209,9 @@ func Match(ctx context.Context, db Canon, scope Scope, query Query) ([]Hit, erro
 	restricted := scope.Projection || scope.ExternalModel
 	var with []string
 	var withArgs []any
-	if restricted {
-		with = append(with, `restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`)
-		withArgs = append(withArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+		with = append(with, cte)
+		withArgs = append(withArgs, cteArgs...)
 	}
 	if len(pairPhrases) > 0 {
 		with = append(with, `pair AS MATERIALIZED (SELECT rowid AS doc, bm25(recall_pair) AS score FROM recall_pair WHERE recall_pair MATCH ?)`)
@@ -364,15 +366,10 @@ func pendingEventText(ctx context.Context, db Canon, scope Scope, at int64, rest
 		"NOT EXISTS(SELECT 1 FROM recall_doc x WHERE x.kind=s.kind AND x.source_id=s.source_id)",
 		"s.body IS NULL")
 	prefix := ""
-	var prefixArgs []any
-	if restricted {
-		prefix = `WITH restricted AS (
-  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
-  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
-   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves'))) `
-		prefixArgs = append(prefixArgs, scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel))
+	if cte, cteArgs := restrictedCTE(scope); cte != "" {
+		prefix = "WITH " + cte + " "
+		args = append(cteArgs, args...)
 	}
-	args = append(prefixArgs, args...)
 	var queued []Hit
 	err := db.Read(ctx, func(tx *canon.Tx) error {
 		rows, err := tx.QueryContext(ctx, prefix+`SELECT s.source_id,s.revision,s.occurred_at,s.holder
@@ -440,6 +437,19 @@ func lineageFilter(enabled bool) string {
 	return ` WHERE c.kind<>'event' OR c.id NOT IN (SELECT d.id FROM candidates d JOIN derived x ON x.id=d.source_id)`
 }
 
+// restrictedCTE lists the events protected by a private or never-leaves memory
+// item for the caller's person. Empty when the scope reads everything.
+func restrictedCTE(scope Scope) (string, []any) {
+	if !scope.Projection && !scope.ExternalModel {
+		return "", nil
+	}
+	return `restricted AS (
+  SELECT DISTINCT c.target_id AS id FROM cite c JOIN memory_item m ON m.id=c.view_id
+  WHERE c.view_kind='memory' AND c.target_kind='event' AND c.dropped_revision IS NULL AND m.person=?
+   AND ((?=1 AND m.scope IN ('private','never-leaves')) OR (?=1 AND m.scope='never-leaves')))`,
+		[]any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
+}
+
 func holderCondition(scope Scope, alias string) string {
 	if scope.CommonOnly || scope.Agent == "" {
 		return alias + ".holder='all'"
@@ -491,6 +501,10 @@ func scopeWhere(scope Scope, kinds []Kind, at int64, restricted bool, alias stri
 	if scope.PersonOnly {
 		where = append(where, `((`+alias+`.kind='event' AND `+alias+`.speaker_kind='person')
  OR (`+alias+`.kind='memory' AND EXISTS(SELECT 1 FROM memory_item m WHERE m.id=`+alias+`.source_id AND m.subject_kind='person')))`)
+	}
+	if scope.EventSpeakerKind != "" {
+		where = append(where, "("+alias+".kind<>'event' OR "+alias+".speaker_kind=?)")
+		args = append(args, string(scope.EventSpeakerKind))
 	}
 	if scope.Origin != "" {
 		where = append(where, "json_extract("+alias+".origin,'$.kind')=?")
@@ -670,6 +684,9 @@ func byIDs(ctx context.Context, db Canon, scope Scope, ids []string) ([]Hit, err
 		args = append(args, olderArgs...)
 	}
 	prefix, prefixArgs := restrictedCTE(scope)
+	if prefix != "" {
+		prefix = "WITH " + prefix + " "
+	}
 	args = append(append(prefixArgs, olderArgs...), args...)
 	order := map[string]int{}
 	for i, id := range ids {
@@ -839,7 +856,7 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 			}
 			return "", err
 		}
-		if material.Valid {
+		if material.Valid || !body.Valid {
 			if readEvent == nil {
 				return "", ErrBytesUnavailable
 			}
@@ -848,9 +865,6 @@ func sourceText(ctx context.Context, db Canon, readEvent ReadEvent, hit Hit) (st
 				return "", ErrBytesUnavailable
 			}
 			return text, nil
-		}
-		if !body.Valid {
-			return "", ErrBytesUnavailable
 		}
 		return maskDerived(body.String, spans)
 	case Memory:
