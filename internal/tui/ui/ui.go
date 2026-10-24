@@ -47,7 +47,7 @@ func Run(ctx context.Context, socket, productVersion string, input io.Reader, ou
 		terminal = true
 	}
 	return runClientShell(ctx, func(ctx context.Context) (connectionPeer, error) {
-		client, err := clientapi.DialWithCapabilities(ctx, socket, productVersion, shellCapabilities)
+		client, err := clientapi.DialWithCapabilities(ctx, socket, productVersion, Capabilities())
 		if err != nil {
 			return nil, err
 		}

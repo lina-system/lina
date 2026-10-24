@@ -20,6 +20,12 @@ import (
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
+// Capabilities returns the client capabilities the shell declares in hello.
+// The copy keeps a caller from changing the offer the connection negotiates.
+func Capabilities() []protocol.Capability {
+	return slices.Clone(shellCapabilities)
+}
+
 // Offer only rendered families; the conversation discovers and maintains its
 // concrete conversation/results subscriptions after welcome.
 var shellCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "telegram_source", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}, {Name: "work", Version: "1.0"}}

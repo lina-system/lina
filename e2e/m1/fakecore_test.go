@@ -19,6 +19,7 @@ import (
 	"time"
 
 	"github.com/thisisjun786/lina/internal/fakecore"
+	"github.com/thisisjun786/lina/internal/tui/ui"
 	"github.com/thisisjun786/lina/kit/protocol"
 )
 
@@ -26,17 +27,11 @@ import (
 // controls the scenario; socket deadlines below are failure bounds only.
 type scenarioClock struct{ now time.Time }
 
-// tuiCapabilities mirrors the offers in internal/tui/ui's shellCapabilities.
-// fakecore matches hello payloads exactly, so a capability the shell adds must
-// be added here too; the TUI e2e fails otherwise.
-var tuiCapabilities = []protocol.Capability{protocol.SurfaceResultsCapability(), {Name: "records", Version: "1.0"}, {Name: "worker_lanes", Version: "1.0"}, {Name: "web", Version: "1.0"}, {Name: "agents", Version: "1.0"}, {Name: "memory", Version: "1.0"}, {Name: "exchanges", Version: "1.0"}, {Name: "channels", Version: "1.0"}, {Name: "accounts", Version: "1.0"}, {Name: "sign_in_relay", Version: "1.0"}, {Name: "conversation", Version: "1.0"}, {Name: "turn_activity", Version: "1.0"}, {Name: "running", Version: "1.0"}, {Name: "progress", Version: "1.0"}, {Name: "waiting", Version: "1.0"}, {Name: "work", Version: "1.0"}}
-
-// Keep the shared conformance corpus unchanged. The TUI scenario explicitly
-// offers its implemented capabilities, which Core may grant or not. A refused
-// 1.1 handshake reconnects once with the legacy envelope, so hello-legacy.json
-// carries the same offers without the fields only a newer minor version defines.
+// tuiFixtures scripts the peer against the shell's own hello offers, so a
+// capability added to the shell cannot silently drift from the TUI e2e.
 func tuiFixtures(t *testing.T) fstest.MapFS {
 	t.Helper()
+	capabilities := ui.Capabilities()
 	fixtures := fstest.MapFS{}
 	root := os.DirFS("../../protocol/fixtures/client/1.0")
 	err := fs.WalkDir(root, ".", func(path string, entry fs.DirEntry, err error) error {
@@ -61,7 +56,7 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 	}
 	hello := envelope.Payload.(protocol.Hello)
 	hello.ProtocolVersions = []string{"1.1", "1.0"}
-	hello.Capabilities = append([]protocol.Capability(nil), tuiCapabilities...)
+	hello.Capabilities = append([]protocol.Capability(nil), capabilities...)
 	// The real client sends its compiled platform, and Core admits the pair.
 	platform := runtime.GOOS + "/" + runtime.GOARCH
 	hello.Platform = &platform
@@ -74,7 +69,7 @@ func tuiFixtures(t *testing.T) fstest.MapFS {
 	legacyHello := hello
 	legacyHello.ProtocolVersions = []string{"1.0"}
 	legacyHello.Capabilities = nil
-	for _, capability := range tuiCapabilities {
+	for _, capability := range capabilities {
 		if capability.Name != "results" && capability.Name != "mocks" {
 			legacyHello.Capabilities = append(legacyHello.Capabilities, protocol.Capability{Name: capability.Name, Version: capability.Version})
 		}
