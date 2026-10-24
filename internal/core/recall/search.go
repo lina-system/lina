@@ -464,8 +464,10 @@ func holderCondition(scope Scope, alias string) string {
 }
 
 // Follow protected memory to its evidence, then protect every current view
-// that depends on any of those sources. Typed identities and UNION terminate
-// cycles without confusing equal ids belonging to different source kinds.
+// that depends on any of those sources. A replay copy or view_of event carries
+// its original's text, so protection also spreads both ways along those links
+// before anything cites them. Typed identities and UNION terminate cycles
+// without confusing equal ids belonging to different source kinds.
 func restrictedSources(scope Scope) (string, []any) {
 	return `sensitive(kind,id) AS (
  SELECT 'memory',m.id FROM memory_item m WHERE m.person=?
@@ -473,12 +475,24 @@ func restrictedSources(scope Scope) (string, []any) {
  UNION
  SELECT c.target_kind,c.target_id FROM cite c JOIN sensitive s ON c.view_kind=s.kind AND c.view_id=s.id
   WHERE c.dropped_revision IS NULL
+), copied(child,parent) AS MATERIALIZED (
+ SELECT e.id,e.replay_of FROM recall_doc d JOIN conv_event e ON e.id=d.source_id
+  WHERE d.person=? AND d.kind='event' AND d.replay=1 AND coalesce(e.replay_of,'')<>''
+ UNION ALL
+ SELECT e.id,e.replay_of FROM recall_pending q JOIN conv_event e ON e.id=q.source_id
+  WHERE q.kind='event' AND coalesce(e.replay_of,'')<>''
+ UNION ALL
+ SELECT event_id,target_id FROM ev_rel WHERE kind='view_of'
 ), restricted(kind,id) AS (
  SELECT kind,id FROM sensitive
  UNION
  SELECT c.view_kind,c.view_id FROM cite c JOIN restricted r ON c.target_kind=r.kind AND c.target_id=r.id
   WHERE c.dropped_revision IS NULL
-)`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel)}
+ UNION
+ SELECT 'event',l.child FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.parent
+ UNION
+ SELECT 'event',l.parent FROM copied l JOIN restricted r ON r.kind='event' AND r.id=l.child
+)`, []any{scope.Person, boolInt(scope.Projection), boolInt(scope.ExternalModel), scope.Person}
 }
 
 // scopeWhere applies the scope before matching. It is shared by the published

@@ -348,6 +348,31 @@ func TestSearchParentSummaryOfProtectedEventStaysOut(t *testing.T) {
 	}
 }
 
+func TestSearchProtectedEventCopiesAndViewsStayOut(t *testing.T) {
+	db := database(t)
+	insert := func(id, body, replayOf string) {
+		write(t, db, `INSERT INTO conv_event(id,conversation_id,person_id,agent_id,speaker_kind,surface,occurred_at,recorded_at,time_quality,origin,body,replay_of)
+ VALUES(?,'conversation','owner','agent','person','{"kind":"tui"}','2026-01-02T00:00:00Z','2026-01-02T00:00:00Z','recorded','{"kind":"native"}',?,nullif(?,''))`, id, body, replayOf)
+	}
+	insert("protected", "도서관 원본", "")
+	insert("public", "도서관 공개", "")
+	insert("indexed-view", "도서관 보기", "")
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind) VALUES('indexed-view','protected','view_of')`)
+	insert("copy", "도서관 사본", "protected")
+	remember(t, db, "agent", "", "도서관 비밀", memory.NeverLeaves, "protected")
+	drain(t, db)
+	insert("queued-view", "도서관 대기", "")
+	write(t, db, `INSERT INTO ev_rel(event_id,target_id,kind) VALUES('queued-view','protected','view_of')`)
+	if count(t, db, "SELECT count(*) FROM recall_pending WHERE source_id='queued-view'") != 1 {
+		t.Fatal("queued view must still be queued")
+	}
+	scope := recall.Scope{Person: "owner", Agent: "agent", Kinds: []recall.Kind{recall.Event}, ExternalModel: true, IncludeReplay: true}
+	ids := searchIDs(t, db, scope, "도서관", 0)
+	if !reflect.DeepEqual(ids, []string{"public"}) {
+		t.Fatalf("protected lineage reached external scope: %v", ids)
+	}
+}
+
 func TestSearchExcerptIsBoundedAndMasked(t *testing.T) {
 	db := database(t)
 	base := time.Unix(1700000000, 0)
