@@ -673,6 +673,15 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		fmt.Fprintln(diagnostic, "proc-job:", err)
 		return 70
 	}
+	// The owner-death goroutine starts only after the handshake. Until then a
+	// return would leave the loaded job and its directory behind, including
+	// when the owner is already gone and the control socket never connects.
+	claimed := false
+	defer func() {
+		if !claimed {
+			endJob(request.Domain, request.Label, request.Temp)
+		}
+	}()
 	if depth := jobDepth(); depth > 1 {
 		fmt.Fprintf(diagnostic, "proc-job: a job cannot start another job (depth %d)\n", depth)
 		return 70
@@ -697,6 +706,7 @@ func JobMain(args []string, diagnostic io.Writer) int {
 		fmt.Fprintln(diagnostic, "proc-job:", err)
 		return 70
 	}
+	claimed = true
 	// The owner closes the control socket when it tears the job down or dies.
 	// Either way the coalition is killed, and a job left registered is removed
 	// by a detached launchctl.

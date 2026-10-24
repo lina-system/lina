@@ -6,11 +6,13 @@ package proc
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 )
 
 // TestJobDefinitionNamesOneMoreNestingLevel guards the recursion defence: a job
@@ -87,5 +89,41 @@ func TestOwnerResolvesTheJobDirectory(t *testing.T) {
 	}
 	if got := ownerEnvironment([]string{"A=1"}); len(got) != 1 || got[0] != "A=1" {
 		t.Fatalf("explicit environment = %#v", got)
+	}
+}
+
+// TestJobMainDropsAnUnclaimedJob proves a helper that never reaches the owner
+// still removes the job. The control socket is absent, as it is when the owner
+// dies after loading the job and before the handshake.
+func TestJobMainDropsAnUnclaimedJob(t *testing.T) {
+	dir, err := os.MkdirTemp("", "lina-proc-unclaimed-")
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = os.RemoveAll(dir) })
+	payload, err := json.Marshal(jobRequest{
+		Path: "/bin/test", Ctl: filepath.Join(dir, "ctl.sock"),
+		Label: "com.lina.proc.unclaimed-test", Domain: "gui/501", Temp: dir,
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	path := filepath.Join(t.TempDir(), "request.json")
+	if err := os.WriteFile(path, payload, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if code := JobMain([]string{"--request", path}, io.Discard); code != 70 {
+		t.Fatalf("exit = %d, want 70", code)
+	}
+	deadline := time.Now().Add(2 * time.Second)
+	for {
+		_, err := os.Stat(dir)
+		if os.IsNotExist(err) {
+			return
+		}
+		if time.Now().After(deadline) {
+			t.Fatalf("job directory %s remains after the owner was already gone", dir)
+		}
+		time.Sleep(20 * time.Millisecond)
 	}
 }
