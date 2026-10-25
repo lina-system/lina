@@ -1,0 +1,8 @@
+# Copy to macs.yaml next to this file (macs.yaml is gitignored). Names are what the model sees.
+# host: local        -> run lina-helperctl on the Mac Hermes runs on, no ssh
+# host: <ssh alias>  -> ssh -T -o BatchMode=yes <alias> ...  (alias from the operator's ~/.ssh/config)
+macs:
+  hub:
+    host: local
+  agent-mac:
+    host: agent-mac

@@ -29,8 +29,9 @@ def failure(code, detail=None):
     return {'v': 1, 'ok': False, 'error': error}
 
 
-def command(host, action, args=(), out=False, json_args=None):
-    if not re.fullmatch(HOST_RE, host or ''):
+def command(host, action, args=(), out=False, json_args=None, local=False, connect_timeout=8):
+    """argv for one lina-helperctl call: over ssh, or run directly when local (host unused)."""
+    if not local and not re.fullmatch(HOST_RE, host or ''):
         raise UsageError('host must be a configured SSH alias or hostname')
     if action not in ACTIONS:
         raise UsageError('unsupported action')
@@ -52,7 +53,9 @@ def command(host, action, args=(), out=False, json_args=None):
         remote += ['--json', json.dumps(value, separators=(',', ':'), sort_keys=True)]
     if out:
         remote += ['--out', '-']
-    return ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5',
+    if local:
+        return remote
+    return ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=%d' % connect_timeout, '-o', 'ServerAliveInterval=5',
             '-o', 'ServerAliveCountMax=2', host, shlex.join(remote)]
 
 
@@ -68,9 +71,10 @@ def parse_response(raw):
     return value
 
 
-def invoke(host, action, args=(), out=None, runner=subprocess.run, json_args=None):
+def invoke(host, action, args=(), out=None, runner=subprocess.run, json_args=None, local=False,
+           connect_timeout=8):
     """Return (exit_code, response dict). Never retries."""
-    cmd = command(host, action, args, out is not None, json_args)
+    cmd = command(host, action, args, out is not None, json_args, local, connect_timeout)
     if out is not None and os.path.lexists(out):
         raise UsageError('refusing to overwrite existing file')
     try:

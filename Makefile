@@ -7,6 +7,7 @@ APP := build/LINA Helper.app
 test:
 	$(MAKE) -C unlock test
 	python3 -m unittest discover -s clients/tests -v
+	python3 -m unittest discover -s clients/hermes/tests -t clients/hermes/tests -v
 	python3 -m unittest discover -s tools/tests -v
 
 ifeq ($(shell uname -s),Darwin)
