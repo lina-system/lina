@@ -102,18 +102,19 @@ public struct Response: Codable, Sendable {
 public struct LineFrame {
     public static let limit = 64 * 1024
     private var buffer = Data()
-    public init() {}
+    private let maximumBytes: Int
+    public init(maximumBytes: Int = Self.limit) { self.maximumBytes = maximumBytes }
     public mutating func append(_ bytes: Data) throws -> Data? {
         if let end = bytes.firstIndex(of: 10) {
             let prefix = bytes[...end]
-            guard buffer.count + prefix.count <= Self.limit else {
-                throw HelperError(.badRequest, "request exceeds 64 KiB")
+            guard buffer.count + prefix.count <= maximumBytes else {
+                throw HelperError(.badRequest, "JSON frame exceeds size limit")
             }
             buffer.append(contentsOf: prefix.dropLast())
             return buffer
         }
-        guard buffer.count + bytes.count < Self.limit else {
-            throw HelperError(.badRequest, "request exceeds 64 KiB")
+        guard buffer.count + bytes.count < maximumBytes else {
+            throw HelperError(.badRequest, "JSON frame exceeds size limit")
         }
         buffer.append(bytes)
         return nil

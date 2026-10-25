@@ -2,6 +2,8 @@ import Foundation
 import Darwin
 
 public enum Transport {
+    // AX trees can exceed the request ceiling; responses remain bounded.
+    public static let responseLimit = 128 * 1024 * 1024
     public static let ioTimeout: TimeInterval = 3
 
     static func prepare(_ fd: Int32) throws {
@@ -47,9 +49,9 @@ public enum Transport {
         }
     }
 
-    public static func readLine(_ fd: Int32, timeout: TimeInterval = ioTimeout) throws -> Data {
+    public static func readLine(_ fd: Int32, timeout: TimeInterval = ioTimeout, maximumBytes: Int = LineFrame.limit) throws -> Data {
         let deadline = ProcessInfo.processInfo.systemUptime + timeout
-        var frame = LineFrame()
+        var frame = LineFrame(maximumBytes: maximumBytes)
         var bytes = [UInt8](repeating: 0, count: 4096)
         while true {
             try wait(fd, events: Int16(POLLIN), deadline: deadline)
@@ -99,7 +101,7 @@ public enum Transport {
         guard line.count <= LineFrame.limit else { throw HelperError(.badRequest, "request exceeds 64 KiB") }
         try write(line, to: fd)
         // Includes the server's action deadline and its 3-second response write budget.
-        let data = try readLine(fd, timeout: request.action == "screenshot" ? 18 : 13)
+        let data = try readLine(fd, timeout: request.action == "screenshot" ? 18 : 13, maximumBytes: responseLimit)
         guard let response = try? JSONDecoder().decode(Response.self, from: data), response.v == 1,
               response.id == request.id || (!response.ok && response.id.isEmpty),
               response.ok ? (response.result != nil && response.error == nil) : response.error != nil else {

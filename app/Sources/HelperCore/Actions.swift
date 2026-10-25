@@ -33,13 +33,22 @@ public final class ActionDispatcher: Sendable {
         guard policy.allows(request.action) else {
             return .failure(id: request.id, HelperError(.notAllowed, "action disabled by policy"))
         }
+        let limits = policy.limits(for: request.action)
+        var timeout = action.timeout
+        if let value = limits["timeout_s"] {
+            guard case .number(let seconds) = value, seconds.isFinite, seconds > 0 else {
+                return .failure(id: request.id, HelperError(.badRequest, "invalid policy timeout_s"))
+            }
+            // Policy can tighten the action's built-in upper bound, never widen it.
+            timeout = min(timeout, seconds)
+        }
         guard slots.wait(timeout: .now()) == .success else {
             return .failure(id: request.id, HelperError(.busy, "action capacity reached"))
         }
         let completion = DispatchSemaphore(value: 0)
         let result = Locked<Response?>(nil)
-        let context = ActionContext(args: request.args, limits: policy.limits(for: request.action),
-                                    deadline: ProcessInfo.processInfo.systemUptime + action.timeout)
+        let context = ActionContext(args: request.args, limits: limits,
+                                    deadline: ProcessInfo.processInfo.systemUptime + timeout)
         DispatchQueue.global().async { [slots] in
             defer { slots.signal(); completion.signal() }
             let response: Response
@@ -52,7 +61,7 @@ public final class ActionDispatcher: Sendable {
             catch { response = .failure(id: request.id, HelperError(.internalError, "action failed")) }
             result.withLock { $0 = response }
         }
-        guard completion.wait(timeout: .now() + action.timeout) == .success else {
+        guard completion.wait(timeout: .now() + timeout) == .success else {
             return .failure(id: request.id, HelperError(.timeout, "action deadline exceeded"))
         }
         return result.withLock { $0! }

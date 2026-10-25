@@ -7,6 +7,7 @@ public enum SystemActions {
     public static let version = "0.1.0"
     public static func registry(
         home: String,
+        outbox: Outbox? = nil,
         probe: @escaping @Sendable () -> [String: JSONValue] = {
             ["accessibility": .bool(AXIsProcessTrusted()), "screen_recording": .bool(CGPreflightScreenCaptureAccess())]
         },
@@ -14,7 +15,14 @@ public enum SystemActions {
     ) -> [String: Action] {
         let started = ProcessInfo.processInfo.systemUptime
         let alert = ScreenAlertState(path: home + "/screen-recording-first-grant.json")
+        let outbox = outbox ?? Outbox(home: home)
         return [
+            "screenshot": ScreenshotAction.make(outbox: outbox, probe: probe),
+            "ax.tree": AXTreeAction.make(probe: probe),
+            "ax.press": AXPressAction.make(probe: probe),
+            "input.click": InputClickAction.make(probe: probe),
+            "input.keys": InputKeysAction.make(probe: probe),
+            "app.open": AppOpenAction.make(),
             "status": Action { context in
                 guard context.args.isEmpty else { throw HelperError(.badRequest, "status takes no arguments") }
                 let grants = probe()

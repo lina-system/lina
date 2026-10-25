@@ -74,9 +74,63 @@ regular, root-owned file without group/world write bits is accepted; symlinks,
 invalid JSON and unreadable files fail closed to `status` and `permissions`.
 `LINA_HELPER_POLICY` overrides that path only when `LINA_HELPER_DEV=1`; ownership
 checks still apply. Action implementations receive their policy limits and a
-deadline through `ActionContext`. Only `status` and `permissions` are implemented
-in this issue; future action files register handlers in `ActionDispatcher`.
+deadline through `ActionContext`. The helper serves `status`, `permissions`,
+`screenshot`, `ax.tree`, `ax.press`,
+`input.click`, `input.keys`, and `app.open` through `ActionDispatcher`.
 
 ## Status
 
 v0 in progress. Milestone "LINA Helper v0" ends when the helper is installed on the agent's Mac, its grants were given once and survive a reboot, and one Hermes request (screenshot or accessibility click) succeeds.
+
+## Desktop actions
+
+Enable actions with policy objects, for example:
+
+```json
+{"actions":{"screenshot":{"timeout_s":15},"ax.tree":{"max_depth":8,"max_nodes":2000},"ax.press":{},"input.click":{},"input.keys":{},"app.open":{}}}
+```
+
+Screenshot requires Screen Recording; AX and input actions require Accessibility.
+`app.open` needs no privacy grant. Missing grants return `permission_missing` with
+`screen_recording` or `accessibility`. Every action rejects unknown argument keys.
+Numeric arguments require `--json`; `--arg` supplies strings.
+
+```sh
+lina-helperctl screenshot --arg display=main --out - > screenshot.png
+lina-helperctl screenshot --json '{"window":123}' --out window.png
+lina-helperctl ax.tree --arg app=frontmost --json '{"depth":4,"max_nodes":100}'
+lina-helperctl ax.press --arg app=com.example.Test --arg path=0/0/3 --arg expect_role=AXButton
+lina-helperctl input.click --json '{"x":100,"y":200,"button":"left","count":2}'
+lina-helperctl input.keys --json '{"text":"Hello"}'
+lina-helperctl input.keys --json '{"key":"tab","modifiers":["shift"]}'
+lina-helperctl app.open --arg bundle_id=com.example.Test
+```
+
+Screenshot defaults to the main display and accepts a numeric display ID or window
+ID, exclusively. It uses SCScreenshotManager (macOS 14+) and returns PNG `path`,
+`width`, and `height`. Outbox directories are `0700`, files `0600`; files older
+than ten minutes are removed on startup, each authenticated decoded request, and
+hourly. `--out -` writes only file bytes to stdout and the JSON response as the
+last line of stderr.
+
+`ax.tree` returns `elements`, including the app root at path `0`; each suffix is
+a zero-based child index (`0/3/1`). Depth zero includes just the root. Each element
+has `path`, `role`, `subrole`, `title`, `value`, `frame` (`x`, `y`, `width`, `height`
+in global points), and `enabled`; unavailable attributes are `null`. Strings are
+truncated to 512 characters. Depth and node budgets default to the policy limits
+(8 and 2000 when absent). Requests above those limits are rejected. Defensive
+ceilings are depth 64 and 10,000 nodes. `ax.press` resolves a path afresh and can
+check `expect_role`; paths are positions, not persistent element identities.
+
+Clicks default to left/single and accept left/right, count 1/2. Keys accept text
+up to 512 characters, or one of return, tab, escape, space, delete, up, down, left,
+right, home, end, pageup, pagedown, f1–f12. Named keys accept a unique subset of
+cmd, shift, option, ctrl in `modifiers`; text does not accept modifiers.
+Policy `timeout_s` can shorten the built-in deadline (15 seconds for screenshots,
+10 seconds otherwise). AX responses have a separate 128 MiB transport ceiling;
+requests retain their 64 KiB limit.
+
+For manual checks against a running helper with grants and enabled policy, use
+`tools/smoke.sh BUNDLE_ID AX_PATH X Y [EXPECT_ROLE]`. Set `LINA_HELPERCTL` if the
+CLI is not on PATH. Pick a disposable window: the script activates it, presses
+the supplied element, clicks the supplied point, and types. This is not run by CI.

@@ -6,6 +6,7 @@ public final class HelperServer: @unchecked Sendable {
     private let configuration: Configuration
     private let dispatcher: ActionDispatcher
     private let audit: AuditLog
+    private let outbox: Outbox?
     private let own: CodeIdentity
     private let inspect: @Sendable (Int32) -> Peer
     private let queue = DispatchQueue(label: "app.lina-os.helper.listener")
@@ -16,9 +17,10 @@ public final class HelperServer: @unchecked Sendable {
     private let logger = Logger(subsystem: "app.lina-os.helper", category: "server")
 
     public init(configuration: Configuration, dispatcher: ActionDispatcher, audit: AuditLog,
-                own: CodeIdentity = PeerAuthorization.ownIdentity(), capacity: Int = 16,
+                outbox: Outbox? = nil, own: CodeIdentity = PeerAuthorization.ownIdentity(), capacity: Int = 16,
                 inspect: @escaping @Sendable (Int32) -> Peer = PeerAuthorization.inspect(socket:)) {
         self.configuration = configuration; self.dispatcher = dispatcher; self.audit = audit
+        self.outbox = outbox
         self.own = own; self.inspect = inspect; clients = DispatchSemaphore(value: capacity)
     }
 
@@ -27,6 +29,7 @@ public final class HelperServer: @unchecked Sendable {
             guard source == nil else { throw HelperError(.busy, "server already started") }
             let directory = (configuration.socketPath as NSString).deletingLastPathComponent
             try PrivateFiles.directory(configuration.home)
+            try outbox?.cleanup()
             try PrivateFiles.directory(directory)
             let lockPath = directory + "/helper.lock"
             let lockFD = open(lockPath, O_CREAT | O_RDWR | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC, 0o600)
@@ -67,6 +70,8 @@ public final class HelperServer: @unchecked Sendable {
                     guard let self else { return }
                     do { try audit.cleanup() }
                     catch { logger.error("audit cleanup failed") }
+                    do { try outbox?.cleanup() }
+                    catch { logger.error("outbox cleanup failed") }
                 }
                 cleanupTimer = timer; timer.resume()
             } catch {
@@ -122,6 +127,7 @@ public final class HelperServer: @unchecked Sendable {
             guard authorized else { throw HelperError(.notAllowed, "peer identity refused") }
             let decoded = try Request.decode(Transport.readLine(fd))
             request = decoded
+            try outbox?.cleanup()
             response = dispatcher.dispatch(decoded, policy: Policy.load(path: configuration.policyPath))
         } catch let error as HelperError { response = .failure(id: request?.id ?? "", error) }
         catch { response = .failure(id: request?.id ?? "", HelperError(.internalError, "request failed")) }

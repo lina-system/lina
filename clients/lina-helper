@@ -12,7 +12,8 @@ CTL = '/usr/local/bin/lina-helperctl'
 ACTIONS = ('status', 'permissions', 'screenshot', 'ax.tree', 'ax.press', 'input.click', 'input.keys', 'app.open')
 HOST_RE = r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}'
 KEY_RE = r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}'
-MAX_JSON = 1 << 20
+# Same ceiling as lina-helperctl's response frame (app Transport.responseLimit).
+MAX_JSON = 128 << 20
 TIMEOUT = 30
 SCREENSHOT_TIMEOUT = 45
 

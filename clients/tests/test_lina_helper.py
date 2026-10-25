@@ -112,10 +112,17 @@ class MainTests(unittest.TestCase):
         self.assertEqual(fake.calls[0][1]['timeout'], 45)
 
     def test_oversized_and_invalid(self):
-        big = b'{"v":1,"ok":true,"pad":"' + b'a' * (1 << 20) + b'"}'
+        big = b'{"v":1,"ok":true,"pad":"' + b'a' * (128 << 20) + b'"}'
         for raw in [big, b'not json', b'', b'[]', b'{"v":2,"ok":true}', b'{"v":1,"ok":"yes"}']:
             code, value = run(['--host', 'h', 'status'], Fake(Result(raw)))
             self.assertEqual((code, value['error']['code']), (1, 'invalid_remote_response'), raw[:20])
+
+    def test_large_ax_tree_response_is_accepted(self):
+        node = {'path': '0/1', 'role': 'AXStaticText', 'title': 't' * 512, 'value': 'v' * 512}
+        raw = json.dumps({'v': 1, 'ok': True, 'result': {'elements': [node] * 2000}}).encode()
+        self.assertGreater(len(raw), 2 << 20)
+        code, value = run(['--host', 'h', 'ax.tree', '--arg', 'app=frontmost'], Fake(Result(raw)))
+        self.assertEqual((code, len(value['result']['elements'])), (0, 2000))
 
     def test_ok_with_nonzero_exit_is_invalid(self):
         code, value = run(['--host', 'h', 'status'], Fake(Result(OK, b'', 255)))

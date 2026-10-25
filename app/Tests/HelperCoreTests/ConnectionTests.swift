@@ -13,7 +13,7 @@ final class ConnectionTests: XCTestCase {
         let log = try AuditLog(directory: config.auditDirectory)
         let dispatcher = ActionDispatcher(actions: ["status": Action { _ in ["test": .bool(true)] },
                                                      "input.keys": Action { _ in [:] }])
-        let server = HelperServer(configuration: config, dispatcher: dispatcher, audit: log,
+        let server = HelperServer(configuration: config, dispatcher: dispatcher, audit: log, outbox: Outbox(home: home),
                                   own: .init(valid: true, team: nil)) { _ in
             var peer = Peer(uid: getuid()); peer.identity = .init(valid: authorized, team: nil)
             return peer
@@ -47,6 +47,20 @@ final class ConnectionTests: XCTestCase {
             XCTAssertEqual(entry["caller"], .string("test"))
             XCTAssertEqual(entry["peer"]?.object?["ssh"], .string("test-client"))
             XCTAssertEqual(entry["peer"]?.object?["parent_pid"], .number(42))
+        }
+    }
+
+    func testEveryRequestCleansOutboxEvenWhenPolicyDeniesAction() throws {
+        for action in ["status", "input.keys", "unknown"] {
+            try connection { fd, directory in
+                let home = (directory as NSString).deletingLastPathComponent
+                let outbox = Outbox(home: home)
+                let expired = try outbox.writePNG(Data([1]))
+                try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-601)], ofItemAtPath: expired)
+                try Transport.write(JSONEncoder().encode(Request(action: action)) + Data([10]), to: fd)
+                _ = try Transport.readLine(fd)
+                XCTAssertFalse(FileManager.default.fileExists(atPath: expired))
+            }
         }
     }
 
