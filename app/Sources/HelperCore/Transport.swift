@@ -97,7 +97,7 @@ public enum Transport {
     public static func exchange(_ request: Request, path: String) throws -> Response {
         let fd = try connect(path: path)
         defer { close(fd) }
-        let line = try JSONEncoder().encode(request) + Data([10])
+        let line = try WireJSON.encode(request)
         guard line.count <= LineFrame.limit else { throw HelperError(.badRequest, "request exceeds 64 KiB") }
         try write(line, to: fd)
         // Includes the server's action deadline and its 3-second response write budget.

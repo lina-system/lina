@@ -94,7 +94,16 @@ public struct Response: Codable, Sendable {
     public static func failure(id: String = "", _ error: HelperError) -> Self {
         Self(v: 1, id: id, ok: false, result: nil, error: error)
     }
-    public func line() throws -> Data { try JSONEncoder().encode(self) + Data([10]) }
+    public func line() throws -> Data { try WireJSON.encode(self) }
+}
+
+/// One encoder for every wire line: sorted keys, so the same value always gives the same bytes.
+enum WireJSON {
+    static func encode<T: Encodable>(_ value: T) throws -> Data {
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try encoder.encode(value) + Data([10])
+    }
 }
 
 /// The limit includes the terminating newline. Bytes after the first line are ignored:

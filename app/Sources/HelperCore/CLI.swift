@@ -11,7 +11,7 @@ public struct CLIOptions: Sendable {
         guard let policy = response.result?["policy"]?.object else {
             throw HelperError(.internalError, "status did not return a policy")
         }
-        return try JSONEncoder().encode(["policy": JSONValue.object(policy)]) + Data([10])
+        return try WireJSON.encode(["policy": JSONValue.object(policy)])
     }
     public static func parse(_ arguments: [String], environment: [String: String] = ProcessInfo.processInfo.environment) throws -> Self {
         guard let action = arguments.first, !action.isEmpty, !action.hasPrefix("-") else {
