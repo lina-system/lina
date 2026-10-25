@@ -1,6 +1,6 @@
 # Installing LINA Helper
 
-Build and sign on the hub Mac, install on the agent's Mac. Design: [design.md](design.md) sections 2, 4 and 11.
+Build and sign on the hub Mac. Install with root on the agent's Mac, or as the current admin user on another Mac. Design: [design.md](design.md) sections 2, 4 and 11.
 
 `tools/sign.py` and `tools/install.py` use only the Python standard library (`/usr/bin/python3` is enough). The team ID `TEAMID` is not a secret.
 
@@ -20,6 +20,8 @@ python3 tools/sign.py --identity 'Developer ID Application: <owner> (TEAMID)' \
 ditto -c -k --keepParent 'build/LINA Helper.app' build/LINA-Helper.zip
 scp build/LINA-Helper.zip <user>@<host>:/tmp/lina-helper/
 scp -r tools <user>@<host>:/tmp/lina-helper/
+ssh <user>@<host> mkdir -p /tmp/lina-helper/app/Resources
+scp app/Resources/PolicyProfiles.json <user>@<host>:/tmp/lina-helper/app/Resources/
 ```
 
 Create `/tmp/lina-helper` on the agent's Mac first if it does not exist (`ssh <user>@<host> mkdir -p /tmp/lina-helper`). Use `ditto`/`scp` of the zip, not `scp -r` of the bundle, so symlinks, resource forks and the signature stay intact.
@@ -47,6 +49,96 @@ sudo /usr/bin/python3 tools/install.py status --user <user>
 ```
 
 `status` prints JSON: installed version, designated requirement, whether the agent is loaded, and the output of `lina-helperctl permissions` run as `<user>`.
+
+## User mode over SSH (no sudo)
+
+Use an SSH alias such as `target-mac` that connects as the admin account which
+will run the helper. That same account must already be logged into an Aqua GUI
+session. An SSH login alone does not create the `gui/<uid>` launchd domain. The
+account needs write access to `/Applications` (normally `root:admin 0775`).
+
+After building and signing on the hub Mac as above:
+
+```sh
+ditto -c -k --keepParent 'build/LINA Helper.app' build/LINA-Helper.zip
+ssh target-mac mkdir -p /tmp/lina-helper/app/Resources
+scp build/LINA-Helper.zip target-mac:/tmp/lina-helper/
+scp -r tools target-mac:/tmp/lina-helper/
+scp app/Resources/PolicyProfiles.json target-mac:/tmp/lina-helper/app/Resources/
+ssh target-mac
+cd /tmp/lina-helper
+ditto -x -k LINA-Helper.zip .
+python3 tools/install.py install --mode user --team TEAMID --app 'LINA Helper.app'
+python3 tools/install.py status --mode user
+'/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl' policy
+```
+
+`--mode` defaults to `root`; use `--mode user` for **every** user-mode command.
+User mode refuses effective UID 0. It derives the account and home directory
+from the current effective UID; `--user` is optional and must name that same
+account if supplied. It uses the same signature, identifier and designated
+requirement checks as root mode.
+
+The installed bundle remains `/Applications/LINA Helper.app`, owned by the
+invoking user. Staging and rollback bundles live in
+`/Applications/.lina-helper-<uid>-staging/` and
+`/Applications/.lina-helper-<uid>-previous/`. Keeping both next to the app makes
+all bundle swaps same-volume renames even when the home directory is on a
+separate volume. Staging is removed after use; the previous bundle stays for
+rollback. The receipt is
+`~/Library/Application Support/LINA Helper/install/state.json` (`0600`).
+
+The LaunchAgent is `~/Library/LaunchAgents/app.lina-os.helper.plist`, user-owned
+`0644`, with the same contents as the root-mode plist. The installer uses
+`launchctl bootout/bootstrap gui/<current uid>`, probes permissions by running
+the bundled CLI directly as the current user, and creates neither a
+`/usr/local/bin` link nor a root policy file. It never changes ownership to root.
+
+For later versions, copy and unzip the signed bundle again, then run on the target:
+
+```sh
+python3 tools/install.py upgrade --mode user --app 'LINA Helper.app'
+python3 tools/install.py rollback --mode user
+python3 tools/install.py status --mode user
+# When removing the installation:
+python3 tools/install.py remove --mode user
+```
+
+Upgrade and rollback compare grants before and after exactly as root mode does;
+`--skip-grant-check` is the explicit opt-out. Remove deletes only recorded
+installer paths, leaving root policies and helper state, outbox and audit logs
+alone. Install mode does not migrate an existing root installation to user mode.
+
+## Policy profiles
+
+When `/Library/Application Support/LINA Helper/policy.json` does not exist, the
+helper uses built-in **observe**: `status`, `permissions`, `screenshot`
+(`timeout_s: 15`) and `ax.tree` (`max_depth: 8`, `max_nodes: 2000`). Input stays
+disabled. A safe root-owned policy can select `{"profile":"observe"}` or
+`{"profile":"operate"}`. Operate adds `ax.press`, `input.click`, `input.keys`
+and `app.open`, each with an empty limits object. `status` and `permissions` are
+always served. The defaults live in `app/Resources/PolicyProfiles.json`, used by
+both the installer and the app and copied into the signed bundle. Include this
+resource at the repo-relative path when copying `tools/` to a deployment folder.
+
+The v0 `{"actions":{...}}` policy still replaces the defaults and reports the
+profile as `custom`. Root mode continues writing the exact v0 operate-equivalent
+policy only if none exists. A file with both `profile` and `actions`, an unknown
+profile, invalid JSON, non-root ownership, group/other write permission, a
+symlink, a non-regular file, or size over 1 MiB is **restricted** to `status` and
+`permissions`. Other read failures also restrict access.
+
+`status` includes `"policy":{"profile":"observe","source":"builtin"}`.
+Safe root policies report source `root`; unsafe or invalid policies report
+`{"profile":"restricted","source":"restricted"}`. The CLI shortcut `policy`
+sends a regular `status` request and prints only `{"policy":...}`. Policy files
+are reread on every request; no restart is needed. Team-signed helpers ignore
+`LINA_HELPER_DEV` and `LINA_HELPER_POLICY` entirely. Only ad-hoc builds honour
+these development overrides, and file trust checks still apply.
+
+Enabling operate in user mode requires a root policy written separately by a
+person on that Mac, as described in [fleet.md](fleet.md), section 4. Never run
+executables from a user-owned helper bundle as root.
 
 ## 4. Person step: switch on the permissions (once)
 

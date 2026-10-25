@@ -7,9 +7,10 @@ public struct Configuration: Sendable {
     public let policyPath: String
     public let auditDirectory: String
     public let development: Bool
-    public init(environment: [String: String] = ProcessInfo.processInfo.environment) {
+    public init(environment: [String: String] = ProcessInfo.processInfo.environment,
+                ownTeam: String? = PeerAuthorization.ownIdentity().team) {
         let userHome = FileManager.default.homeDirectoryForCurrentUser.path
-        development = environment["LINA_HELPER_DEV"] == "1"
+        development = (ownTeam == nil || ownTeam == "") && environment["LINA_HELPER_DEV"] == "1"
         home = environment["LINA_HELPER_HOME"] ?? userHome + "/Library/Application Support/LINA Helper"
         socketPath = home + "/run/helper.sock"
         policyPath = development ? environment["LINA_HELPER_POLICY"] ?? Self.defaultPolicy : Self.defaultPolicy

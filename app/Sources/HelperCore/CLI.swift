@@ -4,6 +4,15 @@ import Darwin
 public struct CLIOptions: Sendable {
     public let request: Request
     public let output: String?
+    public let policyOnly: Bool
+
+    public func responseLine(_ response: Response) throws -> Data {
+        guard policyOnly, response.ok else { return try response.line() }
+        guard let policy = response.result?["policy"]?.object else {
+            throw HelperError(.internalError, "status did not return a policy")
+        }
+        return try JSONEncoder().encode(["policy": JSONValue.object(policy)]) + Data([10])
+    }
     public static func parse(_ arguments: [String], environment: [String: String] = ProcessInfo.processInfo.environment) throws -> Self {
         guard let action = arguments.first, !action.isEmpty, !action.hasPrefix("-") else {
             throw HelperError(.badRequest, "usage: lina-helperctl ACTION [--arg k=v]... [--json ARGS] [--out PATH|-] [--caller NAME]")
@@ -35,9 +44,12 @@ public struct CLIOptions: Sendable {
             }
             index += 2
         }
-        let request = Request(action: action, args: args, caller: caller, sshClient: environment["SSH_CLIENT"], parentPID: getppid())
+        if action == "policy", output != nil {
+            throw HelperError(.badRequest, "policy does not return a file")
+        }
+        let request = Request(action: action == "policy" ? "status" : action, args: args, caller: caller, sshClient: environment["SSH_CLIENT"], parentPID: getppid())
         _ = try Request.decode(JSONEncoder().encode(request))
-        return Self(request: request, output: output)
+        return Self(request: request, output: output, policyOnly: action == "policy")
     }
 }
 
@@ -48,7 +60,7 @@ public enum CLI {
             let options = try CLIOptions.parse(arguments, environment: environment)
             id = options.request.id
             let response = try Transport.exchange(options.request, path: Configuration(environment: environment).socketPath)
-            let json = try response.line()
+            let json = try options.responseLine(response)
             // A byte stream uses stdout; its accompanying JSON goes to stderr.
             let jsonHandle = options.output == "-" ? FileHandle.standardError : FileHandle.standardOutput
             if response.ok, let output = options.output {

@@ -54,7 +54,8 @@ public final class ActionDispatcher: Sendable {
             let response: Response
             do {
                 try context.checkDeadline()
-                let value = try action.run(context)
+                var value = try action.run(context)
+                if request.action == "status" { value["policy"] = .object(policy.metadata) }
                 try context.checkDeadline()
                 response = .success(id: request.id, result: value)
             } catch let error as HelperError { response = .failure(id: request.id, error) }

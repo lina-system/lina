@@ -1,0 +1,12 @@
+{
+  "observe": {
+    "screenshot": {"timeout_s": 15},
+    "ax.tree": {"max_depth": 8, "max_nodes": 2000}
+  },
+  "operate_additions": {
+    "ax.press": {},
+    "input.click": {},
+    "input.keys": {},
+    "app.open": {}
+  }
+}

@@ -72,11 +72,18 @@ The policy schema is `{"actions":{"action.name":{"limit_name":123}}}`. The
 default file is `/Library/Application Support/LINA Helper/policy.json`. Only a
 regular, root-owned file without group/world write bits is accepted; symlinks,
 invalid JSON and unreadable files fail closed to `status` and `permissions`.
-`LINA_HELPER_POLICY` overrides that path only when `LINA_HELPER_DEV=1`; ownership
-checks still apply. Action implementations receive their policy limits and a
+A missing policy selects built-in `observe` (`status`, `permissions`, `screenshot`
+and `ax.tree`). A safe file can also select `{"profile":"observe"}` or
+`{"profile":"operate"}`; operate adds all v0 input actions and `app.open`.
+`status` reports the active policy and `lina-helperctl policy` prints just that
+metadata. `LINA_HELPER_POLICY` overrides the path only in ad-hoc builds when
+`LINA_HELPER_DEV=1`; team-signed helpers ignore both variables. Ownership checks
+still apply. Action implementations receive their policy limits and a
 deadline through `ActionContext`. The helper serves `status`, `permissions`,
 `screenshot`, `ax.tree`, `ax.press`,
 `input.click`, `input.keys`, and `app.open` through `ActionDispatcher`.
+
+See [docs/install.md](docs/install.md) for root and admin-user installation over SSH.
 
 ## Status
 

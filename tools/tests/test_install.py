@@ -383,5 +383,175 @@ class StatusRemoveTests(InstallTestCase):
         self.assertTrue(self.path(APP).is_dir())
 
 
+class UserModeTests(InstallTestCase):
+    def setUp(self):
+        super().setUp()
+        self.b.is_root = lambda: False
+        self.b.current_user = lambda: ('test-admin', 501, '/Users/test-admin')
+        self.user = self.b.configure_mode('user')
+        self.paths = self.b.paths
+
+    def install(self, **kw):
+        return install.cmd_install(self.b, self.user, self.candidate(**kw), TEAM, False)
+
+    def test_user_layout_ownership_and_plist(self):
+        self.install()
+        self.assertEqual(self.user, 'test-admin')
+        self.assertEqual(self.paths.AGENT_PLIST, '/Users/test-admin/Library/LaunchAgents/app.lina-os.helper.plist')
+        self.assertEqual(self.paths.STATE, '/Users/test-admin/Library/Application Support/LINA Helper/install/state.json')
+        for path in [self.paths.STAGED, self.paths.PREVIOUS]:
+            self.assertEqual(Path(path).parent.parent, Path('/Applications'))
+        agent = plistlib.loads(self.path(self.paths.AGENT_PLIST).read_bytes())
+        self.assertEqual(agent, {'Label': install.LABEL, 'ProgramArguments': [install.EXE, 'serve'],
+                                'KeepAlive': True, 'RunAtLoad': True,
+                                'LimitLoadToSessionType': 'Aqua', 'ProcessType': 'Interactive'})
+        self.assertEqual(stat.S_IMODE(self.path(self.paths.AGENT_PLIST).stat().st_mode), 0o644)
+        self.assertEqual(stat.S_IMODE(self.path(self.paths.STATE).stat().st_mode), 0o600)
+        for path in [APP, self.paths.AGENT_PLIST, self.paths.STATE]:
+            self.assertEqual(self.path(path).stat().st_uid, os.geteuid())
+        self.assertIn(('launchctl', 'bootstrap', 'gui/501', self.paths.AGENT_PLIST), self.b.events)
+        self.assertFalse(any(e[0] in ('chown', 'chown_tree', 'symlink') for e in self.b.events))
+        for path in [POLICY, CTL_LINK, AGENT_PLIST, STATE]:
+            self.assertFalse(self.path(path).exists(), path)
+
+    def test_user_mode_rejects_root_or_other_user_before_writes(self):
+        with self.assertRaisesRegex(install.InstallError, 'current user'):
+            self.b.configure_mode('user', 'another-user')
+        self.assertEqual(self.b.configure_mode('user', 'test-admin'), 'test-admin')
+        self.b.is_root = lambda: True
+        with self.assertRaisesRegex(install.InstallError, 'root'):
+            self.b.configure_mode('user')
+        self.assertEqual(self.b.events, [])
+
+    def test_user_signature_checks_are_identical(self):
+        for kwargs, message in [({'adhoc': True}, 'ad-hoc'), ({'team': 'ABCDE12345'}, 'requirement'),
+                                ({'bundle_id': 'com.example.other'}, 'bundle ID'),
+                                ({'ctl_identifier': 'com.example.other'}, 'identifier')]:
+            with self.assertRaisesRegex(install.InstallError, message):
+                self.install(**kwargs)
+            self.assertFalse(self.path(APP).exists())
+
+    def test_upgrade_rollback_status_remove(self):
+        self.install(version='1.0')
+        self.b.perm_results = [{'accessibility': True, 'screen_recording': True}]
+        self.b.events.clear()
+        install.cmd_upgrade(self.b, self.user, self.candidate(version='2.0'), False)
+        order = [self.b.events.index(e) for e in [
+            ('launchctl', 'bootout', 'gui/501/app.lina-os.helper'),
+            ('rename', APP, self.paths.PREVIOUS), ('rename', self.paths.STAGED, APP),
+            ('launchctl', 'bootstrap', 'gui/501', self.paths.AGENT_PLIST)]]
+        self.assertEqual(order, sorted(order))
+        self.assertEqual(self.version(APP), '2.0')
+        self.assertEqual(self.version(self.paths.PREVIOUS), '1.0')
+        self.assertIn(('run_as_user', self.user, install.CTL_IN_APP, 'permissions'), self.b.events)
+        install.cmd_rollback(self.b, self.user)
+        self.assertEqual(self.version(APP), '1.0')
+        self.assertEqual(self.version(self.paths.PREVIOUS), '2.0')
+        status = json.loads(install.cmd_status(self.b, self.user))
+        self.assertTrue(status['installed'])
+        self.assertTrue(status['agent_loaded'])
+        self.assertTrue(status['previous'])
+        self.assertEqual(status['user'], self.user)
+        self.assertEqual(status['permissions'], self.b.perm_results[0])
+        # Even a tampered user state cannot delete root-mode artifacts or other home files.
+        self.path(POLICY).parent.mkdir(parents=True)
+        self.path(POLICY).write_text('keep root policy')
+        state = json.loads(self.path(self.paths.STATE).read_text())
+        state['created'].append({'path': POLICY, 'kind': 'file'})
+        self.path(self.paths.STATE).write_text(json.dumps(state))
+        install.cmd_remove(self.b, self.user)
+        for path in [APP, self.paths.PREVIOUS, self.paths.AGENT_PLIST, self.paths.STATE]:
+            self.assertFalse(self.path(path).exists(), path)
+        self.assertEqual(self.path(POLICY).read_text(), 'keep root policy')
+        self.assertFalse(any(e[0] in ('chown', 'chown_tree', 'symlink') for e in self.b.events))
+
+    def test_upgrade_and_rollback_compare_grants(self):
+        self.install()
+        self.b.perm_results = [None]
+        with self.assertRaisesRegex(install.InstallError, 'did not answer'):
+            install.cmd_upgrade(self.b, self.user, self.candidate(version='2.0'), False)
+        self.assertEqual(self.version(APP), '1.0')
+        self.b.perm_results = [{'accessibility': True}, {'accessibility': False}]
+        with self.assertRaisesRegex(install.InstallError, 'permissions differ'):
+            install.cmd_upgrade(self.b, self.user, self.candidate(version='2.0'), False)
+        self.assertEqual(self.version(self.paths.PREVIOUS), '1.0')
+        self.b.perm_results = [{'accessibility': False}, {'accessibility': True}]
+        with self.assertRaisesRegex(install.InstallError, 'permissions differ'):
+            install.cmd_rollback(self.b, self.user)
+        self.assertEqual(self.version(APP), '1.0')
+
+    def test_upgrade_rejects_requirement_change_before_bootout(self):
+        self.install()
+        self.b.events.clear()
+        with self.assertRaisesRegex(install.InstallError, 'requirement'):
+            install.cmd_upgrade(self.b, self.user,
+                                self.candidate(req=requirement(TEAM) + ' and info[x] = "y"'), False)
+        self.assertEqual(self.version(APP), '1.0')
+        self.assertFalse(any(e[:2] == ('launchctl', 'bootout') for e in self.b.events))
+
+    def test_swap_failure_restores_installed_bundle(self):
+        self.install()
+        self.b.perm_results = [{'accessibility': True}]
+        rename = self.b.rename
+
+        def fail_candidate(src, dst):
+            if src == self.paths.STAGED and dst == APP:
+                raise OSError('injected rename failure')
+            return rename(src, dst)
+        self.b.rename = fail_candidate
+        with self.assertRaisesRegex(install.InstallError, 'previous bundle restored'):
+            install.cmd_upgrade(self.b, self.user, self.candidate(version='2.0'), False)
+        self.assertEqual(self.version(APP), '1.0')
+        self.assertTrue(self.b.loaded)
+        self.assertFalse(self.path(self.paths.STAGING_DIR).exists())
+
+    def test_rollback_failure_preserves_both_versions(self):
+        self.install()
+        self.b.perm_results = [{'accessibility': True}]
+        install.cmd_upgrade(self.b, self.user, self.candidate(version='2.0'), False)
+        rename = self.b.rename
+
+        def fail_previous(src, dst):
+            if src == self.paths.STAGED and dst == APP:
+                raise OSError('injected rename failure')
+            return rename(src, dst)
+        self.b.rename = fail_previous
+        with self.assertRaisesRegex(install.InstallError, 'nothing changed'):
+            install.cmd_rollback(self.b, self.user)
+        self.assertEqual(self.version(APP), '2.0')
+        self.assertEqual(self.version(self.paths.PREVIOUS), '1.0')
+        self.assertTrue(self.b.loaded)
+
+    def test_permission_probe_runs_directly_without_sudo_or_asuser(self):
+        from unittest.mock import patch
+        with patch.object(install.subprocess, 'run') as run:
+            run.return_value.returncode = 0
+            run.return_value.stdout = '{}'
+            install.Backend.run_as_user(self.b, self.user, 501, [install.CTL_IN_APP, 'permissions'])
+        self.assertEqual(run.call_args.args[0], [install.CTL_IN_APP, 'permissions'])
+
+
+class ProfileResourceTests(unittest.TestCase):
+    def test_installer_defaults_match_shared_operate_profile_and_legacy_bytes(self):
+        resource = Path(__file__).resolve().parents[2] / 'app/Resources/PolicyProfiles.json'
+        profiles = json.loads(resource.read_text())
+        self.assertEqual(install.DEFAULT_POLICY, {'actions': {**profiles['observe'], **profiles['operate_additions']}})
+        # Root installs must keep emitting the exact v0 policy bytes (including key order).
+        legacy = {'actions': {'screenshot': {'timeout_s': 15}, 'ax.tree': {'max_depth': 8, 'max_nodes': 2000},
+                              'ax.press': {}, 'input.click': {}, 'input.keys': {}, 'app.open': {}}}
+        self.assertEqual(json.dumps(install.DEFAULT_POLICY, indent=2), json.dumps(legacy, indent=2))
+
+    def test_cli_defaults_to_root_and_user_mode_needs_no_user(self):
+        from unittest.mock import patch
+        with patch.object(install.sys, 'platform', 'darwin'), patch.object(install, 'Backend') as backend, \
+                patch.object(install, 'cmd_status', return_value='{}') as status, patch('builtins.print'):
+            backend.return_value.configure_mode.return_value = 'test-admin'
+            install.main(['status', '--user', 'test-admin'])
+            backend.return_value.configure_mode.assert_called_with('root', 'test-admin')
+            install.main(['status', '--mode', 'user'])
+            backend.return_value.configure_mode.assert_called_with('user', None)
+            status.assert_called_with(backend.return_value, 'test-admin')
+
+
 if __name__ == '__main__':
     unittest.main()

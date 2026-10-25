@@ -1,16 +1,22 @@
 #!/usr/bin/env python3
 """Install, upgrade, roll back, inspect and remove LINA Helper on the target Mac.
 
-Run as root on the target (agent-mac):
+Root mode (the default) on the target Mac:
 
     sudo /usr/bin/python3 tools/install.py install --user agent --team TEAMID0000
     sudo /usr/bin/python3 tools/install.py upgrade --user agent --app /path/LINA\\ Helper.app
     sudo /usr/bin/python3 tools/install.py rollback|status|remove --user agent
 
+User mode (no sudo, current user):
+
+    python3 tools/install.py install --mode user --team ABCDE12345 --app '/path/LINA Helper.app'
+    python3 tools/install.py upgrade|rollback|status|remove --mode user
+
 Every system call goes through a Backend object; tests use a fake one on a temp root.
 The installer never touches TCC and never uses tccutil.
 """
 import argparse
+from dataclasses import dataclass
 import json
 import os
 import plistlib
@@ -43,19 +49,42 @@ LABEL = BUNDLE_ID
 KNOWN_PATHS = {APP, AGENT_PLIST, POLICY, SUPPORT, PREVIOUS_DIR, PREVIOUS, CTL_LINK, STATE,
                STATE_DIR, '/usr/local/bin'}
 
-# Schema read by the app (app/Sources/HelperCore/Policy.swift): an action is enabled when it
-# has an object under "actions"; the object holds that action's limits. status and
-# permissions are always served.
-DEFAULT_POLICY = {
-    'actions': {
-        'screenshot': {'timeout_s': 15},
-        'ax.tree': {'max_depth': 8, 'max_nodes': 2000},
-        'ax.press': {},
-        'input.click': {},
-        'input.keys': {},
-        'app.open': {},
-    },
-}
+# status and permissions are always enabled. The signed app reads this same resource.
+# Preserve the v0 root policy shape, ordering and serialized bytes.
+PROFILE_RESOURCE = Path(__file__).resolve().parents[1] / 'app/Resources/PolicyProfiles.json'
+PROFILES = json.loads(PROFILE_RESOURCE.read_text())
+DEFAULT_POLICY = {'actions': {**PROFILES['observe'], **PROFILES['operate_additions']}}
+
+
+@dataclass(frozen=True)
+class Paths:
+    STAGING_DIR: str = STAGING_DIR
+    STAGED: str = STAGED
+    SUPPORT: str = SUPPORT
+    PREVIOUS_DIR: str = PREVIOUS_DIR
+    PREVIOUS: str = PREVIOUS
+    AGENT_PLIST: str = AGENT_PLIST
+    STATE_DIR: str = STATE_DIR
+    STATE: str = STATE
+    CTL: str = CTL_LINK
+
+    @classmethod
+    def for_user(cls, uid, home):
+        # Both sides of every bundle rename live in /Applications. Home may be on
+        # another volume; only the receipt and LaunchAgent live there.
+        staging = '/Applications/.lina-helper-%d-staging' % uid
+        previous = '/Applications/.lina-helper-%d-previous' % uid
+        support = home + '/Library/Application Support/LINA Helper/install'
+        return cls(staging, staging + '/LINA Helper.app', support,
+                   previous, previous + '/LINA Helper.app',
+                   home + '/Library/LaunchAgents/%s.plist' % BUNDLE_ID,
+                   support, support + '/state.json', CTL_IN_APP)
+
+    def known_paths(self, mode):
+        if mode == 'root':
+            return KNOWN_PATHS
+        return {APP, self.AGENT_PLIST, os.path.dirname(self.AGENT_PLIST),
+                self.PREVIOUS_DIR, self.PREVIOUS, self.STATE, self.STATE_DIR}
 
 
 class InstallError(Exception):
@@ -73,6 +102,8 @@ class Backend:
     def __init__(self, root='/'):
         self.root = root
         self.events = []
+        self.mode = 'root'
+        self.paths = Paths()
 
     def p(self, path):
         return os.path.join(self.root, path.lstrip('/')) if self.root != '/' else path
@@ -83,6 +114,28 @@ class Backend:
     # --- identity ---
     def is_root(self):
         return os.geteuid() == 0
+
+    def current_user(self):
+        entry = pwd.getpwuid(os.geteuid())
+        return entry.pw_name, entry.pw_uid, entry.pw_dir
+
+    def configure_mode(self, mode, user=None):
+        if mode == 'user':
+            if self.is_root():
+                raise InstallError('user mode refuses root; run as the current user without sudo')
+            current, uid, home = self.current_user()
+            if user is not None and user != current:
+                raise InstallError('--user must be the current user in user mode')
+            self.paths = Paths.for_user(uid, home)
+            user = current
+        elif mode == 'root':
+            if not user:
+                raise InstallError('--user is required in root mode')
+            self.paths = Paths()
+        else:
+            raise InstallError('unknown install mode: %s' % mode)
+        self.mode = mode
+        return user
 
     def uid_of(self, user):
         try:
@@ -123,7 +176,8 @@ class Backend:
             self.log('mkdir', d, mode)
             os.mkdir(self.p(d), mode)
             os.chmod(self.p(d), mode)
-            self.chown(d, 'root', 'wheel')
+            if self.mode == 'root':
+                self.chown(d, 'root', 'wheel')
         return list(reversed(created))
 
     def write_file(self, path, data, mode, owner=('root', 'wheel')):
@@ -132,7 +186,8 @@ class Backend:
         with open(self.p(tmp), 'wb') as f:
             f.write(data)
         os.chmod(self.p(tmp), mode)
-        self.chown(tmp, *owner)
+        if self.mode == 'root':
+            self.chown(tmp, *owner)
         os.rename(self.p(tmp), self.p(path))
 
     def symlink(self, target, path):
@@ -163,7 +218,8 @@ class Backend:
         else:
             shutil.copytree(str(src), self.p(dst), symlinks=True)
         # The candidate often comes from a user's staging folder; the installed app is root's.
-        self.chown_tree(dst, 'root', 'wheel')
+        if self.mode == 'root':
+            self.chown_tree(dst, 'root', 'wheel')
 
     def chown_tree(self, path, owner, group):
         self.log('chown_tree', path, owner, group)
@@ -208,7 +264,8 @@ class Backend:
 
     def run_as_user(self, user, uid, argv):
         self.log('run_as_user', user, *argv)
-        r = subprocess.run(['/bin/launchctl', 'asuser', str(uid), '/usr/bin/sudo', '-u', user] + argv,
+        command = argv if self.mode == 'user' else ['/bin/launchctl', 'asuser', str(uid), '/usr/bin/sudo', '-u', user] + argv
+        r = subprocess.run(command,
                            capture_output=True, text=True, timeout=30)
         return r.returncode, r.stdout
 
@@ -255,9 +312,9 @@ class State:
 
     @classmethod
     def load(cls, b):
-        if not b.exists(STATE):
+        if not b.exists(b.paths.STATE):
             return None
-        return cls(b, json.loads(b.read_bytes(STATE)))
+        return cls(b, json.loads(b.read_bytes(b.paths.STATE)))
 
     def record(self, path, kind):
         if not any(e['path'] == path for e in self.data['created']):
@@ -265,7 +322,7 @@ class State:
         self.save()
 
     def save(self):
-        self.b.write_file(STATE, json.dumps(self.data, indent=2).encode(), 0o600)
+        self.b.write_file(self.b.paths.STATE, json.dumps(self.data, indent=2).encode(), 0o600)
 
 
 def make_dirs(b, state, path, mode=0o755):
@@ -276,10 +333,10 @@ def make_dirs(b, state, path, mode=0o755):
 
 def permissions(b, user, uid):
     """Run `lina-helperctl permissions` as the GUI user; None if unavailable."""
-    if not b.exists(CTL_LINK):
+    if not b.exists(b.paths.CTL):
         return None
     try:
-        rc, out = b.run_as_user(user, uid, [CTL_LINK, 'permissions'])
+        rc, out = b.run_as_user(user, uid, [b.paths.CTL, 'permissions'])
     except (OSError, subprocess.SubprocessError):
         return None
     if rc != 0:
@@ -305,19 +362,19 @@ def grants(perms):
 
 
 def stage(b, app):
-    if b.exists(STAGING_DIR):
-        b.rmtree(STAGING_DIR)
-    b.makedirs(STAGING_DIR, 0o700)
-    b.copy_tree(app, STAGED)
+    if b.exists(b.paths.STAGING_DIR):
+        b.rmtree(b.paths.STAGING_DIR)
+    b.makedirs(b.paths.STAGING_DIR, 0o700)
+    b.copy_tree(app, b.paths.STAGED)
 
 
 def unstage(b):
-    if b.exists(STAGING_DIR):
-        b.rmtree(STAGING_DIR)
+    if b.exists(b.paths.STAGING_DIR):
+        b.rmtree(b.paths.STAGING_DIR)
 
 
 def bootstrap(b, uid):
-    rc, out = b.launchctl('bootstrap', 'gui/%d' % uid, AGENT_PLIST)
+    rc, out = b.launchctl('bootstrap', 'gui/%d' % uid, b.paths.AGENT_PLIST)
     if rc != 0:
         raise InstallError('launchctl bootstrap failed (is %d logged in to a GUI session?): %s' % (uid, out.strip()))
 
@@ -337,43 +394,52 @@ def agent_loaded(b, uid):
     return b.launchctl('print', 'gui/%d/%s' % (uid, LABEL))[0] == 0
 
 
-def need_root(b):
+def command_uid(b, user):
+    if b.mode == 'user':
+        if b.is_root():
+            raise InstallError('user mode refuses root')
+        current, uid, _ = b.current_user()
+        if user != current:
+            raise InstallError('--user must be the current user in user mode')
+        return uid
     if not b.is_root():
         raise InstallError('run as root (sudo)')
+    return b.uid_of(user)
 
 
 # ---------------------------------------------------------------- commands
 
 def cmd_install(b, user, app, team, allow_adhoc):
-    need_root(b)
-    uid = b.uid_of(user)
-    if b.exists(APP) or b.exists(STATE):
+    uid = command_uid(b, user)
+    if b.exists(APP) or b.exists(b.paths.STATE):
         raise InstallError('already installed; use upgrade')
     if not allow_adhoc and not (team and TEAM_RE.fullmatch(team)):
         raise InstallError('--team with a 10-character team ID is required')
-    for path in (AGENT_PLIST, CTL_LINK):
+    for path in ((b.paths.AGENT_PLIST, CTL_LINK) if b.mode == 'root' else (b.paths.AGENT_PLIST,)):
         if b.exists(path):
             raise InstallError('%s exists and is not ours; refusing to overwrite' % path)
     try:
         stage(b, app)
-        verify_candidate(b, STAGED, team, allow_adhoc)
+        verify_candidate(b, b.paths.STAGED, team, allow_adhoc)
         state = State(b)
         state.data.update(user=user, team=team)
-        make_dirs(b, state, STATE_DIR, 0o700)
-        make_dirs(b, state, SUPPORT)
-        make_dirs(b, state, os.path.dirname(AGENT_PLIST))
-        make_dirs(b, state, os.path.dirname(CTL_LINK))
-        b.rename(STAGED, APP)
+        make_dirs(b, state, b.paths.STATE_DIR, 0o700)
+        make_dirs(b, state, b.paths.SUPPORT)
+        make_dirs(b, state, os.path.dirname(b.paths.AGENT_PLIST))
+        if b.mode == 'root':
+            make_dirs(b, state, os.path.dirname(CTL_LINK))
+        b.rename(b.paths.STAGED, APP)
         state.record(APP, 'tree')
-        if not b.exists(POLICY):
+        if b.mode == 'root' and not b.exists(POLICY):
             b.write_file(POLICY, json.dumps(DEFAULT_POLICY, indent=2).encode() + b'\n', 0o644)
             state.record(POLICY, 'file')
         plist = {'Label': LABEL, 'ProgramArguments': [EXE, 'serve'], 'KeepAlive': True,
                  'RunAtLoad': True, 'LimitLoadToSessionType': 'Aqua', 'ProcessType': 'Interactive'}
-        b.write_file(AGENT_PLIST, plistlib.dumps(plist), 0o644)
-        state.record(AGENT_PLIST, 'file')
-        b.symlink(CTL_IN_APP, CTL_LINK)
-        state.record(CTL_LINK, 'symlink')
+        b.write_file(b.paths.AGENT_PLIST, plistlib.dumps(plist), 0o644)
+        state.record(b.paths.AGENT_PLIST, 'file')
+        if b.mode == 'root':
+            b.symlink(CTL_IN_APP, CTL_LINK)
+            state.record(CTL_LINK, 'symlink')
         state.data['version'] = 1
         state.data['installed_version'] = bundle_version(b, APP)
         state.save()
@@ -417,29 +483,28 @@ def baseline(b, user, uid, skip):
 
 
 def cmd_upgrade(b, user, app, allow_adhoc, skip_grant_check=False):
-    need_root(b)
-    uid = b.uid_of(user)
+    uid = command_uid(b, user)
     state = State.load(b)
     if state is None or not b.exists(APP):
         raise InstallError('not installed; use install')
     installed = b.codesign_info(APP)
     try:
         stage(b, app)
-        cand = verify_candidate(b, STAGED, installed.team, allow_adhoc)
+        cand = verify_candidate(b, b.paths.STAGED, installed.team, allow_adhoc)
         check_same_requirement(installed, cand)
         before = baseline(b, user, uid, skip_grant_check)
         # Stop the agent before deleting the old backup, so a bootout timeout keeps it.
         bootout(b, uid)
         try:
-            make_dirs(b, state, SUPPORT)
-            if b.exists(PREVIOUS_DIR):
-                b.rmtree(PREVIOUS_DIR)
-            b.makedirs(PREVIOUS_DIR, 0o755)
-            state.record(PREVIOUS_DIR, 'tree')
+            make_dirs(b, state, b.paths.SUPPORT)
+            if b.exists(b.paths.PREVIOUS_DIR):
+                b.rmtree(b.paths.PREVIOUS_DIR)
+            b.makedirs(b.paths.PREVIOUS_DIR, 0o755)
+            state.record(b.paths.PREVIOUS_DIR, 'tree')
         except BaseException:
             bootstrap(b, uid)  # put the untouched installed agent back
             raise
-        swap_in(b, uid, STAGED, PREVIOUS)
+        swap_in(b, uid, b.paths.STAGED, b.paths.PREVIOUS)
     finally:
         unstage(b)
     state.data['installed_version'] = bundle_version(b, APP)
@@ -466,37 +531,36 @@ def finish_check(b, user, uid, before, done):
 
 
 def cmd_rollback(b, user, skip_grant_check=False):
-    need_root(b)
-    uid = b.uid_of(user)
+    uid = command_uid(b, user)
     state = State.load(b)
     if state is None or not b.exists(APP):
         raise InstallError('not installed')
-    if not b.exists(PREVIOUS):
+    if not b.exists(b.paths.PREVIOUS):
         raise InstallError('no previous bundle to roll back to')
     installed = b.codesign_info(APP)
-    prev = verify_candidate(b, PREVIOUS, installed.team, installed.adhoc)
+    prev = verify_candidate(b, b.paths.PREVIOUS, installed.team, installed.adhoc)
     check_same_requirement(installed, prev)
     before = baseline(b, user, uid, skip_grant_check)
     # Stop the agent before touching any bundle, so a bootout timeout leaves both in place.
     bootout(b, uid)
     try:
         unstage(b)
-        b.makedirs(STAGING_DIR, 0o700)
-        b.rename(PREVIOUS, STAGED)  # same volume as /Applications
+        b.makedirs(b.paths.STAGING_DIR, 0o700)
+        b.rename(b.paths.PREVIOUS, b.paths.STAGED)  # same volume as /Applications
     except BaseException:
         bootstrap(b, uid)  # nothing was swapped; put the installed agent back
         raise
     try:
-        b.rename(APP, PREVIOUS)
+        b.rename(APP, b.paths.PREVIOUS)
     except BaseException:
-        b.rename(STAGED, PREVIOUS)
+        b.rename(b.paths.STAGED, b.paths.PREVIOUS)
         bootstrap(b, uid)
         raise
     try:
-        b.rename(STAGED, APP)
+        b.rename(b.paths.STAGED, APP)
     except OSError:
-        b.rename(PREVIOUS, APP)
-        b.rename(STAGED, PREVIOUS)
+        b.rename(b.paths.PREVIOUS, APP)
+        b.rename(b.paths.STAGED, b.paths.PREVIOUS)
         bootstrap(b, uid)
         raise InstallError('could not move the previous bundle into place; nothing changed')
     bootstrap(b, uid)
@@ -507,8 +571,7 @@ def cmd_rollback(b, user, skip_grant_check=False):
 
 
 def cmd_status(b, user):
-    need_root(b)
-    uid = b.uid_of(user)
+    uid = command_uid(b, user)
     out = {'installed': b.exists(APP), 'user': user, 'version': None, 'requirement': None,
            'agent_loaded': agent_loaded(b, uid), 'permissions': None}
     if out['installed']:
@@ -518,19 +581,18 @@ def cmd_status(b, user):
         except InstallError as e:
             out['requirement_error'] = str(e)
         out['permissions'] = permissions(b, user, uid)
-    out['previous'] = b.exists(PREVIOUS)
+    out['previous'] = b.exists(b.paths.PREVIOUS)
     return json.dumps(out, indent=2)
 
 
 def cmd_remove(b, user):
-    need_root(b)
-    uid = b.uid_of(user)
+    uid = command_uid(b, user)
     state = State.load(b)
     if state is None:
         raise InstallError('no state.json; nothing recorded, nothing removed')
     bootout(b, uid)
     removed = []
-    entries = [e for e in state.data['created'] if e['path'] in KNOWN_PATHS and e['path'] != STATE]
+    entries = [e for e in state.data['created'] if e['path'] in b.paths.known_paths(b.mode) and e['path'] != b.paths.STATE]
     # Deepest paths first so directories are emptied before they are tried.
     for e in sorted(entries, key=lambda e: -e['path'].count('/')):
         path, kind = e['path'], e['kind']
@@ -545,17 +607,18 @@ def cmd_remove(b, user):
         else:
             continue
         removed.append(path)
-    b.unlink(STATE)
-    if STATE_DIR in [e['path'] for e in entries] and b.isdir(STATE_DIR) and not b.listdir(STATE_DIR):
-        b.rmdir(STATE_DIR)
-        removed.append(STATE_DIR)
+    b.unlink(b.paths.STATE)
+    if b.paths.STATE_DIR in [e['path'] for e in entries] and b.isdir(b.paths.STATE_DIR) and not b.listdir(b.paths.STATE_DIR):
+        b.rmdir(b.paths.STATE_DIR)
+        removed.append(b.paths.STATE_DIR)
     return 'removed: ' + ', '.join(removed) if removed else 'nothing to remove'
 
 
 def main(argv=None):
     p = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     p.add_argument('command', choices=['install', 'upgrade', 'rollback', 'status', 'remove'])
-    p.add_argument('--user', required=True, help='GUI user that runs the agent (e.g. agent)')
+    p.add_argument('--mode', choices=['root', 'user'], default='root')
+    p.add_argument('--user', help='GUI user that runs the agent (e.g. agent)')
     p.add_argument('--app', type=Path, default=Path('build/LINA Helper.app'))
     p.add_argument('--team', help='Developer ID team (install only; upgrade uses the installed one)')
     p.add_argument('--allow-ad-hoc-for-lab', action='store_true')
@@ -566,6 +629,7 @@ def main(argv=None):
         p.error('runs on macOS only')
     b = Backend()
     try:
+        a.user = b.configure_mode(a.mode, a.user)
         if a.command == 'install':
             msg = cmd_install(b, a.user, a.app.resolve(), a.team, a.allow_ad_hoc_for_lab)
         elif a.command == 'upgrade':

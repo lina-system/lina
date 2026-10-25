@@ -57,10 +57,10 @@ final class CoreTests: XCTestCase {
         XCTAssertFalse(Policy.parse(Data("invalid".utf8), owner: 0, mode: 0o644).allows("screenshot"))
         XCTAssertFalse(Policy.load(path: "/nonexistent-lina-policy").allows("input.keys"))
         let config = Configuration(environment: ["LINA_HELPER_HOME": "/tmp/lina-test",
-                                                 "LINA_HELPER_POLICY": "/tmp/policy.json"])
+                                                 "LINA_HELPER_POLICY": "/tmp/policy.json"], ownTeam: nil)
         XCTAssertEqual(config.socketPath, "/tmp/lina-test/run/helper.sock")
         XCTAssertEqual(config.policyPath, "/Library/Application Support/LINA Helper/policy.json")
-        let dev = Configuration(environment: ["LINA_HELPER_DEV": "1", "LINA_HELPER_POLICY": "/tmp/policy.json"])
+        let dev = Configuration(environment: ["LINA_HELPER_DEV": "1", "LINA_HELPER_POLICY": "/tmp/policy.json"], ownTeam: nil)
         XCTAssertEqual(dev.policyPath, "/tmp/policy.json")
     }
 

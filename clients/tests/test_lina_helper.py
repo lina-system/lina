@@ -43,7 +43,7 @@ class CommandTests(unittest.TestCase):
     def test_builds_fixed_ssh_command(self):
         self.assertEqual(lh.command('agent-mac', 'status'), [
             'ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5',
-            '-o', 'ServerAliveCountMax=2', 'agent-mac', '/usr/local/bin/lina-helperctl status'])
+            '-o', 'ServerAliveCountMax=2', 'agent-mac', "'/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl' status"])
 
     def test_hostile_args_are_quoted(self):
         for value in ['a b', "it's", '"q"', '$(touch /tmp/x)', 'x\ny', '`id`', ';rm -rf /', '--out=/etc/passwd']:
