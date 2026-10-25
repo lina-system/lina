@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+<key>CFBundleIdentifier</key><string>local.hermes.unlock.agent</string>
+<key>CFBundleName</key><string>Hermes Unlock Agent</string>
+<key>CFBundleExecutable</key><string>hermes-unlock-agent</string>
+<key>CFBundlePackageType</key><string>APPL</string>
+<key>CFBundleVersion</key><string>2</string>
+<key>CFBundleShortVersionString</key><string>0.2.0</string>
+<key>LSMinimumSystemVersion</key><string>14.4</string>
+<key>LSUIElement</key><true/>
+<key>NSAccessibilityUsageDescription</key><string>Start an explicitly requested screen-unlock attempt.</string>
+</dict></plist>

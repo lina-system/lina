@@ -1,0 +1,8 @@
+./build/grant-test
+PASS one-use grant and duplicate-arm rejection
+PASS expiration boundary, clock rollback and TTL bounds
+PASS owner, GUI session, boot, lock state and revocation binding
+PASS writable paths, hard links, symlink directories and wrong file owner rejected
+PASS truncated grant and symlink file rejected
+PASS twelve competing processes produce exactly one authorization
+ALL GRANT TESTS PASSED

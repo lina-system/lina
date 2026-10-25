@@ -1,0 +1,3 @@
+Noninteractive synthetic keychain probe, unlocked session; no existing items queried.
+{"legacy_keychain_status":-25293,"data_protection_status":-34018}
+EXIT_CODE=1
