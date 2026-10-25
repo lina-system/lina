@@ -8,3 +8,4 @@ dist/
 *.key
 *.cer
 .DS_Store
+.tmp/

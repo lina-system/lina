@@ -22,10 +22,60 @@ Full design: [docs/design.md](docs/design.md).
 
 ```sh
 make test          # everything that runs without a Mac GUI session (also on Linux for unlock/)
+make app           # macOS: build and ad-hoc sign build/LINA Helper.app
+make clean         # remove app and unlock build products
 make -C unlock native-check   # unlock package native checks (macOS)
 ```
 
-App build, signing and install targets arrive with the v0 issues. Signing runs only on the hub Mac with the team identity in its login keychain; CI never signs.
+The app uses SwiftPM under `app/` and only Apple frameworks. `make test` runs Swift
+tests on macOS and the existing unlock tests everywhere. `make swift-test` runs
+only the Swift tests. In an enclosing sandbox that prevents SwiftPM from creating
+its own sandbox, pass `SWIFT_FLAGS=--disable-sandbox` to make. Tests that require a
+named Unix listener explicitly skip if the environment forbids `bind`; socketpair
+transport and connection-handler tests still run.
+
+`make app` signs only ad-hoc, with no signing identity or keychain access. It does
+not install or launch anything. Developer ID signing and installation are separate
+future work.
+
+## Local development
+
+Ad-hoc helpers reject all clients unless **the helper process** has
+`LINA_HELPER_DEV=1`. With a team signature, valid peer code must have the same team,
+even in development mode. All modes also require the peer UID to be the helper's
+UID or root. For an isolated manual run on macOS:
+
+```sh
+export LINA_HELPER_HOME="$(mktemp -d /tmp/lina-helper.XXXXXX)"
+LINA_HELPER_DEV=1 "build/LINA Helper.app/Contents/MacOS/lina-helper" &
+helper_pid=$!
+"build/LINA Helper.app/Contents/Helpers/lina-helperctl" status --caller local-test
+"build/LINA Helper.app/Contents/Helpers/lina-helperctl" permissions
+kill "$helper_pid"
+```
+
+The override is the helper's state directory: the socket is `run/helper.sock` and
+test audit logs are in `logs/` below it. Without an override, state and logs use
+the locations in the design. Logs redact string arguments to UTF-8 byte length
+and SHA-256; content arrays/objects use their canonical JSON byte length and hash.
+The screen-recording `next_alert` field is an estimate from the first observed
+grant, or `null` when unavailable; no privacy databases are read or modified.
+
+The CLI accepts `ACTION [--arg k=v]... [--json ARGS] [--out PATH|-] [--caller NAME]`.
+`--arg` values are strings; use `--json` for typed values. Later options replace
+earlier keys. Requests include caller, parent PID and `SSH_CLIENT` attribution.
+Responses are JSON and the exit status is zero only on success. For an action
+returning a file, `--out PATH` copies it without overwriting an existing file;
+`--out -` streams bytes to stdout and prints the JSON response to stderr.
+
+The policy schema is `{"actions":{"action.name":{"limit_name":123}}}`. The
+default file is `/Library/Application Support/LINA Helper/policy.json`. Only a
+regular, root-owned file without group/world write bits is accepted; symlinks,
+invalid JSON and unreadable files fail closed to `status` and `permissions`.
+`LINA_HELPER_POLICY` overrides that path only when `LINA_HELPER_DEV=1`; ownership
+checks still apply. Action implementations receive their policy limits and a
+deadline through `ActionContext`. Only `status` and `permissions` are implemented
+in this issue; future action files register handlers in `ActionDispatcher`.
 
 ## Status
 
