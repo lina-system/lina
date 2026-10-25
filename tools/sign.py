@@ -16,6 +16,9 @@ from pathlib import Path
 BUNDLE_ID = 'app.lina-os.helper'
 CTL_ID = 'app.lina-os.helper.ctl'
 CTL_RELPATH = 'Contents/Helpers/lina-helperctl'
+CUA_RELPATH = 'Contents/Helpers/cua-driver'
+CUA_TEAM = 'YCK386LBJ7'
+CUA_REQUIREMENT = 'identifier "cua-driver" and anchor apple generic and certificate leaf[subject.OU] = "YCK386LBJ7"'
 IDENTITY_RE = re.compile(r'Developer ID Application: .+ \(([A-Z0-9]{10})\)')
 TEAM_RE = re.compile(r'[A-Z0-9]{10}')
 DEFAULT_APP = Path(__file__).resolve().parents[1] / 'build' / 'LINA Helper.app'
@@ -48,11 +51,14 @@ def check_inputs(identity, team, app):
         raise SignError('Info.plist bundle ID is %r, expected %s' % (found, BUNDLE_ID))
     if not (Path(app) / CTL_RELPATH).is_file():
         raise SignError('missing %s' % CTL_RELPATH)
+    if not (Path(app) / CUA_RELPATH).is_file():
+        raise SignError('missing %s' % CUA_RELPATH)
 
 
 def sign(app, identity, team, run=subprocess.run):
     check_inputs(identity, team, app)
     app = Path(app)
+    # Keep cua-driver's upstream YCK386LBJ7 signature. Never use --deep to sign.
     steps = [(app / CTL_RELPATH, CTL_ID), (app, BUNDLE_ID)]
     for path, ident in steps:
         run(['/usr/bin/codesign', '--force', '--sign', identity, '--identifier', ident,

@@ -54,13 +54,17 @@ class CommandTests(unittest.TestCase):
         remote = lh.command('h', 'screenshot', ['display=main'], out=True)[-1]
         self.assertEqual(shlex.split(remote), [lh.CTL, 'screenshot', '--arg', 'display=main', '--out', '-'])
 
+    def test_cua_actions_accepted(self):
+        for action in ['cua.status', 'cua.restart']:
+            self.assertEqual(shlex.split(lh.command('h', action)[-1]), [lh.CTL, action])
+
     def test_host_rejected(self):
         for host in ['', None, '-oProxyCommand=x', 'a b', 'a;b', 'h\n', 'a' * 129, 'u@h', '.h']:
             with self.assertRaises(lh.UsageError):
                 lh.command(host, 'status')
 
     def test_action_rejected(self):
-        for action in ['', 'rm', 'status; id', 'Status', 'shell']:
+        for action in ['', 'rm', 'status; id', 'Status', 'shell', 'cua.call']:
             with self.assertRaises(lh.UsageError):
                 lh.command('h', action)
 

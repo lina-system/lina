@@ -9,7 +9,8 @@ import subprocess
 import sys
 
 CTL = '/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl'
-ACTIONS = ('status', 'permissions', 'screenshot', 'ax.tree', 'ax.press', 'input.click', 'input.keys', 'app.open')
+ACTIONS = ('status', 'permissions', 'screenshot', 'ax.tree', 'ax.press', 'input.click', 'input.keys', 'app.open',
+           'cua.status', 'cua.restart')
 HOST_RE = r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}'
 KEY_RE = r'[A-Za-z0-9][A-Za-z0-9_.-]{0,63}'
 # Same ceiling as lina-helperctl's response frame (app Transport.responseLimit).

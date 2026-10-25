@@ -2,6 +2,7 @@ SWIFT ?= swift
 SWIFT_FLAGS ?=
 export CLANG_MODULE_CACHE_PATH := $(CURDIR)/build/ModuleCache
 APP := build/LINA Helper.app
+CUA_DRIVER_TARBALL ?=
 
 .PHONY: test swift-test app clean
 test:
@@ -23,10 +24,12 @@ app:
 	set -e; bin_dir="$$($(SWIFT) build --package-path app -c release --disable-keychain $(SWIFT_FLAGS) --show-bin-path)"; \
 		cp "$$bin_dir/lina-helper" "$(APP)/Contents/MacOS/lina-helper"; \
 		cp "$$bin_dir/lina-helperctl" "$(APP)/Contents/Helpers/lina-helperctl"
+	python3 tools/bundle_cua.py --app "$(APP)" $(if $(CUA_DRIVER_TARBALL),--tarball "$(CUA_DRIVER_TARBALL)")
 	codesign --force --sign - --identifier app.lina-os.helper.ctl "$(APP)/Contents/Helpers/lina-helperctl"
 	codesign --force --sign - "$(APP)"
 	codesign --verify --strict "$(APP)/Contents/Helpers/lina-helperctl"
-	codesign --verify --strict "$(APP)"
+	codesign --verify --strict "$(APP)/Contents/Helpers/cua-driver"
+	codesign --verify --strict --deep "$(APP)"
 clean:
 	rm -rf build app/.build
 	$(MAKE) -C unlock clean

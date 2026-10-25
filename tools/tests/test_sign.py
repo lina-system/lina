@@ -67,6 +67,18 @@ class SignTests(unittest.TestCase):
                 sign.sign(other, IDENTITY, TEAM, run=self.run_)
         self.assertEqual(self.calls, [])
 
+    def test_preserves_upstream_driver_and_refuses_missing_driver(self):
+        driver = self.app / 'Contents/Helpers/cua-driver'
+        driver.write_bytes(b'upstream signed bytes')
+        sign.sign(self.app, IDENTITY, TEAM, run=self.run_)
+        self.assertEqual(driver.read_bytes(), b'upstream signed bytes')
+        self.assertFalse(any('--sign' in c and (c[-1] == str(driver) or '--deep' in c) for c in self.calls))
+        driver.unlink()
+        self.calls.clear()
+        with self.assertRaisesRegex(sign.SignError, 'cua-driver'):
+            sign.sign(self.app, IDENTITY, TEAM, run=self.run_)
+        self.assertEqual(self.calls, [])
+
 
 if __name__ == '__main__':
     unittest.main()

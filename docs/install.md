@@ -14,6 +14,36 @@ python3 tools/sign.py --identity 'Developer ID Application: <owner> (TEAMID)' \
 
 `sign.py` signs `Contents/Helpers/lina-helperctl` (identifier `app.lina-os.helper.ctl`), then the app (identifier `app.lina-os.helper`), both with `--options runtime --timestamp`, then verifies each with `codesign --verify --strict -R '=<requirement>'` and the app with `--deep`. It refuses an identity that is not `Developer ID Application: … (TEAMID)`, a team that is not 10 characters `[A-Z0-9]`, an identity whose team differs from `--team`, and an app whose `Info.plist` bundle ID is not `app.lina-os.helper`. No provisioning profile in v0.
 
+### Bundled cua-driver
+
+`make app` bundles upstream cua-driver **0.38.0** for arm64, verified against
+`app/cua-driver.pin`. It downloads the release tarball, or accepts an offline copy
+with `CUA_DRIVER_TARBALL=/path/to/cua-driver-rs-0.38.0-darwin-arm64.tar.gz` (the
+same SHA-256 check applies). The executable in `Contents/Helpers/cua-driver`
+keeps its upstream `YCK386LBJ7` signature; neither signing path re-signs it.
+The app signature seals the nested executable, and installation verifies its
+signature and team separately. Its license and third-party notices live in
+`Contents/Resources/cua-driver/`.
+
+The helper runs it as a direct, embedded child only under the root-selected
+`operate` profile. Before resuming it, the helper checks the suspended child's
+upstream identity and pinned arm64 CDHash. It writes a private deny-by-default
+tool policy, removes it after socket readiness, and checks the daemon's policy
+digest. The digest uses upstream's versioned filename-and-content SHA-256 format.
+Policy and grant changes are checked on requests and every five seconds.
+`cua.status` reports lifecycle state and the daemon's `check_permissions` result;
+`cua.restart` retries a failed check or restarts the child under `operate`.
+`observe` permits `cua.status` but runs no child. Legacy explicit action policies
+remain `custom` and do not start cua-driver; select `{"profile":"operate"}` to
+enable it. Installer-created legacy policies are unchanged.
+
+To update, change the version, asset, tarball SHA-256 and arm64 CDHashes in the
+pin file using the new upstream release, update the compiled constants in
+`CuaPolicy.swift` (tests enforce agreement), then test, rebuild, re-sign the outer
+helper app and upgrade normally. Keep the upstream executable signature intact.
+Updates and real TCC inheritance checks require the normal signing/deployment
+workflow; an ad-hoc build does not establish the production helper's grants.
+
 ## 2. Copy to the agent's Mac
 
 ```sh
@@ -112,11 +142,11 @@ alone. Install mode does not migrate an existing root installation to user mode.
 ## Policy profiles
 
 When `/Library/Application Support/LINA Helper/policy.json` does not exist, the
-helper uses built-in **observe**: `status`, `permissions`, `screenshot`
+helper uses built-in **observe**: `status`, `permissions`, `cua.status`, `screenshot`
 (`timeout_s: 15`) and `ax.tree` (`max_depth: 8`, `max_nodes: 2000`). Input stays
 disabled. A safe root-owned policy can select `{"profile":"observe"}` or
 `{"profile":"operate"}`. Operate adds `ax.press`, `input.click`, `input.keys`
-and `app.open`, each with an empty limits object. `status` and `permissions` are
+`app.open` and `cua.restart`, each with an empty limits object. `status` and `permissions` are
 always served. The defaults live in `app/Resources/PolicyProfiles.json`, used by
 both the installer and the app and copied into the signed bundle. Include this
 resource at the repo-relative path when copying `tools/` to a deployment folder.

@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sign import BUNDLE_ID, CTL_ID, CTL_RELPATH, TEAM_RE, requirement  # noqa: E402
+from sign import BUNDLE_ID, CTL_ID, CTL_RELPATH, CUA_RELPATH, CUA_TEAM, CUA_REQUIREMENT, TEAM_RE, requirement  # noqa: E402
 
 APP = '/Applications/LINA Helper.app'
 EXE = APP + '/Contents/MacOS/lina-helper'
@@ -53,7 +53,8 @@ KNOWN_PATHS = {APP, AGENT_PLIST, POLICY, SUPPORT, PREVIOUS_DIR, PREVIOUS, CTL_LI
 # Preserve the v0 root policy shape, ordering and serialized bytes.
 PROFILE_RESOURCE = Path(__file__).resolve().parents[1] / 'app/Resources/PolicyProfiles.json'
 PROFILES = json.loads(PROFILE_RESOURCE.read_text())
-DEFAULT_POLICY = {'actions': {**PROFILES['observe'], **PROFILES['operate_additions']}}
+DEFAULT_POLICY = {'actions': {k: v for k, v in {**PROFILES['observe'], **PROFILES['operate_additions']}.items()
+                              if not k.startswith('cua.')}}
 
 
 @dataclass(frozen=True)
@@ -279,8 +280,12 @@ def bundle_version(b, app):
         return None
 
 
-def verify_candidate(b, path, team, allow_adhoc):
-    """Verify a bundle at logical `path`: signature, identifiers, Developer ID requirement."""
+def verify_candidate(b, path, team, allow_adhoc, require_cua=True):
+    """Verify a bundle at logical `path`: signature, identifiers, Developer ID requirement.
+
+    A bundle built before cua-driver was embedded has no Contents/Helpers/cua-driver. Only
+    rollback accepts that (require_cua=False); a cua-driver that is present is always verified.
+    """
     try:
         plist = plistlib.loads(b.read_bytes(path + '/Contents/Info.plist'))
     except (OSError, plistlib.InvalidFileException):
@@ -294,6 +299,15 @@ def verify_candidate(b, path, team, allow_adhoc):
     ctl = b.codesign_info(path + '/' + CTL_RELPATH)
     if ctl.identifier != CTL_ID:
         raise InstallError('lina-helperctl identifier is %r, expected %s' % (ctl.identifier, CTL_ID))
+    driver_path = path + '/' + CUA_RELPATH
+    if b.exists(driver_path) or require_cua:
+        if not b.exists(driver_path):
+            raise InstallError('bundle has no %s' % CUA_RELPATH)
+        b.codesign_verify(driver_path)
+        driver = b.codesign_info(driver_path)
+        if (driver.identifier != 'cua-driver' or driver.adhoc or driver.team != CUA_TEAM
+                or not b.codesign_check_requirement(driver_path, CUA_REQUIREMENT)):
+            raise InstallError('cua-driver must retain its upstream signature (team %s)' % CUA_TEAM)
     if info.adhoc:
         if not allow_adhoc:
             raise InstallError('bundle is ad-hoc signed; grants would not survive (use --allow-ad-hoc-for-lab for a lab run)')
@@ -538,7 +552,7 @@ def cmd_rollback(b, user, skip_grant_check=False):
     if not b.exists(b.paths.PREVIOUS):
         raise InstallError('no previous bundle to roll back to')
     installed = b.codesign_info(APP)
-    prev = verify_candidate(b, b.paths.PREVIOUS, installed.team, installed.adhoc)
+    prev = verify_candidate(b, b.paths.PREVIOUS, installed.team, installed.adhoc, require_cua=False)
     check_same_requirement(installed, prev)
     before = baseline(b, user, uid, skip_grant_check)
     # Stop the agent before touching any bundle, so a bootout timeout leaves both in place.

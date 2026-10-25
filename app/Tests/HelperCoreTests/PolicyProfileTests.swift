@@ -108,9 +108,12 @@ final class PolicyProfileTests: XCTestCase {
         let output = try JSONDecoder().decode([String: JSONValue].self, from: options.responseLine(response))
         XCTAssertEqual(output, ["policy": metadata("observe", "builtin")])
         let status = try CLIOptions.parse(["status"], environment: [:])
-        XCTAssertEqual(try status.responseLine(response), try response.line())
+        // JSON object ordering is unspecified; compare the complete decoded payload.
+        XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: status.responseLine(response)),
+                       try JSONDecoder().decode(JSONValue.self, from: response.line()))
         let failure = Response.failure(id: options.request.id, HelperError(.notAllowed, "test"))
-        XCTAssertEqual(try options.responseLine(failure), try failure.line())
+        XCTAssertEqual(try JSONDecoder().decode(JSONValue.self, from: options.responseLine(failure)),
+                       try JSONDecoder().decode(JSONValue.self, from: failure.line()))
         XCTAssertThrowsError(try CLIOptions.parse(["policy", "--out", "-"], environment: [:]))
     }
 

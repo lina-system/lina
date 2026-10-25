@@ -22,6 +22,7 @@ def make_bundle(dest, version='1.0', team=TEAM, identifier='app.lina-os.helper',
     (dest / 'Contents/Helpers').mkdir(parents=True)
     (dest / 'Contents/MacOS/lina-helper').write_text('exe')
     (dest / 'Contents/Helpers/lina-helperctl').write_text('ctl')
+    (dest / 'Contents/Helpers/cua-driver').write_text('upstream')
     (dest / 'Contents/Info.plist').write_bytes(plistlib.dumps(
         {'CFBundleIdentifier': bundle_id, 'CFBundleShortVersionString': version}))
     sig = {'identifier': identifier, 'adhoc': adhoc, 'team': None if adhoc else team,
@@ -38,6 +39,8 @@ class FakeBackend(install.Backend):
         super().__init__(root)
         self.loaded = False
         self.perm_results = []  # successive `permissions` outputs; last one repeats
+        self.cua_team = 'YCK386LBJ7'
+        self.cua_valid = True
 
     def is_root(self):
         return True
@@ -56,21 +59,28 @@ class FakeBackend(install.Backend):
 
     def _sig(self, path):
         bundle = self.p(path)
-        ctl = path.endswith('lina-helperctl')
+        ctl = path.endswith(('lina-helperctl', 'cua-driver'))
         if ctl:
             bundle = os.path.dirname(os.path.dirname(os.path.dirname(bundle)))
         sig = json.loads(Path(bundle, 'Contents/sig.json').read_text())
         return sig, ctl
 
     def codesign_verify(self, path):
+        self.log('codesign_verify', path)
+        if path.endswith('/cua-driver') and (not self.cua_valid or not Path(self.p(path)).is_file()):
+            raise install.InstallError('invalid cua-driver signature')
         self._sig(path)
 
     def codesign_info(self, path):
+        if path.endswith('/cua-driver'):
+            return install.Info('cua-driver', False, self.cua_team, 'upstream requirement')
         sig, ctl = self._sig(path)
         ident = sig['ctl_identifier'] if ctl else sig['identifier']
         return install.Info(ident, sig['adhoc'], sig['team'], sig['requirement'])
 
     def codesign_check_requirement(self, path, req):
+        if path.endswith('/cua-driver'):
+            return self.cua_valid and self.cua_team == 'YCK386LBJ7'
         sig, _ = self._sig(path)
         return not sig['adhoc'] and sig['requirement'] == req
 
@@ -113,6 +123,24 @@ class InstallTestCase(unittest.TestCase):
 
     def install(self, **kw):
         return install.cmd_install(self.b, 'agent', self.candidate(**kw), TEAM, False)
+
+    def test_nested_upstream_driver_verified_with_its_own_team_even_in_lab_mode(self):
+        for adhoc in (False, True):
+            self.b.cua_team = 'YCK386LBJ7'; self.b.cua_valid = True
+            app = '/candidate-%s.app' % adhoc
+            make_bundle(self.path(app), adhoc=adhoc)
+            install.verify_candidate(self.b, app, TEAM, adhoc)
+            self.assertIn(('codesign_verify', app + '/Contents/Helpers/cua-driver'), self.b.events)
+            self.b.cua_team = TEAM
+            with self.assertRaisesRegex(install.InstallError, 'cua-driver'):
+                install.verify_candidate(self.b, app, TEAM, adhoc)
+            self.b.cua_team = 'YCK386LBJ7'; self.b.cua_valid = False
+            with self.assertRaises(install.InstallError):
+                install.verify_candidate(self.b, app, TEAM, adhoc)
+            self.b.cua_valid = True
+            self.path(app + '/Contents/Helpers/cua-driver').unlink()
+            with self.assertRaises(install.InstallError):
+                install.verify_candidate(self.b, app, TEAM, adhoc)
 
     def event_index(self, event):
         return self.b.events.index(event)
@@ -282,6 +310,28 @@ class UpgradeTests(InstallTestCase):
                  ev.index(('launchctl', 'bootstrap', 'gui/501', AGENT_PLIST))]
         self.assertEqual(order, sorted(order))
         self.assertEqual(json.loads(self.path(STATE).read_text())['installed_version'], '1.0')
+
+    def test_rollback_accepts_a_backup_built_before_cua_driver(self):
+        # The installed 1.0 predates the embedded driver; upgrading to 2.0 keeps it as the backup.
+        self.path(APP + '/Contents/Helpers/cua-driver').unlink()
+        self.upgrade(version='2.0')
+        install.cmd_rollback(self.b, 'agent')
+        self.assertEqual(self.version(APP), '1.0')
+        self.assertFalse(self.path(APP + '/Contents/Helpers/cua-driver').exists())
+        # A candidate for install/upgrade still must carry it.
+        app = '/no-cua.app'
+        make_bundle(self.path(app))
+        self.path(app + '/Contents/Helpers/cua-driver').unlink()
+        with self.assertRaisesRegex(install.InstallError, 'no Contents/Helpers/cua-driver'):
+            install.verify_candidate(self.b, app, TEAM, False)
+        # A driver that is present in a rollback target is still verified: now APP=3.0, PREVIOUS=2.0
+        # after one more upgrade from 2.0 (both carry the driver).
+        install.cmd_rollback(self.b, 'agent')  # back to 2.0 (has the driver)
+        self.upgrade(version='3.0')
+        self.assertTrue(self.path(PREVIOUS + '/Contents/Helpers/cua-driver').exists())
+        self.b.cua_valid = False
+        with self.assertRaisesRegex(install.InstallError, 'cua-driver'):
+            install.cmd_rollback(self.b, 'agent')
 
     def test_unavailable_baseline_refuses_before_any_change(self):
         self.b.perm_results = [None]
@@ -535,7 +585,10 @@ class ProfileResourceTests(unittest.TestCase):
     def test_installer_defaults_match_shared_operate_profile_and_legacy_bytes(self):
         resource = Path(__file__).resolve().parents[2] / 'app/Resources/PolicyProfiles.json'
         profiles = json.loads(resource.read_text())
-        self.assertEqual(install.DEFAULT_POLICY, {'actions': {**profiles['observe'], **profiles['operate_additions']}})
+        actions = {**profiles['observe'], **profiles['operate_additions']}
+        self.assertEqual(install.DEFAULT_POLICY, {'actions': {k: v for k, v in actions.items() if not k.startswith('cua.')}})
+        self.assertIn('cua.status', profiles['observe'])
+        self.assertIn('cua.restart', profiles['operate_additions'])
         # Root installs must keep emitting the exact v0 policy bytes (including key order).
         legacy = {'actions': {'screenshot': {'timeout_s': 15}, 'ax.tree': {'max_depth': 8, 'max_nodes': 2000},
                               'ax.press': {}, 'input.click': {}, 'input.keys': {}, 'app.open': {}}}

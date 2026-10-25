@@ -8,6 +8,7 @@ public enum SystemActions {
     public static func registry(
         home: String,
         outbox: Outbox? = nil,
+        cua: CuaDriverSupervisor? = nil,
         probe: @escaping @Sendable () -> [String: JSONValue] = {
             ["accessibility": .bool(AXIsProcessTrusted()), "screen_recording": .bool(CGPreflightScreenCaptureAccess())]
         },
@@ -17,6 +18,19 @@ public enum SystemActions {
         let alert = ScreenAlertState(path: home + "/screen-recording-first-grant.json")
         let outbox = outbox ?? Outbox(home: home)
         return [
+            "cua.status": Action { context in
+                guard context.args.isEmpty else { throw HelperError(.badRequest, "cua.status takes no arguments") }
+                guard let cua else { throw HelperError(.internalError, "cua supervisor unavailable") }
+                cua.checkPolicy()
+                return cua.status()
+            },
+            "cua.restart": Action { context in
+                guard context.args.isEmpty else { throw HelperError(.badRequest, "cua.restart takes no arguments") }
+                guard let cua else { throw HelperError(.internalError, "cua supervisor unavailable") }
+                try context.checkDeadline()
+                try cua.restart()
+                return cua.status()
+            },
             "screenshot": ScreenshotAction.make(outbox: outbox, probe: probe),
             "ax.tree": AXTreeAction.make(probe: probe),
             "ax.press": AXPressAction.make(probe: probe),

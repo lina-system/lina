@@ -7,6 +7,7 @@ public final class HelperServer: @unchecked Sendable {
     private let dispatcher: ActionDispatcher
     private let audit: AuditLog
     private let outbox: Outbox?
+    private let cua: CuaDriverSupervisor?
     private let own: CodeIdentity
     private let inspect: @Sendable (Int32) -> Peer
     private let queue = DispatchQueue(label: "app.lina-os.helper.listener")
@@ -17,10 +18,12 @@ public final class HelperServer: @unchecked Sendable {
     private let logger = Logger(subsystem: "app.lina-os.helper", category: "server")
 
     public init(configuration: Configuration, dispatcher: ActionDispatcher, audit: AuditLog,
-                outbox: Outbox? = nil, own: CodeIdentity = PeerAuthorization.ownIdentity(), capacity: Int = 16,
+                outbox: Outbox? = nil, cua: CuaDriverSupervisor? = nil,
+                own: CodeIdentity = PeerAuthorization.ownIdentity(), capacity: Int = 16,
                 inspect: @escaping @Sendable (Int32) -> Peer = PeerAuthorization.inspect(socket:)) {
         self.configuration = configuration; self.dispatcher = dispatcher; self.audit = audit
         self.outbox = outbox
+        self.cua = cua
         self.own = own; self.inspect = inspect; clients = DispatchSemaphore(value: capacity)
     }
 
@@ -82,6 +85,9 @@ public final class HelperServer: @unchecked Sendable {
     }
 
     public func stop() {
+        // Keep helper.lock until the grant-bearing child is gone. A replacement
+        // helper must not start another daemon while this one is still stopping.
+        cua?.shutdown()
         queue.sync { cleanupTimer?.cancel(); cleanupTimer = nil; source?.cancel(); source = nil }
         queue.sync {} // Drain the cancellation handler before another server starts.
     }
@@ -128,7 +134,8 @@ public final class HelperServer: @unchecked Sendable {
             let decoded = try Request.decode(Transport.readLine(fd))
             request = decoded
             try outbox?.cleanup()
-            response = dispatcher.dispatch(decoded, policy: Policy.load(path: configuration.policyPath))
+            let policy = cua?.checkPolicy() ?? Policy.load(path: configuration.policyPath)
+            response = dispatcher.dispatch(decoded, policy: policy)
         } catch let error as HelperError { response = .failure(id: request?.id ?? "", error) }
         catch { response = .failure(id: request?.id ?? "", HelperError(.internalError, "request failed")) }
         do {

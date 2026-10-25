@@ -6,6 +6,7 @@ import Darwin
 public struct Policy: Sendable {
     private let actions: [String: JSONValue]
     public let profile: String
+    public var runsCuaDriver: Bool { profile == "operate" }
     public let source: String
     public var metadata: [String: JSONValue] {
         ["profile": .string(profile), "source": .string(source)]
@@ -18,10 +19,12 @@ public struct Policy: Sendable {
     // for the Python installer; PolicyProfileTests checks the two agree.
     static let profiles: [String: [String: JSONValue]]? = [
         "observe": [
+            "cua.status": .object([:]),
             "screenshot": .object(["timeout_s": .number(15)]),
             "ax.tree": .object(["max_depth": .number(8), "max_nodes": .number(2000)]),
         ],
         "operate_additions": [
+            "cua.restart": .object([:]),
             "ax.press": .object([:]), "input.click": .object([:]), "input.keys": .object([:]), "app.open": .object([:]),
         ],
     ]

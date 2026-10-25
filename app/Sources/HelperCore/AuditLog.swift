@@ -79,6 +79,21 @@ public final class AuditLog: @unchecked Sendable {
             "peer": .object(peerJSON), "args": .object(Self.redact(request?.args ?? [:])),
             "ok": .bool(response.ok), "ms": .number(elapsed * 1000)]
         if let error = response.error { entry["error"] = .string(error.code.rawValue) }
+        try appendLocked(entry, now: now)
+        logger.info("request action=\(request?.action ?? "invalid", privacy: .private) ok=\(response.ok) code=\(response.error?.code.rawValue ?? "ok", privacy: .public)")
+    }
+
+    /// Supervisor messages contain only internal lifecycle reasons and PIDs, no tool arguments.
+    public func recordCua(_ event: String, now: Date = Date()) throws {
+        lock.lock(); defer { lock.unlock() }
+        if !Calendar.current.isDate(now, inSameDayAs: lastCleanup) { try cleanupLocked(now: now) }
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        try appendLocked(["t": .string(iso.string(from: now)), "action": .string("cua.lifecycle"),
+                          "event": .string(event)], now: now)
+        logger.info("cua lifecycle: \(event, privacy: .public)")
+    }
+
+    private func appendLocked(_ entry: [String: JSONValue], now: Date) throws {
         let formatter = DateFormatter(); formatter.locale = Locale(identifier: "en_US_POSIX")
         formatter.dateFormat = "yyyyMMdd"
         let path = directory + "/audit-" + formatter.string(from: now) + ".jsonl"
@@ -100,6 +115,5 @@ public final class AuditLog: @unchecked Sendable {
                 offset += n
             }
         }
-        logger.info("request action=\(request?.action ?? "invalid", privacy: .private) ok=\(response.ok) code=\(response.error?.code.rawValue ?? "ok", privacy: .public)")
     }
 }

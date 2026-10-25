@@ -71,3 +71,13 @@ Build of `main` at 29684f9 signed on the hub Mac and installed with `upgrade`; `
 ## v0 result
 
 All exit conditions met: installed on the agent's Mac, grants given once and kept across a restart and repeated upgrades, Hermes on the hub Mac served screenshot, accessibility tree, accessibility press and key input.
+
+## Embedded cua-driver (#20) — the agent's Mac, 2026-10-26 08:43 KST
+
+Build of `feat/20-embedded-cua` signed on the hub Mac (outer app team TEAMID; `Contents/Helpers/cua-driver` keeps its upstream signature, team YCK386LBJ7, cdhash `b067c86e…`), installed with `upgrade`. Grants stayed true. Root policy switched from the v0 explicit actions form to `{"profile":"operate"}` (same actions, plus the cua child); the v0 file is kept on the agent's Mac for rollback.
+
+- `cua.status` under `operate`: child running, `check_permissions` → `accessibility: true`, `screen_recording: true`, `source.attribution: host`, `host_bundle_id: app.lina-os.helper`, `responsible_ppid` = helper pid. The policy file is gone from `run/` once the socket is up.
+- Over the helper's socket: `get_screen_size`; `list_apps` ok; `get_window_state` on Finder → 76 elements and a PNG; `clipboard_read` → "not allowed by the YAML policy".
+- TCC (`/Library/Application Support/com.apple.TCC/TCC.db`): no new `com.trycua.driver` row (the two existing rows belong to the standalone 0.21.0 driver). One new row `kTCCServiceSystemPolicyAllFiles|app.lina-os.helper|0` (denied, auth_reason 5) appeared at child start: something in the child probed a protected file and the request was charged to the helper. It grants nothing; the helper shows up unticked under Full Disk Access.
+- `{"profile":"observe"}`: within 7 s no child, no `cua.sock`, `cua.status` says "not running under observe", `input.keys` → `not_allowed`. Back to `operate`: child restarted within 12 s.
+- Native checks on the hub Mac (`LINA_CUA_NATIVE_TESTS=1`): upstream binary passes while suspended; an ad-hoc re-signed copy is rejected before it runs; a copy with a modified executed page is killed by the kernel.
