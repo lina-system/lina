@@ -71,6 +71,22 @@ enum AccessibilityTree {
     }
 }
 
+/// How an AX read error is treated. Apps return kAXErrorFailure for attributes they cannot
+/// produce right now (Finder does for several), so a failure means "no value" rather than
+/// failing the whole tree; a disabled API or a dead element still surfaces.
+enum AXReadOutcome: Equatable {
+    case value, absent, error(ErrorCode)
+    static func classify(_ error: AXError) -> AXReadOutcome {
+        switch error {
+        case .success: return .value
+        case .attributeUnsupported, .noValue, .failure: return .absent
+        case .apiDisabled: return .error(.permissionMissing)
+        case .invalidUIElement, .cannotComplete, .illegalArgument: return .error(.targetNotFound)
+        default: return .error(.internalError)
+        }
+    }
+}
+
 struct SystemAccessibilityElement: AccessibilityElement {
     let element: AXUIElement
     static func application(_ app: String, context: ActionContext) throws -> SystemAccessibilityElement {
@@ -91,7 +107,7 @@ struct SystemAccessibilityElement: AccessibilityElement {
     private func attribute(_ name: String) throws -> CFTypeRef? {
         var value: CFTypeRef?
         let error = AXUIElementCopyAttributeValue(element, name as CFString, &value)
-        if error == .attributeUnsupported || error == .noValue { return nil }
+        if AXReadOutcome.classify(error) == .absent { return nil }
         try check(error)
         return value
     }
@@ -100,7 +116,7 @@ struct SystemAccessibilityElement: AccessibilityElement {
         case .success: return
         case .apiDisabled: throw HelperError(.permissionMissing, "accessibility")
         case .invalidUIElement, .cannotComplete, .illegalArgument: throw HelperError(.targetNotFound, "AX target unavailable")
-        default: throw HelperError(.internalError, "accessibility operation failed")
+        default: throw HelperError(.internalError, "accessibility operation failed (AXError \(error.rawValue))")
         }
     }
     func snapshot() throws -> [String: JSONValue] {
@@ -125,7 +141,7 @@ struct SystemAccessibilityElement: AccessibilityElement {
     func childCount() throws -> Int {
         var count = 0
         let error = AXUIElementGetAttributeValueCount(element, kAXChildrenAttribute as CFString, &count)
-        if error == .attributeUnsupported || error == .noValue { return 0 }
+        if AXReadOutcome.classify(error) == .absent { return 0 }
         try check(error)
         return count
     }
@@ -133,7 +149,7 @@ struct SystemAccessibilityElement: AccessibilityElement {
         guard index >= 0, index < (try childCount()) else { return nil }
         var values: CFArray?
         let error = AXUIElementCopyAttributeValues(element, kAXChildrenAttribute as CFString, index, 1, &values)
-        if error == .illegalArgument || error == .invalidUIElement { return nil }
+        if error == .illegalArgument || error == .invalidUIElement || error == .failure { return nil }
         try check(error)
         guard let values, CFArrayGetCount(values) == 1 else { return nil }
         let value = unsafeBitCast(CFArrayGetValueAtIndex(values, 0), to: CFTypeRef.self)

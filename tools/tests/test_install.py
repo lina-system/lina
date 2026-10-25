@@ -48,6 +48,9 @@ class FakeBackend(install.Backend):
     def chown(self, path, owner, group):
         self.log('chown', path, owner, group)
 
+    def chown_tree(self, path, owner, group):
+        self.log('chown_tree', path, owner, group)
+
     def sleep(self, seconds):
         pass
 
@@ -179,6 +182,33 @@ class InstallTests(InstallTestCase):
             self.install()
 
 
+class LaunchdTimingTests(InstallTestCase):
+    def test_bootout_waits_until_launchd_drops_the_service(self):
+        b = self.b
+        prints = iter([0, 0, 113])
+        real = b.launchctl
+
+        def launchctl(*args):
+            if args[0] == 'print':
+                b.log('launchctl', *args)
+                return next(prints), ''
+            return real(*args)
+        b.launchctl = launchctl
+        install.bootout(b, 501)
+        self.assertEqual(sum(1 for e in b.events if e[:2] == ('launchctl', 'print')), 3)
+
+    def test_bootout_gives_up_loudly(self):
+        b = self.b
+        real = b.launchctl
+        b.launchctl = lambda *a: (b.log('launchctl', *a), (0, ''))[1] if a[0] == 'print' else real(*a)
+        with self.assertRaisesRegex(install.InstallError, 'still lists'):
+            install.bootout(b, 501)
+
+    def test_installed_bundle_is_chowned_to_root(self):
+        self.install()
+        self.assertIn(('chown_tree', install.STAGED, 'root', 'wheel'), self.b.events)
+
+
 class UpgradeTests(InstallTestCase):
     def setUp(self):
         super().setUp()
@@ -245,8 +275,8 @@ class UpgradeTests(InstallTestCase):
         self.assertEqual(self.version(APP), '1.0')
         self.assertEqual(self.version(PREVIOUS), '2.0')
         ev = self.b.events
-        order = [ev.index(('rename', PREVIOUS, STAGED)),
-                 ev.index(('launchctl', 'bootout', 'gui/501/app.lina-os.helper')),
+        order = [ev.index(('launchctl', 'bootout', 'gui/501/app.lina-os.helper')),
+                 ev.index(('rename', PREVIOUS, STAGED)),
                  ev.index(('rename', APP, PREVIOUS)),
                  ev.index(('rename', STAGED, APP)),
                  ev.index(('launchctl', 'bootstrap', 'gui/501', AGENT_PLIST))]
@@ -271,6 +301,24 @@ class UpgradeTests(InstallTestCase):
         msg = install.cmd_upgrade(self.b, 'agent', self.candidate(version='2.0'), False, True)
         self.assertIn('skipped', msg)
         self.assertEqual(self.version(APP), '2.0')
+
+    def test_upgrade_bootout_timeout_keeps_existing_backup(self):
+        self.upgrade(version='2.0')
+        real = self.b.launchctl
+        self.b.launchctl = lambda *a: (0, '') if a[0] == 'print' else real(*a)
+        with self.assertRaisesRegex(install.InstallError, 'still lists'):
+            self.upgrade(version='3.0')
+        self.assertEqual(self.version(APP), '2.0')
+        self.assertEqual(self.version(PREVIOUS), '1.0')
+
+    def test_rollback_bootout_timeout_keeps_both_bundles(self):
+        self.upgrade(version='2.0')
+        real = self.b.launchctl
+        self.b.launchctl = lambda *a: (0, '') if a[0] == 'print' else real(*a)
+        with self.assertRaisesRegex(install.InstallError, 'still lists'):
+            install.cmd_rollback(self.b, 'agent')
+        self.assertEqual(self.version(APP), '2.0')
+        self.assertEqual(self.version(PREVIOUS), '1.0')
 
     def test_rollback_without_previous(self):
         with self.assertRaisesRegex(install.InstallError, 'no previous'):

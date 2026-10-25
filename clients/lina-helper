@@ -29,7 +29,7 @@ def failure(code, detail=None):
     return {'v': 1, 'ok': False, 'error': error}
 
 
-def command(host, action, args=(), out=False):
+def command(host, action, args=(), out=False, json_args=None):
     if not re.fullmatch(HOST_RE, host or ''):
         raise UsageError('host must be a configured SSH alias or hostname')
     if action not in ACTIONS:
@@ -42,6 +42,14 @@ def command(host, action, args=(), out=False):
         if not sep or not re.fullmatch(KEY_RE, key):
             raise UsageError('--arg must be k=v with a plain key')
         remote += ['--arg', item]
+    if json_args is not None:
+        try:
+            value = json.loads(json_args)
+        except ValueError:
+            raise UsageError('--json must be a JSON object')
+        if not isinstance(value, dict):
+            raise UsageError('--json must be a JSON object')
+        remote += ['--json', json.dumps(value, separators=(',', ':'), sort_keys=True)]
     if out:
         remote += ['--out', '-']
     return ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=8', '-o', 'ServerAliveInterval=5',
@@ -60,9 +68,9 @@ def parse_response(raw):
     return value
 
 
-def invoke(host, action, args=(), out=None, runner=subprocess.run):
+def invoke(host, action, args=(), out=None, runner=subprocess.run, json_args=None):
     """Return (exit_code, response dict). Never retries."""
-    cmd = command(host, action, args, out is not None)
+    cmd = command(host, action, args, out is not None, json_args)
     if out is not None and os.path.lexists(out):
         raise UsageError('refusing to overwrite existing file')
     try:
@@ -109,10 +117,11 @@ def main(argv=None, runner=subprocess.run, env=None, stdout=None):
     ap.add_argument('--host', default=env.get('LINA_HELPER_SSH_HOST'), help='SSH alias (default: $LINA_HELPER_SSH_HOST)')
     ap.add_argument('action')
     ap.add_argument('--arg', action='append', default=[], metavar='k=v')
+    ap.add_argument('--json', metavar='OBJECT', help='typed arguments as one JSON object, e.g. {"depth":2}')
     ap.add_argument('--out', metavar='PATH', help='screenshot only: write the image bytes to PATH')
     ns = ap.parse_args(argv)
     try:
-        code, value = invoke(ns.host, ns.action, ns.arg, ns.out, runner)
+        code, value = invoke(ns.host, ns.action, ns.arg, ns.out, runner, ns.json)
     except UsageError as e:
         code, value = 1, failure('bad_request', str(e))
     print(json.dumps(value, sort_keys=True), file=stdout)

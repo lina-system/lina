@@ -129,6 +129,21 @@ class MainTests(unittest.TestCase):
         self.assertEqual((code, value['error']['code']), (1, 'invalid_remote_response'))
 
 
+class JsonArgTests(unittest.TestCase):
+    def test_typed_args_reach_the_cli_as_one_word(self):
+        fake = Fake()
+        code, _ = run(['--host', 'h', 'ax.tree', '--arg', 'app=frontmost', '--json', '{"depth": 2}'], fake)
+        self.assertEqual(code, 0)
+        remote = shlex.split(fake.calls[0][0][-1])
+        self.assertEqual(remote[remote.index('--json') + 1], '{"depth":2}')
+
+    def test_non_object_json_is_rejected_locally(self):
+        for bad in ['[1]', 'nope', '2']:
+            fake = Fake()
+            code, value = run(['--host', 'h', 'ax.tree', '--json', bad], fake)
+            self.assertEqual((code, value['error']['code'], fake.calls), (1, 'bad_request', []))
+
+
 class OutTests(unittest.TestCase):
     def setUp(self):
         self.dir = tempfile.TemporaryDirectory()

@@ -162,6 +162,12 @@ class Backend:
             subprocess.run(['/usr/bin/ditto', str(src), dst], check=True)
         else:
             shutil.copytree(str(src), self.p(dst), symlinks=True)
+        # The candidate often comes from a user's staging folder; the installed app is root's.
+        self.chown_tree(dst, 'root', 'wheel')
+
+    def chown_tree(self, path, owner, group):
+        self.log('chown_tree', path, owner, group)
+        subprocess.run(['/usr/sbin/chown', '-R', '%s:%s' % (owner, group), self.p(path)], check=True)
 
     def sleep(self, seconds):
         time.sleep(seconds)
@@ -318,6 +324,13 @@ def bootstrap(b, uid):
 
 def bootout(b, uid):
     b.launchctl('bootout', 'gui/%d/%s' % (uid, LABEL))  # not loaded is fine
+    # bootout returns before launchd has removed the service; bootstrapping in that window
+    # fails with "Bootstrap failed: 5: Input/output error". Wait until it is gone.
+    for _ in range(50):
+        if not agent_loaded(b, uid):
+            return
+        b.sleep(0.2)
+    raise InstallError('launchd still lists %s 10 s after bootout' % LABEL)
 
 
 def agent_loaded(b, uid):
@@ -380,8 +393,8 @@ def check_same_requirement(installed_info, cand_info):
 
 
 def swap_in(b, uid, new_path, old_dest):
-    """bootout; installed -> old_dest; new_path -> installed; bootstrap. Restores on failure."""
-    bootout(b, uid)
+    """installed -> old_dest; new_path -> installed; bootstrap. The caller has booted the agent out.
+    Restores on failure."""
     b.rename(APP, old_dest)
     try:
         b.rename(new_path, APP)
@@ -415,11 +428,17 @@ def cmd_upgrade(b, user, app, allow_adhoc, skip_grant_check=False):
         cand = verify_candidate(b, STAGED, installed.team, allow_adhoc)
         check_same_requirement(installed, cand)
         before = baseline(b, user, uid, skip_grant_check)
-        make_dirs(b, state, SUPPORT)
-        if b.exists(PREVIOUS_DIR):
-            b.rmtree(PREVIOUS_DIR)
-        b.makedirs(PREVIOUS_DIR, 0o755)
-        state.record(PREVIOUS_DIR, 'tree')
+        # Stop the agent before deleting the old backup, so a bootout timeout keeps it.
+        bootout(b, uid)
+        try:
+            make_dirs(b, state, SUPPORT)
+            if b.exists(PREVIOUS_DIR):
+                b.rmtree(PREVIOUS_DIR)
+            b.makedirs(PREVIOUS_DIR, 0o755)
+            state.record(PREVIOUS_DIR, 'tree')
+        except BaseException:
+            bootstrap(b, uid)  # put the untouched installed agent back
+            raise
         swap_in(b, uid, STAGED, PREVIOUS)
     finally:
         unstage(b)
@@ -458,11 +477,21 @@ def cmd_rollback(b, user, skip_grant_check=False):
     prev = verify_candidate(b, PREVIOUS, installed.team, installed.adhoc)
     check_same_requirement(installed, prev)
     before = baseline(b, user, uid, skip_grant_check)
-    unstage(b)
-    b.makedirs(STAGING_DIR, 0o700)
-    b.rename(PREVIOUS, STAGED)  # same volume as /Applications
+    # Stop the agent before touching any bundle, so a bootout timeout leaves both in place.
     bootout(b, uid)
-    b.rename(APP, PREVIOUS)
+    try:
+        unstage(b)
+        b.makedirs(STAGING_DIR, 0o700)
+        b.rename(PREVIOUS, STAGED)  # same volume as /Applications
+    except BaseException:
+        bootstrap(b, uid)  # nothing was swapped; put the installed agent back
+        raise
+    try:
+        b.rename(APP, PREVIOUS)
+    except BaseException:
+        b.rename(STAGED, PREVIOUS)
+        bootstrap(b, uid)
+        raise
     try:
         b.rename(STAGED, APP)
     except OSError:

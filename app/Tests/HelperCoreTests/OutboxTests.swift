@@ -11,7 +11,7 @@ final class OutboxTests: XCTestCase {
         XCTAssertNotEqual(first, second)
         let now = Date()
         try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-601)], ofItemAtPath: first)
-        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-600)], ofItemAtPath: second)
+        try FileManager.default.setAttributes([.modificationDate: now.addingTimeInterval(-599)], ofItemAtPath: second)  // not exactly 600: mtime keeps whole seconds only
         try outbox.cleanup(now: now)
         XCTAssertFalse(FileManager.default.fileExists(atPath: first))
         XCTAssertTrue(FileManager.default.fileExists(atPath: second))

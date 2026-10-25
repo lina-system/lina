@@ -51,6 +51,14 @@ final class AccessibilityTreeTests: XCTestCase {
             XCTAssertEqual(($0 as? HelperError)?.code, .targetNotFound)
         }
     }
+    func testFailureFromAnAttributeIsAbsentNotFatal() {
+        // Finder answers kAXErrorFailure (-25200) for some attributes; that must not fail ax.tree.
+        XCTAssertEqual(AXReadOutcome.classify(.failure), .absent)
+        XCTAssertEqual(AXReadOutcome.classify(.noValue), .absent)
+        XCTAssertEqual(AXReadOutcome.classify(.apiDisabled), .error(.permissionMissing))
+        XCTAssertEqual(AXReadOutcome.classify(.invalidUIElement), .error(.targetNotFound))
+        XCTAssertEqual(AXReadOutcome.classify(.notImplemented), .error(.internalError))
+    }
     func testExpiredWorkDoesNotPress() throws {
         let root = FakeElement("AXButton")
         let expired = ActionContext(args: [:], limits: [:], deadline: 0)
