@@ -148,7 +148,7 @@ Hermes runs on the hub Mac and reaches the agent's Mac over SSH.
 - v1: a Hermes standalone plugin (`clients/hermes/`) exposing `mac_helper_status`, `mac_screenshot`, `mac_ax_tree`, `mac_ax_press`, `mac_click`, `mac_keys`. The target host is operator configuration, not a model argument. Installing it into a profile is a Hermes configuration change handed to the operator.
 - LINA later talks to the same socket (or XPC when it runs on the same Mac).
 
-cua-driver keeps working in parallel. Once the Hermes plugin covers what Hermes uses cua-driver for, cua-driver's grants can be switched off (a separate decision).
+cua-driver moves inside the helper as an embedded child that inherits the helper's grants; see `docs/fleet.md` §5. Rollout to the other Macs, the user-mode install and the per-Mac policy profiles are in `docs/fleet.md`.
 
 ## 10. Build, test, CI
 
