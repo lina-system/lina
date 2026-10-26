@@ -12,7 +12,7 @@ final class ConnectionTests: XCTestCase {
                                                   "LINA_HELPER_POLICY": home + "/missing.json"])
         let log = try AuditLog(directory: config.auditDirectory)
         let dispatcher = ActionDispatcher(actions: ["status": Action { _ in ["test": .bool(true)] },
-                                                     "input.keys": Action { _ in [:] }])
+                                                     "cua.lease": Action { _ in [:] }])
         let server = HelperServer(configuration: config, dispatcher: dispatcher, audit: log, outbox: Outbox(home: home),
                                   own: .init(valid: true, team: nil)) { _ in
             var peer = Peer(uid: getuid()); peer.identity = .init(valid: authorized, team: nil)
@@ -51,7 +51,7 @@ final class ConnectionTests: XCTestCase {
     }
 
     func testEveryRequestCleansOutboxEvenWhenPolicyDeniesAction() throws {
-        for action in ["status", "input.keys", "unknown"] {
+        for action in ["status", "cua.lease", "unknown"] {
             try connection { fd, directory in
                 let home = (directory as NSString).deletingLastPathComponent
                 let outbox = Outbox(home: home)
@@ -84,7 +84,7 @@ final class ConnectionTests: XCTestCase {
     }
 
     func testPolicyAndUnknownActionErrors() throws {
-        for (action, code) in [("input.keys", ErrorCode.notAllowed), ("absent", .unknownAction)] {
+        for (action, code) in [("cua.lease", ErrorCode.notAllowed), ("absent", .unknownAction)] {
             try connection { fd, _ in
                 try Transport.write(JSONEncoder().encode(Request(action: action)) + Data([10]), to: fd)
                 let response = try JSONDecoder().decode(Response.self, from: Transport.readLine(fd))

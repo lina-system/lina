@@ -32,6 +32,7 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     private let home: String
     private let executable: String
     private let gate: CuaGate?
+    let lease: CuaInputLease
     private var timer: DispatchSourceTimer?
     private var policy = Policy.restricted
     private var grants: CuaGrants?
@@ -49,10 +50,10 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     private var permissions: JSONValue = .null
     private var socket: String { home + "/run/cua-daemon.sock" }
     private var gateSocket: String { home + "/run/cua.sock" }
-    private var policyFile: String { home + "/run/cua-policy.yaml" }
 
     public convenience init(home: String, policyPath: String, audit: AuditLog, development: Bool = false) {
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/cua-driver").path
+        let lease = CuaInputLease()
         self.init(home: home, executable: executable, dependencies: CuaDependencies(
             policy: { Policy.load(path: policyPath) },
             grants: { CuaGrants(accessibility: AXIsProcessTrusted(), screenRecording: CGPreflightScreenCaptureAccess()) },
@@ -63,11 +64,12 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
             audit: { event in
                 do { try audit.recordCua(event) }
                 catch { Logger(subsystem: "app.lina-os.helper", category: "cua").error("cua audit write failed") }
-            }), gate: CuaGate(home: home, audit: audit, development: development))
+            }), gate: CuaGate(home: home, audit: audit, lease: lease, development: development), lease: lease)
     }
 
-    init(home: String, executable: String, dependencies: CuaDependencies, gate: CuaGate? = nil) {
-        self.home = home; self.executable = executable; deps = dependencies; self.gate = gate
+    init(home: String, executable: String, dependencies: CuaDependencies, gate: CuaGate? = nil,
+         lease: CuaInputLease = CuaInputLease()) {
+        self.home = home; self.executable = executable; deps = dependencies; self.gate = gate; self.lease = lease
     }
 
     public func startMonitoring() {
@@ -130,12 +132,7 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
         if deps.now() - started >= 10 {
             stopChild(); failure("cua socket readiness timed out")
         } else if deps.socketReady(socket) {
-            unlink(policyFile)
             do {
-                let output = try deps.query(launch(["status", "--socket", socket]))
-                guard CuaPolicy.statusDigest(output) == CuaPolicy.digest(CuaPolicy.yaml(profile: "operate")) else {
-                    reject("cua policy hash mismatch"); return
-                }
                 // Best-effort, read-only probe. Preserve source.attribution from the daemon.
                 do {
                     let text = try deps.query(launch(["call", "--socket", socket, "check_permissions", "{}"]))
@@ -161,9 +158,8 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
             try PrivateFiles.directory(home + "/run")
             ownsFiles = true
             cleanup()
-            try CuaPolicy.write(CuaPolicy.yaml(profile: "operate"), path: policyFile)
             let child = try deps.spawn(launch(["serve", "--embedded", "--socket", socket, "--no-permissions-gate",
-                "--permission-mode", "standard", "--host-bundle-id", "app.lina-os.helper"], policy: true))
+                "--permission-mode", "standard", "--host-bundle-id", "app.lina-os.helper"], daemon: true))
             pid = child; launches += 1; started = deps.now()
             do { try deps.verify(child) }
             catch {
@@ -177,13 +173,12 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
         }
     }
 
-    private func launch(_ arguments: [String], policy: Bool = false) -> CuaLaunch {
+    private func launch(_ arguments: [String], daemon: Bool = false) -> CuaLaunch {
         let inherited = ProcessInfo.processInfo.environment
         var environment = ["HOME": FileManager.default.homeDirectoryForCurrentUser.path, "USER": NSUserName(),
             "PATH": "/usr/bin:/bin", "TMPDIR": inherited["TMPDIR"] ?? NSTemporaryDirectory(),
             "CUA_DRIVER_EMBEDDED": "1", "CUA_DRIVER_HOST_BUNDLE_ID": "app.lina-os.helper", "CUA_DRIVER_RS_TELEMETRY_ENABLED": "0"]
-        if policy { environment["CUA_DRIVER_POLICY_FILE"] = policyFile }
-        else {
+        if !daemon {
             // v0.38.0 otherwise self-execs finite commands even with telemetry disabled.
             // Skip that unchecked second exec for our verified, short-lived CLI queries.
             environment["CUA_DRIVER_CLI_TELEMETRY_CHILD"] = "1"
@@ -225,7 +220,7 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     private func cleanup() {
         gate?.stop()
         guard ownsFiles else { return }
-        unlink(policyFile); unlink(socket)
+        unlink(socket)
     }
 
     public func restart() throws {
@@ -244,7 +239,7 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
              "version": .string(CuaDriverPin.version), "socket": .string(gateSocket),
              "gate_socket": .string(gateSocket), "daemon_socket": .string(socket),
              "last_error": lastError.map(JSONValue.string) ?? .null, "restarts": .number(Double(max(0, launches - 1))),
-             "check_permissions": permissions,
+             "check_permissions": permissions, "lease": lease.status(),
              "message": .string(policy.runsCuaDriver ? (ready ? "running" : "not running") : "not running under \(policy.profile)")]
         }
     }

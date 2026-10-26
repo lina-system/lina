@@ -31,12 +31,24 @@ public enum SystemActions {
                 try cua.restart()
                 return cua.status()
             },
+            "cua.lease": Action { context in
+                try ActionArguments.keys(context, ["holder", "ttl_s"])
+                let holder = try ActionArguments.string(context.args["holder"], name: "holder")
+                let ttl = try context.args["ttl_s"].map { try ActionArguments.number($0, name: "ttl_s") } ?? 300
+                guard let cua else { throw HelperError(.internalError, "cua supervisor unavailable") }
+                try context.checkDeadline()
+                return try cua.lease.grant(holder: holder, ttl: ttl)
+            },
+            "cua.release": Action { context in
+                try ActionArguments.keys(context, ["holder"])
+                let holder = try ActionArguments.string(context.args["holder"], name: "holder")
+                guard let cua else { throw HelperError(.internalError, "cua supervisor unavailable") }
+                try context.checkDeadline()
+                try cua.lease.release(holder: holder)
+                return [:]
+            },
             "screenshot": ScreenshotAction.make(outbox: outbox, probe: probe),
             "ax.tree": AXTreeAction.make(probe: probe),
-            "ax.press": AXPressAction.make(probe: probe),
-            "input.click": InputClickAction.make(probe: probe),
-            "input.keys": InputKeysAction.make(probe: probe),
-            "app.open": AppOpenAction.make(),
             "status": Action { context in
                 guard context.args.isEmpty else { throw HelperError(.badRequest, "status takes no arguments") }
                 let grants = probe()

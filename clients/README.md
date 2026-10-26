@@ -6,7 +6,7 @@
 lina-helper [--host HOST] ACTION [--arg k=v]... [--json OBJECT] [--out PATH]
 ```
 
-Python 3.9+, standard library only. `HOST` comes from `--host` or `LINA_HELPER_SSH_HOST` and must match `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`. `ACTION` is one of `status`, `permissions`, `screenshot`, `ax.tree`, `ax.press`, `input.click`, `input.keys`, `app.open`.
+Python 3.9+, standard library only. `HOST` comes from `--host` or `LINA_HELPER_SSH_HOST` and must match `[A-Za-z0-9][A-Za-z0-9_.-]{0,127}`. `ACTION` is one of `status`, `permissions`, `screenshot`, `ax.tree`, `cua.status`, `cua.restart`, `cua.lease`, `cua.release`. Screen input goes through cua-driver (Hermes `computer_use`), not this client.
 
 It runs `ssh -T -o BatchMode=yes -o ConnectTimeout=8 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 HOST '<quoted command>'` where the remote command (built with `shlex.join`) is `'/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl' ACTION [--arg k=v]... [--json OBJECT] [--out -]`. `--arg` values are strings; use `--json '{"depth":2}'` for numbers and booleans. It prints the helper's JSON response and exits 0 only when `ok` is true. No retries. The fixed bundle path works with both root and user installs, including when `/usr/local/bin` is absent.
 

@@ -1,5 +1,4 @@
 import XCTest
-import CryptoKit
 import Darwin
 @testable import HelperCore
 
@@ -12,8 +11,6 @@ private final class CuaFixture: @unchecked Sendable {
     var dead: Set<pid_t> = []
     var signatureOK = true
     var ready = true
-    var wrongHash = false
-    var querySignatureOK = true
     var permissionsSignatureOK = true
     var ignoresTerm = false
     var nextPID: pid_t = 100
@@ -25,10 +22,6 @@ private final class CuaFixture: @unchecked Sendable {
             policy: { [self] in policy }, grants: { [self] in grants }, now: { [self] in now },
             sleep: { [self] in now += $0 },
             spawn: { [self] launch in
-                XCTAssertEqual(try Data(contentsOf: URL(fileURLWithPath: home + "/run/cua-policy.yaml")),
-                               CuaPolicy.yaml(profile: "operate"))
-                let attrs = try FileManager.default.attributesOfItem(atPath: home + "/run/cua-policy.yaml")
-                XCTAssertEqual((attrs[.posixPermissions] as? NSNumber)?.intValue, 0o600)
                 launches.append(launch); nextPID += 1; events.append("spawn \(nextPID)"); return nextPID
             },
             verify: { [self] pid in
@@ -48,19 +41,14 @@ private final class CuaFixture: @unchecked Sendable {
             },
             query: { [self] launch in
                 XCTAssertEqual(launch.arguments[2], home + "/run/cua-daemon.sock")
-                if !querySignatureOK { throw CuaSignatureError(detail: "query signature refused") }
-                XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua-policy.yaml"))
                 XCTAssertNil(launch.environment["CUA_DRIVER_POLICY_FILE"])
                 XCTAssertEqual(launch.environment["CUA_DRIVER_CLI_TELEMETRY_CHILD"], "1")
-                if launch.arguments.first == "call" {
-                    if !permissionsSignatureOK { throw CuaSignatureError(detail: "permission query signature refused") }
-                    return #"{"source":{"attribution":"host"}}"#
-                }
-                return "  user policy sha256: " + (wrongHash ? String(repeating: "0", count: 64) :
-                    CuaPolicy.digest(CuaPolicy.yaml(profile: "operate"))) + "\n"
+                XCTAssertEqual(launch.arguments, ["call", "--socket", home + "/run/cua-daemon.sock", "check_permissions", "{}"])
+                if !permissionsSignatureOK { throw CuaSignatureError(detail: "permission query signature refused") }
+                return #"{"source":{"attribution":"host"}}"#
             },
             audit: { [self] event in events.append("audit " + event) }
-        ), gate: gate)
+        ), gate: gate, lease: CuaInputLease(now: { [self] in now }))
     }
     func operate() { policy = Policy.parse(Data(#"{"profile":"operate"}"#.utf8), owner: 0, mode: 0o644) }
     func close() { supervisor.shutdown(); supervisor = nil; try? FileManager.default.removeItem(atPath: home) }
@@ -75,7 +63,7 @@ final class CuaDriverTests: XCTestCase {
 
     func testOnlyOperateStartsAndObserveStops() throws {
         let f = fixture()
-        for policy in [Policy.observe, .restricted, Policy.parse(Data(#"{"actions":{"input.keys":{}}}"#.utf8), owner: 0, mode: 0o644)] {
+        for policy in [Policy.observe, .restricted, Policy.parse(Data(#"{"actions":{"cua.lease":{}}}"#.utf8), owner: 0, mode: 0o644)] {
             f.policy = policy; _ = f.supervisor.checkPolicy(); XCTAssertTrue(f.launches.isEmpty)
         }
         f.operate(); _ = f.supervisor.checkPolicy()
@@ -85,7 +73,6 @@ final class CuaDriverTests: XCTestCase {
         XCTAssertTrue(f.events.contains("signal 101 \(SIGTERM)"))
         XCTAssertTrue(f.events.contains("reap 101"))
         XCTAssertEqual(f.supervisor.status()["message"], .string("not running under observe"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: f.home + "/run/cua-policy.yaml"))
     }
 
     func testGateAbsentDuringObserveAndReadinessWait() throws {
@@ -140,12 +127,12 @@ final class CuaDriverTests: XCTestCase {
         XCTAssertEqual(launch.arguments, ["serve", "--embedded", "--socket", f.home + "/run/cua-daemon.sock",
             "--no-permissions-gate", "--permission-mode", "standard", "--host-bundle-id", "app.lina-os.helper"])
         XCTAssertEqual(Set(launch.environment.keys), Set(["HOME", "USER", "PATH", "TMPDIR", "CUA_DRIVER_EMBEDDED",
-            "CUA_DRIVER_HOST_BUNDLE_ID", "CUA_DRIVER_RS_TELEMETRY_ENABLED", "CUA_DRIVER_POLICY_FILE"]))
+            "CUA_DRIVER_HOST_BUNDLE_ID", "CUA_DRIVER_RS_TELEMETRY_ENABLED"]))
         XCTAssertEqual(launch.environment["PATH"], "/usr/bin:/bin")
         XCTAssertEqual(launch.environment["CUA_DRIVER_RS_TELEMETRY_ENABLED"], "0")
         XCTAssertEqual(launch.environment["CUA_DRIVER_EMBEDDED"], "1")
         XCTAssertEqual(launch.environment["CUA_DRIVER_HOST_BUNDLE_ID"], "app.lina-os.helper")
-        XCTAssertEqual(launch.environment["CUA_DRIVER_POLICY_FILE"], f.home + "/run/cua-policy.yaml")
+        XCTAssertNil(launch.environment["CUA_DRIVER_POLICY_FILE"])
     }
 
     func testSuspendedFailureKillsWithoutResumeAndLatchesUntilExplicitRestart() throws {
@@ -164,14 +151,6 @@ final class CuaDriverTests: XCTestCase {
         f.policy = .observe; _ = f.supervisor.checkPolicy()
         f.signatureOK = true; f.operate(); _ = f.supervisor.checkPolicy()
         XCTAssertEqual(f.launches.count, 2)
-    }
-
-    func testQuerySignatureFailureLatchesAndKillsDaemon() {
-        let f = fixture(); f.querySignatureOK = false; f.operate(); _ = f.supervisor.checkPolicy()
-        XCTAssertEqual(f.supervisor.status()["running"], .bool(false))
-        XCTAssertTrue(f.events.contains("signal 101 \(SIGKILL)"))
-        f.now = 120; f.querySignatureOK = true; f.supervisor.poll()
-        XCTAssertEqual(f.launches.count, 1)
     }
 
     func testPermissionsSignatureFailureAlsoLatches() {
@@ -238,13 +217,6 @@ final class CuaDriverTests: XCTestCase {
         XCTAssertEqual(f.launches.count, 3)
     }
 
-    func testHashMismatchKillsAndDoesNotAdvertiseRunning() {
-        let f = fixture(); f.wrongHash = true; f.operate(); _ = f.supervisor.checkPolicy()
-        XCTAssertTrue(f.events.contains("signal 101 \(SIGKILL)"))
-        XCTAssertEqual(f.supervisor.status()["running"], .bool(false))
-        XCTAssertTrue(f.supervisor.status()["last_error"]?.string?.contains("policy hash") == true)
-    }
-
     func testReadinessTimeoutAndStopDuringStartup() {
         let f = fixture(); f.ready = false; f.operate(); _ = f.supervisor.checkPolicy()
         XCTAssertEqual(f.supervisor.status()["running"], .bool(false))
@@ -254,7 +226,6 @@ final class CuaDriverTests: XCTestCase {
         f.now = 11; f.supervisor.poll()
         f.policy = .observe; _ = f.supervisor.checkPolicy()
         XCTAssertTrue(f.events.contains("reap 102"))
-        XCTAssertFalse(FileManager.default.fileExists(atPath: f.home + "/run/cua-policy.yaml"))
     }
 
     func testShutdownEscalatesAfterThreeSecondsAndCannotRestart() throws {
@@ -279,6 +250,45 @@ final class CuaDriverTests: XCTestCase {
         XCTAssertTrue(FileManager.default.fileExists(atPath: path))
     }
 
+    func testLeaseActionsShareStatusAndValidateArguments() throws {
+        let f = fixture()
+        let dispatcher = ActionDispatcher(actions: SystemActions.registry(home: f.home, cua: f.supervisor, probe: { [:] }))
+        let holder: [String: JSONValue] = ["holder": .string("hermes-owner")]
+        for name in ["cua.lease", "cua.release"] {
+            XCTAssertEqual(dispatcher.dispatch(Request(action: name, args: holder), policy: .observe).error?.code, .notAllowed)
+        }
+        f.operate(); _ = f.supervisor.checkPolicy()
+        XCTAssertEqual(dispatcher.dispatch(Request(action: "cua.status"), policy: f.policy).result?["lease"], .null)
+        let granted = dispatcher.dispatch(Request(action: "cua.lease", args: holder), policy: f.policy)
+        XCTAssertTrue(granted.ok)
+        XCTAssertEqual(granted.result, ["holder": .string("hermes-owner"), "expires_in_s": .number(300)])
+        f.now = 10
+        XCTAssertEqual(dispatcher.dispatch(Request(action: "cua.status"), policy: f.policy).result?["lease"],
+                       .object(["holder": .string("hermes-owner"), "expires_in_s": .number(290)]))
+        for name in ["cua.lease", "cua.release"] {
+            let busy = dispatcher.dispatch(Request(action: name, args: ["holder": .string("hermes-other")]), policy: f.policy)
+            XCTAssertEqual(busy.error?.code, .busy)
+            XCTAssertEqual(busy.error?.detail, "hermes-owner is using this Mac (290s left)")
+            for args: [String: JSONValue] in [[:], ["holder": .number(1)], ["holder": .null],
+                ["holder": .string("has spaces")], holder.merging(["extra": .null]) { _, v in v }] {
+                XCTAssertEqual(dispatcher.dispatch(Request(action: name, args: args), policy: f.policy).error?.code, .badRequest)
+            }
+        }
+        for ttl: JSONValue in [.string("1"), .null, .bool(true), .number(0), .number(-1), .number(301)] {
+            XCTAssertEqual(dispatcher.dispatch(Request(action: "cua.lease", args: holder.merging(["ttl_s": ttl]) { _, v in v }), policy: f.policy).error?.code, .badRequest)
+        }
+        let short = holder.merging(["ttl_s": JSONValue.number(1.5)]) { _, v in v }
+        XCTAssertTrue(dispatcher.dispatch(Request(action: "cua.lease", args: short), policy: f.policy).ok)
+        XCTAssertEqual(dispatcher.dispatch(Request(action: "cua.release", args: short), policy: f.policy).error?.code, .badRequest)
+        try f.supervisor.restart()
+        XCTAssertEqual(f.supervisor.status()["lease"]?.object?["holder"], .string("hermes-owner"))
+        f.now += 1.5
+        XCTAssertEqual(dispatcher.dispatch(Request(action: "cua.status"), policy: f.policy).result?["lease"], .null)
+        XCTAssertTrue(dispatcher.dispatch(Request(action: "cua.lease", args: holder), policy: f.policy).ok)
+        XCTAssertTrue(dispatcher.dispatch(Request(action: "cua.release", args: holder), policy: f.policy).ok)
+        XCTAssertEqual(f.supervisor.status()["lease"], .null)
+    }
+
     func testActionsAndProfiles() throws {
         let f = fixture()
         let dispatcher = ActionDispatcher(actions: SystemActions.registry(home: f.home, cua: f.supervisor, probe: { [:] }))
@@ -298,25 +308,6 @@ final class CuaDriverTests: XCTestCase {
         XCTAssertEqual(f.supervisor.status()["restarts"], .number(1))
         for action in ["cua.status", "cua.restart"] {
             XCTAssertFalse(dispatcher.dispatch(Request(action: action, args: ["x": .bool(true)]), policy: f.policy).ok)
-        }
-    }
-
-    func testYAMLIsDenyByDefaultWithExactlyFleetAllowlist() {
-        let expected = "get_window_state get_desktop_state get_accessibility_tree list_apps list_windows get_screen_size get_cursor_position zoom check_permissions health_report get_guide start_session end_session get_session list_sessions click double_click right_click drag scroll move_cursor type_text press_key hotkey set_value invoke_menu launch_app bring_to_front run_steps verify_state".split(separator: " ").map(String.init)
-        let yaml = String(decoding: CuaPolicy.yaml(profile: "operate"), as: UTF8.self)
-        XCTAssertEqual(yaml, "allow:\n  tools:\n" + expected.map { "    - \($0)\n" }.joined())
-        for profile in ["observe", "restricted", "custom", "unknown"] {
-            XCTAssertEqual(String(decoding: CuaPolicy.yaml(profile: profile), as: UTF8.self), "allow: []\n")
-        }
-    }
-
-    func testPolicyHashUsesUpstreamFramingAndStatusParsingFailsClosed() {
-        XCTAssertEqual(CuaPolicy.digest(Data("allow: []\n".utf8)), "2e874fb3efeb6e2e0de676ed7823ee096af61d45774eccc7007db8cd523d9070")
-        let hash = String(repeating: "a", count: 64)
-        XCTAssertEqual(CuaPolicy.statusDigest("Daemon:\n  user policy sha256: \(hash)\n"), hash)
-        for text in ["", "user policy sha256: none", "managed policy sha256: \(hash)",
-                     "user policy sha256: \(hash)junk", "user policy sha256: \(hash)\nuser policy sha256: \(hash)"] {
-            XCTAssertNil(CuaPolicy.statusDigest(text))
         }
     }
 

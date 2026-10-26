@@ -98,6 +98,112 @@ final class CuaGateTests: XCTestCase {
         return fd
     }
 
+    private func exchange(_ gate: CuaGate, _ request: [String: JSONValue]) throws -> [String: JSONValue] {
+        var response: [String: JSONValue] = [:]
+        try pair(gate) { fd in
+            try Transport.write(WireJSON.encode(request), to: fd)
+            response = try JSONDecoder().decode([String: JSONValue].self, from: readAll(fd))
+        }
+        return response
+    }
+
+    func testLeaseBlocksEveryInputAndAuditsRefusalButAllowsReads() throws {
+        let home = try home(), peer = peer()
+        let lease = CuaInputLease(now: { 0 })
+        _ = try lease.grant(holder: "hermes-owner")
+        let daemon = GateDaemon(reply: Data("{\"ok\":true}\n".utf8))
+        let gate = CuaGate(home: home, audit: try AuditLog(directory: home + "/logs"), lease: lease,
+                           own: own, inspect: { _ in peer }, connect: { _ in try daemon.connect() })
+        let inputs = "click double_click right_click drag scroll move_cursor type_text type_text_chars press_key hotkey set_value invoke_menu launch_app bring_to_front kill_app run_steps run_script set_window_frame clipboard_write browser_click browser_type browser_navigate browser_pointer browser_select browser_set_input_files browser_dialog browser_download page replay_trajectory".split(separator: " ")
+        let args: JSONValue = .object(["session": .string("hermes-other"), "text": .string("secret")])
+        for name in inputs {
+            let result = try exchange(gate, ["method": .string("call"), "name": .string(String(name)), "args": args])
+            XCTAssertEqual(result, ["ok": .bool(false), "error": .string("hermes-owner is using this Mac (300s left)"), "exit_code": .number(75)], String(name))
+        }
+        XCTAssertTrue(daemon.requests.isEmpty)
+        let records = try entries(home)
+        XCTAssertEqual(records.count, inputs.count)
+        for (record, name) in zip(records, inputs) {
+            XCTAssertEqual(record["action"], .string("cua.call:" + name))
+            XCTAssertEqual(record["ok"], .bool(false))
+            XCTAssertEqual(record["error"], .string("lease held by hermes-owner"))
+            XCTAssertEqual(record["args"], .object(AuditLog.redact(args.object!)))
+        }
+        // Unknown/new tools and all non-call methods remain open under operate.
+        for request: [String: JSONValue] in [
+            ["method": .string("call"), "name": .string("get_window_state"), "args": args],
+            ["method": .string("call"), "name": .string("clipboard_read")],
+            ["method": .string("call"), "name": .string("future_tool")],
+            ["method": .string("list"), "name": .string("click")],
+            ["method": .string("session_begin")]] {
+            XCTAssertEqual(try exchange(gate, request)["ok"], .bool(true))
+        }
+        XCTAssertEqual(daemon.requests.count, 5)
+    }
+
+    func testNoLeaseOwnLeaseExpiryAndInputDoesNotExtend() throws {
+        let home = try home(), peer = peer(), clock = Locked<TimeInterval>(0)
+        let lease = CuaInputLease(now: { clock.withLock { $0 } })
+        let daemon = GateDaemon(reply: Data("{\"ok\":true}\n".utf8))
+        let gate = CuaGate(home: home, audit: try AuditLog(directory: home + "/logs"), lease: lease,
+                           own: own, inspect: { _ in peer }, connect: { _ in try daemon.connect() })
+        let anonymous: [String: JSONValue] = ["method": .string("call"), "name": .string("click")]
+        XCTAssertEqual(try exchange(gate, anonymous)["ok"], .bool(true))
+        _ = try lease.grant(holder: "hermes-owner", ttl: 10)
+        XCTAssertEqual(try exchange(gate, anonymous)["exit_code"], .number(75))
+        // A top-level session_id is not the lease identity.
+        XCTAssertEqual(try exchange(gate, anonymous.merging(["session_id": .string("hermes-owner")]) { _, v in v })["exit_code"], .number(75))
+        clock.withLock { $0 = 9 }
+        var ownRequest = anonymous
+        ownRequest["args"] = .object(["session": .string("hermes-owner")])
+        XCTAssertEqual(try exchange(gate, ownRequest)["ok"], .bool(true))
+        XCTAssertEqual(lease.status().object?["expires_in_s"], .number(1))
+        clock.withLock { $0 = 10 }
+        var other = anonymous
+        other["args"] = .object(["session": .string("hermes-other")])
+        XCTAssertEqual(try exchange(gate, other)["ok"], .bool(true))
+        XCTAssertEqual(lease.status(), .null)
+        XCTAssertEqual(daemon.requests.count, 3)
+    }
+
+    func testIdentityFallbackIsPerProxyPIDAndExpiresAfterTenMinutes() throws {
+        let home = try home(), clock = Locked<TimeInterval>(0), currentPeer = Locked(peer())
+        let lease = CuaInputLease(now: { clock.withLock { $0 } })
+        let daemon = GateDaemon(reply: Data("{\"ok\":true}\n".utf8))
+        let gate = CuaGate(home: home, audit: try AuditLog(directory: home + "/logs"), lease: lease,
+                           own: own, now: { clock.withLock { $0 } }, inspect: { _ in currentPeer.withLock { $0 } },
+                           connect: { _ in try daemon.connect() })
+        let input: [String: JSONValue] = ["method": .string("call"), "name": .string("bring_to_front")]
+        let read: [String: JSONValue] = ["method": .string("call"), "name": .string("list_apps"),
+                                        "args": .object(["session": .string("hermes-owner")])]
+        XCTAssertEqual(try exchange(gate, read)["ok"], .bool(true))
+        clock.withLock { $0 = 500 }
+        _ = try lease.grant(holder: "hermes-owner")
+        XCTAssertEqual(try exchange(gate, input)["ok"], .bool(true))
+        for session: JSONValue in [.string(""), .null, .number(1)] {
+            XCTAssertEqual(try exchange(gate, input.merging(["args": .object(["session": session])]) { _, v in v })["ok"], .bool(true))
+        }
+        // Same parent executable and PID, different proxy PID: no shared identity.
+        currentPeer.withLock { $0.pid = 124 }
+        XCTAssertEqual(try exchange(gate, input)["exit_code"], .number(75))
+        currentPeer.withLock { $0.pid = nil }
+        XCTAssertEqual(try exchange(gate, read)["ok"], .bool(true))
+        XCTAssertEqual(try exchange(gate, input)["exit_code"], .number(75))
+        currentPeer.withLock { $0.pid = 123 }
+        clock.withLock { $0 = 599.9 }
+        XCTAssertEqual(try exchange(gate, input)["ok"], .bool(true))
+        // Falling back never refreshes the last explicit session's timestamp.
+        clock.withLock { $0 = 600.1 }
+        XCTAssertEqual(try exchange(gate, input)["exit_code"], .number(75))
+        XCTAssertEqual(try exchange(gate, read)["ok"], .bool(true))
+        XCTAssertEqual(try exchange(gate, input)["ok"], .bool(true))
+        var other = input
+        other["args"] = .object(["session": .string("hermes-other")])
+        XCTAssertEqual(try exchange(gate, other)["exit_code"], .number(75))
+        // The last explicit identity wins, even when that request was refused.
+        XCTAssertEqual(try exchange(gate, input)["exit_code"], .number(75))
+    }
+
     func testElementIndexDroppedOnlyWhenTokenPresent() throws {
         let both = try JSONDecoder().decode([String: JSONValue].self, from: Data(
             #"{"method":"call","name":"click","args":{"pid":1,"element_index":3,"element_token":"t3"},"session_id":"s"}"#.utf8))

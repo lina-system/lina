@@ -1,20 +1,16 @@
 # LINA Helper Hermes plugin
 
-Standalone Hermes plugin `lina-helper`. It lets an agent act on a Mac running LINA Helper **by Mac name**. The model never sees or supplies a host.
+Standalone Hermes plugin `lina-helper`. Screen reading and input are Hermes `computer_use` (backend `lina-helper-cua`, `clients/hermes-computer-use/`). This plugin chooses which Mac that is and offers quick checks, **by Mac name**; the model never sees or supplies a host.
 
-| Tool | Helper action | Arguments (besides required `mac`) |
+| Tool | What it does | Arguments |
 |---|---|---|
-| `mac_status` | `status` | – |
-| `mac_screenshot` | `screenshot` | `display` (`"main"` or id) → PNG saved locally; returns `path`, `width`, `height`, `bytes` |
-| `mac_ax_tree` | `ax.tree` | `app` (default `frontmost`), `depth` ≤ 8, `max_nodes` ≤ 2000 |
-| `mac_ax_press` | `ax.press` | `app`, `path`, `expect_role` (optional) |
-| `mac_click` | `input.click` | `x`, `y`, `button` |
-| `mac_keys` | `input.keys` | `text`, or `key` + `modifiers` |
-| `mac_cua` | cua-driver | `tool` (`^[a-z_]{1,64}$`), `args` (object) |
+| `mac_use` | Point this session's `computer_use` at a Mac (default `hub`); restarts the session's cua connection | `mac` (required) |
+| `mac_status` | Helper `status` + `cua.status`: grants, profile, cua daemon, input lease holder, this session's target | `mac` (default: current target) |
+| `mac_screenshot` | Helper `screenshot` without a computer_use session → PNG saved locally; returns `path`, `width`, `height`, `bytes` | `mac`, `display` (`"main"` or id) |
 
-`mac_cua` runs `/Applications/LINA Helper.app/Contents/Helpers/cua-driver call --socket "$HOME/Library/Application Support/LINA Helper/run/cua.sock" <tool> <json>` on the target (the socket exists once the helper embeds cua-driver, issue #20).
+Results are JSON strings. Success: `{"ok":true,"mac":NAME,...}`. Failure, never an exception: `{"ok":false,"error":{"code":...,"detail":...},"mac":NAME}`. Codes come from the helper unchanged (`not_allowed`, `permission_missing`, `busy`, …) plus plugin-side `unknown_mac`, `ssh_failed`, `exec_failed`, `invalid_remote_response`, `output_unwritable`, `client_missing`, `internal`. The plugin does not decide what is allowed; the helper's policy on each Mac does.
 
-Results are JSON strings. Success: `{"ok":true,"mac":NAME,"result":{...}}` (screenshot: `path`, `bytes`, `width`, `height`). Failure, never an exception: `{"ok":false,"error":{"code":...,"detail":...},"mac":NAME}`. Codes come from the helper unchanged (`not_allowed`, `permission_missing`, `bad_request`, `busy`, `target_not_found`, `timeout`, …), plus plugin-side `unknown_mac`, `not_configured`, `ssh_failed`, `exec_failed`, `invalid_remote_response`, `output_unwritable`, `cua_failed`, `client_missing`, `internal`. The plugin does not decide what is allowed; the helper's policy on each Mac does.
+The target per session is kept in process memory (`core.targets`), shared with the computer-use backend in the same Hermes process. `core.helper_action(mac, action, args)` is the backend's way to call `cua.lease`/`cua.release`.
 
 ## Config: `macs.yaml`
 
@@ -31,7 +27,7 @@ macs:
 - A name not in the file is refused before any subprocess runs. Names match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`; hosts that are not `local` must be a plain SSH alias/hostname.
 - Remote calls: `ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 HOST '<shlex.join argv>'`, built by `clients/lina-helper`'s `command()`; `lina-helperctl` is called at its bundle path, `/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl`, there and on `local`.
 - Format: YAML if `ruamel.yaml` (Hermes ships it, see `hermes_yaml.py`) or PyYAML is importable, otherwise the same file is read as JSON. Plain system `python3` has neither, so tests use JSON.
-- The file is read at registration (to list the names as the `mac` enum) and again on every call. If it is missing the plugin still registers; calls return `not_configured`.
+- The file is read at registration (to list the names as the `mac` enum) and again on every call. If it is missing the plugin still registers and only `hub` (local) is known.
 - Screenshots go to `LINA_HELPER_CACHE_DIR`, else `<Hermes home>/cache/lina-helper/` (profile-relative via `hermes_constants.get_hermes_home()`), mode `0700`, one new file per call. They are not pruned by the plugin.
 
 ## Install into a profile (the operator)

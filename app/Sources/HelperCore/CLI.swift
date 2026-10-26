@@ -15,7 +15,7 @@ public struct CLIOptions: Sendable {
     }
     public static func parse(_ arguments: [String], environment: [String: String] = ProcessInfo.processInfo.environment) throws -> Self {
         guard let action = arguments.first, !action.isEmpty, !action.hasPrefix("-") else {
-            throw HelperError(.badRequest, "usage: lina-helperctl ACTION [--arg k=v]... [--json ARGS] [--out PATH|-] [--caller NAME]")
+            throw HelperError(.badRequest, CLI.usage)
         }
         var args: [String: JSONValue] = [:]
         var caller = "pid:\(getppid())"
@@ -54,7 +54,21 @@ public struct CLIOptions: Sendable {
 }
 
 public enum CLI {
+    public static let usage = """
+    usage: lina-helperctl ACTION [--arg k=v]... [--json ARGS] [--out PATH|-] [--caller NAME]
+    Actions: status, permissions, screenshot, ax.tree, cua.status, cua.restart, cua.lease, cua.release
+    Shortcut: policy (reports the active policy)
+    cua.lease --arg holder=NAME [--json '{"ttl_s":300}']
+    cua.release --arg holder=NAME
+    Holder: 1..64 characters [A-Za-z0-9_.:@-]; ttl_s: greater than 0, at most 300 (default 300).
+    Input goes through cua-driver; cua.status reports the current lease.
+    """
+
     public static func run(arguments: [String], environment: [String: String] = ProcessInfo.processInfo.environment) -> Int32 {
+        if arguments == ["--help"] || arguments == ["-h"] {
+            do { try FileHandle.standardOutput.write(contentsOf: Data((usage + "\n").utf8)); return 0 }
+            catch { return 1 }
+        }
         var id = ""
         do {
             let options = try CLIOptions.parse(arguments, environment: environment)

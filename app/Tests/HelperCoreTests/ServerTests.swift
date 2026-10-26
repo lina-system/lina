@@ -23,7 +23,7 @@ final class ServerTests: XCTestCase {
         XCTAssertEqual(bound, 0)
         let dispatcher = ActionDispatcher(actions: ["status": Action { _ in ["test": .bool(true)] },
                                                      "permissions": Action { _ in [:] },
-                                                     "input.keys": Action { _ in [:] }])
+                                                     "cua.lease": Action { _ in [:] }])
         let server = HelperServer(configuration: config, dispatcher: dispatcher, audit: log,
                                   own: .init(valid: true, team: nil), capacity: capacity) { _ in
             var peer = Peer(uid: getuid())
@@ -40,7 +40,7 @@ final class ServerTests: XCTestCase {
             let response = try Transport.exchange(Request(action: "status"), path: config.socketPath)
             XCTAssertTrue(response.ok)
             XCTAssertEqual(response.result?["test"], .bool(true))
-            let denied = try Transport.exchange(Request(action: "input.keys", args: ["text": .string("sensitive sample")]), path: config.socketPath)
+            let denied = try Transport.exchange(Request(action: "cua.lease", args: ["holder": .string("sensitive sample")]), path: config.socketPath)
             XCTAssertEqual(denied.error?.code, .notAllowed)
             let unknown = try Transport.exchange(Request(action: "not.registered"), path: config.socketPath)
             XCTAssertEqual(unknown.error?.code, .unknownAction)
@@ -51,7 +51,7 @@ final class ServerTests: XCTestCase {
             let text = String(decoding: data, as: UTF8.self)
             XCTAssertEqual(text.split(separator: "\n").count, 3)
             XCTAssertFalse(text.contains("sensitive sample"))
-            XCTAssertTrue(text.contains("text_sha256"))
+            XCTAssertTrue(text.contains("holder_sha256"))
         }
     }
 

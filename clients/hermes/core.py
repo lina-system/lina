@@ -1,24 +1,19 @@
-"""Tool logic: validate, route by Mac name, call clients/lina-helper, return structured results."""
+"""Tool logic for the ``lina-helper`` plugin: Mac names, the per-session computer_use target, helper calls.
+
+Screen reading and input go through Hermes ``computer_use`` (the ``lina-helper-cua`` backend). This plugin
+only chooses which Mac that is (``mac_use``) and offers light checks (``mac_status``, ``mac_screenshot``).
+"""
 import importlib.machinery
 import importlib.util
 import json
 import os
-import re
-import shlex
 import subprocess
+import threading
 import uuid
 
 from . import macs
 
-CUA = '/Applications/LINA Helper.app/Contents/Helpers/cua-driver'
-CUA_SOCKET = 'Library/Application Support/LINA Helper/run/cua.sock'
-CUA_TOOL_RE = r'[a-z_]{1,64}'
-CUA_TIMEOUT = 30
-CUA_MAX_ARGS = 60 << 10
-CUA_MAX_OUTPUT = 8 << 20  # window state can carry an inline image
-SSH_OPTS = ['-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=5',
-            '-o', 'ServerAliveCountMax=2']
-STR_MAX = 1024
+DEFAULT_MAC = 'hub'
 
 
 class Refused(Exception):
@@ -53,101 +48,13 @@ def default_cache_dir():
         return os.path.join(os.path.expanduser('~'), '.cache', 'lina-helper')
 
 
-def _is_number(v):
-    return isinstance(v, (int, float)) and not isinstance(v, bool)
-
-
-def _is_int(v):
-    return isinstance(v, int) and not isinstance(v, bool)
-
-
-def _string(args, key, default=None, required=False):
-    v = args.get(key, default)
-    if v is None:
-        if required:
-            raise Refused('bad_request', '%s is required' % key)
-        return None
-    if not isinstance(v, str) or not v or len(v) > STR_MAX:
-        raise Refused('bad_request', '%s must be a non-empty string' % key)
-    return v
-
-
-def _int(args, key, lo, hi):
-    v = args.get(key)
-    if v is None:
-        return None
-    if not _is_int(v) or not lo <= v <= hi:
-        raise Refused('bad_request', '%s must be an integer in %d..%d' % (key, lo, hi))
-    return v
-
-
-def _build_status(args):
-    return 'status', {}
-
-
-def _build_screenshot(args):
-    display = args.get('display', 'main')
-    if display == 'main' or display is None:
-        return 'screenshot', {}
-    if not _is_int(display) or display < 1:
-        raise Refused('bad_request', 'display must be "main" or a display id')
-    return 'screenshot', {'display': display}
-
-
-def _build_ax_tree(args):
-    out = {'app': _string(args, 'app', 'frontmost')}
-    for key, hi in (('depth', 8), ('max_nodes', 2000)):
-        v = _int(args, key, 1, hi)
-        if v is not None:
-            out[key] = v
-    return 'ax.tree', out
-
-
-def _build_ax_press(args):
-    out = {'app': _string(args, 'app', required=True), 'path': _string(args, 'path', required=True)}
-    role = _string(args, 'expect_role')
-    if role:
-        out['expect_role'] = role
-    return 'ax.press', out
-
-
-def _build_click(args):
-    out = {}
-    for key in ('x', 'y'):
-        if not _is_number(args.get(key)):
-            raise Refused('bad_request', '%s must be a number' % key)
-        out[key] = args[key]
-    button = _string(args, 'button')
-    if button:
-        out['button'] = button
-    return 'input.click', out
-
-
-def _build_keys(args):
-    text, key, mods = args.get('text'), args.get('key'), args.get('modifiers')
-    if (text is None) == (key is None):
-        raise Refused('bad_request', 'give exactly one of text or key')
-    if text is not None:
-        if not isinstance(text, str) or not text or len(text) > 512 or mods is not None:
-            raise Refused('bad_request', 'text must be 1-512 characters and takes no modifiers')
-        return 'input.keys', {'text': text}
-    out = {'key': _string(args, 'key')}
-    if mods is not None:
-        if not isinstance(mods, list) or len(mods) > 8 or not all(isinstance(m, str) and 0 < len(m) <= 32 for m in mods):
-            raise Refused('bad_request', 'modifiers must be a list of names')
-        out['modifiers'] = mods
-    return 'input.keys', out
-
-
-BUILDERS = {
-    'mac_status': _build_status, 'mac_screenshot': _build_screenshot, 'mac_ax_tree': _build_ax_tree,
-    'mac_ax_press': _build_ax_press, 'mac_click': _build_click, 'mac_keys': _build_keys,
-}
-TOOLS = tuple(BUILDERS) + ('mac_cua',)
-
-
 def fail(mac, code, detail=''):
     return {'ok': False, 'error': {'code': code, 'detail': detail}, 'mac': mac}
+
+
+def _stderr_line(p):
+    lines = (p.stderr or b'').decode('utf-8', 'replace').strip().splitlines()
+    return lines[-1][:300] if lines else ''
 
 
 class Recorder:
@@ -161,14 +68,94 @@ class Recorder:
         return self.last
 
 
-def _stderr_line(p):
-    lines = (p.stderr or b'').decode('utf-8', 'replace').strip().splitlines()
-    return lines[-1][:300] if lines else ''
+class Targets:
+    """Which Mac each Hermes session's computer_use acts on (process-wide, in memory)."""
+
+    def __init__(self):
+        self._lock = threading.Lock()
+        self._by_session = {}
+
+    def set(self, session_id, mac):
+        with self._lock:
+            self._by_session[session_id or ''] = mac
+
+    def get(self, session_id):
+        with self._lock:
+            return self._by_session.get(session_id or '', DEFAULT_MAC)
+
+    @staticmethod
+    def current_session_id():
+        """The Hermes session the current tool call belongs to; '' when unknown."""
+        try:
+            from tools.approval_context import _approval_session_id
+            sid = _approval_session_id.get()
+            if sid:
+                return sid
+        except Exception:
+            pass
+        try:
+            from gateway.session_context import get_session_env
+            return get_session_env('HERMES_SESSION_ID', '')
+        except Exception:
+            return os.environ.get('HERMES_SESSION_ID', '')
+
+
+def _shared_targets():
+    """One Targets per process, whichever name this module was imported under.
+
+    Hermes imports the tools plugin under its own module name and the computer-use backend imports it again
+    under another; both must see the same per-session targets.
+    """
+    import sys
+    import types
+    holder = sys.modules.get('lina_helper_shared')
+    if holder is None:
+        holder = sys.modules.setdefault('lina_helper_shared', types.ModuleType('lina_helper_shared'))
+    if not hasattr(holder, 'targets'):
+        holder.targets = Targets()
+    return holder.targets
+
+
+targets = _shared_targets()
+
+
+def resolve_host(mac, load_config=macs.load):
+    """'local' or an ssh alias for a configured Mac name. hub is local even without a config file."""
+    config = load_config()
+    host = macs.entry(config, mac) if config is not None else None
+    if host is None and mac == DEFAULT_MAC:
+        return 'local'
+    if host is None:
+        raise Refused('unknown_mac', 'unknown Mac name; use one of: %s' % (', '.join(macs.names(config)) or DEFAULT_MAC))
+    return host
+
+
+def release_backend(session_id):
+    """Drop the session's cached computer_use backend so the next call starts one on the new Mac."""
+    try:
+        from tools.computer_use.tool import release_computer_use_session
+        return release_computer_use_session(session_id)
+    except Exception:
+        return False
+
+
+_shared = None
+
+
+def helper_action(mac, action, args):
+    """One helper request on a Mac by name, for the computer-use backend (lease); never raises."""
+    global _shared
+    if _shared is None:
+        _shared = Dispatcher()
+    return _shared.helper_action(mac, action, args)
 
 
 class Dispatcher:
-    def __init__(self, load_config=macs.load, runner=subprocess.run, cache_dir=default_cache_dir):
+    def __init__(self, load_config=macs.load, runner=subprocess.run, cache_dir=default_cache_dir,
+                 targets_=None, release=release_backend, session=Targets.current_session_id):
         self.load_config, self.runner, self.cache_dir = load_config, runner, cache_dir
+        self.targets = targets_ or targets
+        self.release, self.session = release, session
         self._client = None
 
     def client(self):
@@ -181,34 +168,51 @@ class Dispatcher:
         mac = args.get('mac') if isinstance(args, dict) else None
         label = mac if isinstance(mac, str) and len(mac) <= 64 else None
         try:
-            value = self._call(name, args)
+            value = self._call(name, args if isinstance(args, dict) else None)
         except Refused as r:
             value = fail(label, r.code, r.detail)
         except Exception as e:
             value = fail(label, 'internal', type(e).__name__)
         return json.dumps(value, sort_keys=True)
 
-    def _target(self, args):
-        if not isinstance(args, dict):
-            raise Refused('bad_request', 'arguments must be an object')
-        mac = args.get('mac')
-        config = self.load_config()
-        if config is None:
-            raise Refused('not_configured', 'no Macs are configured')
-        host = macs.entry(config, mac)
-        if host is None:
-            raise Refused('unknown_mac', 'unknown Mac name; use one of: %s' % ', '.join(macs.names(config)))
-        return host
-
     def _call(self, name, args):
-        if name not in TOOLS:
-            raise Refused('bad_request', 'unknown tool')
-        host = self._target(args)
-        mac = args['mac']
-        if name == 'mac_cua':
-            return self._cua(mac, host, args)
-        action, typed = BUILDERS[name](args)
-        return self._helper(mac, host, action, typed, name == 'mac_screenshot')
+        if args is None:
+            raise Refused('bad_request', 'arguments must be an object')
+        sid = self.session()
+        if name == 'mac_use':
+            mac = args.get('mac')
+            if not isinstance(mac, str):
+                raise Refused('bad_request', 'mac is required')
+            resolve_host(mac, self.load_config)
+            previous = self.targets.get(sid)
+            self.targets.set(sid, mac)
+            if previous != mac:
+                self.release(sid)
+            return {'ok': True, 'mac': mac, 'previous': previous,
+                    'note': 'computer_use in this session now acts on %s' % mac}
+        mac = args.get('mac') or self.targets.get(sid)
+        if name == 'mac_status':
+            status = self.helper_action(mac, 'status', {})
+            if status.get('ok'):
+                cua = self.helper_action(mac, 'cua.status', {})
+                if cua.get('ok'):
+                    status['result']['cua'] = cua['result']
+                status['computer_use_target'] = self.targets.get(sid)
+            return status
+        if name == 'mac_screenshot':
+            display = args.get('display', 'main')
+            if display not in (None, 'main') and (not isinstance(display, int) or isinstance(display, bool) or display < 1):
+                raise Refused('bad_request', 'display must be "main" or a display id')
+            return self.helper_action(mac, 'screenshot', {} if display in (None, 'main') else {'display': display},
+                                      screenshot=True)
+        raise Refused('bad_request', 'unknown tool')
+
+    def helper_action(self, mac, action, typed, screenshot=False):
+        """One lina-helperctl request on a Mac by name; a result dict, never raises."""
+        try:
+            return self._helper(mac, resolve_host(mac, self.load_config), action, typed, screenshot)
+        except Refused as r:
+            return fail(mac, r.code, r.detail)
 
     def _helper(self, mac, host, action, typed, screenshot):
         lh = self.client()
@@ -246,42 +250,3 @@ class Dispatcher:
             return {'ok': True, 'mac': mac, 'result': result}
         return {'ok': True, 'mac': mac, 'path': out, 'bytes': os.path.getsize(out),
                 'width': result.get('width'), 'height': result.get('height')}
-
-    def _cua(self, mac, host, args):
-        tool = args.get('tool')
-        if not isinstance(tool, str) or not re.fullmatch(CUA_TOOL_RE, tool):
-            raise Refused('bad_request', 'tool must match ^[a-z_]{1,64}$')
-        tool_args = args.get('args', {})
-        if not isinstance(tool_args, dict):
-            raise Refused('bad_request', 'args must be an object')
-        payload = json.dumps(tool_args, separators=(',', ':'), sort_keys=True)
-        if len(payload) > CUA_MAX_ARGS:
-            raise Refused('bad_request', 'args too large')
-        lh = self.client()
-        if host == 'local':
-            cmd = [CUA, 'call', '--socket', os.path.join(os.path.expanduser('~'), CUA_SOCKET), tool, payload]
-        else:
-            if not re.fullmatch(lh.HOST_RE, host):
-                raise Refused('bad_request', 'configured host is not a valid SSH alias')
-            # $HOME must expand on the target, so that part is double-quoted by hand; the rest is shlex-quoted.
-            remote = '%s "$HOME/%s" %s' % (shlex.join([CUA, 'call', '--socket']), CUA_SOCKET, shlex.join([tool, payload]))
-            cmd = ['ssh'] + SSH_OPTS + [host, remote]
-        try:
-            p = self.runner(cmd, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
-                            timeout=CUA_TIMEOUT, check=False)
-        except subprocess.TimeoutExpired:
-            raise Refused('timeout', 'no answer in time')
-        except OSError as e:
-            raise Refused('ssh_failed' if host != 'local' else 'exec_failed', e.strerror or str(e))
-        if p.returncode != 0:
-            if host != 'local' and p.returncode == 255:
-                raise Refused('ssh_failed', _stderr_line(p))
-            raise Refused('cua_failed', _stderr_line(p) or 'exit %d' % p.returncode)
-        if len(p.stdout) > CUA_MAX_OUTPUT:
-            raise Refused('response_too_large', 'cua-driver returned %d bytes; limit is %d' % (len(p.stdout), CUA_MAX_OUTPUT))
-        text = p.stdout.decode('utf-8', 'replace').strip()
-        try:
-            result = json.loads(text)
-        except ValueError:
-            result = text
-        return {'ok': True, 'mac': mac, 'result': result}

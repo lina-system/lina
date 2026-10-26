@@ -8,19 +8,6 @@ protocol AccessibilityElement {
     func snapshot() throws -> [String: JSONValue]
     func childCount() throws -> Int
     func child(at index: Int) throws -> (any AccessibilityElement)?
-    func press() throws
-}
-
-struct AXPath {
-    let indices: [Int]
-    init(_ text: String) throws {
-        let parts = text.split(separator: "/", omittingEmptySubsequences: false)
-        guard parts.first == "0", parts.count <= 65 else { throw HelperError(.badRequest, "invalid AX path") }
-        indices = try parts.dropFirst().map { part in
-            guard let index = Int(part), index >= 0, String(index) == part else { throw HelperError(.badRequest, "invalid AX path") }
-            return index
-        }
-    }
 }
 
 enum AccessibilityTree {
@@ -53,22 +40,7 @@ enum AccessibilityTree {
         try visit(root, path: "0", level: 0)
         return result
     }
-    @discardableResult
-    static func press(_ root: any AccessibilityElement, path: AXPath, expectRole: String?,
-                      context: ActionContext) throws -> [String: JSONValue] {
-        var target = root
-        for index in path.indices {
-            try context.checkDeadline()
-            guard let child = try target.child(at: index) else { throw HelperError(.targetNotFound, "AX path no longer resolves") }
-            target = child
-        }
-        try context.checkDeadline()
-        let snapshot = try target.snapshot()
-        if let expectRole, snapshot["role"]?.string != expectRole { throw HelperError(.targetNotFound, "AX role changed") }
-        try context.checkDeadline()
-        try target.press()
-        return ["role": snapshot["role"] ?? .null]
-    }
+
 }
 
 /// How an AX read error is treated. Apps return kAXErrorFailure for attributes they cannot
@@ -156,5 +128,4 @@ struct SystemAccessibilityElement: AccessibilityElement {
         guard CFGetTypeID(value) == AXUIElementGetTypeID() else { return nil }
         return Self(element: value as! AXUIElement)
     }
-    func press() throws { try check(AXUIElementPerformAction(element, kAXPressAction as CFString)) }
 }

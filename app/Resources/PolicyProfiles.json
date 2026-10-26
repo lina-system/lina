@@ -6,9 +6,7 @@
   },
   "operate_additions": {
     "cua.restart": {},
-    "ax.press": {},
-    "input.click": {},
-    "input.keys": {},
-    "app.open": {}
+    "cua.lease": {},
+    "cua.release": {}
   }
 }

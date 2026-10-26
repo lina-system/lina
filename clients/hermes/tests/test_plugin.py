@@ -6,6 +6,7 @@ import subprocess
 import sys
 import tempfile
 import unittest
+import unittest.mock
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PLUGIN = os.path.normpath(os.path.join(HERE, '..'))
@@ -18,7 +19,6 @@ spec.loader.exec_module(plugin)
 from lina_helper_plugin import core, macs  # noqa: E402
 
 CTL = '/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl'
-CUA = '/Applications/LINA Helper.app/Contents/Helpers/cua-driver'
 CONFIG = {'macs': {'hub': {'host': 'local'}, 'agent-mac': {'host': 'lina-box'}}}
 
 
@@ -59,19 +59,22 @@ class Base(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.cache = os.path.join(self.tmp.name, 'cache')
+        self.targets, self.released = core.Targets(), []
 
     def tool(self, name, args, fake=None, config=CONFIG):
         fake = fake or Fake()
-        d = core.Dispatcher(lambda: config, runner=fake, cache_dir=lambda: self.cache)
+        d = core.Dispatcher(lambda: config, runner=fake, cache_dir=lambda: self.cache, targets_=self.targets,
+                            release=self.released.append, session=lambda: 'sess-1')
         return json.loads(d.call(name, args)), fake
 
 
 class RoutingTests(Base):
     def test_local_runs_ctl_directly(self):
         out, fake = self.tool('mac_status', {'mac': 'hub'})
-        self.assertEqual(fake.calls[0][0], [CTL, 'status'])
+        self.assertEqual([c[0] for c in fake.calls], [[CTL, 'status'], [CTL, 'cua.status']])
         self.assertTrue(out['ok'])
         self.assertEqual(out['mac'], 'hub')
+        self.assertEqual(out['computer_use_target'], 'hub')
 
     def test_ssh_argv(self):
         out, fake = self.tool('mac_status', {'mac': 'agent-mac'})
@@ -80,22 +83,25 @@ class RoutingTests(Base):
             '-o', 'ServerAliveCountMax=2', 'lina-box', shlex.join([CTL, 'status'])])
 
     def test_unknown_mac_refused_before_subprocess(self):
-        for mac in ['nope', '', None, 5, 'lina-box', '-oProxyCommand=x', 'hub ']:
+        for mac in ['nope', 5, 'lina-box', '-oProxyCommand=x', 'hub ']:
             out, fake = self.tool('mac_status', {'mac': mac})
             self.assertEqual(fake.calls, [], mac)
             self.assertFalse(out['ok'])
             self.assertEqual(out['error']['code'], 'unknown_mac')
 
-    def test_missing_mac_argument(self):
+    def test_missing_mac_argument_uses_the_session_target(self):
         out, fake = self.tool('mac_status', {})
+        self.assertEqual(fake.calls[0][0], [CTL, 'status'])
+        self.targets.set('sess-1', 'agent-mac')
+        out, fake = self.tool('mac_status', {})
+        self.assertEqual(fake.calls[0][0][-2], 'lina-box')
+
+    def test_missing_config_still_knows_hub_mac(self):
+        out, fake = self.tool('mac_status', {'mac': 'hub'}, config=None)
+        self.assertEqual(fake.calls[0][0], [CTL, 'status'])
+        out, fake = self.tool('mac_status', {'mac': 'agent-mac'}, config=None)
         self.assertEqual(fake.calls, [])
         self.assertEqual(out['error']['code'], 'unknown_mac')
-
-    def test_missing_config(self):
-        out, fake = self.tool('mac_status', {'mac': 'hub'}, config=None)
-        self.assertEqual(fake.calls, [])
-        self.assertEqual(out['error']['code'], 'not_configured')
-        self.assertEqual(out['mac'], 'hub')
 
     def test_bad_host_in_config_is_refused(self):
         cfg = {'macs': {'x': {'host': '-oProxyCommand=evil'}}}
@@ -104,69 +110,67 @@ class RoutingTests(Base):
         self.assertFalse(out['ok'])
 
     def test_never_raises(self):
-        d = core.Dispatcher(lambda: 1 / 0, runner=Fake(), cache_dir=lambda: self.cache)
+        d = core.Dispatcher(lambda: 1 / 0, runner=Fake(), cache_dir=lambda: self.cache, session=lambda: 's')
         self.assertFalse(json.loads(d.call('mac_status', {'mac': 'a'}))['ok'])
         self.assertFalse(json.loads(d.call('mac_status', 'junk'))['ok'])
 
 
-class MappingTests(Base):
-    def run_tool(self, name, args, mac='hub'):
-        out, fake = self.tool(name, dict(args, mac=mac))
-        self.assertTrue(out['ok'], out)
-        return remote_of(fake.calls[0][0])
+class UseTests(Base):
+    def test_switch_target_and_release_backend(self):
+        out, fake = self.tool('mac_use', {'mac': 'agent-mac'})
+        self.assertEqual(out, {'ok': True, 'mac': 'agent-mac', 'previous': 'hub',
+                               'note': 'computer_use in this session now acts on agent-mac'})
+        self.assertEqual(fake.calls, [])
+        self.assertEqual(self.targets.get('sess-1'), 'agent-mac')
+        self.assertEqual(self.targets.get('other'), 'hub')
+        self.assertEqual(self.released, ['sess-1'])
 
-    def json_arg(self, argv):
-        return json.loads(argv[argv.index('--json') + 1])
+    def test_same_target_does_not_restart(self):
+        self.tool('mac_use', {'mac': 'hub'})
+        self.assertEqual(self.released, [])
 
-    def test_ax_tree(self):
-        argv = self.run_tool('mac_ax_tree', {'app': 'com.apple.finder', 'depth': 3, 'max_nodes': 100})
-        self.assertEqual(argv[:2], [CTL, 'ax.tree'])
-        self.assertEqual(self.json_arg(argv), {'app': 'com.apple.finder', 'depth': 3, 'max_nodes': 100})
+    def test_unknown_mac_refused_and_target_kept(self):
+        for mac in ['nope', None, 5, 'lina-box']:
+            out, fake = self.tool('mac_use', {'mac': mac})
+            self.assertFalse(out['ok'], mac)
+            self.assertEqual(fake.calls, [])
+        self.assertEqual(self.targets.get('sess-1'), 'hub')
+        self.assertEqual(self.released, [])
 
-    def test_ax_tree_defaults_to_frontmost(self):
-        argv = self.run_tool('mac_ax_tree', {})
-        self.assertEqual(self.json_arg(argv), {'app': 'frontmost'})
+    def test_status_reports_cua_and_lease(self):
+        calls = []
 
-    def test_ax_press(self):
-        argv = self.run_tool('mac_ax_press', {'app': 'frontmost', 'path': '0/2/1', 'expect_role': 'AXButton'})
-        self.assertEqual(argv[:2], [CTL, 'ax.press'])
-        self.assertEqual(self.json_arg(argv), {'app': 'frontmost', 'path': '0/2/1', 'expect_role': 'AXButton'})
+        def runner(cmd, **kw):
+            calls.append(cmd)
+            if cmd[-1] == 'cua.status':
+                return Result(ok({'running': True, 'lease': {'holder': 'hermes-x', 'expires_in_s': 200}}))
+            return Result(ok({'policy': {'profile': 'operate'}}))
+        out, _ = self.tool('mac_status', {'mac': 'hub'}, runner)
+        self.assertEqual(out['result']['cua']['lease']['holder'], 'hermes-x')
 
-    def test_ax_press_without_expect_role(self):
-        argv = self.run_tool('mac_ax_press', {'app': 'frontmost', 'path': 'p'})
-        self.assertEqual(self.json_arg(argv), {'app': 'frontmost', 'path': 'p'})
+    def test_screenshot_bad_display_is_bad_request(self):
+        for display in ['second', 0, True]:
+            out, fake = self.tool('mac_screenshot', {'mac': 'hub', 'display': display})
+            self.assertEqual(fake.calls, [])
+            self.assertEqual(out['error']['code'], 'bad_request')
 
-    def test_click(self):
-        argv = self.run_tool('mac_click', {'x': 10, 'y': 20.5, 'button': 'right'})
-        self.assertEqual(argv[:2], [CTL, 'input.click'])
-        self.assertEqual(self.json_arg(argv), {'x': 10, 'y': 20.5, 'button': 'right'})
+    def test_targets_are_shared_across_imports(self):
+        spec2 = importlib.util.spec_from_file_location(
+            'lina_helper_plugin_again', os.path.join(PLUGIN, '__init__.py'), submodule_search_locations=[PLUGIN])
+        again = importlib.util.module_from_spec(spec2)
+        sys.modules['lina_helper_plugin_again'] = again
+        spec2.loader.exec_module(again)
+        self.assertIs(sys.modules['lina_helper_plugin_again.core'].targets, core.targets)
 
-    def test_click_default_button(self):
-        self.assertEqual(self.json_arg(self.run_tool('mac_click', {'x': 1, 'y': 2})), {'x': 1, 'y': 2})
+    def test_module_level_helper_action_for_the_backend(self):
+        self.assertTrue(callable(core.helper_action))
+        with unittest.mock.patch.object(core, '_shared', core.Dispatcher(lambda: CONFIG, runner=Fake(), session=lambda: 's')):
+            self.assertTrue(core.helper_action('hub', 'cua.release', {'holder': 'h'})['ok'])
 
-    def test_keys_text(self):
-        argv = self.run_tool('mac_keys', {'text': "it's $(x)"})
-        self.assertEqual(argv[:2], [CTL, 'input.keys'])
-        self.assertEqual(self.json_arg(argv), {'text': "it's $(x)"})
-
-    def test_keys_key_with_modifiers(self):
-        argv = self.run_tool('mac_keys', {'key': 'c', 'modifiers': ['command']}, mac='agent-mac')
-        self.assertEqual(self.json_arg(argv), {'key': 'c', 'modifiers': ['command']})
-
-    def test_bad_arguments_are_bad_request_without_subprocess(self):
-        cases = [
-            ('mac_ax_tree', {'depth': 'deep'}), ('mac_ax_tree', {'depth': True}), ('mac_ax_tree', {'app': 5}),
-            ('mac_ax_press', {'app': 'frontmost'}), ('mac_ax_press', {'path': 'p'}),
-            ('mac_click', {'x': 1}), ('mac_click', {'x': 'a', 'y': 2}), ('mac_click', {'x': True, 'y': 1}),
-            ('mac_keys', {}), ('mac_keys', {'text': 'a', 'key': 'b'}), ('mac_keys', {'key': 'a', 'modifiers': 'cmd'}),
-            ('mac_keys', {'text': 'a', 'modifiers': ['cmd']}), ('mac_screenshot', {'display': 'second'}),
-            ('mac_screenshot', {'display': 0}), ('mac_screenshot', {'display': True}),
-        ]
-        for name, args in cases:
-            out, fake = self.tool(name, dict(args, mac='hub'))
-            self.assertEqual(fake.calls, [], (name, args))
-            self.assertEqual(out['error']['code'], 'bad_request', (name, args))
-            self.assertEqual(out['mac'], 'hub')
+    def test_helper_action_never_raises(self):
+        d = core.Dispatcher(lambda: CONFIG, runner=Fake(Result(ok({'holder': 'h'}))), session=lambda: 's')
+        self.assertEqual(d.helper_action('hub', 'cua.lease', {'holder': 'h'})['result'], {'holder': 'h'})
+        self.assertEqual(d.helper_action('nope', 'cua.lease', {})['error']['code'], 'unknown_mac')
 
 
 class ScreenshotTests(Base):
@@ -249,85 +253,8 @@ class ErrorTests(Base):
         self.assertEqual(out['error']['code'], 'invalid_remote_response')
 
     def test_success_carries_result(self):
-        out, _ = self.tool('mac_status', {'mac': 'hub'}, Fake(Result(ok({'pid': 7}))))
-        self.assertEqual(out, {'ok': True, 'mac': 'hub', 'result': {'pid': 7}})
-
-
-class CuaTests(Base):
-    def test_local_argv(self):
-        out, fake = self.tool('mac_cua', {'mac': 'hub', 'tool': 'get_window_state', 'args': {'pid': 3, 'a': 'b'}},
-                              Fake(Result(b'{"windows":[]}\n')))
-        sock = os.path.join(os.path.expanduser('~'), 'Library/Application Support/LINA Helper/run/cua.sock')
-        self.assertEqual(fake.calls[0][0], [CUA, 'call', '--socket', sock, 'get_window_state', '{"a":"b","pid":3}'])
-        self.assertEqual(out, {'ok': True, 'mac': 'hub', 'result': {'windows': []}})
-
-    def test_ssh_argv_expands_home_on_the_remote(self):
-        _, fake = self.tool('mac_cua', {'mac': 'agent-mac', 'tool': 'list_apps', 'args': {}}, Fake(Result(b'{}')))
-        cmd = fake.calls[0][0]
-        self.assertEqual(cmd[:2], ['ssh', '-T'])
-        self.assertEqual(cmd[-2], 'lina-box')
-        self.assertEqual(
-            cmd[-1],
-            "'/Applications/LINA Helper.app/Contents/Helpers/cua-driver' call --socket "
-            '"$HOME/Library/Application Support/LINA Helper/run/cua.sock" list_apps \'{}\'')
-
-    def test_args_default_empty(self):
-        _, fake = self.tool('mac_cua', {'mac': 'hub', 'tool': 'list_apps'}, Fake(Result(b'{}')))
-        self.assertEqual(fake.calls[0][0][-1], '{}')
-
-    def test_hostile_json_is_quoted(self):
-        _, fake = self.tool('mac_cua', {'mac': 'agent-mac', 'tool': 'type_text', 'args': {'text': "'; rm -rf / #"}},
-                            Fake(Result(b'{}')))
-        parts = shlex.split(fake.calls[0][0][-1].replace('"$HOME', '"/h'))
-        self.assertEqual(json.loads(parts[-1]), {'text': "'; rm -rf / #"})
-        self.assertEqual(parts[-2], 'type_text')
-
-    def test_tool_name_validation(self):
-        for bad in ['', 'a-b', 'A', 'x y', '../x', 'a' * 65, 'a;b', 'tool\n', '-x', None, 3, 'é']:
-            out, fake = self.tool('mac_cua', {'mac': 'hub', 'tool': bad, 'args': {}})
-            self.assertEqual(fake.calls, [], bad)
-            self.assertEqual(out['error']['code'], 'bad_request', bad)
-        for good in ['a', 'get_window_state', 'a' * 64]:
-            out, _ = self.tool('mac_cua', {'mac': 'hub', 'tool': good, 'args': {}}, Fake(Result(b'{}')))
-            self.assertTrue(out['ok'], good)
-
-    def test_args_must_be_object(self):
-        for bad in [[], 'x', 3, None.__class__]:
-            out, fake = self.tool('mac_cua', {'mac': 'hub', 'tool': 'x', 'args': bad})
-            self.assertEqual(fake.calls, [])
-            self.assertEqual(out['error']['code'], 'bad_request')
-        out, fake = self.tool('mac_cua', {'mac': 'hub', 'tool': 'x', 'args': {'a': 'x' * 70000}})
-        self.assertEqual(out['error']['code'], 'bad_request')
-
-    def test_oversized_response_is_an_error_not_truncated(self):
-        big = json.dumps({'blob': 'x' * (8 << 20)}).encode()
-        out, _ = self.tool('mac_cua', {'mac': 'hub', 'tool': 'get_window_state'}, Fake(Result(big)))
-        self.assertFalse(out['ok'])
-        self.assertEqual(out['error']['code'], 'response_too_large')
-        ok = json.dumps({'blob': 'x' * 70000}).encode()
-        out, _ = self.tool('mac_cua', {'mac': 'hub', 'tool': 'get_window_state'}, Fake(Result(ok)))
-        self.assertEqual(out['result'], {'blob': 'x' * 70000})
-
-    def test_unknown_mac(self):
-        out, fake = self.tool('mac_cua', {'mac': 'zzz', 'tool': 'x'})
-        self.assertEqual((fake.calls, out['error']['code']), ([], 'unknown_mac'))
-
-    def test_nonzero_exit_is_structured(self):
-        out, _ = self.tool('mac_cua', {'mac': 'hub', 'tool': 'click'},
-                           Fake(Result(b'', b'tool "click" is not allowed by the YAML policy\n', 1)))
-        self.assertFalse(out['ok'])
-        self.assertEqual(out['error']['code'], 'cua_failed')
-        self.assertIn('not allowed', out['error']['detail'])
-
-    def test_ssh_failure_and_timeout(self):
-        out, _ = self.tool('mac_cua', {'mac': 'agent-mac', 'tool': 'x'}, Fake(Result(b'', b'Connection refused\n', 255)))
-        self.assertEqual(out['error']['code'], 'ssh_failed')
-        out, _ = self.tool('mac_cua', {'mac': 'agent-mac', 'tool': 'x'}, Fake(exc=subprocess.TimeoutExpired('ssh', 30)))
-        self.assertEqual(out['error']['code'], 'timeout')
-
-    def test_plain_text_output(self):
-        out, _ = self.tool('mac_cua', {'mac': 'hub', 'tool': 'x'}, Fake(Result(b'done\n')))
-        self.assertEqual(out['result'], 'done')
+        out, _ = self.tool('mac_screenshot', {'mac': 'hub'}, Fake(Result(b'PNG', ok({'width': 7, 'height': 8}))))
+        self.assertEqual((out['ok'], out['mac'], out['width'], out['height']), (True, 'hub', 7, 8))
 
 
 class ConfigTests(unittest.TestCase):
@@ -390,20 +317,19 @@ class RegisterTests(Base):
             os.environ.update(old)
         return ctx.tools
 
-    def test_seven_tools_with_required_mac(self):
+    def test_three_tools(self):
         tools = self.register({'LINA_HELPER_MACS_FILE': '/nonexistent/macs.yaml'})
-        self.assertEqual(sorted(tools), sorted(
-            ['mac_status', 'mac_screenshot', 'mac_ax_tree', 'mac_ax_press', 'mac_click', 'mac_keys', 'mac_cua']))
+        self.assertEqual(sorted(tools), ['mac_screenshot', 'mac_status', 'mac_use'])
         for name, t in tools.items():
             s = t['schema']
             self.assertEqual(s['name'], name)
             self.assertEqual(s['parameters']['type'], 'object')
-            self.assertIn('mac', s['parameters']['required'])
             self.assertEqual(s['parameters']['properties']['mac']['type'], 'string')
-            self.assertNotIn('enum', s['parameters']['properties']['mac'])
+            self.assertEqual(s['parameters']['properties']['mac']['enum'], ['hub'])
             self.assertEqual(t['toolset'], 'lina_helper')
             self.assertTrue(callable(t['handler']))
-        self.assertEqual(tools['mac_cua']['schema']['parameters']['properties']['tool']['pattern'], '^[a-z_]{1,64}$')
+        self.assertEqual(tools['mac_use']['schema']['parameters']['required'], ['mac'])
+        self.assertEqual(tools['mac_status']['schema']['parameters']['required'], [])
 
     def test_enum_lists_names_only(self):
         d = tempfile.TemporaryDirectory()
@@ -418,7 +344,7 @@ class RegisterTests(Base):
 
     def test_handler_accepts_dispatch_kwargs_and_returns_json_string(self):
         tools = self.register({'LINA_HELPER_MACS_FILE': '/nonexistent/macs.yaml'})
-        out = tools['mac_status']['handler']({'mac': 'x'}, task_id='t')
+        out = tools['mac_use']['handler']({'mac': 'x'}, task_id='t')
         self.assertFalse(json.loads(out)['ok'])
 
     def test_manifest_lists_the_tools(self):
@@ -426,7 +352,7 @@ class RegisterTests(Base):
             text = f.read()
         self.assertIn('name: lina-helper', text)
         self.assertIn('kind: standalone', text)
-        for name in ['mac_status', 'mac_screenshot', 'mac_ax_tree', 'mac_ax_press', 'mac_click', 'mac_keys', 'mac_cua']:
+        for name in ['mac_use', 'mac_status', 'mac_screenshot']:
             self.assertIn('  - ' + name, text)
 
 

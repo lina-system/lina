@@ -18,7 +18,7 @@ final class PolicyProfileTests: XCTestCase {
             XCTAssertTrue(observe.allows(action), action)
             XCTAssertTrue(operate.allows(action), action)
         }
-        for action in ["ax.press", "input.click", "input.keys", "app.open"] {
+        for action in ["cua.restart", "cua.lease", "cua.release"] {
             XCTAssertFalse(observe.allows(action), action)
             XCTAssertTrue(operate.allows(action), action)
             XCTAssertEqual(operate.limits(for: action), [:])
@@ -30,13 +30,36 @@ final class PolicyProfileTests: XCTestCase {
         }
     }
 
+    func testLegacyLinaMacPolicyKeepsReadsAndRemovedActionsAreUnknown() throws {
+        let policy = parse(#"{"actions":{"screenshot":{},"ax.tree":{},"ax.press":{},"input.click":{},"input.keys":{},"app.open":{}}}"#)
+        XCTAssertEqual(policy.profile, "custom")
+        XCTAssertFalse(policy.runsCuaDriver)
+        var actions = SystemActions.registry(home: NSTemporaryDirectory(), probe: { [:] })
+        // Stub only the OS read handlers; exercise the production registry and dispatch policy.
+        for name in ["screenshot", "ax.tree"] {
+            XCTAssertNotNil(actions[name])
+            actions[name] = Action { _ in ["served": .bool(true)] }
+        }
+        let dispatcher = ActionDispatcher(actions: actions)
+        for name in ["screenshot", "ax.tree"] {
+            XCTAssertEqual(dispatcher.dispatch(Request(action: name), policy: policy).result?["served"], .bool(true))
+        }
+        let operate = parse(#"{"profile":"operate"}"#)
+        for name in ["ax.press", "input.click", "input.keys", "app.open"] {
+            XCTAssertTrue(policy.allows(name))
+            XCTAssertNil(actions[name])
+            XCTAssertFalse(operate.allows(name))
+            XCTAssertEqual(dispatcher.dispatch(Request(action: name), policy: policy).error?.code, .unknownAction)
+        }
+    }
+
     func testMissingPolicyObservesButUnsafeOrInvalidRestricts() throws {
         let dir = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: dir) }
         let missing = dir.appendingPathComponent("missing.json")
         XCTAssertTrue(Policy.load(path: missing.path).allows("screenshot"))
-        XCTAssertFalse(Policy.load(path: missing.path).allows("input.keys"))
+        XCTAssertFalse(Policy.load(path: missing.path).allows("cua.lease"))
         let file = dir.appendingPathComponent("policy.json")
         try Data(#"{"profile":"operate"}"#.utf8).write(to: file)
         // No privileged filesystem operations: the parser separately exercises root ownership.
@@ -72,7 +95,7 @@ final class PolicyProfileTests: XCTestCase {
             (Policy.load(path: "/nonexistent-lina-policy"), metadata("observe", "builtin")),
             (parse(#"{"profile":"observe"}"#), metadata("observe", "root")),
             (parse(#"{"profile":"operate"}"#), metadata("operate", "root")),
-            (parse(#"{"actions":{"app.open":{}}}"#), metadata("custom", "root")),
+            (parse(#"{"actions":{"ax.tree":{}}}"#), metadata("custom", "root")),
             (.restricted, metadata("restricted", "restricted")),
         ]
         for (policy, expected) in cases {
@@ -80,9 +103,9 @@ final class PolicyProfileTests: XCTestCase {
             XCTAssertTrue(response.ok)
             XCTAssertEqual(response.result?["policy"], expected)
         }
-        let custom = parse(#"{"actions":{"app.open":{}}}"#)
+        let custom = parse(#"{"actions":{"ax.tree":{}}}"#)
         XCTAssertFalse(custom.allows("screenshot"))
-        XCTAssertTrue(custom.allows("app.open"))
+        XCTAssertTrue(custom.allows("ax.tree"))
     }
 
     func testSignedConfigurationIgnoresDevelopmentOverrides() {

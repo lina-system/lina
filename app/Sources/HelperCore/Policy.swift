@@ -25,7 +25,7 @@ public struct Policy: Sendable {
         ],
         "operate_additions": [
             "cua.restart": .object([:]),
-            "ax.press": .object([:]), "input.click": .object([:]), "input.keys": .object([:]), "app.open": .object([:]),
+            "cua.lease": .object([:]), "cua.release": .object([:]),
         ],
     ]
 

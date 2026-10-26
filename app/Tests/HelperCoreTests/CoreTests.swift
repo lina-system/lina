@@ -46,7 +46,7 @@ final class CoreTests: XCTestCase {
     }
 
     func testPolicyTrustAndFallback() throws {
-        let raw = Data(#"{"actions":{"screenshot":{"max_bytes":1000},"input.keys":{}}}"#.utf8)
+        let raw = Data(#"{"actions":{"screenshot":{"max_bytes":1000},"cua.lease":{}}}"#.utf8)
         for (uid, mode, expected) in [(UInt32(0), UInt16(0o644), true),
                                       (501, 0o644, false), (0, 0o664, false), (0, 0o646, false)] {
             let policy = Policy.parse(raw, owner: uid, mode: mode)
@@ -55,7 +55,7 @@ final class CoreTests: XCTestCase {
             XCTAssertTrue(policy.allows("permissions"))
         }
         XCTAssertFalse(Policy.parse(Data("invalid".utf8), owner: 0, mode: 0o644).allows("screenshot"))
-        XCTAssertFalse(Policy.load(path: "/nonexistent-lina-policy").allows("input.keys"))
+        XCTAssertFalse(Policy.load(path: "/nonexistent-lina-policy").allows("cua.lease"))
         let config = Configuration(environment: ["LINA_HELPER_HOME": "/tmp/lina-test",
                                                  "LINA_HELPER_POLICY": "/tmp/policy.json"], ownTeam: nil)
         XCTAssertEqual(config.socketPath, "/tmp/lina-test/run/helper.sock")
@@ -156,9 +156,9 @@ final class CoreTests: XCTestCase {
         defer { try? FileManager.default.removeItem(at: directory) }
         let path = directory.appendingPathComponent("policy.json")
         let link = directory.appendingPathComponent("link.json")
-        try Data(#"{"actions":{"input.keys":{}}}"#.utf8).write(to: path)
+        try Data(#"{"actions":{"cua.lease":{}}}"#.utf8).write(to: path)
         try FileManager.default.createSymbolicLink(at: link, withDestinationURL: path)
-        XCTAssertFalse(Policy.load(path: link.path).allows("input.keys"))
-        XCTAssertFalse(Policy.parse(Data(#"{"actions":{"input.keys":true}}"#.utf8), owner: 0, mode: 0o644).allows("input.keys"))
+        XCTAssertFalse(Policy.load(path: link.path).allows("cua.lease"))
+        XCTAssertFalse(Policy.parse(Data(#"{"actions":{"cua.lease":true}}"#.utf8), owner: 0, mode: 0o644).allows("cua.lease"))
     }
 }

@@ -49,12 +49,11 @@ LABEL = BUNDLE_ID
 KNOWN_PATHS = {APP, AGENT_PLIST, POLICY, SUPPORT, PREVIOUS_DIR, PREVIOUS, CTL_LINK, STATE,
                STATE_DIR, '/usr/local/bin'}
 
-# status and permissions are always enabled. The signed app reads this same resource.
-# Preserve the v0 root policy shape, ordering and serialized bytes.
+# status and permissions are always enabled. Keep the explicit root-policy form
+# for installs; the resource mirrors the profiles compiled into the signed helper.
 PROFILE_RESOURCE = Path(__file__).resolve().parents[1] / 'app/Resources/PolicyProfiles.json'
 PROFILES = json.loads(PROFILE_RESOURCE.read_text())
-DEFAULT_POLICY = {'actions': {k: v for k, v in {**PROFILES['observe'], **PROFILES['operate_additions']}.items()
-                              if not k.startswith('cua.')}}
+DEFAULT_POLICY = {'actions': {k: v for k, v in PROFILES['observe'].items() if not k.startswith('cua.')}}
 
 
 @dataclass(frozen=True)

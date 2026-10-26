@@ -164,8 +164,7 @@ class InstallTests(InstallTestCase):
         self.assertEqual(stat.S_IMODE(self.path(POLICY).stat().st_mode), 0o644)
         self.assertIn(('chown', POLICY + '.tmp-lina', 'root', 'wheel'), self.b.events)
         policy = json.loads(self.path(POLICY).read_text())
-        self.assertEqual(sorted(policy['actions']), ['app.open', 'ax.press', 'ax.tree', 'input.click',
-                                                     'input.keys', 'screenshot'])
+        self.assertEqual(sorted(policy['actions']), ['ax.tree', 'screenshot'])
         self.assertTrue(all(isinstance(v, dict) for v in policy['actions'].values()))
         self.assertEqual(policy['actions']['ax.tree'], {'max_depth': 8, 'max_nodes': 2000})
         self.assertEqual(policy['actions']['screenshot']['timeout_s'], 15)
@@ -582,17 +581,17 @@ class UserModeTests(InstallTestCase):
 
 
 class ProfileResourceTests(unittest.TestCase):
-    def test_installer_defaults_match_shared_operate_profile_and_legacy_bytes(self):
+    def test_installer_defaults_keep_explicit_read_actions(self):
         resource = Path(__file__).resolve().parents[2] / 'app/Resources/PolicyProfiles.json'
         profiles = json.loads(resource.read_text())
-        actions = {**profiles['observe'], **profiles['operate_additions']}
-        self.assertEqual(install.DEFAULT_POLICY, {'actions': {k: v for k, v in actions.items() if not k.startswith('cua.')}})
+        self.assertEqual(install.DEFAULT_POLICY, {'actions': {
+            'screenshot': {'timeout_s': 15}, 'ax.tree': {'max_depth': 8, 'max_nodes': 2000}}})
+        self.assertEqual(install.DEFAULT_POLICY['actions'],
+                         {k: v for k, v in profiles['observe'].items() if not k.startswith('cua.')})
         self.assertIn('cua.status', profiles['observe'])
-        self.assertIn('cua.restart', profiles['operate_additions'])
-        # Root installs must keep emitting the exact v0 policy bytes (including key order).
-        legacy = {'actions': {'screenshot': {'timeout_s': 15}, 'ax.tree': {'max_depth': 8, 'max_nodes': 2000},
-                              'ax.press': {}, 'input.click': {}, 'input.keys': {}, 'app.open': {}}}
-        self.assertEqual(json.dumps(install.DEFAULT_POLICY, indent=2), json.dumps(legacy, indent=2))
+        self.assertEqual(set(profiles['operate_additions']), {'cua.restart', 'cua.lease', 'cua.release'})
+        for removed in ['ax.press', 'input.click', 'input.keys', 'app.open']:
+            self.assertNotIn(removed, {**profiles['observe'], **profiles['operate_additions']})
 
     def test_cli_defaults_to_root_and_user_mode_needs_no_user(self):
         from unittest.mock import patch

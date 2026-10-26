@@ -8,6 +8,20 @@ public final class CuaGate: @unchecked Sendable {
     private let path: String
     private let daemonPath: String
     private let audit: AuditLog
+    private let lease: CuaInputLease
+    private let now: @Sendable () -> TimeInterval
+    private struct Identity {
+        let holder: String
+        let seen: TimeInterval
+    }
+    private let identities = Locked<[pid_t: Identity]>([:])
+    private static let inputTools: Set<String> = [
+        "click", "double_click", "right_click", "drag", "scroll", "move_cursor", "type_text", "type_text_chars",
+        "press_key", "hotkey", "set_value", "invoke_menu", "launch_app", "bring_to_front", "kill_app",
+        "run_steps", "run_script", "set_window_frame", "clipboard_write", "browser_click", "browser_type",
+        "browser_navigate", "browser_pointer", "browser_select", "browser_set_input_files", "browser_dialog",
+        "browser_download", "page", "replay_trajectory",
+    ]
     private let own: CodeIdentity
     private let development: Bool
     private let capacity: Int
@@ -21,13 +35,16 @@ public final class CuaGate: @unchecked Sendable {
     private var source: DispatchSourceRead?
     private var connections: [Int32: GateConnection] = [:]
 
-    init(home: String, audit: AuditLog, own: CodeIdentity = PeerAuthorization.ownIdentity(),
+    init(home: String, audit: AuditLog, lease: CuaInputLease = CuaInputLease(),
+         own: CodeIdentity = PeerAuthorization.ownIdentity(),
          development: Bool = false, capacity: Int = 16, readTimeout: TimeInterval = 10,
          relayTimeout: TimeInterval = 120,
+         now: @escaping @Sendable () -> TimeInterval = { ProcessInfo.processInfo.systemUptime },
          inspect: @escaping @Sendable (Int32) -> Peer = PeerAuthorization.inspect(socket:),
          connect: @escaping @Sendable (String) throws -> Int32 = Transport.connect(path:)) {
         path = home + "/run/cua.sock"; daemonPath = home + "/run/cua-daemon.sock"
         self.audit = audit; self.own = own; self.development = development
+        self.lease = lease; self.now = now
         self.capacity = capacity; self.readTimeout = readTimeout; self.relayTimeout = relayTimeout
         self.inspect = inspect; self.connect = connect
     }
@@ -149,6 +166,13 @@ public final class CuaGate: @unchecked Sendable {
                 let message = (error as? HelperError)?.detail ?? "invalid request"
                 refuse(message, request: request, peer: peer, client: client); return
             }
+            let identity = leaseIdentity(request, peer: peer)
+            if request?["method"]?.string == "call", let name = request?["name"]?.string,
+               Self.inputTools.contains(name), let held = lease.refusal(identity: identity) {
+                refuse(held.detail, request: request, peer: peer, client: client,
+                       auditError: "lease held by \(held.holder)", exitCode: 75)
+                return
+            }
             do { try audit.recordCuaRequest(request, peer: peer) }
             catch { try? Transport.write(Self.errorLine("audit unavailable"), to: client); return }
             // From here on there must never be a second audit entry, including for
@@ -172,6 +196,26 @@ public final class CuaGate: @unchecked Sendable {
                 let count = recv(client, &byte, 1, MSG_PEEK)
                 if count <= 0 { return }
             }
+        }
+    }
+
+    /// MCP opens a fresh gate connection for each call. Remember explicit session
+    /// labels by the authenticated proxy PID, not its parent or the socket fd.
+    private func leaseIdentity(_ request: [String: JSONValue]?, peer: Peer) -> String? {
+        identities.withLock { identities in
+            let time = now()
+            identities = identities.filter { time - $0.value.seen <= 600 }
+            if let session = request?["args"]?.object?["session"]?.string, !session.isEmpty {
+                if let pid = peer.pid {
+                    if identities[pid] == nil, identities.count >= 256,
+                       let oldest = identities.min(by: { $0.value.seen < $1.value.seen })?.key {
+                        identities.removeValue(forKey: oldest)
+                    }
+                    identities[pid] = Identity(holder: session, seen: time)
+                }
+                return session
+            }
+            return peer.pid.flatMap { identities[$0]?.holder }
         }
     }
 
@@ -263,15 +307,17 @@ public final class CuaGate: @unchecked Sendable {
         }
     }
 
-    private func refuse(_ error: String, request: [String: JSONValue]?, peer: Peer, client: Int32) {
+    private func refuse(_ error: String, request: [String: JSONValue]?, peer: Peer, client: Int32,
+                        auditError: String? = nil, exitCode: Int? = nil) {
         var message = error
-        do { try audit.recordCuaRequest(request, peer: peer, error: error) }
+        do { try audit.recordCuaRequest(request, peer: peer, error: auditError ?? error) }
         catch { message = "audit unavailable" }
-        try? Transport.write(Self.errorLine(message), to: client)
+        try? Transport.write(Self.errorLine(message, exitCode: exitCode), to: client)
     }
-    private static func errorLine(_ error: String) -> Data {
-        // Every message comes from this implementation, never from request content.
-        (try? WireJSON.encode(["ok": JSONValue.bool(false), "error": .string(error)])) ?? Data()
+    private static func errorLine(_ error: String, exitCode: Int? = nil) -> Data {
+        var response: [String: JSONValue] = ["ok": .bool(false), "error": .string(error)]
+        if let exitCode { response["exit_code"] = .number(Double(exitCode)) }
+        return (try? WireJSON.encode(response)) ?? Data()
     }
 }
 

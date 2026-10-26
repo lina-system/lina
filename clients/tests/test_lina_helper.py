@@ -47,8 +47,8 @@ class CommandTests(unittest.TestCase):
 
     def test_hostile_args_are_quoted(self):
         for value in ['a b', "it's", '"q"', '$(touch /tmp/x)', 'x\ny', '`id`', ';rm -rf /', '--out=/etc/passwd']:
-            remote = lh.command('h', 'input.keys', ['text=' + value])[-1]
-            self.assertEqual(shlex.split(remote), [lh.CTL, 'input.keys', '--arg', 'text=' + value])
+            remote = lh.command('h', 'cua.lease', ['holder=' + value])[-1]
+            self.assertEqual(shlex.split(remote), [lh.CTL, 'cua.lease', '--arg', 'holder=' + value])
 
     def test_out_appends_dash(self):
         remote = lh.command('h', 'screenshot', ['display=main'], out=True)[-1]

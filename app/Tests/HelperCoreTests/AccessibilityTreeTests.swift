@@ -4,7 +4,6 @@ import XCTest
 private final class FakeElement: AccessibilityElement {
     let role: String
     var children: [FakeElement]
-    var presses = 0
     var requestedChildren = 0
     init(_ role: String, _ children: [FakeElement] = []) { self.role = role; self.children = children }
     func snapshot() throws -> [String: JSONValue] {
@@ -15,7 +14,6 @@ private final class FakeElement: AccessibilityElement {
         requestedChildren += 1
         return children.indices.contains(index) ? children[index] : nil
     }
-    func press() throws { presses += 1 }
 }
 
 final class AccessibilityTreeTests: XCTestCase {
@@ -35,22 +33,6 @@ final class AccessibilityTreeTests: XCTestCase {
         XCTAssertEqual(root.requestedChildren, 0)
         XCTAssertEqual(try AccessibilityTree.read(root, depth: 8, maxNodes: 2, context: context).count, 2)
     }
-    func testPressResolvesFreshAndChecksRole() throws {
-        let old = FakeElement("AXButton"), replacement = FakeElement("AXTextField")
-        let root = FakeElement("AXApplication", [old])
-        let path = try AXPath("0/0")
-        try AccessibilityTree.press(root, path: path, expectRole: "AXButton", context: context)
-        XCTAssertEqual(old.presses, 1)
-        root.children = [replacement]
-        XCTAssertThrowsError(try AccessibilityTree.press(root, path: path, expectRole: "AXButton", context: context)) {
-            XCTAssertEqual(($0 as? HelperError)?.code, .targetNotFound)
-        }
-        XCTAssertEqual(replacement.presses, 0)
-        root.children = []
-        XCTAssertThrowsError(try AccessibilityTree.press(root, path: path, expectRole: nil, context: context)) {
-            XCTAssertEqual(($0 as? HelperError)?.code, .targetNotFound)
-        }
-    }
     func testFailureFromAnAttributeIsAbsentNotFatal() {
         // Finder answers kAXErrorFailure (-25200) for some attributes; that must not fail ax.tree.
         XCTAssertEqual(AXReadOutcome.classify(.failure), .absent)
@@ -59,11 +41,9 @@ final class AccessibilityTreeTests: XCTestCase {
         XCTAssertEqual(AXReadOutcome.classify(.invalidUIElement), .error(.targetNotFound))
         XCTAssertEqual(AXReadOutcome.classify(.notImplemented), .error(.internalError))
     }
-    func testExpiredWorkDoesNotPress() throws {
+    func testExpiredWorkDoesNotRead() throws {
         let root = FakeElement("AXButton")
         let expired = ActionContext(args: [:], limits: [:], deadline: 0)
-        XCTAssertThrowsError(try AccessibilityTree.press(root, path: AXPath("0"), expectRole: nil, context: expired))
         XCTAssertThrowsError(try AccessibilityTree.read(root, depth: 8, maxNodes: 100, context: expired))
-        XCTAssertEqual(root.presses, 0)
     }
 }

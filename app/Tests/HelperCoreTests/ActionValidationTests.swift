@@ -20,7 +20,7 @@ final class ActionValidationTests: XCTestCase {
             bad { _ = try ScreenshotArguments(context(args)) }
         }
     }
-    func testTreeLimitsAndPaths() throws {
+    func testTreeLimits() throws {
         let args: [String: JSONValue] = ["app": .string("frontmost")]
         let defaults = try AXTreeArguments(context(args))
         XCTAssertEqual(defaults.depth, 8); XCTAssertEqual(defaults.maxNodes, 2000)
@@ -32,40 +32,12 @@ final class ActionValidationTests: XCTestCase {
             ["depth": .number(1.5)], ["extra": .null]] {
             bad { _ = try AXTreeArguments(context(args.merging(extra) { _, new in new }, limits: limits)) }
         }
-        XCTAssertEqual(try AXPath("0/3/1").indices, [3, 1])
-        XCTAssertEqual(try AXPath("0").indices, [])
-        for path in ["", "/0", "0/", "1", "0/-1", "0/01", "0/a", "0//1", "0/99999999999999999999999"] {
-            bad { _ = try AXPath(path) }
-        }
-        bad { _ = try AXPressArguments(context(["app": .string("frontmost"), "path": .string("0"), "expect_role": .number(1)])) }
     }
-    func testClickArguments() throws {
-        let args: [String: JSONValue] = ["x": .number(-100.5), "y": .number(20)]
-        let click = try ClickArguments(context(args))
-        XCTAssertEqual(click.button, "left"); XCTAssertEqual(click.count, 1)
-        for extra: [String: JSONValue] in [["button": .string("middle")], ["count": .number(3)],
-            ["count": .number(1.2)], ["x": .string("1")], ["y": .number(.infinity)], ["z": .number(0)]] {
-            bad { _ = try ClickArguments(context(args.merging(extra) { _, new in new })) }
-        }
-        bad { _ = try ClickArguments(context([:])) }
-    }
-    func testKeysAndBundleArguments() throws {
-        _ = try KeysArguments(context(["text": .string(String(repeating: "🙂", count: 512))]))
-        for key in ["return", "tab", "escape", "space", "delete", "up", "down", "left", "right", "home", "end", "pageup", "pagedown"] + (1...12).map({ "f\($0)" }) {
-            _ = try KeysArguments(context(["key": .string(key), "modifiers": .array([.string("cmd"), .string("shift")])]))
-        }
-        for args: [String: JSONValue] in [[:], ["text": .string(String(repeating: "a", count: 513))],
-            ["text": .string("x"), "key": .string("return")], ["key": .string("a")],
-            ["key": .string("f13")], ["key": .string("tab"), "modifiers": .array([.string("bad")])],
-            ["key": .string("tab"), "modifiers": .string("cmd")],
-            ["key": .string("tab"), "modifiers": .array([.string("cmd"), .string("cmd")])],
-            ["text": .string("x"), "modifiers": .array([])], ["text": .string("x"), "extra": .null]] {
-            bad { _ = try KeysArguments(context(args)) }
-        }
-        XCTAssertEqual(try AppOpenArguments(context(["bundle_id": .string("com.example.Test")] )).bundleID, "com.example.Test")
-        for args: [String: JSONValue] in [[:], ["bundle_id": .string("")], ["bundle_id": .string("/tmp/test.app")],
-            ["bundle_id": .string("com..test")], ["bundle_id": .string("com.example.Test"), "extra": .null]] {
-            bad { _ = try AppOpenArguments(context(args)) }
+    func testTreeAppBundleArguments() throws {
+        XCTAssertEqual(try AXTreeArguments(context(["app": .string("com.example.Test")])).app, "com.example.Test")
+        for args: [String: JSONValue] in [[:], ["app": .string("")], ["app": .string("/tmp/test.app")],
+            ["app": .string("com..test")], ["app": .string("com.example.Test"), "extra": .null]] {
+            bad { _ = try AXTreeArguments(context(args)) }
         }
     }
 }
