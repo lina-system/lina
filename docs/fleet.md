@@ -93,9 +93,11 @@ Hermes picks its driver binary from `HERMES_CUA_DRIVER_CMD` (`tools/computer_use
 - Any other verb passes to the bundled driver.
 - Hermes core code is unchanged. Only the default `standard` computer_use mode is supported; `bounded`/`unrestricted` make Hermes start a private daemon through CuaDriver.app outside the helper.
 
-Settings for a Hermes profile (applied by the operator): `HERMES_CUA_DRIVER_CMD=~/code/lina-helper/clients/hermes-cua-driver`. On the hub Mac the default (this Mac's gate) is right.
+Every bot profile runs with `approvals.mode: off`, and Hermes maps any approval bypass to cua's `unrestricted` mode, for which the built-in backend starts a private daemon through `CuaDriver.app`, outside the helper. So the wrapper alone is not enough: the computer-use provider `lina-helper-cua` (`clients/hermes-computer-use/`) is the built-in backend with the driver command set to the wrapper and the cua mode fixed to `standard`; the helper's policy profile is the boundary instead.
 
-Tested 2026-10-26 with Hermes's own `CuaDriverBackend` (no model) against the agent's Mac through the wrapper: list_apps, Finder capture with 76 elements and an image, a background click, pressing TextEdit's New Document button by element, typing 15 characters and reading them back. The gate wrote one audit line per call (`cua.call:click`, `cua.call:type_text` with `text_len`/`text_sha256` only). After that, the standalone 0.21.0 on the hub Mac is removed by the operator once every bot has used `computer_use` through the new path, and the owner removes its two grant rows.
+Settings for a Hermes profile (applied by the operator): symlink `clients/hermes-computer-use` to `<profile>/plugins/lina-helper-cua` and set `computer_use.backend: lina-helper-cua`. Steps and check: `clients/hermes-computer-use/README.md`.
+
+Tested 2026-10-26 with Hermes's own `CuaDriverBackend` (no model) against the agent's Mac through the wrapper: list_apps, Finder capture with 76 elements and an image, a background click, pressing TextEdit's New Document button by element, typing 15 characters and reading them back. The gate wrote one audit line per call (`cua.call:click`, `cua.call:type_text` with `text_len`/`text_sha256` only). A model session of an agent profile (copy of its config with `approvals.mode: off` and the provider, `LINA_HELPER_CUA_HOST=<host>`) captured Finder and clicked an empty area; the gate logged `start_session … get_window_state, click, click, get_window_state … end_session`. After that, the standalone 0.21.0 on the hub Mac is removed by the operator once every bot has used `computer_use` through the new path, and the owner removes its two grant rows.
 
 ## 6. Hermes side
 
