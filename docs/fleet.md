@@ -7,13 +7,13 @@ Status: design, 2026-10-26. Follows the v0 acceptance on the agent's Mac (`docs/
 | Mac | Account | Role | Login after boot | sudo over SSH | Policy profile |
 |---|---|---|---|---|---|
 | the agent's Mac | `<user>` | LINA's own Mac, agent-operated | (not recorded) | (not recorded) | `operate` (root policy, done in v0) |
-| the hub Mac | `<user>` | agent hub: Hermes, signing | (not recorded) | (not recorded) | `observe` until #20 is live, then `operate` only if a task needs it |
-| a laptop | `<user>` | the owner's personal laptop | (not recorded) | (not recorded) | `observe` |
-| a laptop | `<user>` | the owner's personal laptop | (not recorded) | (not recorded) | `observe` |
-| a desktop Mac (not here yet) | `<user>` | the owner's own work | (not recorded) | (not recorded) | `observe` |
+| the hub Mac | `<user>` | agent hub: Hermes, signing | (not recorded) | (not recorded) | `operate` |
+| a laptop | `<user>` | the owner's personal laptop | (not recorded) | (not recorded) | `operate` |
+| a laptop | `<user>` | the owner's personal laptop | (not recorded) | (not recorded) | `operate` |
+| a desktop Mac (not here yet) | `<user>` | the owner's own work | (not recorded) | (not recorded) | `operate` (same as the others) |
 | More Macs (later) | per machine | per role | (not recorded) | (not recorded) | decided when they arrive |
 
-Secrets live outside this repository. It stays on `observe` until the embedded cua-driver (#20) replaces the standalone cua-driver 0.21.0 there (otherwise two grant-bearing input paths exist), and then moves to `operate` only when a concrete task needs it (the operator, 2026-10-26).
+Decision (the owner, 2026-10-26, relayed by the operator): every Mac uses the same setting, `operate` plus its own audit log, and Hermes's `computer_use` on the hub Mac goes through the helper (§5). This replaces the earlier plan to keep the hub Mac and the personal Macs on `observe`.Secrets live outside this repository. `observe` stays the built-in default for a Mac that has no root policy yet, and `{"profile":"observe"}` turns input off on any Mac again (§4).
 
 ## 2. Install layout
 
@@ -42,13 +42,13 @@ Deployment from the hub Mac, per Mac: build → `tools/sign.py` → `ditto -c -k
 | `operate` | all v0 actions (`ax.press`, `input.click`, `input.keys`, `app.open` added) | running, read and input tools | root policy file only |
 
 - Without a root policy the helper serves `observe` instead of the v0 "status and permissions only". A root policy, when present and safe, replaces the built-in profile completely, so the agent's Mac keeps exactly what it has.
-- Input is never on by default on a personal Mac. It needs the root policy, which needs the owner's password on that Mac; no agent can write it.
+- Input needs the root policy, which needs the owner's password on that Mac; no agent can write it. The owner writes it once per Mac (§8).
 - An unsafe root policy (wrong owner or mode, bad JSON) falls back to `status` + `permissions` only, not to `observe`, so a broken file never silently changes what is allowed.
 - `status` reports the active profile and whether it came from the root policy or the built-in default.
 
 ## 4. Turning input on (the owner, per Mac)
 
-On the Mac, in Terminal, one line that uses only system binaries:
+On the Mac, in Terminal: `sudo sh ~/lina-helper-operate.sh` (placed on each Mac by the operator). It only uses system binaries: it writes `{"profile": "operate"}` to `/Library/Application Support/LINA Helper/policy.json` (`root:wheel 0644`) and opens the Accessibility settings pane. The equivalent one line:
 
 ```
 sudo /bin/mkdir -p "/Library/Application Support/LINA Helper" && echo '{"profile":"operate"}' | sudo /usr/bin/tee "/Library/Application Support/LINA Helper/policy.json"
@@ -73,21 +73,29 @@ Today cua-driver 0.21.0 runs as its own app (`com.trycua.driver`) and holds its 
 cua-driver supports this directly: `serve --embedded` keeps the daemon in its spawner's TCC responsibility chain, so a daemon spawned by LINA Helper as a direct child (not through `open`/LaunchServices) checks TCC as LINA Helper and never prompts. Upstream reference: `libs/cua-driver/rust/Skills/cua-driver/EMBEDDING.md`.
 
 - Bundle: the upstream cua-driver 0.38.0 `darwin-arm64` binary (SHA-256 checked against the release `SHA256SUMS`) ships as `Contents/Helpers/cua-driver`, keeping its upstream signature (team `YCK386LBJ7`). License MIT; `LICENSE` and `THIRD_PARTY_NOTICES.md` go to `Contents/Resources/cua-driver/`. The pinned version and hash live in one file in the repo; updating is a PR that changes both.
-- Spawn: at start the helper spawns `cua-driver serve --embedded --socket <state>/run/cua.sock --no-permissions-gate --permission-mode standard --host-bundle-id app.lina-os.helper` directly (`posix_spawn`, not `open`) with `CUA_DRIVER_EMBEDDED=1`, `CUA_DRIVER_HOST_BUNDLE_ID=app.lina-os.helper`, `CUA_DRIVER_RS_TELEMETRY_ENABLED=0`, `CUA_DRIVER_POLICY_FILE=<state>/run/cua-policy.yaml` (§4). The socket directory is the helper's `0700` run directory.
+- Spawn: at start the helper spawns `cua-driver serve --embedded --socket <state>/run/cua-daemon.sock --no-permissions-gate --permission-mode standard --host-bundle-id app.lina-os.helper` directly (`posix_spawn`, not `open`) with `CUA_DRIVER_EMBEDDED=1`, `CUA_DRIVER_HOST_BUNDLE_ID=app.lina-os.helper`, `CUA_DRIVER_RS_TELEMETRY_ENABLED=0`, `CUA_DRIVER_POLICY_FILE=<state>/run/cua-policy.yaml` (§4). The socket directory is the helper's `0700` run directory.
 - Supervision: the child runs only while the active profile is `operate` (§4). The helper starts it when the profile becomes `operate`, stops it when it stops being `operate`, restarts it if it exits (backoff 1 s → 60 s) and when a grant changes (TCC answers are cached per process), and stops it on exit.
 - Tool allowlist (cua-driver YAML policy, deny by default; hygiene, not a boundary, see §4): read tools `get_window_state`, `get_desktop_state`, `get_accessibility_tree`, `list_apps`, `list_windows`, `get_screen_size`, `get_cursor_position`, `zoom`, `check_permissions`, `health_report`, `get_guide`, `start_session`, `end_session`, `get_session`, `list_sessions`, and input tools `click`, `double_click`, `right_click`, `drag`, `scroll`, `move_cursor`, `type_text`, `press_key`, `hotkey`, `set_value`, `invoke_menu`, `launch_app`, `bring_to_front`, `run_steps`, `verify_state`. Browser, clipboard, recording, script, config, update and kill tools stay off until a use needs them.
 - Helper actions: `cua.status` (child pid, version, socket path, `check_permissions` result with `source.attribution`), `cua.restart`.
-- Callers: `ssh <mac> '/Applications/LINA Helper.app/Contents/Helpers/cua-driver' call --socket <sock> <tool> <json>` for one call, or `... mcp --embedded --socket <sock>` as a stdio MCP proxy. The proxy only forwards; the embedded daemon does every TCC check and enforces the tool allowlist.
+- Audit gate (#26): the daemon listens on the private `run/cua-daemon.sock`; the public `run/cua.sock` is the helper's gate. Every daemon request (one JSON line per connection: `call`, `list`, `session_begin`, …) is written to the helper's audit log before it is forwarded (`action: cua.call:<tool>`, arguments redacted like other entries: strings as length + SHA-256, so typed text never appears; peer pid, executable, parent process). An audit write failure blocks the request. Peers must be this user and be the bundled cua-driver (the MCP proxy) or team-signed code. The gate socket exists only while the daemon is ready.
+- Compatibility at the gate, for clients written for cua-driver 0.21 (Hermes `computer_use`): a `get_window_state` call without `tree_format` gets `"both"` (0.38 otherwise returns only markdown, so the client sees no `element_token`), and `element_index` is dropped when `element_token` is present (0.38 rejects it). Everything else passes byte for byte.
+- Callers: `ssh <mac> '/Applications/LINA Helper.app/Contents/Helpers/cua-driver' call --socket <gate> <tool> <json>` for one call, or `... mcp --embedded --socket <gate>` as a stdio MCP proxy. The proxy only forwards; the embedded daemon does every TCC check and enforces the tool allowlist, and the gate records each call.
 - Acceptance: on the agent's Mac (`operate`), `check_permissions` through the helper's socket reports `attribution: host` and both grants true, and `get_window_state` returns a tree and an image without any new TCC row for `com.trycua.driver`. A cua-driver binary with one byte changed is refused before it runs. With the profile switched to `observe`, no child is running and the socket is gone.
 
 The standalone cua-driver 0.21.0 is not updated in place: it is Hermes's pinned computer-use driver, and changing that pin is Hermes administration (the operator).
 
-State on 2026-10-26 (the operator): on the hub Mac, Hermes's built-in `computer_use` tool is enabled for all eight bots and finds the standalone 0.21.0 on the gateway's PATH (used 7 times in the last three days). The helper there is on `observe`, so its embedded driver is not running and `computer_use` cannot be pointed at it yet. 0.21.0 stays until one of these is decided with the owner:
+### Hermes `computer_use` through the helper
 
-1. The hub Mac moves to `operate` and `computer_use` uses the helper's socket. Same decision as input on the hub Mac (§1).
-2. `computer_use` is switched off on the hub Mac and screen work there goes through the lina-helper plugin (read-only under `observe`). The operator recommends this: no task needs clicks on the hub Mac today.
+Hermes picks its driver binary from `HERMES_CUA_DRIVER_CMD` (`tools/computer_use/cua_backend_driver.py`), runs `<cmd> manifest` for its runtime contract and then the manifest's `mcp_invocation` as a stdio MCP server. `clients/hermes-cua-driver` is that command:
 
-Either way, the owner then removes the 0.21.0 rows under Accessibility and Screen Recording, and the operator removes the app and the unused `mac_desktop` entry.
+- `manifest`: the bundled driver's manifest, with `mcp_invocation.command` pointing back at the wrapper.
+- `mcp [flags]`: `exec` the bundled driver as `mcp --embedded --socket <this Mac's gate> [flags]`; a caller's `--socket`/`--direct` is dropped. With `LINA_HELPER_CUA_HOST=<ssh alias>` the proxy runs on that Mac instead (`ssh <mac> … mcp --embedded --socket "$HOME/…/cua.sock"`), where it is a child of sshd and the gate admits it as the bundled driver.
+- Any other verb passes to the bundled driver.
+- Hermes core code is unchanged. Only the default `standard` computer_use mode is supported; `bounded`/`unrestricted` make Hermes start a private daemon through CuaDriver.app outside the helper.
+
+Settings for a Hermes profile (applied by the operator): `HERMES_CUA_DRIVER_CMD=~/code/lina-helper/clients/hermes-cua-driver`. On the hub Mac the default (this Mac's gate) is right.
+
+Tested 2026-10-26 with Hermes's own `CuaDriverBackend` (no model) against the agent's Mac through the wrapper: list_apps, Finder capture with 76 elements and an image, a background click, pressing TextEdit's New Document button by element, typing 15 characters and reading them back. The gate wrote one audit line per call (`cua.call:click`, `cua.call:type_text` with `text_len`/`text_sha256` only). After that, the standalone 0.21.0 on the hub Mac is removed by the operator once every bot has used `computer_use` through the new path, and the owner removes its two grant rows.
 
 ## 6. Hermes side
 
@@ -100,15 +108,16 @@ Issue #8 (Hermes plugin) comes first in v1. The plugin takes a Mac name, never a
 
 ## 7. Audit
 
-Each Mac keeps its own audit log (§2), and the helper's audit lines already carry the caller and the SSH origin. cua-driver calls through the helper's socket are logged by cua-driver itself; the helper logs `cua.*` actions and child restarts. Pulling the logs into one place is a later step.
+Each Mac keeps its own audit log (§2). Helper actions carry the caller and the SSH origin; cua-driver calls carry `cua.call:<tool>` and the calling process (§5, gate); child restarts are `cua.lifecycle`. Every input action, through either path, leaves one line. Pulling the logs into one place is a later step.
 
 ## 8. Person tasks (collected, sent once through the operator)
 
-After the helper is installed on all reachable Macs:
+On the hub Mac and the laptops, once each:
 
-1. On the hub Mac and the laptops: System Settings → Privacy & Security → Accessibility and Screen & System Audio Recording → `+` → `/Applications/LINA Helper.app` → on. Two switches per Mac. the laptops need the owner at the Mac or Screen Sharing.
-2. Later, only if a task needs input on a Mac: the one-line `sudo ... tee` command in §4 on that Mac (one password). Every Mac except the agent's Mac starts on `observe`; the hub Mac waits for #20 (§1).
-3. a desktop Mac: when it arrives, same as 1.
+1. Terminal: `sudo sh ~/lina-helper-operate.sh`, one password. It sets `operate` and opens the Accessibility pane.
+2. System Settings → Privacy & Security → Accessibility and Screen & System Audio Recording → `+` → `/Applications/LINA Helper.app` → on. Two switches. the laptops need the owner at the Mac or Screen Sharing.
+3. Later, after the operator confirms every bot works through the new path: remove the two standalone cua-driver rows (Accessibility, Screen Recording) on the hub Mac.
+4. a desktop Mac: when it arrives, same as 1–2.
 
 ## 9. Order
 
@@ -116,3 +125,4 @@ After the helper is installed on all reachable Macs:
 2. Embedded cua-driver (#20), accepted on the agent's Mac first.
 3. Hermes plugin (#8).
 4. Deploy to the hub Mac, a laptop, a laptop; send the person tasks in §8.
+5. Audit gate and `computer_use` through the helper (#26); then the operator points every profile at the wrapper and removes 0.21.0.

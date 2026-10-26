@@ -17,9 +17,10 @@ private final class CuaFixture: @unchecked Sendable {
     var permissionsSignatureOK = true
     var ignoresTerm = false
     var nextPID: pid_t = 100
-    let home = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString).path
+    let home: String
     var supervisor: CuaDriverSupervisor!
-    init() {
+    init(home: String = "/tmp/cs-" + UUID().uuidString, gate: CuaGate? = nil) {
+        self.home = home
         supervisor = CuaDriverSupervisor(home: home, executable: "/test/cua-driver", dependencies: CuaDependencies(
             policy: { [self] in policy }, grants: { [self] in grants }, now: { [self] in now },
             sleep: { [self] in now += $0 },
@@ -42,8 +43,11 @@ private final class CuaFixture: @unchecked Sendable {
                 if dead.contains(pid) { events.append("reap \(pid)"); return true }
                 XCTAssertFalse(wait); return false
             },
-            socketReady: { [self] _ in ready },
+            socketReady: { [self] path in
+                XCTAssertEqual(path, home + "/run/cua-daemon.sock"); return ready
+            },
             query: { [self] launch in
+                XCTAssertEqual(launch.arguments[2], home + "/run/cua-daemon.sock")
                 if !querySignatureOK { throw CuaSignatureError(detail: "query signature refused") }
                 XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua-policy.yaml"))
                 XCTAssertNil(launch.environment["CUA_DRIVER_POLICY_FILE"])
@@ -56,7 +60,7 @@ private final class CuaFixture: @unchecked Sendable {
                     CuaPolicy.digest(CuaPolicy.yaml(profile: "operate"))) + "\n"
             },
             audit: { [self] event in events.append("audit " + event) }
-        ))
+        ), gate: gate)
     }
     func operate() { policy = Policy.parse(Data(#"{"profile":"operate"}"#.utf8), owner: 0, mode: 0o644) }
     func close() { supervisor.shutdown(); supervisor = nil; try? FileManager.default.removeItem(atPath: home) }
@@ -84,10 +88,56 @@ final class CuaDriverTests: XCTestCase {
         XCTAssertFalse(FileManager.default.fileExists(atPath: f.home + "/run/cua-policy.yaml"))
     }
 
+    func testGateAbsentDuringObserveAndReadinessWait() throws {
+        let home = "/tmp/cs-" + UUID().uuidString
+        let gate = CuaGate(home: home, audit: try AuditLog(directory: home + "/logs"))
+        let f = CuaFixture(home: home, gate: gate)
+        defer { f.close() }
+        _ = f.supervisor.checkPolicy()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua-daemon.sock"))
+        f.ready = false; f.operate(); _ = f.supervisor.checkPolicy()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        f.now = 10; f.supervisor.poll()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        f.policy = .observe; _ = f.supervisor.checkPolicy()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua-daemon.sock"))
+    }
+
+    func testGateReadyExitRestartAndObserveLifecycle() throws {
+        let home = "/tmp/cs-" + UUID().uuidString
+        let gate = CuaGate(home: home, audit: try AuditLog(directory: home + "/logs"))
+        let f = CuaFixture(home: home, gate: gate)
+        defer { f.close() }
+        // Probe only the environment restriction; no assertions are relaxed.
+        do { try gate.start(); gate.stop() }
+        catch let error as HelperError where error.detail == "cannot bind cua gate (errno 1)" {
+            throw XCTSkip("environment prohibits Unix listener bind (EPERM)")
+        }
+        f.ready = false; f.operate(); _ = f.supervisor.checkPolicy()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        // Represent the fake process's internal endpoint with a real Unix socket.
+        let fd = socket(AF_UNIX, SOCK_STREAM, 0)
+        defer { close(fd) }
+        XCTAssertEqual(try Transport.withAddress(home + "/run/cua-daemon.sock") { Darwin.bind(fd, $0, $1) }, 0)
+        f.ready = true; f.supervisor.poll()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        f.dead.insert(f.nextPID); f.supervisor.poll()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua-daemon.sock"))
+        f.now += 1; f.supervisor.poll()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        try f.supervisor.restart()
+        XCTAssertTrue(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        f.policy = .observe; _ = f.supervisor.checkPolicy()
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua.sock"))
+        XCTAssertFalse(FileManager.default.fileExists(atPath: home + "/run/cua-daemon.sock"))
+    }
+
     func testLaunchContractAndNoInheritedConfiguration() {
         let f = fixture(); f.operate(); _ = f.supervisor.checkPolicy()
         let launch = f.launches[0]
-        XCTAssertEqual(launch.arguments, ["serve", "--embedded", "--socket", f.home + "/run/cua.sock",
+        XCTAssertEqual(launch.arguments, ["serve", "--embedded", "--socket", f.home + "/run/cua-daemon.sock",
             "--no-permissions-gate", "--permission-mode", "standard", "--host-bundle-id", "app.lina-os.helper"])
         XCTAssertEqual(Set(launch.environment.keys), Set(["HOME", "USER", "PATH", "TMPDIR", "CUA_DRIVER_EMBEDDED",
             "CUA_DRIVER_HOST_BUNDLE_ID", "CUA_DRIVER_RS_TELEMETRY_ENABLED", "CUA_DRIVER_POLICY_FILE"]))
@@ -241,6 +291,8 @@ final class CuaDriverTests: XCTestCase {
         let status = dispatcher.dispatch(Request(action: "cua.status"), policy: f.policy)
         XCTAssertEqual(status.result?["version"], .string(CuaDriverPin.version))
         XCTAssertEqual(status.result?["socket"], .string(f.home + "/run/cua.sock"))
+        XCTAssertEqual(status.result?["gate_socket"], .string(f.home + "/run/cua.sock"))
+        XCTAssertEqual(status.result?["daemon_socket"], .string(f.home + "/run/cua-daemon.sock"))
         XCTAssertEqual(status.result?["check_permissions"]?.object?["source"]?.object?["attribution"], .string("host"))
         XCTAssertTrue(dispatcher.dispatch(Request(action: "cua.restart"), policy: f.policy).ok)
         XCTAssertEqual(f.supervisor.status()["restarts"], .number(1))

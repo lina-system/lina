@@ -31,6 +31,7 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     private let deps: CuaDependencies
     private let home: String
     private let executable: String
+    private let gate: CuaGate?
     private var timer: DispatchSourceTimer?
     private var policy = Policy.restricted
     private var grants: CuaGrants?
@@ -46,10 +47,11 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     private var launches = 0
     private var lastError: String?
     private var permissions: JSONValue = .null
-    private var socket: String { home + "/run/cua.sock" }
+    private var socket: String { home + "/run/cua-daemon.sock" }
+    private var gateSocket: String { home + "/run/cua.sock" }
     private var policyFile: String { home + "/run/cua-policy.yaml" }
 
-    public convenience init(home: String, policyPath: String, audit: AuditLog) {
+    public convenience init(home: String, policyPath: String, audit: AuditLog, development: Bool = false) {
         let executable = Bundle.main.bundleURL.appendingPathComponent("Contents/Helpers/cua-driver").path
         self.init(home: home, executable: executable, dependencies: CuaDependencies(
             policy: { Policy.load(path: policyPath) },
@@ -61,16 +63,23 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
             audit: { event in
                 do { try audit.recordCua(event) }
                 catch { Logger(subsystem: "app.lina-os.helper", category: "cua").error("cua audit write failed") }
-            }))
+            }), gate: CuaGate(home: home, audit: audit, development: development))
     }
 
-    init(home: String, executable: String, dependencies: CuaDependencies) {
-        self.home = home; self.executable = executable; deps = dependencies
+    init(home: String, executable: String, dependencies: CuaDependencies, gate: CuaGate? = nil) {
+        self.home = home; self.executable = executable; deps = dependencies; self.gate = gate
     }
 
     public func startMonitoring() {
         queue.sync {
             guard timer == nil, !closed else { return }
+            // Monitoring begins only after HelperServer has acquired helper.lock.
+            if !ownsFiles {
+                ownsFiles = true
+                cleanup()
+                do { try CuaGate.removeStaleSocket(gateSocket) }
+                catch { deps.audit("cannot remove stale cua gate socket") }
+            }
             refresh(); tick()
             let source = DispatchSource.makeTimerSource(queue: queue)
             source.schedule(deadline: .now() + .milliseconds(100), repeating: .milliseconds(100))
@@ -136,6 +145,7 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
                 if deps.reap(pid, false) {
                     self.pid = nil; cleanup(); failure("cua-driver exited during readiness"); return
                 }
+                try gate?.start()
                 ready = true; lastError = nil
                 deps.audit("cua-driver ready pid=\(pid)")
             } catch let error as CuaSignatureError {
@@ -188,12 +198,14 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     }
 
     private func reject(_ message: String) {
+        gate?.stop()
         if let pid { deps.signal(pid, SIGKILL); _ = deps.reap(pid, true) }
         pid = nil; ready = false; permissions = .null; blocked = true; lastError = message
         cleanup(); deps.audit(message + "; blocked until profile change or cua.restart")
     }
 
     private func stopChild() {
+        gate?.stop()
         if let child = pid {
             // Reap before signalling so an already-observed exit cannot target a reused PID.
             if !deps.reap(child, false) {
@@ -211,6 +223,7 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     }
 
     private func cleanup() {
+        gate?.stop()
         guard ownsFiles else { return }
         unlink(policyFile); unlink(socket)
     }
@@ -228,7 +241,8 @@ public final class CuaDriverSupervisor: @unchecked Sendable {
     public func status() -> [String: JSONValue] {
         queue.sync {
             ["running": .bool(ready), "pid": pid.map { .number(Double($0)) } ?? .null,
-             "version": .string(CuaDriverPin.version), "socket": .string(socket),
+             "version": .string(CuaDriverPin.version), "socket": .string(gateSocket),
+             "gate_socket": .string(gateSocket), "daemon_socket": .string(socket),
              "last_error": lastError.map(JSONValue.string) ?? .null, "restarts": .number(Double(max(0, launches - 1))),
              "check_permissions": permissions,
              "message": .string(policy.runsCuaDriver ? (ready ? "running" : "not running") : "not running under \(policy.profile)")]

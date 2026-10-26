@@ -14,7 +14,8 @@ let configuration = Configuration()
 do {
     let audit = try AuditLog(directory: configuration.auditDirectory)
     let outbox = Outbox(home: configuration.home)
-    let cua = CuaDriverSupervisor(home: configuration.home, policyPath: configuration.policyPath, audit: audit)
+    let cua = CuaDriverSupervisor(home: configuration.home, policyPath: configuration.policyPath, audit: audit,
+                                  development: configuration.development)
     defer { cua.shutdown() }
     let dispatcher = ActionDispatcher(actions: SystemActions.registry(home: configuration.home, outbox: outbox, cua: cua))
     let server = HelperServer(configuration: configuration, dispatcher: dispatcher, audit: audit, outbox: outbox, cua: cua)

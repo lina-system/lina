@@ -83,6 +83,31 @@ public final class AuditLog: @unchecked Sendable {
         logger.info("request action=\(request?.action ?? "invalid", privacy: .private) ok=\(response.ok) code=\(response.error?.code.rawValue ?? "ok", privacy: .public)")
     }
 
+    /// One entry before each gate request is forwarded, or for a refusal. No reply
+    /// content is recorded. A write error must prevent forwarding at the caller.
+    public func recordCuaRequest(_ request: [String: JSONValue]?, peer: Peer,
+                                 error: String? = nil, now: Date = Date()) throws {
+        lock.lock(); defer { lock.unlock() }
+        if !Calendar.current.isDate(now, inSameDayAs: lastCleanup) { try cleanupLocked(now: now) }
+        let iso = ISO8601DateFormatter(); iso.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let method = request?["method"]?.string ?? "unknown"
+        let action = method == "call" ? "cua.call:" + (request?["name"]?.string ?? "unknown") : "cua." + method
+        var peerJSON: [String: JSONValue] = ["uid": .number(Double(peer.uid))]
+        if let pid = peer.pid { peerJSON["pid"] = .number(Double(pid)) }
+        if let exe = peer.executable { peerJSON["exe"] = .string(exe) }
+        if let team = peer.identity.team { peerJSON["team"] = .string(team) }
+        if let parent = peer.parentPID { peerJSON["parent_pid"] = .number(Double(parent)) }
+        if let exe = peer.parentExecutable { peerJSON["parent_exe"] = .string(exe) }
+        // Opaque methods may use non-object args; redact those too.
+        let args = request?["args"].map { $0.object ?? ["value": $0] } ?? [:]
+        var entry: [String: JSONValue] = ["t": .string(iso.string(from: now)), "id": .string(UUID().uuidString),
+            "action": .string(action), "peer": .object(peerJSON), "args": .object(Self.redact(args)),
+            "session_id": request?["session_id"]?.string.map(JSONValue.string) ?? .null, "ok": .bool(error == nil)]
+        if let error { entry["error"] = .string(error) }
+        try appendLocked(entry, now: now)
+        logger.info("cua request action=\(action, privacy: .private) ok=\(error == nil)")
+    }
+
     /// Supervisor messages contain only internal lifecycle reasons and PIDs, no tool arguments.
     public func recordCua(_ event: String, now: Date = Date()) throws {
         lock.lock(); defer { lock.unlock() }

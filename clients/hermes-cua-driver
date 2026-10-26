@@ -1,0 +1,97 @@
+#!/usr/bin/python3
+"""Hermes computer_use -> LINA Helper's embedded cua-driver.
+
+Point Hermes at this file with HERMES_CUA_DRIVER_CMD. Hermes then:
+  - runs `<this> manifest` for its runtime contract; we return the bundled driver's manifest with
+    `mcp_invocation.command` set to this file, so Hermes keeps launching MCP through us;
+  - runs `<this> mcp [--no-overlay ...]`; we exec the bundled driver as a stdio MCP proxy to the
+    helper's audit gate socket (`--embedded --socket <gate>`), so every call is checked and audited
+    by LINA Helper and runs with the helper's grants. The proxy itself holds no grant.
+Every other verb is passed to the bundled driver unchanged.
+
+LINA_HELPER_CUA_HOST=<ssh alias> runs the MCP proxy on that Mac instead (`ssh <host> cua-driver mcp
+--embedded --socket <its gate>`), so the proxy is a local child of sshd there and the gate audits it as
+the bundled driver. Default: this Mac.
+
+Only Hermes' default `standard` computer_use mode is supported. The `bounded`/`unrestricted` modes make
+Hermes start its own private daemon through CuaDriver.app, which would sit outside the helper.
+"""
+import json
+import os
+import re
+import shlex
+import subprocess
+import sys
+
+APP = '/Applications/LINA Helper.app'
+DRIVER = os.environ.get('LINA_HELPER_CUA_DRIVER', APP + '/Contents/Helpers/cua-driver')
+# LINA_HELPER_CUA_SOCKET is for tests (e.g. a gate forwarded over ssh); operators leave it unset.
+GATE = os.environ.get('LINA_HELPER_CUA_SOCKET') or os.path.join(
+    os.path.expanduser('~'), 'Library/Application Support/LINA Helper/run/cua.sock')
+SELF = os.path.realpath(__file__)
+HOST = os.environ.get('LINA_HELPER_CUA_HOST', '').strip()
+HOST_RE = r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}'
+REMOTE_DRIVER = APP + '/Contents/Helpers/cua-driver'
+REMOTE_GATE = '$HOME/Library/Application Support/LINA Helper/run/cua.sock'
+SSH = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'ServerAliveInterval=15',
+       '-o', 'ServerAliveCountMax=3']
+
+
+def fail(message, code=69):
+    sys.stderr.write('lina-helper cua: %s\n' % message)
+    return code
+
+
+def manifest(argv):
+    p = subprocess.run([DRIVER, 'manifest', *argv], capture_output=True, text=True, timeout=10)
+    if p.returncode != 0:
+        sys.stderr.write(p.stderr)
+        return p.returncode
+    try:
+        data = json.loads(p.stdout)
+    except ValueError:
+        return fail('bundled cua-driver returned an unreadable manifest')
+    inv = data.get('mcp_invocation') if isinstance(data, dict) else None
+    if not isinstance(inv, dict):
+        return fail('bundled cua-driver manifest has no mcp_invocation')
+    data['mcp_invocation'] = {'command': SELF, 'args': ['mcp']}
+    sys.stdout.write(json.dumps(data, indent=2 if '--pretty' in argv or '-p' in argv else None) + '\n')
+    return 0
+
+
+def mcp(argv):
+    rest, skip = [], False
+    for i, a in enumerate(argv):
+        if skip:
+            skip = False
+            continue
+        if a in ('--socket', '--direct', '--embedded'):
+            skip = a == '--socket'
+            continue  # we choose the endpoint; never let a caller pick another daemon or --direct
+        if a.startswith('--socket='):
+            continue
+        rest.append(a)
+    if HOST:
+        if not re.fullmatch(HOST_RE, HOST):
+            return fail('LINA_HELPER_CUA_HOST must be a plain ssh alias')
+        # $HOME expands on the target; everything else is quoted.
+        remote = '%s --embedded --socket "%s" %s' % (shlex.join([REMOTE_DRIVER, 'mcp']), REMOTE_GATE, shlex.join(rest))
+        os.execvp('ssh', SSH + [HOST, remote])
+    if not os.path.exists(GATE):
+        return fail('the helper is not serving cua-driver here (helper not running, profile is not '
+                    'operate, or grants are missing); check `lina-helperctl cua.status`')
+    os.execv(DRIVER, [DRIVER, 'mcp', '--embedded', '--socket', GATE, *rest])
+
+
+def main(argv):
+    if not os.access(DRIVER, os.X_OK):
+        return fail('bundled cua-driver not found at %s' % DRIVER)
+    if argv[:1] == ['manifest']:
+        return manifest(argv[1:])
+    if argv[:1] == ['mcp']:
+        return mcp(argv[1:])
+    os.execv(DRIVER, [DRIVER, *argv])
+
+
+if __name__ == '__main__':
+    sys.exit(main(sys.argv[1:]))
