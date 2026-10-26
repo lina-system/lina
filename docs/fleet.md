@@ -80,7 +80,14 @@ cua-driver supports this directly: `serve --embedded` keeps the daemon in its sp
 - Callers: `ssh <mac> '/Applications/LINA Helper.app/Contents/Helpers/cua-driver' call --socket <sock> <tool> <json>` for one call, or `... mcp --embedded --socket <sock>` as a stdio MCP proxy. The proxy only forwards; the embedded daemon does every TCC check and enforces the tool allowlist.
 - Acceptance: on the agent's Mac (`operate`), `check_permissions` through the helper's socket reports `attribution: host` and both grants true, and `get_window_state` returns a tree and an image without any new TCC row for `com.trycua.driver`. A cua-driver binary with one byte changed is refused before it runs. With the profile switched to `observe`, no child is running and the socket is gone.
 
-The standalone cua-driver 0.21.0 is not updated in place: it is Hermes's pinned computer-use driver, and changing that pin is Hermes administration (the operator). Once Hermes's computer use runs through the helper's socket, the standalone driver's grants can be switched off and the app removed (a separate step, with the operator).
+The standalone cua-driver 0.21.0 is not updated in place: it is Hermes's pinned computer-use driver, and changing that pin is Hermes administration (the operator).
+
+State on 2026-10-26 (the operator): on the hub Mac, Hermes's built-in `computer_use` tool is enabled for all eight bots and finds the standalone 0.21.0 on the gateway's PATH (used 7 times in the last three days). The helper there is on `observe`, so its embedded driver is not running and `computer_use` cannot be pointed at it yet. 0.21.0 stays until one of these is decided with the owner:
+
+1. The hub Mac moves to `operate` and `computer_use` uses the helper's socket. Same decision as input on the hub Mac (§1).
+2. `computer_use` is switched off on the hub Mac and screen work there goes through the lina-helper plugin (read-only under `observe`). The operator recommends this: no task needs clicks on the hub Mac today.
+
+Either way, the owner then removes the 0.21.0 rows under Accessibility and Screen Recording, and the operator removes the app and the unused `mac_desktop` entry.
 
 ## 6. Hermes side
 
