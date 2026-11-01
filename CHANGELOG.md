@@ -8,6 +8,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ## [Unreleased]
 
+### Added
+
+- The shared Desk: `hermes desk init` (run by the installer) creates `~/Desk` with Inbox, Projects, Areas, Resources and Archive, or adopts an existing folder; every agent starts there, and the app reads it from `GET /api/desk` (see [docs/desk.md](docs/desk.md)).
+
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
 
 ### Added
