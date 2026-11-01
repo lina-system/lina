@@ -1,0 +1,248 @@
+name: CI
+
+# LINA CI (docs/ci.md). One workflow, one run per pull request or push, after the upstream
+# ci.yaml orchestrator: `detect` classifies the diff once (scripts/ci/classify_changes.py) and
+# the lanes a change cannot affect do not start a runner. Pushes to dev and manual runs have no
+# diff, so every lane runs (the classifier fails open).
+# GitHub-hosted runners only; no upstream organisation secrets, runners or apps.
+
+on:
+  pull_request:
+    branches: [dev, main]
+  push:
+    branches: [dev]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  detect:
+    name: Detect affected areas
+    runs-on: ubuntu-24.04
+    timeout-minutes: 3
+    outputs:
+      python: ${{ steps.classify.outputs.python }}
+      scan: ${{ steps.classify.outputs.scan }}
+      deps: ${{ steps.classify.outputs.deps }}
+      uv_lock: ${{ steps.classify.outputs.uv_lock }}
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          sparse-checkout: |
+            .github/actions/detect-changes
+            scripts/ci/classify_changes.py
+          sparse-checkout-cone-mode: false
+
+      - name: Detect affected areas
+        id: classify
+        uses: ./.github/actions/detect-changes
+
+  lint:
+    # Required check. Upstream lint.yml "ruff enforcement (blocking)": the rules in
+    # [tool.ruff.lint.select], with the ruff version pinned by scripts/code_health.
+    # Runs on every change: it takes under a minute and a required check never waits on detect.
+    name: Lint
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - uses: ./.github/actions/setup-pm
+        with:
+          cache-python: true
+          prune-python-cache: true
+
+      - name: Install pinned ruff
+        uses: ./.github/actions/retry
+        with:
+          command: python -m scripts.ci.python_packages "$(python -m scripts.code_health --print-pins)"
+
+      - name: ruff check .
+        run: ruff check .
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
+
+  linux:
+    # Upstream tests.yml ran the suite in two slices on 32-core runners. A GitHub-hosted
+    # runner has 4 cores, so the same per-file runner is split into more slices; every slice
+    # computes the same partition from the checkout (scripts/run_tests_parallel.py).
+    name: Python tests (Linux ${{ matrix.slice }}/8)
+    needs: detect
+    if: needs.detect.outputs.python == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix:
+        slice: [1, 2, 3, 4, 5, 6, 7, 8]
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Set up locked Python and test dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          packages: ripgrep
+          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          test-environment: 'true'
+          prune-python-cache: true
+
+      - name: Check SQLite runs WAL
+        run: |
+          "$HERMES_PYTHON" -c "import sqlite3, sys, hermes_state_wal as w; v = w.is_sqlite_wal_reset_vulnerable(); print(f'Python {sys.version.split()[0]}, SQLite {sqlite3.sqlite_version}, WAL-reset vulnerable: {v}'); sys.exit(1 if v else 0)"
+
+      - name: Restore per-file duration cache
+        # Upstream tests.yml: the runner raises a known-slow file's timeout to 3x its last
+        # healthy duration, read from test_durations.json. Pull requests read; dev pushes write.
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test_durations.json
+          key: test-durations-never-exact
+          restore-keys: |
+            test-durations-
+
+      - name: Run tests
+        run: scripts/run_tests.sh
+        env:
+          HERMES_TEST_SLICE: ${{ matrix.slice }}/8
+          HERMES_TEST_WORKERS: 4
+          HERMES_TEST_FILE_TIMEOUT: 600
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+
+      - name: Save per-file duration cache (dev pushes only)
+        if: github.event_name == 'push' && hashFiles('test_durations.json') != ''
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test_durations.json
+          key: test-durations-${{ github.run_id }}-${{ matrix.slice }}
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
+
+  linux-result:
+    # Required check: one stable name for the ruleset. Green when every slice passed, or when
+    # detect found no change the Python suite can see (docs and prose only).
+    name: Python tests (Linux)
+    needs: [detect, linux]
+    if: always()
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - name: Every Linux slice passed or the suite was not needed
+        env:
+          DETECT: ${{ needs.detect.result }}
+          PYTHON: ${{ needs.detect.outputs.python }}
+          RESULT: ${{ needs.linux.result }}
+        run: |
+          echo "detect: $DETECT, python lane: $PYTHON, linux slices: $RESULT"
+          test "$DETECT" = success
+          if [ "$PYTHON" = true ]; then test "$RESULT" = success; else test "$RESULT" = skipped; fi
+
+  macos:
+    # Not required. macOS-marked tests (upstream tests-os.yml) on pushes to dev and manual runs.
+    name: Python tests (macOS)
+    if: github.event_name != 'pull_request'
+    runs-on: macos-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Set up locked Python and test dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          packages: ripgrep
+          extras: '["all", "telegram", "anthropic", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          test-environment: 'true'
+          prune-python-cache: true
+
+      - name: Run macOS tests
+        shell: bash
+        run: |
+          set -uo pipefail
+          LIST="$RUNNER_TEMP/selected-tests.txt"
+          python scripts/ci/list_os_marked_tests.py macos > "$LIST" || { echo "::error::could not enumerate macos test files"; exit 1; }
+          test -s "$LIST" || { echo "::error::empty macos file list"; exit 1; }
+          FILES="$(paste -sd ":" - < "$LIST")"
+          scripts/run_tests.sh --files "$FILES" -- -m "platforms and not integration" -v --tb=short
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
+
+  diff-checks:
+    # Upstream blob-size-check.yml and the two critical patterns of supply-chain-audit.yml, in one
+    # job: both read only HEAD^1..HEAD and need no toolchain.
+    name: Diff checks
+    needs: detect
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          fetch-depth: 2 # a pull request checks out its merge commit; HEAD^1 is the base tip
+
+      - name: Blob size check
+        # Rejects a change that adds or modifies a binary over 500 KiB.
+        # Exceptions: .github/blob-size-allowlist.txt.
+        run: python3 scripts/ci/check_blob_size.py --base HEAD^1
+
+      - name: Supply chain audit
+        if: needs.detect.outputs.scan == 'true' || needs.detect.outputs.deps == 'true'
+        run: |
+          set -euo pipefail
+          # Pull request: the merge commit against the base tip. Push to dev: the pushed (merge)
+          # commit against its first parent, which is everything the merged pull request added.
+          DIFF=$(git diff HEAD^1 HEAD -- . ':!uv.lock' ':!*.lock' ':!package-lock.json' ':!yarn.lock' || true)
+          ADDED=$(printf '%s\n' "$DIFF" | grep -n '^+' || true)
+          B64=$(printf '%s\n' "$ADDED" | grep -iE 'base64\.(b64decode|decodebytes|urlsafe_b64decode)' | grep -iE 'exec\(|eval\(' | head -10 || true)
+          PROC=$(printf '%s\n' "$ADDED" | grep -E 'subprocess\.(Popen|call|run)\s*\(' | grep -iE 'base64|\\x[0-9a-f]{2}|chr\(' | head -10 || true)
+          if [ -n "$B64$PROC" ]; then
+            [ -z "$B64" ] || printf '::error::base64 decode passed to exec/eval:\n%s\n' "$B64"
+            [ -z "$PROC" ] || printf '::error::subprocess with an encoded command:\n%s\n' "$PROC"
+            exit 1
+          fi
+          echo "No critical supply chain patterns in HEAD^1..HEAD"
+
+  uv-lockfile:
+    # uv.lock agrees with pyproject.toml (upstream uv-lockfile-check.yml). Gated like upstream
+    # ci.yaml: only pyproject.toml / uv.lock (or a .github/ change) can desync the lock.
+    name: uv.lock check
+    needs: detect
+    if: needs.detect.outputs.uv_lock == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - uses: ./.github/actions/setup-pm
+        with:
+          cache-python: true
+          prune-python-cache: true
+
+      - name: Verify uv.lock is up to date
+        run: |
+          # The check re-resolves against PyPI; retry so a registry blip is not read as a stale lock.
+          for delay in 5 15 45; do
+            if python -m pm.build_env --source . --check-lock > lock-check.log 2>&1; then
+              cat lock-check.log; rm -f lock-check.log; exit 0
+            fi
+            cat lock-check.log
+            grep -q "Request failed after" lock-check.log || { rm -f lock-check.log; echo "::error::uv.lock is out of date: run 'hermes pm lock'"; exit 1; }
+            sleep "$delay"
+          done
+          rm -f lock-check.log
+          echo "::error::could not reach the package registry"
+          exit 1
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
