@@ -10,7 +10,7 @@ TEAM = 'ABCDE12345'
 CLAIM = {'com.apple.application-identifier': TEAM+'.local.hermes.unlock.agent',
          'com.apple.developer.team-identifier': TEAM,
          'keychain-access-groups': [TEAM+'.local.hermes.unlock.agent']}
-NOW = datetime.datetime(2026, 10, 25, tzinfo=datetime.timezone.utc)
+NOW = datetime.datetime(2026, 10, 25, tzinfo=datetime.UTC)
 CERT = b'synthetic leaf certificate'
 
 

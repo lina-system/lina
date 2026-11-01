@@ -32,8 +32,8 @@ DEVELOPER_ID = 'anchor apple generic and certificate 1[field.1.2.840.113635.100.
 
 
 def run(argv, data=None, check=True, timeout=20):
-    p = subprocess.run([str(a) for a in argv], input=data, stdout=subprocess.PIPE,
-                       stderr=subprocess.PIPE, timeout=timeout, env={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','LANG':'C'})
+    p = subprocess.run([str(a) for a in argv], input=data, capture_output=True, check=False,
+                       timeout=timeout, env={'PATH':'/usr/bin:/bin:/usr/sbin:/sbin','LANG':'C'})
     if check and p.returncode:
         # No credentials or arbitrary command output are included in diagnostics.
         raise RuntimeError('command failed: ' + str(argv[0]) + ' (exit ' + str(p.returncode) + ')')
@@ -253,6 +253,7 @@ def main():
             if st.st_uid!=0 or st.st_nlink!=1 or stat.S_IMODE(st.st_mode)!=0o600: raise Conflict('unsafe installer lock')
             fcntl.flock(lock,fcntl.LOCK_EX)
             backend=Backend(); policy=Policy(backend)
+            # health: allow HX011 -- root-only macOS control flow with early exits; kept as imported until it can be re-run on a Mac
             if args.command=='install': result=stage(args,backend)
             elif args.command=='status': result={'installation':backend.load(),'native':backend.status()}
             elif args.command=='activate': result=policy.activate(args.rollback_after)

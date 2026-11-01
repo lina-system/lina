@@ -10,8 +10,7 @@ from pathlib import Path
 
 
 def release_url(pin):
-    return ('https://github.com/trycua/cua/releases/download/cua-driver-rs-v%s/%s'
-            % (pin['version'], pin['asset']))
+    return ('https://github.com/trycua/cua/releases/download/cua-driver-rs-v{}/{}'.format(pin['version'], pin['asset']))
 
 
 def bundle(pin, archive, app):
@@ -52,14 +51,14 @@ def main():
             partial = archive.with_suffix('.partial')
             try:
                 subprocess.run(['/usr/bin/curl', '--fail', '--location', '--proto', '=https',
-                                '--tlsv1.2', '--output', str(partial), release_url(pin)], check=True)
+                                '--tlsv1.2', '--output', str(partial), release_url(pin)], check=True, timeout=600)
                 if hashlib.sha256(partial.read_bytes()).hexdigest() != pin['sha256']:
                     raise ValueError('downloaded cua-driver tarball SHA-256 mismatch')
                 partial.replace(archive)
             finally:
                 partial.unlink(missing_ok=True)
     bundle(pin, archive, args.app)
-    print('Bundled verified cua-driver %s (upstream signature preserved)' % pin['version'])
+    print('Bundled verified cua-driver {} (upstream signature preserved)'.format(pin['version']))
 
 
 if __name__ == '__main__':

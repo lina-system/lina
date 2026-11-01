@@ -5,11 +5,11 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import sign  # noqa: E402
-from test_install import make_bundle  # noqa: E402
+import sign
+from test_install import make_bundle
 
 TEAM = 'TEAM123456'
-IDENTITY = 'Developer ID Application: Example Name (%s)' % TEAM
+IDENTITY = f'Developer ID Application: Example Name ({TEAM})'
 
 
 class SignTests(unittest.TestCase):

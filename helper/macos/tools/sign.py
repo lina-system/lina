@@ -29,30 +29,30 @@ class SignError(Exception):
 
 
 def requirement(team, identifier=BUNDLE_ID):
-    return ('identifier "%s" and anchor apple generic and '
+    return (f'identifier "{identifier}" and anchor apple generic and '
             'certificate 1[field.1.2.840.113635.100.6.2.6] and '
             'certificate leaf[field.1.2.840.113635.100.6.1.13] and '
-            'certificate leaf[subject.OU] = "%s"' % (identifier, team))
+            f'certificate leaf[subject.OU] = "{team}"')
 
 
 def check_inputs(identity, team, app):
     if not TEAM_RE.fullmatch(team):
-        raise SignError('team must be 10 characters [A-Z0-9]: %r' % team)
+        raise SignError(f'team must be 10 characters [A-Z0-9]: {team!r}')
     m = IDENTITY_RE.fullmatch(identity)
     if not m:
         raise SignError("identity must look like 'Developer ID Application: NAME (TEAMID)'")
     if m.group(1) != team:
-        raise SignError('identity team %s differs from --team %s' % (m.group(1), team))
+        raise SignError(f'identity team {m.group(1)} differs from --team {team}')
     plist = Path(app) / 'Contents' / 'Info.plist'
     if not plist.is_file():
-        raise SignError('not an app bundle (no Contents/Info.plist): %s' % app)
+        raise SignError(f'not an app bundle (no Contents/Info.plist): {app}')
     found = plistlib.loads(plist.read_bytes()).get('CFBundleIdentifier')
     if found != BUNDLE_ID:
-        raise SignError('Info.plist bundle ID is %r, expected %s' % (found, BUNDLE_ID))
+        raise SignError(f'Info.plist bundle ID is {found!r}, expected {BUNDLE_ID}')
     if not (Path(app) / CTL_RELPATH).is_file():
-        raise SignError('missing %s' % CTL_RELPATH)
+        raise SignError(f'missing {CTL_RELPATH}')
     if not (Path(app) / CUA_RELPATH).is_file():
-        raise SignError('missing %s' % CUA_RELPATH)
+        raise SignError(f'missing {CUA_RELPATH}')
 
 
 def sign(app, identity, team, run=subprocess.run):
@@ -82,8 +82,8 @@ def main(argv=None):
     except SignError as e:
         p.error(str(e))
     except subprocess.CalledProcessError as e:
-        sys.exit('codesign failed (exit %d): %s' % (e.returncode, ' '.join(map(str, e.cmd))))
-    print('Signed and verified %s (team %s).' % (a.app, a.team))
+        sys.exit(f"codesign failed (exit {e.returncode}): {' '.join(map(str, e.cmd))}")
+    print(f'Signed and verified {a.app} (team {a.team}).')
 
 
 if __name__ == '__main__':

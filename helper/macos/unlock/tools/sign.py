@@ -39,8 +39,8 @@ def check_profile(profile, team, claimed, leaf_sha256=None, now=None):
     if profile.get('ProvisionsAllDevices') is not True:
         problems.append('not a Developer ID profile (ProvisionsAllDevices missing)')
     expires = profile.get('ExpirationDate')
-    now = now or datetime.datetime.now(datetime.timezone.utc)
-    if expires is None or expires.replace(tzinfo=datetime.timezone.utc) <= now: problems.append('profile expired')
+    now = now or datetime.datetime.now(datetime.UTC)
+    if expires is None or expires.replace(tzinfo=datetime.UTC) <= now: problems.append('profile expired')
     if ents.get('com.apple.developer.team-identifier') != team:
         problems.append('profile team-identifier entitlement mismatch')
     if not allowed(ents.get('com.apple.application-identifier', ''), claimed['com.apple.application-identifier']):
@@ -56,7 +56,7 @@ def check_profile(profile, team, claimed, leaf_sha256=None, now=None):
 
 def decode_profile(path):
     out = subprocess.run(['/usr/bin/security', 'cms', '-D', '-i', str(path)],
-                         check=True, capture_output=True).stdout
+                         check=True, capture_output=True, timeout=60).stdout
     return plistlib.loads(out)
 
 
@@ -64,7 +64,7 @@ def leaf_certificate_sha256(artifact):
     """SHA-256 of the leaf certificate actually embedded in a signed artifact."""
     with tempfile.TemporaryDirectory() as tmp:
         subprocess.run(['/usr/bin/codesign', '-d', '--extract-certificates='+tmp+'/c', str(artifact)],
-                       check=True, capture_output=True)
+                       check=True, capture_output=True, timeout=60)
         return hashlib.sha256(Path(tmp, 'c0').read_bytes()).hexdigest()
 
 
@@ -91,17 +91,17 @@ def main():
     for artifact in [a.build/'hermes-unlockctl', a.build/'HermesUnlockAuthorizationPlugin.bundle', app]:
         args = ['/usr/bin/codesign', '--force', '--sign', a.identity, '--options', 'runtime', '--timestamp']
         if artifact == app: args += ['--entitlements', str(path)]
-        subprocess.run(args+[str(artifact)], check=True)
+        subprocess.run(args+[str(artifact)], check=True, timeout=300)
         # codesign -R treats text without a leading '=' as a requirement file path.
-        subprocess.run(['/usr/bin/codesign', '--verify', '--strict', '-R', '='+req, str(artifact)], check=True)
+        subprocess.run(['/usr/bin/codesign', '--verify', '--strict', '-R', '='+req, str(artifact)], check=True, timeout=120)
     problems = check_profile(profile, a.team, entitlements, leaf_certificate_sha256(app))
     if problems: sys.exit('signed agent does not match its profile: '+'; '.join(problems))
     # AMFI SIGKILLs an agent whose restricted entitlements are not authorized; prove it launches.
     smoke = subprocess.run([str(app/'Contents/MacOS/hermes-unlock-agent'), 'permissions'],
-                           capture_output=True, timeout=20)
+                           capture_output=True, check=False, timeout=20)
     if smoke.returncode != 0:
-        sys.exit('signed agent failed to launch (exit %d); check the AMFI log for restricted entitlements'
-                 % smoke.returncode)
+        sys.exit(f'signed agent failed to launch (exit {smoke.returncode}); check the AMFI log for restricted '
+                 'entitlements')
     print('Signed all three artifacts; the agent launches with its embedded profile. Run live acceptance on the target Mac.')
 
 

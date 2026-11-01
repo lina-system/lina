@@ -8,9 +8,9 @@ import unittest
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
-import install  # noqa: E402
-from install import APP, PREVIOUS, STAGED, STATE, POLICY, AGENT_PLIST, CTL_LINK, SUPPORT  # noqa: E402
-from sign import requirement  # noqa: E402
+import install
+from install import APP, PREVIOUS, STAGED, STATE, POLICY, AGENT_PLIST, CTL_LINK, SUPPORT
+from sign import requirement
 
 TEAM = 'TEAM123456'
 
@@ -26,7 +26,7 @@ def make_bundle(dest, version='1.0', team=TEAM, identifier='app.lina-os.helper',
     (dest / 'Contents/Info.plist').write_bytes(plistlib.dumps(
         {'CFBundleIdentifier': bundle_id, 'CFBundleShortVersionString': version}))
     sig = {'identifier': identifier, 'adhoc': adhoc, 'team': None if adhoc else team,
-           'requirement': req or ('cdhash H"%s"' % version if adhoc else requirement(team)),
+           'requirement': req or (f'cdhash H"{version}"' if adhoc else requirement(team)),
            'ctl_identifier': ctl_identifier}
     (dest / 'Contents/sig.json').write_text(json.dumps(sig))
     return dest
@@ -113,7 +113,7 @@ class InstallTestCase(unittest.TestCase):
 
     def candidate(self, **kw):
         self.n += 1
-        return make_bundle(self.src / ('c%d/LINA Helper.app' % self.n), **kw)
+        return make_bundle(self.src / f'c{self.n}/LINA Helper.app', **kw)
 
     def path(self, logical):
         return Path(self.b.p(logical))
@@ -127,7 +127,7 @@ class InstallTestCase(unittest.TestCase):
     def test_nested_upstream_driver_verified_with_its_own_team_even_in_lab_mode(self):
         for adhoc in (False, True):
             self.b.cua_team = 'YCK386LBJ7'; self.b.cua_valid = True
-            app = '/candidate-%s.app' % adhoc
+            app = f'/candidate-{adhoc}.app'
             make_bundle(self.path(app), adhoc=adhoc)
             install.verify_candidate(self.b, app, TEAM, adhoc)
             self.assertIn(('codesign_verify', app + '/Contents/Helpers/cua-driver'), self.b.events)

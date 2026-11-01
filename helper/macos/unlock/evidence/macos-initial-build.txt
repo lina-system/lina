@@ -1,4 +1,4 @@
-BUILD_DIRECTORY=/tmp/hermes-unlock-research.C3tto1
+BUILD_DIRECTORY=/tmp/hermes-unlock-research.C3tto1  (no-tmp: ok: recorded log of a past build)
 mkdir -p build
 cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc tests/grant_test.c src/grant.c -o build/grant-test
 ./build/grant-test

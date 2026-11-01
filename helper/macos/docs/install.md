@@ -48,18 +48,18 @@ workflow; an ad-hoc build does not establish the production helper's grants.
 
 ```sh
 ditto -c -k --keepParent 'build/LINA Helper.app' build/LINA-Helper.zip
-scp build/LINA-Helper.zip agent@agent-mac:/tmp/lina-helper/
-scp -r tools agent@agent-mac:/tmp/lina-helper/
-ssh agent@agent-mac mkdir -p /tmp/lina-helper/app/Resources
-scp app/Resources/PolicyProfiles.json agent@agent-mac:/tmp/lina-helper/app/Resources/
+scp build/LINA-Helper.zip agent@agent-mac:lina-helper-install/
+scp -r tools agent@agent-mac:lina-helper-install/
+ssh agent@agent-mac mkdir -p lina-helper-install/app/Resources
+scp app/Resources/PolicyProfiles.json agent@agent-mac:lina-helper-install/app/Resources/
 ```
 
-Create `/tmp/lina-helper` on agent-mac first if it does not exist (`ssh agent@agent-mac mkdir -p /tmp/lina-helper`). Use `ditto`/`scp` of the zip, not `scp -r` of the bundle, so symlinks, resource forks and the signature stay intact.
+Create `~/lina-helper-install` on agent-mac first if it does not exist (`ssh agent@agent-mac mkdir -p lina-helper-install`). Use `ditto`/`scp` of the zip, not `scp -r` of the bundle, so symlinks, resource forks and the signature stay intact.
 
 ## 3. Install (agent-mac)
 
 ```sh
-cd /tmp/lina-helper
+cd ~/lina-helper-install
 ditto -x -k LINA-Helper.zip .
 sudo /usr/bin/python3 tools/install.py install --user agent --team <TEAMID> --app 'LINA Helper.app'
 ```
@@ -91,12 +91,12 @@ After building and signing on agent-hub as above:
 
 ```sh
 ditto -c -k --keepParent 'build/LINA Helper.app' build/LINA-Helper.zip
-ssh target-mac mkdir -p /tmp/lina-helper/app/Resources
-scp build/LINA-Helper.zip target-mac:/tmp/lina-helper/
-scp -r tools target-mac:/tmp/lina-helper/
-scp app/Resources/PolicyProfiles.json target-mac:/tmp/lina-helper/app/Resources/
+ssh target-mac mkdir -p lina-helper-install/app/Resources
+scp build/LINA-Helper.zip target-mac:lina-helper-install/
+scp -r tools target-mac:lina-helper-install/
+scp app/Resources/PolicyProfiles.json target-mac:lina-helper-install/app/Resources/
 ssh target-mac
-cd /tmp/lina-helper
+cd ~/lina-helper-install
 ditto -x -k LINA-Helper.zip .
 python3 tools/install.py install --mode user --team <TEAMID> --app 'LINA Helper.app'
 python3 tools/install.py status --mode user

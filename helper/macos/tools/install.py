@@ -28,7 +28,7 @@ import time
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent))
-from sign import BUNDLE_ID, CTL_ID, CTL_RELPATH, CUA_RELPATH, CUA_TEAM, CUA_REQUIREMENT, TEAM_RE, requirement  # noqa: E402
+from sign import BUNDLE_ID, CTL_ID, CTL_RELPATH, CUA_RELPATH, CUA_TEAM, CUA_REQUIREMENT, TEAM_RE, requirement
 
 APP = '/Applications/LINA Helper.app'
 EXE = APP + '/Contents/MacOS/lina-helper'
@@ -39,11 +39,12 @@ SUPPORT = '/Library/Application Support/LINA Helper'
 POLICY = SUPPORT + '/policy.json'
 PREVIOUS_DIR = SUPPORT + '/previous'
 PREVIOUS = PREVIOUS_DIR + '/LINA Helper.app'
-AGENT_PLIST = '/Library/LaunchAgents/%s.plist' % BUNDLE_ID
+AGENT_PLIST = f'/Library/LaunchAgents/{BUNDLE_ID}.plist'
 CTL_LINK = '/usr/local/bin/lina-helperctl'
 STATE_DIR = '/var/db/lina-helper'
 STATE = STATE_DIR + '/state.json'
 LABEL = BUNDLE_ID
+CODESIGN_TIMEOUT = 120
 
 # Everything remove may delete; a recorded path outside this set is ignored.
 KNOWN_PATHS = {APP, AGENT_PLIST, POLICY, SUPPORT, PREVIOUS_DIR, PREVIOUS, CTL_LINK, STATE,
@@ -72,12 +73,12 @@ class Paths:
     def for_user(cls, uid, home):
         # Both sides of every bundle rename live in /Applications. Home may be on
         # another volume; only the receipt and LaunchAgent live there.
-        staging = '/Applications/.lina-helper-%d-staging' % uid
-        previous = '/Applications/.lina-helper-%d-previous' % uid
+        staging = f'/Applications/.lina-helper-{uid}-staging'
+        previous = f'/Applications/.lina-helper-{uid}-previous'
         support = home + '/Library/Application Support/LINA Helper/install'
         return cls(staging, staging + '/LINA Helper.app', support,
                    previous, previous + '/LINA Helper.app',
-                   home + '/Library/LaunchAgents/%s.plist' % BUNDLE_ID,
+                   home + f'/Library/LaunchAgents/{BUNDLE_ID}.plist',
                    support, support + '/state.json', CTL_IN_APP)
 
     def known_paths(self, mode):
@@ -133,7 +134,7 @@ class Backend:
                 raise InstallError('--user is required in root mode')
             self.paths = Paths()
         else:
-            raise InstallError('unknown install mode: %s' % mode)
+            raise InstallError(f'unknown install mode: {mode}')
         self.mode = mode
         return user
 
@@ -141,7 +142,7 @@ class Backend:
         try:
             return pwd.getpwnam(user).pw_uid
         except KeyError:
-            raise InstallError('no such user: %s' % user)
+            raise InstallError(f'no such user: {user}')
 
     # --- file system (logical paths) ---
     def exists(self, path):
@@ -214,7 +215,7 @@ class Backend:
         """Copy the candidate bundle (a real path) to a logical path."""
         self.log('copy', str(src), dst)
         if os.path.exists('/usr/bin/ditto') and self.root == '/':
-            subprocess.run(['/usr/bin/ditto', str(src), dst], check=True)
+            subprocess.run(['/usr/bin/ditto', str(src), dst], check=True, timeout=600)
         else:
             shutil.copytree(str(src), self.p(dst), symlinks=True)
         # The candidate often comes from a user's staging folder; the installed app is root's.
@@ -223,7 +224,7 @@ class Backend:
 
     def chown_tree(self, path, owner, group):
         self.log('chown_tree', path, owner, group)
-        subprocess.run(['/usr/sbin/chown', '-R', '%s:%s' % (owner, group), self.p(path)], check=True)
+        subprocess.run(['/usr/sbin/chown', '-R', f'{owner}:{group}', self.p(path)], check=True, timeout=120)
 
     def sleep(self, seconds):
         time.sleep(seconds)
@@ -231,17 +232,17 @@ class Backend:
     # --- code signing (logical paths) ---
     def codesign_verify(self, path):
         r = subprocess.run(['/usr/bin/codesign', '--verify', '--strict', '--deep', self.p(path)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, check=False, timeout=CODESIGN_TIMEOUT)
         if r.returncode != 0:
-            raise InstallError('codesign verification failed for %s: %s' % (path, r.stderr.strip()))
+            raise InstallError(f'codesign verification failed for {path}: {r.stderr.strip()}')
 
     def codesign_info(self, path):
         v = subprocess.run(['/usr/bin/codesign', '-d', '--verbose=4', self.p(path)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, check=False, timeout=CODESIGN_TIMEOUT)
         r = subprocess.run(['/usr/bin/codesign', '-d', '-r-', self.p(path)],
-                           capture_output=True, text=True)
+                           capture_output=True, text=True, check=False, timeout=CODESIGN_TIMEOUT)
         if v.returncode != 0 or r.returncode != 0:
-            raise InstallError('cannot read signature of %s: %s' % (path, (v.stderr or r.stderr).strip()))
+            raise InstallError(f'cannot read signature of {path}: {(v.stderr or r.stderr).strip()}')
         fields = dict(line.split('=', 1) for line in v.stderr.splitlines() if '=' in line)
         team = fields.get('TeamIdentifier')
         # codesign prints "designated => REQ", with a leading "# " on some versions.
@@ -253,20 +254,19 @@ class Backend:
     def codesign_check_requirement(self, path, req):
         # codesign -R treats text without a leading '=' as a requirement file path.
         r = subprocess.run(['/usr/bin/codesign', '--verify', '--strict', '-R', '=' + req, self.p(path)],
-                           capture_output=True)
+                           capture_output=True, check=False, timeout=CODESIGN_TIMEOUT)
         return r.returncode == 0
 
     # --- launchd ---
     def launchctl(self, *args):
         self.log('launchctl', *args)
-        r = subprocess.run(['/bin/launchctl'] + list(args), capture_output=True, text=True)
+        r = subprocess.run(['/bin/launchctl', *args], capture_output=True, text=True, check=False, timeout=60)
         return r.returncode, r.stdout + r.stderr
 
     def run_as_user(self, user, uid, argv):
         self.log('run_as_user', user, *argv)
         command = argv if self.mode == 'user' else ['/bin/launchctl', 'asuser', str(uid), '/usr/bin/sudo', '-u', user] + argv
-        r = subprocess.run(command,
-                           capture_output=True, text=True, timeout=30)
+        r = subprocess.run(command, capture_output=True, text=True, check=False, timeout=30)
         return r.returncode, r.stdout
 
 
@@ -288,25 +288,25 @@ def verify_candidate(b, path, team, allow_adhoc, require_cua=True):
     try:
         plist = plistlib.loads(b.read_bytes(path + '/Contents/Info.plist'))
     except (OSError, plistlib.InvalidFileException):
-        raise InstallError('not an app bundle: %s' % path)
+        raise InstallError(f'not an app bundle: {path}')
     if plist.get('CFBundleIdentifier') != BUNDLE_ID:
-        raise InstallError('Info.plist bundle ID is %r, expected %s' % (plist.get('CFBundleIdentifier'), BUNDLE_ID))
+        raise InstallError('Info.plist bundle ID is {!r}, expected {}'.format(plist.get('CFBundleIdentifier'), BUNDLE_ID))
     b.codesign_verify(path)
     info = b.codesign_info(path)
     if info.identifier != BUNDLE_ID:
-        raise InstallError('code signing identifier is %r, expected %s' % (info.identifier, BUNDLE_ID))
+        raise InstallError(f'code signing identifier is {info.identifier!r}, expected {BUNDLE_ID}')
     ctl = b.codesign_info(path + '/' + CTL_RELPATH)
     if ctl.identifier != CTL_ID:
-        raise InstallError('lina-helperctl identifier is %r, expected %s' % (ctl.identifier, CTL_ID))
+        raise InstallError(f'lina-helperctl identifier is {ctl.identifier!r}, expected {CTL_ID}')
     driver_path = path + '/' + CUA_RELPATH
     if b.exists(driver_path) or require_cua:
         if not b.exists(driver_path):
-            raise InstallError('bundle has no %s' % CUA_RELPATH)
+            raise InstallError(f'bundle has no {CUA_RELPATH}')
         b.codesign_verify(driver_path)
         driver = b.codesign_info(driver_path)
         if (driver.identifier != 'cua-driver' or driver.adhoc or driver.team != CUA_TEAM
                 or not b.codesign_check_requirement(driver_path, CUA_REQUIREMENT)):
-            raise InstallError('cua-driver must retain its upstream signature (team %s)' % CUA_TEAM)
+            raise InstallError(f'cua-driver must retain its upstream signature (team {CUA_TEAM})')
     if info.adhoc:
         if not allow_adhoc:
             raise InstallError('bundle is ad-hoc signed; grants would not survive (use --allow-ad-hoc-for-lab for a lab run)')
@@ -314,7 +314,7 @@ def verify_candidate(b, path, team, allow_adhoc, require_cua=True):
     if not team or not TEAM_RE.fullmatch(team):
         raise InstallError('a 10-character team ID is required (--team)')
     if info.team != team or not b.codesign_check_requirement(path, requirement(team)):
-        raise InstallError('bundle does not satisfy the Developer ID requirement for team %s' % team)
+        raise InstallError(f'bundle does not satisfy the Developer ID requirement for team {team}')
     return info
 
 
@@ -387,24 +387,24 @@ def unstage(b):
 
 
 def bootstrap(b, uid):
-    rc, out = b.launchctl('bootstrap', 'gui/%d' % uid, b.paths.AGENT_PLIST)
+    rc, out = b.launchctl('bootstrap', f'gui/{uid}', b.paths.AGENT_PLIST)
     if rc != 0:
-        raise InstallError('launchctl bootstrap failed (is %d logged in to a GUI session?): %s' % (uid, out.strip()))
+        raise InstallError(f'launchctl bootstrap failed (is {uid} logged in to a GUI session?): {out.strip()}')
 
 
 def bootout(b, uid):
-    b.launchctl('bootout', 'gui/%d/%s' % (uid, LABEL))  # not loaded is fine
+    b.launchctl('bootout', f'gui/{uid}/{LABEL}')  # not loaded is fine
     # bootout returns before launchd has removed the service; bootstrapping in that window
     # fails with "Bootstrap failed: 5: Input/output error". Wait until it is gone.
     for _ in range(50):
         if not agent_loaded(b, uid):
             return
         b.sleep(0.2)
-    raise InstallError('launchd still lists %s 10 s after bootout' % LABEL)
+    raise InstallError(f'launchd still lists {LABEL} 10 s after bootout')
 
 
 def agent_loaded(b, uid):
-    return b.launchctl('print', 'gui/%d/%s' % (uid, LABEL))[0] == 0
+    return b.launchctl('print', f'gui/{uid}/{LABEL}')[0] == 0
 
 
 def command_uid(b, user):
@@ -430,7 +430,7 @@ def cmd_install(b, user, app, team, allow_adhoc):
         raise InstallError('--team with a 10-character team ID is required')
     for path in ((b.paths.AGENT_PLIST, CTL_LINK) if b.mode == 'root' else (b.paths.AGENT_PLIST,)):
         if b.exists(path):
-            raise InstallError('%s exists and is not ours; refusing to overwrite' % path)
+            raise InstallError(f'{path} exists and is not ours; refusing to overwrite')
     try:
         stage(b, app)
         verify_candidate(b, b.paths.STAGED, team, allow_adhoc)
@@ -467,8 +467,7 @@ def check_same_requirement(installed_info, cand_info):
         return  # lab only: ad-hoc has no stable requirement, grants reset anyway
     if installed_info.requirement is None or installed_info.requirement != cand_info.requirement:
         raise InstallError('designated requirement differs from the installed bundle; refusing '
-                           '(grants would be lost)\n  installed: %s\n  candidate: %s'
-                           % (installed_info.requirement, cand_info.requirement))
+                           f'(grants would be lost)\n  installed: {installed_info.requirement}\n  candidate: {cand_info.requirement}')
 
 
 def swap_in(b, uid, new_path, old_dest):
@@ -522,7 +521,7 @@ def cmd_upgrade(b, user, app, allow_adhoc, skip_grant_check=False):
         unstage(b)
     state.data['installed_version'] = bundle_version(b, APP)
     state.save()
-    return finish_check(b, user, uid, before, 'upgraded to %s' % state.data['installed_version'])
+    return finish_check(b, user, uid, before, 'upgraded to {}'.format(state.data['installed_version']))
 
 
 def finish_check(b, user, uid, before, done):
@@ -535,11 +534,11 @@ def finish_check(b, user, uid, before, done):
             break
         b.sleep(1)
     if after is None:
-        raise InstallError('%s, but the new helper did not answer `lina-helperctl permissions`; the '
-                           'previous bundle is kept, run rollback' % done)
+        raise InstallError(f'{done}, but the new helper did not answer `lina-helperctl permissions`; the '
+                           'previous bundle is kept, run rollback')
     if grants(after) != before:
-        raise InstallError('%s, but permissions differ from before (%s -> %s); the previous bundle is '
-                           'kept, run rollback' % (done, before, grants(after)))
+        raise InstallError(f'{done}, but permissions differ from before ({before} -> {grants(after)}); the previous bundle is '
+                           'kept, run rollback')
     return done
 
 
@@ -580,7 +579,7 @@ def cmd_rollback(b, user, skip_grant_check=False):
     unstage(b)
     state.data['installed_version'] = bundle_version(b, APP)
     state.save()
-    return finish_check(b, user, uid, before, 'rolled back to %s' % state.data['installed_version'])
+    return finish_check(b, user, uid, before, 'rolled back to {}'.format(state.data['installed_version']))
 
 
 def cmd_status(b, user):
@@ -643,18 +642,16 @@ def main(argv=None):
     b = Backend()
     try:
         a.user = b.configure_mode(a.mode, a.user)
-        if a.command == 'install':
-            msg = cmd_install(b, a.user, a.app.resolve(), a.team, a.allow_ad_hoc_for_lab)
-        elif a.command == 'upgrade':
-            msg = cmd_upgrade(b, a.user, a.app.resolve(), a.allow_ad_hoc_for_lab, a.skip_grant_check)
-        elif a.command == 'rollback':
-            msg = cmd_rollback(b, a.user, a.skip_grant_check)
-        elif a.command == 'status':
-            msg = cmd_status(b, a.user)
-        else:
-            msg = cmd_remove(b, a.user)
+        commands = {
+            'install': lambda: cmd_install(b, a.user, a.app.resolve(), a.team, a.allow_ad_hoc_for_lab),
+            'upgrade': lambda: cmd_upgrade(b, a.user, a.app.resolve(), a.allow_ad_hoc_for_lab, a.skip_grant_check),
+            'rollback': lambda: cmd_rollback(b, a.user, a.skip_grant_check),
+            'status': lambda: cmd_status(b, a.user),
+            'remove': lambda: cmd_remove(b, a.user),
+        }
+        msg = commands[a.command]()
     except InstallError as e:
-        sys.exit('error: %s' % e)
+        sys.exit(f'error: {e}')
     print(msg)
 
 

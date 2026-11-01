@@ -1,4 +1,4 @@
-#!/bin/bash
+#!/usr/bin/env bash
 # Manual GUI smoke test only. Requires a running, policy-enabled, granted helper.
 # Usage: tools/smoke.sh BUNDLE_ID
 # Open the app manually first. Screen input is served only by cua-driver.
