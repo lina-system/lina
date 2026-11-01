@@ -38,7 +38,8 @@ METRIC_FIX = {
     " judged); fix the syntax, or report the measurer bug",
 }
 
-PY_EXCLUDE = ("website/*", "*/node_modules/*", "node_modules/*")
+# services/honcho is a vendored subtree held to its upstream's own checks (docs/honcho.md).
+PY_EXCLUDE = ("website/*", "*/node_modules/*", "node_modules/*", "services/honcho/*")
 TS_EXCLUDE = PY_EXCLUDE + ("*.d.ts", "*/dist/*", "*/build/*", "*/generated/*", "*.generated.ts")
 TESTS = ("tests/*", "*/tests/*", "tests-js/*", "*/conftest.py")
 # One-shot processes that serve a single profile (CI/release scripts, skill scripts run as a
