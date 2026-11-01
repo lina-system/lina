@@ -1,0 +1,10 @@
+name: lina-helper
+version: 0.2.0
+description: Choose which Mac Hermes computer_use acts on (mac_use) and quick checks by Mac name (status, screenshot).
+kind: standalone
+platforms:
+  - macos
+provides_tools:
+  - mac_use
+  - mac_status
+  - mac_screenshot

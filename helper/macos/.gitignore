@@ -1,0 +1,12 @@
+build/
+.build/
+__pycache__/
+*.pyc
+dist/
+*.provisionprofile
+*.p12
+*.key
+*.cer
+.DS_Store
+.tmp/
+clients/hermes/macs.yaml

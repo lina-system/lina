@@ -1,0 +1,12 @@
+{
+  "observe": {
+    "cua.status": {},
+    "screenshot": {"timeout_s": 15},
+    "ax.tree": {"max_depth": 8, "max_nodes": 2000}
+  },
+  "operate_additions": {
+    "cua.restart": {},
+    "cua.lease": {},
+    "cua.release": {}
+  }
+}
