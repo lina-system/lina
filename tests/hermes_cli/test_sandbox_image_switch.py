@@ -112,7 +112,7 @@ def _fake_docker(tmp_path, monkeypatch, ps_output: str) -> Path:
     exe.chmod(exe.stat().st_mode | stat.S_IXUSR)
     monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
     monkeypatch.setenv("PS_OUTPUT", ps_output)
-    from tools.environments import docker as docker_env
+    from tools.environments import container_runtime as docker_env
     monkeypatch.setattr(docker_env, "_docker_executable", None)
     return exe
 

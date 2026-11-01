@@ -16,18 +16,16 @@ def _dist(description: str, **toolsets: int) -> dict[str, object]:
 
 
 DISTRIBUTIONS = {
-    "default": _dist("All available tools, all the time", web=100, vision=100, image_gen=100, terminal=100, file=100, browser=100),
-    "image_gen": _dist("Heavy focus on image generation with vision and web support", image_gen=90, vision=90, web=55, terminal=45),
+    "default": _dist("All available tools, all the time", web=100, vision=100, terminal=100, file=100, browser=100),
     "research": _dist("Web research with vision analysis and reasoning", web=90, browser=70, vision=50, terminal=10),
     "science": _dist("Scientific research with web, terminal, file, and browser capabilities",
-                     web=94, terminal=94, file=94, vision=65, browser=50, image_gen=15),
+                     web=94, terminal=94, file=94, vision=65, browser=50),
     "development": _dist("Terminal, file tools, and reasoning with occasional web lookup", terminal=80, file=80, web=30, vision=10),
-    "safe": _dist("All tools except terminal for safety", web=80, browser=70, vision=60, image_gen=60),
-    "balanced": _dist("Equal probability of all toolsets", web=50, vision=50, image_gen=50, terminal=50, file=50, browser=50),
+    "safe": _dist("All tools except terminal for safety", web=80, browser=70, vision=60),
+    "balanced": _dist("Equal probability of all toolsets", web=50, vision=50, terminal=50, file=50, browser=50),
     "minimal": _dist("Only web tools for basic research", web=100),
     "terminal_only": _dist("Terminal and file tools for code execution tasks", terminal=100, file=100),
     "terminal_web": _dist("Terminal and file tools with web search for documentation lookup", terminal=100, file=100, web=100),
-    "creative": _dist("Image generation and vision analysis focus", image_gen=90, vision=90, web=30),
     "reasoning": _dist("Heavy research/reasoning distribution with minimal other tools", web=90, file=60, terminal=20),
     "browser_use": _dist("Full browser-based web interaction with search, vision, and page control", browser=100, web=80, vision=70),
     "browser_only": _dist("Only browser automation tools for pure web interaction tasks", browser=100),
@@ -39,24 +37,33 @@ DISTRIBUTIONS = {
     ),
     # nous-terminal-tasks.jsonl
     "terminal_tasks": _dist("Terminal-focused distribution with high terminal/file availability, occasional other tools",
-                            terminal=97, file=97, web=97, browser=75, vision=50, image_gen=10),
+                            terminal=97, file=97, web=97, browser=75, vision=50),
     # mixed-browser-terminal-tasks.jsonl
     "mixed_tasks": _dist("Mixed distribution with high browser, terminal, and file availability for complex tasks",
-                         browser=92, terminal=92, file=92, web=35, vision=15, image_gen=15),
+                         browser=92, terminal=92, file=92, web=35, vision=15),
 }
 
 
 def get_distribution(name: str) -> Optional[dict[str, Any]]:
     """Distribution definition (description + toolsets), or None if unknown."""
-    return DISTRIBUTIONS.get(name)
+    return list_distributions().get(name)
 
 
 def list_distributions() -> dict[str, dict]:
-    return DISTRIBUTIONS.copy()
+    from tools.registry_contributions import startup_entries
+
+    result = {name: {**dist, "toolsets": dict(dist["toolsets"])} for name, dist in DISTRIBUTIONS.items()}
+    for entry in startup_entries():
+        for name, contribution in (entry.startup.distributions or {}).items():
+            if name in result:
+                result[name]["toolsets"].update(contribution["toolsets"])
+            else:
+                result[name] = {**contribution, "toolsets": dict(contribution["toolsets"])}
+    return result
 
 
 def validate_distribution(distribution_name: str) -> bool:
-    return distribution_name in DISTRIBUTIONS
+    return get_distribution(distribution_name) is not None
 
 
 def _entry_members(entry: str) -> list[str]:

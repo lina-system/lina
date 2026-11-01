@@ -32,38 +32,14 @@ class PendingSwitch:
 
 
 def pending() -> Optional[PendingSwitch]:
-    """The switch this profile still has to decide, or None: backend is docker, the image is the
-    unpinned default, and a container labeled for this profile runs another image. ``docker`` is
-    consulted (one ``ps``); any failure is "nothing pending"."""
+    """Ask the configured terminal provider whether an image switch needs approval."""
     from hermes_cli.config import load_config_readonly
-    from tools.environments.docker import _container_identity, _docker_query, find_docker
+    from tools.terminal_tool_config import _get_plugin_env_provider
 
     terminal = (load_config_readonly() or {}).get("terminal") or {}
-    if terminal.get("backend") != "docker":
-        return None
-    if _image_pinned(terminal):
-        return None
-    target = str(terminal.get("docker_image") or "")
-    docker = find_docker()
-    if not docker or not target:
-        return None
-    listing = _docker_query(
-        [docker, "ps", "-a", "--filter", "label=hermes-agent=1",
-         "--filter", f"label=hermes-profile={_container_identity(str(terminal.get('docker_shared_container_key') or ''))}",
-         "--format", "{{.Names}}\t{{.Image}}"],
-        timeout=10, fail="sandbox image switch probe failed: %s", nonzero="docker ps exited %s: %s")
-    if listing is None:
-        return None
-    stale: dict[str, list[str]] = {}
-    for line in listing.stdout.splitlines():
-        name, _, image = line.partition("\t")
-        if image and image != target:
-            stale.setdefault(image, []).append(name)
-    if not stale:
-        return None
-    current = max(stale, key=lambda img: len(stale[img]))
-    return PendingSwitch(current_image=current, target_image=target,
-                         containers=sorted(n for names in stale.values() for n in names))
+    provider = _get_plugin_env_provider(terminal.get("backend", "local"))
+    probe = getattr(provider, "pending_image_switch", None)
+    return probe() if probe is not None else None
 
 
 def _image_pinned(terminal_cfg: dict) -> bool:

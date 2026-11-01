@@ -16,9 +16,17 @@ hosted agents don't expose). It must:
 
 from starlette.testclient import TestClient
 
+import pytest
+
 from hermes_cli import web_server
 import hermes_cli.config as _cfg_mod
 import hermes_cli.web_server_cron as _web_server_cron
+
+
+@pytest.fixture(autouse=True)
+def builtin_provider(monkeypatch):
+    from cron.scheduler_provider import InProcessCronScheduler
+    monkeypatch.setattr("cron.scheduler_provider.resolve_cron_scheduler", InProcessCronScheduler)
 
 
 def _client(auth_required: bool):
@@ -53,8 +61,8 @@ def test_bad_token_401(monkeypatch):
     gate). fire_due must NOT run."""
     fired = []
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: None),  # verification fails
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: None,  # verification fails
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_fire_cron_job_for_profile",
@@ -74,8 +82,8 @@ def test_bad_token_401(monkeypatch):
 
 def test_missing_job_id_400(monkeypatch):
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     client, pa, ph = _client(auth_required=False)
     try:
@@ -92,8 +100,8 @@ def test_unknown_job_200_gone(monkeypatch):
     """Valid token but the job isn't found in any profile -> 200 'gone'
     (NAS shouldn't retry a fire for a cancelled/completed job)."""
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: None)
     client, pa, ph = _client(auth_required=False)
@@ -121,8 +129,8 @@ def test_valid_fire_forwards_to_gateway(monkeypatch):
         return 202, {"status": "accepted", "job_id": job_id}
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -154,8 +162,8 @@ def test_gateway_unreachable_503_for_nas_retry(monkeypatch):
         return None  # unreachable
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -182,8 +190,8 @@ def test_gateway_error_status_passes_through(monkeypatch):
         return 401, {"error": "invalid fire token"}
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -212,13 +220,14 @@ def test_fire_endpoint_default_port(tmp_path, monkeypatch):
     # Resolution reads config/.env (and multiplex state) — it must run off the dashboard loop.
     import asyncio
     import threading
-    import time
 
     import httpx
 
     released = threading.Event()
+    entered = threading.Event()
 
     def _blocking_endpoint(_profile, _home):
+        entered.set()
         released.wait(3)
         return "http://127.0.0.1:8642/api/cron/fire"
 
@@ -242,10 +251,9 @@ def test_fire_endpoint_default_port(tmp_path, monkeypatch):
     async def _heartbeat_while_resolving():
         forward = asyncio.ensure_future(
             _web_server_cron._forward_cron_fire_to_gateway("default", "j1", "Bearer x"))
-        start = time.monotonic()
         try:
-            await asyncio.sleep(0.05)
-            assert time.monotonic() - start < 1.0 and not forward.done()
+            assert await asyncio.to_thread(entered.wait, 2)
+            assert not forward.done()
         finally:
             released.set()
         return await forward
@@ -337,8 +345,8 @@ def test_gateway_unreachable_503_carries_retry_after(monkeypatch):
         return None  # unreachable
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -370,8 +378,8 @@ def test_gateway_intentionally_stopped_drops_with_200(monkeypatch):
         return None  # unreachable — gateway process is down
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -408,8 +416,8 @@ def test_stopped_check_only_consulted_when_gateway_unreachable(monkeypatch):
         return True  # would drop if (wrongly) consulted
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -436,8 +444,8 @@ def test_gateway_own_503_also_carries_retry_after(monkeypatch):
         return 503, {"error": "gateway draining"}
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -532,8 +540,8 @@ def test_forward_failure_stamps_last_fire_error(monkeypatch):
         return True
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -568,8 +576,8 @@ def test_forward_failure_stamp_error_never_breaks_retry_contract(monkeypatch):
         raise RuntimeError("jobs.json locked")
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)
@@ -596,8 +604,8 @@ def test_reachable_gateway_does_not_stamp(monkeypatch):
         return 202, {"status": "accepted", "job_id": job_id}
 
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", lambda jid: "default")
     monkeypatch.setattr(_web_server_cron, "_forward_cron_fire_to_gateway", fake_forward)

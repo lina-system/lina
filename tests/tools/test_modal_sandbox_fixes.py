@@ -153,7 +153,7 @@ class TestCwdHandling:
             return sentinel
 
         from tools.terminal_tool_backends import _create_environment
-        monkeypatch.setattr("tools.terminal_tool_backends._DockerEnvironment", _fake_docker_environment)
+        monkeypatch.setattr("tools.environments.docker.DockerEnvironment", _fake_docker_environment)
 
         env = _create_environment(
             env_type="docker",

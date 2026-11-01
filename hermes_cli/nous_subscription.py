@@ -37,6 +37,7 @@ class _FeatureSpec:
     # Direct-credential env vars that stop apply_nous_managed_defaults switching the category to
     # managed (tts/stt also honour resolve_openai_audio_api_key()).
     default_direct_env: tuple[str, ...] = ()
+    optional_toolset: bool = False
 
 
 _FEATURES: dict[str, _FeatureSpec] = {
@@ -47,9 +48,11 @@ _FEATURES: dict[str, _FeatureSpec] = {
     ),
     "image_gen": _FeatureSpec(
         "Image generation", True, "fal", "fal-queue", ("image_gen", "provider"), "Image generation", "FAL key",
+        optional_toolset=True,
     ),
     "video_gen": _FeatureSpec(
         "Video generation", False, "fal-video", "fal-queue", ("video_gen", "provider"), "Video generation (FAL)", "FAL key",
+        optional_toolset=True,
     ),
     "tts": _FeatureSpec(
         "OpenAI TTS", True, "openai-audio", "openai-audio", ("tts", "provider"),
@@ -288,11 +291,10 @@ def managed_image_partner(config: dict[str, object]) -> Optional[str]:
     """Partner the image request is dispatched to (``"FAL"``, ``"Krea"`` or ``"Nous Portal"``);
     ``None`` when a direct vendor owns it. Reads the stored values the way the runtime dispatcher
     does, so the label and the route cannot disagree."""
-    from tools.image_generation_managed import FAL, KREA, PORTAL, managed_route
+    from tools.registry_contributions import toolset_contribution
 
-    section = _section(config, "image_gen")
-    return {FAL: "FAL", KREA: "Krea", PORTAL: "Nous Portal"}.get(
-        managed_route(section.get("provider"), section.get("model")))
+    contribution = toolset_contribution("image_gen")
+    return contribution.managed_partner(config) if contribution and contribution.managed_partner else None
 
 
 def _fal_feature(key: str, tool_enabled: bool, direct: bool, managed: bool, selected: Optional[str]) -> NousFeatureState:
@@ -467,6 +469,12 @@ def _has_managed_default_direct(key: str) -> bool:
     return bool(key in ("tts", "stt") and resolve_openai_audio_api_key()) or _any_env(*_FEATURES[key].default_direct_env)
 
 
+def _feature_installed(key: str) -> bool:
+    from tools.registry_contributions import toolset_contribution
+
+    return not _FEATURES[key].optional_toolset or toolset_contribution(key) is not None
+
+
 def _krea_image_default(config: dict[str, object], account_info) -> Optional[str]:
     """Krea 3 for accounts entitled to Krea when no image model is stored; the free pool is not
     entitled and keeps the FAL default."""
@@ -500,6 +508,8 @@ def apply_nous_managed_defaults(config: dict[str, object], *, enabled_toolsets: 
         changed.add(key)
     # Video gen is not funded by the free tool pool: only wire managed video for entitled (paid) users.
     for key, category in (("image_gen", None), ("video_gen", "fal-video")):
+        if not _feature_installed(key):
+            continue
         if key in selected_toolsets and not fal_key_is_configured() and (category is None or account_info.tool_gateway_entitled_for(category)):
             model = None
             if key == "image_gen" and not features.features[key].explicit_configured:
@@ -550,6 +560,8 @@ def get_gateway_eligible_tools(config: Optional[dict[str, object]] = None, *, fo
     direct = _get_gateway_direct_credentials()
     unconfigured, has_direct, explicit_configured, already_managed = [], [], [], []
     for key in _ALL_GATEWAY_KEYS:
+        if not _feature_installed(key):
+            continue
         # Only offer tools the entitlement covers (free pool: image but not video).
         if not account_info.tool_gateway_entitled_for(_FEATURES[key].coverage):
             continue
@@ -570,7 +582,7 @@ def apply_gateway_defaults(config: dict[str, object], tool_keys: list[str], acco
     """Store the managed selection for ``tool_keys``; returns the set of tools actually changed."""
     for key in _DEFAULT_SECTIONS:
         _ensure_section(config, key)
-    changed = [key for key in _ALL_GATEWAY_KEYS if key in tool_keys]  # table order: config key order
+    changed = [key for key in _ALL_GATEWAY_KEYS if key in tool_keys and _feature_installed(key)]
     for key in changed:
         _select_nous(config, key, model=_krea_image_default(config, account_info) if key == "image_gen" else None)
     return set(changed)

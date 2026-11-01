@@ -9,6 +9,9 @@ from plugins.teams_pipeline.cli import register_cli, teams_pipeline_command
 
 
 def register(ctx) -> None:
+    from .runtime import wire_platform_handler
+
+    ctx.register_platform_handler("msgraph_webhook", wire_platform_handler)
     ctx.register_cli_command(
         name="teams-pipeline",
         help="Inspect and operate the Microsoft Teams meeting pipeline",

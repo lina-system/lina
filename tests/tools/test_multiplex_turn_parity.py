@@ -86,26 +86,24 @@ def test_launch_artifact_context_cwd_follows_routed_profile(two_homes, tmp_path)
 
 def test_terminal_backend_consumers_read_the_routed_scope(two_homes):
     """Every ``TERMINAL_ENV`` reader that shapes a turn (image-source locality, credential-file path
-    translation, image-gen cache base, skill readiness) resolves the ROUTED profile's backend."""
+    translation, skill readiness) resolves the ROUTED profile's backend."""
     from gateway.run import _profile_runtime_scope
-    from tools import credential_files, image_generation_tool, image_source
+    from tools import credential_files, image_source
 
     a, b = two_homes
 
     def observe():
         return (
             image_source._is_local_terminal_backend(),
-            image_generation_tool._agent_cache_base_for_env(None),
             credential_files.to_agent_visible_cache_path("/host/.hermes/x.png", "/root/.hermes"),
             sorted(Path(m["host_path"]).name for m in credential_files.get_credential_file_mounts()),
         )
 
     with _profile_runtime_scope(a):
-        assert observe() == (True, None, "/host/.hermes/x.png", ["cred_a.txt"])
+        assert observe() == (True, "/host/.hermes/x.png", ["cred_a.txt"])
     with _profile_runtime_scope(b):
-        local, cache_base, translated, mounts = observe()
+        local, translated, mounts = observe()
     assert local is False
-    assert cache_base == "/root/.hermes"
     assert translated != "/host/.hermes/x.png" or mounts == ["cred_b.txt"]
     assert mounts == ["cred_b.txt"]
 

@@ -51,10 +51,7 @@ def _writers(home: Path, monkeypatch):
     from hermes_cli import process_identity
     from tools import mcp_oauth
     from plugins.google_meet.node.server import NodeServer
-    from plugins.platforms.photon import adapter as photon_adapter
 
-    photon_record = home / "runtime" / "photon.json"
-    monkeypatch.setattr(photon_adapter, "_runtime_record_path", lambda: photon_record)
     ledger = home / "spawn-ledger.json"
     monkeypatch.setattr(process_identity, "_ledger_path", lambda: ledger)
     cache = DiskCache("probe.json", key_serializer=str)
@@ -70,7 +67,6 @@ def _writers(home: Path, monkeypatch):
         ("secret-source cache", lambda: cache.write("k", CachedFetch(secrets={"A": "b"}, fetched_at=1.0), 60, home),
          cache.path(home)),
         ("iron-proxy mappings", lambda: iron_proxy.write_mappings([]), home / "proxy" / "mappings.json"),
-        ("photon sidecar record", lambda: photon_adapter._write_runtime_record(1, "tok", 2), photon_record),
         ("pairing", lambda: pairing._save_json_file(home / "pairing" / "p.json", {"a": 1}), home / "pairing" / "p.json"),
         ("vault blob", lambda: vault._write_all([]), vault._vault_path),
         ("spawn ledger", lambda: process_identity.register_self("probe"), ledger),

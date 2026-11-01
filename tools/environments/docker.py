@@ -20,7 +20,7 @@ import threading
 import time
 import uuid
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 from hermes_constants import get_hermes_home
 from tools.environments.base import BaseEnvironment, EnvironmentConnectionError, _SHELL_ENV_NAME_RE, get_sandbox_dir
@@ -41,13 +41,7 @@ from tools.environments.remote_common import (
 
 logger = logging.getLogger(__name__)
 
-# Docker Desktop install paths checked when 'docker' is not in PATH
-# (macOS Intel / Apple Silicon Homebrew / app bundle).
-_DOCKER_SEARCH_PATHS = [
-    "/usr/local/bin/docker", "/opt/homebrew/bin/docker", "/Applications/Docker.app/Contents/Resources/bin/docker",
-]
-
-_docker_executable: Optional[str] = None  # resolved once, cached
+from tools.environments.container_runtime import find_docker
 _ENV_VAR_NAME_RE = _SHELL_ENV_NAME_RE
 _ENVIRONMENT_LABEL_KEY = "hermes-environment"
 # Stamped at create time on per-workspace persistent containers (task key ``<base>:ws:<digest>``)
@@ -260,8 +254,6 @@ def _container_finished_at(docker_exe: str, container_id: str):
         return None
 
 
-def _is_executable(path: str) -> bool:
-    return os.path.isfile(path) and os.access(path, os.X_OK)
 
 
 def _docker_query(
@@ -282,40 +274,6 @@ def _docker_query(
     return result
 
 
-def find_docker() -> Optional[str]:
-    """Locate the docker/podman CLI (cached): ``HERMES_DOCKER_BINARY`` override, ``docker``
-    on PATH, ``podman`` on PATH, then macOS Docker Desktop locations; ``None`` if absent."""
-    global _docker_executable
-    if _docker_executable is not None:
-        return _docker_executable
-
-    override = os.getenv("HERMES_DOCKER_BINARY")
-    if override and _is_executable(override):
-        logger.info("Using HERMES_DOCKER_BINARY override: %s", override)
-        found = override
-    elif found := shutil.which("docker"):
-        pass
-    elif found := shutil.which("podman"):
-        logger.info("Using podman as container runtime: %s", found)
-    elif found := next((p for p in _DOCKER_SEARCH_PATHS if _is_executable(p)), None):
-        logger.info("Found docker at non-PATH location: %s", found)
-    if found:
-        _docker_executable = found
-    return found
-
-
-def docker_runtime_name(executable: str) -> str:
-    """User-facing runtime name (``"Podman"`` / ``"Docker"``) for the CLI at *executable*, so
-    diagnostics and pickers name the runtime actually in use."""
-    return "Podman" if "podman" in os.path.basename(executable).lower() else "Docker"
-
-
-def docker_runtime_start_hint(executable: str) -> str:
-    """How to bring the runtime at *executable* back up, for a "not reachable" message. Docker has
-    a daemon to start; Podman is daemonless (outside Linux it runs inside a VM)."""
-    if docker_runtime_name(executable) != "Podman":
-        return "start Docker and retry"
-    return "run `podman machine start` and retry"
 
 
 # Security flags applied to every container. The container is the security
@@ -1097,6 +1055,16 @@ class DockerEnvironment(BaseEnvironment):
         passthrough_env, unset_names = self._resolve_passthrough_env()
         return _name_only_env_args(passthrough_env), tuple(sorted(unset_names)), dict(passthrough_env)
 
+    def exec_prefix(self, *, user=None, interactive=True):
+        if not self._container_id:
+            return None
+        argv = [self._docker_exe, "exec"]
+        if interactive:
+            argv.append("-i")
+        if user:
+            argv += ["-u", user]
+        return argv + [self._container_id]
+
     def _run_bash(self, cmd_string: str, *, login: bool = False,
                   timeout: int = 120,
                   stdin_data: str | None = None) -> subprocess.Popen:
@@ -1392,3 +1360,140 @@ class DockerEnvironment(BaseEnvironment):
             return True
         thread.join(timeout=timeout)
         return not thread.is_alive()
+
+
+from agent.terminal_env_registry import register_provider
+from tools.environments.provider import EnvironmentProvider
+from tools.terminal_tool_backends import _resources, _reject
+from tools.terminal_tool_config import _tenv, _quiet
+# Once-per-process guard for the docker orphan reaper.
+_docker_orphan_reaper_ran = False
+_docker_orphan_reaper_lock = threading.Lock()
+
+
+def _maybe_reap_docker_orphans(container_config: dict[str, Any]) -> None:
+    """Run the docker orphan reaper once per process, if enabled.
+
+    Sweeps Exited containers labeled ``hermes-agent=1`` for the current
+    profile — leftovers of Hermes processes that died without firing
+    ``atexit`` (SIGKILL, OOM, closed terminal). Conservative: only containers
+    older than ``2 × lifetime_seconds``, profile-scoped. Gates:
+    ``terminal.docker_orphan_reaper: false`` (operator opt-out, e.g. several
+    Hermes processes sharing a profile) and the once-per-interpreter flag so
+    parallel subagent / RL-rollout calls don't re-sweep.
+    """
+    global _docker_orphan_reaper_ran
+    if not container_config.get("docker_orphan_reaper", True):
+        return
+    if _docker_orphan_reaper_ran:  # double-checked locking
+        return
+    with _docker_orphan_reaper_lock:
+        if _docker_orphan_reaper_ran:
+            return
+        _docker_orphan_reaper_ran = True
+
+    # 2 × lifetime gives sibling processes a grace window; floor at 60s so
+    # TERMINAL_LIFETIME_SECONDS=0 can't instant-reap a sibling's own setup.
+    # container_config only carries container_* keys, so read the env var.
+    try:
+        lifetime = int(_tenv("TERMINAL_LIFETIME_SECONDS", "300"))
+    except (TypeError, ValueError):
+        lifetime = 300
+    max_age = max(60, lifetime) * 2
+
+    # Never fail the env-creation path because of a janitor problem.
+    with _quiet("Docker orphan reaper raised"):
+        profile = _container_identity(container_config.get("docker_shared_container_key", ""))
+        removed = reap_orphan_containers(max_age_seconds=max_age, profile_filter=profile)
+        if removed:
+            logger.info(
+                "Docker orphan reaper removed %d stale container(s) for profile %s",
+                removed, profile,
+            )
+
+_DOCKER_KWARGS = (
+    ("volumes", "docker_volumes", []), ("auto_mount_cwd", "docker_mount_cwd_to_workspace", False),
+    ("forward_env", "docker_forward_env", []), ("env", "docker_env", {}),
+    ("run_as_host_user", "docker_run_as_host_user", False), ("network", "docker_network", True),
+    ("extra_args", "docker_extra_args", []), ("persist_across_processes", "docker_persist_across_processes", True),
+    ("shared_container_key", "docker_shared_container_key", ""), ("shm_size", "docker_shm_size", "1g"),
+    ("snap_compat", "docker_snap_compat", False), ("image_pinned", "docker_image_pinned", False),
+)
+
+
+def _build_docker_env(*, image, cwd, timeout, cc, task_id, host_cwd, **_):
+    from tools.terminal_tool import _docker_session_isolation_enabled, _has_isolation_overrides
+    # One-shot reaper for labeled containers orphaned by prior Hermes processes that died before
+    # atexit (SIGKILL / OOM / closed terminal); ``terminal.docker_orphan_reaper: false`` disables it.
+    _maybe_reap_docker_orphans(cc)
+    # A session-keyed container must not outlive its session, so cross-process reuse/persist is
+    # disabled for it (cleanup_vm()/idle reaper stop+rm it). The shared "default" container and
+    # RL/benchmark override sandboxes keep their existing lifecycle.
+    session_scoped = (_docker_session_isolation_enabled() and task_id != "default"
+                      and not _has_isolation_overrides(task_id))
+    kwargs = {out: cc.get(key, default) for out, key, default in _DOCKER_KWARGS}
+    if session_scoped:
+        kwargs["persist_across_processes"] = False
+    docker_env_obj = DockerEnvironment(image=image, cwd=cwd, timeout=timeout, task_id=task_id, host_cwd=host_cwd,
+                                        **_resources(cc), **kwargs)
+    # Marker read by is_persistent_env(): a session-scoped container survives BETWEEN turns (skip
+    # per-turn teardown) but is removed at session close / idle timeout. Test doubles may reject attrs.
+    if session_scoped:
+        try:
+            docker_env_obj._session_scoped = True
+        except AttributeError:
+            pass
+    return docker_env_obj
+
+
+
+def _check_docker(config):
+    executable = find_docker()
+    if not executable:
+        return _reject("Docker is not installed — no docker executable in PATH or the usual install locations")
+    probe = subprocess.run([executable, "version"], capture_output=True, timeout=5,
+                           stdin=subprocess.DEVNULL, check=False)
+    if probe.returncode != 0:
+        return _reject(f"Docker is installed but the Docker daemon is not running (`{executable} version` exited with code {probe.returncode})")
+    return True
+
+
+def _pending_image_switch():
+    """The switch this profile still has to decide, or None: backend is docker, the image is the
+    unpinned default, and a container labeled for this profile runs another image. ``docker`` is
+    consulted (one ``ps``); any failure is "nothing pending"."""
+    from hermes_cli.config import load_config_readonly
+    from hermes_cli.sandbox_image_switch import PendingSwitch, _image_pinned
+
+    terminal = (load_config_readonly() or {}).get("terminal") or {}
+    if terminal.get("backend") != "docker":
+        return None
+    if _image_pinned(terminal):
+        return None
+    target = str(terminal.get("docker_image") or "")
+    docker = find_docker()
+    if not docker or not target:
+        return None
+    listing = _docker_query(
+        [docker, "ps", "-a", "--filter", "label=hermes-agent=1",
+         "--filter", f"label=hermes-profile={_container_identity(str(terminal.get('docker_shared_container_key') or ''))}",
+         "--format", "{{.Names}}\t{{.Image}}"],
+        timeout=10, fail="sandbox image switch probe failed: %s", nonzero="docker ps exited %s: %s")
+    if listing is None:
+        return None
+    stale: dict[str, list[str]] = {}
+    for line in listing.stdout.splitlines():
+        name, _, image = line.partition("\t")
+        if image and image != target:
+            stale.setdefault(image, []).append(name)
+    if not stale:
+        return None
+    current = max(stale, key=lambda img: len(stale[img]))
+    return PendingSwitch(current_image=current, target_image=target,
+                         containers=sorted(n for names in stale.values() for n in names))
+
+_provider = EnvironmentProvider("docker", _build_docker_env, _check_docker,
+                                supports_streams=True, skip_container_guards=False)
+_provider.pending_image_switch = _pending_image_switch
+_provider.wait_for_teardowns = DockerEnvironment.wait_for_all_teardowns
+register_provider(_provider)

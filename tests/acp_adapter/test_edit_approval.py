@@ -6,9 +6,9 @@ import json
 import tempfile
 from pathlib import Path
 
-from acp_adapter.edit_approval import (
+from acp_adapter.edit_approval import build_acp_edit_tool_call
+from tools.edit_approval import (
     EditProposal,
-    build_acp_edit_tool_call,
     build_edit_proposal,
     set_edit_approval_requester,
     should_auto_approve_edit,

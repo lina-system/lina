@@ -48,6 +48,16 @@ class ChronosCronScheduler(CronScheduler):
     def name(self) -> str:
         return "chronos"
 
+    def verify_fire_token(self, *, token: str) -> dict[str, Any] | None:
+        from .verify import get_fire_verifier
+
+        return get_fire_verifier()(
+            token=token,
+            expected_audience=_cfg("cron", "chronos", "expected_audience"),
+            jwks_or_key=_cfg("cron", "chronos", "nas_jwks_url") or None,
+            issuer=_cfg("cron", "chronos", "portal_url") or None,
+        )
+
     def is_available(self) -> bool:
         """Config presence only — NO network: portal URL, publicly reachable callback URL and a
         Nous login; otherwise the resolver falls back to the built-in ticker."""

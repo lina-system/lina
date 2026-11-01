@@ -73,9 +73,3 @@ def test_plain_chat_leaves_plugin_discovery_to_the_gateway(monkeypatch):
     calls = _install_discover_spy(monkeypatch)
     main_mod._prepare_agent_startup(_args(tui=False, command="chat"))
     assert calls == []
-
-
-def test_plugin_discovery_runs_for_acp(monkeypatch):
-    calls = _install_discover_spy(monkeypatch)
-    main_mod._prepare_agent_startup(_args(tui=False, command="acp"))
-    assert calls == ["discover"]

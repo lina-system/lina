@@ -102,6 +102,9 @@ class TestCheckRequirements:
     def test_gateway_tool_prompt_gate_uses_active_profile_token(self, monkeypatch):
         from agent import secret_scope
         from gateway.session import _discord_tools_loaded
+        # Importing tools_config runs built-in tool discovery once per process; the per-turn probe
+        # below is what must stay config-free.
+        import hermes_cli.tools_config
 
         monkeypatch.setenv("DISCORD_BOT_TOKEN", "another-profile-token")
         secret_scope.set_multiplex_active(True)

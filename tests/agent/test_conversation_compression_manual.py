@@ -49,9 +49,9 @@ def test_compressed_result_rejoins_verbatim_tail_and_never_mutates_input():
     assert agent._compress_context.call_args.kwargs["force"] is True
 
 
-@pytest.mark.parametrize("surface", ["cli", "gateway", "tui", "acp"])
+@pytest.mark.parametrize("surface", ["cli", "gateway", "tui"])
 def test_every_surface_honours_preview_without_compressing(surface, monkeypatch):
-    """The prompt-cache-breaking mutation must be gated by the same ``--preview`` on all four surfaces."""
+    """The prompt-cache-breaking mutation must be gated by the same ``--preview`` on kept surfaces."""
     agent, history = _agent(), _history()
     frozen = copy.deepcopy(history)
     if surface == "cli":
@@ -77,14 +77,6 @@ def test_every_surface_honours_preview_without_compressing(surface, monkeypatch)
         session = {"agent": agent, "history": history, "history_lock": threading.Lock(), "history_version": 3}
         assert _compress_session_history(session, "--preview")[0] == 0
         assert session["history"] == frozen and session["history_version"] == 3
-    else:
-        from acp_adapter.commands import SlashCommandsMixin
-        acp = SlashCommandsMixin.__new__(SlashCommandsMixin)
-        acp.session_manager = MagicMock()
-        state = MagicMock(history=history, agent=agent, session_id="acp-sid")
-        assert "Preview" in acp._cmd_compress("--preview", state)
-        assert state.history == frozen
-        acp.session_manager.save_session.assert_not_called()
     agent._compress_context.assert_not_called()
 
 

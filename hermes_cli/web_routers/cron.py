@@ -818,18 +818,13 @@ async def cron_fire_webhook(request: Request):
     and its response passed through (the gateway re-verifies the JWT). Gateway
     unreachable -> 503 so NAS retries; deliberately NO local-execution fallback.
     """
-    from plugins.cron_providers.chronos.verify import get_fire_verifier
+    from cron.scheduler_provider import resolve_cron_scheduler
 
     auth = request.headers.get("Authorization", "")
     token = auth[7:].strip() if auth.startswith("Bearer ") else ""
 
-    cfg = await asyncio.to_thread(load_config)
-    claims = get_fire_verifier()(
-        token=token,
-        expected_audience=cfg_get(cfg, "cron", "chronos", "expected_audience", default=""),
-        jwks_or_key=cfg_get(cfg, "cron", "chronos", "nas_jwks_url", default="") or None,
-        issuer=cfg_get(cfg, "cron", "chronos", "portal_url", default="") or None,
-    )
+    provider = await asyncio.to_thread(resolve_cron_scheduler)
+    claims = await asyncio.to_thread(provider.verify_fire_token, token=token)
     if claims is None:
         return JSONResponse({"error": "invalid fire token"}, status_code=401)
 
