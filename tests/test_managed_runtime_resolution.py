@@ -225,6 +225,9 @@ def _source_files() -> list[Path]:
                 d for d in dirnames
                 if d not in _EXEMPT_DIRS and not _is_packaging_copy(d)
             ]
+        elif rel_dir == Path("services"):
+            # Vendored upstream subtree, held to its upstream's checks (docs/honcho.md).
+            dirnames[:] = [d for d in dirnames if d != "honcho"]
         for fname in filenames:
             if fname.endswith(".py"):
                 files.append(Path(dirpath) / fname)
