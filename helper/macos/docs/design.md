@@ -141,6 +141,8 @@ hermes-macos-unlock (imported under `unlock/`, source `thisisjun786/hermes-macos
 
 ## 9. Hermes-side client
 
+Historical (v0/v1 design). In LINA the client is the core package `tools/lina_helper/` and the device list is `devices.macs` in config.yaml; see [fleet.md](fleet.md) §7.
+
 Hermes runs on agent-hub and reaches agent-mac over SSH.
 
 - `clients/lina-helper` (agent-hub script): `lina-helper [--host HOST] ACTION [--arg k=v …] [--out PATH]`. Runs `ssh -T -o BatchMode=yes HOST /usr/local/bin/lina-helperctl …`, a fixed command with JSON-quoted arguments; never a shell string from the caller. Host comes from `--host` or `LINA_HELPER_SSH_HOST`. Screenshots stream back over the same SSH connection to a local path. Exit code 0 only for `ok:true`.

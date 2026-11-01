@@ -4,7 +4,7 @@ One signed macOS app that holds the privacy permissions (Accessibility, Screen R
 
 - Bundle ID `app.lina-os.helper`, installed at `/Applications/LINA Helper.app`, signed by the team Developer ID. Same bundle ID and same team signature → grants survive updates and reboots.
 - Requests: newline-delimited JSON over a Unix socket in the user's Application Support folder; peer UID and code signature checked; actions limited by a root-owned policy file; every request in an audit log.
-- From agent-hub, Hermes calls `clients/lina-helper` which runs `lina-helperctl` over SSH.
+- LINA's core tools (`tools/lina_helper/` in the repository root) run `lina-helperctl` on this Mac or over SSH on the Macs in `devices.macs` (config.yaml); `computer_use` reaches the helper through the `lina_helper` provider (`plugins/computer_use/lina_helper/`). `lina install` installs or updates the app on a Mac.
 - No MDM, no generic command execution, no edits to the TCC database.
 
 Full design: [docs/design.md](docs/design.md).
@@ -15,13 +15,12 @@ Full design: [docs/design.md](docs/design.md).
 |---|---|
 | `docs/design.md` | design: identity, permissions, API, audit, updates, unlock absorption, client |
 | `app/` | LINA Helper app and `lina-helperctl` (Swift) — v0 |
-| `clients/` | Hermes-side client script, later the Hermes plugin |
 | `unlock/` | imported Hermes Unlock package (`thisisjun786/hermes-macos-unlock@e5a3204`): AuthorizationPlugin, root helper, GUI agent, installer. Absorbed into the app in v1 |
 
 ## Build and test
 
 ```sh
-make test          # everything that runs without a Mac GUI session (also on Linux for unlock/)
+make test          # everything that runs without a Mac GUI session (also on Linux; CI runs it through tests/helper/)
 make app           # macOS: build and ad-hoc sign build/LINA Helper.app
 make clean         # remove app and unlock build products
 make -C unlock native-check   # unlock package native checks (macOS)
@@ -46,7 +45,7 @@ even in development mode. All modes also require the peer UID to be the helper's
 UID or root. For an isolated manual run on macOS:
 
 ```sh
-export LINA_HELPER_HOME="$(mktemp -d /tmp/lina-helper.XXXXXX)"
+export LINA_HELPER_HOME="$(mktemp -d -t lina-helper)"
 LINA_HELPER_DEV=1 "build/LINA Helper.app/Contents/MacOS/lina-helper" &
 helper_pid=$!
 "build/LINA Helper.app/Contents/Helpers/lina-helperctl" status --caller local-test

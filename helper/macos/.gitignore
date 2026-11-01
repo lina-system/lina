@@ -9,4 +9,3 @@ dist/
 *.cer
 .DS_Store
 .tmp/
-clients/hermes/macs.yaml

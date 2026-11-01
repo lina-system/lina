@@ -51,23 +51,9 @@ An installer removes only paths it exclusively created. It never resets a keycha
 
 ## Hermes integration
 
-The repository root is a standard Hermes standalone plugin. Use an immutable commit:
+LINA's core tools `mac_unlock_status`, `mac_unlock` and `mac_unlock_revoke` (`tools/lina_helper/unlock.py` in the repository root) call this package over SSH on a Mac whose entry in `devices.macs` (config.yaml) has `unlock: true`. The model names the Mac; the SSH alias comes only from the device list. Availability checks are offline; an offline Mac does not block LINA startup.
 
-```sh
-hermes plugins install thisisjun786/hermes-macos-unlock --ref FULL_COMMIT_SHA --enable
-```
-
-Set `HERMES_UNLOCK_SSH_HOST` in the environment of the intended Hermes profile/service to an explicitly selected SSH alias. Restart that profile/service to load the plugin. Registration and availability checks are offline; an offline Mac does not block Hermes startup.
-
-For direct command use:
-
-```sh
-python3 bridge/mac_unlock.py --host mac-target status
-python3 bridge/mac_unlock.py --host mac-target unlock
-python3 bridge/mac_unlock.py --host mac-target revoke
-```
-
-The bridge never installs software, changes security policy, configures SSH keys, or answers calls. A failed/ambiguous result remains a failure; no retry loop is hidden behind `unlock`.
+The core client never installs software, changes security policy, configures SSH keys, or answers calls. A failed/ambiguous result remains a failure; no retry loop is hidden behind `unlock`.
 
 ## Limits that matter
 

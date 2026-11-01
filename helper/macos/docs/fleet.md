@@ -70,13 +70,15 @@ Helper actions under `operate`: `status`, `permissions`, `screenshot`, `ax.tree`
 
 Each Mac keeps its own log (§3). Helper actions carry the caller and the SSH origin; cua calls carry `cua.call:<tool>` and the calling process; refusals (policy, peer, lease) are logged too; daemon restarts are `cua.lifecycle`. Every input action leaves exactly one line. Collecting the logs in one place is a later step.
 
-## 7. Hermes side
+## 7. LINA side
 
-- **computer_use backend** `lina-helper-cua` (`clients/hermes-computer-use/`): subclass of upstream `CuaDriverBackend`. It replaces only how the cua MCP session is launched (`clients/hermes-cua-driver mcp`, which execs `<Helper>/cua-driver mcp --embedded --socket <gate>` on agent-hub, or `ssh <alias> '<Helper>/cua-driver mcp --embedded --socket "$HOME/…/cua.sock"'` for another Mac), fixes the cua mode to `standard`, and takes the lease before input. Verification ladder, capture and input logic stay upstream.
-  - Why `standard` is forced: every bot runs `approvals.mode: off`, which Hermes maps to cua `unrestricted`, and for that the upstream backend starts its own daemon through CuaDriver.app outside the helper.
-- **Target Mac**: plugin tool `mac_use(mac)` sets the computer_use target for the current Hermes session (default `agent-hub`) and restarts that session's cua connection. Unknown names are refused (`clients/hermes/macs.yaml`, operator config).
-- **Plugin `lina-helper`** (`clients/hermes/`): `mac_use`, `mac_status` (grants, profile, cua state, lease holder, current target), `mac_screenshot` (quick check without a computer_use session). `mac_click`, `mac_keys`, `mac_ax_press`, `mac_ax_tree` and `mac_cua` are removed; cua covers them. Helper-only actions get tools when they exist.
-- **Profile settings** (operator): symlink `clients/hermes` → `<profile>/plugins/lina-helper` and `clients/hermes-computer-use` → `<profile>/plugins/lina-helper-cua`; `plugins.enabled` includes `lina-helper`; `computer_use.backend: lina-helper-cua`. Same values in all eight profiles. (The directory name is the backend name; `lina-helper` is taken by the tools plugin.)
+- **computer_use provider** `lina_helper` (`plugins/computer_use/lina_helper/` in LINA): subclass of upstream `CuaDriverBackend`. It replaces only how the cua MCP session is launched (`tools/lina_helper/cua_driver_shim.py mcp`, which execs `<Helper>/cua-driver mcp --embedded --socket <gate>` on this Mac, or `ssh <alias> '<Helper>/cua-driver mcp --embedded --socket "$HOME/…/cua.sock"'` for another Mac), fixes the cua mode to `standard`, and takes the lease before input. Verification ladder, capture and input logic stay upstream.
+  - Why `standard` is forced: `approvals.mode: off` maps to cua `unrestricted`, and for that the upstream backend starts its own daemon through CuaDriver.app outside the helper.
+- **Target Mac**: core tool `mac_use(mac)` sets the computer_use target for the current session (default `devices.default_mac`) and restarts that session's cua connection. Unknown names are refused before anything runs (`devices.macs` in config.yaml).
+- **Core tools** (`tools/lina_helper/`, toolset `lina_helper`): `mac_use`, `mac_status` (grants, profile, cua state, lease holder, current target), `mac_screenshot` (quick check without a computer_use session), and `mac_unlock_status`/`mac_unlock`/`mac_unlock_revoke` for Macs with `unlock: true`. They are hidden where no Mac is reachable.
+- **Settings**: `devices.macs` and `computer_use.backend: lina_helper` in each profile's config.yaml. No plugin directory, symlink or environment variable.
+
+Before the move into LINA the same backend and tools were two standalone Hermes plugins (`clients/hermes`, `clients/hermes-computer-use` in this directory's history).
 
 Tested 2026-10-26 on agent-mac from agent-hub: Hermes' own backend through the wrapper — list_apps, Finder capture (76 elements with element tokens and an image), background click, TextEdit New Document pressed by element, 15 characters typed and read back; a model session with `approvals.mode: off` captured and clicked; the gate logged one line per call; cua-driver reported `attribution: host`; no new `com.trycua.driver` TCC row.
 

@@ -44,7 +44,7 @@
 
 ## Hermes에 추가하는 방법
 
-저장소 루트가 Hermes standalone 플러그인이다. `plugins.enabled`를 기존 값과 병합하고, 대상 프로필의 환경에 `HERMES_UNLOCK_SSH_HOST`를 지정한다. 다른 프로필의 설정을 덮어쓰지 않는다.
+LINA에서는 플러그인이 아니라 코어 도구(`mac_unlock*`)로 쓴다. 대상 Mac을 `devices.macs`에 넣고 `unlock: true`를 켠다. 아래 플러그인 설치 명령은 옛 Hermes 기록이다.
 
 ```sh
 hermes plugins install thisisjun786/hermes-macos-unlock --ref FULL_COMMIT_SHA --enable

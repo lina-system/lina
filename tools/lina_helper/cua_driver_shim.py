@@ -1,20 +1,20 @@
 #!/usr/bin/python3
-"""Hermes computer_use -> LINA Helper's embedded cua-driver.
+"""computer_use (provider ``lina_helper``) -> LINA Helper's embedded cua-driver. Standard library only.
 
-Point Hermes at this file with HERMES_CUA_DRIVER_CMD. Hermes then:
-  - runs `<this> manifest` for its runtime contract; we return the bundled driver's manifest with
-    `mcp_invocation.command` set to this file, so Hermes keeps launching MCP through us;
-  - runs `<this> mcp [--no-overlay ...]`; we exec the bundled driver as a stdio MCP proxy to the
-    helper's audit gate socket (`--embedded --socket <gate>`), so every call is checked and audited
-    by LINA Helper and runs with the helper's grants. The proxy itself holds no grant.
+The provider launches this file as its cua-driver command:
+  - `<this> manifest`: the bundled driver's manifest with `mcp_invocation.command` set to this file, so the
+    MCP session is launched through us;
+  - `<this> mcp [--no-overlay ...]`: exec the bundled driver as a stdio MCP proxy to the helper's audit gate
+    socket (`--embedded --socket <gate>`), so every call is checked and audited by LINA Helper and runs with the
+    helper's grants. The proxy itself holds no grant.
 `call` and `status` go to the same gate (and Mac). Every other verb is passed to the bundled driver unchanged.
 
-LINA_HELPER_CUA_HOST=<ssh alias> runs the MCP proxy on that Mac instead (`ssh <host> cua-driver mcp
---embedded --socket <its gate>`), so the proxy is a local child of sshd there and the gate audits it as
-the bundled driver. Default: this Mac.
+LINA_HELPER_CUA_HOST=<ssh alias> (set by the provider from the device list) runs the MCP proxy on that Mac
+instead (`ssh <host> cua-driver mcp --embedded --socket <its gate>`), so the proxy is a local child of sshd
+there and the gate audits it as the bundled driver. Default: this Mac.
 
-Only Hermes' default `standard` computer_use mode is supported. The `bounded`/`unrestricted` modes make
-Hermes start its own private daemon through CuaDriver.app, which would sit outside the helper.
+Only cua's `standard` permission mode is supported: `bounded`/`unrestricted` make the upstream backend start
+its own private daemon through CuaDriver.app, which would sit outside the helper.
 """
 import json
 import os
@@ -24,12 +24,12 @@ import subprocess
 import sys
 
 APP = '/Applications/LINA Helper.app'
-DRIVER = os.environ.get('LINA_HELPER_CUA_DRIVER', APP + '/Contents/Helpers/cua-driver')
+DRIVER = os.environ.get('LINA_HELPER_CUA_DRIVER', APP + '/Contents/Helpers/cua-driver')  # health: allow HX005 -- own process per MCP session
 # LINA_HELPER_CUA_SOCKET is for tests (e.g. a gate forwarded over ssh); operators leave it unset.
-GATE = os.environ.get('LINA_HELPER_CUA_SOCKET') or os.path.join(
-    os.path.expanduser('~'), 'Library/Application Support/LINA Helper/run/cua.sock')
+GATE = os.environ.get('LINA_HELPER_CUA_SOCKET') or os.path.join(  # health: allow HX005 -- own process per MCP session
+    os.path.expanduser('~'), 'Library/Application Support/LINA Helper/run/cua.sock')  # health: allow HX005 -- own process per MCP session
 SELF = os.path.realpath(__file__)
-HOST = os.environ.get('LINA_HELPER_CUA_HOST', '').strip()
+HOST = os.environ.get('LINA_HELPER_CUA_HOST', '').strip()  # health: allow HX005 -- own process per MCP session
 HOST_RE = r'[A-Za-z0-9][A-Za-z0-9_.-]{0,127}'
 REMOTE_DRIVER = APP + '/Contents/Helpers/cua-driver'
 REMOTE_GATE = '$HOME/Library/Application Support/LINA Helper/run/cua.sock'
@@ -38,12 +38,13 @@ SSH = ['ssh', '-T', '-o', 'BatchMode=yes', '-o', 'ConnectTimeout=10', '-o', 'Ser
 
 
 def fail(message, code=69):
-    sys.stderr.write('lina-helper cua: %s\n' % message)
+    sys.stderr.write(f'lina-helper cua: {message}\n')
     return code
 
 
 def manifest(argv):
-    p = subprocess.run([DRIVER, 'manifest', *argv], capture_output=True, text=True, timeout=10)
+    p = subprocess.run([DRIVER, 'manifest', *argv], text=True, encoding='utf-8', errors='replace',
+                       stdin=subprocess.DEVNULL, capture_output=True, check=False, timeout=10)
     if p.returncode != 0:
         sys.stderr.write(p.stderr)
         return p.returncode
@@ -83,7 +84,7 @@ def _run_at_gate(verb, argv, embedded):
         if not re.fullmatch(HOST_RE, HOST):
             return fail('LINA_HELPER_CUA_HOST must be a plain ssh alias')
         # $HOME expands on the target; everything else is quoted.
-        remote = '%s --socket "%s" %s' % (shlex.join([REMOTE_DRIVER, verb, *flags]), REMOTE_GATE, shlex.join(rest))
+        remote = f'{shlex.join([REMOTE_DRIVER, verb, *flags])} --socket "{REMOTE_GATE}" {shlex.join(rest)}'
         os.execvp('ssh', SSH + [HOST, remote])
     if not os.path.exists(GATE):
         return fail('the helper is not serving cua-driver here (helper not running, profile is not '
@@ -116,7 +117,7 @@ def mcp(argv):
 
 def main(argv):
     if not os.access(DRIVER, os.X_OK):
-        return fail('bundled cua-driver not found at %s' % DRIVER)
+        return fail(f'bundled cua-driver not found at {DRIVER}')
     if argv[:1] == ['manifest']:
         return manifest(argv[1:])
     if argv[:1] == ['mcp']:

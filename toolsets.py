@@ -31,6 +31,8 @@ _HERMES_CORE_TOOLS = [
     "kanban_unblock",
     "kanban_attach", "kanban_attach_url", "kanban_attachments",
     "computer_use",
+    # LINA Helper on the Macs in devices.macs; check_fn hides them where none is reachable.
+    "mac_use", "mac_status", "mac_screenshot", "mac_unlock_status", "mac_unlock", "mac_unlock_revoke",
     # Service-gated connector account status and authorization links.
     "manage_connections",
 ]
@@ -95,6 +97,10 @@ TOOLSETS = {
         "screenshots, mouse, keyboard, scroll, drag. Does NOT steal the user's cursor "
         "or keyboard focus. Works with any tool-capable model.",
         ["computer_use"],
+    ),
+    "lina_helper": _ts(
+        "LINA Helper on the configured Macs: choose the desktop-control target, status, screenshot, screen unlock",
+        ["mac_use", "mac_status", "mac_screenshot", "mac_unlock_status", "mac_unlock", "mac_unlock_revoke"],
     ),
     "terminal": _ts("Terminal/command execution and process management tools", ["terminal", "process_manage"]),
     "skills": _ts(
