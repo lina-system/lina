@@ -17,10 +17,11 @@ Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the 
 | Python tests (macOS) | pushes to `dev`, manual runs | macOS-marked tests | `tests-os.yml`, macOS jobs |
 | Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
 | uv.lock check | `uv_lock` lane | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
+| Prune check | always | Fails while a tracked file matches `prune-list.txt`, the upstream paths LINA does not carry ([forking.md](forking.md)) | LINA only |
 
 Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead of Blacksmith runners, `actions/checkout` instead of `useblacksmith/checkout`, one workflow instead of `ci.yaml` calling reusable workflows, and no review-comment or timing artifacts. The advisory lint diff, the code-health ratchet, the Windows-footgun checks, the dependency-bound check, the e2e lanes and the Windows tests are not run.
 
-Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_env --source . --check-lock`, `python scripts/ci/check_blob_size.py --base origin/dev`.
+Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_env --source . --check-lock`, `python scripts/ci/check_blob_size.py --base origin/dev`, `python3 scripts/ci/check_prune_list.py`.
 
 ## Required checks
 

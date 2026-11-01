@@ -1,0 +1,148 @@
+#!/usr/bin/env python3
+"""Take Hermes upstream into a LINA branch: merge, remove what LINA does not carry, report.
+
+    scripts/sync-upstream                 # merge origin/upstream into the current branch
+    scripts/sync-upstream <commit-or-ref> # merge up to any upstream commit
+
+Run it on a branch from ``dev`` with a clean checkout (docs/forking.md, "Taking upstream
+changes"). It
+
+1. merges the upstream ref with ``--no-ff --no-commit``;
+2. runs ``git rm`` on every path matching ``prune-list.txt``: files upstream changed that LINA
+   deleted (modify/delete conflicts), and new upstream files under pruned paths;
+3. reports new upstream paths the list does not classify: a new top-level entry, or a new
+   directory directly under ``plugins/`` or ``plugins/<kind>/``. Add each to the list or keep it;
+4. lists the conflicts left in kept files, to resolve by hand.
+
+The merge is left uncommitted so the same commit can set ``LINA_UPSTREAM_COMMIT``.
+Exit codes: 0 = merged with no conflict left, 1 = conflicts left in kept files, 2 = refused or
+git error.
+"""
+
+from __future__ import annotations
+
+import argparse
+import subprocess
+import sys
+from pathlib import Path
+
+REPO = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(REPO / "scripts" / "ci"))
+
+import check_prune_list as prune
+
+DEFAULT_REF = "origin/upstream"
+PROTECTED_BRANCHES = frozenset({"dev", "main", "upstream"})
+_RM_CHUNK = 500
+
+
+def _git(*args: str, check: bool = True) -> subprocess.CompletedProcess[str]:
+    proc = subprocess.run(["git", *args], cwd=REPO, capture_output=True, text=True,
+                          encoding="utf-8", stdin=subprocess.DEVNULL, check=False)
+    if check and proc.returncode != 0:
+        raise RuntimeError(f"git {' '.join(args)} failed: {proc.stderr.strip()}")
+    return proc
+
+
+def _refuse_reason() -> str | None:
+    branch = _git("symbolic-ref", "--quiet", "--short", "HEAD", check=False).stdout.strip()
+    if not branch:
+        return "HEAD is detached; check out a branch from dev first"
+    if branch in PROTECTED_BRANCHES:
+        return f"on {branch}; run it on a branch from dev"
+    if _git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode == 0:
+        return "a merge is already in progress"
+    if _git("status", "--porcelain", "--untracked-files=no").stdout.strip():
+        return "the checkout has uncommitted changes"
+    return None
+
+
+def _parents(path: str) -> list[str]:
+    parts = path.split("/")
+    return ["/".join(parts[:depth]) for depth in range(1, len(parts))]
+
+
+def unclassified(added: list[str], before: set[str]) -> list[str]:
+    """The new top-level entries and plugin directories among ``added`` (already pruned)."""
+    known = set(before)
+    for path in before:
+        known.update(_parents(path))
+    found: dict[str, None] = {}
+    for path in added:
+        parts = path.split("/")
+        if parts[0] not in known:
+            found[parts[0]] = None
+            continue
+        if parts[0] != "plugins":
+            continue
+        for depth in (2, 3):
+            prefix = "/".join(parts[:depth])
+            if len(parts) > depth and prefix not in known:
+                found[prefix] = None
+                break
+    return sorted(found)
+
+
+def _merge(ref: str) -> bool:
+    """Merge ``ref`` without committing; False when there was nothing to merge."""
+    if _git("merge-base", "--is-ancestor", ref, "HEAD", check=False).returncode == 0:
+        return False
+    proc = _git("merge", "--no-ff", "--no-commit", ref, check=False)
+    if _git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode != 0:
+        raise RuntimeError(f"git merge {ref} failed: {(proc.stderr or proc.stdout).strip()}")
+    return True
+
+
+def _remove(paths: list[str]) -> None:
+    for start in range(0, len(paths), _RM_CHUNK):
+        _git("rm", "-q", "-f", "--", *paths[start:start + _RM_CHUNK])
+
+
+def sync(ref: str) -> int:
+    rules = prune.load(REPO)
+    commit = _git("rev-parse", "--verify", f"{ref}^{{commit}}").stdout.strip()
+    before = set(prune.tracked_files(REPO, "HEAD"))
+    if not _merge(commit):
+        print(f"{ref} ({commit[:10]}) is already merged; nothing to do.")
+        return 0
+
+    pruned = [p for p in prune.tracked_files(REPO) if prune.is_pruned(rules, p)]
+    _remove(pruned)
+    after = prune.tracked_files(REPO)
+    new = unclassified([p for p in after if p not in before], before)
+    conflicts = [p for p in _git("diff", "--name-only", "--diff-filter=U").stdout.splitlines() if p]
+
+    print(f"Merged {ref} ({commit[:10]}) without committing.")
+    print(f"Removed {len(pruned)} paths matching {prune.LIST_NAME}.")
+    if new:
+        print(f"New upstream paths {prune.LIST_NAME} does not classify ({len(new)}); "
+              "add each to the list, or keep it:")
+        for path in new:
+            print(f"    {path}")
+    if conflicts:
+        print(f"Conflicts left in kept files ({len(conflicts)}); resolve each by hand:")
+        for path in conflicts:
+            print(f"    {path}")
+    print(f"Next: set LINA_UPSTREAM_COMMIT = \"{commit[:10]}\" in hermes_cli/lina_version.py, "
+          "run the tests, then `git commit`.")
+    return 1 if conflicts else 0
+
+
+def main(argv: list[str] | None = None) -> int:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("ref", nargs="?", default=DEFAULT_REF,
+                        help=f"upstream commit or ref to merge (default: {DEFAULT_REF})")
+    args = parser.parse_args(argv)
+    try:
+        reason = _refuse_reason()
+        if reason:
+            print(f"sync-upstream: refused: {reason}.", file=sys.stderr)
+            return 2
+        return sync(args.ref)
+    except (OSError, prune.PruneListError, RuntimeError) as exc:
+        print(f"sync-upstream: error: {exc}", file=sys.stderr)
+        return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())
