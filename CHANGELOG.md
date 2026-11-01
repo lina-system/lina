@@ -8,6 +8,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ## [Unreleased]
 
+### Added
+
+- The Honcho server v3.5.0 (`plastic-labs/honcho` 0cd37ddbd8) in `services/honcho/`, a squashed subtree tracked by the `honcho-upstream` branch and `services/honcho-intake.md`; CI checks, tests and builds it (see [docs/honcho.md](docs/honcho.md)).
+
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
 
 ### Added

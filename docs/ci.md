@@ -4,7 +4,7 @@ LINA runs a small CI of its own. The upstream Hermes workflows are kept, unchang
 
 ## What runs
 
-GitHub Actions reads only `.github/workflows/`. Every workflow there runs on pull requests into `dev` or `main`, on pushes to `dev`, and by manual dispatch, on GitHub-hosted runners. None uses an upstream organisation secret, runner or app.
+GitHub Actions reads only `.github/workflows/`. Every workflow there runs on pull requests into `dev` or `main`, on pushes to `dev` (`honcho.yml` only when its paths change), and by manual dispatch, on GitHub-hosted runners. None uses an upstream organisation secret, runner or app.
 
 | Workflow | Job (check name) | What it does | Comes from upstream |
 | --- | --- | --- | --- |
@@ -14,6 +14,7 @@ GitHub Actions reads only `.github/workflows/`. Every workflow there runs on pul
 | `uv-lockfile-check.yml` | uv.lock check | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
 | `supply-chain-audit.yml` | Supply chain audit | Fails when the added lines decode base64 into `exec`/`eval` or run an encoded subprocess command | `supply-chain-audit.yml`, job "scan" |
 | `blob-size-check.yml` | Blob size check | Fails when a change adds or modifies a binary over 500 KiB (exceptions: `.github/blob-size-allowlist.txt`) | `blob-size-check.yml` |
+| `honcho.yml` | Honcho subtree check, Honcho tests, Honcho image build | The Honcho server in `services/honcho/`: subtree, ledger, LICENSE files, headers and modification notice; its pytest suite against pgvector; its Docker image. Only when `services/`, the check script or the workflow change ([honcho.md](honcho.md)) | Honcho's `unittest.yml` and `docker-build.yml` |
 
 Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead of Blacksmith runners, `actions/checkout` instead of `useblacksmith/checkout`, standalone triggers instead of the `ci.yaml` orchestrator, and no review-comment or timing artifacts. The advisory lint diff, the code-health ratchet, the Windows-footgun checks, the dependency-bound check, the e2e lanes and the Windows tests are not run.
 
