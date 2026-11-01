@@ -70,7 +70,7 @@ def _format_version(version: Version) -> str:
 def _read_at(repo: Path, ref: str, path: str) -> str | None:
     """Contents of `path` at `ref`, or None if it doesn't exist there."""
     try:
-        return _git(repo, "show", f"{ref}:{path}")
+        return _git(repo, "show", f"{ref}:./{path}")
     except subprocess.CalledProcessError:
         return None
 
@@ -125,7 +125,9 @@ def alembic_heads(repo: Path, ref: str) -> list[str]:
     """Revisions at `ref` that no other revision names as its down_revision."""
     revisions: set[str] = set()
     parents: set[str] = set()
-    listing = _git(repo, "ls-tree", "--name-only", f"{ref}:{VERSIONS_DIR}")
+    listing = _git(
+        repo, "ls-tree", "--full-tree", "--name-only", f"{ref}:./{VERSIONS_DIR}"
+    )
     for name in listing.split():
         if not name.endswith(".py"):
             continue

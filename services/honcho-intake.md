@@ -22,3 +22,4 @@ copyright and license headers of upstream files are never changed.
 | Path | Change | Since |
 | --- | --- | --- |
 | `README.md` | Modification notice at the top (AGPL-3.0 section 5(a)) | 2026-11-02 |
+| `scripts/release_manifest.py` | Read `<ref>:./<path>` (relative to the project directory, `ls-tree --full-tree`) instead of `<ref>:<path>` (relative to the repository root), so `test_heads_match_alembic` passes when Honcho is a subdirectory | 2026-11-02 |
