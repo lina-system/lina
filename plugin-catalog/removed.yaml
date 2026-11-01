@@ -10,3 +10,6 @@ removed:
 - name: or-picker
   reason: "Folded into openrouter-picker. Installing the provider alone left the picker broken. Install openrouter-picker."
   date: "2026-09-28"
+- name: honcho
+  reason: "Bundled in core as plugins/memory/honcho. Nothing to install: run hermes memory setup honcho."
+  date: "2026-11-01"

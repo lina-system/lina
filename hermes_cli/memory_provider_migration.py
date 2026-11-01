@@ -33,7 +33,7 @@ _attempted: set[tuple[str, str]] = set()
 # Providers that shipped bundled in core. Unattended consent covers only these: their users already
 # accepted the deps when they picked the built-in. Any other catalog plugin named in memory.provider
 # (a synced config, a cloned profile) still needs an explicit install.
-_LEFT_CORE = frozenset({"hindsight", "honcho", "mem0", "supermemory", "openviking", "retaindb", "byterover", "holographic"})
+_LEFT_CORE = frozenset({"hindsight", "mem0", "supermemory", "openviking", "retaindb", "byterover", "holographic"})
 
 # The startup retry window doubles with each consecutive failure, up to a week: a flat window had a
 # home whose install can never succeed (a version gate, a root-owned plugins dir, no route to GitHub)
