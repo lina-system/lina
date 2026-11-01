@@ -1,3 +1,11 @@
+<!-- lina-modification-notice:start -->
+> **Modified by LINA.** This copy of Honcho is part of [LINA](https://github.com/lina-system/lina) and is
+> modified from [plastic-labs/honcho](https://github.com/plastic-labs/honcho) commit
+> `0cd37ddbd88f51cdac7c660d7372f4b2fd40a4b3` (v3.5.0). Modified 2026-11-02. Every change LINA makes
+> to this directory is listed in [services/honcho-intake.md](../honcho-intake.md). Honcho is licensed
+> under the GNU Affero General Public License v3.0; see [LICENSE](LICENSE).
+<!-- lina-modification-notice:end -->
+
 <!-- markdownlint-disable MD033 -->
 <div align="center">
   <a href="https://app.honcho.dev" target="_blank">
