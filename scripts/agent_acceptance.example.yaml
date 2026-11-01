@@ -1,0 +1,38 @@
+# Manifest for scripts/agent_acceptance.py. Copy it, fill in one entry per agent and run:
+#   scripts/agent_acceptance.py --manifest agents.yaml --json results.json
+# Keep the filled-in copy outside the repository: it names the owner's agents and facts.
+
+# The command under test: `hermes` on today's Hermes, `lina` once #29 ships it.
+command: hermes
+# Seconds allowed for each command or request (one agent turn can take minutes).
+timeout: 300
+
+# The gateway's api_server channel. Non-default agents are reached at <url>/p/<agent>/ on a
+# multiplexed gateway. The key is read from the environment variable named here, never from this file.
+gateway:
+  url: http://127.0.0.1:8642
+  key_env: API_SERVER_KEY
+
+agents:
+  - name: default
+    # Optional per-agent override of the gateway base URL (no /v1 suffix) or key variable.
+    # gateway: {url: "http://127.0.0.1:8642", key_env: API_SERVER_KEY}
+    memory:
+      # A question only the agent's memory can answer, and text the reply must contain.
+      prompt: "What is the name of the staging server? Answer from memory."
+      expect: ["staging-1"]
+    person_card:
+      # A question answered by the owner's person card, and text the reply must contain.
+      prompt: "In which language do I want replies? Answer from what you know about me."
+      expect: ["Korean"]
+    cron:
+      # Names of the jobs `cron list` must show; `cron status` must report a live scheduler.
+      jobs: ["daily-brief"]
+    plugins:
+      # Plugins `plugins list --json` must report as enabled.
+      enabled: ["kanban"]
+    work:
+      # The work hand-off command, run as given; {agent} is replaced by the agent name.
+      # Today this is the current ledger tool; after #36 it is `lina work run`.
+      argv: ["lina", "work", "run", "status", "--agent", "{agent}"]
+      expect: []
