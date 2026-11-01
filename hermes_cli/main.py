@@ -371,6 +371,8 @@ from hermes_cli.subcommands.config import build_config_parser
 from hermes_cli.subcommands.skin import build_skin_parser
 from hermes_cli.subcommands.console import build_console_parser
 from hermes_cli.subcommands.update import build_update_parser
+from hermes_cli.subcommands.install import build_install_parser
+from hermes_cli.main_git_refs import _read_packed_ref
 from hermes_cli.subcommands.uninstall import build_uninstall_parser
 from hermes_cli.subcommands.dashboard import build_dashboard_parser, build_serve_parser
 from hermes_cli.subcommands.webapp import build_webapp_parser
@@ -923,25 +925,6 @@ def _is_termux_startup_environment(env: dict[str, str] | None = None) -> bool:
         or "com.termux/files/usr" in prefix
         or prefix.startswith("/data/data/com.termux/")
     )
-
-
-def _read_packed_ref(common_dir: Path, ref: str) -> str | None:
-    """Look up a ref in .git/packed-refs without spawning git.
-
-    packed-refs lines look like ``<sha> <ref>`` with optional ``^<sha>``
-    peel lines and ``#``-prefixed comments / ``# pack-refs with:`` header.
-    """
-    try:
-        text = (common_dir / "packed-refs").read_text(encoding="utf-8-sig", errors="replace")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        if not line or line.startswith("#") or line.startswith("^"):
-            continue
-        parts = line.split(" ", 1)
-        if len(parts) == 2 and parts[1].strip() == ref:
-            return parts[0].strip()
-    return None
 
 
 def _read_git_revision_fingerprint(repo_root: Path) -> str | None:
@@ -3376,6 +3359,7 @@ def _build_cli_parser():
     build_monitoring_parser(subparsers, cmd_monitoring=cmd_monitoring)
     build_vault_parser(subparsers)
     build_update_parser(subparsers, cmd_update=cmd_update)
+    build_install_parser(subparsers)
     build_uninstall_parser(subparsers, cmd_uninstall=cmd_uninstall)
     build_acp_parser(subparsers, cmd_acp=cmd_acp)
     build_profile_parser(subparsers, cmd_profile=cmd_profile)
