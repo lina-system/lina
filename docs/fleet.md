@@ -23,7 +23,7 @@ Decisions (the owner, relayed by the operator, 2026-10-26):
 | the hub Mac | `<user>` | agent hub: Hermes, signing | (not recorded) | (not recorded) | `operate` | external monitor, main |
 | a laptop | `<user>` | the owner's laptop | (not recorded) | (not recorded) | `operate` | built-in; not checked yet (offline) |
 | a laptop | `<user>` | the owner's laptop | (not recorded) | (not recorded) | `operate` | built-in |
-| a desktop Mac (not here yet) | `<user>` | the owner's own work | (not recorded) | (not recorded) | `operate` | decide on arrival |
+| a desktop Mac (not here yet) | `<user>` | the hub Mac candidate, not decided | (not recorded) | (not recorded) | `operate` | decide on arrival |
 
 computer_use needs a shareable display. The hub Mac and the laptops have one while they are awake; the agent's Mac's virtual display has stayed up across a reboot. When a laptop's lid is closed or it sleeps, capture fails and computer_use says so. No HDMI dummy is needed for the current Macs. If capture ever reports "no shareable display" on the hub Mac (its display sleeps after 10 minutes), re-check before buying one.
 
