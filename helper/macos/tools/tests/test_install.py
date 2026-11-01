@@ -12,7 +12,7 @@ import install  # noqa: E402
 from install import APP, PREVIOUS, STAGED, STATE, POLICY, AGENT_PLIST, CTL_LINK, SUPPORT  # noqa: E402
 from sign import requirement  # noqa: E402
 
-TEAM = 'TEAMID0000'
+TEAM = 'TEAM123456'
 
 
 def make_bundle(dest, version='1.0', team=TEAM, identifier='app.lina-os.helper', adhoc=False,

@@ -15,7 +15,7 @@ def _schemas(names):
     optional_mac = dict(mac, description='Mac name. Default: the current computer_use target.')
     spec = {
         'mac_use': (
-            "Point this session's computer_use tool at a Mac. Default target is hub. Changing it restarts the "
+            "Point this session's computer_use tool at a Mac. Default target is agent-hub. Changing it restarts the "
             "session's computer_use connection on the new Mac; capture again afterwards.",
             {'mac': mac}, ['mac']),
         'mac_status': (

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""hub client for LINA Helper: runs lina-helperctl on the agent Mac over SSH."""
+"""agent-hub client for LINA Helper: runs lina-helperctl on the agent Mac over SSH."""
 import argparse
 import json
 import os

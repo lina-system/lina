@@ -8,7 +8,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 import sign  # noqa: E402
 from test_install import make_bundle  # noqa: E402
 
-TEAM = 'TEAMID0000'
+TEAM = 'TEAM123456'
 IDENTITY = 'Developer ID Application: Example Name (%s)' % TEAM
 
 
@@ -28,7 +28,7 @@ class SignTests(unittest.TestCase):
                          'identifier "app.lina-os.helper" and anchor apple generic and '
                          'certificate 1[field.1.2.840.113635.100.6.2.6] and '
                          'certificate leaf[field.1.2.840.113635.100.6.1.13] and '
-                         'certificate leaf[subject.OU] = "TEAMID0000"')
+                         'certificate leaf[subject.OU] = "TEAM123456"')
 
     def test_signs_ctl_before_app_and_verifies_with_equals_prefix(self):
         sign.sign(self.app, IDENTITY, TEAM, run=self.run_)
@@ -47,14 +47,14 @@ class SignTests(unittest.TestCase):
         self.assertIn('--deep', self.calls[-1])
 
     def test_refuses_non_developer_id_identity(self):
-        for ident in ('Apple Development: Example (TEAMID0000)', '-', 'Developer ID Installer: X (TEAMID0000)',
+        for ident in ('Apple Development: Example (TEAM123456)', '-', 'Developer ID Installer: X (TEAM123456)',
                       'Developer ID Application: Example Name'):
             with self.assertRaises(sign.SignError, msg=ident):
                 sign.sign(self.app, ident, TEAM, run=self.run_)
         self.assertEqual(self.calls, [])
 
     def test_refuses_bad_or_mismatching_team(self):
-        for team in ('teamid0000', 'TEAMID000', 'TEAMID00000', 'TEAM-ID000'):
+        for team in ('team123456', 'TEAM12345', 'TEAM1234567', 'TEAM-23456'):
             with self.assertRaises(sign.SignError, msg=team):
                 sign.sign(self.app, IDENTITY, team, run=self.run_)
         with self.assertRaises(sign.SignError):

@@ -4,7 +4,7 @@ One signed macOS app that holds the privacy permissions (Accessibility, Screen R
 
 - Bundle ID `app.lina-os.helper`, installed at `/Applications/LINA Helper.app`, signed by the team Developer ID. Same bundle ID and same team signature → grants survive updates and reboots.
 - Requests: newline-delimited JSON over a Unix socket in the user's Application Support folder; peer UID and code signature checked; actions limited by a root-owned policy file; every request in an audit log.
-- From the hub Mac, Hermes calls `clients/lina-helper` which runs `lina-helperctl` over SSH.
+- From agent-hub, Hermes calls `clients/lina-helper` which runs `lina-helperctl` over SSH.
 - No MDM, no generic command execution, no edits to the TCC database.
 
 Full design: [docs/design.md](docs/design.md).
@@ -87,7 +87,7 @@ See [docs/install.md](docs/install.md) for root and admin-user installation over
 
 ## Status
 
-v0 in progress. Milestone "LINA Helper v0" ends when the helper is installed on the agent's Mac, its grants were given once and survive a reboot, and one Hermes request (screenshot or accessibility click) succeeds.
+v0 in progress. Milestone "LINA Helper v0" ends when the helper is installed on agent-mac, its grants were given once and survive a reboot, and one Hermes request (screenshot or accessibility click) succeeds.
 
 ## Desktop actions
 

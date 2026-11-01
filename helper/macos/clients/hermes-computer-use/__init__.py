@@ -6,7 +6,7 @@ This provider is the upstream ``CuaDriverBackend`` with only the launch changed:
 
 - MCP (and Hermes' CLI fallback) run ``clients/hermes-cua-driver``, which execs the bundled driver
   against the helper's gate on this Mac, or over ssh on another Mac.
-- The target Mac is per Hermes session, chosen with the plugin tool ``mac_use`` (default ``hub``).
+- The target Mac is per Hermes session, chosen with the plugin tool ``mac_use`` (default ``agent-hub``).
 - The cua permission mode is always ``standard``. Every bot runs ``approvals.mode: off``, which Hermes maps
   to ``unrestricted``; for that the built-in backend starts its own daemon through CuaDriver.app, outside
   the helper. The helper's policy on each Mac is the boundary instead.

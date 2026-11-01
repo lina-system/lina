@@ -2,16 +2,16 @@
 
 Computer-use provider `lina-helper-cua`: Hermes' upstream cua backend, launched through LINA Helper on the chosen Mac. Design: `docs/fleet.md` §1, §4, §7.
 
-- Driver command: `clients/hermes-cua-driver`. `mcp` execs the bundled cua-driver's MCP proxy against the helper's audit gate on the hub Mac, or over ssh on another Mac. `call`/`status` go to the same gate (Hermes' CLI fallback). `manifest` returns the bundled driver's manifest with the MCP command pointing back at the wrapper.
-- Target Mac: per Hermes session, set with the `lina-helper` plugin tool `mac_use` (default `hub`; names from `clients/hermes/macs.yaml`).
+- Driver command: `clients/hermes-cua-driver`. `mcp` execs the bundled cua-driver's MCP proxy against the helper's audit gate on agent-hub, or over ssh on another Mac. `call`/`status` go to the same gate (Hermes' CLI fallback). `manifest` returns the bundled driver's manifest with the MCP command pointing back at the wrapper.
+- Target Mac: per Hermes session, set with the `lina-helper` plugin tool `mac_use` (default `agent-hub`; names from `clients/hermes/macs.yaml`).
 - cua mode is always `standard` (all bots run `approvals.mode: off`, which upstream maps to `unrestricted` and a private CuaDriver.app daemon outside the helper).
 - Input lease: before input the backend calls `cua.lease` with its session label (renewed every 2 min, released on stop); another bot holding the Mac gets `mac_busy`.
 
 ## Install into a profile (the operator)
 
 ```sh
-ln -s ~/code/lina-helper/clients/hermes            ~/.hermes/profiles/<p>/plugins/lina-helper
-ln -s ~/code/lina-helper/clients/hermes-computer-use ~/.hermes/profiles/<p>/plugins/lina-helper-cua
+ln -s <checkout>/clients/hermes            ~/.hermes/profiles/<p>/plugins/lina-helper
+ln -s <checkout>/clients/hermes-computer-use ~/.hermes/profiles/<p>/plugins/lina-helper-cua
 ```
 
 `config.yaml`: `plugins.enabled` includes `lina-helper`, and

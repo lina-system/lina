@@ -4,7 +4,7 @@ Standalone Hermes plugin `lina-helper`. Screen reading and input are Hermes `com
 
 | Tool | What it does | Arguments |
 |---|---|---|
-| `mac_use` | Point this session's `computer_use` at a Mac (default `hub`); restarts the session's cua connection | `mac` (required) |
+| `mac_use` | Point this session's `computer_use` at a Mac (default `agent-hub`); restarts the session's cua connection | `mac` (required) |
 | `mac_status` | Helper `status` + `cua.status`: grants, profile, cua daemon, input lease holder, this session's target | `mac` (default: current target) |
 | `mac_screenshot` | Helper `screenshot` without a computer_use session → PNG saved locally; returns `path`, `width`, `height`, `bytes` | `mac`, `display` (`"main"` or id) |
 
@@ -18,16 +18,16 @@ Next to the plugin (`clients/hermes/macs.yaml`, gitignored), or any path in `LIN
 
 ```yaml
 macs:
-  the hub Mac:
+  agent-hub:
     host: local        # the Mac Hermes runs on: run lina-helperctl directly, no ssh
-  the agent's Mac:
-    host: <host>     # ssh alias
+  agent-mac:
+    host: agent-mac     # ssh alias
 ```
 
 - A name not in the file is refused before any subprocess runs. Names match `[A-Za-z0-9][A-Za-z0-9_.-]{0,63}`; hosts that are not `local` must be a plain SSH alias/hostname.
 - Remote calls: `ssh -T -o BatchMode=yes -o ConnectTimeout=10 -o ServerAliveInterval=5 -o ServerAliveCountMax=2 HOST '<shlex.join argv>'`, built by `clients/lina-helper`'s `command()`; `lina-helperctl` is called at its bundle path, `/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl`, there and on `local`.
 - Format: YAML if `ruamel.yaml` (Hermes ships it, see `hermes_yaml.py`) or PyYAML is importable, otherwise the same file is read as JSON. Plain system `python3` has neither, so tests use JSON.
-- The file is read at registration (to list the names as the `mac` enum) and again on every call. If it is missing the plugin still registers and only `hub` (local) is known.
+- The file is read at registration (to list the names as the `mac` enum) and again on every call. If it is missing the plugin still registers and only `agent-hub` (local) is known.
 - Screenshots go to `LINA_HELPER_CACHE_DIR`, else `<Hermes home>/cache/lina-helper/` (profile-relative via `hermes_constants.get_hermes_home()`), mode `0700`, one new file per call. They are not pruned by the plugin.
 
 ## Install into a profile (the operator)

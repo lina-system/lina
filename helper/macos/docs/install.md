@@ -1,15 +1,15 @@
 # Installing LINA Helper
 
-Build and sign on the hub Mac. Install with root on the agent's Mac, or as the current admin user on another Mac. Design: [design.md](design.md) sections 2, 4 and 11.
+Build and sign on agent-hub. Install with root on agent-mac, or as the current admin user on another Mac. Design: [design.md](design.md) sections 2, 4 and 11.
 
-`tools/sign.py` and `tools/install.py` use only the Python standard library (`/usr/bin/python3` is enough). The team ID `TEAMID` is not a secret.
+`tools/sign.py` and `tools/install.py` use only the Python standard library (`/usr/bin/python3` is enough). The team ID `<TEAMID>` is not a secret.
 
-## 1. Build and sign (the hub Mac)
+## 1. Build and sign (agent-hub)
 
 ```sh
 make app                       # builds build/LINA Helper.app (ad-hoc, for local checks)
-python3 tools/sign.py --identity 'Developer ID Application: <owner> (TEAMID)' \
-    --team TEAMID --app 'build/LINA Helper.app'
+python3 tools/sign.py --identity 'Developer ID Application: <Your Name> (<TEAMID>)' \
+    --team <TEAMID> --app 'build/LINA Helper.app'
 ```
 
 `sign.py` signs `Contents/Helpers/lina-helperctl` (identifier `app.lina-os.helper.ctl`), then the app (identifier `app.lina-os.helper`), both with `--options runtime --timestamp`, then verifies each with `codesign --verify --strict -R '=<requirement>'` and the app with `--deep`. It refuses an identity that is not `Developer ID Application: … (TEAMID)`, a team that is not 10 characters `[A-Z0-9]`, an identity whose team differs from `--team`, and an app whose `Info.plist` bundle ID is not `app.lina-os.helper`. No provisioning profile in v0.
@@ -44,24 +44,24 @@ helper app and upgrade normally. Keep the upstream executable signature intact.
 Updates and real TCC inheritance checks require the normal signing/deployment
 workflow; an ad-hoc build does not establish the production helper's grants.
 
-## 2. Copy to the agent's Mac
+## 2. Copy to agent-mac
 
 ```sh
 ditto -c -k --keepParent 'build/LINA Helper.app' build/LINA-Helper.zip
-scp build/LINA-Helper.zip <user>@<host>:/tmp/lina-helper/
-scp -r tools <user>@<host>:/tmp/lina-helper/
-ssh <user>@<host> mkdir -p /tmp/lina-helper/app/Resources
-scp app/Resources/PolicyProfiles.json <user>@<host>:/tmp/lina-helper/app/Resources/
+scp build/LINA-Helper.zip agent@agent-mac:/tmp/lina-helper/
+scp -r tools agent@agent-mac:/tmp/lina-helper/
+ssh agent@agent-mac mkdir -p /tmp/lina-helper/app/Resources
+scp app/Resources/PolicyProfiles.json agent@agent-mac:/tmp/lina-helper/app/Resources/
 ```
 
-Create `/tmp/lina-helper` on the agent's Mac first if it does not exist (`ssh <user>@<host> mkdir -p /tmp/lina-helper`). Use `ditto`/`scp` of the zip, not `scp -r` of the bundle, so symlinks, resource forks and the signature stay intact.
+Create `/tmp/lina-helper` on agent-mac first if it does not exist (`ssh agent@agent-mac mkdir -p /tmp/lina-helper`). Use `ditto`/`scp` of the zip, not `scp -r` of the bundle, so symlinks, resource forks and the signature stay intact.
 
-## 3. Install (the agent's Mac)
+## 3. Install (agent-mac)
 
 ```sh
 cd /tmp/lina-helper
 ditto -x -k LINA-Helper.zip .
-sudo /usr/bin/python3 tools/install.py install --user <user> --team TEAMID --app 'LINA Helper.app'
+sudo /usr/bin/python3 tools/install.py install --user agent --team <TEAMID> --app 'LINA Helper.app'
 ```
 
 `install` (run as root):
@@ -75,10 +75,10 @@ sudo /usr/bin/python3 tools/install.py install --user <user> --team TEAMID --app
 Check:
 
 ```sh
-sudo /usr/bin/python3 tools/install.py status --user <user>
+sudo /usr/bin/python3 tools/install.py status --user agent
 ```
 
-`status` prints JSON: installed version, designated requirement, whether the agent is loaded, and the output of `lina-helperctl permissions` run as `<user>`.
+`status` prints JSON: installed version, designated requirement, whether the agent is loaded, and the output of `lina-helperctl permissions` run as `agent`.
 
 ## User mode over SSH (no sudo)
 
@@ -87,7 +87,7 @@ will run the helper. That same account must already be logged into an Aqua GUI
 session. An SSH login alone does not create the `gui/<uid>` launchd domain. The
 account needs write access to `/Applications` (normally `root:admin 0775`).
 
-After building and signing on the hub Mac as above:
+After building and signing on agent-hub as above:
 
 ```sh
 ditto -c -k --keepParent 'build/LINA Helper.app' build/LINA-Helper.zip
@@ -98,7 +98,7 @@ scp app/Resources/PolicyProfiles.json target-mac:/tmp/lina-helper/app/Resources/
 ssh target-mac
 cd /tmp/lina-helper
 ditto -x -k LINA-Helper.zip .
-python3 tools/install.py install --mode user --team TEAMID --app 'LINA Helper.app'
+python3 tools/install.py install --mode user --team <TEAMID> --app 'LINA Helper.app'
 python3 tools/install.py status --mode user
 '/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl' policy
 ```
@@ -172,7 +172,7 @@ executables from a user-owned helper bundle as root.
 
 ## 4. Person step: switch on the permissions (once)
 
-Over Screen Sharing on the agent's Mac, as `<user>`:
+Over Screen Sharing on agent-mac, as `agent`:
 
 System Settings → Privacy & Security → **Accessibility** → `+` → `/Applications/LINA Helper.app` → switch on.
 System Settings → Privacy & Security → **Screen & System Audio Recording** → `+` → `/Applications/LINA Helper.app` → switch on.
@@ -184,7 +184,7 @@ About 2 minutes. The grants stay through upgrades and reboots as long as the bun
 Build, sign, copy and unzip as above, then:
 
 ```sh
-sudo /usr/bin/python3 tools/install.py upgrade --user <user> --app 'LINA Helper.app'
+sudo /usr/bin/python3 tools/install.py upgrade --user agent --app 'LINA Helper.app'
 ```
 
 `upgrade` takes the team from the installed bundle. It verifies the candidate, requires its designated requirement (`codesign -d -r-`) to equal the installed bundle's, boots the agent out, moves the installed bundle to `/Library/Application Support/LINA Helper/previous/`, renames the staged candidate into place, bootstraps, and compares `lina-helperctl permissions` before and after. If the grants differ, or either the installed or the new helper does not answer `permissions`, it exits with an error (before any change when the installed one is silent; otherwise keeping the previous bundle for `rollback`). `--skip-grant-check` skips the comparison explicitly. It never overwrites an existing `policy.json`.
@@ -192,7 +192,7 @@ sudo /usr/bin/python3 tools/install.py upgrade --user <user> --app 'LINA Helper.
 ## 6. Roll back
 
 ```sh
-sudo /usr/bin/python3 tools/install.py rollback --user <user>
+sudo /usr/bin/python3 tools/install.py rollback --user agent
 ```
 
 Restores `previous/` the same way (bootout, swap by rename, bootstrap); the bundle that was installed becomes the new `previous/`, so a second `rollback` goes forward again.
@@ -200,7 +200,7 @@ Restores `previous/` the same way (bootout, swap by rename, bootstrap); the bund
 ## 7. Remove
 
 ```sh
-sudo /usr/bin/python3 tools/install.py remove --user <user>
+sudo /usr/bin/python3 tools/install.py remove --user agent
 ```
 
 Boots the agent out and deletes only the paths recorded in `state.json` (and only if they are among the installer's own paths). It does not touch TCC; the Settings entries stay and can be removed by a person. Files it did not create, such as a `policy.json` that existed before, stay.

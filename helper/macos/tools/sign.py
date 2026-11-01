@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Sign LINA Helper.app with the team Developer ID (hub only).
+"""Sign LINA Helper.app with the team Developer ID (agent-hub only).
 
 Signs Contents/Helpers/lina-helperctl (identifier app.lina-os.helper.ctl) and then the
 app (identifier app.lina-os.helper), inside-out, with the hardened runtime and a secure

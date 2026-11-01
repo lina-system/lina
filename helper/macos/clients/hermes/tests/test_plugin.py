@@ -19,7 +19,7 @@ spec.loader.exec_module(plugin)
 from lina_helper_plugin import core, macs  # noqa: E402
 
 CTL = '/Applications/LINA Helper.app/Contents/Helpers/lina-helperctl'
-CONFIG = {'macs': {'hub': {'host': 'local'}, 'agent-mac': {'host': 'lina-box'}}}
+CONFIG = {'macs': {'agent-hub': {'host': 'local'}, 'agent-mac': {'host': 'lina-box'}}}
 
 
 def ok(result=None):
@@ -70,11 +70,11 @@ class Base(unittest.TestCase):
 
 class RoutingTests(Base):
     def test_local_runs_ctl_directly(self):
-        out, fake = self.tool('mac_status', {'mac': 'hub'})
+        out, fake = self.tool('mac_status', {'mac': 'agent-hub'})
         self.assertEqual([c[0] for c in fake.calls], [[CTL, 'status'], [CTL, 'cua.status']])
         self.assertTrue(out['ok'])
-        self.assertEqual(out['mac'], 'hub')
-        self.assertEqual(out['computer_use_target'], 'hub')
+        self.assertEqual(out['mac'], 'agent-hub')
+        self.assertEqual(out['computer_use_target'], 'agent-hub')
 
     def test_ssh_argv(self):
         out, fake = self.tool('mac_status', {'mac': 'agent-mac'})
@@ -83,7 +83,7 @@ class RoutingTests(Base):
             '-o', 'ServerAliveCountMax=2', 'lina-box', shlex.join([CTL, 'status'])])
 
     def test_unknown_mac_refused_before_subprocess(self):
-        for mac in ['nope', 5, 'lina-box', '-oProxyCommand=x', 'hub ']:
+        for mac in ['nope', 5, 'lina-box', '-oProxyCommand=x', 'agent-hub ']:
             out, fake = self.tool('mac_status', {'mac': mac})
             self.assertEqual(fake.calls, [], mac)
             self.assertFalse(out['ok'])
@@ -97,7 +97,7 @@ class RoutingTests(Base):
         self.assertEqual(fake.calls[0][0][-2], 'lina-box')
 
     def test_missing_config_still_knows_hub_mac(self):
-        out, fake = self.tool('mac_status', {'mac': 'hub'}, config=None)
+        out, fake = self.tool('mac_status', {'mac': 'agent-hub'}, config=None)
         self.assertEqual(fake.calls[0][0], [CTL, 'status'])
         out, fake = self.tool('mac_status', {'mac': 'agent-mac'}, config=None)
         self.assertEqual(fake.calls, [])
@@ -118,15 +118,15 @@ class RoutingTests(Base):
 class UseTests(Base):
     def test_switch_target_and_release_backend(self):
         out, fake = self.tool('mac_use', {'mac': 'agent-mac'})
-        self.assertEqual(out, {'ok': True, 'mac': 'agent-mac', 'previous': 'hub',
+        self.assertEqual(out, {'ok': True, 'mac': 'agent-mac', 'previous': 'agent-hub',
                                'note': 'computer_use in this session now acts on agent-mac'})
         self.assertEqual(fake.calls, [])
         self.assertEqual(self.targets.get('sess-1'), 'agent-mac')
-        self.assertEqual(self.targets.get('other'), 'hub')
+        self.assertEqual(self.targets.get('other'), 'agent-hub')
         self.assertEqual(self.released, ['sess-1'])
 
     def test_same_target_does_not_restart(self):
-        self.tool('mac_use', {'mac': 'hub'})
+        self.tool('mac_use', {'mac': 'agent-hub'})
         self.assertEqual(self.released, [])
 
     def test_unknown_mac_refused_and_target_kept(self):
@@ -134,7 +134,7 @@ class UseTests(Base):
             out, fake = self.tool('mac_use', {'mac': mac})
             self.assertFalse(out['ok'], mac)
             self.assertEqual(fake.calls, [])
-        self.assertEqual(self.targets.get('sess-1'), 'hub')
+        self.assertEqual(self.targets.get('sess-1'), 'agent-hub')
         self.assertEqual(self.released, [])
 
     def test_status_reports_cua_and_lease(self):
@@ -145,12 +145,12 @@ class UseTests(Base):
             if cmd[-1] == 'cua.status':
                 return Result(ok({'running': True, 'lease': {'holder': 'hermes-x', 'expires_in_s': 200}}))
             return Result(ok({'policy': {'profile': 'operate'}}))
-        out, _ = self.tool('mac_status', {'mac': 'hub'}, runner)
+        out, _ = self.tool('mac_status', {'mac': 'agent-hub'}, runner)
         self.assertEqual(out['result']['cua']['lease']['holder'], 'hermes-x')
 
     def test_screenshot_bad_display_is_bad_request(self):
         for display in ['second', 0, True]:
-            out, fake = self.tool('mac_screenshot', {'mac': 'hub', 'display': display})
+            out, fake = self.tool('mac_screenshot', {'mac': 'agent-hub', 'display': display})
             self.assertEqual(fake.calls, [])
             self.assertEqual(out['error']['code'], 'bad_request')
 
@@ -165,11 +165,11 @@ class UseTests(Base):
     def test_module_level_helper_action_for_the_backend(self):
         self.assertTrue(callable(core.helper_action))
         with unittest.mock.patch.object(core, '_shared', core.Dispatcher(lambda: CONFIG, runner=Fake(), session=lambda: 's')):
-            self.assertTrue(core.helper_action('hub', 'cua.release', {'holder': 'h'})['ok'])
+            self.assertTrue(core.helper_action('agent-hub', 'cua.release', {'holder': 'h'})['ok'])
 
     def test_helper_action_never_raises(self):
         d = core.Dispatcher(lambda: CONFIG, runner=Fake(Result(ok({'holder': 'h'}))), session=lambda: 's')
-        self.assertEqual(d.helper_action('hub', 'cua.lease', {'holder': 'h'})['result'], {'holder': 'h'})
+        self.assertEqual(d.helper_action('agent-hub', 'cua.lease', {'holder': 'h'})['result'], {'holder': 'h'})
         self.assertEqual(d.helper_action('nope', 'cua.lease', {})['error']['code'], 'unknown_mac')
 
 
@@ -224,11 +224,11 @@ class ScreenshotTests(Base):
 class ErrorTests(Base):
     def test_helper_codes_map_to_structured_results(self):
         for code in ['not_allowed', 'permission_missing', 'bad_request', 'timeout', 'busy', 'target_not_found']:
-            out, _ = self.tool('mac_status', {'mac': 'hub'}, Fake(Result(err(code, 'd'), b'', 1)))
-            self.assertEqual(out, {'ok': False, 'error': {'code': code, 'detail': 'd'}, 'mac': 'hub'})
+            out, _ = self.tool('mac_status', {'mac': 'agent-hub'}, Fake(Result(err(code, 'd'), b'', 1)))
+            self.assertEqual(out, {'ok': False, 'error': {'code': code, 'detail': 'd'}, 'mac': 'agent-hub'})
 
     def test_error_without_detail_has_empty_detail(self):
-        out, _ = self.tool('mac_status', {'mac': 'hub'}, Fake(Result(err('busy'), b'', 1)))
+        out, _ = self.tool('mac_status', {'mac': 'agent-hub'}, Fake(Result(err('busy'), b'', 1)))
         self.assertEqual(out['error'], {'code': 'busy', 'detail': ''})
 
     def test_ssh_failure(self):
@@ -249,12 +249,12 @@ class ErrorTests(Base):
         self.assertEqual(out['error']['code'], 'timeout')
 
     def test_garbage_output(self):
-        out, _ = self.tool('mac_status', {'mac': 'hub'}, Fake(Result(b'hello\n', b'', 0)))
+        out, _ = self.tool('mac_status', {'mac': 'agent-hub'}, Fake(Result(b'hello\n', b'', 0)))
         self.assertEqual(out['error']['code'], 'invalid_remote_response')
 
     def test_success_carries_result(self):
-        out, _ = self.tool('mac_screenshot', {'mac': 'hub'}, Fake(Result(b'PNG', ok({'width': 7, 'height': 8}))))
-        self.assertEqual((out['ok'], out['mac'], out['width'], out['height']), (True, 'hub', 7, 8))
+        out, _ = self.tool('mac_screenshot', {'mac': 'agent-hub'}, Fake(Result(b'PNG', ok({'width': 7, 'height': 8}))))
+        self.assertEqual((out['ok'], out['mac'], out['width'], out['height']), (True, 'agent-hub', 7, 8))
 
 
 class ConfigTests(unittest.TestCase):
@@ -295,7 +295,7 @@ class ConfigTests(unittest.TestCase):
             except ImportError:
                 self.skipTest('no YAML library in this interpreter')
         cfg = macs.load(os.path.join(PLUGIN, 'macs.example.yaml'))
-        self.assertEqual(macs.names(cfg), ['hub', 'agent-mac'])
+        self.assertEqual(macs.names(cfg), ['agent-hub', 'agent-mac'])
 
 
 class RegisterTests(Base):
@@ -325,7 +325,7 @@ class RegisterTests(Base):
             self.assertEqual(s['name'], name)
             self.assertEqual(s['parameters']['type'], 'object')
             self.assertEqual(s['parameters']['properties']['mac']['type'], 'string')
-            self.assertEqual(s['parameters']['properties']['mac']['enum'], ['hub'])
+            self.assertEqual(s['parameters']['properties']['mac']['enum'], ['agent-hub'])
             self.assertEqual(t['toolset'], 'lina_helper')
             self.assertTrue(callable(t['handler']))
         self.assertEqual(tools['mac_use']['schema']['parameters']['required'], ['mac'])
@@ -336,10 +336,10 @@ class RegisterTests(Base):
         self.addCleanup(d.cleanup)
         p = os.path.join(d.name, 'macs.yaml')
         with open(p, 'w') as f:
-            json.dump({'macs': {'hub': {'host': 'local'}, 'agent-mac': {'host': 'secret-host.example'}}}, f)
+            json.dump({'macs': {'agent-hub': {'host': 'local'}, 'agent-mac': {'host': 'secret-host.example'}}}, f)
         tools = self.register({'LINA_HELPER_MACS_FILE': p})
         for t in tools.values():
-            self.assertEqual(t['schema']['parameters']['properties']['mac']['enum'], ['hub', 'agent-mac'])
+            self.assertEqual(t['schema']['parameters']['properties']['mac']['enum'], ['agent-hub', 'agent-mac'])
             self.assertNotIn('secret-host', json.dumps(t['schema']))
 
     def test_handler_accepts_dispatch_kwargs_and_returns_json_string(self):

@@ -3,7 +3,7 @@
 
 Root mode (the default) on the target Mac:
 
-    sudo /usr/bin/python3 tools/install.py install --user agent --team TEAMID0000
+    sudo /usr/bin/python3 tools/install.py install --user agent --team TEAM123456
     sudo /usr/bin/python3 tools/install.py upgrade --user agent --app /path/LINA\\ Helper.app
     sudo /usr/bin/python3 tools/install.py rollback|status|remove --user agent
 

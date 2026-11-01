@@ -68,7 +68,7 @@ def load():
 
 class FakeCore:
     def __init__(self, lease=None):
-        self.targets = types.SimpleNamespace(get=lambda sid: 'agent-mac' if sid == 'remote' else 'hub',
+        self.targets = types.SimpleNamespace(get=lambda sid: 'agent-mac' if sid == 'remote' else 'agent-hub',
                                              current_session_id=lambda: 'sess')
         self.actions = []
         self.lease = lease or {'ok': True, 'result': {'holder': 'hermes-abc', 'expires_in_s': 300}}
@@ -123,7 +123,7 @@ class ProviderTests(unittest.TestCase):
         self.assertEqual(core.actions, [])
         self.assertTrue(b.click(x=1, y=2).ok)
         self.assertTrue(b.type_text('hi').ok)
-        self.assertEqual(core.actions, [('hub', 'cua.lease', {'holder': 'hermes-abc', 'ttl_s': 300})])
+        self.assertEqual(core.actions, [('agent-hub', 'cua.lease', {'holder': 'hermes-abc', 'ttl_s': 300})])
         with mock.patch.object(self.mod.time, 'monotonic', return_value=10 ** 9):
             b.click(x=1, y=2)
         self.assertEqual(len(core.actions), 2)

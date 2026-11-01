@@ -1,6 +1,6 @@
 # Clients
 
-## `lina-helper` (the hub Mac)
+## `lina-helper` (agent-hub)
 
 ```sh
 lina-helper [--host HOST] ACTION [--arg k=v]... [--json OBJECT] [--out PATH]

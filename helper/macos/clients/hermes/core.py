@@ -13,7 +13,7 @@ import uuid
 
 from . import macs
 
-DEFAULT_MAC = 'hub'
+DEFAULT_MAC = 'agent-hub'
 
 
 class Refused(Exception):
@@ -120,7 +120,7 @@ targets = _shared_targets()
 
 
 def resolve_host(mac, load_config=macs.load):
-    """'local' or an ssh alias for a configured Mac name. hub is local even without a config file."""
+    """'local' or an ssh alias for a configured Mac name. agent-hub is local even without a config file."""
     config = load_config()
     host = macs.entry(config, mac) if config is not None else None
     if host is None and mac == DEFAULT_MAC:
