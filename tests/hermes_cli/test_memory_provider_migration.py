@@ -262,10 +262,16 @@ def test_startup_hint_installs_into_the_profile_that_printed_it(tmp_path, monkey
 def test_missing_catalog_provider_recovery_names_the_profile_install_command(tmp_path, monkeypatch, capsys):
     """Offline, lazy installs off, or a failed migration: every surface a user turns to (doctor,
     ``memory status``, ``memory setup hindsight``, ``hermes hindsight``) names the one command that installs
-    the catalog plugin into THIS profile. Real in-tree catalog, nothing installed."""
+    the catalog plugin into THIS profile. Synthetic catalog, nothing installed."""
     from types import SimpleNamespace
     from hermes_cli import doctor_state, memory_setup
     from hermes_cli._parser import build_top_level_parser
+    from hermes_cli.plugin_catalog import PluginCatalogEntry
+
+    entry = PluginCatalogEntry("hindsight", "https://example.invalid/hindsight", "a" * 40,
+                               "Test memory provider", "test", category="memory")
+    monkeypatch.setattr("hermes_cli.plugin_catalog.get_catalog_entry",
+                        lambda name: entry if name == "hindsight" else None)
 
     home = tmp_path / "profiles" / "work"
     home.mkdir(parents=True)
@@ -285,6 +291,12 @@ def test_missing_catalog_provider_recovery_names_the_profile_install_command(tmp
 
 def test_recovery_copy_without_a_catalog_memory_entry_keeps_the_generic_hint(tmp_path, monkeypatch, capsys):
     from hermes_cli import doctor_state
+    from hermes_cli.plugin_catalog import PluginCatalogEntry
+
+    entry = PluginCatalogEntry("hindsight", "https://example.invalid/hindsight", "a" * 40,
+                               "Test memory provider", "test", category="memory")
+    monkeypatch.setattr("hermes_cli.plugin_catalog.get_catalog_entry",
+                        lambda name: entry if name == "hindsight" else None)
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))  # not a profile home: no -p to add
     assert mig.catalog_install_hint("hindsight", category="memory") == "hermes plugins install hindsight"

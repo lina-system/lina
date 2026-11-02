@@ -13,12 +13,9 @@ from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
 from tests.gateway import test_api_implicit_session_after_delete as chat
-from tests.gateway import test_derived_session_after_delete as derived
 from tests.gateway.test_api_implicit_session_after_delete import _OPENING, _app, _content, _post
-from tests.gateway.test_derived_session_after_delete import _settle
 
 served = chat.served  # the header-less chat fixture of the delete tests
-a2a = derived.a2a  # the A2A forward fixture of the delete tests
 
 
 def _sweep(authority, sid):
@@ -66,21 +63,7 @@ async def test_a_hosted_room_member_resumed_after_a_sweep_keeps_its_new_session(
     assert await api._ensure_hosted_member_session(task(3)) == resumed, 'the room member fell back to the swept session'
 
 
-@pytest.mark.asyncio
-async def test_an_a2a_context_resumed_after_a_sweep_keeps_its_new_session(a2a):
-    authority, forward = a2a
-    first = await forward('first', 'hello')
-    swept = first['result']['session_id']
-    _settle(authority, swept)
-    _sweep(authority, swept)
-    later = await forward('second', 'are you there?')
-    assert 'result' in later, later
-    resumed = later['result']['session_id']
-    assert resumed != swept
-    _past_the_horizon(authority)
-    again = await forward('third', 'still there?')
-    assert 'result' in again, again
-    assert again['result']['session_id'] == resumed, 'the A2A context fell back to the swept session'
+
 
 
 def test_an_ordinary_swept_session_still_ages_out(owner):

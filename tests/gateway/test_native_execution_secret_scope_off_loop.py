@@ -10,14 +10,15 @@ from gateway.session_authority import initialize_session_authority
 from gateway.session_results import execution_result
 from tests.waiting import async_wait_until
 
-CHAT = '15551234567@s.whatsapp.net'
+CHAT = '12345'
 
 
 @pytest.mark.asyncio
 async def test_native_execution_and_settled_delivery_hydrate_secrets_off_loop(tmp_path, monkeypatch):
+    from gateway.platforms.event import MessageEvent
     from hermes_cli import env_loader
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     hydrations = []
     real_hydrate = env_loader.hydrate_profile_secret_sources
 
@@ -33,9 +34,8 @@ async def test_native_execution_and_settled_delivery_hydrate_secrets_off_loop(tm
     monkeypatch.setattr(env_loader, 'hydrate_profile_secret_sources', hydrate)
     loop_thread = threading.current_thread()
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={
-        'text_batch_delay_seconds': 0, 'session_path': str(tmp_path / 'wa')}))
-    adapter.gateway_runner, runner.adapters = runner, {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    adapter.gateway_runner, runner.adapters = runner, {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='secrets')
     runner._wire_adapter_handlers(adapter)
     sent = []
@@ -51,8 +51,8 @@ async def test_native_execution_and_settled_delivery_hydrate_secrets_off_loop(tm
     monkeypatch.setattr(adapter, 'send', send)
     monkeypatch.setattr(runner, '_handle_message_with_agent', turn)
     try:
-        event = await adapter._build_message_event({'messageId': 'm1', 'chatId': CHAT, 'senderId': CHAT,
-                                                    'body': 'hello', 'nativeType': 'conversation'})
+        event = MessageEvent(text='hello', message_id='m1',
+                             source=adapter.build_source(chat_id=CHAT, user_id=CHAT, chat_type='dm'))
         hydrations.clear()  # admission-side scope (_async_profile_runtime_scope) is already off-loop
         adapter._enqueue_text_event(event)
         await async_wait_until(lambda: sent and not adapter._background_tasks, timeout=20, what='the reply')

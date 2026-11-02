@@ -17,7 +17,7 @@ from hermes_state_runtime import list_session_admissions
 from tests.gateway.test_shared_busy_receive_loop import Adapter
 from tests.waiting import async_wait_until
 
-X, Y = '15551234567@s.whatsapp.net', '15557654321@s.whatsapp.net'
+X, Y = '12345', '67890'
 
 
 def _order(authority):
@@ -94,14 +94,14 @@ async def test_media_then_quick_text_keep_arrival_order(tmp_path, monkeypatch, b
 
 
 async def _held_owner(tmp_path, monkeypatch):
-    """Real authority over SQLite, WhatsApp sources, the capture held on an Event; no drain."""
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567,15557654321')
+    """Real authority over SQLite, Telegram sources, the capture held on an Event; no drain."""
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345,67890')
     monkeypatch.setattr(SessionAuthority, '_schedule', lambda self, ref: None)
     entered, release = _hold_capture(monkeypatch)
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='held')
     clip = tmp_path / 'clip.mp4'
     clip.write_bytes(b'video-bytes' * 1000)

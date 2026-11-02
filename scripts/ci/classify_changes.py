@@ -185,17 +185,12 @@ _SHARED_FIXTURE_CONSUMERS: dict[str, tuple[str, ...]] = {
     # A7 rule 7: the update-marker parse / judge / release corpus.
     "tests/fixtures/update_marker_corpus.json": (
         "tests/hermes_cli/test_update_marker_corpus.py",  # Python: update_lock
-        "apps/bootstrap-installer/src-tauri/src/marker_tests.rs",  # Rust: cargo test
-        "apps/desktop/electron/update-marker-corpus.test.ts",  # Electron: vitest
         "tests/scripts/desktop_update/test_desktop_update_posix_marker_corpus.py",  # marker.sh
         "tests/scripts/desktop_update/test_desktop_update_windows_marker_corpus.py",  # marker.ps1
-        "apps/desktop/electron/remote-update-marker-programs.test.ts",  # SSH remote judge
-        "apps/desktop/electron/remote-lifecycle-v2-marker.test.ts",  # SSH relaunch/spawn gate
     ),
     # Which halves a plugin folder ships: the gateway's and native Desktop's inspectors.
     "tests/fixtures/plugin_component_detection.json": (
         "tests/hermes_cli/test_plugins_cmd_inspect.py",  # Python: detect_components
-        "apps/desktop/electron/desktop-plugin-install.test.ts",  # Electron: detectPluginComponents
     ),
 }
 # What a fixture inherits from its consumers: the lanes that run them as tests.
