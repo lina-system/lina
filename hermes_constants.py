@@ -57,6 +57,12 @@ def _expand_hermes_home(path: str) -> Path:
 LINA_HOME_ENV = "LINA_HOME"
 # Basename of LINA's default home. Hermes Agent's own home (``~/.hermes``) is never opened.
 LINA_HOME_DIRNAME = ".lina"
+# LINA's gateway service names. Hermes Agent's (``hermes-gateway``, ``ai.hermes.gateway``, ``Hermes_Gateway``)
+# may be live on the same account, so LINA never takes them.
+GATEWAY_SERVICE_BASE = "lina-gateway"
+GATEWAY_LAUNCHD_LABEL_BASE = "ai.lina.gateway"
+GATEWAY_WINDOWS_TASK_BASE = "LINA_Gateway"
+LAUNCHD_LABEL_PREFIX = "ai.lina."
 
 
 def _platform_default_hermes_home(
@@ -135,6 +141,18 @@ def _path_within(path: Path, root: Path) -> bool:
 def is_hermes_agent_path(path: str | Path) -> bool:
     """True when *path* is Hermes Agent's home or lies under it."""
     return _path_within(_expand_hermes_home(str(path)), hermes_agent_home())
+
+
+def is_lina_home(path: str | Path) -> bool:
+    """True when *path* is a LINA home of any account: this process's LINA root or under it, or a
+    ``.lina`` root (``.lina/profiles/<name>``) elsewhere. Hermes Agent's home never is."""
+    home = _expand_hermes_home(str(path))
+    if is_hermes_agent_path(home):
+        return False
+    if _path_within(home, _get_platform_default_hermes_home()):
+        return True
+    root = home.parent.parent if home.parent.name == "profiles" else home
+    return root.name.startswith(LINA_HOME_DIRNAME)
 
 
 def drop_foreign_hermes_home(environ: MutableMapping[str, str]) -> str | None:

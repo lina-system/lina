@@ -138,7 +138,7 @@ def _get_service_pids(all_profiles: bool = False) -> set:
 
     # --- systemd (Linux): user and system scopes ---
     if supports_systemd_services():
-        pattern = "hermes-gateway*" if all_profiles else get_service_name()
+        pattern = f"{_SERVICE_BASE}*" if all_profiles else get_service_name()
         for scope_args in [["systemctl", "--user"], ["systemctl"]]:
             try:
                 # Belt-and-suspenders for the EXCLUDE use case (#74075): a bare ``launchctl list`` prefix
@@ -198,7 +198,7 @@ def _get_service_pids(all_profiles: bool = False) -> set:
                 if result.returncode == 0:
                     for line in result.stdout.strip().splitlines():
                         parts = line.split()
-                        if len(parts) >= 3 and parts[-1].startswith("ai.hermes.gateway"):
+                        if len(parts) >= 3 and parts[-1].startswith(GATEWAY_LAUNCHD_LABEL_BASE):
                             try:
                                 pid = int(parts[0])
                                 if pid > 0:
@@ -1825,7 +1825,7 @@ def _reap_unsupervised_gateway_orphans(
             from hermes_cli.gateway_windows import get_task_name  # profile-aware task name
             _task_name = get_task_name()
         except Exception:
-            _task_name = "Hermes_Gateway"
+            _task_name = GATEWAY_WINDOWS_TASK_BASE
         if _windows_scheduled_task_supervises(_task_name):
             return False
 
@@ -2045,7 +2045,7 @@ def is_linux() -> bool:
     return sys.platform.startswith("linux")
 
 
-from hermes_constants import LINA_HOME_DIRNAME, is_container, is_termux, is_wsl
+from hermes_constants import GATEWAY_LAUNCHD_LABEL_BASE, GATEWAY_SERVICE_BASE, GATEWAY_WINDOWS_TASK_BASE, LINA_HOME_DIRNAME, is_container, is_termux, is_wsl
 
 
 def _wsl_systemd_operational() -> bool:
@@ -2195,8 +2195,8 @@ def _windows_gateway_breakaway_state() -> bool | None:
 # Service Configuration
 # =============================================================================
 
-_SERVICE_BASE = "hermes-gateway"
-SERVICE_DESCRIPTION = "Hermes Agent Gateway - Messaging Platform Integration"
+_SERVICE_BASE = GATEWAY_SERVICE_BASE
+SERVICE_DESCRIPTION = "LINA Gateway - Messaging Platform Integration"
 
 _SYSTEM_UNIT_DIR = Path("/etc/systemd/system")
 
@@ -2611,7 +2611,7 @@ def print_legacy_unit_warning() -> None:
     print_warning("Legacy Hermes gateway unit(s) detected from an older install:")
     for name, path, is_system in legacy:
         print_info(f"    {path}  ({_service_scope_label(is_system)} scope)")
-    print_info("  These run alongside the current hermes-gateway service and")
+    print_info(f"  These run alongside the current {_SERVICE_BASE} service and")
     print_info("  cause SIGTERM flap loops — both try to use the same bot token.")
     print_info("  Remove them with:")
     print_info("    hermes gateway migrate-legacy")
@@ -2855,10 +2855,10 @@ def get_systemd_linger_status(username: str | None = None) -> tuple[bool | None,
 
 
 def get_launchd_plist_path() -> Path:
-    """``~/Library/LaunchAgents/ai.hermes.gateway[-<profile>].plist`` under the real account home."""
+    """``~/Library/LaunchAgents/ai.lina.gateway[-<profile>].plist`` under the real account home."""
     import pwd
     suffix = _profile_suffix()
-    name = f"ai.hermes.gateway-{suffix}" if suffix else "ai.hermes.gateway"
+    name = f"{GATEWAY_LAUNCHD_LABEL_BASE}-{suffix}" if suffix else GATEWAY_LAUNCHD_LABEL_BASE
     # Real account home: profile mode may point HOME at a profile dir. Sandboxed/app-hosted
     # shells can expose a UID that pwd cannot resolve (#57292); fall back to the shared
     # real-home resolver (HERMES_REAL_HOME → HOME → pwd → ~, profile home skipped) instead
@@ -2882,9 +2882,9 @@ def launchd_gateway_labels_for_install() -> list[str]:
     profile_labels: list[str] = []
     for profile in list_profiles():
         if profile.is_default:
-            root_label.append("ai.hermes.gateway")
+            root_label.append(GATEWAY_LAUNCHD_LABEL_BASE)
         elif _re.match(r"^[a-z0-9][a-z0-9_-]{0,63}$", profile.name):
-            profile_labels.append(f"ai.hermes.gateway-{profile.name}")
+            profile_labels.append(f"{GATEWAY_LAUNCHD_LABEL_BASE}-{profile.name}")
     return root_label + sorted(profile_labels)
 
 
@@ -2914,7 +2914,7 @@ def legacy_launchd_labels_for_install(exclude=()) -> list[str]:
         return []
     excluded = set(exclude)
     labels: set[str] = set()
-    for plist_path in sorted(agents_dir.glob("ai.hermes.gateway*.plist")):
+    for plist_path in sorted(agents_dir.glob(f"{GATEWAY_LAUNCHD_LABEL_BASE}*.plist")):
         try:
             data = plistlib.loads(plist_path.read_bytes())
             label = data["Label"]
@@ -2922,7 +2922,7 @@ def legacy_launchd_labels_for_install(exclude=()) -> list[str]:
             rel = pinned.relative_to(root).parts
         except Exception:
             continue  # unreadable plist, no pinned home, or a home outside this root: not ours — fail closed
-        if not isinstance(label, str) or label in excluded or not label.startswith("ai.hermes.gateway"):
+        if not isinstance(label, str) or label in excluded or not label.startswith(GATEWAY_LAUNCHD_LABEL_BASE):
             continue
         if not rel or (len(rel) == 2 and rel[0] == "profiles"):
             labels.add(label)

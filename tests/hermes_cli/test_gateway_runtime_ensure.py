@@ -84,7 +84,7 @@ def test_installed_service_start_is_nonmutating_and_failed_manager_never_spawns(
     home = tmp_path / "profile"
     home.mkdir(mode=0o700)
     monkeypatch.setenv("HERMES_HOME", str(home))
-    unit = tmp_path / ".config/systemd/user" / f"hermes-gateway-{service_suffix(home)}.service"
+    unit = tmp_path / ".config/systemd/user" / f"lina-gateway-{service_suffix(home)}.service"
     unit.parent.mkdir(parents=True)
     unit.write_text("[Service]\nExecStart=/owned/inert/gateway\n", encoding="utf-8")
     original = unit.read_bytes()

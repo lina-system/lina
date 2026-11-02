@@ -31,7 +31,7 @@ def test_ensure_checks_effective_service_binding_before_start(tmp_path, monkeypa
     home.mkdir(mode=0o700, parents=True)
     monkeypatch.setenv("HERMES_HOME", str(home))
     suffix = service_suffix(home)
-    unit = tmp_path / ".config/systemd/user" / f"hermes-gateway{'-' + suffix if suffix else ''}.service"
+    unit = tmp_path / ".config/systemd/user" / f"lina-gateway{'-' + suffix if suffix else ''}.service"
     unit.parent.mkdir(parents=True)
     unit.write_text(f'[Service]\nExecStart={sys.executable} -m hermes_cli.main gateway run\nEnvironment="HERMES_HOME={home}"\n', encoding="utf-8")
     original = unit.read_bytes()
@@ -124,7 +124,7 @@ def test_loaded_launchd_identity_is_independent_of_disk(configured, command, rea
     if command == "echo":
         argv = ["/bin/echo", "hermes_cli.main", "gateway", "run"]
     environment = f"HERMES_HOME => {tmp_path / configured}" if configured else ""
-    output = "gui/123/ai.hermes.gateway = {\n\tstate = not running\n\tprogram = " + argv[0] + "\n\targuments = {\n" + "\n".join("\t\t" + a for a in argv) + "\n\t}\n\tenvironment = {\n\t\t" + environment + "\n\t}\n}"
+    output = "gui/123/ai.lina.gateway = {\n\tstate = not running\n\tprogram = " + argv[0] + "\n\targuments = {\n" + "\n".join("\t\t" + a for a in argv) + "\n\t}\n\tenvironment = {\n\t\t" + environment + "\n\t}\n}"
     if command != "unsupervised":
         output = output.replace("\n\tenvironment = {\n", "\n\tenvironment = {\n\t\tHERMES_SUPERVISED_CHILD => 1\n")
     if command == "wrong_account":
@@ -214,11 +214,11 @@ def test_launchd_verifies_the_osascript_wrapped_command_the_installer_writes(cas
         argv[0] = str(tmp_path / "osascript")
     env = dict(HERMES_HOME=str(home if case != "other_home" else tmp_path / "elsewhere" / ".hermes"),
                HERMES_SUPERVISED_CHILD="1")
-    definition = plistlib.loads(plistlib.dumps(dict(Label="ai.hermes.gateway", ProgramArguments=argv, EnvironmentVariables=env)))
-    output = ("gui/123/ai.hermes.gateway = {\n\tstate = not running\n\tprogram = " + argv[0] + "\n\targuments = {\n"
+    definition = plistlib.loads(plistlib.dumps(dict(Label="ai.lina.gateway", ProgramArguments=argv, EnvironmentVariables=env)))
+    output = ("gui/123/ai.lina.gateway = {\n\tstate = not running\n\tprogram = " + argv[0] + "\n\targuments = {\n"
               + "\n".join("\t\t" + arg for arg in argv) + "\n\t}\n\tenvironment = {\n"
               + "".join(f"\t\t{key} => {value}\n" for key, value in env.items()) + "\t}\n}")
-    for verify in (lambda: verify_launchd_plist(definition, "ai.hermes.gateway", home),
+    for verify in (lambda: verify_launchd_plist(definition, "ai.lina.gateway", home),
                    lambda: verify_launchd_loaded(output, home, uid=123, username="owner")):
         if reason:
             with pytest.raises(ValueError, match=reason):
@@ -265,7 +265,7 @@ def test_task_xml_binds_actual_action_and_principal(case, reason, tmp_path):
     home.mkdir()
     script = _installed_vbs(home, str(home if case != 'wrong_home' else tmp_path / 'other'))
     user = 'DOMAIN\\owner'
-    xml = _build_scheduled_task_xml('Hermes_Gateway', script, user)
+    xml = _build_scheduled_task_xml('LINA_Gateway', script, user)
     if case == 'schtasks_export':
         xml = _as_schtasks_exports(xml)
     if case == 'elevated':  # an explicit non-default value is still refused
@@ -304,7 +304,7 @@ def test_task_launcher_for_a_non_ascii_home_is_utf16_and_still_verifies(tmp_path
     from hermes_cli.gateway_runtime_service_identity import verify_windows_task
 
     home = tmp_path / 'Usuário 方舟'
-    script = home / 'gateway-service' / 'Hermes_Gateway.cmd'
+    script = home / 'gateway-service' / 'LINA_Gateway.cmd'
     script.parent.mkdir(parents=True)
     monkeypatch.setattr(gateway_windows, '_assert_windows', lambda: None)
     monkeypatch.setattr(gateway_windows, 'get_task_script_path', lambda: script)
@@ -313,7 +313,7 @@ def test_task_launcher_for_a_non_ascii_home_is_utf16_and_still_verifies(tmp_path
     raw = launcher.read_bytes()
     assert raw.startswith(codecs.BOM_UTF16_LE) and str(home) in raw.decode('utf-16')
     user = 'DOMAIN\\owner'
-    xml = gateway_windows._build_scheduled_task_xml('Hermes_Gateway', launcher, user)
+    xml = gateway_windows._build_scheduled_task_xml('LINA_Gateway', launcher, user)
     verify_windows_task(xml, home, user, 'S-1-5-21-123')
     launcher.write_bytes(raw.decode('utf-16').encode('utf-8'))
     verify_windows_task(xml, home, user, 'S-1-5-21-123')
@@ -331,7 +331,7 @@ def test_task_discovery_skips_listing_lines_that_are_not_task_rows(tmp_path, mon
     home = tmp_path / "profile"
     home.mkdir()
     script = _installed_vbs(home, str(home))
-    name = "Hermes_Gateway_" + service.service_suffix(home)
+    name = "LINA_Gateway_" + service.service_suffix(home)
     account, sid = "DESKTOP-1\\owner", "S-1-5-21-123"
     listing = ('"\\Microsoft\\Windows\\Defrag\\ScheduledDefrag","N/A","Ready"\r\n'
                '错误: 任务映像已损坏或已篡改。\r\n'
@@ -366,7 +366,7 @@ def test_native_launchd_checks_loaded_job_before_disk(case, reason, tmp_path, mo
     home.mkdir(mode=0o700)
     monkeypatch.setenv('HERMES_HOME', str(home))
     monkeypatch.setattr(pwd, 'getpwuid', lambda uid: SimpleNamespace(pw_dir=str(tmp_path), pw_name="owner"))
-    label = 'ai.hermes.gateway' + ('-' + service.service_suffix(home) if service.service_suffix(home) else '')
+    label = 'ai.lina.gateway' + ('-' + service.service_suffix(home) if service.service_suffix(home) else '')
     plist = tmp_path / 'Library/LaunchAgents' / (label + '.plist')
     plist.parent.mkdir(parents=True)
     argv = [sys.executable, '-m', 'hermes_cli.main', 'gateway', 'run']
@@ -417,7 +417,7 @@ def test_native_task_query_uses_installed_xml_and_vendor_launcher(wrong, tmp_pat
     import csv
     _account, sid = next(csv.reader(identity.stdout.decode(_schtasks_encoding()).splitlines()))
     suffix = service.service_suffix(home)
-    name = 'Hermes_Gateway' + ('_' + suffix if suffix else '')
+    name = 'LINA_Gateway' + ('_' + suffix if suffix else '')
     xml = _build_scheduled_task_xml(name, script, 'S-1-5-18' if wrong else sid)
     peer = tmp_path / 'supervisor.py'
     row = f'"\\{name}","N/A","Ready"'
@@ -563,7 +563,7 @@ def test_windows_startup_folder_entry_still_restarts_a_stopped_owner(tmp_path, m
     home.mkdir(mode=0o700)
     startup = tmp_path / "Startup"
     startup.mkdir()
-    (startup / f"Hermes_Gateway_{service.service_suffix(home)}.vbs").write_text("' fallback\r\n")
+    (startup / f"LINA_Gateway_{service.service_suffix(home)}.vbs").write_text("' fallback\r\n")
     monkeypatch.setattr(gateway_windows, "_startup_dir", lambda: startup)
     queries, spawned = [], []
     monkeypatch.setattr(service, "_run", lambda argv, *a, **k: queries.append(argv) or SimpleNamespace(returncode=0, stdout=b""))
@@ -588,7 +588,7 @@ def test_task_discovery_reads_localized_schtasks_output(tmp_path, monkeypatch):
     home = tmp_path / "profile"
     home.mkdir()
     script = _installed_vbs(home, str(home))
-    name = "Hermes_Gateway_" + service.service_suffix(home)
+    name = "LINA_Gateway_" + service.service_suffix(home)
     account, sid = "DESKTOP-1\\\u65b9\u821f", "S-1-5-21-123"
     # whoami first: it is queried with /FO CSV too.
     out = {"whoami.exe": f'"{account}","{sid}"\r\n', "/XML": _as_schtasks_exports(

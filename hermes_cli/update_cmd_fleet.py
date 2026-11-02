@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hermes_cli.update_cmd_common import _best_effort
+from hermes_constants import GATEWAY_SERVICE_BASE, LAUNCHD_LABEL_PREFIX
 from hermes_cli.update_host_obligation import PROFILE_MARKER_NAME
 from hermes_cli.update_inventory import _gateway_service_matches_profile
 
@@ -33,7 +34,7 @@ _FRESH_RESTART_SUPERVISORS = frozenset({"systemd", "launchd", "service", "s6"})
 
 _SYSTEMD_SCOPES = (("user", ["systemctl", "--user"]), ("system", ["systemctl"]))
 _LIST_GATEWAY_UNITS = [
-    "list-units", "hermes-gateway*", "hermes-serve*", "hermes-dashboard*",
+    "list-units", f"{GATEWAY_SERVICE_BASE}*", "hermes-serve*", "hermes-dashboard*",
     "--plain", "--no-legend", "--no-pager",
 ]
 
@@ -754,8 +755,8 @@ def _is_hermes_gateway_unit(unit: str) -> bool:
     return (
         # list-units is already pattern-filtered, but keep the name gate so a stray non-gateway/serve line
         # cannot enter the restart path. See #83595.
-        unit == "hermes-gateway.service"
-        or unit.startswith("hermes-gateway-")
+        unit == f"{GATEWAY_SERVICE_BASE}.service"
+        or unit.startswith(f"{GATEWAY_SERVICE_BASE}-")
         or _is_serve_or_dashboard_unit(unit)
     )
 
@@ -792,7 +793,7 @@ def _service_unit_supports_graceful_sigusr1_restart(svc_name: str) -> bool:
 
     See #83438.
     """
-    return svc_name == "hermes-gateway" or svc_name.startswith("hermes-gateway-")
+    return svc_name == GATEWAY_SERVICE_BASE or svc_name.startswith(f"{GATEWAY_SERVICE_BASE}-")
 
 
 def _warn_incomplete_gateway_fleet_restart(failed_units: list) -> None:
@@ -818,10 +819,10 @@ def _warn_incomplete_gateway_fleet_restart(failed_units: list) -> None:
     print("  Skipped units may still be running pre-update code (mixed")
     print("  sys.modules). Restart them manually, then verify:")
     print("    hermes gateway status")
-    if any(not name.startswith("ai.hermes.") for name in ordered):
+    if any(not name.startswith(LAUNCHD_LABEL_PREFIX) for name in ordered):
         print("    systemctl --user restart <unit>   # user-scope")
         print("    sudo systemctl restart <unit>     # system-scope")
-    if any(name.startswith("ai.hermes.") for name in ordered):
+    if any(name.startswith(LAUNCHD_LABEL_PREFIX) for name in ordered):
         print("    launchctl kickstart -k gui/$UID/<label>   # macOS (or user/$UID)")
 
 

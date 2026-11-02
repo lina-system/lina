@@ -56,15 +56,15 @@ def hermes_home_globs() -> tuple[str, ...]:
 def gateway_service_definition_globs() -> tuple[str, ...]:
     """This OS user's gateway service definitions, each naming the HERMES_HOME it serves."""
     if _WIN:
-        return ("%APPDATA%/Microsoft/Windows/Start Menu/Programs/Startup/Hermes_Gateway*",)
+        return ("%APPDATA%/Microsoft/Windows/Start Menu/Programs/Startup/LINA_Gateway*",)
     if sys.platform == "darwin":
-        return ("~/Library/LaunchAgents/ai.hermes.gateway*.plist",)
-    return ("$XDG_CONFIG_HOME/systemd/user/hermes-gateway*.service", "~/.config/systemd/user/hermes-gateway*.service")
+        return ("~/Library/LaunchAgents/ai.lina.gateway*.plist",)
+    return ("$XDG_CONFIG_HOME/systemd/user/lina-gateway*.service", "~/.config/systemd/user/lina-gateway*.service")
 
 
 def system_gateway_service_definition_globs() -> tuple[str, ...]:
     """Machine-wide gateway services. Each runs as the account its ``User=`` names (root when none)."""
-    return ("/etc/systemd/system/hermes-gateway*.service",) if _POSIX and sys.platform != "darwin" else ()
+    return ("/etc/systemd/system/lina-gateway*.service",) if _POSIX and sys.platform != "darwin" else ()
 
 
 def mac_privacy_protected_dirs() -> tuple[str, ...]:
