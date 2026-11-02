@@ -336,11 +336,11 @@ def work_card_body(card: WorkCard, goal_id: str, goal_title: str) -> str:
 
 def _existing(conn, plan: Plan) -> dict[str, str]:
     """``{idempotency_key: task id}`` for this plan's cards already on the board."""
-    keys = [plan.idempotency_key()] + [plan.idempotency_key(c) for c in plan.cards]
-    marks = ",".join("?" * len(keys))
+    prefix = plan.idempotency_key() + "/"
     rows = conn.execute(
-        f"SELECT id, idempotency_key FROM tasks WHERE idempotency_key IN ({marks}) "
-        "AND status != 'archived' ORDER BY created_at", keys,
+        "SELECT id, idempotency_key FROM tasks WHERE (idempotency_key = ? "
+        "OR substr(idempotency_key, 1, ?) = ?) AND status != 'archived' ORDER BY created_at",
+        (plan.idempotency_key(), len(prefix), prefix),
     ).fetchall()
     return {r["idempotency_key"]: r["id"] for r in rows}
 
@@ -349,8 +349,8 @@ def _check_already_laid_out(plan: Plan, existing: dict[str, str]) -> bool:
     """True when the whole plan is already on the board; refuses a partial match."""
     if not existing:
         return False
-    missing = [c.key for c in plan.cards if plan.idempotency_key(c) not in existing]
-    if plan.idempotency_key() in existing and not missing:
+    expected = {plan.idempotency_key(), *(plan.idempotency_key(c) for c in plan.cards)}
+    if set(existing) == expected:
         return True
     have = sorted(k.split("/", 1)[1] if "/" in k else "goal" for k in existing)
     raise PlanError(f"plan {plan.key!r} is partly on the board already (cards: {', '.join(have)}); "

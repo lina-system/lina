@@ -209,3 +209,35 @@ def test_reserved_goal_key_cli_writes_nothing(board, capsys, dry_run):
     rc, _out, err = _run(capsys, _write(board, plan), *(["--dry-run"] if dry_run else []))
     assert rc != 0 and "goal" in err and "reserved" in err
     assert _tasks() == {} and _links() == set()
+
+
+@pytest.mark.parametrize("change", ["remove", "add"])
+def test_plan_membership_changes_are_refused(board, capsys, change):
+    _plan(capsys, _write(board, PLAN))
+    tasks, links = _tasks(), _links()
+    changed = copy.deepcopy(PLAN)
+    if change == "remove":
+        changed["cards"].pop()
+    else:
+        changed["cards"].append(changed["cards"][-1] | {"key": "extra", "todos": ["[ ] extra work"]})
+
+    rc, _out, err = _run(capsys, _write(board, changed))
+
+    assert rc != 0 and "a laid-out plan cannot gain or lose cards" in err
+    assert _tasks() == tasks and _links() == links
+
+
+@pytest.mark.parametrize("key,other", [("a", "ab"), ("a_b", "axb")])
+def test_plan_membership_prefix_is_exact_and_rerun_is_unchanged(board, capsys, key, other):
+    plan = copy.deepcopy(PLAN)
+    plan["key"] = other
+    _plan(capsys, _write(board, plan))
+    plan["key"] = key
+    first = _plan(capsys, _write(board, plan))
+
+    again = _plan(capsys, _write(board, plan))
+
+    assert first["created"] and not again["created"]
+    assert again["goal"]["id"] == first["goal"]["id"]
+    assert [c["id"] for c in again["cards"]] == [c["id"] for c in first["cards"]]
+    assert len(_tasks()) == 8 and len(_links()) == 10
