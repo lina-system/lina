@@ -1,227 +1,94 @@
 ---
 name: hermes-agent
-description: "Use, configure, theme, extend, and orchestrate Hermes Agent."
-version: 3.2.0
+description: "Configure and operate the agent and its shared workspace."
+version: 1.0.0
 author: Hermes Agent + Teknium
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [hermes, setup, configuration, multi-agent, spawning, cli, gateway, bots, bot-mode, features, themes, skins, desktop-plugins, tui-widgets, petdex, development]
-    homepage: https://github.com/NousResearch/hermes-agent
+    tags: [lina, cli, configuration, delegation, skills, gateway]
+    category: autonomous-ai-agents
     related_skills: [claude-code, codex]
 ---
 
-# Hermes Agent
+# LINA Skill
 
-Hermes Agent is an open-source AI agent framework by Nous Research that runs in your terminal, a native desktop app, messaging platforms, and IDEs. It's in the same category as Claude Code (Anthropic), Codex (OpenAI), and OpenClaw — autonomous coding and task-execution agents that use tool calling to interact with your system. Hermes works with any LLM provider (OpenRouter, Anthropic, OpenAI, Google, DeepSeek, xAI, local models, and 20+ others) and runs on Linux, macOS, Windows, and WSL.
+Operate LINA through its CLI, messaging gateway, and shared Desk. This is an operating guide; inspect the installed command's help and repository source before relying on a flag or setting.
 
-What makes Hermes different:
+## When to Use
 
-- **Self-improving through skills** — Hermes learns from experience by saving reusable procedures as skills that load into future sessions.
-- **Persistent memory across sessions** — remembers who you are, your preferences, environment details, and lessons learned. Pluggable memory backends.
-- **Multi-platform gateway** — the same agent runs on Telegram, Discord, Slack, WhatsApp, iMessage, Signal, Matrix, Teams, Email, and a dozen more platforms with full tool access, not just chat.
-- **Many surfaces** — the same agent core drives the CLI, the Ink TUI, a native Electron desktop app, a web dashboard, and an ACP server for IDEs (VS Code / Zed / JetBrains).
-- **Provider-agnostic** — swap models and providers mid-workflow; credential pools rotate across multiple API keys automatically.
-- **Profiles** — run multiple independent Hermes instances with isolated configs, sessions, skills, and memory.
-- **Extensible & themeable** — plugins, MCP servers, custom tools, webhook triggers, cron scheduling, skins that theme every surface, desktop UI plugins, TUI widgets, and pet mascots.
+- Configure models, tools, skills, profiles, or messaging.
+- Coordinate independent agent runs or diagnose missing capabilities.
+- Work with the Desk, project context, or CLI skins.
 
-**This skill is a hub.** The body covers identity, quick start, spawning/orchestration, and hard invariants. Everything else lives in reference files — **load the matching reference (below) before answering**; do not answer detail questions from the body alone.
+## Prerequisites
 
-**Docs:** https://hermes-agent.nousresearch.com/docs/
+- A working LINA installation. The command is `lina`; `hermes` is an alias with the same arguments and exit codes.
+- Model access through the OCX provider in `plugins/model-providers/ocx/`. OCX owns routing to upstream models.
+- Resolve the active profile's state through `$HERMES_HOME`; use `get_hermes_home()` in code. Do not assume another profile shares credentials or memory.
+- Use `terminal` for CLI commands and `read_file` / `search_files` to inspect local instructions and source.
 
-## Scope & Verification
-
-This skill is a concise operating guide, not the complete source of truth for every Hermes feature. If a Hermes feature, command, or setting is not mentioned here or in a reference, do not treat that absence as evidence that it does not exist. Check the live repository and official docs before giving a negative answer.
-
-Good verification targets, cheapest first:
-
-- **Every shipped feature, one line each: https://hermes-agent.nousresearch.com/docs/llms.txt.** Start here for any "can Hermes do X?" or "how do I do X?" — it indexes the entire documentation set with a link to the page that answers. It is generated from the docs tree on every build, so it is never behind the product. Fetch it with `web_extract`, or `curl -s https://hermes-agent.nousresearch.com/docs/llms.txt` when web tools are off. The whole documentation set in one file is at `/docs/llms-full.txt`.
-- CLI commands: `hermes --help`, `hermes <command> --help`, and `hermes_cli/main.py`
-- Source tree: https://github.com/NousResearch/hermes-agent
-
-Never answer "Hermes can't do that" from memory. Hermes ships far more than this skill body describes, and the index exists so a negative answer is always checkable.
-
-## Quick Start
+## How to Run
 
 ```bash
-# Install (shell installer — bootstraps PM, Python, dependencies, and the launcher)
-curl -fsSL https://hermes-agent.nousresearch.com/install.sh | bash
-
-# Interactive chat (default surface; set display.interface: tui to launch the Ink TUI instead)
-hermes
-
-# Single query
-hermes chat -q "What is the capital of France?"
-
-# Setup wizard  /  pick model+provider  /  health check
-hermes setup
-hermes model
-hermes doctor
-
-# Other surfaces
-hermes desktop                 # launch the native desktop app (alias: hermes gui)
-hermes dashboard               # web admin panel + embedded chat
-hermes proxy                   # OpenAI-compatible local proxy backed by your OAuth provider
+lina --help
+lina setup
+lina model
+lina doctor
+lina
 ```
 
-## Key Paths
+For a bounded query that exits even in a terminal:
 
-```
-~/.hermes/config.yaml       Main configuration (settings — never secrets)
-~/.hermes/.env              API keys and secrets ONLY (under $HERMES_HOME if set)
-$HERMES_HOME/skills/        Installed skills
-~/.hermes/skins/            Custom themes (see references/themes.md)
-~/.hermes/desktop-plugins/  Desktop app UI plugins (see references/desktop-plugins.md)
-~/.hermes/tui-widgets/      TUI widget apps (see references/tui-widgets.md)
-~/.hermes/pets/             Installed pet mascots (see references/petdex.md)
-~/.hermes/state.db          Canonical session store (SQLite + FTS5)
-~/.hermes/sessions/         Gateway routing index, request dumps, *.jsonl transcripts
-~/.hermes/logs/             Gateway and error logs
-~/.hermes/auth.json         OAuth tokens and credential pools
-~/.hermes/hermes-agent/     Source code (if git-installed)
+```bash
+lina chat --oneshot -q "Summarize the project instructions before changing files."
 ```
 
-Profiles use `~/.hermes/profiles/<name>/` with the same layout. When a profile is active, resolve the real home from `$HERMES_HOME` — never hardcode `~/.hermes`.
+Use the repository's `docs/` for LINA-specific guidance, especially `docs/desk.md`. For additional commands, inspect `hermes_cli/subcommands/` and their wiring in `hermes_cli/main.py`; chat flags live in `hermes_cli/_parser.py`. Do not infer availability from an old guide.
 
-## Routing Table — load the reference for the task
+## Quick Reference
 
-| User wants... | Load |
-|---|---|
-| **Anything not listed below — "can Hermes do X?", "how do I set up X?"** | **https://hermes-agent.nousresearch.com/docs/llms.txt** |
-| Bots that chat, run routines, or message each other; the Bots tab | docs: `/user-guide/bot-mode` |
-| CLI commands, subcommands, flags, "how do I run X" | `references/cli-reference.md` |
-| In-session slash commands | `references/slash-commands.md` |
-| Provider setup, API keys, OAuth | `references/providers-and-models.md` |
-| config.yaml sections, toolsets, voice/STT/TTS | `references/configuration.md` |
-| AGENTS.md / .hermes.md / CLAUDE.md project rules | `references/project-context-files.md` |
-| Secret redaction, PII, approval modes, "reset permissions" | `references/security-privacy.md` |
-| Delegation, cron, curator, kanban | `references/background-systems.md` |
-| MCP servers (add, catalog, `hermes mcp`) | `references/native-mcp.md` |
-| Webhook routes and event-driven runs | `references/webhooks.md` |
-| A custom theme/skin ("synthwave theme", "change the gold ●") | `references/themes.md` + `templates/skin.yaml` |
-| A desktop app UI element (pane, widget, ⌘K command, page) | `references/desktop-plugins.md` + `templates/plugin.js` |
-| A live TUI panel or modal widget (ticker, clock, dashboard) | `references/tui-widgets.md` + `templates/clock.mjs` |
-| Pet mascots — install, select, scale, diagnose | `references/petdex.md` |
-| Windows-specific issues (keybinds, WinError 10106, BOM) | `references/windows-quirks.md` |
-| Debugging: voice, tools missing, gateway, aux models | `references/troubleshooting.md` |
-| Contributing code: adding tools, slash commands, tests | `references/contributor-guide.md` |
-| delegate_task "capped at N" reports | `references/delegate-task-concurrency-diagnosis.md` |
-| "Can app X use my Nous Portal subscription/OAuth?" | `references/portal-auth-for-third-party-apps.md` |
-| Connecting a messaging platform (Telegram, Discord, Slack, WhatsApp, …) | docs: `/user-guide/messaging` |
+| Task | Read first |
+| --- | --- |
+| Command syntax and source evidence | [CLI reference](references/cli-reference.md) |
+| OCX and model selection | [Providers and models](references/providers-and-models.md) |
+| Settings, toolsets, voice | [Configuration](references/configuration.md) |
+| Project instructions and the Desk | [Project context](references/project-context-files.md) |
+| Secret handling and approvals | [Security and privacy](references/security-privacy.md) |
+| Delegation, schedules, skill maintenance | [Background systems](references/background-systems.md) |
+| Delegation capacity diagnosis | [Concurrency diagnosis](references/delegate-task-concurrency-diagnosis.md) |
+| External MCP tools | [Native MCP](references/native-mcp.md) |
+| Event-triggered runs | [Webhooks](references/webhooks.md) |
+| CLI palette | [Themes](references/themes.md), [skin template](templates/skin.yaml) |
+| In-session commands | [Slash commands](references/slash-commands.md) |
+| Terminal mascots | [Petdex](references/petdex.md) |
+| Operational failures | [Troubleshooting](references/troubleshooting.md) |
+| Windows behavior | [Windows notes](references/windows-quirks.md) |
+| Code contributions | [Contributor guide](references/contributor-guide.md) |
 
-The reference list above is not the feature list — it is the set of topics that
-need more than their docs page. For everything else Hermes ships, fetch
-`llms.txt` and it maps the question to the page that answers it.
+## Procedure
 
-Two theming rules that hold even without loading the reference: **you apply skins yourself** (`hermes config set display.skin <name>` — every surface repaints live within ~a second; don't tell the user to run `/skin`), and **to tweak one color, edit the ACTIVE skin** (`hermes skin set <key> <hex>`) — never fork `default`, which drops the palette and resets the background.
+1. Identify the active profile, working directory, and requested outcome. Read the matching reference above before giving detailed instructions.
+2. Inspect configuration using `lina config path` and `lina config get <key>`. Keep settings in `config.yaml` and secrets in `.env`. Use `lina config set <key> <value>` rather than hand-editing YAML.
+3. Check the shared Desk with `lina desk show`. Create it with `lina desk init`, or adopt an existing folder with `lina desk init --path ~/project --adopt`. Adoption preserves existing files and numbered PARA folders.
+4. Keep owner files in Inbox, Projects, Areas, Resources, or Archive. Records hold task state and point to files as `desk:<relative path>` instead of duplicating their contents. Archive completed material; do not delete owner files without approval. Re-read before editing and leave files alone while another agent edits them.
+5. Use `delegate_task` for bounded subtasks. For a separate process, use `lina chat --oneshot -q <prompt>` with an explicit working directory, output artifact, and timeout. Parallel editors need separate worktrees; `lina -w` provides worktree mode. Observe completion and inspect the artifact before reporting success.
+6. For interactive subprocesses, use a real PTY and wait for the visible input prompt before sending text; startup can discard early input. Do not substitute fixed startup sleeps for readiness. Use `process_manage` to inspect or steer the process. A background handle alone does not prove persistence or success.
+7. Start a fresh session after changes to prompt-affecting state. Verify the requested behavior on the affected surface.
 
-## Spawning Additional Hermes Instances
+## Pitfalls
 
-Run additional Hermes processes as fully independent subprocesses — separate sessions, tools, and environments.
+- Preserve the cached conversation prefix: do not mutate past context, swap toolsets, or rebuild the system prompt mid-conversation. Context compression is the exception.
+- Preserve user/assistant role alternation; repeated tool-result messages are allowed.
+- The Desk is deliberately shared: `desk.path` belongs to the default profile's config, not the active profile. Profile state remains isolated.
+- Do not invent commands for work records or workers. Use the task ledger as a concept until source proves a CLI exists.
+- LINA Helper is separate from the CLI: inspect `helper/` and `hermes_cli/helper_install.py` for macOS installation and permissions. Do not treat CLI readiness as proof that OS permissions are granted.
+- A missing topic in this skill is not evidence that a feature is absent. Check `lina --help` and source.
 
-### When to Use This vs delegate_task
+## Verification
 
-| | `delegate_task` | Spawning `hermes` process |
-|-|-----------------|--------------------------|
-| Isolation | Separate conversation, shared process | Fully independent process |
-| Duration | Minutes (bounded by parent loop) | Hours/days |
-| Tool access | Subset of parent's tools | Full tool access |
-| Interactive | No | Yes (PTY mode) |
-| Use case | Quick parallel subtasks | Long autonomous missions |
-
-### One-Shot Mode
-
-```
-terminal(command="hermes chat -q 'Research GRPO papers and write summary to ~/research/grpo.md'", timeout=300)
-
-# Background for long tasks:
-terminal(command="hermes chat -q 'Set up CI/CD for ~/myapp'", background=true)
-```
-
-### Interactive PTY Mode (via tmux)
-
-Hermes uses prompt_toolkit, which requires a real terminal. Use tmux for interactive spawning. `tmux send-keys -t agent1 'text' Enter` in one call submits: Hermes treats a lone Enter that ends a fast burst of input as a submit once input has stayed quiet for a quarter second, while the Enters inside a multi-line paste stay newlines. The recipes below send `Enter` as its own call after a short pause, which submits at once and does not depend on that timing. Both recipes wait for the `❯` input prompt (the default skin's symbol; use your skin's prompt symbol if you changed it) instead of a fixed sleep: a first start can take far longer than a few seconds, and input sent before the prompt is lost.
-
-```
-# Start
-terminal(command="tmux new-session -d -s agent1 -x 120 -y 40 'hermes'", timeout=10)
-
-# Wait for the input prompt (❯), then send a message
-terminal(command="for i in $(seq 90); do tmux capture-pane -t agent1 -p | grep -q '❯' && break; sleep 1; done; tmux capture-pane -t agent1 -p | grep -q '❯' && tmux send-keys -t agent1 'Build a FastAPI auth service' && sleep 0.5 && tmux send-keys -t agent1 Enter", timeout=100)
-
-# Read output
-terminal(command="sleep 20 && tmux capture-pane -t agent1 -p", timeout=5)
-
-# Send follow-up
-terminal(command="tmux send-keys -t agent1 'Add rate limiting middleware' && sleep 0.5 && tmux send-keys -t agent1 Enter", timeout=5)
-
-# Exit
-terminal(command="tmux send-keys -t agent1 '/exit' && sleep 0.5 && tmux send-keys -t agent1 Enter && sleep 2 && tmux kill-session -t agent1", timeout=10)
-```
-
-**No tmux** (`command -v tmux` prints nothing, e.g. an older Hermes Docker image): run Hermes as a PTY background process and drive it with `process_manage`. Stdin only exists with `pty=true`. `submit` sends the text plus the Enter key a keyboard sends, and Hermes submits it the same way as a one-call tmux `send-keys`. The recipe below instead `write`s the text, pauses, and `write`s the Enter (`"\r"`) on its own, which does not depend on burst timing. Wait for the input prompt before the first write: during startup Hermes queries the terminal's colours and then flushes its input, so text written before the prompt appears is silently dropped.
-
-```
-terminal(command="hermes", background=true, pty=true)   # returns session_id
-process_manage(action="log", session_id="<id>", limit=20)   # repeat, with terminal(command="sleep 1") between, until the ❯ prompt line shows
-process_manage(action="write", session_id="<id>", data="Build a FastAPI auth service")
-terminal(command="sleep 0.5")
-process_manage(action="write", session_id="<id>", data="\r")
-process_manage(action="log", session_id="<id>", limit=40)   # read the screen
-process_manage(action="write", session_id="<id>", data="/exit")
-terminal(command="sleep 0.5")
-process_manage(action="write", session_id="<id>", data="\r")
-```
-
-### Multi-Agent Coordination
-
-```
-# Agent A: backend
-terminal(command="tmux new-session -d -s backend -x 120 -y 40 'hermes -w'", timeout=10)
-terminal(command="for i in $(seq 90); do tmux capture-pane -t backend -p | grep -q '❯' && break; sleep 1; done; tmux capture-pane -t backend -p | grep -q '❯' && tmux send-keys -t backend 'Build REST API for user management' && sleep 0.5 && tmux send-keys -t backend Enter", timeout=100)
-
-# Agent B: frontend
-terminal(command="tmux new-session -d -s frontend -x 120 -y 40 'hermes -w'", timeout=10)
-terminal(command="for i in $(seq 90); do tmux capture-pane -t frontend -p | grep -q '❯' && break; sleep 1; done; tmux capture-pane -t frontend -p | grep -q '❯' && tmux send-keys -t frontend 'Build React dashboard for user management' && sleep 0.5 && tmux send-keys -t frontend Enter", timeout=100)
-
-# Check progress, relay context between them
-terminal(command="tmux capture-pane -t backend -p | tail -30", timeout=5)
-terminal(command="tmux send-keys -t frontend 'Here is the API schema from the backend agent: ...' && sleep 0.5 && tmux send-keys -t frontend Enter", timeout=5)
-```
-
-### Session Resume
-
-```
-# Resume most recent session
-terminal(command="tmux new-session -d -s resumed 'hermes --continue'", timeout=10)
-
-# Resume specific session
-terminal(command="tmux new-session -d -s resumed 'hermes --resume 20260225_143052_a1b2c3'", timeout=10)
-```
-
-### Tips
-
-- **Prefer `delegate_task` for quick subtasks** — less overhead than spawning a full process
-- **Use `-w` (worktree mode)** when spawning agents that edit code — prevents git conflicts
-- **Set timeouts** for one-shot mode — complex tasks can take 5-10 minutes
-- **Use `hermes chat -q` for fire-and-forget** — no PTY needed
-- **Prefer tmux for interactive sessions when it is installed** — `capture-pane` reads the rendered screen; the PTY-background fallback only has the raw output log
-- **For scheduled tasks**, use the `cronjob` tool instead of spawning — handles delivery and retry
-- **"delegate_task is capped at N" reports** — see `references/delegate-task-concurrency-diagnosis.md`. Three real cap paths in Hermes; if none fired, the model is self-limiting and rationalising it as "the runtime caps."
-- **"Can $external_app use my Nous Portal subscription / OAuth?"** — see `references/portal-auth-for-third-party-apps.md`. Walk the user through three layers (plugin-vs-app, what Portal actually exposes, local-broker-proxy option).
-
-## Surfaces (quick orientation)
-
-- **Desktop app** (`hermes desktop` / `hermes gui`) — native Electron app for macOS/Linux/Windows: streaming chat, session list, Cmd+K palette, drag-and-drop files, native notifications, per-profile remote-gateway login. Extend it with UI plugins — `references/desktop-plugins.md`.
-- **Web dashboard** (`hermes dashboard`) — full admin panel: messaging channels, MCP catalog, webhooks, memory, profile builder, plus an embedded `hermes --tui` chat. Secured behind an OAuth/token gate.
-- **Ink TUI** (`hermes --tui` or `display.interface: tui`) — terminal UI with docked widget apps — `references/tui-widgets.md`.
-- **OpenAI-compatible proxy** (`hermes proxy`) — a local OpenAI API backed by whichever OAuth provider you're signed into. Point Codex CLI, Aider, Cline, or any script at it — no API key.
-
-## Hard Invariants (never violate, regardless of what you loaded)
-
-- **Never break prompt caching** — don't change past context, toolsets, or the system prompt mid-conversation. The only exception is context compression.
-- **Message role alternation** — never two assistant or two user messages in a row; only `tool` results can repeat.
-- **Secrets in `.env`, settings in `config.yaml`** — never tell a user to put a non-credential setting in `.env`.
-- **Profile-safe paths** — `get_hermes_home()` in code, `$HERMES_HOME` when resolving paths in a session.
-- **Never hand-edit `config.yaml` for the user** — use `hermes config set KEY VAL`; a stray indent can corrupt the file and break the live gateway.
+- Confirm the selected OCX model with a real bounded query, without printing credentials.
+- Confirm the Desk path and layout with `lina desk show --json`.
+- Confirm configuration by reading it back; confirm tool or skill changes in a fresh session.
+- Report the actual result, pending work, and any failed checks, not just the command issued.

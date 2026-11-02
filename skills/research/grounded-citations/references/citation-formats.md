@@ -17,7 +17,7 @@ Inline `[n]` immediately after the sentence. Block at the end:
 `--style plain` gives a bare `Sources:` header for chat replies where a
 markdown heading would be noise.
 
-## PDF via LaTeX (`latex-pdf-report` skill)
+## PDF via LaTeX
 
 Use `--style footnotes` and map each id to `\footnote{}` at first use, or keep
 numeric markers and emit an endnotes section. For a bibliography-shaped report,
@@ -45,7 +45,7 @@ can't be clicked in a projected deck.
 Add a `source` column holding the id, plus a `Sources` sheet built from
 `render --style plain`. Do not paste URLs into data cells.
 
-## Wiki / multi-page output (`llm-wiki`, Obsidian)
+## Wiki / multi-page output (`llm-wiki`)
 
 Per-page Sources block, ids shared across pages from one ledger. Because ids
 are ledger identities, `[7]` means the same page everywhere in the wiki — that
@@ -53,10 +53,9 @@ consistency is the reason not to reset the ledger between pages of one build.
 
 ## Research papers
 
-Hand off to the `grounded-citations` skill. Export with
-`--style bibtex` into `references.bib`, then follow that skill's citation
-verification (it greps `\cite{...}` against the .bib). The ledger's job ends at
-producing verified URL entries; venue formatting is that skill's domain.
+Export with `--style bibtex` into `references.bib`. Check that every
+`\cite{...}` key resolves in the bibliography and apply the venue's required
+formatting separately. The ledger produces verified URL entries.
 
 ## Code and config artifacts
 
