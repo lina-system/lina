@@ -18,7 +18,10 @@ import tarfile
 import time
 from pathlib import Path
 
-from hermes_cli.worker import runners, settings
+import psutil
+
+from hermes_cli.process_identity import process_birth
+from hermes_cli.worker import runners, settings, slots
 from hermes_platform.resolver import locate_command
 from tools.environments.local import build_subprocess_env
 from hermes_cli.worker.runners.base import LIVE, Handle, ModelProfile, RunnerError, Task
@@ -58,22 +61,33 @@ def last_run(task: Task) -> int:
     return max(numbers, default=0)
 
 
+_CHILDREN: list[subprocess.Popen] = []  # run processes this serve started without systemd, reaped by reap()
+
+
+def reap() -> None:
+    """Collect the exit status of run processes that ended, so none stays a zombie of the service."""
+    _CHILDREN[:] = [proc for proc in _CHILDREN if proc.poll() is None]
+
+
+def _process_alive(record: dict) -> bool:
+    """The recorded run process is still that process (same PID and birth), and has not exited."""
+    try:
+        proc = psutil.Process(int(record["pid"]))
+        if proc.status() == psutil.STATUS_ZOMBIE:
+            return False
+        return abs(process_birth(proc) - float(record["birth"])) < 2.0
+    except (psutil.Error, KeyError, TypeError, ValueError):
+        return False
+
+
 def alive(task: Task, run: int) -> bool:
     unit = task.path(f"unit.{run}")
     if unit.exists():
         done = subprocess.run(["systemctl", "--user", "is-active", "--quiet",
                                unit.read_text(encoding="utf-8-sig").strip()], capture_output=True, timeout=10, check=False)
         return done.returncode == 0
-    pid = task.path(f"pid.{run}")
-    if not pid.exists():
-        return False
-    try:
-        os.kill(int(pid.read_text(encoding="utf-8-sig").strip()), 0)  # windows-footgun: ok — POSIX work devices only
-    except (ProcessLookupError, ValueError):
-        return False
-    except PermissionError:
-        return True
-    return True
+    record = read_json(task.path(f"pid.{run}"))
+    return isinstance(record, dict) and _process_alive(record)
 
 
 def _read(task: Task, name: str) -> str:
@@ -176,6 +190,10 @@ def run_task(worker_root: Path, task_id: str, run: int) -> str:
     stamp(task, f"started.{run}")
     task.event(run, "started", runner=job.get("runner"))
     runner, handle, code = None, None, 0
+    if task.path("cancelled").exists():  # cancelled between the launch and here: no session is opened
+        task.path(f"rc.{run}").write_text("0\n", encoding="utf-8")
+        stamp(task, f"ended.{run}")
+        return finish_run(worker_root, task, run, "cancelled")
     try:
         runner = runner_for(worker_root, task, job)
         handle = _start_or_follow(runner, task, run, job)
@@ -275,10 +293,7 @@ def probe(worker_root: Path, repo: str = "", runner_name: str = "") -> dict:
         ready, why = False, str(exc)
     heartbeat = settings.tasks_dir(worker_root).parent / HEARTBEAT
     serve = heartbeat.exists() and time.time() - heartbeat.stat().st_mtime < 60
-    running = 0
-    for task_dir in settings.tasks_dir(worker_root).glob("O*-*"):
-        task = Task(task_dir.name, task_dir)
-        running += alive(task, last_run(task))
+    running = slots.held(worker_root)
     repo_ok = not repo.startswith(("/", "~")) or (Path(repo).expanduser() / ".git").exists()
     load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
     return {"runner": name, "ready": ready, **({"runner_at": why} if ready else {"why": why}), "serve": serve, "running": running,
@@ -363,6 +378,7 @@ def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[in
             "untar": lambda: _ok(_untar(worker_root, args[0], args[1], stdin)),
             "meta": lambda: _ok(meta(worker_root, args[0], live=args[1:] == ["live"])),
             "probe": lambda: _ok(probe(worker_root, *args[:2])),
+            "reserve": lambda: _ok(slots.reserve(worker_root, safe_id(args[0]), int(args[1]))),
             "send": lambda: _ok(steer(worker_root, args[0], text)),
             "human": lambda: _ok(human(worker_root, args[0])),
             "answer": lambda: _ok(answer(worker_root, args[0], text)),
@@ -402,4 +418,9 @@ def launch(worker_root: Path, task: Task, run: int) -> None:
         # detached-spawn: ok — a run must outlive the service that started it (restarts never end a task)
         proc = subprocess.Popen(argv, start_new_session=True, stdin=subprocess.DEVNULL, stdout=log,
                                 stderr=subprocess.STDOUT, env=child_env)
-    task.path(f"pid.{run}").write_text(f"{proc.pid}\n", encoding="utf-8")
+    _CHILDREN.append(proc)
+    try:
+        birth = process_birth(psutil.Process(proc.pid))
+    except psutil.Error:
+        birth = None  # it already ended: alive() reads it as gone
+    write_json(task.path(f"pid.{run}"), {"pid": proc.pid, "birth": birth})

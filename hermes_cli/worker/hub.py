@@ -133,7 +133,20 @@ class Hub:
         self.store.receipt(tid, "run_started", run=1, host=dev.name, award=job.get("award"))
 
     def place(self, job: dict) -> str | None:
-        """Start *job* on its fixed device or on the bid winner; None when it stays queued."""
+        """Start *job* on its fixed device or on the bid winner; None when it stays queued.
+
+        One placement at a time from this hub, and the slot is reserved on the device before the task is handed
+        over: a batch or two hubs placing at once cannot all land on a device's last slot."""
+        with self.store.lock("place"):
+            return self._place_locked(job)
+
+    def _reserve(self, job: dict, dev: settings.Device) -> bool:
+        reply = for_device(dev, self.worker_root).call(["reserve", job["id"], str(dev.cap)], timeout=60).json()
+        if reply.get("action") != "reserved":
+            self.store.log(f"{job['id']} {dev.name}: no slot ({reply.get('held')}/{dev.cap} held)")
+        return reply.get("action") == "reserved"
+
+    def _place_locked(self, job: dict) -> str | None:
         table = None
         if job.get("fixed_host"):
             dev = self.device(job["fixed_host"])
@@ -143,6 +156,8 @@ class Hub:
             self.store.log(f"{job['id']} bid: " + "; ".join(
                 f"{r['host']} {r.get('running', '-')}/{r['cap']} {r.get('why', 'ok')}" for r in table)
                 + f" -> {dev.name if dev else 'queued'}")
+        if dev is not None and not self._reserve(job, dev):
+            dev = None
         if dev is None:
             if job.get("state") != "queued":
                 job["state"] = "queued"
