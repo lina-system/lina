@@ -12,7 +12,6 @@ from __future__ import annotations
 import json
 import logging
 import re
-import shutil
 import sqlite3
 import statistics
 import subprocess
@@ -39,7 +38,8 @@ CREATE TABLE IF NOT EXISTS work_card_outcomes (
     owner_answers        INTEGER NOT NULL,
     main_session_touches INTEGER NOT NULL,
     dev_red_runs         INTEGER,
-    recorded_at          INTEGER NOT NULL
+    recorded_at          INTEGER NOT NULL,
+    todo_states          TEXT
 )
 """
 
@@ -65,6 +65,9 @@ _KIND_WORD = re.compile(r"[A-Za-z][\w-]*")
 
 def ensure_table(conn: sqlite3.Connection) -> None:
     conn.execute(WORK_CARD_OUTCOMES_DDL)
+    columns = {row[1] for row in conn.execute("PRAGMA table_info(work_card_outcomes)")}
+    if "todo_states" not in columns:
+        conn.execute("ALTER TABLE work_card_outcomes ADD COLUMN todo_states TEXT")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_agent_kind "
                  "ON work_card_outcomes(assignee, kind)")
 
@@ -114,8 +117,10 @@ def _todo_for_comment(body: str, todos: list[dict]) -> str:
     """The to-do a comment is about: the first one it names, else the card as a whole."""
     for todo in todos:
         if "number" in todo:
-            if f"{todo['repo']}#{todo['number']}" in body or re.search(
-                    rf"(?<![\w/])#{todo['number']}\b", body):
+            # A whole reference only: owner/repo#n or a bare #n token, never the #12 inside #123.
+            full = rf"(?<![\w./-]){re.escape(todo['repo'])}#{todo['number']}(?![\w])"
+            bare = rf"(?<![\w/#.-])#{todo['number']}(?![\w])"
+            if re.search(full, body) or re.search(bare, body):
                 return todo["ref"]
         elif todo["ref"] in body:
             return todo["ref"]
@@ -123,36 +128,46 @@ def _todo_for_comment(body: str, todos: list[dict]) -> str:
 
 
 
-def gh_issue_closed(repo: str, number: int) -> Optional[bool]:
-    """True/False per ``gh issue view``; None when gh is missing or the call fails."""
-    gh = shutil.which("gh")
-    if gh is None:
-        return None
+def gh_issue_closed(repo: str, number: int, *, profile_home: Optional[str] = None) -> Optional[bool]:
+    """True/False per ``gh issue view`` run as ``profile_home``'s login (``kanban_pr_acceptance``
+    rules); None when gh is missing or the call fails."""
+    from hermes_cli.kanban_pr_acceptance import _gh_env
+
     try:
-        proc = subprocess.run([gh, "issue", "view", str(number), "-R", repo, "--json", "state",
-                               "-q", ".state"], capture_output=True, text=True,
-                              encoding="utf-8", errors="replace", timeout=15, check=False)
-    except (OSError, subprocess.SubprocessError):
+        proc = subprocess.run(["gh", "issue", "view", str(number), "-R", repo, "--json", "state",
+                               "-q", ".state"], stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=15,
+                              check=False, env=_gh_env(profile_home))
+    except (OSError, subprocess.SubprocessError):  # FileNotFoundError: gh is not installed
         return None
     if proc.returncode != 0:
         return None
     return proc.stdout.strip().upper() == "CLOSED"
 
 
-def _closed_todos(todos: list[dict], *, ask_github: bool) -> Optional[int]:
-    """Ticked checklist lines plus GitHub to-dos closed per gh. Without ``ask_github`` (the
-    terminal transition, which runs inside the dispatcher and the gateway) any GitHub to-do
-    leaves the count null for ``outcomes --refresh`` to fill."""
-    closed = 0
+def todo_states(todos: list[dict], known: Optional[dict] = None, *,
+                profile_home: Optional[str] = None, ask_github: bool = False) -> dict[str, Optional[bool]]:
+    """Per to-do completion evidence: a ticked checklist line, or a GitHub issue closed per gh.
+    Without ``ask_github`` (the terminal transition, which runs inside the dispatcher and the
+    gateway) an issue not already known stays None for ``outcomes --refresh`` to fill."""
+    known = known or {}
+    states: dict[str, Optional[bool]] = {}
     for todo in todos:
-        if "number" in todo:
-            state = gh_issue_closed(todo["repo"], todo["number"]) if ask_github else None
-            if state is None:
-                return None
-            closed += int(state)
+        if "number" not in todo:
+            states[todo["ref"]] = bool(todo["checked"])
+        elif known.get(todo["ref"]) is not None:
+            states[todo["ref"]] = known[todo["ref"]]
         else:
-            closed += int(bool(todo["checked"]))
-    return closed
+            states[todo["ref"]] = (gh_issue_closed(todo["repo"], todo["number"],
+                                                   profile_home=profile_home)
+                                   if ask_github else None)
+    return states
+
+
+def _closed_count(states: dict[str, Optional[bool]]) -> Optional[int]:
+    if any(v is None for v in states.values()):
+        return None
+    return sum(1 for v in states.values() if v)
 
 
 def _rows(conn: sqlite3.Connection, sql: str, task_id: str) -> list[sqlite3.Row]:
@@ -255,10 +270,11 @@ def compute_outcome(conn: sqlite3.Connection, task_id: str, *,
         # The creation body is gone: count what the session did not add itself.
         planned = max(0, planned - added)
     worker_runs = _worker_runs(comments, todos)
+    states = todo_states(todos)
     gate_failures, dev_red = _gate_counts(events)
     return {
         "task_id": task_id, "assignee": task["assignee"], "kind": card_kind(task["title"]),
-        "status": task["status"], "planned_todos": planned, "closed_todos": _closed_todos(todos, ask_github=False),
+        "status": task["status"], "planned_todos": planned, "closed_todos": _closed_count(states),
         "added_todos": added, "worker_runs": worker_runs,
         "worker_run_count": sum(len(v) for v in worker_runs.values()),
         "escalations": sum(1 for c in comments if ESCALATE_MARK in c["body"].lower()),
@@ -266,14 +282,14 @@ def compute_outcome(conn: sqlite3.Connection, task_id: str, *,
         "elapsed_seconds": _elapsed(task, runs, now),
         "owner_answers": sum(1 for c in comments if c["author"] in OWNER_NAMES),
         "main_session_touches": _main_session_touches(task, comments, runs, now),
-        "dev_red_runs": dev_red, "recorded_at": now,
+        "dev_red_runs": dev_red, "recorded_at": now, "todo_states": states,
     }
 
 
 _COLUMNS = ("task_id", "assignee", "kind", "status", "planned_todos", "closed_todos",
             "added_todos", "worker_runs", "worker_run_count", "escalations", "turns_used",
             "gate_failures", "elapsed_seconds", "owner_answers", "main_session_touches",
-            "dev_red_runs", "recorded_at")
+            "dev_red_runs", "recorded_at", "todo_states")
 
 
 def write_outcome(conn: sqlite3.Connection, task_id: str) -> Optional[dict[str, Any]]:
@@ -282,7 +298,8 @@ def write_outcome(conn: sqlite3.Connection, task_id: str) -> Optional[dict[str, 
     row = compute_outcome(conn, task_id)
     if row is None:
         return None
-    values = [json.dumps(row[c]) if c == "worker_runs" else row[c] for c in _COLUMNS]
+    values = [json.dumps(row[c]) if c in ("worker_runs", "todo_states") else row[c]
+              for c in _COLUMNS]
     with write_txn(conn):
         conn.execute(
             f"INSERT OR REPLACE INTO work_card_outcomes ({', '.join(_COLUMNS)}) "
@@ -300,22 +317,36 @@ def record_terminal_outcome(conn: sqlite3.Connection, task_id: str) -> None:
 
 
 
+def _profile_home(assignee: Optional[str]) -> tuple[bool, Optional[str]]:
+    """``(resolvable, home)``: gh reads as the assignee's own login, never the ambient one."""
+    from hermes_cli.kanban_pr_acceptance import _GateAuthError, _assignee_profile_home
+
+    try:
+        return True, _assignee_profile_home(assignee)
+    except _GateAuthError:
+        return False, None
+
+
 def refresh_closed(conn: sqlite3.Connection) -> tuple[int, int]:
-    """Fill ``closed_todos`` left null at write time by asking gh; ``(filled, still_null)``."""
+    """Fill GitHub to-do states left unknown at write time by asking gh; ``(filled, still_null)``."""
     from hermes_cli.kanban_db import write_txn
 
     filled = pending = 0
-    for row in conn.execute("SELECT o.task_id, t.body FROM work_card_outcomes o "
-                            "JOIN tasks t ON t.id = o.task_id "
+    for row in conn.execute("SELECT o.task_id, o.assignee, o.todo_states, t.body "
+                            "FROM work_card_outcomes o JOIN tasks t ON t.id = o.task_id "
                             "WHERE o.closed_todos IS NULL").fetchall():
-        closed = _closed_todos(parse_todos(row["body"]), ask_github=True)
+        resolvable, home = _profile_home(row["assignee"])
+        known = json.loads(row["todo_states"] or "{}")
+        states = todo_states(parse_todos(row["body"]), known, profile_home=home,
+                             ask_github=resolvable)
+        closed = _closed_count(states)
+        with write_txn(conn):
+            conn.execute("UPDATE work_card_outcomes SET closed_todos = ?, todo_states = ? "
+                         "WHERE task_id = ?", (closed, json.dumps(states), row["task_id"]))
         if closed is None:
             pending += 1
-            continue
-        with write_txn(conn):
-            conn.execute("UPDATE work_card_outcomes SET closed_todos = ? WHERE task_id = ?",
-                         (closed, row["task_id"]))
-        filled += 1
+        else:
+            filled += 1
     return filled, pending
 
 
@@ -335,19 +366,21 @@ def list_outcomes(conn: sqlite3.Connection, *, agent: Optional[str] = None,
     for r in rows:
         item = dict(r)
         item["worker_runs"] = json.loads(item["worker_runs"] or "{}")
+        item["todo_states"] = json.loads(item["todo_states"] or "{}")
         out.append(item)
     return out
 
 
 def _first_try(rows: list[dict]) -> dict[str, list[int]]:
-    """Per runner ``[to-dos done in one worker run, to-dos it took first]``."""
+    """Per runner ``[to-dos done in one worker run, to-dos it took first]``. Done needs the
+    to-do's own completion evidence (``todo_states``); a single recorded run alone is not."""
     tally: dict[str, list[int]] = {}
     for row in rows:
         for todo, runs in row["worker_runs"].items():
             if todo == CARD_SCOPE or not runs:
                 continue
             counts = tally.setdefault(runs[0]["runner"], [0, 0])
-            counts[0] += int(len(runs) == 1)
+            counts[0] += int(len(runs) == 1 and row["todo_states"].get(todo) is True)
             counts[1] += 1
     return tally
 

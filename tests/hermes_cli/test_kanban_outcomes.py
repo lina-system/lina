@@ -38,6 +38,8 @@ def kanban_home(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_PROFILE", "lina")
     monkeypatch.delenv("HERMES_SESSION_ID", raising=False)
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    (home / "profiles" / "lina").mkdir(parents=True)
+    (home / "profiles" / "lina" / "config.yaml").write_text("{}\n")
     kb._INITIALIZED_PATHS.clear()
     kb.init_db()
     return home
@@ -48,7 +50,7 @@ def gh_calls(monkeypatch):
     calls = []
     closed = {("lina-system/lina", 5): True, ("lina-system/lina", 6): False}
 
-    def fake(repo, n):
+    def fake(repo, n, **_kw):
         calls.append((repo, n))
         return closed.get((repo, n))
 
@@ -162,7 +164,7 @@ def test_refresh_fills_github_todos_later(kanban_home, gh_calls):
 
 
 def test_refresh_leaves_null_when_gh_is_unavailable(kanban_home, monkeypatch):
-    monkeypatch.setattr(ko, "gh_issue_closed", lambda repo, n: None)
+    monkeypatch.setattr(ko, "gh_issue_closed", lambda repo, n, **_kw: None)
     with kbc.connect_closing() as conn:
         tid, run_id, _now = _claimed_card(conn, "fix: x", "## To-dos\n- lina-system/lina#9\n")
         assert kb.complete_task(conn, tid, result="ok", expected_run_id=run_id)
@@ -220,14 +222,14 @@ def test_outcomes_command_filters_and_summarizes(kanban_home, gh_calls):
     assert feat["summary"] == [{
         "agent": "lina", "kind": "feat", "cards": 1, "done": 1,
         "first_try": {"omo": {"first_try": 0, "todos": 1},
-                      "quick-issue": {"first_try": 1, "todos": 1}},
+                      "quick-issue": {"first_try": 0, "todos": 1}},
         "median_hours": 1.0, "mean_gate_failures": 2,
     }]
     assert json.loads(kc.run_slash("outcomes --agent nobody --json")) == {"rows": [], "summary": []}
     assert [r["task_id"] for r in json.loads(kc.run_slash("outcomes --last 1 --json"))["rows"]] == [other]
     text = kc.run_slash("outcomes")
     assert "lina / docs: 1 cards, done 0/1" in text
-    assert "lina / feat: 1 cards, done 1/1, first-try omo 0/1 quick-issue 1/1, median 1.0h" in text
+    assert "lina / feat: 1 cards, done 1/1, first-try omo 0/1 quick-issue 0/1, median 1.0h" in text
 
 
 def test_old_board_opens_unchanged_and_gains_the_table(tmp_path, monkeypatch):
@@ -241,3 +243,64 @@ def test_old_board_opens_unchanged_and_gains_the_table(tmp_path, monkeypatch):
     with kbc.connect_closing(db) as conn:
         assert kb.get_task(conn, "t_old").title == "old"
         assert conn.execute("SELECT COUNT(*) FROM work_card_outcomes").fetchone()[0] == 0
+
+
+def _card_with_comments(conn, title, body, comments):
+    tid, run_id, now = _claimed_card(conn, title, body)
+    for text in comments:
+        _comment(conn, tid, "lina", text, now - 1800)
+    conn.commit()
+    assert kb.complete_task(conn, tid, result="ok", expected_run_id=run_id)
+    return tid
+
+
+def test_first_try_needs_completion_evidence(kanban_home, gh_calls):
+    body = "## To-dos\n- [x] write docs\n- [ ] record a demo\n- lina-system/lina#5\n"
+    with kbc.connect_closing() as conn:
+        _card_with_comments(conn, "feat: evidence", body, [
+            "OT-SIO1103011111 on write docs", "OT-SIO1103022222 on record a demo",
+            "OT-SIO1103033333 on lina-system/lina#5"])
+    before = json.loads(kc.run_slash("outcomes --json"))["summary"][0]["first_try"]
+    after = json.loads(kc.run_slash("outcomes --refresh --json"))["summary"][0]["first_try"]
+    assert before == {"omo": {"first_try": 1, "todos": 3}}
+    assert after == {"omo": {"first_try": 2, "todos": 3}}
+
+
+def test_worker_runs_need_a_complete_issue_reference(kanban_home):
+    body = "## To-dos\n- acme/repo#5\n- acme/repo#50\n- acme/repo#12\n- acme/repo#123\n"
+    with kbc.connect_closing() as conn:
+        tid = _card_with_comments(conn, "feat: refs", body, [
+            "OT-SIO1103044444 for acme/repo#50", "OT-SIO1103055555 for acme/repo#123",
+            "OT-SIO1103066666 picks up #12.", "OT-SIO1103077777 on other/repo#5"])
+        runs = json.loads(_outcome_rows(conn, tid)[0]["worker_runs"])
+    assert {todo: [r["id"] for r in rs] for todo, rs in runs.items()} == {
+        "acme/repo#50": ["OT-SIO1103044444"], "acme/repo#123": ["OT-SIO1103055555"],
+        "acme/repo#12": ["OT-SIO1103066666"], ko.CARD_SCOPE: ["OT-SIO1103077777"]}
+
+
+def test_refresh_runs_gh_as_the_assignee_profile(kanban_home, monkeypatch):
+    seen = []
+
+    class Done:
+        returncode, stdout = 0, "CLOSED\n"
+
+    def fake_run(command, **kw):
+        seen.append((command, kw.get("env")))
+        return Done()
+
+    monkeypatch.setattr(ko.subprocess, "run", fake_run)
+    with kbc.connect_closing() as conn:
+        _card_with_comments(conn, "feat: login", "## To-dos\n- acme/repo#7\n", [])
+    assert json.loads(kc.run_slash("outcomes --refresh --json"))["refreshed"] == {
+        "filled": 1, "still_null": 0}
+    command, env = seen[0]
+    assert command[:3] == ["gh", "issue", "view"]
+    assert env["GH_CONFIG_DIR"] == str(kanban_home / "profiles" / "lina" / "gh")
+
+
+def test_gh_missing_leaves_the_state_unknown(kanban_home, monkeypatch):
+    def no_gh(*_a, **_kw):
+        raise FileNotFoundError("gh")
+
+    monkeypatch.setattr(ko.subprocess, "run", no_gh)
+    assert ko.gh_issue_closed("acme/repo", 7) is None
