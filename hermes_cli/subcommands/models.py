@@ -19,11 +19,15 @@ def _view(args) -> int:
 def _takeover(args) -> int:
     from pathlib import Path
 
-    from hermes_cli import lina_ocx_takeover
+    from hermes_cli import lina_ocx_takeover, lina_ocx_takeover_rehearse, lina_ocx_takeover_switch
     source = Path(args.source)
     verbs = {
         "plan": lambda: lina_ocx_takeover.plan(source, argv=args.argv, job=args.job, as_json=args.json),
         "copy": lambda: lina_ocx_takeover.run_copy(source, replace=args.replace),
+        "rehearse": lambda: lina_ocx_takeover_rehearse.rehearse(
+            source, source_accounts=Path(args.source_accounts) if args.source_accounts else None,
+            expect=args.expect_accounts),
+        "switch": lambda: lina_ocx_takeover_switch.switch(source, job=args.job, argv=args.argv),
     }
     return verbs[args.takeover_action]()
 
@@ -81,17 +85,21 @@ def build_models_parser(subparsers) -> None:
 
 
 def _build_takeover_parser(sub) -> None:
-    takeover = sub.add_parser("takeover", help="Take over a running OCX proxy: plan, copy")
+    takeover = sub.add_parser("takeover", help="Take over a running OCX proxy: plan, copy, rehearse, switch")
     verbs = takeover.add_subparsers(dest="takeover_action", required=True)
     texts = {"plan": "Read only: what is copied and skipped, the listeners, the old job, keychain names",
              "copy": "Copy the old data dir into $LINA_HOME/ocx (SQLite through the backup API) with a manifest",
-}
+             "rehearse": "Start the pinned OCX on the copy on a spare loopback port, credit refresh off",
+             "switch": "Quiet window: stop the old job, copy again, serve its listeners from LINA, roll back on "
+                       "failure"}
     for name, text in texts.items():
         verb = verbs.add_parser(name, help=text)
         verb.add_argument("--from", dest="source", required=True, help="The old proxy's OPENCODEX_HOME")
-        if name == "plan":
+        if name in ("plan", "switch"):
             verb.add_argument("--argv", help="The running proxy's command line (its --port wins over config)")
             verb.add_argument("--job", help="The old launchd label / systemd unit (default: OCX's own)")
     verbs.choices["plan"].add_argument("--json", action="store_true", help="The plan as JSON")
     verbs.choices["copy"].add_argument("--replace", action="store_true",
                                        help="Move an existing LINA copy aside (never deleted) and copy again")
+    verbs.choices["rehearse"].add_argument("--source-accounts", help="`ocx account list --json` of the old proxy")
+    verbs.choices["rehearse"].add_argument("--expect-accounts", type=int, help="Pooled account count to expect")
