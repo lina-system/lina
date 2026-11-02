@@ -139,18 +139,20 @@ def gh_issue_closed(repo: str, number: int) -> Optional[bool]:
     return proc.stdout.strip().upper() == "CLOSED"
 
 
-def _closed_todos(todos: list[dict]) -> Optional[int]:
+def _closed_todos(todos: list[dict], *, ask_github: bool) -> Optional[int]:
+    """Ticked checklist lines plus GitHub to-dos closed per gh. Without ``ask_github`` (the
+    terminal transition, which runs inside the dispatcher and the gateway) any GitHub to-do
+    leaves the count null for ``outcomes --refresh`` to fill."""
     closed = 0
     for todo in todos:
         if "number" in todo:
-            state = gh_issue_closed(todo["repo"], todo["number"])
+            state = gh_issue_closed(todo["repo"], todo["number"]) if ask_github else None
             if state is None:
                 return None
             closed += int(state)
         else:
             closed += int(bool(todo["checked"]))
     return closed
-
 
 
 def _rows(conn: sqlite3.Connection, sql: str, task_id: str) -> list[sqlite3.Row]:
@@ -256,7 +258,7 @@ def compute_outcome(conn: sqlite3.Connection, task_id: str, *,
     gate_failures, dev_red = _gate_counts(events)
     return {
         "task_id": task_id, "assignee": task["assignee"], "kind": card_kind(task["title"]),
-        "status": task["status"], "planned_todos": planned, "closed_todos": _closed_todos(todos),
+        "status": task["status"], "planned_todos": planned, "closed_todos": _closed_todos(todos, ask_github=False),
         "added_todos": added, "worker_runs": worker_runs,
         "worker_run_count": sum(len(v) for v in worker_runs.values()),
         "escalations": sum(1 for c in comments if ESCALATE_MARK in c["body"].lower()),
@@ -296,6 +298,25 @@ def record_terminal_outcome(conn: sqlite3.Connection, task_id: str) -> None:
     except Exception:  # health: allow BLE001 -- the transition already committed; log, never raise
         _log.warning("kanban outcomes: could not record the outcome of %s", task_id, exc_info=True)
 
+
+
+def refresh_closed(conn: sqlite3.Connection) -> tuple[int, int]:
+    """Fill ``closed_todos`` left null at write time by asking gh; ``(filled, still_null)``."""
+    from hermes_cli.kanban_db import write_txn
+
+    filled = pending = 0
+    for row in conn.execute("SELECT o.task_id, t.body FROM work_card_outcomes o "
+                            "JOIN tasks t ON t.id = o.task_id "
+                            "WHERE o.closed_todos IS NULL").fetchall():
+        closed = _closed_todos(parse_todos(row["body"]), ask_github=True)
+        if closed is None:
+            pending += 1
+            continue
+        with write_txn(conn):
+            conn.execute("UPDATE work_card_outcomes SET closed_todos = ? WHERE task_id = ?",
+                         (closed, row["task_id"]))
+        filled += 1
+    return filled, pending
 
 
 def list_outcomes(conn: sqlite3.Connection, *, agent: Optional[str] = None,
@@ -374,12 +395,18 @@ def cmd_outcomes(args) -> int:
     from hermes_cli.kanban_db_connect import connect_closing
 
     with connect_closing() as conn:
+        refreshed = refresh_closed(conn) if getattr(args, "refresh", False) else None
         rows = list_outcomes(conn, agent=getattr(args, "agent", None),
                              kind=getattr(args, "kind", None), last=getattr(args, "last", 20))
     summary = summarize(rows)
     if getattr(args, "json", False):
-        print(json.dumps({"rows": rows, "summary": summary}, indent=2, ensure_ascii=False))
+        out = {"rows": rows, "summary": summary}
+        if refreshed is not None:
+            out["refreshed"] = {"filled": refreshed[0], "still_null": refreshed[1]}
+        print(json.dumps(out, indent=2, ensure_ascii=False))
         return 0
+    if refreshed is not None:
+        print(f"refreshed closed to-dos: {refreshed[0]} filled, {refreshed[1]} still unknown")
     if not rows:
         print("(no work card outcomes recorded)")
         return 0

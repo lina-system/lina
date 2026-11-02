@@ -13,6 +13,7 @@ import pytest
 from hermes_cli import kanban as kc
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
+from hermes_cli import kanban_db_dispatch as kbd
 from hermes_cli import kanban_outcomes as ko
 
 DONE_BODY = """## Goal
@@ -39,9 +40,20 @@ def kanban_home(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     kb._INITIALIZED_PATHS.clear()
     kb.init_db()
-    closed = {("lina-system/lina", 5): True, ("lina-system/lina", 6): False}
-    monkeypatch.setattr(ko, "gh_issue_closed", lambda repo, n: closed[(repo, n)])
     return home
+
+
+@pytest.fixture
+def gh_calls(monkeypatch):
+    calls = []
+    closed = {("lina-system/lina", 5): True, ("lina-system/lina", 6): False}
+
+    def fake(repo, n):
+        calls.append((repo, n))
+        return closed.get((repo, n))
+
+    monkeypatch.setattr(ko, "gh_issue_closed", fake)
+    return calls
 
 
 def _comment(conn, tid, author, body, at):
@@ -91,7 +103,7 @@ def _seed_done_card(conn):
     return tid, run_id, now
 
 
-def test_done_card_gets_one_row_from_board_records(kanban_home):
+def test_done_card_gets_one_row_from_board_records(kanban_home, gh_calls):
     with kbc.connect_closing() as conn:
         tid, run_id, _now = _seed_done_card(conn)
         assert kb.complete_task(conn, tid, result="shipped", metadata={"turns_used": 7},
@@ -104,11 +116,12 @@ def test_done_card_gets_one_row_from_board_records(kanban_home):
                                 "gate_failures", "owner_answers", "main_session_touches",
                                 "dev_red_runs")} == {
         "assignee": "lina", "kind": "feat", "status": "done", "planned_todos": 4,
-        "closed_todos": 2, "added_todos": 1, "worker_run_count": 3, "escalations": 1,
+        "closed_todos": None, "added_todos": 1, "worker_run_count": 3, "escalations": 1,
         "turns_used": 7, "gate_failures": 2, "owner_answers": 1, "main_session_touches": 1,
         "dev_red_runs": 1,
     }
     assert 3600 <= row["elapsed_seconds"] <= 3605
+    assert gh_calls == []  # the transition never asks GitHub
     assert json.loads(row["worker_runs"]) == {
         "lina-system/lina#5": [{"runner": "omo", "id": "OT-SIO1103015630"},
                                {"runner": "omo", "id": "OT-SIO1103020000"}],
@@ -134,15 +147,46 @@ def test_blocked_card_gets_one_row_and_a_later_done_replaces_it(kanban_home):
     assert [r["status"] for r in rows] == ["done"]
 
 
-def test_closed_is_null_without_gh_and_cards_outside_goal_mode_get_no_row(kanban_home, monkeypatch):
+def test_refresh_fills_github_todos_later(kanban_home, gh_calls):
+    with kbc.connect_closing() as conn:
+        tid, run_id, _now = _claimed_card(conn, "feat: x", DONE_BODY)
+        assert kb.complete_task(conn, tid, result="ok", expected_run_id=run_id)
+        plain = kb.create_task(conn, title="feat: plain card", body=DONE_BODY, assignee="lina")
+        assert kb.complete_task(conn, plain, result="ok")
+        assert _outcome_rows(conn, plain) == []
+    assert gh_calls == []
+    data = json.loads(kc.run_slash("outcomes --refresh --json"))
+    assert data["refreshed"] == {"filled": 1, "still_null": 0}
+    assert data["rows"][0]["closed_todos"] == 2
+    assert sorted(gh_calls) == [("lina-system/lina", 5), ("lina-system/lina", 6)]
+
+
+def test_refresh_leaves_null_when_gh_is_unavailable(kanban_home, monkeypatch):
     monkeypatch.setattr(ko, "gh_issue_closed", lambda repo, n: None)
     with kbc.connect_closing() as conn:
         tid, run_id, _now = _claimed_card(conn, "fix: x", "## To-dos\n- lina-system/lina#9\n")
-        plain = kb.create_task(conn, title="feat: plain card", body=DONE_BODY, assignee="lina")
         assert kb.complete_task(conn, tid, result="ok", expected_run_id=run_id)
-        assert kb.complete_task(conn, plain, result="ok")
-        assert _outcome_rows(conn, tid)[0]["closed_todos"] is None
-        assert _outcome_rows(conn, plain) == []
+    data = json.loads(kc.run_slash("outcomes --refresh --json"))
+    assert data["refreshed"] == {"filled": 0, "still_null": 1}
+    assert data["rows"][0]["closed_todos"] is None
+
+
+def test_breaker_block_writes_the_row(kanban_home, monkeypatch):
+    from hermes_cli import profiles
+
+    monkeypatch.setattr(profiles, "profile_exists", lambda name: name == "lina")
+
+    def spawn_fails(*_a, **_kw):
+        raise RuntimeError("spawn exploded")
+
+    with kbc.connect_closing() as conn:
+        tid = kb.create_task(conn, title="feat: breaker", body="## To-dos\n- [x] a\n- [ ] b\n",
+                             assignee="lina", goal_mode=True)
+        result = kbd.dispatch_once(conn, spawn_fn=spawn_fails, failure_limit=1)
+        assert result.auto_blocked == [tid]
+        assert kb.get_task(conn, tid).status == "blocked"
+        rows = _outcome_rows(conn, tid)
+    assert [(r["status"], r["planned_todos"], r["closed_todos"]) for r in rows] == [("blocked", 2, 1)]
 
 
 def test_failing_writer_never_blocks_the_transition(kanban_home, monkeypatch, caplog):
@@ -162,7 +206,7 @@ def test_failing_writer_never_blocks_the_transition(kanban_home, monkeypatch, ca
     assert "could not record the outcome" in caplog.text
 
 
-def test_outcomes_command_filters_and_summarizes(kanban_home):
+def test_outcomes_command_filters_and_summarizes(kanban_home, gh_calls):
     with kbc.connect_closing() as conn:
         tid, run_id, _now = _seed_done_card(conn)
         assert kb.complete_task(conn, tid, result="shipped", expected_run_id=run_id)
