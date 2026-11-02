@@ -219,14 +219,14 @@ def _gate_once(tid):
 
 
 def test_card_gate_cannot_read_host_provider_credentials(kanban_home, workspace, monkeypatch):
-    monkeypatch.setenv("OPENAI_API_KEY", "sk-gate-sentinel-108")
+    monkeypatch.setenv("OPENAI_API_KEY", "SENTINEL_NOT_A_KEY_108")
     tid, _ = _card(workspace, ['env | grep -c . ; env | grep -F "sk-gate"; echo "key=${OPENAI_API_KEY:-unset}"; exit 1'])
 
     failure, events = _gate_once(tid)
 
     assert failure is not None and "key=unset" in failure.output
-    assert "sk-gate-sentinel-108" not in failure.output
-    assert "sk-gate-sentinel-108" not in json.dumps(events)
+    assert "SENTINEL_NOT_A_KEY_108" not in failure.output
+    assert "SENTINEL_NOT_A_KEY_108" not in json.dumps(events)
 
 
 def test_card_gate_runs_in_local_backend_in_card_workspace(kanban_home, workspace):
