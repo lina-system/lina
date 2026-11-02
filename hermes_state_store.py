@@ -367,25 +367,27 @@ class MessageStore:
             cached = TEXT_CACHE.get(self.agent_id, uid)
             if cached is not None and cached.values == values:
                 return uid
+        text = _plain_text(values[0])
+        row = (SOURCE_AGENT, self.agent_id, session_id, seq_in_session, role, text, _plain_text(tool_name),
+               _plain_text(tool_call_id), _jsonb_tool_calls(values[1]), timestamp,
+               json.dumps(_native(values, meta, digest)), _sha256(text or ""))
+        insert = ("INSERT INTO memory.messages (uid, source, agent_id, session_id, seq_in_session, role, content,"
+                  " tool_name, tool_call_id, tool_calls, ts, native, content_sha256)"
+                  " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, to_timestamp(%s), %s::jsonb, %s)"
+                  " ON CONFLICT (uid) DO NOTHING RETURNING uid")
         with self._writer_cursor() as cur:
-            cur.execute("SELECT uid, native->>'payload_sha256' FROM memory.messages WHERE uid = ANY(%s)",
-                        ([base, versioned],))
-            found = dict(cur.fetchall())
-            if found.get(base) == digest:
-                uid = base
-            elif versioned in found:
-                uid = versioned
-            else:
-                uid = versioned if base in found else base
-                text = _plain_text(values[0])
-                cur.execute(
-                    "INSERT INTO memory.messages (uid, source, agent_id, session_id, seq_in_session, role, content,"
-                    " tool_name, tool_call_id, tool_calls, ts, native, content_sha256)"
-                    " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, to_timestamp(%s), %s::jsonb, %s)"
-                    " ON CONFLICT (uid) DO NOTHING",
-                    (uid, SOURCE_AGENT, self.agent_id, session_id, seq_in_session, role, text,
-                     _plain_text(tool_name), _plain_text(tool_call_id), _jsonb_tool_calls(values[1]),
-                     timestamp, json.dumps(_native(values, meta, digest)), _sha256(text or "")))
+            # A new message (the usual case) is one round trip; a known one shows which version it is.
+            cur.execute(insert, (base, *row))
+            uid = base if cur.fetchone() else None
+            if uid is None:
+                cur.execute("SELECT native->>'payload_sha256' FROM memory.messages WHERE uid = %s", (base,))
+                stored = cur.fetchone()
+                if stored is not None and stored[0] == digest:
+                    uid = base
+                else:
+                    cur.execute(insert, (versioned, *row))
+                    cur.fetchall()
+                    uid = versioned
         TEXT_CACHE.put(self.agent_id, TextRow(uid, values))
         return uid
 
