@@ -263,6 +263,7 @@ from tests._fixtures.live_system_guard import (
     _LIVE_SYSTEM_GUARD_BYPASS_MARK,
     _live_system_guard,
 )
+from tests._fixtures.memory_store import PROCESS_STORE, _memory_store, memory_store_sql, skip_if_store_unavailable
 from tests._fixtures.model_peer import model_peer  # fixture registers here
 from tests._fixtures.platform_gating import _platforms_gate_reason, _reject_contradictory_platform_marks
 
@@ -1192,6 +1193,14 @@ def require_mcp_2_sdk():
 def pytest_unconfigure(config):
     _reap_session_hermes_processes(config)
     _remove_relocated_basetemp(config)
+    PROCESS_STORE.close()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    skip_if_store_unavailable(item, report)
+    return report
 
 
 @pytest.hookimpl(trylast=True)  # after _pytest.tmpdir has built config._tmp_path_factory
