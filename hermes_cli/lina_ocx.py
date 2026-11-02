@@ -17,6 +17,7 @@ another OCX on this account, so ``own_proxy_running`` is asked before any client
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -235,6 +236,17 @@ def configured_port(root: Path | None = None) -> int:
         return int(load_config_readonly()["ocx"]["port"])
     finally:
         reset_hermes_home_override(token)
+
+
+@contextlib.contextmanager
+def recovering(recover: Callable[[], object]):
+    """For the steps after a serving proxy was stopped: when the block raises, *recover* brings a proxy back before
+    the exception goes on, so no failure leaves nothing serving."""
+    try:
+        yield
+    except BaseException:
+        recover()
+        raise
 
 
 def write_start_port(data: Path, port: int) -> None:

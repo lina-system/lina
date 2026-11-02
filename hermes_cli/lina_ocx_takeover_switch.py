@@ -155,6 +155,25 @@ def _back(root: Path, job: dict, previous_port: int, out, *, lina_started: bool)
     return 1
 
 
+def _take_over(root: Path, source: Path, version: str, listeners: list[takeover.Listener], started: list[bool],
+               out) -> bool:
+    """Everything after the old job stopped; False (or an exception) sends the caller back to the old job.
+    *started* gets an entry once LINA's service may be loaded, so the way back stops it."""
+    main = listeners[0]
+    if not _wait(lambda: not any(_answers(item) for item in listeners), PORTS_FREE_WAIT_S):
+        out("switch: the old listeners still answer after stopping the job")
+        return False
+    if takeover.copy(source, root, replace=True, out=out) != 0:
+        return False
+    _set_port(root, main.port)
+    started.append(True)
+    loaded = start_lina(root, version, main.port)
+    if loaded.returncode != 0:
+        out(f"switch: LINA's OCX service did not load: {(loaded.stderr or loaded.stdout).strip()}")
+        return False
+    return healthy(listeners, lina_ocx.data_dir(root), _token(source), out)
+
+
 def _preflight(root: Path, plan: dict, out) -> str | None:
     version = lina_ocx.current_version(root)
     if version is None:
@@ -179,21 +198,13 @@ def switch(source: Path, job: str | None = None, argv: str | None = None, root: 
         return 1
     old, previous_port = plan["old_job"], lina_ocx.configured_port(root)
     listeners = [takeover.Listener(**item) for item in plan["listeners"]]
-    main = listeners[0]
     stop_old(old)
     out(f"✓ stopped the old job {old['name']}")
-    if not _wait(lambda: not any(_answers(item) for item in listeners), PORTS_FREE_WAIT_S):
-        out("switch: the old listeners still answer after stopping the job")
-        return _back(root, old, previous_port, out, lina_started=False)
-    if takeover.copy(source, root, replace=True, out=out) != 0:
-        return _back(root, old, previous_port, out, lina_started=False)
-    _set_port(root, main.port)
-    loaded = start_lina(root, version, main.port)
-    if loaded.returncode != 0:
-        out(f"switch: LINA's OCX service did not load: {(loaded.stderr or loaded.stdout).strip()}")
-        return _back(root, old, previous_port, out, lina_started=True)
-    if not healthy(listeners, lina_ocx.data_dir(root), _token(source), out):
-        return _back(root, old, previous_port, out, lina_started=True)
+    started: list[bool] = []
+    with lina_ocx.recovering(lambda: _back(root, old, previous_port, out, lina_started=bool(started))):
+        ok = _take_over(root, source, version, listeners, started, out)
+    if not ok:
+        return _back(root, old, previous_port, out, lina_started=bool(started))
     disable_old(old)
     lina_ocx_takeover_refresh.enable_job(root, out=out)
     out(f"✓ LINA's OCX {version} serves the old listeners; the old job {old['name']} is stopped and disabled")

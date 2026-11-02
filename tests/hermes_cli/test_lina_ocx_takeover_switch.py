@@ -191,6 +191,20 @@ def test_a_failed_health_check_stops_lina_reloads_the_old_job_and_exits_non_zero
 
 
 @pytest.mark.platforms("linux")
+def test_an_exception_after_the_old_job_stopped_reloads_it_before_it_goes_on(world, monkeypatch):
+    def disk_full(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(takeover, "copy", disk_full)
+    systemctl, (main_port, loopback_port) = world["systemctl"], world["ports"]
+    with pytest.raises(OSError):
+        switch.switch(world["source"], root=world["root"], out=lambda line: None)
+    assert systemctl.calls.index(["stop", "opencodex-proxy"]) < systemctl.calls.index(["start", "opencodex-proxy"])
+    assert _healthz_pid("127.0.0.2", main_port) == systemctl.old.pid == _healthz_pid("127.0.0.1", loopback_port)
+    assert lina_ocx.configured_port(world["root"]) == lina_ocx.DEFAULT_PORT
+
+
+@pytest.mark.platforms("linux")
 def test_switch_refuses_before_stopping_anything_when_the_old_job_cannot_be_reloaded(world, tmp_path):
     (tmp_path / "units" / "opencodex-proxy.service").unlink()
     assert switch.switch(world["source"], root=world["root"], out=lambda line: None) == 1
