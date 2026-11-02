@@ -27,7 +27,7 @@ class HermesOverlay:
 
 HERMES_OVERLAYS: dict[str, HermesOverlay] = {
     "moa": HermesOverlay(auth_type="virtual", base_url_override="moa://local"),
-    "openrouter": HermesOverlay(is_aggregator=True, base_url_env_var="OPENROUTER_BASE_URL"),
+    "openrouter": HermesOverlay(is_aggregator=True, extra_env_vars=("OPENROUTER_API_KEY",), base_url_env_var="OPENROUTER_BASE_URL"),
     "nous": HermesOverlay(auth_type="oauth_device_code", base_url_override="https://inference-api.nousresearch.com/v1"),
     "openai-codex": HermesOverlay(transport="codex_responses", auth_type="oauth_external",
                                   base_url_override="https://chatgpt.com/backend-api/codex"),
@@ -322,7 +322,9 @@ def _plugin_profile_pdef(name: str) -> Optional[ProviderDef]:
         prof = _profile(name)
     except Exception:
         return None
-    if prof is None:
+    # ``custom`` routes borrow the ocx profile's wire policy, not its identity: only a profile
+    # registered under this name (or alias) is a provider definition here.
+    if prof is None or (name != prof.name and name not in prof.aliases):
         return None
     env_vars = tuple(prof.env_vars or ())
     url_vars = tuple(v for v in env_vars if v.endswith(("_BASE_URL", "_URL")))

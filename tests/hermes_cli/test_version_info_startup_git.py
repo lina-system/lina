@@ -70,6 +70,17 @@ def test_provider_headers_run_no_git_until_read_and_stay_a_dict_for_overrides(tm
     home = tmp_path / "home"
     home.mkdir()
     (home / "config.yaml").write_text(f"plugins:\n  isolation: {isolation}\n", encoding="utf-8")
+    bundled = tmp_path / "bundled"
+    base_plugin = bundled / "header-base"
+    base_plugin.mkdir(parents=True)
+    base_plugin.joinpath("__init__.py").write_text(
+        "from providers import register_provider\n"
+        "from providers.base import ProviderProfile, LazyHeaders\n"
+        "from hermes_cli.version_info import hermes_user_agent\n"
+        "register_provider(ProviderProfile(name='header-base', default_headers="
+        "LazyHeaders({'User-Agent': lambda: hermes_user_agent('HermesAgent')})))\n",
+        encoding="utf-8",
+    )
     overrides = {
         "gmi-eu": "register_provider(dataclasses.replace(base, name='gmi-eu', aliases=()))\n",
         "gmi-acct": (
@@ -86,17 +97,21 @@ def test_provider_headers_run_no_git_until_read_and_stay_a_dict_for_overrides(tm
         ),
     }
     code = (
-        "import json, os, pathlib, hermes_cli.config, providers\n"
+        "import json, os, pathlib, providers\n"
+        f"providers._BUNDLED_PLUGINS_DIR = pathlib.Path({str(bundled)!r})\n"
+        "import hermes_cli.config\n"
         "providers.list_providers()\n"
         "log = os.environ['PATH'].split(os.pathsep)[0] + '/../git.log'\n"
         "before = open(log, encoding='utf-8-sig').read().splitlines() if os.path.exists(log) else []\n"
-        "ua = dict(providers.get_provider_profile('fireworks').default_headers)['User-Agent']\n"
+        "ua = dict(providers.get_provider_profile('header-base').default_headers)['User-Agent']\n"
         f"for name, body in {overrides!r}.items():\n"
         "    plugin = pathlib.Path(os.environ['HERMES_HOME'], 'plugins', 'model-providers', name)\n"
         "    plugin.mkdir(parents=True)\n"
         "    (plugin / '__init__.py').write_text('import dataclasses\\n'\n"
         "        'from providers import get_provider_profile, register_provider\\n'\n"
-        "        \"base = get_provider_profile('gmi')\\n\" + body)\n"
+        "        'from providers.base import ProviderProfile, LazyHeaders\\n'\n"
+        "        'from hermes_cli.version_info import hermes_user_agent\\n'\n"
+        "        \"base = ProviderProfile(name='header-base', default_headers=LazyHeaders({'User-Agent': lambda: hermes_user_agent('HermesAgent')}))\\n\" + body)\n"
         "providers._home_layer(force_stamp_check=True)\n"
         "from hermes_cli.version_info import get_version_info\n"
         "found = {n: providers.get_provider_profile(n) for n in ('gmi-eu', 'gmi-acct', 'gmi-tag')}\n"

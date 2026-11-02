@@ -1,18 +1,4 @@
-"""Golden wire snapshot: the exact request every registered provider is sent.
-
-Each cell builds one request through the production assembly path
-(``agent.turn_api_request.build_api_request``: cache decoration, sanitization, transport
-kwargs, Codex preflight, request middleware) for one provider x three reasoning settings,
-and compares it against ``tests/fixtures/provider_wire_snapshot.json``.
-
-A change to shared request code that alters what ANY provider receives fails here, naming
-the provider and the first diverging key, before a user on that provider finds out. A new
-provider fails ``test_snapshot_covers_every_provider`` until its wire is reviewed and recorded.
-
-Intentional wire changes: regenerate and review the JSON diff in the same PR::
-
-    HERMES_UPDATE_WIRE_SNAPSHOT=1 .venv/bin/python -m pytest tests/agent/transports/test_provider_wire_snapshot.py
-"""
+"""Shared request assembly for OCX routes and a profile-free compatible endpoint."""
 
 from __future__ import annotations
 
@@ -27,7 +13,6 @@ from unittest.mock import patch
 import pytest
 
 SNAPSHOT = Path(__file__).resolve().parents[2] / "fixtures" / "provider_wire_snapshot.json"
-UPDATE = os.environ.get("HERMES_UPDATE_WIRE_SNAPSHOT") == "1"
 
 REASONING = {
     "unset": None,
@@ -50,34 +35,7 @@ MESSAGES = [
     {"role": "user", "content": "thanks, now summarize"},
 ]
 
-# A representative model per provider (else the profile's first curated model).
-MODELS = {
-    "nous": "anthropic/claude-opus-5.5", "openai-codex": "gpt-5.5", "openai-api": "gpt-5.5",
-    "xai-oauth": "grok-4", "qwen-oauth": "qwen3-coder-plus", "lmstudio": "qwen/qwen3-8b",
-    "gemini": "gemini-3-pro", "kimi-coding": "kimi-k3", "kimi-coding-cn": "kimi-k2.5",
-    "stepfun": "step-3", "arcee": "trinity-large", "actual": "actual-1", "minimax": "MiniMax-M3",
-    "minimax-oauth": "MiniMax-M3", "minimax-cn": "MiniMax-M3", "anthropic": "claude-opus-5.5",
-    "alibaba": "qwen3.5-plus", "alibaba-coding-plan": "qwen3-coder-plus", "xai": "grok-4",
-    "ai-gateway": "anthropic/claude-opus-5.5", "opencode-zen": "claude-opus-5.5", "opencode-go": "kimi-k2.5",
-    "kilocode": "anthropic/claude-opus-5.5", "xiaomi": "mimo-v2-pro", "tencent-tokenhub": "hunyuan-t1",
-    "tencent-tokenplan": "hunyuan-t1", "ollama-cloud": "gpt-oss:120b",
-    "bedrock": "us.anthropic.claude-opus-5-5-v1:0", "vertex": "gemini-3-pro", "azure-foundry": "gpt-5.5",
-    "alibaba-cn": "qwen3.5-plus", "alibaba-token-plan": "qwen3.5-plus", "alibaba-token-plan-cn": "qwen3.5-plus",
-    "alibaba-coding-plan-cn": "qwen3-coder-plus", "deepinfra": "deepseek-ai/DeepSeek-V4",
-    "router": "openai/gpt-5.5", "openrouter": "anthropic/claude-opus-5.5", "custom": "my-local-model",
-}
-# Providers with a user-configured endpoint, or outside the auth registry.
-BASE_URLS = {
-    "vertex": "https://aiplatform.googleapis.com/v1/projects/p/locations/global/endpoints/openapi",
-    "azure-foundry": "https://example.openai.azure.com/openai/v1",
-    "openrouter": "https://openrouter.ai/api/v1",
-    "custom": "http://127.0.0.1:8080/v1",
-}
-
-# Agents built from a base_url alone (``AIAgent(base_url=..., api_key=...)``: ``run_agent.py``
-# main, the batch runner, library callers) carry ``provider=""``. Their request quirks are
-# detected from the host, so each host-detected quirk gets one base_url-only cell, plus generic
-# and local endpoints. Keys are ``base-url:<label>``; they sit outside the registry coverage check.
+# Profile-free callers still use the kept host-inference tables.
 BASE_URL_ONLY = {
     "base-url:openrouter": ("anthropic/claude-opus-5.5", "https://openrouter.ai/api/v1"),
     "base-url:nous": ("anthropic/claude-opus-5.5", "https://inference-api.nousresearch.com/v1"),
@@ -91,31 +49,12 @@ BASE_URL_ONLY = {
     "base-url:generic": ("my-model", "https://llm.example.com/v1"),
 }
 
+
 # Values that legitimately differ per run or per release; everything else compares exactly.
 _VOLATILE = (
     (re.compile(r"client=hermes-client-v[^\"]*"), "client=hermes-client-v<VERSION>"),
     (re.compile(r'"promptId": "[0-9a-f-]{36}"'), '"promptId": "<UUID>"'),
 )
-
-
-def _cells() -> list[tuple[str, str, str]]:
-    from hermes_cli.auth import PROVIDER_REGISTRY
-    from providers import get_provider_profile
-
-    seen: set[str] = set()
-    cells = []
-    for pid, cfg in PROVIDER_REGISTRY.items():
-        profile = get_provider_profile(pid)
-        name = profile.name if profile else pid
-        if name in seen or cfg.auth_type == "external_process":
-            continue
-        seen.add(name)
-        fallback = profile.fallback_models[0] if profile and profile.fallback_models else "test-model"
-        cells.append((name, MODELS.get(name, fallback), BASE_URLS.get(name) or cfg.inference_base_url))
-    for name in ("openrouter", "custom"):
-        if name not in seen:
-            cells.append((name, MODELS[name], BASE_URLS[name]))
-    return cells
 
 
 @pytest.fixture
@@ -170,54 +109,29 @@ def _wire(provider: str, model: str, base_url: str) -> dict[str, Any]:
     return out
 
 
-def _first_divergence(expected: Any, actual: Any, path: str = "") -> str:
-    if isinstance(expected, dict) and isinstance(actual, dict):
-        for key in sorted(set(expected) | set(actual)):
-            if key not in actual:
-                return f"{path}.{key}: missing (expected {json.dumps(expected[key])[:200]})"
-            if key not in expected:
-                return f"{path}.{key}: unexpected {json.dumps(actual[key])[:200]}"
-            if expected[key] != actual[key]:
-                return _first_divergence(expected[key], actual[key], f"{path}.{key}")
-    if isinstance(expected, list) and isinstance(actual, list) and len(expected) == len(actual):
-        for i, (e, a) in enumerate(zip(expected, actual)):
-            if e != a:
-                return _first_divergence(e, a, f"{path}[{i}]")
-    return f"{path}: expected {json.dumps(expected)[:200]} got {json.dumps(actual)[:200]}"
-
-
 def _load() -> dict[str, Any]:
     return json.loads(SNAPSHOT.read_text(encoding="utf-8")) if SNAPSHOT.exists() else {}
 
 
-CELLS = _cells()
-BASE_URL_CELLS = [(key, model, url) for key, (model, url) in BASE_URL_ONLY.items()]
+@pytest.mark.parametrize("provider", ["ocx", "custom", "custom:relay"])
+def test_provider_wire_matches_snapshot(offline, provider):
+    """The remaining profile owns reasoning and affinity; history and tools survive assembly."""
+    wire = _wire(provider, "relay-model", "http://127.0.0.1:10100/v1")
+    assert wire["api_mode"] == "chat_completions"
+    for label, effort in (("unset", "medium"), ("high", "high"), ("off", "none")):
+        request = wire[label]
+        assert request["model"] == "relay-model"
+        assert request["messages"] == MESSAGES
+        assert request["tools"] == TOOLS
+        assert request.get("reasoning_effort") == effort
+        assert request["extra_headers"] == {"session-id": "wire-snapshot"}
+        assert "extra_body" not in request
 
 
-def _check(key: str, actual: dict[str, Any], model: str, base_url: str) -> None:
-    if UPDATE:
-        golden = _load()
-        golden[key] = {"model": model, "base_url": base_url, **actual}
-        SNAPSHOT.write_text(json.dumps(dict(sorted(golden.items())), indent=1, sort_keys=True) + "\n",
-                            encoding="utf-8")
-        return
-    expected = _load().get(key)
-    assert expected is not None, f"{key} has no recorded wire; regenerate the snapshot (module docstring)"
-    expected = {k: v for k, v in expected.items() if k not in ("model", "base_url")}
-    assert actual == expected, f"{key} wire changed — {_first_divergence(expected, actual)}"
-
-
-@pytest.mark.parametrize("provider,model,base_url", CELLS, ids=[c[0] for c in CELLS])
-def test_provider_wire_matches_snapshot(offline, provider, model, base_url):
-    _check(provider, _wire(provider, model, base_url), model, base_url)
-
-
-@pytest.mark.parametrize("key,model,base_url", BASE_URL_CELLS, ids=[c[0] for c in BASE_URL_CELLS])
-def test_base_url_only_wire_matches_snapshot(offline, key, model, base_url):
-    _check(key, _wire("", model, base_url), model, base_url)
-
-
-def test_snapshot_covers_every_provider():
-    recorded, current = set(_load()), {c[0] for c in CELLS} | set(BASE_URL_ONLY)
-    assert current <= recorded, f"providers without a recorded wire: {sorted(current - recorded)}"
-    assert recorded <= current, f"snapshot entries for providers that no longer exist: {sorted(recorded - current)}"
+@pytest.mark.parametrize("key", BASE_URL_ONLY)
+def test_base_url_only_wire_matches_snapshot(offline, key):
+    model, url = BASE_URL_ONLY[key]
+    expected = _load()[key]
+    assert _wire("", model, url) == {
+        k: v for k, v in expected.items() if k not in ("model", "base_url")
+    }

@@ -295,8 +295,15 @@ def test_one_due_answer_walks_the_provider_ladder_once(portal, monkeypatch):
     from hermes_cli import auth
 
     as_local_desktop_backend(monkeypatch)
-    real, calls = auth.resolve_provider, []
-    monkeypatch.setattr(auth, "resolve_provider", lambda *a, **kw: (calls.append(kw), real(*a, **kw))[1])
+    from hermes_cli.auth_constants import AuthError
+
+    calls = []
+
+    def unconfigured(*args, **kwargs):
+        calls.append(kwargs)
+        raise AuthError("No configured provider", code="no_provider_configured")
+
+    monkeypatch.setattr(auth, "resolve_provider", unconfigured)
 
     assert welcome_trial.inference_available() is True  # fresh: the trial is claimable
     assert len(calls) == 1
