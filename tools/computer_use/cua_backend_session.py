@@ -222,11 +222,14 @@ class _CuaDriverSession:
         # reports HOW FAR it got instead of an opaque "never reached ready".
         self._startup_phase = "binary-check"
         try:
-            driver_cmd = _driver.resolve_cua_driver_cmd()
-            if not driver_cmd and _cb.sandbox_mcp_invocation() is None:
-                raise RuntimeError(_driver.cua_driver_install_hint())
-            self._startup_phase = "manifest-discovery"
+            # The embedded endpoint is this session's driver for its whole life (the helper's bundled
+            # driver). Resolving the PM default first rejects an install that has only that endpoint.
             daemon = self._embedded_daemon
+            if daemon is None:
+                driver_cmd = _driver.resolve_cua_driver_cmd()
+                if not driver_cmd and _cb.sandbox_mcp_invocation() is None:
+                    raise RuntimeError(_driver.cua_driver_install_hint())
+            self._startup_phase = "manifest-discovery"
             (command, args), child_env = (
                 (daemon.proxy_invocation(), daemon.child_env()) if daemon is not None
                 else _cb.sandbox_mcp_invocation() or (_driver._resolve_mcp_invocation(driver_cmd), _cb.cua_driver_child_env()))
@@ -449,14 +452,17 @@ class _CuaDriverSession:
             fd, shot_file = _tempfile.mkstemp(prefix="cua_shot_", suffix=".png")
             os.close(fd)
             call_args["screenshot_out_file"] = shot_file
-        driver_command = _driver.resolve_cua_driver_cmd()
-        if not driver_command:
-            raise RuntimeError(_driver.cua_driver_install_hint())
-        child_env, socket_args = _cb.cua_driver_child_env(), []
+        # Same rule as the MCP lifecycle: an embedded endpoint supplies the command. The PM default is only
+        # for a session that has no endpoint, so a helper install with only the bundled driver can fall back.
         daemon = getattr(self, "_embedded_daemon", None)
         if daemon is not None:
             driver_command, child_env = daemon.proxy_invocation()[0], daemon.child_env()
             socket_args = ["--socket", daemon.socket_path]
+        else:
+            driver_command = _driver.resolve_cua_driver_cmd()
+            if not driver_command:
+                raise RuntimeError(_driver.cua_driver_install_hint())
+            child_env, socket_args = _cb.cua_driver_child_env(), []
         cmd = [driver_command, "call", name, json.dumps(call_args), *socket_args]
         try:
             return _cli_result(_cli_run_json(cmd, _sanitize_subprocess_env(child_env), name, timeout), shot_file)

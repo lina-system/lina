@@ -87,7 +87,8 @@ def make_backend_class():
 
         def start(self) -> None:
             # Upstream start() checks the driver contract via HERMES_CUA_DRIVER_CMD (else asks PM to install its
-            # pinned driver). Point it at the wrapper for the duration of the check.
+            # pinned driver). Point it at the wrapper for that check only. Recovery and the CLI fallback keep
+            # using this session's HelperEndpoint, so the override must not outlive start().
             prev = os.environ.get("HERMES_CUA_DRIVER_CMD")
             os.environ["HERMES_CUA_DRIVER_CMD"] = WRAPPER
             try:
