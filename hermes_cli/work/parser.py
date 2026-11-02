@@ -212,6 +212,9 @@ def _moves(sp) -> None:
     p.add_argument("--archive", help=argparse.SUPPRESS)
     p.add_argument("--omo-jobs", help=argparse.SUPPRESS)
     p.set_defaults(fn=_fn("cmd_store", "cmd_migrate"), no_resume=True)
+    p = sp.add_parser("run-sync", help="runs from lina worker job files into run and run_todo")
+    p.add_argument("--omo-jobs", help="a folder of job json (default: the worker hub's jobs)")
+    p.set_defaults(fn=_fn("cmd_store", "cmd_run_sync"))
     p = sp.add_parser("export-jsonl", help="the store (or a work.db) as ledger.jsonl")
     p.add_argument("--from", dest="from_")
     p.add_argument("--to")
@@ -224,6 +227,56 @@ def _moves(sp) -> None:
     p.set_defaults(fn=_fn("cmd_store", "cmd_thaw"), no_resume=True)
 
 
+def _run(sp) -> None:
+    p = sp.add_parser("run", help="hand to-dos to lina worker and follow the run (record + hand-off in one step)")
+    runs = p.add_subparsers(dest="run_action", required=True)
+    q = runs.add_parser("submit", aliases=["run"], help="hand to-dos (or a work card's to-dos) to one worker run")
+    q.add_argument("todos", nargs="*", help="to-do ids the run covers (one run may cover several)")
+    q.add_argument("--card", help="a work card (t_…): every to-do linked to it")
+    q.add_argument("--brief", required=True)
+    q.add_argument("--mode", default="ulw")
+    for flag in ("--repo", "--host", "--runner", "--model", "--note"):
+        q.add_argument(flag)
+    q.add_argument("--input", action="append")
+    _as(q)
+    q.set_defaults(fn=_fn("run", "cmd_submit"))
+    for name, fn, extra in (("steer", "cmd_steer", "message"), ("answer", "cmd_answer", "message"),
+                            ("retry", "cmd_retry", None), ("accept", "cmd_accept", None),
+                            ("review", "cmd_review", None), ("cancel", "cmd_cancel", None),
+                            ("status", "cmd_status", None), ("result", "cmd_result", None)):
+        q = runs.add_parser(name)
+        q.add_argument("run")
+        if extra:
+            q.add_argument(extra)
+        if name == "retry":
+            q.add_argument("--message")
+        if name == "accept":
+            q.add_argument("--note")
+        if name == "review":
+            q.add_argument("--why", required=True, help="what the result still lacks")
+        if name == "cancel":
+            q.add_argument("--why")
+        if name == "status":
+            q.add_argument("--json", action="store_true")
+        if name not in ("status", "result"):
+            _as(q)
+        q.set_defaults(fn=_fn("run", fn))
+
+
+def _card(sp) -> None:
+    p = sp.add_parser("card", help="goal and work cards in the record")
+    cards = p.add_subparsers(dest="card_action", required=True)
+    q = cards.add_parser("link", help="a goal card carries its goal id; a work card lists the to-dos it covers")
+    q.add_argument("card")
+    q.add_argument("--goal")
+    q.add_argument("--todo", nargs="+")
+    _as(q)
+    q.set_defaults(fn=_fn("cards", "cmd_card_link"))
+    q = cards.add_parser("show")
+    q.add_argument("card")
+    q.set_defaults(fn=_fn("cards", "cmd_card_show"))
+
+
 def build(sp) -> None:
-    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves):
+    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves, _run, _card):
         part(sp)

@@ -21,10 +21,13 @@ def build_parser(prog: str = "work") -> argparse.ArgumentParser:
 
 
 def execute(a) -> None:
-    """One parsed command: run it, recompute what it wrote, close the store."""
+    """One parsed command: resume hand-offs a crash left, run it, recompute what it wrote, close the store."""
     from hermes_cli.work import env, ledger, state
+    from hermes_cli.work import run as runs
     env.current()
     try:
+        if not getattr(a, "no_resume", False):
+            runs.resume()
         a.fn(a)
         state.recompute()
     finally:

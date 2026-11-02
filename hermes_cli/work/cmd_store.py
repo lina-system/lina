@@ -268,3 +268,17 @@ def cmd_thaw(a) -> None:
     print(t("잠금 풀림"))
 
 
+def cmd_run_sync(a) -> None:
+    """Runs from `lina worker` job files (and an optional session queue) into run and run_todo."""
+    from hermes_cli.work.run import worker_jobs
+    from hermes_cli.work.sources import sessions_index
+    jobs = worker_jobs(a.omo_jobs)
+    sessions = list(sessions_index()[1].values())
+    with Lock():
+        db = ledger.db()
+        with store.transaction(db):
+            missing = store.sync_runs(db, jobs, sessions, store.utc(now()))
+    print(t("작업 {jobs}개·세션 {sessions}개 맞춤", jobs=len(jobs), sessions=len(sessions))
+          + (t(" · 기록에 없는 할 일 {n}개는 뺌", n=len(missing)) if missing else ""))
+    if missing:
+        warn(", ".join(f"{r}->{td}" for r, td in missing[:20]))
