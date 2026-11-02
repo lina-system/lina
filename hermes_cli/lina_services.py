@@ -109,16 +109,14 @@ def list_lines() -> list[str]:
 
 
 def _gateway(verb: str) -> None:
-    """The ``hermes gateway`` verbs, unchanged. ``start`` installs the service first when there is none.
-
-    ``stop`` and ``restart`` name the whole host gateway (``--all``): the memory store is one per LINA root and every
-    profile the host serves uses it, so "the gateway is down" has to mean the host, not one parked profile. The
-    gateway verb itself asks before interrupting live sessions and exits 1 when they are kept."""
+    """The ``hermes gateway`` verbs as they are, in the profile's own scope. ``start`` installs the service first
+    when there is none. Host scope, external supervisors, parking a served profile and the live-session question all
+    stay the gateway command's own business."""
     gw = _gw()
     if verb == "start" and not gw._is_service_installed():
         gw.gateway_command(argparse.Namespace(gateway_command="install", start_now=True, start_on_login=True))
         return
-    gw.gateway_command(argparse.Namespace(gateway_command=verb, all=verb in ("stop", "restart")))
+    gw.gateway_command(argparse.Namespace(gateway_command=verb))
 
 
 def gateway_running() -> bool:
@@ -150,59 +148,28 @@ def _run_store(verb: str) -> None:
 
 _VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store}
 
-# Startup order: a service may need the ones before it (the gateway uses the memory store). Stopping runs it backwards.
-START_ORDER = ("store", "gateway")
-
-
-def _phase(verb: str, names: tuple[str, ...]) -> int:
-    """Run ``verb`` on ``names`` in order and stop at the first failure, saying what was left as it was."""
-    for index, each in enumerate(names):
-        try:
-            _VERBS[each](verb)
-        except SystemExit as exc:
-            if exc.code in (None, 0):  # the gateway verbs exit 0 on success
-                continue
-            if index + 1 < len(names):
-                print(f"{each} {verb} failed; left {', '.join(names[index + 1:])} as it was.")
-            return exc.code if isinstance(exc.code, int) else 1
-    return 0
-
-
-def _plan(verb: str, name: str) -> list[tuple[str, tuple[str, ...]]]:
-    """The phases one request runs, from the dependency order.
-
-    * ``start X`` starts X; ``stop X`` stops X. Stopping a service another one still uses is refused in ``act``.
-    * ``restart X`` stops what depends on X and X (top down), then starts them again (bottom up), so nothing runs on a
-      service while that service is down.
-    * ``all`` is every service that exists."""
-    existing = tuple(each for each in START_ORDER if not BY_NAME[each].issue)
-    if name == "all":
-        chosen = existing
-    else:
-        chosen = existing[existing.index(name):] if verb == "restart" else (name,)
-    down, up = tuple(reversed(chosen)), chosen
-    return {"start": [("start", up)], "stop": [("stop", down)], "restart": [("stop", down), ("start", up)]}[verb]
+# Who runs on whom: a service is not stopped or restarted while a service that uses it still runs.
+USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",)}
+_RUNNING: dict[str, Callable[[], bool]] = {"gateway": gateway_running}
 
 
 def act(verb: str, name: str) -> int:
-    """``start``/``stop``/``restart`` one service, or ``all`` of those that exist.
+    """``start``/``stop``/``restart`` one service with its own command, unchanged.
 
-    The gateway uses the memory store, so services come up bottom-up and go down top-down, each phase stops at its
-    first failure (a gateway that kept its live sessions keeps its store; a store that did not come up gets no
-    gateway), and the store is not stopped alone while any gateway of this root still runs."""
-    if name != "all" and BY_NAME[name].issue:
-        print(f"{name} is not installed yet: lina{BY_NAME[name].issue} adds it.")
+    The one rule added here: a service is not stopped or restarted while a service that uses it still runs (the
+    gateway uses the memory store), so the person stops the user first, with that service's own command and its own
+    checks (the gateway asks before it interrupts live sessions)."""
+    service = BY_NAME[name]
+    if service.issue:
+        print(f"{name} is not installed yet: lina{service.issue} adds it.")
         return 1
-    if verb == "stop" and name == "store" and gateway_running():
-        print("store stop refused: the gateway still runs on it. Stop both with `lina services stop all`.")
-        return 1
-    if name != "all" and verb != "restart":
-        _VERBS[name](verb)
-        return 0
-    for phase_verb, names in _plan(verb, name):
-        code = _phase(phase_verb, names)
-        if code:
-            return code
+    if verb in ("stop", "restart"):
+        users = [each for each in USED_BY.get(name, ()) if _RUNNING.get(each, lambda: False)()]
+        if users:
+            print(f"{name} {verb} refused: {', '.join(users)} still runs on it. "
+                  f"Stop {' and '.join(users)} first (`lina services stop {users[0]}`).")
+            return 1
+    _VERBS[name](verb)
     return 0
 
 

@@ -94,79 +94,51 @@ def test_a_reserved_service_exits_1_naming_its_issue(account, monkeypatch, capsy
     assert account["verbs"] == []
 
 
-@pytest.mark.parametrize(("verb", "first", "second"), [("stop", "gateway", "store"), ("start", "store", "gateway")])
-def test_all_stops_at_the_first_failure_and_leaves_the_rest(account, monkeypatch, capsys, verb, first, second):
-    """A gateway that refused to stop (live sessions kept) keeps its store; a store that did not come up gets no
-    gateway started on it."""
-    calls = []
-
-    def failing(v):
-        calls.append(first)
-        raise SystemExit(1)
-
-    monkeypatch.setitem(lina_services._VERBS, first, failing)
-    monkeypatch.setitem(lina_services._VERBS, second, lambda v: calls.append(second))
-    assert lina_services.act(verb, "all") == 1
-    assert calls == [first]
-    assert second in capsys.readouterr().out
-
-
-def test_all_goes_on_after_a_service_exits_0(account, monkeypatch):
-    calls = []
-
-    def ok_exit(v):
-        calls.append("gateway")
-        raise SystemExit(0)
-
-    monkeypatch.setitem(lina_services._VERBS, "gateway", ok_exit)
-    monkeypatch.setitem(lina_services._VERBS, "store", lambda v: calls.append("store"))
-    assert lina_services.act("stop", "all") == 0
-    assert calls == ["gateway", "store"]
-
-
 @pytest.fixture
 def recorded(monkeypatch):
     """Every service verb recorded as ``(service, verb)`` instead of run."""
     calls = []
-    for name in lina_services.START_ORDER:
+    for name in list(lina_services._VERBS):
         monkeypatch.setitem(lina_services._VERBS, name, lambda verb, name=name: calls.append((name, verb)))
     return calls
 
 
-@pytest.mark.parametrize("name", ["all", "store"])
-def test_restart_takes_the_gateway_down_before_the_store_and_up_after_it(account, recorded, name):
-    """No gateway runs on a store while that store restarts (restarting the store restarts what uses it)."""
-    assert lina_services.act("restart", name) == 0
-    assert recorded == [("gateway", "stop"), ("store", "stop"), ("store", "start"), ("gateway", "start")]
-
-
-def test_restart_stops_before_starting_when_a_phase_fails(account, monkeypatch, recorded):
-    def store_stop_fails(verb):
-        recorded.append(("store", verb))
-        if verb == "stop":
-            raise SystemExit(1)
-
-    monkeypatch.setitem(lina_services._VERBS, "store", store_stop_fails)
-    assert lina_services.act("restart", "all") == 1
-    assert recorded == [("gateway", "stop"), ("store", "stop")]
-
-
-def test_the_store_is_not_stopped_alone_while_a_gateway_runs(account, monkeypatch, recorded, capsys):
-    """A gateway of any profile on this root still uses the one store."""
-    monkeypatch.setattr(gateway_cli, "find_gateway_pids", lambda **kw: [4242] if kw.get("all_profiles") else [])
-    assert lina_services.act("stop", "store") == 1
-    assert recorded == [] and "stop all" in capsys.readouterr().out
-    monkeypatch.setattr(gateway_cli, "find_gateway_pids", lambda **kw: [])
-    assert lina_services.act("stop", "store") == 0
-    assert recorded == [("store", "stop")]
-
-
 @pytest.mark.parametrize("verb", ["stop", "restart"])
-def test_stopping_the_gateway_names_the_whole_host(account, verb):
-    """From a profile the host serves, a plain ``gateway stop`` only parks that profile; the store is shared by every
-    profile, so the services verbs stop the host gateway (``--all``)."""
-    lina_services._gateway(verb)
-    assert account["verbs"] == [{"gateway_command": verb, "all": True}]
+def test_a_service_is_not_stopped_while_a_service_that_uses_it_runs(account, monkeypatch, recorded, capsys, verb):
+    """The gateway of any profile on this root uses the one memory store."""
+    for used, users in lina_services.USED_BY.items():
+        for user in users:
+            monkeypatch.setitem(lina_services._RUNNING, user, lambda: True)
+        assert lina_services.act(verb, used) == 1
+        assert recorded == []
+        assert f"lina services stop {users[0]}" in capsys.readouterr().out
+        for user in users:
+            monkeypatch.setitem(lina_services._RUNNING, user, lambda: False)
+        assert lina_services.act(verb, used) == 0
+        assert recorded == [(used, verb)]
+        recorded.clear()
+
+
+def test_the_store_is_used_by_the_gateway(account, monkeypatch):
+    """The relation the refusal rests on, read through the real probe: any gateway process of this root counts."""
+    assert "gateway" in lina_services.USED_BY["store"]
+    monkeypatch.setattr(gateway_cli, "find_gateway_pids", lambda **kw: [4242] if kw.get("all_profiles") else [])
+    assert lina_services._RUNNING["gateway"]() is True
+
+
+@pytest.mark.parametrize("verb", ["start", "stop", "restart"])
+def test_the_gateway_verbs_pass_through_unchanged(account, monkeypatch, verb):
+    """Host scope, external supervisors and the live-session question stay with the gateway command itself."""
+    monkeypatch.setattr(gateway_cli, "_is_service_installed", lambda: True)
+    assert lina_services.act(verb, "gateway") == 0
+    assert account["verbs"] == [{"gateway_command": verb}]
+
+
+def test_there_is_no_all_target(account):
+    parser = argparse.ArgumentParser()
+    build_services_parser(parser.add_subparsers())
+    with pytest.raises(SystemExit):
+        parser.parse_args(["services", "stop", "all"])
 
 
 def test_start_installs_the_missing_gateway_service_through_the_gateway_verbs(account):
