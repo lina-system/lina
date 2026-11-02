@@ -173,6 +173,16 @@ def test_refusal_names_the_card_and_writes_nothing(board, capsys, plan, names):
     assert _tasks() == {} and _links() == set()
 
 
+def test_delegate_child_cannot_lay_out_a_plan(board, capsys):
+    from agent.delegation_context import delegated_child_context
+
+    with delegated_child_context():
+        rc, _out, err = _run(capsys, _write(board, PLAN))
+    assert rc != 0
+    assert "delegate_task child contexts cannot mutate Kanban tasks via the CLI" in err
+    assert _tasks() == {} and _links() == set()
+
+
 def test_dry_run_writes_nothing(board, capsys):
     rc, out, err = _run(capsys, _write(board, PLAN), "--dry-run")
     assert rc == 0, err
