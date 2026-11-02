@@ -54,6 +54,13 @@ CASES = {
         [_review(OLD)], [_finding(5, OLD, 1, "Flush buffered messages")], [_summary(OLD)], "pending"),
     "clean review summary on the new head": (
         [_review(OLD)], [_finding(5, OLD, 1, "Flush buffered messages")], [_summary(HEAD)], "success"),
+    "completed head summary with an older P2": (
+        [], [_finding(5, OLD, 2, "Minor")], [_summary(HEAD, findings=True)], "success"),
+    "completed head summary with an older P2 and a head P1": (
+        [], [_finding(5, OLD, 2, "Minor"), _finding(6, HEAD, 1, "Gate attribution")],
+        [_summary(HEAD, findings=True)], "failure"),
+    "older P2 without a summary for the head": (
+        [], [_finding(5, OLD, 2, "Minor")], [_summary(OLD, findings=True)], "pending"),
     "P1 on the head": (
         [_review(HEAD)], [_finding(7, HEAD, 2, "Minor"), _finding(6, HEAD, 1, "Gate attribution")],
         [_summary(HEAD, findings=True)], "failure"),
