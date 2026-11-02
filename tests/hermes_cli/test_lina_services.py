@@ -1,4 +1,4 @@
-"""``lina services``: one line per LINA service with its label, and the reserved OCX / worker entries (lina#31)."""
+"""``lina services``: one line per LINA service with its label, and the reserved entries (lina#31)."""
 import argparse
 import plistlib
 import subprocess
@@ -23,6 +23,8 @@ def account(tmp_path, monkeypatch):
     hermes_constants._default_hermes_root_memo = None
     monkeypatch.setattr("hermes_cli.store.store_dir", lambda: tmp_path / "store")
     monkeypatch.setattr(gateway_cli, "_is_service_installed", lambda: False)
+    # OCX's unit lives under the account's real config dir; keep `all` from seeing (and stopping) a real one.
+    monkeypatch.setattr("hermes_cli.lina_ocx_service.definition_path", lambda kind: tmp_path / "units" / "lina-ocx")
     verbs = []
     monkeypatch.setattr(gateway_cli, "gateway_command", lambda args: verbs.append(vars(args)))
     return {"store": tmp_path / "store", "verbs": verbs}
@@ -139,6 +141,11 @@ def test_there_is_no_all_target(account):
     build_services_parser(parser.add_subparsers())
     with pytest.raises(SystemExit):
         parser.parse_args(["services", "stop", "all"])
+
+
+def test_ocx_is_used_by_the_gateway(account):
+    """The gateway calls every model through OCX, so OCX is not stopped while a gateway runs."""
+    assert "gateway" in lina_services.USED_BY["ocx"]
 
 
 def test_start_installs_the_missing_gateway_service_through_the_gateway_verbs(account):
