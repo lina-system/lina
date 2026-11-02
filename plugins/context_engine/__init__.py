@@ -7,6 +7,7 @@ general plugin system: ``context.engine`` in config.yaml names the active engine
 from __future__ import annotations
 
 import logging
+from contextlib import contextmanager
 from pathlib import Path
 from typing import List, Optional, Tuple
 
@@ -82,21 +83,71 @@ def _load_engine_from_dir(engine_dir: Path) -> Optional[ContextEngine]:
     mod = _loader.load_plugin_module(
         module_name, engine_dir, parents=("plugins", "plugins.context_engine"), logger=logger,
         synthetic_namespace=None if is_bundled else _USER_NAMESPACE)
-    return mod and _loader.instance_from_module(
-        mod, collector=_EngineCollector(engine_name=name), collected_attr="engine",
-        base_cls=ContextEngine, name=name, logger=logger)
+    if not mod:
+        return None
+    collector = _EngineCollector(engine_name=name, engine_dir=engine_dir)
+    with collector.replacing_previous_build():
+        return _loader.instance_from_module(
+            mod, collector=collector, collected_attr="engine", base_cls=ContextEngine, name=name, logger=logger)
 
 
-class _EngineCollector(_loader.NoopPluginContext):
-    """Captures register_context_engine; forwards register_command to the global plugin command
-    registry so engine slash commands behave like plugin ones."""
+class _EngineCollector:
+    """Plugin context for context engines. ``register_context_engine`` is captured (one engine instance
+    per agent build); every other ``register_*`` call goes to a real ``PluginContext`` of the active
+    profile home, so an engine's hooks, skills and prompt sections register like a plugin's. They form a
+    fallback group keyed by (engine name, source path), the shape memory providers use: each agent build
+    replaces the group, so a home holds one set however many agents are built."""
 
-    def __init__(self, engine_name: str = ""):
+    def __init__(self, engine_name: str = "", engine_dir: Optional[Path] = None):
         self.engine = None
         self._engine_name = engine_name or "context_engine"
+        self._engine_dir = engine_dir
+        self._source = (self._engine_name, str((engine_dir / "__init__.py").resolve())) if engine_dir else None
+        self._context = None
+
+    @contextmanager
+    def replacing_previous_build(self):
+        """Drop the group the previous build of this engine registered in this home, then hold the
+        manager's discovery lock while ``register(ctx)`` builds the new one."""
+        manager = self._plugin_context()._manager
+        with manager._discovery_lock:
+            manager._drop_fallback_hooks(self._source)
+            yield
 
     def register_context_engine(self, engine):
         self.engine = engine
+
+    def register_hook(self, hook_name, callback, *, hold_stream=False):
+        context = self._plugin_context()
+        with context._manager._discovery_lock:
+            return context._manager._register_fallback_hook(
+                context, self._source, hook_name, callback, hold_stream=hold_stream)
+
+    def __getattr__(self, attr: str):
+        """Forward any other ``register_*`` call to the real ``PluginContext`` and add its handle to the
+        group. Other attributes raise, so an engine probing for a host capability sees it absent."""
+        if not attr.startswith("register_"):
+            raise AttributeError(attr)
+
+        def _forward(*args, **kwargs):
+            context = self._plugin_context()
+            handle = getattr(context, attr)(*args, **kwargs)
+            if handle is not None and self._source is not None:
+                context._manager._add_fallback_registration(self._source, handle)
+            return handle
+
+        return _forward
+
+    def _plugin_context(self):
+        if self._context is None:
+            from hermes_cli.plugins import PluginContext, PluginManifest, get_plugin_manager
+
+            # plugin.yaml's name keeps qualified skill names (``hermes-lcm-x:hermes-lcm``) as they were.
+            name = (_loader.read_plugin_field(self._engine_dir, "name", self._engine_name)
+                    if self._engine_dir else self._engine_name)
+            manifest = PluginManifest(name=name, key=f"context_engine/{self._engine_name}")
+            self._context = PluginContext(manifest, get_plugin_manager())
+        return self._context
 
     def register_command(self, name: str, handler, description: str = "", args_hint: str = "") -> None:
         clean = (name or "").lower().strip().lstrip("/").replace(" ", "-")

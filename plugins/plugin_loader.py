@@ -104,16 +104,21 @@ def iter_plugin_dirs(root: Path) -> list[Path]:
     return dirs
 
 
-def read_plugin_description(plugin_dir: Path) -> str:
-    """Return ``description`` from ``plugin.yaml`` (empty string if absent/unreadable)."""
+def read_plugin_field(plugin_dir: Path, field: str, default: str = "") -> str:
+    """Return *field* from ``plugin.yaml`` (*default* if absent/unreadable)."""
     try:
         from utils import fast_safe_load
 
         with open(plugin_dir / "plugin.yaml", encoding="utf-8-sig") as f:
             meta = fast_safe_load(f) or {}
-        return meta.get("description", "")
+        return meta.get(field, default) or default
     except Exception:
-        return ""
+        return default
+
+
+def read_plugin_description(plugin_dir: Path) -> str:
+    """Return ``description`` from ``plugin.yaml`` (empty string if absent/unreadable)."""
+    return read_plugin_field(plugin_dir, "description")
 
 
 def _new_module(name: str, file: Path, search_locations: Optional[list[str]] = None) -> Optional[Any]:
