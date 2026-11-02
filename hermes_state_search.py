@@ -25,7 +25,7 @@ logger = logging.getLogger("hermes_state")
 # Cap on user-controlled query input before parsing.
 MAX_SEARCH_QUERY_CHARS = 2_048
 # Matches the store hands back per query; transcript_rows filters and pages within them.
-_CANDIDATE_LIMIT = 5_000
+_CANDIDATE_LIMIT = 5_000  # store rows read per page of search candidates
 _OPERATORS = frozenset({"AND", "OR", "NOT", "NEAR"})
 _TOKEN_RE = re.compile(r'"[^"]+"|\S+')
 # Unified Ideographs, Extension A, Extension B, CJK Symbols, Hiragana, Katakana, Hangul Syllables.
@@ -347,20 +347,31 @@ class SessionSearchMixin:
 
     def _matching_rows(self, groups: list[list[SearchTerm]], *, limit: int, offset: int, newest: bool,
                        **filters) -> list[dict[str, Any]]:
-        uids = self.message_store.search_groups(groups, limit=_CANDIDATE_LIMIT)
-        if not uids:
-            return []
+        # Every matching text version is a candidate: the source, session-date and visibility filters live in
+        # state.db, so the store is read a page at a time and each page filtered here, keeping the best
+        # offset+limit rows. A single capped read would hide older matches behind newer filtered-out ones.
+        keep = max(offset, 0) + max(limit, 0)
         rows: list[dict[str, Any]] = []
-        for start in range(0, len(uids), 900):
-            chunk = uids[start:start + 900]
-            where = [f"m.text_uid IN ({_placeholders(chunk)})"]
-            params: list = list(chunk)
-            _search_filter_clauses(where, params, **filters)
-            rows.extend(dict(row) for row in self._read_all(
-                "SELECT m.id, m.session_id, m.role, m.text_uid, m.timestamp, m.tool_name, s.source, s.model, "
-                "s.started_at AS session_started FROM transcript_rows m JOIN sessions s ON s.id = m.session_id "
-                f"WHERE {' AND '.join(where)}", params))
-        rows.sort(key=lambda r: (r["timestamp"] or 0, r["id"]), reverse=newest)
+        before_id = None
+        while keep:
+            page = self.message_store.search_groups(groups, limit=_CANDIDATE_LIMIT, before_id=before_id)
+            if not page:
+                break
+            before_id = page[-1][0]
+            uids = [uid for _, uid in page]
+            for start in range(0, len(uids), 900):
+                chunk = uids[start:start + 900]
+                where = [f"m.text_uid IN ({_placeholders(chunk)})"]
+                params: list = list(chunk)
+                _search_filter_clauses(where, params, **filters)
+                rows.extend(dict(row) for row in self._read_all(
+                    "SELECT m.id, m.session_id, m.role, m.text_uid, m.timestamp, m.tool_name, s.source, s.model, "
+                    "s.started_at AS session_started FROM transcript_rows m JOIN sessions s ON s.id = m.session_id "
+                    f"WHERE {' AND '.join(where)}", params))
+            rows.sort(key=lambda r: (r["timestamp"] or 0, r["id"]), reverse=newest)
+            del rows[keep:]
+            if len(page) < _CANDIDATE_LIMIT:
+                break
         return rows[offset:offset + limit]
 
     def _finalize_search_matches(self, matches: list[dict[str, Any]], terms: list[str],

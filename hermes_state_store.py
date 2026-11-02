@@ -489,8 +489,10 @@ class MessageStore:
 
     # ── search ──
 
-    def search_groups(self, groups: Sequence[Sequence[SearchTerm]], *, limit: int = 5000) -> list[str]:
-        """Uids of the newest rows matching any group, a group matching when all its terms do (``NOT``
+    def search_groups(self, groups: Sequence[Sequence[SearchTerm]], *, limit: int = 5000,
+                      before_id: Optional[int] = None) -> list[tuple[int, str]]:
+        """``(message_id, uid)`` of the newest *limit* rows matching any group, below *before_id* when given (the
+        next page starts below the last id of this one). A group matches when all its terms do (``NOT``
         terms must not match). A word term matches a word of the text (the ``simple`` tsvector; a prefix
         term any word starting with it); a substring term matches anywhere (``pg_trgm``), so a one- or
         two-character Korean, Chinese or Japanese term matches inside a longer word. Tool names and
@@ -506,11 +508,13 @@ class MessageStore:
                 group_sql.append("(" + " AND ".join(parts) + ")")
         if not group_sql:
             return []
-        sql = (f"SELECT uid FROM memory.messages WHERE forgotten_at IS NULL AND ({' OR '.join(group_sql)}) "
-               "ORDER BY message_id DESC LIMIT %s")
+        below = "" if before_id is None else "message_id < %s AND "
+        sql = (f"SELECT message_id, uid FROM memory.messages WHERE {below}forgotten_at IS NULL AND "
+               f"({' OR '.join(group_sql)}) ORDER BY message_id DESC LIMIT %s")
+        args = ([] if before_id is None else [int(before_id)]) + params + [int(limit)]
         with self._cursor() as cur:
-            cur.execute(sql, (*params, int(limit)))
-            return [row[0] for row in cur.fetchall()]
+            cur.execute(sql, args)
+            return [(int(row[0]), row[1]) for row in cur.fetchall()]
 
 
 @dataclass(frozen=True)

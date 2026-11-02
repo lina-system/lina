@@ -142,3 +142,24 @@ def test_text_of_a_rolled_back_write_is_written_again_by_its_retry(tmp_path, mem
     finally:
         db.close()
 
+
+def test_search_filters_and_oldest_sort_see_past_the_candidate_page(tmp_path, monkeypatch):
+    import hermes_state_search
+
+    monkeypatch.setattr(hermes_state_search, "_CANDIDATE_LIMIT", 2)
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        db.create_session(session_id="quiet", source="telegram")
+        for i in range(2):
+            db.append_message("quiet", "user", f"harbor ledger {i}", timestamp=1_600_000_000 + i)
+        db.create_session(session_id="busy", source="cli")
+        for i in range(5):
+            db.append_message("busy", "user", f"harbor ledger busy {i}", timestamp=1_700_000_000 + i)
+
+        quiet = db.search_messages("ledger", source_filter=["telegram"], limit=10)
+        assert sorted(r["session_id"] for r in quiet) == ["quiet", "quiet"]
+        oldest = db.search_messages("ledger", sort="oldest", limit=1)
+        assert [r["session_id"] for r in oldest] == ["quiet"]
+        assert len(db.search_messages("ledger", limit=50)) == 7
+    finally:
+        db.close()
