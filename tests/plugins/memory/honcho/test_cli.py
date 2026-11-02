@@ -996,3 +996,30 @@ class TestWriteConfigMergesOntoDisk:
         self._rotate_on_disk(cfg_path)
         honcho_cli._write_config(cfg)
         assert json.loads(cfg_path.read_text()) == cfg
+
+
+class TestSetupWithoutTheSdk:
+    """lina#59: accepting the install prompt prepares the declared ``honcho`` PM extra; the retired
+    runtime installer raised ImportError and aborted setup."""
+
+    def test_accepting_the_install_prepares_the_extra_and_stops_for_the_relaunch(self, monkeypatch, tmp_path):
+        import sys
+        import types
+        import plugins.memory.honcho.cli as honcho_cli
+
+        cfg_path = tmp_path / "honcho.json"
+        monkeypatch.setitem(sys.modules, "honcho", None)  # `import honcho` raises ImportError
+        monkeypatch.setattr(honcho_cli, "_read_config", dict)
+        monkeypatch.setattr(honcho_cli, "_local_config_path", lambda: cfg_path)
+        monkeypatch.setattr(honcho_cli, "_config_path", lambda: cfg_path)
+        monkeypatch.setattr(honcho_cli, "_prompt", lambda label, default=None, secret=False: "y")
+        writes = []
+        monkeypatch.setattr(honcho_cli, "_write_config", lambda *a, **k: writes.append(a))
+        prepared = []
+        monkeypatch.setattr("hermes_cli.memory_setup.prepare_memory_provider_dependencies",
+                            lambda name: prepared.append(name) or ({}, "restart_required"))
+
+        honcho_cli.cmd_setup(types.SimpleNamespace())
+
+        assert prepared == ["honcho"]
+        assert writes == []  # the wizard stops before any prompt that would need the SDK

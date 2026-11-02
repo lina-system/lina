@@ -164,7 +164,10 @@ Safe root policies report source `root`; unsafe or invalid policies report
 sends a regular `status` request and prints only `{"policy":...}`. Policy files
 are reread on every request; no restart is needed. Team-signed helpers ignore
 `LINA_HELPER_DEV` and `LINA_HELPER_POLICY` entirely. Only ad-hoc builds honour
-these development overrides, and file trust checks still apply.
+these development overrides, and file trust checks still apply. An ad-hoc install
+or upgrade (`--allow-ad-hoc-for-lab`) sets `LINA_HELPER_DEV=1` in the LaunchAgent's
+`EnvironmentVariables`, because a teamless helper rejects every client without it;
+a signed install never gets it.
 
 Enabling operate in user mode requires a root policy written separately by a
 person on that Mac, as described in [fleet.md](fleet.md), section 4. Never run
