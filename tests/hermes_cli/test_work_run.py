@@ -59,6 +59,22 @@ def test_crash_between_record_and_worker_leaves_an_outbox_row_the_next_call_resu
     assert list(_jobs(work)) == [run_id]
 
 
+def test_crash_after_the_worker_saved_a_new_job_places_it_before_the_outbox_is_done(work, monkeypatch):
+    from hermes_cli.worker.hub import Hub
+    real = Hub.place
+    monkeypatch.setattr(Hub, "place", _crash)
+    with pytest.raises(RuntimeError):
+        work.run("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = list(_jobs(work))
+    assert _jobs(work)[run_id]["state"] == "new"
+    assert _rows(work, "SELECT op FROM outbox WHERE done_at IS NULL") == [("submit",)]
+
+    monkeypatch.setattr(Hub, "place", real)
+    work.ok("list")
+    assert _jobs(work)[run_id]["state"] == "queued"
+    assert _rows(work, "SELECT count(*) FROM outbox WHERE done_at IS NULL") == [(0,)]
+
+
 def test_a_failed_record_write_hands_nothing_to_the_worker(work, monkeypatch):
     from hermes_cli.work import store
 

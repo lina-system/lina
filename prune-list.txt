@@ -132,6 +132,43 @@ plugins/model-providers/zai
 # entry below.
 !plugin-catalog/hermes-rustpush-imessage.yaml
 
+# Bundled skills no agent used (#67). Mail, meeting and inbox skills come back from upstream
+# with M6; requesting-code-review is folded into skills/software-development/code-review.
+skills/apple/apple-notes
+skills/apple/apple-reminders
+skills/apple/findmy
+skills/apple/imessage
+skills/creative/architecture-diagram
+skills/creative/ascii-video
+skills/creative/baoyu-infographic
+skills/creative/manim-video
+skills/creative/p5js
+skills/creative/popular-web-designs
+skills/devops/sdlc-review
+skills/email/email-inbox-triage
+skills/email/himalaya
+skills/note-taking/obsidian
+skills/productivity/document-to-action-items
+skills/productivity/maps
+skills/productivity/meeting-action-items
+skills/productivity/teams-meeting-pipeline
+skills/productivity/weekly-review-planning
+skills/research/arxiv
+skills/research/competitor-news-monitor
+skills/software-development/codebase-inspection
+skills/software-development/dogfood
+skills/software-development/simplify-code
+skills/software-development/spike
+skills/software-development/systematic-debugging
+skills/software-development/test-driven-development
+skills/software-development/requesting-code-review
+skills/web/blocked-page-recovery
+# Category notes left with no skill in them.
+skills/apple/DESCRIPTION.md
+skills/email/DESCRIPTION.md
+skills/note-taking/DESCRIPTION.md
+skills/web/DESCRIPTION.md
+
 # Tests that only cover the paths above.
 tests/acp_adapter
 tests/docker

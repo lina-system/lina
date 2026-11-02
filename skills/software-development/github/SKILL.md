@@ -1,7 +1,7 @@
 ---
 name: github
 description: "GitHub via gh CLI: PRs, issues, reviews, repos, auth."
-version: 2.0.0
+version: 1.0.0
 author: Ben Barclay (benbarclay), Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
@@ -9,7 +9,7 @@ metadata:
   hermes:
     tags: [github, gh, git, pull-requests, issues, code-review, repos, auth, ci]
     category: software-development
-    related_skills: [codebase-inspection, requesting-code-review]
+    related_skills: [code-review, codex, claude-code]
 ---
 
 # GitHub
@@ -30,6 +30,8 @@ starting that workflow, the body below only routes.
 | Carry an ISSUE to a verified PR (full delivery loop) | `references/issue-to-pr.md` |
 | Review someone's PR: diffs, inline comments, verdict | `references/code-review.md` |
 | Clone/create/fork repos, remotes, releases | `references/repo-management.md` |
+| Organization transfers, visibility changes, exposure checks | `references/repo-management.md` |
+| Move open work from another tracker | `references/tracker-migration.md` |
 
 Supporting assets: `scripts/gh-env.sh` + `scripts/git-credential-token.py`
 (auth helpers), `templates/` (PR bodies, bug report, feature request),
@@ -48,6 +50,31 @@ Supporting assets: `scripts/gh-env.sh` + `scripts/git-credential-token.py`
   `gh pr view --comments` — decisions live in threads, not titles.
 - Sweep for duplicates before creating anything:
   `gh pr list --search` / `gh issue list --search`.
+- Resolve forwarded issue numbers with `gh issue view` and match the title.
+  Check all PR states and remote branches before starting duplicate work.
+- Before merging, fetch and recheck the issue, default-branch log, and competing
+  PRs. Do not overwrite another contributor's completed fix.
+- Read test exit codes and full logs; a missing summary match is not a pass.
+- Check contributor trailers separately from repository collaborators: attribution
+  does not grant access. Do not rewrite shared history to remove attribution.
+
+## LINA issue and PR rules
+
+- Issues use `## Summary`, `## Done when`, `## Context`, in that order.
+  Make acceptance observable; put dependencies, size and routing context in Context.
+- PRs use `## Summary`, `## Done when`, `## Verification`, then end with
+  `Closes #N` for the issue they fully resolve. Record commands, results and any
+  unverified behavior in Verification. Use the templates in `templates/`.
+- Merge with a merge commit: `gh pr merge --merge`, never squash.
+- Read `gh label list -R lina-system/lina` and the target repository's labels
+  before applying the organization label set. Do not invent labels.
+  Kind: `bug`, `enhancement`, `documentation`, `maintenance`, or `research`.
+  Size: `size/S`, `size/M`, `size/L`. Use `blocked` for open dependencies and
+  `ready` only when all dependencies are closed. Use `needs-routing` until
+  routing is settled; runner labels are `omo`, `dsh`, `grok-cursor`, `agy`.
+  `cloud` is paused, not a routing choice. Apply `no-changelog` only when users
+  receive no change, and `dev-red-fix` only for a fix to a red dev check.
+  Other triage labels follow their live descriptions.
 
 ## Verification
 

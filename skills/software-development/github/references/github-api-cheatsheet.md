@@ -6,7 +6,7 @@ All requests need: `-H "Authorization: token $GITHUB_TOKEN"`
 
 Use the `gh-env.sh` helper to set `$GITHUB_TOKEN`, `$GH_OWNER`, `$GH_REPO` automatically:
 ```bash
-source "${HERMES_HOME:-$HOME/.hermes}/skills/github/github-auth/scripts/gh-env.sh"
+source "${HERMES_HOME:-$HOME/.hermes}/skills/software-development/github/scripts/gh-env.sh"
 ```
 
 ## Repositories
@@ -42,10 +42,10 @@ source "${HERMES_HOME:-$HOME/.hermes}/skills/github/github-auth/scripts/gh-env.s
 ### PR Merge Body
 
 ```json
-{"merge_method": "squash", "commit_title": "feat: description (#N)"}
+{"merge_method": "merge", "commit_title": "feat: description (#N)"}
 ```
 
-Merge methods: `"merge"`, `"squash"`, `"rebase"`
+LINA requires `"merge"` (a merge commit), not squash or rebase.
 
 ### PR Review Events
 
