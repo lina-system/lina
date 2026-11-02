@@ -192,12 +192,12 @@ def _store_install_layout(this_home: str) -> tuple[Optional[str], Optional[str]]
     so ANY named-profile selection contradicts it.
     """
     try:
-        from hermes_constants import named_profile_home
+        from hermes_constants import LINA_HOME_DIRNAME, named_profile_home
 
         profile_home = named_profile_home(this_home)
         if profile_home is not None:
             return os.path.abspath(str(profile_home.parent.parent)), profile_home.name
-        if os.path.basename(this_home) == ".hermes":
+        if os.path.basename(this_home) == LINA_HOME_DIRNAME:
             return os.path.abspath(this_home), None
     except Exception:  # constants import/resolution must never break a holder scan
         logger.debug("Could not classify the install layout of %s", this_home, exc_info=True)

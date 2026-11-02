@@ -84,7 +84,7 @@ def test_installed_service_start_is_nonmutating_and_failed_manager_never_spawns(
     home = tmp_path / "profile"
     home.mkdir(mode=0o700)
     monkeypatch.setenv("HERMES_HOME", str(home))
-    unit = tmp_path / ".config/systemd/user" / f"hermes-gateway-{service_suffix(home)}.service"
+    unit = tmp_path / ".config/systemd/user" / f"lina-gateway-{service_suffix(home)}.service"
     unit.parent.mkdir(parents=True)
     unit.write_text("[Service]\nExecStart=/owned/inert/gateway\n", encoding="utf-8")
     original = unit.read_bytes()
@@ -342,7 +342,7 @@ def test_unmanaged_root_home_child_ignores_sticky_active_profile(tmp_path, monke
     """Explicit default selection survives the CLI child's own profile bootstrap (F15): with
     active_profile=other sticky, the spawned `gateway run` must still resolve the root home."""
     from hermes_cli import gateway_runtime_start as start
-    root = tmp_path / ".hermes"
+    root = tmp_path / ".lina"
     (root / "profiles" / "other").mkdir(parents=True)
     (root / "active_profile").write_text("other", encoding="utf-8")
     witness = tmp_path / "resolved.json"
@@ -375,7 +375,7 @@ def test_named_profile_without_multiplex_evidence_starts_the_host_gateway(tmp_pa
     """`gateway run` refuses a profiles/<name> home a gateway of its own, so ensure must start the host."""
     from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
 
-    root = tmp_path / ".hermes"
+    root = tmp_path / ".lina"
     home = root / "profiles" / "alpha"
     home.mkdir(parents=True, mode=0o700)
     if standalone:
@@ -397,7 +397,7 @@ def test_cold_start_target_follows_boot_multiplex_policy(tmp_path, monkeypatch, 
     from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
 
     monkeypatch.delenv("GATEWAY_MULTIPLEX_PROFILES", raising=False)
-    root = tmp_path / ".hermes"
+    root = tmp_path / ".lina"
     home = root / "profiles" / "alpha"
     home.mkdir(parents=True, mode=0o700)
     (root / "config.yaml").write_text(f"gateway:\n  multiplex_profiles: {flag}\n", encoding="utf-8")
@@ -420,7 +420,7 @@ def test_reserved_root_never_suppresses_a_standalone_profile_start(tmp_path, mon
     from gateway.runtime_ownership import ProfileOwnership
     from hermes_cli import gateway_runtime as runtime, gateway_runtime_service as service, gateway_runtime_start as start
 
-    root = tmp_path / ".hermes"
+    root = tmp_path / ".lina"
     home = root / "profiles" / "alpha"
     home.mkdir(parents=True, mode=0o700)
     (root / "config.yaml").write_text("model: {default: m}\n", encoding="utf-8")
@@ -443,7 +443,7 @@ def _standalone_host(tmp_path, monkeypatch, record):
     from hermes_cli import gateway_runtime as runtime, gateway_runtime_discovery as discovery
     from hermes_cli import gateway_runtime_service as service, gateway_runtime_start as start
 
-    root = tmp_path / ".hermes"
+    root = tmp_path / ".lina"
     home = root / "profiles" / "alpha"
     home.mkdir(parents=True, mode=0o700)
     if record is not None:

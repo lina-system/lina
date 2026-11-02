@@ -27,7 +27,14 @@ INSTALL_COMMIT=""
 # official repository's main line) or main (every commit). An explicit choice is persisted.
 CHANNEL="${HERMES_INSTALL_CHANNEL:-}"
 INSTALL_DIR="${HERMES_INSTALL_DIR:-}"
-HERMES_HOME="${HERMES_HOME:-$HOME/.hermes}"
+# LINA's root is LINA_HOME, else ~/.lina. An inherited HERMES_HOME stays only where the runtime keeps it
+# (hermes_constants.drop_foreign_hermes_home): inside that root, or a custom home when LINA_HOME is unset.
+LINA_ROOT="${LINA_HOME:-$HOME/.lina}"
+case "${HERMES_HOME:-}" in
+    "$LINA_ROOT"|"$LINA_ROOT"/*) ;;
+    ""|"$HOME/.hermes"|"$HOME/.hermes"/*) HERMES_HOME="$LINA_ROOT" ;;
+    *) if [ -n "${LINA_HOME:-}" ]; then HERMES_HOME="$LINA_ROOT"; fi ;;
+esac
 STAGE=""
 WANT_MANIFEST=false
 JSON=false

@@ -23,20 +23,34 @@ except ImportError:  # pragma: no cover - stripped/scaffold installs only
 _STATE_DB_GUARD_BYPASS_ENV = "HERMES_STATE_DB_GUARD_BYPASS"
 
 
-def _real_platform_state_root() -> Optional[Path]:
-    """The REAL platform-default Hermes root. Avoids ``Path.home()`` /
-    ``hermes_constants`` (tests monkeypatch Path.home to a tempdir); ``expanduser``
-    reads HOME/passwd, which the conftest never rewrites."""
+def _real_root(posix_name: str, windows_name: str) -> Optional[Path]:
+    """A REAL platform-default root by name. Avoids ``Path.home()`` / ``hermes_constants``
+    (tests monkeypatch Path.home to a tempdir); ``expanduser`` reads HOME/passwd, which the
+    conftest never rewrites."""
     try:
         home = Path(os.path.expanduser("~"))
         if sys.platform == "win32":
             base = os.environ.get("LOCALAPPDATA", "").strip()
-            root = Path(base) / "hermes" if base else home / "AppData" / "Local" / "hermes"
+            root = Path(base) / windows_name if base else home / "AppData" / "Local" / windows_name
         else:
-            root = home / ".hermes"
+            root = home / posix_name
         return root.resolve()
-    except Exception:
+    except (OSError, RuntimeError):
         return None
+
+
+def _real_platform_state_root() -> Optional[Path]:
+    """The REAL platform-default LINA root (``~/.lina``)."""
+    return _real_root(".lina", "lina")
+
+
+def _real_hermes_agent_root() -> Optional[Path]:
+    """Hermes Agent's REAL home (``~/.hermes``): LINA never opens it, so tests must not either."""
+    return _real_root(".hermes", "hermes")
+
+
+def _real_state_roots() -> tuple[Path, ...]:
+    return tuple(r for r in (_real_platform_state_root(), _real_hermes_agent_root()) if r is not None)
 
 
 #: Exported by the hermetic conftest alongside the HERMES_HOME redirect. Unlike
