@@ -61,7 +61,7 @@ def _probe_docker_backend(_cfg) -> tuple:
     because Podman has no ServerVersion field and the agent already probes with
     ``version``.
     """
-    from tools.environments.docker import docker_runtime_name, docker_runtime_start_hint, find_docker
+    from tools.environments.container_runtime import docker_runtime_name, docker_runtime_start_hint, find_docker
     from tools.environments.remote_common import run_capture
 
     docker_exe = find_docker()

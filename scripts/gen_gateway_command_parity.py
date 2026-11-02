@@ -97,11 +97,11 @@ def classic_cell(cmd):
 
 
 def acp_cell(name, gateway):
-    """ACP's own route (``acp_adapter.gateway_commands.ROUTES``, the table its dispatch reads), else
+    """The editor route label shared with ACP dispatch, else
     the owner's ``slash.exec`` answer, its refusal shown as the reply."""
-    from acp_adapter.gateway_commands import ROUTES
-    if name in ROUTES:
-        return ROUTES[name][0]
+    from hermes_cli.gateway_command_routes import EDITOR_COMMAND_ROUTES
+    if name in EDITOR_COMMAND_ROUTES:
+        return EDITOR_COMMAND_ROUTES[name]
     return "slash.exec" if gateway != "refused" else "slash.exec: refused"
 
 

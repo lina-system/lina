@@ -18,13 +18,14 @@ def _reset_reason():
 
 def test_docker_binary_missing_captures_reason(monkeypatch):
     monkeypatch.setitem(backends._BACKEND_SPECS, "docker",
-                        {"binary": (lambda: None, "version", backends._BACKEND_SPECS["docker"]["binary"][2])})
+                        {"binary": (lambda: None, "version", "Docker executable missing")})
     assert backends._check_requirements("docker", {}) is False
     reason = backends.terminal_backend_unavailable_reason()
     assert reason and "Docker" in reason
 
 
 def test_docker_daemon_probe_failure_captures_daemon_reason(monkeypatch):
+    monkeypatch.setitem(backends._PROBE_FAILED_REASONS, "docker", "Docker daemon unavailable")
     monkeypatch.setitem(backends._BACKEND_SPECS, "docker",
                         {"binary": (lambda: "/usr/bin/docker", "version", "unused")})
     monkeypatch.setattr(backends.subprocess, "run",

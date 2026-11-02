@@ -5,8 +5,8 @@ Central map of registered pluggable terminal backends, populated by plugins via
 :func:`tools.terminal_tool_backends._create_environment` plus the classification helpers across the
 terminal/file/approval/prompt surfaces. Unlike the image/video/web/browser registries there
 is **no active-provider resolution**: the active backend is whatever ``TERMINAL_ENV`` /
-``terminal.backend`` names. Built-in names are reserved (registration raises) so a plugin can
-never shadow the in-tree docker/modal/... implementations. Scope semantics mirror
+``terminal.backend`` names. Local and SSH names are reserved (registration raises);
+optional in-tree environments register alongside plugins. Scope semantics mirror
 :mod:`agent.browser_registry` (per-profile scope or the global base map).
 """
 
@@ -21,11 +21,9 @@ from agent.terminal_env_provider import TerminalEnvironmentProvider
 logger = logging.getLogger(__name__)
 
 
-#: Names owned by in-tree backends in tools/environments/ — never
-#: registrable by plugins. Includes internal-mode aliases (managed_modal).
+#: Names owned by the kept built-in backends, never registrable by plugins.
 BUILTIN_BACKEND_NAMES = frozenset({
-    "local", "docker", "modal", "managed_modal",
-    "daytona", "vercel_sandbox", "ssh",
+    "local", "ssh",
 })
 
 

@@ -364,6 +364,9 @@ def _build_dynamic_video_schema() -> dict[str, Any]:
     return _schema("\n".join(parts), properties)
 
 
+from tools.registry_contributions import StartupContribution
+
+
 registry.register(
     name="video_generate",
     toolset="video_gen",
@@ -373,4 +376,12 @@ registry.register(
     requires_env=[],
     is_async=False,
     emoji="🎬",
-    dynamic_schema_overrides=_build_dynamic_video_schema)
+    dynamic_schema_overrides=_build_dynamic_video_schema,
+    startup=StartupContribution(
+        description="Video generation tools. Text, image and reference-to-video, plus provider edit/extend workflows.",
+        checklist=("🎬 Video Generation", "video_generate (text/image/reference)"), default_off=True,
+        category={"name": "Video Generation", "icon": "🎬", "providers": [{
+            "name": "Nous Subscription", "badge": "subscription",
+            "tag": "Managed FAL video generation billed to your subscription",
+            "env_vars": [], "requires_nous_auth": True, "managed_nous_feature": "video_gen",
+            "override_env_vars": ["FAL_KEY"], "video_gen_plugin_name": "fal"}]}))

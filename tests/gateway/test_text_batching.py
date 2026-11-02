@@ -70,7 +70,7 @@ class TestDiscordTextBatching:
         adapter.handle_message.assert_not_called()
 
         # Wait for flush
-        await asyncio.sleep(0.2)
+        await asyncio.gather(*adapter._pending_text_batch_tasks.values())
 
         adapter.handle_message.assert_called_once()
         dispatched = adapter.handle_message.call_args[0][0]
@@ -82,71 +82,16 @@ class TestDiscordTextBatching:
         adapter = _make_discord_adapter()
 
         adapter._enqueue_text_event(_make_event("Part one of a long", Platform.DISCORD))
-        await asyncio.sleep(0.02)
         adapter._enqueue_text_event(_make_event("message that was split.", Platform.DISCORD))
 
         adapter.handle_message.assert_not_called()
 
-        await asyncio.sleep(0.2)
+        await asyncio.gather(*adapter._pending_text_batch_tasks.values())
 
         adapter.handle_message.assert_called_once()
         text = adapter.handle_message.call_args[0][0].text
         assert "Part one" in text
         assert "split" in text
-
-
-# =====================================================================
-# Matrix text batching
-# =====================================================================
-
-def _make_matrix_adapter():
-    """Create a minimal MatrixAdapter for testing text batching."""
-    from plugins.platforms.matrix.adapter import MatrixAdapter
-
-    config = PlatformConfig(enabled=True, token="test-token")
-    adapter = object.__new__(MatrixAdapter)
-    adapter._platform = adapter.platform = Platform.MATRIX
-    adapter.config = config
-    adapter._pending_text_batches = {}
-    adapter._pending_text_batch_tasks = {}
-    adapter._text_batch_delay_seconds = 0.1
-    adapter._text_batch_split_delay_seconds = 0.3
-    adapter._active_sessions = {}
-    adapter._pending_messages = {}
-    adapter._message_handler = AsyncMock()
-    adapter.handle_message = AsyncMock()
-    return adapter
-
-
-class TestMatrixTextBatching:
-    @pytest.mark.asyncio
-    async def test_single_message_dispatched_after_delay(self):
-        adapter = _make_matrix_adapter()
-        event = _make_event("hello world", Platform.MATRIX)
-
-        adapter._enqueue_text_event(event)
-
-        adapter.handle_message.assert_not_called()
-        await asyncio.sleep(0.2)
-
-        adapter.handle_message.assert_called_once()
-        assert adapter.handle_message.call_args[0][0].text == "hello world"
-
-    @pytest.mark.asyncio
-    async def test_split_messages_aggregated(self):
-        adapter = _make_matrix_adapter()
-
-        adapter._enqueue_text_event(_make_event("first part", Platform.MATRIX))
-        await asyncio.sleep(0.02)
-        adapter._enqueue_text_event(_make_event("second part", Platform.MATRIX))
-
-        adapter.handle_message.assert_not_called()
-        await asyncio.sleep(0.2)
-
-        adapter.handle_message.assert_called_once()
-        text = adapter.handle_message.call_args[0][0].text
-        assert "first part" in text
-        assert "second part" in text
 
 
 # =====================================================================
@@ -181,7 +126,7 @@ class TestWeComTextBatching:
         adapter._enqueue_text_event(event)
 
         adapter.handle_message.assert_not_called()
-        await asyncio.sleep(0.2)
+        await asyncio.gather(*adapter._pending_text_batch_tasks.values())
 
         adapter.handle_message.assert_called_once()
         assert adapter.handle_message.call_args[0][0].text == "hello world"
@@ -191,11 +136,10 @@ class TestWeComTextBatching:
         adapter = _make_wecom_adapter()
 
         adapter._enqueue_text_event(_make_event("first part", Platform.WECOM))
-        await asyncio.sleep(0.02)
         adapter._enqueue_text_event(_make_event("second part", Platform.WECOM))
 
         adapter.handle_message.assert_not_called()
-        await asyncio.sleep(0.2)
+        await asyncio.gather(*adapter._pending_text_batch_tasks.values())
 
         adapter.handle_message.assert_called_once()
         text = adapter.handle_message.call_args[0][0].text

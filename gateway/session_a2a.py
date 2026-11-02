@@ -47,34 +47,6 @@ def forward_author(policy):
     return {'id': peer, 'name': peer, 'is_bot': True}
 
 
-def storage_source(db, source, session_id, fallback):
-    """Retain the owner's creation label when its LOCAL transport refreshes peer metadata."""
-    from gateway.config import Platform
-    if source.platform != Platform.LOCAL:
-        return fallback
-    if not str(source.chat_id).startswith('local-'):
-        # An adopted pre-authority row keeps its historical id as the route (session_local_migration).
-        from hermes_state_local_migration import LEGACY_PREFIX
-        with db._read_ctx() as conn:
-            if conn.execute('SELECT 1 FROM state_meta WHERE key=?', (LEGACY_PREFIX + str(source.chat_id),)).fetchone() is None:
-                return fallback
-    from hermes_state_local import local_receipt
-    receipt = local_receipt(db, source.chat_id)
-    if session_id not in receipt.get('lineage', [receipt['session_id']]):
-        raise RuntimeStoreError('admission_conflict')
-    # Producer labels (a2a, cron, kanban, bot_room, ``--source tool``, finite ``oneshot`` runs) survive the
-    # refresh: pickers filter on them (kanban/tool/oneshot hidden, cron in its own section). Interactive
-    # surfaces keep the transport's ``local``, outside the state-owned stale-open sweeps keyed on cli/tui/acp.
-    label = receipt['policy']['source']
-    # An adopted pre-authority row (main's cli/tui/gui history) keeps the label main wrote: its
-    # ``sessions list --source``, ``-c`` and stale-open sweeps key on it, as they did before the upgrade.
-    # That is the adopted row's own label, which adoption never rewrites: the policy's creation source
-    # folds main's ``desktop`` into ``gui``, so a Desktop chat (a Bot Chat) was re-sourced on its first turn.
-    if 'legacy_session_id' in receipt:
-        root = db.get_session(receipt['legacy_session_id'])
-        return (root or {}).get('source') or label
-    from gateway.session_policy import STORED_AS_LOCAL
-    return fallback if label in STORED_AS_LOCAL else label
 
 
 async def forward(connection, params):
@@ -140,6 +112,10 @@ async def forward(connection, params):
     saved = admission_result(authority.db, receipt.admission_id)
     return dict(asdict(receipt), session_id=ref.session_id,
                 result=saved['result'] if saved is not None else None)
+
+
+async def forward_rpc(connection, ref, params):
+    return await forward(connection, params)
 
 
 async def forward_to_owner(home, *, agent, tenant, peer, context_id, input_id, text, timeout):

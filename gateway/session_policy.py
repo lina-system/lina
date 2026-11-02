@@ -419,9 +419,10 @@ def build_policy(params, config, *, private_secrets=None, profile_terminal=True,
     from hermes_constants import get_hermes_home
 
     source = params.get('source', 'cli')
-    if source == 'a2a':
-        from gateway.session_a2a import build_forward_policy
-        return build_forward_policy(params, config, private_secrets=private_secrets)
+    from gateway.session_sources import source_hooks
+    hooks = source_hooks(source) if isinstance(source, str) and source not in SURFACES else None
+    if hooks is not None:
+        return hooks.build_policy(params, config, private_secrets=private_secrets)
     unknown = sorted(set(params) - CREATE_FIELDS)
     if unknown or not isinstance(source, str) or source not in SURFACES:
         _refuse(f'params.{unknown[0]}' if unknown else 'source',
@@ -981,9 +982,9 @@ def restore_policy(data):
     """Reject incomplete private policy rather than rebuilding from current defaults."""
     try:
         policy = LocalSessionPolicy(**data)
-        from gateway.session_a2a import is_forward_policy
+        from gateway.session_sources import policy_hooks
         surfaces = {**SURFACES, 'cron': 'cron', 'kanban': 'cli', 'bot_room': 'bot_room'}
-        if ((not is_forward_policy(policy) and
+        if ((policy_hooks(policy) is None and
              (policy.source not in surfaces or policy.platform != surfaces[policy.source]))
                 or not isinstance(policy.cwd, str) or not Path(policy.cwd).is_absolute()
                 or not isinstance(policy.model, str) or not policy.model.strip()

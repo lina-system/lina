@@ -1171,6 +1171,9 @@ stage_gateway() {
 
 stage_complete() {
     local commit
+    # Every agent starts on the shared Desk; adopting is idempotent, so a repair rerun keeps it.
+    "$INSTALL_DIR/.hermes/bin/hermes" desk init --adopt \
+        || fail "could not create the Desk; run 'hermes desk init' after install" other
     commit="$INSTALL_COMMIT"
     [ -n "$commit" ] || commit=$(git -C "$INSTALL_DIR" rev-parse HEAD 2>/dev/null) || commit=""
     if [ -n "$commit" ]; then

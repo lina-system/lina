@@ -237,8 +237,14 @@ def check_stale(task_id: str, resolved_or_path: str | Path) -> Optional[str]:
     return _registry.check_stale(task_id, str(resolved_or_path))
 
 
+@contextmanager
 def lock_path(resolved_or_path: str | Path):
-    return _registry.lock_path(str(resolved_or_path))
+    """The in-process per-path lock; a Desk file also takes a cross-process lock, since agents of
+    other profiles may run in other processes (``hermes_cli.desk.desk_file_lock``)."""
+    from hermes_cli.desk import desk_file_lock
+
+    with _registry.lock_path(str(resolved_or_path)), desk_file_lock(resolved_or_path):
+        yield
 
 
 def writes_since(exclude_task_id: str, since_ts: float, paths: Iterable[str | Path]) -> dict[str, list[str]]:

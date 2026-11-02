@@ -4,29 +4,34 @@ LINA runs a small CI of its own. The upstream Hermes workflows are kept, unchang
 
 ## What runs
 
-GitHub Actions reads only `.github/workflows/`. Every workflow there runs on pull requests into `dev` or `main`, on pushes to `dev` (`honcho.yml` only when its paths change), and by manual dispatch, on GitHub-hosted runners. None uses an upstream organisation secret, runner or app.
+GitHub Actions reads only `.github/workflows/`. It holds `ci.yml` ("CI"), which runs on pull requests into `dev` or `main`, on pushes to `dev`, and by manual dispatch, on GitHub-hosted runners. None of its jobs uses an upstream organisation secret, runner or app. A pull request starts one workflow run. `honcho.yml` checks, tests and builds the vendored Honcho server in `services/honcho/` and runs only when those paths change ([honcho.md](honcho.md)).
 
-| Workflow | Job (check name) | What it does | Comes from upstream |
+Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the diff once with `scripts/ci/classify_changes.py`, and a lane the change cannot affect starts no runner. A pull request that touches only prose (`*.md` outside `skills/`, `docs/`) runs no test slices. A push to `dev` or a manual run has no diff, so every lane runs. Any `.github/` change also runs every lane.
+
+| Job (check name) | Runs when | What it does | Comes from upstream |
 | --- | --- | --- | --- |
-| `lint.yml` | **Lint** (required) | `ruff check .` with the ruff version pinned by `scripts/code_health` | `lint.yml`, job "ruff enforcement (blocking)" |
-| `tests.yml` | **Python tests (Linux)** (required) | `scripts/run_tests.sh` on Ubuntu, in 8 slices (`Python tests (Linux n/8)`); the required job is green only when every slice passed | `tests.yml`, job "Run tests" |
-| `tests.yml` | Python tests (macOS) | macOS-marked tests; pushes to `dev` and manual runs only | `tests-os.yml`, macOS jobs |
-| `uv-lockfile-check.yml` | uv.lock check | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
-| `supply-chain-audit.yml` | Supply chain audit | Fails when the added lines decode base64 into `exec`/`eval` or run an encoded subprocess command | `supply-chain-audit.yml`, job "scan" |
-| `blob-size-check.yml` | Blob size check | Fails when a change adds or modifies a binary over 500 KiB (exceptions: `.github/blob-size-allowlist.txt`) | `blob-size-check.yml` |
-| `honcho.yml` | Honcho subtree check, Honcho tests, Honcho image build | The Honcho server in `services/honcho/`: subtree, ledger, LICENSE files, headers and modification notice; its pytest suite against pgvector; its Docker image. Only when `services/`, the check script or the workflow change ([honcho.md](honcho.md)) | Honcho's `unittest.yml` and `docker-build.yml` |
+| Detect affected areas | always | Picks the lanes below | `ci.yaml`, job `detect` |
+| **Lint** (required) | always | `ruff check .` with the ruff version pinned by `scripts/code_health` | `lint.yml`, job "ruff enforcement (blocking)" |
+| Python tests (Linux n/8) | `python` lane | `scripts/run_tests.sh` on Ubuntu, in 8 slices, with the per-file duration cache (`test_durations.json`; pull requests read it, `dev` pushes write it) | `tests.yml`, job "Run tests" |
+| **Python tests (Linux)** (required) | always | Green when every slice passed, or when detect skipped the slices because the change cannot reach Python | `ci.yaml`, job `all-checks-pass` |
+| Python tests (macOS) | pushes to `dev`, manual runs | macOS-marked tests | `tests-os.yml`, macOS jobs |
+| LINA Helper (macOS) | always | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
+| Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
+| uv.lock check | `uv_lock` lane | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
+| Prune check | always | Fails while a tracked file matches `prune-list.txt`, the upstream paths LINA does not carry ([forking.md](forking.md)) | LINA only |
+| Honcho subtree check, Honcho tests, Honcho image build (`honcho.yml`) | `services/`, its check script or the workflow change | The Honcho server in `services/honcho/`: subtree, ledger, LICENSE files, headers and modification notice; its pytest suite against pgvector; its Docker image. Only when `services/`, the check script or the workflow change ([honcho.md](honcho.md)) | Honcho's `unittest.yml` and `docker-build.yml` |
 
-Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead of Blacksmith runners, `actions/checkout` instead of `useblacksmith/checkout`, standalone triggers instead of the `ci.yaml` orchestrator, and no review-comment or timing artifacts. The advisory lint diff, the code-health ratchet, the Windows-footgun checks, the dependency-bound check, the e2e lanes and the Windows tests are not run.
+Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead of Blacksmith runners, `actions/checkout` instead of `useblacksmith/checkout`, one workflow instead of `ci.yaml` calling reusable workflows, and no review-comment or timing artifacts. The advisory lint diff, the code-health ratchet, the Windows-footgun checks, the dependency-bound check, the e2e lanes and the Windows tests are not run.
 
-Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_env --source . --check-lock`, `python scripts/ci/check_blob_size.py --base origin/dev`.
+Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_env --source . --check-lock`, `python scripts/ci/check_blob_size.py --base origin/dev`, `python3 scripts/ci/check_prune_list.py`.
 
 ## Required checks
 
-`dev` and `main` require two checks: **Lint** and **Python tests (Linux)**. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
+`dev` and `main` require two checks: **Lint** and **Python tests (Linux)**. LINA Helper (macOS) is not required; the Linux half of `helper/macos`'s `make test` runs inside **Python tests (Linux)** (`tests/helper/`). Both are job names in `ci.yml` and always report, so a pull request never waits on a check that did not start. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
 
 ## What was moved
 
-- All 57 upstream workflows are in `.github/workflows-upstream/`, byte for byte, including the original versions of the five above. Actions does not read that folder.
+- All 57 upstream workflows are in `.github/workflows-upstream/`, byte for byte, including the original versions of the checks above and of `ci.yaml`. Actions does not read that folder.
 - `dependabot.yml`, `CODEOWNERS`, `ISSUE_TEMPLATE/` and `PULL_REQUEST_TEMPLATE.md` are in `.github/upstream/`, so they are inactive. Issue and pull request forms come from [lina-system/.github](https://github.com/lina-system/.github).
 - `.github/actions/`, `.github/scripts/`, `actionlint.yaml` and `blob-size-allowlist.txt` stay in place: the kept workflows and the tests use them.
 - Tests that read upstream workflow files read them from `.github/workflows-upstream/`.
@@ -40,7 +45,7 @@ Only public repositories use GitHub CI. Private repositories (for example hermes
 ## Moved workflows
 
 - `archive-inputs.yml`
-- `blob-size-check.yml` (LINA version in `.github/workflows/`)
+- `blob-size-check.yml` (LINA version: a job in `.github/workflows/ci.yml`)
 - `bootstrap-installer-build.yml`
 - `bootstrap-installer.yml`
 - `canary-release.yml`
@@ -71,7 +76,7 @@ Only public repositories use GitHub CI. Private repositories (for example hermes
 - `js-tests.yml`
 - `label-rerun.yml`
 - `lazy-deps-guard.yml`
-- `lint.yml` (LINA version in `.github/workflows/`)
+- `lint.yml` (LINA version: a job in `.github/workflows/ci.yml`)
 - `live-providers.yml`
 - `lockfile-diff.yml`
 - `nix.yml`
@@ -87,11 +92,11 @@ Only public repositories use GitHub CI. Private repositories (for example hermes
 - `skills-index.yml`
 - `stable-release-publication.yml`
 - `stable-release.yml`
-- `supply-chain-audit.yml` (LINA version in `.github/workflows/`)
+- `supply-chain-audit.yml` (LINA version: a job in `.github/workflows/ci.yml`)
 - `termux-verify.yml`
 - `tests-os.yml`
-- `tests.yml` (LINA version in `.github/workflows/`)
-- `uv-lockfile-check.yml` (LINA version in `.github/workflows/`)
+- `tests.yml` (LINA version: a job in `.github/workflows/ci.yml`)
+- `uv-lockfile-check.yml` (LINA version: a job in `.github/workflows/ci.yml`)
 - `windows-bundle-sdk.yml`
 - `windows-desktop-attach-e2e.yml`
 - `windows-install-update-e2e.yml`

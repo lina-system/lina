@@ -1488,6 +1488,8 @@ function Confirm-DesktopArtifact {
 }
 
 function Stage-Complete {
+    # Every agent starts on the shared Desk; adopting is idempotent, so a repair rerun keeps it.
+    Invoke-InstalledHermes @('desk', 'init', '--adopt')
     $commit = $Commit
     if (-not $commit) {
         if (-not (Ensure-Git)) { Fail "no pinned Git artifact for this Windows architecture" unsupported_platform }

@@ -1,0 +1,74 @@
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc tests/flow_test.c src/flow.c src/grant.c -o build/flow-test
+./build/grant-test
+PASS one-use grant and duplicate-arm rejection
+PASS expiration boundary, clock rollback and TTL bounds
+PASS owner, GUI session, boot, lock state and revocation binding
+PASS writable paths, hard links, symlink directories and wrong file owner rejected
+PASS truncated grant and symlink file rejected
+PASS twelve competing processes produce exactly one authorization
+ALL GRANT TESTS PASSED
+./build/flow-test
+PASS synthetic request -> trigger -> observed unlock -> matching receipt -> both keychain probes
+PASS no receipt, keychain failure, session switch, relock, timeout and trigger failures never report ready
+PASS one arm and trigger per request; all armed outcomes revoke; already-unlocked does not inject input
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+test "$(uname -s)" = Darwin
+mkdir -p build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 -bundle src/authorization_plugin.c src/grant.c src/macos_context.c -framework CoreFoundation -framework IOKit -framework Security -o build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS/HermesUnlockAuthorizationPlugin
+cp Info.plist build/HermesUnlockAuthorizationPlugin.bundle/Contents/Info.plist
+codesign --force --sign - build/HermesUnlockAuthorizationPlugin.bundle
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 src/unlockctl.c src/flow.c src/grant.c src/macos_context.c src/runtime.c -framework CoreFoundation -framework IOKit -framework Security -o build/hermes-unlockctl
+codesign --force --sign - build/hermes-unlockctl
+mkdir -p "build/Hermes Unlock Agent.app/Contents/MacOS"
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 -fobjc-arc src/gui_agent.m src/keychain_probe.m src/runtime.c src/macos_context.c -framework CoreFoundation -framework IOKit -framework Security -framework AppKit -framework ApplicationServices -framework LocalAuthentication -o "build/Hermes Unlock Agent.app/Contents/MacOS/hermes-unlock-agent"
+cp AgentInfo.plist "build/Hermes Unlock Agent.app/Contents/Info.plist"
+codesign --force --sign - "build/Hermes Unlock Agent.app"
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 -fobjc-arc -DHU_NO_AGENT_MAIN tests/native_safety_test.m src/gui_agent.m src/keychain_probe.m src/runtime.c src/macos_context.c -framework CoreFoundation -framework IOKit -framework Security -framework AppKit -framework ApplicationServices -framework LocalAuthentication -o build/native-safety-test
+codesign --force --sign - build/native-safety-test
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 tests/plugin_test.c -framework Security -o build/plugin-test
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 -Dgeteuid=hu_test_euid tests/plugin_logic_test.c src/authorization_plugin.c -framework Security -o build/plugin-logic-test
+./build/plugin-test build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS/HermesUnlockAuthorizationPlugin
+PASS native bundle load, invalid callbacks/mechanism, deny and deactivate callbacks
+NOTE this is an unprivileged test host, not SecurityAgentHelper
+./build/plugin-logic-test
+PASS authorization maps one-use grant to Allow and replay to Deny
+PASS expired grant, missing username, different owner, missing console and unprivileged host deny
+NOTE positive authorization uses synthetic OS facts in a separate test executable
+./build/native-safety-test
+PASS invalid GUI version, user, operation and missing session reject before input or keychain access
+PASS kernel peer UID and audit-token code hash validation; wire framing round-trip
+codesign --verify --strict build/HermesUnlockAuthorizationPlugin.bundle
+codesign --verify --strict "build/Hermes Unlock Agent.app"
+./build/hermes-unlockctl status
+{"schema_version":1,"result":"status","installed":false,"active":false,"console_known":true,"screen_locked":false,"agent_connected":false,"accessibility":false,"active_displays":0,"desktop_ready":false}
+"build/Hermes Unlock Agent.app/Contents/MacOS/hermes-unlock-agent" permissions
+{"accessibility":true}
+test_no_shell_or_option_injection (test_bridge.BridgeTests) ... ok
+test_nonzero_transport_exit_cannot_be_success (test_bridge.BridgeTests) ... ok
+test_success_requires_both_keychains_and_receipt (test_bridge.BridgeTests) ... ok
+test_timeout_has_no_retry (test_bridge.BridgeTests) ... ok
+test_stage_failure_removes_only_package_paths (test_installer.InstallerTests) ... ok
+test_stage_files_services_and_narrow_sudoers_without_authentication_mutation (test_installer.InstallerTests) ... ok
+test_stale_atomic_temp_does_not_block_recovery (test_installer.InstallerTests) ... ok
+test_model_cannot_select_another_host (test_plugin.PluginTests) ... ok
+test_register_is_offline_and_handlers_are_bound (test_plugin.PluginTests) ... ok
+test_confirm_requires_observed_transition_and_keychains (test_policy.PolicyTests) ... ok
+test_confirmation_preflight_cannot_outlive_trial (test_policy.PolicyTests) ... ok
+test_crash_after_rule_write_is_recoverable (test_policy.PolicyTests) ... ok
+test_deadline_and_reboot_rollback (test_policy.PolicyTests) ... ok
+test_drift_never_overwrites_unrelated_changes (test_policy.PolicyTests) ... ok
+test_each_partial_write_rolls_back (test_policy.PolicyTests) ... ok
+test_expired_trial_cannot_be_confirmed (test_policy.PolicyTests) ... ok
+test_invalid_timeout (test_policy.PolicyTests) ... ok
+test_preserves_entire_original_instead_of_flattening_threshold (test_policy.PolicyTests) ... ok
+test_reserved_name_collision_aborts_before_mutation (test_policy.PolicyTests) ... ok
+test_reserved_reference_cannot_create_authorization_cycle (test_policy.PolicyTests) ... ok
+
+----------------------------------------------------------------------
+Ran 20 tests in 0.012s
+
+OK
+build/HermesUnlockAuthorizationPlugin.bundle: replacing existing signature
+build/hermes-unlockctl: replacing existing signature
+build/Hermes Unlock Agent.app: replacing existing signature
+build/native-safety-test: replacing existing signature

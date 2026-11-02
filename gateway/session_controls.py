@@ -223,7 +223,7 @@ class AuthorityConnection:
                     'session.mutate': self.mutate, 'bot_relay.deliver': self.bot_deliver,
                     'bot_relay.settle': self.bot_settle,
                     'bot_relay.roster.sync': self.bot_roster, 'bot_relay.outbox.drain': self.bot_outbox,
-                    'bot_relay.reply': self.bot_reply, 'a2a.forward': self.a2a_forward,
+                    'bot_relay.reply': self.bot_reply,
                     'kanban.run': self.kanban_run,
                     'cron.submit': self.cron_submit, 'cron.status': self.cron_status,
                     'cron.cancel': self.cron_cancel, 'cron.recover': self.cron_recover,
@@ -337,7 +337,6 @@ class AuthorityConnection:
             # commits in a worker here, so the handler's synchronous restore only reads.
             from gateway.session_local_adoption import adopt_before_restore
             await adopt_before_restore(authority, ref.session_id)
-        handlers = self.handlers()
         try:
             from gateway.session_group_controls import GROUP_METHODS, dispatch_group_control
             # Every handler reads config/jobs/policy for the OWNING profile: enter its home so
@@ -347,6 +346,10 @@ class AuthorityConnection:
             from gateway.session_authorities import async_owner_scope
             from gateway.session_connections import METHODS as CONNECTION_METHODS, session_owned
             async with async_owner_scope(self.authority):
+                handlers = self.handlers()
+                if method not in handlers:
+                    from gateway.session_sources import rpc_handlers
+                    handlers.update(rpc_handlers(self, method))
                 if method in GROUP_METHODS or method == 'profiles.list':
                     result = await dispatch_group_control(self, method, params)
                 elif method not in handlers or (method in CONNECTION_METHODS and not session_owned(params)):
@@ -375,10 +378,6 @@ class AuthorityConnection:
                                  params.get('session_id'), exc)
             return {'jsonrpc': '2.0', 'id': rid, 'error': {
                 'code': 5001, 'message': 'storage_unavailable', 'data': {'reason': 'storage_unavailable'}}}
-
-    async def a2a_forward(self, ref, params):
-        from gateway.session_a2a import forward
-        return await forward(self, params)
 
     async def kanban_run(self, ref, params):
         from gateway.session_kanban import run_task

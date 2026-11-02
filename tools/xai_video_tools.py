@@ -9,6 +9,7 @@ from typing import Any, Dict, Optional
 from hermes_cli.config import load_config
 from plugins.video_gen.xai import has_xai_video_credentials, run_xai_video_edit, run_xai_video_extend
 from tools.registry import registry, tool_error
+from tools.registry_contributions import StartupContribution
 
 
 def _configured_for_xai_video() -> bool:
@@ -122,4 +123,5 @@ for _name, _schema, _handler in (
     registry.register(
         name=_name, toolset="video_gen", schema=_schema, handler=_handler,
         check_fn=_check_xai_video_requirements, requires_env=[], is_async=False, emoji="video",
+        startup=StartupContribution(),
     )

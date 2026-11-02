@@ -1929,7 +1929,7 @@ delegation:
 # Builds a deeper understanding of the user across sessions and tools.
 # Runs alongside USER.md — additive, not a replacement.
 #
-# Requires: hermes plugins install honcho (Plastic Labs' plugin from the catalog)
+# Bundled memory provider (plugins/memory/honcho): hermes memory setup honcho
 # Config: ~/.honcho/config.json (shared with Claude Code, Cursor, etc.)
 # API key: HONCHO_API_KEY in ~/.hermes/.env or ~/.honcho/config.json
 #
@@ -2425,3 +2425,19 @@ updates:
 #   # This runs ONCE per process at startup, so it cannot replace a credential
 #   # that expires mid-session. For a single provider whose token needs
 #   # re-minting during a session, use `providers.<name>.key_cmd` instead.
+
+# =============================================================================
+# Devices (LINA Helper)
+# =============================================================================
+# Macs that run LINA Helper (helper/macos). The model sees only the names; `host`
+# is `local` (the Mac LINA runs on) or an SSH alias from ~/.ssh/config.
+# `unlock: true` allows the screen-unlock tools for a Mac reached over SSH.
+#
+# devices:
+#   default_mac: agent-hub
+#   macs:
+#     agent-hub:
+#       host: local
+#     agent-mac:
+#       host: agent-mac
+#       unlock: true

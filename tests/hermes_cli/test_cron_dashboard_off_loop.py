@@ -39,8 +39,9 @@ def test_cron_fire_profile_lookup_off_loop(monkeypatch, loop_probe):
 
     monkeypatch.setattr(_web_server_cron, "_find_cron_job_profile", fake_find)
 
-    import plugins.cron_providers.chronos.verify as chv
-    monkeypatch.setattr(chv, "get_fire_verifier", lambda: (lambda **kw: {"sub": "t"}))
+    from cron.scheduler_provider import InProcessCronScheduler
+    monkeypatch.setattr("cron.scheduler_provider.resolve_cron_scheduler", InProcessCronScheduler)
+    monkeypatch.setattr(InProcessCronScheduler, "verify_fire_token", lambda self, **kw: {"sub": "t"})
 
     client = TestClient(web_server.app)
     resp = client.post(

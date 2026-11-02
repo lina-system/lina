@@ -23,9 +23,11 @@ def test_create_environment_dispatches_each_sandbox_builder_once(
             received.update(kwargs)
 
     monkeypatch.setitem(
-        backends._SANDBOX_ROWS,
+        backends._ENV_BUILDERS,
         env_type,
-        (lambda: FakeEnvironment, expects_image, lambda _cc, _kwargs: {}),
+        lambda **kw: FakeEnvironment(
+            cwd=kw["cwd"], timeout=kw["timeout"], task_id=kw["task_id"],
+            **({"image": kw["image"]} if expects_image else {})),
     )
 
     environment = backends._create_environment(

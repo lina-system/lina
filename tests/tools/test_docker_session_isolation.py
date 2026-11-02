@@ -352,8 +352,8 @@ class TestSessionScopedContainerLifecycle:
             def __init__(self, **kwargs):
                 captured.update(kwargs)
 
-        monkeypatch.setattr(terminal_tool_backends, "_DockerEnvironment", _FakeDockerEnv)
-        monkeypatch.setattr(terminal_tool, "_maybe_reap_docker_orphans", lambda cc: None)
+        monkeypatch.setattr("tools.environments.docker.DockerEnvironment", _FakeDockerEnv)
+        monkeypatch.setattr("tools.environments.docker._maybe_reap_docker_orphans", lambda cc: None)
 
         env = terminal_tool_backends._create_environment(
             env_type="docker", image="img:1", cwd="/workspace", timeout=60,
@@ -371,8 +371,8 @@ class TestSessionScopedContainerLifecycle:
             def __init__(self, **kwargs):
                 captured.update(kwargs)
 
-        monkeypatch.setattr(terminal_tool_backends, "_DockerEnvironment", _FakeDockerEnv)
-        monkeypatch.setattr(terminal_tool, "_maybe_reap_docker_orphans", lambda cc: None)
+        monkeypatch.setattr("tools.environments.docker.DockerEnvironment", _FakeDockerEnv)
+        monkeypatch.setattr("tools.environments.docker._maybe_reap_docker_orphans", lambda cc: None)
 
         env = terminal_tool_backends._create_environment(
             env_type="docker", image="img:1", cwd="/workspace", timeout=60,
