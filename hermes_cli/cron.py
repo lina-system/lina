@@ -1012,6 +1012,11 @@ def cron_cancel(args) -> int:
     return 0
 
 
+def _cron_ops(args) -> int:
+    from hermes_cli.cron_ops import cmd_ops
+    return cmd_ops(args)
+
+
 # Late-bound lambdas keep module-level monkeypatching working; list/status/runs return None -> 0.
 _CRON_SUBCOMMANDS = {
     "list": lambda a: cron_list(getattr(a, "all", False)) or 0,
@@ -1028,6 +1033,7 @@ _CRON_SUBCOMMANDS = {
     "run": lambda a: _job_action("run", a.job_id, "Triggered"),
     "cancel": lambda a: cron_cancel(a),
     "remove": lambda a: _job_action("remove", a.job_id, "Removed"),
+    "ops": lambda a: _cron_ops(a),
 }
 _CRON_SUBCOMMANDS["history"] = _CRON_SUBCOMMANDS["runs"]
 _CRON_SUBCOMMANDS["add"] = _CRON_SUBCOMMANDS["create"]
