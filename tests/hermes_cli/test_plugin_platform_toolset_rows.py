@@ -13,8 +13,7 @@ _SEEDED_ROWS = {
     "cli": ["hermes-cli"],
     "telegram": ["hermes-telegram"],
     "homeassistant": ["hermes-homeassistant"],
-    "teams": ["hermes-teams"],
-    "google_chat": ["hermes-google_chat"],
+    "bluebubbles": ["hermes-bluebubbles"],
 }
 
 

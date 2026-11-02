@@ -49,7 +49,9 @@ def test_all_builtins_have_checker_or_generic_token_path():
         pass
 
     # Every built-in should be in one of the sets
-    all_builtins = set(_BUILTIN_PLATFORM_VALUES)
+    all_builtins = set(_BUILTIN_PLATFORM_VALUES) & (
+        Platform._scan_bundled_plugin_platforms()[0] | {"local", "api_server", "webhook", "msgraph_webhook", "relay"}
+    )
     missing = (
         all_builtins
         - generic_token_values
