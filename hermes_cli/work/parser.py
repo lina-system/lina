@@ -203,6 +203,9 @@ def _reads(sp) -> None:
 
 
 def _moves(sp) -> None:
+    p = sp.add_parser("import", help="copy a work.db or ledger.jsonl into the store (read-only source, idempotent)")
+    p.add_argument("--from", dest="from_", required=True)
+    p.set_defaults(fn=_fn("cmd_store", "cmd_import"), no_resume=True)
     p = sp.add_parser("migrate", help="a ledger.jsonl -> a new SQLite work.db file, checked")
     p.add_argument("--from", dest="from_", required=True)
     p.add_argument("--to", required=True)

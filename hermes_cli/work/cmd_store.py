@@ -91,6 +91,18 @@ class Source:
             self.db.close()
 
 
+def _imported(db, lines) -> dict[int, str]:
+    """Source line number -> the store's line for it: by the import marker, or, for a record written here (its own
+    export), by position."""
+    rows = db.execute(f"SELECT {db.jget('data', 'import_line')}, {db.jtext('data')} FROM event "
+                      f"WHERE {db.jget('data', 'import_line')} IS NOT NULL").fetchall()
+    if rows:
+        return {int(n): json.loads(data)["ledger"] for n, data in rows}
+    own = [line for _, line in store.lines(db)]
+    numbers = [n for n, _, row in lines if row is not None]
+    return dict(zip(numbers, own))
+
+
 def _info(row: dict) -> dict:
     info = ledger.describe(row)
     at = store.utc(row.get("ts")) or store.utc(row.get("created"))
@@ -111,6 +123,24 @@ def _import_line(db, n: int, text: str, row: dict) -> None:
     if row.get("_meta"):
         data["meta"] = True
     db.execute("UPDATE event SET data = ? WHERE id = ?", (json.dumps(data, ensure_ascii=False), eid))
+
+
+def _copy_runs(db, runs, pairs) -> int:
+    for run in runs:
+        store.actor(db, run[RUN_COLUMNS.index("agent_id")])
+        values = dict(zip(RUN_COLUMNS, run))
+        if values.get("goal_id") and not store.exists(db, "goal", values["goal_id"]):
+            values["goal_id"] = None
+        db.execute(f"INSERT INTO run ({', '.join(RUN_COLUMNS)}) VALUES ({', '.join('?' * len(RUN_COLUMNS))}) "
+                   "ON CONFLICT (id) DO NOTHING", [values[c] for c in RUN_COLUMNS])
+    copied = 0
+    for run_id, todo_id, closes, added_by, added_at in pairs:
+        if store.exists(db, "todo", todo_id) and store.exists(db, "run", run_id):
+            store.actor(db, added_by)
+            db.execute("INSERT INTO run_todo (run_id, todo_id, closes, added_by, added_at) VALUES (?, ?, ?, ?, ?) "
+                       "ON CONFLICT DO NOTHING", (run_id, todo_id, closes, added_by, added_at))
+            copied += 1
+    return copied
 
 
 def _check_counts(src: Source, db, lines, skipped) -> tuple[bool, list[str]]:
@@ -150,6 +180,29 @@ def _import_new(db, lines, done: dict) -> tuple[int, list]:
         except LookupError:
             skipped.append(row)
     return added, skipped
+
+
+def cmd_import(a) -> None:
+    """Copy a record into the configured store: idempotent (a line already imported is never written twice), the
+    source opened read-only, then a count check per table and a compare of every item's latest record."""
+    src = Source(Path(a.from_).expanduser())
+    try:
+        lines = src.lines()
+        runs, pairs = src.runs()
+        with Lock():
+            db = ledger.db()
+            with store.transaction(db):
+                added, skipped = _import_new(db, lines, _imported(db, lines))
+                copied = _copy_runs(db, runs, pairs)
+                ok, report = _check_counts(src, db, lines, skipped)
+                if not ok:
+                    print("\n".join(report))
+                    raise SystemExit(t("가져온 기록이 원본과 다르다. 아무것도 바꾸지 않았다"))
+    finally:
+        src.close()
+    print("\n".join(report))
+    print(t("가져옴: 새 줄 {added}개 · 붙을 항목이 없어 건너뛴 줄 {skipped}개 · 작업-할 일 {pairs}개 · 저장소 {backend}",
+            added=added, skipped=len(skipped), pairs=copied, backend=ledger.backend()))
 
 
 def cmd_migrate(a) -> None:
