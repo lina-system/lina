@@ -9,6 +9,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from fnmatch import fnmatch
 
+from scripts.vendored_subtrees import VENDORED_SUBTREES
+
 # Master switch, honoured everywhere the ratchet runs (CI, `scripts/check`, the git hooks). It is
 # read from main, never from the branch under test, so a PR cannot relax its own check: CI reads
 # the merge commit's first parent; local runs read `origin/main` (falling back to the merge-base).
@@ -38,8 +40,8 @@ METRIC_FIX = {
     " judged); fix the syntax, or report the measurer bug",
 }
 
-# Vendored subtrees are held to their upstream's own checks (docs/honcho.md, docs/lcm-x.md).
-PY_EXCLUDE = ("website/*", "*/node_modules/*", "node_modules/*", "services/honcho/*", "plugins/context_engine/lcm-x/*")
+# Vendored subtrees are held to their upstream's own checks (scripts/vendored_subtrees.py).
+PY_EXCLUDE = ("website/*", "*/node_modules/*", "node_modules/*", *(f"{subtree}/*" for subtree in VENDORED_SUBTREES))
 TS_EXCLUDE = PY_EXCLUDE + ("*.d.ts", "*/dist/*", "*/build/*", "*/generated/*", "*.generated.ts")
 TESTS = ("tests/*", "*/tests/*", "tests-js/*", "*/conftest.py")
 # One-shot processes that serve a single profile (CI/release scripts, skill scripts run as a

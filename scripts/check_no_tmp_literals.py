@@ -53,6 +53,9 @@ import warnings
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if __package__ in (None, ""):
+    sys.path.insert(0, str(ROOT))
+from scripts.vendored_subtrees import VENDORED_SUBTREES
 SELF = Path(__file__).resolve()
 
 MARKER = "no-tmp: ok"
@@ -72,8 +75,7 @@ SKIP_DIRS = {
 ROOT_SKIP_DIRS = {".github"}
 # Pruned as repo-relative paths.
 SKIP_REL_DIRS = {Path("website/i18n"), Path("website/build"), Path("website/node_modules"),
-                 Path("services/honcho"),  # vendored subtrees, docs/honcho.md, docs/lcm-x.md
-                 Path("plugins/context_engine/lcm-x")}
+                 *(Path(subtree) for subtree in VENDORED_SUBTREES)}
 
 SKIP_FILE_NAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "uv.lock", "poetry.lock"}
 SKIP_FILE_PATTERNS = (

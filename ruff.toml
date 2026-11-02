@@ -6,7 +6,7 @@ indent-width = 4
 # version-gated fix must stay valid where annotations are evaluated eagerly (< 3.14).
 target-version = "py311"
 
-# Vendored subtrees keep their upstream's own lint config and CI (docs/honcho.md, docs/lcm-x.md).
+# Vendored subtrees keep their upstream's own lint config and CI: the list in scripts/vendored_subtrees.py.
 extend-exclude = ["services/honcho", "plugins/context_engine/lcm-x"]
 
 [format]

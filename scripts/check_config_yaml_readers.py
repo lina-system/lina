@@ -38,14 +38,15 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.vendored_subtrees import is_vendored
 DEFAULT_TREES = (
     "hermes_cli", "agent", "gateway", "tui_gateway", "cron", "plugins", "tools", "acp_adapter", "pm",
     "cli.py", "utils.py", "hermes_constants.py", "hermes_logging.py", "hermes_time.py", "run_agent.py",
     "model_tools.py", "batch_runner.py")
 # The backend module itself, and the on-disk primitives it wraps.
 ALLOWED_FILES = {ROOT / "hermes_cli" / "config_backend.py", ROOT / "utils.py"}
-# A vendored subtree, held to its upstream's own checks (docs/lcm-x.md).
-VENDORED = ROOT / "plugins" / "context_engine" / "lcm-x"
 # Modules whose ``config_path`` / ``path`` names are their OWN config file, never a hermes
 # config.yaml (the name heuristic would flag every line of them).
 FOREIGN_CONFIG_FILES = {
@@ -235,7 +236,7 @@ def main(argv: list[str]) -> int:
     for t in targets:
         if t.is_dir():
             files.extend(p for p in t.rglob("*.py") if "node_modules" not in p.parts and "tests" not in p.parts
-                         and not p.is_relative_to(VENDORED))
+                         and not is_vendored(p.relative_to(ROOT)))
         elif t.suffix == ".py" and t.exists():
             files.append(t)
     problems: list[str] = []
