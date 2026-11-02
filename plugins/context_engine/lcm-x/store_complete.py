@@ -236,8 +236,8 @@ class StoreCompleteMixin:
         """fork: pin a view occurrence to the stored row(s) its host ``message_uid`` is canonically bound to (this
         session root, any home tag). A pinned occurrence's key becomes ``("fork-uid", uid)`` and ``pins`` maps
         store_id -> that key, so the matcher pairs it only with its own row. Without this, rows with an empty or
-        repeated identity (a content-less assistant turn) matched across the whole view: on the 10-25 default
-        telegram session a 07:39 empty reply "showed" a 02:18 empty reply above the frontier and every leaf
+        repeated identity (a content-less assistant turn) matched across the whole view: on a long gateway session a
+        later empty reply "showed" an earlier empty reply above the frontier and every leaf
         stopped there. Fail-open: no uid, no table, an unresolved lineage or any error leaves everything unpinned."""
         if not occurrences or host_message_uid_mode() == "off":
             return occurrences, {}
@@ -490,7 +490,7 @@ class StoreCompleteMixin:
                 # fork: the composite carrier that claims this row (and later ones, with other stored rows
                 # between them) sits behind host rows mapped to LATER store rows, so the chunk cannot emit it in
                 # store order and the contiguity check cut every leaf to nothing ("cannot form a contiguous
-                # stored prefix (hole=<first constituent> role=user)", default telegram session 10-25). As the
+                # stored prefix (hole=<first constituent> role=user)", seen on a long gateway session). As the
                 # single-claim branch above does, read each constituent from its stored bytes at its own store
                 # position; the carrier stays input but no longer claims them. Duplicated text, never a lost row.
                 for constituent in composite_claims[store_id]:

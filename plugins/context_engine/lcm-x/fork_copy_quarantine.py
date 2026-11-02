@@ -1,8 +1,8 @@
 """fork: quarantine raw RE-STORED copies of rows the session already stored (lossless, reversible).
 
 Hermes' compression re-persists the kept tail with fresh timestamps. Before ``LCM_FORK_UID_REPLAY_STAMPED`` the
-first ingest after each compression stored that whole tail again (the default telegram session
-20261024_165049_398f126f held 20,755 rows of which 2,925 were distinct on 10-26). Those copies took the in-order
+first ingest after each compression stored that whole tail again (a long gateway session held tens of thousands
+of rows, most of them copies). Those copies took the in-order
 store mapper's slots, so leaves stopped on "unresolved retained occurrence ... kind=shown" or "cannot form a
 contiguous stored prefix". The ingest switch stops new copies; this module takes the old ones out of selection.
 

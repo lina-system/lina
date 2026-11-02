@@ -1,7 +1,7 @@
 """fork: a CLI resume hands LCM its own summary row (``[Recent Summary ...]``, the boundary it rendered
 earlier) with the same bytes and host stamp every time. The identity anchor gives a pure scaffold row no
-identity, so before this fix each resume stored that row again (27 copies of one 57k-char summary in the
-sion session of 10-23). Same stamp + same bytes already stored in this lineage = a replay, not content."""
+identity, so before this fix each resume stored that row again (dozens of copies of one long summary in a
+single CLI session). Same stamp + same bytes already stored in this lineage = a replay, not content."""
 
 from __future__ import annotations
 

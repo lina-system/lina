@@ -184,14 +184,14 @@ logger = logging.getLogger(__name__)
 _DIAGNOSTIC_ENGINE_TOKENS = itertools.count(1)
 # fork: a host row that carries a message_uid LCM itself minted for this session root (kind='engine') is LCM's
 # own emission: its summary head is not content. A cold bind whose commit proof no longer binds (a host move that
-# changed hermes_home, 10-25) stored such a head as a raw row above the frontier; the in-order store mapper tied
+# changed hermes_home) stored such a head as a raw row above the frontier; the in-order store mapper tied
 # the host's head to that copy, every later host row went unmapped, and compaction stopped on "unresolved retained
 # occurrence ... kind=shown". LCM_FORK_OWN_SUMMARY_GUARD=off restores the old path.
 _FORK_NEVER_STORE_OWN_SUMMARY = os.environ.get("LCM_FORK_OWN_SUMMARY_GUARD", "on").strip().lower() not in (
     "0", "off", "false", "no")
-# fork: see _fork_uid_replayed_indexes. On by default since 10-26 (LCM_FORK_UID_REPLAY_STAMPED=off restores the old path):
-# without it every compression re-stored the restamped tail (the default telegram session reached 20,755 rows, 2,925
-# distinct) and those copies wedged compaction. A stamped row is claimed on a canonical binding only, so the #1403
+# fork: see _fork_uid_replayed_indexes. On by default (LCM_FORK_UID_REPLAY_STAMPED=off restores the old path):
+# without it every compression re-stored the restamped tail (a long gateway session reached tens of thousands of
+# rows, most of them copies) and those copies wedged compaction. A stamped row is claimed on a canonical binding only, so the #1403
 # version-binding cases keep their old result.
 _FORK_UID_REPLAY_STAMPED = os.environ.get("LCM_FORK_UID_REPLAY_STAMPED", "on").strip().lower() not in (
     "0", "off", "false", "no")
@@ -7198,11 +7198,11 @@ class LCMEngine(
         # so those rows keep today's path.
         # Only rows the host sent WITHOUT a timestamp: a stamped row is #436's to decide (stamp + payload,
         # #1403 occurrence rules); the gap this closes is exactly the stamp the gateway strips.
-        # fork (10-25): also a STAMPED row when the host rewrote its stamp. Hermes' compression re-persists the
+        # fork: also a STAMPED row when the host rewrote its stamp. Hermes' compression re-persists the
         # kept tail with fresh timestamps (one per compression), so #436 cannot match it and each compression
-        # stored the whole tail again (634 copies at 07:09 on the default telegram session); those copies then
-        # took the store mapper's in-order slots and stopped the leaf walk (raw_prefix_drained, ~160k raw
-        # tokens left). The uid is Hermes' per-row identity and the bytes must match, so this is the same
+        # stored the whole tail again (hundreds of copies in one compression on a long gateway session); those
+        # copies then took the store mapper's in-order slots and stopped the leaf walk (raw_prefix_drained, a large
+        # raw backlog left). The uid is Hermes' per-row identity and the bytes must match, so this is the same
         # occurrence. A stamped row is claimed here only when no stored copy of it has its current stamp.
         stamped_ok = _FORK_UID_REPLAY_STAMPED
         wanted = {idx: m.get("message_uid") for idx, m in enumerate(messages)
@@ -7264,7 +7264,7 @@ class LCMEngine(
         part by part against this session's DAG) whose exact bytes and host stamp are already stored for this
         session lineage. Such a row is the summary LCM rendered into an earlier boundary and the host now
         replays on every resume; the identity anchor gives scaffold rows no identity, so without this check
-        the same 57k-char row was stored again on each resume (27 copies in one session). A summary row with
+        the same long row was stored again on each resume (dozens of copies in one session). A summary row with
         new bytes or no stamp keeps today's path (stored as content)."""
         wanted: dict = {}
         own: set = set()

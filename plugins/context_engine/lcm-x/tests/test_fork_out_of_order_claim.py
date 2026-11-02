@@ -1,4 +1,4 @@
-"""Fork regression (default 20261020_190551_3754ddd7, sion 20261015_193926_ec05b251, 10-22).
+"""Fork regression (seen on gateway sessions of two profiles).
 
 The host replayed newer copies of a tool run before an older user turn, so the host row that owns
 the user turn's store row sat behind host rows mapped to LATER store rows. The store-complete leaf

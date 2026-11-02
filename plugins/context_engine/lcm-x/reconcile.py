@@ -4005,7 +4005,7 @@ class ReconcileMixin:
                 # fork: this row's only stored copy sits AFTER rows the following host rows map to (the turn's
                 # own ingest missed it and a later re-store wrote it at the end). Mapping it there jumped the
                 # in-order cursor past them, every one stayed unmapped, and the leaf stopped at the first as a
-                # "retained occurrence ... kind=shown" (default telegram session 10-25/26). Leave this row
+                # "retained occurrence ... kind=shown" (seen on a long gateway session). Leave this row
                 # unmapped so its neighbours map in order; the late copy stays stored and is reached later.
                 continue
             if (match_idx is not None and match_idx > store_idx

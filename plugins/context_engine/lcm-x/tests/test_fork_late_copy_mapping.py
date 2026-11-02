@@ -1,6 +1,6 @@
-"""fork (10-26, default telegram session 20261024_165049_398f126f, third wedge): compaction stopped with
-``leaf would end before an unresolved retained occurrence (store_id=22043 role=user kind=shown)``, and after the
-restamped copies were cleared it stopped again at ``store_id=22445 role=assistant kind=shown``.
+"""fork (a long gateway session, third wedge): compaction stopped with
+``leaf would end before an unresolved retained occurrence (store_id=<n> role=user kind=shown)``, and after the
+restamped copies were cleared it stopped again at ``store_id=<m> role=assistant kind=shown``.
 
 The turn's own ingest had missed a tool-call assistant row (state 128420, 05:35); its only stored copy came from a
 later re-store (store 22675, 06:09), i.e. AFTER the stored rows of the host rows that follow it. The in-order store

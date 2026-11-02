@@ -1,8 +1,8 @@
-"""fork (#1162 family, 10-25 hub move): a cold bind whose commit proof no longer binds (the host moved, so
+"""fork (#1162 family, a profile whose hermes_home moved): a cold bind whose commit proof no longer binds (the host moved, so
 ``hermes_home`` changed) handed LCM its own emitted summary head as the first host row. Ingest stored that head
 as a raw user row above the frontier; the in-order store mapper then tied the host's head to that copy, every
 later host row went unmapped, and each compaction stopped on "leaf would end before an unresolved retained
-occurrence (... kind=shown)" (sion 20261024_153651_55951e, default 20261015_004705_713a68).
+occurrence (... kind=shown)" (seen on gateway sessions of two profiles).
 
 Covered here: the guard (a host row carrying an engine uid LCM minted for this session root, headed by a verified
 summary, is not stored again; a user's own summary-shaped row still is) and the lossless repair for a store an
@@ -64,7 +64,7 @@ def _compacted(tmp_path, monkeypatch):
 
 
 def _moved_host(engine, tmp_path):
-    """The same lcm.db opened from a new hermes_home (the hub move): the old commit proof no longer binds."""
+    """The same lcm.db opened from a new hermes_home (the home moved): the old commit proof no longer binds."""
     engine.shutdown()
     moved = LCMEngine(config=_config(tmp_path, fresh_tail_count=2), hermes_home=_home(tmp_path, "moved"))
     moved.on_session_start("S0", platform="cli", context_length=200_000)
@@ -113,7 +113,7 @@ def test_guard_off_reproduces_the_stored_head(tmp_path, monkeypatch):
         engine.ingest(_persisted_view(compressed, BASE + 100.5))
         (store_id,) = engine._store._conn.execute(
             "SELECT store_id FROM messages WHERE session_id = 'S0' AND content = ?", (head["content"],)).fetchone()
-        assert int(store_id) > _frontier(engine)  # the wedge's precondition, as stored on 10-25
+        assert int(store_id) > _frontier(engine)  # the wedge's precondition, as it was stored
     finally:
         engine.shutdown()
 

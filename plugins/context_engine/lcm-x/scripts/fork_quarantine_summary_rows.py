@@ -4,9 +4,9 @@
 Dry-run by default. ``--apply`` needs a backup made first (``sqlite3 lcm.db ".backup <file>"``) and a session with no
 turn in flight. Nothing is deleted or truncated; see ``fork_summary_quarantine.py``.
 
-  python3 scripts/fork_quarantine_summary_rows.py --db ~/.hermes/profiles/sion/lcm.db --session <id>
+  python3 scripts/fork_quarantine_summary_rows.py --db <home>/lcm.db --session <id>
   python3 scripts/fork_quarantine_summary_rows.py --db ... --session <id> --apply --backup-confirmed <path>
-  python3 scripts/fork_quarantine_summary_rows.py --db ... --restore 163884,164107
+  python3 scripts/fork_quarantine_summary_rows.py --db ... --restore <store_id>,<store_id>
 """
 
 from __future__ import annotations

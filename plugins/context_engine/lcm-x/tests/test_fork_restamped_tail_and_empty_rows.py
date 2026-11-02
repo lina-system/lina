@@ -1,9 +1,9 @@
-"""fork (10-25, default telegram session 20261024_165049_398f126f): compaction stopped with
-``raw_prefix_drained`` while ~160k raw tokens stayed above the frontier. Three causes, each pinned here:
+"""fork (a long gateway session): compaction stopped with
+``raw_prefix_drained`` while a large raw backlog stayed above the frontier. Three causes, each pinned here:
 
 1. Hermes' compression re-persists the kept tail with FRESH timestamps. #436 matches by stamp + payload, and the
    fork's uid-replay check only took unstamped rows, so the first ingest after every compression stored the whole
-   tail again (634 rows at 07:09). After the hub move the new-home lineage key also had no binding for the old
+   tail again (hundreds of rows per compression). After the profile's hermes_home moved, the new-home lineage key also had no binding for the old
    rows. Now a row whose message_uid is bound (any home tag of this session root) to a stored row with the same
    bytes is a replay even when its stamp changed; a row whose stored copy has its current stamp stays #436's.
 2. Rows with an empty identity (a content-less assistant turn) matched ANY empty view occurrence, so a later empty
@@ -32,7 +32,7 @@ PAD = " alpha beta gamma delta" * 4
 def carry_mode(monkeypatch):
     monkeypatch.delenv("LCM_HOST_MESSAGE_UID", raising=False)
     monkeypatch.setattr(emit, "_host_uid_capability", True)
-    monkeypatch.setattr(lcm_engine_module, "_FORK_UID_REPLAY_STAMPED", True)  # default on since 10-26
+    monkeypatch.setattr(lcm_engine_module, "_FORK_UID_REPLAY_STAMPED", True)  # on by default
 
 
 def _home(tmp_path, name):

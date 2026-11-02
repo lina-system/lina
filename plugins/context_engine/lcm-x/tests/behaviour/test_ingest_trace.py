@@ -170,7 +170,7 @@ def test_uid_scenarios_bind_durable_rows(name: str, tmp_path: Path) -> None:
     assert all(row[3] == "canonical" for row in bindings)
     assert state["_host_uid_counters"]["unbound.agree_new"] == len(bindings)
     if name == "uid-bindings-new-occurrence":
-        # fork (10-26): the same uid with the same bytes and a NEW host stamp is Hermes' compression re-persisting
+        # fork: the same uid with the same bytes and a NEW host stamp is Hermes' compression re-persisting
         # the kept tail, not a new occurrence; LCM_FORK_UID_REPLAY_STAMPED (default on) recognises it as a replay,
         # so it is not stored again (base: bound.disagree.stored_despite_match, a fifth row).
         assert len(state["tables"]["messages"]) == 4
