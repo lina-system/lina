@@ -319,6 +319,7 @@ def _memory_store(_hermetic_environment, monkeypatch, request):
         PROCESS_STORE.reset()
     PROCESS_STORE.refused_this_test = False
     monkeypatch.setattr(hermes_state_store, "resolve_dsn", PROCESS_STORE.app_dsn)
+    monkeypatch.setattr(hermes_state_store, "resolve_owner_dsn", PROCESS_STORE.superuser_dsn)
     if not PROCESS_STORE.started and os.environ.get(CLUSTER_ENV) and not PROCESS_STORE.unavailable:
         # A run's cluster is already up: make the database now, so a child process the test starts before
         # its own first store use (a gateway daemon, a worker) inherits LINA_STORE_DSN.

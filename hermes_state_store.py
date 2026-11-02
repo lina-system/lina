@@ -195,6 +195,33 @@ def resolve_dsn() -> str:
                          user="lina_app", password=password, connect_timeout="10")
 
 
+def resolve_owner_dsn() -> str:
+    """The store owner's DSN (role ``lina``, password ``LINA_STORE_PASSWORD`` in store.env): the one role row-level
+    security lets move rows from one agent to another."""
+    from hermes_cli.store import read_env, store_dir
+    values = read_env(store_dir() / "store.env")
+    password = values.get("LINA_STORE_PASSWORD")
+    if not password:
+        raise StoreUnavailableError(
+            "the memory store is not set up (no store.env with LINA_STORE_PASSWORD); run `lina store install`")
+    from psycopg.conninfo import make_conninfo
+    return make_conninfo(host="127.0.0.1", port=values.get("LINA_STORE_PORT", "54320"), dbname="lina",
+                         user="lina", password=password, connect_timeout="10")
+
+
+def _owner_connection():
+    import psycopg
+    try:
+        return psycopg.connect(resolve_owner_dsn())
+    except psycopg.OperationalError as exc:
+        raise StoreUnavailableError(f"cannot reach the memory store: {exc}".strip()) from exc
+
+
+def check_owner_reachable() -> None:
+    """Raise StoreUnavailableError unless the store owner can connect (asked before a profile rename)."""
+    _owner_connection().close()
+
+
 def agent_id_for(db_path: Path) -> str:
     """The profile a state.db belongs to, from its path alone: ``<name>`` for ``profiles/<name>/state.db``,
     else ``default``. Never from the process's active profile: one path must name one agent everywhere."""
@@ -832,6 +859,35 @@ def import_state_db_texts(db_path: Path, jsonl_path: Path, *, dsn: Optional[str]
             f"the store for agent {agent!r}, and {len(differs)} differ from the backup "
             f"(first: {(missing + differs)[0]}). The restored transcript would read empty messages.")
     return inserted
+
+def move_agent_texts(db_path: Path, old_agent: str, new_agent: str) -> int:
+    """Hand *old_agent*'s text rows to *new_agent* (a renamed profile: the agent id is its directory name), then
+    point *db_path*'s transcript at the moved uids. Postgres moves first in one transaction, then state.db; each
+    step leaves rows already on ``agent:<new>:`` alone, so running this again repairs an interrupted rename.
+    A row whose new uid is already taken by the same text is dropped in favour of it; one taken by other text
+    fails the move. Returns the rows moved."""
+    import psycopg
+    old_prefix, new_prefix = f"{SOURCE_AGENT}:{old_agent}:", f"{SOURCE_AGENT}:{new_agent}:"
+    conn = _owner_connection()
+    try:
+        with conn.transaction(), conn.cursor() as cur:
+            cur.execute(
+                "DELETE FROM memory.messages o USING memory.messages n WHERE o.agent_id = %s AND starts_with(o.uid, %s)"
+                " AND n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256'",
+                (old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
+            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s)"
+                        " WHERE agent_id = %s AND starts_with(uid, %s)",
+                        (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix))
+            moved = cur.rowcount
+    except psycopg.Error as exc:
+        raise StoreUnavailableError(
+            f"could not move message text from agent {old_agent!r} to {new_agent!r}: {exc}".strip()) from exc
+    finally:
+        conn.close()
+    if Path(db_path).exists():
+        _remap_state_db_uids(db_path, new_agent)
+    return moved
+
 
 def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
     """``collect_unreferenced`` for a SessionDB's agent, counting references in its state.db."""

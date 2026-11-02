@@ -1881,6 +1881,8 @@ def rename_profile(old_name: str, new_name: str) -> Path:
         raise _unknown_profile_error(old_canon)
     if new_dir.exists():
         raise _profile_exists_error(new_canon)
+    from hermes_cli.profile_identity import _migrate_profile_identity, require_message_store_for_rename
+    require_message_store_for_rename(old_dir)
 
     # 1. Remove the old name's service even when its gateway is stopped: the unit is named after
     # the old profile and runs ``--profile <old>``, so the service manager would crash-loop it on
@@ -1904,9 +1906,8 @@ def rename_profile(old_name: str, new_name: str) -> Path:
         mark_named_profile_deleted(old_dir)
         _notify_multiplexer(old_canon)
 
-    # 1c. Release this process's cached MCP stderr handle into the old home (same as
-    # delete_profile): Windows refuses to rename a directory holding an open file, and the
-    # handle would otherwise stay cached under the old key after the move.
+    # 1c. Release this process's cached MCP stderr handle into the old home (same as delete_profile): Windows
+    # refuses to rename a directory holding an open file, and the handle would stay cached under the old key.
     from hermes_constants import hermes_home_key
     from tools.mcp_tool_lifecycle import shutdown_mcp_servers
     shutdown_mcp_servers(scope=hermes_home_key(old_dir))
@@ -1955,7 +1956,6 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     # 6. Migrate profile-name-keyed session/routing state (session keys, profile_name, heartbeats,
     # delivery + routing index) from the old name to the new one. A stale ``agent:<old>:*`` routing
     # key otherwise resolves to a profile that no longer exists on every inbound event.
-    from hermes_cli.profile_identity import _migrate_profile_identity
     _migrate_profile_identity(old_canon, new_canon, live_mux)
 
     # 7. Hot-serve the renamed profile now (mirrors create; a missed signal only delays it).
