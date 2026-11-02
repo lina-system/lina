@@ -124,7 +124,10 @@ def _prepare_repo(worker_root: Path, task: Task, job: dict) -> None:
     base = job.get("base_branch") or _git("-C", str(source), "symbolic-ref", "-q", "--short",
                                           "refs/remotes/origin/HEAD").stdout.strip() or "HEAD"
     _run_git("-C", str(source), "worktree", "add", "-q", "-b", job["branch"], str(task.work), base)
-    _run_git("-C", str(task.work), "config", "remote.origin.pushurl", "PUSH-BLOCKED-by-lina-worker")
+    # The block lives in this worktree's own config: in the shared config it would also block the person's
+    # checkout and every sibling worktree, and stay after the task.
+    _run_git("-C", str(source), "config", "extensions.worktreeConfig", "true")
+    _run_git("-C", str(task.work), "config", "--worktree", "remote.origin.pushurl", "PUSH-BLOCKED-by-lina-worker")
     exclude = _git("-C", str(task.work), "rev-parse", "--git-path", "info/exclude").stdout.strip()
     exclude_path = Path(exclude) if os.path.isabs(exclude) else task.work / exclude
     exclude_path.parent.mkdir(parents=True, exist_ok=True)
