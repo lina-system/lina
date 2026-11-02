@@ -1,8 +1,13 @@
 """Device bidding of ``lina worker`` (lina#35): fill ratio first, a ``fast`` device wins a tie, ``no_repo`` refuses
-repo work, ``last`` only when the others are full, and nothing ready means the queue."""
+repo work, ``last`` only when the others are full, and a task waits in the queue when every device is full, then
+starts from the hub tick once one is free."""
 
-from hermes_cli.worker import bidding
+import json
+
+from hermes_cli.worker import bidding, serve
+from hermes_cli.worker.hub import Hub
 from hermes_cli.worker.settings import Device
+from tests.hermes_cli import _worker_fakes as fakes
 
 
 def probe(running=0, load=0.0, cores=8, **extra):
@@ -45,3 +50,30 @@ def test_nothing_ready_means_the_queue():
     assert winner is None
     assert [r["why"] for r in rows] == ["full", "omo daemon not ready", "unreachable: ssh: timeout"]
 
+
+def test_a_queued_task_starts_from_the_tick_when_a_slot_frees(tmp_path, monkeypatch):
+    base, fake = tmp_path / "lina", tmp_path / "fake"
+    argv = fakes.install_fake_cli(fake)
+    monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
+    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n")
+    root = base / "worker"
+    launcher = fakes.ThreadLauncher().install(monkeypatch)
+    full = {"value": True}
+    real_probe = bidding.probe_all
+    monkeypatch.setattr(bidding, "probe_all", lambda *a, **k: [
+        {**row, "running": 2} if full["value"] else row for row in real_probe(*a, **k)])
+    serve.serve_once(root)
+    lines: list[str] = []
+    hub = Hub(root, out=lines.append)
+    hub.submit({"briefs": [fakes.brief(tmp_path, "SCENARIO:done")], "mode": "ulw", "topic": "queue", "bot": "sion",
+                "runner": "fakecli", "wait": None})
+    task_id = lines[0].split()[0]
+    assert hub.store.load(task_id)["state"] == "queued" and "queued" in lines[0]
+
+    full["value"] = False
+    hub.tick()
+    assert hub.store.load(task_id)["host"] == "here"
+    serve.serve_once(root)
+    fakes.until(lambda: "done:1" in hub.store.load(task_id)["notified"], what="the queued task ran")
+    assert [r["kind"] for r in hub.store.receipts_of(task_id)][:3] == ["submitted", "queued", "award"]
+    launcher.join()
