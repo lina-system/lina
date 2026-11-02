@@ -1,6 +1,6 @@
 """Connect-failure classification + reconnect-queue escalation (OOF-156).
 
-Four platforms (telegram, discord, photon, email) used to funnel every
+Retained platforms (telegram, discord, photon) used to funnel every
 startup failure into an indefinitely-retried state — including permanent
 failures like revoked tokens, missing privileged intents, and sidecar deps
 that can never install on an immutable image. Fleet triage found agents that
@@ -129,83 +129,6 @@ class TestDiscordConnectClassification:
         )
         assert code == "discord_connect_error"
         assert retryable is True
-
-
-# ── Email: explicit fatal codes on IMAP/SMTP failure ───────────────────
-
-
-class TestEmailConnectClassification:
-    def _make_adapter(self, monkeypatch):
-        for key, value in {
-            "EMAIL_ADDRESS": "bot@example.com",
-            "EMAIL_PASSWORD": "app-password",
-            "EMAIL_IMAP_HOST": "imap.example.com",
-            "EMAIL_SMTP_HOST": "smtp.example.com",
-        }.items():
-            monkeypatch.setenv(key, value)
-        from plugins.platforms.email.adapter import EmailAdapter
-
-        return EmailAdapter(PlatformConfig(enabled=True, token=""))
-
-    @pytest.mark.asyncio
-    async def test_imap_failure_sets_explicit_retryable_fatal(self, monkeypatch):
-        # The old code returned False with NO fatal info — the gateway's
-        # "no info = transient" branch then retried forever with zero owner
-        # signal ("stuck retrying 22h").
-        adapter = self._make_adapter(monkeypatch)
-        from plugins.platforms.email import adapter as email_adapter
-
-        def _raise(*a, **k):
-            raise email_adapter.imaplib.IMAP4.error(b"[AUTHENTICATIONFAILED]")
-
-        monkeypatch.setattr(email_adapter.imaplib, "IMAP4_SSL", _raise)
-        ok = await adapter.connect()
-
-        assert ok is False
-        assert adapter.fatal_error_code == "email_imap_connect_error"
-        # IMAP4.error is the same type for bad creds and transient server
-        # NOs, so a type-based terminal classification is not safe here.
-        assert adapter.fatal_error_retryable is True
-
-    @pytest.mark.asyncio
-    async def test_smtp_auth_failure_is_terminal(self, monkeypatch):
-        import smtplib
-
-        adapter = self._make_adapter(monkeypatch)
-        from plugins.platforms.email import adapter as email_adapter
-
-        imap = MagicMock()
-        imap.uid.return_value = ("OK", [b""])
-        monkeypatch.setattr(email_adapter.imaplib, "IMAP4_SSL", lambda *a, **k: imap)
-
-        def _smtp_fail():
-            raise smtplib.SMTPAuthenticationError(535, b"authentication failed")
-
-        monkeypatch.setattr(adapter, "_connect_smtp", _smtp_fail)
-        ok = await adapter.connect()
-
-        assert ok is False
-        assert adapter.fatal_error_code == "email_auth_error"
-        assert adapter.fatal_error_retryable is False
-
-    @pytest.mark.asyncio
-    async def test_smtp_transient_failure_stays_retryable(self, monkeypatch):
-        adapter = self._make_adapter(monkeypatch)
-        from plugins.platforms.email import adapter as email_adapter
-
-        imap = MagicMock()
-        imap.uid.return_value = ("OK", [b""])
-        monkeypatch.setattr(email_adapter.imaplib, "IMAP4_SSL", lambda *a, **k: imap)
-
-        def _smtp_fail():
-            raise OSError("connection refused")
-
-        monkeypatch.setattr(adapter, "_connect_smtp", _smtp_fail)
-        ok = await adapter.connect()
-
-        assert ok is False
-        assert adapter.fatal_error_code == "email_smtp_connect_error"
-        assert adapter.fatal_error_retryable is True
 
 
 # ── Gateway: needs_attention escalation ────────────────────────────────

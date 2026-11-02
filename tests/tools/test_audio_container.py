@@ -2,8 +2,8 @@
 
 ``tools/audio_container.py`` is the single owner of container detection:
 the outbound TTS repair (``tools/tts_tool.py``), the inbound gateway audio
-cache (``gateway/platforms/base.py``), and Signal's ``_guess_extension``
-all delegate to it. These tests cover every magic-byte branch, the
+cache (``gateway/platforms/base.py``) both delegate to it.
+These tests cover every magic-byte branch, the
 wrong-extension repair behaviour on the inbound cache path, and unknown
 passthrough.
 """
@@ -146,12 +146,3 @@ class TestInboundCacheUsesSniffer:
 
         result = await base.cache_audio_from_url("https://example.com/voice.ogg", ext=".ogg")
         assert result.endswith(".mp3")
-
-
-class TestSignalDelegatesToCentralSniffer:
-    """signal._guess_extension audio branches delegate to the shared module."""
-
-    def test_signal_uses_shared_sniffer(self):
-        from plugins.platforms.signal import adapter as signal_mod
-
-        assert signal_mod._guess_extension(M4A) == ".m4a"

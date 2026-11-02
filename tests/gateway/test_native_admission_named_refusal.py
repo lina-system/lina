@@ -12,15 +12,15 @@ from gateway.session_envelope import prepare_native
 from gateway.session_ingress import admit_message
 from hermes_state_runtime import RuntimeStoreError, list_session_admissions
 
-CHAT = '15551234567@s.whatsapp.net'
+CHAT = '12345'
 
 
 async def _authority(tmp_path, monkeypatch):
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    adapter.gateway_runner, runner.adapters = runner, {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    adapter.gateway_runner, runner.adapters = runner, {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='named')
     runner._wire_adapter_handlers(adapter)
     return authority, adapter.build_source(chat_id=CHAT, user_id=CHAT, chat_type='dm')

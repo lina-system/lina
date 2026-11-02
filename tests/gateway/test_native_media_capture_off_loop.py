@@ -13,7 +13,7 @@ from gateway.session_envelope import restore_native
 from hermes_state_runtime import get_session_admission
 from tests.waiting import async_wait_until
 
-CHAT = '15551234567@s.whatsapp.net'
+CHAT = '12345'
 
 
 @pytest.mark.asyncio
@@ -21,11 +21,11 @@ CHAT = '15551234567@s.whatsapp.net'
 async def test_cancelled_native_capture_releases_unadmitted_bytes(tmp_path, monkeypatch, pause_after_publish):
     import gateway.session_envelope as envelope
     import gateway.session_ingress_media as media
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='cancel-media')
     source_file = tmp_path / 'clip.mp4'
     source_file.write_bytes(b'video-bytes' * 1000)
@@ -71,11 +71,11 @@ async def test_cancelled_native_capture_releases_unadmitted_bytes(tmp_path, monk
 @pytest.mark.asyncio
 async def test_native_capture_error_releases_published_bytes(tmp_path, monkeypatch):
     import gateway.session_ingress_media as media
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='error-media')
     source_file = tmp_path / 'clip.mp4'
     source_file.write_bytes(b'video-bytes' * 1000)
@@ -101,8 +101,8 @@ async def test_native_capture_error_releases_published_bytes(tmp_path, monkeypat
 async def test_native_media_capture_runs_off_loop_and_commits_owned_bytes(tmp_path, monkeypatch):
     import gateway.session_envelope as envelope
     import gateway.session_ingress_media as media
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     monkeypatch.setattr(SessionAuthority, '_schedule', lambda self, ref: None)
     loop_thread, captured = threading.current_thread(), []
     real_capture = media.capture_native_media
@@ -113,8 +113,8 @@ async def test_native_media_capture_runs_off_loop_and_commits_owned_bytes(tmp_pa
 
     monkeypatch.setattr(envelope, 'capture_native_media', capture)
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='media')
     try:
         attachment = tmp_path / 'clip.mp4'
@@ -138,8 +138,8 @@ async def test_native_admission_does_not_rehash_captured_media_on_the_loop(tmp_p
     """After the off-loop capture, admission derives the route's source without re-verifying the
     captured bytes on the owner loop (B1-07 remainder); execution still verifies them."""
     import hashlib
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     monkeypatch.setattr(SessionAuthority, '_schedule', lambda self, ref: None)
     loop_thread, on_loop = threading.current_thread(), []
     real_digest = hashlib.file_digest
@@ -149,8 +149,8 @@ async def test_native_admission_does_not_rehash_captured_media_on_the_loop(tmp_p
         return real_digest(*a, **k)
     monkeypatch.setattr(hashlib, 'file_digest', digest)
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='media')
     try:
         attachment = tmp_path / 'clip.mp4'

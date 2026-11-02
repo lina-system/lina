@@ -8,16 +8,16 @@ from gateway.run import GatewayRunner
 from gateway.session_authority import initialize_session_authority
 from gateway.session_envelope import prepare_native
 
-CHAT = '15551234567@s.whatsapp.net'
+CHAT = '12345'
 
 
 @pytest.mark.asyncio
 async def test_remote_media_url_is_dropped_with_a_note_instead_of_refusing_the_message(tmp_path, monkeypatch):
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='remote-media')
     local = tmp_path / 'clip.mp4'
     local.write_bytes(b'video-bytes')
@@ -37,11 +37,11 @@ async def test_remote_media_url_is_dropped_with_a_note_instead_of_refusing_the_m
 
 @pytest.mark.asyncio
 async def test_an_attachment_only_message_stores_just_the_note(tmp_path, monkeypatch):
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='remote-media-only')
     event = MessageEvent(text='', message_type=MessageType.PHOTO, message_id='m2',
                          source=adapter.build_source(chat_id=CHAT, user_id=CHAT, chat_type='dm'),
@@ -57,11 +57,11 @@ async def test_an_attachment_only_message_stores_just_the_note(tmp_path, monkeyp
 async def test_dropping_a_remote_attachment_keeps_original_names_aligned(tmp_path, monkeypatch):
     """Relay keeps a public URL whose download failed, with its original name; dropping that URL must
     drop its name too, or the length check refuses the whole message."""
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='remote-media-named')
     local = tmp_path / 'relay_media_x1.pdf'
     local.write_bytes(b'%PDF-1.4 bytes')
