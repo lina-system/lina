@@ -35,8 +35,10 @@ def trial(root: Path, version: str, out=print) -> bool:
         port = lina_ocx.free_port()
         lina_ocx.write_start_port(work / "data", port)  # the copy carries the service's port, where LINA's OCX runs
         env = lina_ocx.ocx_env(root, data=work / "data", home=work / "home")
-        proc = subprocess.Popen(lina_ocx.ocx_argv(root, version, "start", "--port", str(port)), env=env,
-                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+        # Owned: the trial proxy dies with this command even when the command is killed (no stray OCX on a port).
+        from hermes_cli.process_identity import spawn_owned
+        proc = spawn_owned(lina_ocx.ocx_argv(root, version, "start", "--port", str(port)), purpose="ocx upgrade trial",
+                           env=env, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
         deadline = time.monotonic() + TRIAL_WAIT_S
         while time.monotonic() < deadline and proc.poll() is None:
             if lina_ocx.http_get(port, "/v1/models")[0] == 200:
@@ -54,6 +56,9 @@ def trial(root: Path, version: str, out=print) -> bool:
             except subprocess.TimeoutExpired:
                 proc.kill()
                 proc.wait()
+        if proc is not None:
+            from hermes_cli.process_identity import release_process_group_once_empty
+            release_process_group_once_empty(proc.pid, proc=proc)
         shutil.rmtree(work, ignore_errors=True)
 
 

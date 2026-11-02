@@ -496,6 +496,18 @@ KANBAN_CREATE_SCHEMA = _schema(
             "Declare at creation: local-only (default), OWNER/REPO for PR publication, or an exact GitHub PR URL. "
             "PR tasks cannot complete until repository-required exact-head CI passes. On publication pass metadata.published_pr."
         )),
+        "goal_gates": {
+            "type": "array",
+            "items": {"type": ["string", "object"]},
+            "description": (
+                "Quality gates for a goal_mode card: shell commands (or objects with "
+                "command, timeout_seconds, max_retries) run in the card workspace at every "
+                "turn boundary before the judge. Exit 0 passes, exit 75 means still waiting "
+                "(re-checked later, no turn spent), anything else fails and its output becomes "
+                "the next prompt. Completion and review handoffs are refused while one fails. "
+                "Requires goal_mode."
+            ),
+        },
         "goal_max_turns": _prop("integer", (
                 "Turn budget for goal_mode workers. Caps how many "
                 "continuation turns the worker may take before the task "

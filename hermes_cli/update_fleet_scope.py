@@ -1,6 +1,6 @@
 """Home scoping for ``hermes update``'s fleet restart (#93349).
 
-The restart phase enumerates ``hermes-gateway*``/``hermes-serve*`` units, ``ai.hermes.gateway*``
+The restart phase enumerates ``hermes-gateway*``/``lina-serve*`` units, ``ai.hermes.gateway*``
 LaunchAgents and every ``gateway run`` process on the host. Those are HOST-wide namespaces: a
 second Hermes install (another ``HERMES_HOME`` root under the same account, its own checkout and
 venv) shares them, and the update used to restart that install's gateway too — including the
