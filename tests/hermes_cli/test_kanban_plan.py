@@ -190,3 +190,22 @@ def test_dry_run_writes_nothing(board, capsys):
     assert "gate: hermes kanban gate dev lina-system/lina" in out
     assert "link  gates -> plan-cmd" in out and "link  review -> goal" in out
     assert _tasks() == {} and _links() == set()
+
+
+def test_reserved_goal_key_rejected_during_validation(board):
+    from hermes_cli.kanban_plan import PlanError, parse_plan
+
+    plan = copy.deepcopy(PLAN)
+    plan["cards"] = [plan["cards"][0] | {"key": "goal"}]
+    with pytest.raises(PlanError, match="goal.*reserved"):
+        parse_plan(plan)
+    assert _tasks() == {} and _links() == set()
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_reserved_goal_key_cli_writes_nothing(board, capsys, dry_run):
+    plan = copy.deepcopy(PLAN)
+    plan["cards"] = [plan["cards"][0] | {"key": "goal"}]
+    rc, _out, err = _run(capsys, _write(board, plan), *(["--dry-run"] if dry_run else []))
+    assert rc != 0 and "goal" in err and "reserved" in err
+    assert _tasks() == {} and _links() == set()

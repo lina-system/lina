@@ -216,6 +216,8 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
         where = f"card {raw['key']!r}"
     raw = _mapping(raw, where, _CARD_KEYS)
     key = _text(raw.get("key"), where, "key")
+    if key == "goal":
+        raise PlanError(f"{where}: key 'goal' is reserved for the goal card")
     if not _KEY_RE.match(key):
         raise PlanError(f"{where}: key must be lowercase letters, digits, '.', '_' or '-'")
     sections = {}
