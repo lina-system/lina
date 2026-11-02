@@ -76,7 +76,7 @@ outputs:
     description: Run the LINA Helper macOS job (helper/ changes).
     value: ${{ steps.classify.outputs.helper }}
   macos:
-    description: Run the macOS Python tests (macOS paths; reads the checkout, see classify_changes.py).
+    description: Run LINA's macOS-marked tests (a marked test file or a module it imports changed, or the dev-red-fix label).
     value: ${{ steps.classify.outputs.macos }}
 
 runs:

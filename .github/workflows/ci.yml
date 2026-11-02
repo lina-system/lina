@@ -9,8 +9,6 @@ name: CI
 on:
   pull_request:
     branches: [dev, main]
-    # labeled: adding `dev-red-fix` must start the macOS tests (scripts/ci/classify_changes.py).
-    types: [opened, synchronize, reopened, labeled]
   push:
     branches: [dev]
   workflow_dispatch:
@@ -35,8 +33,15 @@ jobs:
       helper: ${{ steps.classify.outputs.helper }}
       macos: ${{ steps.classify.outputs.macos }}
     steps:
-      # Full checkout: the macOS lane reads changed files for darwin branches and macOS test gates.
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          # tests/ and the lister: the macos lane reads which test files are macOS-marked.
+          sparse-checkout: |
+            .github/actions/detect-changes
+            scripts/ci/classify_changes.py
+            scripts/ci/list_os_marked_tests.py
+            tests
+          sparse-checkout-cone-mode: false
 
       - name: Detect affected areas
         id: classify
@@ -146,12 +151,13 @@ jobs:
           if [ "$PYTHON" = true ]; then test "$RESULT" = success; else test "$RESULT" = skipped; fi
 
   macos:
-    # Required check. macOS-marked tests (upstream tests-os.yml) on the `macos` lane: a change to a
-    # macOS path, or the `dev-red-fix` label (scripts/ci/classify_changes.py). Skipped otherwise, which passes the check; if
-    # detect fails this skips too, and the required Python tests (Linux) fails instead.
+    # Required check. macOS-marked tests (upstream tests-os.yml) on pushes to dev and manual runs, and
+    # on a pull request when detect's macos lane fires: a macOS-marked test file or a module one
+    # imports changed, or the pull request carries the dev-red-fix label (a label added after the
+    # last push counts on a re-run). Other pull requests skip it, which passes the check.
     name: Python tests (macOS)
     needs: detect
-    if: needs.detect.outputs.macos == 'true'
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.detect.outputs.macos == 'true') }}
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
