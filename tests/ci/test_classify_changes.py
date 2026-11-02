@@ -51,12 +51,14 @@ DEFAULT = {
     "rust": True,
     "remote_backends": True,
     "catalog": True,
+    "helper": True,
+    "macos": True,
 }
 
 SLOW_LANES = {"docker", "nix", "e2e", "e2e_upgrade", "e2e_desktop_core", "e2e_desktop_update"}
 
 
-def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, bootstrap=False, desktop_updater=False, rust=False, docker_meta=False, python_prod=None, nix=False, docker=None, e2e=False, e2e_upgrade=False, e2e_desktop_core=False, e2e_desktop_update=False, remote_backends=False, catalog=False) -> dict[str, bool]:
+def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, bootstrap=False, desktop_updater=False, rust=False, docker_meta=False, python_prod=None, nix=False, docker=None, e2e=False, e2e_upgrade=False, e2e_desktop_core=False, e2e_desktop_update=False, remote_backends=False, catalog=False, helper=False, macos=False) -> dict[str, bool]:
     # python_prod tracks python except for tests-only diffs; default it to
     # python so the majority of cases don't need to spell it out.
     #
@@ -86,6 +88,8 @@ def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_
         "rust": rust,
         "remote_backends": remote_backends,
         "catalog": catalog,
+        "helper": helper,
+        "macos": macos,
     }
 
 
@@ -440,6 +444,11 @@ CASES = {
         ["plugin-catalog/foo.yaml", "agent/display.py"],
         _lanes(python=True, scan=True, catalog=True),
     ),
+    "LINA Helper source → helper": (
+        ["helper/macos/app/Sources/HelperApp/main.swift"], _lanes(python=True, helper=True)),
+    "LINA Helper Linux checks → not helper": (
+        ["tests/helper/test_macos_portable_checks.py"],
+        _lanes(python=True, python_prod=False, scan=True)),
     # Fail open: CI-config / empty / blank diffs run everything.
     ".github change → all": ([".github/workflows/tests.yml"], DEFAULT),
     "action change → all": ([".github/actions/detect-changes/action.yml"], DEFAULT),
