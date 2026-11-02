@@ -4,9 +4,7 @@ import asyncio
 import sqlite3
 import threading
 import time
-from types import SimpleNamespace
 
-import pytest
 
 
 def _hold(db_path):
@@ -47,35 +45,7 @@ async def _max_gap_while(create, release):
     return max(gaps), result
 
 
-@pytest.mark.asyncio
-async def test_a2a_forward_creation_commits_off_the_owner_loop(tmp_path, monkeypatch):
-    from gateway import run
-    from gateway.config import GatewayConfig
-    from gateway.session import SessionStore
-    from gateway.session_authority import initialize_session_authority
-    from gateway.session_controls import AuthorityConnection
 
-    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
-    monkeypatch.setattr(run, '_load_gateway_config', lambda: {'model': {'default': 'fixture'}, 'platform_toolsets': {'cli': []}})
-    monkeypatch.setattr(run, '_resolve_gateway_model', lambda config: 'fixture')
-    store = SessionStore(tmp_path / 'sessions', GatewayConfig())
-    runner = run.GatewayRunner.__new__(run.GatewayRunner)
-    runner.adapters, runner.session_store, runner._session_db, runner._draining = {}, store, store._db, False
-    authority = await initialize_session_authority(runner, profile_id='target', instance_id='test')
-    authority._schedule = lambda ref: None
-    conn = AuthorityConnection(authority, SimpleNamespace(write=lambda frame: None), {'user_id': 'producer'})
-    params = dict(agent='dev', tenant='team', peer='alice', context_id='ctx', text='hello')
-    warm = await conn.dispatch({'id': 0, 'method': 'a2a.forward', 'params': dict(params, context_id='warm', input_id='w')})
-    assert 'result' in warm, warm  # cold imports are not the write under test
-    release = await asyncio.to_thread(_hold, authority.db.db_path)
-    gap, response = await _max_gap_while(
-        lambda: conn.dispatch({'id': 1, 'method': 'a2a.forward', 'params': dict(params, input_id='first')}), release)
-    try:
-        assert 'result' in response, response
-        assert gap < 0.5, f'the owner loop stalled {gap:.2f}s behind a held writer'
-    finally:
-        await conn.close()
-        authority.db.close()
 
 
 def test_hosted_member_creation_commits_off_the_owner_loop(hosted_owner):

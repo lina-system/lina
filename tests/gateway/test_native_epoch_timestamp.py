@@ -11,16 +11,16 @@ from gateway.session_authority import initialize_session_authority
 from gateway.session_ingress import admit_message
 from gateway.session_results import execution_result
 
-CHAT = '15551234567@s.whatsapp.net'
+CHAT = '12345'
 
 
 @pytest.mark.asyncio
 async def test_epoch_zero_producer_timestamp_runs_with_local_time_and_keeps_retry_identity(tmp_path, monkeypatch):
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    from plugins.platforms.telegram.adapter import TelegramAdapter
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '12345')
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    adapter.gateway_runner, runner.adapters = runner, {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token='test-token'))
+    adapter.gateway_runner, runner.adapters = runner, {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='stamp')
     runner._wire_adapter_handlers(adapter)
     stamps = []

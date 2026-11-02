@@ -327,55 +327,9 @@ def _prepare(request: BuildRequest) -> Path:
 
 
 def prepare_in_worker(request: BuildRequest) -> Path:
-    from scripts.bundles.desktop import run
-    from scripts.bundles.desktop_toolchain import prepare_tools
-    from scripts.build.icon_environment import prepare_icon_environment
-    from scripts.bundles.native import prepare_native
-
-    require_source(request.source, request.commit)
-    from scripts.bundles.desktop_inputs import identity_environment
-    request.validate_channel()
-    python, node, env = prepare_tools(request.source, request.work, request.cache, os.environ)
-    env = identity_environment(request, request.variant, env)
-    native_toolchain = Path(env["UV_CACHE_DIR"]).resolve().name
-    run([str(node), "scripts/build/node-deps.mjs", "--source", str(request.source), "--reuse",
-         "--native-toolchain", native_toolchain,
-         *[arg for name in request.workspaces() for arg in ("--workspace", name)]], cwd=request.source, env=env)
-    icon_environment = request.work / "icon-environment"
-    if icon_environment.exists():
-        if icon_environment.is_symlink():
-            raise ValueError("icon environment must be preparation-owned, not a symlink")
-        shutil.rmtree(icon_environment)
-    icon_python = prepare_icon_environment(request.source, icon_environment, request.cache / "python/build")
-    native = request.source / "apps/desktop/build/native-deps"
-    run([str(node), "apps/desktop/scripts/stage-native-deps.mjs", "--source", str(request.source),
-         "--out", str(native), "--native-toolchain", native_toolchain], cwd=request.source, env=env)
-    packager = request.work / "packager"
-    dmg_args = []
-    if request.target.startswith("darwin-"):
-        from apps.desktop.scripts.prepare_dmgbuild import prepare_dmgbuild
-        dmg = prepare_dmgbuild(request.cache / "tools", request.cache / "python/build")
-        dmg_args = ["--dmgbuild", str(dmg)]
-    run([str(node), "apps/desktop/scripts/prepare-packaging-tools.mjs", "--source", str(request.source),
-         "--out", str(packager), "--cache", str(request.cache / "packager"), "--target", request.target, *dmg_args],
-        cwd=request.source, env=env)
-    run([str(node), "apps/desktop/scripts/probe-prepared-native.mjs", "--source", str(request.source),
-         "--native-deps", str(native), "--packaging", str(packager / "prepared.json"),
-         "--out", str(request.work / "native-probe"), "--native-toolchain", native_toolchain],
-        cwd=request.source, env=env)
-    payload = None
-    if request.variant != "light":
-        payload = prepare_native(out=request.source / "apps/desktop/build/agent-payload", ref=request.commit,
-                                 source=request.source, cache=Path(env["UV_CACHE_DIR"]),
-                                 tools=request.cache / "tools", env=env)
-    require_source(request.source, request.commit)
-    prepared = PreparedDesktop.record(request, python=python, node=node, icon_python=icon_python,
-                                      native=native, packager=packager / "prepared.json", payload=payload,
-                                      native_toolchain=native_toolchain)
-    result = request.work / "prepared.json"
-    prepared.write(result)
-    return result
-
+    # Every step built apps/desktop, which prune-list.txt removes from LINA.
+    raise RuntimeError("LINA does not carry the desktop app (apps/ is in prune-list.txt); "
+                       "desktop bundles cannot be prepared")
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)

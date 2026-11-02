@@ -55,7 +55,7 @@ def test_valid_platform_toolsets_no_runtime_warning(caplog):
     assert not any("#38798" in r.getMessage() for r in caplog.records)
 
 
-@pytest.mark.parametrize("platform", ["teams", "google_chat", "homeassistant"])
+@pytest.mark.parametrize("platform", ["bluebubbles", "photon", "homeassistant"])
 def test_unloaded_plugin_platform_toolset_no_runtime_warning(caplog, platform):
     """Bundled and catalog plugin-platform entries are valid before plugin loading."""
     import hermes_cli.tools_config as _tc
@@ -263,65 +263,6 @@ def test_save_platform_tools_preserves_mcp_server_names():
 
 
 
-def test_first_install_nous_auto_configures_video_gen(monkeypatch):
-    """When a Nous subscriber checks video_gen in the toolset checklist,
-    apply_nous_managed_defaults must write video_gen.provider and
-    video_gen.use_gateway so the FAL plugin can route through the gateway
-    at runtime.  Regression test for the bug where video_gen was marked as
-    auto-configured but no config was actually written."""
-    monkeypatch.setattr("tools.tool_backend_helpers.managed_nous_tools_enabled", lambda: True)
-    config = {
-        "model": {"provider": "nous"},
-        "platform_toolsets": {"cli": []},
-    }
-    for env_var in (
-        "VOICE_TOOLS_OPENAI_KEY",
-        "OPENAI_API_KEY",
-        "ELEVENLABS_API_KEY",
-        "FIRECRAWL_API_KEY",
-        "FIRECRAWL_API_URL",
-        "KEENABLE_API_KEY",
-        "TAVILY_API_KEY",
-        "PARALLEL_API_KEY",
-        "BROWSERBASE_API_KEY",
-        "BROWSERBASE_PROJECT_ID",
-        "BROWSER_USE_API_KEY",
-        "FAL_KEY",
-    ):
-        monkeypatch.delenv(env_var, raising=False)
-
-    monkeypatch.setattr(
-        "hermes_cli.tools_config._prompt_toolset_checklist",
-        lambda *args, **kwargs: {"video_gen"},
-    )
-    monkeypatch.setattr("hermes_cli.tools_config.save_config", lambda config: None)
-    monkeypatch.setattr(
-        "hermes_cli.tools_config._get_enabled_platforms",
-        lambda: ["cli"],
-    )
-    monkeypatch.setattr(
-        "hermes_cli.nous_subscription.get_nous_portal_account_info",
-        lambda *args, **kwargs: NousPortalAccountInfo(
-            logged_in=True,
-            source="jwt",
-            fresh=False,
-            paid_service_access=True,
-        ),
-    )
-
-    configured = []
-    monkeypatch.setattr(
-        "hermes_cli.tools_config._configure_toolset",
-        lambda ts_key, config: configured.append(ts_key),
-    )
-
-    tools_command(first_install=True, config=config)
-
-    assert config["video_gen"]["provider"] == "nous"
-    assert "use_gateway" not in config["video_gen"]
-    # video_gen should NOT appear in the manual configure list — it's auto-configured
-    assert "video_gen" not in configured
-
 # ── Platform / toolset consistency ────────────────────────────────────────────
 
 
@@ -479,102 +420,6 @@ class TestBrowserExecEngineCheckedForEveryBrowserRow:
         assert any("hermes update" in c.args[0] for c in info.call_args_list)
 
 
-class TestImagegenBackendRegistry:
-    """IMAGEGEN_BACKENDS tags drive the model picker flow in tools_config."""
-
-
-
-    def test_image_gen_providers_tagged_with_registered_backend(self):
-        """Every hardcoded image_gen row must name a backend in IMAGEGEN_BACKENDS
-        so _configure_provider can fire that backend's model picker."""
-        from hermes_cli.tools_config import IMAGEGEN_BACKENDS, TOOL_CATEGORIES
-        providers = TOOL_CATEGORIES["image_gen"]["providers"]
-        for p in providers:
-            assert p.get("imagegen_backend") in IMAGEGEN_BACKENDS, (
-                f"{p['name']} missing a registered imagegen_backend tag"
-            )
-
-
-class TestImagegenModelPicker:
-    """_configure_imagegen_model writes selection to config and respects
-    curses fallback semantics (returns default when stdin isn't a TTY)."""
-
-    def test_picker_writes_chosen_model_to_config(self):
-        from hermes_cli.tools_config import _configure_imagegen_model
-        config = {}
-        # Force _prompt_choice to pick index 1 (second-in-ordered-list).
-        with patch("hermes_cli.tools_config._prompt_choice", return_value=1):
-            _configure_imagegen_model("fal", config)
-        # ordered[0] == current (default klein), ordered[1] == first non-default
-        from hermes_cli.tools_config import IMAGEGEN_BACKENDS
-        catalog, default_model = IMAGEGEN_BACKENDS["fal"]["catalog_fn"]({})
-        assert config["image_gen"]["model"] != default_model
-        assert config["image_gen"]["model"] in catalog
-
-    def test_picker_with_gpt_image_does_not_prompt_quality(self):
-        """GPT-Image quality is pinned to medium in the tool's defaults —
-        no follow-up prompt, no config write for quality_setting."""
-        from hermes_cli.tools_config import (
-            _configure_imagegen_model,
-            IMAGEGEN_BACKENDS,
-        )
-        catalog, default_model = IMAGEGEN_BACKENDS["fal"]["catalog_fn"]({})
-        model_ids = list(catalog.keys())
-        ordered = [default_model] + [m for m in model_ids if m != default_model]
-        gpt_idx = ordered.index("fal-ai/gpt-image-1.5")
-
-        # Only ONE picker call is expected (for model) — not two (model + quality).
-        call_count = {"n": 0}
-        def fake_prompt(*a, **kw):
-            call_count["n"] += 1
-            return gpt_idx
-
-        config = {}
-        with patch("hermes_cli.tools_config._prompt_choice", side_effect=fake_prompt):
-            _configure_imagegen_model("fal", config)
-
-        assert call_count["n"] == 1, (
-            f"Expected 1 picker call (model only), got {call_count['n']}"
-        )
-        assert config["image_gen"]["model"] == "fal-ai/gpt-image-1.5"
-        assert "quality_setting" not in config["image_gen"]
-
-
-    def test_picker_repairs_corrupt_config_section(self):
-        """When image_gen is a non-dict (user-edit YAML), the picker should
-        replace it with a fresh dict rather than crash."""
-        from hermes_cli.tools_config import IMAGEGEN_BACKENDS, _configure_imagegen_model
-        config = {"image_gen": "some-garbage-string"}
-        with patch("hermes_cli.tools_config._prompt_choice", return_value=0):
-            _configure_imagegen_model("fal", config)
-        assert isinstance(config["image_gen"], dict)
-        assert config["image_gen"]["model"] == IMAGEGEN_BACKENDS["fal"]["catalog_fn"]({})[1]
-
-    def test_plugin_picker_falls_back_when_default_is_missing_from_catalog(self):
-        """A stale cross-provider model must not become an unindexable row."""
-        from hermes_cli.tools_config import _configure_imagegen_model_for_plugin
-
-        catalog = {
-            "openai/gpt-5.4-image-2": {"strengths": "quality"},
-            "google/gemini-3-pro-image": {"strengths": "fallback"},
-        }
-        config = {"image_gen": {"model": "gpt-image-2-medium"}}
-        with (
-            patch(
-                "hermes_cli.tools_config._plugin_image_gen_catalog",
-                return_value=(catalog, "also-missing"),
-            ),
-            patch("hermes_cli.tools_config._prompt_choice", return_value=0),
-        ):
-            _configure_imagegen_model_for_plugin("openrouter", config)
-
-        assert config["image_gen"]["model"] == "openai/gpt-5.4-image-2"
-
-
-
-
-
-
 def test_get_effective_configurable_toolsets_dedupes_bundled_plugins():
     """A plugin toolset whose key is also a CONFIGURABLE_TOOLSETS entry must not
     be listed twice — otherwise `hermes tools` → "reconfigure existing" shows
@@ -656,51 +501,13 @@ def test_visible_providers_reuses_logged_out_feature_snapshot(monkeypatch):
     )
 
     providers = _visible_providers(
-        TOOL_CATEGORIES["image_gen"], {}, features=features
+        TOOL_CATEGORIES["browser"], {}, features=features
     )
 
     assert any(
-        provider.get("managed_nous_feature") == "image_gen"
+        provider.get("managed_nous_feature") == "browser"
         for provider in providers
     )
-
-
-def test_visible_providers_reuses_pool_video_feature_snapshot(monkeypatch):
-    from hermes_cli import tools_config
-
-    account = NousPortalAccountInfo(
-        logged_in=True,
-        source="jwt",
-        fresh=False,
-        paid_service_access=False,
-        tool_access=NousToolAccessInfo(
-            enabled=True,
-            coverage={"fal-video": False},
-        ),
-    )
-    features = NousSubscriptionFeatures(
-        subscribed=True,
-        nous_auth_present=True,
-        provider_is_nous=False,
-        features={},
-        account_info=account,
-    )
-    monkeypatch.setattr(
-        tools_config,
-        "get_nous_subscription_features",
-        lambda *args, **kwargs: pytest.fail("feature snapshot was resolved again"),
-    )
-
-    providers = _visible_providers(
-        TOOL_CATEGORIES["video_gen"], {}, features=features
-    )
-
-    assert not any(
-        provider.get("managed_nous_feature") == "video_gen"
-        for provider in providers
-    )
-
-
 
 
 # ── One managed image row ─────────────────────────────────────────────────────
@@ -708,42 +515,6 @@ def test_visible_providers_reuses_pool_video_feature_snapshot(monkeypatch):
 # FAL, Krea and Portal models all live behind the single "Nous Subscription" row; the stored
 # model id picks the gateway. Before, the Portal plugin rendered its own row that also wrote
 # `provider: nous`, so two rows read active at once and the Portal pick generated on FAL.
-
-
-def _managed_image_row() -> dict:
-    return next(p for p in TOOL_CATEGORIES["image_gen"]["providers"] if p.get("managed_nous_feature") == "image_gen")
-
-
-def test_exactly_one_image_row_is_active_for_a_managed_selection(monkeypatch):
-    from hermes_cli import tools_config
-    from hermes_cli.tools_config_providers import _plugin_image_gen_providers
-
-    monkeypatch.setattr(
-        tools_config, "get_nous_subscription_features",
-        lambda config, **kwargs: SimpleNamespace(features={"image_gen": SimpleNamespace(managed_by_nous=True)}),
-    )
-    rows = TOOL_CATEGORIES["image_gen"]["providers"] + _plugin_image_gen_providers()
-    for model in ("fal-ai/flux-2/klein/9b", "krea-2-medium", "google/gemini-3-pro-image"):
-        config = {"image_gen": {"provider": "nous", "model": model}}
-        active = [r["name"] for r in rows if tools_config._is_provider_active(r, config)]
-        assert active == [_managed_image_row()["name"]], (model, active)
-
-
-
-
-def test_pool_only_account_is_offered_fal_models_only(monkeypatch):
-    from hermes_cli import tools_config
-    from hermes_cli.tools_config_providers import IMAGEGEN_BACKENDS
-
-    pool = NousPortalAccountInfo(
-        logged_in=True, source="jwt", fresh=False, paid_service_access=False,
-        tool_access=NousToolAccessInfo(enabled=True, coverage={"fal": True, "krea": False}))
-    monkeypatch.setattr(
-        tools_config, "get_nous_subscription_features",
-        lambda *args, **kwargs: SimpleNamespace(features={}, account_info=pool))
-    catalog, _ = IMAGEGEN_BACKENDS["nous"]["catalog_fn"]({})
-
-    assert catalog and {meta["backend"] for meta in catalog.values()} == {"fal"}
 
 
 # ── Toolsets that shipped after a platform's last `hermes tools` save ────────
@@ -979,28 +750,6 @@ def test_explicit_plugin_toolset_admitted_in_platform_toolsets(monkeypatch):
     assert "dplat_client" in enabled, (
         "plugin toolset 'dplat_client' listed in platform_toolsets.cli was "
         "dropped by _get_platform_tools — Layer 2 of #81163 not fixed"
-    )
-
-
-def test_explicit_plugin_toolset_admitted_against_real_a2a_plugin(monkeypatch):
-    """End-to-end Layer 2 regression: with the bundled a2a plugin enabled and
-    a real config like ``platform_toolsets.cli: [hermes-cli, a2a]``, ``a2a``
-    must appear in the resolved enabled toolset set. Before the fix, the
-    filter dropped all non-CONFIGURABLE keys (a2a included)."""
-    # Discover real plugins so _get_plugin_toolset_keys() sees the a2a key.
-    # If the worktree lacks bundled plugin manifests, skip — this test
-    # exercises real bundled state and is meaningless without it.
-    from hermes_cli.plugins import discover_plugins, get_plugin_toolsets
-    discover_plugins()
-    plugin_ts_keys = {k for k, _, _ in get_plugin_toolsets()}
-    if "a2a" not in plugin_ts_keys:
-        pytest.skip("bundled a2a plugin not discoverable in this worktree")
-
-    config = {"platform_toolsets": {"cli": ["hermes-cli", "a2a"]}}
-    enabled = _get_platform_tools(config, "cli")
-    assert "a2a" in enabled, (
-        f"plugin-provided 'a2a' toolset dropped by _get_platform_tools "
-        f"(Layer 2 of #81163); enabled={sorted(enabled)}"
     )
 
 

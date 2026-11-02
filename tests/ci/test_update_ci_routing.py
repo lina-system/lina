@@ -254,7 +254,7 @@ def _consumers_reached(run: dict, lane: str) -> dict[str, bool]:
     return reached
 
 
-_GATED = ("python", "desktop_updater", "e2e", "e2e_upgrade", "e2e_desktop_update")
+_GATED = ("python", "desktop_updater", "e2e", "e2e_upgrade")
 
 
 def test_replay_evaluator_follows_actions_semantics():
@@ -277,7 +277,7 @@ def test_every_set_lane_reaches_its_consumer_whatever_the_other_lanes_say(combo)
     lanes = {k: False for k in cc.classify(["README.md"])}
     lanes.update(zip(_GATED, combo))
     run = _ci_run(lanes)
-    for lane in ("desktop_updater", "e2e", "e2e_upgrade", "e2e_desktop_update"):
+    for lane in ("desktop_updater", "e2e", "e2e_upgrade"):
         reached = _consumers_reached(run, lane)
         if lanes[lane]:
             assert all(reached.values()), f"{lane}=true but not dispatched: {reached}"
@@ -288,15 +288,13 @@ def test_every_set_lane_reaches_its_consumer_whatever_the_other_lanes_say(combo)
 # One-file changes from the review's direct classifier run (acceptance/classifier.json),
 # and the suites each must dispatch on a pull request.
 _R15_CASES = {
-    "scripts/build/desktop.mjs": ("e2e_upgrade", "e2e_desktop_update"),
-    "scripts/build/web.mjs": ("e2e_upgrade", "e2e_desktop_update"),
-    "hermes_cli/_subprocess_compat.py": ("e2e_upgrade", "e2e_desktop_update"),
-    "hermes_cli/desktop_build_lock.py": ("e2e_upgrade", "e2e_desktop_update"),
-    "hermes_cli/memory_provider_migration.py": ("e2e_upgrade", "e2e_desktop_update"),
-    "hermes_cli/source_build.py": ("e2e_upgrade", "e2e_desktop_update"),
-    "hermes_cli/source_completion.py": ("e2e_upgrade", "e2e_desktop_update"),
-    "apps/desktop/electron/update-marker.ts": ("desktop_updater", "e2e_desktop_update"),
-    "apps/desktop/electron/handoff-result.ts": ("desktop_updater", "e2e_desktop_update"),
+    "scripts/build/desktop.mjs": ("e2e_upgrade",),
+    "scripts/build/web.mjs": ("e2e_upgrade",),
+    "hermes_cli/_subprocess_compat.py": ("e2e_upgrade",),
+    "hermes_cli/desktop_build_lock.py": ("e2e_upgrade",),
+    "hermes_cli/memory_provider_migration.py": ("e2e_upgrade",),
+    "hermes_cli/source_build.py": ("e2e_upgrade",),
+    "hermes_cli/source_completion.py": ("e2e_upgrade",),
 }
 
 
@@ -315,15 +313,8 @@ def test_update_owner_change_dispatches_its_suites_end_to_end(path, lanes):
 # Review R6 m11: update-path files whose suites the classifier left off. Some land in a sibling
 # PR of the update stack (update-marker-gate.ts), so the table routes paths, not files on disk.
 _R6_CASES = {
-    # The Desktop gate's marker reader: the hand-off script's contract (desktop_updater) and the
-    # Desktop update E2E that drives the gate.
-    "apps/desktop/electron/update-marker-gate.ts": ("desktop_updater", "e2e_desktop_update"),
-    # Stops the backend before a remote update: typecheck/vitest and the hand-off script tests.
-    "apps/desktop/electron/remote-lifecycle.ts": ("frontend", "desktop_updater"),
-    # The Tauri updater's marker claim: cargo, the only CI that builds it (review CI3).
-    "apps/bootstrap-installer/src-tauri/src/marker.rs": ("rust",),
-    # The launchers reach the launch repair: the Desktop update relaunches through them too.
-    "hermes_cli/_launchers.py": ("e2e_upgrade", "e2e_desktop_update"),
+    # Launch repair remains part of the CLI install/update journey.
+    "hermes_cli/_launchers.py": ("e2e_upgrade",),
 }
 
 
@@ -342,30 +333,14 @@ def test_update_path_change_selects_every_suite_that_exercises_it(path, lanes):
 
 # Review CI2/CI3: update-path files the classifier sent to the wrong suites.
 _CI3_CASES = {
-    # /api/health `commit`: the Desktop compares it before attaching after an update.
-    "hermes_cli/web_routers/status.py": ("python", "e2e_desktop_update"),
-    # The SSH remote's marker judge/gate: typecheck/vitest and the marker contract's script tests.
-    "apps/desktop/electron/remote-update-marker-programs.ts": ("frontend", "desktop_updater"),
-    "apps/desktop/electron/remote-update-marker-programs.test.ts": ("frontend", "desktop_updater"),
+    # The kept status route still needs the Python suite.
+    "hermes_cli/web_routers/status.py": ("python",),
 }
 
 
 @pytest.mark.parametrize("path,lanes", list(_CI3_CASES.items()))
 def test_update_path_change_reaches_the_suites_that_consume_it(path, lanes):
     test_update_path_change_selects_every_suite_that_exercises_it(path, lanes)
-
-
-_TAURI_UPDATER = tuple(f"apps/bootstrap-installer/src-tauri/src/{name}.rs" for name in ("marker", "update", "paths"))
-
-
-@pytest.mark.parametrize("path", _TAURI_UPDATER)
-def test_tauri_updater_routes_as_one_unit_to_the_lane_that_builds_it(path):
-    """No slow lane builds the bootstrap installer: starting one for its updater runs nothing of it."""
-    assert (_REPO / path).is_file(), f"{path} moved: update this table"
-    classified = _real_classifier([path])
-    assert classified["rust"], f"{path}: cargo test never runs"
-    started = [lane for lane in ("e2e", "e2e_upgrade", "e2e_desktop_update", "e2e_desktop_core") if classified[lane]]
-    assert not started, f"{path}: starts {started}, which never build the Tauri installer"
 
 
 def test_gateway_status_routing_names_the_stamp_not_its_prefix_siblings():
@@ -389,8 +364,6 @@ def test_every_detect_output_a_lane_sets_is_consumed_by_some_job():
 # The job (path from ci.yaml down) that runs each lane's consumers of a shared fixture.
 _FIXTURE_LANE_JOBS: dict[str, tuple[str, ...]] = {
     "python": ("tests", "test"),  # pytest on Linux (marker.sh corpus included)
-    "rust": ("rust-tests", "bootstrap-installer"),  # cargo test of the Tauri crate
-    "frontend": ("js-tests", "check"),  # apps/desktop `check` -> vitest --project electron
 }
 _CORPUS = "tests/fixtures/update_marker_corpus.json"
 _TEST_FILE = re.compile(r"(^tests/(?!ci/).*\.py$)|(_tests?\.rs$)|(\.test\.[cm]?[jt]sx?$)")
@@ -481,7 +454,6 @@ def test_native_windows_lane_selects_the_replay_and_its_controls():
 # -- replay guard sensitivity: mutate data, not the replay implementation ------------------
 
 _REQUIRED_STEP_CASES = (
-    ("e2e_desktop_update", ".github/workflows/e2e-desktop-update.yml", "update", "Run the update suite under xvfb"),
     ("e2e_upgrade", ".github/workflows/tests.yml", "e2e-upgrade", "Run upgrade e2e tests"),
     ("e2e_upgrade", ".github/workflows/windows-install-update-e2e.yml", "install-update", "Run Windows install + update E2E"),
     ("desktop_updater", ".github/workflows/tests-os.yml", "os-tests", "Run ${{ matrix.marker }} tests"),
@@ -769,27 +741,6 @@ def _python_script_seeds(entries: tuple[str, ...]) -> set[str]:
     for module in _entry_modules(entries):
         seeds |= set(_SCRIPT_LITERAL.findall(module.read_text(encoding="utf-8-sig")))
     return seeds
-
-
-def test_build_scripts_the_update_runs_start_the_upgrade_suite():
-    reached = _js_closure(_python_script_seeds(cc._UPDATE_ENTRY_POINTS))
-    assert "scripts/build/web.mjs" in reached, "seed scan broke: source_build runs web.mjs"
-    unowned = sorted(f for f in reached if not cc.classify([f])["e2e_upgrade"])
-    assert unowned == []
-
-
-def test_desktop_build_scripts_start_the_desktop_update_suite():
-    """`hermes desktop --build-only` (the update's Desktop rebuild) runs
-    apps/desktop's `build` script, which steps through scripts/build/desktop.mjs."""
-    package = json.loads((_REPO / "apps/desktop/package.json").read_text(encoding="utf-8-sig"))
-    build = re.search(r"node\s+(\S+\.mjs)", package["scripts"]["build"])
-    assert build, package["scripts"]["build"]
-    seeds = {("apps/desktop/" + build.group(1)).replace("/./", "/")}
-    seeds |= _python_script_seeds(cc._DESKTOP_BUILD_ENTRY_POINTS)
-    reached = _js_closure(seeds)
-    assert "scripts/build/desktop.mjs" in reached, "seed scan broke: the Desktop build runs desktop.mjs"
-    unowned = sorted(f for f in reached if not cc.classify([f])["e2e_desktop_update"])
-    assert unowned == []
 
 
 # -- strict acceptance: the dispatch input reaches every E2E suite's environment ------------

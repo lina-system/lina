@@ -6,7 +6,7 @@ import pytest
 
 
 def verifier():
-    path = Path(__file__).resolve().parents[2] / 'evals/shared_gateway/verify_receipt.py'
+    path = Path(__file__).resolve().parents[2] / 'tests/probes/shared_gateway/verify_receipt.py'
     assert path.is_file(), 'shared gateway acceptance verifier missing'
     spec = importlib.util.spec_from_file_location('shared_gateway_verifier', path)
     assert spec is not None and spec.loader is not None

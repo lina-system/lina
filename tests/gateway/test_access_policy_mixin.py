@@ -28,26 +28,11 @@ def _scope(secrets):
 
 
 def _hosts():
-    """One bare instance per own-policy class, attributes set exactly as the adapters do."""
-    from plugins.platforms.qqbot.adapter import QQAdapter
-    from plugins.platforms.weixin.adapter import WeixinAdapter
-    from plugins.platforms.whatsapp_cloud.adapter import WhatsAppCloudAdapter
     from gateway.platforms.whatsapp_common import WhatsAppBehaviorMixin
-    from plugins.platforms.yuanbao.adapter import AccessPolicy
-    from plugins.platforms.wecom.adapter import WeComAdapter
 
-    hosts = {
-        "weixin": object.__new__(WeixinAdapter),
-        "wecom": object.__new__(WeComAdapter),
-        "qqbot": object.__new__(QQAdapter),
-        "whatsapp": WhatsAppBehaviorMixin(),
-        "whatsapp_cloud": object.__new__(WhatsAppCloudAdapter),
-        "yuanbao": AccessPolicy("open", [], "open", []),
-    }
-    hosts["whatsapp"]._dm_allowlist_source = "config"
-    hosts["whatsapp_cloud"]._dm_allowlist_source = "config"
-    hosts["wecom"]._groups = {}
-    return hosts
+    host = WhatsAppBehaviorMixin()
+    host._dm_allowlist_source = "config"
+    return {"whatsapp": host}
 
 
 def _verdicts(host, name, dm_policy, group_policy):
@@ -65,11 +50,8 @@ def _verdicts(host, name, dm_policy, group_policy):
 
 # Per-host opt-in var (the one ``hermes gateway setup`` writes). Setting only GATEWAY_ALLOW_ALL_USERS
 # would pass with a host whose prefix is missing — that is exactly how WeCom regressed once.
-PLATFORM_OPT_IN = {"weixin": "WEIXIN_ALLOW_ALL_USERS", "wecom": "WECOM_ALLOW_ALL_USERS",
-                   "qqbot": "QQ_ALLOW_ALL_USERS", "whatsapp": "WHATSAPP_ALLOW_ALL_USERS",
-                   "whatsapp_cloud": "WHATSAPP_CLOUD_ALLOW_ALL_USERS", "yuanbao": "YUANBAO_ALLOW_ALL_USERS"}
-# Hosts whose allowlists document ``*`` (weixin/yuanbao match literally, as before).
-WILDCARD_HOSTS = ("wecom", "qqbot", "whatsapp", "whatsapp_cloud")
+PLATFORM_OPT_IN = {"whatsapp": "WHATSAPP_ALLOW_ALL_USERS"}
+WILDCARD_HOSTS = ("whatsapp",)
 
 
 def _all_agree(hosts, opt_in_for, label):
@@ -79,11 +61,11 @@ def _all_agree(hosts, opt_in_for, label):
             with _scope(opt_in_for(name)):
                 table[name] = _verdicts(host, name, dm_policy, group_policy)
         for name, verdicts in table.items():
-            assert verdicts == table["weixin"], (name, dm_policy, group_policy, label)
-        expected_open = bool(opt_in_for("weixin")) and dm_policy == "open"
-        assert table["weixin"][("dm", "stranger")] is expected_open
-        assert table["weixin"][("intake", "   ")] is False  # blank principal never admitted
-        assert table["weixin"][("intake", "stranger")] is (dm_policy == "pairing" or expected_open)
+            assert verdicts == table["whatsapp"], (name, dm_policy, group_policy, label)
+        expected_open = bool(opt_in_for("whatsapp")) and dm_policy == "open"
+        assert table["whatsapp"][("dm", "stranger")] is expected_open
+        assert table["whatsapp"][("intake", "   ")] is False  # blank principal never admitted
+        assert table["whatsapp"][("intake", "stranger")] is (dm_policy == "pairing" or expected_open)
 
 
 @pytest.mark.parametrize("mode", ["none", "gateway", "platform"])

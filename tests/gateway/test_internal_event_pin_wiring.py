@@ -464,16 +464,15 @@ async def test_goal_continuation_keeps_channel_pin_through_session_authority(tmp
     import gateway.run as gr
     from gateway.platforms.base import SendResult
     from gateway.session_authority import initialize_session_authority
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
+    from plugins.platforms.telegram.adapter import TelegramAdapter
     from tests.waiting import async_wait_until
 
-    chat = "15551234567@s.whatsapp.net"
-    monkeypatch.setenv("WHATSAPP_ALLOWED_USERS", "15551234567")
+    chat = "15551234567"
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "15551234567")
     monkeypatch.setattr(gr, "_resolve_runtime_agent_kwargs", lambda: {"api_key": "fake"})
     runner = gr.GatewayRunner(GatewayConfig(sessions_dir=tmp_path / "sessions"))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={
-        "text_batch_delay_seconds": 0, "session_path": str(tmp_path / "wa")}))
-    adapter.gateway_runner, runner.adapters = runner, {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token="test-token", typing_indicator=False))
+    adapter.gateway_runner, runner.adapters = runner, {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id="default", instance_id="pins")
     runner._wire_adapter_handlers(adapter)
     calls: list[dict] = []

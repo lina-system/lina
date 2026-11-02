@@ -7,8 +7,6 @@ display switch. Regression for #121524, which tied tool rows to show_reasoning.
 """
 
 import json
-import re
-from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -294,33 +292,6 @@ def test_tool_progress_off_keeps_file_edit_lifecycle_pair(monkeypatch):
     for tool_id in cases:
         lifecycle = [event[0] for event in events if event[2].get("tool_id") == tool_id]
         assert lifecycle == ["tool.start", "tool.complete"], tool_id
-
-
-def test_gateway_lifecycle_set_covers_desktop_card_tools():
-    """`isCardTool` (tool-render-class.ts) and the gateway lifecycle set must not drift.
-
-    Every name the desktop classifies as a card needs its full lifecycle under
-    answer-only, or its `tool.complete` arrives orphaned.
-    """
-    ts_path = Path(__file__).resolve().parents[2] / "apps" / "desktop" / "src" / "lib" / "tool-render-class.ts"
-    source = ts_path.read_text(encoding="utf-8")
-
-    def set_literal(var: str) -> set[str]:
-        # Either a `new Set([...])` or a `[...] as const` tuple.
-        match = re.search(rf"const {var} = (?:new Set\()?\[(.*?)\]", source, re.DOTALL)
-        assert match, f"{var} not found in {ts_path.name}"
-        names = set(re.findall(r"'([^']+)'", match.group(1)))
-        assert names, f"{var} is empty in {ts_path.name}"
-        return names
-
-    # CONNECTION_CARD_KEY is the run-splitter's alias for a manage_connections
-    # part, not a tool name the gateway ever sees.
-    desktop_cards = (
-        set_literal("CARD_TOOL_NAMES")
-        | set_literal("FILE_EDIT_TOOL_NAMES")
-        | {"manage_connections"}
-    )
-    assert desktop_cards <= set(server._TOOL_LIFECYCLE_UI_TOOLS)
 
 
 def test_tool_progress_off_shows_failed_terminal_exit_code(monkeypatch):
