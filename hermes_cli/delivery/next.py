@@ -278,6 +278,23 @@ def brief_of(full: str, n: int, base: str, author: str | None) -> str:
               "can.\n")
 
 
+SUBMIT_LOCK = "work-next"
+
+
+def run_next(gh, repos: list[str], record, *, submit_picks: bool, base: Path | None = None, hub=None) -> tuple[dict, bool]:
+    """Collect, decide and, with ``submit_picks``, hand the picks out. A submitting call holds the worker hub's file
+    lock (``Store.lock``, under the LINA root) from the snapshot to the last hand-off, so a second ``next --submit``
+    waits and then sees the first one's jobs instead of choosing the same issues (docs/delivery.md step 5). A
+    listing call takes no lock."""
+    if not submit_picks:
+        return decide(collect(gh, repos, record, base)), True
+    from hermes_cli.worker import settings as worker_settings
+    from hermes_cli.worker.hub_store import Store
+    with Store(worker_settings.root(base)).lock(SUBMIT_LOCK):
+        plan = decide(collect(gh, repos, record, base))
+        return plan, submit(plan, base, hub)
+
+
 def submit(plan: dict, base: Path | None = None, hub=None) -> bool:
     """Hand each pick to its runner through ``lina worker`` (#35). Inside a work card (``HERMES_KANBAN_TASK``)
     the hub records each run on that card. True when every hand-off worked."""

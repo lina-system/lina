@@ -24,8 +24,7 @@ def cmd_next(args) -> None:
     from hermes_cli.delivery import next as picker
     from hermes_cli.delivery.github import Gh
     from hermes_cli.delivery.record import WorkerHubRecord
-    plan = picker.decide(picker.collect(Gh(), _repos(args), WorkerHubRecord()))
-    ok = picker.submit(plan) if args.submit else True
+    plan, ok = picker.run_next(Gh(), _repos(args), WorkerHubRecord(), submit_picks=args.submit)
     if args.json:
         print(json.dumps(plan, ensure_ascii=False, indent=1, default=list))
     else:

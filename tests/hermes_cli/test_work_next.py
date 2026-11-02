@@ -167,3 +167,68 @@ def test_an_open_pull_request_without_a_running_job_holds_only_its_own_issue():
     busy = picker.decide(_two(issues, pulls=[{"n": 50, "head": "feat/5-five", "body": "Closes #5"}],
                               jobs=[{"id": "OT-5", "state": "running", "text": f"{REPO}#5"}]))
     assert _kinds(busy)[6] == ("scope", "same contract running: store #5")
+
+
+def _submit_lock_free(base: Path) -> bool:
+    from hermes_cli.worker import settings as worker_settings
+    from hermes_cli.worker.hub_store import Store
+    with Store(worker_settings.root(base)).lock(picker.SUBMIT_LOCK, wait=False) as held:
+        return held
+
+
+def test_two_submitting_calls_on_one_snapshot_hand_each_issue_out_once(tmp_path):
+    import threading
+    _config(tmp_path, "work:\n  sprint: S1\n")
+    submitted: list[tuple[str, str]] = []
+    jobs: list[dict] = []
+    probe: list[bool] = []
+
+    class SharedRecord:
+        def jobs(self):
+            return list(jobs)
+
+    class FakeHub:
+        def __init__(self, name):
+            self.name = name
+
+        def submit(self, opts):
+            if self.name == "first" and not submitted:
+                # The second call starts while the first is between its snapshot and its hand-offs.
+                checker = threading.Thread(target=lambda: probe.append(_submit_lock_free(tmp_path)))
+                checker.start()
+                checker.join(10)
+                second.start()
+            submitted.append((self.name, opts["topic"]))
+            jobs.append({"id": f"OT-{len(jobs)}", "state": "running", "text": opts["topic"]})
+
+    def call(name):
+        picker.run_next(day_gh(recorded_day()), [REPO], SharedRecord(), submit_picks=True, base=tmp_path,
+                        hub=FakeHub(name))
+
+    second = threading.Thread(target=call, args=("second",))
+    call("first")
+    second.join(30)
+
+    assert not second.is_alive()
+    assert probe == [False], "the first call holds the submit lock while it hands out"
+    topics = [topic for _, topic in submitted]
+    assert len(topics) == len(set(topics)) == 5, submitted
+    assert {name for name, _ in submitted} == {"first"}, "the second call saw the first one's jobs"
+
+
+def test_listing_without_submit_takes_no_lock(tmp_path):
+    from hermes_cli.worker import settings as worker_settings
+    from hermes_cli.worker.hub_store import Store
+    _config(tmp_path, "work:\n  sprint: S1\n")
+    import threading
+    result = []
+    lister = threading.Thread(target=lambda: result.append(
+        picker.run_next(day_gh(recorded_day()), [REPO], FakeRecord(), submit_picks=False, base=tmp_path)))
+    with Store(worker_settings.root(tmp_path)).lock(picker.SUBMIT_LOCK):
+        lister.start()
+        lister.join(30)
+        finished_while_held = not lister.is_alive()
+    lister.join(30)
+    assert finished_while_held, "a listing call must not wait on the submit lock"
+    plan, ok = result[0]
+    assert ok and [d["issue"] for d in plan["decisions"] if d["action"] == "open"] == [102, 116, 122, 125, 126]
