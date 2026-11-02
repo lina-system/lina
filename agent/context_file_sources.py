@@ -72,6 +72,9 @@ def list_context_file_sources(
     suppressed = _pb._project_context_suppressed(cwd, cwd_path, allow_install_tree_fallback)
     sources: list[dict[str, Any]] = []
     winner: Optional[str] = None
+    # Desk-only AGENTS chain: the project's CLAUDE.md / cursor rules load after it (see build_context_files_prompt).
+    project_winner: Optional[str] = None
+    desk_only = not suppressed and _pb._agents_md_from_desk_only(cwd_path)
     for kind, label, path, content in _pb.discover_context_files(cwd_path):
         if not content:
             status = _empty_status(path)
@@ -80,6 +83,9 @@ def list_context_file_sources(
         elif winner in (None, kind):
             winner = kind
             # The builder caps the rendered ``## label`` section, not the raw file.
+            status = _loaded_status(content, len(f"## {label}\n\n{content}"), max_chars)
+        elif desk_only and kind in ("claude_md", "cursorrules") and project_winner in (None, kind):
+            project_winner = kind
             status = _loaded_status(content, len(f"## {label}\n\n{content}"), max_chars)
         else:
             status = "shadowed"
