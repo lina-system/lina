@@ -46,15 +46,16 @@ import json, os, runpy, sys
 script, args = sys.argv[1], sys.argv[2:]
 if script.endswith("npm-cli.js"):
     open(os.path.join(os.environ["HOME"], "npm-was-here"), "w").close()
-    if args[0] == "install":
-        prefix = args[args.index("--prefix") + 1]
-        name, version = args[-1].rsplit("@", 1)
-        os.makedirs(os.path.join(prefix, "node_modules", name, "bin"))
-        with open(os.path.join(prefix, "node_modules", name, "bin", "omo.js"), "w") as fh:
-            fh.write({omo!r}.format(version=version))
-        lock = {{"packages": {{"node_modules/" + name: {{"version": version, "integrity": {integrity!r}}}}}}}
-        with open(os.path.join(prefix, "package-lock.json"), "w") as fh:
+    deps = json.load(open("package.json")).get("dependencies", {{}})
+    if args[0] == "install" and "--package-lock-only" in args:
+        lock = {{"packages": {{"node_modules/" + name: {{"version": version, "integrity": {integrity!r}}}
+                               for name, version in deps.items()}}}}
+        with open("package-lock.json", "w") as fh:
             json.dump(lock, fh)
+    elif args[0] == "ci" and "omo-ai" in deps:
+        os.makedirs(os.path.join("node_modules", "omo-ai", "bin"))
+        with open(os.path.join("node_modules", "omo-ai", "bin", "omo.js"), "w") as fh:
+            fh.write({omo!r}.format(version=deps["omo-ai"]))
     elif args == ["run", "build"]:
         os.makedirs(os.path.join("dist", "src"))
         with open(os.path.join("dist", "src", "cli.js"), "w") as fh:
@@ -101,6 +102,7 @@ def world(tmp_path, monkeypatch):
         real.version, real.integrity))
     monkeypatch.setattr(lina_omo, "omo_pin", lambda path=None: lina_omo.OmoPin("omo-ai", PINNED, INTEGRITY))
     monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_ocx, "LOCK_DIR", tmp_path / "npm-locks")
 
     def fetch(url, dest):
         Path(dest).write_bytes(tarball)

@@ -63,7 +63,7 @@ def build(root: Path, node: Path, source: Path = SOURCE,
             target = staging / path.relative_to(source)
             target.parent.mkdir(parents=True, exist_ok=True)
             shutil.copy2(path, target)
-        lina_ocx.npm(root, node, "ci", cwd=staging, label="ocx-omo: npm ci", run=run)
+        lina_ocx.npm(root, node, "ci", "--ignore-scripts", cwd=staging, label="ocx-omo: npm ci", run=run)
         lina_ocx.npm(root, node, "run", "build", cwd=staging, label="ocx-omo: npm run build", run=run)
         if not (staging / "dist" / "src" / "cli.js").exists():
             raise lina_ocx.OcxError("ocx-omo: the build wrote no dist/src/cli.js")
