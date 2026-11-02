@@ -62,9 +62,16 @@ def desk_config_path() -> Path:
 
 
 def configured_desk_path() -> Path | None:
-    """``desk.path`` from the default profile's config, expanded; None when unset or unreadable."""
+    """``desk.path`` from the default profile's config, expanded; None when unset or unreadable.
+
+    A bypass worker (safe mode, ``--ignore-user-config``) reads no profile file, and the Desk is user
+    config, so it has no Desk."""
+    from agent.safe_worker_policy import _current_policy
     from hermes_cli.config_backend import config_exists, read_config_doc_readonly
 
+    policy = _current_policy()
+    if policy is not None and policy.ignore_user_config:
+        return None
     cfg_path = desk_config_path()
     try:
         doc = read_config_doc_readonly(cfg_path) if config_exists(cfg_path) else None
