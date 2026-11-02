@@ -12,8 +12,9 @@ Agent's and is never stopped, rewritten or deleted.
 
 from __future__ import annotations
 
-import os
+import contextlib
 import plistlib
+import re
 import subprocess
 from pathlib import Path
 
@@ -44,28 +45,66 @@ def _legacy_label_suffix(label: object) -> str | None:
     return suffix if suffix == "" or suffix.startswith("-") else None
 
 
-def find_legacy_launchd_agents() -> list[tuple[str, Path, str]]:
-    """``[(old_label, plist_path, new_label)]`` for LINA's ``ai.hermes.gateway*`` LaunchAgents.
+def _candidate_legacy_labels() -> tuple[list[str], set[str]]:
+    """``(labels, derived)``: the old labels this install's profile layout maps to (``derived``, as
+    ``launchd_gateway_labels_for_install`` derives LINA's current ones) plus any ``ai.hermes.gateway*``
+    label launchd has loaded (the listing the facade's prefix scan reads), e.g. a pre-suffix one."""
+    derived = {LEGACY_GATEWAY_LAUNCHD_LABEL_BASE + label[len(GATEWAY_LAUNCHD_LABEL_BASE):]
+               for label in _gw().launchd_gateway_labels_for_install()}
+    labels = set(derived)
+    try:
+        listed = subprocess.run(["launchctl", "list"], check=False, timeout=10, **_gw()._CAPTURE_TEXT)
+        lines = listed.stdout.splitlines() if listed.returncode == 0 else []
+    except (OSError, subprocess.TimeoutExpired):
+        lines = []
+    labels.update(parts[-1] for parts in map(str.split, lines)
+                  if len(parts) >= 3 and _legacy_label_suffix(parts[-1]) is not None)
+    return sorted(labels), derived
 
-    Read-only. A plist that is unreadable, carries another label, or pins no LINA home is skipped.
+
+def _loaded_definition_path(label: str) -> Path | None:
+    """The plist launchd loaded *label* from, looked up in ``gui/<uid>`` then ``user/<uid>``; None when
+    the label is loaded in neither domain or its definition path cannot be read."""
+    try:
+        domain, _pid = _gw()._locate_launchd_gateway_service(label)
+        if domain is None:
+            return None
+        printed = _launchctl("print", f"{domain}/{label}")
+    except (OSError, subprocess.TimeoutExpired):
+        return None
+    match = re.search(r"^\tpath = (.+)$", printed.stdout or "", re.MULTILINE)
+    return Path(match.group(1).strip()) if printed.returncode == 0 and match else None
+
+
+def _is_lina_legacy_definition(plist_path: Path, label: str) -> bool:
+    """The plist defines *label*, runs a gateway, and pins a LINA home in its environment."""
+    try:
+        data = plistlib.loads(plist_path.read_bytes())
+    except (OSError, ValueError, plistlib.InvalidFileException):
+        return False
+    if not isinstance(data, dict) or data.get("Label") != label:
+        return False
+    argv, env = data.get("ProgramArguments"), data.get("EnvironmentVariables")
+    runs_gateway = isinstance(argv, list) and any(isinstance(arg, str) and "gateway" in arg for arg in argv)
+    return runs_gateway and isinstance(env, dict) and pins_lina_home(env.get("HERMES_HOME"))
+
+
+def find_legacy_launchd_agents() -> list[tuple[str, Path, str]]:
+    """``[(old_label, plist_path, new_label)]`` for LINA's ``ai.hermes.gateway*`` LaunchAgents. Read-only.
+
+    A loaded label is judged by the definition launchd loaded it from; a derived label that is not
+    loaded by its plist in the LaunchAgents folder. Never a folder glob: a plist that carries another
+    label, runs no gateway or pins no LINA home (Hermes Agent's ``~/.hermes``) is not LINA's.
     """
     agents_dir = _gw().get_launchd_plist_path().parent
-    if not agents_dir.is_dir():
-        return []
+    labels, derived = _candidate_legacy_labels()
     found: list[tuple[str, Path, str]] = []
-    for plist_path in sorted(agents_dir.glob(f"{LEGACY_GATEWAY_LAUNCHD_LABEL_BASE}*.plist")):
-        try:
-            data = plistlib.loads(plist_path.read_bytes())
-        except (OSError, ValueError, plistlib.InvalidFileException):
-            continue
-        if not isinstance(data, dict):
-            continue
-        label = data.get("Label")
-        suffix = _legacy_label_suffix(label)
-        env = data.get("EnvironmentVariables")
-        if suffix is None or not isinstance(env, dict) or not pins_lina_home(env.get("HERMES_HOME")):
-            continue
-        found.append((label, plist_path, f"{GATEWAY_LAUNCHD_LABEL_BASE}{suffix}"))
+    for label in labels:
+        plist_path = _loaded_definition_path(label)
+        if plist_path is None and label in derived:
+            plist_path = agents_dir / f"{label}.plist"
+        if plist_path is not None and _is_lina_legacy_definition(plist_path, label):
+            found.append((label, plist_path, f"{GATEWAY_LAUNCHD_LABEL_BASE}{_legacy_label_suffix(label)}"))
     return found
 
 
@@ -86,30 +125,30 @@ def _launchctl(*args: str) -> subprocess.CompletedProcess:
 
 
 def _loaded_domain(label: str) -> str | None:
-    """The launchd domain (``gui/<uid>`` or ``user/<uid>``) that has *label* loaded, else None."""
-    uid = os.getuid()  # windows-footgun: ok — macOS LaunchAgent helper, never invoked on Windows
-    for domain in (f"gui/{uid}", f"user/{uid}"):
-        if _launchctl("print", f"{domain}/{label}").returncode == 0:
-            return domain
-    return None
+    try:
+        return _gw()._locate_launchd_gateway_service(label)[0]
+    except subprocess.TimeoutExpired:
+        return None
 
 
 def _move_agent(old_label: str, plist_path: Path, new_label: str) -> None:
-    """Re-register one LaunchAgent under LINA's label, running again only if it was loaded."""
+    """Re-register one LaunchAgent under LINA's label. A loaded old job is replaced by a loaded new one
+    (an existing but unloaded ``ai.lina.gateway*`` plist is bootstrapped, not trusted); the old
+    definition is removed only once the new label is loaded, else the old job is restored."""
     data = plistlib.loads(plist_path.read_bytes())
-    target = plist_path.with_name(f"{new_label}.plist")
+    target = _gw().get_launchd_plist_path().parent / f"{new_label}.plist"
+    if not target.exists():
+        data["Label"] = new_label
+        target.write_bytes(plistlib.dumps(data))
     domain = _loaded_domain(old_label)
     if domain is not None:
         _launchctl("bootout", f"{domain}/{old_label}")
-    if target.exists():
-        print(f"  {target.name} is already installed; removing the old agent only")
-    else:
-        data["Label"] = new_label
-        target.write_bytes(plistlib.dumps(data))
-        if domain is not None:
-            done = _launchctl("bootstrap", domain, str(target))
-            if done.returncode != 0:
-                raise OSError(f"launchctl bootstrap {domain} {target} failed: {(done.stderr or '').strip()}")
+        if _loaded_domain(new_label) is None:
+            with contextlib.suppress(subprocess.SubprocessError, OSError):
+                _gw()._launchctl_bootstrap(domain, target, new_label)
+        if _loaded_domain(new_label) is None:
+            _launchctl("bootstrap", domain, str(plist_path))
+            raise OSError(f"{new_label} did not load from {target}; {old_label} was restored")
     plist_path.unlink()
 
 
