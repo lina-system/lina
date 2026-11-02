@@ -127,7 +127,7 @@ def test_available_missing_module():
 
 
 @pytest.mark.parametrize(("extra", "module"), [
-    ("teams", "microsoft_teams.apps"),
+    ("azure-identity", "azure.identity"),
 ])
 def test_available_counts_sys_modules_fakes(monkeypatch, extra, module):
     monkeypatch.setitem(sys.modules, module, SimpleNamespace())
@@ -148,8 +148,8 @@ def test_available_unknown_extra_uses_underscore_guess(monkeypatch):
 
 
 def test_ensure_import_noop_when_available(monkeypatch, synced):
-    monkeypatch.setitem(sys.modules, "fal_client", SimpleNamespace())
-    extras.ensure_import("fal")
+    monkeypatch.setitem(sys.modules, "exa_py", SimpleNamespace())
+    extras.ensure_import("exa")
     assert synced == []
 
 
@@ -158,23 +158,23 @@ def test_ensure_import_syncs_when_missing(monkeypatch, synced, tmp_path):
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     monkeypatch.setattr(extras, "available", lambda e: False)
-    extras.ensure_import("fal")
-    assert synced == [["fal"]]
+    extras.ensure_import("exa")
+    assert synced == [["exa"]]
 
 
 def test_ensure_import_respects_terminal_decline_without_installing(monkeypatch, synced):
     import builtins
 
     monkeypatch.setattr(extras, "available", lambda _: False)
-    monkeypatch.setattr(extras, "missing", lambda _: ["fal_client"])
+    monkeypatch.setattr(extras, "missing", lambda _: ["exa_py"])
     monkeypatch.setattr(sys, "stdin", SimpleNamespace(isatty=lambda: True))
     monkeypatch.setattr(sys, "stdout", SimpleNamespace(isatty=lambda: True))
     prompts = []
     monkeypatch.setattr(builtins, "input", lambda text: prompts.append(text) or "n")
     with pytest.raises(pm.InstallError, match="declined"):
-        extras.ensure_import("fal")
+        extras.ensure_import("exa")
     # Users know the feature, not the Python modules behind it.
-    assert "'fal' feature" in prompts[0] and "fal_client" not in prompts[0]
+    assert "'exa' feature" in prompts[0] and "exa_py" not in prompts[0]
     assert synced == []
 
 
@@ -185,7 +185,7 @@ def test_ensure_import_propagates_install_error(monkeypatch):
     monkeypatch.setattr(client, "sync_venv", boom)
     monkeypatch.setattr(extras, "available", lambda e: False)
     with pytest.raises(pm.InstallError):
-        extras.ensure_import("fal")
+        extras.ensure_import("exa")
 
 
 @pytest.mark.parametrize("failure", [None, "install", "import"])
@@ -199,7 +199,7 @@ def test_ensure_and_bind_preserves_target_on_failure(monkeypatch, failure):
             raise ImportError("still broken")
         return {"NAME": 42}
     target = {"existing": "kept"}
-    assert extras.ensure_and_bind("fal", importer, target) is (failure is None)
+    assert extras.ensure_and_bind("exa", importer, target) is (failure is None)
     assert target == ({"existing": "kept", "NAME": 42} if failure is None else {"existing": "kept"})
 
 
@@ -219,12 +219,12 @@ def test_every_anchor_extra_exists_in_pyproject():
 
 
 def test_legacy_selection_carries_extras_the_main_era_venv_lazily_installed(monkeypatch, tmp_path):
-    """Migrating a main-era venv must keep opt-in extras it already had (FAL
-    image generation, a messaging SDK), or the first PM launch prompts to
+    """Migrating a main-era venv must keep opt-in extras it already had (Mistral
+    voice, a messaging SDK), or the first PM launch prompts to
     reinstall them. Umbrella and gated-off extras are never carried."""
     monkeypatch.setattr(extras, "_PLATFORM_GATES", {"piper": "python_version < '0'"})
     site = tmp_path / "venv" / "lib" / "python3.11" / "site-packages"
-    (site / "fal_client").mkdir(parents=True)
+    (site / "mistralai").mkdir(parents=True)
     (site / "telegram").mkdir()
     (site / "piper").mkdir()
     (site / "google").mkdir()
@@ -235,7 +235,7 @@ def test_legacy_selection_carries_extras_the_main_era_venv_lazily_installed(monk
     selection = extras.legacy_selection(tmp_path)
 
     assert selection[0] == "all"
-    assert {"fal", "telegram", "vertex", "exa"} <= set(selection)
+    assert {"mistral", "telegram", "vertex", "exa"} <= set(selection)
     assert "messaging" not in selection
     assert "piper" not in selection
     assert "hindsight" not in selection  # Catalog plugin owns this dependency, not a core extra.
