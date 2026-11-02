@@ -7,8 +7,8 @@
   is written for them.
 * ``ocx``: LINA's pinned OCX proxy (#32), launchd ``ai.lina.ocx`` / systemd ``lina-ocx``, written through
   ``service_definition`` by ``hermes_cli/lina_ocx_service.py``.
-* ``worker``: name reserved for ``lina worker`` (#35). Nothing is installed for it yet; ``service_definition`` is the
-  writer it can use.
+* ``worker``: ``lina worker serve`` (#35), launchd ``ai.lina.worker`` / systemd ``lina-worker``, written through
+  ``service_definition`` by ``hermes_cli/worker/service.py``. Its runs reach models through OCX.
 
 A LINA gateway never starts beside a Hermes Agent gateway of the same profile name: both would poll the same bot
 tokens. ``loaded_hermes_agent_gateway`` is the read-only probe ``gateway/run_bootstrap.py`` asks before it binds.
@@ -47,7 +47,7 @@ SERVICES = (
     Service("gateway", "ai.lina.gateway", "lina-gateway", "LINA_Gateway"),
     Service("store", "lina-store", "lina-store", "lina-store"),
     Service("ocx", "ai.lina.ocx", "lina-ocx", "LINA_OCX"),
-    Service("worker", "ai.lina.worker", "lina-worker", "LINA_Worker", issue="#35"),
+    Service("worker", "ai.lina.worker", "lina-worker", "LINA_Worker"),
 )
 BY_NAME = {service.name: service for service in SERVICES}
 
@@ -101,7 +101,13 @@ def _ocx_state() -> str:
     return lina_ocx_service.state()
 
 
-_STATE: dict[str, Callable[[], str]] = {"gateway": _gateway_state, "store": _store_state, "ocx": _ocx_state}
+def _worker_state() -> str:
+    from hermes_cli.worker import service
+    return service.state()
+
+
+_STATE: dict[str, Callable[[], str]] = {"gateway": _gateway_state, "store": _store_state, "ocx": _ocx_state,
+                                        "worker": _worker_state}
 
 
 def state(service: Service) -> str:
@@ -160,19 +166,32 @@ def _ocx(verb: str) -> None:
         sys.exit(code)
 
 
-_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "ocx": _ocx}
+def _worker(verb: str) -> None:
+    from hermes_cli.worker import service
+    code = service.VERBS[verb]()
+    if code:
+        sys.exit(code)
 
-# Who runs on whom: a service is not stopped or restarted while a service that uses it still runs.
-USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",), "ocx": ("gateway",)}
-_RUNNING: dict[str, Callable[[], bool]] = {"gateway": gateway_running}
+
+def worker_running() -> bool:
+    from hermes_cli.worker import service
+    return service.running()
+
+
+_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "ocx": _ocx, "worker": _worker}
+
+# Who runs on whom: a service is not stopped or restarted while a service that uses it still runs (the gateway's and
+# the worker's model calls go through OCX).
+USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",), "ocx": ("gateway", "worker")}
+_RUNNING: dict[str, Callable[[], bool]] = {"gateway": gateway_running, "worker": worker_running}
 
 
 def act(verb: str, name: str) -> int:
     """``start``/``stop``/``restart`` one service with its own command, unchanged.
 
     The one rule added here: a service is not stopped or restarted while a service that uses it still runs (the
-    gateway uses the memory store and OCX), so the person stops the user first, with that service's own command and its own
-    checks (the gateway asks before it interrupts live sessions)."""
+    gateway uses the memory store and OCX, the worker uses OCX), so the person stops the user first, with that
+    service's own command and its own checks (the gateway asks before it interrupts live sessions)."""
     service = BY_NAME[name]
     if service.issue:
         print(f"{name} is not installed yet: lina{service.issue} adds it.")
@@ -199,7 +218,7 @@ def install_gateway_step(*, services: bool, out=print) -> int:
 
 
 def service_definition(kind: str, label: str, argv: list[str], env: dict[str, str]) -> str:
-    """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.ocx`` (#32) and, later,
+    """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.ocx`` (#32) and
     ``ai.lina.worker`` (#35)."""
     if kind == "launchd":
         return plistlib.dumps({"Label": label, "ProgramArguments": list(argv), "EnvironmentVariables": dict(env),

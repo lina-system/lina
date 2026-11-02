@@ -140,6 +140,24 @@ def git_summary(task: Task) -> str:
             f"{git('log', '--oneline', f'{start}..HEAD')}\n" + "\n".join(stat_lines) + "\n")
 
 
+def verify(out_dir: Path) -> dict:
+    """Hold the fetched files against the device's manifest: a file changed after the run settled is a mismatch."""
+    manifest = read_json(out_dir / "manifest.json")
+    if manifest is None:
+        return {"ok": False, "mismatch": [], "missing": [], "error": "no manifest"}
+    check = {"mismatch": [], "missing": []}
+    for name, want in (manifest.get("files") or {}).items():
+        local = out_dir / name
+        if not local.is_file():
+            check["missing"].append(name)
+        elif sha256(local) != want:
+            check["mismatch"].append(name)
+    check["ok"] = not check["mismatch"] and not check["missing"]
+    for key in ("inputs_unchanged", "head", "start_latency_s", "run_s", "model"):
+        check[key] = manifest.get(key)
+    return check
+
+
 _SAFE_ID = re.compile(r"^O[TGS]-[A-Z0-9_-]{1,40}$")
 
 
