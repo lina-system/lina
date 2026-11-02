@@ -234,8 +234,10 @@ def _apply_additive_schema(path: Path, budget: _Budget | None = None) -> None:
                                  isolation_level=None)) as conn:
         _reapply_durability_barriers(conn)
         budget.arm(conn)
-        conn.execute('BEGIN IMMEDIATE')
         try:
+            # Inside the try: connect and the barriers can use up the budget, and BEGIN itself is
+            # then interrupted, which must read as the budget refusal, not as an unreadable store.
+            conn.execute('BEGIN IMMEDIATE')
             cursor = conn.cursor()
             apply_declared_schema(cursor)
             # Postcondition, still inside the transaction: every declared table/column resolves.
