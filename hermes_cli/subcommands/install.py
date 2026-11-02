@@ -37,7 +37,8 @@ def _cmd_install(args) -> None:
 
 def build_install_parser(subparsers) -> None:
     """Attach the ``install`` subcommand, and ``store``, ``services``, ``models``, ``omo`` ``worker`` (what install
-    sets up) and ``work``, to ``subparsers``."""
+    sets up), ``work`` and the operations tools (``heart``), to ``subparsers``."""
+    from hermes_cli.subcommands.heart import build_heart_parser
     from hermes_cli.subcommands.models import build_models_parser
     from hermes_cli.subcommands.omo import build_omo_parser
     from hermes_cli.subcommands.services import build_services_parser
@@ -71,3 +72,4 @@ def build_install_parser(subparsers) -> None:
     build_omo_parser(subparsers)
     build_worker_parser(subparsers)
     build_work_parser(subparsers)
+    build_heart_parser(subparsers)
