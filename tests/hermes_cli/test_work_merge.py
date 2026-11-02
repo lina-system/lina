@@ -25,7 +25,8 @@ def finding(level, head, path="hermes_cli/x.py", line=3, title="Guard the empty 
 
 
 def snapshot(**over) -> dict:
-    base = {"repo": REPO, "number": 7, "state": "OPEN", "head": HEAD, "head_ref": "feat/12-thing",
+    base = {"repo": REPO, "number": 7, "state": "OPEN", "head": HEAD, "head_ref": "feat/12-thing", "base": "dev",
+            "delivery_branch": "dev",
             "body": "## Summary\n\nx\n\nCloses #12\n", "labels": [], "required": ["Lint", "tests"],
             "runs": [run("Lint"), run("tests", run_id=2)], "statuses": [],
             "reviews": [{"user": CODEX, "commit_id": HEAD, "state": "COMMENTED"}], "review_comments": [],
@@ -115,6 +116,7 @@ CASES = [
     ("linked issue already closed", {"issues": {12: {"state": "CLOSED"}}}, rules.FAIL, "no open issue"),
     ("branch names another issue", {"head_ref": "feat/13-thing"}, rules.FAIL, "branch names #13"),
     ("closed pull request", {"state": "CLOSED"}, rules.FAIL, "#7 is closed"),
+    ("pull request into main", {"base": "main"}, rules.FAIL, "base is main, not dev"),
 ]
 
 
@@ -138,7 +140,7 @@ def _github(snap: dict, *, queue: bool, queue_answers=(), issue_body="## Done wh
 
     def pull(_query):
         return {"number": 7, "state": "closed" if state["merged"] else "open", "merged": state["merged"],
-                "node_id": "PR_node", "head": {"sha": HEAD, "ref": snap["head_ref"]}, "base": {"ref": "dev"},
+                "node_id": "PR_node", "head": {"sha": HEAD, "ref": snap["head_ref"]}, "base": {"ref": snap["base"]},
                 "body": snap["body"], "labels": labels}
 
     rule_list = [{"type": "required_status_checks", "parameters": {"required_status_checks": [
@@ -270,3 +272,14 @@ def test_the_merge_verdict_on_codex_is_the_required_status_verdict():
         verdict = rules.codex_review(HEAD, snap["reviews"], snap["review_comments"], snap["issue_comments"])
         assert verdict.lines == [({"success": rules.PASS, "failure": rules.FAIL, "pending": rules.WAIT}[status.state],
                                   status.description)]
+
+
+def test_a_pull_request_into_another_branch_is_refused_before_any_merge_or_issue_edit():
+    gh, lines = _github(snapshot(base="main"), queue=False), []
+    gh.routes[f"repos/{REPO}/rules/branches/main"] = []
+    assert _merge(gh, lines) == rules.FAIL
+    assert "FAIL base is main, not dev" in lines
+    assert gh.commands == [] and gh.writes == [] and gh.queries == []
+    runs = [path for path in gh.reads if path.startswith(f"repos/{REPO}/actions/runs?")]
+    assert runs and all("branch=dev&" in path for path in runs), "dev green is read on the delivery branch"
+    assert not any(path.startswith(f"repos/{REPO}/rules/branches/main") for path in gh.reads)

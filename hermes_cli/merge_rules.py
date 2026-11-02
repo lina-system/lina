@@ -270,10 +270,15 @@ def linked_issue(repo: str, body: str | None, labels: set[str], head_ref: str, i
 def may_merge(pr: dict) -> Verdict:
     """May this head merge? ``pr`` holds what the collector read, all on the pull request's current head:
     ``repo, number, state, head, head_ref, body, labels, required, runs, statuses, reviews, review_comments,
-    issue_comments, dev_ok, dev_failed, issues, label_events, owner_login``."""
+    issue_comments, dev_ok, dev_failed, issues, label_events, owner_login`` and ``base`` (the PR's base branch)
+    against ``delivery_branch`` (``work.base``): a pull request into any other branch never merges here."""
     verdict = Verdict()
     if pr.get("state") != "OPEN":
         verdict.add(FAIL, f"#{pr.get('number')} is {str(pr.get('state')).lower()}")
+        return verdict
+    delivery = pr.get("delivery_branch") or "dev"
+    if pr.get("base") != delivery:
+        verdict.add(FAIL, f"base is {pr.get('base')}, not {delivery}")
         return verdict
     labels = set(pr.get("labels") or ())
     for part in (required_checks(pr.get("required") or [], pr.get("runs") or [], pr.get("statuses")),

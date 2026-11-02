@@ -29,11 +29,12 @@ def _state(pr: dict) -> str:
 
 def collect_pr(gh, repo: str, number: int, base: Path | None = None) -> dict:
     pr = gh.json(f"repos/{repo}/pulls/{number}")
-    head, branch = pr["head"]["sha"], pr["base"]["ref"]
-    found = rule_types(gh, repo, branch)
-    dev_ok, dev_failed = dev_state(gh, repo, branch, settings.dev_workflow(base))
+    head, delivery = pr["head"]["sha"], settings.base_branch(base)
+    # Rules and dev green are read on the delivery branch, never on whatever base the PR names.
+    found = rule_types(gh, repo, delivery)
+    dev_ok, dev_failed = dev_state(gh, repo, delivery, settings.dev_workflow(base))
     snapshot = {"repo": repo, "number": number, "state": _state(pr), "head": head, "head_ref": pr["head"]["ref"],
-                "base": branch, "node_id": pr.get("node_id"), "body": pr.get("body") or "",
+                "base": pr["base"]["ref"], "delivery_branch": delivery, "node_id": pr.get("node_id"), "body": pr.get("body") or "",
                 "labels": [label["name"] for label in pr.get("labels") or []], "required": required_contexts(found),
                 "queue": merge_queue_on(found), "runs": check_runs(gh, repo, head),
                 "statuses": gh.json(f"repos/{repo}/commits/{head}/statuses?per_page=100") or [],
