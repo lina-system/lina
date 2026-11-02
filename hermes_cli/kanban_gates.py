@@ -16,6 +16,8 @@ A card's to-dos are the lines under its ``## To-dos`` heading:
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -28,7 +30,6 @@ PASS, FAIL, WAIT = 0, 1, 75
 _LABEL = {PASS: "PASS", FAIL: "FAIL", WAIT: "WAIT"}
 _ISSUE_TODO = re.compile(r"^\s*[-*]\s+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([1-9][0-9]*)\s*$")
 _CHECK_TODO = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+\S")
-_BOX = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+")
 _QUESTION = re.compile(r"^\s*(질문\s*:|Q\s*:)", re.IGNORECASE)
 _APPROVAL = re.compile(r"^\s*(승인|approve)", re.IGNORECASE)
 _OK_JOB = {"success", "skipped", "neutral"}
@@ -74,18 +75,6 @@ def load_card(conn: sqlite3.Connection, card: str | None) -> sqlite3.Row:
     if row is None:
         raise GateError(f"card {card} not found on the board")
     return row
-
-
-def section(body: str | None, heading: str) -> list[str]:
-    lines, inside = [], False
-    for raw in (body or "").splitlines():
-        match = re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", raw)
-        if match and len(match[1]) <= 2:
-            inside = len(match[1]) == 2 and match[2].strip().lower() == heading.lower()
-            continue
-        if inside:
-            lines.append(raw)
-    return lines
 
 
 def card_todos(body: str | None) -> tuple[list[tuple[str, int]], list[str]]:
@@ -182,25 +171,29 @@ def merged_prs(issue: dict) -> list[dict]:
     return [pr for pr in nodes if pr and pr.get("merged")]
 
 
-def _collect_acceptance():
+def _sibling(name: str):
     try:
-        from hermes_cli.kanban_pr_acceptance import collect_acceptance
+        return importlib.import_module(f"hermes_cli.{name}")
     except ImportError:  # run as a plain file: load the stdlib-only sibling by path
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "kanban_pr_acceptance", Path(__file__).with_name("kanban_pr_acceptance.py"))
+        if name in sys.modules:
+            return sys.modules[name]
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
         if spec is None or spec.loader is None:
-            raise GateError("kanban_pr_acceptance.py is missing beside this file") from None
+            raise GateError(f"{name}.py is missing beside this file") from None
         module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
         spec.loader.exec_module(module)
-        collect_acceptance = module.collect_acceptance
-    return collect_acceptance
+        return module
 
 
+def _collect_acceptance():
+    return _sibling("kanban_pr_acceptance").collect_acceptance
 
-def done_when(body: str | None) -> tuple[int, int]:
-    boxes = [m[1] for m in (_BOX.match(line) for line in section(body, "Done when")) if m]
-    return sum(1 for box in boxes if box in "xX"), len(boxes)
+
+# The merge rule's Done-when reading (lina#63): one copy, shared with ``lina work merge``.
+section = _sibling("merge_rules").section
+done_when = _sibling("merge_rules").done_when
+
 
 
 def check_issue(repo: str, number: int, issue: dict) -> tuple[int, str]:
@@ -221,7 +214,7 @@ def check_issue(repo: str, number: int, issue: dict) -> tuple[int, str]:
     worst = PASS
     notes = []
     for pr in prs:
-        receipt = collect(pr["url"], None)
+        receipt = collect(pr["url"], None, green=_sibling("merge_rules").GREEN)
         cls = receipt.get("classification")
         if not receipt.get("ok"):
             worst = WAIT if cls == "pending" and worst != FAIL else FAIL

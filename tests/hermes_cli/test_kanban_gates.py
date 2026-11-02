@@ -136,6 +136,26 @@ def test_prs_refuses(board, gh, capsys, record, accept, expected, why):
     assert why in capsys.readouterr().out
 
 
+@pytest.mark.parametrize("runs, expected", [
+    ([("success", "2026-11-01T09:00:00Z"), ("cancelled", "2026-11-01T09:30:00Z")], gates.PASS),
+    ([("cancelled", "2026-11-01T09:00:00Z"), ("success", "2026-11-01T09:30:00Z")], gates.PASS),
+    ([("skipped", "2026-11-01T09:00:00Z")], gates.PASS),
+    ([("cancelled", "2026-11-01T09:00:00Z")], gates.FAIL),
+], ids=["green-then-cancelled", "cancelled-then-green", "skipped", "only-cancelled"])
+def test_prs_reads_the_merge_rule_for_each_required_check(board, gh, runs, expected):
+    """``gate prs`` and ``lina work merge`` judge a check the same way (lina#63, ``merge_rules``): by its latest
+    non-cancelled run, with skipped green."""
+    tid = _card(TODOS)
+    records = _acceptance()
+    records[2] = [["commits/" + PR_HEAD + "/check-runs"], 0, [{"total_count": len(runs), "check_runs": [
+        {"id": 7 + i, "name": "tests", "head_sha": PR_HEAD, "app": {"id": 1}, "status": "completed",
+         "conclusion": conclusion, "started_at": at, "html_url": f"https://github.com/acme/app/actions/runs/{7 + i}"}
+        for i, (conclusion, at) in enumerate(runs)]}]]
+    gh.set([_issue(), *records])
+    assert _run("prs", "--card", tid) == expected
+    assert any("filter=all" in call for call in gh.calls() if "check-runs" in call)
+
+
 def test_prs_fails_without_issue_todos_and_defaults_card_to_env(board, gh, monkeypatch, capsys):
     tid = _card("## To-dos\n\n- [ ] only a checklist\n")
     monkeypatch.setenv("HERMES_KANBAN_TASK", tid)
