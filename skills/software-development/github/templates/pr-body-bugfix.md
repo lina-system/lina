@@ -1,35 +1,14 @@
-## Bug Description
+## Summary
 
-<!-- What was happening? -->
+<!-- Failure, root cause and smallest complete fix, including sibling paths. -->
 
-Fixes #
+## Done when
 
-## Root Cause
+- [ ] <!-- Issue acceptance criterion. -->
 
-<!-- What was causing the bug? -->
+## Verification
 
-## Fix
+<!-- Exact checks and results; show the regression fails without the fix.
+Record manual verification, remaining risks and checks not run. -->
 
-<!-- What does this PR change to fix it? -->
-
--
-
-## How to Verify
-
-<!-- Steps a reviewer can follow to confirm the fix -->
-
-1.
-2.
-3.
-
-## Test Plan
-
-- [ ] Added regression test for this bug
-- [ ] Existing tests still pass
-- [ ] Manual verification of the fix
-
-## Risk Assessment
-
-<!-- Could this fix break anything else? What's the blast radius? -->
-
-Low / Medium / High — <!-- explanation -->
+Closes #N

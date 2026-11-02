@@ -235,7 +235,7 @@ def _create_swarm_uncommitted(
         assignee=verifier_assignee,
         parents=worker_ids,
         priority=priority,
-        skills=["requesting-code-review"],
+        skills=["code-review"],
         **common,
     )
     synthesizer = kb.create_task(

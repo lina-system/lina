@@ -114,7 +114,7 @@ def test_no_nudge_after_handoff_tool(clear_kanban_env, tool_name, who):
 
     Both move the card out of ``running``, and the worker is told to call
     them — goals.py's continuation/finalize prompts name
-    ``kanban_request_review``; the force-loaded sdlc-review skill names
+    ``kanban_request_review``; the force-loaded code-review skill names
     ``kanban_request_changes``. Nudging afterwards asks a worker that did
     the right thing to close a card it must not close.
     """

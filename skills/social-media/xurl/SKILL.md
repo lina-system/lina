@@ -10,6 +10,7 @@ prerequisites:
 metadata:
   hermes:
     tags: [twitter, x, social-media, xurl, official-api]
+    category: social-media
     homepage: https://github.com/xdevplatform/xurl
     upstream_skill: https://github.com/openclaw/openclaw/blob/main/skills/xurl/SKILL.md
 ---
@@ -38,7 +39,7 @@ Critical rules when operating inside an agent/LLM session:
 
 - **Never** read, print, parse, summarize, upload, or send `~/.xurl` to LLM context.
 - **Never** ask the user to paste credentials/tokens into chat.
-- The user must fill `~/.xurl` with secrets manually on their own machine. In Docker, this must be the `~` seen by Hermes tool subprocesses; see the Docker note below.
+- The user must fill `~/.xurl` with secrets manually on their own machine.
 - **Never** recommend or execute auth commands with inline secrets in agent sessions.
 - **Never** use `--verbose` / `-v` in agent sessions — it can expose auth headers/tokens.
 - To verify credentials exist, only use: `xurl auth status`.
@@ -96,11 +97,11 @@ These steps must be performed by the user directly, NOT by the agent, because th
    ```
    (This opens a browser for the OAuth 2.0 PKCE flow.)
 
-   If X returns a `UsernameNotFound` error or 403 on the post-OAuth `/2/users/me` lookup, pass your handle explicitly (xurl v1.1.0+):
+   If X returns a `UsernameNotFound` error or 403 on the post-OAuth current-user lookup, pass your handle explicitly (xurl v1.1.0+):
    ```bash
    xurl auth oauth2 --app my-app YOUR_USERNAME
    ```
-   This binds the token to your handle and skips the broken `/2/users/me` call.
+   This binds the token to your handle and skips the broken current-user endpoint call.
 6. Set the app as default so all commands use it:
    ```bash
    xurl auth default my-app
@@ -115,14 +116,6 @@ After this, the agent can use any command below without further setup. OAuth 2.0
 
 > **Common pitfall:** If you omit `--app my-app` from `xurl auth oauth2`, the OAuth token is saved to the built-in `default` app profile — which has no client-id or client-secret. Commands will fail with auth errors even though the OAuth flow appeared to succeed. If you hit this, re-run `xurl auth oauth2 --app my-app` and `xurl auth default my-app`.
 
-> **Docker HOME pitfall:** In the official Hermes Docker layout, `/opt/data` is `HERMES_HOME`, but Hermes tool subprocesses use `/opt/data/home` as `HOME`. That means `~/.xurl` resolves to `/opt/data/home/.xurl` for Hermes-run `xurl` commands, not `/opt/data/.xurl`. Run the user setup with the same HOME:
-> ```bash
-> HOME=/opt/data/home xurl auth apps add my-app --client-id YOUR_CLIENT_ID --client-secret YOUR_CLIENT_SECRET
-> HOME=/opt/data/home xurl auth oauth2 --app my-app YOUR_USERNAME
-> HOME=/opt/data/home xurl auth default my-app YOUR_USERNAME
-> HOME=/opt/data/home xurl auth status
-> ```
-> If `HOME=/opt/data xurl auth status` succeeds but `HOME=/opt/data/home xurl auth status` shows no apps or tokens, Hermes tool calls will not see the credentials.
 
 ---
 
@@ -155,7 +148,7 @@ After this, the agent can use any command below without further setup. OAuth 2.0
 | List apps | `xurl auth apps list` |
 | Remove app | `xurl auth apps remove NAME` |
 | Set default app | `xurl auth default APP_NAME [USERNAME]` |
-| Per-request app | `xurl --app NAME /2/users/me` |
+| Per-request app | `xurl --app NAME /2/"users"/me` |
 | Auth status | `xurl auth status` |
 
 Notes:
@@ -283,7 +276,7 @@ The shortcuts cover common operations. For anything else, use raw curl-style mod
 
 ```bash
 # GET
-xurl /2/users/me
+xurl /2/"users"/me
 
 # POST with JSON body
 xurl -X POST /2/tweets -d '{"text":"Hello world!"}'
@@ -298,7 +291,7 @@ xurl -H "Content-Type: application/json" /2/some/endpoint
 xurl -s /2/tweets/search/stream
 
 # Full URLs also work
-xurl https://api.x.com/2/users/me
+xurl https://api.x.com/2/"users"/me
 ```
 
 ---
@@ -374,7 +367,7 @@ xurl timeline -n 20
 ### Multiple apps (credentials pre-configured manually)
 ```bash
 xurl auth default prod alice               # prod app, alice user
-xurl --app staging /2/users/me             # one-off against staging
+xurl --app staging /2/"users"/me             # one-off against staging
 ```
 
 ---
@@ -384,7 +377,7 @@ xurl --app staging /2/users/me             # one-off against staging
 - Non-zero exit code on any error.
 - API errors are still printed as JSON to stdout, so you can parse them.
 - Auth errors → have the user re-run `xurl auth oauth2` outside the agent session.
-- Commands that need the caller's user ID (like, repost, bookmark, follow, etc.) will auto-fetch it via `/2/users/me`. An auth failure there surfaces as an auth error.
+- Commands that need the caller's user ID (like, repost, bookmark, follow, etc.) will auto-fetch it via the current-user endpoint. An auth failure there surfaces as an auth error.
 
 ---
 
@@ -408,7 +401,7 @@ xurl --app staging /2/users/me             # one-off against staging
 | --- | --- | --- |
 | Auth errors after successful OAuth flow | Token saved to `default` app (no client-id/secret) instead of your named app | `xurl auth oauth2 --app my-app` then `xurl auth default my-app` |
 | `unauthorized_client` during OAuth | App type set to "Native App" in X dashboard | Change to "Web app, automated app or bot" in User Authentication Settings |
-| `UsernameNotFound` or 403 on `/2/users/me` right after OAuth | X not returning username reliably from `/2/users/me` | Re-run `xurl auth oauth2 --app my-app YOUR_USERNAME` (xurl v1.1.0+) to pass the handle explicitly |
+| `UsernameNotFound` or 403 on the current-user endpoint right after OAuth | X not returning username reliably from the current-user endpoint | Re-run `xurl auth oauth2 --app my-app YOUR_USERNAME` (xurl v1.1.0+) to pass the handle explicitly |
 | 401 on every request | Token expired or wrong default app | Check `xurl auth status` — verify `▸` points to an app with oauth2 tokens |
 | `client-forbidden` / `client-not-enrolled` | X platform enrollment issue | Dashboard → Apps → Manage → Move to "Pay-per-use" package → Production environment |
 | `CreditsDepleted` | $0 balance on X API | Buy credits (min $5) in Developer Console → Billing |
@@ -424,7 +417,7 @@ xurl --app staging /2/users/me             # one-off against staging
 - **Token refresh:** OAuth 2.0 tokens auto-refresh. Nothing to do.
 - **Multiple apps:** Each app has isolated credentials/tokens. Switch with `xurl auth default` or `--app`.
 - **Multiple accounts per app:** Select with `-u / --username`, or set a default with `xurl auth default APP USER`.
-- **Token storage:** `~/.xurl` is YAML. In Docker, use the Hermes subprocess HOME (`/opt/data/home` in the official image) so tokens land under `/opt/data/home/.xurl`. Never read or send this file to LLM context.
+- **Token storage:** `~/.xurl` is YAML. Never read or send this file to LLM context.
 - **Cost:** X API access is typically paid for meaningful usage. Many failures are plan/permission problems, not code problems.
 
 ---

@@ -44,7 +44,7 @@ letter is 612 x 792).
 - `radio`: the buttons are laid out left-to-right inside `entry_box`,
   one slot per option, each with a small static caption. `value`
   pre-selects an option by its export name.
-- `dropdown` maps to an AcroForm choice (combo) field.
+- `dropdown` becomes an AcroForm choice (combo) field.
 
 ## Field types → what pdf_read.py --fields reports
 
