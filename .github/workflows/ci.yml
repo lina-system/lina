@@ -213,6 +213,18 @@ jobs:
           fi
           echo "No critical supply chain patterns in HEAD^1..HEAD"
 
+  prune-check:
+    # LINA-only: no tracked file may match prune-list.txt, the upstream paths LINA does not carry
+    # (docs/forking.md). Reads only the checkout; scripts/sync-upstream removes the matches on intake.
+    name: Prune check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: No tracked file matches prune-list.txt
+        run: python3 scripts/ci/check_prune_list.py
+
   uv-lockfile:
     # uv.lock agrees with pyproject.toml (upstream uv-lockfile-check.yml). Gated like upstream
     # ci.yaml: only pyproject.toml / uv.lock (or a .github/ change) can desync the lock.
