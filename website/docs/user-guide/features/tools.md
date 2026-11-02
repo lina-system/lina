@@ -17,7 +17,7 @@ Tools are functions that extend the agent's capabilities. They're organized into
 Hermes ships with a broad built-in tool registry covering web search, browser automation, terminal execution, file editing, memory, delegation, scheduled tasks, and more. Plugins add more tools — for example Home Assistant device control comes from the `homeassistant` catalog plugin.
 
 :::note
-**Honcho cross-session memory** is available as a memory provider plugin from the plugin catalog (`hermes plugins install honcho`), not as a built-in toolset. See [Memory Providers](./memory-providers.md#honcho).
+**Honcho cross-session memory** is available as the bundled Honcho memory provider (`hermes memory setup honcho`), not as a built-in toolset. See [Memory Providers](./memory-providers.md#honcho).
 :::
 
 High-level categories:
