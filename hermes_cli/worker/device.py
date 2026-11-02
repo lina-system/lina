@@ -8,6 +8,8 @@ the runner (run 1) or hands it the follow-up (run n), polls the runner's state u
 
 from __future__ import annotations
 
+import contextlib
+import fcntl  # windows-footgun: ok — work devices are POSIX (launchd/systemd) only
 import io
 import json
 import os
@@ -314,6 +316,39 @@ def steer(worker_root: Path, task_id: str, text: str) -> dict:
     return {"action": how, "run": run}
 
 
+@contextlib.contextmanager
+def task_lock(task: Task):
+    """One task's runs change hands under this lock: a follow-up asking for the next run and ``serve`` taking one."""
+    task.dir.mkdir(parents=True, exist_ok=True)
+    with task.path("runs.lock").open("w") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)  # windows-footgun: ok — POSIX work devices only
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)  # windows-footgun: ok — POSIX work devices only
+
+
+def follow_up(worker_root: Path, task_id: str, payload: dict) -> dict:
+    """A person's follow-up, so that a task has at most one requested-or-running run: queued into the newest run
+    while it waits for ``serve``, steered into it while it is live, refused while it is starting; once that run
+    ended, the next run is requested."""
+    task = task_of(worker_root, task_id)
+    with task_lock(task):
+        run = slots.requested(task.dir)
+        if run and not task.path(f"rc.{run}").exists():
+            if not task.path(f"taken.{run}").exists():
+                with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:
+                    fh.write("\n\n" + payload["message"])
+                task.event(run, "follow_up", how="queued")
+                return {"action": "queued", "run": run}
+            reply = steer(worker_root, task_id, payload["message"])
+            return reply if reply["action"] != "not_live" else {"action": "busy", "run": run}
+        run = max(run, last_run(task)) + 1
+        task.path(f"prompt.{run}").write_text(payload["prompt"], encoding="utf-8")
+        task.path(f"request.{run}").write_text(json.dumps({"run": run, "at": time.time()}), encoding="utf-8")
+        return {"action": "requested", "run": run}
+
+
 def human(worker_root: Path, task_id: str) -> dict:
     task = task_of(worker_root, task_id)
     run = last_run(task)
@@ -393,6 +428,7 @@ def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[in
             "probe": lambda: _ok(probe(worker_root, *args[:2])),
             "reserve": lambda: _ok(slots.reserve(worker_root, safe_id(args[0]), int(args[1]))),
             "send": lambda: _ok(steer(worker_root, args[0], text)),
+            "follow_up": lambda: _ok(follow_up(worker_root, args[0], json.loads(text))),
             "human": lambda: _ok(human(worker_root, args[0])),
             "answer": lambda: _ok(answer(worker_root, args[0], text)),
             "cancel": lambda: _ok(cancel(worker_root, args[0], text)),
