@@ -13,7 +13,8 @@ Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the 
 | Detect affected areas | always | Picks the lanes below | `ci.yaml`, job `detect` |
 | **Lint** (required) | always | `ruff check .` with the ruff version pinned by `scripts/code_health` | `lint.yml`, job "ruff enforcement (blocking)" |
 | Python tests (Linux n/8) | `python` lane | `scripts/run_tests.sh` on Ubuntu, in 8 slices, with the per-file duration cache (`test_durations.json`; pull requests read it, `dev` pushes write it) | `tests.yml`, job "Run tests" |
-| **Python tests (Linux)** (required) | always | Green when every slice passed, or when detect skipped the slices because the change cannot reach Python | `ci.yaml`, job `all-checks-pass` |
+| Catalog tests | `catalog` lane | The tests that read `plugin-catalog/` entries and contributor email maps, discovered by `scripts/ci/catalog_test_files.py` and run through `scripts/run_tests.sh`. A catalog-only pull request runs this instead of the Linux slices | `catalog-tests.yml` |
+| **Python tests (Linux)** (required) | always | Green when every slice passed (or detect skipped the slices because the change cannot reach Python) and the `catalog` tests passed (or the lane was not needed) | `ci.yaml`, job `all-checks-pass` |
 | Python tests (macOS) | pushes to `dev`, manual runs | macOS-marked tests | `tests-os.yml`, macOS jobs |
 | LINA Helper (macOS) | always | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
 | Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
@@ -27,7 +28,7 @@ Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_e
 
 ## Required checks
 
-`dev` and `main` require two checks: **Lint** and **Python tests (Linux)**. LINA Helper (macOS) is not required; the Linux half of `helper/macos`'s `make test` runs inside **Python tests (Linux)** (`tests/helper/`). Both are job names in `ci.yml` and always report, so a pull request never waits on a check that did not start. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
+`dev` and `main` require two checks: **Lint** and **Python tests (Linux)**. LINA Helper (macOS) is not required; the Linux half of `helper/macos`'s `make test` runs inside **Python tests (Linux)** (`tests/helper/`). The catalog lane is folded into **Python tests (Linux)** the same way: a catalog-only pull request skips the Linux slices, so its Catalog tests job must pass before that required check goes green. Both are job names in `ci.yml` and always report, so a pull request never waits on a check that did not start. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
 
 ## What was moved
 
@@ -50,7 +51,7 @@ Only public repositories use GitHub CI. Private repositories (for example hermes
 - `bootstrap-installer.yml`
 - `canary-release.yml`
 - `case-collision-check.yml`
-- `catalog-tests.yml`
+- `catalog-tests.yml` (LINA version: a job in `.github/workflows/ci.yml`)
 - `ci-review-comment.yml`
 - `ci.yaml`
 - `contributor-check.yml`
