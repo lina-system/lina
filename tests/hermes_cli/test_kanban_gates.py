@@ -339,6 +339,85 @@ def test_review_owner_name_is_configurable(board):
     assert _run("review", "--card", tid, "--owner", "jun") == gates.PASS
 
 
+@pytest.mark.parametrize("source", ["comment", "run"])
+@pytest.mark.parametrize("approval_after", [False, True], ids=["before_changes", "after_changes"])
+def test_review_same_second_approval_order(board, monkeypatch, source, approval_after):
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    tid = _card()
+
+    def approve():
+        if source == "comment":
+            with connect() as conn:
+                kb.add_comment(conn, tid, "user", "approve")
+        else:
+            _review_flow(tid, "bob")
+
+    if not approval_after:
+        approve()
+    with connect() as conn, kb.write_txn(conn):
+        kb._append_event(conn, tid, "changes_requested", {"reason": "needs another pass"})
+    if approval_after:
+        approve()
+    with connect() as conn:
+        events = kb.list_events(conn, tid)
+        relevant = [e for e in events if e.kind in {"commented", "completed", "changes_requested"}]
+        assert {e.created_at for e in relevant} == {1_800_000_000}
+        assert relevant[-1].kind == ("changes_requested" if not approval_after else
+                                    "commented" if source == "comment" else "completed")
+
+    assert _run("review", "--card", tid) == (gates.PASS if approval_after else gates.FAIL)
+
+
+@pytest.mark.parametrize("approval_before", [True, False])
+def test_review_same_second_ambiguous_history_fails_closed(board, monkeypatch, capsys, approval_before):
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    audit = "Specified — updated title and promoted to todo."
+    approval = "approve" + "x" * 40
+    assert len(audit) == len(approval)
+    with connect() as conn:
+        tid = kb.create_task(conn, title="original", assignee="impl", triage=True)
+        assert kb.specify_triage_task(conn, tid, title="v1", author="user" if approval_before else None)
+        kb.add_comment(conn, tid, "user", approval if approval_before else audit)
+        assert kb.request_review(conn, tid, reviewer="reviewer")
+        claimed = kb.claim_review_task(conn, tid, claimer="fixed-review-claimer")
+        assert kb.request_changes(conn, tid, reason="revise", expected_run_id=claimed.current_run_id)[0]
+        kb.add_comment(conn, tid, "user", audit if approval_before else approval)
+        assert kb.block_task(conn, tid, kind="needs_input", reason="same")
+        assert kb.unblock_task(conn, tid)
+        assert kb.block_task(conn, tid, kind="needs_input", reason="same")
+        assert kb.specify_triage_task(conn, tid, title="v2", author=None if approval_before else "user")
+        assert [c.body for c in kb.list_comments(conn, tid)] == [audit, approval, audit]
+
+    assert _run("review", "--card", tid) == gates.FAIL
+    output = capsys.readouterr().out
+    assert "same second" in output and "approve again" in output
+
+
+@pytest.mark.parametrize("offset,expected", [(-1, gates.FAIL), (1, gates.PASS)])
+def test_review_comment_in_another_second(board, monkeypatch, offset, expected):
+    tid = _card()
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    with connect() as conn, kb.write_txn(conn):
+        kb._append_event(conn, tid, "changes_requested", {"reason": "revise"})
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000 + offset)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "user", "approve")
+
+    assert _run("review", "--card", tid) == expected
+
+
+def test_review_same_second_unique_comment_after_audit_gap(board, monkeypatch):
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    with connect() as conn:
+        tid = kb.create_task(conn, title="original", assignee="alice", triage=True)
+        assert kb.specify_triage_task(conn, tid, title="specified", author="user")
+        with kb.write_txn(conn):
+            kb._append_event(conn, tid, "changes_requested", {"reason": "revise"})
+        kb.add_comment(conn, tid, " user ", " approve ")
+
+    assert _run("review", "--card", tid) == gates.PASS
+
+
 
 def test_ask_waits_until_someone_else_answers(board, capsys):
     tid = _card()

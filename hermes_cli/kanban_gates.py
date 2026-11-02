@@ -345,29 +345,60 @@ def gate_artifact(args: argparse.Namespace, report: Report) -> None:
 
 
 
-def _approvals(conn, card, own, owners) -> list[tuple[int, str]]:
+def _comment_event_ids(conn, card_id: str, comments) -> dict[int, int]:
+    """Normal comment writes pair atomically with events; audit comments can leave gaps."""
+    events = conn.execute("SELECT id, payload FROM task_events WHERE task_id = ? AND kind = 'commented' "
+                          "ORDER BY id", (card_id,)).fetchall()
+    if len(comments) == len(events):
+        return {comment["id"]: event["id"] for comment, event in zip(comments, events)}
+    # With gaps, do not guess by position. Raw event text was not stripped before its
+    # length was recorded, so equal lengths alone cannot establish a unique match.
+    candidates: dict[int, list[int]] = {comment["id"]: [] for comment in comments}
+    for event in events:
+        payload = _payload(event)
+        matches = [c for c in comments if c["author"] == str(payload.get("author") or "").strip()
+                   and isinstance(payload.get("len"), int) and len(c["body"]) <= payload["len"]]
+        for comment in matches:
+            candidates[comment["id"]].append(event["id"] if len(matches) == 1 else 0)
+    return {cid: ids[0] for cid, ids in candidates.items() if len(ids) == 1 and ids[0]}
+
+
+def _approvals(conn, card, own, owners, changes) -> tuple[list[str], bool]:
     found = []
+    ambiguous = False
+    change_id, change_time = (changes["id"], changes["created_at"]) if changes else (0, 0)
     review_runs = _review_run_ids(conn, card["id"])
-    for run in conn.execute("SELECT id, profile, metadata, ended_at FROM task_runs "
-                            "WHERE task_id = ? AND outcome = 'completed'", (card["id"],)):
+    for run in conn.execute("SELECT r.id, r.profile FROM task_runs r JOIN task_events e "
+                            "ON e.task_id = r.task_id AND e.run_id = r.id AND e.kind = 'completed' "
+                            "WHERE r.task_id = ? AND r.outcome = 'completed' AND e.id > ? ORDER BY e.id",
+                            (card["id"], change_id)):
         if run["id"] in review_runs and run["profile"] and run["profile"] not in own:
-            found.append((run["ended_at"] or 0, f"review run {run['id']} by {run['profile']} completed"))
-    for row in conn.execute("SELECT id, author, body, created_at FROM task_comments WHERE task_id = ?",
-                            (card["id"],)):
+            found.append(f"review run {run['id']} by {run['profile']} completed")
+    comments = conn.execute("SELECT id, author, body, created_at FROM task_comments WHERE task_id = ? ORDER BY id",
+                            (card["id"],)).fetchall()
+    event_ids = _comment_event_ids(conn, card["id"], comments) if changes else {}
+    for row in comments:
         if row["author"] in owners and row["author"] not in own and _APPROVAL.match(row["body"] or ""):
-            found.append((row["created_at"], f"comment {row['id']} by {row['author']} approves"))
-    return found
+            if changes and row["created_at"] == change_time and row["id"] not in event_ids:
+                ambiguous = True
+            elif (not changes or row["created_at"] > change_time
+                  or row["created_at"] == change_time and event_ids.get(row["id"], 0) > change_id):
+                found.append(f"comment {row['id']} by {row['author']} approves")
+    return found, ambiguous
 
 
 def gate_review(args: argparse.Namespace, conn: sqlite3.Connection, report: Report) -> None:
     card = load_card(conn, args.card)
     own = own_names(conn, card)
     owners = set(args.owner or DEFAULT_OWNERS)
-    changes = conn.execute("SELECT MAX(created_at) FROM task_events WHERE task_id = ? AND kind = 'changes_requested'",
-                           (card["id"],)).fetchone()[0] or 0
-    approvals = [a for a in _approvals(conn, card, own, owners) if a[0] >= changes]
+    changes = conn.execute("SELECT id, created_at FROM task_events WHERE task_id = ? AND kind = 'changes_requested' "
+                           "ORDER BY id DESC LIMIT 1", (card["id"],)).fetchone()
+    approvals, ambiguous = _approvals(conn, card, own, owners, changes)
     if approvals:
-        report.line(PASS, f"{card['id']}: {max(approvals)[1]} (assignee: {', '.join(sorted(own)) or '-'})")
+        report.line(PASS, f"{card['id']}: {approvals[-1]} (assignee: {', '.join(sorted(own)) or '-'})")
+    elif ambiguous:
+        report.line(FAIL, f"{card['id']}: approval came in the same second as the change request; "
+                    "its order is ambiguous, so the reviewer must approve again")
     elif card["status"] == "review":
         report.line(WAIT, f"{card['id']}: review pending")
     else:
