@@ -4,7 +4,7 @@ description: "Grow an agent's voice from its own journal."
 version: 1.0.0
 author: LINA
 license: AGPL-3.0
-platforms: [linux, macos, windows]
+platforms: [linux, macos]
 metadata:
   hermes:
     tags: [persona, journal, reflection]
@@ -25,13 +25,18 @@ Zero entries is valid; do not manufacture feelings to fill a quota.
 ## Prerequisites
 
 An agent-private journal, source message identifiers, and a separate self note
-such as `SOUL.self.md` must be available through approved storage tools.
-This is a file-based procedure, not a requirement for an additional CLI.
+such as `SOUL.self.md`. On LINA, `lina heart` keeps the journal and guards the self
+note (it reads this agent's own `state.db` and refuses boundary edits); the same
+steps work with file tools where that command is absent.
 
 ## How to Run
 
-Use `read_file` for the agent's own evidence and journal, and `write_file` or `patch`
-for append-only entries and a validated self-note update. Keep the main persona untouched.
+With `lina heart`: `lina heart write` records a scene with its owner message ids,
+`lina heart candidates` lists today's owner messages and replies, `lina heart review-input`
+gathers the journal and note, and `lina heart self-apply` checks and applies a candidate note
+(`lina heart undo` restores the last one). Daily review follows `templates/heart-review.md`.
+Without it, use `read_file` for the agent's own evidence and journal, and `write_file` or
+`patch` for append-only entries and a validated self-note update. Keep the main persona untouched.
 
 ## Quick Reference
 
