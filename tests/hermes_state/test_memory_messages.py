@@ -7,10 +7,12 @@ from __future__ import annotations
 
 import json
 
+import pytest
+
 from gateway.config import GatewayConfig
 from gateway.session import SessionStore
 from hermes_state import SessionDB
-from hermes_state_store import MessageStore
+from hermes_state_store import MessageStore, insert_rows
 from tools.session_search_tool import session_search
 
 
@@ -117,3 +119,26 @@ def test_a_compacted_copy_of_a_message_shares_its_row(tmp_path, memory_store_sql
         assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(3,)]
     finally:
         db.close()
+
+
+def test_text_of_a_rolled_back_write_is_written_again_by_its_retry(tmp_path, memory_store_sql):
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        db.create_session(session_id="rb", source="cli")
+        row = {"session_id": "rb", "role": "user", "content": "the vanished ledger", "timestamp": 1_700_000_000.0,
+               "message_uid": "rb-msg-1"}
+
+        def fails_before_commit(conn):
+            insert_rows(conn, db.message_store, [row])
+            raise RuntimeError("the state.db write fails after the text went in")
+
+        with pytest.raises(RuntimeError):
+            db._execute_write(fails_before_commit)
+        db._execute_write(lambda conn: insert_rows(conn, db.message_store, [row]))
+
+        assert memory_store_sql("SELECT count(*) FROM memory.messages WHERE uid = %s",
+                                (_text_uid(db, "rb", "user"),)) == [(1,)]
+        assert [m["content"] for m in db.get_messages_as_conversation("rb")] == ["the vanished ledger"]
+    finally:
+        db.close()
+

@@ -254,6 +254,9 @@ class MessageStore:
         self._write_owner: Optional[int] = None
         self._write_depth = 0
         self._pending_sessions: list[str] = []
+        # Text rows the open write transaction wrote or read: published to TEXT_CACHE once it commits,
+        # dropped on rollback (a cached uid whose insert rolled back would make a retry skip the insert).
+        self._staged: dict[str, TextRow] = {}
         self._closed = False
 
     # ── connections ──
@@ -308,10 +311,13 @@ class MessageStore:
             return
         self._write_owner, self._write_depth = me, 1
         self._pending_sessions = []
+        self._staged = {}
         try:
             yield
             if self._write_conn is not None and not self._write_conn.closed:
                 self._write_conn.commit()
+            for row in self._staged.values():
+                TEXT_CACHE.put(self.agent_id, row)
         except BaseException:
             self._pending_sessions = []
             if self._write_conn is not None and not self._write_conn.closed:
@@ -322,6 +328,7 @@ class MessageStore:
                     self._discard_writer()
             raise
         finally:
+            self._staged = {}
             self._write_owner, self._write_depth = None, 0
 
     def _writer_cursor(self):
@@ -330,6 +337,22 @@ class MessageStore:
         if self._write_conn is None or self._write_conn.closed or self._write_conn.broken:
             self._write_conn = self._connect(autocommit=False)
         return self._write_conn.cursor()
+
+    def _in_write(self) -> bool:
+        return self._write_owner == threading.get_ident()
+
+    def _cached(self, uid: str) -> Optional[TextRow]:
+        """A text row this process knows is committed, or that this thread's open write transaction holds."""
+        if self._in_write() and uid in self._staged:
+            return self._staged[uid]
+        return TEXT_CACHE.get(self.agent_id, uid)
+
+    def _remember(self, row: TextRow) -> None:
+        """Cache a row read or written now: at once outside a write, after the commit inside one."""
+        if self._in_write():
+            self._staged[row.uid] = row
+        else:
+            TEXT_CACHE.put(self.agent_id, row)
 
     def _discard_writer(self) -> None:
         conn, self._write_conn = self._write_conn, None
@@ -364,7 +387,7 @@ class MessageStore:
         base = self.base_uid(message_uid)
         versioned = f"{base}#{digest[:16]}"
         for uid in (base, versioned):
-            cached = TEXT_CACHE.get(self.agent_id, uid)
+            cached = self._cached(uid)
             if cached is not None and cached.values == values:
                 return uid
         text = _plain_text(values[0])
@@ -388,7 +411,7 @@ class MessageStore:
                     cur.execute(insert, (versioned, *row))
                     cur.fetchall()
                     uid = versioned
-        TEXT_CACHE.put(self.agent_id, TextRow(uid, values))
+        self._remember(TextRow(uid, values))
         return uid
 
     def texts(self, uids: Iterable[Optional[str]]) -> dict[str, TextRow]:
@@ -397,7 +420,7 @@ class MessageStore:
         found: dict[str, TextRow] = {}
         missing = []
         for uid in wanted:
-            row = TEXT_CACHE.get(self.agent_id, uid)
+            row = self._cached(uid)
             if row is None:
                 missing.append(uid)
             else:
@@ -408,7 +431,7 @@ class MessageStore:
                 cur.execute("SELECT uid, content, native FROM memory.messages WHERE uid = ANY(%s)", (chunk,))
                 for uid, content, native in cur.fetchall():
                     row = TextRow(uid, _values_from_row(content, native or {}))
-                    TEXT_CACHE.put(self.agent_id, row)
+                    self._remember(row)
                     found[uid] = row
         return found
 
