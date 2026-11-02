@@ -27,9 +27,10 @@ def build_services_parser(subparsers) -> None:
     sub = parser.add_subparsers(dest="services_action")
     sub.add_parser("list", help="One line per service (the default)")
     sub.add_parser("status", help="Same as list")
-    names = [service.name for service in SERVICES] + ["all"]
-    for verb in ("start", "stop", "restart"):
-        p = sub.add_parser(verb, help=f"{verb.capitalize()} a service, or all of them (start installs the "
-                                      "gateway service when it is missing)")
+    names = [service.name for service in SERVICES]
+    for verb in (("start", "Start a service (installs the gateway service when it is missing)"),
+                 ("stop", "Stop a service; refused while a service that uses it still runs"),
+                 ("restart", "Restart a service; refused while a service that uses it still runs")):
+        p = sub.add_parser(verb[0], help=verb[1])
         p.add_argument("service", choices=names)
     parser.set_defaults(func=_cmd_services)

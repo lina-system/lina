@@ -116,12 +116,19 @@ def list_lines() -> list[str]:
 
 
 def _gateway(verb: str) -> None:
-    """The ``hermes gateway`` verbs, unchanged. ``start`` installs the service first when there is none."""
+    """The ``hermes gateway`` verbs as they are, in the profile's own scope. ``start`` installs the service first
+    when there is none. Host scope, external supervisors, parking a served profile and the live-session question all
+    stay the gateway command's own business."""
     gw = _gw()
     if verb == "start" and not gw._is_service_installed():
         gw.gateway_command(argparse.Namespace(gateway_command="install", start_now=True, start_on_login=True))
         return
     gw.gateway_command(argparse.Namespace(gateway_command=verb))
+
+
+def gateway_running() -> bool:
+    """Any gateway process of this LINA root, whichever profile it serves."""
+    return bool(_gw().find_gateway_pids(all_profiles=True))
 
 
 def _store_verb(verb: str) -> None:
@@ -155,32 +162,28 @@ def _ocx(verb: str) -> None:
 
 _VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "ocx": _ocx}
 
+# Who runs on whom: a service is not stopped or restarted while a service that uses it still runs.
+USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",), "ocx": ("gateway",)}
+_RUNNING: dict[str, Callable[[], bool]] = {"gateway": gateway_running}
+
 
 def act(verb: str, name: str) -> int:
-    """``start``/``stop``/``restart`` one service, or ``all`` of those that exist (store, then OCX, then the gateway
-    up; the reverse down).
+    """``start``/``stop``/``restart`` one service with its own command, unchanged.
 
-    ``all`` stops at the first failure: the gateway depends on the store and on OCX, so a store or OCX that did not
-    come up must not get a gateway started on it, and a gateway that refused to stop (live sessions the person kept)
-    must keep its store and OCX."""
-    if name != "all":
-        service = BY_NAME[name]
-        if service.issue:
-            print(f"{name} is not installed yet: lina{service.issue} adds it.")
+    The one rule added here: a service is not stopped or restarted while a service that uses it still runs (the
+    gateway uses the memory store and OCX), so the person stops the user first, with that service's own command and its own
+    checks (the gateway asks before it interrupts live sessions)."""
+    service = BY_NAME[name]
+    if service.issue:
+        print(f"{name} is not installed yet: lina{service.issue} adds it.")
+        return 1
+    if verb in ("stop", "restart"):
+        users = [each for each in USED_BY.get(name, ()) if _RUNNING.get(each, lambda: False)()]
+        if users:
+            print(f"{name} {verb} refused: {', '.join(users)} still runs on it. "
+                  f"Stop {' and '.join(users)} first (`lina services stop {users[0]}`).")
             return 1
-        _VERBS[name](verb)
-        return 0
-    order = ("store", "ocx", "gateway") if verb == "start" else ("gateway", "ocx", "store")
-    for index, each in enumerate(order):
-        try:
-            _VERBS[each](verb)
-        except SystemExit as exc:
-            if exc.code in (None, 0):  # the gateway verbs exit 0 on success
-                continue
-            code = exc.code if isinstance(exc.code, int) else 1
-            if index + 1 < len(order):
-                print(f"{each} {verb} failed; left {', '.join(order[index + 1:])} as it was.")
-            return code
+    _VERBS[name](verb)
     return 0
 
 
