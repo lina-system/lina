@@ -455,6 +455,9 @@ _SPECS = [
              "class is reported and left untouched (fail-closed). Exits 0 when the DB is healthy "
              "or was repaired, non-zero when it is still corrupt."
          )),
+    _cmd("gate", [_arg("gate_argv", nargs=argparse.REMAINDER, metavar="prs|dev|artifact|review|ask ...")],
+         help="Deterministic work-card gates (exit 0 pass, 1 fail, 75 waiting); "
+              "`hermes kanban gate <gate> --help` for each gate"),
 ]
 
 
