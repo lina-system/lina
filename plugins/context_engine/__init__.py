@@ -9,9 +9,12 @@ from __future__ import annotations
 import logging
 from contextlib import contextmanager
 from pathlib import Path
-from typing import List, Optional, Tuple
+from typing import TYPE_CHECKING, List, Optional, Tuple
 
 from plugins import plugin_loader as _loader
+
+if TYPE_CHECKING:
+    from agent.context_engine import ContextEngine
 
 logger = logging.getLogger(__name__)
 
@@ -48,9 +51,10 @@ def _iter_engine_dirs() -> list[tuple[str, Path]]:
 
 
 def discover_context_engines() -> list[tuple[str, str, bool]]:
-    """Return ``[(name, description, is_available), ...]`` for every bundled and user engine."""
+    """Return ``[(name, description, is_available), ...]`` for every bundled and user engine. Probing
+    registers nothing: only the selected engine's load puts hooks, skills and prompt sections in the home."""
     return [(name, _loader.read_plugin_description(child),
-             _loader.probe_availability(lambda c=child: _load_engine_from_dir(c)))
+             _loader.probe_availability(lambda c=child: _load_engine_from_dir(c, register=False)))
             for name, child in _iter_engine_dirs()]
 
 
@@ -76,8 +80,9 @@ def load_context_engine(name: str) -> Optional[ContextEngine]:
     )
 
 
-def _load_engine_from_dir(engine_dir: Path) -> Optional[ContextEngine]:
-    """Import an engine module and extract its ContextEngine (register(ctx) or subclass)."""
+def _load_engine_from_dir(engine_dir: Path, register: bool = True) -> Optional[ContextEngine]:
+    """Import an engine module and extract its ContextEngine (register(ctx) or subclass). With
+    ``register=False`` (an availability probe) ``register(ctx)`` gets a context that keeps only the engine."""
     from agent.context_engine import ContextEngine
     name = engine_dir.name
     is_bundled = engine_dir.parent == _CONTEXT_ENGINE_PLUGINS_DIR
@@ -92,6 +97,10 @@ def _load_engine_from_dir(engine_dir: Path) -> Optional[ContextEngine]:
         synthetic_namespace=None if is_bundled else _USER_NAMESPACE)
     if not mod:
         return None
+    if not register:
+        return _loader.instance_from_module(
+            mod, collector=_ProbeCollector(), collected_attr="engine", base_cls=ContextEngine, name=name,
+            logger=logger)
     collector = _EngineCollector(engine_name=name, engine_dir=engine_dir)
     with collector.replacing_previous_build():
         engine = _loader.instance_from_module(
@@ -110,6 +119,21 @@ def re_register_config_hooks() -> None:
     from hermes_constants import hermes_home_key
     for engine_dir in list(_LOADED_ENGINE_DIRS.get(hermes_home_key(), {}).values()):
         _load_engine_from_dir(engine_dir)
+
+
+class _ProbeCollector:
+    """Plugin context for an availability probe: keeps the engine, drops every other ``register_*`` call."""
+
+    def __init__(self):
+        self.engine = None
+
+    def register_context_engine(self, engine):
+        self.engine = engine
+
+    def __getattr__(self, attr: str):
+        if not attr.startswith("register_"):
+            raise AttributeError(attr)
+        return lambda *args, **kwargs: None
 
 
 class _EngineCollector:

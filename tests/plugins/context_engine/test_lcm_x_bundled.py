@@ -264,3 +264,78 @@ def test_legacy_engine_name_lcm_runs_the_bundled_engine(tmp_path, monkeypatch, e
     assert _stored(home, "sess-legacy") == [("user", "legacy config asks"), ("assistant", "bundled engine answers")]
     if enabled:
         assert not (home / "plugins" / enabled / "registered").exists()
+
+
+def _probe_cli():
+    from hermes_cli.plugins_cmd_toggle import _discover_context_engines
+
+    return [name for name, _ in _discover_context_engines()]
+
+
+def _probe_engines():
+    from plugins.context_engine import discover_context_engines
+
+    return [name for name, _, available in discover_context_engines() if available]
+
+
+PROBES = pytest.mark.parametrize("probe", [_probe_engines, _probe_cli], ids=["discover", "cli-dashboard"])
+NO_SURFACE = {**dict.fromkeys(LCM_HOOKS, 0), "skill": False, "prompt_section": False}
+
+
+@pytest.fixture
+def compressor_home(tmp_path, monkeypatch):
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "config.yaml").write_text("context:\n  engine: compressor\n", encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(tmp_path / "no-bundled-plugins"))
+    return home
+
+
+@PROBES
+def test_listing_engines_registers_nothing_of_lcm_x(compressor_home, probe):
+    """The CLI picker and the dashboard Plugins Hub list engines; only the selected engine registers."""
+    assert "lcm-x" in probe()
+    assert _plugin_surface() == NO_SURFACE
+
+
+@PROBES
+def test_a_compressor_turn_after_listing_engines_stays_out_of_lcm_db(compressor_home, probe):
+    from run_agent import AIAgent
+
+    probe()
+    with (
+        patch("model_tools.get_tool_definitions", return_value=[]),
+        patch("model_tools.check_toolset_requirements", return_value={}),
+        patch("agent.process_bootstrap.OpenAI"),
+    ):
+        agent = AIAgent(api_key="test-key-1234567890", base_url="https://openrouter.ai/api/v1", quiet_mode=True,
+                        skip_context_files=True, skip_memory=True, session_id="sess-compressor")
+    assert type(agent.context_compressor).__module__ == "agent.context_compressor"
+    _turn(agent, "a compressor-managed question", "a compressor-managed answer")
+    assert not (compressor_home / "lcm.db").exists() or _stored(compressor_home, "sess-compressor") == []
+
+
+@PROBES
+def test_forced_discovery_after_listing_engines_registers_nothing_of_lcm_x(compressor_home, probe):
+    from hermes_cli.plugins import discover_plugins
+
+    probe()
+    discover_plugins(force=True)
+    assert _plugin_surface() == NO_SURFACE
+
+
+@PROBES
+def test_listing_engines_next_to_a_built_lcm_x_agent_keeps_one_set(home, tmp_path, monkeypatch, probe):
+    monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(tmp_path / "no-bundled-plugins"))
+    from hermes_cli.plugins import get_plugin_manager
+
+    agent = _agent("sess-listed")
+    one_set = {**dict.fromkeys(LCM_HOOKS, 1), "skill": True, "prompt_section": True}
+    built = {name: list(get_plugin_manager()._hooks[name]) for name in LCM_HOOKS}
+    probe()
+    assert _plugin_surface() == one_set
+    # The probe neither adds a set nor rebuilds the agent's: the registrations are the build's own.
+    assert {name: list(get_plugin_manager()._hooks[name]) for name in LCM_HOOKS} == built
+    _turn(agent, "asked after the listing", "answered after the listing")
+    assert _stored(home, "sess-listed") == [("user", "asked after the listing"), ("assistant", "answered after the listing")]
