@@ -81,7 +81,7 @@ def test_the_sprint_is_the_owners_setting_and_never_moves_by_itself(tmp_path):
     plan = _plan(tmp_path)
     assert settings.sprint(tmp_path) is None
     assert not [d for d in plan["decisions"] if d["action"] == "open"]
-    assert picker.lines_of(plan)[0] == "no current sprint: set it with `lina work sprint set <S>`"
+    assert picker.lines_of(plan)[0] == "no current sprint: set it with `lina work sprint current <S>`"
     assert settings.set_sprint("m0 s2", tmp_path) == "M0 S2"
     _plan(tmp_path)
     assert settings.sprint(tmp_path) == ("M0", 2)

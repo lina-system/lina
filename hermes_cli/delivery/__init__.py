@@ -1,5 +1,6 @@
-"""``lina work next|merge|status|sprint`` (lina-system/lina#63): the delivery procedure of docs/delivery.md from the
-core.
+"""``lina work next|merge|status`` and ``lina work sprint current`` (lina-system/lina#63): the delivery procedure of
+docs/delivery.md from the core. The verbs join the one ``lina work`` parser (``hermes_cli/work/parser.py``, lina#36);
+their bodies are in ``cli.py``.
 
 * ``next.py`` picks the issues to open (closed dependencies, current sprint, issues waiting behind it, contract
   scopes) from one snapshot (``collect``) through a pure ``decide``, and ``--submit`` hands each pick to the runner

@@ -259,7 +259,7 @@ def lines_of(plan: dict) -> list[str]:
     lines = [f"dev red in {full}: merges wait, starts do not ({', '.join(checks)})" for full, checks in
              plan["red"].items()]
     if plan["sprint"] is None:
-        lines.append("no current sprint: set it with `lina work sprint set <S>`")
+        lines.append("no current sprint: set it with `lina work sprint current <S>`")
     lines += [line_of(d) for d in plan["decisions"] if d["shown"]]
     return lines if any(d["shown"] for d in plan["decisions"]) or lines else ["nothing to open"]
 

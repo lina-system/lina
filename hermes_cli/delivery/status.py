@@ -30,7 +30,7 @@ def progress(issues: list[dict], sprint) -> dict[str, dict]:
 
 def status(gh, repos: list[str], record, base: Path | None = None, out=print) -> int:
     sprint = settings.sprint(base)
-    out(f"sprint: {settings.sprint_label(sprint) if sprint else 'not set (lina work sprint set <S>)'}")
+    out(f"sprint: {settings.sprint_label(sprint) if sprint else 'not set (lina work sprint current <S>)'}")
     for repo in repos:
         out(f"{repo}")
         for name, row in sorted(progress(gh.pages(f"repos/{repo}/issues?state=all"), sprint).items()):

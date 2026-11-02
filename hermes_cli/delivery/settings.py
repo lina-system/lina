@@ -3,7 +3,7 @@
 ```yaml
 work:
   repos: [owner/name]            # what `lina work next|status` look at when --repo is not given
-  sprint: M0 S3                  # the current sprint; only the owner moves it (`lina work sprint set`)
+  sprint: M0 S3                  # the current sprint; only the owner moves it (`lina work sprint current <S>`)
   base: dev                      # the branch pull requests go into
   dev_workflow: CI               # the push workflow whose latest run says whether dev is green
   runner_labels: {grok-cursor: grok}   # issue label -> lina worker runner (default: a label names its runner)

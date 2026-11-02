@@ -15,6 +15,13 @@ def _fn(module: str, name: str):
     return call
 
 
+def _delivery_fn(name: str):
+    def call(a):
+        from importlib import import_module
+        return getattr(import_module("hermes_cli.delivery.cli"), name)(a)
+    return call
+
+
 def _as(p) -> None:
     p.add_argument("--as", dest="as_", help="the agent writing this (default: the item's agent)")
 
@@ -35,6 +42,28 @@ def _sprint(sp) -> None:
         if action != "show":
             _as(q)
         q.set_defaults(fn=_fn("cmd_edit", "cmd_sprint"))
+    q = actions.add_parser("current", help="show the current sprint; with S (S3 or M0 S3) the owner moves it")
+    q.add_argument("value", nargs="?")
+    q.set_defaults(fn=_delivery_fn("cmd_sprint_current"), no_resume=True)
+
+
+def _delivery(sp) -> None:
+    """The delivery procedure (lina#63): docs/delivery.md from the core. Exit 0 done, 1 refused, 2 usage, 75 wait."""
+    p = sp.add_parser("next", help="list the issues to open and why the rest waits")
+    p.add_argument("--repo", action="append", metavar="OWNER/NAME", help="repeatable (default: work.repos)")
+    p.add_argument("--submit", action="store_true",
+                   help="hand each pick to the runner its label names through lina worker (recorded on the work card "
+                        "when HERMES_KANBAN_TASK is set)")
+    p.add_argument("--json", action="store_true")
+    p.set_defaults(fn=_delivery_fn("cmd_next"), no_resume=True)
+    p = sp.add_parser("merge", help="merge a pull request through the gates (exit 0 merged, 1 refused, 75 wait)")
+    p.add_argument("target", nargs="*", metavar="ARG", help="<owner/repo> <pr>, or with --branch: <title> <issue>")
+    p.add_argument("--branch", help="land this lina worker branch: fetch it, merge dev into it, open the PR")
+    p.add_argument("--task", help="the lina worker run id the branch comes from")
+    p.set_defaults(fn=_delivery_fn("cmd_merge"), no_resume=True)
+    p = sp.add_parser("status", help="sprint progress per milestone, open pull requests and running jobs")
+    p.add_argument("--repo", action="append", metavar="OWNER/NAME")
+    p.set_defaults(fn=_delivery_fn("cmd_status"), no_resume=True)
 
 
 def _add(sp) -> None:
@@ -278,5 +307,5 @@ def _card(sp) -> None:
 
 
 def build(sp) -> None:
-    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves, _run, _card):
+    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves, _run, _card, _delivery):
         part(sp)
