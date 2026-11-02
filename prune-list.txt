@@ -267,3 +267,8 @@ tests/tui_gateway/test_gateway_bootstrap_control_home.py
 tests/tui_gateway/test_gateway_bootstrap_recover.py
 tests/tui_gateway/test_ink_helper_dependencies.py
 tests/website
+hermes_cli/dingtalk_auth.py
+tools/fal_common.py
+tests/hermes_cli/test_dingtalk_auth.py
+tests/tools/test_fal_sdk.py
+tests/tools/test_fal_common.py
