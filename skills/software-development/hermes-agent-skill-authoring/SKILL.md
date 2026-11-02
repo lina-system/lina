@@ -27,7 +27,7 @@ In-repo skills must meet the repo's **hardline authoring standards** (see AGENTS
 
 - User asks you to add a skill "in this branch / repo / commit"
 - You're committing a reusable workflow that should ship with hermes-agent
-- You're editing an existing skill under `skills/` (use `patch` for small edits, `write_file` for rewrites; `skill_manage` still works for patch on in-repo skills, but not for `create`)
+- You're editing an existing skill under `skills/` (use `patch` for small edits and `write_file` for rewrites on the repo path; never `skill_manage`, which edits the installed copy under `$HERMES_HOME/skills/`, not the repo)
 - Don't use for: personal skills in `~/.hermes/skills/` (just use `skill_manage`)
 
 ## Choose the Category
@@ -177,14 +177,14 @@ A skill exists to make the agent's process more predictable — the agent reliab
 
 ## Editing Existing In-Repo Skills
 
-- **Small fix:** `skill_manage(action='patch', ...)` works on in-repo skills, as does `patch`.
+- **Small fix:** `patch` on the repo path (`skills/<category>/<name>/SKILL.md`). Not `skill_manage`: it changes the installed copy under `$HERMES_HOME/skills/` and leaves the repo unchanged.
 - **Major rewrite:** `write_file` the whole SKILL.md.
 - **Supporting files:** `write_file` to `references/`, `templates/`, or `scripts/` under the skill dir.
 - Treat in-repo skills as source. Regenerate docs when frontmatter changes and documentation is in scope.
 
 ## Common Pitfalls
 
-1. **Using `skill_manage(action='create')` for an in-repo skill.** It writes to `~/.hermes/skills/`, not the repo tree. Use `write_file`.
+1. **Using `skill_manage` (any action) for an in-repo skill.** It writes to `~/.hermes/skills/`, not the repo tree. Use `write_file` and `patch` on the repo path.
 2. **Trusting the validator's limits as the standard.** The validator allows 1024-char descriptions; review rejects anything over 60. The validator doesn't check `platforms:`, author format, tests, or docs — review does.
 3. **`author: Hermes Agent` on a contributed skill.** Credit the human first.
 4. **Leading whitespace before `---`.** Validation fails on any leading blank line or BOM.
