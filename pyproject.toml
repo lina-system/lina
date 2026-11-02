@@ -38,6 +38,10 @@ dependencies = [
   # user picks that backend. Smaller `dependencies` = smaller blast
   # radius for the next supply-chain attack.
   "openai==2.54.0; python_version >= '3.14'",
+  # The memory store (memory.messages in LINA's Postgres, lina#12): every session reads and writes its turns there.
+  # psycopg-binary bundles libpq; Android has no wheel for it and uses the system libpq (Termux: pkg install libpq).
+  "psycopg==3.3.4; python_version >= '3.14'",
+  "psycopg-binary==3.3.4; sys_platform != 'android' and python_version >= '3.14'",
   "certifi==2026.10.19; python_version >= '3.14'",
   # TLS trust comes from the OS certificate store (agent/ssl_verify.py), so
   # a corporate/internal root installed on the machine just works. certifi
