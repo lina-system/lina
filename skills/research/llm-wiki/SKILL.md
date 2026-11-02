@@ -10,6 +10,11 @@ metadata:
     tags: [wiki, knowledge-base, research, notes, markdown, rag-alternative]
     category: research
     related_skills: [grounded-citations, pdf]
+    config:
+      - key: wiki.path
+        description: Directory that holds the wiki
+        default: "~/wiki"
+        prompt: Where should the wiki live?
 ---
 
 # Karpathy's LLM Wiki
@@ -35,13 +40,11 @@ Use this skill when the user:
 
 ## Wiki Location
 
-**Location:** Set via `WIKI_PATH` environment variable (e.g. in `${HERMES_HOME:-~/.hermes}/.env`).
-
-If unset, defaults to `~/wiki`.
-
-```bash
-WIKI="${WIKI_PATH:-$HOME/wiki}"
-```
+**Location:** the `wiki.path` skill setting, stored as `skills.config.wiki.path` in
+`config.yaml` (set it with `lina config set skills.config.wiki.path <dir>` or when setup asks).
+When the skill loads, its resolved value appears in the `[Skill config ...]` block as
+`wiki.path = <dir>`; it defaults to `~/wiki`. Use that directory as `$WIKI` below. It is not a
+secret, so it does not go in `.env`.
 
 The wiki is a directory of markdown files, usable in any editor.
 Bundled skill: `skills/research/llm-wiki`. No database is required.
@@ -62,7 +65,7 @@ Bundled skill: `skills/research/llm-wiki`. No database is required.
 wiki/
 ├── SCHEMA.md           # Conventions, structure rules, domain config
 ├── index.md            # Sectioned content catalog with one-line summaries
-├── log.md              # Chronological action log (append-only, rotated yearly)
+├── log.md              # Chronological action log (append-only, rotated past 500 entries)
 ├── raw/                # Layer 1: Immutable source material
 │   ├── articles/       # Web articles, clippings
 │   ├── papers/         # PDFs, research papers
@@ -88,7 +91,7 @@ When the user has an existing wiki, **always orient yourself before doing anythi
 ③ **Scan recent `log.md`** — read the last 20-30 entries to understand recent activity.
 
 ```bash
-WIKI="${WIKI_PATH:-$HOME/wiki}"
+# $WIKI is wiki.path from the [Skill config ...] block
 # Orientation reads at session start
 read_file "$WIKI/SCHEMA.md"
 read_file "$WIKI/index.md"
@@ -108,7 +111,7 @@ at hand before creating anything new.
 
 When the user asks to create or start a wiki:
 
-1. Determine the wiki path (from `$WIKI_PATH` env var, or ask the user; default `~/wiki`)
+1. Determine the wiki path (`wiki.path` from the skill config block, or ask the user and save it with `lina config set skills.config.wiki.path <dir>`; default `~/wiki`)
 2. Create the directory structure above
 3. Ask the user what domain the wiki covers — be specific
 4. Write `SCHEMA.md` customized to the domain (see template below)
@@ -255,7 +258,7 @@ a `_meta/topic-map.md` that groups pages by theme for faster navigation.
 > Chronological record of all wiki actions. Append-only.
 > Format: `## [YYYY-MM-DD] action | subject`
 > Actions: ingest, update, query, lint, create, archive, delete
-> When this file exceeds 500 entries, rotate: rename to log-YYYY.md, start fresh.
+> When this file exceeds 500 entries, rotate: rename to log-YYYY-MM-DD-HHMMSS.md (the rotation time), start fresh.
 
 ## [YYYY-MM-DD] create | Wiki initialized
 - Domain: [domain]
@@ -334,7 +337,7 @@ When the user asks to lint, health-check, or audit the wiki:
 # Use execute_code for this — programmatic scan across all wiki pages
 import os, re
 from collections import defaultdict
-wiki = "<WIKI_PATH>"
+wiki = "<wiki.path>"
 # Scan all .md files in entities/, concepts/, comparisons/, queries/
 # Extract all [[wikilinks]] — build inbound link map
 # Pages with zero inbound links are orphans
@@ -430,7 +433,9 @@ When content is fully superseded or the domain scope changes:
   200 lines. Move detailed analysis to dedicated deep-dive pages.
 - **Ask before mass-updating** — if an ingest would touch 10+ existing pages, confirm
   the scope with the user first.
-- **Rotate the log** — when log.md exceeds 500 entries, rename it `log-YYYY.md` and start fresh.
+- **Rotate the log** — when log.md exceeds 500 entries, rename it `log-YYYY-MM-DD-HHMMSS.md`
+  (the rotation time, so a second rotation in the same year never overwrites the first) and start
+  fresh. If that name already exists, add `-2`, `-3`, ... rather than overwrite.
   The agent should check log size during lint.
 - **Handle contradictions explicitly** — don't silently overwrite. Note both claims with dates,
   mark in frontmatter, flag for user review.
