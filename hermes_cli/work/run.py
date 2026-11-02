@@ -125,6 +125,10 @@ def _submit(h, run_id: str, payload: dict) -> None:
     if job:
         if job.get("state") == "new":
             _place_saved(h, job)
+        elif job.get("state") == "placing":
+            # The worker recorded its device and may have published the request before the crash: finish that
+            # placement on the same device instead of bidding again (a second bid could start the task twice).
+            h.resume_placement(job["id"])
         return  # the worker took it before the crash: nothing to hand out again
     opts = dict(payload["opts"])
     if opts.get("card"):

@@ -17,6 +17,7 @@ from pathlib import Path
 from hermes_cli import lina_ocx, lina_ocx_service
 
 TRIAL_WAIT_S = 90.0
+STOP_WAIT_S = 30.0
 
 
 def _previous_file(root: Path) -> Path:
@@ -68,20 +69,48 @@ def _restore(root: Path) -> None:
     shutil.copytree(backup, data, symlinks=True)
 
 
+def _unprepared(root: Path, previous: str, running: bool, out) -> None:
+    """The way back from a failed preparation: the data dir was only read, so drop the partial backup and its
+    record, point ``current`` at *previous* again and start it when it was running."""
+    shutil.rmtree(lina_ocx.backup_dir(root), ignore_errors=True)
+    _previous_file(root).unlink(missing_ok=True)
+    lina_ocx.set_current(root, previous)
+    out(f"upgrade preparation failed; current stays {previous}")
+    if running:
+        lina_ocx_service.start(root, out=out)
+
+
+def _stopped(root: Path, port: int) -> bool:
+    """Stop the service and wait until nothing answers on its port."""
+    lina_ocx_service.stop(root, out=lambda line: None)
+    deadline = time.monotonic() + STOP_WAIT_S
+    while lina_ocx.port_taken(port):
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.5)
+    return True
+
+
 def _switch(root: Path, previous: str, version: str, out) -> int:
-    running = lina_ocx.own_proxy_running(root, lina_ocx.configured_port(root))
+    port = lina_ocx.configured_port(root)
+    running = lina_ocx.own_proxy_running(root, port)
     lina_ocx_service.stop(root, out=lambda line: None)
     backup = lina_ocx.backup_dir(root)
-    shutil.rmtree(backup, ignore_errors=True)
-    data = lina_ocx.data_dir(root)
-    data.mkdir(mode=0o700, parents=True, exist_ok=True)
-    shutil.copytree(data, backup, symlinks=True)
-    _previous_file(root).write_text(previous + "\n", encoding="utf-8")
-    lina_ocx.set_current(root, version)
+    with lina_ocx.recovering(lambda: _unprepared(root, previous, running, out)):
+        shutil.rmtree(backup, ignore_errors=True)
+        data = lina_ocx.data_dir(root)
+        data.mkdir(mode=0o700, parents=True, exist_ok=True)
+        shutil.copytree(data, backup, symlinks=True)
+        _previous_file(root).write_text(previous + "\n", encoding="utf-8")
+        lina_ocx.set_current(root, version)
     out(f"✓ current: {previous} -> {version} (data backed up to {backup})")
     if not running or lina_ocx_service.start(root, out=out) == 0:
         return 0
     out(f"OCX {version} did not come back as a service; switching back to {previous}")
+    if not _stopped(root, port):
+        out(f"OCX {version} still holds port {port} after stopping it; current and data left as they are, "
+            "stop it by hand and run `lina models rollback`")
+        return 1
     lina_ocx.set_current(root, previous)
     _restore(root)
     lina_ocx_service.start(root, out=out)

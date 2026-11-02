@@ -22,6 +22,16 @@ def root(tmp_path, monkeypatch):
     return root
 
 
+def test_ocx_port_is_a_registered_setting_that_config_get_and_the_service_read_alike(root, monkeypatch, capsys):
+    from hermes_cli.config import get_config_value
+    monkeypatch.setenv("HERMES_HOME", str(root))
+    get_config_value("ocx.port")
+    assert capsys.readouterr().out.strip() == str(lina_ocx.configured_port(root)) == "10100"
+    (root / "config.yaml").write_text("ocx:\n  port: 18123\n")
+    get_config_value("ocx.port")
+    assert capsys.readouterr().out.strip() == str(lina_ocx.configured_port(root)) == "18123"
+
+
 def test_systemd_unit_runs_the_pinned_bun_and_ocx_with_its_data_dir(root):
     unit = lina_ocx_service.definition("systemd", root, "2.95.0", 10100).splitlines()
     (exec_start,) = [line for line in unit if line.startswith("ExecStart=")]

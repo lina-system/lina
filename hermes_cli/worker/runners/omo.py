@@ -22,10 +22,11 @@ import time
 from pathlib import Path
 
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
-from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view
+from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view, stop_session
 from tools.environments.local import build_subprocess_env
 
 HELPERS = Path(__file__).resolve().parent
+STOP_WAIT_S = 60.0  # within the hub's 120 s for a `_device cancel`
 ENGINE = Path("node_modules") / "@code-yeongyu" / "senpi"
 
 
@@ -185,4 +186,4 @@ class OmoRunner:
 
     def stop(self, handle: Handle) -> None:
         if handle.data.get("ref"):
-            self.session(["abort", handle.data["ref"]], 60)
+            stop_session(self.session, handle.data["ref"], STOP_WAIT_S)

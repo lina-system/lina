@@ -8,10 +8,15 @@ import contextlib
 import fcntl  # windows-footgun: ok — the hub runs on POSIX (launchd/systemd) only
 import json
 import os
+import tempfile
+import threading
 import time
 from pathlib import Path
 
 from hermes_cli.worker import settings
+
+
+_HELD = threading.local()  # lock files this thread holds
 
 
 class Store:
@@ -51,10 +56,32 @@ class Store:
         return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else None
 
     def save(self, job: dict) -> None:
+        """Replace the job file atomically; each write has its own temp file, so overlapping saves never collide."""
         self.jobs.mkdir(parents=True, exist_ok=True)
-        tmp = self.path(job["id"]).with_suffix(".tmp")
-        tmp.write_text(json.dumps(job, ensure_ascii=False, indent=1), encoding="utf-8")
-        os.replace(tmp, self.path(job["id"]))
+        fd, tmp = tempfile.mkstemp(prefix=f".{job['id']}.", suffix=".tmp", dir=self.jobs)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                fh.write(json.dumps(job, ensure_ascii=False, indent=1))
+            os.replace(tmp, self.path(job["id"]))
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+
+    @contextlib.contextmanager
+    def edit(self, task_id: str):
+        """Read-modify-write of one job under its lock (the one ``notify`` holds): the job as stored now, saved on
+        exit. None when there is no such job."""
+        with self.lock(task_id):
+            job = self.load(task_id)
+            yield job
+            if job is not None:
+                self.save(job)
+
+    def update(self, task_id: str, **changes) -> dict | None:
+        with self.edit(task_id) as job:
+            if job is not None:
+                job.update(changes)
+        return job
 
     def all(self) -> list[dict]:
         if not self.jobs.is_dir():
@@ -77,14 +104,22 @@ class Store:
 
     @contextlib.contextmanager
     def lock(self, name: str, *, wait: bool = True):
+        """An exclusive lock across processes; reentrant in one thread (``notify`` saves through ``edit``)."""
         self.locks.mkdir(parents=True, exist_ok=True)
-        with (self.locks / f"{name}.lock").open("w") as handle:
+        path = str(self.locks / f"{name}.lock")
+        held = _HELD.__dict__.setdefault("paths", set())
+        if path in held:
+            yield True
+            return
+        with open(path, "w") as handle:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
             except BlockingIOError:
                 yield False
                 return
+            held.add(path)
             try:
                 yield True
             finally:
+                held.discard(path)
                 fcntl.flock(handle, fcntl.LOCK_UN)

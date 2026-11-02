@@ -13,7 +13,7 @@ import time
 from pathlib import Path
 
 from hermes_cli.worker import device, settings, slots
-from hermes_cli.worker.runners.base import Task
+from hermes_cli.worker.runners.base import Handle, Task
 from hermes_cli.worker.task import read_json
 
 DEAD_AFTER_S = 30.0
@@ -85,6 +85,12 @@ def serve_once(worker_root: Path) -> None:
             device.report_end(worker_root, task, pending.read_text(encoding="utf-8-sig").strip(), int(pending.name.split(".")[1]))
         run = device.last_run(task)
         if run and _dead(task, run):
+            if task.path("handle.json").exists():  # the run's process died: its agent must not go on alone
+                try:
+                    runner = device.runner_for(worker_root, task, device.job_of(task))
+                except device.RunnerError:
+                    runner = None
+                device.stop_runner(runner, Handle.load(task, run))
             task.path(f"rc.{run}").write_text("1\n", encoding="utf-8")
             with task.path(f"stderr.{run}.txt").open("a", encoding="utf-8") as fh:
                 fh.write("lina worker: the run's process ended without an end report\n")
