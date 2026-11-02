@@ -1093,10 +1093,13 @@ def _read_script_for_scanning(script_path: str) -> tuple[str, Optional[str]]:
 def _contains_unsafe_gateway_action(
     command: str, *, cwd: Optional[str], depth: int, visited: set[Path], budget: _LifecycleScanBudget,
     read_remote_script: Optional[_ReadRemoteScriptFn] = None, executed: bool = True,
+    walk_view: Optional[str] = None,
 ) -> bool:
     """``executed=False`` means *command* is the content of a file that is only MENTIONED in inert
     (masked) text: it is still scanned for a literal lifecycle command, but "could not scan" (budget,
-    depth, size, device, live SQLite, cloud) is "nothing to scan" there, never a block (#113944)."""
+    depth, size, device, live SQLite, cloud) is "nothing to scan" there, never a block (#113944).
+    *walk_view* (default: *command*) is the text walked for referenced scripts and ``sh -c``
+    payloads; the direct scan always covers the whole *command*."""
     # Charge BEFORE _direct_lifecycle_scan: every scan in it tokenizes with shlex.
     if not budget.charge_text(command):
         return _budget_exhausted(budget, "text", depth) if executed else False
@@ -1116,7 +1119,8 @@ def _contains_unsafe_gateway_action(
     # oversized data file mentioned there otherwise fails closed as a "script".
     from tools.shell_heredoc import strip_inert_heredoc_bodies
 
-    walk_command = strip_inert_heredoc_bodies(command)
+    walk_base = command if walk_view is None else walk_view
+    walk_command = strip_inert_heredoc_bodies(walk_base)
 
     for payload in _iter_shell_command_payloads(walk_command):
         if recurse(payload, cwd, executed):
@@ -1127,8 +1131,8 @@ def _contains_unsafe_gateway_action(
     # oversized/binary, budget) stay restricted to the executed view — a mere data mention must not
     # trip them. Executed candidates come first so a mention never starves a real script's budget.
     candidates = [(path, executed) for path in _iter_referenced_shell_scripts(walk_command, cwd=cwd)]
-    if walk_command != command:
-        candidates += [(path, False) for path in _iter_referenced_shell_scripts(command, cwd=cwd)]
+    if walk_command != walk_base:
+        candidates += [(path, False) for path in _iter_referenced_shell_scripts(walk_base, cwd=cwd)]
 
     for script_path, candidate_executed in candidates:
         # Do not touch a FileProvider path even to discover whether the file is hydrated.
@@ -1183,11 +1187,12 @@ def _contains_unsafe_gateway_action(
 
 def scan_gateway_lifecycle(
     command: str, *, cwd: Optional[str] = None,
-    read_remote_script: Optional[_ReadRemoteScriptFn] = None,
+    read_remote_script: Optional[_ReadRemoteScriptFn] = None, walk_view: Optional[str] = None,
 ) -> tuple[bool, Optional[str]]:
     """``(unsafe, refusal)``: *refusal* names a non-lifecycle reason the walk failed closed (budget,
     size, device, live SQLite, cloud) so callers can tell the model; ``None`` when the verdict is a
-    real lifecycle command or the command is allowed.
+    real lifecycle command or the command is allowed. *walk_view* narrows the top-level
+    referenced-script walk (see ``_contains_unsafe_gateway_action``).
 
     Total by construction: never raises. Direct scans are pure string ops; the referenced-script
     walk (filesystem, remote backends, shlex on decoded bytes) is best-effort defense-in-depth — an
@@ -1202,7 +1207,7 @@ def scan_gateway_lifecycle(
     try:
         unsafe = _contains_unsafe_gateway_action(
             command, cwd=cwd, depth=0, visited=set(), budget=budget,
-            read_remote_script=read_remote_script,
+            read_remote_script=read_remote_script, walk_view=walk_view,
         )
         return unsafe, budget.refusal if unsafe else None
     except Exception:
@@ -1233,7 +1238,10 @@ def check_gateway_lifecycle(prompt: Optional[str], script: Optional[str] = None)
     command. The script is read from disk and concatenated with the prompt so a command cannot slip
     through by being split across the two. Callers let the ``ValueError``-shaped exception
     propagate."""
+    from cron.lifecycle_guard_prompt import prompt_shell_view
+
     combined = prompt or ""
+    script_text = ""
     python_script = False
     refusal: Optional[str] = None
     if script:
@@ -1274,8 +1282,17 @@ def check_gateway_lifecycle(prompt: Optional[str], script: Optional[str] = None)
         else:
             unsafe = _lifecycle_command_scan_with_data_exemption(combined)
     else:
+        # The prompt is prose: only its shell-context lines are walked for referenced scripts
+        # (#68). Building that view tokenizes, so it waits until the text fits the scan budget;
+        # over budget, the full walk below fails closed on its own charge.
+        walk_view = None
+        if lifecycle_scan_root_within_budget(combined):
+            walk_view = prompt_shell_view(prompt or "")
+            if script_text:
+                walk_view = f"{walk_view}\n{script_text}"
         unsafe, refusal = scan_gateway_lifecycle(
-            combined, cwd=_resolve_script_directory(script) if script else None
+            combined, cwd=_resolve_script_directory(script) if script else None,
+            walk_view=walk_view,
         )
     if unsafe and refusal:
         raise GatewayLifecycleBlocked(
