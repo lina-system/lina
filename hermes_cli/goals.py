@@ -50,6 +50,11 @@ DEFAULT_MAX_CONSECUTIVE_TRANSPORT_FAILURES = 5
 # on concrete evidence instead of a vibe check.
 DEFAULT_GATE_TIMEOUT_SECONDS = 300
 DEFAULT_GATE_MAX_RETRIES = 3
+# Card gates: exit 75 (EX_TEMPFAIL) = "still waiting" (CI running, review pending). The card loop
+# re-runs the gates after this backoff instead of spending a turn, a retry or a judge call.
+GATE_WAIT_EXIT_CODE = 75
+GATE_WAIT_INITIAL_S = 30
+GATE_WAIT_MAX_S = 10 * 60
 # Longest a pid/session wait barrier may hold the loop before judging resumes. Timed barriers
 # (``waiting_until``) carry their own deadline and are exempt.
 _MAX_BARRIER_WAIT_S = 30 * 60
@@ -1637,13 +1642,18 @@ def run_kanban_goal_loop(
     max_turns: int = DEFAULT_MAX_TURNS,
     first_response: str = "",
     log=None,
+    gate_check=None,
+    wait_fn=time.sleep,
 ) -> dict[str, Any]:
     """Drive a kanban worker through a Ralph-style goal loop.
 
     Each iteration: stop if the worker already terminated the task (``kanban_complete`` /
-    ``kanban_block`` / review hand-off); otherwise judge the latest response against ``goal_text``
-    (the card's title + body) and feed a continuation or finalize nudge. A WAIT verdict is treated
-    as CONTINUE (workers finish via kanban tools, not by parking).
+    ``kanban_block`` / review hand-off); otherwise run the card's gates (``gate_check``, see
+    ``kanban_goal_gates.loop_gate_check``) and, only when they pass, judge the latest response
+    against ``goal_text`` (the card's title + body) and feed a continuation or finalize nudge. A
+    failing gate's prompt replaces the judge for that boundary; a waiting gate (exit 75) costs no
+    turn: ``wait_fn`` backs off (30 s doubling to 10 min) and the boundary is re-checked. A WAIT
+    verdict is treated as CONTINUE (workers finish via kanban tools, not by parking).
     """
 
     def _log(msg: str) -> None:
@@ -1669,6 +1679,7 @@ def run_kanban_goal_loop(
     last_response = first_response or ""
     turns_used = 1   # the first turn already consumed one unit of budget
     nudged_to_finalize = False
+    wait_delay = GATE_WAIT_INITIAL_S
 
     while True:
         try:
@@ -1687,41 +1698,62 @@ def run_kanban_goal_loop(
             _log(f"kanban goal loop: task {task_id} status={status!r}; stopping")
             return _result("stopped", f"status={status}")
 
-        from agent.portal_tags import get_affinity_scope, reset_affinity_scope, set_affinity_scope
-        affinity_token = None if get_affinity_scope() else set_affinity_scope(f"kanban:{task_id}")
         try:
-            verdict, reason, _parse_failed, _wait, _transport_failed = judge_goal(goal_text, last_response)
-        finally:
-            if affinity_token is not None:
-                reset_affinity_scope(affinity_token)
-        if _transport_failed:
-            _log(f"kanban goal loop: judge transport failed on turn {turns_used}; stopping")
-            return _result("stopped", "judge transport failure")
-        if verdict == "wait":
-            verdict = "continue"
-        _log(f"kanban goal loop: turn {turns_used}/{max_turns} verdict={verdict} reason={_truncate(reason, 120)}")
-
-        if verdict == "blocked":
-            # Unachievable is NOT done: block the card with the judge's reason now instead of
-            # re-poking an impossible goal, and never let it land in done.
-            # The judge ruled the goal cannot be satisfied at all — this is NOT done (#100954).
-            _log(f"kanban goal loop: task {task_id} judged unachievable; blocking")
-            _block(f"Goal-mode judge ruled the goal unachievable: {reason}")
-            return _result("blocked_unachievable", f"judge verdict blocked: {reason}")
-
-        if verdict == "done":
-            if nudged_to_finalize:
-                # Already asked once to call kanban_complete — block for review rather than spin.
-                _log(f"kanban goal loop: task {task_id} judged done but worker won't finalize; blocking")
-                _block(
-                    f"Goal-mode worker's output looked complete but it never "
-                    f"called kanban_complete after a finalize nudge ({reason})."
-                )
-                return _result("blocked_budget", "judged done, never finalized")
-            prompt = KANBAN_GOAL_FINALIZE_TEMPLATE.format(reason=_truncate(reason, 400))
-            nudged_to_finalize = True
+            gate = gate_check() if gate_check is not None else None
+        except Exception as exc:
+            # A gate step that cannot run must not fall through to the judge alone.
+            logger.warning("kanban goal loop: gate check failed for %s", task_id, exc_info=True)
+            _log(f"kanban goal loop: gate check failed ({exc}); stopping")
+            return _result("stopped", "gate check failed")
+        if gate is not None and gate.get("block"):
+            _log(f"kanban goal loop: task {task_id} gate retries exhausted; blocking")
+            _block(gate["block"])
+            return _result("blocked_gate", _truncate(gate["block"], 300))
+        if gate is not None and gate.get("wait"):
+            _log(f"kanban goal loop: {gate['wait']}; re-checking in {wait_delay}s (no turn spent)")
+            wait_fn(wait_delay)
+            wait_delay = min(wait_delay * 2, GATE_WAIT_MAX_S)
+            continue
+        wait_delay = GATE_WAIT_INITIAL_S
+        if gate is not None:
+            _log(f"kanban goal loop: turn {turns_used}/{max_turns} gate failed; judge skipped")
+            prompt, reason = gate["prompt"], gate["reason"]
         else:
-            prompt = KANBAN_GOAL_CONTINUATION_TEMPLATE.format(reason=_truncate(reason, 400))
+            from agent.portal_tags import get_affinity_scope, reset_affinity_scope, set_affinity_scope
+            affinity_token = None if get_affinity_scope() else set_affinity_scope(f"kanban:{task_id}")
+            try:
+                verdict, reason, _parse_failed, _wait, _transport_failed = judge_goal(goal_text, last_response)
+            finally:
+                if affinity_token is not None:
+                    reset_affinity_scope(affinity_token)
+            if _transport_failed:
+                _log(f"kanban goal loop: judge transport failed on turn {turns_used}; stopping")
+                return _result("stopped", "judge transport failure")
+            if verdict == "wait":
+                verdict = "continue"
+            _log(f"kanban goal loop: turn {turns_used}/{max_turns} verdict={verdict} reason={_truncate(reason, 120)}")
+
+            if verdict == "blocked":
+                # Unachievable is NOT done: block the card with the judge's reason now instead of
+                # re-poking an impossible goal, and never let it land in done.
+                # The judge ruled the goal cannot be satisfied at all — this is NOT done (#100954).
+                _log(f"kanban goal loop: task {task_id} judged unachievable; blocking")
+                _block(f"Goal-mode judge ruled the goal unachievable: {reason}")
+                return _result("blocked_unachievable", f"judge verdict blocked: {reason}")
+
+            if verdict == "done":
+                if nudged_to_finalize:
+                    # Already asked once to call kanban_complete — block for review rather than spin.
+                    _log(f"kanban goal loop: task {task_id} judged done but worker won't finalize; blocking")
+                    _block(
+                        f"Goal-mode worker's output looked complete but it never "
+                        f"called kanban_complete after a finalize nudge ({reason})."
+                    )
+                    return _result("blocked_budget", "judged done, never finalized")
+                prompt = KANBAN_GOAL_FINALIZE_TEMPLATE.format(reason=_truncate(reason, 400))
+                nudged_to_finalize = True
+            else:
+                prompt = KANBAN_GOAL_CONTINUATION_TEMPLATE.format(reason=_truncate(reason, 400))
 
         # Budget check BEFORE spending another turn.
         if turns_used >= max_turns:

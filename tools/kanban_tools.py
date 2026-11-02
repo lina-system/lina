@@ -421,7 +421,7 @@ def _opt_int(value: Any, default: Optional[int] = None) -> Optional[int]:
 _TASK_FIELDS = tuple(
     "id title body assignee status tenant priority workspace_kind workspace_path created_by "
     "created_at started_at completed_at result current_run_id model_override "
-    "provider_override completion_contract last_failure_error".split())
+    "provider_override completion_contract goal_gates last_failure_error".split())
 _TASK_SUMMARY_FIELDS = tuple(
     "id title assignee status priority tenant workspace_kind workspace_path project_id created_by "
     "created_at started_at completed_at current_run_id model_override provider_override".split())
@@ -481,6 +481,20 @@ _GOAL_GATE_MESSAGES = {
         "continue": (
             "Goal review handoff rejected by judge: {reason}. Provide acceptance evidence "
             "matching the card before requesting review.")}}
+
+
+def _card_gates_gate(tool_name: str, conn, task, tid: str) -> None:
+    """Deterministic half of the handoff gate: a goal-mode card's own gates must pass in its
+    workspace. Unlike the judge this never fails open, so it runs whether or not a judge is
+    reachable."""
+    if not task or not task.goal_mode or not task.goal_gates:
+        return
+    from hermes_cli.kanban_goal_gates import run_card_gates
+    failure = run_card_gates(conn, task, workspace=_own_task_env(tid, "HERMES_KANBAN_WORKSPACE"))
+    if failure is not None:
+        raise _Reject(
+            f"{tool_name} refused: {failure.describe()}\nThe task is still in-flight (no state "
+            f"change). Make the gate pass, then call {tool_name} again.")
 
 
 def _goal_gate(tool_name: str, task, tid: str, evidence: str) -> None:
@@ -745,6 +759,7 @@ def _handle_complete(args: dict, **kw) -> str:
         # judge by calling kanban_complete before acceptance criteria are met. Only enforce when a judge is
         # actually reachable — see _goal_judge_available for why an unavailable judge fails open.
         task = kb.get_task(conn, tid)
+        _card_gates_gate("kanban_complete", conn, task, tid)
         _goal_gate("kanban_complete", task, tid, (summary or result or "").strip())
         try:
             ok = kb.complete_task(
@@ -897,7 +912,9 @@ def _handle_request_review(args: dict, **kw) -> str:
                f"reviewer profile {reviewer!r} is not installed. "
                f"Installed profiles: {', '.join(list_profile_names())}")
     with _board(args.get("board")) as (kb, conn):
-        _goal_gate("kanban_request_review", kb.get_task(conn, tid), tid, summary)
+        task = kb.get_task(conn, tid)
+        _card_gates_gate("kanban_request_review", conn, task, tid)
+        _goal_gate("kanban_request_review", task, tid, summary)
         try:
             ok, fail_reason = kb.request_review(
                 conn, tid, summary=summary, metadata=metadata, reviewer=reviewer,
@@ -1145,6 +1162,7 @@ def _handle_create(args: dict, **kw) -> str:
             model_override=model_override, provider_override=provider_override,
             goal_mode=goal_mode, goal_max_turns=_opt_int(args.get("goal_max_turns")),
             completion_contract=args.get("completion_contract"),
+            goal_gates=args.get("goal_gates"),
             initial_status=str(args.get("initial_status") or "running"),
             created_by=_persisted_identity(), session_id=session_id)
         landed = _fields(kb.get_task(conn, new_tid), _CREATED_FIELDS)

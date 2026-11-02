@@ -374,6 +374,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             goal_mode=bool(getattr(args, "goal_mode", False)),
             goal_max_turns=getattr(args, "goal_max_turns", None),
             completion_contract=getattr(args, "completion_contract", None),
+            goal_gates=getattr(args, "goal_gates", None),
             initial_status=getattr(args, "initial_status", "running"),
             creator_task_id=(os.environ.get("HERMES_KANBAN_TASK")
                              if is_dispatcher_owned_worker_context() else None),
@@ -471,6 +472,12 @@ def _print_section(title: str, lines) -> None:
         print(line)
 
 
+def _print_goal_gates(task: kb.Task) -> None:
+    if task.goal_gates:
+        from hermes_cli.kanban_goal_gates import render_gates
+        _print_section("Goal gates:", render_gates(task))
+
+
 def _cmd_show(args: argparse.Namespace) -> int:
     rsk, rc = _run_state_kwargs(args, "show")
     if rc:
@@ -543,6 +550,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
         field("children", ", ".join(children))
     if task.body:
         _print_section("Body:", [task.body])
+    _print_goal_gates(task)
     if task.result:
         _print_section("Result:", [task.result])
     elif latest_summary:

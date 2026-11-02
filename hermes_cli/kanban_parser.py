@@ -213,6 +213,10 @@ _SPECS = [
                   "review). Best for open-ended cards one shot rarely finishes."),
         _arg("--goal-max-turns", type=int, metavar="N", dest="goal_max_turns",
              help="Turn budget for --goal workers (default 20). Ignored without --goal."),
+        _arg("--gate", action="append", default=None, metavar="CMD", dest="goal_gates",
+             help="Quality gate for a --goal card (repeatable): a shell command run in the "
+                  "card workspace before the judge at every turn boundary. Exit 0 passes, "
+                  "75 means still waiting, anything else fails and blocks completion."),
         _arg("--initial-status", choices=sorted(kb.VALID_INITIAL_STATUSES), default="running",
              help="Initial card status. Use 'blocked' for cards "
                   "that require immediate human ops (R3 gate) "
