@@ -87,6 +87,11 @@ def start(root: Path | None = None, out=print) -> int:
     if lina_ocx.port_taken(port):
         out(f"ocx: port {port} is already in use by another process; set ocx.port in config.yaml to a free port")
         return 1
+    try:
+        lina_ocx.write_start_port(lina_ocx.data_dir(root), port)
+    except lina_ocx.OcxError as exc:
+        out(f"ocx: {exc}")
+        return 1
     path = definition_path(kind)
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(definition(kind, root, version, port), encoding="utf-8")

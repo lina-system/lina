@@ -1,10 +1,12 @@
 """``lina models upgrade`` / ``rollback`` (lina#32): the new version is started on a spare port with a copy of the
 data dir and must answer ``GET /v1/models`` 200 before ``current`` moves; the data dir is backed up first, and
 rollback restores it."""
+import json
+
 import pytest
 
 from hermes_cli import lina_ocx, lina_ocx_service, lina_ocx_upgrade
-from tests.hermes_cli._lina_ocx_fakes import install_fake_version, installed_root
+from tests.hermes_cli._lina_ocx_fakes import install_fake_version, installed_root, other_ocx
 
 NEW = "2.96.0"
 NEW_INTEGRITY = "sha512-" + "C" * 86 + "=="
@@ -54,6 +56,18 @@ def test_a_healthy_version_is_switched_to_after_backing_up_the_data_and_rollback
     assert lina_ocx.current_version(root["root"]) == "2.95.0"
     assert (data / "config.json").read_text() == '{"schema": 1}\n'
     assert lina_ocx_upgrade.rollback(root["root"]) == 1  # one upgrade, one rollback
+
+
+@pytest.mark.platforms("posix")
+def test_the_trial_copy_starts_on_its_spare_port_while_lina_s_ocx_runs_on_the_copied_one(root, monkeypatch):
+    """The copied config.json names the service's port, where LINA's OCX answers; OCX 2.95.0 probes that port and
+    would refuse the trial start, so the copy must carry the trial's spare port instead."""
+    monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda root, port: True)
+    with other_ocx() as service_port:
+        (root["root"] / "ocx" / "config.json").write_text(json.dumps({"port": service_port, "keep": "me"}))
+        assert lina_ocx_upgrade.upgrade(root["root"], NEW, NEW_INTEGRITY) == 0
+    assert lina_ocx.current_version(root["root"]) == NEW
+    assert json.loads((root["root"] / "ocx" / "config.json").read_text()) == {"port": service_port, "keep": "me"}
 
 
 def test_a_version_that_is_not_the_pin_needs_its_integrity(root, capsys):

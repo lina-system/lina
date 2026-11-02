@@ -235,6 +235,29 @@ def configured_port(root: Path | None = None) -> int:
     return int(port) if port else DEFAULT_PORT
 
 
+def write_start_port(data: Path, port: int) -> None:
+    """Merge ``"port": port`` into ``<data>/config.json`` before OCX is started on *port*.
+
+    OCX 2.95.0 checks who owns a start by probing its config's port (else 10100), not ``--port``: with an empty data
+    dir it finds another OCX on 10100 and refuses ("Proxy ownership is unverified"). OCX writes this file too, so
+    every other key is kept."""
+    data.mkdir(mode=0o700, parents=True, exist_ok=True)
+    path = data / "config.json"
+    try:
+        config = json.loads(path.read_text(encoding="utf-8-sig")) if path.exists() else {}
+    except ValueError as exc:
+        raise OcxError(f"{path} is not JSON ({exc}); not starting OCX on it") from exc
+    if not isinstance(config, dict):
+        raise OcxError(f"{path} is not a JSON object; not starting OCX on it")
+    if config.get("port") == port:
+        return
+    config["port"] = port
+    tmp = path.with_name(".config.json.lina-tmp")
+    with os.fdopen(os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600), "wb") as fh:  # windows-footgun: ok — binary
+        fh.write((json.dumps(config, indent=2) + "\n").encode("utf-8"))
+    os.replace(tmp, path)
+
+
 def entry_paths(root: Path, version: str) -> tuple[Path, Path]:
     """(bun, OCX's CLI entry) of an installed version: the proxy runs as ``bun <entry> start --port <port>``."""
     prefix = version_dir(root, version) / "node_modules"

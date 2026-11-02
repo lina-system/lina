@@ -28,14 +28,15 @@ def trial(root: Path, version: str, out=print) -> bool:
     work = lina_ocx.vendor_dir(root) / f".trial-{version}"
     shutil.rmtree(work, ignore_errors=True)
     data = lina_ocx.data_dir(root)
-    if data.exists():
-        shutil.copytree(data, work / "data", symlinks=True, ignore=shutil.ignore_patterns("ocx.pid", "*.sock"))
-    (work / "data").mkdir(parents=True, exist_ok=True)
-    port = lina_ocx.free_port()
-    env = lina_ocx.ocx_env(root, data=work / "data", home=work / "home")
-    proc = subprocess.Popen(lina_ocx.ocx_argv(root, version, "start", "--port", str(port)), env=env,
-                            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    proc = None
     try:
+        if data.exists():
+            shutil.copytree(data, work / "data", symlinks=True, ignore=shutil.ignore_patterns("ocx.pid", "*.sock"))
+        port = lina_ocx.free_port()
+        lina_ocx.write_start_port(work / "data", port)  # the copy carries the service's port, where LINA's OCX runs
+        env = lina_ocx.ocx_env(root, data=work / "data", home=work / "home")
+        proc = subprocess.Popen(lina_ocx.ocx_argv(root, version, "start", "--port", str(port)), env=env,
+                                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
         deadline = time.monotonic() + TRIAL_WAIT_S
         while time.monotonic() < deadline and proc.poll() is None:
             if lina_ocx.http_get(port, "/v1/models")[0] == 200:
@@ -46,7 +47,7 @@ def trial(root: Path, version: str, out=print) -> bool:
             + (f" (exited {proc.returncode})" if proc.poll() is not None else ""))
         return False
     finally:
-        if proc.poll() is None:
+        if proc is not None and proc.poll() is None:
             proc.terminate()
             try:
                 proc.wait(timeout=15)
@@ -100,10 +101,11 @@ def upgrade(root: Path | None = None, version: str | None = None, integrity: str
     try:
         node = lina_ocx.install_node(root, pin)
         lina_ocx.install_ocx(root, pin, node, version, integrity)
+        healthy = trial(root, version, out=out)
     except lina_ocx.OcxError as exc:
         out(f"OCX: {exc}; current stays {previous}")
         return 1
-    if not trial(root, version, out=out):
+    if not healthy:
         out(f"current stays {previous}")
         return 1
     return _switch(root, previous, version, out)

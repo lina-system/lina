@@ -2,6 +2,7 @@
 ``OPENCODEX_HOME`` set, ``lina services start ocx`` brings it up on ``ocx.port``, and a port held by anything else
 is refused before a unit is written."""
 import argparse
+import json
 import plistlib
 import shlex
 import socket
@@ -11,7 +12,7 @@ import pytest
 
 from hermes_cli import lina_ocx, lina_ocx_service
 from hermes_cli.subcommands.services import build_services_parser
-from tests.hermes_cli._lina_ocx_fakes import installed_root
+from tests.hermes_cli._lina_ocx_fakes import install_fake_version, installed_root, other_ocx
 
 
 @pytest.fixture
@@ -96,6 +97,35 @@ def test_lina_services_start_ocx_runs_it_on_the_configured_port(root, systemd, c
     assert not lina_ocx.own_proxy_running(root, port)
     joined = " ".join(" ".join(call) for call in systemd.calls)
     assert "com.opencodex" not in joined and "service install" not in joined
+
+
+@pytest.mark.platforms("linux")
+def test_start_on_an_empty_data_dir_succeeds_beside_another_ocx_on_the_default_port(root, systemd, monkeypatch):
+    """OCX 2.95.0 probes its config's port (else the default) before it binds --port and refuses a start when
+    another OCX answers there; LINA's start must point that probe at its own port."""
+    monkeypatch.setattr(lina_ocx_service, "START_WAIT_S", 10.0)
+    with other_ocx() as default_port:
+        install_fake_version(root, "2.95.0", default_port=default_port)
+        port = lina_ocx.free_port()
+        (root / "config.yaml").write_text(f"ocx:\n  port: {port}\n")
+        assert lina_ocx_service.start(root) == 0
+        assert lina_ocx.own_proxy_running(root, port)
+    assert json.loads((root / "ocx" / "config.json").read_text())["port"] == port
+
+
+def test_the_start_port_is_merged_into_ocx_config_keeping_every_other_key(tmp_path):
+    data = tmp_path / "ocx"
+    data.mkdir()
+    (data / "config.json").write_text('{"port": 10100, "defaultProvider": "openai", "providers": {"openai": {}}}')
+    lina_ocx.write_start_port(data, 10150)
+    assert json.loads((data / "config.json").read_text()) == {"port": 10150, "defaultProvider": "openai",
+                                                               "providers": {"openai": {}}}
+    lina_ocx.write_start_port(tmp_path / "fresh", 10151)
+    assert json.loads((tmp_path / "fresh" / "config.json").read_text()) == {"port": 10151}
+    (data / "config.json").write_text("{not json")
+    with pytest.raises(lina_ocx.OcxError, match="not JSON"):
+        lina_ocx.write_start_port(data, 10152)
+    assert (data / "config.json").read_text() == "{not json"
 
 
 @pytest.mark.platforms("linux")
