@@ -28,6 +28,14 @@ def hermes_root(tmp_path, monkeypatch):
     (get_default_hermes_root's Docker/custom branch), so named profiles live at
     ``<root>/profiles/<name>/`` and the launch/default profile is ``<root>``.
     """
+    from hermes_cli import mcp_catalog
+
+    catalog = tmp_path / "catalog"
+    entry = catalog / "linear"
+    entry.mkdir(parents=True)
+    (entry / "manifest.yaml").write_text(
+        "manifest_version: 1\nname: linear\ndescription: Test MCP server\nsource: https://example.com\ntransport:\n  type: http\n  url: https://example.com/mcp\nauth:\n  type: oauth\n", encoding="utf-8")
+    monkeypatch.setattr(mcp_catalog, "_catalog_root", lambda: catalog)
     root = tmp_path / "hermes_home"
     (root / "profiles" / "work").mkdir(parents=True)
     (root / "profiles" / "other").mkdir(parents=True)

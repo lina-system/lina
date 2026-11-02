@@ -31,8 +31,8 @@ def configured_update(source_launch, tmp_path, monkeypatch):
     # Reuse installed core libraries without exposing the updater's site tree:
     # neither SDK, executable .pth hooks, nor editable package finders cross over.
     for path in Path(sysconfig.get_path("purelib")).iterdir():
-        if (path.name in {"lark_oapi", "mcp", "__pycache__"}
-                or path.name.startswith(("lark_oapi-", "mcp-", "__editable__"))
+        if (path.name in {"aiohttp", "mcp", "__pycache__"}
+                or path.name.startswith(("aiohttp-", "mcp-", "__editable__"))
                 or path.suffix == ".pth" or (site / path.name).exists()):
             continue
         (site / path.name).symlink_to(path, target_is_directory=path.is_dir())
@@ -64,14 +64,14 @@ def configured_update(source_launch, tmp_path, monkeypatch):
     home = tmp_path / "home"
     config = home / "config.yaml"
     config.write_text(
-        "platforms:\n  feishu:\n    enabled: true\n    extra:\n      app_id: cli_x\n      app_secret: y\n"
+        "platforms:\n  bluebubbles:\n    enabled: true\n    extra:\n      server_url: http://localhost:1234\n      password: fixture\n"
         "mcp_servers:\n  fixture:\n    command: must-not-run\n",
         encoding="utf-8",
     )
     monkeypatch.setenv("HERMES_DISABLE_LAZY_INSTALLS", "1")
     # A stale positive verdict in the updater must not conceal missing child SDKs.
     from types import ModuleType
-    for name in ("lark_oapi", "mcp"):
+    for name in ("aiohttp", "mcp"):
         monkeypatch.setitem(sys.modules, name, ModuleType(name))
     return root, selected, site, config, build_in_child
 
@@ -83,8 +83,8 @@ def test_update_names_missing_configured_features_from_selected_child(configured
     build()
     out = capfd.readouterr().out
     assert "fail to load them on restart" in out
-    assert "Feishu / Lark" in out and "MCP servers" in out
-    assert "hermes setup" in out and "hermes pm" in out
+    assert "BlueBubbles" in out and "MCP servers" in out
+    assert "aiohttp/httpx missing" in out and "hermes pm" in out
     target = json.loads(next(line.removeprefix("TARGET=") for line in out.splitlines() if line.startswith("TARGET=")))
     assert Path(target["prefix"]) == selected
     assert Path(target["python"]).parent.parent == selected
@@ -92,8 +92,9 @@ def test_update_names_missing_configured_features_from_selected_child(configured
     assert not (root / ".update-incomplete").exists()
 
     # Only the target gains the anchors; no updater module/cache is repaired.
-    for name in ("lark_oapi", "mcp"):
-        (site / f"{name}.py").write_text("# Passive dependency-probe fixture.\n", encoding="utf-8")
+    aiohttp = Path(sysconfig.get_path("purelib")) / "aiohttp"
+    (site / "aiohttp").symlink_to(aiohttp, target_is_directory=True)
+    (site / "mcp.py").write_text("# Passive dependency-probe fixture.\n", encoding="utf-8")
     build()
     assert "fail to load them on restart" not in capfd.readouterr().out
     assert runtime_facts_path(root).read_bytes() == facts
@@ -103,8 +104,8 @@ def test_update_names_missing_configured_features_from_selected_child(configured
 def test_unconfigured_or_disabled_features_are_quiet(configured_update, capfd):
     root, _, _, config, build = configured_update
     for body in (
-        "platforms:\n  feishu:\n    enabled: false\n    extra:\n      app_id: cli_x\n      app_secret: y\n",
-        "platforms:\n  feishu:\n    enabled: true\n",
+        "platforms:\n  bluebubbles:\n    enabled: false\n    extra:\n      server_url: http://localhost:1234\n      password: fixture\n",
+        "platforms:\n  bluebubbles:\n    enabled: true\n",
     ):
         config.write_text(body, encoding="utf-8")
         build()
@@ -112,7 +113,7 @@ def test_unconfigured_or_disabled_features_are_quiet(configured_update, capfd):
         assert "TARGET=" in out
         assert "fail to load them on restart" not in out
         assert "MCP servers" not in out
-        assert "Feishu / Lark:" not in out
+        assert "BlueBubbles:" not in out
         assert not (root / ".update-incomplete").exists()
 
 

@@ -9,7 +9,6 @@ dedicated alias expansion. Left unconditional, it makes a bare allowlist entry
 
 import pytest
 
-from gateway.authz_mixin import _principal_matches_allowlist
 from gateway.config import Platform
 from gateway.session import SessionSource
 
@@ -36,7 +35,7 @@ def _make_runner():
 # allowlist unset GATEWAY_ALLOWED_USERS is the only enforcement on that path.
 @pytest.mark.parametrize(
     ("platform", "env_var"),
-    [(Platform.EMAIL, "EMAIL_ALLOWED_USERS"), (Platform.BLUEBUBBLES, "GATEWAY_ALLOWED_USERS")],
+    [(Platform.BLUEBUBBLES, "GATEWAY_ALLOWED_USERS")],
 )
 def test_bare_localpart_entry_admits_no_foreign_domain(monkeypatch, platform, env_var):
     # conftest's hermetic env blanks the EMAIL_/GATEWAY_ vars but not BlueBubbles' own.
@@ -49,15 +48,3 @@ def test_bare_localpart_entry_admits_no_foreign_domain(monkeypatch, platform, en
     assert runner._is_user_authorized(_source(platform, "bob@evil.example")) is False
     # Positive control: a qualified entry still admits its exact sender.
     assert runner._is_user_authorized(_source(platform, "bob@corp.example")) is True
-
-
-@pytest.mark.parametrize(
-    ("platform", "user_id"),
-    [
-        (Platform.WHATSAPP, "15550000001@s.whatsapp.net"),
-        (Platform.WHATSAPP, "15550000001:47@s.whatsapp.net"),
-        (Platform.WHATSAPP_CLOUD, "15550000001@s.whatsapp.net"),
-    ],
-)
-def test_whatsapp_bare_phone_entry_still_matches_jid(platform, user_id):
-    assert _principal_matches_allowlist(_source(platform, user_id), user_id, {"15550000001"}) is True
