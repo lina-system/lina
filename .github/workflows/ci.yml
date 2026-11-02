@@ -11,13 +11,19 @@ on:
     branches: [dev, main]
   push:
     branches: [dev]
+  # The merge queue: required checks must report on the queue's merge commit too, or a queued
+  # pull request never merges. A queue run is the last gate before dev and runs every suite.
+  merge_group:
+    types: [checks_requested]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # One group per pull request, per queue entry (merge_group head_ref) and per pushed ref.
+  group: ci-${{ github.event.merge_group.head_ref || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:

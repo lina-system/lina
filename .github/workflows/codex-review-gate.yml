@@ -26,18 +26,23 @@ on:
   workflow_run:
     workflows: [CI]
     types: [completed]
+  # The merge queue waits for every required check on its own merge commit, these three included.
+  # The script still checks itself out from dev, so the queued change cannot rewrite the verdict.
+  merge_group:
+    types: [checks_requested]
+    branches: [dev]
 
 permissions: {}
 
 concurrency:
-  group: merge-gates-${{ github.event.pull_request.number || github.event.issue.number || 'all' }}
+  group: merge-gates-${{ github.event.merge_group.head_ref || github.event.pull_request.number || github.event.issue.number || 'all' }}
   cancel-in-progress: false
 
 jobs:
   gates:
     name: Set merge gate statuses
     if: >-
-      github.event_name == 'workflow_run' ||
+      github.event_name == 'workflow_run' || github.event_name == 'merge_group' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
       (github.event_name != 'issue_comment' && github.event.pull_request.base.ref == 'dev')
     runs-on: ubuntu-24.04
@@ -62,7 +67,10 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          QUEUE_REF: ${{ github.event.merge_group.head_ref }}
+          QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
-          if [ -n "$PR" ]; then WHICH=(--pr "$PR"); else WHICH=(--all); fi
+          if [ -n "$QUEUE_REF" ]; then WHICH=(--merge-group "$QUEUE_REF" --sha "$QUEUE_SHA")
+          elif [ -n "$PR" ]; then WHICH=(--pr "$PR"); else WHICH=(--all); fi
           python3 scripts/ci/codex_review_gate.py --repo "$REPO" "${WHICH[@]}" --target-url "$RUN_URL"

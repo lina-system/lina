@@ -829,6 +829,16 @@ def pull_request_labels() -> list[str]:
     return [label["name"] for label in labels if isinstance(label, dict) and label.get("name")]
 
 
+# LINA: a merge-queue entry is the last gate before dev, so every test suite runs on it whatever
+# the diff says (docs/delivery.md, step 7). Lanes that only gate cheap or path-bound checks
+# (helper, uv_lock, scan, ...) keep their diff value.
+MERGE_GROUP_FULL_LANES = ("python", "python_prod", "macos")
+
+
+def merge_group_lanes(lanes: dict[str, bool]) -> dict[str, bool]:
+    return {**lanes, **dict.fromkeys(MERGE_GROUP_FULL_LANES, True)}
+
+
 def main() -> int:
     files = sys.stdin.read().splitlines()
     if not any(f.strip() for f in files):
@@ -843,6 +853,8 @@ def main() -> int:
     labels = pull_request_labels()
     lanes = classify(files, run_e2e=RUN_E2E_LABEL in labels)
     lanes["macos"] = macos_lane(files, red_fix=DEV_RED_FIX_LABEL in labels)
+    if os.environ.get("EVENT_NAME") == "merge_group":
+        lanes = merge_group_lanes(lanes)
     out = "\n".join(f"{key}={str(value).lower()}" for key, value in lanes.items())
     if dest := os.environ.get("GITHUB_OUTPUT"):
         with open(dest, "a", encoding="utf-8") as fh:

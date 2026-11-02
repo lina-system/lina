@@ -30,7 +30,13 @@ Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/
 - success also when a repository admin (the owner) put the ``dev-red-approved`` label on the pull
   request after seeing why ``dev`` must stay red (docs/delivery.md, step 7).
 
+In the merge queue the three statuses must also report on the queue's merge commit, or the
+queue waits on them for good. ``--merge-group`` judges the pull request the queue ref names
+(``gh-readonly-queue/dev/pr-<n>-<sha>``) exactly as on its head and sets the same verdicts on
+the queue commit.
+
     python3 scripts/ci/codex_review_gate.py --repo owner/name (--pr 123 | --all) [--dry-run]
+    python3 scripts/ci/codex_review_gate.py --repo owner/name --merge-group <head_ref> --sha <sha>
 """
 
 from __future__ import annotations
@@ -61,6 +67,7 @@ _TITLE = re.compile(r"!\[P[0-3] Badge\][^\n]*?(?:</sub>)+\s*(.+?)\s*\*\*")
 _STATE = re.compile(r"<!--\s*codex-review-state:v1\s*(\{.*?\})\s*-->", re.DOTALL)
 _NO_MAJOR = re.compile(r"(?:\bno|n[’']t find any) major issues", re.IGNORECASE)
 _BRANCH_ISSUE = re.compile(r"^[a-z]+/(\d+)-")
+_QUEUE_REF = re.compile(r"^(?:refs/heads/)?gh-readonly-queue/[^/]+/pr-(\d+)-[0-9a-f]+$")
 
 
 @dataclass(frozen=True)
@@ -234,6 +241,14 @@ def dev_green_status(dev_run: dict[str, Any] | None, dev_red: frozenset[str],
     return Status("success", _limit("Fixes dev's red: " + ", ".join(fixed)))
 
 
+def queue_pull_request(head_ref: str) -> int:
+    """The pull request a merge-queue ref belongs to (the last one in the group)."""
+    match = _QUEUE_REF.match(head_ref or "")
+    if not match:
+        raise ValueError(f"not a merge queue ref: {head_ref!r}")
+    return int(match.group(1))
+
+
 def _gh(*args: str) -> str:
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
@@ -328,20 +343,28 @@ def main(argv: list[str] | None = None) -> int:
     which = parser.add_mutually_exclusive_group(required=True)
     which.add_argument("--pr", type=int)
     which.add_argument("--all", action="store_true", help="Every open pull request into dev.")
+    which.add_argument("--merge-group", metavar="HEAD_REF", help="A merge queue ref; needs --sha.")
+    parser.add_argument("--sha", help="The merge queue commit to set the statuses on.")
     parser.add_argument("--target-url", default="")
     parser.add_argument("--dry-run", action="store_true", help="Print the statuses, post nothing.")
     args = parser.parse_args(argv)
 
-    numbers = [args.pr] if args.pr else [
-        p["number"] for p in gh_list(f"repos/{args.repo}/pulls?state=open&base=dev&per_page=100")]
+    if args.merge_group and not args.sha:
+        parser.error("--merge-group needs --sha")
+    if args.merge_group:
+        numbers = [queue_pull_request(args.merge_group)]
+    elif args.pr:
+        numbers = [args.pr]
+    else:
+        numbers = [p["number"] for p in gh_list(f"repos/{args.repo}/pulls?state=open&base=dev&per_page=100")]
     dev = latest_dev_run(args.repo)
     for number in numbers:
         pull, statuses = judge(args.repo, number, dev)
-        head_sha = pull["head"]["sha"]
+        target_sha = args.sha if args.merge_group else pull["head"]["sha"]
         for context, status in statuses.items():
-            print(f"#{number} {context} @ {head_sha[:7]}: {status.state} - {status.description}")
+            print(f"#{number} {context} @ {target_sha[:7]}: {status.state} - {status.description}")
             if not args.dry_run:
-                post_status(args.repo, head_sha, context, status, args.target_url or pull["html_url"])
+                post_status(args.repo, target_sha, context, status, args.target_url or pull["html_url"])
     return 0
 
 

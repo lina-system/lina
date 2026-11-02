@@ -165,3 +165,17 @@ def test_dev_green_status(run, red, labels, checks, expected):
     status = gate.dev_green_status(run, red, labels, checks)
     assert status.state == expected
     assert len(status.description) <= gate.DESCRIPTION_LIMIT
+
+
+@pytest.mark.parametrize("ref,number", [
+    ("refs/heads/gh-readonly-queue/dev/pr-61-9d1bbd23026a1b2c3d4e5f60718293a4b5c6d7e8", 61),
+    ("gh-readonly-queue/dev/pr-123-abc123", 123),
+])
+def test_queue_ref_names_its_pull_request(ref, number):
+    assert gate.queue_pull_request(ref) == number
+
+
+@pytest.mark.parametrize("ref", ["refs/heads/dev", "refs/heads/ci/61-delivery-procedure", ""])
+def test_other_refs_are_not_queue_refs(ref):
+    with pytest.raises(ValueError):
+        gate.queue_pull_request(ref)
