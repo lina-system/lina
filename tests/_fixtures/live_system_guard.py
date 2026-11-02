@@ -186,11 +186,13 @@ def _live_system_guard(request, monkeypatch):
     # ── Subprocess command-string inspection (whole-line) ──────────
     _HERMES_TOKENS = (
         "hermes-gateway",
+        "lina-gateway",
         "hermes.service",
         "hermes_cli.main gateway",
         "hermes_cli/main.py gateway",
         "gateway/run.py",
         "hermes gateway",
+        "lina gateway",
     )
     _MUTATING_VERBS = (
         "restart", "start", "stop", "kill", "reload",
@@ -255,11 +257,12 @@ def _live_system_guard(request, monkeypatch):
     def _is_hermes_unit(word: str) -> bool:
         # ``hermes`` / ``hermes-<anything>`` once any path and unit suffix are
         # stripped: hermes-gateway[-<profile>], hermes-dashboard[-<profile>],
-        # hermes-serve[-<profile>], ... — never ``myhermes-dashboard`` or ``nginx``.
+        # hermes-serve[-<profile>], ... and LINA's ``lina-*`` units by the same shape — never
+        # ``myhermes-dashboard`` or ``nginx``.
         name = word.rsplit("/", 1)[-1].lower()
         for suffix in (".service", ".timer", ".socket"):
             name = name.removesuffix(suffix)
-        return name == "hermes" or name.startswith("hermes-")
+        return name in ("hermes", "lina") or name.startswith(("hermes-", "lina-"))
 
     def _is_blocked_systemctl(cmd) -> bool:
         cmd_str = _cmd_to_string(cmd)

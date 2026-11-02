@@ -208,12 +208,12 @@ def _serve(profile: str, pid: int, kind: str = "serve") -> RuntimeRecord:
 
 
 def test_systemd_dashboard_runtime_reconciles_restarted_via_its_unit():
-    """#125297: the fleet unit pass restarts ``hermes-dashboard{,-<profile>}``, so the
+    """#125297: the fleet unit pass restarts ``lina-dashboard{,-<profile>}``, so the
     receipt's runtime_outcomes row must credit it as ``restarted`` — not leave the
     dashboard ``deferred`` while the update still reports success."""
     outcomes = match_runtime_outcomes(
         _plan(_dash_unit_runtime("default", 700), _dash_unit_runtime("work", 701)),
-        restarted_services=["hermes-dashboard", "user/hermes-dashboard-work"],
+        restarted_services=["lina-dashboard", "user/lina-dashboard-work"],
         relaunched_profiles=[], externally_supervised_profiles=[],
         killed_pids=set(), failed_units=[],
     )
@@ -223,7 +223,7 @@ def test_systemd_dashboard_runtime_reconciles_restarted_via_its_unit():
 
 
 def test_systemd_dashboard_runtime_without_unit_restart_stays_unaccounted():
-    """The tripwire side: no ``hermes-dashboard*`` restart in the bookkeeping means
+    """The tripwire side: no ``lina-dashboard*`` restart in the bookkeeping means
     the row escalates (exit 1), never a silent ``deferred`` on a success receipt."""
     outcomes = match_runtime_outcomes(
         _plan(_dash_unit_runtime("default", 700), _rt("default", 100, supervisor="systemd")),
@@ -275,22 +275,22 @@ def test_named_profile_serve_does_not_match_gateway_profile_unit():
 
 
 def test_serve_reconciles_against_its_own_unit_vocabulary():
-    """A serve IS covered when a ``hermes-serve*`` unit for its profile was
+    """A serve IS covered when a ``lina-serve*`` unit for its profile was
     restarted (or failed) — scope-qualified identities included."""
     outcomes = match_runtime_outcomes(
         _plan(_serve("default", 900), _serve("work", 901),
               _serve("ops", 902, kind="dashboard"), _serve("qa", 903)),
-        restarted_services=["lina-gateway", "user/hermes-serve",
-                            "hermes-serve-work.service", "hermes-dashboard-ops"],
+        restarted_services=["lina-gateway", "user/lina-serve",
+                            "lina-serve-work.service", "lina-dashboard-ops"],
         relaunched_profiles=[], externally_supervised_profiles=[],
-        killed_pids=set(), failed_units=["hermes-serve-qa.service"],
+        killed_pids=set(), failed_units=["lina-serve-qa.service"],
     )
     by_pid = {o["pid"]: o["outcome"] for o in outcomes}
     assert by_pid == {900: "restarted", 901: "restarted", 902: "restarted", 903: "failed"}
-    # exact names: ``work`` must not claim ``hermes-serve-workbench``
+    # exact names: ``work`` must not claim ``lina-serve-workbench``
     outcomes = match_runtime_outcomes(
         _plan(_serve("work", 901)),
-        restarted_services=["hermes-serve-workbench.service"], relaunched_profiles=[],
+        restarted_services=["lina-serve-workbench.service"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     assert outcomes[0]["outcome"] == "unaccounted"
@@ -312,10 +312,10 @@ def test_failed_respawn_outranks_incarnation_probe():
 def test_serve_outcome_follows_incarnation_probe_when_provided():
     """With the (pid, create_time) survivor probe result, liveness decides:
     a pre-update serve that is gone was replaced (restarted); one still
-    alive is unaccounted — even when a hermes-serve unit was restarted."""
+    alive is unaccounted — even when a lina-serve unit was restarted."""
     plan = _plan(_serve("default", 900), _serve("default", 901, kind="dashboard"))
     outcomes = match_runtime_outcomes(
-        plan, restarted_services=["hermes-serve.service"], relaunched_profiles=[],
+        plan, restarted_services=["lina-serve.service"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
         stale_serve_pids={900},
     )
@@ -338,7 +338,7 @@ def test_desktop_serve_deferral_requires_a_verified_alive_incarnation():
     desktop_serve.restart_via = _restart_mechanism("desktop", "default")
 
     unknown = match_runtime_outcomes(
-        _plan(desktop_serve), restarted_services=["hermes-serve.service"],
+        _plan(desktop_serve), restarted_services=["lina-serve.service"],
         relaunched_profiles=[], externally_supervised_profiles=[], killed_pids=set(),
         failed_units=[], stale_serve_pids=None,
     )
