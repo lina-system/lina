@@ -127,12 +127,16 @@ def systemd_unit_hermes_home(scope_cmd: list, svc_name: str) -> str | None:
         tokens = shlex.split(env_line)
     except ValueError:
         tokens = env_line.split()
+    declared = {}
     for token in tokens:
         key, sep, value = token.partition("=")
         if sep and key == "HERMES_HOME" and value.strip():
             return value.strip()
+        if sep:
+            declared[key] = value
     if "--user" in scope_cmd:
-        return str(Path.home() / ".hermes")
+        from hermes_constants import platform_default_home_for
+        return str(platform_default_home_for(declared, Path.home()))
     return None
 
 

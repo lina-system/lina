@@ -67,19 +67,19 @@ _has_pytest() { [ -n "$1" ] && [ -x "$1" ] && "$1" -c 'import pytest' 2>/dev/nul
 # install or update resolve their own stores. Their PATH still holds the
 # account store's tool dirs, so a test writing through a PATH tool
 # (`pip install`, `npm -g`) would write into the account store. An explicit
-# HERMES_RUNTIME_DIR, a custom HERMES_HOME, a home that already holds a store,
+# HERMES_RUNTIME_DIR, a LINA_HOME or custom HERMES_HOME, a home that already holds a store,
 # or an account without a usable store keep today's per-home layout.
 # Prints the account home, then the pinned Python minor.
 _account_tool_store() {
   local account py_minor
-  [ -z "${HERMES_RUNTIME_DIR:-}" ] || return 1
-  case "${HERMES_HOME:-}" in "" | "$HOME/.hermes" | "$HOME/.hermes/"*) ;; *) return 1 ;; esac
-  [ ! -f "$HOME/.hermes/tools/facts.json" ] || return 1
+  [ -z "${HERMES_RUNTIME_DIR:-}" ] && [ -z "${LINA_HOME:-}" ] || return 1
+  case "${HERMES_HOME:-}" in "" | "$HOME/.lina" | "$HOME/.lina/"*) ;; *) return 1 ;; esac
+  [ ! -f "$HOME/.lina/tools/facts.json" ] || return 1
   account="$(getent passwd "$(id -u)" 2>/dev/null | cut -d: -f6)"
   [ -n "$account" ] || account="$(dscl . -read "/Users/$(id -un)" NFSHomeDirectory 2>/dev/null | sed -n 's/^NFSHomeDirectory: *//p')"
   [ -n "$account" ] && [ -d "$account" ] && [ ! "$account" -ef "$HOME" ] || return 1
-  [ -f "$account/.hermes/tools/facts.json" ] && [ -w "$account/.hermes/tools" ] || return 1
-  py_minor="$(_store_has_pins "$account/.hermes/tools")" || return 1
+  [ -f "$account/.lina/tools/facts.json" ] && [ -w "$account/.lina/tools" ] || return 1
+  py_minor="$(_store_has_pins "$account/.lina/tools")" || return 1
   printf '%s\n%s\n' "$account" "$py_minor"
 }
 # Read-only check that the store already records this checkout's pins
@@ -91,7 +91,7 @@ _store_has_pins() {
 }
 if _shared="$(_account_tool_store)"; then
   _account="${_shared%%$'\n'*}"
-  export HERMES_RUNTIME_DIR="$_account/.hermes/tools"
+  export HERMES_RUNTIME_DIR="$_account/.lina/tools"
   # setup-hermes.sh's uv-managed bootstrap interpreter is the same kind of
   # cache, but only reused: a missing pinned minor would download into it.
   if [ -z "${UV_PYTHON_INSTALL_DIR:-}" ] && [ -w "$_account/.local/share/uv/python" ] \

@@ -201,16 +201,16 @@ _SHARED_ENV = (
     "OPENAI_API_KEY=sk\n"
     "GATEWAY_ALLOW_ALL_USERS=true\nGATEWAY_ALLOWED_USERS=1,2\n"
     "GATEWAY_RELAY_ID=gw-1\nGATEWAY_RELAY_SECRET=s\nGATEWAY_RELAY_DELIVERY_KEY=k\n"
-    "WECOM_DM_POLICY=open\nSMS_WEBHOOK_PORT=8700\n"
+    "TELEGRAM_DM_POLICY=open\nDISCORD_WEBHOOK_PORT=8700\n"
     "TWILIO_ACCOUNT_SID=AC1\nTWILIO_AUTH_TOKEN=tw\nTWILIO_PHONE_NUMBER=+1\n"
-    "EMAIL_ADDRESS=a@b\nEMAIL_PASSWORD=p\nEMAIL_SMTP_HOST=smtp\nEMAIL_IMAP_HOST=imap\nEMAIL_ALLOWED_USERS=x@y\n"
+    "HASS_TOKEN=ha-token\nHASS_URL=http://ha.local\nHASS_ALLOWED_USERS=x@y\n"
 )
 
 
 def test_ownership_inventory_strips_policy_relay_and_aliases_but_keeps_tool_credentials(home):
-    """Gateway-wide policy, relay identity and alias-prefixed keys are channel settings. TWILIO/EMAIL
+    """Gateway-wide policy, relay identity and platform-prefixed keys are channel settings. TWILIO/HASS
     credentials are shared with tools: they leave with the channel only when the source's gateway would
-    run that adapter (email here — complete creds, not disabled); an explicitly disabled channel means
+    run that adapter (Home Assistant here — complete creds, not disabled); an explicitly disabled channel means
     the key is a tool credential and stays. Its policy keys (allowlists, ports) go regardless."""
     (home / ".env").write_text(_SHARED_ENV, encoding="utf-8")
     (home / "config.yaml").write_text(
@@ -277,7 +277,7 @@ def test_plugin_platform_shared_env_prefixes_follow_the_ownership_rule(home, ena
 
 
 def test_clone_all_drops_directory_shaped_channel_state(home):
-    (home / "google_chat_user_tokens").mkdir()
-    (home / "google_chat_user_tokens" / "u@x.json").write_text("{}", encoding="utf-8")
+    (home / "telegram_user_tokens").mkdir()
+    (home / "telegram_user_tokens" / "u@x.json").write_text("{}", encoding="utf-8")
     profile_dir = create_profile("full", clone_all=True, no_alias=True)
-    assert not (profile_dir / "google_chat_user_tokens").exists()
+    assert not (profile_dir / "telegram_user_tokens").exists()

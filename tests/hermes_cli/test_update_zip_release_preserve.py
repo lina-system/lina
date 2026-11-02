@@ -78,11 +78,9 @@ def test_guard_admits_a_real_installs_ignored_set_and_blocks_only_what_the_swap_
     root.mkdir()
     subprocess.run(["git", "init", "-q", str(root)], check=True)
     repo = Path(__file__).resolve().parents[2]
-    (root / "ui-tui").mkdir()
-    for rel in (".gitignore", "ui-tui/.gitignore"):  # ui-tui/dist is ignored by the nested file
+    for rel in (".gitignore",):
         shutil.copy(repo / rel, root / rel)
-    for tracked in ("apps/desktop/package.json", "hermes_cli/main.py", "scripts/whatsapp-bridge/index.js",
-                    "ui-tui/package.json", "web/package.json", "tests-js/a.test.ts", "run_agent.py"):
+    for tracked in ("hermes_cli/main.py", "run_agent.py"):
         (root / tracked).parent.mkdir(parents=True, exist_ok=True)
         (root / tracked).write_text("src", encoding="utf-8")
     subprocess.run(["git", "-C", str(root), "add", "-A"], check=True)
@@ -90,23 +88,19 @@ def test_guard_admits_a_real_installs_ignored_set_and_blocks_only_what_the_swap_
                    check=True)
     for ignored in (".bytecode-fingerprint", ".hermes-bootstrap-complete", ".install_method",
                     "hermes_agent.egg-info/PKG-INFO", "hermes_cli/__pycache__/main.pyc", "__pycache__/x.pyc",
-                    "apps/desktop/release/win-unpacked/Hermes.exe", "apps/desktop/dist/index.html",
-                    "apps/desktop/build/icon.ico", "apps/desktop/node_modules/electron/index.js",
-                    "hermes_cli/web_dist/index.html", "ui-tui/dist/entry.js", "ui-tui/node_modules/x/index.js",
-                    "ui-tui/packages/hermes-ink/dist/index.js", "web/node_modules/x/index.js",
-                    "tests-js/node_modules/x/index.js", "scripts/whatsapp-bridge/node_modules/x/index.js",
+                    "hermes_cli/web_dist/index.html",
                     "venv/lib.py", "node_modules/x/index.js", ".env"):
         (root / ignored).parent.mkdir(parents=True, exist_ok=True)
         (root / ignored).write_text("artifact", encoding="utf-8")
     status = subprocess.run(["git", "-C", str(root), "status", "--porcelain", "-uall", "--ignored=matching"],
                             capture_output=True, text=True, check=True).stdout
-    assert status.count("!!") >= 19 and "??" not in status, status  # the fixture really is all-ignored
+    assert status.count("!!") >= 9 and "??" not in status, status  # the fixture really is all-ignored
 
     assert _zip_overlay_block_reason(root) is None
     # The pre-swap re-check knows the ZIP's real entry set: a root entry it ships would be replaced.
-    shipped = {"apps", "hermes_cli", "scripts", "ui-tui", "web", "tests-js", "run_agent.py"}
+    shipped = {"hermes_cli", "run_agent.py"}
     assert _zip_overlay_block_reason(root, shipped=shipped) is None
     assert _zip_overlay_block_reason(root, shipped=shipped | {"hermes_agent.egg-info"}) is not None
     # Gitignored user data under a shipped dir is destroyed by the swap: still refused.
-    (root / "apps" / "desktop" / ".env").write_text("mine", encoding="utf-8")
+    (root / "hermes_cli" / ".env").write_text("mine", encoding="utf-8")
     assert _zip_overlay_block_reason(root) is not None

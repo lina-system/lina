@@ -1,26 +1,18 @@
 """Plugin module-level caches must not hand profile A's state to profile B under a multiplexed
 HERMES_HOME override (``hermes_constants.set_hermes_home_override``).
 
-One invariant per mechanism: home-keyed slot with the unscoped module slot intact (yuanbao's
-ClassVar), credential-fingerprinted catalog keys (openrouter), per-home registries (memory
-provider skills), lru_cache keyed by the home (disk-cleanup).
-Only HTTP transports are faked; the caches themselves are exercised for real.
+Per-home memory-provider skill registries are exercised for real.
 """
 
 from __future__ import annotations
 
 import contextlib
-import importlib.util
-import json
 from pathlib import Path
 
 import pytest
 
 from agent.secret_scope import build_profile_secret_scope, reset_secret_scope, set_secret_scope
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-
-REPO = Path(__file__).resolve().parents[2]
-
 
 @pytest.fixture
 def homes(tmp_path, monkeypatch):
@@ -43,27 +35,6 @@ def scoped(home: Path):
     finally:
         reset_secret_scope(t_secret)
         reset_hermes_home_override(t_home)
-
-
-class _Resp:
-    def __init__(self, payload, status=200):
-        self._payload, self.status_code = payload, status
-
-    def read(self):
-        return json.dumps(self._payload).encode()
-
-    def json(self):
-        return self._payload
-
-    def raise_for_status(self):
-        if self.status_code >= 400:
-            raise RuntimeError(f"HTTP {self.status_code}")
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *_exc):
-        return False
 
 
 def test_memory_provider_skill_prune_only_touches_the_active_home(homes, monkeypatch):
@@ -91,44 +62,3 @@ def test_memory_provider_skill_prune_only_touches_the_active_home(homes, monkeyp
     finally:
         mem._REGISTERED_MEMORY_PROVIDER_SKILLS.clear()
         _reset_plugin_managers_for_tests()
-
-
-def test_disk_cleanup_protected_cron_paths_follow_the_active_home(homes):
-    """The protected-path guard must protect the ACTIVE profile's cron dir, not the first one asked."""
-    spec = importlib.util.spec_from_file_location(
-        "disk_cleanup_mux_scope", REPO / "plugins" / "disk-cleanup" / "disk_cleanup.py")
-    dc = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(dc)
-    a, b = homes
-    for home in (a, b):
-        (home / "cron").mkdir()
-    with scoped(a):
-        assert dc._is_protected_cron_path(a / "cron")
-    with scoped(b):
-        assert dc._is_protected_cron_path(b / "cron")
-        assert not dc._is_protected_cron_path(a / "cron")
-
-
-def test_yuanbao_active_adapter_resolves_per_profile(homes, monkeypatch):
-    """Each profile's turn reads back its own adapter; the unscoped slot still serves single-profile."""
-    from gateway.config import PlatformConfig
-    from plugins.platforms.yuanbao.adapter import YuanbaoAdapter
-
-    a, b = homes
-    cfg = PlatformConfig(enabled=True, extra={"app_id": "x", "app_secret": "y"})
-    monkeypatch.setattr(YuanbaoAdapter, "_active_instance", None)
-    monkeypatch.setattr(YuanbaoAdapter, "_active_instances", {})
-    with scoped(a):
-        adapter_a = YuanbaoAdapter(cfg)
-        YuanbaoAdapter.set_active(adapter_a)
-    with scoped(b):
-        adapter_b = YuanbaoAdapter(cfg)
-        YuanbaoAdapter.set_active(adapter_b)
-    with scoped(a):
-        assert YuanbaoAdapter.get_active() is adapter_a
-    with scoped(b):
-        assert YuanbaoAdapter.get_active() is adapter_b
-    assert YuanbaoAdapter.get_active() is None  # scoped adapters never claim the unscoped slot
-    unscoped = YuanbaoAdapter(cfg)
-    YuanbaoAdapter.set_active(unscoped)
-    assert YuanbaoAdapter.get_active() is unscoped

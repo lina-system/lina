@@ -1,8 +1,8 @@
 """#93349 — ``hermes update`` restarts only the gateways of the home it is updating.
 
-``hermes-gateway*`` units and ``gateway run`` processes are host-wide namespaces shared by every
+``lina-gateway*`` units and ``gateway run`` processes are host-wide namespaces shared by every
 Hermes install under the account. A scratch home's update used to drain and restart the account's
-real ``hermes-gateway.service`` and SIGTERM sibling installs' gateways because they were listed,
+real ``lina-gateway.service`` and SIGTERM sibling installs' gateways because they were listed,
 not because they ran the updated code.
 """
 
@@ -36,7 +36,7 @@ def _pid_homes(monkeypatch, mapping: dict):
 
 
 def test_systemd_unit_of_another_home_is_left_alone(monkeypatch, own_home):
-    """user/hermes-gateway runs on another HERMES_HOME → no drain, no restart, not a failure;
+    """user/lina-gateway runs on another HERMES_HOME → no drain, no restart, not a failure;
     the same unit running on the updating home is still restarted (control)."""
     homes = {4242: FOREIGN_HOME, 4343: str(own_home)}
     _pid_homes(monkeypatch, homes)
@@ -62,17 +62,17 @@ def test_systemd_unit_of_another_home_is_left_alone(monkeypatch, own_home):
     restarted: list[str] = []
     failed: list[str] = []
     fleet._restart_one_systemd_gateway_unit(
-        "hermes-gateway", scope="user", scope_cmd=["systemctl", "--user"], drain_budget=5.0,
+        "lina-gateway", scope="user", scope_cmd=["systemctl", "--user"], drain_budget=5.0,
         _manage_cmd_cache={}, restarted_services=restarted, failed_or_stale_units=failed,
     )
     assert drained == [] and write_verbs == [] and restarted == [] and failed == []
 
     main_pid["value"] = 4343  # control: same unit name, this update's home
     fleet._restart_one_systemd_gateway_unit(
-        "hermes-gateway", scope="user", scope_cmd=["systemctl", "--user"], drain_budget=5.0,
+        "lina-gateway", scope="user", scope_cmd=["systemctl", "--user"], drain_budget=5.0,
         _manage_cmd_cache={}, restarted_services=restarted, failed_or_stale_units=failed,
     )
-    assert drained == [4343] and restarted == ["hermes-gateway"] and failed == []
+    assert drained == [4343] and restarted == ["lina-gateway"] and failed == []
 
 
 def test_manual_gateway_of_another_home_is_not_stopped(monkeypatch, own_home):

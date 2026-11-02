@@ -113,13 +113,16 @@ def init_desk(path: str | Path | None = None, *, adopt: bool = False) -> Path:
     """Create (or, with *adopt*, take over) the Desk and point every agent at it.
 
     Adoption keeps every existing file: it only adds missing PARA folders and an ``AGENTS.md``
-    when none exists. Re-running on the configured Desk is a no-op apart from filling gaps."""
+    when none exists. Re-running on the configured Desk is a no-op apart from filling gaps, and
+    with no *path* the configured Desk wins over ``~/Desk``: both installers re-run
+    ``desk init --adopt``, so a reinstall must not pull a Desk made with ``--path`` back to home."""
     from hermes_cli.config_backend import write_config_key
 
-    root = Path(path or DEFAULT_DESK_PATH).expanduser().absolute()
+    configured = configured_desk_path()
+    root = Path(path or configured or DEFAULT_DESK_PATH).expanduser().absolute()
     if root.exists() and not root.is_dir():
         raise DeskError(f"{root} exists and is not a folder")
-    already_desk = configured_desk_path() == root
+    already_desk = configured == root
     if root.is_dir() and any(root.iterdir()) and not (adopt or already_desk):
         raise DeskError(f"{root} is not empty; pass --adopt to use it as the Desk, keeping its files")
     root.mkdir(parents=True, exist_ok=True)
@@ -129,7 +132,8 @@ def init_desk(path: str | Path | None = None, *, adopt: bool = False) -> Path:
     agents_md = root / "AGENTS.md"
     if not agents_md.exists():
         agents_md.write_text(AGENTS_MD.format(**{k: v.name for k, v in layout.items()}), encoding="utf-8")
-    write_config_key(desk_config_path(), CONFIG_KEY, str(root))
+    if not already_desk:  # keep the stored spelling of an already-configured Desk
+        write_config_key(desk_config_path(), CONFIG_KEY, str(root))
     return root
 
 

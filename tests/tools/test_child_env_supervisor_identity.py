@@ -18,7 +18,7 @@ from tests.tools._child_env_fixtures import child_env, observe_terminal
 from tools.environments import local
 
 SUPERVISED_GATEWAY_ENV = {
-    "HERMES_LAUNCHD_LABEL": "ai.hermes.gateway",
+    "HERMES_LAUNCHD_LABEL": "ai.lina.gateway",
     "XPC_SERVICE_NAME": "0",
     "HERMES_GATEWAY_EXTERNAL_SUPERVISOR": "1",
     "NOTIFY_SOCKET": "/run/user/1000/systemd/notify",
@@ -42,7 +42,7 @@ def _reads_as_unsupervised(env):
 def test_child_env_factories_drop_the_supervised_gateways_identity(build):
     parent = {**os.environ, **SUPERVISED_GATEWAY_ENV}
     # Control: the gateway itself still resolves its launchd job and the restart route.
-    assert launchd_job_label(parent) == "ai.hermes.gateway" and is_gateway_supervisor_process(parent)
+    assert launchd_job_label(parent) == "ai.lina.gateway" and is_gateway_supervisor_process(parent)
 
     child = build(parent)
 
