@@ -346,6 +346,15 @@ class TestGeneratedSystemdUnits:
         assert "LD_LIBRARY_PATH" not in gateway_cli.generate_systemd_unit(system=False)
 
 
+    def test_launchd_plist_materializes_dataless_files(self):
+        """Local patch #3: launchd's default policy refuses to download dataless (cloud) files, so
+        bot tools hit EDEADLK on Synology Drive On-demand folders. The generated plist must opt in,
+        and every rewrite must keep it."""
+        plist = gateway_cli.generate_launchd_plist()
+        assert "<key>MaterializeDatalessFiles</key>\n    <true/>" in plist
+        import plistlib
+        assert plistlib.loads(plist.encode())["MaterializeDatalessFiles"] is True
+
     def test_launchd_plist_persists_configured_nofile_soft_limit(self, monkeypatch):
         """The generated plist must carry SoftResourceLimits/NumberOfFiles so a
         plist rewrite by `hermes gateway start` cannot strip the FD floor and

@@ -457,6 +457,13 @@ def generate_launchd_plist() -> str:
 
     <key>ExitTimeOut</key>
     <integer>60</integer>
+
+    <!-- Local patch #3 (selene 11-02): launchd jobs default to NOT materializing dataless files
+         (IOPOL_TYPE_VFS_MATERIALIZE_DATALESS_FILES off), so every bot tool process failed with
+         EDEADLK on not-yet-downloaded File Provider (Synology Drive On-demand) files. True lets a
+         file download when it is opened; it does not pin anything locally. Inherited by children. -->
+    <key>MaterializeDatalessFiles</key>
+    <true/>
 {nofile_block}
     <key>StandardOutPath</key>
     <string>{stdout_log}</string>
