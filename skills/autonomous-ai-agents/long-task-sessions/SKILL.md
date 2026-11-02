@@ -3,7 +3,7 @@ name: long-task-sessions
 description: "Run long tasks with checkpoints and restart recovery."
 version: 1.0.0
 author: LINA
-license: MIT
+license: AGPL-3.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:

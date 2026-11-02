@@ -2,7 +2,7 @@
 name: codex
 description: "Run delegated coding tasks and local reviews."
 version: 1.0.0
-author: LINA
+author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:

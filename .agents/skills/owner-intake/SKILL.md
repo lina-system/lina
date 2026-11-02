@@ -3,7 +3,7 @@ name: owner-intake
 description: "Route owner requests without losing the active plan."
 version: 1.0.0
 author: LINA
-license: MIT
+license: AGPL-3.0
 platforms: [linux, macos, windows]
 metadata:
   hermes:
