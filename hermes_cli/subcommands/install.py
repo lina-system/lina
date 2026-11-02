@@ -14,6 +14,9 @@ def _start_ocx() -> int:
 
 
 def _cmd_install(args) -> None:
+    if args.shims:
+        from hermes_cli.lina_shims import install
+        sys.exit(install())
     from hermes_cli.helper_install import cmd_install
     from hermes_cli.lina_ocx import install_step as ocx_install_step
     from hermes_cli.lina_services import install_gateway_step
@@ -64,6 +67,9 @@ def build_install_parser(subparsers) -> None:
                              "(`lina omo install`)")
     parser.add_argument("--apply", action="store_true",
                         help="with --role worker: write the routing changes the check found (default: show them)")
+    parser.add_argument("--shims", action="store_true",
+                        help="only write the caller shims omo-task (-> lina worker) and work (-> lina work) into "
+                             "$LINA_HOME/bin; nothing else is installed (docs/switch-callers.md)")
     parser.set_defaults(func=_cmd_install)
     build_store_parser(subparsers)
     build_services_parser(subparsers)
