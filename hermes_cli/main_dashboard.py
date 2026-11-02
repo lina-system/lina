@@ -15,6 +15,7 @@ import time
 from pathlib import Path
 from typing import NoReturn
 from hermes_cli.cli_output import line_input
+from hermes_constants import DASHBOARD_SERVICE_BASE
 from hermes_cli.process_identity import is_desktop_owned_backend as _is_desktop_owned_backend
 
 _PRE_BUILD_HINT = "  Pre-build first:  npm install --workspace web && npm run build -w web"
@@ -79,7 +80,7 @@ def _dashboard_probe_host(host: str | None) -> str:
     return normalized
 
 
-_DASHBOARD_SYSTEMD_UNIT = "hermes-dashboard.service"
+_DASHBOARD_SYSTEMD_UNIT = f"{DASHBOARD_SERVICE_BASE}.service"
 
 _SYSTEMCTL_ERRORS = (FileNotFoundError, subprocess.TimeoutExpired, OSError)
 
@@ -185,7 +186,7 @@ def _pid_unified_cgroup_entries(pid: int):
 
 
 def _get_systemd_service_for_pid(pid: int) -> str | None:
-    """The systemd service unit that supervises *pid* (``hermes-serve.service``), or None.
+    """The systemd service unit that supervises *pid* (``lina-serve.service``), or None.
 
     A ``.service`` cgroup alone only says where the process was started: a dashboard launched by
     hand from a shell that itself runs under some unit (a CI runner agent, ``cron.service``, a
