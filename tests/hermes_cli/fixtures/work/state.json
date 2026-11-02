@@ -1,0 +1,1 @@
+{"at": 1799999940, "dv_ok": true, "stage_at": {"G1": 1799996400}, "items": {"G1": {"status": "working", "line": "Fixture is active", "checked": 1799999940, "activity": 1799999880, "reasons": []}, "T1": {"status": "waiting", "line": "Fixture dependency", "checked": 1799999940, "reasons": []}, "M1": {"status": "memo", "line": "정리 전", "checked": 1799999940, "reasons": []}}}

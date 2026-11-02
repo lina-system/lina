@@ -371,7 +371,6 @@ from hermes_cli.subcommands.skin import build_skin_parser
 from hermes_cli.subcommands.console import build_console_parser, cmd_console
 from hermes_cli.subcommands.update import build_update_parser
 from hermes_cli.subcommands.install import build_install_parser
-from hermes_cli.subcommands.work import build_work_parser
 from hermes_cli.main_git_refs import _read_packed_ref
 from hermes_cli.subcommands.uninstall import build_uninstall_parser
 from hermes_cli.subcommands.dashboard import build_dashboard_parser, build_serve_parser
@@ -3350,7 +3349,6 @@ def _build_cli_parser():
     build_vault_parser(subparsers)
     build_update_parser(subparsers, cmd_update=cmd_update)
     build_install_parser(subparsers)
-    build_work_parser(subparsers)
     build_uninstall_parser(subparsers, cmd_uninstall=cmd_uninstall)
     build_profile_parser(subparsers, cmd_profile=cmd_profile)
     build_completion_parser(subparsers, cmd_completion=cmd_completion, parser=parser)
