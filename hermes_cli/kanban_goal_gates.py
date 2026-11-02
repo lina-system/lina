@@ -12,8 +12,9 @@ its scrubbed child environment, exactly like a terminal-tool command.
 from __future__ import annotations
 
 import json
+import shlex
 import sqlite3
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Callable, Iterable, Optional
 
@@ -193,9 +194,13 @@ def run_card_gates(conn: sqlite3.Connection, task, *, workspace: Optional[str] =
     cwd, refusal = _card_workspace(task, workspace)
     if refusal:
         return GateFailure(None, -1, refusal, exhausted=True)
+    board = next(row[2] for row in conn.execute("PRAGMA database_list") if row[1] == "main")
+    # Command-local exports survive backend scrubbing without widening inherited credentials.
+    context = f"export HERMES_KANBAN_TASK={shlex.quote(task.id)} HERMES_KANBAN_DB={shlex.quote(board)};\n"
     failure, events = None, []
     for gate in gates:
-        passed, exit_code, tail = run_card_gate(gate, cwd=cwd, task_id=task.id)
+        passed, exit_code, tail = run_card_gate(
+            replace(gate, command=context + gate.command), cwd=cwd, task_id=task.id)
         gate.last_exit_code, gate.last_output_tail = exit_code, tail
         events.append({"command": gate.command, "exit_code": exit_code, "passed": passed,
                        "output_tail": tail[-_EVENT_TAIL_CHARS:]})

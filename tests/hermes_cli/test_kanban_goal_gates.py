@@ -7,6 +7,7 @@ refuse while a gate fails, judge or no judge; exit 75 waits without spending a t
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from pathlib import Path
 
@@ -251,6 +252,50 @@ def test_card_gate_cannot_read_host_provider_credentials(kanban_home, workspace,
     assert failure is not None and "key=unset" in failure.output
     assert "SENTINEL_NOT_A_KEY_108" not in failure.output
     assert "SENTINEL_NOT_A_KEY_108" not in json.dumps(events)
+
+
+@pytest.mark.parametrize("caller", ["missing", "different"])
+@pytest.mark.parametrize("entry", ["handoff", "loop"])
+def test_card_gate_context_uses_target_and_connected_board(
+        kanban_home, workspace, monkeypatch, caller, entry):
+    from hermes_cli.kanban_goal_gates import handoff_gate_failure
+
+    board = workspace / "target board's $data.sqlite"
+    kbc.init_db(db_path=board)
+    command = (
+        'printf "%s\\n" "$HERMES_KANBAN_TASK" "$HERMES_KANBAN_DB"; '
+        'test "$HERMES_KANBAN_TASK" = "$(cat expected-card)" && '
+        'test "$HERMES_KANBAN_DB" = "$(cat expected-board)" && '
+        'test -z "${OPENAI_API_KEY:-}"'
+    )
+    with kbc.connect_closing(db_path=board) as conn:
+        tid = kb.create_task(conn, title="context gate", assignee="test-worker",
+                             goal_mode=True, goal_gates=[command], workspace_kind="dir",
+                             workspace_path=str(workspace))
+    (workspace / "expected-card").write_text(tid)
+    (workspace / "expected-board").write_text(str(board))
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(workspace / "wrong-board.sqlite"))
+    monkeypatch.setenv("OPENAI_API_KEY", "SENTINEL_NOT_A_KEY_CONTEXT")
+    if caller == "missing":
+        monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
+    else:
+        monkeypatch.setenv("HERMES_KANBAN_TASK", "another-card")
+    before = {name: os.environ.get(name) for name in ("HERMES_KANBAN_TASK", "HERMES_KANBAN_DB")}
+
+    if entry == "handoff":
+        with kbc.connect_closing(db_path=board) as conn:
+            failure = handoff_gate_failure(conn, kb.get_task(conn, tid))
+    else:
+        failure = loop_gate_check(tid, "context gate", connect=lambda: kbc.connect_closing(db_path=board))()
+
+    assert failure is None, failure
+    assert {name: os.environ.get(name) for name in before} == before
+    with kbc.connect_closing(db_path=board) as conn:
+        stored = json.loads(kb.get_task(conn, tid).goal_gates)[0]
+        event = [e for e in kb.list_events(conn, tid) if e.kind == "goal_gate"][-1]
+    assert stored["command"] == event.payload["command"] == command
+    assert event.payload["passed"] is True
+    assert event.payload["output_tail"].splitlines() == [tid, str(board)]
 
 
 def test_card_gate_runs_in_local_backend_in_card_workspace(kanban_home, workspace):
