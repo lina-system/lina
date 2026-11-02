@@ -638,6 +638,7 @@ class Task:
     block_kind: Optional[str] = None
     block_recurrences: int = 0               # unblock-loop counter, see BLOCK_RECURRENCE_LIMIT
     completion_contract: Optional[str] = None
+    goal_gates: Optional[str] = None  # JSON list of GoalGate dicts, see kanban_goal_gates
 
     @classmethod
     def from_row(cls, row: sqlite3.Row) -> Task:
@@ -669,7 +670,7 @@ _TASK_EPOCH_COLUMNS = ("created_at", "started_at", "completed_at", "claim_expire
 _TASK_OPTIONAL_COLUMNS = (
     "branch_name", "project_id", "tenant", "result", "idempotency_key", "worker_pid",
     "max_runtime_seconds", "current_run_id", "workflow_template_id",
-    "current_step_key", "max_retries", "session_id", "completion_contract",
+    "current_step_key", "max_retries", "session_id", "completion_contract", "goal_gates",
 )
 # Text columns where "" is stored/read as "not set".
 _TASK_EMPTY_IS_NULL_COLUMNS = (
@@ -1167,7 +1168,7 @@ def create_task(
     session_id: Optional[str] = None, board: Optional[str] = None, project_id: Optional[str] = None,
     project_source_task_id: Optional[str] = None,
     creator_task_id: Optional[str] = None,
-    completion_contract: Optional[str] = None,
+    completion_contract: Optional[str] = None, goal_gates: Optional[Iterable[Any]] = None,
 ) -> str:
     """Create a task (optionally under ``parents``); returns its id.
 
@@ -1185,9 +1186,11 @@ def create_task(
     an explicit ``"scratch"`` or ``project_id=""`` is a request for no project.
     """
     from hermes_cli.kanban_db_graph import initial_task_state, inherit_creator_origin
+    from hermes_cli.kanban_goal_gates import normalize_gates
     from hermes_cli.kanban_pr_acceptance import validate_contract
 
     completion_contract = validate_contract(completion_contract)
+    goal_gates = normalize_gates(goal_gates, goal_mode=goal_mode)
     model_override, provider_override = _validate_model_override(model_override, provider_override)
     reasoning_effort = normalize_reasoning_effort(reasoning_effort)
     assignee = _canonical_assignee(assignee)
@@ -1267,8 +1270,8 @@ def create_task(
                         max_runtime_seconds,
                         skills, max_retries, model_override, provider_override,
                         reasoning_effort,
-                        goal_mode, goal_max_turns, session_id, completion_contract
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        goal_mode, goal_max_turns, session_id, completion_contract, goal_gates
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         task_id, title.strip(), body, assignee, task_status, priority,
@@ -1278,6 +1281,7 @@ def create_task(
                         json.dumps(skills_list) if skills_list is not None else None,
                         _opt_int(max_retries), model_override, provider_override, reasoning_effort,
                         1 if goal_mode else 0, _opt_int(goal_max_turns), session_id, completion_contract,
+                        goal_gates,
                     ),
                 )
                 for pid in parents:
@@ -2246,46 +2250,6 @@ def _retry_status_for_run(
     event = _latest_event(conn, task_id, "claimed", run_id)
     payload = _json_dict(_row_get(event, "payload"))
     return "review" if payload.get("source_status") == "review" else "ready"
-
-
-# Run outcome -> lifecycle status a goal loop should report for a handed-off run.
-_RUN_OUTCOME_TERMINAL_STATUS = {
-    "completed": "done",
-    "review_requested": "review",
-    "changes_requested": "changes_requested",
-    "blocked": "blocked",
-    "dependency_wait": "blocked",
-}
-
-
-def goal_run_status(
-    conn: sqlite3.Connection, task_id: str, expected_run_id: Optional[int] = None,
-) -> Optional[str]:
-    """Lifecycle status as seen by ONE run: terminal handoffs bind to that run,
-    any other ownership loss is ``superseded`` — otherwise an old goal loop
-    would read the successor's live ``running`` and mutate it."""
-    task = get_task(conn, task_id)
-    if task is None:
-        return None
-    if expected_run_id is not None:
-        row = conn.execute(
-            "SELECT outcome FROM task_runs WHERE id = ? AND task_id = ?",
-            (int(expected_run_id), task_id),
-        ).fetchone()
-        outcome = str(row["outcome"]) if row and row["outcome"] is not None else None
-        terminal_status = _RUN_OUTCOME_TERMINAL_STATUS.get(outcome)
-        if terminal_status is not None:
-            return terminal_status
-        if outcome is not None or task.current_run_id != int(expected_run_id):
-            return "superseded"
-    if task.status in {"ready", "todo"}:
-        event = conn.execute(
-            "SELECT kind FROM task_events WHERE task_id = ? "
-            "ORDER BY id DESC LIMIT 1", (task_id,),
-        ).fetchone()
-        if event and event["kind"] == "changes_requested":
-            return "changes_requested"
-    return task.status
 
 
 def heartbeat_claim(
@@ -4229,3 +4193,4 @@ from hermes_cli.kanban_db_dispatch import (
     _worker_survived_termination,
     _worker_terminal_timeout_env,
 )
+from hermes_cli.kanban_db_goal import goal_run_status

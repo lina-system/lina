@@ -1880,7 +1880,7 @@ DEFAULT_CONFIG = {
         # run it as a separate unit or don't want the gateway spawning workers.
         "dispatch_in_gateway": True,
         # Auto-claim tasks in the review column and spawn the assigned profile with the bundled
-        # sdlc-review skill. Disable where every review is done manually from the dashboard.
+        # code-review skill. Disable where every review is done manually from the dashboard.
         "review_dispatch": True,
         # Seconds between dispatcher ticks. Lower = snappier pickup; higher = less SQL pressure.
         "dispatch_interval_seconds": 60,

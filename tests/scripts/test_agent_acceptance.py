@@ -26,7 +26,14 @@ if rest[:1] == ["chat"]:
     print(rest[rest.index("-q") + 1])
     print(state["memory"].get(agent, ""))
 elif rest[:2] == ["cron", "list"]:
-    print("\n".join(state["jobs"]))
+    if not state["jobs"]:
+        print("No scheduled jobs in profile 'default'.")
+    for index, name in enumerate(state["jobs"]):
+        print("  job{{}} [active]".format(index))
+        print("    Name:      {{}}".format(name))
+        print("    Schedule:  0 9 * * *")
+        print("    Deliver:   local")
+        print()
 elif rest[:2] == ["cron", "status"]:
     print(state["cron_status"])
 elif rest[:3] == ["plugins", "list", "--json"]:
@@ -136,6 +143,8 @@ def test_a_working_agent_passes_every_check(agent_env):
     (lambda s: s["memory"].update(default="owner prefers Korean"), "memory"),
     (lambda s: s.update(cron_status="⚠ Gateway is running but the cron ticker looks STALLED"), "cron"),
     (lambda s: s.update(jobs=[]), "cron"),
+    # Only a longer job name exists: `daily-brief` must not match inside `daily-brief-backup`.
+    (lambda s: s.update(jobs=["daily-brief-backup"]), "cron"),
     (lambda s: s["plugins"][0].update(status="not enabled"), "plugins"),
     (lambda s: s.update(work_exit=3), "work"),
 ])
@@ -146,6 +155,18 @@ def test_a_broken_surface_fails_only_its_check(agent_env, breakage, check):
     failed = [key for key, r in _results(tmp_path).items() if not r["passed"]]
     assert code == 1
     assert failed == [("default", check)]
+
+
+@pytest.mark.platforms("posix")
+def test_the_cron_check_matches_complete_job_names(agent_env):
+    """lina-system/lina#73: `daily-brief` must not be satisfied by `daily-brief-backup`."""
+    state, manifest, tmp_path = agent_env
+    state["jobs"] = ["daily-brief-backup"]
+    code = _load().main(["--manifest", str(manifest()), "--check", "cron",
+                         "--json", str(tmp_path / "out.json")])
+    result = _results(tmp_path)[("default", "cron")]
+    assert code == 1 and not result["passed"]
+    assert "daily-brief" in result["detail"]
 
 
 @pytest.mark.platforms("posix")

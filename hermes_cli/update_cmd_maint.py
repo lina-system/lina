@@ -198,7 +198,7 @@ def _refresh_dashboard_after_update(*, already_restarted_units: set[str] | None 
         print()
         print(f"⚠ Could not refresh running dashboard/serve process(es): {exc}")
         print("  If one is still running, restart it so it serves the updated code:")
-        print("    hermes dashboard --port <port>   (or: systemctl --user restart hermes-dashboard)")
+        print("    lina dashboard --port <port>   (or: systemctl --user restart lina-dashboard)")
         return set()
     unrecovered = {int(pid) for pid in stop_result.get("unrecovered") or ()}
     if not unrecovered:

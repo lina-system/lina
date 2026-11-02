@@ -71,16 +71,13 @@ TRACEBACK = "Traceback (most recent call last)"
 # requirement whose environment marker excludes this platform) — the table is re-validated
 # against pyproject.toml, so it cannot be used to hide a missing core dependency.
 _OPTIONAL_IMPORTS = {
-    "acp": "agent-client-protocol", "aiohttp": "aiohttp", "aiohttp_socks": "aiohttp-socks",
-    "aiosqlite": "aiosqlite", "alibabacloud_dingtalk": "alibabacloud-dingtalk", "anthropic": "anthropic",
-    "asyncpg": "asyncpg", "azure": "azure-identity", "boto3": "boto3", "botocore": "boto3",
-    "brotlicffi": "brotlicffi", "daytona": "daytona", "defusedxml": "defusedxml",
-    "dingtalk_stream": "dingtalk-stream", "discord": "discord.py", "edge_tts": "edge-tts",
-    "elevenlabs": "elevenlabs", "exa_py": "exa-py", "fal_client": "fal-client",
+    "acp": "agent-client-protocol", "aiohttp": "aiohttp", "anthropic": "anthropic",
+    "azure": "azure-identity", "boto3": "boto3", "botocore": "boto3",
+    "brotlicffi": "brotlicffi", "daytona": "daytona", "discord": "discord.py", "edge_tts": "edge-tts",
+    "elevenlabs": "elevenlabs", "exa_py": "exa-py",
     "faster_whisper": "faster-whisper", "firecrawl": "firecrawl-py", "google": "google-auth",
     "google_auth_oauthlib": "google-auth-oauthlib", "googleapiclient": "google-api-python-client",
-    "httplib2": "httplib2", "lark_oapi": "lark-oapi", "mautrix": "mautrix",
-    "mcp": "mcp", "microsoft_teams": "microsoft-teams-apps", "mistralai": "mistralai",
+    "httplib2": "httplib2", "mcp": "mcp", "mistralai": "mistralai",
     "modal": "modal", "numpy": "numpy", "pyopen_wakeword": "pyopen-wakeword",
     "opentelemetry": "opentelemetry-sdk", "parallel": "parallel-web", "pvporcupine": "pvporcupine",
     "pyasn1": "pyasn1", "qrcode": "qrcode", "sentencepiece": "sentencepiece", "sherpa_onnx": "sherpa-onnx",

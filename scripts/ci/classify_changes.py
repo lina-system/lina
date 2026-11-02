@@ -47,6 +47,12 @@ Lanes:
   set of tests reads, so a one-entry PR need not run 23k tests on three OSes.
   ``plugin-catalog/README.md`` is not entry data (a docs page mirrors it), and
   any other file in the diff brings the full Python suite back.
+* ``macos``       — LINA's macOS-marked tests (ci.yml ``Python tests (macOS)``). Not from
+  :func:`classify`: :func:`macos_lane` sets it from the diff and the labels. A pull request
+  runs it when it changes a test file ``list_os_marked_tests.py macos`` lists, or a module
+  such a file imports, or carries the ``dev-red-fix`` label; any other pull request skips it
+  (runner cost). It fails open like the rest: push, dispatch, an empty diff or a ``.github/``
+  change.
 * ``remote_backends`` — the SSH and Docker terminal backends against a real
   sshd container and the runner's Docker daemon (remote-backends.yml). Every
   other test of those backends is mocked, so a change to the backends, the
@@ -87,10 +93,13 @@ must never skip one a change could break:
 
 from __future__ import annotations
 
+import ast
+import importlib.util
 import json
 import os
 import subprocess
 import sys
+from pathlib import Path
 
 _FRONTEND = ("ui-tui/", "web/", "apps/")  # TS typecheck-matrix packages
 # Shipped page outside those packages, exercised by the desktop Electron suite.
@@ -142,6 +151,7 @@ _PY_RELEVANT_CONTRACT_FILES = {
 _CATALOG_DATA = ("plugin-catalog/", "contributors/emails/")
 
 # Supply-chain scan: files that can execute code at install/import time.
+_HELPER_PATHS = ("helper/",)
 _SCAN_EXTS = (".py", ".pth")
 _SCAN_FILES = {"setup.cfg", "pyproject.toml"}
 
@@ -541,6 +551,10 @@ _NIX_LANE_PATHS = (*_NIX_PATHS, *_NIX_FILES, *_DEP_MANIFESTS, *_NPM_MANIFESTS)
 
 # A pull request with this label runs every slow lane, whatever it touches.
 RUN_E2E_LABEL = "run-e2e"
+# A pull request with this label runs the macOS tests, whatever it touches: a fix for a red dev
+# must prove itself on macOS before it merges, not after (#86).
+DEV_RED_FIX_LABEL = "dev-red-fix"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _is_docs(p: str) -> bool:
     if p.startswith(("skills/", "optional-skills/")):
@@ -652,6 +666,11 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         "rust": any(_is_rust(f) for f in files),
         "remote_backends": any(f.startswith(_REMOTE_BACKEND_PATHS) for f in files),
         "catalog": catalog,
+        # LINA: helper/macos (LINA Helper) runs its Swift and native checks on macOS.
+        "helper": any(f.startswith(_HELPER_PATHS) for f in files),
+        # Every detect output needs a key here (ci.yaml replays them). main() replaces this with
+        # macos_lane(), which reads the test tree and the labels; only the fail-open stays True.
+        "macos": False,
         **{lane: run_e2e or on for lane, on in _slow_lanes(files).items()},
     }
     consumers = [c for f in files for c in _SHARED_FIXTURE_CONSUMERS.get(f, ())]
@@ -674,8 +693,58 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         ret["rust"] = True
         ret["remote_backends"] = True
         ret["catalog"] = True
+        ret["helper"] = True
+        ret["macos"] = True
         ret.update(dict.fromkeys(_slow_lanes([]), True))
     return ret
+
+
+def _module_paths(module: str) -> tuple[str, str]:
+    base = module.replace(".", "/")
+    return f"{base}.py", f"{base}/__init__.py"
+
+
+def _imported_paths(text: str) -> set[str]:
+    """Repo-relative paths an absolute import in *text* may load, wherever the import sits (test
+    functions import lazily). ``from a import b`` may name a module ``a/b`` or a symbol of ``a``."""
+    try:
+        tree = ast.parse(text)
+    except SyntaxError:
+        return set()
+    paths: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                paths.update(_module_paths(alias.name))
+        elif isinstance(node, ast.ImportFrom) and node.module and not node.level:
+            paths.update(_module_paths(node.module))
+            for alias in node.names:
+                paths.update(_module_paths(f"{node.module}.{alias.name}"))
+    return paths
+
+
+def macos_watched_paths(root: Path = _REPO_ROOT) -> set[str]:
+    """The macOS-marked test files (the macOS job's own file list) plus every module they import."""
+    spec = importlib.util.spec_from_file_location(
+        "list_os_marked_tests", Path(__file__).with_name("list_os_marked_tests.py"))
+    if spec is None or spec.loader is None:
+        raise ImportError("Failed to load list_os_marked_tests.py")
+    marked = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(marked)
+    watched: set[str] = set()
+    for path in marked.find_marked_files("macos", root / "tests"):
+        watched.add(path.relative_to(root).as_posix())
+        watched |= _imported_paths(path.read_text(encoding="utf-8-sig", errors="replace"))
+    return watched
+
+
+def macos_lane(files: list[str], *, red_fix: bool = False, root: Path = _REPO_ROOT) -> bool:
+    """Whether a pull request with this diff runs the macOS tests (``macos`` in the module doc)."""
+    files = [f.strip() for f in files if f.strip()]
+    if red_fix or not files or any(f.startswith(".github/") for f in files):
+        return True
+    watched = macos_watched_paths(root)
+    return any(f in watched for f in files)
 
 
 def _event_payload() -> dict:
@@ -754,6 +823,16 @@ def pull_request_labels() -> list[str]:
     return [label["name"] for label in labels if isinstance(label, dict) and label.get("name")]
 
 
+# LINA: a merge-queue entry is the last gate before dev, so every test suite runs on it whatever
+# the diff says (docs/delivery.md, step 7). Lanes that only gate cheap or path-bound checks
+# (helper, uv_lock, scan, ...) keep their diff value.
+MERGE_GROUP_FULL_LANES = ("python", "python_prod", "macos")
+
+
+def merge_group_lanes(lanes: dict[str, bool]) -> dict[str, bool]:
+    return {**lanes, **dict.fromkeys(MERGE_GROUP_FULL_LANES, True)}
+
+
 def main() -> int:
     files = sys.stdin.read().splitlines()
     if not any(f.strip() for f in files):
@@ -765,7 +844,11 @@ def main() -> int:
                 file=sys.stderr,
             )
             files = recovered
-    lanes = classify(files, run_e2e=RUN_E2E_LABEL in pull_request_labels())
+    labels = pull_request_labels()
+    lanes = classify(files, run_e2e=RUN_E2E_LABEL in labels)
+    lanes["macos"] = macos_lane(files, red_fix=DEV_RED_FIX_LABEL in labels)
+    if os.environ.get("EVENT_NAME") == "merge_group":
+        lanes = merge_group_lanes(lanes)
     out = "\n".join(f"{key}={str(value).lower()}" for key, value in lanes.items())
     if dest := os.environ.get("GITHUB_OUTPUT"):
         with open(dest, "a", encoding="utf-8") as fh:

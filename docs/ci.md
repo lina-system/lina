@@ -4,7 +4,7 @@ LINA runs a small CI of its own. The upstream Hermes workflows are kept, unchang
 
 ## What runs
 
-GitHub Actions reads only `.github/workflows/`. It holds `ci.yml` ("CI"), which runs on pull requests into `dev` or `main`, on pushes to `dev`, and by manual dispatch, on GitHub-hosted runners. None of its jobs uses an upstream organisation secret, runner or app. A pull request starts one workflow run. `honcho.yml` checks, tests and builds the vendored Honcho server in `services/honcho/` and runs only when those paths change ([honcho.md](honcho.md)).
+GitHub Actions reads only `.github/workflows/`. It holds `ci.yml` ("CI"), which runs on pull requests into `dev` or `main`, on pushes to `dev`, and by manual dispatch, on GitHub-hosted runners. None of its jobs uses an upstream organisation secret, runner or app. A pull request starts one workflow run. `honcho.yml` checks, tests and builds the vendored Honcho server in `services/honcho/` and runs only when those paths change ([honcho.md](honcho.md)). `codex-review-gate.yml` ("Merge gates") sets the `Codex review`, `Linked issue` and `dev green` commit statuses on a pull request's head ([Required checks](#required-checks)).
 
 Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the diff once with `scripts/ci/classify_changes.py`, and a lane the change cannot affect starts no runner. A pull request that touches only prose (`*.md` outside `skills/`, `docs/`) runs no test slices. A push to `dev` or a manual run has no diff, so every lane runs. Any `.github/` change also runs every lane.
 
@@ -13,9 +13,10 @@ Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the 
 | Detect affected areas | always | Picks the lanes below | `ci.yaml`, job `detect` |
 | **Lint** (required) | always | `ruff check .` with the ruff version pinned by `scripts/code_health` | `lint.yml`, job "ruff enforcement (blocking)" |
 | Python tests (Linux n/8) | `python` lane | `scripts/run_tests.sh` on Ubuntu, in 8 slices, with the per-file duration cache (`test_durations.json`; pull requests read it, `dev` pushes write it) | `tests.yml`, job "Run tests" |
-| **Python tests (Linux)** (required) | always | Green when every slice passed, or when detect skipped the slices because the change cannot reach Python | `ci.yaml`, job `all-checks-pass` |
-| Python tests (macOS) | pushes to `dev`, manual runs | macOS-marked tests | `tests-os.yml`, macOS jobs |
-| LINA Helper (macOS) | always | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
+| Catalog tests | `catalog` lane | The tests that read `plugin-catalog/` entries and contributor email maps, discovered by `scripts/ci/catalog_test_files.py` and run through `scripts/run_tests.sh`. A catalog-only pull request runs this instead of the Linux slices | `catalog-tests.yml` |
+| **Python tests (Linux)** (required) | always | Green when every slice passed (or detect skipped the slices because the change cannot reach Python) and the `catalog` tests passed (or the lane was not needed) | `ci.yaml`, job `all-checks-pass` |
+| **Python tests (macOS)** (required) | pushes to `dev`, manual runs; a pull request on the `macos` lane | macOS-marked tests. A pull request runs them when it changes a test file `scripts/ci/list_os_marked_tests.py macos` lists or a module such a file imports, or carries the `dev-red-fix` label (added after the last push, it counts on a re-run); other pull requests skip them (runner cost; a skip passes the check). Upstream runs them on every pull request with a Python change | `tests-os.yml`, macOS jobs |
+| **LINA Helper (macOS)** (required) | `helper` lane | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
 | Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
 | uv.lock check | `uv_lock` lane | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
 | Prune check | always | Fails while a tracked file matches `prune-list.txt`, the upstream paths LINA does not carry ([forking.md](forking.md)) | LINA only |
@@ -25,9 +26,27 @@ Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead 
 
 Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_env --source . --check-lock`, `python scripts/ci/check_blob_size.py --base origin/dev`, `python3 scripts/ci/check_prune_list.py`.
 
+The `macos` lane (`classify_changes.macos_lane`) is on for a pull request that changes a test file `scripts/ci/list_os_marked_tests.py macos` lists or a module such a file imports, or that carries the `dev-red-fix` label (a label added after the last push counts on a re-run). `detect` checks out `tests/` and the lister to read that list. The `helper` lane is on for `helper/`. Like every lane, both are on for pushes, manual runs, an empty diff and `.github/` changes. Upstream ran its macOS tests on every Python change; LINA narrows that to keep the macOS runner cost.
+
 ## Required checks
 
-`dev` and `main` require two checks: **Lint** and **Python tests (Linux)**. LINA Helper (macOS) is not required; the Linux half of `helper/macos`'s `make test` runs inside **Python tests (Linux)** (`tests/helper/`). Both are job names in `ci.yml` and always report, so a pull request never waits on a check that did not start. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
+`dev` and `main` require these checks on the head commit. A skipped job counts as passed, so each always reports and a pull request never waits on a check that did not start.
+
+| Check | Source | Green when |
+| --- | --- | --- |
+| Lint | `ci.yml` job | `ruff check .` passes |
+| Python tests (Linux) | `ci.yml` job | every slice passed (or `detect` found no change the suite can see) and the Catalog tests passed (or the `catalog` lane was off); fails when `detect` fails |
+| Python tests (macOS) | `ci.yml` job | the macOS tests passed, or skipped: a pull request off the `macos` lane (no macOS-marked test file or module one imports changed, no `dev-red-fix` label) |
+| LINA Helper (macOS) | `ci.yml` job | Swift tests, native checks and the ad-hoc build passed, or skipped: `helper/` did not change. The Linux half of its `make test` runs inside Python tests (Linux) (`tests/helper/`) |
+| Codex review | `codex-review-gate.yml` status | `chatgpt-codex-connector[bot]` reviewed this head (a review on it, its summary comment marking a finished review of it without findings, or a "no major issues" comment naming it; a comment's time proves nothing) and none of its review comments made on this head carries a P0 or P1 badge. Red with the count and the first finding; pending until the review of this head arrives. A review of an earlier head never counts |
+| Linked issue | `codex-review-gate.yml` status | the body closes (`Closes`/`Fixes #n`, GitHub `closingIssuesReferences`) an open issue of this repository, and a branch named `<type>/<n>-<slug>` closes #n; or the pull request carries the `no-issue` label (a typo, a one-line CI fix) |
+| dev green | `codex-review-gate.yml` status | the latest finished push CI on `dev` with a verdict passed (a run cancelled by a newer push does not count). While `dev` is red it is pending (wait) for every pull request except one labelled `dev-red-fix` on whose head at least one of `dev`'s red jobs passes (skipped is not passing) and no other check is red (red when it adds a red check or makes none of `dev`'s pass), or one the owner labelled `dev-red-approved` (a repository admin added the label; [delivery.md](delivery.md), step 7) |
+
+The three statuses are judged by `scripts/ci/codex_review_gate.py` (tests: `tests/ci/test_codex_review_gate.py`). The workflow runs on `pull_request_target` (opened, synchronize, reopened, edited, labeled, unlabeled), `pull_request_review` (submitted), `issue_comment` (created, edited: Codex edits one summary comment per pull request) and `workflow_run` of CI (completed: a finished `dev` push or pull request run changes `dev green`, so every open pull request into `dev` is judged again). It checks out the gate script from `dev` and runs nothing from the pull request, with `GITHUB_TOKEN` only (`statuses: write`; `actions`, `checks`, `contents`, `issues`, `pull-requests`: read). Local run: `python3 scripts/ci/codex_review_gate.py --repo lina-system/lina --pr <n> --dry-run`.
+
+In the merge queue (`merge_group`, `checks_requested`, into `dev`), `ci.yml` runs on the queue's merge commit: `detect` compares `merge_group.base_sha` with `merge_group.head_sha`, and every test suite runs whatever the diff says (`python`, `python_prod` and `macos` lanes on; `helper`, `uv_lock` and the other path-bound lanes follow the diff), so `Lint`, `Python tests (Linux)`, `Python tests (macOS)`, `LINA Helper (macOS)` and `Prune check` report there under their usual names. `codex-review-gate.yml` runs on `merge_group` too: it judges the pull request the queue ref names (`gh-readonly-queue/dev/pr-<n>-<sha>`) exactly as on its head and sets the same three statuses on the queue commit; without them the queue would wait for good. Concurrency groups take `merge_group.head_ref`, so queue runs never cancel each other or a pull request's run. Upstream Hermes has no `merge_group` trigger.
+
+Known limits: if Codex is down, `Codex review` stays pending and merging stops; wait, do not bypass. Commit statuses come from GitHub Actions, so a workflow added by a pull request could post one; the gate stops mistakes, not a hostile author. A pull request from a fork gets a read-only token on `pull_request_review`, so its status updates on the next comment or push. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
 
 ## What was moved
 
@@ -50,7 +69,7 @@ Only public repositories use GitHub CI. Private repositories (for example hermes
 - `bootstrap-installer.yml`
 - `canary-release.yml`
 - `case-collision-check.yml`
-- `catalog-tests.yml`
+- `catalog-tests.yml` (LINA version: a job in `.github/workflows/ci.yml`)
 - `ci-review-comment.yml`
 - `ci.yaml`
 - `contributor-check.yml`

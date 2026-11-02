@@ -11,13 +11,19 @@ on:
     branches: [dev, main]
   push:
     branches: [dev]
+  # The merge queue: required checks must report on the queue's merge commit too, or a queued
+  # pull request never merges. A queue run is the last gate before dev and runs every suite.
+  merge_group:
+    types: [checks_requested]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # One group per pull request, per queue entry (merge_group head_ref) and per pushed ref.
+  group: ci-${{ github.event.merge_group.head_ref || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -30,12 +36,21 @@ jobs:
       scan: ${{ steps.classify.outputs.scan }}
       deps: ${{ steps.classify.outputs.deps }}
       uv_lock: ${{ steps.classify.outputs.uv_lock }}
+      helper: ${{ steps.classify.outputs.helper }}
+      macos: ${{ steps.classify.outputs.macos }}
+      # A catalog-only diff turns `python` off and this lane on; without the
+      # output here the catalog job below never starts (the `rust` lane shipped
+      # dead exactly this way).
+      catalog: ${{ steps.classify.outputs.catalog }}
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
         with:
+          # tests/ and the lister: the macos lane reads which test files are macOS-marked.
           sparse-checkout: |
             .github/actions/detect-changes
             scripts/ci/classify_changes.py
+            scripts/ci/list_os_marked_tests.py
+            tests
           sparse-checkout-cone-mode: false
 
       - name: Detect affected areas
@@ -88,7 +103,7 @@ jobs:
         uses: ./.github/actions/setup-pm
         with:
           packages: ripgrep
-          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          extras: '["all", "anthropic", "bedrock", "mistral", "modal", "daytona", "parallel-web", "keychain"]'
           test-environment: 'true'
           prune-python-cache: true
 
@@ -126,29 +141,76 @@ jobs:
       - name: Check the checkout is clean
         uses: ./.github/actions/check-clean-worktree
 
+  catalog:
+    # A diff made only of catalog entry data (plugin-catalog/*.yaml) turns `python` off in
+    # detect and `catalog` on, so the Linux slices above never see it. This is the lane that
+    # reads those files: the test set is discovered by scripts/ci/catalog_test_files.py, not
+    # listed, so a new test that reads the catalog joins by existing. Without this job such a
+    # PR runs no test at all (issue #74); it is the job upstream catalog-tests.yml ran.
+    name: Catalog tests
+    needs: detect
+    if: needs.detect.outputs.catalog == 'true'
+    runs-on: ubuntu-24.04
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Set up locked Python and test dependencies
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '[]'
+          test-environment: 'true'
+          prune-python-cache: true
+
+      - name: Run the catalog tests
+        env:
+          OPENROUTER_API_KEY: ""
+          OPENAI_API_KEY: ""
+          NOUS_API_KEY: ""
+        run: |
+          set -euo pipefail
+          mapfile -t FILES < <(python3 scripts/ci/catalog_test_files.py)
+          # run_tests.sh with no path runs the whole suite, so an empty discovery must fail the
+          # lane instead of quietly turning it into a full-suite run (or a no-op).
+          [ "${#FILES[@]}" -gt 0 ] || { echo "::error::catalog discovery selected no test files"; exit 1; }
+          echo "Catalog test files (${#FILES[@]}):"; printf '  %s\n' "${FILES[@]}"
+          scripts/run_tests.sh "${FILES[@]}"
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
+
   linux-result:
     # Required check: one stable name for the ruleset. Green when every slice passed, or when
-    # detect found no change the Python suite can see (docs and prose only).
+    # detect found no change the Python suite can see (docs and prose only). Also holds the
+    # catalog lane: a catalog-only diff skips the slices, so folding that job in here is what
+    # makes its tests gate the merge instead of only running.
     name: Python tests (Linux)
-    needs: [detect, linux]
+    needs: [detect, linux, catalog]
     if: always()
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     steps:
-      - name: Every Linux slice passed or the suite was not needed
+      - name: Every Linux slice and catalog test passed or was not needed
         env:
           DETECT: ${{ needs.detect.result }}
           PYTHON: ${{ needs.detect.outputs.python }}
           RESULT: ${{ needs.linux.result }}
+          CATALOG: ${{ needs.detect.outputs.catalog }}
+          CATALOG_RESULT: ${{ needs.catalog.result }}
         run: |
-          echo "detect: $DETECT, python lane: $PYTHON, linux slices: $RESULT"
+          echo "detect: $DETECT, python lane: $PYTHON, linux slices: $RESULT, catalog lane: $CATALOG, catalog tests: $CATALOG_RESULT"
           test "$DETECT" = success
           if [ "$PYTHON" = true ]; then test "$RESULT" = success; else test "$RESULT" = skipped; fi
+          if [ "$CATALOG" = true ]; then test "$CATALOG_RESULT" = success; else test "$CATALOG_RESULT" = skipped; fi
 
   macos:
-    # Not required. macOS-marked tests (upstream tests-os.yml) on pushes to dev and manual runs.
+    # Required check. macOS-marked tests (upstream tests-os.yml) on pushes to dev and manual runs, and
+    # on a pull request when detect's macos lane fires: a macOS-marked test file or a module one
+    # imports changed, or the pull request carries the dev-red-fix label (a label added after the
+    # last push counts on a re-run). Other pull requests skip it, which passes the check.
     name: Python tests (macOS)
-    if: github.event_name != 'pull_request'
+    needs: detect
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.detect.outputs.macos == 'true') }}
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -158,7 +220,7 @@ jobs:
         uses: ./.github/actions/setup-pm
         with:
           packages: ripgrep
-          extras: '["all", "telegram", "anthropic", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          extras: '["all", "telegram", "anthropic", "mistral", "modal", "daytona", "parallel-web", "keychain"]'
           test-environment: 'true'
           prune-python-cache: true
 
@@ -180,9 +242,12 @@ jobs:
         uses: ./.github/actions/check-clean-worktree
 
   helper-macos:
-    # Not required. LINA Helper (helper/macos): Swift tests, the unlock package's native checks
-    # and an ad-hoc app build. The Linux half of its `make test` runs in the Python suite (tests/helper).
+    # Required check. LINA Helper (helper/macos): Swift tests, the unlock package's native checks
+    # and an ad-hoc app build, on the `helper` lane (helper/ changes); skipped (which passes)
+    # otherwise. The Linux half of its `make test` runs in the Python suite (tests/helper).
     name: LINA Helper (macOS)
+    needs: detect
+    if: needs.detect.outputs.helper == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
