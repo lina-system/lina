@@ -110,10 +110,6 @@ dependencies = [
   # where a wildcard DNS name escapes permittedSubtrees, and
   # GHSA-jwv3-5hgf-82ww, exponential path-building on duplicate self-signed
   # intermediates.
-  #
-  # A pin here is not sufficient on its own. alibabacloud-tea-openapi caps
-  # cryptography<49, so [tool.uv] also holds an override. Read that comment
-  # before you move this version.
   "cryptography==50.0.2; python_version >= '3.14'",  # CVE-2026-69247, GHSA-m2h6-j472-rp4c, GHSA-jwv3-5hgf-82ww, CVE-2026-39892, CVE-2026-34073, GHSA-537c-gmf6-5ccf
   # Windows has no IANA tzdata shipped with the OS, so Python's ``zoneinfo``
   # (PEP 615) raises ``ZoneInfoNotFoundError`` for every non-UTC timezone
@@ -240,8 +236,6 @@ exa = ["exa-py==2.26.0"]
 firecrawl = ["firecrawl-py==4.53.2"]
 parallel-web = ["parallel-web==0.6.0"]
 ddgs = ["ddgs==9.16.0"]
-# Image generation backends
-fal = ["fal-client==0.14.1"]
 # Edge TTS — default TTS provider but still optional (users can pick
 # ElevenLabs / OpenAI / MiniMax instead).
 edge-tts = ["edge-tts==7.3.1"]
@@ -266,7 +260,6 @@ piper = [
 modal = ["modal==1.6.2"]
 daytona = ["daytona==0.225.0"]
 vercel = ["vercel==0.12.0"]
-google-meet = ["playwright==1.64.0; sys_platform != 'android'", "websockets==15.0.1; sys_platform != 'android'"]
 messaging = [
   "python-telegram-bot[webhooks]==22.8",
   "discord.py[voice]==2.7.1",
@@ -278,27 +271,6 @@ messaging = [
 ] # aiohttp 3.14.5: prior CVEs + GHSA-9xw5-w5jj-pvcg/GHSA-2g87-pp6c-29x5/GHSA-5wr8-gcqf-gqf3 family
 cron = [] # croniter is now a core dependency; this extra kept for back-compat
 slack = ["slack-bolt==1.30.0", "slack-sdk==3.45.0", "aiohttp==3.14.5"]
-# Matrix gateway deps. `mautrix[encryption]` pulls `python-olm`, whose
-# vendored libolm (archived 2023) cannot build on Windows or modern macOS:
-# no wheels for those targets AND the sdist fails to compile on current
-# clang/MSVC (olm/list.hh const-iterator error) and on CMake >= 4. It is
-# linux-only — gate the whole extra so `uv sync --all-extras` (the bundle
-# build) doesn't try to build python-olm on the win/darwin lanes. The
-# matrix adapter degrades gracefully without mautrix (import stubs).
-matrix = [
-  "mautrix[encryption]==0.21.1; sys_platform == 'linux'",
-  "aiosqlite==0.22.1; sys_platform == 'linux'",
-  "asyncpg==0.32.0; sys_platform == 'linux'",
-  "aiohttp-socks==0.12.0; sys_platform == 'linux'",
-  "aiohttp==3.14.5; sys_platform == 'linux'",
-] # aiohttp 3.14.5: prior CVEs + GHSA-9xw5-w5jj-pvcg/GHSA-2g87-pp6c-29x5/GHSA-5wr8-gcqf-gqf3 family (mautrix/aiohttp-socks only cap aiohttp<4 / >=3.10, so pin the patched floor directly)
-
-# WeCom callback-mode adapter — parses untrusted XML POST bodies from
-# WeCom-controlled callback endpoints, so we use defusedxml (drop-in
-# replacement for stdlib xml.etree.ElementTree) to block billion-laughs
-# and XXE. aiohttp/httpx are already in [messaging]; defusedxml lands
-# here to keep the dependency local to wecom_callback's threat model.
-wecom = ["defusedxml==0.7.1"]
 # Opt-in OS-keychain storage for the local credential vault key (vault.key_storage: keychain).
 # Lazy-installed by `hermes vault key migrate --to keychain`, so NOT in [all].
 keychain = ["keyring==25.7.0"]
@@ -360,15 +332,6 @@ wake-sherpa = [
   "pypinyin==0.55.0",
 ]
 wake-porcupine = ["pvporcupine==4.0.3"]
-# Google Chat service account push (gateway/platforms/google_chat) — pubsub
-# subscriber for the Chat API's Cloud Pub/Sub delivery.
-# grpcio (pubsub's native transitive) has no win_arm64 wheel, so win32-arm64
-# would build its sdist and fail — gate the whole extra off there like
-# faster-whisper. The adapter's pubsub import is lazy, so this just makes the
-# google-chat platform unavailable on win32-arm64.
-google-chat = [
-  "google-cloud-pubsub==2.43.0; platform_machine != 'ARM64' or sys_platform != 'win32'",
-]
 # Document extraction (read_file anydoc converter self-heal) — core already
 # bundles firecrawl-anydoc==0.2.4; the extra exists so a lean/broken install
 # can re-sync exactly the pin from core.
@@ -429,11 +392,9 @@ mcp = [
 # Backwards-compatible no-op alias. Relay is a core dependency on supported
 # wheel targets and intentionally unavailable on other platforms.
 nemo-relay = []
+# The SMS adapter is gone, but [all] and [termux-all] still get aiohttp only
+# through this extra, and the API server and webhook adapters import it.
 sms = ["aiohttp==3.14.5"]
-teams = [
-  "microsoft-teams-apps==2.1.1",
-  "aiohttp==3.14.5",
-] # aiohttp 3.14.5: prior CVEs + GHSA-9xw5-w5jj-pvcg/GHSA-2g87-pp6c-29x5/GHSA-5wr8-gcqf-gqf3 family
 # Computer use talks to PM's pinned cua-driver over MCP stdio. This extra
 # provides the MCP client, independently of the native driver package.
 computer-use = [
@@ -474,7 +435,7 @@ termux = [
 termux-all = [
   # Best-effort "install all" profile for Termux. Same policy as [all]:
   # only includes extras that are not prepared on demand by PM.
-  # Backends like telegram/slack/dingtalk/feishu lazy-install at
+  # Backends like telegram/discord/slack lazy-install at
   # first use, so they're no longer eager-installed here.
   "hermes-agent[termux]",
   "hermes-agent[google]",
@@ -482,12 +443,6 @@ termux-all = [
   "hermes-agent[web]",
   "hermes-agent[pty]",
 ]
-dingtalk = [
-  "dingtalk-stream==0.24.3",
-  "alibabacloud-dingtalk==2.2.65",
-  "qrcode==7.4.2",
-]
-feishu = ["lark-oapi==1.7.5", "qrcode==7.4.2"]
 google = [
   # Required by the google-workspace skill (Gmail, Calendar, Drive, Contacts,
   # Sheets, Docs). Declared here so PM environments and independent
@@ -533,17 +488,10 @@ all = [
   # release breaks every fresh install.
   #
   # Removed from [all] on 2026-05-12 (covered by lazy-install):
-  #   anthropic, exa, firecrawl, parallel-web, fal, edge-tts,
+  #   anthropic, exa, firecrawl, parallel-web, edge-tts,
   #   modal, daytona, vercel, messaging (telegram/discord/slack),
-  #   matrix, slack, honcho, voice (faster-whisper),
-  #   dingtalk, feishu, bedrock, tts-premium (elevenlabs)
-  #
-  # Why: the matrix extra in particular pulls `mautrix[encryption]`
-  # which depends on `python-olm`. python-olm has Linux-only wheels and
-  # no native build path on Windows or modern macOS. With matrix in
-  # [all], `uv sync --locked` on Windows tried to build it from sdist
-  # and failed on `make`. Lazy-install routes that build to first use,
-  # where the user is expected to have a toolchain available.
+  #   slack, honcho, voice (faster-whisper),
+  #   bedrock, tts-premium (elevenlabs)
   "hermes-agent[cron]",
   "hermes-agent[pty]",
   "hermes-agent[mcp]",
@@ -605,10 +553,6 @@ opt-in-extras = ["kittentts"]
 # single-authority for WHICH extra is supported WHERE.
 
 [tool.hermes.extras-platforms]
-# mautrix[encryption] → python-olm: linux-only wheels, no win/darwin build.
-matrix = "sys_platform == 'linux'"
-# grpcio (via google-cloud-pubsub) has no win_arm64 wheel.
-google-chat = "platform_machine != 'ARM64' or sys_platform != 'win32'"
 # Match the engine dependency markers so PM refuses an unsupported install.
 wake-openwakeword = "(platform_machine != 'ARM64' or sys_platform != 'win32') and (platform_machine != 'x86_64' or sys_platform != 'darwin')"
 # faster-whisper's closure is prebuilt-only: ctranslate2 has no win_arm64 wheel and onnxruntime
@@ -623,8 +567,6 @@ neutts = "python_version < '3.14'"
 # Windows ARM64 wheel.
 kittentts = "(platform_machine != 'ARM64' or sys_platform != 'win32') and (platform_machine != 'x86_64' or sys_platform != 'darwin') and sys_platform != 'android'"
 piper = "(platform_machine != 'ARM64' or sys_platform != 'win32') and (platform_machine != 'x86_64' or sys_platform != 'darwin') and sys_platform != 'android'"
-# no playwright on android
-google-meet = "sys_platform != 'android'"
 
 [tool.uv]
 # uv otherwise enables the dev group by default, including in payload builds.
@@ -639,15 +581,6 @@ override-dependencies = [
   # so, we force-override this to pynacl 1.6. here.
   # remove this when we update discord.py
   "pynacl>=1.6,<1.7",
-  # alibabacloud-tea-openapi caps cryptography<49, and its latest release
-  # still does. Without this override, that cap holds cryptography at 48.0.1
-  # and its three advisories (see the cryptography pin in
-  # [project].dependencies). The package uses cryptography only to sign
-  # requests with RSA and AES, and that API did not break in 49 or 50.
-  # Keep this exact version equal to the direct dependency. uv overrides
-  # replace that requirement too, not only the vendor's upper bound.
-  # Remove this line when alibabacloud-tea-openapi lifts the cap.
-  "cryptography==50.0.2",
   # browser-harness 0.1.13 (core dependency, latest release) pins
   # pillow==12.3.0 exactly, which holds Pillow below 13.0.0, the first
   # release fixing GHSA-8g5g-8vmr-9782, GHSA-w889-685w-c8fh and the rest of
