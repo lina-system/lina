@@ -42,20 +42,29 @@ def _rows(capsys):
     return [line.split(None, 2) for line in capsys.readouterr().out.splitlines()]
 
 
-def test_lists_the_four_services_with_systemd_names(account, monkeypatch, capsys):
-    monkeypatch.setattr(gateway_cli, "_service_backend", lambda **kw: "systemd")
-    assert _rows(capsys) == [["gateway", "lina-gateway", "not installed"],
-                             ["store", "lina-store", "not installed"],
-                             ["ocx", "lina-ocx", "not installed yet (#32)"],
-                             ["worker", "lina-worker", "not installed yet (#35)"]]
+@pytest.mark.parametrize("kind", ["systemd", "launchd"])
+def test_every_registered_service_is_one_row_with_its_label_and_state(account, monkeypatch, capsys, kind):
+    monkeypatch.setattr(gateway_cli, "_service_backend", lambda **kw: kind)
+    rows = _rows(capsys)
+    assert [row[0] for row in rows] == [service.name for service in lina_services.SERVICES]
+    for (name, shown_label, shown_state), service in zip(rows, lina_services.SERVICES):
+        assert shown_label == lina_services.label(service, kind)
+        assert shown_state == lina_services.state(service)
 
 
-def test_lists_the_four_services_with_launchd_labels(account, monkeypatch, capsys):
-    monkeypatch.setattr(gateway_cli, "_service_backend", lambda **kw: "launchd")
-    assert _rows(capsys) == [["gateway", "ai.lina.gateway", "not installed"],
-                             ["store", "lina-store", "not installed"],
-                             ["ocx", "ai.lina.ocx", "not installed yet (#32)"],
-                             ["worker", "ai.lina.worker", "not installed yet (#35)"]]
+@pytest.mark.parametrize(("kind", "prefix"), [("systemd", "lina-"), ("launchd", "ai.lina.")])
+def test_service_labels_are_lina_names_never_hermes_agent_ones(account, kind, prefix):
+    for service in lina_services.SERVICES:
+        if service.name == "store":  # the Docker compose project, the same name on every backend
+            continue
+        assert lina_services.label(service, kind).startswith(prefix)
+        assert "hermes" not in lina_services.label(service, kind).lower()
+
+
+def test_a_reserved_service_shows_the_issue_that_adds_it(account):
+    for service in lina_services.SERVICES:
+        if service.issue:
+            assert service.issue in lina_services.state(service)
 
 
 def test_store_state_comes_from_store_status(account, monkeypatch):
@@ -76,11 +85,12 @@ def test_store_state_comes_from_store_status(account, monkeypatch):
     assert lina_services.state(lina_services.BY_NAME["store"]) == "stopped"
 
 
-@pytest.mark.parametrize(("verb", "name", "issue"), [("start", "ocx", "#32"), ("stop", "ocx", "#32"),
-                                                     ("start", "worker", "#35"), ("restart", "worker", "#35")])
-def test_reserved_services_exit_1_naming_their_issue(account, capsys, verb, name, issue):
-    assert _run(verb, name) == 1
-    assert f"lina{issue}" in capsys.readouterr().out
+@pytest.mark.parametrize("verb", ["start", "stop", "restart"])
+def test_a_reserved_service_exits_1_naming_its_issue(account, monkeypatch, capsys, verb):
+    reserved = lina_services.Service("later", "ai.lina.later", "lina-later", "LINA_Later", issue="#9999")
+    monkeypatch.setitem(lina_services.BY_NAME, reserved.name, reserved)
+    assert lina_services.act(verb, reserved.name) == 1
+    assert "lina#9999" in capsys.readouterr().out
     assert account["verbs"] == []
 
 
