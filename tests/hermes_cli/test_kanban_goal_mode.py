@@ -222,6 +222,7 @@ class TestCLIJudgeGate:
             goal_mode=goal_mode,
             title="Finish report",
             body="acceptance: criteria",
+            goal_gates=None,
         )
         fake_conn = MagicMock()
         complete_calls: list = []

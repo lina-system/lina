@@ -893,9 +893,15 @@ def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str):
 def _goal_gate_error(conn, tid: str, evidence: str, handoff: str, blocked_hint: str,
                      continue_hint: str) -> Optional[str]:
     """Goal-mode judge gate shared by ``complete`` / ``request-review`` (mirrors tools/kanban_tools.py);
-    applied to every terminal handoff so request-review can't bypass it. Returns the error line, or
-    None to allow."""
-    verdict, rejection = _goal_mode_handoff_rejection(kb.get_task(conn, tid), evidence)
+    applied to every terminal handoff so request-review can't bypass it. The card's own gates run
+    first and do not depend on the judge. Returns the error line, or None to allow."""
+    from hermes_cli.kanban_goal_gates import handoff_gate_failure
+
+    task = kb.get_task(conn, tid)
+    failure = handoff_gate_failure(conn, task)
+    if failure is not None:
+        return f"kanban: goal {handoff} of {tid} refused: {failure.describe()}"
+    verdict, rejection = _goal_mode_handoff_rejection(task, evidence)
     if verdict == "blocked":
         return (f"kanban: goal {handoff} of {tid} rejected: judge ruled "
                 f"the goal unachievable — {rejection}. {blocked_hint}")

@@ -182,6 +182,127 @@ def test_handoff_refused_while_gate_fails_without_judge(kanban_home, workspace, 
     assert _task(tid)[0].status == ("done" if tool == "kanban_complete" else "review")
 
 
+@pytest.mark.parametrize("command,landed", [("complete", "done"), ("request-review", "review")])
+def test_cli_handoff_refused_while_gate_fails_without_judge(kanban_home, workspace, monkeypatch,
+                                                            capsys, command, landed):
+    import argparse
+
+    from hermes_cli import kanban as kc
+
+    monkeypatch.setattr(kc, "_goal_mode_handoff_rejection", lambda task, ev: ("done", None))
+    tid, run_id = _card(workspace, ["echo suite red; test -f ok.txt"], claim=True)
+    monkeypatch.setenv("HERMES_KANBAN_TASK", tid)
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(run_id))
+    parser = argparse.ArgumentParser(prog="hermes", add_help=False)
+    kc.build_parser(parser.add_subparsers(dest="command"))
+
+    def run():
+        args = parser.parse_args(["kanban", command, tid, "--summary", "done, trust me"])
+        return kc.kanban_command(args)
+
+    assert run() != 0
+    err = capsys.readouterr().err
+    assert "echo suite red; test -f ok.txt" in err and "suite red" in err
+    assert _task(tid)[0].status == "running"
+
+    (workspace / "ok.txt").write_text("ok")
+    assert run() == 0
+    assert _task(tid)[0].status == landed
+
+
+def _gate_once(tid):
+    from hermes_cli.kanban_goal_gates import run_card_gates
+
+    with kbc.connect_closing() as conn:
+        failure = run_card_gates(conn, kb.get_task(conn, tid))
+    return failure, [e.payload for e in _task(tid)[1] if e.kind == "goal_gate"]
+
+
+def test_card_gate_cannot_read_host_provider_credentials(kanban_home, workspace, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "SENTINEL_NOT_A_KEY_108")
+    tid, _ = _card(workspace, ['env | grep -c . ; env | grep -F "sk-gate"; echo "key=${OPENAI_API_KEY:-unset}"; exit 1'])
+
+    failure, events = _gate_once(tid)
+
+    assert failure is not None and "key=unset" in failure.output
+    assert "SENTINEL_NOT_A_KEY_108" not in failure.output
+    assert "SENTINEL_NOT_A_KEY_108" not in json.dumps(events)
+
+
+def test_card_gate_runs_in_local_backend_in_card_workspace(kanban_home, workspace):
+    (workspace / "marker").write_text("x")
+    tid, _ = _card(workspace, ["pwd; test -f marker"])
+
+    failure, events = _gate_once(tid)
+
+    assert failure is None
+    assert events[-1]["passed"] is True and str(workspace) in events[-1]["output_tail"]
+
+
+def test_card_gate_fails_closed_when_backend_unreachable(kanban_home, workspace, monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "no-such-backend-108")
+    (workspace / "marker").write_text("x")
+    tid, _ = _card(workspace, ["test -f marker"])
+
+    failure, events = _gate_once(tid)
+
+    assert failure is not None and failure.exit_code == -1
+    assert "no-such-backend-108" in failure.output and events[-1]["passed"] is False
+
+
+def test_gate_results_of_a_reclaimed_run_are_discarded(kanban_home, workspace, monkeypatch):
+    from hermes_cli import kanban_goal_gates as kgg
+
+    judge_calls = _judge(monkeypatch, "done")
+    tid, run_a = _card(workspace, ["test -f ok.txt"], claim=True)
+    real_gate, successor = kgg.run_card_gate, {}
+
+    def reclaimed_mid_gate(gate, *, cwd, task_id):
+        # While run A's gate is still running, the card is reclaimed and run B takes it and
+        # records its own (passing) gate result.
+        monkeypatch.setattr(kgg, "run_card_gate", real_gate)
+        with kbc.connect_closing() as conn:
+            assert kb.reclaim_task(conn, tid, signal_fn=lambda *a, **k: None)
+            kb.claim_task(conn, tid)
+            successor["run"] = kb._current_run_id(conn, tid)
+            (workspace / "ok.txt").write_text("ok")
+            assert kgg.run_card_gates(conn, kb.get_task(conn, tid), count_attempts=True) is None
+        successor["state"] = _task(tid)[0].goal_gates
+        return False, 1, "run A saw red"
+
+    monkeypatch.setattr(kgg, "run_card_gate", reclaimed_mid_gate)
+    worker, blocks = _Worker(), []
+
+    res = goals.run_kanban_goal_loop(
+        task_id=tid, goal_text="ship it", run_turn=worker.turn, task_status_fn=lambda: "running",
+        block_fn=blocks.append, first_response="first",
+        gate_check=kgg.loop_gate_check(tid, "ship it", run_id=run_a),
+        wait_fn=lambda s: pytest.fail("no wait"))
+
+    assert res["outcome"] == "stopped" and blocks == [] and worker.prompts == [] and judge_calls == []
+    task, events = _task(tid)
+    assert successor["run"] != run_a and task.goal_gates == successor["state"]
+    stored = json.loads(task.goal_gates)[0]
+    assert (stored["run_id"], stored["last_exit_code"], stored["attempts"]) == (successor["run"], 0, 0)
+    gate_events = [e for e in events if e.kind == "goal_gate"]
+    assert [e.run_id for e in gate_events] == [successor["run"]]
+    assert "run A saw red" not in json.dumps([e.payload for e in gate_events])
+
+
+def test_gate_state_and_events_name_the_run(kanban_home, workspace, capsys):
+    from hermes_cli import kanban as kc
+
+    tid, run_id = _card(workspace, [{"command": "echo red; exit 1", "max_retries": 5}], claim=True)
+
+    failure, _ = _gate_once(tid)
+
+    task, events = _task(tid)
+    assert failure is not None and json.loads(task.goal_gates)[0]["run_id"] == run_id
+    assert [e.run_id for e in events if e.kind == "goal_gate"] == [run_id]
+    kc._print_goal_gates(task)
+    assert f"run {run_id}" in capsys.readouterr().out
+
+
 def test_legacy_board_without_goal_gates_column_opens(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     home.mkdir()
