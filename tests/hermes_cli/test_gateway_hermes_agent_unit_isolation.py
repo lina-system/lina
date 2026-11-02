@@ -4,9 +4,16 @@ LINA is a fork of Hermes Agent and an account can run both. Hermes Agent's gatew
 ``hermes-gateway.service`` (launchd ``ai.hermes.gateway``, Windows ``Hermes_Gateway``) pinning
 ``HERMES_HOME=~/.hermes``. LINA's own service names differ, and a unit pinning a home that is not a
 LINA home is never LINA's, even for the account's default LINA home.
+
+The same holds for the serve/dashboard units, the one-off launchd runtime jobs and the pre-rename
+leftovers (``hermes.service``, ``ai.hermes.gateway*``): restart, ``migrate-legacy`` and install leave
+Hermes Agent's alone (#94).
 """
+import fnmatch
 import os
+import plistlib
 from pathlib import Path
+from types import SimpleNamespace
 
 import pytest
 
@@ -125,3 +132,180 @@ def test_owner_guard_refuses_a_lina_named_unit_pinning_the_hermes_home(account, 
     assert exc.value.code == 1
     assert account["calls"] == []
     assert Path(os.environ["HERMES_HOME"]) == account["lina"]
+
+
+def _legacy_unit(home: Path) -> str:
+    """A pre-rename ``hermes.service`` gateway unit pinning *home*."""
+    return f'[Service]\nEnvironment="HERMES_HOME={home}"\nExecStart=/usr/bin/hermes gateway run --replace\n'
+
+
+def _named_in_calls(calls, name: str) -> bool:
+    return any(name in arg for call in calls for arg in call)
+
+
+@pytest.mark.platforms("linux")
+@pytest.mark.parametrize("system", [False, True])
+def test_install_keeps_the_hermes_agent_legacy_unit(account, system):
+    """Non-interactive install removes legacy units; Hermes Agent's ``hermes.service`` is not LINA's."""
+    legacy = account["user_units"] / "hermes.service"  # the legacy scan reads both scopes on every install
+    legacy.write_text(_legacy_unit(account["hermes"]), encoding="utf-8")
+    gateway_cli.systemd_install(system=system, non_interactive=True)
+    assert legacy.read_text(encoding="utf-8") == _legacy_unit(account["hermes"])
+    assert not _named_in_calls(account["calls"], "hermes.service")
+
+
+@pytest.mark.platforms("linux")
+def test_migrate_legacy_removes_only_lina_legacy_units(account, monkeypatch):
+    monkeypatch.setattr(os, "geteuid", lambda: 0)
+    monkeypatch.setattr(gateway_cli, "is_macos", lambda: False)
+    hermes_legacy = account["user_units"] / "hermes.service"
+    hermes_legacy.write_text(_legacy_unit(account["hermes"]), encoding="utf-8")
+    lina_legacy = account["system_units"] / "hermes.service"
+    lina_legacy.write_text(_legacy_unit(account["lina"]), encoding="utf-8")
+
+    gateway_cli.gateway_command(SimpleNamespace(gateway_command="migrate-legacy", dry_run=False, yes=True))
+
+    assert hermes_legacy.read_text(encoding="utf-8") == _legacy_unit(account["hermes"])
+    assert not lina_legacy.exists()
+    assert ["stop", "hermes.service"] in account["calls"]  # the LINA one, system scope
+    assert account["calls"].count(["stop", "hermes.service"]) == 1
+
+
+@pytest.mark.platforms("linux")
+def test_migrate_legacy_keeps_an_unpinned_legacy_unit(account, monkeypatch):
+    """A unit pinning no home cannot be proven LINA's, so it is left alone."""
+    monkeypatch.setattr(gateway_cli, "is_macos", lambda: False)
+    legacy = account["user_units"] / "hermes.service"
+    legacy.write_text("[Service]\nExecStart=/usr/bin/hermes gateway run\n", encoding="utf-8")
+    gateway_cli.gateway_command(SimpleNamespace(gateway_command="migrate-legacy", dry_run=False, yes=True))
+    assert legacy.exists()
+    assert account["calls"] == []
+
+
+class _FakeSystemd:
+    """systemctl over a fixed set of active units; every restart moves the unit to a new MainPID."""
+
+    def __init__(self, units):
+        self.pids = {unit: 100 + i for i, unit in enumerate(units)}
+        self.restarted: list[str] = []
+
+    def __call__(self, argv, **kwargs):
+        verb = next(a for a in argv[1:] if not a.startswith("-"))
+        unit = argv[argv.index(verb) + 1]
+        out = {"list-units": self._list, "is-active": lambda _u: "active", "show": lambda u: str(self.pids[u]),
+               "restart": self._restart}[verb](unit)
+        return SimpleNamespace(returncode=0, stdout=out, stderr="")
+
+    def _list(self, pattern):
+        return "\n".join(f"{u} loaded active running x" for u in self.pids if fnmatch.fnmatch(u, pattern))
+
+    def _restart(self, unit):
+        self.restarted.append(unit)
+        self.pids[unit] += 1000
+        return ""
+
+
+@pytest.mark.platforms("linux")
+def test_serve_unit_restart_leaves_hermes_agent_units_alone(monkeypatch):
+    from hermes_cli import update_restart_recovery as recovery
+
+    systemd = _FakeSystemd(["hermes-serve.service", "hermes-dashboard-work.service",
+                            "lina-serve.service", "lina-dashboard-work.service"])
+    monkeypatch.setattr(recovery, "_systemctl_scopes", lambda: [("user", ["systemctl", "--user"])])
+
+    result = recovery.restart_serve_units(run=systemd, sleep=lambda _s: None)
+
+    assert sorted(systemd.restarted) == ["lina-dashboard-work.service", "lina-serve.service"]
+    assert result == {"verified": ["user/lina-dashboard-work", "user/lina-serve"], "failed": []}
+
+
+@pytest.mark.platforms("linux")
+def test_fleet_restart_name_gate_excludes_hermes_agent_serve_units():
+    from hermes_cli.update_cmd_fleet import _is_hermes_gateway_unit
+
+    assert not any(map(_is_hermes_gateway_unit, ("hermes-serve.service", "hermes-dashboard.service",
+                                                 "hermes-serve-work.service", "hermes-gateway.service")))
+    assert all(map(_is_hermes_gateway_unit, ("lina-serve.service", "lina-dashboard-work.service",
+                                             "lina-gateway.service")))
+
+
+@pytest.mark.platforms("linux")
+def test_dashboard_stop_does_not_restart_the_hermes_agent_dashboard_unit(monkeypatch):
+    from hermes_cli import main_dashboard
+
+    probes = []
+
+    def _probe(cmd, *, timeout):
+        probes.append(cmd)
+        listed = "hermes-dashboard.service enabled enabled" if "list-unit-files" in cmd else ""
+        state = "active" if "is-active" in cmd else "enabled" if "is-enabled" in cmd else listed
+        return SimpleNamespace(returncode=0, stdout=state, stderr="")
+
+    monkeypatch.setattr(main_dashboard, "_run_probe", _probe)
+    assert main_dashboard._restart_managed_dashboard_service("update") is False
+    assert not any("restart" in cmd for cmd in probes)
+
+
+def _agent_plist(label: str, home: Path) -> bytes:
+    return plistlib.dumps({"Label": label, "ProgramArguments": ["/bin/true"], "RunAtLoad": True,
+                           "EnvironmentVariables": {"HERMES_HOME": str(home)}})
+
+
+@pytest.mark.platforms("macos")
+def test_migrate_legacy_moves_only_lina_launch_agents(account, tmp_path, monkeypatch):
+    """LINA's pre-#93 ``ai.hermes.gateway*`` agents move to ``ai.lina.gateway*``; Hermes Agent's stay."""
+    import subprocess
+
+    agents = tmp_path / "LaunchAgents"
+    agents.mkdir()
+    hermes_agent = agents / "ai.hermes.gateway.plist"
+    hermes_agent.write_bytes(_agent_plist("ai.hermes.gateway", account["hermes"]))
+    lina_old = agents / "ai.hermes.gateway-work.plist"
+    lina_old.write_bytes(_agent_plist("ai.hermes.gateway-work", account["lina"] / "profiles" / "work"))
+    launchctl = []
+
+    def _run(argv, **kwargs):
+        launchctl.append(list(argv))
+        loaded = argv[:2] == ["launchctl", "print"] and argv[2].endswith("/ai.hermes.gateway-work")
+        return SimpleNamespace(returncode=0 if loaded or argv[1] != "print" else 113, stdout="", stderr="")
+
+    monkeypatch.setattr(subprocess, "run", _run)
+    monkeypatch.setattr(gateway_cli, "get_launchd_plist_path", lambda: agents / "ai.lina.gateway.plist")
+
+    gateway_cli.gateway_command(SimpleNamespace(gateway_command="migrate-legacy", dry_run=False, yes=True))
+
+    assert hermes_agent.read_bytes() == _agent_plist("ai.hermes.gateway", account["hermes"])
+    assert not any(arg.endswith("/ai.hermes.gateway") for call in launchctl for arg in call)
+    assert not lina_old.exists()
+    moved = plistlib.loads((agents / "ai.lina.gateway-work.plist").read_bytes())
+    assert moved["Label"] == "ai.lina.gateway-work"
+    assert moved["EnvironmentVariables"]["HERMES_HOME"] == str(account["lina"] / "profiles" / "work")
+    assert any(call[1] == "bootout" and call[2].endswith("/ai.hermes.gateway-work") for call in launchctl)
+    assert any(call[1] == "bootstrap" and call[-1].endswith("ai.lina.gateway-work.plist") for call in launchctl)
+
+
+def test_windows_service_owner_ignores_hermes_agent_service_names():
+    from hermes_cli.gateway_windows import hermes_owns_windows_service
+
+    assert not hermes_owns_windows_service("Hermes_Gateway", "", ())
+    assert not hermes_owns_windows_service("HermesGateway", "C:/Users/u/AppData/Local/hermes/x.exe", ())
+    assert hermes_owns_windows_service("LINA_Gateway", "", ())
+
+
+@pytest.mark.platforms("posix")
+def test_runtime_job_sweep_leaves_hermes_agent_jobs(monkeypatch):
+    """The finished-job sweep removes only LINA's one-off runtime jobs, never Hermes Agent's."""
+    from hermes_cli import gateway_launchd_runtime as runtime
+
+    listing = ("PID\tStatus\tLabel\n-\t0\tcom.nousresearch.hermes.runtime.aaaaaaaaaaaa\n"
+               f"-\t0\t{runtime.LABEL_PREFIX}bbbbbbbbbbbb\n")
+    calls = []
+
+    def _launchctl(*args, timeout):
+        calls.append(args)
+        return SimpleNamespace(returncode=0, stdout=listing if args[0] == "list" else "", stderr="")
+
+    monkeypatch.setattr(runtime, "_launchctl", _launchctl)
+    runtime._remove_finished_jobs(None)
+    assert [args for args in calls if args[0] == "remove"] == [("remove", f"{runtime.LABEL_PREFIX}bbbbbbbbbbbb")]
+    assert not runtime.LABEL_PREFIX.startswith(("com.nousresearch.hermes.", "ai.lina.", "ai.hermes."))

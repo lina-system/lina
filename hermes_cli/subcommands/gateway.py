@@ -192,11 +192,11 @@ def build_gateway_parser(
     gateway_subparsers.add_parser("setup", help="Configure messaging platforms")
 
     gateway_migrate_legacy = gateway_subparsers.add_parser(
-        "migrate-legacy", help="Remove legacy hermes.service units from pre-rename installs",
-        description="Stop, disable, and remove legacy Hermes gateway unit files "
-            "(e.g. hermes.service) left over from older installs. Profile "
-            "units (hermes-gateway-<profile>.service) and unrelated "
-            "third-party services are never touched.")
+        "migrate-legacy", help="Clean up LINA's pre-rename gateway units (hermes.service, ai.hermes.gateway*)",
+        description="Stop, disable, and remove LINA's legacy hermes.service units, and move LINA's "
+            "ai.hermes.gateway* LaunchAgents to ai.lina.gateway*. Only units pinning a LINA home "
+            "are LINA's: Hermes Agent's units (~/.hermes), profile units "
+            "(lina-gateway-<profile>.service) and unrelated services are never touched.")
     _flag(gateway_migrate_legacy, "--dry-run", dest="dry_run",
         help="List what would be removed without doing it")
     _flag(gateway_migrate_legacy, "-y", "--yes", dest="yes", help="Skip the confirmation prompt")
