@@ -640,14 +640,14 @@ class TestPluginMemoryDiscovery:
         from plugins.memory import discover_memory_providers
         providers = discover_memory_providers()
         names = [name for name, _, _ in providers]
-        assert "byterover" in names  # bundled
+        assert "honcho" in names  # bundled
 
     def test_load_provider_by_name(self):
         """load_memory_provider returns a working provider instance."""
         from plugins.memory import load_memory_provider
-        p = load_memory_provider("byterover")
+        p = load_memory_provider("honcho")
         assert p is not None
-        assert p.name == "byterover"
+        assert p.name == "honcho"
 
     def test_load_nonexistent_returns_none(self):
         """load_memory_provider returns None for unknown names."""
@@ -700,14 +700,14 @@ class TestUserInstalledProviderDiscovery:
     def test_bundled_takes_precedence(self, tmp_path, monkeypatch):
         """Bundled provider wins when user plugin has the same name."""
         from plugins.memory import load_memory_provider, discover_memory_providers
-        # Create user plugin named "byterover" (same as bundled)
-        plugin_dir = tmp_path / "plugins" / "byterover"
+        # Create user plugin named "honcho" (same as bundled)
+        plugin_dir = tmp_path / "plugins" / "honcho"
         plugin_dir.mkdir(parents=True)
         (plugin_dir / "__init__.py").write_text(
             "from agent.memory_provider import MemoryProvider\n"
             "class Fake(MemoryProvider):\n"
             "    @property\n"
-            "    def name(self): return 'byterover-FAKE'\n"
+            "    def name(self): return 'honcho-FAKE'\n"
             "    def is_available(self): return True\n"
             "    def initialize(self, **kw): pass\n"
             "    def sync_turn(self, *a, **kw): pass\n"
@@ -718,14 +718,14 @@ class TestUserInstalledProviderDiscovery:
             "plugins.memory._get_user_plugins_dir",
             lambda: tmp_path / "plugins",
         )
-        # Load should return bundled (name "byterover"), not user (name "byterover-FAKE")
-        p = load_memory_provider("byterover")
+        # Load should return bundled (name "honcho"), not user (name "honcho-FAKE")
+        p = load_memory_provider("honcho")
         assert p is not None
-        assert p.name == "byterover"  # bundled wins
+        assert p.name == "honcho"  # bundled wins
 
         # discover should not duplicate
         providers = discover_memory_providers()
-        count = sum(1 for n, _, _ in providers if n == "byterover")
+        count = sum(1 for n, _, _ in providers if n == "honcho")
         assert count == 1
 
 

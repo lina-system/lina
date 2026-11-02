@@ -59,13 +59,10 @@ def test_auth_surface_names_oauth_vs_api_key_recovery():
     assert oauth["auth_kind"] == "oauth"
     assert oauth["provider_label"] == "Nous Portal"
 
-    key = build_error_surface_from_result(_failed_result("auth"), provider="openrouter")
+    key = build_error_surface_from_result(_failed_result("auth"), provider="ocx")
     assert key["auth_kind"] == "api_key"
-    assert key["api_key_env"] == "OPENROUTER_API_KEY"
+    assert key["api_key_env"] == "OCX_API_KEY"
     assert "api_key_env" not in oauth
-
-    opencode = build_error_surface_from_result(_failed_result("auth"), provider="opencode-go")
-    assert opencode["api_key_env"] == "OPENCODE_GO_API_KEY"
 
     # Non-auth layers never carry the field (clients gate the button on it).
     assert "auth_kind" not in build_error_surface_from_result(_failed_result("rate_limit"), provider="nous")

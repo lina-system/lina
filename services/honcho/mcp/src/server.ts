@@ -1,0 +1,29 @@
+import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import type { ToolContext } from "./types.js";
+import { register as registerWorkspaceTools } from "./tools/workspace.js";
+import { register as registerPeerTools } from "./tools/peers.js";
+import { register as registerSessionTools } from "./tools/sessions.js";
+import { register as registerScopeTools } from "./tools/scopes.js";
+import { register as registerConclusionTools } from "./tools/conclusions.js";
+import { register as registerSystemTools } from "./tools/system.js";
+import instructions from "../instructions.md";
+import pkg from "../package.json";
+
+export function createServer(ctx: ToolContext): McpServer {
+  const server = new McpServer(
+    {
+      name: "Honcho MCP Server",
+      version: pkg.version,
+    },
+    { instructions },
+  );
+
+  registerWorkspaceTools(server, ctx);
+  registerPeerTools(server, ctx);
+  registerSessionTools(server, ctx);
+  registerScopeTools(server, ctx);
+  registerConclusionTools(server, ctx);
+  registerSystemTools(server, ctx);
+
+  return server;
+}

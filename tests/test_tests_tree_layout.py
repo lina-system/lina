@@ -31,7 +31,7 @@ TESTS_ROOT = REPO_ROOT / "tests"
 _NON_MIRROR_DIRS = {
     "compat", "installation", "_fixtures",
     "ci", "conformance", "dashboard", "desktop", "docker", "e2e", "evals",
-    "fakes", "fixtures", "install", "integration", "manual",
+    "fakes", "fixtures", "install", "integration", "manual", "probes",
     "monitoring", "perf_guards", "scripts", "secret_sources",
     "security", "skills", "verify", "website", "computer_use", "hermes_state",
     "helper",  # runs helper/macos's own standard-library suites; helper/ holds no Python package

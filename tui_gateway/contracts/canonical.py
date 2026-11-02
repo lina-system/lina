@@ -374,7 +374,7 @@ canonical_method("clarify.lock", params=ClarifyLockParams, result=ClarifyLockRes
                      "locked); only a viewer attached to that session with session:respond may lock.")
 
 
-# ── cron / kanban / a2a producers ─────────────────────────────────────────────────────────────
+# ── cron / kanban producers ─────────────────────────────────────────────────────────────────
 
 
 class CronRunParams(Params):
@@ -438,24 +438,6 @@ class KanbanRunResult(Result):
 
 canonical_method("kanban.run", params=KanbanRunParams, result=KanbanRunResult,
                  doc="Native-owner only: admit the dispatcher's current claim on a kanban task.")
-
-
-class A2aForwardParams(Params):
-    agent: str
-    tenant: str
-    peer: str
-    context_id: str
-    input_id: str
-    text: str
-
-
-class A2aForwardResult(AdmissionStatus):
-    session_id: str
-    result: JsonValue | None
-
-
-canonical_method("a2a.forward", params=A2aForwardParams, result=A2aForwardResult,
-                 doc="Forward one A2A input into the conversation its identity tuple names.")
 
 
 # ── managed workers ───────────────────────────────────────────────────────────────────────────

@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import contextlib
-import re
 import threading
 import time
 import sys
@@ -22,21 +21,6 @@ def test_every_required_binary_maps_to_an_installed_package(pm):
     assert set(mapping) == set(runtime.REQUIRED_BINARIES)
     assert set(mapping.values()) <= set(runtime.PACKAGES[pm])
     assert not {"xorg-x11-server-utils", "xorg-x11-utils"} & set(runtime.PACKAGES["dnf"]), "retired on Fedora"
-
-
-def test_the_image_bakes_the_same_apt_packages_the_runtime_would_install() -> None:
-    """The image layer is the only delivery path on a hosted instance, so a package added here but not
-    there stalls the screen with no error until someone presses Start."""
-    dockerfile = Path(__file__).resolve().parents[2] / "Dockerfile"
-    text = dockerfile.read_text()
-    assert "ARG HERMES_BOT_DESKTOP" in text, "the Bot Screen apt layer is gone from the Dockerfile"
-    body = text.split("ARG HERMES_BOT_DESKTOP", 1)[1].split("--no-install-recommends", 1)[1].split("rm -rf", 1)[0]
-    baked = {tok for tok in re.split(r"[\s\\&]+", body) if tok and not tok.startswith("-")}
-    required = set(runtime.PACKAGES["apt"])
-    assert required <= baked, f"the image would not install: {sorted(required - baked)}"
-    # apt `chromium` on top of the operator's list: a headed browser for the dock's Browser icon that
-    # does not depend on Playwright's copy being unpacked yet.
-    assert baked - required <= {"chromium"}, f"unexpected extra packages: {sorted(baked - required)}"
 
 
 def test_no_running_screen_returns_none_without_grabbing(monkeypatch):

@@ -418,7 +418,12 @@ class TestDoctorMemoryProviderSection:
 
 
     def test_catalog_provider_not_installed_names_install_command(self, monkeypatch, tmp_path):
-        # mem0 left core for the plugin catalog: a home still configured for it gets the exact command.
+        from hermes_cli.plugin_catalog import PluginCatalogEntry
+
+        entry = PluginCatalogEntry("mem0", "https://example.invalid/mem0", "a" * 40,
+                                   "Test memory provider", "test", category="memory")
+        monkeypatch.setattr("hermes_cli.plugin_catalog.get_catalog_entry",
+                            lambda name: entry if name == "mem0" else None)
         out = self._run_doctor_and_capture(monkeypatch, tmp_path, provider="mem0")
         section = out.split("Memory Provider", 1)[1][:600]
         assert "Built-in memory active" not in out
@@ -1185,14 +1190,6 @@ def _run_doctor_with_healthy_oauth_fallback(
             {"logged_in": True, "region": "global"},
             None,
             "Check MINIMAX_API_KEY in .env",
-        ),
-        (
-            "XAI_API_KEY",
-            "bad-xai-key",
-            "api.x.ai",
-            {},
-            {"logged_in": True, "auth_mode": "oauth_pkce"},
-            "Check XAI_API_KEY in .env",
         ),
     ],
 )

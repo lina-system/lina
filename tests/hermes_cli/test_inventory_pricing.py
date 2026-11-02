@@ -555,14 +555,24 @@ def test_custom_provider_pricing_rejects_lookalike_upstream_hosts(monkeypatch, b
 def test_custom_provider_alias_uses_proven_canonical_upstream(monkeypatch):
     """A Vercel-named row on the real AI Gateway uses its canonical pricing cache."""
     expected = {"vendor/model": {"prompt": "0.000001", "completion": "0.000002"}}
-    monkeypatch.setattr(models_pricing, "_cached_only_pricing", lambda provider: expected if provider == "ai-gateway" else {})
+    import providers
+    from providers.base import ProviderProfile
+
+    monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
+    monkeypatch.setattr(providers, "_ALIASES", dict(providers._ALIASES))
+    providers.register_provider(ProviderProfile(
+        name="pricing-upstream", aliases=("pricing-alias",),
+        hostnames=("pricing.invalid",),
+        hostname="pricing.invalid", base_url="https://pricing.invalid/v1",
+    ))
+    monkeypatch.setattr(models_pricing, "_cached_only_pricing", lambda provider: expected if provider == "pricing-upstream" else {})
 
     assert models_pricing.get_pricing_for_provider(
-        "custom:vercel", base_url="https://ai-gateway.vercel.sh/v1", cached_only=True
+        "custom:pricing-alias", base_url="https://pricing.invalid/v1", cached_only=True
     ) == expected
     assert (
-        models_pricing.pricing_cache_scope("custom:vercel", base_url="https://ai-gateway.vercel.sh/v1")
-        == models_pricing.pricing_cache_scope("ai-gateway")
+        models_pricing.pricing_cache_scope("custom:pricing-alias", base_url="https://pricing.invalid/v1")
+        == models_pricing.pricing_cache_scope("pricing-upstream")
     )
 
 

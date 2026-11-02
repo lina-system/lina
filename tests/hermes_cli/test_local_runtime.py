@@ -299,12 +299,13 @@ def test_llamacpp_aliases_route_to_custom_profile():
     mechanism — the aliases already resolve to the keyless custom profile;
     no parallel provider plugin exists."""
     from providers import get_provider_profile
+    from hermes_cli.providers import normalize_provider
 
     for alias in ("llamacpp", "llama.cpp", "llama-cpp"):
-        profile = get_provider_profile(alias)
+        profile = get_provider_profile(normalize_provider(alias))
         assert profile is not None, alias
-        assert profile.name == "custom"
-        assert profile.env_vars == ()  # credential is reachability
+        assert profile.name == "ocx"
+        assert profile.env_vars == ("OCX_API_KEY", "OCX_BASE_URL")
 
 
 def test_llamacpp_endpoint_resolution_prefers_managed(tmp_path, monkeypatch, stub_server):
