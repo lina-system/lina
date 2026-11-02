@@ -288,7 +288,7 @@ def meta(worker_root: Path, task_id: str, live: bool = False) -> dict:
         runner = runner_for(worker_root, task, job_of(task))
         if hasattr(runner, "live_view"):
             live_view.update({k: v for k, v in runner.live_view(Handle.load(task)).items() if v is not None})
-    return {"state": state or "new", "run": run, "rc": _read(task, f"rc.{run}"), "alive": is_alive,
+    return {"state": state or "new", "run": run, "requested": slots.requested(task.dir), "rc": _read(task, f"rc.{run}"), "alive": is_alive,
             "report": (task.work / "report.md").is_file(), "final": _read(task, "final.md")[:600], "live": live_view}
 
 

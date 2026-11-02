@@ -117,7 +117,27 @@ class Hub:
         return {"via": "ssh", "host": hub.get("host"), "lina": hub.get("lina") or "lina"}
 
     def start_on(self, job: dict, dev: settings.Device) -> None:
+        """Record the placement durably (host, run 1, ``placing``), then publish it: a hub that dies in between
+        resumes this placement (``resume_placement``) instead of bidding the task out a second time."""
+        job.update(self.store.update(job["id"], host=dev.name, runs=1, state="placing", award=job.get("award")) or {})
+        self.store.receipt(job["id"], "placed", run=1, host=dev.name, award=job.get("award"))
+        self._publish(job, dev)
+
+    def resume_placement(self, task_id: str) -> str | None:
+        """Finish a placement a hub recorded but may not have published (it stopped in between): the same device
+        and run, the request published once. The host, or None when *task_id* is not being placed."""
+        job = self.need(task_id)
+        if job.get("state") != "placing" or not job.get("host"):
+            return None
+        dev = self.device(job["host"])
+        self._publish(job, dev, resume=True)
+        return dev.name
+
+    def _publish(self, job: dict, dev: settings.Device, resume: bool = False) -> None:
         transport, tid = for_device(dev, self.worker_root), job["id"]
+        if resume and transport.call(["meta", tid], timeout=90).json().get("requested"):
+            self._started(job, dev)  # the request reached the device before the hub stopped
+            return
         device_job = {key: job.get(key) for key in ("id", "mode", "runner", "runner_spec", "model", "repo", "branch",
                                                      "next_notes_rule")}
         device_job["notify"] = self._notify_spec(dev)
@@ -128,8 +148,11 @@ class Hub:
         if job.get("inputs"):
             put_tree(transport, tid, "input.upload", [Path(p) for p in job["inputs"]])
         put(transport, tid, "request.1", json.dumps({"run": 1, "at": time.time()}))
-        job.update(self.store.update(tid, host=dev.name, state="running", started=time.time()) or {})
-        self.store.receipt(tid, "run_started", run=1, host=dev.name, award=job.get("award"))
+        self._started(job, dev)
+
+    def _started(self, job: dict, dev: settings.Device) -> None:
+        job.update(self.store.update(job["id"], state="running", started=time.time()) or {})
+        self.store.receipt(job["id"], "run_started", run=1, host=dev.name, award=job.get("award"))
 
     def place(self, job: dict) -> str | None:
         """Start *job* on its fixed device or on the bid winner; None when it stays queued.
@@ -217,9 +240,12 @@ class Hub:
         try:
             host = self.place(job)
         except (TransportError, HubError, RunnerError, OSError) as exc:
-            job.update(self.store.update(job["id"], state="queued") or {})
-            self.store.receipt(job["id"], "start_failed_requeued", error=str(exc)[:300])
             host = None
+            if (self.store.load(job["id"]) or {}).get("state") == "placing":  # the tick resumes it on that device
+                self.store.receipt(job["id"], "publish_failed_resumes", error=str(exc)[:300])
+            else:
+                job.update(self.store.update(job["id"], state="queued") or {})
+                self.store.receipt(job["id"], "start_failed_requeued", error=str(exc)[:300])
         self.out(f"{job['id']} handed out · {job['bot']} · topic {job['topic']} · mode {job['mode']} · runner "
                  f"{job['runner']} · model {models.label(job['model'])} · "
                  f"{host or 'queued (starts when a device is free)'}"
@@ -413,6 +439,8 @@ class Hub:
         job = self.need(task_id)
         if not job.get("host"):
             raise HubError(f"{task_id} has not started yet (queued): cancel it and submit a new brief instead")
+        if job.get("state") == "placing":
+            raise HubError(f"{task_id} is still being handed to {job['host']}: send it again in a moment")
         transport, remote = self.transport(job), self.meta(job)
         if transport.call(["human", task_id], timeout=90).json().get("open"):
             reply = transport.call(["answer", task_id], message.encode("utf-8"), timeout=180).json()
@@ -491,7 +519,12 @@ class Hub:
             self.notify(task_id, "cancelled", "0")
             self.out(f"{task_id} cancelled while queued.")
             return 0
-        reply = self.transport(job).call(["cancel", task_id], (why or "cancelled").encode("utf-8"), timeout=120).json()
+        answer = self.transport(job).call(["cancel", task_id], (why or "cancelled").encode("utf-8"), timeout=120)
+        reply = answer.json()
+        if answer.code != 0 or reply.get("action") != "cancel":
+            raise HubError(f"{task_id}: the cancel did not reach {job['host']} (rc {answer.code}: "
+                           f"{(answer.err.strip() or reply.get('reason') or 'no acknowledgement')[-300:]}); the task "
+                           "is not cancelled, try again")
         self.out(f"{task_id} cancelled (the runner was stopped). The task folder stays. One notice follows.")
         if not reply.get("alive"):
             self.notify(task_id, "cancelled", str(reply.get("run") or 1))
@@ -612,6 +645,8 @@ class Hub:
                 if job.get("state") == "queued":
                     if not self._try_place(job):
                         break  # first in, first out: nothing free for the oldest means nothing for newer ones
+                elif job.get("state") == "placing":
+                    self._try_resume(job)
                 elif job.get("state") == "running" and job.get("host") and time.time() - job["created"] < 7 * 86400:
                     self._watch(job)
 
@@ -621,6 +656,12 @@ class Hub:
         except (TransportError, HubError, RunnerError, OSError) as exc:
             self.store.log(f"{job['id']} start failed on tick: {exc}")
             return False
+
+    def _try_resume(self, job: dict) -> None:
+        try:
+            self.resume_placement(job["id"])
+        except (TransportError, HubError, OSError) as exc:
+            self.store.log(f"{job['id']} placement not resumed on tick: {exc}")
 
     def _watch(self, job: dict) -> None:
         now, remote = time.time(), self.meta(job)
@@ -670,3 +711,4 @@ def notify(worker_root: Path, task_id: str, kind: str, run: str) -> str:
 
 def tick(worker_root: Path) -> None:
     Hub(worker_root).tick()
+
