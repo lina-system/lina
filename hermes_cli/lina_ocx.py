@@ -87,14 +87,15 @@ def home_dir(root: Path) -> Path:
     return vendor_dir(root) / "home"
 
 
-def current_version(root: Path) -> str | None:
-    link = vendor_dir(root) / "current"
+def current_version(root: Path, vendor: Path | None = None) -> str | None:
+    link = (vendor or vendor_dir(root)) / "current"
     return os.readlink(link) if link.is_symlink() else None
 
 
-def set_current(root: Path, version: str) -> None:
-    """Point ``vendor/ocx/current`` at *version* in one rename, so a reader never sees it missing."""
-    link = vendor_dir(root) / "current"
+def set_current(root: Path, version: str, vendor: Path | None = None) -> None:
+    """Point ``<vendor>/current`` (default ``vendor/ocx``) at *version* in one rename, so a reader never sees it
+    missing."""
+    link = (vendor or vendor_dir(root)) / "current"
     tmp = link.with_name(".current.tmp")
     tmp.unlink(missing_ok=True)
     os.symlink(version, tmp)
@@ -165,35 +166,48 @@ def _locked(prefix: Path, package: str) -> dict:
     return json.loads(lock.read_text(encoding="utf-8-sig")).get("packages", {}).get(f"node_modules/{package}", {})
 
 
-def install_ocx(root: Path, pin: Pins, node: Path, version: str, integrity: str,
+def npm(root: Path, node: Path, *args: str, cwd: Path | None = None, label: str = "",
+        run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> None:
+    """The pinned Node's npm with LINA's HOME and cache (``npm_env``); a failure raises with npm's last line."""
+    npm_cli = node / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    result = run([str(node / "bin" / "node"), str(npm_cli), *args], env=npm_env(root, node), cwd=cwd,
+                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900, check=False)
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip().splitlines()[-1:] or ["no output"]
+        raise OcxError(f"{label or 'npm ' + ' '.join(args[:2])} failed: {tail[0]}")
+
+
+def npm_install(root: Path, node: Path, vendor: Path, package: str, version: str, integrity: str,
                 run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Path:
-    """OCX *version* into ``vendor/ocx/<version>`` with the pinned Node's npm (install scripts run: OCX's ``bun``
-    dependency fetches its binary). The lock must record *integrity*, else nothing is kept."""
-    dest = version_dir(root, version)
-    entry = _locked(dest, pin.package)
+    """*package* @ *version* into ``<vendor>/<version>`` with the pinned Node's npm (install scripts run). The lock
+    must record *integrity*, else nothing is kept."""
+    dest = vendor / version
+    entry = _locked(dest, package)
     if entry.get("version") == version and entry.get("integrity") == integrity:
         return dest
-    staging = vendor_dir(root) / f".{version}.partial"
+    staging = vendor / f".{version}.partial"
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
-    (staging / "package.json").write_text('{"name": "lina-ocx", "private": true}\n', encoding="utf-8")
+    (staging / "package.json").write_text(f'{{"name": "lina-{vendor.name}", "private": true}}\n', encoding="utf-8")
     try:
-        npm_cli = node / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
-        result = run([str(node / "bin" / "node"), str(npm_cli), "install", "--prefix", str(staging), "--save-exact",
-                      f"{pin.package}@{version}"], env=npm_env(root, node), capture_output=True, text=True,
-                     encoding="utf-8", errors="replace", timeout=900, check=False)
-        if result.returncode != 0:
-            tail = (result.stderr or result.stdout or "").strip().splitlines()[-1:] or ["no output"]
-            raise OcxError(f"npm install {pin.package}@{version} failed: {tail[0]}")
-        entry = _locked(staging, pin.package)
+        npm(root, node, "install", "--prefix", str(staging), "--save-exact", f"{package}@{version}",
+            label=f"npm install {package}@{version}", run=run)
+        entry = _locked(staging, package)
         if (entry.get("version"), entry.get("integrity")) != (version, integrity):
-            raise OcxError(f"{pin.package}@{version}: the lock records {entry.get('version')} "
+            raise OcxError(f"{package}@{version}: the lock records {entry.get('version')} "
                            f"{entry.get('integrity')}, the pin is {integrity}; nothing kept")
         shutil.rmtree(dest, ignore_errors=True)
         os.replace(staging, dest)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return dest
+
+
+def install_ocx(root: Path, pin: Pins, node: Path, version: str, integrity: str,
+                run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Path:
+    """OCX *version* into ``vendor/ocx/<version>`` (install scripts run: OCX's ``bun`` dependency fetches its
+    binary)."""
+    return npm_install(root, node, vendor_dir(root), pin.package, version, integrity, run)
 
 
 def install(root: Path | None = None, *, fetch: Callable[[str, Path], None] = download, out=print) -> int:
