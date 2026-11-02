@@ -30,7 +30,7 @@ List acceptance criteria, interfaces, migrations/state changes, compatibility, s
 
 ### 5. Implement the smallest complete change — and fix the class
 
-Work on an isolated branch or worktree, loading `systematic-debugging` or `test-driven-development` when the bug class calls for them. Add regression tests first, then implement. When the fix is in hand, `search_files` for the same bug shape at sibling call sites and fix the whole class in this PR — an incomplete fix that leaves known siblings broken is worse than none. Every changed line must trace to the issue; no drive-by cleanup. Done when targeted tests pass, the original failure no longer reproduces, and sibling sites are fixed or explicitly ruled out.
+Work on an isolated branch or worktree. Add a regression test that reproduces the bug, then implement. When the fix is in hand, use `search_files` for the same bug shape at sibling call sites and fix the whole class. Every changed line must trace to the issue; no drive-by cleanup. Done when targeted tests pass, the original failure no longer reproduces, and sibling sites are fixed or explicitly ruled out.
 
 ### 6. Prove the regression test bites (sabotage run)
 
@@ -38,11 +38,11 @@ Temporarily restore the old behavior of the exact function under test, run the n
 
 ### 7. Run repository quality gates, then open the PR immediately
 
-Run the formatter, lint, typecheck, and the repo's canonical test entrypoint on affected areas; use `requesting-code-review` on the diff. Then push and open the PR right away — the PR is what dispatches CI, and CI latency is the long pole; do not sit on finished work. Load `github-pr-workflow` for PR mechanics: conventional branch/commit, body linking the issue with problem, approach, tests, risk, and exclusions. Read the PR back and verify head SHA, base, title, and files. Done when the PR exists with the intended diff and CI is running.
+Run formatting, lint, typecheck, and the repository's canonical tests on affected areas; review the diff. Follow `references/pr-workflow.md`, then push and open the PR: it dispatches CI. Use Summary / Done when / Verification, finish with `Closes #N`, and apply the live organization labels. Read the PR back and verify head SHA, base, title, and files. Done when the PR exists with the intended diff and CI is running.
 
 ### 8. Shepherd CI honestly and close the loop
 
-Inspect live checks and failure logs via `gh pr checks` / `gh run view --log-failed`. Distinguish failures introduced by your diff from pre-existing baseline or infrastructure failures — reproduce on the default branch when unsure, and rerun once only for genuine infra flakes. Never say "green," "merged," or "released" without live evidence of that exact state. When the PR lands, comment on the issue with the PR link and a one-line explanation so the reporter gets a traceable resolution. Done when CI state, remaining blockers, and the issue thread all reflect reality.
+Inspect live checks and failure logs via `gh pr checks` / `gh run view --log-failed`. Distinguish introduced failures from baseline or infrastructure failures; reproduce on the default branch when unsure. Before merging, fetch and recheck competing work and the issue state. Use a merge commit, not squash. Never say "green," "merged," or "released" without live evidence. Verify the delivered behavior and issue closure after merge. Done when CI state, remaining blockers, and the issue thread all reflect reality.
 
 ## Pitfalls
 

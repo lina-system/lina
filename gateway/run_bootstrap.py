@@ -551,6 +551,25 @@ def _launch_home_may_multiplex(config=None) -> bool:
     raise SystemExit(GATEWAY_FATAL_CONFIG_EXIT_CODE)
 
 
+def _refuse_beside_hermes_agent_gateway(profile_homes) -> None:
+    """Exit 78 when Hermes Agent's gateway for a profile this launch serves is loaded on the account: both
+    would poll the same bot tokens. Runs before anything binds, and ``--force`` does not skip it (lina#31)."""
+    from hermes_constants import profile_name_for_home
+    from gateway.run import get_hermes_home
+    from hermes_cli.lina_services import loaded_hermes_agent_gateway
+    names = [profile_name_for_home(get_hermes_home()), *(name for name, _ in profile_homes)]
+    for name in dict.fromkeys(n for n in names if n):
+        loaded = loaded_hermes_agent_gateway(name)
+        if loaded is None:
+            continue
+        from gateway.restart import GATEWAY_FATAL_CONFIG_EXIT_CODE
+        from gateway.run import _write_runtime_status_quiet
+        print(f"Refusing to start LINA's gateway for profile '{name}': Hermes Agent's gateway {loaded} is loaded "
+              "on this account and would share its bot tokens; stop it in Hermes Agent first.", flush=True)
+        _write_runtime_status_quiet(gateway_state="startup_failed", exit_reason="hermes_agent_gateway_loaded")
+        raise SystemExit(GATEWAY_FATAL_CONFIG_EXIT_CODE)
+
+
 def _start_gateway_resolve_terminal_cwd() -> None:
     """Messaging-only defaults belong to startup, not incidental imports by the TUI."""
     import os
@@ -745,6 +764,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         return False
     if profile_homes and not getattr(resolved_config, 'multiplex_profiles', False):
         profile_homes = []  # implicit default downgraded: this named launch serves only itself
+    _refuse_beside_hermes_agent_gateway(profile_homes)
 
     # Multiplex-only: the ONE host gateway decides first. Attach to it, make it serve this profile,
     # replace it (--replace) or refuse — before anything below binds a port or claims a PID file.
