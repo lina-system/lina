@@ -724,4 +724,7 @@ MESSAGES = {
     "작업 기록 못 읽음: {e}": "Cannot read the worker jobs: {e}",
     "목표를 직접 넣은 에이전트 {n}: {names}": "Agents who wrote their own goal {n}: {names}",
     "시간 초과": "timed out",
+    "결정 필요: {text}": "Decision needed: {text}",
+    "검토 필요": "Review needed",
+    "내 할 일": "My to-do",
 }
