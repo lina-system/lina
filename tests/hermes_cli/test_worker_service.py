@@ -53,3 +53,29 @@ def test_the_worker_is_a_real_service_that_runs_on_ocx(monkeypatch, capsys):
     monkeypatch.setitem(lina_services._RUNNING, "worker", lambda: True)
     assert lina_services.act("stop", "ocx") == 1
     assert calls == [] and "lina services stop worker" in capsys.readouterr().out
+
+
+@pytest.mark.platforms("linux")
+def test_restart_starts_a_healthy_worker_again(tmp_path, monkeypatch):
+    """A worker that wrote its heartbeat seconds ago is stopped and then really started again, not reported as
+    "already running" from the stopped loop's last heartbeat."""
+    base, calls = tmp_path / "lina", []
+
+    def systemctl(argv):
+        calls.append(argv)
+        if argv[-2:] == ["restart", "lina-worker"]:
+            serve.serve_once(base / "worker")  # the new loop's first heartbeat
+        return type("R", (), {"returncode": 0, "stdout": "", "stderr": ""})()
+
+    monkeypatch.setattr(service, "definition_path", lambda kind: tmp_path / kind / f"{kind}.service")
+    monkeypatch.setattr(service, "_run", systemctl)
+    monkeypatch.setattr(service, "START_WAIT_S", 2.0)
+    (tmp_path / "systemd").mkdir()
+    (tmp_path / "systemd" / "systemd.service").write_text("old unit")
+    serve.serve_once(base / "worker")
+    assert service.running(base)
+
+    assert service.restart(base, out=lambda line: None) == 0
+    assert ["systemctl", "--user", "stop", "lina-worker"] in calls
+    assert calls.index(["systemctl", "--user", "restart", "lina-worker"]) > \
+        calls.index(["systemctl", "--user", "stop", "lina-worker"])
