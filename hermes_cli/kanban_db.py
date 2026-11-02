@@ -2705,6 +2705,7 @@ def complete_task(
     _done_task = get_task(conn, task_id)
     if fire_lifecycle_hook:
         _fire_task_hook("kanban_task_completed", _done_task, task_id, run_id, summary=handoff_summary)
+    record_terminal_outcome(conn, task_id)
     return True
 
 
@@ -3173,6 +3174,7 @@ def block_task(
         _append_event(conn, task_id, event_kind, payload, run_id=run_id)
         blocked_task = get_task(conn, task_id)
     _fire_task_hook("kanban_task_blocked", blocked_task, task_id, run_id, reason=reason)
+    record_terminal_outcome(conn, task_id)
     return True
 
 
@@ -4154,3 +4156,4 @@ from hermes_cli.kanban_db_dispatch import (
 )
 from hermes_cli.kanban_db_goal import goal_run_status
 from hermes_cli.kanban_db_runs import current_run_started_ats, latest_summaries
+from hermes_cli.kanban_outcomes import record_terminal_outcome

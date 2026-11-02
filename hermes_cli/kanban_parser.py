@@ -455,6 +455,13 @@ _SPECS = [
              "class is reported and left untouched (fail-closed). Exits 0 when the DB is healthy "
              "or was repaired, non-zero when it is still corrupt."
          )),
+    _cmd("outcomes", [
+        _arg("--agent", help="Only cards assigned to this profile"),
+        _arg("--kind", help="Only cards of this kind (the title word before ':', else 'general')"),
+        _arg("--last", type=int, default=20, metavar="N", help="Newest N rows (default 20)"),
+        _json_flag(),
+    ], help="Planned against actual outcome of finished goal-mode work cards, "
+            "with one summary line per agent and kind"),
 ]
 
 
