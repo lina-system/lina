@@ -48,15 +48,21 @@ _WORKER_ID_PATTERNS = (
 # --- Board access ------------------------------------------------------------
 
 def _board_slug(board: Optional[str]) -> Optional[str]:
+    """The slug of an existing board, taken from the board list rather than from the request, so
+    the database path is never built from caller input (400 malformed, 404 unknown)."""
     if not board:
         return None
     try:
-        slug = kanban_db._normalize_board_slug(board)
+        wanted = kanban_db._normalize_board_slug(board)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc))
-    if slug and slug != kanban_db.DEFAULT_BOARD and not kanban_db.board_exists(slug):
-        raise HTTPException(status_code=404, detail=f"board {slug!r} does not exist")
-    return slug
+    if not wanted:
+        return None
+    from hermes_cli.kanban_db_boards import list_boards
+    for meta in list_boards(include_archived=False):
+        if meta.get("slug") == wanted:
+            return str(meta["slug"])
+    raise HTTPException(status_code=404, detail=f"board {wanted!r} does not exist")
 
 
 @contextmanager

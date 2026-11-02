@@ -225,3 +225,12 @@ def test_work_routes_sit_behind_the_dashboard_auth_gate(_isolate_hermes_home, mo
     r = authed.get(f"{WORK}/cards")
     assert r.status_code == 200, r.text
     assert _valid("WorkCardList", r.json()) == {"cards": []}
+
+
+def test_board_query_resolves_only_existing_boards(client, conn):
+    _card(conn, "on the default board")
+    assert client.get(f"{WORK}/cards", params={"board": "default"}).status_code == 200
+    assert client.get(f"{WORK}/cards", params={"board": "no-such-board"}).status_code == 404
+    assert client.get(f"{WORK}/cards", params={"board": "../etc"}).status_code == 400
+    kb.create_board("side")
+    assert client.get(f"{WORK}/cards", params={"board": "side"}).status_code == 200
