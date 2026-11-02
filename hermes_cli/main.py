@@ -2744,7 +2744,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "resume",
         "send", "sessions", "setup",
         "skin", "skills", "slack", "status", "tools", "uninstall", "update",
-        "usage", "vault", "store", "services",
+        "usage", "vault", "store", "services", "models",
         "webhook", "whatsapp", "worktree", "chat", "secrets", "security",
         "browser",
         "verify",

@@ -5,8 +5,10 @@
 * ``store``: the memory store (``hermes_cli/store.py``). Postgres and the Honcho api and deriver run in the Docker
   compose project ``lina-store`` with ``restart: unless-stopped``, so Docker keeps them up and no launchd/systemd job
   is written for them.
-* ``ocx``, ``worker``: names reserved for the OCX run command (#32) and ``lina worker`` (#35). Nothing is installed
-  for them yet; ``service_definition`` is the writer they can use.
+* ``ocx``: LINA's pinned OCX proxy (#32), launchd ``ai.lina.ocx`` / systemd ``lina-ocx``, written through
+  ``service_definition`` by ``hermes_cli/lina_ocx_service.py``.
+* ``worker``: name reserved for ``lina worker`` (#35). Nothing is installed for it yet; ``service_definition`` is the
+  writer it can use.
 
 A LINA gateway never starts beside a Hermes Agent gateway of the same profile name: both would poll the same bot
 tokens. ``loaded_hermes_agent_gateway`` is the read-only probe ``gateway/run_bootstrap.py`` asks before it binds.
@@ -44,7 +46,7 @@ class Service:
 SERVICES = (
     Service("gateway", "ai.lina.gateway", "lina-gateway", "LINA_Gateway"),
     Service("store", "lina-store", "lina-store", "lina-store"),
-    Service("ocx", "ai.lina.ocx", "lina-ocx", "LINA_OCX", issue="#32"),
+    Service("ocx", "ai.lina.ocx", "lina-ocx", "LINA_OCX"),
     Service("worker", "ai.lina.worker", "lina-worker", "LINA_Worker", issue="#35"),
 )
 BY_NAME = {service.name: service for service in SERVICES}
@@ -94,7 +96,12 @@ def _store_state() -> str:
         return f"stopped ({exc})"
 
 
-_STATE: dict[str, Callable[[], str]] = {"gateway": _gateway_state, "store": _store_state}
+def _ocx_state() -> str:
+    from hermes_cli import lina_ocx_service
+    return lina_ocx_service.state()
+
+
+_STATE: dict[str, Callable[[], str]] = {"gateway": _gateway_state, "store": _store_state, "ocx": _ocx_state}
 
 
 def state(service: Service) -> str:
@@ -146,10 +153,17 @@ def _run_store(verb: str) -> None:
         sys.exit(1)
 
 
-_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store}
+def _ocx(verb: str) -> None:
+    from hermes_cli import lina_ocx_service
+    code = lina_ocx_service.VERBS[verb]()
+    if code:
+        sys.exit(code)
+
+
+_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "ocx": _ocx}
 
 # Who runs on whom: a service is not stopped or restarted while a service that uses it still runs.
-USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",)}
+USED_BY: dict[str, tuple[str, ...]] = {"store": ("gateway",), "ocx": ("gateway",)}
 _RUNNING: dict[str, Callable[[], bool]] = {"gateway": gateway_running}
 
 
@@ -157,7 +171,7 @@ def act(verb: str, name: str) -> int:
     """``start``/``stop``/``restart`` one service with its own command, unchanged.
 
     The one rule added here: a service is not stopped or restarted while a service that uses it still runs (the
-    gateway uses the memory store), so the person stops the user first, with that service's own command and its own
+    gateway uses the memory store and OCX), so the person stops the user first, with that service's own command and its own
     checks (the gateway asks before it interrupts live sessions)."""
     service = BY_NAME[name]
     if service.issue:
@@ -185,8 +199,8 @@ def install_gateway_step(*, services: bool, out=print) -> int:
 
 
 def service_definition(kind: str, label: str, argv: list[str], env: dict[str, str]) -> str:
-    """A launchd plist or a systemd user unit running *argv* as *label*. Written by nobody yet: the seam for
-    ``ai.lina.ocx`` (#32) and ``ai.lina.worker`` (#35)."""
+    """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.ocx`` (#32) and, later,
+    ``ai.lina.worker`` (#35)."""
     if kind == "launchd":
         return plistlib.dumps({"Label": label, "ProgramArguments": list(argv), "EnvironmentVariables": dict(env),
                                "RunAtLoad": True, "KeepAlive": True}).decode()
