@@ -1,0 +1,2562 @@
+{
+ "repo": "lina-system/lina",
+ "recorded": "2026-11-02",
+ "note": "Public GitHub data of lina-system/lina on 2026-11-02, read-only. Issue bodies keep only their Sprint: and Serial with: lines and pull request bodies only their closing lines: the fields the picker reads.",
+ "issues": [
+  {
+   "number": 128,
+   "title": "feat(worker): add lina worker with omo as the default runner and pluggable others",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/128"
+   }
+  },
+  {
+   "number": 127,
+   "title": "fix(kanban): resolve the review findings on the work-card gates",
+   "body": "Sprint: M0 S3",
+   "labels": [
+    {
+     "name": "bug"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    },
+    {
+     "name": "follow-up"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 3
+   }
+  },
+  {
+   "number": 126,
+   "title": "chore(scripts/ci): review follow-ups",
+   "body": "Sprint: M0 S1",
+   "labels": [
+    {
+     "name": "omo"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/S"
+    },
+    {
+     "name": "follow-up"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 125,
+   "title": "chore(hermes_cli): review follow-ups",
+   "body": "Sprint: M0 S1",
+   "labels": [
+    {
+     "name": "dsh"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/S"
+    },
+    {
+     "name": "follow-up"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 124,
+   "title": "fix(plugins): refuse installing honcho again now that it is bundled",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "bug"
+    },
+    {
+     "name": "dsh"
+    },
+    {
+     "name": "size/S"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 123,
+   "title": "feat(context): bundle LCM-X as the core context engine",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/123"
+   }
+  },
+  {
+   "number": 122,
+   "title": "fix(bot-relay): keep a kanban card's variables out of message_agent deliveries",
+   "body": "Sprint: M0 S1. Size: S. Same rule as the work-session card design: a message to another agent starts an ordinary turn of that agent, never a child of the sender's card.",
+   "labels": [
+    {
+     "name": "bug"
+    },
+    {
+     "name": "dsh"
+    },
+    {
+     "name": "size/S"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 121,
+   "title": "feat(models): add the tools to take over a running OCX, rehearsed on a copy",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/121"
+   }
+  },
+  {
+   "number": 120,
+   "title": "feat(install): install a pinned omo and bring ocx-omo in as lina omo routing",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/120"
+   }
+  },
+  {
+   "number": 119,
+   "title": "feat(kanban): record each work card's planned and actual outcome",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/119"
+   }
+  },
+  {
+   "number": 118,
+   "title": "feat(kanban): lay out a goal and its work cards from one plan file",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/118"
+   }
+  },
+  {
+   "number": 117,
+   "title": "feat(kanban): serve goals, work cards and worker runs to the app",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/117"
+   }
+  },
+  {
+   "number": 116,
+   "title": "fix(pm): stop a parent manifest.json from marking a checkout as a packaged install",
+   "body": "Sprint: M0 S1. Size: S.",
+   "labels": [
+    {
+     "name": "bug"
+    },
+    {
+     "name": "dsh"
+    },
+    {
+     "name": "size/S"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 114,
+   "title": "feat(kanban): run goal gates before the judge on goal-mode cards",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/114"
+   }
+  },
+  {
+   "number": 113,
+   "title": "feat(models): install a pinned OCX as LINA's own service and add lina models",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/113"
+   }
+  },
+  {
+   "number": 112,
+   "title": "feat(api): serve goals, work cards and worker runs to the app",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 111,
+   "title": "feat(kanban): record each work card's planned and actual outcome",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 110,
+   "title": "feat(kanban): lay out a goal and its work cards from one plan file",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 108,
+   "title": "feat(kanban): run goal gates before the judge on goal-mode cards",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 107,
+   "title": "feat(work): run a goal through work sessions, workers and the board",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 6
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 106,
+   "title": "chore(skills): trim the bundled skills to what the agents use and keep the self-improvement loop",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/106"
+   }
+  },
+  {
+   "number": 105,
+   "title": "feat(services): run LINA's services from one layer and refuse to start beside a Hermes Agent gateway",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": null,
+   "pull_request": {
+    "url": "https://api.github.com/repos/lina-system/lina/pulls/105"
+   }
+  },
+  {
+   "number": 102,
+   "title": "chore(agent): review follow-ups",
+   "body": "Sprint: M0 S1",
+   "labels": [
+    {
+     "name": "dsh"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/S"
+    },
+    {
+     "name": "follow-up"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 67,
+   "title": "chore(skills): trim the bundled skills to what the agents use and keep the self-improvement loop",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "omo"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 63,
+   "title": "feat(work): run the delivery procedure with lina work next and merge",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 49,
+   "title": "feat(memory): let each agent grow its own character from its own journal",
+   "body": "",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 41,
+   "title": "chore(fleet): move the owner's agents to LINA in one quiet window",
+   "body": "Sprint: M0 S4 — Move the agents (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "omo"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 5
+   }
+  },
+  {
+   "number": 40,
+   "title": "feat(channels): add an iMessage channel through BlueBubbles",
+   "body": "",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "grok-cursor"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 39,
+   "title": "feat(api): serve the client API the current board and dashboard read",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "grok-cursor"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 38,
+   "title": "feat(ops): bring the rest of today's operations tooling to parity",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 37,
+   "title": "chore(work): move the callers and the running operation to lina work",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "omo"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 36,
+   "title": "feat(work): move the work ledger into lina work and add lina work run",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 35,
+   "title": "feat(worker): add lina worker with omo as the default runner and pluggable others",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 34,
+   "title": "feat(install): install a pinned omo on work devices with its OCX routing",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 33,
+   "title": "chore(ocx): take over the running OCX proxy",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "omo"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 32,
+   "title": "feat(models): install a pinned OCX as a LINA service and add lina models",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 31,
+   "title": "feat(service): run LINA as ai.lina.* services",
+   "body": "Sprint: M0 S3 — Work, worker and the client API (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 26,
+   "title": "chore(parity): the owner's agents run on LINA with today's features",
+   "body": "",
+   "labels": [
+    {
+     "name": "maintenance"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 18
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 25,
+   "title": "test(memory): measure the cache on LINA against the baseline",
+   "body": "Sprint: M0 S4 — Move the agents (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "omo"
+    },
+    {
+     "name": "maintenance"
+    },
+    {
+     "name": "size/S"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 3
+   }
+  },
+  {
+   "number": 24,
+   "title": "feat(migrate): move today's memory into the store from untouched copies and check it",
+   "body": "Sprint: M0 S4 — Move the agents (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 5
+   }
+  },
+  {
+   "number": 23,
+   "title": "feat(memory): switch external messages on and off as one source",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "grok-cursor"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 3
+   }
+  },
+  {
+   "number": 22,
+   "title": "feat(memory): search and open memory across the three sources",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "grok-cursor"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 21,
+   "title": "feat(memory): compose context in cache order and test the prefix invariant",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 20,
+   "title": "feat(memory): add the memory layer with one receive path, a policy table and an identity registry",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 3
+   }
+  },
+  {
+   "number": 19,
+   "title": "feat(memory): use one embedding model for all three sources",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "grok-cursor"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 18,
+   "title": "feat(memory): add external messages as the third memory source",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "grok-cursor"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 16,
+   "title": "feat(store): run LCM on schema ctx and read messages from memory",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 15,
+   "title": "feat(context): bundle LCM-X as the core context engine on upstream 0.29 or later",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 1
+   }
+  },
+  {
+   "number": 13,
+   "title": "feat(store): split Honcho messages into memory.messages and ltm.message_meta",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/M"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 12,
+   "title": "feat(store): keep each message once in memory.messages and have the core read and write it",
+   "body": "Sprint: M0 S2 — Store and memory (order in lina-system/lina#1).",
+   "labels": [
+    {
+     "name": "enhancement"
+    },
+    {
+     "name": "omo"
+    },
+    {
+     "name": "size/L"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 2
+   }
+  },
+  {
+   "number": 4,
+   "title": "refactor(core): prune Hermes to what LINA uses",
+   "body": "",
+   "labels": [
+    {
+     "name": "maintenance"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 6
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 3,
+   "title": "feat(store): one Postgres and pgvector store for all memory",
+   "body": "",
+   "labels": [
+    {
+     "name": "enhancement"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 6
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 2,
+   "title": "feat(memory): one memory layer over agent conversations, Honcho and external messages",
+   "body": "",
+   "labels": [
+    {
+     "name": "enhancement"
+    }
+   ],
+   "sub_issues_summary": {
+    "total": 10
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  },
+  {
+   "number": 1,
+   "title": "Roadmap",
+   "body": "",
+   "labels": [],
+   "sub_issues_summary": {
+    "total": 0
+   },
+   "issue_dependencies_summary": {
+    "total_blocked_by": 0
+   }
+  }
+ ],
+ "blocked_by": {
+  "127": [
+   {
+    "number": 108,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 109,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 112,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "124": [
+   {
+    "number": 15,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "112": [
+   {
+    "number": 108,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "111": [
+   {
+    "number": 108,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "110": [
+   {
+    "number": 108,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "63": [
+   {
+    "number": 35,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 36,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "41": [
+   {
+    "number": 24,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 28,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 33,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 37,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 39,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "39": [
+   {
+    "number": 38,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "38": [
+   {
+    "number": 36,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "37": [
+   {
+    "number": 34,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 36,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "36": [
+   {
+    "number": 30,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 35,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "35": [
+   {
+    "number": 34,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "34": [
+   {
+    "number": 32,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "33": [
+   {
+    "number": 27,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 32,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "32": [
+   {
+    "number": 31,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 7,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "31": [
+   {
+    "number": 30,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 11,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "25": [
+   {
+    "number": 17,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 21,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 24,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "24": [
+   {
+    "number": 18,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 19,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 12,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 16,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 13,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "23": [
+   {
+    "number": 18,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 21,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 22,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "22": [
+   {
+    "number": 19,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 16,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "21": [
+   {
+    "number": 20,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "20": [
+   {
+    "number": 15,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 14,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 11,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "19": [
+   {
+    "number": 12,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "18": [
+   {
+    "number": 12,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "16": [
+   {
+    "number": 15,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 12,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "15": [
+   {
+    "number": 8,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "13": [
+   {
+    "number": 11,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 12,
+    "state": "open",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ],
+  "12": [
+   {
+    "number": 11,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   },
+   {
+    "number": 8,
+    "state": "closed",
+    "repository_url": "https://api.github.com/repos/lina-system/lina"
+   }
+  ]
+ },
+ "pulls": [
+  {
+   "number": 128,
+   "title": "feat(worker): add lina worker with omo as the default runner and pluggable others",
+   "head": {
+    "ref": "feat/35-lina-worker"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #35"
+  },
+  {
+   "number": 123,
+   "title": "feat(context): bundle LCM-X as the core context engine",
+   "head": {
+    "ref": "feat/15-lcm-x-core-engine"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #15"
+  },
+  {
+   "number": 121,
+   "title": "feat(models): add the tools to take over a running OCX, rehearsed on a copy",
+   "head": {
+    "ref": "feat/33-ocx-takeover"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #33"
+  },
+  {
+   "number": 120,
+   "title": "feat(install): install a pinned omo and bring ocx-omo in as lina omo routing",
+   "head": {
+    "ref": "feat/34-pinned-omo"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #34"
+  },
+  {
+   "number": 119,
+   "title": "feat(kanban): record each work card's planned and actual outcome",
+   "head": {
+    "ref": "feat/111-work-card-outcomes"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #111"
+  },
+  {
+   "number": 118,
+   "title": "feat(kanban): lay out a goal and its work cards from one plan file",
+   "head": {
+    "ref": "feat/110-kanban-plan"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #110"
+  },
+  {
+   "number": 117,
+   "title": "feat(kanban): serve goals, work cards and worker runs to the app",
+   "head": {
+    "ref": "feat/112-work-api"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #112"
+  },
+  {
+   "number": 114,
+   "title": "feat(kanban): run goal gates before the judge on goal-mode cards",
+   "head": {
+    "ref": "feat/108-goal-gates"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #108"
+  },
+  {
+   "number": 113,
+   "title": "feat(models): install a pinned OCX as LINA's own service and add lina models",
+   "head": {
+    "ref": "feat/32-pinned-ocx"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #32"
+  },
+  {
+   "number": 106,
+   "title": "chore(skills): trim the bundled skills to what the agents use and keep the self-improvement loop",
+   "head": {
+    "ref": "chore/67-trim-bundled-skills"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #67"
+  },
+  {
+   "number": 105,
+   "title": "feat(services): run LINA's services from one layer and refuse to start beside a Hermes Agent gateway",
+   "head": {
+    "ref": "feat/31-lina-services"
+   },
+   "base": {
+    "ref": "dev"
+   },
+   "body": "Closes #31"
+  }
+ ],
+ "branches": [
+  {
+   "name": "chore/67-trim-bundled-skills"
+  },
+  {
+   "name": "ci/5-prune-check"
+  },
+  {
+   "name": "dev"
+  },
+  {
+   "name": "feat/15-lcm-x-core-engine"
+  },
+  {
+   "name": "feat/29-lina-command"
+  },
+  {
+   "name": "feat/31-lina-services"
+  },
+  {
+   "name": "feat/32-pinned-ocx"
+  },
+  {
+   "name": "feat/33-ocx-takeover"
+  },
+  {
+   "name": "feat/34-pinned-omo"
+  },
+  {
+   "name": "feat/35-lina-worker"
+  },
+  {
+   "name": "feat/44-desk"
+  },
+  {
+   "name": "feat/108-goal-gates"
+  },
+  {
+   "name": "feat/110-kanban-plan"
+  },
+  {
+   "name": "feat/111-work-card-outcomes"
+  },
+  {
+   "name": "feat/112-work-api"
+  },
+  {
+   "name": "gh-readonly-queue/dev/pr-105-2fe1e3fe63165805c48b4628717d2f4ccaf284bb"
+  },
+  {
+   "name": "gh-readonly-queue/dev/pr-114-18539811caafb5cab6655615ea58c3d48e934c40"
+  },
+  {
+   "name": "honcho-upstream"
+  },
+  {
+   "name": "lcm-x-upstream"
+  },
+  {
+   "name": "main"
+  },
+  {
+   "name": "upstream"
+  }
+ ],
+ "runs": {
+  "workflow_runs": [
+   {
+    "id": 41497022286,
+    "name": "CI",
+    "head_sha": "18539811caafb5cab6655615ea58c3d48e934c40",
+    "status": "queued",
+    "conclusion": null,
+    "created_at": "2026-11-02T18:04:07Z",
+    "event": "push"
+   },
+   {
+    "id": 41482956069,
+    "name": "CI",
+    "head_sha": "c86f39231acb797c446b05cc919aa4802b9245db",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T16:35:25Z",
+    "event": "push"
+   },
+   {
+    "id": 41481701642,
+    "name": "CI",
+    "head_sha": "646df54f15c65140d8ff44d82f764d267fc94504",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T16:27:46Z",
+    "event": "push"
+   },
+   {
+    "id": 41475996387,
+    "name": "CI",
+    "head_sha": "010c694527d58566fcab191c475439034196deb6",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T15:53:16Z",
+    "event": "push"
+   },
+   {
+    "id": 41475021326,
+    "name": "CI",
+    "head_sha": "33d3a6a3696a2ab3feac79a7f9df42ba5cad51e5",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T15:47:17Z",
+    "event": "push"
+   },
+   {
+    "id": 41475010036,
+    "name": "CI",
+    "head_sha": "ad12929b4a523e4b9c22f06198b6195c8ecbcfcd",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T15:47:13Z",
+    "event": "push"
+   },
+   {
+    "id": 41474885220,
+    "name": "CI",
+    "head_sha": "231d07f5b67d60769a484f8f38905b2ea0776d7b",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T15:46:27Z",
+    "event": "push"
+   },
+   {
+    "id": 41470979682,
+    "name": "CI",
+    "head_sha": "c1f5e0c95d86e8ffe6bcfd4546750d046a950686",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T15:22:41Z",
+    "event": "push"
+   },
+   {
+    "id": 41470961688,
+    "name": "CI",
+    "head_sha": "b63c5246d5b61abe1618dfacdd8cece375e03cc6",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T15:22:34Z",
+    "event": "push"
+   },
+   {
+    "id": 41470829684,
+    "name": "CI",
+    "head_sha": "fb8a56a33b045299c576b01271703be4dfee94ec",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T15:21:46Z",
+    "event": "push"
+   },
+   {
+    "id": 41467967399,
+    "name": "CI",
+    "head_sha": "25904233bf7a5f5ab6bd85d7f460bbea14032bc6",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T15:04:19Z",
+    "event": "push"
+   },
+   {
+    "id": 41467967454,
+    "name": "Honcho",
+    "head_sha": "25904233bf7a5f5ab6bd85d7f460bbea14032bc6",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T15:04:19Z",
+    "event": "push"
+   },
+   {
+    "id": 41463377180,
+    "name": "CI",
+    "head_sha": "cfb694c5fd43a04f46d5d8ee06f5abd29f4c0609",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T14:35:20Z",
+    "event": "push"
+   },
+   {
+    "id": 41450169578,
+    "name": "CI",
+    "head_sha": "6747a517e2abbd92ebc7e565ba3f01c744922227",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T13:06:52Z",
+    "event": "push"
+   },
+   {
+    "id": 41450140526,
+    "name": "CI",
+    "head_sha": "4c3753d14f2ee8cdc4c67a9c95f67fe113f9e5bc",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T13:06:40Z",
+    "event": "push"
+   },
+   {
+    "id": 41445167206,
+    "name": "CI",
+    "head_sha": "aa5d61889e14a63beee66a234433433afb3cdb97",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T12:29:49Z",
+    "event": "push"
+   },
+   {
+    "id": 41445146172,
+    "name": "CI",
+    "head_sha": "c522b4ca1666285a1493f1fdc4d1eb7bbf50e9a9",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T12:29:40Z",
+    "event": "push"
+   },
+   {
+    "id": 41445124073,
+    "name": "CI",
+    "head_sha": "929446778d8f0678c6c9ac50f6c98991354db536",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T12:29:30Z",
+    "event": "push"
+   },
+   {
+    "id": 41444967869,
+    "name": "CI",
+    "head_sha": "c2e5edaee988bf5f94fa8014e593e85f91dfa924",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T12:28:19Z",
+    "event": "push"
+   },
+   {
+    "id": 41440803792,
+    "name": "CI",
+    "head_sha": "9a5c9042789259c912346c7d4d8099ee8d7bdd37",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T11:57:16Z",
+    "event": "push"
+   },
+   {
+    "id": 41431606797,
+    "name": "CI",
+    "head_sha": "467440f775578625bcc96c2dfa389720dbc16195",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T10:47:27Z",
+    "event": "push"
+   },
+   {
+    "id": 41413571298,
+    "name": "CI",
+    "head_sha": "ef1bac5a75fed1d4a5e8503d33fb869ed3765fca",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T08:30:28Z",
+    "event": "push"
+   },
+   {
+    "id": 41389683623,
+    "name": "CI",
+    "head_sha": "2c3bed6a382ac2dd653b290fedfd760681db57fd",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T04:39:30Z",
+    "event": "push"
+   },
+   {
+    "id": 41385963210,
+    "name": "CI",
+    "head_sha": "df74379616710654957481dda9035122cad73760",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T03:59:26Z",
+    "event": "push"
+   },
+   {
+    "id": 41382703133,
+    "name": "Honcho",
+    "head_sha": "56a8e142938d5d093e34f908cbf54798ac7e52e0",
+    "status": "completed",
+    "conclusion": "success",
+    "created_at": "2026-11-02T03:22:00Z",
+    "event": "push"
+   },
+   {
+    "id": 41382703238,
+    "name": "CI",
+    "head_sha": "56a8e142938d5d093e34f908cbf54798ac7e52e0",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T03:22:00Z",
+    "event": "push"
+   },
+   {
+    "id": 41377647995,
+    "name": "CI",
+    "head_sha": "0aa45ef500fd647f8bc3a33fdbf95223896d032f",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T02:25:25Z",
+    "event": "push"
+   },
+   {
+    "id": 41374642580,
+    "name": "CI",
+    "head_sha": "add286163649c0fcfadee9519a6a279888e18174",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T01:51:30Z",
+    "event": "push"
+   },
+   {
+    "id": 41372763119,
+    "name": "CI",
+    "head_sha": "e816f37df3276c29a4ce0e48025471e1f4c020c0",
+    "status": "completed",
+    "conclusion": "failure",
+    "created_at": "2026-11-02T01:29:42Z",
+    "event": "push"
+   },
+   {
+    "id": 41372714051,
+    "name": "CI",
+    "head_sha": "e10d574a94580de494691c3f8562d8849fabe5a9",
+    "status": "completed",
+    "conclusion": "cancelled",
+    "created_at": "2026-11-02T01:29:05Z",
+    "event": "push"
+   }
+  ]
+ },
+ "rules": [
+  {
+   "type": "merge_queue"
+  },
+  {
+   "type": "deletion"
+  },
+  {
+   "type": "non_fast_forward"
+  },
+  {
+   "type": "required_status_checks",
+   "parameters": {
+    "required_status_checks": [
+     {
+      "context": "Lint"
+     },
+     {
+      "context": "Python tests (Linux)"
+     },
+     {
+      "context": "Python tests (macOS)"
+     },
+     {
+      "context": "LINA Helper (macOS)"
+     },
+     {
+      "context": "Codex review"
+     },
+     {
+      "context": "Linked issue"
+     },
+     {
+      "context": "dev green"
+     }
+    ]
+   }
+  }
+ ],
+ "head_checks": {
+  "sha": "18539811caafb5cab6655615ea58c3d48e934c40",
+  "check_runs": [
+   {
+    "name": "Set merge gate statuses",
+    "status": "in_progress",
+    "conclusion": null
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "LINA Helper sign and notarise (not wired)",
+    "status": "completed",
+    "conclusion": "skipped"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "labels / labels",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "labels / labels",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "labels / labels",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "labels / labels",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "labels / labels",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "labels / labels",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 4/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 8/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 6/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Catalog tests",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 7/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 3/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 2/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 1/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 5/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Diff checks",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "uv.lock check",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (macOS)",
+    "status": "queued",
+    "conclusion": null
+   },
+   {
+    "name": "LINA Helper (macOS)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "labels / labels",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Analyze (swift)",
+    "status": "in_progress",
+    "conclusion": null
+   },
+   {
+    "name": "Analyze (python)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Analyze (actions)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Analyze (javascript-typescript)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Analyze (c-cpp)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Prune check",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Detect affected areas",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Catalog tests",
+    "status": "completed",
+    "conclusion": "skipped"
+   },
+   {
+    "name": "uv.lock check",
+    "status": "completed",
+    "conclusion": "skipped"
+   },
+   {
+    "name": "LINA Helper sign and notarise (not wired)",
+    "status": "completed",
+    "conclusion": "skipped"
+   },
+   {
+    "name": "LINA Helper (macOS)",
+    "status": "completed",
+    "conclusion": "skipped"
+   },
+   {
+    "name": "Python tests (Linux 1/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 3/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 8/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 5/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 6/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 4/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 2/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (Linux 7/8)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Python tests (macOS)",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Diff checks",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Lint",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Prune check",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Detect affected areas",
+    "status": "completed",
+    "conclusion": "success"
+   },
+   {
+    "name": "Set merge gate statuses",
+    "status": "completed",
+    "conclusion": "success"
+   }
+  ]
+ },
+ "prototype": {
+  "note": "lina-next decide() on this snapshot (no running omo jobs or quick-issue records), per sprint: the issues it opens in order, the runner each goes to, and why each other issue waits.",
+  "by_sprint": {
+   "S1": {
+    "open": [
+     102,
+     116,
+     122,
+     125,
+     126
+    ],
+    "hold": {
+     "31": "sprint",
+     "32": "sprint",
+     "12": "sprint",
+     "15": "sprint",
+     "34": "sprint",
+     "35": "sprint",
+     "36": "sprint",
+     "16": "sprint",
+     "19": "sprint",
+     "18": "sprint",
+     "108": "sprint",
+     "13": "sprint",
+     "20": "sprint",
+     "38": "sprint",
+     "21": "sprint",
+     "24": "sprint",
+     "39": "sprint",
+     "37": "sprint",
+     "22": "sprint",
+     "33": "sprint",
+     "112": "sprint",
+     "41": "sprint",
+     "63": "sprint",
+     "23": "sprint",
+     "25": "sprint",
+     "127": "sprint",
+     "110": "sprint",
+     "111": "sprint",
+     "124": "sprint",
+     "1": "parent",
+     "2": "parent",
+     "3": "parent",
+     "4": "parent",
+     "26": "parent",
+     "40": "sprint",
+     "49": "sprint",
+     "67": "sprint",
+     "107": "parent"
+    },
+    "runner": {
+     "102": "dsh",
+     "116": "dsh",
+     "122": "dsh",
+     "125": "dsh",
+     "126": "omo"
+    }
+   },
+   "S2": {
+    "open": [
+     12
+    ],
+    "hold": {
+     "31": "sprint",
+     "32": "sprint",
+     "15": "running",
+     "34": "sprint",
+     "35": "sprint",
+     "36": "sprint",
+     "16": "blocked",
+     "19": "blocked",
+     "18": "blocked",
+     "108": "sprint",
+     "13": "blocked",
+     "20": "blocked",
+     "38": "sprint",
+     "21": "blocked",
+     "24": "sprint",
+     "39": "sprint",
+     "37": "sprint",
+     "22": "blocked",
+     "33": "sprint",
+     "112": "sprint",
+     "41": "sprint",
+     "63": "sprint",
+     "23": "blocked",
+     "25": "sprint",
+     "127": "sprint",
+     "110": "sprint",
+     "111": "sprint",
+     "124": "blocked",
+     "1": "parent",
+     "2": "parent",
+     "3": "parent",
+     "4": "parent",
+     "26": "parent",
+     "40": "sprint",
+     "49": "sprint",
+     "67": "running",
+     "102": "sprint",
+     "107": "parent",
+     "116": "sprint",
+     "122": "sprint",
+     "125": "sprint",
+     "126": "sprint"
+    },
+    "runner": {
+     "12": "omo"
+    }
+   },
+   "S3": {
+    "open": [],
+    "hold": {
+     "31": "running",
+     "32": "running",
+     "12": "sprint",
+     "15": "sprint",
+     "34": "running",
+     "35": "running",
+     "36": "blocked",
+     "16": "sprint",
+     "19": "sprint",
+     "18": "sprint",
+     "108": "running",
+     "13": "sprint",
+     "20": "sprint",
+     "38": "blocked",
+     "21": "sprint",
+     "24": "sprint",
+     "39": "blocked",
+     "37": "blocked",
+     "22": "sprint",
+     "33": "running",
+     "112": "running",
+     "41": "sprint",
+     "63": "blocked",
+     "23": "sprint",
+     "25": "sprint",
+     "127": "blocked",
+     "110": "running",
+     "111": "running",
+     "124": "sprint",
+     "1": "parent",
+     "2": "parent",
+     "3": "parent",
+     "4": "parent",
+     "26": "parent",
+     "40": "sprint",
+     "49": "sprint",
+     "67": "sprint",
+     "102": "sprint",
+     "107": "parent",
+     "116": "sprint",
+     "122": "sprint",
+     "125": "sprint",
+     "126": "sprint"
+    },
+    "runner": {}
+   },
+   "S4": {
+    "open": [],
+    "hold": {
+     "31": "sprint",
+     "32": "sprint",
+     "12": "sprint",
+     "15": "sprint",
+     "34": "sprint",
+     "35": "sprint",
+     "36": "sprint",
+     "16": "sprint",
+     "19": "sprint",
+     "18": "sprint",
+     "108": "sprint",
+     "13": "sprint",
+     "20": "sprint",
+     "38": "sprint",
+     "21": "sprint",
+     "24": "blocked",
+     "39": "sprint",
+     "37": "sprint",
+     "22": "sprint",
+     "33": "sprint",
+     "112": "sprint",
+     "41": "blocked",
+     "63": "sprint",
+     "23": "sprint",
+     "25": "blocked",
+     "127": "sprint",
+     "110": "sprint",
+     "111": "sprint",
+     "124": "sprint",
+     "1": "parent",
+     "2": "parent",
+     "3": "parent",
+     "4": "parent",
+     "26": "parent",
+     "40": "sprint",
+     "49": "sprint",
+     "67": "sprint",
+     "102": "sprint",
+     "107": "parent",
+     "116": "sprint",
+     "122": "sprint",
+     "125": "sprint",
+     "126": "sprint"
+    },
+    "runner": {}
+   },
+   "S5": {
+    "open": [],
+    "hold": {
+     "31": "sprint",
+     "32": "sprint",
+     "12": "sprint",
+     "15": "sprint",
+     "34": "sprint",
+     "35": "sprint",
+     "36": "sprint",
+     "16": "sprint",
+     "19": "sprint",
+     "18": "sprint",
+     "108": "sprint",
+     "13": "sprint",
+     "20": "sprint",
+     "38": "sprint",
+     "21": "sprint",
+     "24": "sprint",
+     "39": "sprint",
+     "37": "sprint",
+     "22": "sprint",
+     "33": "sprint",
+     "112": "sprint",
+     "41": "sprint",
+     "63": "sprint",
+     "23": "sprint",
+     "25": "sprint",
+     "127": "sprint",
+     "110": "sprint",
+     "111": "sprint",
+     "124": "sprint",
+     "1": "parent",
+     "2": "parent",
+     "3": "parent",
+     "4": "parent",
+     "26": "parent",
+     "40": "sprint",
+     "49": "sprint",
+     "67": "sprint",
+     "102": "sprint",
+     "107": "parent",
+     "116": "sprint",
+     "122": "sprint",
+     "125": "sprint",
+     "126": "sprint"
+    },
+    "runner": {}
+   }
+  },
+  "with_running_job": {
+   "sprint": "S1",
+   "open": [
+    116,
+    122,
+    125,
+    126
+   ],
+   "hold": {
+    "31": "sprint",
+    "32": "sprint",
+    "12": "sprint",
+    "15": "sprint",
+    "34": "sprint",
+    "35": "sprint",
+    "36": "sprint",
+    "16": "sprint",
+    "19": "sprint",
+    "18": "sprint",
+    "108": "sprint",
+    "13": "sprint",
+    "20": "sprint",
+    "38": "sprint",
+    "21": "sprint",
+    "24": "sprint",
+    "39": "sprint",
+    "37": "sprint",
+    "22": "sprint",
+    "33": "sprint",
+    "112": "sprint",
+    "41": "sprint",
+    "63": "sprint",
+    "23": "sprint",
+    "25": "sprint",
+    "127": "sprint",
+    "110": "sprint",
+    "111": "sprint",
+    "124": "sprint",
+    "1": "parent",
+    "2": "parent",
+    "3": "parent",
+    "4": "parent",
+    "26": "parent",
+    "40": "sprint",
+    "49": "sprint",
+    "67": "sprint",
+    "102": "running",
+    "107": "parent"
+   },
+   "runner": {
+    "116": "dsh",
+    "122": "dsh",
+    "125": "dsh",
+    "126": "omo"
+   },
+   "jobs": [
+    {
+     "id": "OT-RUN1",
+     "state": "running",
+     "issue": 102
+    }
+   ]
+  }
+ }
+}
