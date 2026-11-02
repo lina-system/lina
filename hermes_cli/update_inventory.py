@@ -14,6 +14,8 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, asdict, fields as dataclass_fields
 from typing import Any, Callable, Optional
 
+from hermes_constants import GATEWAY_LAUNCHD_LABEL_BASE, GATEWAY_SERVICE_BASE
+
 logger = logging.getLogger(__name__)
 
 
@@ -397,8 +399,8 @@ def _gateway_service_matches_profile(profile: str, service: object) -> bool:
     """
     name = str(service).removesuffix(".service").rsplit("/", 1)[-1]
     if profile == "default":
-        return name in {"hermes-gateway", "ai.hermes.gateway", "gateway", "gateway-default"}
-    return name in {f"hermes-gateway-{profile}", f"ai.hermes.gateway-{profile}", f"gateway-{profile}"}
+        return name in {GATEWAY_SERVICE_BASE, GATEWAY_LAUNCHD_LABEL_BASE, "gateway", "gateway-default"}
+    return name in {f"{GATEWAY_SERVICE_BASE}-{profile}", f"{GATEWAY_LAUNCHD_LABEL_BASE}-{profile}", f"gateway-{profile}"}
 
 
 def _gateway_named_in(r: RuntimeRecord, names: set) -> bool:

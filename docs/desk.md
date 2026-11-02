@@ -13,8 +13,8 @@ as PARA:
 
 ## Creating it
 
-The installer runs `hermes desk init --adopt`, which creates `~/Desk` or keeps the one already there.
-By hand:
+The installer runs `hermes desk init --adopt`, which creates `~/Desk`, keeps the Desk already
+configured (including one made with `--path`), or keeps the folder already there. By hand:
 
 ```sh
 hermes desk init                       # create ~/Desk

@@ -54,9 +54,9 @@ _GATEWAY_LIFECYCLE_PATTERN = re.compile(
     # makes an unload durable across boots. Omitting them left the bypassable approval layer
     # (tools/approval.py, skipped on force=True) as the only cover, while this hard block — documented as
     # "force=True cannot help here" — let them through (#80260).
-    r"|(?:launchctl\s+(?:kickstart|unload|load|stop|restart|submit|bootstrap|bootout|remove|disable)\b[^\n]*\bhermes[.\-]?gateway)"
-    # Branch C: systemctl ops on a hermes-gateway unit.
-    r"|(?:systemctl\s+(?:-\S+\s+)*(?:restart|stop|start)\b[^\n]*\bhermes[.\-]?gateway)"
+    r"|(?:launchctl\s+(?:kickstart|unload|load|stop|restart|submit|bootstrap|bootout|remove|disable)\b[^\n]*\b(?:hermes|lina)[.\-]?gateway)"
+    # Branch C: systemctl ops on a gateway unit (LINA's ``lina-gateway`` or Hermes Agent's ``hermes-gateway``).
+    r"|(?:systemctl\s+(?:-\S+\s+)*(?:restart|stop|start)\b[^\n]*\b(?:hermes|lina)[.\-]?gateway)"
     # Branch D: pkill/kill of the gateway process, both token orders. Leading \b keeps "skill" from
     # matching as "kill".
     # `taskkill` / `Stop-Process` are the Windows spellings of the same operation; `\bp?kill\b`

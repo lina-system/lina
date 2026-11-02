@@ -7,6 +7,7 @@ test patches on ``update_cmd`` stay effective).
 
 import logging
 import os
+import re
 import shlex
 from contextlib import nullcontext, suppress
 import subprocess
@@ -278,6 +279,14 @@ OFFICIAL_REPO_URLS = {
     "git@github.com:NousResearch/hermes-agent",
 }
 OFFICIAL_REPO_URL = "https://github.com/NousResearch/hermes-agent.git"
+# The product repository. A checkout of it updates from origin only: Hermes
+# intake is the maintainer procedure in docs/forking.md, not a user update.
+LINA_REPOSITORY = "lina-system/lina"
+_GITHUB_ORIGIN = re.compile(
+    r"^(?:https://github\.com/|git@github\.com:|ssh://git@github\.com/)"
+    r"([A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+?)(?:\.git)?/?$",
+    re.IGNORECASE,
+)
 SKIP_UPSTREAM_PROMPT_FILE = ".skip_upstream_prompt"
 
 
@@ -286,9 +295,21 @@ def _get_origin_url(git_cmd: list[str], cwd: Path) -> Optional[str]:
     return _git_stdout(git_cmd, ["remote", "get-url", "origin"], cwd)
 
 
-def _is_fork(origin_url: Optional[str]) -> bool:
-    """Check if the origin remote points to a fork (not the official repo)."""
+def _is_lina_origin(origin_url: Optional[str]) -> bool:
+    """True when ``origin`` is the LINA repository (https, ssh, or ``ssh://``)."""
     if not origin_url:
+        return False
+    match = _GITHUB_ORIGIN.fullmatch(origin_url.strip())
+    return bool(match) and match.group(1).lower() == LINA_REPOSITORY
+
+
+def _is_fork(origin_url: Optional[str]) -> bool:
+    """True when origin is neither the Hermes repo nor the LINA repo.
+
+    A ``lina-system/lina`` checkout is the product, not a Hermes fork, so a
+    user update never offers, adds, or fetches NousResearch/hermes-agent.
+    """
+    if not origin_url or _is_lina_origin(origin_url):
         return False
 
     def _norm(url: str) -> str:

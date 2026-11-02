@@ -61,6 +61,7 @@ _GATEWAY_MARKERS = ("_HERMES_GATEWAY", "HERMES_GATEWAY", "HERMES_GATEWAY_MODE")
 _PROFILE_RESTART_TIMEOUT = 90
 _VERIFY_TIMEOUT = 15
 from hermes_constants import PROFILE_ID_RE as _PROFILE_ID_RE
+from hermes_constants import GATEWAY_SERVICE_BASE
 
 _SUPERVISOR_RE = re.compile(r"^[a-z0-9][a-z0-9_-]{0,31}$")
 _UNIT_RE = re.compile(r"^hermes-(serve|dashboard)(-[a-z0-9][a-z0-9_-]{0,63})?\.service$")
@@ -148,8 +149,8 @@ def _run_profile_restart(profile: str, *, run: Callable[..., Any]) -> bool:
 def _systemd_unit_candidates(profile: str) -> tuple[str, ...]:
     """Unit names the existing systemd gateway lifecycle produces per profile."""
     if profile == "default":
-        return ("hermes-gateway.service", "gateway.service", "gateway-default.service")
-    return (f"hermes-gateway-{profile}.service", f"gateway-{profile}.service")
+        return (f"{GATEWAY_SERVICE_BASE}.service", "gateway.service", "gateway-default.service")
+    return (f"{GATEWAY_SERVICE_BASE}-{profile}.service", f"gateway-{profile}.service")
 
 
 def _systemd_verified_active(profile: str, *, run: Callable[..., Any]) -> bool:

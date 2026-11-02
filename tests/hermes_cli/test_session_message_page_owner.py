@@ -10,7 +10,7 @@ def test_message_pages_identify_the_serving_profile(tmp_path, monkeypatch, servi
     from hermes_state import SessionDB
 
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
-    default_home = tmp_path / ".hermes"
+    default_home = tmp_path / ".lina"
     work_home = default_home / "profiles" / "work" if serving_profile else default_home / "custom-home"
     default_home.mkdir(parents=True)
     work_home.mkdir(parents=True)

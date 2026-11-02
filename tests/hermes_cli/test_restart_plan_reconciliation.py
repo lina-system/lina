@@ -56,7 +56,7 @@ def test_windows_service_runtime_reconciles_via_service_profiles():
     # must not trip the unaccounted tripwire.
     outcomes = match_runtime_outcomes(
         _plan(_rt("default", 500, supervisor="windows-service")),
-        restarted_services=["hermes-gateway"], relaunched_profiles=["default"],
+        restarted_services=["lina-gateway"], relaunched_profiles=["default"],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     assert outcomes == [
@@ -104,7 +104,7 @@ def test_failed_unit_is_failed():
         _plan(_rt("work", 300, supervisor="systemd")),
         restarted_services=[], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(),
-        failed_units=["hermes-gateway-work.service"],
+        failed_units=["lina-gateway-work.service"],
     )
     assert outcomes[0]["outcome"] == "failed"
 
@@ -112,21 +112,21 @@ def test_failed_unit_is_failed():
 def test_restarted_service_unit_matches_profile():
     outcomes = match_runtime_outcomes(
         _plan(_rt("default", 400, supervisor="systemd")),
-        restarted_services=["hermes-gateway.service"], relaunched_profiles=[],
+        restarted_services=["lina-gateway.service"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     assert outcomes[0]["outcome"] == "restarted"
 
 
 def test_launchd_default_gateway_restarted_via_ai_hermes_label():
-    """macOS restart bookkeeping records ``ai.hermes.gateway``, which does not
-    contain the substring ``hermes-gateway``. The default-profile gateway must
+    """macOS restart bookkeeping records ``ai.lina.gateway``, which does not
+    contain the substring ``lina-gateway``. The default-profile gateway must
     still count as restarted — otherwise every Desktop update on launchd
     exits 1 after a successful kickstart (receipt outcome=partial, tripwire
     'never touched')."""
     outcomes = match_runtime_outcomes(
         _plan(_rt("default", 400, supervisor="launchd")),
-        restarted_services=["ai.hermes.gateway"], relaunched_profiles=[],
+        restarted_services=["ai.lina.gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     assert outcomes[0]["outcome"] == "restarted"
@@ -136,7 +136,7 @@ def test_launchd_default_gateway_restarted_via_ai_hermes_label():
 def test_launchd_named_profile_and_failed_label():
     restarted = match_runtime_outcomes(
         _plan(_rt("work", 401, supervisor="launchd")),
-        restarted_services=["ai.hermes.gateway-work"], relaunched_profiles=[],
+        restarted_services=["ai.lina.gateway-work"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     assert restarted[0]["outcome"] == "restarted"
@@ -144,7 +144,7 @@ def test_launchd_named_profile_and_failed_label():
         _plan(_rt("default", 402, supervisor="launchd")),
         restarted_services=[], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(),
-        failed_units=["ai.hermes.gateway"],
+        failed_units=["ai.lina.gateway"],
     )
     assert failed[0]["outcome"] == "failed"
 
@@ -153,7 +153,7 @@ def test_untouched_runtime_is_unaccounted_and_escalates(capsys):
     """The tripwire: plan saw it, NO bookkeeping mentions it."""
     outcomes = match_runtime_outcomes(
         _plan(_rt("coder", 500)),
-        restarted_services=["hermes-gateway.service"],
+        restarted_services=["lina-gateway.service"],
         relaunched_profiles=["default"],
         externally_supervised_profiles=[], killed_pids={123}, failed_units=[],
     )
@@ -188,7 +188,7 @@ def test_unmanaged_serve_runtime_under_default_profile_is_unaccounted():
     )
     outcomes = match_runtime_outcomes(
         _plan(_rt("default", 100, supervisor="systemd"), serve_runtime),
-        restarted_services=["hermes-gateway"], relaunched_profiles=[],
+        restarted_services=["lina-gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     by_pid = {o["pid"]: o["outcome"] for o in outcomes}
@@ -227,7 +227,7 @@ def test_systemd_dashboard_runtime_without_unit_restart_stays_unaccounted():
     the row escalates (exit 1), never a silent ``deferred`` on a success receipt."""
     outcomes = match_runtime_outcomes(
         _plan(_dash_unit_runtime("default", 700), _rt("default", 100, supervisor="systemd")),
-        restarted_services=["hermes-gateway"], relaunched_profiles=[],
+        restarted_services=["lina-gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     by_pid = {o["pid"]: o["outcome"] for o in outcomes}
@@ -263,11 +263,11 @@ def test_serve_never_borrows_relaunched_or_external_gateway_profile():
 
 
 def test_named_profile_serve_does_not_match_gateway_profile_unit():
-    """``hermes-gateway-work.service`` restarted must not credit the ``work``
+    """``lina-gateway-work.service`` restarted must not credit the ``work``
     serve — the old substring match (``"work" in unit``) did exactly that."""
     outcomes = match_runtime_outcomes(
         _plan(_rt("work", 101, supervisor="systemd"), _serve("work", 901)),
-        restarted_services=["hermes-gateway-work.service"], relaunched_profiles=[],
+        restarted_services=["lina-gateway-work.service"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     by_pid = {o["pid"]: o["outcome"] for o in outcomes}
@@ -280,7 +280,7 @@ def test_serve_reconciles_against_its_own_unit_vocabulary():
     outcomes = match_runtime_outcomes(
         _plan(_serve("default", 900), _serve("work", 901),
               _serve("ops", 902, kind="dashboard"), _serve("qa", 903)),
-        restarted_services=["hermes-gateway", "user/hermes-serve",
+        restarted_services=["lina-gateway", "user/hermes-serve",
                             "hermes-serve-work.service", "hermes-dashboard-ops"],
         relaunched_profiles=[], externally_supervised_profiles=[],
         killed_pids=set(), failed_units=["hermes-serve-qa.service"],
@@ -362,7 +362,7 @@ def test_desktop_serve_deferral_requires_a_verified_alive_incarnation():
 def test_unaccounted_serve_report_names_serve_remedy_not_gateway_restart(capsys):
     outcomes = match_runtime_outcomes(
         _plan(_serve("default", 900)),
-        restarted_services=["hermes-gateway"], relaunched_profiles=[],
+        restarted_services=["lina-gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     assert report_unaccounted_runtimes(outcomes) is True
@@ -379,7 +379,7 @@ def test_mixed_fleet_only_the_missed_one_escalates(capsys):
             _rt("work", 701),
             _rt("ghost", 702),
         ),
-        restarted_services=["hermes-gateway.service"],
+        restarted_services=["lina-gateway.service"],
         relaunched_profiles=["work"],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
@@ -397,14 +397,14 @@ def test_mixed_fleet_only_the_missed_one_escalates(capsys):
 
 def test_gateway_credited_by_successor_incarnation_not_service_name():
     """A service can serve a profile its own name does not encode: with a sticky
-    active profile, the root-home ``ai.hermes.gateway`` LaunchAgent supervises the
+    active profile, the root-home ``ai.lina.gateway`` LaunchAgent supervises the
     ``coder`` gateway, so the plan row (profile ``coder``) and the restarted label
     never match by name. The planned PID being gone while a gateway answers for the
     same profile is the evidence that has to credit it — otherwise every update
     exits 1 (receipt outcome=partial) after a successful launchd restart."""
     outcomes = match_runtime_outcomes(
         _plan(_rt("coder", 76508, supervisor="launchd")),
-        restarted_services=["ai.hermes.gateway"], relaunched_profiles=[],
+        restarted_services=["ai.lina.gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
         live_gateway_pids={"coder": {76796}},
     )
@@ -418,7 +418,7 @@ def test_gateway_successor_credit_requires_a_live_replacement():
     stays unaccounted and escalates."""
     no_successor = match_runtime_outcomes(
         _plan(_rt("coder", 76508, supervisor="launchd")),
-        restarted_services=["ai.hermes.gateway"], relaunched_profiles=[],
+        restarted_services=["ai.lina.gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
         live_gateway_pids={},
     )
@@ -443,7 +443,7 @@ def test_gateway_successor_credit_requires_a_live_replacement():
 
     empty_evidence = match_runtime_outcomes(
         _plan(_rt("coder", 76508, supervisor="launchd")),
-        restarted_services=["ai.hermes.gateway"], relaunched_profiles=[],
+        restarted_services=["ai.lina.gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
         live_gateway_pids={"coder": set()},
     )
@@ -459,7 +459,7 @@ def test_missing_successor_evidence_is_logged(caplog):
     with caplog.at_level(logging.DEBUG, logger="hermes_cli.update_inventory"):
         outcomes = match_runtime_outcomes(
             _plan(_rt("coder", 76508, supervisor="launchd")),
-            restarted_services=["ai.hermes.gateway"], relaunched_profiles=[],
+            restarted_services=["ai.lina.gateway"], relaunched_profiles=[],
             externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
             live_gateway_pids={},
         )
@@ -483,7 +483,7 @@ def test_successor_evidence_never_outranks_stopped_or_failed():
         _plan(_rt("coder", 76508, supervisor="launchd")),
         restarted_services=[], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(),
-        failed_units=["ai.hermes.gateway-coder"],
+        failed_units=["ai.lina.gateway-coder"],
         live_gateway_pids={"coder": {76796}},
     )
     assert failed[0]["outcome"] == "failed"
@@ -565,7 +565,7 @@ def test_successor_evidence_is_gateway_only_and_stays_optional():
 
     without_probe = match_runtime_outcomes(
         _plan(_rt("coder", 76508, supervisor="launchd")),
-        restarted_services=["ai.hermes.gateway"], relaunched_profiles=[],
+        restarted_services=["ai.lina.gateway"], relaunched_profiles=[],
         externally_supervised_profiles=[], killed_pids=set(), failed_units=[],
     )
     assert without_probe[0]["outcome"] == "unaccounted"

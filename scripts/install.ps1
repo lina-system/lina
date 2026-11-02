@@ -25,8 +25,8 @@ param(
     [string]$Branch = "main",
     [string]$Commit = "",
     [string]$Channel = $(if ($env:HERMES_INSTALL_CHANNEL) { $env:HERMES_INSTALL_CHANNEL } else { "" }),
-    [string]$HermesHome = $(if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$env:LOCALAPPDATA\hermes" }),
-    [string]$InstallDir = $(if ($env:HERMES_HOME) { "$env:HERMES_HOME\hermes-agent" } else { "$env:LOCALAPPDATA\hermes\hermes-agent" }),
+    [string]$HermesHome = $(if ($env:LINA_HOME) { $env:LINA_HOME } else { "$env:LOCALAPPDATA\lina" }),
+    [string]$InstallDir = $(if ($env:LINA_HOME) { "$env:LINA_HOME\hermes-agent" } else { "$env:LOCALAPPDATA\lina\hermes-agent" }),
     [switch]$Manifest,
     [string]$Stage,
     [switch]$ProtocolVersion,
@@ -314,6 +314,19 @@ $script:NormalizedPathRewrites = @{}
 # caller's process env, so the normalization prologue runs only on real
 # entry. Called from the entry dispatch below, before -ProtocolVersion and
 # every other switch, so the resolved paths are always the install's own.)
+# LINA's root is LINA_HOME, else %LOCALAPPDATA%\lina. An inherited HERMES_HOME stays only where the
+# runtime keeps it (hermes_constants.drop_foreign_hermes_home): inside that root, or a custom home when
+# LINA_HOME is unset; Hermes Agent's own %LOCALAPPDATA%\hermes never.
+function Get-LinaInstallHome {
+    $root = if ($env:LINA_HOME) { $env:LINA_HOME } else { "$env:LOCALAPPDATA\lina" }
+    $inherited = "$env:HERMES_HOME".TrimEnd('\')
+    if (-not $inherited) { return $root }
+    $within = { param($path, $base) $path -eq $base -or $path.StartsWith("$base\", 'OrdinalIgnoreCase') }
+    if (& $within $inherited $root.TrimEnd('\')) { return $inherited }
+    if ($env:LINA_HOME -or (& $within $inherited "$env:LOCALAPPDATA\hermes")) { return $root }
+    return $inherited
+}
+
 function Initialize-ResolvedPaths {
     $script:NormalizedProfilePaths = Set-LongProfileEnvVars
 
@@ -326,9 +339,7 @@ function Initialize-ResolvedPaths {
     $resolvedHome = if ($script:BoundParams.ContainsKey('HermesHome')) {
         ConvertTo-LongPath $HermesHome
     } else {
-        ConvertTo-LongPath $(
-            if ($env:HERMES_HOME) { $env:HERMES_HOME } else { "$env:LOCALAPPDATA\hermes" }
-        )
+        ConvertTo-LongPath (Get-LinaInstallHome)
     }
     $resolvedDir = if ($script:BoundParams.ContainsKey('InstallDir')) {
         ConvertTo-LongPath $InstallDir

@@ -568,6 +568,21 @@ if _legacy_post_swap is not None:
     raise SystemExit(_continue_legacy_post_swap(_handoff_path, argv_tail=_argv_tail))
 
 
+def _drop_foreign_home() -> None:
+    """Keep this process and every child it spawns inside LINA's home, before PM or any home reader
+    runs: an inherited ``HERMES_HOME`` naming Hermes Agent's home (or a home outside ``LINA_HOME``)
+    is removed, so resolution falls back to ``LINA_HOME`` / ``~/.lina``. A launcher's pin above is
+    always inside LINA's root, so it survives."""
+    from hermes_constants import drop_foreign_hermes_home
+
+    dropped = drop_foreign_hermes_home(os.environ)
+    if dropped is not None:
+        print(f"lina: ignoring HERMES_HOME={dropped}: it is outside the LINA home", file=sys.stderr)
+
+
+_drop_foreign_home()
+
+
 class RelaunchExit(SystemExit):
     """Exit carrying a relaunched child's status: that child already produced this run's output,
     so callers that report their own boot failures (the Bot Chat delivery runner) must not."""
