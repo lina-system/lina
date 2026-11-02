@@ -1929,7 +1929,7 @@ delegation:
 # Builds a deeper understanding of the user across sessions and tools.
 # Runs alongside USER.md — additive, not a replacement.
 #
-# Requires: hermes plugins install honcho (Plastic Labs' plugin from the catalog)
+# Bundled memory provider (plugins/memory/honcho): hermes memory setup honcho
 # Config: ~/.honcho/config.json (shared with Claude Code, Cursor, etc.)
 # API key: HONCHO_API_KEY in ~/.hermes/.env or ~/.honcho/config.json
 #

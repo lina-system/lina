@@ -1,0 +1,1238 @@
+# pyright: reportPrivateUsage=false, reportUnknownVariableType=false
+"""Integration tests for Prometheus token metrics tracking.
+
+These tests verify that deriver and dialectic token metrics are correctly
+emitted with accurate token counts when processing messages and dialectic queries.
+
+The approach uses delta-based verification by directly accessing Prometheus counters:
+1. Capture counter values before test execution
+2. Run the code under test (with mocked LLM)
+3. Verify deltas match expected values
+"""
+
+import asyncio
+from collections.abc import Iterator
+from typing import Any
+from unittest.mock import AsyncMock, patch
+
+import pytest
+from nanoid import generate as generate_nanoid
+from prometheus_client import Counter
+from sqlalchemy import select, update
+from sqlalchemy.exc import OperationalError
+from sqlalchemy.ext.asyncio import AsyncEngine, AsyncSession, async_sessionmaker
+
+from src import crud, models, schemas
+from src.llm import HonchoLLMCallResponse
+from src.models import Peer, Workspace
+from src.schemas import (
+    ResolvedConfiguration,
+    ResolvedDreamConfiguration,
+    ResolvedPeerCardConfiguration,
+    ResolvedReasoningConfiguration,
+    ResolvedSummaryConfiguration,
+)
+from src.telemetry.prometheus.metrics import (
+    deriver_tokens_processed_counter,
+    dialectic_tokens_processed_counter,
+    summary_rejections_counter,
+)
+from src.utils.representation import ExplicitObservationBase, PromptRepresentation
+from src.utils.summarizer import (
+    SUMMARIES_KEY,
+    Summary,
+    SummaryType,
+    _create_and_save_summary,
+    _save_summary,
+    estimate_short_summary_prompt_tokens,
+    summarize_if_needed,
+)
+
+# =============================================================================
+# Fixtures
+# =============================================================================
+
+
+class PrometheusMetricChecker:
+    """Utility class to capture and verify Prometheus counter deltas."""
+
+    def _get_counter_value(self, counter: Counter, labels: dict[str, str]) -> float:
+        """Get current value of a counter with specific labels.
+
+        Note: For prometheus_client counters, we access the internal _value
+        of the labeled metric. This is implementation-specific but works for testing.
+        """
+        try:
+            labeled_counter = counter.labels(**labels)
+            return labeled_counter._value.get()
+        except Exception:
+            return 0.0
+
+    def capture(self, counter: Counter, labels: dict[str, str]) -> float:
+        """Capture current value of a counter with specific labels."""
+        return self._get_counter_value(counter, labels)
+
+    def get_delta(
+        self, counter: Counter, labels: dict[str, str], before: float
+    ) -> float:
+        """Get the delta between a before value and current."""
+        return self.capture(counter, labels) - before
+
+    def assert_delta(
+        self,
+        counter: Counter,
+        labels: dict[str, str],
+        before: float,
+        expected: int | float,
+        message: str = "",
+    ) -> None:
+        """Assert that the delta matches expected value."""
+        delta = self.get_delta(counter, labels, before)
+        assert delta == expected, (
+            f"{message}: expected delta {expected}, got {delta}. Labels: {labels}"
+        )
+
+
+@pytest.fixture
+def prometheus_test_setup(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Iterator[PrometheusMetricChecker]:
+    """Set up Prometheus metrics for testing.
+
+    Yields:
+        A PrometheusMetricChecker for verifying metrics
+    """
+    # Enable METRICS in settings and set namespace for test assertions
+    monkeypatch.setattr("src.config.settings.METRICS.ENABLED", True)
+    monkeypatch.setattr("src.config.settings.METRICS.NAMESPACE", "test")
+
+    checker = PrometheusMetricChecker()
+
+    yield checker
+
+
+@pytest.fixture
+def metric_checker(
+    prometheus_test_setup: PrometheusMetricChecker,
+) -> PrometheusMetricChecker:
+    """Fixture providing a metric checker instance."""
+    return prometheus_test_setup
+
+
+# =============================================================================
+# Test Data Helpers
+# =============================================================================
+
+
+async def create_test_session_with_peer(
+    db_session: AsyncSession,
+    workspace: Workspace,
+    peer: Peer,
+) -> models.Session:
+    """Create a session with a peer configured for observation."""
+    session = (
+        await crud.get_or_create_session(
+            db_session,
+            schemas.SessionCreate(
+                name=str(generate_nanoid()),
+                peers={peer.name: schemas.SessionPeerConfig(observe_me=True)},
+            ),
+            workspace.name,
+        )
+    ).resource
+    await db_session.commit()
+    return session
+
+
+async def create_test_messages(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    peer_name: str,
+    count: int = 1,
+    content_prefix: str = "Test message",
+) -> list[models.Message]:
+    """Create test messages in the database."""
+    messages: list[models.Message] = []
+    for i in range(count):
+        message = models.Message(
+            workspace_name=workspace_name,
+            session_name=session_name,
+            peer_name=peer_name,
+            content=f"{content_prefix} {i}",
+            public_id=generate_nanoid(),
+            seq_in_session=i + 1,
+            token_count=10,
+        )
+        db_session.add(message)
+        messages.append(message)
+
+    await db_session.commit()
+    # Refresh to get IDs
+    for msg in messages:
+        await db_session.refresh(msg)
+    return messages
+
+
+def create_test_configuration() -> ResolvedConfiguration:
+    """Create a test configuration to avoid DB lookups in tests."""
+    return ResolvedConfiguration(
+        reasoning=ResolvedReasoningConfiguration(enabled=True),
+        peer_card=ResolvedPeerCardConfiguration(use=False, create=False),
+        summary=ResolvedSummaryConfiguration(
+            enabled=True, messages_per_short_summary=20, messages_per_long_summary=60
+        ),
+        dream=ResolvedDreamConfiguration(enabled=False),
+    )
+
+
+def create_mock_deriver_response(
+    output_tokens: int = 42,
+) -> HonchoLLMCallResponse[PromptRepresentation]:
+    """Create a mock LLM response for the deriver."""
+    return HonchoLLMCallResponse(
+        content=PromptRepresentation(
+            explicit=[ExplicitObservationBase(content="Test observation from deriver")],
+        ),
+        input_tokens=100,
+        output_tokens=output_tokens,
+        finish_reasons=["end_turn"],
+    )
+
+
+def create_mock_dialectic_response(
+    input_tokens: int = 150, output_tokens: int = 75
+) -> HonchoLLMCallResponse[str]:
+    """Create a mock LLM response for the dialectic."""
+    return HonchoLLMCallResponse(
+        content="This is a test dialectic response about the peer.",
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+        cache_read_input_tokens=0,
+        cache_creation_input_tokens=0,
+        finish_reasons=["end_turn"],
+        tool_calls_made=[],
+    )
+
+
+# =============================================================================
+# Deriver Ingestion Metrics Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestDeriverIngestionMetrics:
+    """Test token metrics for deriver INGESTION task type."""
+
+    async def test_ingestion_tracks_output_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify OUTPUT_TOTAL tokens match response.output_tokens from LLM."""
+        from src.deriver.deriver import process_representation_tasks_batch
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=1
+        )
+
+        expected_output_tokens = 42
+        mock_response = create_mock_deriver_response(
+            output_tokens=expected_output_tokens
+        )
+
+        # Capture metrics before
+        labels = {
+            "namespace": "test",
+            "task_type": "ingestion",
+            "token_type": "output",
+            "component": "output_total",
+        }
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
+
+        # Mock the LLM call and save_representation (we're testing metrics, not DB writes)
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new=AsyncMock(return_value=mock_response),
+            ),
+            patch(
+                "src.crud.representation.RepresentationManager.save_representation",
+                new=AsyncMock(),
+            ),
+        ):
+            await process_representation_tasks_batch(
+                messages=messages,
+                message_level_configuration=create_test_configuration(),
+                observers=[peer.name],
+                observed=peer.name,
+                queue_item_message_ids=[m.id for m in messages],
+            )
+
+        # Verify output tokens metric
+        metric_checker.assert_delta(
+            deriver_tokens_processed_counter,
+            labels,
+            before,
+            expected_output_tokens,
+            "Ingestion output tokens",
+        )
+
+    async def test_ingestion_tracks_prompt_input_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify PROMPT component is tracked for ingestion input."""
+        from src.deriver.deriver import process_representation_tasks_batch
+        from src.deriver.prompts import estimate_minimal_deriver_prompt_tokens
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=1
+        )
+
+        mock_response = create_mock_deriver_response()
+
+        # Get expected prompt tokens
+        expected_prompt_tokens = estimate_minimal_deriver_prompt_tokens()
+
+        labels = {
+            "namespace": "test",
+            "task_type": "ingestion",
+            "token_type": "input",
+            "component": "prompt",
+        }
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
+
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new=AsyncMock(return_value=mock_response),
+            ),
+            patch(
+                "src.crud.representation.RepresentationManager.save_representation",
+                new=AsyncMock(),
+            ),
+        ):
+            await process_representation_tasks_batch(
+                messages=messages,
+                message_level_configuration=create_test_configuration(),
+                observers=[peer.name],
+                observed=peer.name,
+                queue_item_message_ids=[m.id for m in messages],
+            )
+
+        metric_checker.assert_delta(
+            deriver_tokens_processed_counter,
+            labels,
+            before,
+            expected_prompt_tokens,
+            "Ingestion prompt input tokens",
+        )
+
+    async def test_ingestion_tracks_messages_input_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify MESSAGES component is tracked for ingestion input."""
+        from src.deriver.deriver import process_representation_tasks_batch
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session,
+            workspace.name,
+            session.name,
+            peer.name,
+            count=1,
+            content_prefix="Hello this is a test message",
+        )
+
+        mock_response = create_mock_deriver_response()
+
+        labels = {
+            "namespace": "test",
+            "task_type": "ingestion",
+            "token_type": "input",
+            "component": "messages",
+        }
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
+
+        with (
+            patch(
+                "src.deriver.deriver.honcho_llm_call",
+                new=AsyncMock(return_value=mock_response),
+            ),
+            patch(
+                "src.crud.representation.RepresentationManager.save_representation",
+                new=AsyncMock(),
+            ),
+        ):
+            await process_representation_tasks_batch(
+                messages=messages,
+                message_level_configuration=create_test_configuration(),
+                observers=[peer.name],
+                observed=peer.name,
+                queue_item_message_ids=[m.id for m in messages],
+            )
+
+        # Verify messages tokens were tracked (should be > 0)
+        delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, labels, before
+        )
+        assert delta > 0, f"Expected messages input tokens > 0, got {delta}"
+
+
+# =============================================================================
+# Summary degeneration guard (#899)
+# =============================================================================
+
+_DEGENERATE_SUMMARY_TEXT = "Human. Forever. Human. Always. Human value. Always. " * 300
+
+
+@pytest.mark.asyncio
+class TestSummaryDegenerationGuard:
+    """Persistence-boundary tests for the #899 degeneration guard."""
+
+    async def test_degenerate_cap_hit_does_not_save_summary(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Degenerate max_tokens summary must not call _save_summary and must count rejection."""
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+        last_message = messages[-1]
+
+        mock_response = HonchoLLMCallResponse(
+            content=_DEGENERATE_SUMMARY_TEXT,
+            input_tokens=20000,
+            output_tokens=4000,
+            finish_reasons=["max_tokens"],
+        )
+
+        rejection_labels = {
+            "namespace": "test",
+            "summary_type": "long",
+            "reason": "degenerate_repetition",
+        }
+        before = metric_checker.capture(summary_rejections_counter, rejection_labels)
+
+        with (
+            patch(
+                "src.utils.summarizer.create_long_summary",
+                new=AsyncMock(return_value=mock_response),
+            ),
+            patch(
+                "src.utils.summarizer._save_summary",
+                new=AsyncMock(),
+            ) as mock_save,
+        ):
+            await _create_and_save_summary(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
+                summary_type=SummaryType.LONG,
+                message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
+            )
+
+        mock_save.assert_not_awaited()
+        metric_checker.assert_delta(
+            summary_rejections_counter,
+            rejection_labels,
+            before,
+            1,
+            "Summary rejection counter",
+        )
+
+
+# =============================================================================
+# NUL in summaries (DEV-2535): jsonb rejects it
+# =============================================================================
+
+
+def _stored_summary(
+    content: str, message: models.Message, summary_type: SummaryType
+) -> Summary:
+    return Summary(
+        content=content,
+        message_id=message.id,
+        summary_type=summary_type.value,
+        created_at="2026-01-01T00:00:00+00:00",
+        token_count=3,
+        message_public_id=message.public_id,
+    )
+
+
+async def _stored_summaries(
+    db_session: AsyncSession, workspace_name: str, session_name: str
+) -> dict[str, Summary]:
+    # Select the column so the committed row is read, not the identity map.
+    metadata = await db_session.scalar(
+        select(models.Session.internal_metadata).where(
+            models.Session.workspace_name == workspace_name,
+            models.Session.name == session_name,
+        )
+    )
+    assert metadata is not None
+    return metadata.get(SUMMARIES_KEY, {})
+
+
+@pytest.mark.asyncio
+class TestSummaryNulPersistence:
+    """Persistence-boundary tests: NUL never reaches the jsonb write."""
+
+    async def _run_short_summary(
+        self,
+        workspace: Workspace,
+        session: models.Session,
+        last_message: models.Message,
+        content: str,
+    ) -> None:
+        mock_response = HonchoLLMCallResponse(
+            content=content,
+            input_tokens=100,
+            output_tokens=7,
+            finish_reasons=["stop"],
+        )
+        with patch(
+            "src.utils.summarizer.create_short_summary",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            await _create_and_save_summary(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
+                summary_type=SummaryType.SHORT,
+                message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
+            )
+
+    async def test_nul_only_summary_keeps_previous(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """A clean-stop NUL-only summary is not saved; the previous one stays."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+        previous = _stored_summary("Earlier summary.", messages[0], SummaryType.SHORT)
+        await _save_summary(db_session, previous, workspace.name, session.name)
+
+        await self._run_short_summary(workspace, session, messages[-1], "\x00 \x00")
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored[SummaryType.SHORT.value] == previous
+
+    async def test_summary_with_nul_is_saved_stripped(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """Mixed content is saved without NUL; the provider token count is kept."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+
+        await self._run_short_summary(
+            workspace, session, messages[-1], "Alice\x00 asked about Bob."
+        )
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        short = stored[SummaryType.SHORT.value]
+        assert short["content"] == "Alice asked about Bob."
+        assert short["token_count"] == 7
+        assert short["message_id"] == messages[-1].id
+
+    async def test_save_summary_strips_nul_and_keeps_sibling(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """The `_save_summary` backstop strips NUL on direct calls too, and the
+        merge leaves the other summary type intact."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=2
+        )
+        long_summary = _stored_summary("Long summary.", messages[0], SummaryType.LONG)
+        await _save_summary(db_session, long_summary, workspace.name, session.name)
+
+        raw = _stored_summary(
+            "Short\x00 summary. Literal \\u0000 stays.", messages[1], SummaryType.SHORT
+        )
+        await _save_summary(db_session, raw, workspace.name, session.name)
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored[SummaryType.SHORT.value]["content"] == (
+            "Short summary. Literal \\u0000 stays."
+        )
+        assert stored[SummaryType.LONG.value] == long_summary
+        assert raw["content"] == "Short\x00 summary. Literal \\u0000 stays."
+
+
+# =============================================================================
+# Sibling summaries at a combined short/long boundary (DEV-3159, DEV-3160)
+# =============================================================================
+
+
+async def _set_internal_metadata(
+    db_session: AsyncSession,
+    workspace_name: str,
+    session_name: str,
+    metadata: dict[str, object],
+) -> None:
+    await db_session.execute(
+        update(models.Session)
+        .where(models.Session.workspace_name == workspace_name)
+        .where(models.Session.name == session_name)
+        .values(internal_metadata=metadata)
+    )
+    await db_session.commit()
+
+
+@pytest.mark.asyncio
+class TestConcurrentSummarySaves:
+    """Short and long saves at one boundary run concurrently (DEV-3160).
+
+    Each used to read the summaries map (possibly from cache) and write the
+    whole map back, so whichever committed second dropped or reverted the
+    other's entry.
+    """
+
+    @pytest.mark.parametrize("previous", [False, True], ids=["first", "replacing"])
+    async def test_both_saves_survive_when_reads_precede_writes(
+        self,
+        db_session: AsyncSession,
+        db_engine: AsyncEngine,
+        sample_data: tuple[Workspace, Peer],
+        previous: bool,
+    ):
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=2
+        )
+        metadata: dict[str, object] = {"unrelated": "kept"}
+        if previous:
+            metadata[SUMMARIES_KEY] = {
+                summary_type.value: _stored_summary("Old.", messages[0], summary_type)
+                for summary_type in SummaryType
+            }
+        await _set_internal_metadata(db_session, workspace.name, session.name, metadata)
+        new = {
+            summary_type: _stored_summary("New.", messages[-1], summary_type)
+            for summary_type in SummaryType
+        }
+
+        # Hold each save after its session read until both have read, so both
+        # start from the same stored map. Writes aren't held: the second UPDATE
+        # just waits for the first to commit.
+        both_read = asyncio.Barrier(2)
+        real_get_session = crud.get_session
+
+        async def get_session_then_wait(*args: Any, **kwargs: Any) -> Any:
+            session_row = await real_get_session(*args, **kwargs)
+            await both_read.wait()
+            return session_row
+
+        session_factory = async_sessionmaker(bind=db_engine, expire_on_commit=False)
+
+        async def save(summary: Summary) -> None:
+            async with session_factory() as db:
+                await _save_summary(db, summary, workspace.name, session.name)
+
+        with patch.object(crud, "get_session", side_effect=get_session_then_wait):
+            await asyncio.wait_for(
+                asyncio.gather(*(save(summary) for summary in new.values())),
+                timeout=10,
+            )
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored == {
+            summary_type.value: summary for summary_type, summary in new.items()
+        }
+        refreshed = await db_session.scalar(
+            select(models.Session.internal_metadata).where(
+                models.Session.workspace_name == workspace.name,
+                models.Session.name == session.name,
+            )
+        )
+        assert refreshed is not None
+        assert refreshed["unrelated"] == "kept"
+
+    async def test_non_object_summaries_value_is_replaced(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        """A stored non-object (e.g. JSON null) can't be merged into; it is
+        replaced by a map holding the new entry."""
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=1
+        )
+        await _set_internal_metadata(
+            db_session, workspace.name, session.name, {SUMMARIES_KEY: None}
+        )
+        summary = _stored_summary("New.", messages[0], SummaryType.SHORT)
+
+        await _save_summary(db_session, summary, workspace.name, session.name)
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored == {SummaryType.SHORT.value: summary}
+
+
+@pytest.mark.asyncio
+class TestCombinedBoundaryRetry:
+    """A failed sibling now fails the queue item instead of vanishing
+    (DEV-3159); the retry must finish the job without redoing the other."""
+
+    async def test_retry_after_partial_success_saves_the_missing_summary(
+        self, db_session: AsyncSession, sample_data: tuple[Workspace, Peer]
+    ):
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=60
+        )
+        boundary = messages[-1]
+
+        def response(content: str) -> HonchoLLMCallResponse[str]:
+            return HonchoLLMCallResponse(
+                content=content,
+                input_tokens=100,
+                output_tokens=5,
+                finish_reasons=["stop"],
+            )
+
+        class FakePGError(Exception):
+            sqlstate: str = "40P01"
+
+        real_save = _save_summary
+        long_save_failures = 1
+
+        async def save_failing_long_once(
+            db: AsyncSession, summary: Summary, *args: Any, **kwargs: Any
+        ) -> None:
+            nonlocal long_save_failures
+            if summary["summary_type"] == SummaryType.LONG.value and long_save_failures:
+                long_save_failures -= 1
+                raise OperationalError("UPDATE sessions", {}, FakePGError())
+            await real_save(db, summary, *args, **kwargs)
+
+        async def run_boundary() -> None:
+            await summarize_if_needed(
+                workspace.name,
+                session.name,
+                message_id=boundary.id,
+                message_seq_in_session=boundary.seq_in_session,
+                message_public_id=boundary.public_id,
+                configuration=create_test_configuration(),
+            )
+
+        with (
+            patch(
+                "src.utils.summarizer.create_short_summary",
+                new=AsyncMock(return_value=response("Short.")),
+            ) as short_llm,
+            patch(
+                "src.utils.summarizer.create_long_summary",
+                new=AsyncMock(return_value=response("Long.")),
+            ) as long_llm,
+            patch(
+                "src.utils.summarizer._save_summary",
+                side_effect=save_failing_long_once,
+            ),
+        ):
+            with pytest.raises(OperationalError):
+                await run_boundary()
+            stored = await _stored_summaries(db_session, workspace.name, session.name)
+            assert set(stored) == {SummaryType.SHORT.value}
+
+            await run_boundary()
+
+        stored = await _stored_summaries(db_session, workspace.name, session.name)
+        assert stored[SummaryType.SHORT.value]["content"] == "Short."
+        assert stored[SummaryType.LONG.value]["content"] == "Long."
+        # The short summary was already saved, so the retry skipped it.
+        assert short_llm.await_count == 1
+        assert long_llm.await_count == 2
+
+
+# =============================================================================
+# Deriver Summary Metrics Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestDeriverSummaryMetrics:
+    """Test token metrics for deriver SUMMARY task type."""
+
+    async def test_summary_tracks_output_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify OUTPUT_TOTAL tokens are tracked for summary."""
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+
+        # Create messages for summary
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+        last_message = messages[-1]
+
+        # Mock _create_summary to return a summary with known token count
+        expected_output_tokens = 25
+        mock_summary = {
+            "content": "This is a test summary.",
+            "token_count": expected_output_tokens,
+            "message_id": last_message.id,
+            "message_public_id": last_message.public_id,
+        }
+
+        labels = {
+            "namespace": "test",
+            "task_type": "summary",
+            "token_type": "output",
+            "component": "output_total",
+        }
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
+
+        with (
+            patch(
+                "src.utils.summarizer._create_summary",
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, expected_output_tokens)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
+            ),
+            patch(
+                "src.utils.summarizer._save_summary",
+                new=AsyncMock(),
+            ),
+        ):
+            await _create_and_save_summary(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
+                summary_type=SummaryType.SHORT,
+                message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
+            )
+
+        # Verify output tokens match the summary token_count
+        metric_checker.assert_delta(
+            deriver_tokens_processed_counter,
+            labels,
+            before,
+            expected_output_tokens,
+            "Summary output tokens",
+        )
+
+    async def test_summary_tracks_prompt_input_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify PROMPT component is tracked for summary input."""
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+        last_message = messages[-1]
+
+        expected_prompt_tokens = estimate_short_summary_prompt_tokens()
+
+        mock_summary = {
+            "content": "Test summary.",
+            "token_count": 10,
+            "message_id": last_message.id,
+            "message_public_id": last_message.public_id,
+        }
+
+        labels = {
+            "namespace": "test",
+            "task_type": "summary",
+            "token_type": "input",
+            "component": "prompt",
+        }
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
+
+        with (
+            patch(
+                "src.utils.summarizer._create_summary",
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
+            ),
+            patch(
+                "src.utils.summarizer._save_summary",
+                new=AsyncMock(),
+            ),
+        ):
+            await _create_and_save_summary(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
+                summary_type=SummaryType.SHORT,
+                message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
+            )
+
+        metric_checker.assert_delta(
+            deriver_tokens_processed_counter,
+            labels,
+            before,
+            expected_prompt_tokens,
+            "Summary prompt input tokens",
+        )
+
+    async def test_summary_tracks_messages_input_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify MESSAGES component is tracked for summary input."""
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+        last_message = messages[-1]
+
+        # Get the actual messages that would be included in the summary
+        # (to match what _create_and_save_summary computes via get_messages_by_seq_range)
+        actual_messages = await crud.get_messages_by_seq_range(
+            db_session,
+            workspace.name,
+            session.name,
+            start_seq=1,
+            end_seq=last_message.seq_in_session,
+        )
+        expected_messages_tokens = sum(m.token_count for m in actual_messages)
+
+        mock_summary = {
+            "content": "Test summary.",
+            "token_count": 10,
+            "message_id": last_message.id,
+            "message_public_id": last_message.public_id,
+        }
+
+        labels = {
+            "namespace": "test",
+            "task_type": "summary",
+            "token_type": "input",
+            "component": "messages",
+        }
+        before = metric_checker.capture(deriver_tokens_processed_counter, labels)
+
+        with (
+            patch(
+                "src.utils.summarizer._create_summary",
+                new=AsyncMock(
+                    return_value=(mock_summary, False, 100, 10)
+                ),  # (summary, is_fallback, llm_input_tokens, llm_output_tokens)
+            ),
+            patch(
+                "src.utils.summarizer._save_summary",
+                new=AsyncMock(),
+            ),
+        ):
+            await _create_and_save_summary(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
+                summary_type=SummaryType.SHORT,
+                message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
+            )
+
+        # Verify messages tokens match what summarizer actually computed
+        delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, labels, before
+        )
+        assert delta == expected_messages_tokens, (
+            f"Expected messages input tokens {expected_messages_tokens}, got {delta}"
+        )
+        assert delta > 0, "Expected at least some message tokens to be tracked"
+
+    async def test_summary_fallback_does_not_track(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify metrics are NOT emitted when _create_summary returns is_fallback=True."""
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+        messages = await create_test_messages(
+            db_session, workspace.name, session.name, peer.name, count=5
+        )
+        last_message = messages[-1]
+
+        mock_summary = {
+            "content": "Fallback summary.",
+            "token_count": 10,
+            "message_id": last_message.id,
+            "message_public_id": last_message.public_id,
+        }
+
+        # Capture all relevant metric labels before
+        output_labels = {
+            "namespace": "test",
+            "task_type": "summary",
+            "token_type": "output",
+            "component": "output_total",
+        }
+        prompt_labels = {
+            "namespace": "test",
+            "task_type": "summary",
+            "token_type": "input",
+            "component": "prompt",
+        }
+        before_output = metric_checker.capture(
+            deriver_tokens_processed_counter, output_labels
+        )
+        before_prompt = metric_checker.capture(
+            deriver_tokens_processed_counter, prompt_labels
+        )
+
+        with patch(
+            "src.utils.summarizer._create_summary",
+            new=AsyncMock(
+                return_value=(mock_summary, True, 0, 0)
+            ),  # (summary, is_fallback=True, llm_input_tokens, llm_output_tokens)
+        ):
+            await _create_and_save_summary(
+                workspace_name=workspace.name,
+                session_name=session.name,
+                message_id=last_message.id,
+                message_seq_in_session=last_message.seq_in_session,
+                summary_type=SummaryType.SHORT,
+                message_public_id=last_message.public_id,
+                configuration=create_test_configuration(),
+            )
+
+        # Verify NO change in metrics when fallback
+        output_delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, output_labels, before_output
+        )
+        prompt_delta = metric_checker.get_delta(
+            deriver_tokens_processed_counter, prompt_labels, before_prompt
+        )
+
+        assert output_delta == 0, (
+            f"Expected no output token change on fallback, got {output_delta}"
+        )
+        assert prompt_delta == 0, (
+            f"Expected no prompt token change on fallback, got {prompt_delta}"
+        )
+
+
+# =============================================================================
+# Dialectic Token Metrics Tests
+# =============================================================================
+
+
+@pytest.mark.asyncio
+class TestDialecticTokenMetrics:
+    """Test token metrics for dialectic calls."""
+
+    async def test_dialectic_tracks_input_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify INPUT tokens are tracked from LLM response."""
+        from src.dialectic.core import DialecticAgent
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+
+        expected_input_tokens = 150
+        mock_response = create_mock_dialectic_response(
+            input_tokens=expected_input_tokens, output_tokens=75
+        )
+
+        labels = {
+            "namespace": "test",
+            "token_type": "input",
+            "component": "total",
+            "reasoning_level": "low",
+        }
+        before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
+
+        agent = DialecticAgent(
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observer=peer.name,
+            observed=peer.name,
+        )
+
+        with patch(
+            "src.dialectic.core.honcho_llm_call",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            await agent.answer("What do you know about this user?")
+
+        metric_checker.assert_delta(
+            dialectic_tokens_processed_counter,
+            labels,
+            before,
+            expected_input_tokens,
+            "Dialectic input tokens",
+        )
+
+    async def test_dialectic_tracks_output_tokens(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+    ):
+        """Verify OUTPUT tokens are tracked from LLM response."""
+        from src.dialectic.core import DialecticAgent
+
+        metric_checker = prometheus_test_setup
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+
+        expected_output_tokens = 75
+        mock_response = create_mock_dialectic_response(
+            input_tokens=150, output_tokens=expected_output_tokens
+        )
+
+        labels = {
+            "namespace": "test",
+            "token_type": "output",
+            "component": "total",
+            "reasoning_level": "low",
+        }
+        before = metric_checker.capture(dialectic_tokens_processed_counter, labels)
+
+        agent = DialecticAgent(
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observer=peer.name,
+            observed=peer.name,
+        )
+
+        with patch(
+            "src.dialectic.core.honcho_llm_call",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            await agent.answer("What do you know about this user?")
+
+        metric_checker.assert_delta(
+            dialectic_tokens_processed_counter,
+            labels,
+            before,
+            expected_output_tokens,
+            "Dialectic output tokens",
+        )
+
+    async def test_dialectic_metrics_disabled_no_emission(
+        self,
+        db_session: AsyncSession,
+        sample_data: tuple[Workspace, Peer],
+        prometheus_test_setup: PrometheusMetricChecker,
+        monkeypatch: pytest.MonkeyPatch,
+    ):
+        """Verify metrics are NOT emitted when PROMETHEUS.ENABLED=False."""
+        from src.dialectic.core import DialecticAgent
+
+        metric_checker = prometheus_test_setup
+
+        # Explicitly disable Prometheus metrics
+        monkeypatch.setattr("src.config.settings.METRICS.ENABLED", False)
+
+        workspace, peer = sample_data
+        session = await create_test_session_with_peer(db_session, workspace, peer)
+
+        mock_response = create_mock_dialectic_response(
+            input_tokens=200, output_tokens=100
+        )
+
+        # Capture before values
+        input_labels = {
+            "namespace": "test",
+            "token_type": "input",
+            "component": "total",
+            "reasoning_level": "low",
+        }
+        output_labels = {
+            "namespace": "test",
+            "token_type": "output",
+            "component": "total",
+            "reasoning_level": "low",
+        }
+        before_input = metric_checker.capture(
+            dialectic_tokens_processed_counter, input_labels
+        )
+        before_output = metric_checker.capture(
+            dialectic_tokens_processed_counter, output_labels
+        )
+
+        agent = DialecticAgent(
+            workspace_name=workspace.name,
+            session_name=session.name,
+            observer=peer.name,
+            observed=peer.name,
+        )
+
+        with patch(
+            "src.dialectic.core.honcho_llm_call",
+            new=AsyncMock(return_value=mock_response),
+        ):
+            await agent.answer("What do you know about this user?")
+
+        # Verify NO change in metrics
+        input_delta = metric_checker.get_delta(
+            dialectic_tokens_processed_counter, input_labels, before_input
+        )
+        output_delta = metric_checker.get_delta(
+            dialectic_tokens_processed_counter, output_labels, before_output
+        )
+
+        assert input_delta == 0, (
+            f"Expected no input token change when disabled, got {input_delta}"
+        )
+        assert output_delta == 0, (
+            f"Expected no output token change when disabled, got {output_delta}"
+        )

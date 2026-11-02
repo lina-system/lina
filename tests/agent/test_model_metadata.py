@@ -1398,10 +1398,8 @@ class TestBedrockContextCachePersistence:
 
 class TestStripProviderPrefix:
     def test_known_provider_prefix_is_stripped(self):
-        assert _strip_provider_prefix("local:my-model") == "my-model"
-        assert _strip_provider_prefix("openrouter:anthropic/claude-sonnet-4") == "anthropic/claude-sonnet-4"
-        assert _strip_provider_prefix("anthropic:claude-sonnet-4") == "claude-sonnet-4"
-        assert _strip_provider_prefix("stepfun:step-3.5-flash") == "step-3.5-flash"
+        assert _strip_provider_prefix("ocx:my-model") == "my-model"
+        assert _strip_provider_prefix("opencodex:anthropic/claude-sonnet-4") == "anthropic/claude-sonnet-4"
 
 
     def test_http_urls_preserved(self):
@@ -1424,7 +1422,7 @@ class TestStripProviderPrefix:
         assert _strip_provider_prefix("fake-alias:org/model") == "org/model"
 
     def test_bundled_plugin_provider_prefix_is_stripped(self):
-        assert _strip_provider_prefix("fireworks:accounts/fireworks/models/foo") == (
+        assert _strip_provider_prefix("ocx:accounts/fireworks/models/foo") == (
             "accounts/fireworks/models/foo"
         )
 

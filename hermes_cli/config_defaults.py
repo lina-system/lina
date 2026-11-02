@@ -1307,8 +1307,8 @@ DEFAULT_CONFIG = {
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
-        # One external provider: bundled (retaindb, byterover) or catalog-installed (honcho,
-        # hindsight, supermemory, mem0, openviking, holographic). Empty = built-in only.
+        # One external provider: bundled (honcho, retaindb, byterover) or catalog-installed
+        # (hindsight, supermemory, mem0, openviking, holographic). Empty = built-in only.
         "provider": "",
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.
@@ -1507,7 +1507,7 @@ DEFAULT_CONFIG = {
             "keep": 2,  # retain last N regular snapshots
         },
     },
-    # Honcho memory plugin (plugin catalog) — ~/.honcho/config.json is the source of truth (apiKey,
+    # Honcho memory provider (bundled) — ~/.honcho/config.json is the source of truth (apiKey,
     # workspace, peerName, sessions, enabled); the plugin reads hermes-specific overrides from here.
     "honcho": {},
     # IANA timezone (e.g. "Asia/Kolkata", "America/New_York"). Empty = server-local time.

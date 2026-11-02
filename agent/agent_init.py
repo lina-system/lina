@@ -72,8 +72,8 @@ def _provider_default_routes(provider: str) -> set[str]:
 
     with suppress(Exception):
         from providers import get_provider_profile
-        add(getattr(get_provider_profile(provider), "base_url", ""))
-
+        p = get_provider_profile(provider)  # a custom route borrows ocx's wire policy, not its endpoint
+        add(p.base_url if p is not None and provider in (p.name, *p.aliases) else "")
     with suppress(Exception):
         from hermes_cli.auth import PROVIDER_REGISTRY
         from hermes_cli.models import normalize_provider as normalize_model_provider

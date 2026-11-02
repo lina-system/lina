@@ -55,7 +55,7 @@ def test_the_catalog_builds_under_a_backend_that_refuses_every_read(monkeypatch)
     monkeypatch.setattr(cb, "_route", refuse)
     monkeypatch.setattr(cpe, "_CATALOG", None)
     entries = cpe._provider_entries()
-    assert "ANTHROPIC_API_KEY" in entries or len(entries) > 10
+    assert "OCX_API_KEY" in entries
     assert reads == []
 
 

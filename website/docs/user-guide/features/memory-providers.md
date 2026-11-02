@@ -55,7 +55,7 @@ AI-native cross-session user modeling with dialectic reasoning, session-scoped c
 | | |
 |---|---|
 | **Best for** | Multi-agent systems with cross-session context, user-agent alignment |
-| **Requires** | `hermes plugins install honcho` (installs the `honcho-ai` SDK with it); [API key](https://app.honcho.dev) or self-hosted instance |
+| **Requires** | Bundled; `hermes memory setup honcho` prepares the `honcho-ai` SDK; [API key](https://app.honcho.dev) or self-hosted instance |
 | **Data storage** | Honcho Cloud or self-hosted |
 | **Cost** | Honcho pricing (cloud) / free (self-hosted) |
 
@@ -73,8 +73,7 @@ The auto-injected dialectic also scales its reasoning level by query length (lon
 
 **Setup Wizard:**
 ```bash
-hermes plugins install honcho   # from the plugin catalog
-hermes memory setup             # select "honcho" — runs the Honcho-specific post-setup
+hermes memory setup honcho      # bundled — runs the Honcho-specific post-setup
 ```
 
 The legacy `hermes honcho setup` command still works (it now redirects to `hermes memory setup`), but is only registered after Honcho is selected as the active memory provider.
@@ -287,7 +286,7 @@ See the [plugin README](https://github.com/plastic-labs/honcho/tree/main/hermes-
 
 #### Upgrading from the bundled Honcho
 
-Earlier Hermes releases shipped Honcho in-tree. If a profile still has `memory.provider: honcho`, Hermes installs the catalog plugin automatically the next time it starts or runs `hermes update` — your `~/.honcho/config.json` (or `$HERMES_HOME/honcho.json`), host blocks, peers and session mappings are read exactly as before, so no memory is lost. To do it by hand, or on a machine without network access at startup, run `hermes plugins install honcho`.
+Honcho is bundled again, so a profile with `memory.provider: honcho` uses `plugins/memory/honcho/` and Hermes no longer installs the catalog plugin. Your `~/.honcho/config.json` (or `$HERMES_HOME/honcho.json`), host blocks, peers and session mappings are read exactly as before. A copy installed earlier under `$HERMES_HOME/plugins/honcho/` is shadowed by the bundled provider and can be removed with `hermes plugins remove honcho`.
 
 
 ---
@@ -796,7 +795,7 @@ package command. Restart Hermes after successful dependency preparation.
 
 | Provider | Storage | Cost | Tools | Dependencies | Unique Feature |
 |----------|---------|------|-------|-------------|----------------|
-| **Honcho** (plugin catalog) | Cloud/Self-hosted | Paid/Free | 5 | `hermes plugins install honcho` | Dialectic user modeling + session-scoped context |
+| **Honcho** (bundled) | Cloud/Self-hosted | Paid/Free | 5 | `honcho-ai` (prepared by `hermes memory setup honcho`) | Dialectic user modeling + session-scoped context |
 | **OpenViking** (plugin catalog) | Self-hosted | Free | 6 | `hermes plugins install openviking` + server | Filesystem hierarchy + tiered loading |
 | **Mem0** (plugin catalog) | Cloud/Self-hosted | Free/Paid | 4 | `hermes plugins install mem0` | Server-side LLM extraction + self-hosted/OSS modes |
 | **Hindsight** (plugin catalog) | Cloud/Local | Free/Paid | 3 | `hermes plugins install hindsight` | Knowledge graph + reflect synthesis |

@@ -4,7 +4,7 @@ LINA runs a small CI of its own. The upstream Hermes workflows are kept, unchang
 
 ## What runs
 
-GitHub Actions reads only `.github/workflows/`. It holds one workflow, `ci.yml` ("CI"), which runs on pull requests into `dev` or `main`, on pushes to `dev`, and by manual dispatch, on GitHub-hosted runners. None of its jobs uses an upstream organisation secret, runner or app. A pull request starts one workflow run.
+GitHub Actions reads only `.github/workflows/`. It holds `ci.yml` ("CI"), which runs on pull requests into `dev` or `main`, on pushes to `dev`, and by manual dispatch, on GitHub-hosted runners. None of its jobs uses an upstream organisation secret, runner or app. A pull request starts one workflow run. `honcho.yml` checks, tests and builds the vendored Honcho server in `services/honcho/` and runs only when those paths change ([honcho.md](honcho.md)).
 
 Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the diff once with `scripts/ci/classify_changes.py`, and a lane the change cannot affect starts no runner. A pull request that touches only prose (`*.md` outside `skills/`, `docs/`) runs no test slices. A push to `dev` or a manual run has no diff, so every lane runs. Any `.github/` change also runs every lane.
 
@@ -19,6 +19,7 @@ Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the 
 | Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
 | uv.lock check | `uv_lock` lane | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
 | Prune check | always | Fails while a tracked file matches `prune-list.txt`, the upstream paths LINA does not carry ([forking.md](forking.md)) | LINA only |
+| Honcho subtree check, Honcho tests, Honcho image build (`honcho.yml`) | `services/`, its check script or the workflow change | The Honcho server in `services/honcho/`: subtree, ledger, LICENSE files, headers and modification notice; its pytest suite against pgvector; its Docker image. Only when `services/`, the check script or the workflow change ([honcho.md](honcho.md)) | Honcho's `unittest.yml` and `docker-build.yml` |
 
 Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead of Blacksmith runners, `actions/checkout` instead of `useblacksmith/checkout`, one workflow instead of `ci.yaml` calling reusable workflows, and no review-comment or timing artifacts. The advisory lint diff, the code-health ratchet, the Windows-footgun checks, the dependency-bound check, the e2e lanes and the Windows tests are not run.
 
