@@ -47,6 +47,16 @@ def _start(worker_root: Path, task: Task, run: int) -> None:
     device.launch(worker_root, task, run)
 
 
+def _requests(task_dir: Path) -> list[int]:
+    return sorted(int(p.name.split(".")[1]) for p in task_dir.glob("request.*") if p.name.split(".")[1].isdigit())
+
+
+def _unfinished(task: Task, run: int) -> bool:
+    """Another run of this task was taken and has not ended: two runs never share one worktree and session."""
+    return any(task.path(f"taken.{other}").exists() and not task.path(f"rc.{other}").exists()
+               for other in _requests(task.dir) if other != run)
+
+
 def _dead(task: Task, run: int) -> bool:
     taken = task.path(f"taken.{run}")
     return (taken.exists() and not task.path(f"rc.{run}").exists() and time.time() - taken.stat().st_mtime > DEAD_AFTER_S
@@ -61,14 +71,15 @@ def serve_once(worker_root: Path) -> None:
     cap = slots.cap(worker_root)
     for task_dir in sorted(tasks.glob("O*-*")):
         task = device.task_of(worker_root, task_dir.name)
-        for request in sorted(task_dir.glob("request.*")):
-            run = int(request.name.split(".")[1])
+        for run in _requests(task_dir):
             if task.path(f"taken.{run}").exists():
                 continue
             if (cap is not None and not task.path("cancelled").exists()
                     and slots.running_others(worker_root, task.id) >= cap):
                 continue  # the device is full: the request waits for a later pass
-            if _take(task, run):
+            with device.task_lock(task):  # a follow-up queues into an untaken run under the same lock
+                taken = not _unfinished(task, run) and _take(task, run)
+            if taken:
                 _start(worker_root, task, run)
         for pending in task_dir.glob("notify_pending.*"):
             device.report_end(worker_root, task, pending.read_text(encoding="utf-8-sig").strip(), int(pending.name.split(".")[1]))
