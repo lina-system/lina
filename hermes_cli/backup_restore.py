@@ -177,7 +177,11 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
     try:
         with exclusive_maintenance([dst.absolute().parent, dst.resolve().parent]):
             with _restore_epoch_source(src, dst) as prepared:
-                return _restore_db_pages(prepared, dst)
+                if not _restore_db_pages(prepared, dst):
+                    return False
+                from hermes_cli.backup_message_text import restore_snapshot_texts
+                restore_snapshot_texts(src, dst)
+                return True
     except (OwnershipConflict, OSError, sqlite3.Error) as exc:
         logger.error("%s", exc)
         return False
@@ -616,6 +620,8 @@ def _import_db_member_exclusive(
                 "leave them writing an invisible database. Stop those processes and re-run the import."
             )
         _extract_member_atomically(zf, member, target, new_file_mode)
+        from hermes_cli.backup_message_text import import_zip_texts
+        import_zip_texts(zf, member, target)
         return
 
     # The database keeps its own mode/ownership: the bytes come from the
@@ -651,6 +657,8 @@ def _import_db_member_exclusive(
             )
         _restore_file_owner(target, owner)
         _restore_file_mode(target, mode)
+        from hermes_cli.backup_message_text import import_zip_texts
+        import_zip_texts(zf, member, target)
     finally:
         try:
             os.unlink(tmp_name)

@@ -90,9 +90,12 @@ None of them is filtered or sorted on in Postgres, so none became a column.
 A row is never changed after it is written. Hermes writes one message several times: compaction keeps the
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the
 original beside a shortened copy. Copies with the same text share one row; a copy whose text differs gets its
-own version row. When a session's transcript is deleted, its text goes with it, except versions another
-session still points at (a compression child shares its parent's rows). Versions a rewrite or replace left
-behind stay until then: a reader may still hold a snapshot that points at them.
+own version row. Deleting a session deletes its `transcript_rows`, never the text: `lina store gc` (also run by the
+state.db auto-maintenance) deletes rows no transcript row of the profile points at once nobody wrote or re-used
+them for `sessions.message_text_grace_days` (30, at least 2), counting references by `text_uid`, not by session,
+and leaving `forgotten_at` rows to the forget path. `hermes backup` ZIPs and quick snapshots carry the rows their
+`state.db` references as `memory-messages.jsonl` (uid, content, content_sha256, ...); restoring one puts missing
+rows back (checked against content_sha256) before the restored `state.db` is used.
 
 ### What stays in each profile's `state.db`
 

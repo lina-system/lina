@@ -241,6 +241,9 @@ TEXT_CACHE = _TextCache()
 _TOUCH_AFTER_HOURS = 24
 MIN_COLLECT_DAYS = 2.0
 DEFAULT_COLLECT_DAYS = 30.0
+TEXT_EXPORT_NAME = "memory-messages.jsonl"
+_EXPORT_COLUMNS = ("uid", "source", "session_id", "conversation_id", "seq_in_session", "role", "content", "tool_name",
+                   "tool_call_id", "tool_calls", "scope", "native", "content_sha256")
 
 
 class MessageStore:
@@ -492,6 +495,41 @@ class MessageStore:
                 TEXT_CACHE.drop(self.agent_id, gone)
                 deleted += len(gone)
 
+    def export_texts(self, uids: Iterable[Optional[str]]) -> Iterator[dict[str, Any]]:
+        """The text rows of *uids* as JSON-ready dicts (``import_texts`` takes them back)."""
+        wanted = sorted({u for u in uids if u})
+        columns = ", ".join(_EXPORT_COLUMNS)
+        for start in range(0, len(wanted), 1000):
+            with self._cursor() as cur:
+                cur.execute(f"SELECT {columns}, extract(epoch FROM ts) FROM memory.messages WHERE uid = ANY(%s)",
+                            (wanted[start:start + 1000],))
+                for record in cur.fetchall():
+                    row = dict(zip(_EXPORT_COLUMNS, record))
+                    row["ts"] = None if record[-1] is None else float(record[-1])
+                    yield row
+
+    def import_texts(self, rows: Iterable[dict[str, Any]]) -> int:
+        """Write exported text rows back under this agent, keeping rows already there (``ON CONFLICT DO
+        NOTHING``) in one transaction. A row whose content does not match its content_sha256 fails the import
+        before anything is written. Returns the rows inserted."""
+        rows = list(rows)
+        for row in rows:
+            if _sha256(row.get("content") or "") != row.get("content_sha256"):
+                raise ValueError(f"message text {row.get('uid')!r} does not match its content_sha256")
+        inserted = 0
+        names = [c for c in _EXPORT_COLUMNS if c != "uid"]
+        sql = (f"INSERT INTO memory.messages (uid, agent_id, {', '.join(names)}, ts) VALUES (%s, %s, "
+               + ", ".join("%s::jsonb" if c in ("tool_calls", "native") else "%s" for c in names)
+               + ", to_timestamp(%s)) ON CONFLICT (uid) DO NOTHING RETURNING uid")
+        with self.write():
+            for row in rows:
+                values = [json.dumps(row.get(c)) if c in ("tool_calls", "native") and row.get(c) is not None
+                          else row.get(c) for c in names]
+                with self._writer_cursor() as cur:
+                    cur.execute(sql, (row["uid"], self.agent_id, *values, row.get("ts")))
+                    inserted += len(cur.fetchall())
+        return inserted
+
     def count(self) -> int:
         with self._cursor() as cur:
             cur.execute("SELECT count(*) FROM memory.messages")
@@ -700,6 +738,46 @@ def rows_with_text(store: MessageStore, rows: Iterable[Any]) -> list[dict[str, A
         for field in TEXT_FIELDS:
             row[field] = text.get(field) if text is not None else None
     return rows
+
+
+def _state_db_text_uids(db_path: Path) -> list[str]:
+    import sqlite3
+    conn = sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)
+    try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (PLACEMENT_TABLE,)).fetchone() is None:
+            return []
+        return [row[0] for row in conn.execute(
+            f"SELECT DISTINCT text_uid FROM {PLACEMENT_TABLE} WHERE text_uid IS NOT NULL")]
+    finally:
+        conn.close()
+
+
+def export_state_db_texts(db_path: Path, out_path: Path, *, dsn: Optional[str] = None) -> int:
+    """Write the text rows *db_path*'s transcript points at to *out_path* (JSONL, one row per line, keyed by
+    uid with its content_sha256): a backup or snapshot of state.db carries its message text. Returns the rows."""
+    uids = _state_db_text_uids(db_path)
+    store = MessageStore(agent_id_for(db_path), dsn=dsn)
+    count = 0
+    try:
+        with open(out_path, "w", encoding="utf-8") as out:
+            for row in store.export_texts(uids):
+                out.write(json.dumps(row, ensure_ascii=False) + "\n")
+                count += 1
+    finally:
+        store.close()
+    return count
+
+
+def import_state_db_texts(db_path: Path, jsonl_path: Path, *, dsn: Optional[str] = None) -> int:
+    """Put the text rows of a backup's JSONL back into the store, under the agent *db_path* (the restored
+    state.db) belongs to, before that state.db is used. Returns the rows that were missing."""
+    with open(jsonl_path, encoding="utf-8-sig") as src:
+        rows = [json.loads(line) for line in src if line.strip()]
+    store = MessageStore(agent_id_for(db_path), dsn=dsn)
+    try:
+        return store.import_texts(rows)
+    finally:
+        store.close()
 
 
 def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:

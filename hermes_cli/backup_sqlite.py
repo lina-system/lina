@@ -239,9 +239,24 @@ def preflight_state_db(home: Path) -> dict:
             result = connection.execute("PRAGMA quick_check").fetchall()
             if result != [("ok",)]:
                 raise RuntimeError(f"SQLite snapshot integrity check failed: {result}")
+            external_text = connection.execute(
+                "SELECT 1 FROM sqlite_master WHERE name='transcript_rows' AND type='table'").fetchone()
         finally:
             connection.close()
         size = staged.stat().st_size
+        if external_text:
+            # Desktop invokes this file with -I -S so SQLite preflight survives
+            # broken application imports. Only modern transcript images need the
+            # application's Postgres dependencies, in a separate interpreter.
+            import subprocess
+            subprocess.run([
+                sys.executable, "-c",
+                "import sys; from pathlib import Path; sys.path.insert(0, sys.argv[1]); "
+                "from hermes_cli.backup_message_text import export_snapshot_texts; "
+                "export_snapshot_texts(*(Path(p) for p in sys.argv[2:]))",
+                str(Path(__file__).resolve().parent.parent), str(source), str(staged),
+                str(destination.with_name(f"{destination.name}.memory-messages.jsonl")),
+            ], check=True, timeout=600)
         os.replace(staged, destination)
     finally:
         staged.unlink(missing_ok=True)
@@ -250,6 +265,7 @@ def preflight_state_db(home: Path) -> dict:
     for old in sorted(home.glob(f"{prefix}*.bak"), reverse=True)[2:]:
         try:
             old.unlink()
+            old.with_name(f"{old.name}.memory-messages.jsonl").unlink(missing_ok=True)
         except OSError as exc:
             logger.warning("Could not prune emergency snapshot %s: %s", old, exc)
     return {"path": str(destination), "bytes": size}
