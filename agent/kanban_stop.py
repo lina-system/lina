@@ -17,7 +17,7 @@ from agent.delegation_context import owned_kanban_task
 # Every tool that ends this worker's responsibility for the card, not just the two that
 # close it out: ``kanban_request_review`` moves it to ``review`` (goals.py's continuation /
 # finalize prompts tell builders to call it) and ``kanban_request_changes`` returns it to
-# ``ready`` (the sdlc-review skill tells reviewers to). Nudging after either asks a worker
+# ``ready`` (the code-review skill tells reviewers to). Nudging after either asks a worker
 # that did the right thing to ``kanban_complete`` a card it must not close.
 _TERMINAL_KANBAN_TOOLS = frozenset({
     "kanban_complete",
