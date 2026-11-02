@@ -1,8 +1,8 @@
-"""Runner registry: ``worker.runners`` in config names each runner and its type.
+"""Runner registry: ``worker.runners`` in config names each runner and its type; omo is there when nothing is.
 
 ```yaml
 worker:
-  default_runner: codex
+  default_runner: omo
   runners:
     codex:  {type: command, argv: [codex, exec, --full-auto, "-"]}
     claude: {type: command, argv: [claude, -p], follow_up_argv: [claude, -p, --continue]}
@@ -17,14 +17,17 @@ from pathlib import Path
 
 from hermes_cli.worker.runners.base import RunnerError
 from hermes_cli.worker.runners.command import CommandRunner
+from hermes_cli.worker.runners.omo import OmoRunner
 
-TYPES = {"command": CommandRunner}
+TYPES = {"omo": OmoRunner, "command": CommandRunner}
 DEFAULT = "omo"
 
 
 def specs(worker: dict) -> dict[str, dict]:
     configured = worker.get("runners") if isinstance(worker.get("runners"), dict) else {}
-    return {str(name): spec for name, spec in configured.items() if isinstance(spec, dict)}
+    table = {"omo": {"type": "omo"}}
+    table.update({str(name): spec for name, spec in configured.items() if isinstance(spec, dict)})
+    return table
 
 
 def default_name(worker: dict) -> str:
@@ -35,6 +38,8 @@ def build(name: str, spec: dict, limits: dict | None = None, root: Path | None =
     kind = spec.get("type")
     if kind not in TYPES:
         raise RunnerError(f"runner {name}: unknown type {kind!r} (known: {', '.join(TYPES)})")
+    if kind == "omo":
+        return OmoRunner(name, spec, limits, root)
     return TYPES[kind](name, spec, limits)
 
 
