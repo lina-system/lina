@@ -38,14 +38,18 @@ git fetch upstream main --no-tags
    ```
 
 3. On a branch from `dev`, bring the chosen changes in:
-   - everything up to an upstream commit: `git merge --no-ff <upstream-commit>`;
-   - single fixes: `git cherry-pick -x <upstream-commit>` (`-x` records the upstream hash in the message).
+   - everything up to an upstream commit: `scripts/sync-upstream <upstream-commit>` (default `origin/upstream`). It merges with `--no-ff --no-commit`, runs `git rm` on every path matching `prune-list.txt`, reports new upstream top-level entries and plugin directories the list does not classify (add each to the list or keep it), and lists the conflicts left in kept files;
+   - single fixes: `git cherry-pick -x <upstream-commit>` (`-x` records the upstream hash in the message), then `git rm` what `python3 scripts/ci/check_prune_list.py` reports.
 4. In the same branch, set `LINA_UPSTREAM_COMMIT` in `hermes_cli/lina_version.py` to the upstream commit you merged up to (a merge only; a cherry-pick does not move it), and compare `.github/workflows-upstream/` and `.github/upstream/` with upstream's `.github/` (see [ci.md](ci.md)).
 5. Open a pull request into `dev`, add one `CHANGELOG.md` line under `## [Unreleased]` (for example "Took Hermes upstream up to <hash>"), and merge it with a merge commit once the checks are green.
 
 Never rebase `dev` onto upstream and never force-push any of the three branches.
 
 When taking upstream changes, do not change upstream LICENSE files or copyright headers.
+
+## What LINA does not carry
+
+`prune-list.txt` at the repository root lists the upstream paths LINA does not carry; its header explains the format. The CI "Prune check" fails while a tracked file matches it.
 
 ## Our patches on top of upstream
 
