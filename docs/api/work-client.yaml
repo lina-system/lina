@@ -1,0 +1,478 @@
+# Work endpoints the app reads: goals, work cards, their worker runs and the owner inbox.
+# Served by plugins/kanban/dashboard/work_api.py under /api/plugins/kanban/work, behind the
+# dashboard auth gate (session token). lina-app's scripts/generate-client.mjs can point
+# SCHEMA_SOURCE at this file. tests/plugins/test_kanban_work_api.py validates served JSON
+# against it, so a shape change here and in the code land together.
+openapi: 3.0.3
+info:
+  title: LINA work API
+  version: 0.1.0
+  description: >
+    Goals (goal cards with their work cards and the evidence that closed them), work cards
+    (summary and detail), and the owner inbox with one write: answer an item as the owner.
+    A work card is a goal-mode kanban card that is a link-parent of another card (its goal
+    card). Times are Unix epoch seconds.
+servers:
+  - url: /api/plugins/kanban
+paths:
+  /work/goals:
+    get:
+      operationId: listWorkGoals
+      summary: Goal cards with their work cards and evidence.
+      parameters:
+        - $ref: "#/components/parameters/Board"
+      responses:
+        "200":
+          description: Goal list.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/GoalList"
+  /work/goals/{id}:
+    get:
+      operationId: getWorkGoal
+      summary: One goal card.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Board"
+      responses:
+        "200":
+          description: The goal.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkGoal"
+        "404":
+          description: No such card, or the card is not a goal card.
+  /work/cards:
+    get:
+      operationId: listWorkCards
+      summary: Work cards, optionally for one agent or in one state.
+      parameters:
+        - name: agent
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: state
+          in: query
+          required: false
+          schema:
+            $ref: "#/components/schemas/WorkState"
+        - $ref: "#/components/parameters/Board"
+      responses:
+        "200":
+          description: Work card summaries.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkCardList"
+        "400":
+          description: Unknown state.
+  /work/cards/{id}:
+    get:
+      operationId: getWorkCard
+      summary: One card with to-dos, worker runs, gate results, comments and runs.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Board"
+      responses:
+        "200":
+          description: Card detail.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/WorkCardDetail"
+        "404":
+          description: No such card.
+  /work/inbox:
+    get:
+      operationId: getWorkInbox
+      summary: Blocked cards and unanswered owner questions.
+      parameters:
+        - $ref: "#/components/parameters/Board"
+      responses:
+        "200":
+          description: Inbox.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Inbox"
+  /work/inbox/{id}/answer:
+    post:
+      operationId: answerWorkInboxItem
+      summary: Comment on the card as the owner; unblock it when it is blocked for input.
+      parameters:
+        - $ref: "#/components/parameters/Id"
+        - $ref: "#/components/parameters/Board"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AnswerRequest"
+      responses:
+        "200":
+          description: The answer was recorded.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AnswerResult"
+        "400":
+          description: Empty text, or the author is the card's assignee.
+        "404":
+          description: No such card.
+components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: string
+    Board:
+      name: board
+      in: query
+      required: false
+      description: Kanban board slug; omit for the current board.
+      schema:
+        type: string
+  schemas:
+    WorkState:
+      type: string
+      description: >
+        planned (triage, todo, scheduled, ready); in_progress (running with a live run);
+        waiting (review, or a gate still waiting with exit 75); stopped (blocked, or running
+        with no live run); done.
+      enum:
+        - planned
+        - in_progress
+        - waiting
+        - stopped
+        - done
+    Reason:
+      type: string
+      nullable: true
+      description: >
+        One word after the state, when there is one: the column for planned; review or gate
+        for waiting; the block kind, gate, budget or unresponsive for stopped.
+    TodoProgress:
+      type: object
+      additionalProperties: false
+      required: [done, total]
+      properties:
+        done:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+    WorkCardSummary:
+      type: object
+      additionalProperties: false
+      required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          $ref: "#/components/schemas/Reason"
+        elapsedSeconds:
+          type: integer
+          minimum: 0
+        todoProgress:
+          $ref: "#/components/schemas/TodoProgress"
+        now:
+          type: string
+          nullable: true
+          maxLength: 120
+          description: The latest comment or heartbeat note, plain text.
+    WorkCardList:
+      type: object
+      additionalProperties: false
+      required: [cards]
+      properties:
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkCardSummary"
+    Todo:
+      type: object
+      additionalProperties: false
+      required: [id, title, kind, done]
+      properties:
+        id:
+          type: string
+          description: owner/repo#n for an issue; check-N for a checklist item.
+        title:
+          type: string
+        kind:
+          type: string
+          enum: [issue, check]
+        done:
+          type: boolean
+    WorkerRun:
+      type: object
+      additionalProperties: false
+      required: [id, kind, firstSeenAt, lastSeenAt]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [omo, quick-issue, lina-worker]
+        firstSeenAt:
+          type: integer
+        lastSeenAt:
+          type: integer
+    GateResult:
+      type: object
+      additionalProperties: false
+      required: [command, exitCode, passed, waiting, outputTail, at]
+      properties:
+        command:
+          type: string
+        exitCode:
+          type: integer
+          nullable: true
+        passed:
+          type: boolean
+        waiting:
+          type: boolean
+          description: The gate exited 75 (still waiting).
+        outputTail:
+          type: string
+        at:
+          type: integer
+    Comment:
+      type: object
+      additionalProperties: false
+      required: [id, author, body, createdAt]
+      properties:
+        id:
+          type: integer
+        author:
+          type: string
+        body:
+          type: string
+        createdAt:
+          type: integer
+    CardRun:
+      type: object
+      additionalProperties: false
+      required: [id, profile, status, outcome, startedAt, endedAt, lastHeartbeatAt, summary, live]
+      properties:
+        id:
+          type: integer
+        profile:
+          type: string
+          nullable: true
+        status:
+          type: string
+        outcome:
+          type: string
+          nullable: true
+        startedAt:
+          type: integer
+        endedAt:
+          type: integer
+          nullable: true
+        lastHeartbeatAt:
+          type: integer
+          nullable: true
+        summary:
+          type: string
+          nullable: true
+        live:
+          type: boolean
+    WorkCardDetail:
+      type: object
+      additionalProperties: false
+      required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now,
+                 todos, workerRuns, gates, comments, runs]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          $ref: "#/components/schemas/Reason"
+        elapsedSeconds:
+          type: integer
+          minimum: 0
+        todoProgress:
+          $ref: "#/components/schemas/TodoProgress"
+        now:
+          type: string
+          nullable: true
+          maxLength: 120
+        todos:
+          type: array
+          items:
+            $ref: "#/components/schemas/Todo"
+        workerRuns:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkerRun"
+        gates:
+          type: array
+          description: The latest result per gate command.
+          items:
+            $ref: "#/components/schemas/GateResult"
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/Comment"
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/CardRun"
+    Evidence:
+      type: object
+      additionalProperties: false
+      required: [cardId, title, summary, metadata, completedAt]
+      properties:
+        cardId:
+          type: string
+        title:
+          type: string
+        summary:
+          type: string
+          nullable: true
+        metadata:
+          type: object
+          nullable: true
+          additionalProperties: true
+        completedAt:
+          type: integer
+          nullable: true
+    WorkGoal:
+      type: object
+      additionalProperties: false
+      required: [id, title, agent, state, reason, elapsedSeconds, workCards, evidence]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          $ref: "#/components/schemas/Reason"
+        elapsedSeconds:
+          type: integer
+          minimum: 0
+        workCards:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkCardSummary"
+        evidence:
+          type: array
+          description: Completion summary and metadata of the goal card and its done work cards.
+          items:
+            $ref: "#/components/schemas/Evidence"
+    GoalList:
+      type: object
+      additionalProperties: false
+      required: [goals]
+      properties:
+        goals:
+          type: array
+          items:
+            $ref: "#/components/schemas/WorkGoal"
+    InboxBlocked:
+      type: object
+      additionalProperties: false
+      required: [cardId, title, agent, state, reason, blockKind, blockReason]
+      properties:
+        cardId:
+          type: string
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          $ref: "#/components/schemas/Reason"
+        blockKind:
+          type: string
+          nullable: true
+          enum: [dependency, needs_input, capability, transient, null]
+        blockReason:
+          type: string
+          nullable: true
+    InboxQuestion:
+      type: object
+      additionalProperties: false
+      required: [cardId, title, agent, commentId, body, askedAt]
+      properties:
+        cardId:
+          type: string
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+        commentId:
+          type: integer
+        body:
+          type: string
+        askedAt:
+          type: integer
+    Inbox:
+      type: object
+      additionalProperties: false
+      required: [blocked, questions]
+      properties:
+        blocked:
+          type: array
+          items:
+            $ref: "#/components/schemas/InboxBlocked"
+        questions:
+          type: array
+          items:
+            $ref: "#/components/schemas/InboxQuestion"
+    AnswerRequest:
+      type: object
+      additionalProperties: false
+      required: [text]
+      properties:
+        text:
+          type: string
+          minLength: 1
+        author:
+          type: string
+          default: owner
+    AnswerResult:
+      type: object
+      additionalProperties: false
+      required: [ok, cardId, commentId, unblocked, state, reason]
+      properties:
+        ok:
+          type: boolean
+        cardId:
+          type: string
+        commentId:
+          type: integer
+        unblocked:
+          type: boolean
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          $ref: "#/components/schemas/Reason"
