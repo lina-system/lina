@@ -412,7 +412,7 @@ def test_review_dispatch_gate_prevents_phantom_reviewer(
         assert tid not in [s[0] for s in res_off.spawned]
         assert kb.get_task(conn, tid).status == "review"
 
-        # Gate ON (the default; sdlc-review is bundled) -> the review task is
+        # Gate ON (the default; code-review is bundled) -> the review task is
         # picked up by the dispatcher.
         monkeypatch.setattr(
             cfgmod, "load_config",
@@ -681,7 +681,7 @@ def test_review_dispatch_preserves_task_skills_and_adds_reviewer_skill(
         result = kbd.dispatch_once(conn, spawn_fn=spawn)
 
     assert task_id in [task[0] for task in result.spawned]
-    assert captured == [["domain-specific-review", "sdlc-review"]]
+    assert captured == [["domain-specific-review", "code-review"]]
 
 
 def test_review_dispatch_honors_global_and_per_profile_caps(
