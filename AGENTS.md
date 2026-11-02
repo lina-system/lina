@@ -10,7 +10,7 @@ and every root-to-area chain at 30k, so it loads whole on 128k+ models: long for
 ## What Hermes Is
 
 Hermes is a personal AI agent that runs the same agent core across a CLI, a messaging
-gateway (Telegram, Discord, Slack, ~20 platforms), a TUI, and an Electron desktop app. It
+gateway (~20 platforms), a TUI and an Electron desktop app. It
 learns across sessions (memory + skills), delegates to subagents, runs scheduled jobs, and
 drives a real terminal and browser. It is extended primarily through **plugins and skills**,
 not by growing the core.
@@ -32,7 +32,7 @@ The project's intent layer, for contributors and for the triage sweeper (which m
 call, and when in doubt a PR stays open). Long form with examples:
 `website/docs/developer-guide/contributing.md` § Contribution rubric.
 
-**Wanted:** real bug fixes (repro on `main`, the exact line, the whole class incl. sibling paths);
+**Wanted:** real bug fixes (repro on `dev`, the exact line, the whole class incl. sibling paths);
 reach at the edges (adapters, providers, models, UI features) wired into the existing setup UX;
 god-file → module refactors; extending before duplicating (3+ PRs in one category → an ABC +
 orchestrator); behaviour-contract tests; E2E with real imports against a temp `HERMES_HOME` for
@@ -49,9 +49,9 @@ standalone plugin repo).
 isolation is often the design (profiles are islands on purpose), an absence can be load-bearing,
 and a fix that cannot point to the line where the bug manifests has an unverified premise.
 
-**Security:** `SECURITY.md` is the scope authority. A §3.1 finding goes private (GitHub Security
-Advisories or security@nousresearch.com), never into a public issue, PR, commit or comment; §3.2
-hardening is ordinary public work. Name the §2 boundary crossed, with a repro on `main`.
+**Security:** `SECURITY.md` is the scope authority. A §3.1 finding goes private (this repo's
+Security Advisories, Report a vulnerability), never into a public issue, PR, commit or comment;
+§3.2 hardening is ordinary public work. Name the §2 boundary crossed, with a repro on `dev`.
 
 **Footprint ladder** (take the highest rung that solves it): extend existing code → CLI command +
 skill → service-gated tool (`check_fn` answers reachability/opt-in, never per-session surface:
@@ -60,7 +60,7 @@ unreachable otherwise).
 
 ## Development Environment
 
-`source ./activate` (fish: `activate.fish`, PowerShell: `activate.ps1`) provisions and activates the
+`source ./activate` (or `activate.fish`, `activate.ps1`) provisions and activates the
 PM environment; pick an isolated `HERMES_HOME`/`HERMES_RUNTIME_DIR` first
 (`website/docs/reference/package-management.md#developer-workflow`). Tests need the separate test
 environment in `CONTRIBUTING.md`. **`python scripts/check`** runs every blocking lint check CI
@@ -70,7 +70,7 @@ pulling to refresh the hook). `# noqa` does not waive a ratchet finding:
 
 ## Project Structure
 
-Counts shift constantly; the filesystem is canonical. Load-bearing entry points:
+Load-bearing entry points (filesystem is canonical):
 
 ```
 hermes-agent/
@@ -136,8 +136,8 @@ Every former god file is a **facade** (public entry points + the names other pac
   roots, narrow hooks and colocated action modules, `interface` for props and shared shapes,
   table-driven dispatch over condition ladders; `src/app` routes, `src/store` atoms, `src/lib` pure
   helpers.
-- **Commits and PRs:** rebase onto `main` before merging (a squash from a stale branch silently
-  reverts newer fixes); 1–2 invariant tests per fix, proven red on the base.
+- **Commits and PRs:** merge `dev` into the branch before merging; PRs join `dev` as merge
+  commits (docs/delivery.md); 1–2 invariant tests per fix, proven red on the base.
 - **Tests:** always `scripts/run_tests.sh`, never bare `pytest`; behaviour contracts, never
   change-detectors or source-reading tests; host-specific behaviour is tested on that host with
   `@pytest.mark.platforms(...)`, never by faking `sys.platform`; tests never write to `~/.hermes/`.
@@ -160,5 +160,9 @@ Every former god file is a **facade** (public entry points + the names other pac
 | `pm/`, `pyproject.toml` | `pm/AGENTS.md` | pinning policy, PM-owned environments, plugin quarantine |
 | `hermes_platform/` | `hermes_platform/AGENTS.md` | host facts, resolvers |
 
-Long-form background: `website/docs/developer-guide/`. Workflow rules (PR/issue/review/salvage
-process) live in the `hermes-agent-dev` skill, not here.
+## Code Review Rules
+
+`docs/delivery.md`, `.agents/skills/delivery/SKILL.md`. P1 unless noted:
+- The diff misses an item of the PR's `## Done when`.
+- Behaviour changed outside the issue's scope (formatting, renames there: P2).
+- A test disabled, skipped, weakened.

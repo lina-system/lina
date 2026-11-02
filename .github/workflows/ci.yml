@@ -11,13 +11,19 @@ on:
     branches: [dev, main]
   push:
     branches: [dev]
+  # The merge queue: required checks must report on the queue's merge commit too, or a queued
+  # pull request never merges. A queue run is the last gate before dev and runs every suite.
+  merge_group:
+    types: [checks_requested]
+    branches: [dev]
   workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ci-${{ github.event.pull_request.number || github.ref }}
+  # One group per pull request, per queue entry (merge_group head_ref) and per pushed ref.
+  group: ci-${{ github.event.merge_group.head_ref || github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -30,6 +36,8 @@ jobs:
       scan: ${{ steps.classify.outputs.scan }}
       deps: ${{ steps.classify.outputs.deps }}
       uv_lock: ${{ steps.classify.outputs.uv_lock }}
+      helper: ${{ steps.classify.outputs.helper }}
+      macos: ${{ steps.classify.outputs.macos }}
       # A catalog-only diff turns `python` off and this lane on; without the
       # output here the catalog job below never starts (the `rust` lane shipped
       # dead exactly this way).
@@ -37,9 +45,12 @@ jobs:
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
         with:
+          # tests/ and the lister: the macos lane reads which test files are macOS-marked.
           sparse-checkout: |
             .github/actions/detect-changes
             scripts/ci/classify_changes.py
+            scripts/ci/list_os_marked_tests.py
+            tests
           sparse-checkout-cone-mode: false
 
       - name: Detect affected areas
@@ -92,7 +103,7 @@ jobs:
         uses: ./.github/actions/setup-pm
         with:
           packages: ripgrep
-          extras: '["all", "anthropic", "bedrock", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          extras: '["all", "anthropic", "bedrock", "mistral", "modal", "daytona", "parallel-web", "keychain"]'
           test-environment: 'true'
           prune-python-cache: true
 
@@ -193,9 +204,13 @@ jobs:
           if [ "$CATALOG" = true ]; then test "$CATALOG_RESULT" = success; else test "$CATALOG_RESULT" = skipped; fi
 
   macos:
-    # Not required. macOS-marked tests (upstream tests-os.yml) on pushes to dev and manual runs.
+    # Required check. macOS-marked tests (upstream tests-os.yml) on pushes to dev and manual runs, and
+    # on a pull request when detect's macos lane fires: a macOS-marked test file or a module one
+    # imports changed, or the pull request carries the dev-red-fix label (a label added after the
+    # last push counts on a re-run). Other pull requests skip it, which passes the check.
     name: Python tests (macOS)
-    if: github.event_name != 'pull_request'
+    needs: detect
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.detect.outputs.macos == 'true') }}
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -205,7 +220,7 @@ jobs:
         uses: ./.github/actions/setup-pm
         with:
           packages: ripgrep
-          extras: '["all", "telegram", "anthropic", "mistral", "fal", "modal", "daytona", "parallel-web", "keychain"]'
+          extras: '["all", "telegram", "anthropic", "mistral", "modal", "daytona", "parallel-web", "keychain"]'
           test-environment: 'true'
           prune-python-cache: true
 
@@ -227,9 +242,12 @@ jobs:
         uses: ./.github/actions/check-clean-worktree
 
   helper-macos:
-    # Not required. LINA Helper (helper/macos): Swift tests, the unlock package's native checks
-    # and an ad-hoc app build. The Linux half of its `make test` runs in the Python suite (tests/helper).
+    # Required check. LINA Helper (helper/macos): Swift tests, the unlock package's native checks
+    # and an ad-hoc app build, on the `helper` lane (helper/ changes); skipped (which passes)
+    # otherwise. The Linux half of its `make test` runs in the Python suite (tests/helper).
     name: LINA Helper (macOS)
+    needs: detect
+    if: needs.detect.outputs.helper == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:
