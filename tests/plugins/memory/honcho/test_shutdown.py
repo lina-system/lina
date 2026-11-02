@@ -221,3 +221,22 @@ def test_close_honcho_clients_closes_every_pool_and_drops_the_slots():
             _client_slots.pop(key, None)
     client._http.close.assert_called_once_with()
     assert key not in _client_slots
+
+
+@pytest.mark.parametrize("write_frequency", ["session", 3])
+def test_shutdown_flushes_buffered_turns_in_every_write_mode(monkeypatch, write_frequency):
+    """lina#14: "session" and every-N-turns buffer turns with no async queue. release_soft() reaches
+    shutdown() without on_session_end(), so shutdown itself must write them."""
+    fake = MagicMock()
+    monkeypatch.setattr(session_module, "get_honcho_client", lambda *a, **k: fake)
+    cfg = HonchoClientConfig(write_frequency=write_frequency, api_key="test-key", enabled=True)
+    mgr = HonchoSessionManager(honcho=fake, config=cfg)
+    assert mgr._async_queue is None
+    session = HonchoSession(key="cli:buffered", user_peer_id="eri", assistant_peer_id="hermes",
+                            honcho_session_id="cli-buffered", messages=[])
+    session.add_message("user", "a turn that only lives in the buffer")
+    mgr._cache[session.key] = session
+
+    mgr.shutdown(timeout=5.0)
+
+    assert all(m.get("_synced") for m in session.messages)

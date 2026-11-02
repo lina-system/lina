@@ -613,12 +613,14 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
         HTTP timeout. Whatever stayed unsynced is counted in one warning."""
         with self._async_thread_lock:
             self._shutting_down = True
+        deadline = time.monotonic() + timeout
+        # Every write mode buffers in the cached sessions ("session" and every-N-turns hold turns until
+        # here), and release_soft() reaches this without on_session_end(): flush them in all modes.
+        skipped = self._flush_cached_before(deadline)
         if self._async_queue is not None:
-            deadline = time.monotonic() + timeout
-            skipped = self._flush_cached_before(deadline)
             skipped.extend(self._drain_async_queue(deadline))
             skipped.extend(self._stop_async_writer_before(deadline))
-            self._warn_unsynced(skipped, timeout)
+        self._warn_unsynced(skipped, timeout)
 
     # ----- Prefetch cache -----
 
