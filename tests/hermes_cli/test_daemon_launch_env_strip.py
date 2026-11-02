@@ -14,8 +14,8 @@ from tests.waiting import wait_until
 # (SWEEP_daemon-launch-env.md): consent, Kanban worker pins, the launching turn's session identity,
 # human-presence and one-shot markers, a bot-to-bot turn author, a terminal's systemd markers, and the
 # launchd/external-supervisor markers every process below a service-managed gateway inherits.
-SUPERVISOR_LEAKS = {'XPC_SERVICE_NAME': 'ai.hermes.gateway', 'LAUNCHD_SOCKET': '/tmp/launchd-x/Listeners',
-                    'HERMES_LAUNCHD_LABEL': 'ai.hermes.gateway', 'HERMES_GATEWAY_EXTERNAL_SUPERVISOR': '1',
+SUPERVISOR_LEAKS = {'XPC_SERVICE_NAME': 'ai.lina.gateway', 'LAUNCHD_SOCKET': '/tmp/launchd-x/Listeners',
+                    'HERMES_LAUNCHD_LABEL': 'ai.lina.gateway', 'HERMES_GATEWAY_EXTERNAL_SUPERVISOR': '1',
                     'HERMES_SUPERVISED_CHILD': '1'}
 PIN = 'HERMES_GATEWAY_PROFILE_PIN'
 LEAKS = {**SUPERVISOR_LEAKS, 'HERMES_ACCEPT_HOOKS': '1', 'HERMES_KANBAN_TASK': 't_1', 'HERMES_KANBAN_BOARD': 'other',
