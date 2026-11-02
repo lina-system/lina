@@ -463,6 +463,22 @@ class TestBuildContextFilesPrompt:
         assert "Never delete anything on the Desk" not in outside_prompt
         assert "Planted above the Desk." not in outside_prompt
 
+    @pytest.mark.parametrize("rules_file", ["CLAUDE.md", ".cursorrules"])
+    def test_desk_rules_do_not_shadow_project_tool_rules(self, tmp_path, rules_file):
+        # A Desk project that keeps its instructions in CLAUDE.md or .cursorrules (no
+        # AGENTS.md of its own) gets both: the Desk rules first, its own rules after.
+        from hermes_cli.desk import init_desk
+
+        desk = init_desk(tmp_path / "Desk")
+        project = desk / "Projects" / "launch"
+        project.mkdir(parents=True)
+        (project / rules_file).write_text("Launch tool rules only.")
+
+        result = build_context_files_prompt(cwd=str(project), skip_soul=True)
+        assert "Never delete anything on the Desk" in result
+        assert "Launch tool rules only." in result
+        assert result.index("Never delete anything on the Desk") < result.index("Launch tool rules only.")
+
     # --- AGENTS.override.md personal override (port of pi#7681) ---
 
     def test_agents_override_md_wins_over_agents_md(self, tmp_path):

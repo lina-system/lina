@@ -1601,6 +1601,27 @@ def _desk_root_containing(cwd: Path) -> Optional[Path]:
     return root if cwd.is_relative_to(root) else None
 
 
+def _agents_md_project_start(current: Path) -> Path:
+    """Where the AGENTS.md chain starts without the Desk: the git root above *current*, else *current*."""
+    root = _find_git_root(current)
+    under_git = root is not None and root != current and current.is_relative_to(root)
+    return root if under_git else current
+
+
+def _agents_md_from_desk_only(cwd_path: Path) -> bool:
+    """True when every non-empty AGENTS file on the chain sits above the project (Desk-widened part).
+
+    Then the AGENTS.md type carries only the Desk rules, not the project's own instructions, so a
+    project that keeps them in CLAUDE.md or .cursorrules still needs those loaded after the Desk rules.
+    """
+    current = cwd_path.resolve()
+    if _desk_root_containing(current) is None:
+        return False
+    start = _agents_md_project_start(current)
+    loaded = [path for _label, path, content in _agents_md_candidates(current) if content]
+    return bool(loaded) and not any(path.parent.is_relative_to(start) for path in loaded)
+
+
 def _agents_md_directory_chain(cwd_path: Path) -> list[Path]:
     """Directories to check for AGENTS.md, outermost first and cwd last (deeper = precedence).
 
@@ -1611,9 +1632,7 @@ def _agents_md_directory_chain(cwd_path: Path) -> list[Path]:
     worker in ``desk:Projects/launch`` still receives the Desk rules.
     """
     current = cwd_path.resolve()
-    root = _find_git_root(current)
-    under_git = root is not None and root != current and current.is_relative_to(root)
-    start = root if under_git else current
+    start = _agents_md_project_start(current)
     desk = _desk_root_containing(current)
     if desk is not None and start != desk and start.is_relative_to(desk):
         start = desk
@@ -1753,7 +1772,9 @@ def build_context_files_prompt(
 
     Only ONE project context type loads, first found wins: .hermes.md/HERMES.md (walk to git root) →
     AGENTS.md chain (git root, or the Desk root when the workspace is on the Desk, → cwd) →
-    CLAUDE.md (cwd) → .cursorrules + .cursor/rules/*.mdc (cwd). SOUL.md
+    CLAUDE.md (cwd) → .cursorrules + .cursor/rules/*.mdc (cwd). One exception: when the AGENTS.md chain holds
+    only Desk rules (no AGENTS file from the project itself), the project's CLAUDE.md or cursor rules still
+    load after them (deeper = precedence). SOUL.md
     from HERMES_HOME is independent and always included unless *skip_soul* (already the identity slot).
     """
     from agent.safe_worker_policy import safe_worker_enabled
@@ -1768,8 +1789,11 @@ def build_context_files_prompt(
         )
         sections = []
     else:
-        sections = [_load_hermes_md(cwd_path, context_length) or _load_agents_md(cwd_path, context_length)
-                    or _load_claude_md(cwd_path, context_length) or _load_cursorrules(cwd_path, context_length)]
+        hermes_md = _load_hermes_md(cwd_path, context_length)
+        agents_md = "" if hermes_md else _load_agents_md(cwd_path, context_length)
+        sections = [hermes_md or agents_md]
+        if not sections[0] or (agents_md and _agents_md_from_desk_only(cwd_path)):
+            sections.append(_load_claude_md(cwd_path, context_length) or _load_cursorrules(cwd_path, context_length))
     if not skip_soul:
         sections.append(load_soul_md(context_length, home_override=home_override))
     sections = [s for s in sections if s]
