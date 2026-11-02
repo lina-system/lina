@@ -104,21 +104,30 @@ def iter_plugin_dirs(root: Path) -> list[Path]:
     return dirs
 
 
-def read_plugin_field(plugin_dir: Path, field: str, default: str = "") -> str:
-    """Return *field* from ``plugin.yaml`` (*default* if absent/unreadable)."""
+def read_plugin_description(plugin_dir: Path) -> str:
+    """Return ``description`` from ``plugin.yaml`` (empty string if absent/unreadable)."""
     try:
         from utils import fast_safe_load
 
         with open(plugin_dir / "plugin.yaml", encoding="utf-8-sig") as f:
             meta = fast_safe_load(f) or {}
-        return meta.get(field, default) or default
+        return meta.get("description", "")
     except Exception:
+        return ""
+
+
+def read_plugin_field(plugin_dir: Path, field: str, default: str = "") -> str:
+    """Return the string *field* of ``plugin.yaml``, or *default* when the file, the field or a string value is missing."""
+    from hermes_yaml import YAMLError
+    from utils import fast_safe_load
+
+    try:
+        with open(plugin_dir / "plugin.yaml", encoding="utf-8-sig") as f:
+            meta = fast_safe_load(f)
+    except (OSError, UnicodeDecodeError, YAMLError):
         return default
-
-
-def read_plugin_description(plugin_dir: Path) -> str:
-    """Return ``description`` from ``plugin.yaml`` (empty string if absent/unreadable)."""
-    return read_plugin_field(plugin_dir, "description")
+    value = meta.get(field) if isinstance(meta, dict) else None
+    return value if isinstance(value, str) and value else default
 
 
 def _new_module(name: str, file: Path, search_locations: Optional[list[str]] = None) -> Optional[Any]:
