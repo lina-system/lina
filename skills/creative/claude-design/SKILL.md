@@ -570,6 +570,16 @@ It is not acceptable to clone proprietary layouts, copy exact branded surfaces, 
 
 When using references, transform posture and principles into an original design.
 
+## Pitfalls
+
+- Do not paste hosted tool schemas into a skill. They cause fake tool calls.
+- Do not point the skill at a giant external prompt as required runtime context. That creates drift.
+- Do not strip the design doctrine while removing tool plumbing.
+- Do not over-ask when the user already gave enough direction.
+- Do not under-ask for high-fidelity work with no brand context.
+- Do not produce generic SaaS layouts and call them designed.
+- Do not claim browser verification unless it actually happened.
+
 ## Verification
 
 Before final response, verify as much as the environment allows.
@@ -619,13 +629,3 @@ When adapting a Claude Design style request into CLI/API mode, use this mental t
 ```text
 You are running in CLI/API mode, not hosted Claude Design. Ignore references to hosted-only tools or preview panes. Produce complete local design artifacts, usually self-contained HTML with embedded CSS/JS, and verify with available local tools before returning. Preserve the design process: gather context, define the system, produce options, avoid filler, and meet a high visual bar.
 ```
-
-## Pitfalls
-
-- Do not paste hosted tool schemas into a skill. They cause fake tool calls.
-- Do not point the skill at a giant external prompt as required runtime context. That creates drift.
-- Do not strip the design doctrine while removing tool plumbing.
-- Do not over-ask when the user already gave enough direction.
-- Do not under-ask for high-fidelity work with no brand context.
-- Do not produce generic SaaS layouts and call them designed.
-- Do not claim browser verification unless it actually happened.
