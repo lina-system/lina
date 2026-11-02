@@ -1097,57 +1097,6 @@ class TestSecondaryProfileConfigHandling:
         assert second == 1
         assert runner._profile_adapters["later"][photon] is later
 
-    @pytest.mark.asyncio
-    @pytest.mark.parametrize("paired", [False, True])
-    async def test_secondary_profile_adapter_start_skips_whatsapp(self, monkeypatch, tmp_path, paired):
-        """Only paired secondaries start a profile-local WhatsApp adapter."""
-        runner = _secondary_recovery_runner()
-        direct = _SecondaryRecoveryAdapter()
-        _real_profile_scope = gateway_run._profile_runtime_scope
-        _install_secondary_reconnect_context(monkeypatch, runner, direct)
-        monkeypatch.setattr(gateway_run, "_profile_runtime_scope", _real_profile_scope)
-        home = tmp_path / "secondary"
-        session = home / "platforms/whatsapp/session"
-        session.mkdir(parents=True)
-        if paired:
-            (session / "creds.json").write_text("{}")
-        statuses = []
-        monkeypatch.setattr(runner, "_update_platform_runtime_status", lambda *a, **kw: statuses.append((a, kw)))
-        monkeypatch.setattr(
-            "gateway.config.load_gateway_config",
-            lambda: GatewayConfig(
-                multiplex_profiles=True,
-                platforms={
-                    Platform.WHATSAPP: PlatformConfig(enabled=True),
-                    Platform.DISCORD: PlatformConfig(enabled=True, token="profile-token"),
-                },
-            ),
-        )
-        factory_calls = []
-
-        def _create_adapter(platform, config):
-            factory_calls.append(platform)
-            if platform is Platform.WHATSAPP:
-                from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
-                wa = WhatsAppAdapter(config)
-                assert wa._session_path == session
-                return wa
-            return direct
-
-        async def _connect(adapter, platform):
-            return True
-
-        monkeypatch.setattr(runner, "_create_adapter", _create_adapter)
-        monkeypatch.setattr(runner, "_connect_initial_adapter_with_timeout", _connect)
-
-        monkeypatch.setattr(runner, "_configure_profile_adapter", lambda *a: None)
-        connected = await runner._start_one_profile_adapters("clientbot", home, {})
-
-        assert connected == (2 if paired else 1)
-        assert factory_calls == ([Platform.WHATSAPP, Platform.DISCORD] if paired else [Platform.DISCORD])
-        if not paired:
-            assert statuses[-1][1]["error_code"] == "whatsapp_unpaired"
-            assert "hermes -p clientbot whatsapp" in statuses[-1][1]["error_message"]
 
 
 class TestSecondaryProfileHookRegistration:
@@ -1195,33 +1144,6 @@ class TestSecondaryProfileHookRegistration:
 
         assert ("shell", profile_cfg) in seen
         assert ("webhook", profile_cfg) in seen
-
-
-class TestFeishuPortBindingConditional:
-    """Feishu websocket mode does NOT bind a port; only webhook mode does (#52563)."""
-
-    @pytest.mark.asyncio
-    async def test_feishu_websocket_mode_not_rejected(self, monkeypatch):
-        """Feishu in websocket mode (the default) should NOT raise MultiplexConfigError."""
-        from gateway.run import MultiplexConfigError
-        from gateway.config import GatewayConfig, Platform, PlatformConfig
-
-        runner = GatewayRunner.__new__(GatewayRunner)
-        runner.config = GatewayConfig(multiplex_profiles=True)
-        runner._profile_adapters = {}
-
-        reviewer_cfg = GatewayConfig(multiplex_profiles=True)
-        reviewer_cfg.platforms = {
-            Platform.FEISHU: PlatformConfig(
-                enabled=True,
-                extra={"app_id": "cli_xxx", "app_secret": "sec", "connection_mode": "websocket"},
-            ),
-        }
-        monkeypatch.setattr("gateway.config.load_gateway_config", lambda: reviewer_cfg)
-        monkeypatch.setattr(runner, "_create_adapter", lambda p, c: None)
-
-        connected = await runner._start_one_profile_adapters("reviewer", "/tmp/x", {})
-        assert connected == 0  # no error, just nothing connected
 
 
 class TestSecondarySkipsCredentiallessPlatforms:

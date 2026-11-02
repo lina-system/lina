@@ -401,20 +401,9 @@ def resolve_cron_scheduler() -> CronScheduler:
     if not name or name in ("builtin", "in-process", "inprocess"):
         return InProcessCronScheduler()
 
-    try:
-        from plugins.cron_providers import load_cron_scheduler
-        provider = load_cron_scheduler(name)
-        if provider is None:
-            logger.warning("cron.provider '%s' not found; using built-in ticker", name)
-            return InProcessCronScheduler()
-        if not provider.is_available():
-            logger.warning("cron.provider '%s' not available; using built-in ticker", name)
-            return InProcessCronScheduler()
-        logger.info("Using cron scheduler provider: %s", provider.name)
-        return provider
-    except Exception as e:
-        logger.warning("Failed to load cron.provider '%s' (%s); using built-in ticker", name, e)
-        return InProcessCronScheduler()
+    # LINA carries no external cron providers (plugins/cron_providers is in prune-list.txt).
+    logger.warning("cron.provider '%s' not found; using built-in ticker", name)
+    return InProcessCronScheduler()
 
 
 def scheduler_for_profile_mode(

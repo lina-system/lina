@@ -20,8 +20,6 @@ TOOLS = ("bash", "mkdir", "mktemp", "readlink", "ln", "rm", "chmod", "cat")
 BLOCKS = [  # (document, the venv name its sandbox branch publishes under $HOME/.cache)
     ("skills/productivity/microsoft-office/SKILL.md", "hermes-docs-venv"),
     ("skills/productivity/pdf/SKILL.md", "hermes-docs-venv"),
-    ("optional-skills/finance/excel-author/SKILL.md", "hermes-docs-venv"),
-    ("optional-skills/finance/pptx-author/SKILL.md", "hermes-docs-venv"),
     ("skills/productivity/pdf/references/ocr-extraction.md", "hermes-pdf-pymupdf-venv"),
     ("skills/productivity/pdf/references/ocr-extraction.md", "hermes-pdf-marker-venv"),
 ]
