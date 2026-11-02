@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Junsoo Kim, 2026-11-02
+# Modified by Jun, 2026-11-02
 """Tests for scripts/ci/live_comment.py run selection.
 
 The poller now reports on a run it is not part of, and merges jobs from

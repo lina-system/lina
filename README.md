@@ -40,7 +40,7 @@ Report a problem or an idea for LINA in this repository's Issues. App problems g
 
 The original Hermes Agent README follows below for reference.
 <!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- Modified by Junsoo Kim, 2026-11-02 -->
+<!-- Modified by Jun, 2026-11-02 -->
 
 <p align="center">
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">

@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Junsoo Kim, 2026-11-02
+# Modified by Jun, 2026-11-02
 """Every job of the main CI lanes ends by checking that it left the checkout clean.
 
 The step (.github/actions/check-clean-worktree) runs ``git status --porcelain=v1

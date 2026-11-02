@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Junsoo Kim, 2026-11-02
+# Modified by Jun, 2026-11-02
 """Replay artifact handoffs and publication against a fake R2."""
 import hashlib
 import json
