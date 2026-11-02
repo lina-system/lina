@@ -279,7 +279,7 @@ class _FakeLaunchd:
         return (0, f"{label} = {{\n\tpath = {job[1]}\n\tpid = 321\n}}\n") if job and job[0] == domain else (113, "")
 
     def _bootout(self, args):
-        domain, _, label = args[0].rpartition("/")
+        label = args[0].rpartition("/")[2]
         return (0, "") if self.loaded.pop(label, None) else (113, "")
 
     def _bootstrap(self, args):
