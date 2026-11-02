@@ -75,6 +75,28 @@ def test_crash_after_the_worker_saved_a_new_job_places_it_before_the_outbox_is_d
     assert _rows(work, "SELECT count(*) FROM outbox WHERE done_at IS NULL") == [(0,)]
 
 
+def test_crash_after_the_worker_recorded_a_placement_resumes_it_without_bidding_again(work, monkeypatch):
+    """The worker saves its device choice (``placing``) before it publishes the request; a crash in between must
+    finish that placement on the same device, never bid again (two bids could start the task twice)."""
+    from hermes_cli.worker.hub import Hub
+
+    def recorded_then_died(self, job):
+        job.update(self.store.update(job["id"], host="here", runs=1, state="placing") or {})
+        raise RuntimeError("the process died after recording the placement")
+    monkeypatch.setattr(Hub, "place", recorded_then_died)
+    with pytest.raises(RuntimeError):
+        work.run("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = list(_jobs(work))
+    assert (_jobs(work)[run_id]["state"], _jobs(work)[run_id]["host"]) == ("placing", "here")
+
+    calls = []
+    monkeypatch.setattr(Hub, "place", lambda self, job: calls.append(("place", job["id"])))
+    monkeypatch.setattr(Hub, "resume_placement", lambda self, task_id: calls.append(("resume", task_id)) or "here")
+    work.ok("list")
+    assert calls == [("resume", run_id)]
+    assert _rows(work, "SELECT count(*) FROM outbox WHERE done_at IS NULL") == [(0,)]
+
+
 def test_a_failed_record_write_hands_nothing_to_the_worker(work, monkeypatch):
     from hermes_cli.work import store
 
