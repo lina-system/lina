@@ -34,11 +34,11 @@ KINDS = set(KIND_BY_PREFIX.values())
 READY, BLOCKED = "ready", "blocked"
 MARKER = "<!-- lina-labels:runners -->"
 
-DEPENDS_RE = re.compile(r"\bDepends on:[ \t]*([^\n]*)", re.I)
+DEPENDS_RE = re.compile(r"\bDepends on:[ \t]*([^\n]*)", re.IGNORECASE)
 REF_RE = re.compile(r"(?:([\w.-]+/)?([\w.-]+))?#(\d+)")
 SIZE_RE = re.compile(r"\bSize:[ \t]*([SML])\b")
-RUNNER_RE = re.compile(r"\bRunner:[ \t]*([\w-]+)", re.I)
-PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.I)
+RUNNER_RE = re.compile(r"\bRunner:[ \t]*([\w-]+)", re.IGNORECASE)
+PREFIX_RE = re.compile(r"^\s*([a-z]+)(?:\([^)]*\))?!?:", re.IGNORECASE)
 
 
 def parse_depends(body, repo):
