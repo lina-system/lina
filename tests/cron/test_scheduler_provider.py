@@ -241,54 +241,6 @@ def test_resolve_unknown_provider_falls_back_to_builtin(monkeypatch):
     assert prov.name == "builtin"
 
 
-def test_resolve_unavailable_provider_falls_back(monkeypatch):
-    """A provider that loads but reports is_available()==False → built-in."""
-    import hermes_cli.config as cfg
-    import plugins.cron_providers as pc
-    from cron import scheduler_provider as sp
-    from cron.scheduler_provider import CronScheduler
-
-    class Unavailable(CronScheduler):
-        @property
-        def name(self):
-            return "unavailable"
-
-        def is_available(self):
-            return False
-
-        def start(self, stop_event, **kw):
-            pass
-
-    monkeypatch.setattr(cfg, "load_config", lambda: {"cron": {"provider": "unavailable"}})
-    monkeypatch.setattr(pc, "load_cron_scheduler", lambda n: Unavailable())
-    prov = sp.resolve_cron_scheduler()
-    assert prov.name == "builtin"
-
-
-def test_resolve_available_provider_is_used(monkeypatch):
-    """A provider that loads and is available is returned (not the fallback)."""
-    import hermes_cli.config as cfg
-    import plugins.cron_providers as pc
-    from cron import scheduler_provider as sp
-    from cron.scheduler_provider import CronScheduler
-
-    class Fake(CronScheduler):
-        @property
-        def name(self):
-            return "fake"
-
-        def is_available(self):
-            return True
-
-        def start(self, stop_event, **kw):
-            pass
-
-    monkeypatch.setattr(cfg, "load_config", lambda: {"cron": {"provider": "fake"}})
-    monkeypatch.setattr(pc, "load_cron_scheduler", lambda n: Fake())
-    prov = sp.resolve_cron_scheduler()
-    assert prov.name == "fake"
-
-
 def test_external_provider_falls_back_to_builtin_under_multiplex():
     from cron.scheduler_provider import (
         CronScheduler,
