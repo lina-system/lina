@@ -64,6 +64,30 @@ def test_shell_lines_in_prompt_are_still_walked(tmp_path, monkeypatch, prompt_te
         check_gateway_lifecycle(prompt, None)
 
 
+SCRIPT_FIRST_LINES = [
+    "Weekly upkeep.\n~/bin/restart.sh",
+    "Weekly upkeep.\n./restart.sh --now",
+]
+
+
+@pytest.mark.parametrize("prompt", SCRIPT_FIRST_LINES)
+def test_script_named_first_word_is_walked_from_home(tmp_path, monkeypatch, prompt):
+    workdir = _workdir(tmp_path, monkeypatch, "home")
+    (workdir / "bin").mkdir()
+    _restart_script(workdir)
+    _restart_script(workdir / "bin")
+    with pytest.raises(GatewayLifecycleBlocked, match="contains a gateway lifecycle command"):
+        check_gateway_lifecycle(prompt, None)
+
+
+@pytest.mark.parametrize("prompt", SCRIPT_FIRST_LINES)
+def test_script_named_first_word_is_walked_from_cloud(tmp_path, monkeypatch, prompt):
+    """From a cloud-synced directory the walked script is refused without being opened."""
+    _workdir(tmp_path, monkeypatch, "cloud")
+    with pytest.raises(GatewayLifecycleBlocked, match="could not scan"):
+        check_gateway_lifecycle(prompt, None)
+
+
 def test_sourced_cloud_script_in_prompt_is_still_refused_unread(tmp_path, monkeypatch):
     cloud = tmp_path / "Library" / "CloudStorage" / "Drive"
     cloud.mkdir(parents=True)

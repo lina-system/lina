@@ -16,8 +16,10 @@ A line is in a shell context when it is:
   prompt stripped;
 - a ``$ `` prompt line (the ``$ `` is stripped);
 - a command line: its command word (after env assignments and wrappers such as ``sudo``) is a
-  POSIX shell (``bash x.sh``, ``sh -c "..."``), or ``.``/``source`` followed by a path-shaped
-  token, or a wrapper running a path-shaped token (``sudo ./x.sh``);
+  POSIX shell (``bash x.sh``, ``sh -c "..."``), a shell script by suffix (``~/bin/x.sh``,
+  ``./x.sh --now``: this guard stops restart loops, so a script-named first word is walked even
+  in prose), ``.``/``source`` followed by a path-shaped token, or a wrapper running a
+  path-shaped token (``sudo ./x.sh``);
 - a line chaining commands with ``&&`` or ``||``, which prose does not use.
 
 A shell line whose quotes are unbalanced, or that ends in a backslash, pulls in the following
@@ -54,8 +56,9 @@ def _line_tokens(line: str) -> list[str]:
 
 
 def _starts_shell_command(segment: list[str]) -> bool:
-    """True when the segment's command word is a shell, a ``.``/``source`` of a path-shaped
-    token, or a wrapper (``sudo``, ``env``, ...) running a shell or a path-shaped token."""
+    """True when the segment's command word is a shell, a shell script by suffix, a
+    ``.``/``source`` of a path-shaped token, or a wrapper (``sudo``, ``env``, ...) running a shell
+    or a path-shaped token."""
     from cron.lifecycle_guard import (
         _SHELL_EXECUTABLES,
         _command_token_index,
@@ -71,7 +74,7 @@ def _starts_shell_command(segment: list[str]) -> bool:
         if position >= len(segment):
             continue
         name = _executable_name(segment[position])
-        if name in _SHELL_EXECUTABLES:
+        if name in _SHELL_EXECUTABLES or segment[position].endswith(_SCRIPT_SUFFIXES):
             return True
         if name in _SOURCE_COMMANDS and position + 1 < len(segment):
             if _is_path_shaped(segment[position + 1]):
