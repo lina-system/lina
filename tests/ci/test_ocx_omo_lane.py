@@ -67,7 +67,7 @@ def test_the_node_step_installs_only_the_pinned_tarball(tmp_path, tampered):
     runner_temp, github_path = tmp_path / "runner", tmp_path / "github_path"
     runner_temp.mkdir()
     github_path.write_text("")
-    result = subprocess.run(["bash", "-c", step["run"]], cwd=tmp_path, capture_output=True, text=True, timeout=60,
+    result = subprocess.run(["bash", "-c", step["run"]], cwd=tmp_path, capture_output=True, text=True, timeout=60, check=False,
                             env={**os.environ, "PATH": f"{bin_dir}{os.pathsep}{os.environ['PATH']}",
                                  "RUNNER_TEMP": str(runner_temp), "GITHUB_PATH": str(github_path)})
     if tampered:
@@ -77,4 +77,4 @@ def test_the_node_step_installs_only_the_pinned_tarball(tmp_path, tampered):
     assert result.returncode == 0, result.stderr
     added = github_path.read_text().strip()
     assert added == str(runner_temp / "node-v24.0.0-linux-x64" / "bin")
-    assert subprocess.run([f"{added}/node"], capture_output=True, text=True).stdout.strip() == "v24.0.0"
+    assert subprocess.run([f"{added}/node"], capture_output=True, text=True, check=True).stdout.strip() == "v24.0.0"
