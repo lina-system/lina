@@ -403,3 +403,30 @@ def test_the_legacy_name_lcm_still_selects_lcm_x(home, no_bundled_plugins, path)
     _turn(agent, "asked under the legacy name", "answered under the legacy name")
     assert _stored(home, agent.session_id)[-2:] == [
         ("user", "asked under the legacy name"), ("assistant", "answered under the legacy name")]
+
+
+def test_a_cached_lcm_x_agent_is_rebuilt_on_the_compressor_after_the_switch(home, no_bundled_plugins):
+    """A running gateway keeps one agent per session; the next message after ``context.engine`` changes must
+    get a new agent on the selected engine, not the cached LCM-X one (and LCM-X's hooks end with it)."""
+    from hermes_cli.config import load_config
+    from tests.gateway.test_agent_cache import gateway_signature, lookup_cached_agent
+
+    cache: dict = {}
+
+    def message(user: str, reply: str, build):
+        sig = gateway_signature(load_config())
+        agent = lookup_cached_agent(cache, sig).agent
+        if agent is None:
+            agent = build()
+            cache["sk"] = (agent, sig, None, None)
+        _turn(agent, user, reply)
+        return agent
+
+    lcm_agent = message("first question", "first answer", lambda: _agent("sess-gateway"))
+    assert _stored(home, "sess-gateway") == [("user", "first question"), ("assistant", "first answer")]
+
+    _select(home, "compressor")
+    agent = message("asked after the switch", "answered after the switch", lambda: _compressor_agent("sess-gateway"))
+    assert agent is not lcm_agent
+    assert _stored(home, "sess-gateway") == [("user", "first question"), ("assistant", "first answer")]
+    assert _plugin_surface() == NO_SURFACE
