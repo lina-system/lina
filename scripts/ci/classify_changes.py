@@ -87,10 +87,13 @@ must never skip one a change could break:
 
 from __future__ import annotations
 
+import importlib.util
 import json
 import os
+import re
 import subprocess
 import sys
+from pathlib import Path
 
 _FRONTEND = ("ui-tui/", "web/", "apps/")  # TS typecheck-matrix packages
 # Shipped page outside those packages, exercised by the desktop Electron suite.
@@ -142,6 +145,17 @@ _PY_RELEVANT_CONTRACT_FILES = {
 _CATALOG_DATA = ("plugin-catalog/", "contributors/emails/")
 
 # Supply-chain scan: files that can execute code at install/import time.
+_HELPER_PATHS = ("helper/",)
+# LINA: the macOS lane (Python tests (macOS), required). A path is a macOS path when it names
+# macOS, is LINA Helper or the host-facts package, is the test harness or the dependency set, or,
+# read from the checkout, holds a darwin branch or is a test file gated onto the macOS lane.
+_MACOS_PATHS = ("helper/", "hermes_platform/", "tests/_fixtures/platform_gating")
+_MACOS_FILES = {"pyproject.toml", "uv.lock", "scripts/run_tests.sh", "scripts/run_tests_parallel.py",
+                "tests/conftest.py", "scripts/ci/list_os_marked_tests.py"}
+_MACOS_NAME = re.compile(r"macos|darwin|launchd|keychain|osascript", re.IGNORECASE)
+_DARWIN_CODE = re.compile(
+    r"""sys\.platform\s*[!=]=\s*["']darwin|platform\.system\(\)\s*[!=]=\s*["']Darwin"""
+    r"""|\bIS_MACOS\b|\bis_macos\(""")
 _SCAN_EXTS = (".py", ".pth")
 _SCAN_FILES = {"setup.cfg", "pyproject.toml"}
 
@@ -606,6 +620,27 @@ def _is_rust(p: str) -> bool:
     )
 
 
+def _macos_gated_test(text: str) -> bool:
+    spec = importlib.util.spec_from_file_location(
+        "list_os_marked_tests", Path(__file__).with_name("list_os_marked_tests.py"))
+    assert spec and spec.loader
+    module = importlib.util.module_from_spec(spec)
+    spec.loader.exec_module(module)
+    return module.file_gates_on(text, "macos")
+
+
+def _is_macos(p: str, root: Path | None) -> bool:
+    if p.startswith(_MACOS_PATHS) or p in _MACOS_FILES or _MACOS_NAME.search(p):
+        return True
+    if root is None or not p.endswith(".py"):
+        return False
+    try:
+        text = (root / p).read_text(encoding="utf-8", errors="replace")
+    except OSError:  # deleted by the change: only its path counts
+        return False
+    return bool(_DARWIN_CODE.search(text)) or (p.startswith("tests/") and _macos_gated_test(text))
+
+
 def _slow_lanes(files: list[str]) -> dict[str, bool]:
     """The slow lanes a pull request with this diff runs; see ``_E2E_LANES``."""
     lanes = {
@@ -620,11 +655,12 @@ def _slow_lanes(files: list[str]) -> dict[str, bool]:
     return lanes
 
 
-def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
+def classify(files: list[str], run_e2e: bool = False, root: Path | None = None) -> dict[str, bool]:
     """Map changed paths to ``{lane: should_run}``.
 
     ``run_e2e`` is the pull request's ``run-e2e`` label: it turns every slow
-    lane on.
+    lane on. ``root`` is the checkout the macOS lane reads file contents from;
+    without it only paths count.
     """
     files = [f.strip() for f in files if f.strip()]
     catalog = any(_is_catalog_data(f) for f in files)
@@ -658,6 +694,9 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         "rust": any(_is_rust(f) for f in files),
         "remote_backends": any(f.startswith(_REMOTE_BACKEND_PATHS) for f in files),
         "catalog": catalog,
+        # LINA: helper/macos (LINA Helper) runs its Swift and native checks on macOS.
+        "helper": any(f.startswith(_HELPER_PATHS) for f in files),
+        "macos": any(_is_macos(f, root) for f in files),
         **{lane: run_e2e or on for lane, on in _slow_lanes(files).items()},
     }
     consumers = [c for f in files for c in _SHARED_FIXTURE_CONSUMERS.get(f, ())]
@@ -680,6 +719,8 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         ret["rust"] = True
         ret["remote_backends"] = True
         ret["catalog"] = True
+        ret["helper"] = True
+        ret["macos"] = True
         ret.update(dict.fromkeys(_slow_lanes([]), True))
     return ret
 
@@ -771,7 +812,7 @@ def main() -> int:
                 file=sys.stderr,
             )
             files = recovered
-    lanes = classify(files, run_e2e=RUN_E2E_LABEL in pull_request_labels())
+    lanes = classify(files, run_e2e=RUN_E2E_LABEL in pull_request_labels(), root=Path.cwd())
     out = "\n".join(f"{key}={str(value).lower()}" for key, value in lanes.items())
     if dest := os.environ.get("GITHUB_OUTPUT"):
         with open(dest, "a", encoding="utf-8") as fh:

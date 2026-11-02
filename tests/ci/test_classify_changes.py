@@ -49,12 +49,14 @@ DEFAULT = {
     "rust": True,
     "remote_backends": True,
     "catalog": True,
+    "helper": True,
+    "macos": True,
 }
 
 SLOW_LANES = {"docker", "nix", "e2e", "e2e_upgrade", "e2e_desktop_core", "e2e_desktop_update"}
 
 
-def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, bootstrap=False, desktop_updater=False, rust=False, docker_meta=False, python_prod=None, nix=False, docker=None, e2e=False, e2e_upgrade=False, e2e_desktop_core=False, e2e_desktop_update=False, remote_backends=False, catalog=False) -> dict[str, bool]:
+def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_lock=False, npm_lock=False, bootstrap=False, desktop_updater=False, rust=False, docker_meta=False, python_prod=None, nix=False, docker=None, e2e=False, e2e_upgrade=False, e2e_desktop_core=False, e2e_desktop_update=False, remote_backends=False, catalog=False, helper=False, macos=False) -> dict[str, bool]:
     # python_prod tracks python except for tests-only diffs; default it to
     # python so the majority of cases don't need to spell it out.
     #
@@ -84,6 +86,8 @@ def _lanes(python=False, frontend=False, site=False, scan=False, deps=False, uv_
         "rust": rust,
         "remote_backends": remote_backends,
         "catalog": catalog,
+        "helper": helper,
+        "macos": macos,
     }
 
 
@@ -115,9 +119,9 @@ CASES = {
     # install, so they start those slow lanes on the PR itself.
     "dep manifest → python": (
         ["pyproject.toml"],
-        _lanes(python=True, scan=True, deps=True, uv_lock=True, desktop_updater=True, docker=True, nix=True, e2e_upgrade=True),
+        _lanes(python=True, scan=True, deps=True, uv_lock=True, desktop_updater=True, docker=True, nix=True, e2e_upgrade=True, macos=True),
     ),
-    "uv.lock → python": (["uv.lock"], _lanes(python=True, uv_lock=True, docker=True, nix=True, e2e_upgrade=True)),
+    "uv.lock → python": (["uv.lock"], _lanes(python=True, uv_lock=True, docker=True, nix=True, e2e_upgrade=True, macos=True)),
     "ts package → frontend": (["apps/desktop/src/app.tsx"], _lanes(frontend=True)),
     "ui-tui → frontend": (["ui-tui/src/entry.ts"], _lanes(frontend=True)),
     # Lockfile bump shifts every TS package's tree, but not the Python suite.
@@ -253,11 +257,11 @@ CASES = {
     # The shared harness can break every Python E2E suite.
     "conftest → python + desktop_updater + python e2e": (
         ["tests/conftest.py"],
-        _lanes(python=True, python_prod=False, scan=True, desktop_updater=True, e2e=True, e2e_upgrade=True),
+        _lanes(python=True, python_prod=False, scan=True, desktop_updater=True, e2e=True, e2e_upgrade=True, macos=True),
     ),
     "conftest fixture module → python + desktop_updater + python e2e": (
         ["tests/_fixtures/platform_gating.py"],
-        _lanes(python=True, python_prod=False, scan=True, desktop_updater=True, e2e=True, e2e_upgrade=True),
+        _lanes(python=True, python_prod=False, scan=True, desktop_updater=True, e2e=True, e2e_upgrade=True, macos=True),
     ),
     "tests + prod source → both lanes": (
         ["tests/agent/test_foo.py", "agent/x.py"],
@@ -269,7 +273,7 @@ CASES = {
     # .py/.pth payloads are what it scans for).
     "test runner script → python_prod stays on": (
         ["scripts/run_tests_parallel.py"],
-        _lanes(python=True, scan=True, e2e=True, e2e_upgrade=True),
+        _lanes(python=True, scan=True, e2e=True, e2e_upgrade=True, macos=True),
     ),
     # Supply-chain lanes
     ".pth file → scan": (["evil.pth"], _lanes(python=True, scan=True)),
@@ -438,6 +442,11 @@ CASES = {
         ["plugin-catalog/foo.yaml", "agent/display.py"],
         _lanes(python=True, scan=True, catalog=True),
     ),
+    "LINA Helper source → helper": (
+        ["helper/macos/app/Sources/HelperApp/main.swift"], _lanes(python=True, helper=True, macos=True)),
+    "LINA Helper Linux checks → macos, not helper": (
+        ["tests/helper/test_macos_portable_checks.py"],
+        _lanes(python=True, python_prod=False, scan=True, macos=True)),
     # Fail open: CI-config / empty / blank diffs run everything.
     ".github change → all": ([".github/workflows/tests.yml"], DEFAULT),
     "action change → all": ([".github/actions/detect-changes/action.yml"], DEFAULT),
@@ -449,6 +458,23 @@ CASES = {
 @pytest.mark.parametrize("files,expected", CASES.values(), ids=CASES.keys())
 def test_classify(files, expected):
     assert classify(files) == expected
+
+
+def test_macos_lane_reads_darwin_branches_and_macos_test_gates_from_the_checkout(tmp_path):
+    """LINA: Python tests (macOS) is required and runs only on macOS paths."""
+    files = {
+        "tools/clip.py": 'if sys.platform == "darwin":\n    pass\n',
+        "tests/tools/test_clip.py": '@pytest.mark.platforms("posix")\ndef test_x(): ...\n',
+        "gateway/run.py": "def run(): ...\n",
+        "tests/gateway/test_run.py": '@pytest.mark.platforms("linux")\ndef test_x(): ...\n',
+    }
+    for rel, text in files.items():
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(text)
+    lanes = {rel: classify([rel], root=tmp_path)["macos"] for rel in [*files, "tools/gone.py"]}
+    assert lanes == {"tools/clip.py": True, "tests/tools/test_clip.py": True, "gateway/run.py": False,
+                     "tests/gateway/test_run.py": False, "tools/gone.py": False}
+    assert classify(["hermes_cli/gateway_launchd.py"])["macos"]
 
 
 @pytest.mark.parametrize("files", [["README.md"], ["gateway/run.py"], ["apps/desktop/src/app.tsx"]])

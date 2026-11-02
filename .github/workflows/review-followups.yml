@@ -1,0 +1,40 @@
+name: Review follow-ups
+
+# When a pull request merges into dev, every Codex P2/P3 finding on its merged head commit becomes
+# one follow-up issue (scripts/ci/review_followups.py, docs/ci.md). pull_request_target runs this
+# file and the script from dev; nothing from the pull request is checked out or run.
+
+on:
+  pull_request_target:
+    types: [closed]
+    branches: [dev]
+
+permissions: {}
+
+jobs:
+  follow-ups:
+    name: Open follow-up issues
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            scripts/ci/codex_review_gate.py
+            scripts/ci/review_followups.py
+          sparse-checkout-cone-mode: false
+
+      - name: Open one issue per P2/P3 finding
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 -m scripts.ci.review_followups --repo "$REPO" --pr "$PR" --head-sha "$HEAD_SHA"

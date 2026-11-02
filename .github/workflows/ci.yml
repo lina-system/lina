@@ -30,13 +30,11 @@ jobs:
       scan: ${{ steps.classify.outputs.scan }}
       deps: ${{ steps.classify.outputs.deps }}
       uv_lock: ${{ steps.classify.outputs.uv_lock }}
+      helper: ${{ steps.classify.outputs.helper }}
+      macos: ${{ steps.classify.outputs.macos }}
     steps:
+      # Full checkout: the macOS lane reads changed files for darwin branches and macOS test gates.
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
-        with:
-          sparse-checkout: |
-            .github/actions/detect-changes
-            scripts/ci/classify_changes.py
-          sparse-checkout-cone-mode: false
 
       - name: Detect affected areas
         id: classify
@@ -146,9 +144,12 @@ jobs:
           if [ "$PYTHON" = true ]; then test "$RESULT" = success; else test "$RESULT" = skipped; fi
 
   macos:
-    # Not required. macOS-marked tests (upstream tests-os.yml) on pushes to dev and manual runs.
+    # Required check. macOS-marked tests (upstream tests-os.yml) on the `macos` lane: a change to a
+    # macOS path (scripts/ci/classify_changes.py). Skipped otherwise, which passes the check; if
+    # detect fails this skips too, and the required Python tests (Linux) fails instead.
     name: Python tests (macOS)
-    if: github.event_name != 'pull_request'
+    needs: detect
+    if: needs.detect.outputs.macos == 'true'
     runs-on: macos-latest
     timeout-minutes: 60
     steps:
@@ -180,9 +181,12 @@ jobs:
         uses: ./.github/actions/check-clean-worktree
 
   helper-macos:
-    # Not required. LINA Helper (helper/macos): Swift tests, the unlock package's native checks
-    # and an ad-hoc app build. The Linux half of its `make test` runs in the Python suite (tests/helper).
+    # Required check. LINA Helper (helper/macos): Swift tests, the unlock package's native checks
+    # and an ad-hoc app build, on the `helper` lane (helper/ changes); skipped (which passes)
+    # otherwise. The Linux half of its `make test` runs in the Python suite (tests/helper).
     name: LINA Helper (macOS)
+    needs: detect
+    if: needs.detect.outputs.helper == 'true'
     runs-on: macos-latest
     timeout-minutes: 30
     steps:

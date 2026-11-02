@@ -72,6 +72,12 @@ outputs:
   catalog:
     description: Run the plugin-catalog tests (catalog-only diffs run these instead of the Python suite).
     value: ${{ steps.classify.outputs.catalog }}
+  helper:
+    description: Run the LINA Helper macOS job (helper/ changes).
+    value: ${{ steps.classify.outputs.helper }}
+  macos:
+    description: Run the macOS Python tests (macOS paths; reads the checkout, see classify_changes.py).
+    value: ${{ steps.classify.outputs.macos }}
 
 runs:
   using: composite

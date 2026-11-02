@@ -1,0 +1,54 @@
+name: Merge gates
+
+# Sets two commit statuses on a pull request's head commit, both required by the dev ruleset
+# (docs/ci.md): "Codex review" (the Codex reviewer looked at this head and left no P0/P1
+# finding on it) and "Linked issue" (the body closes an open issue of this repository).
+# Judged by scripts/ci/codex_review_gate.py.
+#
+# pull_request_target, not pull_request: the run uses the workflow and the gate script from dev,
+# so a pull request cannot edit the gate that judges it. Nothing from the pull request is
+# checked out or run. Codex edits one summary comment per pull request when it finishes a
+# review without findings, hence issue_comment `edited`.
+
+on:
+  pull_request_target:
+    types: [opened, synchronize, reopened, edited]
+    branches: [dev]
+  pull_request_review:
+    types: [submitted]
+  issue_comment:
+    types: [created, edited]
+
+permissions: {}
+
+concurrency:
+  group: merge-gates-${{ github.event.pull_request.number || github.event.issue.number }}
+  cancel-in-progress: false
+
+jobs:
+  gates:
+    name: Set merge gate statuses
+    if: >-
+      (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
+      (github.event_name != 'issue_comment' && github.event.pull_request.base.ref == 'dev')
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      pull-requests: read
+      statuses: write
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: scripts/ci/codex_review_gate.py
+          sparse-checkout-cone-mode: false
+
+      - name: Judge and set the statuses
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REPO: ${{ github.repository }}
+          PR: ${{ github.event.pull_request.number || github.event.issue.number }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: python3 scripts/ci/codex_review_gate.py --repo "$REPO" --pr "$PR" --target-url "$RUN_URL"
