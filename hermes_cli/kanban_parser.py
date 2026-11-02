@@ -467,6 +467,11 @@ _SPECS = [
     _cmd("gate", [_arg("gate_argv", nargs=argparse.REMAINDER, metavar="prs|dev|artifact|review|ask ...")],
          help="Deterministic work-card gates (exit 0 pass, 1 fail, 75 waiting); "
               "`hermes kanban gate <gate> --help` for each gate"),
+    _cmd("plan", [
+        _arg("plan_file", metavar="FILE", help="Plan file (YAML or JSON): key, goal, cards"),
+        _arg("--dry-run", action="store_true", help="Print the cards, gates and links without writing"),
+        _json_flag(help="Emit the laid-out plan as JSON"),
+    ], help="Lay out a goal card and its gated work cards from one plan file, in one transaction"),
 ]
 
 

@@ -70,6 +70,50 @@ def test_the_trial_copy_starts_on_its_spare_port_while_lina_s_ocx_runs_on_the_co
     assert json.loads((root["root"] / "ocx" / "config.json").read_text()) == {"port": service_port, "keep": "me"}
 
 
+def _record_services(root, monkeypatch, start_codes: list[int]) -> list[tuple]:
+    """stop/start of the service, each with the ``current`` version and the data's config.json at that moment;
+    *start_codes* are the start results in order."""
+    config, events = lina_ocx.data_dir(root) / "config.json", []
+
+    def stop(root=None, out=print):
+        events.append(("stop", lina_ocx.current_version(root), config.read_text()))
+        return 0
+
+    def start(root=None, out=print):
+        events.append(("start", lina_ocx.current_version(root), config.read_text()))
+        if start_codes[0] != 0:
+            config.write_text('{"schema": 2}\n')  # what the new version left before it failed
+        return start_codes.pop(0)
+
+    monkeypatch.setattr(lina_ocx_service, "stop", stop)
+    monkeypatch.setattr(lina_ocx_service, "start", start)
+    monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda root, port: True)
+    (root / "config.yaml").write_text(f"ocx:\n  port: {lina_ocx.free_port()}\n")
+    install_fake_version(root, NEW)
+    return events
+
+
+def test_a_failed_backup_after_the_stop_starts_the_current_version_again(root, monkeypatch):
+    events = _record_services(root["root"], monkeypatch, [0])
+
+    def disk_full(*args, **kwargs):
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(lina_ocx_upgrade.shutil, "copytree", disk_full)
+    with pytest.raises(OSError):
+        lina_ocx_upgrade._switch(root["root"], "2.95.0", NEW, out=lambda line: None)
+    assert [(verb, version) for verb, version, _ in events] == [("stop", "2.95.0"), ("start", "2.95.0")]
+    assert lina_ocx.current_version(root["root"]) == "2.95.0"
+    assert lina_ocx_upgrade.rollback(root["root"], out=lambda line: None) == 1  # no partial backup to restore
+
+
+def test_a_new_version_that_fails_as_a_service_is_stopped_before_its_data_is_restored(root, monkeypatch):
+    events = _record_services(root["root"], monkeypatch, [1, 0])
+    assert lina_ocx_upgrade._switch(root["root"], "2.95.0", NEW, out=lambda line: None) == 1
+    assert events == [("stop", "2.95.0", '{"schema": 1}\n'), ("start", NEW, '{"schema": 1}\n'),
+                      ("stop", NEW, '{"schema": 2}\n'), ("start", "2.95.0", '{"schema": 1}\n')]
+
+
 def test_a_version_that_is_not_the_pin_needs_its_integrity(root, capsys):
     assert lina_ocx_upgrade.upgrade(root["root"], NEW, None) == 1
     assert "--integrity" in capsys.readouterr().out
