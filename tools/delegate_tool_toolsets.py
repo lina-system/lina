@@ -5,6 +5,7 @@ from __future__ import annotations
 import logging
 from typing import List, Optional
 
+from tools.registry_contributions import startup_entries
 from toolsets import TOOLSETS, resolve_toolset
 from tools.delegate_tool_config import _get_inherit_mcp_toolsets
 
@@ -35,18 +36,26 @@ def _is_mcp_toolset_name(name: str) -> bool:
         target = None
     return bool(target and str(target).startswith("mcp-"))
 
+def _grantable_toolset_names() -> set[str]:
+    """Names the static surface can resolve: the ``TOOLSETS`` keys plus startup-declared toolsets. A built-in whose
+    tools ship in a startup bundle carries no static entry (``image_gen``), so enumerating only ``TOOLSETS`` silently
+    dropped it when a composite parent delegated with an explicit ``toolsets=[...]``. Registry-only (plugin/MCP) names
+    stay out: they resolve to nothing without the registry, so the subset check could never grant them anyway."""
+    return set(TOOLSETS) | {entry.toolset for entry in startup_entries()}
+
+
 def _expand_parent_toolsets(parent_toolsets: set) -> set:
     """Add every toolset whose tools are a subset of the parent's tools: a parent on a composite like ``hermes-cli``
     must still let a child request ``web``/``terminal``; bare name intersection would reject them. Both sides use
     the RESOLVED static surface: a composite's ``includes`` (``debugging`` -> ``web``/``file``, ``safe``) are tools
     the parent genuinely holds, and the child never gains a tool the parent lacks."""
     parent_tool_names = {
-        t for ts_name in parent_toolsets if ts_name in TOOLSETS for t in resolve_toolset(ts_name, include_registry=False)
+        t for ts_name in parent_toolsets for t in resolve_toolset(ts_name, include_registry=False)
     }
     expanded = set(parent_toolsets)
     if parent_tool_names:
         expanded.update(
-            ts_name for ts_name in TOOLSETS
+            ts_name for ts_name in _grantable_toolset_names()
             if ts_name not in expanded
             and (resolved := resolve_toolset(ts_name, include_registry=False))
             and set(resolved).issubset(parent_tool_names)

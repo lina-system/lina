@@ -18,6 +18,7 @@ import time
 from xml.parsers.expat import ExpatError
 
 from gateway.runtime_contract import RuntimeState
+from hermes_constants import GATEWAY_LAUNCHD_LABEL_BASE, GATEWAY_SERVICE_BASE, GATEWAY_WINDOWS_TASK_BASE
 from hermes_cli._subprocess_compat import windows_hide_flags
 
 
@@ -96,7 +97,7 @@ def _systemd(home: Path, deadline: float) -> ExistingService | None:
     if _s6_running():
         raise RuntimeStartError("external_supervisor")
     suffix = service_suffix(home)
-    unit = f"hermes-gateway{'-' + suffix if suffix else ''}.service"
+    unit = f"{GATEWAY_SERVICE_BASE}{'-' + suffix if suffix else ''}.service"
     paths = (Path.home() / ".config/systemd/user" / unit, Path("/etc/systemd/system") / unit)
     # On non-systemd hosts there is no manager to own transient units. Installed
     # definitions still count: a broken manager is not permission to bypass one.
@@ -186,7 +187,7 @@ def _s6(home: Path, deadline: float) -> ExistingService | None:
 def _launchd(home: Path, deadline: float) -> ExistingService | None:
     import pwd
     suffix = service_suffix(home)
-    label = f"ai.hermes.gateway{'-' + suffix if suffix else ''}"
+    label = f"{GATEWAY_LAUNCHD_LABEL_BASE}{'-' + suffix if suffix else ''}"
     account = pwd.getpwuid(os.getuid())  # windows-footgun: ok — native launchd only
     account_home = Path(account.pw_dir)
     plist = account_home / "Library/LaunchAgents" / f"{label}.plist"
@@ -221,7 +222,7 @@ def _launchd(home: Path, deadline: float) -> ExistingService | None:
 def _windows(home: Path, deadline: float) -> ExistingService | None:
     from hermes_cli.gateway_windows import _decode_schtasks_output
     suffix = service_suffix(home)
-    name = f"Hermes_Gateway{'_' + suffix if suffix else ''}"
+    name = f"{GATEWAY_WINDOWS_TASK_BASE}{'_' + suffix if suffix else ''}"
 
     def query(refusal: str, *argv: str) -> str:
         # schtasks/whoami write the console code page, and /XML declares UTF-16 over those bytes:

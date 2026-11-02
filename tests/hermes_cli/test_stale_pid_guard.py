@@ -200,7 +200,7 @@ def test_stop_only_targets_the_invoking_hermes_home(monkeypatch):
 class TestHermesHomeForPid:
     """Tri-state owner resolution: a readable environment always names a home."""
 
-    @pytest.mark.platforms("posix")  # POSIX default home is $HOME/.hermes
+    @pytest.mark.platforms("posix")  # POSIX default home is $HOME/.lina
     def test_readable_env_without_var_resolves_to_that_process_default_home(self, monkeypatch, tmp_path):
         """The common install shape exports no HERMES_HOME: the backend lives in its user's
         platform default home, and a default-home ``--stop`` must still find it (#113978)."""
@@ -210,10 +210,10 @@ class TestHermesHomeForPid:
         monkeypatch.setattr(main_dashboard, "_dashboard_cmdline_for_pid",
                             lambda pid: ["hermes", "--profile", "work", "serve"] if pid == 2 else ["hermes", "serve"])
 
-        assert dashboard_procs._hermes_home_for_pid(1) == f"{home}/.hermes"
+        assert dashboard_procs._hermes_home_for_pid(1) == f"{home}/.lina"
         # ``-p``/``--profile`` is applied to os.environ after exec, invisible in /proc environ.
-        assert dashboard_procs._hermes_home_for_pid(2) == f"{home}/.hermes/profiles/work"
-        assert dashboard_procs._pids_owned_by_hermes_home([1, 2], f"{home}/.hermes") == [1]
+        assert dashboard_procs._hermes_home_for_pid(2) == f"{home}/.lina/profiles/work"
+        assert dashboard_procs._pids_owned_by_hermes_home([1, 2], f"{home}/.lina") == [1]
 
     # REGRESSION (#116906): a systemd/launchd unit with a scrubbed environment exports no HOME.
     # The target resolves its own default home from the password database, so attributing it to
@@ -232,13 +232,13 @@ class TestHermesHomeForPid:
         service_home = tmp_path / "hermes-service"
         self._posix_scrubbed_unit(monkeypatch, tmp_path, str(service_home))
 
-        assert Path(dashboard_procs._hermes_home_for_pid(1)) == service_home / ".hermes"
+        assert Path(dashboard_procs._hermes_home_for_pid(1)) == service_home / ".lina"
 
     def test_unreadable_passwd_entry_keeps_the_existing_fallback(self, monkeypatch, tmp_path):
         """No owner, no entry: the previous behaviour stands rather than resolving to nothing."""
         self._posix_scrubbed_unit(monkeypatch, tmp_path, None)
 
-        assert Path(dashboard_procs._hermes_home_for_pid(1)) == tmp_path / "inspecting-user" / ".hermes"
+        assert Path(dashboard_procs._hermes_home_for_pid(1)) == tmp_path / "inspecting-user" / ".lina"
 
     def test_root_shaped_hermes_home_follows_the_flag_and_the_sticky_active_profile(self, monkeypatch, tmp_path):
         """Mirror ``_apply_profile_override``: an exported root ``HERMES_HOME`` is the root, not the

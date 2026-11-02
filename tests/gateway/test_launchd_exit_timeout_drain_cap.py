@@ -55,8 +55,8 @@ def _grandchild(label):
 @pytest.mark.parametrize(
     "platform, environ, expected",
     [
-        ("darwin", _direct("ai.hermes.gateway"), _CAPPED),
-        ("darwin", _grandchild("ai.hermes.gateway"), _CAPPED),
+        ("darwin", _direct("ai.lina.gateway"), _CAPPED),
+        ("darwin", _grandchild("ai.lina.gateway"), _CAPPED),
         # App-coalition label (IDE integrated terminal) is not our job: no budget, drain unchanged —
         # whichever variable carries it.
         ("darwin", _direct("application.com.example.ide.123"), 180.0),
@@ -64,8 +64,8 @@ def _grandchild(label):
         # No label at all (foreground start, or a wrapper older than the forward) is not launchd-owned.
         ("darwin", {"XPC_SERVICE_NAME": "0"}, 180.0),
         # launchd is darwin-only (same predicate as control_socket): a leaked label elsewhere is ignored.
-        ("linux", _direct("ai.hermes.gateway"), 180.0),
-        ("linux", _grandchild("ai.hermes.gateway"), 180.0),
+        ("linux", _direct("ai.lina.gateway"), 180.0),
+        ("linux", _grandchild("ai.lina.gateway"), 180.0),
     ],
     ids=["darwin-direct", "darwin-grandchild", "darwin-direct-app", "darwin-grandchild-app",
          "darwin-unlabelled", "linux-direct", "linux-grandchild"],
@@ -82,8 +82,8 @@ def test_launchd_reader_yields_a_budget_only_for_hermes_jobs(platform, environ, 
 def test_forwarded_label_marks_grandchild_supervised_for_every_reader():
     """One seam: the restart route and the control-socket declaration see the same launchd identity
     the drain cap does, so a grandchild is not 'manual' to one reader and 'launchd' to another."""
-    grandchild_env = _grandchild("ai.hermes.gateway")
-    assert launchd_service_label(grandchild_env, platform="darwin") == "ai.hermes.gateway"
+    grandchild_env = _grandchild("ai.lina.gateway")
+    assert launchd_service_label(grandchild_env, platform="darwin") == "ai.lina.gateway"
     assert is_gateway_supervisor_process(grandchild_env) is True
     assert is_gateway_supervisor_process({"XPC_SERVICE_NAME": "0"}) is False
     assert is_gateway_supervisor_process(_grandchild("application.com.x.1")) is False
