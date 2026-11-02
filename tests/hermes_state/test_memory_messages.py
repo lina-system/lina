@@ -163,3 +163,56 @@ def test_search_filters_and_oldest_sort_see_past_the_candidate_page(tmp_path, mo
         assert len(db.search_messages("ledger", limit=50)) == 7
     finally:
         db.close()
+
+
+def test_a_cached_message_written_again_after_another_process_removed_its_row_is_stored(tmp_path, memory_store_sql):
+    import hermes_state_store
+
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        db.create_session(session_id="cache", source="cli")
+        row = {"session_id": "cache", "role": "user", "content": "the pier inventory", "timestamp": 1_700_000_000.0,
+               "message_uid": "cache-msg-1"}
+        db._execute_write(lambda conn: insert_rows(conn, db.message_store, [row]))
+        uid = _text_uid(db, "cache", "user")
+        # Another process collects the row; this process's cache still holds it.
+        memory_store_sql("DELETE FROM memory.messages WHERE uid = %s", (uid,))
+        db._execute_write(lambda conn: insert_rows(conn, db.message_store, [row]))
+
+        assert memory_store_sql("SELECT count(*) FROM memory.messages WHERE uid = %s", (uid,)) == [(1,)]
+        hermes_state_store.TEXT_CACHE.clear()
+        assert [m["content"] for m in db.get_messages_as_conversation("cache")] == ["the pier inventory"] * 2
+    finally:
+        db.close()
+
+
+def test_text_shared_by_a_branch_is_collected_once_no_session_uses_it_and_its_grace_ran_out(
+        tmp_path, memory_store_sql):
+    from hermes_state_store import collect_session_db_text
+
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        for sid in ("parent", "branch"):
+            db.create_session(session_id=sid, source="cli")
+            rows = [{"session_id": sid, "role": "user", "content": f"shared line {i}", "timestamp": 1_700_000_000.0 + i,
+                     "message_uid": f"shared-{i}"} for i in range(3)]
+            db._execute_write(lambda conn, rows=rows: insert_rows(conn, db.message_store, rows))
+        shared = memory_store_sql("SELECT count(*) FROM memory.messages")
+        assert shared == [(3,)]
+        age = "UPDATE memory.messages SET observed_at = now() - interval '40 days'"
+
+        db.delete_session("parent")
+        memory_store_sql(age)
+        assert collect_session_db_text(db, older_than_days=30) == 0  # the branch still uses every row
+        assert [m["content"] for m in db.get_messages_as_conversation("branch")] == [
+            "shared line 0", "shared line 1", "shared line 2"]
+
+        db.delete_session("branch")
+        memory_store_sql("UPDATE memory.messages SET observed_at = now() - interval '5 days'")
+        assert collect_session_db_text(db, older_than_days=30) == 0  # within the grace period: kept
+        assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(3,)]
+        memory_store_sql(age)
+        assert collect_session_db_text(db, older_than_days=30) == 3
+        assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(0,)]
+    finally:
+        db.close()

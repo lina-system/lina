@@ -67,7 +67,7 @@ from hermes_state_dbfile import (
     RetiredGenerationCaptureError, capture_retired_wal_generation, refuse_deleted_wal_generation,
 )
 from hermes_state_messages import SessionMessagesMixin
-from hermes_state_store import MessageStore, agent_id_for, held_text_uids, install_sqlite_functions
+from hermes_state_store import MessageStore, agent_id_for, install_sqlite_functions
 from hermes_state_prune_rewrite import SessionPruneRewriteMixin
 from hermes_state_api_content import SessionApiContentMixin
 from hermes_state_coverage import SessionCoverageMixin
@@ -1060,11 +1060,6 @@ class SessionDB(
                         except Exception:
                             pass
                         raise
-                try:
-                    self.message_store.flush_forgotten(
-                        lambda uids: self._read_retrying_ioerr(lambda conn: held_text_uids(conn, uids)))
-                except Exception:  # health: allow BLE001 -- committed: the text stays behind, nothing replays
-                    logger.warning("Could not delete the text of sessions a committed write emptied", exc_info=True)
                 # Success — periodic best-effort checkpoint.
                 self._write_count += 1
                 if self._write_count % self._CHECKPOINT_EVERY_N_WRITES == 0:

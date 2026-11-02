@@ -236,6 +236,12 @@ class _TextCache:
 
 TEXT_CACHE = _TextCache()
 
+# A text row re-used after this long gets its observed_at refreshed; collection keeps rows younger than
+# MIN_COLLECT_DAYS whatever it is asked, so a row a writer re-uses without touching is never a candidate.
+_TOUCH_AFTER_HOURS = 24
+MIN_COLLECT_DAYS = 2.0
+DEFAULT_COLLECT_DAYS = 30.0
+
 
 class MessageStore:
     """One profile's view of ``memory.messages``.
@@ -253,7 +259,6 @@ class MessageStore:
         self._write_conn = None
         self._write_owner: Optional[int] = None
         self._write_depth = 0
-        self._pending_sessions: list[str] = []
         # Text rows the open write transaction wrote or read: published to TEXT_CACHE once it commits,
         # dropped on rollback (a cached uid whose insert rolled back would make a retry skip the insert).
         self._staged: dict[str, TextRow] = {}
@@ -310,7 +315,6 @@ class MessageStore:
                 self._write_depth -= 1
             return
         self._write_owner, self._write_depth = me, 1
-        self._pending_sessions = []
         self._staged = {}
         try:
             yield
@@ -319,7 +323,6 @@ class MessageStore:
             for row in self._staged.values():
                 TEXT_CACHE.put(self.agent_id, row)
         except BaseException:
-            self._pending_sessions = []
             if self._write_conn is not None and not self._write_conn.closed:
                 try:
                     self._write_conn.rollback()
@@ -386,26 +389,33 @@ class MessageStore:
         digest = payload_digest(values)
         base = self.base_uid(message_uid)
         versioned = f"{base}#{digest[:16]}"
-        for uid in (base, versioned):
-            cached = self._cached(uid)
-            if cached is not None and cached.values == values:
-                return uid
+        known = next((uid for uid in (base, versioned)
+                      if (cached := self._cached(uid)) is not None and cached.values == values), None)
         text = _plain_text(values[0])
         row = (SOURCE_AGENT, self.agent_id, session_id, seq_in_session, role, text, _plain_text(tool_name),
                _plain_text(tool_call_id), _jsonb_tool_calls(values[1]), timestamp,
                json.dumps(_native(values, meta, digest)), _sha256(text or ""))
+        # The cache may skip the read, never the write: another process's collection may have removed a row
+        # this process still caches. A conflicting row is locked until this transaction commits, and one not
+        # re-used for a day gets its observed_at refreshed, so collect_unreferenced() cannot take it meanwhile.
         insert = ("INSERT INTO memory.messages (uid, source, agent_id, session_id, seq_in_session, role, content,"
                   " tool_name, tool_call_id, tool_calls, ts, native, content_sha256)"
                   " VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s::jsonb, to_timestamp(%s), %s::jsonb, %s)"
-                  " ON CONFLICT (uid) DO NOTHING RETURNING uid")
+                  " ON CONFLICT (uid) DO UPDATE SET observed_at = now()"
+                  f" WHERE memory.messages.observed_at < now() - interval '{_TOUCH_AFTER_HOURS} hours'"
+                  " RETURNING native->>'payload_sha256'")
         with self._writer_cursor() as cur:
-            # A new message (the usual case) is one round trip; a known one shows which version it is.
-            cur.execute(insert, (base, *row))
-            uid = base if cur.fetchone() else None
-            if uid is None:
-                cur.execute("SELECT native->>'payload_sha256' FROM memory.messages WHERE uid = %s", (base,))
-                stored = cur.fetchone()
-                if stored is not None and stored[0] == digest:
+            if known is not None:
+                cur.execute(insert, (known, *row))
+                cur.fetchall()
+                uid = known
+            else:
+                cur.execute(insert, (base, *row))
+                returned = cur.fetchone()
+                if returned is None:  # a row written within the day: locked, not touched; read its version
+                    cur.execute("SELECT native->>'payload_sha256' FROM memory.messages WHERE uid = %s", (base,))
+                    returned = cur.fetchone()
+                if returned is not None and returned[0] == digest:
                     uid = base
                 else:
                     cur.execute(insert, (versioned, *row))
@@ -441,32 +451,6 @@ class MessageStore:
         row = self.texts([uid]).get(uid)
         return None if row is None else row.get(field)
 
-    def forget_sessions_after_commit(self, session_ids: Iterable[str]) -> None:
-        """Queue sessions whose transcript this write emptied: once it commits (``flush_forgotten``) their
-        text goes, except versions another session still points at. Text of a session that still has rows
-        stays: a reader may hold a snapshot of a row a rewrite or replace just moved off it."""
-        if self._write_owner != threading.get_ident():
-            raise RuntimeError("memory store writes run inside MessageStore.write()")
-        self._pending_sessions.extend(s for s in session_ids if s)
-
-    def flush_forgotten(self, still_held: Callable[[list[str]], set[str]]) -> int:
-        """Delete the text of the sessions queued by the last committed write; *still_held* names the
-        uids state.db rows still point at (a compression child shares its parent's text)."""
-        sessions, self._pending_sessions = list(dict.fromkeys(self._pending_sessions)), []
-        if not sessions:
-            return 0
-        with self._cursor() as cur:
-            cur.execute("SELECT uid FROM memory.messages WHERE session_id = ANY(%s)", (sessions,))
-            uids = [row[0] for row in cur.fetchall()]
-        doomed = sorted(set(uids) - still_held(uids))
-        if not doomed:
-            return 0
-        with self._cursor() as cur:
-            cur.execute("DELETE FROM memory.messages WHERE uid = ANY(%s)", (doomed,))
-            count = cur.rowcount
-        TEXT_CACHE.drop(self.agent_id, doomed)
-        return count
-
     def session_messages(self, session_id: str) -> list[dict[str, Any]]:
         """The rows first written by *session_id*, in write order: the shape the other engines (LCM,
         Honcho) read, without Hermes's placement state."""
@@ -476,6 +460,37 @@ class MessageStore:
                         (session_id,))
             names = [d.name for d in cur.description]
             return [dict(zip(names, row)) for row in cur.fetchall()]
+
+    def collect_unreferenced(self, still_held: Callable[[list[str]], set[str]], *,
+                             older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
+        """Delete this agent's text rows no transcript row points at any more (*still_held* names the uids its
+        state.db still references) and that nobody wrote or re-used for *older_than_days* (at least
+        MIN_COLLECT_DAYS): a snapshot or backup taken within that window restores with its text. Explicitly
+        forgotten rows (``forgotten_at``) are left to the forget path. Returns the rows deleted."""
+        if self._in_write():
+            raise RuntimeError("collect_unreferenced runs outside a write transaction")
+        seconds = max(float(older_than_days), MIN_COLLECT_DAYS) * 86400.0
+        deleted, after = 0, 0
+        while True:
+            with self._cursor() as cur:
+                cur.execute("SELECT message_id, uid FROM memory.messages WHERE message_id > %s AND forgotten_at IS NULL"
+                            " AND observed_at < now() - make_interval(secs => %s) ORDER BY message_id LIMIT 1000",
+                            (after, seconds))
+                page = cur.fetchall()
+            if not page:
+                return deleted
+            after = page[-1][0]
+            uids = [uid for _, uid in page]
+            doomed = sorted(set(uids) - still_held(uids))
+            if doomed:
+                # observed_at is checked again here: a writer that re-used a row meanwhile refreshed it (and holds
+                # its lock until it commits), so the row stays.
+                with self._cursor() as cur:
+                    cur.execute("DELETE FROM memory.messages WHERE uid = ANY(%s) AND forgotten_at IS NULL"
+                                " AND observed_at < now() - make_interval(secs => %s) RETURNING uid", (doomed, seconds))
+                    gone = [row[0] for row in cur.fetchall()]
+                TEXT_CACHE.drop(self.agent_id, gone)
+                deleted += len(gone)
 
     def count(self) -> int:
         with self._cursor() as cur:
@@ -659,15 +674,11 @@ def rewrite_rows(conn, store: MessageStore, row_ids: Sequence[int], changes: dic
 
 
 def delete_rows(conn, store: MessageStore, where_sql: str, params: Sequence[Any] = ()) -> int:
-    """``DELETE FROM transcript_rows WHERE <where_sql>``; a session left without rows has its text forgotten
-    after the commit."""
-    sessions = [row[0] for row in conn.execute(
-        f"SELECT DISTINCT session_id FROM {PLACEMENT_TABLE} WHERE {where_sql}", tuple(params)).fetchall()]
-    count = conn.execute(f"DELETE FROM {PLACEMENT_TABLE} WHERE {where_sql}", tuple(params)).rowcount
-    store.forget_sessions_after_commit(
-        sid for sid in sessions
-        if conn.execute(f"SELECT 1 FROM {PLACEMENT_TABLE} WHERE session_id = ? LIMIT 1", (sid,)).fetchone() is None)
-    return count
+    """``DELETE FROM transcript_rows WHERE <where_sql>``. The text stays in the store: rows are immutable and
+    shared (compaction copies, branches, snapshots), and ``MessageStore.collect_unreferenced`` reclaims the
+    ones nothing references after a grace period."""
+    del store  # kept in the signature: every placement write goes through the store
+    return conn.execute(f"DELETE FROM {PLACEMENT_TABLE} WHERE {where_sql}", tuple(params)).rowcount
 
 
 def held_text_uids(conn, uids: Sequence[str]) -> set[str]:
@@ -689,3 +700,9 @@ def rows_with_text(store: MessageStore, rows: Iterable[Any]) -> list[dict[str, A
         for field in TEXT_FIELDS:
             row[field] = text.get(field) if text is not None else None
     return rows
+
+
+def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
+    """``collect_unreferenced`` for a SessionDB's agent, counting references in its state.db."""
+    return db.message_store.collect_unreferenced(
+        lambda uids: db._read_retrying_ioerr(lambda conn: held_text_uids(conn, uids)), older_than_days=older_than_days)

@@ -136,33 +136,3 @@ class TestSystemErrorTransactionBoundary:
         with pytest.raises(SystemError, match="returned NULL"):
             db._execute_write(broken)
         assert calls["n"] == 1
-
-    def test_post_commit_maintenance_error_does_not_replay_message(
-        self, db, monkeypatch
-    ):
-        db.create_session("s1", "cli")
-        before = db._write_count
-        maintenance_calls = {"n": 0}
-
-        def fail_once(*_still_held):
-            maintenance_calls["n"] += 1
-            if maintenance_calls["n"] == 1:
-                raise SystemError(
-                    "<TrackedConnection object at 0x0> returned NULL "
-                    "without setting an exception"
-                )
-            return 0
-
-        monkeypatch.setattr(db.message_store, "flush_forgotten", fail_once)
-
-        message_id = db.append_message("s1", "user", "exactly-once")
-        matching = [
-            row for row in db.get_messages("s1")
-            if row["content"] == "exactly-once"
-        ]
-
-        assert isinstance(message_id, int)
-        assert len(matching) == 1
-        assert db.get_session("s1")["message_count"] == 1
-        assert db._write_count == before + 1
-        assert maintenance_calls["n"] == 1
