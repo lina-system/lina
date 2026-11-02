@@ -639,6 +639,8 @@ def launchd_install(force: bool = False, *, start_now: bool = True, force_unit_p
     from hermes_cli.gateway_service_owner import definition_belongs_to_home
     if not force_unit_path and not definition_belongs_to_home(plist_path, _gw().get_hermes_home(), "overwrite"):
         sys.exit(1)
+    from hermes_cli.gateway_legacy_units import print_legacy_launchd_warning
+    print_legacy_launchd_warning()
     # Loading the plist starts the gateway (RunAtLoad), so a no-start install writes it without
     # loading it. A gateway that launchd already runs is still reloaded; this install did not start it.
     load = start_now or _gw()._launchctl_label_supervising_process(label)

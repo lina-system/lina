@@ -200,7 +200,7 @@ class TestSuccessImpliesAccounting:
             plan,
             # Serve/dashboard runtimes are reconciled in their own unit
             # vocabulary and never borrow a gateway relaunch (#100479).
-            restarted_services=["hermes-serve-ops.service"],
+            restarted_services=["lina-serve-ops.service"],
             relaunched_profiles=["work"],
             externally_supervised_profiles=[],
             killed_pids={101},

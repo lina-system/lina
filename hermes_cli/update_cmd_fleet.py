@@ -17,7 +17,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from hermes_cli.update_cmd_common import _best_effort
-from hermes_constants import GATEWAY_SERVICE_BASE, LAUNCHD_LABEL_PREFIX
+from hermes_constants import DASHBOARD_SERVICE_BASE, GATEWAY_SERVICE_BASE, LAUNCHD_LABEL_PREFIX, SERVE_SERVICE_BASE
 from hermes_cli.update_host_obligation import PROFILE_MARKER_NAME
 from hermes_cli.update_inventory import _gateway_service_matches_profile
 
@@ -34,7 +34,7 @@ _FRESH_RESTART_SUPERVISORS = frozenset({"systemd", "launchd", "service", "s6"})
 
 _SYSTEMD_SCOPES = (("user", ["systemctl", "--user"]), ("system", ["systemctl"]))
 _LIST_GATEWAY_UNITS = [
-    "list-units", f"{GATEWAY_SERVICE_BASE}*", "hermes-serve*", "hermes-dashboard*",
+    "list-units", f"{GATEWAY_SERVICE_BASE}*", f"{SERVE_SERVICE_BASE}*", f"{DASHBOARD_SERVICE_BASE}*",
     "--plain", "--no-legend", "--no-pager",
 ]
 
@@ -737,21 +737,22 @@ def _scoped_manual_gateway_pids(pids, *, keep=(), quiet: bool = False) -> list[i
 
 
 def _is_serve_or_dashboard_unit(unit: str) -> bool:
-    """``hermes-serve*``/``hermes-dashboard*`` (``.service``) by the same exact-or-hyphenated shape."""
+    """``lina-serve*``/``lina-dashboard*`` (``.service``) by the same exact-or-hyphenated shape. Hermes
+    Agent's ``hermes-serve*``/``hermes-dashboard*`` on the same account are never LINA's."""
     return (
-        unit == "hermes-serve.service"
-        or unit.startswith("hermes-serve-")
-        # #125297: ``hermes-dashboard*`` units are systemd-supervised dashboard backends — the
+        unit == f"{SERVE_SERVICE_BASE}.service"
+        or unit.startswith(f"{SERVE_SERVICE_BASE}-")
+        # #125297: dashboard units are systemd-supervised dashboard backends — the
         # same fleet this pass restarts. Leaving them out meant a successful update reported
         # the dashboard ``deferred`` (still on pre-update code) while nothing ever restarted it.
-        or unit == "hermes-dashboard.service"
-        or unit.startswith("hermes-dashboard-")
+        or unit == f"{DASHBOARD_SERVICE_BASE}.service"
+        or unit.startswith(f"{DASHBOARD_SERVICE_BASE}-")
     )
 
 
 def _is_hermes_gateway_unit(unit: str) -> bool:
-    """Exact base unit or hyphenated profile family only: ``startswith("hermes-serve")``
-    would accept ``hermes-server.service``."""
+    """Exact base unit or hyphenated profile family only: ``startswith("lina-serve")``
+    would accept ``lina-server.service``."""
     return (
         # list-units is already pattern-filtered, but keep the name gate so a stray non-gateway/serve line
         # cannot enter the restart path. See #83595.
@@ -762,7 +763,7 @@ def _is_hermes_gateway_unit(unit: str) -> bool:
 
 
 def _for_each_systemd_gateway_unit(list_units_stdout: str, *, process_unit, on_unit_timeout) -> None:
-    """Process each hermes-gateway*/hermes-serve* unit from ``systemctl list-units``.
+    """Process each hermes-gateway*/lina-serve* unit from ``systemctl list-units``.
 
     ``TimeoutExpired`` from ``process_unit`` is isolated per unit via ``on_unit_timeout``
     so one wedged systemctl call cannot abort the rest of the fleet.
@@ -787,7 +788,7 @@ def _service_unit_supports_graceful_sigusr1_restart(svc_name: str) -> bool:
     """Whether *svc_name* wires SIGUSR1 to a graceful drain-then-restart.
 
     Only ``hermes-gateway*`` runs ``gateway/run.py`` (the handler); SIGUSR1 would just
-    kill ``hermes-serve*`` and burn the drain budget, so those go straight to the blunt
+    kill ``lina-serve*`` and burn the drain budget, so those go straight to the blunt
     restart. Same exact/hyphenated shape as ``_for_each_systemd_gateway_unit`` so a
     near-prefix unit like ``hermes-gatewayd`` is never signalled.
 
@@ -1026,7 +1027,7 @@ _DESKTOP_SERVE_SKIP_REASON = (
 # survivors reported by _surviving_pre_update_serve_runtimes.
 _SERVE_SKIP_REASON = (
     "no per-profile relaunch command reaches a serve/dashboard runtime; recovered by the fresh"
-    " systemd unit pass when a hermes-serve*/hermes-dashboard* unit owns it, else left running for explicit"
+    " systemd unit pass when a lina-serve*/lina-dashboard* unit owns it, else left running for explicit"
     " operator restart"
 )
 # A launchd-owned backend (#116503): the fresh child has no per-label kickstart for serve/dashboard
@@ -1046,7 +1047,7 @@ def _gateway_recovery_partition(plan, *, skip_profiles: set[str] | None = None) 
     ``(candidates, skipped)``: profile → supervisor for supervised gateways the fresh
     process may restart; every other inventoried runtime with an explicit reason so
     nothing vanishes silently. Skipped serve/dashboard is NOT unrecoverable: the fresh
-    child's ``hermes-serve*`` systemd pass enumerates units from systemd; leftovers are
+    child's ``lina-serve*`` systemd pass enumerates units from systemd; leftovers are
     caught by :func:`_surviving_pre_update_serve_runtimes`.
     """
     skip_profiles = skip_profiles or set()
@@ -1255,7 +1256,7 @@ def _restart_one_systemd_gateway_unit(
     _manage_cmd = _resolve_manage_cmd(_manage_cmd_cache, scope, scope_cmd, svc_name)
 
     # Graceful SIGUSR1 first so in-flight runs drain: handler → request_restart(via_service=True)
-    # → drain → exit, Restart=always respawns. hermes-serve has no handler → blunt restart below.
+    # → drain → exit, Restart=always respawns. lina-serve has no handler → blunt restart below.
     _main_pid = 0
     if _service_unit_supports_graceful_sigusr1_restart(svc_name):
         try:
@@ -1344,7 +1345,7 @@ def _restart_one_systemd_gateway_unit(
 def _restart_systemd_gateway_units(
     restarted_services, failed_or_stale_units, restarted_scoped_units, drain_budget, self_restart_pending=None,
 ):
-    """Restart every active hermes-gateway*/hermes-serve* systemd unit (user + system).
+    """Restart every active hermes-gateway*/lina-serve* systemd unit (user + system).
 
     Settled units → ``restarted_services`` (bare) and ``restarted_scoped_units``
     (``scope/name``); failures → ``failed_or_stale_units``. Per-unit timeouts isolated.
@@ -1704,7 +1705,7 @@ def _restart_gateway_fleet_after_update(_pre_update_plan, gateway_mode: bool):
         incomplete=False, phase_errors=[], pre_restart_gateway_pids=[], restarted_services=[], failed_or_stale_units=[],
         relaunched_profiles=[], externally_supervised_profiles=[], killed_pids=set(),
     )
-    # Scope-qualified twin (``user/hermes-serve`` vs ``system/hermes-serve`` are different
+    # Scope-qualified twin (``user/lina-serve`` vs ``system/lina-serve`` are different
     # processes; abort recovery needs WHICH settled). Bare names stay in
     # ``restarted_services`` for the fleet probe, receipt and summary.
     # Snapshot of gateways running before we touch anything. Stays empty until we successfully import the
