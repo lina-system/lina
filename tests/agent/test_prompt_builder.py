@@ -424,6 +424,45 @@ class TestBuildContextFilesPrompt:
 
         assert _load_agents_md(sub) == ""
 
+    @pytest.mark.parametrize("git_layout", ["none", "cwd", "parent"])
+    def test_desk_root_agents_md_loads_for_a_nested_workspace(self, tmp_path, monkeypatch, git_layout):
+        # A worker in dir:desk:Projects/launch must see the Desk root AGENTS.md
+        # (deletion and archive rules) with no git root, with the workspace itself
+        # as the git root, and with the git root between the Desk and a deeper cwd.
+        # The chain still must not climb past the Desk to a planted parent file, and a
+        # profile worker reads desk.path from the default profile, not its own config.
+        from hermes_cli.desk import init_desk
+
+        (tmp_path / "AGENTS.md").write_text("Planted above the Desk.")
+        desk = init_desk(tmp_path / "Desk")
+        launch = desk / "Projects" / "launch"
+        launch.mkdir(parents=True)
+        cwd = launch
+        if git_layout != "none":
+            (launch / ".git").mkdir()
+            (launch / "AGENTS.md").write_text("Launch checklist only.")
+        if git_layout == "parent":
+            cwd = launch / "src"
+            cwd.mkdir()
+
+        profile = Path(os.environ["HERMES_HOME"]) / "profiles" / "coder"
+        profile.mkdir(parents=True)
+        (profile / "config.yaml").write_text("desk:\n  path: /elsewhere\n", encoding="utf-8")
+        monkeypatch.setenv("HERMES_HOME", str(profile))
+
+        result = build_context_files_prompt(cwd=str(cwd), skip_soul=True)
+        assert "Never delete anything on the Desk" in result
+        assert "Planted above the Desk." not in result
+        if git_layout != "none":
+            assert "Launch checklist only." in result
+            assert result.index("Never delete anything on the Desk") < result.index("Launch checklist only.")
+
+        outside = tmp_path / "elsewhere"
+        outside.mkdir()
+        outside_prompt = build_context_files_prompt(cwd=str(outside), skip_soul=True)
+        assert "Never delete anything on the Desk" not in outside_prompt
+        assert "Planted above the Desk." not in outside_prompt
+
     # --- AGENTS.override.md personal override (port of pi#7681) ---
 
     def test_agents_override_md_wins_over_agents_md(self, tmp_path):
