@@ -781,6 +781,7 @@ from hermes_cli.web_routers import (
     memory_providers as _memory_providers_routes,
     config_env as _config_env_routes,
     models as _models_routes,
+    lina_models as _lina_models_routes,
     messaging as _messaging_routes,
     oauth as _oauth_routes,
     cron as _cron_routes,
@@ -822,6 +823,7 @@ app.include_router(_sessions_routes.search_router)
 app.include_router(_memory_providers_routes.router)
 app.include_router(_config_env_routes.config_router)
 app.include_router(_models_routes.router)
+app.include_router(_lina_models_routes.router)
 app.include_router(_config_env_routes.router)
 app.include_router(_messaging_routes.router)
 app.include_router(_oauth_routes.router)

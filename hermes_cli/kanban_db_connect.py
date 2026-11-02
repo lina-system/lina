@@ -995,6 +995,10 @@ def _migrate_add_optional_columns(conn: sqlite3.Connection) -> None:
     ):
         conn.execute("UPDATE task_events SET kind = ? WHERE kind = ?", (new, old))
 
+    # Work card outcome rows (lina#111): a new table, so old boards open unchanged.
+    from hermes_cli.kanban_outcomes import ensure_table
+    ensure_table(conn)
+
     _rebuild_drifted_tables(conn)
 
 
