@@ -128,6 +128,30 @@ def test_gate_retries_exhausted_blocks_card_naming_gate(kanban_home, workspace, 
     assert len(blocks) == 1 and "echo red suite; exit 1" in blocks[0] and "red suite" in blocks[0]
 
 
+def test_finalize_again_after_gate_repair(kanban_home, workspace, monkeypatch):
+    judge_calls = _judge(monkeypatch, "done")
+    (workspace / "ok.txt").write_text("ok")
+    tid, _ = _card(workspace, ["test -f ok.txt"])
+
+    def on_turn(worker, prompt, number):
+        if number == 1:
+            (workspace / "ok.txt").unlink()
+        elif number == 2:
+            (workspace / "ok.txt").write_text("repaired")
+        else:
+            worker.status = "done"
+
+    worker, blocks = _Worker(on_turn), []
+
+    result = _loop(tid, worker, blocks, max_turns=6)
+
+    assert result["outcome"] == "completed_by_worker" and blocks == []
+    assert worker.prompts == [FINALIZE, worker.prompts[1], FINALIZE]
+    assert len(judge_calls) == 2
+    events = [event.payload for event in _task(tid)[1] if event.kind == "goal_gate"]
+    assert [event["passed"] for event in events] == [True, False, True]
+
+
 def test_waiting_gate_costs_no_turn_or_retry(kanban_home, workspace, monkeypatch):
     judge_calls = _judge(monkeypatch, "done")
     script = ('n=$(cat n 2>/dev/null || echo 0); n=$((n+1)); echo $n > n; '
@@ -239,6 +263,48 @@ def test_card_gate_runs_in_local_backend_in_card_workspace(kanban_home, workspac
     assert events[-1]["passed"] is True and str(workspace) in events[-1]["output_tail"]
 
 
+@pytest.mark.parametrize("persistent", [True, False])
+def test_card_gate_docker_workspace(kanban_home, workspace, monkeypatch, persistent):
+    from tools import terminal_tool as terminal
+    from tools import terminal_tool_lifecycle as lifecycle
+    from tools.terminal_scope import reset_terminal_scope, set_terminal_scope
+
+    (workspace / "marker").write_text("worker output")
+    recorded = {}
+
+    class MountedEnvironment:
+        def execute(self, command, *, cwd, **kwargs):
+            recorded["execute_cwd"] = cwd
+            visible = (recorded["host_cwd"] == str(workspace) and cwd == "/workspace"
+                       and (workspace / "marker").is_file())
+            return {"returncode": 0 if visible else 1, "output": "marker" if visible else "missing"}
+
+        def cleanup(self):
+            recorded["cleaned"] = True
+
+    def factory(config, env_type, **kwargs):
+        recorded.update(kwargs)
+        return MountedEnvironment()
+
+    monkeypatch.setattr(lifecycle, "_create_configured_env", factory)
+    token = set_terminal_scope({
+        "TERMINAL_ENV": "docker", "TERMINAL_CWD": str(kanban_home),
+        "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE": "true",
+        "TERMINAL_CONTAINER_PERSISTENT": str(persistent).lower(),
+    })
+    try:
+        tid, _ = _card(workspace, ["test -f marker"])
+        failure, events = _gate_once(tid)
+        assert terminal.resolve_task_overrides(f"kanban-gate-{tid}") == {}
+    finally:
+        reset_terminal_scope(token)
+
+    assert failure is None, failure
+    assert recorded["host_cwd"] == str(workspace)
+    assert recorded["cwd"] == recorded["execute_cwd"] == "/workspace"
+    assert recorded["cleaned"] and events[-1]["passed"]
+
+
 def test_card_gate_fails_closed_when_backend_unreachable(kanban_home, workspace, monkeypatch):
     monkeypatch.setenv("TERMINAL_ENV", "no-such-backend-108")
     (workspace / "marker").write_text("x")
@@ -248,6 +314,30 @@ def test_card_gate_fails_closed_when_backend_unreachable(kanban_home, workspace,
 
     assert failure is not None and failure.exit_code == -1
     assert "no-such-backend-108" in failure.output and events[-1]["passed"] is False
+
+
+def test_card_gate_bounded_output(kanban_home, workspace, monkeypatch):
+    from tools.environments import base
+    from tools import tool_output_limits
+
+    collectors = []
+    original = base._new_output_collector
+
+    def record_collector(process, bounded_capture):
+        collector = original(process, bounded_capture)
+        collectors.append(collector)
+        return collector
+
+    monkeypatch.setattr(tool_output_limits, "get_max_bytes", lambda: 4096)
+    monkeypatch.setattr(base, "_new_output_collector", record_collector)
+    tid, _ = _card(workspace, ["printf '%200000s' x; printf '\\nEND-OF-GATE\\n'; exit 7"])
+
+    failure, events = _gate_once(tid)
+
+    verbose = [collector for collector in collectors if collector.total_chars >= 200000]
+    assert verbose and all(collector.buffered_chars <= 4096 for collector in verbose)
+    assert failure.exit_code == 7 and len(failure.output) <= 3000
+    assert "END-OF-GATE" in failure.output and events[-1]["exit_code"] == 7
 
 
 def test_gate_results_of_a_reclaimed_run_are_discarded(kanban_home, workspace, monkeypatch):

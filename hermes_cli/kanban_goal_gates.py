@@ -28,6 +28,33 @@ _EVENT_TAIL_CHARS = 1000
 _PROMPT_TAIL_CHARS = 3000
 
 
+def _gate_cwd(config: dict, cwd: str, key: str) -> tuple[str, Optional[str]]:
+    """Resolve the card's workspace with the terminal's shared and per-session mount policy."""
+    import os
+
+    from tools.terminal_scope import get_terminal_scope, reset_terminal_scope, set_terminal_scope
+    from tools.terminal_tool import (
+        _is_container_backend, _is_unusable_container_cwd, _resolve_config_cwd,
+        _resolve_task_host_cwd, clear_task_env_overrides, register_task_env_overrides,
+    )
+
+    scope = get_terminal_scope()
+    token = set_terminal_scope({**(scope if scope is not None else os.environ), "TERMINAL_CWD": cwd})
+    try:
+        configured_cwd, configured_host = _resolve_config_cwd(
+            config["env_type"], config.get("docker_mount_cwd_to_workspace", False))
+    finally:
+        reset_terminal_scope(token)
+    register_task_env_overrides(key, {"cwd": cwd, "cwd_source": "session"})
+    try:
+        host_cwd = _resolve_task_host_cwd({**config, "host_cwd": configured_host}, key)
+    finally:
+        clear_task_env_overrides(key)
+    if _is_container_backend(config["env_type"]) and _is_unusable_container_cwd(cwd, mounted_host=host_cwd):
+        cwd = "/workspace" if host_cwd else configured_cwd
+    return cwd, host_cwd
+
+
 def run_card_gate(gate: GoalGate, *, cwd: str, task_id: str) -> tuple[bool, int, str]:
     """Run one card gate in the profile's terminal backend (local, container, ssh, ...), never
     as a host shell: the backend's child environment carries no provider credentials, and a
@@ -42,13 +69,14 @@ def run_card_gate(gate: GoalGate, *, cwd: str, task_id: str) -> tuple[bool, int,
     try:
         config = _get_env_config()
         env_type = config["env_type"]
+        cwd, host_cwd = _gate_cwd(config, cwd, key)
         env = _create_configured_env(
             config, env_type, image=_select_image(env_type, resolve_task_overrides(key), config),
-            cwd=cwd, timeout=int(gate.timeout_seconds), task_id=key, host_cwd=None)
+            cwd=cwd, timeout=int(gate.timeout_seconds), task_id=key, host_cwd=host_cwd)
     except Exception as exc:  # health: allow BLE001 -- any backend bring-up failure must fail the gate closed, and the reason is the gate's output
         return False, -1, f"[gate not run: the {env_type} backend could not be reached: {exc}]"
     try:
-        result = env.execute(gate.command, cwd=cwd, timeout=int(gate.timeout_seconds))
+        result = env.execute(gate.command, cwd=cwd, timeout=int(gate.timeout_seconds), bounded_capture=True)
     except Exception as exc:  # health: allow BLE001 -- a backend error mid-run fails the gate closed with its reason as output
         return False, -1, f"[gate not run: the {env_type} backend failed: {exc}]"
     finally:
