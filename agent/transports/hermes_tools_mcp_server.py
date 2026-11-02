@@ -56,7 +56,7 @@ def _signature_from_schema(schema: dict | None) -> tuple[inspect.Signature, dict
 # model-written Python on the Hermes host, outside codex's sandbox and approval UI).
 EXPOSED_TOOLS: tuple[str, ...] = (
     "web_search", "web_extract",
-    "vision_analyze", "image_generate", "skill_view", "skills_list", "text_to_speech",
+    "vision_analyze", "skill_view", "skills_list", "text_to_speech",
     # Kanban handoff tools: stateless (read HERMES_KANBAN_TASK, write kanban.db).
     # Without them a codex-runtime worker can't report completion and hangs.
     "kanban_complete", "kanban_block", "kanban_schedule", "kanban_request_review",
@@ -83,7 +83,7 @@ def _build_server() -> Any:
             "Hermes Agent's tool surface, exposed for use inside a Codex "
             "session. Use these for capabilities Codex's built-in toolset "
             "doesn't cover: web search/extract, "
-            "subagent delegation, vision, image generation, persistent "
+            "subagent delegation, vision, persistent "
             "memory, skills, and cross-session search."
         ),
     )

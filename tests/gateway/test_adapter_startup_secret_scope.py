@@ -28,15 +28,6 @@ from agent import secret_scope as ss
 
 # (module path, representative credential env var owned by that adapter)
 MIGRATED_ADAPTER_MODULES = [
-    ("plugins.platforms.irc.adapter", "IRC_SERVER_PASSWORD"),
-    ("plugins.platforms.line.adapter", "LINE_CHANNEL_ACCESS_TOKEN"),
-    ("plugins.platforms.mattermost.adapter", "MATTERMOST_TOKEN"),
-    ("plugins.platforms.ntfy.adapter", "NTFY_TOKEN"),
-    ("plugins.platforms.sms.adapter", "TWILIO_AUTH_TOKEN"),
-    ("plugins.platforms.dingtalk.adapter", "DINGTALK_CLIENT_SECRET"),
-    ("plugins.platforms.feishu.adapter", "FEISHU_APP_SECRET"),
-    ("plugins.platforms.wecom.adapter", "WECOM_SECRET"),
-    ("plugins.platforms.buzz.adapter", "BUZZ_PRIVATE_KEY"),
     ("plugins.platforms.bluebubbles.adapter", "BLUEBUBBLES_PASSWORD"),
     ("gateway.platforms.api_server", "API_SERVER_KEY"),
 ]

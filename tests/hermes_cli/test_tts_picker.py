@@ -96,11 +96,10 @@ class TestVisibleProvidersInjectsTTSPlugins:
         assert plugin_rows[0]["tts_provider"] == "cartesia"
 
     def test_other_categories_unaffected_by_tts_plugins(self):
-        """Registering a TTS plugin must not leak into the Image Generation
-        or Browser pickers."""
+        """Registering a TTS plugin must not leak into the Browser pickers."""
         tts_registry.register_provider(_FakeTTSProvider(name="cartesia"))
 
-        img_cat = tools_config.TOOL_CATEGORIES["image_gen"]
+        img_cat = tools_config.TOOL_CATEGORIES["browser"]
         visible = tools_config._visible_providers(img_cat, config={})
         names = [row.get("name") for row in visible]
         assert "Cartesia" not in names

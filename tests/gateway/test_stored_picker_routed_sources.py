@@ -107,7 +107,7 @@ async def test_a_compressed_messaging_conversation_is_listed_under_its_lineage_r
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize('platform', ['irc', 'line', 'google_chat'])
+@pytest.mark.parametrize('platform', ['photon'])
 async def test_a_bundled_plugin_platform_conversation_is_listed_and_resumes(tmp_path, monkeypatch, platform):
     """Plugin platforms are ``Platform`` pseudo-members that enum iteration never yields; the cold mount
     resolves them by label, so the listing must offer the same rows."""
