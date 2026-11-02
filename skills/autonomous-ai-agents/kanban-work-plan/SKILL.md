@@ -63,22 +63,25 @@ cards:
     boundaries: "What the card must not touch."                        # optional
     stop_when: "The observable end state."
     worker: "omo — multi-file change"
-    gates: ["hermes kanban gate prs", "hermes kanban gate dev lina-system/lina"]
+    gates:
+      - "hermes kanban gate prs"
+      - "hermes kanban gate dev lina-system/lina"
+      - "hermes kanban gate review --owner rev"   # rev's approval on THIS card
     max_turns: 40
     max_runtime: 12h
     workspace: "dir:/srv/work/lina"  # optional: scratch, worktree, worktree:<p>, dir:<p>
   - key: review
     title: "Review the gates PR"
     assignee: rev                    # another agent
-    todos: ["[ ] review the gates PR"]
-    outcome: "An approval comment by rev."
-    verification: "The approval is on the card."
-    stop_when: "Approved."
+    todos: ["[ ] review the gates PR, write reviews/gates.md, comment `approve` on the gates card"]
+    outcome: "A review note with a verdict, and rev's approval comment on the gates card."
+    verification: "The note has a Verdict line."
+    stop_when: "The note is written and the approval is posted."
     worker: "rev — reviewer"
-    gates: ["hermes kanban gate review"]
+    gates: ['hermes kanban gate artifact reviews/gates.md --check "grep -q Verdict: reviews/gates.md"']
     max_turns: 10
     max_runtime: 2h
-    after: [gates]                   # starts only when `gates` is done
+    # no `after: [gates]`: the gates card waits for this approval, so a link would deadlock
 ```
 
 What gets created: a goal card, then one goal-mode work card per entry with its gates, turn budget
@@ -92,6 +95,10 @@ Gates: code cards use `gate prs` (every To-dos issue closed by a merged PR with 
 `gate artifact <path> --check "<cmd>"` and `gate review`; add `gate ask` when the card may ask
 the owner questions.
 
+`gate review` never counts the card assignee's own approval: put it on the card being reviewed
+(`--owner <reviewer>` for an agent reviewer), and gate the reviewer's own card on what the reviewer
+writes (`gate artifact`).
+
 ## Procedure
 
 1. Read the goal and list every to-do: GitHub issues as `owner/repo#n`, other items as `[ ] text`.
@@ -101,8 +108,9 @@ the owner questions.
 4. Order cards with `after:` only when one really needs another's result; leave the rest parallel.
 5. A decision two cards share (a name, a format, an interface) is written into both bodies, in
    `constraints`. Do not rely on one card reading the other.
-6. A review by another agent, or a non-code part, is its own card assigned to that agent, usually
-   `after:` the card it reviews, gated with `gate review` or `gate artifact`.
+6. A review by another agent, or a non-code part, is its own card assigned to that agent, gated on
+   what that agent writes (`gate artifact`); the reviewed card carries `gate review --owner <agent>`
+   and the two run side by side, without an `after:` link between them.
 7. Give every card gates, `max_turns` and `max_runtime`, then run `--dry-run`, read it, and run the
    plan.
 
