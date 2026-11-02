@@ -51,3 +51,13 @@ def test_an_update_waits_for_a_running_edit_and_keeps_its_change(tmp_path, monke
     assert not second.is_alive()
     stored = store.load(TASK)
     assert stored["cancel_why"] == "not needed" and stored["verdict"] == "accepted"
+
+
+def test_two_hubs_allocating_in_the_same_second_get_two_ids(tmp_path, monkeypatch):
+    monkeypatch.setattr(hub_store.time, "strftime", lambda fmt, *args: "1102120040")
+    first, second = Store(tmp_path / "worker"), Store(tmp_path / "worker")
+    ids = [first.new_id("sion"), second.new_id("sion")]
+    assert ids[0] != ids[1]
+    for store, task_id in zip((first, second), ids):
+        store.save({"id": task_id, "created": 1.0})
+    assert sorted(job["id"] for job in first.all()) == sorted(ids)

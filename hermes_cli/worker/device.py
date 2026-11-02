@@ -428,6 +428,9 @@ def _ok(value: dict) -> tuple[int, bytes]:
     return code, (json.dumps(value, ensure_ascii=False) + "\n").encode("utf-8")
 
 
+STDIN_VERBS = ("put", "untar", "send", "answer", "cancel", "follow_up")  # the verbs the hub sends a payload with
+
+
 def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[int, bytes]:
     """One ``_device`` verb: ``(exit code, stdout bytes)``."""
     name, args = verb[0], verb[1:]

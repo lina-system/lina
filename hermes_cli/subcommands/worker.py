@@ -23,7 +23,7 @@ def _submit(args) -> int:
 def _device(args) -> int:
     from hermes_cli.worker import device, settings
     code, out = device.dispatch(settings.root(), [args.verb, *args.args], sys.stdin.buffer.read()
-                                if args.verb in ("put", "untar", "send", "answer", "cancel") else b"")
+                                if args.verb in device.STDIN_VERBS else b"")
     sys.stdout.buffer.write(out)
     return code
 
