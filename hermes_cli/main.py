@@ -349,7 +349,6 @@ from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
 from hermes_cli.subcommands.model import build_model_parser
 from hermes_cli.subcommands.setup import build_setup_parser
-
 from hermes_cli.subcommands.whatsapp import build_whatsapp_parser
 from hermes_cli.subcommands.slack import build_slack_parser
 from hermes_cli.subcommands.login import build_login_parser
@@ -372,6 +371,7 @@ from hermes_cli.subcommands.skin import build_skin_parser
 from hermes_cli.subcommands.console import build_console_parser, cmd_console
 from hermes_cli.subcommands.update import build_update_parser
 from hermes_cli.subcommands.install import build_install_parser
+from hermes_cli.subcommands.work import build_work_parser
 from hermes_cli.main_git_refs import _read_packed_ref
 from hermes_cli.subcommands.uninstall import build_uninstall_parser
 from hermes_cli.subcommands.dashboard import build_dashboard_parser, build_serve_parser
@@ -2744,7 +2744,7 @@ _BUILTIN_SUBCOMMANDS = frozenset(
         "resume",
         "send", "sessions", "setup",
         "skin", "skills", "slack", "status", "tools", "uninstall", "update",
-        "usage", "vault", "store", "services", "models", "worker",
+        "usage", "vault", "store", "services", "models", "worker", "work",
         "webhook", "whatsapp", "worktree", "chat", "secrets", "security",
         "browser",
         "verify",
@@ -3335,7 +3335,6 @@ def _build_cli_parser():
     build_plugins_parser(subparsers, cmd_plugins=cmd_plugins)
 
     _register_plugin_cli_commands(subparsers)
-
     build_curator_parser(subparsers)
     build_pets_parser(subparsers)
     build_journey_parser(subparsers)
@@ -3351,6 +3350,7 @@ def _build_cli_parser():
     build_vault_parser(subparsers)
     build_update_parser(subparsers, cmd_update=cmd_update)
     build_install_parser(subparsers)
+    build_work_parser(subparsers)
     build_uninstall_parser(subparsers, cmd_uninstall=cmd_uninstall)
     build_profile_parser(subparsers, cmd_profile=cmd_profile)
     build_completion_parser(subparsers, cmd_completion=cmd_completion, parser=parser)
