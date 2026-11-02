@@ -579,24 +579,28 @@ def _setup_identity_mapping(cfg: dict, hermes_host: dict, current_peer: str, new
 # ── setup wizard ───────────────────────────────────────────────────────────
 
 def _ensure_sdk_installed() -> bool:
-    """Check honcho-ai is importable; offer to install if not. Returns True if ready."""
+    """Check honcho-ai is importable; offer to prepare the ``honcho`` PM extra if not. True if ready.
+
+    PM prepares the extra for the next process: this interpreter cannot import what it installs,
+    so the wizard stops and asks for a re-run instead of continuing without the SDK."""
     try:
         import honcho
         return True
     except ImportError:
         pass
     print("  honcho-ai is not installed.")
-    if not _yes(_prompt("Install it now? (honcho-ai==2.2.0)", default="y")):
-        print("  Skipping install. Run: pip install 'honcho-ai==2.2.0'\n")
+    if not _yes(_prompt("Install the honcho extra now?", default="y")):
+        print("  Skipping install. Run: hermes pm install --extra honcho\n")
         return False
-    print("  Installing honcho-ai...", flush=True)
-    from tools.lazy_deps import install_specs  # env-aware: sealed hosted venvs redirect to the data volume
-    result = install_specs(["honcho-ai==2.2.0"])
-    if result.ok:
-        print("  Installed.\n")
-        return True
-    print(f"  Cannot install: {result.reason}\n" if result.blocked else
-          f"  Install failed:\n{(result.stderr or '').strip()}\n  Run manually: uv pip install 'honcho-ai==2.2.0'\n")
+    print("  Preparing the honcho extra...", flush=True)
+    from hermes_cli.memory_setup import prepare_memory_provider_dependencies
+    try:
+        prepare_memory_provider_dependencies("honcho")
+    except Exception as exc:  # resolver conflict, network, PM refusal: report and stop the wizard
+        logger.debug("Honcho extra preparation failed", exc_info=True)
+        print(f"  Could not prepare the honcho extra: {exc}\n  Run: hermes pm install --extra honcho\n")
+        return False
+    print("  Installed. Re-run 'hermes memory setup honcho' to continue with the new environment.\n")
     return False
 
 
