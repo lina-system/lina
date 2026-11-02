@@ -87,13 +87,15 @@ def card_gates(task) -> list[GoalGate]:
 @dataclass
 class GateFailure:
     """Why a card's gates did not pass. ``gate`` is None when they could not run at all;
-    ``waiting`` = the gate exited ``GATE_WAIT_EXIT_CODE`` (not a failure, not a retry)."""
+    ``waiting`` = the gate exited ``GATE_WAIT_EXIT_CODE`` (not a failure, not a retry);
+    ``superseded`` = the card changed runs while they ran, so the results were discarded."""
 
     gate: Optional[GoalGate]
     exit_code: int
     output: str
     exhausted: bool = False
     waiting: bool = False
+    superseded: bool = False
 
     def describe(self) -> str:
         if self.gate is None:
@@ -115,16 +117,30 @@ def _card_workspace(task, workspace: Optional[str]) -> tuple[Optional[str], Opti
                   "and running gates anywhere else would check a different tree")
 
 
-def _record(conn: sqlite3.Connection, task, gates: list[GoalGate], events: list[dict],
-            run_id: Optional[int]) -> None:
+def _stored_runs(task) -> list[Optional[int]]:
+    """The run that produced each stored gate result (None = never run, or a pre-run-id row)."""
+    raw = getattr(task, "goal_gates", None)
+    return [d.get("run_id") for d in json.loads(raw)] if raw else []
+
+
+def _record(conn: sqlite3.Connection, task_id: str, gates: list[GoalGate], events: list[dict],
+            run_id: Optional[int]) -> bool:
+    """Store the results of the run that executed the gates, fenced like the lifecycle
+    mutations: if the card moved to another run (reclaimed, re-claimed) while the gates ran,
+    nothing is written and False is returned, so a stale run never overwrites its successor's
+    results or retry counters. Each stored gate carries ``run_id`` so readers can tell whose
+    result it is; each event carries the same ``run_id``."""
     from hermes_cli import kanban_db as kb
 
     with kb.write_txn(conn):
+        row = conn.execute("SELECT current_run_id FROM tasks WHERE id = ?", (task_id,)).fetchone()
+        if row is None or row["current_run_id"] != run_id:
+            return False
         conn.execute("UPDATE tasks SET goal_gates = ? WHERE id = ?",
-                     (json.dumps([g.to_dict() for g in gates]), task.id))
+                     (json.dumps([{**g.to_dict(), "run_id": run_id} for g in gates]), task_id))
         for payload in events:
-            kb._append_event(conn, task.id, GATE_EVENT_KIND, payload,
-                             run_id=run_id if run_id is not None else task.current_run_id)
+            kb._append_event(conn, task_id, GATE_EVENT_KIND, payload, run_id=run_id)
+    return True
 
 
 def run_card_gates(conn: sqlite3.Connection, task, *, workspace: Optional[str] = None,
@@ -136,11 +152,16 @@ def run_card_gates(conn: sqlite3.Connection, task, *, workspace: Optional[str] =
     ``count_attempts`` (the goal loop) advances the per-gate retry count, which persists across
     turns; a gate past ``max_retries`` comes back ``exhausted`` with its count reset, so an
     unblocked card starts a fresh retry budget. A waiting gate (exit 75) never counts. The
-    handoff tools only check (no counting).
+    handoff tools only check (no counting). Retry counts belong to one run: a successor run starts
+    from zero. ``run_id`` defaults to the card's current run when the gates start.
     """
     gates = card_gates(task)
     if not gates:
         return None
+    run_id = run_id if run_id is not None else task.current_run_id
+    if count_attempts:
+        for gate, owner in zip(gates, _stored_runs(task)):
+            gate.attempts = gate.attempts if owner == run_id else 0
     cwd, refusal = _card_workspace(task, workspace)
     if refusal:
         return GateFailure(None, -1, refusal, exhausted=True)
@@ -163,7 +184,9 @@ def run_card_gates(conn: sqlite3.Connection, task, *, workspace: Optional[str] =
         if failure.exhausted:
             gate.attempts = 0
         break
-    _record(conn, task, gates, events, run_id)
+    if not _record(conn, task.id, gates, events, run_id):
+        return GateFailure(None, -1, (f"card {task.id} left run {run_id} while its gates ran; "
+                                      "the results were discarded"), superseded=True)
     return failure
 
 
@@ -180,13 +203,19 @@ def handoff_gate_failure(conn: sqlite3.Connection, task) -> Optional[GateFailure
                           workspace=os.environ.get("HERMES_KANBAN_WORKSPACE") if own else None)
 
 
+def _block_end(message: str) -> dict:
+    return {"end": "blocked_gate", "reason": message, "block": message}
+
+
 def loop_gate_check(task_id: str, goal_text: str, *, workspace: Optional[str] = None,
                     run_id: Optional[int] = None,
                     connect: Optional[Callable] = None) -> Callable[[], Optional[dict]]:
     """Gate step for ``goals.run_kanban_goal_loop``: None = no gates or all pass (judge as usual);
     ``{"prompt": ..., "reason": ...}`` = feed the gate-failed prompt and skip the judge;
-    ``{"wait": ...}`` = a gate is still waiting, re-check later; ``{"block": ...}`` = retries
-    exhausted or gates cannot run, so block the card naming the gate."""
+    ``{"wait": ...}`` = a gate is still waiting, re-check later; ``{"end": outcome, "reason": ...,
+    "block": ...}`` = retries exhausted or gates cannot run, so block the card naming the gate;
+    ``{"end": "stopped", ...}`` without ``block`` = this run no longer owns the card, so the loop
+    ends without touching it."""
     def check() -> Optional[dict]:
         from hermes_cli import kanban_db as kb
         from hermes_cli.kanban_db_connect import connect_closing
@@ -197,14 +226,16 @@ def loop_gate_check(task_id: str, goal_text: str, *, workspace: Optional[str] = 
                                      run_id=run_id) if task is not None else None
         if failure is None:
             return None
+        if failure.superseded:
+            return {"end": "stopped", "reason": failure.output}
         if failure.gate is None:
-            return {"block": f"Goal-mode card blocked: {failure.describe()}"}
+            return _block_end(f"Goal-mode card blocked: {failure.describe()}")
         gate = failure.gate
         if failure.waiting:
             return {"wait": f"gate still waiting (exit {failure.exit_code}): $ {gate.command}"}
         if failure.exhausted:
-            return {"block": (f"Goal-mode card blocked: gate still failing after "
-                              f"{gate.max_retries} retries — {failure.describe()}")}
+            return _block_end(f"Goal-mode card blocked: gate still failing after "
+                              f"{gate.max_retries} retries — {failure.describe()}")
         return {"reason": f"gate failed (exit {failure.exit_code}): $ {gate.command}",
                 "prompt": CONTINUATION_PROMPT_GATE_FAILED_TEMPLATE.format(
                     goal=goal_text, command=gate.command, exit_code=failure.exit_code,
@@ -226,7 +257,7 @@ def wait_with_heartbeat(seconds: float) -> None:
 
 def render_gates(task) -> list[str]:
     lines = []
-    for i, gate in enumerate(card_gates(task), 1):
+    for i, (gate, owner) in enumerate(zip(card_gates(task), _stored_runs(task)), 1):
         if gate.last_exit_code is None:
             status = "not run yet"
         elif gate.last_exit_code == 0:
@@ -236,7 +267,8 @@ def render_gates(task) -> list[str]:
         else:
             status = (f"failing (exit {gate.last_exit_code}, "
                       f"attempt {gate.attempts}/{gate.max_retries})")
-        lines.append(f"  {i}. $ {gate.command}  [{status}]")
+        run = f", run {owner}" if owner is not None else ""
+        lines.append(f"  {i}. $ {gate.command}  [{status}{run}]")
         tail = gate.last_output_tail.strip().splitlines()[-3:] if gate.last_exit_code else []
         lines.extend(f"       {line}" for line in tail)
     return lines

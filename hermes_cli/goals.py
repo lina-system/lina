@@ -1632,6 +1632,18 @@ _KANBAN_TERMINAL_STATUSES = {
 }
 
 
+def _kanban_gate_end(gate: dict, task_id: str, block, log) -> Optional[tuple[str, str]]:
+    """``(outcome, reason)`` when the card's gates end its loop: retries exhausted or gates cannot
+    run (the card is blocked), or this run lost the card while they ran (the successor is left
+    alone); None to keep going."""
+    if not gate.get("end"):
+        return None
+    log(f"kanban goal loop: task {task_id} {gate['end']}: {_truncate(gate['reason'], 200)}")
+    if gate.get("block"):
+        block(gate["block"])
+    return gate["end"], _truncate(gate["reason"], 300)
+
+
 def run_kanban_goal_loop(
     *,
     task_id: str,
@@ -1699,23 +1711,22 @@ def run_kanban_goal_loop(
             return _result("stopped", f"status={status}")
 
         try:
-            gate = gate_check() if gate_check is not None else None
+            gate = (gate_check or dict)() or {}
         except Exception as exc:
             # A gate step that cannot run must not fall through to the judge alone.
             logger.warning("kanban goal loop: gate check failed for %s", task_id, exc_info=True)
             _log(f"kanban goal loop: gate check failed ({exc}); stopping")
             return _result("stopped", "gate check failed")
-        if gate is not None and gate.get("block"):
-            _log(f"kanban goal loop: task {task_id} gate retries exhausted; blocking")
-            _block(gate["block"])
-            return _result("blocked_gate", _truncate(gate["block"], 300))
-        if gate is not None and gate.get("wait"):
+        ended = _kanban_gate_end(gate, task_id, _block, _log)
+        if ended:
+            return _result(*ended)
+        if gate.get("wait"):
             _log(f"kanban goal loop: {gate['wait']}; re-checking in {wait_delay}s (no turn spent)")
             wait_fn(wait_delay)
             wait_delay = min(wait_delay * 2, GATE_WAIT_MAX_S)
             continue
         wait_delay = GATE_WAIT_INITIAL_S
-        if gate is not None:
+        if gate:
             _log(f"kanban goal loop: turn {turns_used}/{max_turns} gate failed; judge skipped")
             prompt, reason = gate["prompt"], gate["reason"]
         else:
