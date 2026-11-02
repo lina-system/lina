@@ -20,7 +20,9 @@ from hermes_cli import store_upgrade as su
 class FakeDocker:
     def __init__(self, *, volume_exists=False, fail=()):
         self.steps, self.fail = [], set(fail)
-        self.running, self.volumes, self.images = set(), {"lina-store-pgdata"} if volume_exists else set(), set()
+        self.running, self.volumes = set(), {"lina-store-pgdata"} if volume_exists else set()
+        # tag -> image id. As in Docker's containerd image store, an image with no tag left is gone.
+        self.images, self.builds, self.writer_image = {}, 0, None
         self.tables = {"memory.t": [2, "abc"]}
         self.restored_tables = None
 
@@ -37,9 +39,11 @@ class FakeDocker:
         if argv[1:3] == ["volume", "inspect"]:
             return self._done(argv, code=0 if argv[3] in self.volumes else 1)
         if argv[1:3] == ["image", "inspect"]:
-            return self._done(argv, code=0 if argv[3] in self.images else 1)
+            name = argv[-1]
+            image = self.images.get(name) or (name if name in self.images.values() else None)
+            return self._done(argv, image or "", code=0 if image else 1)
         if argv[1] == "tag":
-            self.images.add(argv[3])
+            self.images[argv[3]] = self.images.get(argv[2], argv[2])
         return self._done(argv)
 
     def _compose(self, argv, args, env, stdout, sql):
@@ -56,9 +60,12 @@ class FakeDocker:
         if args[0] == "exec" and "pg_basebackup" in args:
             stdout.write(b"cluster-bytes")
         elif args[0] == "build":
-            self.images.add(st.HONCHO_IMAGE)
+            self.builds += 1
+            self.images[st.HONCHO_IMAGE] = f"sha256:build{self.builds}"
         elif args[0] == "up" and project == st.PROJECT:
             self.running |= {a for a in args if a in ("db", *st.WRITERS)}
+            if set(st.WRITERS) & set(args):
+                self.writer_image = self.images.get(st.HONCHO_IMAGE)
         elif args[0] == "stop":
             self.running -= set(args[1:])
         elif args[0] == "run" and "--entrypoint" in args:
@@ -228,7 +235,7 @@ def test_upgrade_runs_backup_rehearsal_one_job_and_smoke_test_in_order(tmp_path,
 
 def test_a_failed_rehearsal_leaves_the_store_and_its_image_alone(tmp_path, honcho_src):
     docker, lines = FakeDocker(volume_exists=True, fail={"lina-store-rehearsal: --profile job"}), []
-    docker.images.add(st.HONCHO_IMAGE)
+    docker.images[st.HONCHO_IMAGE] = "sha256:old"
     store = make_store(tmp_path, docker, lines)
     st.ensure_env(store.directory)
     docker.running = {"db", "honcho-api", "honcho-deriver"}
@@ -237,6 +244,25 @@ def test_a_failed_rehearsal_leaves_the_store_and_its_image_alone(tmp_path, honch
     assert "lina-store: --profile job run honcho-migrate" not in docker.steps
     assert "lina-store-rehearsal: down" in docker.steps
     assert docker.steps[-1] == "tag lina-honcho:previous"
+    assert docker.running == {"db", "honcho-api", "honcho-deriver"}
+
+
+def test_restore_after_failed_upgrades_starts_honcho_on_the_image_from_before_them(tmp_path, honcho_src,
+                                                                                    monkeypatch):
+    stamps = iter(f"20261102T00000{n}Z" for n in range(10))
+    monkeypatch.setattr(sb, "stamp", lambda now=None: next(stamps))
+    docker, lines = FakeDocker(volume_exists=True, fail={"lina-store: --profile job"}), []
+    docker.images[st.HONCHO_IMAGE] = "sha256:old"
+    store = make_store(tmp_path, docker, lines)
+    st.ensure_env(store.directory)
+    docker.running = {"db", "honcho-api", "honcho-deriver"}
+    for _attempt in range(2):  # the retry moves lina-honcho:previous off the old image
+        with pytest.raises(st.StoreError, match="lina store restore"):
+            su.upgrade(store)
+    assert "sha256:old" not in (docker.images[st.HONCHO_IMAGE], docker.images[su.PREVIOUS_IMAGE])
+    docker.fail.clear()
+    sb.restore(store, sb.generations(store)[0].name)
+    assert docker.writer_image == "sha256:old"
     assert docker.running == {"db", "honcho-api", "honcho-deriver"}
 
 

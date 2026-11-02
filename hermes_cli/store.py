@@ -139,6 +139,12 @@ class Store:
                           capture=True)
         return set((result.stdout or "").split()) if result.returncode == 0 else set()
 
+    def image_id(self, ref: str) -> str | None:
+        result = self.run(["docker", "image", "inspect", "--format", "{{.Id}}", ref], capture=True)
+        if result.returncode != 0:
+            return None
+        return (result.stdout or "").strip() or None
+
     def volume_exists(self, name: str) -> bool:
         return self.run(["docker", "volume", "inspect", name], capture=True).returncode == 0
 

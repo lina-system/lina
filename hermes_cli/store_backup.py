@@ -17,7 +17,7 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
-from hermes_cli.store import WRITERS, Store, StoreError, read_env, write_env
+from hermes_cli.store import HONCHO_IMAGE, WRITERS, Store, StoreError, read_env, write_env
 
 FORMAT = 1
 ARCHIVE = "base.tar.gz"
@@ -87,7 +87,8 @@ def _dump(store: Store, partial: Path) -> dict:
         fh.flush()
         os.fsync(fh.fileno())
     return {"format": FORMAT, "file": ARCHIVE, "sha256": _sha256(archive), "bytes": archive.stat().st_size,
-            "postgres": version, "volume": store.values()["LINA_STORE_VOLUME"], "fingerprint": prints}
+            "postgres": version, "volume": store.values()["LINA_STORE_VOLUME"], "fingerprint": prints,
+            "honcho_image": _keep_honcho_image(store)}
 
 
 def backup(store: Store, *, now: datetime | None = None) -> Path:
@@ -167,6 +168,32 @@ def _switch_volume(store: Store, volume: str) -> None:
     store.start_db()
 
 
+def kept_image_tag(image: str) -> str:
+    return f"{HONCHO_IMAGE.split(':')[0]}:id-{image.removeprefix('sha256:')[:12]}"
+
+
+def _keep_honcho_image(store: Store) -> str | None:
+    """Tag the current Honcho image by its id so a restore can run it again. Docker drops an image whose last
+    tag moves (the containerd image store), and an upgrade moves ``lina-honcho:local``."""
+    image = store.image_id(HONCHO_IMAGE)
+    if image:
+        store.docker("tag", image, kept_image_tag(image), what="keeping the Honcho image for this backup")
+    return image
+
+
+def _put_back_honcho_image(store: Store, manifest: dict) -> None:
+    """Run Honcho on the image the backup was taken with: its schema matches the restored data."""
+    image = manifest.get("honcho_image")
+    if not image or image == store.image_id(HONCHO_IMAGE):
+        return
+    if store.image_id(kept_image_tag(image)) != image:
+        store.out(f"The Honcho image the backup was taken with ({image[:19]}) is not on this machine; the current "
+                  f"{HONCHO_IMAGE} is used.")
+        return
+    store.docker("tag", image, HONCHO_IMAGE, what="putting back the Honcho image the backup was taken with")
+    store.out(f"{HONCHO_IMAGE} is the image the backup was taken with again ({image[:19]}).")
+
+
 def restore(store: Store, name: str | None = None, *, now: datetime | None = None) -> str:
     """Restore a generation into a new volume and switch the store to it. Returns the volume it replaced."""
     generation = find_generation(store, name)
@@ -182,6 +209,7 @@ def restore(store: Store, name: str | None = None, *, now: datetime | None = Non
         _switch_volume(store, previous)
         raise StoreError(f"the restored data differs from {generation.name} in {', '.join(differ)}; the store is "
                          f"back on volume {previous} (the restored copy is in volume {volume})")
+    _put_back_honcho_image(store, manifest)
     store.start_writers()
     store.smoke()
     store.out(f"Restored {generation.name} into volume {volume}; every table matches the backup. The data from "

@@ -56,16 +56,22 @@ lina store restore [GENERATION]   # default: the newest
 ```
 
 A generation is `store/backups/<UTC time>/`: `base.tar.gz` (`pg_basebackup` of the whole cluster,
-WAL included) and `manifest.json` (its sha256, the Postgres version, and every table's row count
-and row digest). The Honcho api and deriver are stopped while it is taken and started again
+WAL included) and `manifest.json` (its sha256, the Postgres version, every table's row count and
+row digest, and the id of the Honcho image `lina-honcho:local` pointed at). The backup also tags
+that image `lina-honcho:id-<first 12 hex of the id>`: Docker drops an image whose last tag moves,
+and an upgrade moves `lina-honcho:local`. `docker image rm lina-honcho:id-...` frees one once no
+backup you keep needs it. The Honcho api and deriver are stopped while it is taken and started again
 afterwards. It is written as `.partial-<time>` and renamed when complete, so an interrupted backup
 never appears as a generation; the next backup deletes the leftover.
 
 Restore refuses a generation whose archive does not match its sha256, naming the cause. Otherwise
 it unpacks the archive into a new volume, switches `store.env` to it, sets the role passwords to the
 ones in `store.env` (a cluster from another machine carries that machine's), and compares every
-table with the manifest. If anything differs, the store goes back to its previous volume. The
-volume the store used before is never deleted; `restore` prints its name.
+table with the manifest. If anything differs, the store goes back to its previous volume. Before
+the api and deriver start, `lina-honcho:local` is tagged back to the image recorded in the manifest,
+so Honcho's code matches the restored schema; if that image is not on this machine (a restore on
+another machine), the current one is used and `restore` says so. The volume the store used before
+is never deleted; `restore` prints its name.
 
 To move the store to another machine, run `lina store install` there, copy a generation into its
 `store/backups/`, and run `lina store restore`.
@@ -87,4 +93,4 @@ lina store upgrade   # or: lina store install
 4. **Smoke test**: the api and deriver start on the new image and the smoke test runs.
 
 If step 3 or 4 fails, the message names the backup from step 1; `lina store restore <generation>`
-puts the store back.
+puts the store back: the data, and the Honcho image from before the upgrade.
