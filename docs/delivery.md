@@ -19,6 +19,8 @@ How a change reaches `dev`. GitHub enforces the required checks; the rest is the
    | Linked issue | the body closes an open issue of this repository (the branch number among them), or `no-issue` |
 
    Details: [ci.md](ci.md). Codex follows `## Code Review Rules` in [AGENTS.md](../AGENTS.md).
+
+   A pull request that changes a screen (label `ui`) also gets one browser QA pass against the feature map. A defect (it breaks Intended behavior or a `Done when` item) blocks the merge like a P1; improvement ideas go into one issue per sprint. Details: [lina-system/lina-app#16](https://github.com/lina-system/lina-app/issues/16).
 7. **Merge** with a merge commit and delete the branch. Not while the latest `dev` push CI is red, except the pull request that fixes it (title `fix(ci)` or label `dev-red-fix`). Never `--admin` or a bypass. If Codex is down, `Codex review` stays pending: wait.
 8. **After merge.** File each P2/P3 finding as a follow-up issue (`Follow-up to #<pr>`, same milestone). If `dev` turns red, fix the cause or revert the pull request.
 9. **Sprint close.** The owner checks the sprint; only the owner opens the next one. Releases need the owner's approval.
