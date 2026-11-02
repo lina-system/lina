@@ -339,3 +339,67 @@ def test_listing_engines_next_to_a_built_lcm_x_agent_keeps_one_set(home, tmp_pat
     assert {name: list(get_plugin_manager()._hooks[name]) for name in LCM_HOOKS} == built
     _turn(agent, "asked after the listing", "answered after the listing")
     assert _stored(home, "sess-listed") == [("user", "asked after the listing"), ("assistant", "answered after the listing")]
+
+
+def _select(home: Path, engine: str) -> None:
+    (home / "config.yaml").write_text(f"context:\n  engine: {engine}\n", encoding="utf-8")
+
+
+def _compressor_agent(session_id: str):
+    from run_agent import AIAgent
+
+    with (
+        patch("model_tools.get_tool_definitions", return_value=[]),
+        patch("model_tools.check_toolset_requirements", return_value={}),
+        patch("agent.process_bootstrap.OpenAI"),
+    ):
+        agent = AIAgent(api_key="test-key-1234567890", base_url="https://openrouter.ai/api/v1", quiet_mode=True,
+                        skip_context_files=True, skip_memory=True, session_id=session_id)
+    assert type(agent.context_compressor).__module__ == "agent.context_compressor"
+    return agent
+
+
+@pytest.fixture
+def no_bundled_plugins(tmp_path, monkeypatch):
+    monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(tmp_path / "no-bundled-plugins"))
+
+
+def test_forced_discovery_after_switching_to_compressor_restores_nothing_of_lcm_x(home, no_bundled_plugins):
+    """A running gateway that used LCM-X, then selects ``compressor``: a plugin install/enable reruns discovery."""
+    from hermes_cli.plugins import discover_plugins
+
+    _agent("sess-before-switch")
+    _select(home, "compressor")
+    discover_plugins(force=True)
+    assert _plugin_surface() == NO_SURFACE
+
+    _turn(_compressor_agent("sess-compressor"), "a compressor-managed question", "a compressor-managed answer")
+    assert _stored(home, "sess-compressor") == []
+
+
+def test_a_compressor_build_after_switching_drops_the_lcm_x_group(home, no_bundled_plugins):
+    _agent("sess-before-switch")
+    _select(home, "compressor")
+    agent = _compressor_agent("sess-compressor")
+    assert _plugin_surface() == NO_SURFACE
+
+    _turn(agent, "a compressor-managed question", "a compressor-managed answer")
+    assert _stored(home, "sess-compressor") == []
+
+
+@pytest.mark.parametrize("path", ["forced-discovery", "agent-build"])
+def test_the_legacy_name_lcm_still_selects_lcm_x(home, no_bundled_plugins, path):
+    """``context.engine: lcm`` is LCM-X's pre-rename name: switching to it keeps LCM-X's one set live."""
+    from hermes_cli.plugins import discover_plugins
+
+    agent = _agent("sess-lcm-x")
+    one_set = {**dict.fromkeys(LCM_HOOKS, 1), "skill": True, "prompt_section": True}
+    _select(home, "lcm")
+    if path == "forced-discovery":
+        discover_plugins(force=True)
+    else:
+        agent = _agent("sess-legacy", engine_name="lcm")
+    assert _plugin_surface() == one_set
+    _turn(agent, "asked under the legacy name", "answered under the legacy name")
+    assert _stored(home, agent.session_id)[-2:] == [
+        ("user", "asked under the legacy name"), ("assistant", "answered under the legacy name")]

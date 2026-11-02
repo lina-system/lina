@@ -111,13 +111,43 @@ def _load_engine_from_dir(engine_dir: Path, register: bool = True) -> Optional[C
     return engine
 
 
+def selected_engine_name(config: Optional[dict] = None) -> Optional[str]:
+    """The engine directory the active home's config selects (``context.engine``, legacy alias resolved), or
+    None for the built-in compressor and for a safe worker: the same source and early returns as
+    ``agent.agent_init._select_context_engine``. An engine's registrations are live in a home only while
+    this names it."""
+    from agent.safe_worker_policy import safe_worker_enabled
+
+    if safe_worker_enabled():
+        return None
+    if config is None:
+        from hermes_cli.config import load_config
+        config = load_config()
+    context = config.get("context") if isinstance(config, dict) else None
+    name = (context.get("engine") if isinstance(context, dict) else None) or "compressor"
+    return None if name == "compressor" else _ENGINE_ALIASES.get(name, name)
+
+
+def release_unselected_engines(config: Optional[dict] = None) -> Optional[str]:
+    """Drop the hooks, skill and prompt section, and the record, of every engine this process loaded in the
+    active home that its config no longer selects. Returns the selected engine's directory name."""
+    from hermes_constants import hermes_home_key
+    selected = selected_engine_name(config)
+    loaded = _LOADED_ENGINE_DIRS.get(hermes_home_key(), {})
+    for name in [name for name in loaded if name != selected]:
+        _EngineCollector(engine_name=name, engine_dir=loaded.pop(name)).drop_group()
+    return selected
+
+
 def re_register_config_hooks() -> None:
     """After a forced plugin discovery cleared them, register again the hooks, skill and prompt section of
-    every engine this process loaded in the active home, by rerunning the engine's own ``register(ctx)``.
-    The hooks resolve the agent's engine through the engine's registry, so cached agents get them back;
-    the instance this builds is dropped, and the next agent build replaces the group as usual."""
+    the engine the active home selects, if this process loaded it there, by rerunning the engine's own
+    ``register(ctx)``. The hooks resolve the agent's engine through the engine's registry, so cached agents
+    get them back; the instance this builds is dropped, and the next agent build replaces the group."""
     from hermes_constants import hermes_home_key
-    for engine_dir in list(_LOADED_ENGINE_DIRS.get(hermes_home_key(), {}).values()):
+    selected = release_unselected_engines()
+    engine_dir = _LOADED_ENGINE_DIRS.get(hermes_home_key(), {}).get(selected) if selected else None
+    if engine_dir is not None:
         _load_engine_from_dir(engine_dir)
 
 
@@ -158,6 +188,12 @@ class _EngineCollector:
         with manager._discovery_lock:
             manager._drop_fallback_hooks(self._source)
             yield
+
+    def drop_group(self) -> None:
+        """Dispose of the group this engine registered in the active home."""
+        manager = self._plugin_context()._manager
+        with manager._discovery_lock:
+            manager._drop_fallback_hooks(self._source)
 
     def register_context_engine(self, engine):
         self.engine = engine
