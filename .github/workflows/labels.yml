@@ -10,6 +10,6 @@ permissions:
   issues: write
 jobs:
   labels:
-    uses: lina-system/.github/.github/workflows/issue-labels.yml@76d26d83d32deb254443eef0cf2b8a2c11aaf927
+    uses: lina-system/.github/.github/workflows/issue-labels.yml@33e43ae2891d7d6460ab1ca2856b7b28b93e9cf8
     with:
-      rules_ref: 76d26d83d32deb254443eef0cf2b8a2c11aaf927
+      rules_ref: 33e43ae2891d7d6460ab1ca2856b7b28b93e9cf8
