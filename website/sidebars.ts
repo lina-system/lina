@@ -286,6 +286,7 @@ const sidebars: SidebarsConfig = {
                   collapsed: true,
                   items: [
                     'user-guide/skills/bundled/software-development/software-development-codebase-inspection',
+                    'user-guide/skills/bundled/software-development/software-development-delivery',
                     'user-guide/skills/bundled/software-development/software-development-dogfood',
                     'user-guide/skills/bundled/software-development/software-development-github',
                     'user-guide/skills/bundled/software-development/software-development-requesting-code-review',

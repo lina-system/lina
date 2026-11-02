@@ -1,0 +1,31 @@
+# Delivery
+
+How a change reaches `dev`. GitHub enforces the required checks; the rest is the rule.
+
+1. **Issue.** `## Summary`, `## Done when` (observable checks, as `- [ ]` boxes), `## Context` with `Sprint:`, `Depends on: #n` (or `none`), `Size: S|M|L` and `Runner:`. The forms are in [lina-system/.github](https://github.com/lina-system/.github/tree/main/ISSUE_TEMPLATE).
+2. **Start** an issue only when every `Depends on` issue is closed (label `ready`) and it is in the current sprint. A chained issue starts after the one before it merged into `dev`.
+3. **Runner**, one label per issue: `dsh` tiny change (1-2 files, ~50 lines), `grok-cursor` medium single-area change, `agy` docs and wording, `omo` large, multi-area, device or research work.
+4. **One pull request per issue**, into `dev`, from branch `<type>/<issue>-<slug>` (`ci/61-delivery-procedure`). The body has `Closes #<issue>`, the issue's `## Done when` with each box checked (or `N/A: <reason>`), and `## Verification` (commands run and what you saw). A typo or one-line CI fix may skip the issue with the `no-issue` label.
+5. **Parallel.** Open the issues the most others wait on first. Never two at once that touch the same contract (storage or config format, command name, shared module, safety path). Open nothing new while 4 pull requests are unmerged or the latest `dev` push CI is red.
+6. **Required checks** on the head commit:
+
+   | Check | Green when |
+   | --- | --- |
+   | Lint | `ruff check .` passes |
+   | Python tests (Linux) | every test slice passed, or the change cannot reach Python |
+   | Python tests (macOS) | macOS tests passed; skipped (green) when no macOS path changed |
+   | LINA Helper (macOS) | Swift and native checks passed; skipped (green) when `helper/` did not change |
+   | Codex review | Codex reviewed this head and left no P0/P1 finding on it |
+   | Linked issue | the body closes an open issue of this repository (the branch number among them), or `no-issue` |
+
+   Details: [ci.md](ci.md). Codex follows `## Code Review Rules` in [AGENTS.md](../AGENTS.md).
+7. **Merge** with a merge commit and delete the branch. Not while the latest `dev` push CI is red, except the pull request that fixes it (title `fix(ci)` or label `dev-red-fix`). Never `--admin` or a bypass. If Codex is down, `Codex review` stays pending: wait.
+8. **After merge.** File each P2/P3 finding as a follow-up issue (`Follow-up to #<pr>`, same milestone). If `dev` turns red, fix the cause or revert the pull request.
+9. **Sprint close.** The owner checks the sprint; only the owner opens the next one. Releases need the owner's approval.
+
+| Step | Now (hermes-ops) | From #63 |
+| --- | --- | --- |
+| Pick what to open | `lina-next` | `lina work next` |
+| Small issue | `quick-issue` | |
+| Merge | `lina-merge <owner/repo> <pr> [--wait <min>]` | `lina work merge <repo> <pr>` |
+| Audit closed issues | | `lina work audit` |

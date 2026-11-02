@@ -10,7 +10,7 @@ and every root-to-area chain at 30k, so it loads whole on 128k+ models: long for
 ## What Hermes Is
 
 Hermes is a personal AI agent that runs the same agent core across a CLI, a messaging
-gateway (Telegram, Discord, Slack, ~20 platforms), a TUI, and an Electron desktop app. It
+gateway (~20 platforms), a TUI and an Electron desktop app. It
 learns across sessions (memory + skills), delegates to subagents, runs scheduled jobs, and
 drives a real terminal and browser. It is extended primarily through **plugins and skills**,
 not by growing the core.
@@ -60,7 +60,7 @@ unreachable otherwise).
 
 ## Development Environment
 
-`source ./activate` (fish: `activate.fish`, PowerShell: `activate.ps1`) provisions and activates the
+`source ./activate` (or `activate.fish`, `activate.ps1`) provisions and activates the
 PM environment; pick an isolated `HERMES_HOME`/`HERMES_RUNTIME_DIR` first
 (`website/docs/reference/package-management.md#developer-workflow`). Tests need the separate test
 environment in `CONTRIBUTING.md`. **`python scripts/check`** runs every blocking lint check CI
@@ -70,7 +70,7 @@ pulling to refresh the hook). `# noqa` does not waive a ratchet finding:
 
 ## Project Structure
 
-Counts shift constantly; the filesystem is canonical. Load-bearing entry points:
+Load-bearing entry points (the filesystem is canonical):
 
 ```
 hermes-agent/
@@ -165,5 +165,9 @@ Every former god file is a **facade** (public entry points + the names other pac
 | `pm/`, `pyproject.toml` | `pm/AGENTS.md` | pinning policy, PM-owned environments, plugin quarantine |
 | `hermes_platform/` | `hermes_platform/AGENTS.md` | host facts, resolvers |
 
-Long-form background: `website/docs/developer-guide/`. Workflow rules (PR/issue/review/salvage
-process) live in the `hermes-agent-dev` skill, not here.
+## Code Review Rules
+
+Procedure: `docs/delivery.md`, skill `delivery`. P1 unless noted:
+- The diff misses an item of the PR's `## Done when`.
+- Behaviour changed outside the issue's scope (formatting or renames there: P2).
+- A test disabled, skipped, weakened.
