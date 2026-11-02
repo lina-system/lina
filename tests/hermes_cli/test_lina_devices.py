@@ -16,6 +16,7 @@ import pytest
 from hermes_cli import lina_devices
 from hermes_cli.worker import serve, settings
 from tests.hermes_cli import _worker_fakes as fakes
+from tests.waiting import wait_until
 
 PIN = {"pinned": "1.2.3", "current": "1.2.3"}
 
@@ -115,6 +116,8 @@ def local_device(tmp_path, monkeypatch):
 
     loop = threading.Thread(target=serve_loop, daemon=True)
     loop.start()
+    # Readiness needs the serve heartbeat; the loop's first tick writes it on its own thread.
+    wait_until(lambda: serve.heartbeat_age(root / "worker") is not None, what="the serve loop's first heartbeat")
     yield root
     stop.set()
     loop.join(10)
