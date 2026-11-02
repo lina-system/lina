@@ -20,7 +20,7 @@ from agent.skill_utils import (
     EXCLUDED_SKILL_DIRS as _EXCLUDED_SKILL_DIRS, is_skill_support_path as _is_skill_support_path)
 from tools.skills_tool_setup import (
     SkillReadinessStatus, _build_setup_note, _capture_required_environment_variables,
-    _get_required_environment_variables, _is_env_var_persisted, _is_remote_env_backend)
+    _get_required_environment_variables, _is_env_var_persisted, _is_remote_env_backend, _resolved_skill_config)
 from tools.skills_tool_plugin import (
     MAX_DESCRIPTION_LENGTH, MAX_NAME_LENGTH, _INJECTION_PATTERNS, _fail, _json,
     _mark_background_review_read, _preprocess_skill, _read_skill_text, _safe_frontmatter,
@@ -702,7 +702,7 @@ def skill_view(
             "linked_files": linked_files if linked_files else None,
             "usage_hint": "To view linked files, call skill_view(name, file_path) where file_path is e.g. 'references/api.md' or 'assets/config.yaml'" if linked_files else None,
             **readiness,
-            **readiness_extras}
+            **readiness_extras, **_resolved_skill_config(frontmatter)}
         if deps_note:
             result["deps_note"] = deps_note
         _mark_background_review_read(skill_md)

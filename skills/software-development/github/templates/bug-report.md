@@ -1,35 +1,12 @@
-## Bug Description
+## Summary
 
-<!-- Clear, concise description of the bug -->
+<!-- Describe the failure and who it affects. -->
 
-## Steps to Reproduce
+## Done when
 
-1.
-2.
-3.
+- [ ] <!-- Observable corrected behavior. -->
 
-## Expected Behavior
+## Context
 
-<!-- What should happen -->
-
-## Actual Behavior
-
-<!-- What actually happens -->
-
-## Environment
-
-- OS:
-- Version/Commit:
-- Python version:
-- Browser (if applicable):
-
-## Error Output
-
-<!-- Paste relevant error messages, stack traces, or logs -->
-
-```
-```
-
-## Additional Context
-
-<!-- Screenshots, related issues, workarounds discovered, etc. -->
+<!-- Reproduction, expected/actual behavior, environment, logs, related issues,
+dependencies, scope, size and routing. Remove secrets and private details. -->

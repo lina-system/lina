@@ -14,7 +14,8 @@ metadata:
   hermes:
     tags: [Google, Gmail, Calendar, Drive, Sheets, Docs, Contacts, Email, OAuth]
     homepage: https://github.com/NousResearch/hermes-agent
-    related_skills: [himalaya]
+    category: productivity
+    related_skills: []
 ---
 
 # Google Workspace
@@ -62,10 +63,7 @@ Before starting OAuth setup, ask the user TWO questions:
 **Question 1: "What Google services do you need? Just email, or also
 Calendar/Drive/Sheets/Docs?"**
 
-- **Email only** → They don't need this skill at all. Use the `himalaya` skill
-  instead — it works with a Gmail App Password (Settings → Security → App
-  Passwords) and takes 2 minutes to set up. No Google Cloud project needed.
-  Load the himalaya skill and follow its setup instructions.
+- **Email only** → Continue with this skill and use `--services email` during auth.
 
 - **Email + Calendar** → Continue with this skill, but use
   `--services email,calendar` during auth so the consent screen only asks for
@@ -92,7 +90,7 @@ Tell the user:
 > You need a Google Cloud OAuth client. This is a one-time setup:
 >
 > 1. Create or select a project:
->    https://console.cloud.google.com/projectselector2/home/dashboard
+>    https://console.cloud.google.com/
 > 2. Enable the required APIs from the API Library:
 >    https://console.cloud.google.com/apis/library
 >    Enable: Gmail API, Google Calendar API, Google Drive API,

@@ -44,8 +44,8 @@ def build_kanban_policy(connection, params, config):
             context = kb.build_worker_context(conn, task.id)
             skills = list(task.skills or ())
             if kb._retry_status_for_run(conn, task.id, task.current_run_id) == 'review':
-                # Same rule as the dispatcher's review lane: the reviewer always loads sdlc-review.
-                skills = list(dict.fromkeys([*skills, 'sdlc-review']))
+                # Same rule as the dispatcher's review lane: the reviewer always loads code-review.
+                skills = list(dict.fromkeys([*skills, 'code-review']))
     except (ValueError, OSError, sqlite3.Error) as exc:
         raise RuntimeStoreError('invalid_kanban_claim') from exc
     cwd = task.workspace_path
@@ -419,7 +419,11 @@ def _run_task_turns(agent, frame, history, context):
         result = agent.run_conversation(prompt, conversation_history=agent._session_db.get_messages_as_conversation(agent.session_id),
                                         turn_author=KANBAN_TURN_AUTHOR)
         return result.get('final_response', '')
+    from hermes_cli.kanban_goal_gates import loop_gate_check, wait_with_heartbeat
     run_kanban_goal_loop(task_id=context['task_id'], goal_text=context['goal_text'], run_turn=turn,
         task_status_fn=status, block_fn=block, max_turns=context['goal_max_turns'] or DEFAULT_MAX_TURNS,
-        first_response=result.get('final_response', ''))
+        first_response=result.get('final_response', ''),
+        gate_check=loop_gate_check(context['task_id'], context['goal_text'], run_id=context['run_id'],
+                                   workspace=context.get('workspace')),
+        wait_fn=wait_with_heartbeat)
     return result
