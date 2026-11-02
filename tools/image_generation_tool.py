@@ -1046,9 +1046,13 @@ def _build_dynamic_image_schema() -> dict[str, Any]:
             "parameters": {"type": "object", "properties": properties, "required": ["prompt"]}}
 
 
+from plugins.image_gen.setup import contribution
+
+
 registry.register(
     name="image_generate", toolset="image_gen", schema=IMAGE_GENERATE_SCHEMA,
     handler=_handle_image_generate, check_fn=check_image_generation_requirements, requires_env=[],
     is_async=False,   # sync fal_client API to avoid "Event loop is closed" in gateway
     emoji="🎨", dynamic_schema_overrides=_build_dynamic_image_schema,
+    startup=contribution(),
 )

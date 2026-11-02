@@ -371,6 +371,8 @@ from hermes_cli.subcommands.config import build_config_parser
 from hermes_cli.subcommands.skin import build_skin_parser
 from hermes_cli.subcommands.console import build_console_parser, cmd_console
 from hermes_cli.subcommands.update import build_update_parser
+from hermes_cli.subcommands.install import build_install_parser
+from hermes_cli.main_git_refs import _read_packed_ref
 from hermes_cli.subcommands.uninstall import build_uninstall_parser
 from hermes_cli.subcommands.dashboard import build_dashboard_parser, build_serve_parser
 from hermes_cli.subcommands.webapp import build_webapp_parser
@@ -378,7 +380,6 @@ from hermes_cli.subcommands.gui import build_gui_parser
 from hermes_cli.subcommands.logs import build_logs_parser
 from hermes_cli.subcommands.prompt_size import build_prompt_size_parser
 from hermes_cli.subcommands.memory import build_memory_parser
-from hermes_cli.subcommands.acp import build_acp_parser
 from hermes_cli.subcommands.tools import build_tools_parser
 from hermes_cli.subcommands.insights import build_insights_parser
 from hermes_cli.subcommands.usage import build_usage_parser
@@ -798,7 +799,6 @@ from hermes_cli.model_setup_flows import (
 from hermes_cli.model_setup_flows_local import _model_flow_local
 logger = logging.getLogger(__name__)
 from hermes_cli.main_agent_cmds import (
-    cmd_acp,
     cmd_insights,
     cmd_memory,
     cmd_monitoring,
@@ -924,25 +924,6 @@ def _is_termux_startup_environment(env: dict[str, str] | None = None) -> bool:
         or "com.termux/files/usr" in prefix
         or prefix.startswith("/data/data/com.termux/")
     )
-
-
-def _read_packed_ref(common_dir: Path, ref: str) -> str | None:
-    """Look up a ref in .git/packed-refs without spawning git.
-
-    packed-refs lines look like ``<sha> <ref>`` with optional ``^<sha>``
-    peel lines and ``#``-prefixed comments / ``# pack-refs with:`` header.
-    """
-    try:
-        text = (common_dir / "packed-refs").read_text(encoding="utf-8-sig", errors="replace")
-    except OSError:
-        return None
-    for line in text.splitlines():
-        if not line or line.startswith("#") or line.startswith("^"):
-            continue
-        parts = line.split(" ", 1)
-        if len(parts) == 2 and parts[1].strip() == ref:
-            return parts[0].strip()
-    return None
 
 
 def _read_git_revision_fingerprint(repo_root: Path) -> str | None:
@@ -2438,7 +2419,7 @@ def _coalesce_session_name_args(argv: list) -> list:
         "chat", "model", "gateway", "setup", "whatsapp", "whatsapp-cloud", "login", "logout",
         "auth", "status", "cron", "doctor", "config", "pairing", "skills", "tools", "mcp",
         "sessions", "insights", "update", "uninstall", "profile", "dashboard", "serve", "webapp",
-        "desktop", "gui", "honcho", "claw", "plugins", "security", "acp", "webhook", "peer",
+        "desktop", "gui", "honcho", "claw", "plugins", "security", "webhook", "peer",
         "memory", "dump", "debug", "backup", "import", "completion", "logs", "usage",
     }
     _SESSION_FLAGS = {"-c", "--continue", "-r", "--resume"}
@@ -2752,7 +2733,7 @@ def cmd_logs(args):
 # entry would let a plugin command silently fail to parse.
 _BUILTIN_SUBCOMMANDS = frozenset(
     {
-        "acp", "approvals", "auth", "backup", "bundles", "checkpoints", "codex-runtime", "completion",
+        "approvals", "auth", "backup", "bundles", "checkpoints", "codex-runtime", "completion",
         "computer-use", "connectors",
         "config", "console", "cron", "curator", "dashboard", "serve", "debug", "desk", "doctor",
         "dump", "egress", "fallback", "gateway", "hooks", "import", "insights",
@@ -2824,7 +2805,7 @@ def _resolve_deferred_platform_cli_command(command_name: str | None) -> None:
         )
 
 
-_AGENT_COMMANDS = {None, "chat", "acp", "rl"}
+_AGENT_COMMANDS = {None, "chat", "rl"}
 _AGENT_SUBCOMMANDS = {
     "cron": ("cron_command", {"run", "tick"}),
     "gateway": ("gateway_command", {"run"}),
@@ -3371,8 +3352,8 @@ def _build_cli_parser():
     build_monitoring_parser(subparsers, cmd_monitoring=cmd_monitoring)
     build_vault_parser(subparsers)
     build_update_parser(subparsers, cmd_update=cmd_update)
+    build_install_parser(subparsers)
     build_uninstall_parser(subparsers, cmd_uninstall=cmd_uninstall)
-    build_acp_parser(subparsers, cmd_acp=cmd_acp)
     build_profile_parser(subparsers, cmd_profile=cmd_profile)
     build_completion_parser(subparsers, cmd_completion=cmd_completion, parser=parser)
     build_dashboard_parser(

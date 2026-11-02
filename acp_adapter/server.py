@@ -780,7 +780,7 @@ class HermesACPAgent(SlashCommandsMixin, acp.Agent):
                 return lambda: terminal_tool.set_approval_callback(previous)
 
             def _edit_approval() -> Callable[[], None]:
-                from acp_adapter.edit_approval import reset_edit_approval_requester, set_edit_approval_requester
+                from tools.edit_approval import reset_edit_approval_requester, set_edit_approval_requester
 
                 token = set_edit_approval_requester(edit_approval_requester)
                 return lambda: reset_edit_approval_requester(token)

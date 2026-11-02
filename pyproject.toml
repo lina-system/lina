@@ -394,6 +394,7 @@ documents-pdf = [
 trace-upload = ["huggingface-hub==1.33.0"]
 # Cloud memory providers are opt-in PM extras. They stay outside [all]
 # so a quarantined release cannot break fresh installs.
+honcho = ["honcho-ai==2.5.1"]
 # Image resize recovery for the vision tools. Pillow is now a CORE dependency
 # (see the main `dependencies` list above) since the byte/pixel shrink paths are on
 # the default vision-embed path and the mid-session lazy install deadlocked the

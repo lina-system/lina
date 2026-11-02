@@ -94,8 +94,12 @@ def register(ctx) -> None:
         logger.warning("A2A: failed to register client tools", exc_info=True)
     try:
         from .adapter import A2AAdapter
+        from gateway.session_sources import SessionSourceFactory
+        from gateway.session_a2a import build_forward_policy, is_forward_policy, forward_author, forward_rpc
         ctx.register_platform(
-            name="a2a", label="A2A", adapter_factory=lambda cfg: A2AAdapter(cfg),
+            name="a2a", label="A2A", adapter_factory=SessionSourceFactory(
+                A2AAdapter, build_forward_policy, is_forward_policy, forward_author,
+                'Clarification is unavailable to a forwarded peer', {'a2a.forward': forward_rpc}),
             check_fn=check_requirements, validate_config=validate_config, is_connected=is_connected,
             required_env=[], install_hint="No extra packages needed (stdlib only)", setup_fn=interactive_setup,
             emoji="\U0001f9e9",  # puzzle piece

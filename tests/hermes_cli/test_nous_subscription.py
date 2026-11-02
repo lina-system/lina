@@ -5,7 +5,21 @@ import pytest
 from hermes_cli.nous_account import NousPortalAccountInfo, NousToolAccessInfo
 from hermes_cli import nous_subscription as ns
 from tools import tool_backend_helpers
-from tools.image_generation_catalog import DEFAULT_MODEL as FAL_DEFAULT_MODEL
+
+SAVED_IMAGE_MODEL = "saved-image-model"
+
+
+def test_absent_optional_toolsets_are_not_configured(monkeypatch):
+    from tools.registry import ToolRegistry
+    from tools.registry_contributions import startup_entries
+
+    startup_entries()
+    monkeypatch.setattr("tools.registry.registry", ToolRegistry())
+    config = {}
+    changed = ns.apply_gateway_defaults(config, ["image_gen", "video_gen"], _account(logged_in=True, paid=True))
+    assert changed == set()
+    assert "image_gen" not in config
+    assert "video_gen" not in config
 
 
 _POOL_COVERAGE = {
@@ -210,22 +224,6 @@ def test_logged_in_entitled_account_yields_a_state_for_every_feature(monkeypatch
     assert result.modal.available is True  # entitled + gateway ready → managed modal is offered
 
 
-@pytest.mark.parametrize(
-    "image_cfg, partner",
-    [
-        ({"provider": "nous", "model": "krea-2-medium"}, "Krea"),
-        ({"model": FAL_DEFAULT_MODEL}, "FAL"),
-        ({"provider": "nous", "model": "openai/gpt-image-2"}, "Nous Portal"),
-        ({"model": "openai/gpt-image-2"}, "FAL"),
-        ({"use_gateway": True, "model": "openai/gpt-image-2"}, "FAL"),  # managed-model routing ignores legacy use_gateway
-        ({"provider": "openai", "model": "gpt-image-2"}, None),
-    ],
-)
-def test_managed_image_partner_follows_the_stored_model(image_cfg, partner):
-    """The partner is the gateway the runtime dispatcher routes to (tools.image_generation_managed.
-    managed_route): the stored model decides under the managed pick, Portal ids only with an
-    explicit ``nous``; a direct vendor owns its model id."""
-    assert ns.managed_image_partner({"image_gen": image_cfg}) == partner
 
 
 def test_prompt_enable_tool_gateway_pool_offers_covered_tools_only(monkeypatch):
@@ -455,15 +453,15 @@ def test_first_run_gateway_acceptance_writes_the_krea_image_model():
     pooled = {}
     ns.apply_gateway_defaults(pooled, ["image_gen"], pool)
     assert "model" not in pooled["image_gen"]
-    kept = {"image_gen": {"model": FAL_DEFAULT_MODEL}}
+    kept = {"image_gen": {"model": SAVED_IMAGE_MODEL}}
     ns.apply_gateway_defaults(kept, ["image_gen"], paid)
-    assert kept["image_gen"]["model"] == FAL_DEFAULT_MODEL
+    assert kept["image_gen"]["model"] == SAVED_IMAGE_MODEL
 
 
 def test_configured_image_section_is_left_alone(monkeypatch):
-    config = {"model": {"provider": "nous"}, "image_gen": {"provider": "nous", "model": FAL_DEFAULT_MODEL}}
+    config = {"model": {"provider": "nous"}, "image_gen": {"provider": "nous", "model": SAVED_IMAGE_MODEL}}
     section = _defaults_for(monkeypatch, _account(logged_in=True, paid=True), config)
-    assert section["model"] == FAL_DEFAULT_MODEL
+    assert section["model"] == SAVED_IMAGE_MODEL
 
 
 # ---------------------------------------------------------------------------

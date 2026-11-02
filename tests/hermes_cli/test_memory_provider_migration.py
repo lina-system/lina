@@ -11,7 +11,7 @@ from hermes_cli import memory_provider_migration as mig
 @pytest.fixture
 def home(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    (tmp_path / "config.yaml").write_text("memory:\n  provider: honcho\n  honcho:\n    workspace: keep-me\n")
+    (tmp_path / "config.yaml").write_text("memory:\n  provider: hindsight\n  hindsight:\n    workspace: keep-me\n")
     monkeypatch.setattr(mig, "provider_present", lambda name, home: (home / "plugins" / name).is_dir())
     return tmp_path
 
@@ -26,14 +26,14 @@ def test_missing_provider_installs_its_catalog_plugin_and_keeps_config(home, mon
         (home / "plugins" / name).mkdir(parents=True)
         return {"ok": True}
 
-    assert mig.migrate_home(home, install=fake_install, say=said.append) == "honcho"
-    assert calls == ["honcho"]
+    assert mig.migrate_home(home, install=fake_install, say=said.append) == "hindsight"
+    assert calls == ["hindsight"]
     # Must not imply config.yaml's memory.<name> keys still apply: the plugin reads its own (#124038).
-    assert "memory.honcho" not in said[0] and "hermes memory status" in said[0]
+    assert "memory.hindsight" not in said[0] and "hermes memory status" in said[0]
     assert "workspace: keep-me" in (home / "config.yaml").read_text()
     # present now → nothing to do, nothing said
     assert mig.migrate_home(home, install=fake_install, say=said.append) is None
-    assert calls == ["honcho"]
+    assert calls == ["hindsight"]
 
 
 def test_presence_is_checked_in_the_home_being_migrated(tmp_path, monkeypatch):
@@ -261,7 +261,7 @@ def test_startup_hint_installs_into_the_profile_that_printed_it(tmp_path, monkey
 
 def test_missing_catalog_provider_recovery_names_the_profile_install_command(tmp_path, monkeypatch, capsys):
     """Offline, lazy installs off, or a failed migration: every surface a user turns to (doctor,
-    ``memory status``, ``memory setup honcho``, ``hermes honcho``) names the one command that installs
+    ``memory status``, ``memory setup hindsight``, ``hermes hindsight``) names the one command that installs
     the catalog plugin into THIS profile. Real in-tree catalog, nothing installed."""
     from types import SimpleNamespace
     from hermes_cli import doctor_state, memory_setup
@@ -269,17 +269,17 @@ def test_missing_catalog_provider_recovery_names_the_profile_install_command(tmp
 
     home = tmp_path / "profiles" / "work"
     home.mkdir(parents=True)
-    (home / "config.yaml").write_text("memory:\n  provider: honcho\n", encoding="utf-8")
+    (home / "config.yaml").write_text("memory:\n  provider: hindsight\n", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
-    want = "hermes -p work plugins install honcho"
+    want = "hermes -p work plugins install hindsight"
 
-    doctor_state._memory_provider_generic("honcho")
+    doctor_state._memory_provider_generic("hindsight")
     memory_setup.cmd_status(SimpleNamespace())
-    memory_setup.cmd_setup_provider("honcho")
+    memory_setup.cmd_setup_provider("hindsight")
     assert capsys.readouterr().out.count(want) == 3
     parser, _subparsers, _chat = build_top_level_parser()
     with pytest.raises(SystemExit):
-        parser.parse_args(["honcho", "status"])
+        parser.parse_args(["hindsight", "status"])
     assert want in capsys.readouterr().err
 
 
@@ -287,8 +287,8 @@ def test_recovery_copy_without_a_catalog_memory_entry_keeps_the_generic_hint(tmp
     from hermes_cli import doctor_state
 
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))  # not a profile home: no -p to add
-    assert mig.catalog_install_hint("honcho", category="memory") == "hermes plugins install honcho"
-    assert mig.catalog_install_hint("honcho", category="tools") is None
+    assert mig.catalog_install_hint("hindsight", category="memory") == "hermes plugins install hindsight"
+    assert mig.catalog_install_hint("hindsight", category="tools") is None
     assert mig.catalog_install_hint("no-such-provider") is None
     doctor_state._memory_provider_generic("no-such-provider")
     assert "run: hermes memory setup" in capsys.readouterr().out
@@ -315,3 +315,19 @@ def test_startup_recovery_backs_off_after_a_failed_install(tmp_path, monkeypatch
     monkeypatch.setattr(mig, "_attempted", set())
     mig.recover_at_startup("hindsight")
     assert attempts == ["hindsight", "hindsight"]
+
+
+def test_bundled_honcho_is_never_installed_from_the_catalog(tmp_path, monkeypatch):
+    """lina#14: Honcho ships in core as plugins/memory/honcho, so a home configured for it resolves the
+    bundled provider and neither ``hermes update`` nor agent start installs the catalog plugin. Real
+    discovery and the real in-tree catalog, nothing mocked."""
+    from plugins.memory import find_provider_dir
+
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path))
+    (tmp_path / "config.yaml").write_text("memory:\n  provider: honcho\n", encoding="utf-8")
+    assert find_provider_dir("honcho") == Path(mig.__file__).resolve().parents[1] / "plugins" / "memory" / "honcho"
+    assert mig.catalog_source("honcho") is None
+    assert mig.catalog_install_hint("honcho") is None
+    said: list[str] = []
+    assert mig.migrate_home(tmp_path, install=lambda n: pytest.fail("must not install"), say=said.append) is None
+    assert said == []

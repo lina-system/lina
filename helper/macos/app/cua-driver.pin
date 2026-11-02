@@ -1,0 +1,9 @@
+{
+  "version": "0.38.0",
+  "asset": "cua-driver-rs-0.38.0-darwin-arm64.tar.gz",
+  "sha256": "5f71191c082ca07c9dfc13b7c9a6eec60a82818c245a93534cc0eb7911471d72",
+  "identifier": "cua-driver",
+  "team": "YCK386LBJ7",
+  "cdhash_arm64": "b067c86ef1ca3e63a8c86eba9fe29d61bd00ad68",
+  "cdhash_full_sha256_arm64": "b067c86ef1ca3e63a8c86eba9fe29d61bd00ad68641d133c7fbf52d659a2a2e4"
+}

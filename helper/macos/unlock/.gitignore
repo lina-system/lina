@@ -1,0 +1,7 @@
+build/
+core
+core.*
+evidence/grant-test-red
+__pycache__/
+*.pyc
+dist/

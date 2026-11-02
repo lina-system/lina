@@ -31,19 +31,8 @@ def exec_prefix(env: BaseEnvironment, *, user: Optional[str] = None, interactive
     ``user`` selects the sandbox-side account (docker only; ssh runs as the configured login).
     ``interactive`` keeps stdin open (``docker exec -i``); ssh always does.
     """
-    from tools.environments.docker import DockerEnvironment
     from tools.environments.ssh import SSHEnvironment
 
-    if isinstance(env, DockerEnvironment):
-        container = getattr(env, "_container_id", None)
-        if not container:
-            return None
-        argv = [env._docker_exe, "exec"]
-        if interactive:
-            argv.append("-i")
-        if user:
-            argv += ["-u", user]
-        return argv + [container]
     if isinstance(env, SSHEnvironment):
         return env._build_ssh_command()
     return _plugin_exec_prefix(env, user=user, interactive=interactive)

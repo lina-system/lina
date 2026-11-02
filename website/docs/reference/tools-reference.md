@@ -114,7 +114,7 @@ For local files, a full unredacted read (including all pages of the same file ve
 
 
 :::note
-**Honcho tools** (`honcho_profile`, `honcho_search`, `honcho_context`, `honcho_reasoning`, `honcho_conclude`) are no longer built-in. They are available via the Honcho memory provider plugin from the plugin catalog (`hermes plugins install honcho`). See [Memory Providers](../user-guide/features/memory-providers.md) for installation and usage.
+**Honcho tools** (`honcho_profile`, `honcho_search`, `honcho_context`, `honcho_reasoning`, `honcho_conclude`) come from the bundled Honcho memory provider (`hermes memory setup honcho`), not a built-in toolset. See [Memory Providers](../user-guide/features/memory-providers.md) for installation and usage.
 
 **Home Assistant tools** (`ha_list_entities`, `ha_get_state`, `ha_list_services`, `ha_call_service`, toolset `homeassistant`) are no longer built-in. They come from the `homeassistant` catalog plugin (`hermes plugins install homeassistant`). See [Home Assistant](../user-guide/messaging/homeassistant.md).
 

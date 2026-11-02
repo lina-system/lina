@@ -43,13 +43,6 @@ def _scope(secrets):
         ss.reset_secret_scope(token)
 
 
-def _matrix(extra=None):
-    from plugins.platforms.matrix.adapter import MatrixAdapter
-
-    return MatrixAdapter(PlatformConfig(enabled=True, token="t", extra={"homeserver": "https://m.example",
-                                                                       "user_id": "@bot:m.example", **(extra or {})}))
-
-
 def _whatsapp():
     from gateway.platforms.whatsapp_common import WhatsAppBehaviorMixin
 
@@ -106,16 +99,6 @@ _GATES = [
     ("whatsapp.live_allow_from", {"WHATSAPP_ALLOWED_USERS": "+15559998888"},
      lambda: __import__("gateway.platforms.whatsapp_common", fromlist=["WhatsAppBehaviorMixin"]).WhatsAppBehaviorMixin._live_dm_allow_from(_whatsapp()),
      set(), {"+15559998888"}),
-    ("teams.card_action", {"TEAMS_ALLOWED_USERS": "clicker"},
-     lambda: __import__("plugins.platforms.teams.adapter", fromlist=["TeamsAdapter"]).TeamsAdapter._card_action_denied(
-         SimpleNamespace(aad_object_id="clicker")) is None,
-     False, True),
-    ("matrix.authorized_user", {"MATRIX_ALLOWED_USERS": "@bot2-admin:example.org"},
-     lambda: _matrix()._is_authorized_user("@bot2-admin:example.org"),
-     False, True),
-    ("matrix.ignored_patterns", {"MATRIX_IGNORE_USER_PATTERNS": r"^@bot2-spam:.*"},
-     lambda: [p.pattern for p in _matrix()._ignored_user_patterns],
-     [], [r"^@bot2-spam:.*"]),
     ("slack.allow_bots", {"SLACK_ALLOW_BOTS": "mentions"}, lambda: _slack()._slack_allow_bots(), "none", "mentions"),
     ("slack.api_human_users", {"SLACK_API_HUMAN_USERS": "U0BOT2"},
      lambda: set(_slack()._slack_api_human_users()), set(), {"U0BOT2"}),

@@ -489,7 +489,7 @@
     "kind": "bare_which"
   },
   {
-    "path": "tools/environments/docker.py",
+    "path": "tools/environments/container_runtime.py",
     "symbol": "find_docker",
     "kind": "bare_which"
   },

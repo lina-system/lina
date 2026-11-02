@@ -1,0 +1,39 @@
+./build/grant-test
+PASS one-use grant and duplicate-arm rejection
+PASS expiration boundary, clock rollback and TTL bounds
+PASS owner, GUI session, boot, lock state and revocation binding
+PASS writable paths, hard links, symlink directories and wrong file owner rejected
+PASS truncated grant and symlink file rejected
+PASS twelve competing processes produce exactly one authorization
+ALL GRANT TESTS PASSED
+./build/flow-test
+PASS synthetic request -> trigger -> observed unlock -> matching receipt -> both keychain probes
+PASS no receipt, keychain failure, session switch, relock, timeout and trigger failures never report ready
+PASS one arm and trigger per request; all armed outcomes revoke; already-unlocked does not inject input
+python3 -m unittest discover -s tests -p 'test_*.py' -v
+test_no_shell_or_option_injection (test_bridge.BridgeTests.test_no_shell_or_option_injection) ... ok
+test_nonzero_transport_exit_cannot_be_success (test_bridge.BridgeTests.test_nonzero_transport_exit_cannot_be_success) ... ok
+test_success_requires_both_keychains_and_receipt (test_bridge.BridgeTests.test_success_requires_both_keychains_and_receipt) ... ok
+test_timeout_has_no_retry (test_bridge.BridgeTests.test_timeout_has_no_retry) ... ok
+test_stage_failure_removes_only_package_paths (test_installer.InstallerTests.test_stage_failure_removes_only_package_paths) ... ok
+test_stage_files_services_and_narrow_sudoers_without_authentication_mutation (test_installer.InstallerTests.test_stage_files_services_and_narrow_sudoers_without_authentication_mutation) ... ok
+test_stale_atomic_temp_does_not_block_recovery (test_installer.InstallerTests.test_stale_atomic_temp_does_not_block_recovery) ... ok
+test_watchdog_rejects_writable_interpreter_ancestry (test_installer.InstallerTests.test_watchdog_rejects_writable_interpreter_ancestry) ... ok
+test_model_cannot_select_another_host (test_plugin.PluginTests.test_model_cannot_select_another_host) ... ok
+test_register_is_offline_and_handlers_are_bound (test_plugin.PluginTests.test_register_is_offline_and_handlers_are_bound) ... ok
+test_confirm_requires_observed_transition_and_keychains (test_policy.PolicyTests.test_confirm_requires_observed_transition_and_keychains) ... ok
+test_confirmation_preflight_cannot_outlive_trial (test_policy.PolicyTests.test_confirmation_preflight_cannot_outlive_trial) ... ok
+test_crash_after_rule_write_is_recoverable (test_policy.PolicyTests.test_crash_after_rule_write_is_recoverable) ... ok
+test_deadline_and_reboot_rollback (test_policy.PolicyTests.test_deadline_and_reboot_rollback) ... ok
+test_drift_never_overwrites_unrelated_changes (test_policy.PolicyTests.test_drift_never_overwrites_unrelated_changes) ... ok
+test_each_partial_write_rolls_back (test_policy.PolicyTests.test_each_partial_write_rolls_back) ... ok
+test_expired_trial_cannot_be_confirmed (test_policy.PolicyTests.test_expired_trial_cannot_be_confirmed) ... ok
+test_invalid_timeout (test_policy.PolicyTests.test_invalid_timeout) ... ok
+test_preserves_entire_original_instead_of_flattening_threshold (test_policy.PolicyTests.test_preserves_entire_original_instead_of_flattening_threshold) ... ok
+test_reserved_name_collision_aborts_before_mutation (test_policy.PolicyTests.test_reserved_name_collision_aborts_before_mutation) ... ok
+test_reserved_reference_cannot_create_authorization_cycle (test_policy.PolicyTests.test_reserved_reference_cannot_create_authorization_cycle) ... ok
+
+----------------------------------------------------------------------
+Ran 21 tests in 0.075s
+
+OK

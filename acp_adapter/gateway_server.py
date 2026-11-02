@@ -1186,7 +1186,8 @@ class GatewayACPAgent(GatewayReplyMixin, acp.Agent):
             if _OPTION_ID_TO_HERMES[option.option_id] in choices]
         try:
             if 'edit' in prompt:
-                from acp_adapter.edit_approval import EditProposal, build_acp_edit_tool_call
+                from tools.edit_approval import EditProposal
+                from acp_adapter.edit_approval import build_acp_edit_tool_call
                 tool_call = build_acp_edit_tool_call(EditProposal(**prompt['edit']))
             else:
                 tool_call = _build_permission_tool_call(prompt.get('command', ''), prompt.get('description', ''))

@@ -434,3 +434,42 @@ class VercelSandboxEnvironment(BaseEnvironment):
         # Always stop the sandbox during cleanup to avoid resource leaks (matches Modal/Daytona).
         self._stop_sandbox(sandbox)
         self._close_sandbox_client(sandbox)
+
+
+import importlib.util
+from agent.terminal_env_registry import register_provider
+from tools.environments.provider import EnvironmentProvider
+from tools.terminal_tool_backends import _resources, _reject, _is_supported_vercel_runtime, _SUPPORTED_VERCEL_RUNTIMES
+
+def _check_vercel(config: dict[str, Any]) -> bool:
+    """Runtime -> disk -> SDK -> auth (OIDC token, else the full TOKEN/PROJECT_ID/TEAM_ID tuple)."""
+    runtime = (config.get("vercel_runtime") or "").strip()
+    disk = config.get("container_disk", 51200)
+    if not _is_supported_vercel_runtime(runtime):
+        return _reject(f"Vercel Sandbox runtime {runtime!r} is not supported. Set TERMINAL_VERCEL_RUNTIME to one of: "
+                       f"{', '.join(_SUPPORTED_VERCEL_RUNTIMES)}.")
+    if disk not in {0, 51200}:
+        return _reject(f"Vercel Sandbox does not support custom TERMINAL_CONTAINER_DISK={disk}. "
+                       "Use the default shared setting (51200 MB).")
+    if importlib.util.find_spec("vercel") is None:
+
+        return _reject("vercel is required for the Vercel Sandbox terminal backend. Run hermes setup terminal and select Vercel Sandbox.")
+    from agent.secret_scope import get_secret
+    if get_secret("VERCEL_OIDC_TOKEN"):
+        return True
+    present = [bool(get_secret(k)) for k in ("VERCEL_TOKEN", "VERCEL_PROJECT_ID", "VERCEL_TEAM_ID")]
+    if all(present):
+        return True
+    head = ("selected with token auth, but VERCEL_TOKEN, VERCEL_PROJECT_ID, and VERCEL_TEAM_ID must all be "
+            "set together." if any(present) else
+            "selected but no supported auth configuration was found. Set VERCEL_TOKEN, VERCEL_PROJECT_ID, "
+            "and VERCEL_TEAM_ID for normal use.")
+    return _reject(f"Vercel Sandbox backend {head} VERCEL_OIDC_TOKEN is supported for one-off local development only.")
+
+
+
+def _build_vercel_env(*, cwd, timeout, cc, task_id, **_):
+    return VercelSandboxEnvironment(cwd=cwd, timeout=timeout, task_id=task_id, **_resources(cc),
+                                    runtime=cc.get("vercel_runtime") or None, image=cc.get("vercel_image") or None)
+
+register_provider(EnvironmentProvider("vercel_sandbox", _build_vercel_env, _check_vercel))

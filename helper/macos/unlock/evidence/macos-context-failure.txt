@@ -1,0 +1,27 @@
+./build/grant-test
+PASS one-use grant and duplicate-arm rejection
+PASS expiration boundary, clock rollback and TTL bounds
+PASS owner, GUI session, boot, lock state and revocation binding
+PASS writable paths, hard links, symlink directories and wrong file owner rejected
+PASS truncated grant and symlink file rejected
+PASS twelve competing processes produce exactly one authorization
+ALL GRANT TESTS PASSED
+test "$(uname -s)" = Darwin
+mkdir -p build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 -bundle src/authorization_plugin.c src/grant.c src/macos_context.c -framework CoreFoundation -framework IOKit -framework Security -o build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS/HermesUnlockAuthorizationPlugin
+cp Info.plist build/HermesUnlockAuthorizationPlugin.bundle/Contents/Info.plist
+codesign --force --sign - build/HermesUnlockAuthorizationPlugin.bundle
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 src/unlockctl.c src/grant.c src/macos_context.c -framework CoreFoundation -framework IOKit -framework Security -o build/hermes-unlockctl
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 tests/plugin_test.c -framework Security -o build/plugin-test
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 -Dgeteuid=hu_test_euid tests/plugin_logic_test.c src/authorization_plugin.c -framework Security -o build/plugin-logic-test
+./build/plugin-test build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS/HermesUnlockAuthorizationPlugin
+PASS native bundle load, invalid callbacks/mechanism, deny and deactivate callbacks
+NOTE this is an unprivileged test host, not SecurityAgentHelper
+./build/plugin-logic-test
+PASS authorization maps one-use grant to Allow and replay to Deny
+PASS expired grant, missing username, different owner, missing console and unprivileged host deny
+NOTE positive authorization uses synthetic OS facts in a separate test executable
+./build/hermes-unlockctl status
+{"console_context":"unknown","can_arm":false}
+build/HermesUnlockAuthorizationPlugin.bundle: replacing existing signature
+make: *** [native-test] Error 1

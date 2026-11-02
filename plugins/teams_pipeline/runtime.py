@@ -65,12 +65,18 @@ def build_pipeline_runtime(gateway: Any) -> TeamsMeetingPipeline:
     )
 
 
-def bind_gateway_runtime(gateway: Any) -> bool:
+def wire_platform_handler(native: Any, adapter: Any) -> None:
+    """Bind at adapter connection, before the gateway publishes the adapter."""
+    bind_gateway_runtime(adapter.gateway_runner, adapter=adapter)
+
+
+def bind_gateway_runtime(gateway: Any, *, adapter: Any = None) -> bool:
     """Attach the Teams pipeline runtime to the msgraph webhook adapter."""
-    adapter = gateway.adapters.get(Platform.MSGRAPH_WEBHOOK)
+    if adapter is None:
+        adapter = gateway.adapters.get(Platform.MSGRAPH_WEBHOOK)
     if adapter is None:
         return False
-    if getattr(gateway, "_teams_pipeline_runtime", None) is not None:
+    if getattr(adapter, "_teams_pipeline_runtime", None) is not None:
         return True
     try:
         runtime = build_pipeline_runtime(gateway)
@@ -105,6 +111,7 @@ def bind_gateway_runtime(gateway: Any) -> bool:
         task.add_done_callback(background.discard)
         task.add_done_callback(lambda _task: scheduled.discard(job.job_id))
     adapter.set_notification_scheduler(_schedule)
+    adapter._teams_pipeline_runtime = runtime
     gateway._teams_pipeline_runtime = runtime
     gateway._teams_pipeline_runtime_error = None
     return True

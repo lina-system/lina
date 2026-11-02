@@ -191,54 +191,6 @@ _calls_in_flight: dict[str, int] = {}  # Foreground calls running per env key; t
 _cleanup_thread = None
 _cleanup_running = False
 
-# Once-per-process guard for the docker orphan reaper.
-_docker_orphan_reaper_ran = False
-_docker_orphan_reaper_lock = threading.Lock()
-
-
-def _maybe_reap_docker_orphans(container_config: dict[str, Any]) -> None:
-    """Run the docker orphan reaper once per process, if enabled.
-
-    Sweeps Exited containers labeled ``hermes-agent=1`` for the current
-    profile — leftovers of Hermes processes that died without firing
-    ``atexit`` (SIGKILL, OOM, closed terminal). Conservative: only containers
-    older than ``2 × lifetime_seconds``, profile-scoped. Gates:
-    ``terminal.docker_orphan_reaper: false`` (operator opt-out, e.g. several
-    Hermes processes sharing a profile) and the once-per-interpreter flag so
-    parallel subagent / RL-rollout calls don't re-sweep.
-    """
-    global _docker_orphan_reaper_ran
-    if not container_config.get("docker_orphan_reaper", True):
-        return
-    if _docker_orphan_reaper_ran:  # double-checked locking
-        return
-    with _docker_orphan_reaper_lock:
-        if _docker_orphan_reaper_ran:
-            return
-        _docker_orphan_reaper_ran = True
-
-    # 2 × lifetime gives sibling processes a grace window; floor at 60s so
-    # TERMINAL_LIFETIME_SECONDS=0 can't instant-reap a sibling's own setup.
-    # container_config only carries container_* keys, so read the env var.
-    try:
-        lifetime = int(_tenv("TERMINAL_LIFETIME_SECONDS", "300"))
-    except (TypeError, ValueError):
-        lifetime = 300
-    max_age = max(60, lifetime) * 2
-
-    try:
-        from tools.environments.docker import reap_orphan_containers, _container_identity
-    except ImportError:
-        return
-    # Never fail the env-creation path because of a janitor problem.
-    with _quiet("Docker orphan reaper raised"):
-        profile = _container_identity(container_config.get("docker_shared_container_key", ""))
-        removed = reap_orphan_containers(max_age_seconds=max_age, profile_filter=profile)
-        if removed:
-            logger.info(
-                "Docker orphan reaper removed %d stale container(s) for profile %s",
-                removed, profile,
-            )
 
 
 # Per-task environment overrides (never exposed to the model). RL/benchmark
@@ -934,9 +886,12 @@ def _atexit_cleanup():
                 with _quiet("wait_for_cleanup raised on exit"):  # never block shutdown on a bad backend
                     wait_fn(timeout=15.0)
     # Workers of envs the idle reaper already detached are not in the registry (#86317).
-    if "tools.environments.docker" in sys.modules:
-        with _quiet("teardown drain raised on exit"):
-            sys.modules["tools.environments.docker"].DockerEnvironment.wait_for_all_teardowns(timeout=15.0)
+    from agent.terminal_env_registry import list_providers
+    for provider in list_providers():
+        drain = getattr(provider, "wait_for_teardowns", None)
+        if drain is not None:
+            with _quiet("teardown drain raised on exit"):
+                drain(timeout=15.0)
 
 atexit.register(_atexit_cleanup)
 

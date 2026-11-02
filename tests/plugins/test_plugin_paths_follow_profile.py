@@ -11,18 +11,12 @@ import pytest
 from hermes_constants import reset_hermes_home_override, set_hermes_home_override
 
 
-def _a2a_conversation(home):
-    from plugins.platforms.a2a import protocol
-    return protocol._conv_path("peer-x")
+def _discord_recovery(home):
+    from plugins.platforms.discord.recovery import DiscordRecoveryStore
+    return DiscordRecoveryStore().path()
 
 
-def _photon_auth(home):
-    from plugins.platforms.photon import auth
-    return auth._auth_json_path()
-
-
-_RESOLVERS = {"a2a": _a2a_conversation, "photon": _photon_auth}
-
+_RESOLVERS = {"discord": _discord_recovery}
 
 @pytest.mark.parametrize("name", sorted(_RESOLVERS))
 def test_plugin_path_follows_profile_override(name, tmp_path, monkeypatch):

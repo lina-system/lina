@@ -4,7 +4,6 @@ agent assuming background processes and unsynced files survived."""
 
 import json
 
-from tools.environments import docker as docker_env
 from tools.environments.local import LocalEnvironment
 from tools.terminal_tool_result import finalize_foreground_result
 
@@ -26,23 +25,15 @@ def test_execute_folds_recreation_flag_once():
         env.cleanup()
 
 
-def test_docker_recovery_marks_pending_and_finalizer_warns(monkeypatch):
-    """Docker's out-of-band recovery sets the pending mark, and the tool-layer
-    finalizer turns the flag into a model-facing warning — omitted entirely
+def test_recovery_marks_pending_and_finalizer_warns():
+    """The tool-layer finalizer turns the flag into a warning — omitted entirely
     when the backend never flagged a recreation."""
-    env = docker_env.DockerEnvironment.__new__(docker_env.DockerEnvironment)
-    env._container_id = "old"
-    env._labels = {}
-    env._image = ""
-    monkeypatch.setattr(
-        docker_env.DockerEnvironment, "_find_reusable_container",
-        lambda self, *a: ("newcid", "running"))
-    monkeypatch.setattr(docker_env.DockerEnvironment, "init_session", lambda self: None)
-    assert env._recreate_container() is True
+    env = LocalEnvironment(cwd=".", timeout=30)
+    env._mark_recreated()
     assert getattr(env, "_recreated_notice_pending", False) is True
 
     common: dict = dict(
-        command="echo hi", env=env, env_type="docker", effective_task_id="t",
+        command="echo hi", env=env, env_type="local", effective_task_id="t",
         task_id="t", session_id="s", session_key="k", workdir=None,
         command_cwd=None, approval_note=None)
 
@@ -53,3 +44,4 @@ def test_docker_recovery_marks_pending_and_finalizer_warns(monkeypatch):
     clean = json.loads(finalize_foreground_result(
         result={"output": "hi", "returncode": 0}, **common))
     assert "environment_recreated" not in clean
+    env.cleanup()

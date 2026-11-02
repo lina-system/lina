@@ -1,0 +1,3 @@
+Baseline: deny-all implementation
+Exit code: -6
+grant-test-red: tests/grant_test.c:30: main: Assertion `hu_arm(directory, owner, &c, ttl) == HU_OK' failed.

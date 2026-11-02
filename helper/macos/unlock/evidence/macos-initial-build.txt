@@ -1,0 +1,19 @@
+BUILD_DIRECTORY=/tmp/hermes-unlock-research.C3tto1  (no-tmp: ok: recorded log of a past build)
+mkdir -p build
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc tests/grant_test.c src/grant.c -o build/grant-test
+./build/grant-test
+PASS one-use grant and duplicate-arm rejection
+PASS expiration boundary, clock rollback and TTL bounds
+PASS owner, GUI session, boot, lock state and revocation binding
+PASS writable paths, hard links, symlink directories and wrong file owner rejected
+PASS truncated grant and symlink file rejected
+PASS twelve competing processes produce exactly one authorization
+ALL GRANT TESTS PASSED
+test "$(uname -s)" = Darwin
+mkdir -p build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc -mmacosx-version-min=14.4 -bundle src/authorization_plugin.c src/grant.c src/macos_context.c -framework CoreFoundation -framework IOKit -framework Security -o build/HermesUnlockAuthorizationPlugin.bundle/Contents/MacOS/HermesUnlockAuthorizationPlugin
+src/authorization_plugin.c:28:58: error: use of undeclared identifier 'kAuthorizationEnvironmentUsername'
+   28 |     if (m->plugin->callbacks->GetContextValue(m->engine, kAuthorizationEnvironmentUsername,
+      |                                                          ^~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+1 error generated.
+make: *** [macos] Error 1
