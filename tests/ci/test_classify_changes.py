@@ -553,6 +553,8 @@ _REPO = Path(__file__).resolve().parents[2]
 
 def _yaml(rel: str) -> dict:
     yaml = pytest.importorskip("hermes_yaml")
+    # Upstream workflows live in .github/workflows-upstream/ in LINA (docs/ci.md).
+    rel = rel.replace(".github/workflows/", ".github/workflows-upstream/", 1)
     return yaml.safe_load((_REPO / rel).read_text(encoding="utf-8-sig"))
 
 
@@ -639,7 +641,7 @@ def test_remote_backends_lane_runs_test_files_that_exist_and_start_it():
     """The lane's test list and its path gate must agree: a renamed test file would
     otherwise drop silently out of the run (run_tests.sh skips a missing path) or stop
     starting the lane on the PR that edits it."""
-    text = (_REPO / ".github/workflows/remote-backends.yml").read_text(encoding="utf-8-sig")
+    text = (_REPO / ".github/workflows-upstream/remote-backends.yml").read_text(encoding="utf-8-sig")
     paths = sorted(set(re.findall(r"(tests/[\w/.-]+\.py)", text)))
     assert paths
     assert [p for p in paths if not (_REPO / p).is_file()] == []
@@ -652,7 +654,7 @@ def test_remote_backends_lane_runs_test_files_that_exist_and_start_it():
 def test_windows_venv_e2e_runs_only_test_files_that_exist():
     """``run_tests.sh`` drops a missing path (or a ``::node`` selector) without
     a word, so a stale entry silently stops running on every wine2e push."""
-    text = (_REPO / ".github/workflows/windows-venv-e2e.yml").read_text(encoding="utf-8-sig")
+    text = (_REPO / ".github/workflows-upstream/windows-venv-e2e.yml").read_text(encoding="utf-8-sig")
     paths = re.findall(r"(tests/[\w/.:-]+)", text)
     assert paths
     assert [p for p in paths if "::" in p or not (_REPO / p).is_file()] == []
@@ -780,5 +782,5 @@ def test_catalog_lane_runs_every_test_that_reads_the_shipped_catalog():
     ):
         assert must in files
     assert not any(f.startswith("tests/e2e/") for f in files)
-    text = (_REPO / ".github/workflows/catalog-tests.yml").read_text(encoding="utf-8-sig")
+    text = (_REPO / ".github/workflows-upstream/catalog-tests.yml").read_text(encoding="utf-8-sig")
     assert "scripts/ci/catalog_test_files.py" in text and "scripts/run_tests.sh" in text

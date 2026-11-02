@@ -21,7 +21,7 @@ ROOT = Path(__file__).resolve().parents[2]
 # CATALOG_CI_WORKFLOW points the harness at another workflow copy (e.g.
 # `git show origin/main:...`) to prove a case fails on the old gate.
 WORKFLOW = Path(os.environ.get(
-    "CATALOG_CI_WORKFLOW", ROOT / ".github/workflows/plugin-catalog-ci.yml"))
+    "CATALOG_CI_WORKFLOW", ROOT / ".github/workflows-upstream/plugin-catalog-ci.yml"))
 REPO_URL = "https://fixture.invalid/repo"
 
 

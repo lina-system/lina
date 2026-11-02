@@ -12,7 +12,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOWS = ROOT / ".github/workflows"
+WORKFLOWS = ROOT / ".github/workflows-upstream"
 
 EXPRESSION = re.compile(r"\$\{\{(.*?)\}\}", re.DOTALL)
 JOB_REFERENCE = re.compile(r"\bneeds\.([A-Za-z0-9_-]+)")

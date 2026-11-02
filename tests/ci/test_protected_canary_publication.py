@@ -29,7 +29,7 @@ pytestmark = pytest.mark.platforms("posix")
 
 
 def workflow_jobs():
-    return hermes_yaml.safe_load((ROOT / ".github/workflows/desktop-bundled-release.yml").read_text())["jobs"]
+    return hermes_yaml.safe_load((ROOT / ".github/workflows-upstream/desktop-bundled-release.yml").read_text())["jobs"]
 
 
 def canary_job():

@@ -20,7 +20,7 @@ def needs_r2_credentials(step):
 
 
 def load(name):
-    return YAML(typ="base").load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
+    return YAML(typ="base").load((ROOT / ".github/workflows-upstream" / name).read_text(encoding="utf-8"))
 
 
 def test_archive_reader_accepts_bom_without_changing_pin_authority(tmp_path):

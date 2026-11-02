@@ -21,7 +21,7 @@ def test_every_messaging_gated_gateway_file_runs_in_the_messaging_job():
                    if _SDK_PROBE.search(path.read_text(encoding="utf-8")))
     assert gated, "no messaging-gated gateway file found; the probe pattern drifted"
     yaml = pytest.importorskip("hermes_yaml")
-    job = yaml.safe_load((_REPO / ".github" / "workflows" / "tests.yml").read_text(encoding="utf-8"))["jobs"]["e2e"]
+    job = yaml.safe_load((_REPO / ".github" / "workflows-upstream" / "tests.yml").read_text(encoding="utf-8"))["jobs"]["e2e"]
     extras = next(step["with"]["extras"] for step in job["steps"] if "setup-pm" in step.get("uses", ""))
     assert "messaging" in extras
     script = "\n".join(step.get("run", "") for step in job["steps"] if "messaging-gated" in step.get("name", ""))

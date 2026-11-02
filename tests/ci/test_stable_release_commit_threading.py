@@ -5,7 +5,7 @@ from pathlib import Path
 from ruamel.yaml import YAML
 
 ROOT = Path(__file__).resolve().parents[2]
-WORKFLOWS = ROOT / ".github/workflows"
+WORKFLOWS = ROOT / ".github/workflows-upstream"
 LOCAL_CALL = re.compile(r"^\./\.github/workflows/(?P<name>[^/@]+)$")
 
 # Reusable workflows that already named their commit input before this contract.

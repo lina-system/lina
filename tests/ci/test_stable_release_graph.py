@@ -16,7 +16,7 @@ ROOT = Path(__file__).resolve().parents[2]
 
 
 def workflow(name):
-    return YAML(typ="base").load((ROOT / ".github/workflows" / name).read_text(encoding="utf-8"))
+    return YAML(typ="base").load((ROOT / ".github/workflows-upstream" / name).read_text(encoding="utf-8"))
 
 
 def direct_needs(jobs, name):

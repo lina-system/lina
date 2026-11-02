@@ -88,6 +88,8 @@ def _real_classifier(paths: list[str]) -> dict[str, bool]:
 @cache
 def _yaml(rel: str) -> dict:
     yaml = pytest.importorskip("hermes_yaml")
+    # Upstream workflows live in .github/workflows-upstream/ in LINA (docs/ci.md).
+    rel = rel.replace(".github/workflows/", ".github/workflows-upstream/", 1)
     return yaml.safe_load((_REPO / rel).read_text(encoding="utf-8-sig"))
 
 

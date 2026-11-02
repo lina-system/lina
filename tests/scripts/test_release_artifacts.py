@@ -329,9 +329,9 @@ def test_promote_refuses_when_one_macos_arch_is_missing(tmp_path, monkeypatch, r
 def candidate_workflow_step(tmp_path, r2_server, staged_candidate):
     """Run real workflow shell/CLIs; replace only service endpoints and tool setup."""
     manifest, fetched, base = staged_candidate
-    jobs = hermes_yaml.safe_load((ROOT / '.github/workflows/desktop-bundled-release.yml').read_text(encoding='utf-8-sig'))['jobs']
+    jobs = hermes_yaml.safe_load((ROOT / '.github/workflows-upstream/desktop-bundled-release.yml').read_text(encoding='utf-8-sig'))['jobs']
     stable_jobs = hermes_yaml.safe_load(
-        (ROOT / '.github/workflows/stable-release.yml').read_text(encoding='utf-8-sig'))['jobs']
+        (ROOT / '.github/workflows-upstream/stable-release.yml').read_text(encoding='utf-8-sig'))['jobs']
     render = next(step for step in stable_jobs['complete']['steps']
                   if step.get('name', '').startswith('Render the admitted'))
     jobs['controller-promote'] = {

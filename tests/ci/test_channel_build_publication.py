@@ -168,7 +168,7 @@ def test_scoped_receiver_publication_preserves_existing_head_and_requires_smoke(
 
 
 def workflow_step(workflow, job, name):
-    doc = hermes_yaml.safe_load((ROOT / ".github/workflows" / workflow).read_text(encoding="utf-8"))
+    doc = hermes_yaml.safe_load((ROOT / ".github/workflows-upstream" / workflow).read_text(encoding="utf-8"))
     return next(step["run"] for step in doc["jobs"][job]["steps"] if step.get("name") == name)
 
 

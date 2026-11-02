@@ -32,7 +32,7 @@ def _load(path: Path):
 
 def _checkout_jobs():
     for filename in WORKFLOWS:
-        for name, job in (_load(ROOT / ".github/workflows" / filename)["jobs"] or {}).items():
+        for name, job in (_load(ROOT / ".github/workflows-upstream" / filename)["jobs"] or {}).items():
             steps = job.get("steps") or []  # reusable-workflow calls have none
             if any(is_checkout(step) for step in steps):
                 yield f"{filename}:{name}", job, steps
@@ -62,7 +62,7 @@ def test_every_checkout_job_ends_with_the_clean_worktree_step():
 
 def test_no_workflow_overrides_the_master_switch():
     offenders = []
-    for path in sorted((ROOT / ".github/workflows").glob("*.y*ml")):
+    for path in sorted((ROOT / ".github/workflows-upstream").glob("*.y*ml")):
         for name, job in (_load(path).get("jobs") or {}).items():
             for step in job.get("steps") or []:
                 if step.get("uses") == USES and "mode" in (step.get("with") or {}):

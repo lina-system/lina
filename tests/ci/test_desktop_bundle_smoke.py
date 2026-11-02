@@ -20,7 +20,7 @@ from tests.scripts.test_release_r2 import r2_server
 
 
 def smoke_workflow():
-    return hermes_yaml.safe_load((ROOT / '.github/workflows/desktop-bundle-smoke.yml').read_text(encoding='utf-8-sig'))
+    return hermes_yaml.safe_load((ROOT / '.github/workflows-upstream/desktop-bundle-smoke.yml').read_text(encoding='utf-8-sig'))
 
 
 def smoke_fetch_script():

@@ -26,7 +26,7 @@ _SUITE = "tests/e2e/core/windows_update"
 def _workflow_selection() -> str:
     """The ``-m`` expression the Windows install + update E2E workflow runs its suite with."""
     yaml = pytest.importorskip("hermes_yaml")
-    wf = yaml.safe_load((_REPO / ".github/workflows/windows-install-update-e2e.yml").read_text(encoding="utf-8-sig"))
+    wf = yaml.safe_load((_REPO / ".github/workflows-upstream/windows-install-update-e2e.yml").read_text(encoding="utf-8-sig"))
     step = next(s for s in wf["jobs"]["install-update"]["steps"] if s.get("name") == "Run Windows install + update E2E")
     argv = shlex.split(step["run"].replace("\\\n", " "))
     assert f"{_SUITE}/" in argv, f"the workflow no longer runs {_SUITE}/: {argv}"
@@ -231,7 +231,7 @@ def test_workflow_requires_the_crash_journey_manifest(tmp_path, monkeypatch):
     from tests.ci import workflow_steps
 
     yaml = pytest.importorskip("hermes_yaml")
-    wf = yaml.safe_load((_REPO / ".github/workflows/windows-install-update-e2e.yml").read_text(encoding="utf-8-sig"))
+    wf = yaml.safe_load((_REPO / ".github/workflows-upstream/windows-install-update-e2e.yml").read_text(encoding="utf-8-sig"))
     steps = wf["jobs"]["install-update"]["steps"]
     names = [s.get("name") for s in steps]
     run, check = steps[names.index("Run Windows install + update E2E")], steps[names.index("Every crash cell ran")]
