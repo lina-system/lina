@@ -12,6 +12,7 @@ pinned Node, so the checkout stays clean; it is redone when the sources change (
 from __future__ import annotations
 
 import hashlib
+import json
 import os
 import shutil
 import subprocess
@@ -75,11 +76,58 @@ def build(root: Path, node: Path, source: Path = SOURCE,
     return cli_path(root)
 
 
+def catalog_path() -> Path:
+    return lina_omo.agent_dir() / "models.json"
+
+
 def argv(root: Path, verb: str, args: list[str]) -> list[str]:
-    """ocx-omo on the pinned Node, pointed at the pinned omo unless the caller names another ``--omo-task``."""
-    extra = [] if any(arg.split("=", 1)[0] == "--omo-task" for arg in args) else [
-        "--omo-task", str(lina_omo.omo_task_path(root))]
+    """ocx-omo on the pinned Node, pointed at the pinned omo and omo's catalog unless the caller names others."""
+    named = {arg.split("=", 1)[0] for arg in args}
+    defaults = {"--omo-task": lina_omo.omo_task_path(root), "--models": catalog_path()}
+    extra = [part for flag, path in defaults.items() if flag not in named for part in (flag, str(path))]
     return [str(lina_omo.node_bin(root)), str(cli_path(root)), verb, *args, *extra]
+
+
+def catalog_problem() -> str | None:
+    """Why omo's catalog cannot be routed over (None when it lists OCX models): ocx-omo needs
+    ``providers.opencodex.models`` in omo's ``models.json``, which OCX's omo client integration writes."""
+    path = catalog_path()
+    try:
+        models = json.loads(path.read_text(encoding="utf-8-sig"))["providers"]["opencodex"]["models"]
+    except FileNotFoundError:
+        return f"{path} does not exist"
+    except (OSError, ValueError, KeyError, TypeError):
+        return f"{path} has no providers.opencodex models"
+    return None if isinstance(models, list) and models else f"{path} has no providers.opencodex models"
+
+
+def _enable_integration(root: Path, run) -> str | None:
+    """Ask LINA's own running OCX to write its catalog for omo; None when it did, else why not."""
+    version = lina_ocx.current_version(root)
+    if version is None:
+        return "LINA's OCX is not installed: run `lina models install`"
+    if not lina_ocx.own_proxy_running(root, lina_ocx.configured_port(root)):
+        return "LINA's OCX is not running: run `lina services start ocx`"
+    lina_omo.agent_dir().mkdir(parents=True, exist_ok=True)  # OCX reports omo absent until its agent dir exists
+    result = run(lina_ocx.ocx_argv(root, version, "integration", "client", "enable", "--client", "omo"),
+                 env=lina_ocx.ocx_env(root), capture_output=True, text=True, encoding="utf-8", errors="replace",
+                 timeout=120, check=False)
+    if result.returncode != 0:
+        tail = ((result.stderr or "") + (result.stdout or "")).strip().splitlines()[-1:] or ["no output"]
+        return f"`ocx integration client enable --client omo` failed: {tail[0]}"
+    return None
+
+
+def setup_catalog(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> str | None:
+    """omo's catalog of OCX models, set up through LINA's OCX when it is missing; None when it is usable."""
+    if catalog_problem() is None:
+        return None
+    refused = _enable_integration(root, run)
+    if refused:
+        return refused
+    left = catalog_problem()
+    return f"{left} although LINA's OCX enabled its omo integration (has it an account? `lina models accounts`)" \
+        if left else None
 
 
 def _missing(root: Path) -> str | None:
@@ -119,6 +167,10 @@ def install_step(apply: bool = False, root: Path | None = None, out=print,
     except lina_ocx.OcxError as exc:
         out(f"omo: {exc}")
         return 1
+    problem = setup_catalog(root, run=run)
+    if problem:
+        out(f"omo routing: not set up: {problem}; then run `lina omo install` again")
+        return 0
     code = run_verb("check", [], root, run=run, out=out)
     if code not in CHECK_STATES:
         out(f"omo routing check failed (exit {code}); omo is installed, routing is unchanged")

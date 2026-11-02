@@ -314,11 +314,17 @@ def ocx_argv(root: Path, version: str, *args: str) -> list[str]:
 
 
 def ocx_env(root: Path, data: Path | None = None, home: Path | None = None) -> dict[str, str]:
-    """What OCX runs with: its data dir, the isolated HOME and the pinned Node first on PATH."""
+    """What OCX runs with: its data dir, the isolated HOME and the pinned Node first on PATH. The service and its CLI
+    (no *home* given) also get omo's agent dir: OCX writes its catalog for omo (the omo client integration) there, not
+    under the isolated HOME. An upgrade trial runs on a copy and never gets it."""
+    from hermes_cli.lina_omo import agent_dir
     node = node_dir(root, pins().node_version)
     (home or home_dir(root)).mkdir(parents=True, exist_ok=True)
-    return {"OPENCODEX_HOME": str(data or data_dir(root)), "HOME": str(home or home_dir(root)),
-            "PATH": os.pathsep.join([str(node / "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])}
+    env = {"OPENCODEX_HOME": str(data or data_dir(root)), "HOME": str(home or home_dir(root)),
+           "PATH": os.pathsep.join([str(node / "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])}
+    if home is None:
+        env["OMO_CODING_AGENT_DIR"] = str(agent_dir())
+    return env
 
 
 def port_taken(port: int) -> bool:
