@@ -1,6 +1,7 @@
 """The hub hands a task to a device and cancels it only on the device's word (lina#35, review of #128 and #132): the
 placement is recorded before the request is published, so a hub that stops in between resumes the same placement
-instead of bidding again; a cancel that never reached the device is an error, not a cancelled task."""
+instead of bidding again; a cancel that never reached the device is an error, not a cancelled task; a late end of an
+earlier run never ends the run that is going now."""
 
 import json
 
@@ -90,4 +91,17 @@ def test_a_cancel_that_never_reached_the_device_is_not_a_cancel(lane):
         hub.cancel(task_id, "not needed")
     job = hub.store.load(task_id)
     assert job["state"] == "running" and job["notified"] == []
+    assert not list(hub.store.notices.glob(f"{task_id}-*"))
+
+
+def test_a_late_end_of_an_earlier_run_does_not_end_the_current_run(lane):
+    task_id = _submit(lane)
+    hub = lane["hub"]
+    job = hub.store.load(task_id)
+    job.update(runs=2, state="running")
+    hub.store.save(job)
+    assert hub.notify(task_id, "done", "1") == "earlier run"
+    job = hub.store.load(task_id)
+    assert (job["state"], job["runs"]) == ("running", 2)
+    assert "done:1" in job["notified"]
     assert not list(hub.store.notices.glob(f"{task_id}-*"))

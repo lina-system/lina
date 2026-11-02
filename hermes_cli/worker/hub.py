@@ -581,6 +581,13 @@ class Hub:
         marker = f"{kind}:{run}"
         if marker in job.get("notified", []):
             return "already"
+        if str(run) != str(job.get("runs") or 1):
+            # A late end of an earlier run (its notice retried after a follow-up started the next one): record it,
+            # never let it end the run that is going now.
+            job.setdefault("notified", []).append(marker)
+            self.store.save(job)
+            self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True)
+            return "earlier run"
         job.update(state=kind, last_state=kind)
         self.store.receipt(job["id"], "exec_end", state=kind, run=run)
         if self._waiter_alive(job):
