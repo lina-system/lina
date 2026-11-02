@@ -12,8 +12,8 @@ STOPPED = {"action": "state", "state": {"lifecycle": {"state": "cancelled", "wai
 
 
 class FakeSession:
-    def __init__(self, obeys_abort: bool):
-        self.obeys_abort, self.aborted, self.calls = obeys_abort, False, []
+    def __init__(self, obeys_abort: bool, unreadable: bool = False):
+        self.obeys_abort, self.aborted, self.calls, self.unreadable = obeys_abort, False, [], unreadable
 
     def __call__(self, argv: list[str], timeout: float) -> dict:
         self.calls.append(argv[0])
@@ -21,6 +21,8 @@ class FakeSession:
             self.aborted = self.obeys_abort
             return {"action": "abort"}
         if argv[0] == "state":
+            if self.unreadable:
+                return None
             return STOPPED if self.aborted else RUNNING
         if argv[0] == "read":
             return {"action": "read", "entries": []}
@@ -50,3 +52,14 @@ def test_a_session_still_working_after_abort_keeps_the_run_and_is_aborted_again(
     assert _expired(tmp_path, session).step() == "failed"
     assert session.calls.count("abort") == 2
     assert json.loads((tmp_path / "wait.1.json").read_text())["outcome"] == "timeout"
+
+
+def test_a_session_whose_state_stays_unreadable_is_aborted_and_held_until_seen_stopped(tmp_path):
+    session = FakeSession(obeys_abort=True, unreadable=True)
+    settle = Settle(Task("OT-SIO1102120021", tmp_path), 1, "s-1", session, {"abort_wait_s": 0})
+    assert [settle.step() for _ in range(8)] == ["running"] * 8
+    assert "abort" in session.calls
+    assert not (tmp_path / "wait.1.json").exists()
+    session.unreadable = False
+    assert settle.step() == "failed"
+    assert json.loads((tmp_path / "wait.1.json").read_text())["outcome"] == "error"

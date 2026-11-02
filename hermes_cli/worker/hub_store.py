@@ -94,10 +94,21 @@ class Store:
         base = f"{prefix}-{''.join(ch for ch in agent.upper() if ch.isalnum())[:3] or 'X'}{time.strftime('%m%d%H%M%S')}"
         taken = self.path if prefix == "OT" else (lambda tid: self.schedules / f"{tid}.json")
         candidate, n = base, 1
-        while taken(candidate).exists() or (prefix == "OG" and any(j.get("group") == candidate for j in self.all())):
+        while (taken(candidate).exists() or (prefix == "OG" and any(j.get("group") == candidate for j in self.all()))
+               or not self._reserve_id(candidate)):
             n += 1
             candidate = f"{base}-{n}"
         return candidate
+
+    def _reserve_id(self, candidate: str) -> bool:
+        """Claim *candidate* once across processes: two hubs in the same second never get the same ID."""
+        ids = self.root / "ids"
+        ids.mkdir(parents=True, exist_ok=True)
+        try:
+            os.close(os.open(ids / candidate, os.O_CREAT | os.O_EXCL | os.O_WRONLY))
+        except FileExistsError:
+            return False
+        return True
 
     def out_dir(self, job: dict) -> Path:
         return self.outs / job["bot"] / job["id"]
