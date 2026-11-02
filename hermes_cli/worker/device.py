@@ -207,9 +207,21 @@ def run_task(worker_root: Path, task_id: str, run: int) -> str:
             fh.write(f"lina worker: {exc}\n")
         if not task.path(f"wait.{run}.json").exists():
             write_json(task.path(f"wait.{run}.json"), {"outcome": "start_failed", "why": str(exc)[:300]})
+        stop_runner(runner, handle)
     task.path(f"rc.{run}").write_text(f"{code}\n", encoding="utf-8")
     stamp(task, f"ended.{run}")
     return finish_run(worker_root, task, run, runner_state, runner, handle)
+
+
+def stop_runner(runner, handle: Handle | None) -> None:
+    """A run the worker ends on its own (an error, a dead run process) stops its agent before the slot is freed."""
+    if runner is None or handle is None:
+        return
+    try:
+        runner.stop(handle)
+    except RunnerError as exc:
+        with handle.task.path(f"stderr.{handle.run}.txt").open("a", encoding="utf-8") as fh:
+            fh.write(f"lina worker: stopping the runner failed: {exc}\n")
 
 
 def finish_run(worker_root: Path, task: Task, run: int, runner_state: str, runner=None, handle=None) -> str:
