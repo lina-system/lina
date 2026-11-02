@@ -9,7 +9,7 @@ metadata:
   hermes:
     tags: [Research, Citations, Grounding, Sources, Web, Reports]
     category: research
-    related_skills: [arxiv, pdf, youtube-content]
+    related_skills: [pdf, youtube-content]
 ---
 
 # Grounded Citations
@@ -25,9 +25,8 @@ the fetched page text), claims from model knowledge are flagged `[unverified]`,
 and `verify --evidence` fails any draft whose cited sources carry no evidence.
 
 This skill covers answers in chat, written documents (markdown, PDF, docx,
-slides), and research reports. It does not cover academic BibTeX pipelines —
-for conference papers use the `arxiv` skill, which this skill
-feeds (see `references/citation-formats.md`).
+slides), and research reports. For citation formats, including BibTeX export,
+see `references/citation-formats.md`.
 
 ## When to Use
 
@@ -135,15 +134,11 @@ with every claim attributed to the platform it came from:
 | Source type | Route | What it adds |
 |---|---|---|
 | Open web | `web_search` → `web_extract` | official docs, articles, announcements |
-| Community discussion | `reddit-reading` (`search`, `thread`) | real user experience, complaints, workarounds |
-| Blogs / releases / changelogs | `rss-feeds` (`read`, `discover`) | dated primary posts, version history |
+| Community discussion | `web_search` → `web_extract` | real user experience, complaints, workarounds |
+| Blogs / releases / changelogs | `web_search` → `web_extract` | dated primary posts, version history |
 | Video | `youtube-content` | walkthroughs, demos, talks |
 | Code | `terminal` with `gh search repos` / `gh search issues` | implementations, open bugs |
 | X/Twitter | `xurl` (needs API access) | announcements, developer chatter |
-
-The `reddit-reading` and `rss-feeds` skills are optional. If absent, install with
-`hermes skills install official/social-media/reddit-reading` or
-`hermes skills install official/research/rss-feeds` before using them.
 
 Register every URL from every route in the ledger as it arrives (step ②). Keep
 opinion and measurement apart: a Reddit thread is evidence that users *report*
