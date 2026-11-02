@@ -33,7 +33,7 @@ class LearnedSandbox(unittest.TestCase):
         self.addCleanup(self.monkeypatch.undo)
         self.work_env = WorkEnv(self.home, self.monkeypatch)
         self.home = self.work_env.home
-        (self.home / "desk").mkdir()
+        self.desk = self.work_env.desk  # WorkEnv made it; "desk" and "Desk" are one folder on macOS
         self.hermes = self.home / "Synthetic LINA"
         self.state = self.hermes / "learned"
         self.ledger = self.hermes / "work"
@@ -90,7 +90,7 @@ class LearnedSandbox(unittest.TestCase):
     def write_config(self):
         from hermes_cli.config import atomic_config_replace
         self.hermes.mkdir(parents=True, exist_ok=True)
-        doc = {"learned": self.settings, "desk": {"path": str(self.home / "desk")},
+        doc = {"learned": self.settings, "desk": {"path": str(self.desk)},
                "work": {"locale": "ko", "owner": {"id": "owner-fixture", "name": "사용자"},
                         "agents": {"default": "알파", "amber": "호박", "lina": "하나", "sion": "둘",
                                    "kai": "셋", "rumi": "넷"}, "store": {"backend": "sqlite"}}}

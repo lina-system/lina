@@ -45,9 +45,9 @@ class RuleTests(LearnedSandbox):
 
     def test_allowlist_shared_skills_attribution_and_unknown(self):
         soul = self.profiles["amber"] / "SOUL.md"
-        rule = self.home / "desk/Rules/guide.md"
+        rule = self.desk / "Rules/guide.md"
         shared = self.hermes / "shared-skills/sample/SKILL.md"
-        outside = self.home / "desk/Outside.md"
+        outside = self.desk / "Outside.md"
         for path in (soul, rule, shared, outside):
             path.parent.mkdir(parents=True, exist_ok=True)
             path.write_text("Before\n")

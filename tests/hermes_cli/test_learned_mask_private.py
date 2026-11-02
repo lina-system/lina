@@ -38,7 +38,7 @@ class PrivacyTests(LearnedSandbox):
     def test_private_counts_only_and_secrets_masked_everywhere(self):
         private = "Synthetic confidential orchid detail"
         secret = "sk-" + "SyntheticOnly" * 3
-        rule = self.home / "desk/hidden-garden/rule.md"
+        rule = self.desk / "hidden-garden/rule.md"
         rule.parent.mkdir(parents=True)
         rule.write_text(private)
         self.list_config("rules.txt", [str(rule)])

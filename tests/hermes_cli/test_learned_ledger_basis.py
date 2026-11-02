@@ -3,7 +3,7 @@ from tests.hermes_cli._learned_env import LearnedSandbox, epoch
 
 class LedgerTests(LearnedSandbox):
     def test_terminal_read_is_not_a_self_written_file(self):
-        path = self.home / "desk/Notes/result.md"
+        path = self.desk / "Notes/result.md"
         self.call("terminal", {"command": "cat '" + str(path) + "'"}, {"exit_code": 0})
         self.ledger_rows(dict(id="G1", op="done", ts=epoch("2026-01-02T12:00:00"), by="amber",
                              check="evidence:A meeting happened", evidence=[{"ref": "desk:Notes/result.md"}]))
@@ -12,7 +12,7 @@ class LedgerTests(LearnedSandbox):
 
     def test_basis_found_missing_mismatch_and_self_closed(self):
         self.message("Build the sample, please!", at="2026-01-02T01:02:00", profile="default")
-        self.call("write_file", {"path": str(self.home / "desk/Notes/result.md"), "content": "Synthetic memo"},
+        self.call("write_file", {"path": str(self.desk / "Notes/result.md"), "content": "Synthetic memo"},
                   {"success": True}, at="2026-01-02T01:04:00")
         def row(id_, text, at, **extra):
             return dict(id=id_, op="basis", ts=epoch("2026-01-02T01:05:00"), by="amber", writer="amber",
