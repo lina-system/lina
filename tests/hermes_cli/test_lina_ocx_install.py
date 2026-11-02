@@ -14,21 +14,28 @@ from hermes_cli import lina_ocx
 
 INTEGRITY = "sha512-" + "A" * 86 + "=="
 
-# A Node whose ``node`` runs npm-cli.js as ``npm install --prefix <dir> --save-exact <pkg>@<ver>``: it writes the
-# lock npm would (version + the integrity in this script) and touches $HOME, as npm's cache and bun's postinstall do.
+# A Node whose ``node`` runs npm-cli.js the way LINA calls npm, logging each call to $HOME/npm-calls.jsonl:
+# ``install --package-lock-only`` writes the lock npm would (the integrity in this script), ``ci`` lays out the
+# locked tree, ``rebuild`` runs the install scripts (bun's postinstall touches $HOME).
 _FAKE_NODE = '''#!{python}
 import json, os, sys
 args = sys.argv[2:]
-prefix = args[args.index("--prefix") + 1]
-spec = args[-1]
-name, version = spec.rsplit("@", 1)
-open(os.path.join(os.environ["HOME"], "npm-was-here"), "w").close()
-os.makedirs(os.path.join(prefix, "node_modules", "bun", "bin"), exist_ok=True)
-open(os.path.join(prefix, "node_modules", "bun", "bin", "bun.exe"), "w").close()
-lock = {{"lockfileVersion": 3, "packages": {{"": {{"dependencies": {{name: version}}}},
-        "node_modules/" + name: {{"version": version, "integrity": {integrity!r}}}}}}}
-with open(os.path.join(prefix, "package-lock.json"), "w") as fh:
-    json.dump(lock, fh)
+home = os.environ["HOME"]
+with open(os.path.join(home, "npm-calls.jsonl"), "a") as fh:
+    fh.write(json.dumps(args) + "\\n")
+if args[0] == "install" and "--package-lock-only" in args:
+    (name, version), = json.load(open("package.json"))["dependencies"].items()
+    lock = {{"lockfileVersion": 3, "packages": {{"": {{"dependencies": {{name: version}}}},
+            "node_modules/" + name: {{"version": version, "integrity": {integrity!r}}}}}}}
+    with open("package-lock.json", "w") as fh:
+        json.dump(lock, fh)
+elif args[0] == "ci":
+    os.makedirs(os.path.join("node_modules", "bun", "bin"), exist_ok=True)
+    open(os.path.join("node_modules", "bun", "bin", "bun.exe"), "w").close()
+elif args[0] == "rebuild":
+    open(os.path.join(home, "npm-was-here"), "w").close()
+else:
+    sys.exit("unexpected npm call: " + " ".join(args))
 '''
 
 
@@ -58,6 +65,7 @@ def world(tmp_path, monkeypatch):
     pin = lina_ocx.Pins(real.node_version, "https://nodejs.invalid/dist", {key: digest for key in real.node_sha256},
                         real.package, real.version, INTEGRITY)
     monkeypatch.setattr(lina_ocx, "pins", lambda path=None: pin)
+    monkeypatch.setattr(lina_ocx, "LOCK_DIR", tmp_path / "npm-locks")  # no committed lock unless a test writes one
     fetched = []
 
     def fetch(url, dest):
@@ -115,3 +123,53 @@ def test_the_port_comes_from_ocx_port_in_the_lina_config(tmp_path):
     assert lina_ocx.configured_port(tmp_path) == lina_ocx.DEFAULT_PORT == 10100
     (tmp_path / "config.yaml").write_text("ocx:\n  port: 10150\n")
     assert lina_ocx.configured_port(tmp_path) == 10150
+
+
+def _npm_calls(root: Path) -> list[list[str]]:
+    log = root / "vendor" / "ocx" / "home" / "npm-calls.jsonl"
+    return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
+
+
+@pytest.mark.platforms("posix")
+def test_no_package_script_runs_before_the_locked_tree_is_verified(world):
+    assert lina_ocx.install(world["root"], fetch=world["fetch"]) == 0
+    calls = _npm_calls(world["root"])
+    assert [call[0] for call in calls] == ["install", "ci", "rebuild"]
+    assert all("--ignore-scripts" in call for call in calls[:2])
+
+
+@pytest.mark.platforms("posix")
+def test_an_integrity_mismatch_runs_no_package_and_no_script(world, monkeypatch):
+    pin = world["pin"]
+    monkeypatch.setattr(lina_ocx, "pins", lambda path=None: lina_ocx.Pins(
+        pin.node_version, pin.node_dist, pin.node_sha256, pin.package, pin.version, "sha512-" + "B" * 86 + "=="))
+    with pytest.raises(lina_ocx.OcxError, match="nothing kept"):
+        lina_ocx.install(world["root"], fetch=world["fetch"])
+    assert [call[0] for call in _npm_calls(world["root"])] == ["install"]  # the lock only; no ci, no rebuild
+    assert not (world["root"] / "vendor" / "ocx" / "home" / "npm-was-here").exists()
+
+
+@pytest.mark.platforms("posix")
+@pytest.mark.parametrize("locked", [INTEGRITY, "sha512-" + "B" * 86 + "=="])
+def test_a_committed_lock_is_installed_as_is_and_must_carry_the_pin(world, locked):
+    pin, lock = world["pin"], world["tmp"] / "npm-locks" / "ocx"
+    lock.mkdir(parents=True)
+    (lock / "package.json").write_text(json.dumps({"name": "lina-ocx", "dependencies": {pin.package: pin.version}}))
+    (lock / "package-lock.json").write_text(json.dumps({"packages": {
+        f"node_modules/{pin.package}": {"version": pin.version, "integrity": locked}}}))
+    if locked != INTEGRITY:
+        with pytest.raises(lina_ocx.OcxError, match="nothing kept"):
+            lina_ocx.install(world["root"], fetch=world["fetch"])
+        assert _npm_calls(world["root"]) == []
+        return
+    assert lina_ocx.install(world["root"], fetch=world["fetch"]) == 0
+    assert [call[0] for call in _npm_calls(world["root"])] == ["ci", "rebuild"]
+
+
+@pytest.mark.parametrize("name", ["ocx", "omo"])
+def test_the_committed_lock_of_each_npm_pin_carries_the_pinned_integrity(name):
+    pin = json.loads(lina_ocx.PIN_FILE.read_text())[name]
+    lock = lina_ocx.committed_lock(name, pin["package"], pin["version"])
+    assert lock is not None, f"pm/npm-locks/{name} does not lock {pin['package']}@{pin['version']}"
+    entry = json.loads((lock / "package-lock.json").read_text())["packages"][f"node_modules/{pin['package']}"]
+    assert (entry["version"], entry["integrity"]) == (pin["version"], pin["integrity"])

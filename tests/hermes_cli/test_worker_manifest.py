@@ -104,6 +104,30 @@ def test_a_repo_task_works_in_a_fresh_worktree_without_push_rights(tmp_path):
     assert (task.dir / "state").read_text().strip() == "done"
 
 
+def test_the_push_block_stays_in_the_task_worktree(tmp_path):
+    """The person's checkout and its other worktrees keep their push URL during and after a task."""
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    _git("init", "-q", "-b", "main", cwd=repo)
+    (repo / "a.txt").write_text("a\n")
+    _git("add", "a.txt", cwd=repo)
+    _git("commit", "-q", "-m", "base", cwd=repo)
+    _git("remote", "add", "origin", str(tmp_path / "remote.git"), cwd=repo)
+    root, tid = tmp_path / "worker", "OT-SIO1102120003"
+    put(LocalTransport(root), tid, "job.json", json.dumps({"repo": str(repo), "branch": f"omo/{tid}",
+                                                          "base_branch": "main"}))
+    task = device.task_of(root, tid)
+    device.prepare(root, task)
+    _git("worktree", "add", "-q", "-b", "sibling", str(tmp_path / "sibling"), "main", cwd=repo)
+
+    def push_url(cwd):
+        return _git("remote", "get-url", "--push", "origin", cwd=cwd).stdout.strip()
+
+    assert push_url(task.work) == "PUSH-BLOCKED-by-lina-worker"
+    assert push_url(repo) == str(tmp_path / "remote.git")
+    assert push_url(tmp_path / "sibling") == str(tmp_path / "remote.git")
+
+
 def test_lock_inputs_without_inputs_records_nothing(tmp_path):
     task = _task(tmp_path / "worker")
     assert lock_inputs(task) == {}

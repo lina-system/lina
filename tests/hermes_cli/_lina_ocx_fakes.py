@@ -3,7 +3,8 @@
 The fake ``bun`` is called exactly as the real one (``bun <OCX entry> <verb…>``). ``start --port N`` serves
 ``/healthz`` and ``/v1/models`` on 127.0.0.1:N and records its pid in ``$OPENCODEX_HOME/ocx.pid``; ``/v1/models``
 answers with the status written in ``$OPENCODEX_HOME/fake-status`` (200 when absent). Any other verb prints the
-recorded ``--json`` output of OCX 2.95.0 from ``fixtures/ocx_2_95_0``.
+recorded ``--json`` output of OCX 2.95.0 from ``fixtures/ocx_2_95_0``; ``integration client enable --client omo`` writes
+a one-model catalog to ``$OMO_CODING_AGENT_DIR/models.json`` (refused, like OCX, when that dir does not exist).
 
 Like OCX 2.95.0's start (``discoverLiveProxy`` + ``start-owner-fence.ts``), ``start`` first probes the port in
 ``$OPENCODEX_HOME/config.json`` (else the default port, never ``--port``) and refuses with "Proxy ownership is
@@ -71,6 +72,15 @@ if args[:1] == ["start"]:
     with open(os.path.join(home, "ocx.pid"), "w") as fh:
         fh.write(str(os.getpid()))
     server.serve_forever()
+if args == ["integration", "client", "enable", "--client", "omo"]:  # OCX writes its catalog where omo reads it
+    agent = os.environ.get("OMO_CODING_AGENT_DIR") or os.path.join(os.environ["HOME"], ".omo", "agent")
+    if not os.path.isdir(agent):
+        print("omo is not installed", file=sys.stderr)
+        sys.exit(1)
+    with open(os.path.join(agent, "models.json"), "w") as fh:
+        json.dump({{"providers": {{"opencodex": {{"models": [{{"id": "gpt-fake"}}]}}}}}}, fh)
+    print("omo enabled.")
+    sys.exit(0)
 fixtures = {fixtures!r}
 name = fixtures.get(" ".join(args))
 if name is None:

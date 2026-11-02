@@ -25,13 +25,13 @@ def _cmd_install(args) -> None:
     ocx = ocx_install_step()
     if ocx:
         sys.exit(max(helper, ocx))
+    if args.services:  # before omo: its routing is set up through the running OCX
+        ocx = _start_ocx()
     if args.role == "worker":
         from hermes_cli.lina_omo_routing import install_step as omo_install_step
         omo = omo_install_step(apply=args.apply)
         if omo:
-            sys.exit(max(helper, omo))
-    if args.services:
-        ocx = _start_ocx()
+            sys.exit(max(helper, ocx, omo))
     sys.exit(max(helper, ocx, install_gateway_step(services=args.services)))
 
 
