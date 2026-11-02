@@ -24,6 +24,9 @@ OmoCall = Callable[[list[str], float], dict | None]
 MOVING = ("thinking", "tool", "running", "checking")
 CONTRACT = {"done": "done", "idle_after_question": "done", "failed": "failed", "cancelled": "cancelled",
             "stalled": "stalled"}
+LOCAL_ENDS = ("timeout", "cancelled", "stalled")  # ends the worker imposes while the session may still be working
+SEALED = ("done", "failed", "cancelled")
+ABORT_WAIT_S = 120.0
 
 
 def parse_time(value) -> float | None:
@@ -110,6 +113,27 @@ def answered_and_idle(view: dict, task: Task) -> bool:
             and (task.work / "report.md").is_file())
 
 
+def stopped(view: dict | None) -> bool:
+    """The engine reports the session at rest: sealed, or neither running a turn, streaming nor in a bash call."""
+    if view is None:
+        return False
+    if view.get("state") in SEALED:
+        return True
+    return not view.get("isStreaming") and not view.get("isBashRunning") and view.get("state") != "running"
+
+
+def stop_session(call: OmoCall, ref: str, wait_s: float) -> bool:
+    """Abort the session's turn and wait until the engine reports it stopped; False while it still works."""
+    call(["abort", ref], 60)
+    deadline = time.monotonic() + wait_s
+    while True:
+        if stopped(lifecycle_view(call(["state", ref], 60))):
+            return True
+        if time.monotonic() >= deadline:
+            return False
+        call(["wait", ref, "--until", "idle", "--timeout", "10000"], 30)
+
+
 class Settle:
     def __init__(self, task: Task, run: int, ref: str, call: OmoCall, limits: dict):
         self.task, self.run, self.ref, self.call, self.limits = task, run, ref, call, limits
@@ -123,6 +147,13 @@ class Settle:
         self.file.write_text(json.dumps(self.mem, ensure_ascii=False), encoding="utf-8")
 
     def _finish(self, outcome: str, **extra) -> str:
+        """End the run; an end the worker imposes first aborts the session and needs it confirmed stopped, else the
+        run stays ``running`` (its slot held) and the next poll aborts again."""
+        if outcome in LOCAL_ENDS and not stop_session(self.call, self.ref,
+                                                      float(self.limits.get("abort_wait_s", ABORT_WAIT_S))):
+            self.mem["stopping"] = {"outcome": outcome, **extra}
+            self._save()
+            return "running"
         result = {"outcome": outcome, "waited_s": round(time.time() - self.mem["start"], 1),
                   "wakes": self.mem["wakes"], **extra}
         self.task.path(f"wait.{self.run}.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
@@ -209,6 +240,9 @@ class Settle:
         """One poll: ``running``, ``waiting_human`` or the run's end (``done``, ``stalled``, ``failed``, ...)."""
         if "outcome" in self.mem:
             return CONTRACT.get(self.mem["outcome"], "failed")
+        if self.mem.get("stopping"):
+            pending = dict(self.mem["stopping"])
+            return self._finish(pending.pop("outcome"), **pending)
         if self.task.path("cancelled").exists():
             return self._finish("cancelled", via="lina worker cancel")
         if self.task.path(f"answer_abort.{self.run}").exists():
