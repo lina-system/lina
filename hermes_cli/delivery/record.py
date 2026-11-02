@@ -11,7 +11,9 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Protocol
 
-RUNNING = ("new", "queued", "running")
+# ``placing``: the hub recorded a device and may already have published the request (lina#35); it holds its contract
+# until it runs or ends, so a crash between record and publish never frees a scope that is still being worked.
+RUNNING = ("new", "queued", "placing", "running")
 FREE = ("failed", "cancelled")
 
 
