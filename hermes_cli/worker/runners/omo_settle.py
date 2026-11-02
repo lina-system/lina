@@ -24,7 +24,7 @@ OmoCall = Callable[[list[str], float], dict | None]
 MOVING = ("thinking", "tool", "running", "checking")
 CONTRACT = {"done": "done", "idle_after_question": "done", "failed": "failed", "cancelled": "cancelled",
             "stalled": "stalled"}
-LOCAL_ENDS = ("timeout", "cancelled", "stalled")  # ends the worker imposes while the session may still be working
+LOCAL_ENDS = ("timeout", "cancelled", "stalled", "error")  # ends the worker imposes while the session may still be working
 SEALED = ("done", "failed", "cancelled")
 ABORT_WAIT_S = 120.0
 
