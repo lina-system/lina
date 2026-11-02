@@ -1,6 +1,7 @@
-import { describe, expect, test } from "bun:test";
-import type { Catalog, CatalogModel } from "../src/catalog";
-import { buildPlan, clampReasoning, type Policy } from "../src/plan";
+import assert from "node:assert/strict";
+import { describe, test } from "node:test";
+import type { Catalog, CatalogModel } from "../src/catalog.js";
+import { buildPlan, clampReasoning, type Policy } from "../src/plan.js";
 
 const levels = (...supported: string[]) =>
   Object.fromEntries(["low", "medium", "high", "xhigh", "max"].map((l) => [l, supported.includes(l) ? l : null]));
@@ -20,7 +21,7 @@ describe("buildPlan", () => {
       [{ model: "gemini-4-argon", variant: "low" }],
       catalogOf({ id: "google/gemini-4-argon" }, { id: "google-antigravity/gemini-4-argon" }, { id: "inferhub/gemini-4-argon" }),
     );
-    expect(route?.models.map((e) => e.model)).toEqual([
+    assert.deepEqual(route?.models.map((e) => e.model), [
       "opencodex/google-antigravity/gemini-4-argon",
       "opencodex/google/gemini-4-argon",
     ]);
@@ -31,8 +32,8 @@ describe("buildPlan", () => {
       [{ model: "gpt-x-fast" }, { model: "gpt-y-fast" }],
       catalogOf({ id: "gpt-x--fast" }, { id: "gpt-y--fast" }),
     );
-    expect(route?.models).toEqual([{ model: "opencodex/gpt-y--fast" }]);
-    expect(route?.skipped).toEqual(["gpt-x-fast"]);
+    assert.deepEqual(route?.models, [{ model: "opencodex/gpt-y--fast" }]);
+    assert.deepEqual(route?.skipped, ["gpt-x-fast"]);
   });
 
   test("keeps the first occurrence of a model", () => {
@@ -40,7 +41,7 @@ describe("buildPlan", () => {
       [{ model: "gpt-a", variant: "xhigh" }, { model: "gpt-a", variant: "high" }],
       catalogOf({ id: "gpt-a" }),
     );
-    expect(route?.models).toEqual([{ model: "opencodex/gpt-a", reasoning: "xhigh" }]);
+    assert.deepEqual(route?.models, [{ model: "opencodex/gpt-a", reasoning: "xhigh" }]);
   });
 
   test("appends extras after the upstream chain and warns on a dead extras route", () => {
@@ -50,25 +51,25 @@ describe("buildPlan", () => {
       withExtras,
       catalogOf({ id: "gpt-a" }, { id: "gpt-b" }),
     );
-    expect(plan.routes["categories.r"]?.models.map((e) => e.model)).toEqual(["opencodex/gpt-a", "opencodex/gpt-b"]);
-    expect(plan.warnings).toContain("policy extras name a route omo no longer has: categories.gone");
+    assert.deepEqual(plan.routes["categories.r"]?.models.map((e) => e.model), ["opencodex/gpt-a", "opencodex/gpt-b"]);
+    assert.ok(plan.warnings.includes("policy extras name a route omo no longer has: categories.gone"));
   });
 
   test("warns when a route ends up empty", () => {
     const plan = buildPlan({ categories: { r: [{ model: "nope", providers: [] }] }, agents: {} }, policy, catalogOf({ id: "gpt-a" }));
-    expect(plan.warnings).toContain("categories.r: no model is available in the catalog");
+    assert.ok(plan.warnings.includes("categories.r: no model is available in the catalog"));
   });
 });
 
 describe("clampReasoning", () => {
   test("uses the nearest supported level below, else above", () => {
-    expect(clampReasoning({ id: "m", thinkingLevelMap: levels("low", "high") }, "max")).toBe("high");
-    expect(clampReasoning({ id: "m", thinkingLevelMap: levels("low", "high") }, "medium")).toBe("low");
-    expect(clampReasoning({ id: "m", thinkingLevelMap: levels("high") }, "low")).toBe("high");
-    expect(clampReasoning({ id: "m", thinkingLevelMap: levels("low") }, "off")).toBe("low");
+    assert.equal(clampReasoning({ id: "m", thinkingLevelMap: levels("low", "high") }, "max"), "high");
+    assert.equal(clampReasoning({ id: "m", thinkingLevelMap: levels("low", "high") }, "medium"), "low");
+    assert.equal(clampReasoning({ id: "m", thinkingLevelMap: levels("high") }, "low"), "high");
+    assert.equal(clampReasoning({ id: "m", thinkingLevelMap: levels("low") }, "off"), "low");
   });
 
   test("keeps the level when the model declares no map", () => {
-    expect(clampReasoning({ id: "m" }, "max")).toBe("max");
+    assert.equal(clampReasoning({ id: "m" }, "max"), "max");
   });
 });

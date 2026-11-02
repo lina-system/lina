@@ -1,15 +1,18 @@
-#!/usr/bin/env bun
+#!/usr/bin/env node
 import { existsSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { parseArgs } from "node:util";
-import defaultPolicy from "../policy.default.json";
-import { loadCatalog } from "./catalog";
-import { currentEntries, editRouting, nativeOverrideWarnings, readConfig, writeConfig } from "./config";
-import { OcxOmoError } from "./errors";
-import { buildPlan, formatEntries, type Entry, type Plan, type Policy } from "./plan";
-import { readState, writeState, type State } from "./state";
-import { loadUpstream, type Chains, type Rung } from "./upstream";
+import { loadCatalog } from "./catalog.js";
+import { currentEntries, editRouting, nativeOverrideWarnings, readConfig, writeConfig } from "./config.js";
+import { OcxOmoError } from "./errors.js";
+import { parseJsonc } from "./jsonc.js";
+import { buildPlan, formatEntries, type Entry, type Plan, type Policy } from "./plan.js";
+import { readState, writeState, type State } from "./state.js";
+import { loadUpstream, type Chains, type Rung } from "./upstream.js";
+
+/** The bundled policy; the build keeps src/ and policy.default.json one level apart under dist/. */
+const DEFAULT_POLICY = new URL("../../policy.default.json", import.meta.url);
 
 const EXIT_PENDING = 10;
 const EXIT_ERROR = 2;
@@ -57,8 +60,8 @@ function load(values: ReturnType<typeof parse>["values"]): Context {
   const policyPath = values.policy ?? join(home, ".omo/ocx-omo/policy.json");
   if (values.policy && !existsSync(values.policy)) throw new OcxOmoError(`policy not found: ${values.policy}`);
   const policy = existsSync(policyPath)
-    ? (Bun.JSONC.parse(readFileSync(policyPath, "utf8")) as Policy)
-    : (defaultPolicy as Policy);
+    ? (parseJsonc(readFileSync(policyPath, "utf8"), policyPath) as Policy)
+    : (JSON.parse(readFileSync(DEFAULT_POLICY, "utf8")) as Policy);
   const upstream = loadUpstream(values["omo-task"]);
   const catalog = loadCatalog(values.models ?? join(home, ".omo/agent/models.json"), policy.provider);
   return {
@@ -195,7 +198,7 @@ function main(argv: string[]): number {
 }
 
 try {
-  process.exitCode = main(Bun.argv.slice(2));
+  process.exitCode = main(process.argv.slice(2));
 } catch (error) {
   const badArgs = error instanceof TypeError && "code" in error && String(error.code).startsWith("ERR_PARSE_ARGS");
   if (!(error instanceof OcxOmoError) && !badArgs) throw error;

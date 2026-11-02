@@ -1,7 +1,9 @@
+import { randomUUID } from "node:crypto";
 import { copyFileSync, existsSync, readFileSync, renameSync, statSync, writeFileSync } from "node:fs";
 import { applyEdits, modify, type JSONPath } from "jsonc-parser";
-import { OcxOmoError } from "./errors";
-import type { Entry, Plan } from "./plan";
+import { OcxOmoError } from "./errors.js";
+import { parseJsonc } from "./jsonc.js";
+import type { Entry, Plan } from "./plan.js";
 
 /** The only keys ocx-omo owns on a route; prompts, tools and other tuning stay untouched. */
 const ROUTING_KEYS = ["model", "models", "reasoning", "variant", "reasoningEffort", "fallback_models"];
@@ -12,7 +14,7 @@ export type ConfigFile = { path: string; text: string; parsed: Record<string, un
 
 export function readConfig(path: string): ConfigFile {
   const text = existsSync(path) ? readFileSync(path, "utf8") : "{}\n";
-  const parsed = Bun.JSONC.parse(text);
+  const parsed = parseJsonc(text, path);
   if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed))
     throw new OcxOmoError(`${path} must be a JSONC object`);
   return { path, text, parsed: parsed as Record<string, unknown> };
@@ -57,7 +59,7 @@ export function editRouting(text: string, plan: Plan, paths: string[]): string {
     const planned = plan.routes[path];
     if (!planned?.models.length) continue;
     const [scope, name] = splitPath(path);
-    const route = routeOf(Bun.JSONC.parse(result) as Record<string, unknown>, path) ?? {};
+    const route = routeOf(parseJsonc(result, "edited config") as Record<string, unknown>, path) ?? {};
     for (const key of ROUTING_KEYS) {
       if (key !== "models" && key in route) edit([scope, name, key], undefined);
     }
@@ -74,7 +76,7 @@ export function writeConfig(path: string, text: string): string | undefined {
     backup = `${path}.bak.ocx-omo-${new Date().toISOString().replace(/[:.]/g, "-")}`;
     copyFileSync(path, backup);
   }
-  const temporary = `${path}.${crypto.randomUUID()}.tmp`;
+  const temporary = `${path}.${randomUUID()}.tmp`;
   writeFileSync(temporary, text, { mode });
   renameSync(temporary, path);
   return backup;

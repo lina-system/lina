@@ -2,13 +2,16 @@
 
 omo가 업데이트되면 내장 카테고리·에이전트 모델 순서를 다시 읽어서, OpenCodex 모델 기준의 새 라우팅을 제안하는 도구입니다.
 
-```sh
-bun install
-bun link            # ocx-omo 명령 등록
+LINA에서는 `lina omo routing plan|apply|check`가 이 도구를 LINA의 고정 Node로 실행합니다(lina#34). 직접 쓸 때는 Node 24 이상에서:
 
-ocx-omo plan        # 제안 라우팅과 현재 omo.jsonc의 차이 보기
-ocx-omo apply       # 백업 후 ~/.omo/omo.jsonc에 쓰고 기준선 저장
-ocx-omo check       # omo 업데이트 후 실행. 0 = 변경 없음, 10 = 검토할 변경 있음, 2 = 오류
+```sh
+npm ci
+npm run build       # tsc → dist/
+npm test            # 빌드 후 node --test
+
+node dist/src/cli.js plan        # 제안 라우팅과 현재 omo.jsonc의 차이 보기
+node dist/src/cli.js apply       # 백업 후 ~/.omo/omo.jsonc에 쓰고 기준선 저장
+node dist/src/cli.js check       # omo 업데이트 후 실행. 0 = 변경 없음, 10 = 검토할 변경 있음, 2 = 오류
 ```
 
 `check`가 변경을 찾으면 경로별 전후 차이와 함께 `ocx-omo apply --only <routes>` 명령을 알려줍니다. 자동으로 쓰지는 않습니다.

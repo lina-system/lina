@@ -1,7 +1,7 @@
-import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { accessSync, constants, existsSync, readFileSync, realpathSync } from "node:fs";
 import { homedir } from "node:os";
-import { dirname, join } from "node:path";
-import { OcxOmoError } from "./errors";
+import { delimiter, dirname, join } from "node:path";
+import { OcxOmoError } from "./errors.js";
 
 export type Rung = { model: string; variant?: string; providers: string[] };
 export type Chains = {
@@ -97,6 +97,21 @@ export function extractChains(source: string): Chains {
   return { categories: extract(CATEGORY_ANCHOR, "category"), agents: extract(AGENT_ANCHOR, "agent") };
 }
 
+/** The first executable `name` on PATH, like `which`. */
+function onPath(name: string): string | undefined {
+  for (const directory of (process.env["PATH"] ?? "").split(delimiter)) {
+    if (!directory) continue;
+    const candidate = join(directory, name);
+    try {
+      accessSync(candidate, constants.X_OK);
+      return candidate;
+    } catch {
+      // not here: try the next PATH entry
+    }
+  }
+  return undefined;
+}
+
 function candidates(): string[] {
   const found: string[] = [];
   const fromBinary = (binary: string) => {
@@ -111,8 +126,8 @@ function candidates(): string[] {
     found.push(join(directory, "../plugin/extensions/omo-task.js"));
   };
   if (process.env["OMO_BIN"]) fromBinary(process.env["OMO_BIN"]);
-  const onPath = Bun.which("omo");
-  if (onPath) fromBinary(onPath);
+  const omo = onPath("omo");
+  if (omo) fromBinary(omo);
   found.push(join(homedir(), ".bun/install/global/node_modules/omo-ai/plugin/extensions/omo-task.js"));
   found.push("/Applications/OmO.app/Contents/Resources/omo-runtime/darwin-arm64/plugin/extensions/omo-task.js");
   return found;

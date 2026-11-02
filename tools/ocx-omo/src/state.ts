@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { dirname } from "node:path";
-import type { Entry } from "./plan";
-import type { Rung } from "./upstream";
+import type { Entry } from "./plan.js";
+import type { Rung } from "./upstream.js";
 
 /** What the user last accepted: per route, the upstream chain and the routing written for it. */
 export type State = {

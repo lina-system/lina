@@ -1,5 +1,5 @@
-import type { Catalog, CatalogModel } from "./catalog";
-import type { Chains, Rung } from "./upstream";
+import type { Catalog, CatalogModel } from "./catalog.js";
+import type { Chains, Rung } from "./upstream.js";
 
 export type Extra = { model: string; reasoning?: string };
 export type Policy = {
