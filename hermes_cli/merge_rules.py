@@ -10,9 +10,10 @@ Standard library only: ``kanban_gates.py`` loads this file by path when it runs 
   outranks a real pass or failure either.
 * Required checks: each one green (success, skipped or neutral) on the head.
 * Codex review: Codex reviewed this head and left no P0/P1 finding on it; findings on older heads do not count.
-* dev green: the latest ``dev`` push CI passed and no check on the head failed or timed out, required or not; the
-  only exception is a ``dev-red-fix`` pull request on whose head at least one check red on ``dev`` passes, that
-  fails strictly fewer checks than ``dev`` and adds none.
+* dev green: the latest ``dev`` push CI passed and no check on the head failed or timed out, required or not; or a
+  ``dev-red-fix`` pull request on whose head at least one check red on ``dev`` passes, that fails strictly fewer
+  checks than ``dev`` and adds none; or the owner approved merging over the red ``dev`` with ``dev-red-approved``
+  (``owner_approved``: the label counts only when the owner account added it) and the head adds no red check.
 * Linked issue: the body closes an open issue of this repository (the branch number among them), or ``no-issue``.
 """
 from __future__ import annotations
@@ -25,7 +26,7 @@ LABEL = {PASS: "PASS", FAIL: "FAIL", WAIT: "WAIT"}
 GREEN = frozenset({"success", "skipped", "neutral"})
 RED = frozenset({"failure", "timed_out", "cancelled", "action_required", "startup_failure", "stale"})
 CODEX = "chatgpt-codex-connector"
-DEV_RED_FIX, NO_ISSUE = "dev-red-fix", "no-issue"
+DEV_RED_FIX, DEV_RED_APPROVED, NO_ISSUE = "dev-red-fix", "dev-red-approved", "no-issue"
 
 _BOX = re.compile(r"^(\s*[-*]\s+\[)([ xX])(\]\s+)")
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
@@ -163,17 +164,42 @@ def codex_review(head: str, reviews: list[dict], review_comments: list[dict], is
 
 
 
-def dev_green(labels: set[str], head_runs: list[dict], dev_ok: bool, dev_failed: set[str]) -> Verdict:
+def owner_approved(labels: set[str], label_events: list[dict], owner_login: str | None) -> tuple[bool, str]:
+    """Whether ``dev-red-approved`` stands as the owner's approval: the label is on the pull request and its latest
+    ``labeled`` event in the issue timeline was made by ``owner_login`` (``work.owner_login``). Only the owner
+    applies that label; anyone else adding it approves nothing."""
+    if DEV_RED_APPROVED not in labels:
+        return False, "no dev-red-approved label"
+    if not owner_login:
+        return False, "dev-red-approved cannot be checked: work.owner_login is not set"
+    added = [e for e in label_events if e.get("event") == "labeled"
+             and (e.get("label") or {}).get("name") == DEV_RED_APPROVED]
+    if not added:
+        return False, "dev-red-approved has no labeled event in the timeline"
+    actor = str(((max(added, key=lambda e: e.get("created_at") or "")).get("actor") or {}).get("login") or "")
+    if actor.lower() != owner_login.lower():
+        return False, f"dev-red-approved was added by {actor or 'an unknown account'}, not the owner"
+    return True, "dev-red-approved added by the owner"
+
+
+def dev_green(labels: set[str], head_runs: list[dict], dev_ok: bool, dev_failed: set[str],
+              approval: tuple[bool, str] = (False, "")) -> Verdict:
     """The dev-green guard. ``dev_ok``/``dev_failed``: the newest finished ``dev`` push CI run with a verdict
     and the names of its red jobs."""
     verdict = Verdict()
     latest = latest_runs([r for r in head_runs if r.get("status") == "completed"])
     head_fail = {name for name, run in latest.items() if run.get("conclusion") in RED}
     passed = {name for name, run in latest.items() if run.get("conclusion") == "success"}
+    if not dev_ok and approval[0] and DEV_RED_FIX not in labels:
+        new = head_fail - dev_failed
+        verdict.add(FAIL if new else PASS, f"dev is red but {approval[1]}; the head adds red checks: "
+                    f"{', '.join(sorted(new))}" if new else f"dev is red; merging over it: {approval[1]}")
+        return verdict
     if DEV_RED_FIX not in labels:
         if not dev_ok:
+            why = f"; {approval[1]}" if DEV_RED_APPROVED in labels else ""
             verdict.add(FAIL, f"dev is red ({', '.join(sorted(dev_failed)) or 'see the dev run'}); "
-                              "only a dev-red-fix pull request merges until dev is green")
+                              f"only a dev-red-fix pull request merges until dev is green{why}")
         elif head_fail:
             verdict.add(FAIL, f"red checks on the head: {', '.join(sorted(head_fail))}")
         else:
@@ -231,7 +257,7 @@ def linked_issue(repo: str, body: str | None, labels: set[str], head_ref: str, i
 def may_merge(pr: dict) -> Verdict:
     """May this head merge? ``pr`` holds what the collector read, all on the pull request's current head:
     ``repo, number, state, head, head_ref, body, labels, required, runs, statuses, reviews, review_comments,
-    issue_comments, dev_ok, dev_failed, issues``."""
+    issue_comments, dev_ok, dev_failed, issues, label_events, owner_login``."""
     verdict = Verdict()
     if pr.get("state") != "OPEN":
         verdict.add(FAIL, f"#{pr.get('number')} is {str(pr.get('state')).lower()}")
@@ -240,7 +266,8 @@ def may_merge(pr: dict) -> Verdict:
     for part in (required_checks(pr.get("required") or [], pr.get("runs") or [], pr.get("statuses")),
                  codex_review(pr["head"], pr.get("reviews") or [], pr.get("review_comments") or [],
                               pr.get("issue_comments") or []),
-                 dev_green(labels, pr.get("runs") or [], bool(pr.get("dev_ok", True)), set(pr.get("dev_failed") or ())),
+                 dev_green(labels, pr.get("runs") or [], bool(pr.get("dev_ok", True)), set(pr.get("dev_failed") or ()),
+                           owner_approved(labels, pr.get("label_events") or [], pr.get("owner_login"))),
                  linked_issue(pr["repo"], pr.get("body"), labels, pr.get("head_ref") or "", pr.get("issues") or {})):
         verdict.lines.extend(part.lines)
     return verdict

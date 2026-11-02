@@ -156,6 +156,28 @@ def test_prs_reads_the_merge_rule_for_each_required_check(board, gh, runs, expec
     assert any("filter=all" in call for call in gh.calls() if "check-runs" in call)
 
 
+@pytest.mark.parametrize("labels, actor, owner, expected, why", [
+    (["dev-red-approved"], "repo-owner", "repo-owner", gates.PASS, "checks green"),
+    (["dev-red-approved"], "someone-else", "repo-owner", gates.FAIL, "added by someone-else, not the owner"),
+    (["dev-red-approved"], "repo-owner", None, gates.FAIL, "work.owner_login is not set"),
+    ([], None, "repo-owner", gates.PASS, "checks green"),
+], ids=["owner", "someone-else", "no-owner-configured", "absent"])
+def test_prs_accepts_dev_red_approved_only_from_the_owner(board, gh, capsys, labels, actor, owner, expected, why):
+    """A merged pull request labelled ``dev-red-approved`` merged over a red dev: ``gate prs`` asks the merge
+    rule's ``owner_approved`` whether the owner added the label (lina#63)."""
+    tid = _card(TODOS)
+    issue = _issue()
+    issue[2]["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"][0]["labels"] = {
+        "nodes": [{"name": name} for name in labels]}
+    timeline = [{"event": "labeled", "actor": {"login": actor}, "label": {"name": "dev-red-approved"},
+                 "created_at": "2026-11-01T09:00:00Z"}]
+    gh.set([issue, [["issues/34/timeline"], 0, timeline], *_acceptance()])
+    argv = ["prs", "--card", tid] + (["--owner-login", owner] if owner else [])
+    assert _run(*argv) == expected
+    assert why in capsys.readouterr().out
+    assert any("issues/34/timeline" in c for c in gh.calls()) is bool(labels)
+
+
 def test_prs_fails_without_issue_todos_and_defaults_card_to_env(board, gh, monkeypatch, capsys):
     tid = _card("## To-dos\n\n- [ ] only a checklist\n")
     monkeypatch.setenv("HERMES_KANBAN_TASK", tid)

@@ -8,6 +8,7 @@ work:
   dev_workflow: CI               # the push workflow whose latest run says whether dev is green
   runner_labels: {grok-cursor: grok}   # issue label -> lina worker runner (default: a label names its runner)
   contract_scopes: [store, config]     # title scopes that never run twice at once (feat(<scope>): ...)
+  owner_login: <github login>   # the owner account; only its dev-red-approved label approves a merge over red dev
   author: Name <id+name@users.noreply.github.com>   # the only commit author a landed branch may carry
   forbidden_patterns: ["private-host", "/home/someone"]   # regexes refused in a landed branch's added lines
   followup_two_level: [scripts/ci]     # paths whose follow-up area is two directories deep
@@ -66,6 +67,11 @@ def contract_scopes(base: Path | None = None) -> tuple[str, ...]:
 
 def author(base: Path | None = None) -> str | None:
     value = section(base).get("author")
+    return str(value) if value else None
+
+
+def owner_login(base: Path | None = None) -> str | None:
+    value = section(base).get("owner_login")
     return str(value) if value else None
 
 

@@ -153,7 +153,7 @@ def gh_json(*args: str):
 
 _ISSUE_QUERY = """query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){
 issue(number:$number){state stateReason body closedByPullRequestsReferences(first:20,includeClosedPrs:true){
-nodes{number url merged mergedAt mergeCommit{oid} repository{nameWithOwner}}}}}}"""
+nodes{number url merged mergedAt mergeCommit{oid} repository{nameWithOwner} labels(first:50){nodes{name}}}}}}}"""
 
 
 def fetch_issue(repo: str, number: int) -> dict:
@@ -196,7 +196,20 @@ done_when = _sibling("merge_rules").done_when
 
 
 
-def check_issue(repo: str, number: int, issue: dict) -> tuple[int, str]:
+def _owner_approval(pr: dict, owner_login: str | None) -> tuple[int, str] | None:
+    """A merged pull request labelled ``dev-red-approved`` merged over a red dev: the merge rule's
+    ``owner_approved`` decides whether the owner added that label."""
+    rules = _sibling("merge_rules")
+    labels = {n["name"] for n in (pr.get("labels") or {}).get("nodes") or []}
+    if rules.DEV_RED_APPROVED not in labels:
+        return None
+    pr_repo = (pr.get("repository") or {}).get("nameWithOwner") or ""
+    events = gh_json("api", f"repos/{pr_repo}/issues/{pr['number']}/timeline?per_page=100")
+    approved, why = rules.owner_approved(labels, events if isinstance(events, list) else [], owner_login)
+    return (PASS if approved else FAIL), f"#{pr['number']} {why}"
+
+
+def check_issue(repo: str, number: int, issue: dict, owner_login: str | None = None) -> tuple[int, str]:
     ref = f"{repo}#{number}"
     if issue.get("state") != "CLOSED":
         return FAIL, f"{ref}: issue is still open"
@@ -214,6 +227,10 @@ def check_issue(repo: str, number: int, issue: dict) -> tuple[int, str]:
     worst = PASS
     notes = []
     for pr in prs:
+        approval = _owner_approval(pr, owner_login)
+        if approval and approval[0] == FAIL:
+            worst = FAIL
+            notes.append(approval[1])
         receipt = collect(pr["url"], None, green=_sibling("merge_rules").GREEN)
         cls = receipt.get("classification")
         if not receipt.get("ok"):
@@ -231,9 +248,10 @@ def gate_prs(args: argparse.Namespace, conn: sqlite3.Connection, report: Report)
     if not issues:
         report.line(FAIL, f"{card['id']}: no owner/repo#n issues under ## To-dos")
         return
+    owner = args.owner_login or _configured_owner()
     for repo, number in issues:
         try:
-            code, text = check_issue(repo, number, fetch_issue(repo, number))
+            code, text = check_issue(repo, number, fetch_issue(repo, number), owner)
         except GateError as exc:
             code, text = FAIL, f"{repo}#{number}: {exc}"
         report.line(code, text)
@@ -370,7 +388,9 @@ def build_parser(prog: str = "kanban gate") -> argparse.ArgumentParser:
     card = argparse.ArgumentParser(add_help=False)
     card.add_argument("--card", default=os.environ.get("HERMES_KANBAN_TASK"),
                       help="Card id (default: $HERMES_KANBAN_TASK)")
-    sub.add_parser("prs", parents=[card], help="Every To-dos issue closed by a merged PR with green required checks")
+    prs = sub.add_parser("prs", parents=[card], help="Every To-dos issue closed by a merged PR with green required checks")
+    prs.add_argument("--owner-login", metavar="LOGIN",
+                     help="the owner account whose dev-red-approved label counts (default: work.owner_login)")
     dev = sub.add_parser("dev", parents=[card], help="Latest push run on the branch after the card's last merge is green")
     dev.add_argument("repo", metavar="owner/repo")
     dev.add_argument("--branch", default="dev")
@@ -384,6 +404,17 @@ def build_parser(prog: str = "kanban gate") -> argparse.ArgumentParser:
                         help=f"Comment author that counts as the owner (repeatable; default: {', '.join(DEFAULT_OWNERS)})")
     sub.add_parser("ask", parents=[card], help="Every question the assignee raised has a later answer")
     return parser
+
+
+def _configured_owner() -> str | None:
+    try:
+        from hermes_cli.delivery.settings import owner_login
+    except ImportError:  # run as a plain file: pass --owner-login
+        return None
+    try:
+        return owner_login()
+    except (OSError, ValueError):
+        return None
 
 
 _BOARD_GATES = {"prs": gate_prs, "dev": gate_dev, "review": gate_review, "ask": gate_ask}

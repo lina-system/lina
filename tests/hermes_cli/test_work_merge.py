@@ -35,6 +35,15 @@ def snapshot(**over) -> dict:
 
 
 DEV_RED = {"dev_ok": False, "dev_failed": ["tests", "macOS tests"]}
+OWNER = "repo-owner"
+
+
+def labeled(login, at="2026-11-02T09:00:00Z", event="labeled", name="dev-red-approved"):
+    return {"event": event, "actor": {"login": login}, "label": {"name": name}, "created_at": at}
+
+
+APPROVED = {**DEV_RED, "labels": ["dev-red-approved"], "owner_login": OWNER,
+            "runs": [run("Lint"), run("tests", "failure", run_id=2)], "required": ["Lint"]}
 CASES = [
     ("required green", {}, rules.PASS, "dev green, no red check on the head"),
     ("one required failed", {"runs": [run("Lint"), run("tests", "failure", run_id=2)]}, rules.FAIL,
@@ -76,6 +85,21 @@ CASES = [
     ("dev red, dev-red-fix only skips dev's red",
      {**DEV_RED, "labels": ["dev-red-fix"], "runs": [run("Lint"), run("tests", "skipped", run_id=2)]},
      rules.FAIL, "shows none of dev's red checks passing"),
+    ("dev red, dev-red-approved added by the owner", {**APPROVED, "label_events": [labeled(OWNER)]}, rules.PASS,
+     "merging over it: dev-red-approved added by the owner"),
+    ("dev red, dev-red-approved added by someone else", {**APPROVED, "label_events": [labeled("someone-else")]},
+     rules.FAIL, "added by someone-else, not the owner"),
+    ("dev red, dev-red-approved absent", {**APPROVED, "labels": [], "label_events": [labeled(OWNER)]}, rules.FAIL,
+     "dev is red (macOS tests, tests)"),
+    ("dev red, the owner's label re-added by someone else",
+     {**APPROVED, "label_events": [labeled(OWNER), labeled(OWNER, "2026-11-02T09:10:00Z", "unlabeled"),
+                                   labeled("someone-else", "2026-11-02T09:20:00Z")]},
+     rules.FAIL, "added by someone-else, not the owner"),
+    ("dev red, dev-red-approved without work.owner_login",
+     {**APPROVED, "owner_login": None, "label_events": [labeled(OWNER)]}, rules.FAIL, "work.owner_login is not set"),
+    ("dev red, approved but the head adds a red check",
+     {**APPROVED, "label_events": [labeled(OWNER)], "runs": [run("Lint"), run("docs", "failure", run_id=3)]},
+     rules.FAIL, "the head adds red checks: docs"),
     ("dev green, a check outside the required list failed", {"runs": [run("Lint"), run("tests", run_id=2),
                                                                       run("docs", "failure", run_id=3)]},
      rules.FAIL, "red checks on the head: docs"),
@@ -122,7 +146,7 @@ def _github(snap: dict, *, queue: bool, queue_answers=(), issue_body="## Done wh
         f"repos/{REPO}/commits/{HEAD}/statuses": [], f"repos/{REPO}/pulls/7/reviews": snap["reviews"],
         f"repos/{REPO}/pulls/7/comments": snap["review_comments"], f"repos/{REPO}/issues/7/comments": [],
         f"repos/{REPO}/issues/12": {"number": 12, "state": "open", "body": issue_body},
-        f"repos/{REPO}/issues": [],
+        f"repos/{REPO}/issues": [], f"repos/{REPO}/issues/7/timeline": snap.get("label_events") or [],
     }
 
     def graphql(query, variables):
@@ -209,3 +233,21 @@ def test_followups_skip_a_finding_already_listed(monkeypatch):
     body = gh.writes[0][2]["body"]
     assert body.count("Guard the empty case") == 1 and "Name the file" in body and "Follow-up to #7" in body
 
+
+
+def test_an_owner_approved_head_merges_over_a_red_dev_and_the_timeline_is_read(monkeypatch):
+    from hermes_cli.delivery import settings
+    monkeypatch.setattr(settings, "owner_login", lambda base=None: OWNER)
+    snap = snapshot(**{**APPROVED, "label_events": [labeled(OWNER)]})
+    gh, lines = _github(snap, queue=False), []
+    assert _merge(gh, lines) == rules.PASS, lines
+    assert any(path.startswith(f"repos/{REPO}/issues/7/timeline") for path in gh.reads)
+    assert gh.commands[0][:2] == ["pr", "merge"]
+
+
+def test_a_label_by_someone_else_is_refused_through_the_merge_path(monkeypatch):
+    from hermes_cli.delivery import settings
+    monkeypatch.setattr(settings, "owner_login", lambda base=None: OWNER)
+    gh, lines = _github(snapshot(**{**APPROVED, "label_events": [labeled("someone-else")]}), queue=False), []
+    assert _merge(gh, lines) == rules.FAIL
+    assert gh.commands == [] and gh.writes == []

@@ -40,7 +40,10 @@ def collect_pr(gh, repo: str, number: int, base: Path | None = None) -> dict:
                 "reviews": gh.pages(f"repos/{repo}/pulls/{number}/reviews"),
                 "review_comments": gh.pages(f"repos/{repo}/pulls/{number}/comments"),
                 "issue_comments": gh.pages(f"repos/{repo}/issues/{number}/comments"),
-                "dev_ok": dev_ok, "dev_failed": sorted(dev_failed), "issues": {}}
+                "dev_ok": dev_ok, "dev_failed": sorted(dev_failed), "issues": {}, "label_events": [],
+                "owner_login": settings.owner_login(base)}
+    if rules.DEV_RED_APPROVED in snapshot["labels"]:
+        snapshot["label_events"] = gh.pages(f"repos/{repo}/issues/{number}/timeline")
     for n in rules.closed_refs(repo, snapshot["body"]):
         try:
             issue = gh.json(f"repos/{repo}/issues/{n}")
