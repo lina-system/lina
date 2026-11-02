@@ -11,6 +11,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 ### Added
 
 - The shared Desk: `hermes desk init` (run by the installer) creates `~/Desk` with Inbox, Projects, Areas, Resources and Archive, or adopts an existing folder; every agent starts there, and the app reads it from `GET /api/desk` (see [docs/desk.md](docs/desk.md)).
+- The memory store: `lina store install` (also run by `lina install`) runs one Postgres with pgvector in Docker, with schemas `memory`, `ctx`, `ltm` and `vec` and row-level security on `agent_id`, and the Honcho api and deriver built from `services/honcho`; `lina store backup` / `restore` back up and restore the whole cluster, and `lina store upgrade` upgrades Honcho by backup, rehearsal migration, one migration job and smoke test (see [docs/store.md](docs/store.md)).
 - The Honcho server v3.5.0 (`plastic-labs/honcho` 0cd37ddbd8) in `services/honcho/`, a squashed subtree tracked by the `honcho-upstream` branch and `services/honcho-intake.md`; CI checks, tests and builds it (see [docs/honcho.md](docs/honcho.md)).
 
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
