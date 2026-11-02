@@ -13,7 +13,7 @@ import sys
 import time
 from pathlib import Path
 
-from hermes_cli.worker import serve, settings
+from hermes_cli.worker import device, serve, settings
 
 LAUNCHD_LABEL = "ai.lina.worker"
 SYSTEMD_UNIT = "lina-worker"
@@ -104,6 +104,9 @@ def stop(base: Path | None = None, out=print) -> int:
         _run(["launchctl", "bootout", f"{_launchd_target()}/{LAUNCHD_LABEL}"])
     else:
         _run(["systemctl", "--user", "stop", SYSTEMD_UNIT])
+    # The stopped loop's last heartbeat stays fresh for a minute: without this, `restart` reads it as "already
+    # running" and never starts the service again.
+    (settings.root(base) / device.HEARTBEAT).unlink(missing_ok=True)
     out("✓ worker stopped (running tasks keep running)")
     return 0
 

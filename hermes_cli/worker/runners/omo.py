@@ -23,6 +23,7 @@ from pathlib import Path
 
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
 from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view
+from tools.environments.local import build_subprocess_env
 
 HELPERS = Path(__file__).resolve().parent
 ENGINE = Path("node_modules") / "@code-yeongyu" / "senpi"
@@ -48,7 +49,10 @@ class OmoRunner:
         candidates = [current / ENGINE, current / "node_modules" / lina_omo.omo_pin().package / ENGINE]
         self.engine = Path(spec["engine"]) if spec.get("engine") else next(
             (each for each in candidates if each.is_dir()), candidates[0])
-        self.env = {**os.environ, "OMO_RUNTIME": "node", "GIT_TERMINAL_PROMPT": "0", "GCM_INTERACTIVE": "never"}
+        # The omo CLI and the RPC helpers are clients of the device's own daemon over its socket: the model
+        # credentials live with the daemon and OCX, so this client gets none of them.
+        self.env = build_subprocess_env(scrub_secrets=True, extra={"OMO_RUNTIME": "node", "GIT_TERMINAL_PROMPT": "0",
+                                                                   "GCM_INTERACTIVE": "never"})
 
     def _call(self, argv: list[str], timeout: float, stderr: Path | None = None) -> tuple[dict | None, int]:
         """One omo call with its answer read from a file: through a pipe omo stops after the first 64 KiB."""
