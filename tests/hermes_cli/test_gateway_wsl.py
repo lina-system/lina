@@ -96,4 +96,4 @@ class TestGatewayCommandWSLMessages:
 
         out = capsys.readouterr().out
         assert "WSL detected" in out
-        assert "hermes gateway run" in out
+        assert "lina gateway run" in out
