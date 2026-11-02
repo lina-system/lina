@@ -1,7 +1,5 @@
 # Contributing to Hermes Agent
 
-Contributions are accepted under the project's license (AGPL-3.0). Please add a `Signed-off-by` line to your commits (`git commit -s`) to certify you have the right to submit them (Developer Certificate of Origin).
-
 Thank you for contributing to Hermes Agent! This guide covers everything you need: setting up your dev environment, understanding the architecture, deciding what to build, and getting your PR merged.
 
 ---
@@ -1038,4 +1036,4 @@ test(tools): add unit tests for file_operations
 
 ## License
 
-By contributing, you agree that your contributions will be licensed under the [MIT License](LICENSE).
+Contributions are licensed under the project's [AGPL-3.0 License](./LICENSE).
