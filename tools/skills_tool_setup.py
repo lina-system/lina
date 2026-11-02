@@ -43,6 +43,16 @@ def _clean_str(value: Any) -> str | None:
     return value.strip() if isinstance(value, str) and value.strip() else None
 
 
+def _resolved_skill_config(frontmatter: dict[str, Any]) -> dict[str, Any]:
+    """``{"skill_config": {key: value}}`` for the skill's ``metadata.hermes.config`` settings, resolved
+    from ``skills.config.<key>`` (or the declared default) the same way a slash/preload load renders
+    its ``[Skill config ...]`` block; empty when the skill declares none."""
+    from agent.skill_utils import extract_skill_config_vars, resolve_skill_config_values
+
+    config_vars = extract_skill_config_vars(frontmatter)
+    return {"skill_config": resolve_skill_config_values(config_vars)} if config_vars else {}
+
+
 def _get_required_environment_variables(frontmatter: dict[str, Any]) -> list[dict[str, Any]]:
     """Merge required_environment_variables, setup.collect_secrets and legacy
     prerequisites.env_vars into one deduped, validated list (first entry wins)."""
