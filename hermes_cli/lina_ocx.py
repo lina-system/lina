@@ -33,6 +33,7 @@ from pathlib import Path
 from typing import Callable
 
 PIN_FILE = Path(__file__).resolve().parents[1] / "pm" / "lina-deps.json"
+LOCK_DIR = PIN_FILE.parent / "npm-locks"
 DEFAULT_PORT = 10100
 _ARCH = {"amd64": "x64", "arm64": "arm64"}
 _OS = {"darwin": "darwin", "linux": "linux"}
@@ -88,14 +89,15 @@ def home_dir(root: Path) -> Path:
     return vendor_dir(root) / "home"
 
 
-def current_version(root: Path) -> str | None:
-    link = vendor_dir(root) / "current"
+def current_version(root: Path, vendor: Path | None = None) -> str | None:
+    link = (vendor or vendor_dir(root)) / "current"
     return os.readlink(link) if link.is_symlink() else None
 
 
-def set_current(root: Path, version: str) -> None:
-    """Point ``vendor/ocx/current`` at *version* in one rename, so a reader never sees it missing."""
-    link = vendor_dir(root) / "current"
+def set_current(root: Path, version: str, vendor: Path | None = None) -> None:
+    """Point ``<vendor>/current`` (default ``vendor/ocx``) at *version* in one rename, so a reader never sees it
+    missing."""
+    link = (vendor or vendor_dir(root)) / "current"
     tmp = link.with_name(".current.tmp")
     tmp.unlink(missing_ok=True)
     os.symlink(version, tmp)
@@ -166,35 +168,77 @@ def _locked(prefix: Path, package: str) -> dict:
     return json.loads(lock.read_text(encoding="utf-8-sig")).get("packages", {}).get(f"node_modules/{package}", {})
 
 
-def install_ocx(root: Path, pin: Pins, node: Path, version: str, integrity: str,
+def npm(root: Path, node: Path, *args: str, cwd: Path | None = None, label: str = "",
+        run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> None:
+    """The pinned Node's npm with LINA's HOME and cache (``npm_env``); a failure raises with npm's last line."""
+    npm_cli = node / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
+    result = run([str(node / "bin" / "node"), str(npm_cli), *args], env=npm_env(root, node), cwd=cwd,
+                 capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=900, check=False)
+    if result.returncode != 0:
+        tail = (result.stderr or result.stdout or "").strip().splitlines()[-1:] or ["no output"]
+        raise OcxError(f"{label or 'npm ' + ' '.join(args[:2])} failed: {tail[0]}")
+
+
+def committed_lock(name: str, package: str, version: str) -> Path | None:
+    """``pm/npm-locks/<name>`` when it locks *package* @ *version*: the whole tree's integrity, reviewed in git."""
+    lock = LOCK_DIR / name
+    try:
+        wanted = json.loads((lock / "package.json").read_text(encoding="utf-8-sig"))["dependencies"][package]
+    except (OSError, ValueError, KeyError):
+        return None
+    return lock if wanted == version and (lock / "package-lock.json").exists() else None
+
+
+def _lock_staging(root: Path, node: Path, staging: Path, name: str, package: str, version: str, run) -> None:
+    """Write *staging*'s package.json and package-lock.json: the committed lock when it covers *version*, else one
+    resolved from the registry's metadata with scripts off (``--package-lock-only`` downloads no package code)."""
+    lock = committed_lock(name, package, version)
+    if lock is not None:
+        for file in ("package.json", "package-lock.json"):
+            shutil.copyfile(lock / file, staging / file)
+        return
+    (staging / "package.json").write_text(json.dumps(
+        {"name": f"lina-{name}", "private": True, "dependencies": {package: version}}, indent=2) + "\n",
+        encoding="utf-8")
+    npm(root, node, "install", "--package-lock-only", "--ignore-scripts", cwd=staging,
+        label=f"npm lock {package}@{version}", run=run)
+
+
+def npm_install(root: Path, node: Path, vendor: Path, package: str, version: str, integrity: str,
                 run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Path:
-    """OCX *version* into ``vendor/ocx/<version>`` with the pinned Node's npm (install scripts run: OCX's ``bun``
-    dependency fetches its binary). The lock must record *integrity*, else nothing is kept."""
-    dest = version_dir(root, version)
-    entry = _locked(dest, pin.package)
+    """*package* @ *version* into ``<vendor>/<version>`` with the pinned Node's npm.
+
+    No package code runs before it is verified: the lock (committed under ``pm/npm-locks``, else resolved with
+    scripts off) must record *integrity* for *package*; ``npm ci --ignore-scripts`` then installs exactly that tree
+    and refuses any tarball whose bytes do not match its locked integrity; only then does ``npm rebuild`` run the
+    install scripts (OCX's ``bun`` fetches its binary, omo prepares its engine). A mismatch keeps nothing."""
+    dest = vendor / version
+    entry = _locked(dest, package)
     if entry.get("version") == version and entry.get("integrity") == integrity:
         return dest
-    staging = vendor_dir(root) / f".{version}.partial"
+    staging = vendor / f".{version}.partial"
     shutil.rmtree(staging, ignore_errors=True)
     staging.mkdir(parents=True)
-    (staging / "package.json").write_text('{"name": "lina-ocx", "private": true}\n', encoding="utf-8")
     try:
-        npm_cli = node / "lib" / "node_modules" / "npm" / "bin" / "npm-cli.js"
-        result = run([str(node / "bin" / "node"), str(npm_cli), "install", "--prefix", str(staging), "--save-exact",
-                      f"{pin.package}@{version}"], env=npm_env(root, node), capture_output=True, text=True,
-                     encoding="utf-8", errors="replace", timeout=900, check=False)
-        if result.returncode != 0:
-            tail = (result.stderr or result.stdout or "").strip().splitlines()[-1:] or ["no output"]
-            raise OcxError(f"npm install {pin.package}@{version} failed: {tail[0]}")
-        entry = _locked(staging, pin.package)
+        _lock_staging(root, node, staging, vendor.name, package, version, run)
+        entry = _locked(staging, package)
         if (entry.get("version"), entry.get("integrity")) != (version, integrity):
-            raise OcxError(f"{pin.package}@{version}: the lock records {entry.get('version')} "
+            raise OcxError(f"{package}@{version}: the lock records {entry.get('version')} "
                            f"{entry.get('integrity')}, the pin is {integrity}; nothing kept")
+        npm(root, node, "ci", "--ignore-scripts", cwd=staging, label=f"npm ci {package}@{version}", run=run)
+        npm(root, node, "rebuild", cwd=staging, label=f"npm rebuild {package}@{version}", run=run)
         shutil.rmtree(dest, ignore_errors=True)
         os.replace(staging, dest)
     finally:
         shutil.rmtree(staging, ignore_errors=True)
     return dest
+
+
+def install_ocx(root: Path, pin: Pins, node: Path, version: str, integrity: str,
+                run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> Path:
+    """OCX *version* into ``vendor/ocx/<version>`` (install scripts run: OCX's ``bun`` dependency fetches its
+    binary)."""
+    return npm_install(root, node, vendor_dir(root), pin.package, version, integrity, run)
 
 
 def install(root: Path | None = None, *, fetch: Callable[[str, Path], None] = download, out=print) -> int:
@@ -284,11 +328,17 @@ def ocx_argv(root: Path, version: str, *args: str) -> list[str]:
 
 
 def ocx_env(root: Path, data: Path | None = None, home: Path | None = None) -> dict[str, str]:
-    """What OCX runs with: its data dir, the isolated HOME and the pinned Node first on PATH."""
+    """What OCX runs with: its data dir, the isolated HOME and the pinned Node first on PATH. The service and its CLI
+    (no *home* given) also get omo's agent dir: OCX writes its catalog for omo (the omo client integration) there, not
+    under the isolated HOME. An upgrade trial runs on a copy and never gets it."""
+    from hermes_cli.lina_omo import agent_dir
     node = node_dir(root, pins().node_version)
     (home or home_dir(root)).mkdir(parents=True, exist_ok=True)
-    return {"OPENCODEX_HOME": str(data or data_dir(root)), "HOME": str(home or home_dir(root)),
-            "PATH": os.pathsep.join([str(node / "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])}
+    env = {"OPENCODEX_HOME": str(data or data_dir(root)), "HOME": str(home or home_dir(root)),
+           "PATH": os.pathsep.join([str(node / "bin"), "/usr/bin", "/bin", "/usr/sbin", "/sbin"])}
+    if home is None:
+        env["OMO_CODING_AGENT_DIR"] = str(agent_dir())
+    return env
 
 
 def port_taken(port: int) -> bool:

@@ -1,7 +1,7 @@
-"""The pins in ``pm/lina-deps.json`` (lina#32) match what the registries publish.
+"""The pins in ``pm/lina-deps.json`` (lina#32, lina#34) match what the registries publish.
 
 Network: marked ``integration`` (deselected by default; run with ``-m integration``) and skipped when the registry
-cannot be reached. The OCX integrity is the registry's ``dist.integrity``, the field ``npm view <pkg>@<ver>
+cannot be reached. The OCX and omo integrity is the registry's ``dist.integrity``, the field ``npm view <pkg>@<ver>
 dist.integrity`` prints; the Node checksums are nodejs.org's ``SHASUMS256.txt`` for the pinned version.
 """
 import json
@@ -11,7 +11,7 @@ import urllib.request
 
 import pytest
 
-from hermes_cli import lina_ocx
+from hermes_cli import lina_ocx, lina_omo
 
 pytestmark = pytest.mark.integration
 
@@ -28,6 +28,13 @@ def test_ocx_integrity_is_the_registrys():
     pin = lina_ocx.pins()
     meta = json.loads(_get(f"https://registry.npmjs.org/{urllib.parse.quote(pin.package, safe='@')}/{pin.version}"))
     assert meta["dist"]["integrity"] == pin.integrity
+
+
+def test_omo_integrity_is_the_registrys():
+    pin = lina_omo.omo_pin()
+    meta = json.loads(_get(f"https://registry.npmjs.org/{pin.package}/{pin.version}"))
+    assert meta["dist"]["integrity"] == pin.integrity
+    assert int(meta["engines"]["node"].lstrip(">=~^ ").split(".")[0]) <= int(lina_ocx.pins().node_version.split(".")[0])
 
 
 def test_node_checksums_are_nodejs_orgs():
