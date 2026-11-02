@@ -50,16 +50,16 @@ def test_scratch_home_does_not_resolve_the_accounts_bare_gateway_unit(tmp_path, 
     """The incident's resolution: HOME=<scratch>, HERMES_HOME unset, the account's real bare unit
     pinning the account home. The scratch home must not name that unit."""
     account, scratch = tmp_path / "account", tmp_path / "scratch"
-    (scratch / ".hermes").mkdir(parents=True)
+    (scratch / ".lina").mkdir(parents=True)
     real_unit = account / ".config" / "systemd" / "user" / "hermes-gateway.service"
-    _unit(real_unit, account / ".hermes")
+    _unit(real_unit, account / ".lina")
     monkeypatch.delenv("HERMES_HOME", raising=False)
     monkeypatch.delenv("XDG_CONFIG_HOME", raising=False)
     monkeypatch.setenv("HOME", str(scratch))
     monkeypatch.setenv("HERMES_REAL_HOME", str(account))
     monkeypatch.setattr(os, "geteuid", lambda: 1000)
 
-    assert gw.get_hermes_home() == scratch / ".hermes"
+    assert gw.get_hermes_home() == scratch / ".lina"
     assert gw.get_service_name() != "hermes-gateway"
     assert gw.get_systemd_unit_path() != real_unit
     assert not gw.get_systemd_unit_path().exists()

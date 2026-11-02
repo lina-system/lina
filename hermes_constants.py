@@ -54,14 +54,30 @@ def _expand_hermes_home(path: str) -> Path:
     return Path(os.path.expanduser(os.path.expandvars(path)))
 
 
-def _platform_default_hermes_home(environ: Mapping[str, str], user_home: Callable[[], Path]) -> Path:
-    """The platform default that *environ* names, with the literal data-directory suffix."""
+LINA_HOME_ENV = "LINA_HOME"
+# Basename of LINA's default home. Hermes Agent's own home (``~/.hermes``) is never opened.
+LINA_HOME_DIRNAME = ".lina"
+
+
+def _platform_default_hermes_home(
+        environ: Mapping[str, str], user_home: Callable[[], Path],
+        expand: Callable[[str], Path] = _expand_hermes_home) -> Path:
+    """LINA's root that *environ* names: ``LINA_HOME``, else the platform default with the literal
+    data-directory suffix (``~/.lina``, ``%LOCALAPPDATA%\\lina``)."""
+    explicit = environ.get(LINA_HOME_ENV, "").strip()
+    if explicit:
+        return expand(explicit)
     suffix = environ.get("HERMES_DATA_DIR_SUFFIX", "")
     if sys.platform == "win32":
         local_appdata = environ.get("LOCALAPPDATA", "").strip()
         base = Path(local_appdata) if local_appdata else user_home() / "AppData" / "Local"
-        return base / ("hermes" + suffix)
-    return user_home() / (".hermes" + suffix)
+        return base / ("lina" + suffix)
+    return user_home() / (LINA_HOME_DIRNAME + suffix)
+
+
+def platform_default_home_for(environ: Mapping[str, str], user_home: Path) -> Path:
+    """LINA's root for another process or account: its ``LINA_HOME``, else the default under *user_home*."""
+    return _platform_default_hermes_home(environ, lambda: user_home)
 
 
 def _get_platform_default_hermes_home() -> Path:
@@ -96,6 +112,52 @@ def account_default_hermes_home() -> Path:
     return _get_platform_default_hermes_home() if same else _platform_default_hermes_home(os.environ, lambda: account)
 
 
+def hermes_agent_home() -> Path:
+    """Hermes Agent's own default home for this OS account (``~/.hermes``, ``%LOCALAPPDATA%\\hermes``).
+
+    It belongs to the Hermes install LINA was forked from and may still be live; LINA only uses this
+    path to recognise it and stay out of it."""
+    if sys.platform == "win32":
+        local_appdata = os.environ.get("LOCALAPPDATA", "").strip()
+        base = Path(local_appdata) if local_appdata else _account_home() / "AppData" / "Local"
+        return base / "hermes"
+    return _account_home() / ".hermes"
+
+
+def _path_within(path: Path, root: Path) -> bool:
+    try:
+        resolved, base = path.resolve(strict=False), root.resolve(strict=False)
+    except (OSError, RuntimeError):
+        return False
+    return resolved == base or base in resolved.parents
+
+
+def is_hermes_agent_path(path: str | Path) -> bool:
+    """True when *path* is Hermes Agent's home or lies under it."""
+    return _path_within(_expand_hermes_home(str(path)), hermes_agent_home())
+
+
+def drop_foreign_hermes_home(environ: MutableMapping[str, str]) -> str | None:
+    """Remove an inherited ``HERMES_HOME`` that would take this process out of LINA's home; return it.
+
+    ``HERMES_HOME`` is how a LINA process hands its active profile home to its children, so a value
+    inside LINA's root stays. A value under Hermes Agent's home (a shell or service left over from
+    Hermes) goes, and so does any value outside an explicit ``LINA_HOME``; a custom home named without
+    ``LINA_HOME`` (a container, a test sandbox) stays.
+    """
+    raw = environ.get("HERMES_HOME", "").strip()
+    if not raw:
+        return None
+    home = _expand_hermes_home(raw)
+    root = _platform_default_hermes_home(environ, Path.home)
+    if _path_within(home, root):
+        return None
+    if not environ.get(LINA_HOME_ENV, "").strip() and not is_hermes_agent_path(home):
+        return None
+    del environ["HERMES_HOME"]
+    return raw
+
+
 def _hermes_root_of(native_home: Path, env_path: Path | None) -> Path:
     """The root that holds *env_path*: the native home, a custom root, or *env_path* itself."""
     if env_path is None:
@@ -117,7 +179,7 @@ def hermes_root_for_environment(environ: Mapping[str, str]) -> Path | None:
     environment. ``%NAME%``, ``${NAME}`` and ``$NAME`` references and a leading
     ``~`` expand from *environ* alone, never from this process. Returns None
     when the answer depends on anything outside *environ*: a relative
-    HERMES_HOME, an undefined variable, or a missing user profile folder.
+    HERMES_HOME or LINA_HOME, an undefined variable, or a missing user profile folder.
     """
     names = {key.upper(): value for key, value in environ.items()}
     profile = names.get("USERPROFILE" if sys.platform == "win32" else "HOME", "").strip()
@@ -127,22 +189,24 @@ def hermes_root_for_environment(environ: Mapping[str, str]) -> Path | None:
             raise LookupError("no user profile folder")
         return Path(profile)
 
-    raw = names.get("HERMES_HOME", "").strip()
-    try:
-        native_home = _platform_default_hermes_home(names, user_home)
-        if not raw:
-            return native_home
+    def expand(raw: str) -> Path:
         expanded = _ENV_REFERENCE.sub(lambda match: names[match.group(match.lastindex).upper()], raw)
         if expanded == "~" or expanded.startswith(("~/", "~\\")):
             expanded = str(user_home()) + expanded[1:]
+        if not Path(expanded).is_absolute():
+            raise LookupError("relative home")
+        return Path(expanded)
+
+    raw = names.get("HERMES_HOME", "").strip()
+    try:
+        native_home = _platform_default_hermes_home(names, user_home, expand)
+        return _hermes_root_of(native_home, expand(raw)) if raw else native_home
     except LookupError:
         return None
-    env_path = Path(expanded)
-    return _hermes_root_of(native_home, env_path) if env_path.is_absolute() else None
 
 
 def sudo_invoker_default_home() -> Path | None:
-    """The invoking user's native ``~/.hermes`` when this process is root under ``sudo``, else None.
+    """The invoking user's native ``~/.lina`` when this process is root under ``sudo``, else None.
 
     sudo strips HERMES_HOME and sets HOME=/root, so the process's own default is root's; the profile
     store and the system service being operated on belong to SUDO_USER.
@@ -155,7 +219,7 @@ def sudo_invoker_default_home() -> Path | None:
     import pwd
 
     try:
-        return Path(pwd.getpwnam(sudo_user).pw_dir) / ".hermes"
+        return Path(pwd.getpwnam(sudo_user).pw_dir) / LINA_HOME_DIRNAME
     except KeyError:  # SUDO_USER not in passwd (chroot/container)
         return None
 
@@ -192,7 +256,7 @@ def _warn_profile_fallback_once() -> None:
 
 
 def get_hermes_home() -> Path:
-    """Hermes home: context-local override → ``HERMES_HOME`` env var → platform default."""
+    """Active home: context-local override → ``HERMES_HOME`` (the active profile) → ``LINA_HOME`` → ``~/.lina``."""
     override = get_hermes_home_override()
     if override:
         return _expand_hermes_home(override)
@@ -323,11 +387,11 @@ _HERMES_HOME_MARKERS = ("config.yaml", ".env", "state.db")
 def _is_hermes_profiles_root(profiles_dir: Path) -> bool:
     """True when *profiles_dir* is provably ``<hermes-home>/profiles``.
 
-    Accepts the classic ``~/.hermes`` layout, a root carrying Hermes-home marker files, a
+    Accepts the default ``~/.lina`` layout, a root carrying home marker files, a
     ``profiles/.deleted`` tombstone dir (only ``profile delete`` creates it), or the default root.
     """
     root = profiles_dir.parent
-    if root.name == ".hermes":
+    if root.name == LINA_HOME_DIRNAME:
         return True
     try:
         if (profiles_dir / _DELETED_PROFILES_DIR).is_dir() or any(
@@ -353,7 +417,7 @@ def named_profile_home(path: str | Path) -> Path | None:
         if (candidate.parent.name == "profiles" and not candidate.name.startswith(".")
                 and _is_hermes_profiles_root(candidate.parent)):
             return candidate
-        if candidate.name == ".hermes":  # default home: a coincidental profiles/ ancestor is not a root
+        if candidate.name == LINA_HOME_DIRNAME:  # default home: a coincidental profiles/ ancestor is not a root
             return None
     return None
 

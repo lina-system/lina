@@ -174,7 +174,7 @@ def _hermes_home_for_pid(pid: int, *, require_launch_identity: bool = False) -> 
     exec-time env + argv (``hermes -p X serve`` rewrites ``HERMES_HOME`` in ``os.environ`` AFTER
     startup, which ``/proc/<pid>/environ`` never reflects): a profile-shaped ``HERMES_HOME``
     without a flag is the home; otherwise the root is ``HERMES_HOME`` (its grandparent when
-    profile-shaped) or the platform default of the process's own ``HOME`` / ``LOCALAPPDATA``
+    profile-shaped), the process's ``LINA_HOME``, or the platform default of its own ``HOME`` / ``LOCALAPPDATA``
     (its owner's password-database home when a scrubbed unit environment exports neither), and
     the profile is the ``--profile``/``-p`` flag, else the root's sticky ``active_profile`` unless
     the process has a fixed identity (supervised child, post-swap updater, Desktop SSH backend).
@@ -205,12 +205,12 @@ def _hermes_home_for_pid(pid: int, *, require_launch_identity: bool = False) -> 
         Path(env_home).parent.name == "profiles" or env.get("HERMES_UPDATE_POST_SWAP") == "1"
     ):
         return env_home
+    from hermes_constants import platform_default_home_for
     if sys.platform == "win32":
-        local_appdata = env.get("LOCALAPPDATA", "").strip()
-        base = Path(local_appdata) if local_appdata else Path(env.get("USERPROFILE") or Path.home()) / "AppData" / "Local"
-        default_home = base / "hermes"
+        user_home = Path(env.get("USERPROFILE") or Path.home())
     else:
-        default_home = Path(env.get("HOME") or _pid_passwd_home(pid) or Path.home()) / ".hermes"
+        user_home = Path(env.get("HOME") or _pid_passwd_home(pid) or Path.home())
+    default_home = platform_default_home_for(env, user_home)
     root = profile_root_for_env_home(env_home, default_home)
     fixed_identity = any(env.get(k) for k in ("HERMES_SUPERVISED_CHILD", "HERMES_S6_SUPERVISED_CHILD",
                                                "HERMES_GATEWAY_EXTERNAL_SUPERVISOR",

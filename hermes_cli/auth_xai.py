@@ -108,11 +108,12 @@ def _write_through_xai_oauth_to_global_root(state: dict[str, Any]) -> None:
     global_path = _global_auth_file_path()
     if global_path is None:  # classic mode (profile == root); the profile save already hit root
         return
-    # Seat belt: under pytest never write the real ~/.hermes/auth.json (mirrors the read-side guard
+    # Seat belt: under pytest never write the real ~/.lina/auth.json (mirrors the read-side guard
     # in _load_global_auth_store). Uses raw HOME, not Path.home(), which fixtures may monkeypatch.
     real_home_env = os.environ.get("HOME", "") if os.environ.get("PYTEST_CURRENT_TEST") else ""
     if real_home_env:
-        real_root = Path(real_home_env) / ".hermes" / "auth.json"
+        from hermes_constants import LINA_HOME_DIRNAME
+        real_root = Path(real_home_env) / LINA_HOME_DIRNAME / "auth.json"
         try:
             if global_path.resolve(strict=False) == real_root.resolve(strict=False):
                 return

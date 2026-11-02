@@ -803,11 +803,8 @@ class LineAdapter(BasePlatformAdapter):
         path = Path(file_path)
         if not path.is_file():
             return web.Response(status=404, text="not found")
-        try:
-            from hermes_constants import get_hermes_home
-            hermes_home = Path(get_hermes_home()).resolve()
-        except Exception:
-            hermes_home = Path.home().joinpath(".hermes").resolve()
+        from hermes_constants import get_hermes_home
+        hermes_home = Path(get_hermes_home()).resolve()
         resolved = path.resolve()
         if not any(resolved.is_relative_to(r) for r in (Path(tempfile.gettempdir()).resolve(), Path("/tmp").resolve(), hermes_home)):  # no-tmp: ok — macOS /private/tmp alias in the allowed-roots check, not a write target
             logger.warning("LINE: refusing to serve outside allowed roots: %s", resolved)

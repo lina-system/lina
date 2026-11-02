@@ -2045,7 +2045,7 @@ def is_linux() -> bool:
     return sys.platform.startswith("linux")
 
 
-from hermes_constants import is_container, is_termux, is_wsl
+from hermes_constants import LINA_HOME_DIRNAME, is_container, is_termux, is_wsl
 
 
 def _wsl_systemd_operational() -> bool:
@@ -3031,17 +3031,17 @@ def _ld_library_path_line(system: bool, target_home_dir: str | None = None) -> s
 
 def _hermes_home_for_target_user(target_home_dir: str) -> str:
     """Remap the current HERMES_HOME (root's, under sudo) to the target user's equivalent:
-    ``/root/.hermes[/profiles/x]`` → ``/home/alice/.hermes[/profiles/x]``; custom paths kept as-is."""
+    ``/root/.lina[/profiles/x]`` → ``/home/alice/.lina[/profiles/x]``; custom paths kept as-is."""
     current_hermes_raw = os.environ.get("HERMES_HOME", "").strip()
     current_hermes = Path(current_hermes_raw).expanduser() if current_hermes_raw else get_hermes_home()
     # Keep paths lexical: resolving a non-existent path can bake a different HERMES_HOME into the unit.
-    current_default = Path.home() / ".hermes"
-    target_default = Path(target_home_dir) / ".hermes"
+    current_default = Path.home() / LINA_HOME_DIRNAME
+    target_default = Path(target_home_dir) / LINA_HOME_DIRNAME
     try:
-        # Default ~/.hermes or a profile/subdir of it → preserve the relative structure under the target.
+        # Default ~/.lina or a profile/subdir of it → preserve the relative structure under the target.
         return str(target_default / current_hermes.relative_to(current_default))
     except ValueError:
-        return str(current_hermes)  # Completely custom path (not under ~/.hermes) — keep as-is
+        return str(current_hermes)  # Completely custom path (not under ~/.lina) — keep as-is
 
 
 def _build_service_path_dirs(project_root: Path | None = None) -> list[str]:
@@ -3204,8 +3204,8 @@ def generate_systemd_unit(system: bool = False, run_as_user: str | None = None) 
     if system:
         username, group_name, home_dir, uid = _system_service_identity(run_as_user)
         hermes_home = _hermes_home_for_target_user(home_dir)
-        # Profile arg relative to the TARGET user's ~/.hermes when hermes_home lives under it.
-        target_root = Path(home_dir) / ".hermes"
+        # Profile arg relative to the TARGET user's ~/.lina when hermes_home lives under it.
+        target_root = Path(home_dir) / LINA_HOME_DIRNAME
         try:
             Path(hermes_home).resolve().relative_to(target_root.resolve())
             profile_arg = _profile_arg(hermes_home, default_root=target_root)

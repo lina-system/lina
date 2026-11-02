@@ -46,12 +46,11 @@ def machine_marker_files() -> tuple[str, ...]:
 
 
 def hermes_home_globs() -> tuple[str, ...]:
-    """Every place a Hermes data root can sit by default: suffixed channel roots, the legacy Windows
-    root, and the per-package roots of MSIX builds that ran with filesystem virtualisation."""
+    """Every place a LINA data root can sit by default, suffixed channel roots included. Hermes
+    Agent's own roots (``~/.hermes*``) belong to another product and are not listed."""
     if _WIN:
-        return ("%LOCALAPPDATA%/hermes*", "%USERPROFILE%/.hermes",
-                "%LOCALAPPDATA%/Packages/NousResearch*_*/LocalCache/Local/hermes*")
-    return ("~/.hermes*",)
+        return ("%LOCALAPPDATA%/lina*",)
+    return ("~/.lina*",)
 
 
 def gateway_service_definition_globs() -> tuple[str, ...]:

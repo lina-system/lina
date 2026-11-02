@@ -67,6 +67,10 @@ _version_info._cached_version_info = _version_info.VersionInfo(
 # would silently stop protecting the operator's actual ~/.hermes (#69385).
 _PRE_SANDBOX_KANBAN_OVERRIDE = os.environ.get("HERMES_KANBAN_HOME", "").strip()
 _PRE_SANDBOX_HERMES_HOME = os.environ.get("HERMES_HOME", "")
+# A developer's LINA_HOME names their live LINA root: drop it before the platform default is
+# captured below (it would replace the default, so isolation would keep the live root), and
+# guard it like the default root.
+_PRE_SANDBOX_LINA_HOME = os.environ.pop("LINA_HOME", "").strip()
 
 # Capture before any test fixture can override Path.home()/LOCALAPPDATA.
 from hermes_constants import _get_platform_default_hermes_home
@@ -94,16 +98,20 @@ def _hermes_home_points_at_production(value: str) -> bool:
         # ``%LOCALAPPDATA%\hermes``, and a dev shell exporting that path used to be honored as
         # "custom", pinning import-time paths (``tui_gateway.server._hermes_home``) to the live
         # install so the state.db guard tripped on every store-touching test (#112692).
-        from hermes_state_guard import _real_platform_state_root
+        from hermes_state_guard import _real_state_roots
 
         resolved = Path(value).expanduser().resolve()
-        real_root = _real_platform_state_root() or (Path.home() / ".hermes").resolve()
+        real_roots = {*_real_state_roots(), *_pre_sandbox_lina_roots()}
     except Exception:
         return True
-    if resolved == real_root:
+    if resolved in real_roots:
         return True
-    # Profile home directly under the production root: <root>/profiles/<name>
-    return resolved.parent.name == "profiles" and resolved.parent.parent == real_root
+    # Profile home directly under a production root: <root>/profiles/<name>
+    return resolved.parent.name == "profiles" and resolved.parent.parent in real_roots
+
+
+def _pre_sandbox_lina_roots() -> tuple[Path, ...]:
+    return (Path(_PRE_SANDBOX_LINA_HOME).expanduser().resolve(),) if _PRE_SANDBOX_LINA_HOME else ()
 
 
 # ``import hermes_bootstrap`` (transitively: any entry-point module) runs
@@ -133,10 +141,9 @@ if _HERMES_EXPORTED_TMP:
             del os.environ[_key]
     del os.environ[SCRATCH_DIR_MARKER_ENV]
 
-from hermes_state_guard import _real_platform_state_root
+from hermes_state_guard import _real_state_roots
 
-_real_test_root = _real_platform_state_root() or (Path.home() / ".hermes").resolve()
-_guarded_tmp_roots = [_real_test_root]
+_guarded_tmp_roots = [*_real_state_roots(), *_pre_sandbox_lina_roots()]
 _custom_test_home = os.environ.get("HERMES_HOME")
 if _custom_test_home:
     _guarded_tmp_roots.append(Path(_custom_test_home).expanduser().resolve())
@@ -646,9 +653,10 @@ def _capture_real_kanban_root() -> Path:
         # root matters).
         from hermes_constants import get_default_hermes_root
         return get_default_hermes_root().resolve()
-    # No pre-existing HERMES_HOME: the real root is the platform default,
-    # NOT the sandbox tempdir now sitting in the env.
-    return (Path.home() / ".hermes").resolve()
+    # No pre-existing HERMES_HOME: the real root is LINA_HOME or the platform
+    # default, NOT the sandbox tempdir now sitting in the env.
+    from hermes_state_guard import _real_platform_state_root
+    return next(iter(_pre_sandbox_lina_roots()), None) or _real_platform_state_root() or (Path.home() / ".lina").resolve()
 
 
 _REAL_KANBAN_ROOT = _capture_real_kanban_root()
@@ -747,7 +755,7 @@ def _state_db_write_guard(request, monkeypatch):
         monkeypatch.setattr(_hs, "_STATE_DB_GUARD_BYPASS", True)
         yield
         return
-    extra_roots = []
+    extra_roots = list(_pre_sandbox_lina_roots())
     if _PRE_SANDBOX_HERMES_HOME and not _hermes_home_points_at_production(
         _PRE_SANDBOX_HERMES_HOME
     ):

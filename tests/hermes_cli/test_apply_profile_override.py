@@ -163,11 +163,11 @@ class TestApplyProfileOverrideHermesHomeGuard:
         """sudo elias ... should resolve `-p elias` under SUDO_USER, not root."""
         root_home = tmp_path / "root"
         user_home = tmp_path / "home" / "hermes"
-        profile_dir = user_home / ".hermes" / "profiles" / "elias"
+        profile_dir = user_home / ".lina" / "profiles" / "elias"
         profile_dir.mkdir(parents=True, exist_ok=True)
         (profile_dir / "config.yaml").write_text(
             "{}\n", encoding="utf-8")  # identity marker: a bare dir does not resolve
-        (root_home / ".hermes").mkdir(parents=True, exist_ok=True)
+        (root_home / ".lina").mkdir(parents=True, exist_ok=True)
 
         monkeypatch.setattr(Path, "home", lambda: root_home)
         monkeypatch.setenv("SUDO_USER", "hermes")
@@ -185,7 +185,7 @@ class TestApplyProfileOverrideHermesHomeGuard:
         assert os.environ.get("HERMES_HOME") == str(profile_dir)
         assert sys.argv == ["hermes", "gateway", "install", "--system"]
         # Same identity gate as ``-p`` without sudo: a marker-less shell is not a profile.
-        (user_home / ".hermes" / "profiles" / "ghost" / "cron").mkdir(parents=True)
+        (user_home / ".lina" / "profiles" / "ghost" / "cron").mkdir(parents=True)
         assert _resolve_sudo_user_profile_env("ghost") is None
 
 
