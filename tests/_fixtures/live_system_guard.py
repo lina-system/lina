@@ -544,4 +544,9 @@ def _live_system_guard(request, monkeypatch):
     except Exception:
         pass
 
+    # Every gateway boot asks whether Hermes Agent's gateway is loaded on the account (lina#31). The real
+    # probe reads the DEVELOPER's launchd/systemd, so a boot test would refuse on a machine running Hermes
+    # Agent. Nothing is loaded here; tests of the refusal patch ``_probe`` themselves.
+    monkeypatch.setattr("hermes_cli.lina_services._probe", lambda argv: None)
+
     yield
