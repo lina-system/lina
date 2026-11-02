@@ -1586,19 +1586,66 @@ def _hermes_md_candidates(cwd_path: Path) -> list[tuple[str, Path, str]]:
     return [(label, path, _read_context_file(path))]
 
 
-def _agents_md_directory_chain(cwd_path: Path) -> list[Path]:
-    """Directories to check for AGENTS.md: git root first, cwd last (deeper = precedence); cwd only without a root."""
-    current = cwd_path.resolve()
+def _desk_root_containing(cwd: Path) -> Optional[Path]:
+    """Resolved Desk root when *cwd* is on the configured Desk, else None.
+
+    The Desk's own ``AGENTS.md`` (deletion and archive rules) applies to every
+    workspace under that folder. An unset or missing Desk leaves the chain as it was.
+    """
+    from hermes_cli.desk import get_desk_path
+
+    desk = get_desk_path()
+    if desk is None:
+        return None
+    root = desk.resolve()
+    return root if cwd.is_relative_to(root) else None
+
+
+def _agents_md_project_start(current: Path) -> Path:
+    """Where the AGENTS.md chain starts without the Desk: the git root above *current*, else *current*."""
     root = _find_git_root(current)
-    if root is None or root == current or not current.is_relative_to(root):
+    under_git = root is not None and root != current and current.is_relative_to(root)
+    return root if under_git else current
+
+
+def _agents_md_from_desk_only(cwd_path: Path) -> bool:
+    """True when every non-empty AGENTS file on the chain sits above the project (Desk-widened part).
+
+    Then the AGENTS.md type carries only the Desk rules, not the project's own instructions, so a
+    project that keeps them in CLAUDE.md or .cursorrules still needs those loaded after the Desk rules.
+    """
+    current = cwd_path.resolve()
+    if _desk_root_containing(current) is None:
+        return False
+    start = _agents_md_project_start(current)
+    loaded = [path for _label, path, content in _agents_md_candidates(current) if content]
+    return bool(loaded) and not any(path.parent.is_relative_to(start) for path in loaded)
+
+
+def _agents_md_directory_chain(cwd_path: Path) -> list[Path]:
+    """Directories to check for AGENTS.md, outermost first and cwd last (deeper = precedence).
+
+    Git root down to cwd, or cwd alone when there is no git root: parents outside a
+    repo are not consulted, so an AGENTS.md planted in ``/tmp`` or ``$HOME`` cannot
+    leak in. A cwd on the configured Desk is the exception — the chain starts at the
+    Desk root even when a git repo sits between the Desk and the workspace, so a
+    worker in ``desk:Projects/launch`` still receives the Desk rules.
+    """
+    current = cwd_path.resolve()
+    start = _agents_md_project_start(current)
+    desk = _desk_root_containing(current)
+    if desk is not None and start != desk and start.is_relative_to(desk):
+        start = desk
+    if start == current:
         return [current]
-    parts = current.relative_to(root).parts
-    return [root] + [root.joinpath(*parts[: i + 1]) for i in range(len(parts))]
+    parts = current.relative_to(start).parts
+    return [start] + [start.joinpath(*parts[: i + 1]) for i in range(len(parts))]
 
 
 def _agents_md_candidates(cwd_path: Path) -> list[tuple[str, Path, str]]:
-    """AGENTS.md chain from git root down to cwd; per directory the first NON-EMPTY of ``AGENTS.override.md`` /
-    ``AGENTS.md`` / ``agents.md`` wins (empty or unreadable files are listed but fall through)."""
+    """AGENTS.md chain from the outermost root down to cwd; per directory the first NON-EMPTY of
+    ``AGENTS.override.md`` / ``AGENTS.md`` / ``agents.md`` wins (empty or unreadable files are listed
+    but fall through)."""
     cwd_resolved = cwd_path.resolve()
     found: list[tuple[str, Path, str]] = []
     for directory in _agents_md_directory_chain(cwd_resolved):
@@ -1674,15 +1721,15 @@ def _load_hermes_md(cwd_path: Path, context_length: Optional[int] = None) -> str
 
 
 def _load_agents_md(cwd_path: Path, context_length: Optional[int] = None) -> str:
-    """AGENTS.md — merged directory chain from git root down to cwd.
+    """AGENTS.md — merged directory chain from the outermost root down to cwd.
 
     Each directory on the chain (see ``_agents_md_candidates``) contributes its ``AGENTS.override.md`` /
     ``AGENTS.md`` / ``agents.md`` (first name wins per directory) as its own provenance-labelled section.
     ``AGENTS.override.md`` wins over ``AGENTS.md`` so a developer can keep a personal, typically-gitignored
     override next to the committed project instructions without editing the tracked file (same convention as
     earendil-works/pi#7681). Identical content encountered again further down the chain (copied or symlinked
-    files) is deduplicated. With a single match — the common case, and always the case outside a git repo —
-    output is identical to the historical single-file behavior.
+    files) is deduplicated. With a single match — the common case, and the case outside both a git repo
+    and the Desk — output is identical to the historical single-file behavior.
     """
     sections: list[str] = []
     seen_content: set = set()
@@ -1724,7 +1771,10 @@ def build_context_files_prompt(
     """Discover and load context files for the system prompt (each capped, see ``_get_context_file_max_chars``).
 
     Only ONE project context type loads, first found wins: .hermes.md/HERMES.md (walk to git root) →
-    AGENTS.md chain (git root → cwd) → CLAUDE.md (cwd) → .cursorrules + .cursor/rules/*.mdc (cwd). SOUL.md
+    AGENTS.md chain (git root, or the Desk root when the workspace is on the Desk, → cwd) →
+    CLAUDE.md (cwd) → .cursorrules + .cursor/rules/*.mdc (cwd). One exception: when the AGENTS.md chain holds
+    only Desk rules (no AGENTS file from the project itself), the project's CLAUDE.md or cursor rules still
+    load after them (deeper = precedence). SOUL.md
     from HERMES_HOME is independent and always included unless *skip_soul* (already the identity slot).
     """
     from agent.safe_worker_policy import safe_worker_enabled
@@ -1739,8 +1789,11 @@ def build_context_files_prompt(
         )
         sections = []
     else:
-        sections = [_load_hermes_md(cwd_path, context_length) or _load_agents_md(cwd_path, context_length)
-                    or _load_claude_md(cwd_path, context_length) or _load_cursorrules(cwd_path, context_length)]
+        hermes_md = _load_hermes_md(cwd_path, context_length)
+        agents_md = "" if hermes_md else _load_agents_md(cwd_path, context_length)
+        sections = [hermes_md or agents_md]
+        if not sections[0] or (agents_md and _agents_md_from_desk_only(cwd_path)):
+            sections.append(_load_claude_md(cwd_path, context_length) or _load_cursorrules(cwd_path, context_length))
     if not skip_soul:
         sections.append(load_soul_md(context_length, home_override=home_override))
     sections = [s for s in sections if s]
