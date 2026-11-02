@@ -2,6 +2,7 @@
 
 import importlib.util
 from pathlib import Path
+import re
 import sqlite3
 import sys
 import types
@@ -85,6 +86,11 @@ def _handler(plugin, monkeypatch, prototype, context, resolved=None):
         return resolved
 
     return plugin._make_command_handler(command.handle_lcm_command, prototype, resolve), calls
+
+
+def _without_pass_time(text):
+    # LINA: a background incremental embedding pass can stamp the next second between the two status reads.
+    return re.sub(r"(?m)^(embedding_incremental_last_pass: )\S+", r"\1<time>", text)
 
 
 @pytest.mark.parametrize("raw_args", ["embed backfill --apply", "embed warmup"])
@@ -245,7 +251,7 @@ def test_unresolved_other_bound_session_refuses_write_allows_read(
     handler, _ = _handler(plugin, monkeypatch, prototype, context)
 
     assert handler(raw_args) == OWNERSHIP_REFUSAL
-    assert handler("status") == expected
+    assert _without_pass_time(handler("status")) == _without_pass_time(expected)
     assert prototype._session_id == "bound-session"
     assert _snapshot(prototype) == before
 
