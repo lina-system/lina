@@ -19,7 +19,7 @@ import pytest
 
 from tests.hermes_cli.test_update_pause_record import _child, _reap_children
 
-_UNIT = {"kind": "systemd", "scope": "user", "unit": "hermes-gateway-p2probe.service", "pid": 4242}
+_UNIT = {"kind": "systemd", "scope": "user", "unit": "lina-gateway-p2probe.service", "pid": 4242}
 
 
 @pytest.mark.platforms("posix")
@@ -74,7 +74,7 @@ _KILLED_AFTER_RECORDING = """
     pid, kind, asked, home = int(sys.argv[1]), sys.argv[2], sys.argv[3] == "1", sys.argv[4]
     entry = {"pid": pid, "home": home}
     if kind == "systemd":
-        entry.update(kind="systemd", scope="user", unit="hermes-gateway-p2probe.service", cgroup=None)
+        entry.update(kind="systemd", scope="user", unit="lina-gateway-p2probe.service", cgroup=None)
     else:
         entry["argv"] = ["hermes", "gateway", "run"]
     # Discovery is the seam (no real unit or install here); recording is the code under test.
@@ -181,7 +181,7 @@ def test_unknown_cgroup_membership_never_authorizes_stopping_the_unit():
     """A unit whose stop could kill this update stays running unless the update is PROVEN outside
     its cgroup; unreadable membership is unknown, never outside."""
     from hermes_cli.update_cmd_posix_pause import _escape_cgroup
-    assert _escape_cgroup({"unit": "hermes-gateway-p2probe.service", "pid": 4242, "cgroup": None}) is False
+    assert _escape_cgroup({"unit": "lina-gateway-p2probe.service", "pid": 4242, "cgroup": None}) is False
 
 
 @pytest.mark.platforms("macos")

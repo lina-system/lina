@@ -88,7 +88,7 @@ _CHILD = textwrap.dedent('''
         if mode == "ipc-failed-unit":
             gateway_module.find_gateway_pids = lambda **kwargs: []
             fleet._restart_systemd_gateway_units = lambda restarted, failed, *rest: failed.append(
-                "hermes-gateway-probe.service")
+                "lina-gateway-probe.service")
         else:
             def unavailable(*args, **kwargs):
                 raise RuntimeError("systemctl unavailable")

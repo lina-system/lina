@@ -150,9 +150,9 @@ def test_claiming_marks_the_machine_and_the_next_probe_sees_it(machine):
 
 def test_gateway_service_definitions_name_their_homes(tmp_path, monkeypatch):
     home = tmp_path / "gw-home"
-    unit = tmp_path / "hermes-gateway.service"
+    unit = tmp_path / "lina-gateway.service"
     unit.write_text(f'[Service]\nEnvironment="HERMES_HOME={home}"\n', encoding="utf-8")
-    vbs = tmp_path / "Hermes_Gateway.vbs"
+    vbs = tmp_path / "LINA_Gateway.vbs"
     vbs.write_text(f'env.Item("HERMES_HOME") = "{home}-win"\r\n', encoding="utf-8")
     from hermes_platform.resolver import known_dirs
     monkeypatch.setattr(known_dirs, "gateway_service_definition_globs", lambda: (str(tmp_path / "*Gateway*"),
@@ -171,7 +171,7 @@ def test_a_gateway_started_by_a_scheduled_task_or_the_startup_fallback_names_its
     from hermes_platform.resolver import known_dirs
 
     def launcher(home: Path) -> Path:  # the .cmd wrapper _write_task_script leaves in the home, gateway.vbs beside it
-        script = home / "gateway-service" / "Hermes_Gateway.cmd"
+        script = home / "gateway-service" / "LINA_Gateway.cmd"
         script.parent.mkdir(parents=True)
         monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: script)
         monkeypatch.setattr(gateway_windows, "_launcher_settings", lambda: (sys.executable, str(home), str(home), ""))
@@ -179,12 +179,12 @@ def test_a_gateway_started_by_a_scheduled_task_or_the_startup_fallback_names_its
 
     monkeypatch.setattr(gateway_windows, "_assert_windows", lambda: None)
     by_task, by_startup = tmp_path / "task home 方舟", tmp_path / "startup home Usuário"
-    startup = tmp_path / "Startup" / "Hermes_Gateway.vbs"
+    startup = tmp_path / "Startup" / "LINA_Gateway.vbs"
     monkeypatch.setattr(gateway_windows, "get_startup_entry_path", lambda: startup)
     monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: startup.with_suffix(".cmd"))
     gateway_windows._install_startup_entry(launcher(by_startup))
     task_launcher = launcher(by_task).with_suffix(".vbs")
-    monkeypatch.setattr(known_dirs, "gateway_service_definition_globs", lambda: (str(startup.parent / "Hermes_Gateway*"),))
+    monkeypatch.setattr(known_dirs, "gateway_service_definition_globs", lambda: (str(startup.parent / "LINA_Gateway*"),))
     monkeypatch.setattr(gateway_windows, "registered_task_launchers", lambda: [str(task_launcher)], raising=False)
 
     assert {by_task, by_startup} <= set(install_state._service_homes())
@@ -201,12 +201,12 @@ def test_a_gateway_service_counts_only_for_the_account_it_runs_as(tmp_path, monk
     me = getpass.getuser()
     units = {"mine": f"User={me}\n", "theirs": "User=nobody\n" if me != "nobody" else "User=root\n", "root": ""}
     for name, identity in units.items():
-        (tmp_path / f"hermes-gateway-{name}.service").write_text(
+        (tmp_path / f"lina-gateway-{name}.service").write_text(
             f'[Service]\n{identity}Environment="HERMES_HOME={tmp_path / name}"\n', encoding="utf-8")
     monkeypatch.setattr(known_dirs, "gateway_service_definition_globs",
-                        lambda: (str(tmp_path / "hermes-gateway-[mt]*.service"),))
+                        lambda: (str(tmp_path / "lina-gateway-[mt]*.service"),))
     monkeypatch.setattr(known_dirs, "system_gateway_service_definition_globs",
-                        lambda: (str(tmp_path / "hermes-gateway-root.service"),), raising=False)
+                        lambda: (str(tmp_path / "lina-gateway-root.service"),), raising=False)
 
     homes = set(install_state._service_homes())
 
