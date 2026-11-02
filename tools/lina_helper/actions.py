@@ -23,19 +23,29 @@ class Refused(Exception):
 
 
 class Targets:
-    """Which Mac each session's computer_use acts on (process memory; a session without a choice gets the default)."""
+    """Which Mac each session's computer_use acts on (process memory; a session without a choice gets the default).
+
+    Keyed by the active profile home as well as the session id: in a multiplexed process two profiles can share a
+    session id, and one profile's choice must never leak into the other's."""
 
     def __init__(self):
         self._lock = threading.Lock()
-        self._by_session: dict[str, str] = {}
+        self._by_session: dict[tuple[str, str], str] = {}
+
+    @staticmethod
+    def _key(session_id: str) -> tuple[str, str]:
+        from hermes_constants import hermes_home_key
+        return hermes_home_key(), session_id or ""
 
     def set(self, session_id: str, mac: str) -> None:
+        key = self._key(session_id)
         with self._lock:
-            self._by_session[session_id or ""] = mac
+            self._by_session[key] = mac
 
     def get(self, session_id: str) -> str:
+        key = self._key(session_id)
         with self._lock:
-            chosen = self._by_session.get(session_id or "")
+            chosen = self._by_session.get(key)
         return chosen or devices.default_name()
 
 

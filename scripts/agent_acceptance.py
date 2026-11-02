@@ -183,6 +183,21 @@ def _scheduler_healthy(output: str) -> bool:
     return "✓" in output and "✗" not in output and "⚠" not in output
 
 
+def _cron_job_names(listing: str) -> set[str]:
+    """Complete job names in a ``cron list`` listing, folded.
+
+    Each job renders one indented ``Name:`` row, so reading that row's value compares whole
+    names: a substring search over the listing would accept ``daily-brief`` when only
+    ``daily-brief-backup`` exists (or when the name shows up anywhere else in the output).
+    """
+    names: set[str] = set()
+    for line in listing.splitlines():
+        label, sep, value = line.partition(":")
+        if sep and label.strip() == "Name" and (name := value.strip()):
+            names.add(name.casefold())
+    return names
+
+
 def check_cron(settings: Settings, agent: str, section: dict[str, Any]) -> tuple[bool, str]:
     jobs = _expect_list(section, "jobs")
     if not jobs:
@@ -190,7 +205,8 @@ def check_cron(settings: Settings, agent: str, section: dict[str, Any]) -> tuple
     code, listing = _run([settings.command, "-p", agent, "cron", "list"], settings.timeout)
     if code != 0:
         return False, f"cron list exited {code}: {_clip(listing)}"
-    missing = _missing(listing, jobs)
+    listed = _cron_job_names(listing)
+    missing = [job for job in jobs if job.casefold() not in listed]
     if missing:
         return False, f"cron list lacks {missing}"
     code, status = _run([settings.command, "-p", agent, "cron", "status"], settings.timeout)
