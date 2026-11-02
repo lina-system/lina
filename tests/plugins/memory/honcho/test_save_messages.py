@@ -102,3 +102,33 @@ class TestShutdown:
         # manager.shutdown() flushes AND joins the async-writer thread;
         # calling flush_all() alone left the writer thread alive at exit.
         p._manager.shutdown.assert_called_once()
+
+
+class TestMemoryFileMigration:
+    """lina#14: the first-session upload of MEMORY.md / USER.md / SOUL.md is an automatic write too."""
+
+    @staticmethod
+    def _initialize(tmp_path, save_messages: bool) -> MagicMock:
+        from unittest.mock import patch
+
+        memories = tmp_path / "memories"
+        memories.mkdir()
+        (memories / "MEMORY.md").write_text("owner facts", encoding="utf-8")
+        cfg = HonchoClientConfig(api_key="test-key", enabled=True, recall_mode="tools", init_on_session_start=True,
+                                 session_strategy="per-directory", peer_name="owner", save_messages=save_messages)
+        manager = MagicMock()
+        manager.get_or_create.return_value.messages = []  # a new, empty owner session
+        with patch("plugins.memory.honcho.client.HonchoClientConfig.from_global_config", return_value=cfg), \
+             patch("plugins.memory.honcho.client.get_honcho_client", return_value=MagicMock()), \
+             patch("plugins.memory.honcho.session.HonchoSessionManager", return_value=manager), \
+             patch("hermes_constants.get_hermes_home", return_value=tmp_path):
+            HonchoMemoryProvider().initialize(session_id="owner-session")
+        return manager
+
+    def test_disabled_uploads_no_memory_files(self, tmp_path):
+        assert self._initialize(tmp_path, save_messages=False).migrate_memory_files.call_count == 0
+
+    def test_enabled_migrates_the_memory_files(self, tmp_path):
+        manager = self._initialize(tmp_path, save_messages=True)
+        manager.migrate_memory_files.assert_called_once()
+        assert manager.migrate_memory_files.call_args.args[1] == str(tmp_path / "memories")

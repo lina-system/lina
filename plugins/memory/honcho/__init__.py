@@ -380,7 +380,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         # Per-session strategy creates a fresh Honcho session every run, so a per-run
         # MEMORY.md/USER.md/SOUL.md upload would flood the backend with duplicates.
-        if cfg.session_strategy == "per-session":
+        if not getattr(cfg, "save_messages", True):
+            # saveMessages: false disables every automatic write, this upload of local memory included.
+            logger.debug("Honcho memory file migration skipped: saveMessages is false (%s)", self._session_key)
+        elif cfg.session_strategy == "per-session":
             logger.debug("Honcho memory file migration skipped: per-session strategy creates a fresh session per run (%s)",
                          self._session_key)
         elif not session.messages:
