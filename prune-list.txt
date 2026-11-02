@@ -228,6 +228,7 @@ tests/gateway/test_ws_auth_retry_verifier_probe.py
 tests/hermes_cli/test_desktop_build_reuse.py
 tests/hermes_cli/test_sandbox_image_switch.py
 tests/hermes_cli/test_teams_pipeline_plugin_cli.py
+tests/hermes_cli/test_update_zip_webapp_preserve.py
 tests/plugins/cron_providers/chronos/test_execution_recovery.py
 tests/plugins/memory/test_byterover_multiplex_child_env.py
 tests/plugins/memory/test_byterover_provider.py
