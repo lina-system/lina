@@ -1,0 +1,11 @@
+#!/usr/bin/env python3
+"""
+LINA CLI launcher.
+
+`lina` is the command; `hermes` (./hermes) is another name for the same entry
+point, with the same arguments and exit codes.
+"""
+
+if __name__ == "__main__":
+    from hermes_cli.main import main
+    main()

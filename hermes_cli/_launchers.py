@@ -100,11 +100,13 @@ def installation_command(repo_root: Path, args=(), *, module: str = "hermes_cli.
 
 #: Launcher command names — keep in lockstep with scripts/install.ps1
 #: Publish-UserCommand and hermes_cli/_install_repair.py.
-WINDOWS_BIN_LAUNCHERS = ("hermes", "hermes-acp")
+#: ``lina`` is the command; ``hermes`` is another name for the same entry point.
+WINDOWS_BIN_LAUNCHERS = ("lina", "hermes", "hermes-acp")
 
 #: command name -> (entry module, callable) — mirrors pyproject.toml
 #: [project.scripts].
 ENTRY_POINTS = {
+    "lina": ("hermes_cli.main", "main"),
     "hermes": ("hermes_cli.main", "main"),
     "hermes-acp": ("acp_adapter.entry", "main"),
 }
@@ -216,6 +218,8 @@ def exe_is_venv_bound(exe: Path, venv_dir: Path | None) -> bool:
         venv_dir / "bin" / "python3",
         venv_dir / "bin" / "hermes",
         venv_dir / "bin" / "hermes-acp",
+        venv_dir / "Scripts" / "lina.exe",
+        venv_dir / "bin" / "lina",
     ):
         for enc in ("utf-8", "utf-16-le"):
             try:
@@ -547,7 +551,7 @@ def _owns_launcher(target: Path, root: Path) -> bool:
     paths = {str(root / p) for p in (
         "hermes", "run_agent.py", "venv/bin/python", "venv/bin/python3",
         "venv/bin/hermes",
-        ".hermes/bin/hermes", ".hermes/bin/hermes-acp",
+        ".hermes/bin/hermes", ".hermes/bin/hermes-acp", ".hermes/bin/lina",
     )}
     # Current store launchers pass this Python bootstrap as one shell argument.
     bootstrap = f"sys.path.insert(0, {str(root)!r})"
@@ -1114,7 +1118,7 @@ def _is_bundled_payload(root: Path) -> bool:
 
 
 def _symlink_sealed_launchers(payload_bin) -> dict:
-    """Link ~/.local/bin/{hermes,hermes-agent,hermes-acp} at a sealed
+    """Link ~/.local/bin/{lina,hermes,hermes-agent,hermes-acp} at a sealed
     bundle's own prebuilt shims (macOS only).
 
     Symlinks, not copies: the shims are signed as part of the app bundle,
@@ -1132,7 +1136,7 @@ def _symlink_sealed_launchers(payload_bin) -> dict:
     written: list[str] = []
     try:
         link_dir.mkdir(parents=True, exist_ok=True)
-        for name in ("hermes", "hermes-agent", "hermes-acp"):
+        for name in ("lina", "hermes", "hermes-agent", "hermes-acp"):
             source = payload_bin / name
             if not source.is_file():
                 continue
