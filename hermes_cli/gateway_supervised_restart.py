@@ -124,12 +124,12 @@ def refuse_restart_of_service_managed_gateway(pid: int | None) -> None:
     _print_lines(
         "",
         f"✗ Gateway (PID {pid}) is managed by systemd unit {unit}.",
-        "  `hermes gateway restart` cannot restart it from here: the fallback would",
+        "  `lina gateway restart` cannot restart it from here: the fallback would",
         "  kill a live gateway and spawn an unsupervised replacement in this shell's",
         "  cgroup while the unit keeps failing against the stolen lock.",
         "  Restart it through its unit instead:",
         *(f"    {c}" for c in cmds),
-        "  (Pre-convention `hermes.service` installs: `hermes gateway migrate-legacy`",
+        "  (Pre-convention `hermes.service` installs: `lina gateway migrate-legacy`",
         "  removes the legacy unit so the canonical one can own the gateway.)",
     )
     sys.exit(1)

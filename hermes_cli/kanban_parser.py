@@ -464,6 +464,9 @@ _SPECS = [
         _json_flag(),
     ], help="Planned against actual outcome of finished goal-mode work cards, "
             "with one summary line per agent and kind"),
+    _cmd("gate", [_arg("gate_argv", nargs=argparse.REMAINDER, metavar="prs|dev|artifact|review|ask ...")],
+         help="Deterministic work-card gates (exit 0 pass, 1 fail, 75 waiting); "
+              "`hermes kanban gate <gate> --help` for each gate"),
 ]
 
 

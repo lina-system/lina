@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 
 def _serve_unit_recovery_available() -> bool:
-    """Can a fresh process restart ``hermes-serve*``/``hermes-dashboard*`` units on this host?"""
+    """Can a fresh process restart ``lina-serve*``/``lina-dashboard*`` units on this host?"""
     return sys.platform == "linux" and bool(shutil.which("systemctl"))
 
 
@@ -83,7 +83,7 @@ def _numeric(value):
 
 def _qualified_serve_skips(skip_units) -> list[dict]:
     """Scope-qualify the units the aborted phase already settled: ``<scope>/<unit>`` because
-    ``hermes-serve.service`` can exist in BOTH the user and system manager (two processes)."""
+    ``lina-serve.service`` can exist in BOTH the user and system manager (two processes)."""
     rows: list[dict] = []
     for entry in sorted(skip_units or ()):
         scope, sep, unit = str(entry).partition("/")
@@ -158,7 +158,7 @@ def _recover_gateway_restart_after_abort(
     supervisor-owned profiles.
 
     ``skip_units`` names the units the aborted phase already settled, as ``<scope>/<unit>``. The scope is
-    part of the identity, not decoration: ``hermes-serve.service`` can exist in both the user and the system
+    part of the identity, not decoration: ``lina-serve.service`` can exist in both the user and the system
     manager as two different processes, and an unqualified token would let a settled one suppress recovery
     of a stale one (review on #96235).
     """
@@ -244,7 +244,7 @@ def _warn_stale_serve_runtimes(rows) -> None:
     if len(unit_rows) < len(rows):
         print("    Ask their owner to relaunch `hermes serve` / `hermes dashboard`, or reconnect Desktop for an SSH backend.")
     # A unit-managed backend restarts through its own unit and scope — never "ask the owner to
-    # relaunch", and never a hardcoded user-scope hermes-serve (#141021).
+    # relaunch", and never a hardcoded user-scope lina-serve (#141021).
     from hermes_cli.main_dashboard import _format_restart_commands, _systemd_restart_commands
 
     for row in unit_rows:
