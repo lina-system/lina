@@ -135,6 +135,19 @@ def run_card_gates(conn: sqlite3.Connection, task, *, workspace: Optional[str] =
     return failure
 
 
+def handoff_gate_failure(conn: sqlite3.Connection, task) -> Optional[GateFailure]:
+    """The deterministic half of every completion / review handoff (tools and CLI): a goal-mode
+    card's own gates must pass in its workspace. Never fails open, judge or no judge. A worker
+    scoped to the card runs them in ``$HERMES_KANBAN_WORKSPACE``; anyone else in the card's path."""
+    if task is None or not task.goal_mode or not task.goal_gates:
+        return None
+    import os
+
+    own = os.environ.get("HERMES_KANBAN_TASK") == task.id
+    return run_card_gates(conn, task,
+                          workspace=os.environ.get("HERMES_KANBAN_WORKSPACE") if own else None)
+
+
 def loop_gate_check(task_id: str, goal_text: str, *, workspace: Optional[str] = None,
                     run_id: Optional[int] = None,
                     connect: Optional[Callable] = None) -> Callable[[], Optional[dict]]:

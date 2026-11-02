@@ -182,6 +182,34 @@ def test_handoff_refused_while_gate_fails_without_judge(kanban_home, workspace, 
     assert _task(tid)[0].status == ("done" if tool == "kanban_complete" else "review")
 
 
+@pytest.mark.parametrize("command,landed", [("complete", "done"), ("request-review", "review")])
+def test_cli_handoff_refused_while_gate_fails_without_judge(kanban_home, workspace, monkeypatch,
+                                                            capsys, command, landed):
+    import argparse
+
+    from hermes_cli import kanban as kc
+
+    monkeypatch.setattr(kc, "_goal_mode_handoff_rejection", lambda task, ev: ("done", None))
+    tid, run_id = _card(workspace, ["echo suite red; test -f ok.txt"], claim=True)
+    monkeypatch.setenv("HERMES_KANBAN_TASK", tid)
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(run_id))
+    parser = argparse.ArgumentParser(prog="hermes", add_help=False)
+    kc.build_parser(parser.add_subparsers(dest="command"))
+
+    def run():
+        args = parser.parse_args(["kanban", command, tid, "--summary", "done, trust me"])
+        return kc.kanban_command(args)
+
+    assert run() != 0
+    err = capsys.readouterr().err
+    assert "echo suite red; test -f ok.txt" in err and "suite red" in err
+    assert _task(tid)[0].status == "running"
+
+    (workspace / "ok.txt").write_text("ok")
+    assert run() == 0
+    assert _task(tid)[0].status == landed
+
+
 def test_legacy_board_without_goal_gates_column_opens(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     home.mkdir()
