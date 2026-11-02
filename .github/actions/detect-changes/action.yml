@@ -72,9 +72,6 @@ outputs:
   catalog:
     description: Run the plugin-catalog tests (catalog-only diffs run these instead of the Python suite).
     value: ${{ steps.classify.outputs.catalog }}
-  macos:
-    description: Run LINA's macOS-marked tests (a marked test file or a module it imports changed, or the dev-red-fix label).
-    value: ${{ steps.classify.outputs.macos }}
 
 runs:
   using: composite
