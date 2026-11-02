@@ -76,7 +76,18 @@ def ensure_env(directory: Path) -> dict[str, str]:
     return values
 
 
+DOCKER_MISSING = ("Docker is not running or not installed. Install Docker (Docker Desktop on a Mac), start it, then "
+                  "run `lina store install`.")
+
+
 def _run(argv, *, env=None, capture=False, stdout=None, input=None) -> subprocess.CompletedProcess:
+    try:
+        return _run_process(argv, env=env, capture=capture, stdout=stdout, input=input)
+    except FileNotFoundError as exc:
+        raise StoreError(DOCKER_MISSING) from exc
+
+
+def _run_process(argv, *, env, capture, stdout, input) -> subprocess.CompletedProcess:
     return subprocess.run(argv, env=env, text=stdout is None, check=False, timeout=3600, input=input,
                           stdout=stdout if stdout is not None else (subprocess.PIPE if capture else None),
                           stderr=subprocess.PIPE if capture else None,
@@ -186,8 +197,7 @@ class Store:
 
 def preflight(store: Store) -> None:
     if store.run(["docker", "info", "--format", "{{.ServerVersion}}"], capture=True).returncode != 0:
-        raise StoreError("Docker is not running or not installed. Install Docker (Docker Desktop on a Mac), start "
-                         "it, then run `lina store install`.")
+        raise StoreError(DOCKER_MISSING)
     if not (HONCHO_DIR / "Dockerfile").exists():
         raise StoreError(f"{HONCHO_DIR} is missing: the Honcho server source is needed to build its image.")
 

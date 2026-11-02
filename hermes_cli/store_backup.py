@@ -201,12 +201,14 @@ def restore(store: Store, name: str | None = None, *, now: datetime | None = Non
     volume = f"lina-store-pgdata-{stamp(now).lower()}"
     unpack(replace(store, overrides={**store.overrides, "LINA_STORE_VOLUME": volume}), generation)
     previous = store.values()["LINA_STORE_VOLUME"]
-    store.stop_writers()
+    stopped = store.stop_writers()
     _switch_volume(store, volume)
     store.set_role_passwords()
     differ = _differences(manifest["fingerprint"], fingerprint(store))
     if differ:
         _switch_volume(store, previous)
+        if stopped:
+            store.compose("up", "-d", "--wait", *stopped, what="starting the Honcho api and deriver again")
         raise StoreError(f"the restored data differs from {generation.name} in {', '.join(differ)}; the store is "
                          f"back on volume {previous} (the restored copy is in volume {volume})")
     _put_back_honcho_image(store, manifest)

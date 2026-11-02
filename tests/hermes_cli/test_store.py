@@ -130,6 +130,16 @@ def test_install_without_docker_says_what_to_do(tmp_path, honcho_src, monkeypatc
     assert "Docker is not running or not installed" in lines[0]
 
 
+def test_install_without_a_docker_executable_says_what_to_do(tmp_path, honcho_src, monkeypatch):
+    empty = tmp_path / "empty-bin"
+    empty.mkdir()
+    monkeypatch.setenv("PATH", str(empty))
+    monkeypatch.setattr(st, "store_dir", lambda: tmp_path / "store")
+    lines = []
+    assert st.install_step(out=lines.append) == 1
+    assert lines[0] == f"Store: {st.DOCKER_MISSING}"
+
+
 def test_install_refuses_without_the_honcho_source(tmp_path, monkeypatch):
     monkeypatch.setattr(st, "HONCHO_DIR", tmp_path / "missing")
     with pytest.raises(st.StoreError, match="Honcho server source"):
@@ -217,6 +227,15 @@ def test_restore_that_does_not_match_the_backup_goes_back_to_the_old_volume(tmp_
     with pytest.raises(st.StoreError, match="differs from .* in memory.t"):
         sb.restore(store, generation.name)
     assert store.values()["LINA_STORE_VOLUME"] == "lina-store-pgdata"
+
+
+def test_a_rejected_restore_starts_the_honcho_writers_it_stopped_again(tmp_path):
+    docker, store, generation = _one_generation(tmp_path)
+    docker.running = {"db", "honcho-api", "honcho-deriver"}
+    docker.restored_tables = {"memory.t": [1, "abc"]}
+    with pytest.raises(st.StoreError, match="differs from"):
+        sb.restore(store, generation.name)
+    assert docker.running == {"db", "honcho-api", "honcho-deriver"}
 
 
 def test_upgrade_runs_backup_rehearsal_one_job_and_smoke_test_in_order(tmp_path, honcho_src):
