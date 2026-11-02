@@ -788,8 +788,8 @@ def resolve_workspace(task: Task, *, board: Optional[str] = None) -> Path:
     """Resolve (and create if needed) the workspace for a task.
 
     ``scratch``: ``<board-root>/workspaces/<id>/`` — path-stable across the
-    dispatcher and every profile worker. ``dir``: ``workspace_path``, created
-    if missing; MUST be absolute (relative paths would resolve against the
+    dispatcher and every profile worker. ``dir``: ``workspace_path`` or a
+    ``desk:<path>`` folder on the shared Desk, created if missing; MUST be absolute (relative paths would resolve against the
     dispatcher's CWD — confused-deputy traversal). ``worktree``: a linked git
     worktree; a repo-root ``workspace_path`` anchors ``<repo>/.worktrees/<id>``,
     a concrete path is created/reused, none -> the board's ``default_workdir``
@@ -812,7 +812,10 @@ def resolve_workspace(task: Task, *, board: Optional[str] = None) -> Path:
     elif kind == "dir":
         if not task.workspace_path:
             raise ValueError(f"task {task.id} has workspace_kind=dir but no workspace_path")
-        p = Path(task.workspace_path).expanduser()
+        from hermes_cli.desk import REF_PREFIX, resolve_desk_ref
+
+        p = (resolve_desk_ref(task.workspace_path) if task.workspace_path.startswith(REF_PREFIX)
+             else Path(task.workspace_path).expanduser())
         if not p.is_absolute():
             raise ValueError(
                 f"task {task.id} has non-absolute workspace_path "
