@@ -85,6 +85,8 @@ EXCLUDED_DIRS = {
     "website/build",
     "optional-skills",  # external skills
 }
+# Vendored subtrees, held to their upstream's own checks (docs/lcm-x.md).
+EXCLUDED_REL_PREFIXES = ("plugins/context_engine/lcm-x/",)
 
 # File globs we never scan (beyond the dirs above).
 EXCLUDED_SUFFIXES = {
@@ -525,7 +527,7 @@ def should_scan_file(path: Path) -> bool:
             return False
     # Skip self and docs that intentionally mention the patterns
     rel = path.relative_to(REPO_ROOT).as_posix()
-    if rel in EXCLUDED_FILES:
+    if rel in EXCLUDED_FILES or rel.startswith(EXCLUDED_REL_PREFIXES):
         return False
     # Only scan text files (rough heuristic — .py, .md, .sh, .ps1, .yaml, etc.)
     if path.suffix in {".py", ".pyw", ".pyi"}:

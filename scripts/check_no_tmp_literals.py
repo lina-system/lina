@@ -72,7 +72,8 @@ SKIP_DIRS = {
 ROOT_SKIP_DIRS = {".github"}
 # Pruned as repo-relative paths.
 SKIP_REL_DIRS = {Path("website/i18n"), Path("website/build"), Path("website/node_modules"),
-                 Path("services/honcho")}  # vendored subtree, docs/honcho.md
+                 Path("services/honcho"),  # vendored subtrees, docs/honcho.md, docs/lcm-x.md
+                 Path("plugins/context_engine/lcm-x")}
 
 SKIP_FILE_NAMES = {"package-lock.json", "yarn.lock", "pnpm-lock.yaml", "uv.lock", "poetry.lock"}
 SKIP_FILE_PATTERNS = (

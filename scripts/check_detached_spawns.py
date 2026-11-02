@@ -53,6 +53,8 @@ HELPER_FILES = {"hermes_cli/process_identity.py"}
 SCAN_TREES = ("agent", "cron", "gateway", "hermes_cli", "plugins", "tools", "tui_gateway", "acp_adapter", "pm")
 SCAN_ROOT_FILES = ("cli.py", "run_agent.py", "hermes_state.py", "utils.py", "hermes_constants.py")
 SKIP_PARTS = {"tests", "__pycache__", "evals", "node_modules"}
+# Vendored subtrees, held to their upstream's own checks (docs/lcm-x.md).
+VENDORED = ("plugins/context_engine/lcm-x/",)
 _DETACH_OS_ATTRS = {"setsid", "setpgid", "setpgrp"}
 # Helpers that return detaching Popen kwargs (``start_new_session=True`` on POSIX).
 _DETACH_HELPERS = {"windows_detach_popen_kwargs"}
@@ -130,7 +132,8 @@ def _tracked_files(root: Path) -> list[Path]:
 
 def _in_scope(rel: str) -> bool:
     parts = Path(rel).parts
-    return not (SKIP_PARTS & set(parts)) and not Path(rel).name.startswith("test_") and rel not in HELPER_FILES
+    return (not (SKIP_PARTS & set(parts)) and not Path(rel).name.startswith("test_") and rel not in HELPER_FILES
+            and not rel.startswith(VENDORED))
 
 
 def scan(paths=None, root: Path | None = None) -> dict[str, list[tuple[int, str]]]:

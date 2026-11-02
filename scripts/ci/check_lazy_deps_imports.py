@@ -21,8 +21,8 @@ re-opening.
   or parsed is reported and fails the run (exit 2), not skipped.
 
 tests/ files are out of scope: tests may reference the stub module to
-assert its behaviour. So is services/honcho/, a vendored upstream subtree
-(docs/honcho.md) held to its upstream's own checks.
+assert its behaviour. So are services/honcho/ and plugins/context_engine/lcm-x/,
+vendored upstream subtrees (docs/honcho.md, docs/lcm-x.md) held to their upstream's own checks.
 
 Exit codes: 0 = clean, 1 = offenders found (exact ``path:line`` sites on
 stdout), 2 = inventory/analysis error.
@@ -69,7 +69,7 @@ def _tracked_python_files(root: Path) -> list[str]:
         n.replace("\\", "/")
         for n in names
         if n.endswith(".py") and n not in removed
-        and not n.replace("\\", "/").startswith(("tests/", "services/honcho/"))
+        and not n.replace("\\", "/").startswith(("tests/", "services/honcho/", "plugins/context_engine/lcm-x/"))
     )
     if not files:
         sys.stderr.write(

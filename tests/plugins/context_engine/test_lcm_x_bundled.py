@@ -12,6 +12,7 @@ import contextlib
 import json
 import re
 import sqlite3
+import sys
 import textwrap
 from pathlib import Path
 from types import SimpleNamespace
@@ -30,6 +31,8 @@ def _clean_managers(monkeypatch):
 
     # FastEmbed is not a LINA dependency; with embeddings on, LCM-X starts a retry worker for it.
     monkeypatch.setenv("LCM_EMBEDDINGS_ENABLED", "false")
+    # tiktoken would fetch its BPE file over the network; without it LCM-X counts by characters.
+    monkeypatch.setitem(sys.modules, "tiktoken", None)
     _reset_plugin_managers_for_tests()
     yield
     _reset_plugin_managers_for_tests()

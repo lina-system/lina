@@ -23,6 +23,8 @@ from pathlib import Path, PurePosixPath
 
 ROOT_MAX_CHARS = 12_000
 CHAIN_MAX_CHARS = 30_000
+# Vendored subtrees keep upstream's AGENTS.md unedited (docs/lcm-x.md); its chain is not LINA's to size.
+VENDORED = ("plugins/context_engine/lcm-x/",)
 
 
 def _int_constant(source: Path, name: str) -> int:
@@ -44,7 +46,8 @@ def main(repo: Path) -> int:
         ["git", "ls-files", "-z", "--", "AGENTS.md", "*/AGENTS.md"], cwd=repo, capture_output=True,
         check=True, stdin=subprocess.DEVNULL, timeout=60,
     ).stdout.decode("utf-8").split("\0")
-    sizes = {rel: len((repo / rel).read_text(encoding="utf-8-sig")) for rel in filter(None, tracked)}
+    sizes = {rel: len((repo / rel).read_text(encoding="utf-8-sig")) for rel in filter(None, tracked)
+             if not rel.startswith(VENDORED)}
     over = []
     for rel, size in sorted(sizes.items()):
         cap = ROOT_MAX_CHARS if rel == "AGENTS.md" else hint_cap

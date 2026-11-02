@@ -13,6 +13,8 @@ import subprocess
 
 
 FIXED_BASH = re.compile(rb"#![ \t]*/(?:usr/)?bin/bash\b")
+# Vendored subtrees, held to their upstream's own checks (docs/lcm-x.md).
+VENDORED = ("plugins/context_engine/lcm-x/",)
 
 
 def check(root: Path) -> list[str]:
@@ -25,7 +27,7 @@ def check(root: Path) -> list[str]:
             continue
         relative = name.decode("utf-8", errors="surrogateescape")
         path = root / relative
-        if path.is_symlink() or not path.is_file():
+        if relative.startswith(VENDORED) or path.is_symlink() or not path.is_file():
             continue
         data = path.read_bytes()
         if b"\0" in data:

@@ -44,6 +44,8 @@ DEFAULT_TREES = (
     "model_tools.py", "batch_runner.py")
 # The backend module itself, and the on-disk primitives it wraps.
 ALLOWED_FILES = {ROOT / "hermes_cli" / "config_backend.py", ROOT / "utils.py"}
+# A vendored subtree, held to its upstream's own checks (docs/lcm-x.md).
+VENDORED = ROOT / "plugins" / "context_engine" / "lcm-x"
 # Modules whose ``config_path`` / ``path`` names are their OWN config file, never a hermes
 # config.yaml (the name heuristic would flag every line of them).
 FOREIGN_CONFIG_FILES = {
@@ -232,7 +234,8 @@ def main(argv: list[str]) -> int:
     files: list[Path] = []
     for t in targets:
         if t.is_dir():
-            files.extend(p for p in t.rglob("*.py") if "node_modules" not in p.parts and "tests" not in p.parts)
+            files.extend(p for p in t.rglob("*.py") if "node_modules" not in p.parts and "tests" not in p.parts
+                         and not p.is_relative_to(VENDORED))
         elif t.suffix == ".py" and t.exists():
             files.append(t)
     problems: list[str] = []
