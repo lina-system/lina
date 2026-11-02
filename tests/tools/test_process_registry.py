@@ -42,6 +42,14 @@ def _reset_systemd_scope_cache():
     _pr._SYSTEMD_SCOPE_AVAILABLE = original
 
 
+@pytest.fixture(autouse=True)
+def _no_owner_death_supervision(monkeypatch):
+    """A fake Popen's made-up pid must not reach the owner-death supervisor: it would start one
+    through the patched Popen (#95) or have a running one kill that unrelated group at exit."""
+    for module in ("hermes_cli.process_identity", "tools.process_registry_ownership"):
+        monkeypatch.setattr(f"{module}.own_process_groups", lambda pgids: None)
+
+
 def _make_session(
     sid="proc_test123",
     command="echo hello",
@@ -998,8 +1006,6 @@ class TestEnvPollerIncrementalRead:
             )
         return env.commands
 
-
-
     @pytest.mark.skipif(not shutil.which("sh"), reason="needs a POSIX sh")
     def test_read_command_holds_back_a_split_utf8_sequence(self, tmp_path):
         """A multibyte character straddling two polls must not be split.
@@ -1027,7 +1033,6 @@ class TestEnvPollerIncrementalRead:
             assert delta == full[:size]
             complete = full[:n].decode("utf-8", "ignore").encode() == full[:n]
             assert (n - size) == 0 if complete else 0 < (n - size) <= 3
-
 
     def test_delta_is_appended_not_replaced(self, registry):
         session = _make_session(sid="proc_append", output="already here ")
@@ -1186,7 +1191,6 @@ class TestSpawnRewriteCompoundBackground:
         # The command passed to Popen should be the REWRITTEN version
         assert "&& { node server.js &>/tmp/srv.log & }" in shell_cmd[2]
 
-
     def test_pty_path_uses_rewritten_command(self, registry):
         """PTY spawn path must also use the rewritten command (issue #68915)."""
         mock_pty_proc = MagicMock()
@@ -1281,7 +1285,6 @@ class TestCheckpoint:
         stop_unit.assert_called_once_with(entry["systemd_unit"])
         assert json.loads(checkpoint.read_text()) == []
 
-
     def test_recovery_skips_explicit_sandbox_backed_entries(self, registry, tmp_path):
         checkpoint = tmp_path / "procs.json"
         original = [{
@@ -1331,7 +1334,6 @@ class TestKillProcess:
         registry._finished[s.id] = s
         result = registry.kill_process(s.id)
         assert result["status"] == "already_exited"
-
 
     def test_kill_detached_session_uses_host_pid(self, registry):
         s = _make_session(sid="proc_detached", command="sleep 999")
@@ -1737,7 +1739,6 @@ class TestPidReuseGuard:
         finally:
             proc.kill()
             proc.wait()
-
 
     def test_refresh_detached_marks_recycled_pid_exited(self, registry):
         """A detached session whose PID got recycled is moved to finished."""
@@ -2952,7 +2953,6 @@ class TestNotificationRedaction:
 
 class TestGetByPrefix:
     """ProcessRegistry.get() resolves unique ID prefixes like git short hashes."""
-
 
     def test_unique_prefix_resolves(self, registry):
         s = _make_session(sid="proc_4dae56ca81f6")

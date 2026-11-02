@@ -188,6 +188,19 @@ class InstallTests(InstallTestCase):
         install.cmd_install(self.b, 'agent', self.candidate(adhoc=True), None, True)
         self.assertTrue(self.path(APP).is_dir())
 
+    def test_ad_hoc_lab_install_runs_the_helper_in_development_mode(self):
+        # Without it the teamless helper rejects every client, even permissions and status (lina#60).
+        install.cmd_install(self.b, 'agent', self.candidate(adhoc=True), None, True)
+        agent = plistlib.loads(self.path(AGENT_PLIST).read_bytes())
+        self.assertEqual(agent['EnvironmentVariables'], {'LINA_HELPER_DEV': '1'})
+
+    def test_ad_hoc_upgrade_repairs_an_agent_without_development_mode(self):
+        install.cmd_install(self.b, 'agent', self.candidate(adhoc=True, version='1.0'), None, True)
+        self.path(AGENT_PLIST).write_bytes(install.agent_plist(False))  # as written before lina#60
+        install.cmd_upgrade(self.b, 'agent', self.candidate(adhoc=True, version='2.0'), True, skip_grant_check=True)
+        agent = plistlib.loads(self.path(AGENT_PLIST).read_bytes())
+        self.assertEqual(agent['EnvironmentVariables'], {'LINA_HELPER_DEV': '1'})
+
     def test_refuses_wrong_bundle_id(self):
         with self.assertRaisesRegex(install.InstallError, 'bundle ID'):
             self.install(bundle_id='com.example.other')
@@ -281,6 +294,12 @@ class UpgradeTests(InstallTestCase):
         self.assertEqual(self.version(PREVIOUS), '1.0')
         self.assertFalse(self.path('/Applications/.lina-helper-staging').exists())
         self.assertEqual(json.loads(self.path(STATE).read_text())['installed_version'], '2.0')
+
+    def test_signed_upgrade_leaves_the_agent_unchanged(self):
+        before = self.path(AGENT_PLIST).read_bytes()
+        self.upgrade(version='2.0')
+        self.assertEqual(self.path(AGENT_PLIST).read_bytes(), before)
+        self.assertNotIn('EnvironmentVariables', plistlib.loads(before))
 
     def test_upgrade_keeps_existing_policy(self):
         self.path(POLICY).write_text('{"local": true}')
