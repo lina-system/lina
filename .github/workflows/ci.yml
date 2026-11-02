@@ -179,6 +179,38 @@ jobs:
       - name: Check the checkout is clean
         uses: ./.github/actions/check-clean-worktree
 
+  helper-macos:
+    # Not required. LINA Helper (helper/macos): Swift tests, the unlock package's native checks
+    # and an ad-hoc app build. The Linux half of its `make test` runs in the Python suite (tests/helper).
+    name: LINA Helper (macOS)
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Swift tests
+        run: make -C helper/macos swift-test
+
+      - name: Unlock package native checks
+        run: make -C helper/macos/unlock native-check
+
+      - name: Build the app (ad-hoc signature)
+        run: make -C helper/macos app
+
+  helper-macos-sign:
+    # Placeholder. Developer ID signing and notarisation need credentials held outside the
+    # repository; this job stays off until they are provisioned for this workflow.
+    name: LINA Helper sign and notarise (not wired)
+    if: ${{ false }}
+    needs: helper-macos
+    runs-on: macos-latest
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Sign and notarise
+        run: echo "Signing and notarisation are not wired yet; see helper/macos/docs/install.md."
+
   diff-checks:
     # Upstream blob-size-check.yml and the two critical patterns of supply-chain-audit.yml, in one
     # job: both read only HEAD^1..HEAD and need no toolchain.

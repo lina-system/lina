@@ -1,0 +1,4 @@
+cc -std=c11 -Wall -Wextra -Werror -O2 -Isrc tests/grant_test.c src/grant.c -o build/grant-test
+./build/grant-test
+grant-test: tests/grant_test.c:33: main: Assertion `hu_consumed(directory, owner, &c)' failed.
+make: *** [Makefile:17: test] Aborted (core dumped)

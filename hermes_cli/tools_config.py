@@ -91,6 +91,7 @@ CONFIGURABLE_TOOLSETS = [
     ("discord_admin",   "🛡️  Discord Server Admin",    "list channels/roles, pin, assign roles"),
     ("yuanbao",          "🤖 Yuanbao",                  "group info, member queries, DM"),
     ("computer_use",     "🖱️  Computer Use (macOS/Windows/Linux)", "background desktop control via cua-driver"),
+    ("lina_helper",      "🖥️  LINA Helper (Macs)",      "mac_use, mac_status, mac_screenshot, mac_unlock (devices.macs)"),
 ]
 
 

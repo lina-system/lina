@@ -34,6 +34,7 @@ _NON_MIRROR_DIRS = {
     "fakes", "fixtures", "install", "integration", "manual",
     "monitoring", "perf_guards", "scripts", "secret_sources",
     "security", "skills", "verify", "website", "computer_use", "hermes_state",
+    "helper",  # runs helper/macos's own standard-library suites; helper/ holds no Python package
 }
 
 # Root-level modules whose tests sit directly in tests/ (no package to mirror).

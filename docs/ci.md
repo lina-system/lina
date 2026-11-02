@@ -15,6 +15,7 @@ Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the 
 | Python tests (Linux n/8) | `python` lane | `scripts/run_tests.sh` on Ubuntu, in 8 slices, with the per-file duration cache (`test_durations.json`; pull requests read it, `dev` pushes write it) | `tests.yml`, job "Run tests" |
 | **Python tests (Linux)** (required) | always | Green when every slice passed, or when detect skipped the slices because the change cannot reach Python | `ci.yaml`, job `all-checks-pass` |
 | Python tests (macOS) | pushes to `dev`, manual runs | macOS-marked tests | `tests-os.yml`, macOS jobs |
+| LINA Helper (macOS) | always | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
 | Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
 | uv.lock check | `uv_lock` lane | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
 | Prune check | always | Fails while a tracked file matches `prune-list.txt`, the upstream paths LINA does not carry ([forking.md](forking.md)) | LINA only |
@@ -25,7 +26,7 @@ Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_e
 
 ## Required checks
 
-`dev` and `main` require two checks: **Lint** and **Python tests (Linux)**. Both are job names in `ci.yml` and always report, so a pull request never waits on a check that did not start. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
+`dev` and `main` require two checks: **Lint** and **Python tests (Linux)**. LINA Helper (macOS) is not required; the Linux half of `helper/macos`'s `make test` runs inside **Python tests (Linux)** (`tests/helper/`). Both are job names in `ci.yml` and always report, so a pull request never waits on a check that did not start. The repository ruleset also forbids force push and deletion on `upstream`, `dev` and `main`. `upstream` has no required checks: it only fast-forwards to Hermes `main`.
 
 ## What was moved
 
