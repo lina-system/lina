@@ -297,13 +297,13 @@ async def test_native_admission_envelope_round_trips_the_names(tmp_path, monkeyp
     from gateway.session_authority import initialize_session_authority
     from gateway.session_envelope import restore_native, snapshot_native
     from hermes_state_runtime import RuntimeStoreError
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
+    from plugins.platforms.telegram.adapter import TelegramAdapter
 
-    chat = "15551234567@s.whatsapp.net"
-    monkeypatch.setenv("WHATSAPP_ALLOWED_USERS", "15551234567")
+    chat = "15551234567"
+    monkeypatch.setenv("TELEGRAM_ALLOWED_USERS", "15551234567")
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / "sessions"))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={"session_path": str(tmp_path / "wa")}))
-    runner.adapters = {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token="test-token", typing_indicator=False))
+    runner.adapters = {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id="default", instance_id="names")
     files = []
     for stem in ("one", "two"):

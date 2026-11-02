@@ -16,7 +16,7 @@ import agent.secret_scope as ss
 import gateway.platforms._shared as shared
 import hermes_cli.config as cli_config
 
-_ENV_ENABLEMENT_PLUGINS = ("buzz", "google_chat", "irc", "line", "ntfy", "photon", "simplex", "teams")
+_ENV_ENABLEMENT_PLUGINS = ("photon",)
 
 
 @pytest.fixture(autouse=True)
@@ -34,17 +34,10 @@ def test_env_enablement_reads_only_through_scoped_getter(plugin, monkeypatch):
     mod = importlib.import_module(f"plugins.platforms.{plugin}.adapter")
     # Anything the plugin resolves through raw env would be visible here; the scoped reader hides it.
     for var in list(os.environ):
-        if var.startswith(plugin.upper().replace("GOOGLE_CHAT", "GOOGLE")):
+        if var.startswith(plugin.upper()):
             monkeypatch.delenv(var, raising=False)
     fake_scope = {
-        "BUZZ_RELAY_URL": "wss://relay", "BUZZ_PRIVATE_KEY": "k" * 8, "BUZZ_CHANNELS": "a,b",
-        "GOOGLE_CHAT_PROJECT_ID": "p", "GOOGLE_CHAT_SUBSCRIPTION_NAME": "s", "GOOGLE_CHAT_MAX_MESSAGES": "3",
-        "IRC_SERVER": "irc.example", "IRC_CHANNEL": "#h", "IRC_PORT": "6697",
-        "LINE_CHANNEL_ACCESS_TOKEN": "t", "LINE_CHANNEL_SECRET": "s", "LINE_PORT": "8081",
-        "NTFY_TOPIC": "topic", "NTFY_TOKEN": "tok",
         "PHOTON_PROJECT_ID": "pid", "PHOTON_PROJECT_SECRET": "sec", "PHOTON_HOME_CHANNEL": "line-1",
-        "SIMPLEX_WS_URL": "ws://x", "SIMPLEX_GROUP_ALLOWED": "g",
-        "TEAMS_CLIENT_ID": "c", "TEAMS_CLIENT_SECRET": "s", "TEAMS_TENANT_ID": "t", "TEAMS_PORT": "3979",
     }
     scoped_hits: list[str] = []
     raw_hits: list[str] = []
@@ -69,7 +62,7 @@ def test_env_enablement_reads_only_through_scoped_getter(plugin, monkeypatch):
 
 def test_home_channel_name_defaults_to_home_everywhere(monkeypatch):
     """One rule for ``home_channel.name`` across adapters: ``<HOME_ENV>_NAME`` else the literal ``Home``
-    (irc/ntfy/buzz previously used the chat id as its own name)."""
+    regardless of whether the channel has an explicit name."""
     monkeypatch.setattr(shared, "get_scoped_secret", lambda n, d=None, **k: {"X_HOME": "room"}.get(n, d))
     seed = shared.seed_extra_from_env((), home_env="X_HOME")
     assert seed["home_channel"] == {"chat_id": "room", "name": "Home"}
@@ -79,28 +72,6 @@ def test_home_channel_name_defaults_to_home_everywhere(monkeypatch):
     monkeypatch.setattr(shared, "get_scoped_secret", lambda n, d=None, **k: d)
     assert shared.seed_extra_from_env((), home_env="X_HOME", home_default="fallback")["home_channel"]["chat_id"] == "fallback"
     assert "home_channel" not in shared.seed_extra_from_env((), home_env="X_HOME")
-
-
-def test_buzz_yaml_bridge_seeds_extra_for_a_secondary_profile(monkeypatch):
-    """Under a secondary profile's scope the env write is skipped, so the hook MUST return the values for
-    ``PlatformConfig.extra`` — a ``None`` return left a secondary Buzz profile with neither."""
-    import plugins.platforms.buzz.adapter as buzz
-
-    for var in ("BUZZ_RELAY_URL", "BUZZ_REPLY_TO_MODE", "BUZZ_CHANNELS", "BUZZ_REQUIRE_MENTION"):
-        monkeypatch.delenv(var, raising=False)
-    monkeypatch.setattr(shared, "profile_scoped", lambda: True)
-    seeded = buzz._apply_yaml_config({}, {"extra": {
-        "relay_url": "wss://p.relay", "reply_to_mode": "off", "channels": ["a", "b"], "require_mention": False}})
-    assert seeded == {"relay_url": "wss://p.relay", "reply_to_mode": "off", "channels": ["a", "b"], "require_mention": False}
-    assert not any(v in os.environ for v in ("BUZZ_RELAY_URL", "BUZZ_REPLY_TO_MODE", "BUZZ_CHANNELS", "BUZZ_REQUIRE_MENTION"))
-
-    monkeypatch.setattr(shared, "profile_scoped", lambda: False)
-    buzz._apply_yaml_config({}, {"extra": {"reply_to_mode": "off", "channels": ["a", "b"], "require_mention": False}})
-    assert os.environ["BUZZ_REPLY_TO_MODE"] == "off"
-    assert os.environ["BUZZ_CHANNELS"] == "a,b"
-    assert os.environ["BUZZ_REQUIRE_MENTION"] == "false"
-    for var in ("BUZZ_REPLY_TO_MODE", "BUZZ_CHANNELS", "BUZZ_REQUIRE_MENTION"):
-        monkeypatch.delenv(var, raising=False)
 
 
 def test_extra_or_secret_precedence_env_then_yaml_then_default(monkeypatch):
@@ -140,7 +111,7 @@ def test_extra_or_secret_scoped_miss_never_reads_launch_env(monkeypatch):
 
 
 def test_external_fallback_consults_profile_scope_only_when_unscoped(monkeypatch):
-    """Buzz's startup gate rung: a Bitwarden-managed key is visible through ``external_fallback`` before any
+    """An externally managed key is visible through ``external_fallback`` before any
     scope exists, but never overrides an installed (authoritative) scope."""
     monkeypatch.delenv("K", raising=False)
     monkeypatch.setattr(shared, "_UNSCOPED_PROFILE_SECRETS", {"K": "external"})

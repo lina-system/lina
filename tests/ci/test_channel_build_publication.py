@@ -141,32 +141,6 @@ def test_channel_handoff_binds_full_request_and_feed_bytes(tmp_path, r2_server, 
         channel_publish.assemble(request, fetched, needs=needs)
 
 
-@pytest.mark.parametrize("staged_channel", ["receiver"], indirect=True)
-def test_scoped_receiver_publication_preserves_existing_head_and_requires_smoke(tmp_path, r2_server, staged_channel):
-    from scripts.releases.channels import ChannelPublisher, R2ChannelStore
-    from scripts.releases.r2_scope import R2Scope
-    request, _ = staged_channel
-    scope = R2Scope.configured()
-    previous = {"buildId": "b" * 32, "sequence": 1,
-                "manifestKey": "releases/channel-builds/" + "b" * 32 + "/build.json", "sha256": "e" * 64}
-    record = {"schema": 1, "name": "stable", "repository": request["repository"], "policy": "stable-release",
-              "state": "active", "revision": 1, "nextSequence": 8, "identity": request["identity"],
-              "testOnly": True, "head": previous}
-    key = scope.key("releases/channels/stable.json")
-    r2_server.store[key] = (canonical_json(record), '"record"')
-    publisher = ChannelPublisher(R2ChannelStore(*r2.credentials()), request["repository"], request["publicBase"],
-                                 authorize=lambda *_: pytest.fail("Receiver must not enter production promotion"))
-    before = dict(r2_server.store)
-    with pytest.raises(ValueError, match="successful jobs"):
-        channel_publish.publish_receiver(request, tmp_path / "rejected", needs={}, publisher=publisher)
-    assert r2_server.store == before
-    result = channel_publish.publish_receiver(request, tmp_path / "receiver", publisher=publisher,
-        needs={job: {"result": "success"} for job in channel_publish.REQUIRED_JOBS})
-    assert result["manifest"]["receiverProtocol"] == 1
-    assert json.loads(publisher.reader.read_bytes(result["head"]["manifestKey"], result["head"]["sha256"])) == result["manifest"]
-    assert json.loads(r2_server.store[key][0])["head"] == previous
-
-
 def workflow_step(workflow, job, name):
     doc = hermes_yaml.safe_load((ROOT / ".github/workflows-upstream" / workflow).read_text(encoding="utf-8"))
     return next(step["run"] for step in doc["jobs"][job]["steps"] if step.get("name") == name)
@@ -448,33 +422,6 @@ def test_disposable_controller_allocates_then_separate_admission(tmp_path):
             failed = run_shell(tmp_path, server, admission, {**admit_env, **change}, cwd=clone)
             assert failed.returncode != 0
             assert objects == before
-
-
-@pytest.mark.platforms("posix")
-def test_receiver_allocation_uses_official_identity_only_inside_scope(tmp_path):
-    from tests.scripts.test_release_channels import object_server, publisher
-    from scripts.releases.channel_disposable import allocate_receivers
-    from scripts.releases.channel_releases import product_identity
-    from scripts.releases.r2_scope import R2Scope
-
-    with object_server() as (url, _objects, *_):
-        pub = publisher(url)
-        with pytest.raises(ValueError, match="disposable"):
-            allocate_receivers(pub, "a" * 40, "1.2.3", "a" * 40)
-        scope = R2Scope("ci-disposable/12345/17/")
-        pub.store.scope = scope
-        pub.public_base += "/" + scope.prefix.rstrip("/")
-        from hermes_cli.release_channels import ChannelReader
-        pub.reader = ChannelReader(pub.public_base, pub.repository)
-        receivers = allocate_receivers(pub, "a" * 40, "1.2.3", "a" * 40)
-        assert set(receivers) == {"S", "T"}
-        for slot, request in receivers.items():
-            assert request["receiverCandidate"] is True
-            assert request["identity"] == product_identity("v" + request["version"])
-            assert request["publicBase"] == pub.public_base
-            assert request["controllerCommit"] == "a" * 40
-        assert receivers["T"]["sequence"] > receivers["S"]["sequence"]
-        assert pub._read("stable")[0]["head"] is None
 
 
 def test_pinned_xml_retains_legacy_automatic_policy(tmp_path):

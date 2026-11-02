@@ -1,7 +1,6 @@
 """Local deferred tools retain the live agent path; batches must not bypass it."""
 
 import json
-import threading
 from types import SimpleNamespace
 
 import pytest
@@ -33,7 +32,7 @@ def test_local_batches_rejected_before_any_entry_executes(monkeypatch, mixed):
 
 
 @pytest.mark.parametrize("flatten_probe", [False, True])
-def test_single_local_unwrap_keeps_session_db_todo_store_and_setup_callback(tmp_path, flatten_probe):
+def test_single_local_unwrap_keeps_session_db_todo_store_and_setup_callback(tmp_path, monkeypatch, flatten_probe):
     from agent.tool_executor import _unwrap_tool_search_call
     from agent.agent_runtime_helpers import invoke_tool
     from hermes_state import SessionDB
@@ -46,6 +45,15 @@ def test_single_local_unwrap_keeps_session_db_todo_store_and_setup_callback(tmp_
 
     # A desktop session: the MCP card exists only there.
     set_session_vars(source="desktop", session_key="current-session", session_id="current-session")
+
+    from hermes_cli import mcp_catalog
+
+    catalog = tmp_path / "catalog"
+    entry = catalog / "linear"
+    entry.mkdir(parents=True)
+    (entry / "manifest.yaml").write_text(
+        "manifest_version: 1\nname: linear\ndescription: Test MCP server\nsource: https://example.com\ntransport:\n  type: http\n  url: https://example.com/mcp\nauth:\n  type: oauth\n", encoding="utf-8")
+    monkeypatch.setattr(mcp_catalog, "_catalog_root", lambda: catalog)
 
     db = SessionDB(tmp_path / "recall.db")
     db.create_session("past-session", source="cli")
@@ -61,7 +69,7 @@ def test_single_local_unwrap_keeps_session_db_todo_store_and_setup_callback(tmp_
                     {"targets": [{"name": t["name"], "status": "skipped"} for t in payload["targets"]]}))
                 operation.settle(SettleReason.all_resolved)
 
-        threading.Timer(0.02, respond).start()
+        respond()
 
     agent = SimpleNamespace(
         enabled_toolsets=["todo", "session_search", "connections"], disabled_toolsets=[],

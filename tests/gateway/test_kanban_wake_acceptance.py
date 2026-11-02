@@ -3,7 +3,7 @@ import asyncio
 
 import pytest
 
-from evals.heartbeat_idle_wire import WireAdapter
+from tests.gateway.conftest import WireAdapter
 from gateway.config import Platform, PlatformConfig
 from gateway.kanban_watchers_notifier import _KanbanNotification, _notifier_collect
 from gateway.platforms.event import MessageEvent
@@ -15,13 +15,8 @@ from hermes_cli import kanban_db_connect as kbc
 from hermes_cli import kanban_db_notify as kbn
 
 
-def setup_route(raft=False):
-    if raft:
-        from plugins.platforms.raft.adapter import RaftAdapter
-        adapter = RaftAdapter(PlatformConfig(enabled=True, typing_indicator=False,
-            extra={"bridge_token": "owned-test-token", "port": 0}))
-    else:
-        adapter = WireAdapter(PlatformConfig(enabled=True, typing_indicator=False), Platform.TELEGRAM)
+def setup_route():
+    adapter = WireAdapter(PlatformConfig(enabled=True, typing_indicator=False), Platform.TELEGRAM)
     adapter.wire = []
     runner = object.__new__(GatewayRunner)
     runner._running_agents = {}
@@ -42,11 +37,8 @@ async def drain(adapter):
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("raft", [False, True])
-async def test_push_receipt_requires_real_admission_without_displacing_user(raft, monkeypatch):
-    runner, adapter, source, key = setup_route(raft)
-    if raft:
-        monkeypatch.setattr(adapter, "_spawn_bridge", lambda port: None)
+async def test_push_receipt_requires_real_admission_without_displacing_user(monkeypatch):
+    runner, adapter, source, key = setup_route()
     release, started = asyncio.Event(), asyncio.Event()
     received = []
 

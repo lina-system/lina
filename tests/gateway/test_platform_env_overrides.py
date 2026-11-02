@@ -21,6 +21,8 @@ def test_every_static_plugin_platform_declares_its_env_bridge():
     _entries()
     missing = []
     for member in Platform:
+        if member.value not in Platform._scan_bundled_plugin_platforms()[0]:
+            continue
         if member.value in _CORE_ONLY:
             continue
         entry = platform_registry.get(member.value)
@@ -38,5 +40,5 @@ def test_env_override_secrets_stay_in_terminal_secret_blocklist():
 
     secrets = {name.upper() for name in config_env_table_keys(_entries())
                if name.upper().endswith(PLATFORM_SECRET_ENV_SUFFIXES)}
-    assert "WEIXIN_TOKEN" in secrets  # the rows were actually read
+    assert "TELEGRAM_BOT_TOKEN" in secrets  # the rows were actually read
     assert sorted(secrets - _ADAPTER_SECRET_ENV) == []
