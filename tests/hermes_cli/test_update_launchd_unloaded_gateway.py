@@ -42,7 +42,7 @@ def launchd(monkeypatch):
 
     import hermes_cli.gateway as gateway_mod
 
-    monkeypatch.setattr(gateway_mod, "get_launchd_label", lambda: "ai.hermes.gateway", raising=False)
+    monkeypatch.setattr(gateway_mod, "get_launchd_label", lambda: "ai.lina.gateway", raising=False)
     monkeypatch.setattr(gateway_mod, "get_launchd_plist_path", lambda: state["plist"], raising=False)
 
     def fake_restart():
@@ -74,7 +74,7 @@ class TestLaunchdRestartAfterUpdate:
         """
         calls, _state, subprocess_calls = launchd
 
-        assert update_cmd._restart_launchd_gateway_after_update(supervision_verify=False) == (["ai.hermes.gateway"], [])
+        assert update_cmd._restart_launchd_gateway_after_update(supervision_verify=False) == (["ai.lina.gateway"], [])
         assert calls == ["restart"]
         # No `launchctl list` classification happens in this helper.
         assert subprocess_calls == []
@@ -86,7 +86,7 @@ class TestLaunchdRestartAfterUpdate:
             returncode=1, cmd=["launchctl", "kickstart"], stderr="kickstart refused"
         )
 
-        assert update_cmd._restart_launchd_gateway_after_update(supervision_verify=False) == ([], ["ai.hermes.gateway"])
+        assert update_cmd._restart_launchd_gateway_after_update(supervision_verify=False) == ([], ["ai.lina.gateway"])
         out = capsys.readouterr().out
         assert "kickstart refused" in out
         assert "hermes gateway restart" in out
@@ -103,7 +103,7 @@ class TestLaunchdRestartAfterUpdate:
         calls, state, _ = launchd
         state["restart_exc"] = exc
 
-        assert update_cmd._restart_launchd_gateway_after_update(supervision_verify=False) == ([], ["ai.hermes.gateway"])
+        assert update_cmd._restart_launchd_gateway_after_update(supervision_verify=False) == ([], ["ai.lina.gateway"])
         assert calls == []
         out = capsys.readouterr().out
         assert "hermes gateway restart" in out
@@ -121,9 +121,9 @@ class TestLaunchdRestartAfterUpdate:
 # `launchctl print gui/<uid>/<label>` excerpt for a running service, matching
 # the real output shape (tab-indented, lowercase `pid = <N>`).
 _PRINT_OUTPUT_RUNNING = """\
-ai.hermes.gateway = {
+ai.lina.gateway = {
 \tactive count = 1
-\tpath = /Users/u/Library/LaunchAgents/ai.hermes.gateway.plist
+\tpath = /Users/u/Library/LaunchAgents/ai.lina.gateway.plist
 \tstate = running
 \tpid = 59038
 \tprogram = /Users/u/.hermes/bin/hermes
@@ -149,7 +149,7 @@ class TestServicePidSweepExclusion:
         state = {"list_rc": 1, "print_rc": 0, "print_out": _PRINT_OUTPUT_RUNNING}
 
         monkeypatch.setattr(gateway_mod, "supports_systemd_services", lambda: False)
-        monkeypatch.setattr(gateway_mod, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(gateway_mod, "get_launchd_label", lambda: "ai.lina.gateway")
         monkeypatch.setattr(gateway_mod, "_launchd_domain", lambda: "gui/501")
 
         def fake_run(argv, **kwargs):

@@ -2,7 +2,7 @@
 
 The macOS branch of the update's fleet-restart step only restarted the
 invoking profile's LaunchAgent (``get_launchd_label()`` is profile-scoped).
-Sibling ``ai.hermes.gateway-<profile>`` services kept running pre-update
+Sibling ``ai.lina.gateway-<profile>`` services kept running pre-update
 modules cached in ``sys.modules`` and died on their next agent turn once the
 new code lazily imported a symbol the old module generation didn't have
 (``ImportError: cannot import name ...`` — or, with a wider version gap,
@@ -93,11 +93,15 @@ class TestLaunchdGatewayLabelsForInstall:
                 _Profile("Bad Name!"),  # cannot map to a service suffix — skipped
             ],
         )
-        assert launchd_gateway_labels_for_install() == [
-            "ai.hermes.gateway",
-            "ai.hermes.gateway-merit-ops",
-            "ai.hermes.gateway-tfl-wiki",
+        labels = launchd_gateway_labels_for_install()
+        assert labels == [
+            "ai.lina.gateway",
+            "ai.lina.gateway-merit-ops",
+            "ai.lina.gateway-tfl-wiki",
         ]
+        # Hermes Agent's own LaunchAgents (ai.hermes.gateway*) may share the account (#93):
+        # the fleet this install restarts never names one.
+        assert not [label for label in labels if label.startswith("ai.hermes.")]
 
     def test_no_profiles_means_no_fleet(self, monkeypatch):
         monkeypatch.setattr(hermes_cli.profiles, "list_profiles", list)
@@ -109,7 +113,7 @@ class TestLaunchdGatewayLabelsForInstall:
 class TestLocateLaunchdGatewayService:
     def test_domains_resolve_per_label_not_from_cache(self, monkeypatch):
         """The #41403 review defect: sibling domains are independent."""
-        gui_loaded = {"ai.hermes.gateway-a"}
+        gui_loaded = {"ai.lina.gateway-a"}
 
         def fake_run(cmd, **kwargs):
             assert cmd[:2] == ["launchctl", "print"]
@@ -125,11 +129,11 @@ class TestLocateLaunchdGatewayService:
         # process-wide cache — per-label lookups must not consult it.
         monkeypatch.setattr(gw, "_resolved_launchd_domain", f"gui/{UID}")
 
-        assert _locate_launchd_gateway_service("ai.hermes.gateway-a") == (
+        assert _locate_launchd_gateway_service("ai.lina.gateway-a") == (
             f"gui/{UID}",
             4242,
         )
-        assert _locate_launchd_gateway_service("ai.hermes.gateway-b") == (
+        assert _locate_launchd_gateway_service("ai.lina.gateway-b") == (
             f"user/{UID}",
             4242,
         )
@@ -140,14 +144,14 @@ class TestLocateLaunchdGatewayService:
             "run",
             lambda *a, **k: _completed(0, PRINT_LOADED_NOT_RUNNING),
         )
-        assert _locate_launchd_gateway_service("ai.hermes.gateway-x") == (
+        assert _locate_launchd_gateway_service("ai.lina.gateway-x") == (
             f"gui/{UID}",
             None,
         )
 
     def test_not_loaded_in_either_domain(self, monkeypatch):
         monkeypatch.setattr(gw.subprocess, "run", lambda *a, **k: _completed(113))
-        assert _locate_launchd_gateway_service("ai.hermes.gateway-x") == (None, None)
+        assert _locate_launchd_gateway_service("ai.lina.gateway-x") == (None, None)
 
     def test_timeout_propagates_to_caller(self, monkeypatch):
         """A wedged launchctl must surface as a failure, not read as
@@ -158,7 +162,7 @@ class TestLocateLaunchdGatewayService:
 
         monkeypatch.setattr(gw.subprocess, "run", fake_run)
         with pytest.raises(subprocess.TimeoutExpired):
-            _locate_launchd_gateway_service("ai.hermes.gateway-x")
+            _locate_launchd_gateway_service("ai.lina.gateway-x")
 
 
 class TestProbeLaunchdDomainForLabel:
@@ -171,7 +175,7 @@ class TestProbeLaunchdDomainForLabel:
             raise AssertionError(f"unexpected command {cmd}")
 
         monkeypatch.setattr(gw.subprocess, "run", fake_run)
-        assert _probe_launchd_domain_for_label("ai.hermes.gateway-x") == f"gui/{UID}"
+        assert _probe_launchd_domain_for_label("ai.lina.gateway-x") == f"gui/{UID}"
 
     def test_unloaded_label_defaults_to_user_domain(self, monkeypatch):
         def fake_run(cmd, **kwargs):
@@ -182,25 +186,25 @@ class TestProbeLaunchdDomainForLabel:
             raise AssertionError(f"unexpected command {cmd}")
 
         monkeypatch.setattr(gw.subprocess, "run", fake_run)
-        assert _probe_launchd_domain_for_label("ai.hermes.gateway-x") == f"user/{UID}"
+        assert _probe_launchd_domain_for_label("ai.lina.gateway-x") == f"user/{UID}"
 
 
 class TestGetServicePidsScoping:
     def _wire(self, monkeypatch):
         monkeypatch.setattr(gw, "supports_systemd_services", lambda: False)
         # The all_profiles branch also runs a real ``launchctl list`` prefix scan; a developer
-        # box with a live ai.hermes.gateway* fleet would leak its PIDs into the assertion.
+        # box with a live ai.lina.gateway* fleet would leak its PIDs into the assertion.
         monkeypatch.setattr(gw.subprocess, "run", lambda *a, **k: _completed(0, ""))
-        monkeypatch.setattr(gw, "get_launchd_label", lambda: "ai.hermes.gateway")
+        monkeypatch.setattr(gw, "get_launchd_label", lambda: "ai.lina.gateway")
         monkeypatch.setattr(
             gw,
             "launchd_gateway_labels_for_install",
-            lambda: ["ai.hermes.gateway", "ai.hermes.gateway-a", "ai.hermes.gateway-b"],
+            lambda: ["ai.lina.gateway", "ai.lina.gateway-a", "ai.lina.gateway-b"],
         )
         located = {
-            "ai.hermes.gateway": (f"gui/{UID}", 100),
-            "ai.hermes.gateway-a": (f"gui/{UID}", 200),
-            "ai.hermes.gateway-b": (None, None),  # not bootstrapped
+            "ai.lina.gateway": (f"gui/{UID}", 100),
+            "ai.lina.gateway-a": (f"gui/{UID}", 200),
+            "ai.lina.gateway-b": (None, None),  # not bootstrapped
         }
         monkeypatch.setattr(
             gw, "_locate_launchd_gateway_service", lambda label: located[label]
@@ -316,16 +320,16 @@ class TestRestartMacosLaunchdGateways:
         """Current profile keeps launchd_restart(); every sibling (including
         the root gateway when a named profile invokes the update) is
         kickstarted — and verified — in the domain IT was located in."""
-        current = "ai.hermes.gateway-merit-ops"
+        current = "ai.lina.gateway-merit-ops"
         rec = _fleet(
             monkeypatch,
             tmp_path,
             current=current,
-            labels=["ai.hermes.gateway", current, "ai.hermes.gateway-user-scoped"],
+            labels=["ai.lina.gateway", current, "ai.lina.gateway-user-scoped"],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway": (f"gui/{UID}", 100),
                 current: (f"gui/{UID}", 200),
-                "ai.hermes.gateway-user-scoped": (f"user/{UID}", 300),
+                "ai.lina.gateway-user-scoped": (f"user/{UID}", 300),
             },
         )
         restarted: list[str] = []
@@ -335,17 +339,17 @@ class TestRestartMacosLaunchdGateways:
 
         assert rec.current_restarts == [current]
         assert rec.kickstarts == [
-            f"gui/{UID}/ai.hermes.gateway",
-            f"user/{UID}/ai.hermes.gateway-user-scoped",
+            f"gui/{UID}/ai.lina.gateway",
+            f"user/{UID}/ai.lina.gateway-user-scoped",
         ]
         assert rec.waits == [
-            f"gui/{UID}/ai.hermes.gateway",
-            f"user/{UID}/ai.hermes.gateway-user-scoped",
+            f"gui/{UID}/ai.lina.gateway",
+            f"user/{UID}/ai.lina.gateway-user-scoped",
         ]
         assert restarted == [
             current,
-            "ai.hermes.gateway",
-            "ai.hermes.gateway-user-scoped",
+            "ai.lina.gateway",
+            "ai.lina.gateway-user-scoped",
         ]
         assert failed == []
         # Siblings were drained before the hard kickstart.
@@ -358,13 +362,13 @@ class TestRestartMacosLaunchdGateways:
         skipped without ANY launchctl interaction (no registered probe, no
         locate) — and definitely without inventing a failure. Siblings are
         still processed."""
-        current = "ai.hermes.gateway"
+        current = "ai.lina.gateway"
         rec = _fleet(
             monkeypatch,
             tmp_path,
             current=current,
-            labels=[current, "ai.hermes.gateway-a"],
-            located={"ai.hermes.gateway-a": (f"gui/{UID}", 200)},
+            labels=[current, "ai.lina.gateway-a"],
+            located={"ai.lina.gateway-a": (f"gui/{UID}", 200)},
             plist_exists=False,
         )
         restarted: list[str] = []
@@ -375,7 +379,7 @@ class TestRestartMacosLaunchdGateways:
         assert rec.current_restarts == []
         assert current not in rec.registered_checks
         assert current not in rec.locates
-        assert restarted == ["ai.hermes.gateway-a"]
+        assert restarted == ["ai.lina.gateway-a"]
         assert failed == []
 
     def test_current_profile_registered_but_unlocatable_still_restarts(
@@ -386,7 +390,7 @@ class TestRestartMacosLaunchdGateways:
         support service management). The gate must use the registered
         predicate and hand off to launchd_restart(), which owns the
         domain-unsupported fallback — locate is for siblings only."""
-        current = "ai.hermes.gateway"
+        current = "ai.lina.gateway"
         rec = _fleet(
             monkeypatch,
             tmp_path,
@@ -411,11 +415,11 @@ class TestRestartMacosLaunchdGateways:
         rec = _fleet(
             monkeypatch,
             tmp_path,
-            current="ai.hermes.gateway",
-            labels=["ai.hermes.gateway", "ai.hermes.gateway-idle"],
+            current="ai.lina.gateway",
+            labels=["ai.lina.gateway", "ai.lina.gateway-idle"],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
-                "ai.hermes.gateway-idle": (None, None),
+                "ai.lina.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway-idle": (None, None),
             },
         )
         restarted: list[str] = []
@@ -424,7 +428,7 @@ class TestRestartMacosLaunchdGateways:
         _restart_macos_launchd_gateways(restarted, failed, drain_budget=0.0)
 
         assert rec.kickstarts == []
-        assert restarted == ["ai.hermes.gateway"]
+        assert restarted == ["ai.lina.gateway"]
         assert failed == []
 
     def test_loaded_but_not_running_sibling_is_kickstarted(
@@ -435,11 +439,11 @@ class TestRestartMacosLaunchdGateways:
         rec = _fleet(
             monkeypatch,
             tmp_path,
-            current="ai.hermes.gateway",
-            labels=["ai.hermes.gateway", "ai.hermes.gateway-dormant"],
+            current="ai.lina.gateway",
+            labels=["ai.lina.gateway", "ai.lina.gateway-dormant"],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
-                "ai.hermes.gateway-dormant": (f"gui/{UID}", None),
+                "ai.lina.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway-dormant": (f"gui/{UID}", None),
             },
         )
         restarted: list[str] = []
@@ -448,8 +452,8 @@ class TestRestartMacosLaunchdGateways:
         _restart_macos_launchd_gateways(restarted, failed, drain_budget=0.0)
 
         assert rec.drains == []
-        assert rec.kickstarts == [f"gui/{UID}/ai.hermes.gateway-dormant"]
-        assert restarted == ["ai.hermes.gateway", "ai.hermes.gateway-dormant"]
+        assert rec.kickstarts == [f"gui/{UID}/ai.lina.gateway-dormant"]
+        assert restarted == ["ai.lina.gateway", "ai.lina.gateway-dormant"]
         assert failed == []
 
     def test_graceful_drain_with_keepalive_respawn_skips_kickstart(
@@ -460,11 +464,11 @@ class TestRestartMacosLaunchdGateways:
         rec = _fleet(
             monkeypatch,
             tmp_path,
-            current="ai.hermes.gateway",
-            labels=["ai.hermes.gateway", "ai.hermes.gateway-a"],
+            current="ai.lina.gateway",
+            labels=["ai.lina.gateway", "ai.lina.gateway-a"],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
-                "ai.hermes.gateway-a": (f"gui/{UID}", 200),
+                "ai.lina.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway-a": (f"gui/{UID}", 200),
             },
             drain_results={200: True},
         )
@@ -475,8 +479,8 @@ class TestRestartMacosLaunchdGateways:
 
         assert rec.drains == [200]
         assert rec.kickstarts == []
-        assert rec.waits == [f"gui/{UID}/ai.hermes.gateway-a"]
-        assert restarted == ["ai.hermes.gateway", "ai.hermes.gateway-a"]
+        assert rec.waits == [f"gui/{UID}/ai.lina.gateway-a"]
+        assert restarted == ["ai.lina.gateway", "ai.lina.gateway-a"]
         assert failed == []
 
     def test_kickstart_failure_is_recorded_and_rest_continue(
@@ -485,19 +489,19 @@ class TestRestartMacosLaunchdGateways:
         rec = _fleet(
             monkeypatch,
             tmp_path,
-            current="ai.hermes.gateway",
+            current="ai.lina.gateway",
             labels=[
-                "ai.hermes.gateway",
-                "ai.hermes.gateway-bad",
-                "ai.hermes.gateway-good",
+                "ai.lina.gateway",
+                "ai.lina.gateway-bad",
+                "ai.lina.gateway-good",
             ],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
-                "ai.hermes.gateway-bad": (f"gui/{UID}", 200),
-                "ai.hermes.gateway-good": (f"gui/{UID}", 300),
+                "ai.lina.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway-bad": (f"gui/{UID}", 200),
+                "ai.lina.gateway-good": (f"gui/{UID}", 300),
             },
             kick_errors={
-                "ai.hermes.gateway-bad": subprocess.CalledProcessError(
+                "ai.lina.gateway-bad": subprocess.CalledProcessError(
                     5, ["launchctl", "kickstart"]
                 )
             },
@@ -507,9 +511,9 @@ class TestRestartMacosLaunchdGateways:
 
         _restart_macos_launchd_gateways(restarted, failed, drain_budget=0.0)
 
-        assert failed == ["ai.hermes.gateway-bad"]
-        assert rec.kickstarts == [f"gui/{UID}/ai.hermes.gateway-good"]
-        assert restarted == ["ai.hermes.gateway", "ai.hermes.gateway-good"]
+        assert failed == ["ai.lina.gateway-bad"]
+        assert rec.kickstarts == [f"gui/{UID}/ai.lina.gateway-good"]
+        assert restarted == ["ai.lina.gateway", "ai.lina.gateway-good"]
 
     def test_timeout_during_discovery_is_failed_and_rest_continue(
         self, monkeypatch, tmp_path
@@ -520,18 +524,18 @@ class TestRestartMacosLaunchdGateways:
         rec = _fleet(
             monkeypatch,
             tmp_path,
-            current="ai.hermes.gateway",
+            current="ai.lina.gateway",
             labels=[
-                "ai.hermes.gateway",
-                "ai.hermes.gateway-wedged",
-                "ai.hermes.gateway-after",
+                "ai.lina.gateway",
+                "ai.lina.gateway-wedged",
+                "ai.lina.gateway-after",
             ],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
-                "ai.hermes.gateway-wedged": subprocess.TimeoutExpired(
+                "ai.lina.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway-wedged": subprocess.TimeoutExpired(
                     cmd=["launchctl", "print"], timeout=5
                 ),
-                "ai.hermes.gateway-after": (f"gui/{UID}", 300),
+                "ai.lina.gateway-after": (f"gui/{UID}", 300),
             },
         )
         restarted: list[str] = []
@@ -539,9 +543,9 @@ class TestRestartMacosLaunchdGateways:
 
         _restart_macos_launchd_gateways(restarted, failed, drain_budget=0.0)
 
-        assert failed == ["ai.hermes.gateway-wedged"]
-        assert rec.kickstarts == [f"gui/{UID}/ai.hermes.gateway-after"]
-        assert restarted == ["ai.hermes.gateway", "ai.hermes.gateway-after"]
+        assert failed == ["ai.lina.gateway-wedged"]
+        assert rec.kickstarts == [f"gui/{UID}/ai.lina.gateway-after"]
+        assert restarted == ["ai.lina.gateway", "ai.lina.gateway-after"]
 
     def test_timeout_during_kickstart_is_failed_and_rest_continue(
         self, monkeypatch, tmp_path
@@ -549,19 +553,19 @@ class TestRestartMacosLaunchdGateways:
         rec = _fleet(
             monkeypatch,
             tmp_path,
-            current="ai.hermes.gateway",
+            current="ai.lina.gateway",
             labels=[
-                "ai.hermes.gateway",
-                "ai.hermes.gateway-wedged",
-                "ai.hermes.gateway-after",
+                "ai.lina.gateway",
+                "ai.lina.gateway-wedged",
+                "ai.lina.gateway-after",
             ],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
-                "ai.hermes.gateway-wedged": (f"gui/{UID}", 200),
-                "ai.hermes.gateway-after": (f"gui/{UID}", 300),
+                "ai.lina.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway-wedged": (f"gui/{UID}", 200),
+                "ai.lina.gateway-after": (f"gui/{UID}", 300),
             },
             kick_errors={
-                "ai.hermes.gateway-wedged": subprocess.TimeoutExpired(
+                "ai.lina.gateway-wedged": subprocess.TimeoutExpired(
                     cmd=["launchctl", "kickstart"], timeout=90
                 )
             },
@@ -571,29 +575,29 @@ class TestRestartMacosLaunchdGateways:
 
         _restart_macos_launchd_gateways(restarted, failed, drain_budget=0.0)
 
-        assert failed == ["ai.hermes.gateway-wedged"]
-        assert rec.kickstarts == [f"gui/{UID}/ai.hermes.gateway-after"]
-        assert restarted == ["ai.hermes.gateway", "ai.hermes.gateway-after"]
+        assert failed == ["ai.lina.gateway-wedged"]
+        assert rec.kickstarts == [f"gui/{UID}/ai.lina.gateway-after"]
+        assert restarted == ["ai.lina.gateway", "ai.lina.gateway-after"]
 
     def test_sibling_that_never_comes_back_is_failed(self, monkeypatch, tmp_path):
         _fleet(
             monkeypatch,
             tmp_path,
-            current="ai.hermes.gateway",
-            labels=["ai.hermes.gateway", "ai.hermes.gateway-zombie"],
+            current="ai.lina.gateway",
+            labels=["ai.lina.gateway", "ai.lina.gateway-zombie"],
             located={
-                "ai.hermes.gateway": (f"gui/{UID}", 100),
-                "ai.hermes.gateway-zombie": (f"gui/{UID}", 200),
+                "ai.lina.gateway": (f"gui/{UID}", 100),
+                "ai.lina.gateway-zombie": (f"gui/{UID}", 200),
             },
-            wait_results={"ai.hermes.gateway-zombie": False},
+            wait_results={"ai.lina.gateway-zombie": False},
         )
         restarted: list[str] = []
         failed: list[str] = []
 
         _restart_macos_launchd_gateways(restarted, failed, drain_budget=0.0)
 
-        assert restarted == ["ai.hermes.gateway"]
-        assert failed == ["ai.hermes.gateway-zombie"]
+        assert restarted == ["ai.lina.gateway"]
+        assert failed == ["ai.lina.gateway-zombie"]
 
 
 def _write_launchd_plist(agents_dir: Path, label: str, *, argv=(), hermes_home=None, raw=None):
@@ -634,15 +638,20 @@ class TestLegacyLaunchdLabelsForInstall:
         import hermes_constants
         monkeypatch.setattr(hermes_constants, "get_default_hermes_root", lambda: root)
         venv_python = str(root.parent / "install" / ".venv" / "bin" / "python")
-        _write_launchd_plist(agents, "ai.hermes.gateway-398559f7", argv=[venv_python], hermes_home=root / "profiles" / "gopod")
-        _write_launchd_plist(agents, "ai.hermes.gateway-1a2b3c4d", argv=[venv_python], hermes_home=root)
-        _write_launchd_plist(agents, "ai.hermes.gateway-gopod", argv=[venv_python], hermes_home=root / "profiles" / "gopod")
+        _write_launchd_plist(agents, "ai.lina.gateway-398559f7", argv=[venv_python], hermes_home=root / "profiles" / "gopod")
+        _write_launchd_plist(agents, "ai.lina.gateway-1a2b3c4d", argv=[venv_python], hermes_home=root)
+        _write_launchd_plist(agents, "ai.lina.gateway-gopod", argv=[venv_python], hermes_home=root / "profiles" / "gopod")
         # Another install's unit: same venv on disk, but its home lives under a different root.
-        _write_launchd_plist(agents, "ai.hermes.gateway-5db8084b", argv=[venv_python], hermes_home=tmp_path / "other-root" / "profiles" / "gopod")
-        _write_launchd_plist(agents, "ai.hermes.gateway-nohome", argv=[venv_python])  # no pinned home: unattributable
-        _write_launchd_plist(agents, "ai.hermes.gateway-broken", raw="not a plist at all")
-        assert gw.legacy_launchd_labels_for_install(exclude={"ai.hermes.gateway-gopod", "ai.hermes.gateway"}) == [
-            "ai.hermes.gateway-1a2b3c4d", "ai.hermes.gateway-398559f7",
+        _write_launchd_plist(agents, "ai.lina.gateway-5db8084b", argv=[venv_python], hermes_home=tmp_path / "other-root" / "profiles" / "gopod")
+        _write_launchd_plist(agents, "ai.lina.gateway-nohome", argv=[venv_python])  # no pinned home: unattributable
+        _write_launchd_plist(agents, "ai.lina.gateway-broken", raw="not a plist at all")
+        # Hermes Agent on the same account (#93): its units are never credited, neither the one pinned
+        # to its own ~/.hermes nor one whose plist happens to pin a home under this install's root.
+        hermes_agent_python = str(tmp_path / ".hermes" / "hermes-agent" / "venv" / "bin" / "python")
+        _write_launchd_plist(agents, "ai.hermes.gateway", argv=[hermes_agent_python], hermes_home=tmp_path / ".hermes")
+        _write_launchd_plist(agents, "ai.hermes.gateway-0f0f0f0f", argv=[venv_python], hermes_home=root)
+        assert gw.legacy_launchd_labels_for_install(exclude={"ai.lina.gateway-gopod", "ai.lina.gateway"}) == [
+            "ai.lina.gateway-1a2b3c4d", "ai.lina.gateway-398559f7",
         ]
 
 
@@ -651,17 +660,17 @@ class TestRestartMacosLaunchdGatewaysLegacyUnits:
         """The update restart pass iterates the derivation PLUS the install's
         legacy-labelled units (#115254): the hash-suffixed sibling is drained,
         kickstarted and verified in its own domain."""
-        current = "ai.hermes.gateway"
-        legacy = "ai.hermes.gateway-398559f7"
+        current = "ai.lina.gateway"
+        legacy = "ai.lina.gateway-398559f7"
         rec = _fleet(
             monkeypatch,
             tmp_path,
             current=current,
-            labels=[current, "ai.hermes.gateway-gopod"],
+            labels=[current, "ai.lina.gateway-gopod"],
             legacy_labels=[legacy],
             located={
                 current: (f"gui/{UID}", 100),
-                "ai.hermes.gateway-gopod": (f"gui/{UID}", 200),
+                "ai.lina.gateway-gopod": (f"gui/{UID}", 200),
                 legacy: (f"user/{UID}", 300),
             },
         )
@@ -671,10 +680,10 @@ class TestRestartMacosLaunchdGatewaysLegacyUnits:
         _restart_macos_launchd_gateways(restarted, failed, drain_budget=0.0)
 
         assert rec.kickstarts == [
-            f"gui/{UID}/ai.hermes.gateway-gopod",
+            f"gui/{UID}/ai.lina.gateway-gopod",
             f"user/{UID}/{legacy}",
         ]
-        assert restarted == [current, "ai.hermes.gateway-gopod", legacy]
+        assert restarted == [current, "ai.lina.gateway-gopod", legacy]
         assert failed == []
         assert set(rec.drains) == {200, 300}
         out = capsys.readouterr().out
@@ -691,7 +700,7 @@ class TestWaitForLaunchdServicePid:
         )
         monkeypatch.setattr(gw.time, "sleep", lambda _s: None)
         assert gw._wait_for_launchd_service_pid(
-            "ai.hermes.gateway-x", old_pid=200, timeout=5.0, domain=f"gui/{UID}"
+            "ai.lina.gateway-x", old_pid=200, timeout=5.0, domain=f"gui/{UID}"
         )
 
     def test_returns_false_when_pid_never_changes(self, monkeypatch):
@@ -704,7 +713,7 @@ class TestWaitForLaunchdServicePid:
             lambda domain, label: (True, 200),
         )
         assert not gw._wait_for_launchd_service_pid(
-            "ai.hermes.gateway-x", old_pid=200, timeout=3.0, domain=f"gui/{UID}"
+            "ai.lina.gateway-x", old_pid=200, timeout=3.0, domain=f"gui/{UID}"
         )
 
 
@@ -713,7 +722,7 @@ class TestIncompleteWarningOnMacos:
     ``kickstart`` line — a label in this list is likely deregistered (#88848)."""
 
     def test_launchd_labels_get_bootstrap_hint(self, capsys):
-        _warn_incomplete_gateway_fleet_restart(["ai.hermes.gateway-merit-ops"])
+        _warn_incomplete_gateway_fleet_restart(["ai.lina.gateway-merit-ops"])
         out = capsys.readouterr().out
         assert "launchctl bootstrap" in out
         assert "systemctl" not in out
