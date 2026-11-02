@@ -19,6 +19,8 @@ import time
 from pathlib import Path
 
 from hermes_cli.worker import runners, settings
+from hermes_platform.resolver import locate_command
+from tools.environments.local import build_subprocess_env
 from hermes_cli.worker.runners.base import LIVE, Handle, ModelProfile, RunnerError, Task
 from hermes_cli.worker.task import (end_state, git_summary, lock_inputs, read_json, safe_id, stamp, write_json,
                                     write_manifest)
@@ -81,9 +83,15 @@ def _read(task: Task, name: str) -> str:
         return ""
 
 
+def _git_env() -> dict[str, str]:
+    """The device's own git for the repo cache and worktrees: its credentials (helpers, tokens for a private clone)
+    and the person's real HOME (``~/.gitconfig``) as the service sees them, and never a prompt."""
+    return build_subprocess_env(scrub_secrets=False, inherit_profile_home=False, extra={"GIT_TERMINAL_PROMPT": "0"})
+
+
 def _git(*args: str, cwd: Path | None = None, timeout: float = 60) -> subprocess.CompletedProcess:
     return subprocess.run(["git", *args], cwd=cwd, capture_output=True, text=True, encoding="utf-8", errors="replace",
-                          timeout=timeout, check=False, env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                          timeout=timeout, check=False, env=_git_env())
 
 
 def _run_git(*args: str, cwd: Path | None = None) -> None:
@@ -365,12 +373,19 @@ def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[in
         return _ok({"action": "error", "reason": f"{name}: {exc}"[:300]})
 
 
+def run_argv(task: Task, run: int) -> list[str]:
+    return [sys.executable, "-m", "hermes_cli.main", "worker", "_run", task.id, str(run)]
+
+
 def launch(worker_root: Path, task: Task, run: int) -> None:
     """Start run *run* as its own process: a transient systemd user unit with the memory cap where there is
     systemd, else a new session (``setsid``). Either way a restart of the service leaves it running."""
-    argv = [sys.executable, "-m", "hermes_cli.main", "worker", "_run", task.id, str(run)]
-    child_env = {**os.environ, "PYTHONPATH": settings.child_pythonpath()}
-    if shutil.which("systemd-run") and sys.platform.startswith("linux"):
+    argv = run_argv(task, run)
+    # The run process is lina itself serving this LINA root: it keeps the service's HERMES_HOME (no profile bridge)
+    # and the credentials the runner's agent needs, and finds hermes_cli through PYTHONPATH.
+    child_env = build_subprocess_env(scrub_secrets=False, inherit_profile_home=False,
+                                     extra={"PYTHONPATH": settings.child_pythonpath()})
+    if sys.platform.startswith("linux") and locate_command("systemd-run").found:
         unit = f"lina-worker-{task.id}-{run}"
         env = [f"--setenv={key}={child_env[key]}" for key in ("HERMES_HOME", "PATH", "HOME", "LANG", "PYTHONPATH")
                if child_env.get(key)]
