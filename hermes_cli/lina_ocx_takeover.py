@@ -145,15 +145,19 @@ def keychain_refs(value) -> list[str]:
     return sorted({ref for item in items for ref in keychain_refs(item)})
 
 
+def launch_agents_dir() -> Path:
+    from hermes_constants import get_real_home
+    return Path(get_real_home()) / "Library" / "LaunchAgents"
+
+
 def old_job(job: str | None = None) -> dict:
     """The old OCX's own service (``ocx service install``): launchd ``com.opencodex.proxy`` / systemd user unit
     ``opencodex-proxy``, or *job* when given. Only its definition file is looked at."""
     from hermes_cli.lina_ocx_service import backend
     kind = backend()
     if kind == "launchd":
-        from hermes_constants import get_real_home
         name = job or OLD_LAUNCHD_LABEL
-        path = Path(get_real_home()) / "Library" / "LaunchAgents" / f"{name}.plist"
+        path = launch_agents_dir() / f"{name}.plist"
     else:
         from hermes_cli.gateway import user_systemd_unit_dir
         name = (job or OLD_SYSTEMD_UNIT).removesuffix(".service")

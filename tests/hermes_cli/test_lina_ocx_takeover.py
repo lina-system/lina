@@ -60,12 +60,20 @@ def _models(*argv) -> int:
     return exc.value.code
 
 
+def isolate_old_job_dirs(tmp_path, monkeypatch, kind: str = "systemd") -> None:
+    """The old job is looked up under tmp_path for both kinds, never in the developer's real LaunchAgents or
+    systemd user unit dir (a machine running OCX has one there)."""
+    from hermes_cli import gateway, lina_ocx_service
+    monkeypatch.setattr(lina_ocx_service, "backend", lambda: kind)
+    monkeypatch.setattr(takeover, "launch_agents_dir", lambda: tmp_path / "LaunchAgents")
+    monkeypatch.setattr(gateway, "user_systemd_unit_dir", lambda: tmp_path / "units")
+
+
 @pytest.fixture
 def root(tmp_path, monkeypatch):
     root = installed_root(tmp_path / "lina")
     monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
-    from hermes_cli import gateway
-    monkeypatch.setattr(gateway, "user_systemd_unit_dir", lambda: tmp_path / "units")
+    isolate_old_job_dirs(tmp_path, monkeypatch)
     return root
 
 
@@ -89,6 +97,21 @@ def test_plan_lists_what_is_copied_and_skipped_and_never_prints_a_secret(root, t
         ("main", "127.0.0.2", 18555, True), ("loopback", "127.0.0.1", 18556, False)]
     assert takeover.build_plan(source, argv="bun index.ts start --port 18557")["listeners"][0]["port"] == 18557
     assert data["old_job"]["name"] == "opencodex-proxy" and data["old_job"]["found"] is False
+
+
+@pytest.mark.parametrize(("kind", "name", "definition"), [
+    ("systemd", "opencodex-proxy", "units/opencodex-proxy.service"),
+    ("launchd", "com.opencodex.proxy", "LaunchAgents/com.opencodex.proxy.plist"),
+])
+def test_plan_finds_the_old_job_of_either_kind_only_where_the_test_put_it(root, tmp_path, monkeypatch, kind, name,
+                                                                         definition):
+    isolate_old_job_dirs(tmp_path, monkeypatch, kind)
+    source = old_data_dir(tmp_path / "old")
+    job = takeover.build_plan(source)["old_job"]
+    assert (job["kind"], job["name"], job["path"], job["found"]) == (kind, name, str(tmp_path / definition), False)
+    (tmp_path / definition).parent.mkdir(parents=True, exist_ok=True)
+    (tmp_path / definition).write_text("")
+    assert takeover.build_plan(source)["old_job"]["found"] is True
 
 
 @pytest.mark.platforms("posix")

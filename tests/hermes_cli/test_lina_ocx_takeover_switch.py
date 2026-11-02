@@ -15,7 +15,7 @@ from hermes_cli import lina_ocx, lina_ocx_service, lina_ocx_takeover as takeover
 from hermes_cli import lina_ocx_takeover_switch as switch
 from hermes_cli.lina_ocx_takeover_refresh import JOB_NAME
 from tests.hermes_cli._lina_ocx_fakes import FIXTURES, installed_root
-from tests.hermes_cli.test_lina_ocx_takeover import TOKEN, _state, old_data_dir
+from tests.hermes_cli.test_lina_ocx_takeover import TOKEN, _state, isolate_old_job_dirs, old_data_dir
 
 _PIDS = count(700_001)
 
@@ -110,10 +110,8 @@ def world(tmp_path, monkeypatch, request):
     units = tmp_path / "units"
     units.mkdir()
     (units / "opencodex-proxy.service").write_text("[Service]\nExecStart=/bin/false\n")
-    from hermes_cli import gateway
-    monkeypatch.setattr(gateway, "user_systemd_unit_dir", lambda: units)
+    isolate_old_job_dirs(tmp_path, monkeypatch, "systemd")
     monkeypatch.setattr(lina_ocx_service, "definition_path", lambda kind: units / "lina-ocx.service")
-    monkeypatch.setattr(lina_ocx_service, "backend", lambda: "systemd")
     main_port, loopback_port = _ports()
     source = old_data_dir(tmp_path / "old", port=main_port, loopback_port=loopback_port)
     systemctl = FakeSystemctl(source, root, getattr(request, "param", 200))
