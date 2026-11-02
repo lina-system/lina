@@ -128,8 +128,7 @@ class Hub:
         if job.get("inputs"):
             put_tree(transport, tid, "input.upload", [Path(p) for p in job["inputs"]])
         put(transport, tid, "request.1", json.dumps({"run": 1, "at": time.time()}))
-        job.update(host=dev.name, state="running", started=time.time())
-        self.store.save(job)
+        job.update(self.store.update(tid, host=dev.name, state="running", started=time.time()) or {})
         self.store.receipt(tid, "run_started", run=1, host=dev.name, award=job.get("award"))
 
     def place(self, job: dict) -> str | None:
@@ -160,8 +159,7 @@ class Hub:
             dev = None
         if dev is None:
             if job.get("state") != "queued":
-                job["state"] = "queued"
-                self.store.save(job)
+                job.update(self.store.update(job["id"], state="queued") or {})
                 self.store.receipt(job["id"], "queued", bids=table)
             return None
         job["award"] = f"AW-{job['id']}-{int(time.time())}"
@@ -214,14 +212,12 @@ class Hub:
     def _submit_one(self, brief: Path, opts: dict, group: str | None) -> dict:
         job = self.make_job(brief, opts, group)
         if opts.get("wait") is not None and not group:
-            job["waiter"] = os.getpid()
-            self.store.save(job)
+            job.update(self.store.update(job["id"], waiter=os.getpid()) or {})
         self._link_card(job)
         try:
             host = self.place(job)
         except (TransportError, HubError, RunnerError, OSError) as exc:
-            job["state"] = "queued"
-            self.store.save(job)
+            job.update(self.store.update(job["id"], state="queued") or {})
             self.store.receipt(job["id"], "start_failed_requeued", error=str(exc)[:300])
             host = None
         self.out(f"{job['id']} handed out · {job['bot']} · topic {job['topic']} · mode {job['mode']} · runner "
@@ -242,9 +238,7 @@ class Hub:
                     self.out(f"{task_id} {notice.STATE_WORDS.get(remote['state'])} · result {out_dir}")
                     return 0
         self.out(f"{task_id} has not ended yet (--wait ran out). The end notice will come.")
-        job = self.need(task_id)
-        job["waiter"] = None
-        self.store.save(job)
+        self.store.update(task_id, waiter=None)
         return 0
 
 
@@ -323,9 +317,7 @@ class Hub:
         check = verify(out_dir)
         state = "missing" if "error" in check else "ok" if check["ok"] and check.get("inputs_unchanged") is not False \
             else "mismatch"
-        job = self.store.load(job["id"]) or job
-        job["delivery"], job["delivery_check"] = state, check
-        self.store.save(job)
+        self.store.update(job["id"], delivery=state, delivery_check=check)
         self.store.receipt(job["id"], "delivery", state=state, **{k: v for k, v in check.items() if k != "ok"})
         return out_dir, check
 
@@ -455,11 +447,12 @@ class Hub:
             if time.time() > deadline:
                 return False
             time.sleep(2)
-        job = self.store.load(job["id"]) or job
         marker = f"stalled:{run}"
-        if marker not in job.get("notified", []):
-            job.setdefault("notified", []).append(marker)
-            self.store.save(job)
+        with self.store.edit(job["id"]) as job:
+            first = marker not in job.get("notified", [])
+            if first:
+                job.setdefault("notified", []).append(marker)
+        if first:
             self.store.receipt(job["id"], "exec_end", state="stalled", run=str(run), why="closed on an open question "
                                                                                         "by send")
         return True
@@ -484,9 +477,7 @@ class Hub:
                            "again when it is live or has ended")
         if action != "requested":
             raise HubError(f"follow-up failed: {reply.get('reason') or reply}")
-        job = self.store.load(job["id"]) or job
-        job.update(runs=run, state="running", delivery="pending", verdict=None)
-        self.store.save(job)
+        self.store.update(job["id"], runs=run, state="running", delivery="pending", verdict=None)
         self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run)
         self.out(f"{job['id']} started run {run} in the same session. The end notice will come.")
         return 0
@@ -494,8 +485,7 @@ class Hub:
     def cancel(self, task_id: str, why: str = "") -> int:
         job = self.need(task_id)
         why = (why or "").replace("\n", " ")[:300]
-        job["cancel_why"] = why
-        self.store.save(job)
+        job = self.store.update(task_id, cancel_why=why) or job
         self.store.receipt(task_id, "cancel_requested", why=why)
         if not job.get("host"):
             self.notify(task_id, "cancelled", "0")
@@ -510,8 +500,7 @@ class Hub:
     def verdict(self, task_id: str, accepted: bool, note: str = "") -> int:
         job = self.need(task_id)
         verdict = "accepted" if accepted else "rejected"
-        job["verdict"], job["verdict_note"] = verdict, note
-        self.store.save(job)
+        job = self.store.update(task_id, verdict=verdict, verdict_note=note) or job
         self.store.receipt(task_id, "verdict", verdict=verdict, note=note[:500], by=caller_agent(),
                            delivery=job.get("delivery"))
         self.out(f"{task_id} {verdict}")
@@ -636,24 +625,28 @@ class Hub:
     def _watch(self, job: dict) -> None:
         now, remote = time.time(), self.meta(job)
         if remote.get("unreachable") or remote.get("missing"):
-            job = self.store.load(job["id"]) or job
-            job.setdefault("unreachable_since", now)
-            self.store.save(job)
+            with self.store.edit(job["id"]) as job:
+                job.setdefault("unreachable_since", now)
             if now - job["unreachable_since"] >= int(settings.setting("unknown_after_s", worker=self.worker)):
                 self.notify(job["id"], "unknown", "x")
             return
         if job.pop("unreachable_since", None):
-            self.store.save(job)
+            with self.store.edit(job["id"]) as stored:
+                stored.pop("unreachable_since", None)
         state, run = remote.get("state"), str(remote.get("run"))
         if state in ENDED and f"{state}:{run}" not in job.get("notified", []):
             self.notify(job["id"], state, run)
         elif state == "running" and (remote.get("live") or {}).get("dash") == "human":
             self._human_notice(job, run, now)
         elif job.pop("human_since", None):
-            self.store.save(job)
+            with self.store.edit(job["id"]) as stored:
+                stored.pop("human_since", None)
 
     def _human_notice(self, job: dict, run: str, now: float) -> None:
-        job = self.store.load(job["id"]) or job
+        with self.store.edit(job["id"]) as job:
+            self._human_notice_locked(job, run, now)
+
+    def _human_notice_locked(self, job: dict, run: str, now: float) -> None:
         job.setdefault("human_since", now)
         marker = f"human:{run}"
         if now - job["human_since"] >= HUMAN_NOTICE_AFTER_S and marker not in job.get("notified", []):
@@ -662,7 +655,6 @@ class Hub:
             self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run)
             if job.get("card"):
                 self._card_end(job, "human", run, notice.body(job, "human", run, self.store.out_dir(job), {}))
-        self.store.save(job)
 
 
 def parse_every(value: str) -> int:
@@ -678,4 +670,3 @@ def notify(worker_root: Path, task_id: str, kind: str, run: str) -> str:
 
 def tick(worker_root: Path) -> None:
     Hub(worker_root).tick()
-
