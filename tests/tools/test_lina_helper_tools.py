@@ -142,6 +142,26 @@ def test_mac_use_switches_the_session_target_and_restarts_its_connection(run, re
     assert actions.targets.get("sess-1") == "agent-mac"
 
 
+def test_mac_use_target_is_scoped_by_profile_as_well_as_session(run, tmp_path):
+    # Two profiles in one multiplexed process can share a session id; one's choice must not leak (lina#60).
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    for name in ("profile-a", "profile-b"):
+        (tmp_path / name).mkdir()
+        (tmp_path / name / "config.yaml").write_text(yaml.safe_dump({"devices": DEVICES}))
+    hc._LOAD_CONFIG_CACHE.clear()
+    token = set_hermes_home_override(str(tmp_path / "profile-a"))
+    try:
+        actions.targets.set("sess-1", "agent-mac")
+        assert actions.targets.get("sess-1") == "agent-mac"
+    finally:
+        reset_hermes_home_override(token)
+    token = set_hermes_home_override(str(tmp_path / "profile-b"))
+    try:
+        assert actions.targets.get("sess-1") == "agent-hub"
+    finally:
+        reset_hermes_home_override(token)
+
+
 def test_screenshot_lands_in_the_profile_cache(run):
     png = b"\x89PNG\r\n\x1a\nbytes"
     run.result = subprocess.CompletedProcess([], 0, png, ok({"width": 800, "height": 600, "path": "/remote/x.png"}))
