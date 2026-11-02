@@ -10,7 +10,7 @@ adoption; this file is the operator reference.
 
 - Hermes Agent with the pluggable context engine slot ([PR #7464](https://github.com/NousResearch/hermes-agent/pull/7464))
 - Python 3.11+
-- No required third-party runtime dependencies. `tiktoken` is used if available; otherwise LCM falls back to character-based token estimates. `regex` is used if available to apply timeouts to message ignore patterns; if it is not installed, message-level regex filtering is disabled with a warning rather than running unbounded stdlib `re` matches.
+- No required third-party runtime dependencies. `tiktoken` is declared in `plugin.yaml` so Hermes PM installs it (fork); if it is still missing, LCM falls back to character-based token estimates. `regex` is used if available to apply timeouts to message ignore patterns; if it is not installed, message-level regex filtering is disabled with a warning rather than running unbounded stdlib `re` matches.
 - Images in structured message content (list parts of type `image`, `image_url` or `input_image`, and multimodal tool results) count at the host's per-image price (`agent.image_token_cost`, default 1,500 tokens), not by the characters of the encoded image. Image data inside plain text content counts as text.
 
 ## Install
@@ -494,7 +494,7 @@ Useful environment variables:
 | `LCM_CRITICAL_BUDGET_PRESSURE_RATIO` | `0.0` | Disabled at `0.0`; when set, permits critical-pressure bypasses for bounded deferred catch-up and cache-friendly follow-on condensation only |
 | `LCM_SURVIVAL_FIT` | `true` | When compaction cannot bring the returned list under the model window (a publication failure, a sweep deadline, a lock), drop the oldest whole user turns from live context until it fits; an oversized newest turn gets a bounded projection. Nothing is deleted: the rows stay stored and reachable with `lcm_grep` / `lcm_load_session`. Logs `LCM survival fit applied`, warns the user once, and `/lcm doctor` reports `survival_fit` |
 | `LCM_SURVIVAL_RESERVE` | `0.15` | Share of the model window the survival fit keeps free for the response and host overhead (the fit target is window x (1 - reserve), minus the observed host overhead) |
-| `LCM_HOST_MESSAGE_UID` | `shadow` | `shadow`: on a host that sends `message_uid`, records the row each uid was bound to in the droppable `host_uid_bindings` table and counts agreement with the existing identity matching; ingest, replay and emission are unchanged, and `/lcm doctor` reports `host_uid_*` counts only. `off`: no capture, no table writes, no counts and no log line. Under `shadow` and `on`, canonical uid evidence can also exclude a proven hidden re-ingest copy of an assistant message from leaf summary input (the row stays stored and searchable); `off` disables that. `on` behaves exactly like `shadow`: both record count-only would-reject alias UID-conflict diagnostics in the debug log without changing matching, stored rows, bindings, or ingest writes. `off` performs no UID/binding reads on this diagnostic path. Unknown values behave as `shadow` and log one warning. Bindings are deleted with their messages, and lineage keys are namespaced by Hermes home, so one database shared by several homes keeps them apart |
+| `LCM_HOST_MESSAGE_UID` | `shadow` | `shadow`: on a host that sends `message_uid`, records the row each uid was bound to in the droppable `host_uid_bindings` table and counts agreement with the existing identity matching; ingest, replay and emission are unchanged, and `/lcm doctor` reports `host_uid_*` counts only. `off`: no capture, no table writes, no counts and no log line. Under `shadow` and `on`, canonical uid evidence can also exclude a proven hidden re-ingest copy of an assistant message from leaf summary input (the row stays stored and searchable); `off` disables that. Existing owned bindings still determine live compaction pairing in every mode (fork); disabling capture does not erase stored identity evidence, and missing bindings use content/position fallback. `on` behaves exactly like `shadow`: both record count-only would-reject alias UID-conflict diagnostics in the debug log without changing matching, stored rows, bindings, or ingest writes. `off` performs no UID/binding reads on this diagnostic path. Unknown values behave as `shadow` and log one warning. Bindings are deleted with their messages, and lineage keys are namespaced by Hermes home, so one database shared by several homes keeps them apart |
 | `LCM_SUMMARY_MODEL` | auxiliary | Override summarization model |
 | `LCM_SUMMARY_FALLBACK_MODELS` | empty | Comma-separated summarization models tried after `LCM_SUMMARY_MODEL` or the auxiliary task default fails |
 | `LCM_SUMMARY_CIRCUIT_BREAKER_FAILURE_THRESHOLD` | `2` | Consecutive failed summarization calls before a route is skipped temporarily |
@@ -1649,3 +1649,40 @@ Safety and reconciliation behavior:
 - [Benchmarking and stress checks](../benchmarks/README.md)
 - [Release validation](release-validation.md)
 - [Packaging and distribution posture](packaging.md)
+
+
+## Rewritten and reordered host messages
+
+Compaction pairs a host `message_uid` with its newest owned stored version in the
+same profile lineage. Earlier versions remain searchable raw history. Rows without
+a UID or binding use the existing content/position fallback. UID-bound rows do not
+move that fallback cursor.
+
+A summary records its exact source-ID set. The lifecycle frontier advances only
+across accounted-for stored rows; a later summarized row can sit beyond a retained
+gap without claiming that gap. Unpaired host rows stay in the active view while
+other attributable rows compact, and tool groups are kept together. A later
+UID-less replay also checks these source sets before draining a resolved gap.
+Stored bytes and a differing UID-bound host representation share one source
+claim: a smaller-prefix retry that splits them is refused without publication.
+The occurrence stays active so a later successful full attempt can drain it.
+A prepared background summary cannot consume a host rewrite the worker did not
+read; that leaf is summarized in the foreground. UID source-byte checks remain
+active even when the legacy identity-anchor fallback is disabled.
+
+`lcm_status.uid_coverage` reports `paired_store_ids`, `superseded_store_ids`,
+`unpaired_count`, and `unpaired` entries containing only `store_id` and `uid`.
+When present, `covered_store_ids` identifies existing summary sources above the
+current frontier that this pass must not claim again.
+The compaction stop line includes the unpaired count and identifiers. This audit
+belongs to the last compaction of the bound profile/session and is empty before
+one has run or when that foreground audit is unavailable. It is not durable
+coverage; summary source IDs remain the durable evidence. No message content is
+included in the audit.
+
+A persisted summary is not by itself proof that the returned context got smaller.
+If the assembled output does not reduce its token count, status reports a no-op
+and the stop line reports `progress=none`; raw source rows and the committed
+summary remain available. No database migration or new configuration is needed.
+
+For older unbound host message UIDs, `scripts/fork_backfill_uid_bindings.py --db <lcm.db> --state-db <state.db>` reports the number of unambiguous exact-payload candidates without writing. Stop active turns and make a SQLite backup before adding `--apply --backup-confirmed <backup>`; run once for each Hermes home. The script requires the existing UID binding table, skips ambiguous or already bound rows, and adds only binding records. It excludes lossy redactions, malformed tool calls, tool results without names, pruned or persisted-output markers, host scaffolding, and bracket-leading content; when a stored host timestamp exists it must match. Dry-run counts distinguish timestamp matches from rows without a stored host timestamp. To undo the backfill, remove bindings with `proof_kind='backfill'` after making a backup; message rows are unaffected.

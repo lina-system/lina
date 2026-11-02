@@ -116,13 +116,24 @@ def _show(trace) -> str:
                      f"| noop={t['reason']!r}" for t in trace)
 
 
+def _legacy_retained_path(engine):
+    """Exercise the retained-stop diagnostic independently of UID sparse selection.
+
+    UID-first sparse compaction fixes the historical reorder wedge. These tests
+    still pin the legacy guard's warning/streak/fit consumers when it fires.
+    """
+    engine._uid_pairing_rows = lambda messages: ({}, set())
+    engine._uid_leaf_candidates = lambda candidate, view, full_map: candidate
+    return engine
+
+
 def _reorder(tmp_path, sweep, *, bound=True):
     """#581 test (c): R moves to the END; #1403 requires proof that it is the same occurrence."""
     if bound:
         from tests.test_host_uid_shadow import _state_db
 
         _state_db(tmp_path, [("S", None, None)])
-    engine = _engine(tmp_path, sweep, fresh_tail_count=1, leaf_chunk_tokens=1)
+    engine = _legacy_retained_path(_engine(tmp_path, sweep, fresh_tail_count=1, leaf_chunk_tokens=1))
     r = {"role": "user", "content": "[R] retained occurrence" + PAD, "message_uid": "retained-r"}
     stored = [*_turn("T1", 100.0), r, *[row for i in range(2, 6) for row in _turn(f"T{i}", 100.0 * i)]]
     engine.ingest(stored)
@@ -134,7 +145,7 @@ def _reorder(tmp_path, sweep, *, bound=True):
 def _restore(tmp_path, sweep):
     """The host replaces an older tool output with new, non-salvage content: the ingest stores it and the
     unstamped rows after it again at the END, and the oldest host row binds to a newer store id."""
-    engine = _engine(tmp_path, sweep, fresh_tail_count=4, leaf_chunk_tokens=400)
+    engine = _legacy_retained_path(_engine(tmp_path, sweep, fresh_tail_count=4, leaf_chunk_tokens=400))
     view = [row for i in range(1, 13) for row in _turn(f"T{i}", 100.0 * i, tool=True)]
     view = engine.compress(view, current_tokens=10_000)
     engine.note_turn_complete()
@@ -178,6 +189,8 @@ def test_unbound_reorder_keeps_one_copy_across_compactions(tmp_path, summaries, 
 def test_the_first_retained_stop_names_the_blocking_row(tmp_path, summaries, lines, name, sweep):
     """The stop line, the no-op line, the sweep record and the status all carry the blocking row (store_id, role,
     kind); with the sweep off a sanitizing pass no longer erases the reason."""
+    if name == "restore" and not sweep:
+        pytest.skip("fork: the stored-bytes rehydration un-wedges this fixture (leaves form every pass)")
     engine, view = _scenario(name, tmp_path, sweep)
     try:
         trace, start = [], 0

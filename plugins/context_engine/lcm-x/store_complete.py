@@ -1,5 +1,9 @@
-"""#581 store-complete leaves: a leaf's summarizer input is a bounded, contiguous prefix of the owned
-stored rows above the frontier, in store order.
+"""Build source-complete leaves without consuming unresolved host occurrences.
+
+UID-paired and fail-open leaves use explicit source-ID sets in host/group order;
+the publication transaction advances a separate gap-safe contiguous frontier.
+The legacy fallback below builds a bounded contiguous prefix of owned stored
+rows above the frontier, in store order.
 
 The publication proof (lifecycle_state.py ``stage_compaction_publication``) asks every owned row in
 (frontier, covered_end] to be covered or excluded. A leaf built only from the host view could never
@@ -31,6 +35,13 @@ from .ingest_protection import quarantine_suspicious_assistant_messages
 from .message_analysis import _tool_call_id
 from .reconcile import _has_lossy_redacted_identity
 from .tokens import count_message_tokens
+
+import os as _os
+
+# fork: opt-in (LCM_FORK_COMPOSITE_REHYDRATE=on). With it on, 4 #821/recognition-receipt tests change (the carrier stops claiming
+# its constituents); kept off until that tradeoff is decided.
+_FORK_COMPOSITE_REHYDRATE = _os.environ.get("LCM_FORK_COMPOSITE_REHYDRATE", "off").strip().lower() in (
+    "1", "on", "true", "yes")
 
 logger = logging.getLogger(__name__)
 
@@ -192,7 +203,8 @@ class StoreCompleteMixin:
         carry = self._load_compression_carry_ranges()
         rows, truncated = self._store_complete_owned_rows(frontier, end, carry)
         conversation = {"", str(self._conversation_id or "")}
-        loose = [int(row["store_id"]) for row in rows if int(row["store_id"]) not in mapped and row.get("role") != "system"
+        _uid_pairs, superseded = self._uid_pairing_rows(working)
+        loose = [int(row["store_id"]) for row in rows if int(row["store_id"]) not in mapped | superseded and row.get("role") != "system"
                  and str(row.get("conversation_id") or "").strip() in conversation
                  and not self._matches_ignore_message_patterns(row, stored_row=True)]
         twins, twin_covered = self._store_complete_copy_twins(rows, carry) if loose else ({}, set())
@@ -220,13 +232,82 @@ class StoreCompleteMixin:
                                "that point is unknown; pass scheduled as drained", key, frontier, last)
         return result
 
+    def _fork_uid_pinned_occurrences(self, occurrences, view):
+        """fork: pin a view occurrence to the stored row(s) its host ``message_uid`` is canonically bound to (this
+        session root, any home tag). A pinned occurrence's key becomes ``("fork-uid", uid)`` and ``pins`` maps
+        store_id -> that key, so the matcher pairs it only with its own row. Without this, rows with an empty or
+        repeated identity (a content-less assistant turn) matched across the whole view: on the 10-25 default
+        telegram session a 07:39 empty reply "showed" a 02:18 empty reply above the frontier and every leaf
+        stopped there. Fail-open: no uid, no table, an unresolved lineage or any error leaves everything unpinned."""
+        if not occurrences or host_message_uid_mode() == "off":
+            return occurrences, {}
+        try:
+            lineage = self._host_uid_lineage_key()[0]
+            if not lineage or ":" not in lineage or not self._store._host_uid_table_exists():
+                return occurrences, {}
+            uids = sorted({u for idx, _key in occurrences
+                           if isinstance(u := view[idx].get("message_uid"), str) and u})
+            root = lineage.split(":", 1)[1]
+            bound: dict = {}
+            for start in range(0, len(uids), 500):
+                chunk = uids[start:start + 500]
+                for uid, store_id in self._store._conn.execute(
+                        "SELECT uid, store_id FROM host_uid_bindings WHERE kind = 'canonical' AND store_id > 0 "
+                        f"AND lineage_key LIKE ? AND uid IN ({','.join('?' * len(chunk))})", ["%:" + root, *chunk]):
+                    bound.setdefault(uid, set()).add(int(store_id))
+            pins: dict = {}
+            out = []
+            for idx, key in occurrences:
+                uid = view[idx].get("message_uid")
+                rows = bound.get(uid) if isinstance(uid, str) else None
+                if rows:
+                    pinned = ("fork-uid", uid)
+                    for store_id in rows:
+                        pins.setdefault(store_id, set()).add(pinned)
+                    out.append((idx, pinned))
+                else:
+                    out.append((idx, key))
+            return out, pins
+        except Exception:
+            logger.debug("LCM fork uid occurrence pinning unavailable", exc_info=True)
+            return occurrences, {}
+
+    def _uid_set_leaf_input(self, chunk, claims, full_map, uid_pairs, superseded):
+        """Build a leaf from explicit occurrences; never consume a store interval.
+
+        Host order keeps call/result groups intact. Stored bytes are included
+        before a rewritten host occurrence claims their lineage. The publication
+        transaction validates bindings and advances only a contiguous safe prefix.
+        """
+        covered = self._store_complete_node_covered(set(full_map.values()))
+        out = []
+        self._uid_source_bindings = {}
+        self._uid_superseded_store_ids = set(superseded)
+        for message in chunk:
+            sid = full_map.get(id(message))
+            ids = sorted(set(claims.get(id(message), ())) | ({sid} if sid else set()))
+            if not ids or set(ids) & (covered | superseded):
+                continue
+            bound = uid_pairs.get(message.get("message_uid")) if isinstance(message.get("message_uid"), str) else None
+            if bound is not None and sid == int(bound["store_id"]):
+                self._uid_source_bindings[sid] = message["message_uid"]
+                if self._message_replay_identity(message, strip_carrier=False) not in self._stored_row_forms(bound):
+                    out.append((self._store_complete_messages([bound])[0], [sid]))
+            out.append((message, ids))
+        self._store_complete_excluded = sorted(superseded)
+        self._store_complete_cut = True
+        if not out:
+            self._store_complete_empty_reason = "no paired uncovered source rows"
+        return out
+
     def _store_complete_input(self, chunk, claims, full_map, view, raw_chunk, frontier, carry, budget,
                               accounted_ids=(), scale: int = 1, scanned=None, copy_lookup=None,
                               escape_retained: bool = False, allow_retained_escape: bool = False,
                               lift_allowed: bool = True) -> Optional[list]:
         """``[(input_row, [store_id, ...]), ...]`` in walk order (when the host reordered the leaf,
         ``_store_complete_order`` holds each input row's store-order rank); ``[]`` when the leaf cannot start
-        (a retained occurrence, no source rows, or a contiguity cut); None: today's input."""
+        (a retained occurrence, no source rows, or a contiguity cut); None: today's input.
+        UID/fail-open input (fork) preserves host groups and can cover a sparse set."""
         from .identity_anchor import _match_occurrences
 
         self._store_complete_excluded, self._store_complete_cut = [], False
@@ -236,6 +317,16 @@ class StoreCompleteMixin:
         self._store_complete_escaped = []
         self._store_complete_order = {}  # #2007: id(input row) -> store-order rank, set only for a host-reordered leaf
         given_claims = claims
+        uid_pairs, superseded = self._uid_pairing_rows(view)
+        self._uid_source_bindings = {}
+        self._uid_superseded_store_ids = set(superseded)
+        self._uid_sparse_coverage = False
+        if chunk and (any(isinstance(m.get("message_uid"), str) and m["message_uid"] in uid_pairs
+                          and id(m) in full_map for m in view)
+                      or self._uid_coverage_status().get("unpaired_count", 0)
+                      or self._uid_coverage_status().get("covered_store_ids")):
+            self._uid_sparse_coverage = True
+            return self._uid_set_leaf_input(chunk, claims, full_map, uid_pairs, superseded)
         in_chunk = {id(message) for message in chunk}
         claims = {key: list(ids) for key, ids in claims.items()}
         # Rows this pass accounts for elsewhere: its exclusions (anchors, scaffold, committed replay)
@@ -253,11 +344,17 @@ class StoreCompleteMixin:
                  taken | passive | (set() if escape_retained else set(full_map.values()))]
         ignored = {int(row["store_id"]) for row in loose if self._matches_ignore_message_patterns(row, stored_row=True)}
         covered = self._store_complete_node_covered([int(row["store_id"]) for row in loose if int(row["store_id"]) not in ignored])
+        # A newer bound version is the live occurrence. Keep older versions in
+        # raw history, without claiming them as this summary's source text.
+        covered.update(superseded)
         candidates = [row for row in loose if int(row["store_id"]) not in ignored | covered]
         occurrences = [(idx, self._message_replay_identity(message, strip_carrier=False))
                        for idx, message in enumerate(view) if id(message) not in full_map and not claims.get(id(message))]
+        occurrences, pins = self._fork_uid_pinned_occurrences(occurrences, view)
         self._load_host_rewrite_overrides(candidates)
-        shown = _match_occurrences(candidates, self._stored_row_forms, occurrences) if occurrences else {}
+        keys_of = (lambda row: self._stored_row_forms(row) | pins.get(int(row["store_id"]), set())) if pins \
+            else self._stored_row_forms
+        shown = _match_occurrences(candidates, keys_of, occurrences) if occurrences else {}
         blocked = set()
         escaped = {int(row["store_id"]): "mapped" for row in candidates
                    if escape_retained and int(row["store_id"]) in full_map.values()}
@@ -276,8 +373,22 @@ class StoreCompleteMixin:
         copy_proofs, admitted, group_twins = {}, set(), {}
         text = dict(zip((int(row["store_id"]) for row in hidden), self._store_complete_messages(hidden)))
 
+        mapped_ids = set(full_map.values())
+        # only a host row that claims exactly this one store row (a composite carrier holds its constituents'
+        # text in one row and must keep claiming them together)
+        single_claims = {ids[0] for message_id, ids in claims.items() if len(ids) == 1 and message_id not in full_map}
+        # fork: a composite carrier's claim (one host row holding several stored user turns), keyed by its
+        # lowest constituent; see the composite branch of the rows loop.
+        composite_claims = {min(ids): sorted(ids) for message_id, ids in claims.items()
+                            if len(ids) > 1 and message_id not in full_map}
+        rehydrated: dict = {}  # fork: store_id -> the stored-bytes row that now carries it (see the rows loop)
+        # fork: rehydration is a fallback, tried once after upstream's walk and escape left the leaf empty.
+        rehydrate = bool(getattr(self, "_fork_rehydrate_active", False))
+        pending_composite: set = set()
+
         def ids_of(message, ids) -> list:
-            return list(ids) + ([full_map[id(message)]] if id(message) in full_map else [])
+            found = list(ids) + ([full_map[id(message)]] if id(message) in full_map else [])
+            return [s for s in found if s not in rehydrated or rehydrated[s] is message] if rehydrated else found
 
         def position(message, ids=None) -> int:
             return max(ids_of(message, claims.get(id(message), ()) if ids is None else ids), default=0)
@@ -319,6 +430,15 @@ class StoreCompleteMixin:
                 return False
             if answers:
                 group[3].add(str(message.get("tool_call_id") or "").strip())
+            bound = uid_pairs.get(message.get("message_uid")) if isinstance(message.get("message_uid"), str) else None
+            if (bound is not None and full_map.get(id(message)) == int(bound["store_id"])
+                    and self._message_replay_identity(message, strip_carrier=False)
+                    not in self._stored_row_forms(bound)):
+                # UID proves identity, not byte equality. Summarize the durable
+                # payload as well as the host rewrite before claiming its source.
+                durable = self._store_complete_messages([bound])[0]
+                out.append((durable, [int(bound["store_id"])]))
+                used += count_message_tokens(durable)
             out.append((message, ids))
             admitted.update(ids_of(message, ids))
             used += tokens
@@ -329,7 +449,7 @@ class StoreCompleteMixin:
             while index < len(chunk) and (limit is None or position(chunk[index]) < limit):
                 if group_cut is not None and position(chunk[index]) >= group_cut:
                     return False  # I9: no host half of an escaped tool group is consumed
-                if not take(chunk[index], claims.get(id(chunk[index]), [])):
+                if not take(chunk[index], [s for s in claims.get(id(chunk[index]), []) if s not in rehydrated]):
                     return False
                 dependent = dependent and chunk[index].get("role") not in ("user", "system")
                 index += 1
@@ -346,6 +466,44 @@ class StoreCompleteMixin:
                 break
             if store_id in ignored:  # as compaction.py: an ignored row of any role makes the next replies dependent
                 dependent = True
+                continue
+            if rehydrate and store_id in taken and store_id not in passive and store_id not in mapped_ids \
+                    and index < len(chunk) \
+                    and position(chunk[index]) > store_id and store_id in single_claims \
+                    and not any(store_id in ids_of(m, i) for m, i in out):
+                # fork: the host row that claims this store row sits behind host rows mapped to LATER store
+                # rows (the host replayed newer copies of them), so the chunk can never emit it in store order
+                # and the contiguity check below cut every leaf to nothing (sessions wedged for hours with
+                # "cannot form a contiguous stored prefix" / the old retained-occurrence label). Read this row
+                # from its stored bytes here, at its store position; the host row stays input but no longer
+                # claims it. Duplicated text in one summary, never a lost row.
+                stored_row = self._store_complete_messages([row])[0]
+                if not take(stored_row, [store_id]):
+                    complete = False
+                    break
+                rehydrated[store_id] = stored_row
+                dependent = dependent and role not in ("user", "system")
+                continue
+            if _FORK_COMPOSITE_REHYDRATE and store_id in composite_claims and store_id not in passive \
+                    and store_id not in mapped_ids and index < len(chunk) and position(chunk[index]) > store_id \
+                    and not any(store_id in ids_of(m, i) for m, i in out):
+                # fork: the composite carrier that claims this row (and later ones, with other stored rows
+                # between them) sits behind host rows mapped to LATER store rows, so the chunk cannot emit it in
+                # store order and the contiguity check cut every leaf to nothing ("cannot form a contiguous
+                # stored prefix (hole=<first constituent> role=user)", default telegram session 10-25). As the
+                # single-claim branch above does, read each constituent from its stored bytes at its own store
+                # position; the carrier stays input but no longer claims them. Duplicated text, never a lost row.
+                for constituent in composite_claims[store_id]:
+                    if constituent not in rehydrated:
+                        rehydrated[constituent] = None  # pending: taken at its own position below
+                pending_composite.update(composite_claims[store_id])
+            if store_id in pending_composite and store_id in rehydrated and rehydrated[store_id] is None:
+                stored_row = self._store_complete_messages([row])[0]
+                if not take(stored_row, [store_id]):
+                    complete = False
+                    break
+                rehydrated[store_id] = stored_row
+                dependent = dependent and role not in ("user", "system")
                 continue
             if store_id in taken or store_id in passive:
                 dependent = dependent and role not in ("user", "system")
@@ -439,7 +597,29 @@ class StoreCompleteMixin:
                     allow_retained_escape=not escape_retained, lift_allowed=lift_allowed and bool(blocked_row))
                 if blocked_row is not None:
                     self._store_complete_blocked = blocked_row
-                return result
+                if result or blocked_row is not None or not single_claims:
+                    return result
+                out = []  # the lifted walk is still cut: the fork fallback below may read the row itself
+        if (not out and not rehydrate and not escape_retained and lift_allowed and single_claims
+                and self._store_complete_empty_reason == "leaf input cannot form a contiguous stored prefix"):
+            # fork (6d94edf6): the host row that alone claims an older store row sits behind rows mapped to
+            # later store rows, so no walk can emit it in store order. Read that row from its stored bytes
+            # at its own position (the host row stays input); duplicated text, never a lost row.
+            saved = (self._store_complete_excluded, self._store_complete_cut, self._store_complete_blocked,
+                     self._store_complete_empty_reason, self._store_complete_escaped, self._store_complete_order,
+                     self._store_complete_copy_exclusion_proofs)
+            self._fork_rehydrate_active = True
+            try:
+                retried = self._store_complete_input(
+                    chunk, given_claims, full_map, view, raw_chunk, frontier, carry, budget, accounted_ids,
+                    scale=scale, scanned=(rows, truncated), copy_lookup=copy_lookup, lift_allowed=False)
+            finally:
+                self._fork_rehydrate_active = False
+            if retried:
+                return retried
+            (self._store_complete_excluded, self._store_complete_cut, self._store_complete_blocked,
+             self._store_complete_empty_reason, self._store_complete_escaped, self._store_complete_order,
+             self._store_complete_copy_exclusion_proofs) = saved
         if not out or (not any(ids_of(m, ids) for m, ids in out)
                        and all(self._is_context_summary_content(m.get("content")) for m in chunk)):
             if not self._store_complete_blocked and not self._store_complete_empty_reason:

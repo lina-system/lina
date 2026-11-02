@@ -258,6 +258,7 @@ _host_message_uid_mode_warned = False
 def host_message_uid_mode() -> str:
     """``LCM_HOST_MESSAGE_UID``: ``off`` disables UID capture and alias-guard reads; ``shadow`` (default)
     observes only; ``on`` behaves exactly like ``shadow``. Alias UID conflicts are count-only diagnostics (#1519).
+    Existing owned bindings remain authoritative for compaction pairing in every mode (fork).
     An unknown value means ``shadow``, with one WARNING per process."""
     global _host_message_uid_mode_warned
     raw = (lcm_env_get("LCM_HOST_MESSAGE_UID") or "").strip().lower()

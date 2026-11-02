@@ -193,6 +193,10 @@ class _ReadStore:
                 and (conversation_id is None or str(r.get("conversation_id") or "").strip() in owners)][:limit]
 
     @staticmethod
+    def _host_uid_table_exists():
+        return False  # fork: UID pairing reads host proof the copy cannot supply; it fails open without it
+
+    @staticmethod
     def to_openai_msg(row):
         message = {key: row[key] for key in ("role", "content", "tool_calls", "tool_call_id")
                    if row.get(key) is not None}
@@ -205,6 +209,10 @@ class _Probe(StoreCompleteMixin, ReconcileMixin):
     """Read-only facade for ordinary raw views; unavailable host proof stays unknown."""
 
     _context_aware_leaf_cap = CompactionMixin._context_aware_leaf_cap
+
+    @staticmethod
+    def _uid_coverage_status():
+        return {}  # fork: no compaction pass ran in this read-only probe, so it has no UID coverage audit
     _working_leaf_chunk_tokens = CompactionMixin._working_leaf_chunk_tokens
 
     def __init__(self, connection, rows, session_id, frontier, config, covered, conversation_id):

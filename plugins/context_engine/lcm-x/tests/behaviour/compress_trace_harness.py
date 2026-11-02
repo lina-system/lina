@@ -450,6 +450,7 @@ OBSERVED_ATTRIBUTES = (
     "_generated_placeholder_digest_ordinals_for_active_replay",
     "_get_store_id_map_for_messages",
     "_get_store_ids_for_messages",
+    "_hermes_home",
     "_hidden_backlog_label",
     "_hidden_backlog_status",
     "_hung_summary_route_has_fallback",
@@ -552,12 +553,18 @@ OBSERVED_ATTRIBUTES = (
     "_sweep_budget_hold_until",
     "_take_leaf_summary_model",
     "_thread_context_session_id",
+    "_uid_coverage_audit",
+    "_uid_coverage_owner",
+    "_uid_source_bindings",
+    "_uid_sparse_coverage",
+    "_uid_superseded_store_ids",
     "_unattributed_leaf_warned",
     "_working_leaf_chunk_tokens",
     "_write_generated_ignored_placeholder_hash_counts",
     "_write_generated_ignored_placeholder_hash_ordinals",
     "compression_count",
     "context_length",
+    "side_channel_active",
     "threshold_tokens",
 )
 
@@ -1479,10 +1486,11 @@ def observe(case: Scenario, root: Path) -> Trace:
                             if case.name == "leaf-phase-soft-extraction":
                                 assert any(event.startswith("extraction timeout=") and event.endswith("progress=leaf")
                                            for event in events)
-                            if case.setup == "rescue-loses":
-                                assert provider.calls == 2 and leaf_probe["models"] == 0, (provider.calls, leaf_probe, engine._last_compression_noop_reason)
-                                assert engine._last_compression_noop_reason == "selected leaf chunk lacks raw store lineage"
-                                assert returned == view
+                            if case.setup in {"rescue-loses", "rescue-keeps"}:
+                                # fork (UID-first pairing): unpaired rows stay live, so the rescue retries only
+                                # attributable source rows and keeps durable source (test_issue_1141 fork variant).
+                                assert provider.calls == 3 and leaf_probe["models"] == 1, (provider.calls, leaf_probe, engine._last_compression_noop_reason)
+                                assert returned != view
                             if case.setup == "rescue-keeps":
                                 assert provider.calls == 3 and leaf_probe["models"] == 1, (provider.calls, leaf_probe, engine._last_compression_noop_reason)
                                 assert returned != view
@@ -1554,11 +1562,15 @@ def observe(case: Scenario, root: Path) -> Trace:
                             if case.name.startswith("stop-reason-") and (case.setup != "rotated" or attempt):
                                 assert fit_causes
                                 if case.name.endswith("retained"):
-                                    assert fit_causes[-1].startswith(compaction._RETAINED_NOOP_REASON)
-                                    assert engine._last_compression_status == "sanitized"
+                                    # fork (UID-first pairing): the unresolved host occurrence stays live and the
+                                    # sparse UID leaf drains the other rows instead of stopping before it.
+                                    assert engine._uid_sparse_coverage, (fit_causes, engine._last_compression_noop_reason)
+                                    assert fit_causes == [""] and engine._last_compression_status == "compacted"
                                 elif case.name.endswith("unattributed") and attempt:
-                                    assert fit_causes == ["selected leaf chunk lacks raw store lineage"]
-                                    assert engine._last_compression_status == "sanitized"
+                                    # fork (UID-first pairing): the rotated rows without lineage stay live and the
+                                    # sparse UID leaf compacts the attributable rows instead of refusing the pass.
+                                    assert engine._uid_sparse_coverage, (fit_causes, engine._last_compression_noop_reason)
+                                    assert fit_causes == [""] and engine._last_compression_status == "compacted"
                                 elif case.name.endswith("cleared"):
                                     assert fit_causes == [""]
                                     assert engine._last_compression_status == "sanitized"

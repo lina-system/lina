@@ -88,7 +88,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=07de47bf4efc1ca5a16d7b85e86871449eec11aeee0674aaa26daceaf999ed27"
+"attrs count=153 sha256=c82fbc20e6ef32b199d396f8a8cca0051d5831c02df162435804a96a5e2dca58"
 ],
 "below-threshold-cleanup-only": [
 "compress attempt=1",
@@ -174,7 +174,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=3badbf199d0452754645d9c259c3064b26ef6e22562c732b3d3b6cfac2a560ff"
+"attrs count=153 sha256=71d245d3298c9953008d7d9b9ac52f6dd85fa3c554164e0a6d065af3925d7937"
 ],
 "boundary-cleanup-only": [
 "compress attempt=1",
@@ -260,7 +260,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=bd6cfe53c44f5ba0e49a63f4e504b027a02812ac0b1450891849856985ac8768"
+"attrs count=153 sha256=00c92a8d66bcabd1c0bdf5fbc3e85320b260741bd5d62d82ead5ba6d0b0b0469"
 ],
 "budget-exhausted-before-leaf": [
 "compress attempt=1",
@@ -369,7 +369,10 @@
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_turn_paced=true",
 "attr _sweep_budget_hold_until=1715.0",
-"attrs count=146 sha256=3ce5206a4ebc549cf7f81b4c911999700ef76bb9da957d1f6aa9c5a36b8f6bfc"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=4ed6f03fbe0c29febfba8b0b8e80af20f32d299c75162ec52b3ebdac30a5add2"
 ],
 "budget-partial-pass": [
 "compress attempt=1",
@@ -498,8 +501,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=5484956a99cf3f19db2309a07ccd37aeda83de4f54c68d1e61a492305abebeae"
+"attrs count=153 sha256=0923a26ccef4c3f558297672c2f02b631a3608e16f7231cc16b25672e2cef394"
 ],
 "child-session-bypass": [
 "compress attempt=1",
@@ -522,7 +528,7 @@
 "attr _last_compression_status=\"running\"",
 "attr _pending_emission_candidates=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=212fea16c6e9fb4d08c04417c1972287ed31d9f203b96ae3b2fcf159fcaf45b5"
+"attrs count=153 sha256=d83f693a6f2b4d369d05048e49b85b77731093c9ebc070fc99b2ea03a269cef2"
 ],
 "child-session-forced": [
 "compress attempt=1",
@@ -545,7 +551,7 @@
 "attr _last_compression_status=\"running\"",
 "attr _pending_emission_candidates=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=212fea16c6e9fb4d08c04417c1972287ed31d9f203b96ae3b2fcf159fcaf45b5"
+"attrs count=153 sha256=d83f693a6f2b4d369d05048e49b85b77731093c9ebc070fc99b2ea03a269cef2"
 ],
 "child-with-cached-usage": [
 "compress attempt=1",
@@ -568,7 +574,7 @@
 "attr _last_compression_status=\"running\"",
 "attr _pending_emission_candidates=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=212fea16c6e9fb4d08c04417c1972287ed31d9f203b96ae3b2fcf159fcaf45b5"
+"attrs count=153 sha256=d83f693a6f2b4d369d05048e49b85b77731093c9ebc070fc99b2ea03a269cef2"
 ],
 "child-without-usage": [
 "compress attempt=1",
@@ -591,7 +597,7 @@
 "attr _last_compression_status=\"running\"",
 "attr _pending_emission_candidates=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=212fea16c6e9fb4d08c04417c1972287ed31d9f203b96ae3b2fcf159fcaf45b5"
+"attrs count=153 sha256=d83f693a6f2b4d369d05048e49b85b77731093c9ebc070fc99b2ea03a269cef2"
 ],
 "condensation-levels": [
 "compress attempt=1",
@@ -727,8 +733,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=96d77aba5e417ec7463060f8f7ee2f6f8d71a2ea56c28fd024aa9954229f984b"
+"attrs count=153 sha256=b74c313bbe4f84a0b273c069ce3423d5689901e070a8c5b2947afc569cae41cc"
 ],
 "condensation-publication-locked": [
 "compress attempt=1",
@@ -853,7 +862,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"sqlite_publication_locked\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=c2e23c23d908f0f81b71e429c064f16a6e35e9f5b17d44c654bc2c43593d1f20"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=c8f1aaf3da08715638b0a17f687569ac9c779cbb605095fbc62bf5ac733c65a3"
 ],
 "condensation-spends-soft-budget": [
 "compress attempt=1",
@@ -957,7 +969,7 @@
 "attr _pending_emission_candidates=sha12/len=fc146730afef/464",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=ecb1f27226f1ee4a01099622bccefb02d8e7d00220c37e578c78111f01b7e92c"
+"attrs count=153 sha256=0adfd92b9d1465e6fe79da9904a2550fdff7226333afb145e938b0cf26bd67b3"
 ],
 "context-length-rescue": [
 "compress attempt=1",
@@ -1084,8 +1096,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=55f52b669e1232f092c8cc3164078b964afe73302bf80c6172a1b61b130f231c"
+"attrs count=153 sha256=1393a7758c044285a7cdaf6d4af1b9fe8d5b67f33993f23eae3bb80241272edd"
 ],
 "deadline-checkpoint-10": [
 "compress attempt=1",
@@ -1186,7 +1201,10 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1721.0",
-"attrs count=146 sha256=ab3a6fb1ff7a021888138b5e3dd0e2aeebf017b03d63d0f1360523cc7191d781"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=f9ab545a4eae67efbc4ec464d020376512a926221c8b5b39506cac48878fca63"
 ],
 "deadline-checkpoint-4": [
 "compress attempt=1",
@@ -1279,7 +1297,7 @@
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1721.0",
-"attrs count=146 sha256=43ffde9a1e137286bbd68c90ae2c9140965784caa6f6b2c07c7af773ea90fa38"
+"attrs count=153 sha256=fb652108022e55136811b2f77856062595bcbb4efa3a9e5aba7701b4df6fdd1b"
 ],
 "deadline-checkpoint-6": [
 "compress attempt=1",
@@ -1372,7 +1390,7 @@
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1721.0",
-"attrs count=146 sha256=43ffde9a1e137286bbd68c90ae2c9140965784caa6f6b2c07c7af773ea90fa38"
+"attrs count=153 sha256=fb652108022e55136811b2f77856062595bcbb4efa3a9e5aba7701b4df6fdd1b"
 ],
 "deadline-checkpoint-8": [
 "compress attempt=1",
@@ -1466,7 +1484,7 @@
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1721.0",
-"attrs count=146 sha256=91f51dd9b400976689c99f0b2da39d0affa8d61bb8730777b31e4eccb98cbfc4"
+"attrs count=153 sha256=9c7f5a626701907564ab5532cc4a4ffcab5485bfd5c2ddbb818aa0a4091b98ad"
 ],
 "deadline-hidden-backlog-read": [
 "compress attempt=1",
@@ -1506,7 +1524,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1721.0",
-"attrs count=146 sha256=1f706a525fdb8321b99d4412e5319b64ec2f31a31de0c34e212c8c14d179af16"
+"attrs count=153 sha256=9263256d71eab2e35fd3c9580086b608af2a7cd62b2138d799573f537a5202f5"
 ],
 "default-sweep-target": [
 "compress attempt=1",
@@ -1680,8 +1698,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=37bb55ef41322faf7581a4f8b206799725a9dbd63802bca8646844d5f9207d1f"
+"attrs count=153 sha256=34c205dd2524b30713050e0ba645129194dd5700c8b75b57c1b19fa8d68defe2"
 ],
 "deferred-critical-small-backlog": [
 "compress attempt=1",
@@ -1790,8 +1811,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=7cbbaccc54943022d16e8297de8d8feecba172171154ce175d0f3286d563a0a1"
+"attrs count=153 sha256=668957dce14818fed82019acd74fc1a1a6f74822d27283254d3c532a9ef15fdc"
 ],
 "deferred-maintenance": [
 "compress attempt=1",
@@ -1914,8 +1938,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=e6e33868c1084eb3a194b656c511b2f79b68963b8cd59df9b2351862fd4e659e"
+"attrs count=153 sha256=5486e99369ad5bb0e82838e3f3604c7f966d3dac2b4d4fa7de277455420e71ea"
 ],
 "dependent-nonreply-barrier": [
 "non-reply role: both fingerprints absent despite persisted ledger; generated=False",
@@ -1994,8 +2021,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=50b54eb8ea36166797204e5ec6dc3f636af1eb5836b4d82c3d5d0ca96298d91e"
+"attrs count=153 sha256=bfae47f6ed3eddfbc4e815ebdf9e845d452200236791ed940462931f382201a9"
 ],
 "dependent-only-leaf": [
 "compress attempt=1",
@@ -2069,8 +2099,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=e5ef476efc791d3f29684dbc6767dec15a1a0ac07ade6d1d137469effb499ff0"
+"attrs count=153 sha256=a20f0cc6dd158948f8d8efec19c84473c909977fd0fb53c56c3cd13ea4d159cc"
 ],
 "dynamic-below-minimum": [
 "compress attempt=1",
@@ -2161,7 +2194,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=b722be22670cf5638c357d231222f3ec77f244d868d3677e4ece23b02d0207e8"
+"attrs count=153 sha256=6c3aa96b9e2187d1f5603c284dbcecbe91d2c3b2e6510b051ec72639df1a6e1f"
 ],
 "dynamic-below-minimum-no-fit": [
 "compress attempt=1",
@@ -2253,7 +2286,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=6e31c7156873ad14141fbc4d68f965febb3349842fb272ca66b4686de1093965"
+"attrs count=153 sha256=2b01b7d8ab4b71a487c146cc52381883ee215067cba8b8d9873f48f89657f1d9"
 ],
 "dynamic-forced-overflow": [
 "compress attempt=1",
@@ -2360,8 +2393,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=dbea42fffb5af0147f37cb75dda6e27c862c97efc3e71c354ee8ffce169ad82c"
+"attrs count=153 sha256=34fc67c561f5ed8b1724b2acc84429184ad05c538658ade09ad5b0317f42133f"
 ],
 "dynamic-fresh-tail-yield": [
 "compress attempt=1",
@@ -2491,8 +2527,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=cf4c029ed60327a5227596476f459d20e3e5317e4cebfd19a0e88e5968a06517"
+"attrs count=153 sha256=29ff15ba9075dffe87c966bd768e3ace64188b3add33758aa01f84e7248c0e62"
 ],
 "dynamic-leaf-passes": [
 "compress attempt=1",
@@ -2641,8 +2680,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=09b8c7f389b35e26c33c4619e4c916d9a21dcd840aa0862e9563e2f847dd6e4c"
+"attrs count=153 sha256=fb94570761c7b0bfa13e42b77702275902ade52224d11aa0537ba79d9f986bf1"
 ],
 "dynamic-raw-drained": [
 "compress attempt=1",
@@ -2743,8 +2785,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=60c7f3fbb6c08eb4319300cb5e036d050520d9e573da541d96839cef23f5cce2"
+"attrs count=153 sha256=7f67a6c55ec2de5cb31e2cd25275b6ae1143de3de8747cd73845b703cf4025b6"
 ],
 "dynamic-small-backlog-yields": [
 "compress attempt=1",
@@ -2853,8 +2898,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=141f52acc2509178d47be1c090fb7b509a027c593f7a22df8ecb7ae663d952de"
+"attrs count=153 sha256=8e63bea0470cccbd34c4a9c8b42384f40df47d23de51b723b435c3df1dbb3d6a"
 ],
 "dynamic-threshold-reached": [
 "compress attempt=1",
@@ -2973,8 +3021,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=f1b9756c5a479d5d36d253772481cba56fc5821ee1480f7bfd90dc9bff626844"
+"attrs count=153 sha256=659e47fe1ec76ee3397ac15d335f892b8dc05b494beae4f940ecfeff9ba70dc4"
 ],
 "empty": [
 "compress attempt=1",
@@ -2993,7 +3044,7 @@
 "attr _last_compression_noop_reason=\"empty message list\"",
 "attr _last_compression_status=\"noop\"",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=b7e1b2faa32b2e6f98ba07a37d95483d1e8b682f0c6ca12d4440eefdfd4b135f"
+"attrs count=153 sha256=d4d3ce15f391266d1a870afabf81a5c909f1bf5ab515fc4e833343fb5038d893"
 ],
 "escalation-level-three": [
 "compress attempt=1",
@@ -3114,8 +3165,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=43e1954c6de0da02914eeebd9cdcd6c8a58e2c69709808d3293b580f0ad2a2a6"
+"attrs count=153 sha256=a711ea721f8f48361def363cd64cdad79402322eab6f1befedecfa9f01b83a88"
 ],
 "escalation-level-two": [
 "compress attempt=1",
@@ -3236,8 +3290,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=2cd7ca60c56d2e37948a574786e78f5a74571a68c796d7119fca4c30fd7c1479"
+"attrs count=153 sha256=b1af81d38e2dbdbb8d5f5019767bc3705fde8852d5ab5f61d1d058b9eb4b238b"
 ],
 "escalation-rejected-keeps-backlog": [
 "compress attempt=1",
@@ -3343,7 +3400,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=7a76af8a82775340f778be5e1db150cb5164302e50455f653616602275989d06"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=cf8a6026a0e1de813f41d20e8524c82ecc24002a48e4c07297a843b80c87700a"
 ],
 "explicit-focus": [
 "compress attempt=1",
@@ -3462,8 +3522,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=50b54eb8ea36166797204e5ec6dc3f636af1eb5836b4d82c3d5d0ca96298d91e"
+"attrs count=153 sha256=bfae47f6ed3eddfbc4e815ebdf9e845d452200236791ed940462931f382201a9"
 ],
 "externalized-payloads": [
 "compress attempt=1",
@@ -3599,8 +3662,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=174a9a7c92d16d1d3291856f392d593a083b21c5baaaa61c5d1d6752e80c848d"
+"attrs count=153 sha256=3874813a5ce333f9201e2da1e276d29c8adee491e88bc9b6db2e03c6d936f4f4"
 ],
 "externalized-transcript-gc": [
 "compress attempt=1",
@@ -3729,8 +3795,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=c378a6fb36b1dd4ccfa526a7e3b9dd0c2f1a8011e4c4c477dc7abe3017c4ee9e"
+"attrs count=153 sha256=cdd37ef33d9154ce70246e39b9663907fa109c030831a3119cd7ef62ff867c6f"
 ],
 "finish-callable-telemetry": [
 "compress attempt=1",
@@ -3892,8 +3961,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=e53554424bd5755df4c4d2cae1280face3a5c3569dfeb5bc931b07ee353901b1"
+"attrs count=153 sha256=d450322cc3b950eb70c70f0155b2dd7a21cef42a8e852244d199e0cc16038ba2"
 ],
 "finish-condensation-lock": [
 "compress attempt=1",
@@ -4020,7 +4092,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"sqlite_publication_locked\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=c2e23c23d908f0f81b71e429c064f16a6e35e9f5b17d44c654bc2c43593d1f20"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=c8f1aaf3da08715638b0a17f687569ac9c779cbb605095fbc62bf5ac733c65a3"
 ],
 "finish-condensation-nonlock-error": [
 "compress attempt=1",
@@ -4146,7 +4221,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=a37abc5efeb8ac14a99e98cbb3523224c1f0756d7ebf9aa65d132b9dfaa274ff"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=edf68c785252da6a8401f068fd88e053705f42c4110cb08a51aaa4f634b12304"
 ],
 "finish-gc-lock": [
 "compress attempt=1",
@@ -4271,7 +4349,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"sqlite_publication_locked\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=c8927b9870d4d7bc59bbd1f04e73392d9f42f849c415ad55af1a4a3805c64534"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=884da7b16e3423bd8c8f2ca415b1496682a17790a4b6ba5a3ee3c7a04169ebad"
 ],
 "finish-post-drain-read-error": [
 "compress attempt=1",
@@ -4447,7 +4528,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=a8c9d075f4b95531b5aa6d11c895bf0b842435facf2a78fc787e320d235ff7a3"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=23292a05de273b417484bc0d16b322911cb2c2f76b9275396194152796881fa2"
 ],
 "finish-promoted-keys": [
 "compress attempt=1",
@@ -4551,8 +4635,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=d643b930655218df7b4b97540beb87d4ea7093db9082533933b0e1ed370694bf"
+"attrs count=153 sha256=ba0891ade7f384a91371c73fe10422b37bfe74ef299228824518965ed5755fb6"
 ],
 "finish-repeat-condensation-skipped": [
 "compress attempt=1",
@@ -4719,8 +4806,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=8ec4bc136e91dec331ee61ea261c9c953327218c9b325836f957bba8ee6682ce"
+"attrs count=153 sha256=033659e5275cb68c03783764596da8258cf4fc2a1f59903804f7c4ad5b52c6f4"
 ],
 "forced-overflow": [
 "compress attempt=1",
@@ -4825,8 +4915,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=93bf4361e2a47e1b606313607b4579d9baa4141e59d8bd64f27648de63f658ce"
+"attrs count=153 sha256=2d5d3a307b4965e240b9cc4e91ea6368973cb875a19c3a5bc96e5aad5a5ef784"
 ],
 "fresh-tail-protected": [
 "compress attempt=1",
@@ -4890,7 +4983,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=ea1402633a11/3476",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=8a1fd691a7392144d4bf1d63b6ef39003e455eb74b9b3c77f1568a126b7a1f13"
+"attrs count=153 sha256=4089a30a9bebcf1e322a67ab6618c33f282f277cd1007fd1ad695121df09de06"
 ],
 "fresh-tail-yield": [
 "compress attempt=1",
@@ -5012,8 +5105,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=b3654b0fc49f7dade8923a4eb62eac63d03be259f9c94dedf731ee72676434b9"
+"attrs count=153 sha256=e908bf0b1c842d4fc3f470cfb53a22416f1a52215f407c0a3b7b598e00c0f922"
 ],
 "generated-dependent-replies": [
 "compress attempt=1",
@@ -5112,8 +5208,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=087763f9394b16ced79769472e2f1067e81f43298a7b897f710687bb49f2fd03"
+"attrs count=153 sha256=1f629023325ef5caf62e5811f809c366db2aa951f9bbe4ca8311a84a17dc97f1"
 ],
 "hidden-owned-backlog": [
 "compress attempt=1",
@@ -5177,8 +5276,11 @@
 "attr _store_complete_excluded=[1]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=ac7521bab1b5822b429b30d4ccfa83e137d677262fd5e863ddcb647db986fb0d"
+"attrs count=153 sha256=97cb318123d9010f3598c71434b7107c550dd2be1e984e4140e729e7428db43f"
 ],
 "hold-fit-only": [
 "compress attempt=1",
@@ -5266,7 +5368,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=023318335e5b7bec472c1ce04a4b579cfd2c3fe58ca780bc82bc65fee6cbfd1c"
+"attrs count=153 sha256=3cf9230f0a90c4ccffe82ebe58442e934105c3e4e15ba92fb1b64fdb6db1c1c9"
 ],
 "hung-primary-leaves-fallback": [
 "compress attempt=1",
@@ -5373,7 +5475,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=fd7291bc60f05078b73c37aba1afe5ee632a37bd758c353d12a671b7a11875b4"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=db7c5a2dc6b48f2484a102ad95e7f760a3ac6efdaa59561438cd2004e691e1d6"
 ],
 "identity-anchor": [
 "compress attempt=1",
@@ -5492,8 +5597,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=9a8117cc5150857d0245012ff81ff43dee41ec1586e88ce6cdeff91268c626fb"
+"attrs count=153 sha256=b8695ea9aa57d60ddd4965832f19f04d15e9747e210888eababaebf5772218a8"
 ],
 "identity-anchor-disabled": [
 "compress attempt=1",
@@ -5603,7 +5711,7 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr compression_count=1",
-"attrs count=146 sha256=50b54eb8ea36166797204e5ec6dc3f636af1eb5836b4d82c3d5d0ca96298d91e"
+"attrs count=153 sha256=eb83aca3ac9dc46864c91a5fac030cab6e4b9bfcf61f936d62326f77ced9ddf3"
 ],
 "ignored-bypass-missing": [
 "compress attempt=1",
@@ -5666,7 +5774,7 @@
 "attr _last_compression_noop_reason=\"LCM bypassed below threshold: ignored session\"",
 "attr _last_compression_status=\"noop\"",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=8d180cc9f2e6ccca00959c6143fab24c86a9e8628c05e6c3567783977a6fd14a"
+"attrs count=153 sha256=870f0825454b2a4bcfc2769cb2501de47e72d5681ac6176faf3d3a3750dc3cee"
 ],
 "ignored-bypass-negative": [
 "compress attempt=1",
@@ -5729,7 +5837,7 @@
 "attr _last_compression_noop_reason=\"LCM bypassed below threshold: ignored session\"",
 "attr _last_compression_status=\"noop\"",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=8d180cc9f2e6ccca00959c6143fab24c86a9e8628c05e6c3567783977a6fd14a"
+"attrs count=153 sha256=870f0825454b2a4bcfc2769cb2501de47e72d5681ac6176faf3d3a3750dc3cee"
 ],
 "ignored-bypass-zero": [
 "compress attempt=1",
@@ -5792,7 +5900,7 @@
 "attr _last_compression_noop_reason=\"LCM bypassed below threshold: ignored session\"",
 "attr _last_compression_status=\"noop\"",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=8d180cc9f2e6ccca00959c6143fab24c86a9e8628c05e6c3567783977a6fd14a"
+"attrs count=153 sha256=870f0825454b2a4bcfc2769cb2501de47e72d5681ac6176faf3d3a3750dc3cee"
 ],
 "ignored-dependent-tail-eof": [
 "compress attempt=1",
@@ -5839,7 +5947,7 @@
 "attr _no_progress_public_rows=sha12/len=a1311241116e/3987",
 "attr _pending_emission_candidates=[]",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=205d3259788f1fcafbf14c5a6b5ff85a5f6978caf879ba763c61186c974fc272"
+"attrs count=153 sha256=8a619d68bf391512df652cd3ee134381d6910a3844fe06e20a144cc35286a4a7"
 ],
 "ignored-message-dependents": [
 "compress attempt=1",
@@ -5970,8 +6078,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=17947e668b99ef58c8cd53450d68c6efc16c6c3a4f37a24a182d5586835dc6b7"
+"attrs count=153 sha256=1a580887380221ce40dccad720fe9d4a8f6e044e681ceb82629c868f01eb6746"
 ],
 "ignored-tail-nondict-barrier": [
 "compress attempt=1",
@@ -5986,7 +6097,7 @@
 "attr _foreground_budget=sha12/len=a4ce1981038b/351",
 "attr _last_compression_status=\"running\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=6f1baf58c441940b683b74205db7a6a071eaecc4708ee7bf9e95a4c371491ffe"
+"attrs count=153 sha256=216152d9d875b34e9432a38c5587af2aa277bd5c9c6d1a01a162ed3af44b7620"
 ],
 "ignored-tail-unanchored-eof": [
 "compress attempt=1",
@@ -6031,7 +6142,7 @@
 "attr _no_progress_public_rows=sha12/len=919971a2eae2/3917",
 "attr _pending_emission_candidates=[]",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=1db11f3a97a73470ed250b43349c06a712dd2e2c5e431d80cd4eb4b024787d06"
+"attrs count=153 sha256=769b49a97829979ebaf229c4f4df1af54b21f8013cfec54718024ebe28e979fa"
 ],
 "ignored-tail-unknown-role": [
 "compress attempt=1",
@@ -6122,8 +6233,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=2b3668e571817595bfbf7ac85a1b2c6c17ac8d9b495569d940d188e9f7d34ebe"
+"attrs count=153 sha256=26948af6f93e4c1e4d3caf51863a1f120f1aaf781a91fdc53c70cda2d3d1a6fe"
 ],
 "ignored-unknown-role": [
 "compress attempt=1",
@@ -6209,8 +6323,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=a77ca060ef78c76fb63f7bc40216a53b76769cc5171fe3fa83949aba094591bd"
+"attrs count=153 sha256=44f671a7ea7671355e0f30ae3ccb10a86257ea3f8842e3af2258d23a904fd418"
 ],
 "leaf-automatic-no-sweep": [
 "compress attempt=1",
@@ -6329,8 +6446,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=a576baa2ffbf41a38b704a1bdb3282577afcfb3bb2604b2e613ced52dcf1bf68"
+"attrs count=153 sha256=566aa25d930544abf52dd6f55013e2d21b3ee5498dccc04ee7e0686b1b2c53ba"
 ],
 "leaf-no-host-token-count": [
 "compress attempt=1",
@@ -6448,8 +6568,11 @@
 "attr _store_complete_escaped=[]",
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=62abb172e857ac9a241ebded9fd43b2cf0a246f348ca071fe1ad06619e628276"
+"attrs count=153 sha256=02581ad20ca30a385591e4be85d2d64318ab3d1250cf145d3c22e0245b258bc2"
 ],
 "leaf-pass": [
 "compress attempt=1",
@@ -6568,8 +6691,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=50b54eb8ea36166797204e5ec6dc3f636af1eb5836b4d82c3d5d0ca96298d91e"
+"attrs count=153 sha256=bfae47f6ed3eddfbc4e815ebdf9e845d452200236791ed940462931f382201a9"
 ],
 "leaf-phase-budget-after-leaf": [
 "compress attempt=1",
@@ -6701,8 +6827,11 @@
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_turn_paced=true",
 "attr _sweep_budget_hold_until=1715.0",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=6b596c7708e795e31663410d3635ab88df88a8114964fe97c6492b76999ae875"
+"attrs count=153 sha256=537630d888399c2117a11a8afe9871e10032840d18f9a05e3b0c2523bded9bc3"
 ],
 "leaf-phase-data-error-after": [
 "compress attempt=1",
@@ -6832,8 +6961,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=e52d981b889bc5bc78aa8a83af16ab9acab4c8df6a208da58980363f43972d81"
+"attrs count=153 sha256=18dc536ab0ceff42fb31bfbda044d927feecd08e1cdc87c96aa7d218abc5e073"
 ],
 "leaf-phase-data-error-before": [
 "compress attempt=1",
@@ -6935,7 +7067,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=d5e4369defe2d0f1731452390345949d30e9ad6babdf3542cd695d126df31e8b"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=a5eba74abfe1e3090cffd8cd02484cf332e939a61a2c8b1fa52c8032a5655d5b"
 ],
 "leaf-phase-dependent": [
 "compress attempt=1",
@@ -7005,7 +7140,7 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr compression_count=1",
-"attrs count=146 sha256=203a971ec0286417f1f34b608aac2aca0c0021fe067a79df0b8ada0fe8797db2"
+"attrs count=153 sha256=f2c338b6127d426fcf73c95183a96a41325c9a8a64bcc1a7b0b56fc2e9605ac1"
 ],
 "leaf-phase-lineage-moved": [
 "compress attempt=1",
@@ -7114,8 +7249,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr _unattributed_leaf_warned=[[\"trace-conversation\",0]]",
-"attrs count=146 sha256=6cda5718f0d638e8c15ed8432380a805c49e310f7aaef5dc1a92b1851a89715b"
+"attrs count=153 sha256=e50937e6ad00ac3cdc81aaab5d3685ff5a26659951899bb5f164fb5e3366acc0"
 ],
 "leaf-phase-no-call-stop": [
 "compress attempt=1",
@@ -7215,7 +7353,10 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1300.0",
-"attrs count=146 sha256=7c92d476a0885a7e2cc90cc65c558e2e8fd1efd4ba2b425d0e4e2e50728eebb9"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=b8436b506748582514f33d48b404141983a214ad19a096eec67e364d99c74bb2"
 ],
 "leaf-phase-raise-cleanup": [
 "compress attempt=1",
@@ -7313,7 +7454,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=d5ae5d5ab614a5be17172d4959d057edea0ae18b335dee733d6f49217abd542f"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=7782a8e4554d4c44109b01b6f32609810046e600b2c8c94f7e12e9028e978a76"
 ],
 "leaf-phase-rescue-keeps": [
 "compress attempt=1",
@@ -7413,8 +7557,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=b65b1369f510653abe404ea5eb9f896081a2bb24251f73831a7895bdaf6bb225"
+"attrs count=153 sha256=8a70b906196f79e633199f1fefbf91f0ea06651ed36501cd2ea25e4b13c9bad1"
 ],
 "leaf-phase-rescue-loses": [
 "compress attempt=1",
@@ -7425,21 +7572,36 @@
 "sql #1 sha12/len=52614d71143e/151",
 "sql COMMIT",
 "log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
-"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=9d5dbb066143/80764",
+"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=2057233a0b39/16758",
 "log hermes_lcm.escalation WARNING \"LLM summarization failed: %s\"",
-"call 2 model=trace-model level=2 budget=2000 timeout=115.0 in=b3033e65b137/80590",
+"call 2 model=trace-model level=2 budget=2000 timeout=115.0 in=eca78d4dbdd2/16584",
 "log hermes_lcm.escalation WARNING \"LLM summarization failed: %s\"",
 "log hermes_lcm.escalation DEBUG \"L3 deterministic truncation (%d tokens)\"",
-"log hermes_lcm.compaction WARNING \"LCM leaf chunk has no durable source above the frontier: frontier=%d rows=%d first_mapped_store_id=%s\"",
-"log hermes_lcm.compaction INFO \"LCM compression no-op: %s%s\"",
-"return sha12/len=a90df4ca043d/93353",
-"leaf probes {\"captures\":1,\"models\":0,\"summaries\":1} hook=None",
-"leaf_prep after {\"chain\":[],\"counters\":{}}",
+"log hermes_lcm.engine WARNING \"LCM leaf summarization retrying with smaller oldest chunk after a context-length refusal (attempt %d/%d, %d\u2192%d messages, clip budget %d\u2192%d tokens)\"",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 3 model=trace-model level=1 budget=4000 timeout=115.0 in=32ef3bbf00db/15486",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql shape=2 conn=_dag INSERT INTO summary_nodes (session_id, depth, summary, token_count, source_token_count, source_ids, source_type, created_at, earliest_at, latest_at, expand_hint) VALUES (?, ?,?, ?, ?,?,?, ?, ?, ?,?)",
+"sql #2 sha12/len=b6c899d9c7e1/352 x3",
+"sql shape=3 conn=_dag INSERT OR REPLACE INTO summary_node_provenance (node_id, escalation_level, model, created_at) VALUES (?, ?,?, ?)",
+"sql #3 sha12/len=bd12465197ec/135",
+"sql shape=4 conn=_dag UPDATE lcm_lifecycle_state SET current_frontier_store_id = MAX(current_frontier_store_id, ?), updated_at = ? WHERE conversation_id =?AND current_session_id =?",
+"sql #4 sha12/len=eb94f71be3a5/191",
+"sql COMMIT",
 "sql BEGIN IMMEDIATE",
 "sql #1 sha12/len=4702b2b116a4/157",
 "sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=1ddc1221da37/482",
+"sql COMMIT",
+"return sha12/len=d5b19a53c8df/79195",
+"leaf probes {\"captures\":1,\"models\":1,\"summaries\":1} hook=None",
+"leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
-"message user 3966be03c944/1267",
+"message user 93a4ea685407/1495",
 "message assistant 7a468e7d082c/1266",
 "message user f6149929fcde/1267",
 "message assistant 1d3aa33ccd2c/1266",
@@ -7490,19 +7652,7 @@
 "message user f378ea082268/1268",
 "message assistant bb29f3230a05/1267",
 "message user 759828fcbec1/1268",
-"message assistant 7912d1bd8df7/1267",
-"message user 464528f0331a/1268",
-"message assistant 34f0db7ba883/1267",
-"message user 530eaefe3fcf/1268",
-"message assistant 611d255588dc/1267",
-"message user ccad62ecac3e/1268",
-"message assistant 5c7d7e8030b9/1267",
-"message user 1be0acff385d/1268",
-"message assistant 56ea567a39db/1267",
-"message user 514b1c10a58b/1252",
-"message assistant 4e3bf5441560/1257",
-"message user 6be93e49b2ba/1252",
-"message assistant 2542cfe035c5/1257",
+"message assistant 0c3a19efbcd0/2525",
 "message user e1ee1d979dfd/1252",
 "message assistant c48112ccf7c5/1257",
 "message user 1fde724764a9/1252",
@@ -7514,28 +7664,35 @@
 "attr _compress_escaped=[]",
 "attr _compress_forced_overflow=false",
 "attr _compress_hidden_rows_consumed=0",
-"attr _compress_host_rows_consumed=0",
+"attr _compress_host_rows_consumed=11",
 "attr _compress_occurrences=null",
 "attr _compress_run=sha12/len=d104c326b392/380",
-"attr _foreground_budget=sha12/len=94f681e9c127/375",
-"attr _last_compression_noop_reason=\"selected leaf chunk lacks raw store lineage\"",
-"attr _last_compression_status=\"noop\"",
+"attr _dag=sha12/len=6feacdcb999f/369",
+"attr _foreground_budget=sha12/len=266c292d9531/383",
+"attr _ingest_cursor=60",
+"attr _last_compacted_store_id=63",
+"attr _last_compression_status=\"compacted\"",
 "attr _last_leaf_content_filter_error=false",
 "attr _last_leaf_level_3_verbatim=false",
+"attr _last_leaf_summary_model=\"\"",
+"attr _lifecycle=sha12/len=1ce93c9517b7/392",
 "attr _no_progress_observed_tokens=3000",
-"attr _no_progress_proof_complete=false",
-"attr _no_progress_proof_fingerprint=null",
-"attr _pending_emission_candidates=[]",
+"attr _pending_emission_candidates=sha12/len=5807d6b43263/3256",
 "attr _store_complete_blocked=null",
 "attr _store_complete_copy_exclusion_proofs={}",
-"attr _store_complete_cut=false",
+"attr _store_complete_cut=true",
 "attr _store_complete_empty_reason=\"\"",
 "attr _store_complete_escaped=[]",
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attr _unattributed_leaf_warned=[[\"trace-conversation\",52]]",
-"attrs count=146 sha256=c59d736f77a6b459ac264de4d251ac3abf9336c8285b51ace014db7c433bd9ea"
+"attr _uid_coverage_audit=sha12/len=6d30f43425c4/1649",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
+"attr compression_count=1",
+"attrs count=153 sha256=c661d641345d29cd13cd68cc8248025373a1d413bde3acfd20883b2826b44516"
 ],
 "leaf-phase-soft-extraction": [
 "compress attempt=1",
@@ -7716,8 +7873,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=e9f9a578b48634d4d1ff8c74709db4e4691c1fe25fe6ca9c8588118b2735cf8b"
+"attrs count=153 sha256=0dfef568687f535b997149c2379d1d1f0988732267658ba172bf593c9646c23a"
 ],
 "legacy-filtered-backlog": [
 "compress attempt=1",
@@ -7806,8 +7966,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=04e1873fa5833c7f34ca6cbf5dec8dabf8ac36665231cc66505af82962554f50"
+"attrs count=153 sha256=98c52b395903f0fdf5f7479ade2e7e36800740ecf5ed70a05d0bd7f9e0cb78da"
 ],
 "legacy-filtered-eof-dependents": [
 "compress attempt=1",
@@ -7893,8 +8056,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=4f1ccb59143ff2ac87132141a743c71db2bf8569357cf508d4723729f4bbe7dd"
+"attrs count=153 sha256=e42544cce70075fa7ec1253f435c87a7115c51e2a203161f17fe69b67272ec27"
 ],
 "legacy-filtered-tail-dependents": [
 "compress attempt=1",
@@ -7980,8 +8146,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=31462471724aee87eb11c0f78b2d07260839ea555c2ed8f6931a3d9e716ff5aa"
+"attrs count=153 sha256=0e5a3a323e6c7f85c8345896e53df056ee4a6cdeb2b32efd287ff9f32679f6c7"
 ],
 "lifecycle-publication-conflict": [
 "compress attempt=1",
@@ -8093,7 +8262,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"publication_invariant_conflict\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=0d8f2776dcb3019b6495ca1aaeb4a9e9e439f1ccec3b3c5537d5544d0322e8b0"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=1cc3cb44d32a4beef6c022eff48cfaeee74986b8c71635bc7782eeeff48de1e0"
 ],
 "no-system-prompt": [
 "compress attempt=1",
@@ -8202,8 +8374,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=d88dd2aea485c03c696cc571206bbb74779946db47ae35d893ede5642d456d8d"
+"attrs count=153 sha256=a45ad50790f636719fa63e1ede9309a91d0b1d93804472e38d90bbe9adb61dfe"
 ],
 "objective-anchor": [
 "compress attempt=1",
@@ -8269,7 +8444,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=25ee3a20c4e0/15841",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=f3eb802edf07bddf602c978fabd61137452259fdbf750f34af6c7fed8861ebc9"
+"attrs count=153 sha256=cb5ba2183341a0892de86f9017cbe7794ac2a05f4811266c9b49098ec9ae3f41"
 ],
 "objective-cap-too-small": [
 "compress attempt=1",
@@ -8349,8 +8524,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=0e276ae4604251a70dd43b0b42b7ce9105d6ddbf12f9b76995bee40b78aba403"
+"attrs count=153 sha256=2246942523190701f2d8e33bd3270e41d67eed3b6e835c116c5ce4dac07459ac"
 ],
 "objective-without-cap": [
 "compress attempt=1",
@@ -8416,7 +8594,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=25ee3a20c4e0/15841",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=016599c8bb7262da32ce009a98f9359d58ee8754d7f926c8533c32f1895e2689"
+"attrs count=153 sha256=36af6f7bcefed37520eb1d896756c2de0f0a51cae1e0e8ffe03b8edea439c2a8"
 ],
 "optional-extraction-host-unavailable": [
 "compress attempt=1",
@@ -8549,8 +8727,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=cdbb3ddd719cc21ed35e47d6b9512b219a43991c64a3e9344e4bda828f4f2304"
+"attrs count=153 sha256=4b487237b1d84da9142f2c2c0e888b79abdda6eb956b313316dc8cda503a45b9"
 ],
 "persisted-volatile-no-pattern": [
 "compress attempt=1",
@@ -8636,8 +8817,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=727f99d615ee203d9448ace3ee5e7e8444c5eef09893fe1265bb069d2c47bae0"
+"attrs count=153 sha256=d1134b87ad64a44cd8e6429265e38f87f36ae34ff20e8de2fdc187a30432cef9"
 ],
 "post-leaf-condensation-rejected": [
 "compress attempt=1",
@@ -8801,8 +8985,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=4283ffd717afde34e87748fc395ac2fab39f61983a1c158ffac01729a39b030e"
+"attrs count=153 sha256=a4858904e97ba59750e3717313be2ef30869af969adfea675f58cf157d22b26e"
 ],
 "post-leaf-publication-conflict": [
 "compress attempt=1",
@@ -8939,7 +9126,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"publication_invariant_conflict\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=9ba659fc97540a16f026beac92925bae770ecfec2c7f7107336bc6a36b9048d7"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=1db123ebdb880988134aafeb73537bb5cbd8ccabc9b7a8e51a32e77e0fb404e3"
 ],
 "pre-leaf-condensation-rejected": [
 "compress attempt=1",
@@ -9048,7 +9238,10 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1300.0",
-"attrs count=146 sha256=61aa5c2851d09ea99327f4c63b43ed5f8bd01e3fd12c1529e58b7b6aecdf959b"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=e6ce45ce136dc0c61c577bcadeef6ce10738f06441ca7197818af58ea3006aae"
 ],
 "pre-leaf-frontier-read-error": [
 "compress attempt=1",
@@ -9149,7 +9342,7 @@
 "attr _pending_emission_candidates=sha12/len=fc146730afef/464",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=553657245aeb3372789a9aaa31c934232850bc79543a2ba88a8e9be985cc5e3b"
+"attrs count=153 sha256=ea4be25d52a8f3e242067543fb8d216292f82588608e7d7a8d12580a2d4b2e22"
 ],
 "pre-leaf-publication-locked": [
 "compress attempt=1",
@@ -9251,7 +9444,7 @@
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_fit_reason=\"sqlite_publication_locked\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=c8c5ce260085d20152e699231fc6d1b9b5ffc905ab058597fd03544c59b2f5f7"
+"attrs count=153 sha256=5582b5ed522d01fa28abca9d7433c24e2cc91b30024d3fdc5ca406d2bfff542e"
 ],
 "prepared-leaf-promotion": [
 "compress attempt=1",
@@ -9352,8 +9545,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=d643b930655218df7b4b97540beb87d4ea7093db9082533933b0e1ed370694bf"
+"attrs count=153 sha256=ba0891ade7f384a91371c73fe10422b37bfe74ef299228824518965ed5755fb6"
 ],
 "prepared-leaf-route-rejected": [
 "compress attempt=1",
@@ -9432,8 +9628,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=4ab416f925d12e4b658cc5f897a72457142d490230144150f9d0a4118c1d801a"
+"attrs count=153 sha256=cb686c3e080782b1a589880b293c9cc99c40d9a5b1b32718940447504c05f4f8"
 ],
 "provider-aborted": [
 "compress attempt=1",
@@ -9530,7 +9729,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=d5ae5d5ab614a5be17172d4959d057edea0ae18b335dee733d6f49217abd542f"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=7782a8e4554d4c44109b01b6f32609810046e600b2c8c94f7e12e9028e978a76"
 ],
 "publish-advance-deferred-short": [
 "compress attempt=1",
@@ -9612,8 +9814,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=eb0bdc6add67561b81c67b8658255f1a69db4f8afb18fe5caeddeced1b409174"
+"attrs count=153 sha256=b420177a8bca075dbbed7c9c93d08f19cd9b49ff1169fdb1c7723e9bef5b68e3"
 ],
 "publish-advance-dynamic-empty": [
 "compress attempt=1",
@@ -9720,8 +9925,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=f9072ce60737551e041738d73302c6457cb685e3f79f4b09b673d6c3c250f87d"
+"attrs count=153 sha256=1e7ac4b0f54c30cb88aa3499baf3f2e6d1e40174ea08fda3a87b8633176c8510"
 ],
 "publish-advance-gc-nonlock": [
 "compress attempt=1",
@@ -9861,7 +10069,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=3a45fc998094680c3f0f512d8db198c22aaa3d66af1a9e7a36db71cd7db678ba"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=069e53ed4ae8b8a1faeb161c1486708f6276241f77b42524bd7073c257c7354c"
 ],
 "publish-advance-hidden-drain": [
 "compress attempt=1",
@@ -9988,8 +10199,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=b100ffa42ceab8c1537b2639a795f6ee188c489240b3e6d7828d88639e2d3e46"
+"attrs count=153 sha256=ce01e393271197a95e9037038b71a3181315783c6c429780dddaa876f9d1d40f"
 ],
 "publish-advance-nonlock": [
 "compress attempt=1",
@@ -10096,7 +10310,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=19cb62de38937d4c8326568b69cc05657e70be1d4b1315f88eaa6f35b87f9ba0"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=9b4364102abfaef95e6d0ec7baa32305e3dda77eff820c17a4ce47ec667e7ffe"
 ],
 "publish-advance-promote-continue": [
 "compress attempt=1",
@@ -10207,8 +10424,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=055f50520793c3febf2b828a5a1532efbb7886ed585fcb09d45f469a29e540fa"
+"attrs count=153 sha256=06ed5b1400731a4ac4ab6a7853bb9d7b415abd9dfbd94230eef9530f768556db"
 ],
 "publish-advance-promote-low": [
 "compress attempt=1",
@@ -10288,8 +10508,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=9985fd34d9f1daddad48ebdf7c10f7eec8a06a0913e03cb90da408bfebb5c40d"
+"attrs count=153 sha256=c8e7867f07c86d6d3b8e5d8b430fb18a12ba5b8efd4a368610224a21ab499983"
 ],
 "publish-advance-publish-binding": [
 "compress attempt=1",
@@ -10356,7 +10579,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"lifecycle_binding_changed\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=8cd1f00f1662fd0a51eb74a77082fee279172be5ac73ec7dd314f988c2df83b8"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=2a6f065614fb2da2a8533354c1a68b7235dbe51058d4033abdec3ac53a4e671f"
 ],
 "publish-advance-publish-coverage": [
 "compress attempt=1",
@@ -10441,8 +10667,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=76e18194be4acf972584178bf5c70fb2bd827ad48af0ebcae2f62ac765fb00a5"
+"attrs count=153 sha256=68ee3395f7a24b2102f628983282d785c15045aaa54a910a6856ad9e83a6b2f9"
 ],
 "publish-advance-publish-fence": [
 "compress attempt=1",
@@ -10509,7 +10738,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"publication_invariant_conflict\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=9ce87ea3044d4ff0b1458bb4fc16c9cc66adeaf4abe97e5657c7cbb63b630530"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=ee91f2fbc34571afe511f1c504a9215b9f91df3f73d6b46aa1b61233b75da8cc"
 ],
 "publish-advance-publish-frontier": [
 "compress attempt=1",
@@ -10576,7 +10808,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"publication_invariant_conflict\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=9ce87ea3044d4ff0b1458bb4fc16c9cc66adeaf4abe97e5657c7cbb63b630530"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=ee91f2fbc34571afe511f1c504a9215b9f91df3f73d6b46aa1b61233b75da8cc"
 ],
 "publish-advance-publish-retry": [
 "compress attempt=1",
@@ -10694,8 +10929,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=055f50520793c3febf2b828a5a1532efbb7886ed585fcb09d45f469a29e540fa"
+"attrs count=153 sha256=06ed5b1400731a4ac4ab6a7853bb9d7b415abd9dfbd94230eef9530f768556db"
 ],
 "publish-advance-publish-route": [
 "compress attempt=1",
@@ -10781,8 +11019,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=4ab416f925d12e4b658cc5f897a72457142d490230144150f9d0a4118c1d801a"
+"attrs count=153 sha256=cb686c3e080782b1a589880b293c9cc99c40d9a5b1b32718940447504c05f4f8"
 ],
 "replayed-summary-scaffold": [
 "compress attempt=1",
@@ -10937,8 +11178,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=2",
-"attrs count=146 sha256=9a1525c85854acc0e51cf113f8c3044039002cb5adcc001ecdbcacd854ddd99e"
+"attrs count=153 sha256=2b8d16cf4820f8c55a1abcfc9637cee2bbd8b288f4d87c645695d6f199607f8c"
 ],
 "resume-after-interruption": [
 "compress attempt=1",
@@ -11126,8 +11370,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=b7276d67d81a23cf4d44884bacbf470079c53dce66ef9defd756b46fa573ff1a"
+"attrs count=153 sha256=759e8109b9258f57dc537f481bbfdf930b1fb7ac8540f99cb6ffc2afe2892c36"
 ],
 "resume-commit-wide-tail": [
 "compress attempt=1",
@@ -11169,7 +11416,7 @@
 "attr _no_progress_proof_fingerprint=null",
 "attr _pending_emission_candidates=sha12/len=80ce4269865e/3211",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=c1f0e151110b20c3461dd1c4ff468c126aeda73a98a147f334dadfbe6f6254f6"
+"attrs count=153 sha256=ced85b90a2b3ca76e7d97ec15f7774341ad270e57999f840b3a33630b713d38a"
 ],
 "resume-unadopted-commit": [
 "compress attempt=1",
@@ -11324,8 +11571,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=2",
-"attrs count=146 sha256=08e7b734b1c74474ed6243cd36c138e1321e09dfb73a7e02cd223c81fe42f5f8"
+"attrs count=153 sha256=2f43e1d857650f6761fedd5c597eac835fb8795c4b7e96c6b42f223bfb5094c7"
 ],
 "retained-tail-occurrence": [
 "compress attempt=1",
@@ -11335,100 +11585,17 @@
 "sql shape=1 conn=_host_rewrite_store INSERT INTO metadata(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 "sql #1 sha12/len=52614d71143e/151",
 "sql COMMIT",
-"log hermes_lcm.compaction INFO \"LCM compression no-op: %s%s\"",
-"return sha12/len=2813f8fa50a9/20905",
-"leaf_prep after {\"chain\":[],\"counters\":{}}",
-"sql BEGIN IMMEDIATE",
-"sql #1 sha12/len=4702b2b116a4/157",
-"sql COMMIT",
-"assemble",
-"message user f6149929fcde/1267",
-"message assistant 1d3aa33ccd2c/1266",
-"message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
-"message user 6c12f191db5f/1267",
-"message assistant 63393eb669ff/1266",
-"message user d403af208259/1267",
-"message assistant 23e7a56837ee/1266",
-"message user 848f65aa4811/1267",
-"message assistant 7c6b372997fd/1266",
-"message user a036540eca3b/1267",
-"message assistant 5af94fa49bf3/1266",
-"message user 3966be03c944/1267",
-"message assistant 7a468e7d082c/1266",
-"compress attempt=2",
-"leaf_prep before {\"chain\":[],\"counters\":{}}",
-"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
-"log hermes_lcm.compaction INFO \"LCM compression no-op: %s%s\"",
-"return sha12/len=2813f8fa50a9/20905",
-"leaf_prep after {\"chain\":[],\"counters\":{}}",
-"assemble",
-"message user f6149929fcde/1267",
-"message assistant 1d3aa33ccd2c/1266",
-"message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
-"message user 6c12f191db5f/1267",
-"message assistant 63393eb669ff/1266",
-"message user d403af208259/1267",
-"message assistant 23e7a56837ee/1266",
-"message user 848f65aa4811/1267",
-"message assistant 7c6b372997fd/1266",
-"message user a036540eca3b/1267",
-"message assistant 5af94fa49bf3/1266",
-"message user 3966be03c944/1267",
-"message assistant 7a468e7d082c/1266",
-"attr _compress_escaped=[]",
-"attr _compress_forced_overflow=false",
-"attr _compress_hidden_rows_consumed=0",
-"attr _compress_host_rows_consumed=0",
-"attr _compress_occurrences=null",
-"attr _compress_run=sha12/len=da861222b8ab/265",
-"attr _foreground_budget=sha12/len=ef56c4a78a12/349",
-"attr _last_compression_noop_reason=sha12/len=e4bb51b72020/91",
-"attr _last_compression_status=\"noop\"",
-"attr _no_progress_observed_tokens=3000",
-"attr _no_progress_proof_complete=true",
-"attr _no_progress_proof_fingerprint=\"<proof-digest-0>\"",
-"attr _no_progress_public_rows=sha12/len=43639987ef45/21000",
-"attr _pending_emission_candidates=[]",
-"attr _store_complete_blocked=[1,\"user\",\"shown\",3]",
-"attr _store_complete_copy_exclusion_proofs={}",
-"attr _store_complete_cut=false",
-"attr _store_complete_empty_reason=\"\"",
-"attr _store_complete_escaped=[]",
-"attr _store_complete_excluded=[]",
-"attr _store_complete_order={}",
-"attr _survival_pass_observed=true",
-"attrs count=146 sha256=2e8570e52eb6bee0d8dce07b7dc2380966643e74cc263d16ebc555b8136ce9a5"
-],
-"retained-tail-occurrence-escape": [
-"compress attempt=1",
-"leaf_prep before {\"chain\":[],\"counters\":{}}",
-"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
-"sql BEGIN IMMEDIATE",
-"sql shape=1 conn=_host_rewrite_store INSERT INTO metadata(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-"sql #1 sha12/len=52614d71143e/151",
-"sql COMMIT",
-"log hermes_lcm.store_complete INFO \"LCM store-complete leaf: frontier=%d last=%d rows=%d host_rows=%d/%d hidden=%d excluded=%d copies=%d cut=%s\"",
 "log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
-"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=71e04201f1ea/6566",
+"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=285dd361d900/6566",
 "log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
 "sql BEGIN IMMEDIATE",
 "sql shape=2 conn=_dag INSERT INTO summary_nodes (session_id, depth, summary, token_count, source_token_count, source_ids, source_type, created_at, earliest_at, latest_at, expand_hint) VALUES (?, ?,?, ?, ?,?,?, ?, ?, ?,?)",
-"sql #2 sha12/len=5fdee48ee0e1/319 x3",
+"sql #2 sha12/len=641c900973e9/320 x3",
 "sql shape=3 conn=_dag INSERT OR REPLACE INTO summary_node_provenance (node_id, escalation_level, model, created_at) VALUES (?, ?,?, ?)",
 "sql #3 sha12/len=bd12465197ec/135",
 "sql shape=4 conn=_dag UPDATE lcm_lifecycle_state SET current_frontier_store_id = MAX(current_frontier_store_id, ?), updated_at = ? WHERE conversation_id =?AND current_session_id =?",
-"sql #4 sha12/len=db40c02d9788/190",
+"sql #4 sha12/len=55f0c8932dd5/190",
 "sql COMMIT",
-"sql BEGIN IMMEDIATE",
-"sql #1 sha12/len=04dc23c75f8d/325",
-"sql COMMIT",
-"log hermes_lcm.compaction WARNING \"LCM retained-occurrence fallback: leaf includes %d retained row(s) whole (store_id=%d role=%s kind=%s%s) frontier=%d; the host view still holds them, so their content is also summarised; source rows stay stored; cause: host order disagrees with store order (#1162)\"",
 "sql BEGIN IMMEDIATE",
 "sql #1 sha12/len=4702b2b116a4/157",
 "sql COMMIT",
@@ -11437,12 +11604,10 @@
 "sql BEGIN IMMEDIATE",
 "sql #1 sha12/len=1ddc1221da37/482",
 "sql COMMIT",
-"return sha12/len=42982ac2ba3d/18394",
+"return sha12/len=2782856eb58a/15781",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
-"message user 4009495f6e2d/1495",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
+"message user f4e4f5948832/1495",
 "message assistant 55698fcd55cb/1266",
 "message user 6c12f191db5f/1267",
 "message assistant 63393eb669ff/1266",
@@ -11460,27 +11625,30 @@
 "log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
 "sql BEGIN IMMEDIATE",
 "sql shape=5 conn=_host_rewrite_store INSERT INTO messages (session_id, source, conversation_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_estimate, pinned, ingested_at, observed_at, observed_at_source) VALUES (?,?,?,?,?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)",
+"sql #5 sha12/len=7201fd996872/1578 x5",
 "sql #5 sha12/len=5928522868b9/1578 x5",
 "sql COMMIT",
 "log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
 "log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
-"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=2782b2c2d7cf/6566",
+"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=45b7ac9c89a5/6566",
 "log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
 "sql BEGIN IMMEDIATE",
-"sql #2 sha12/len=6231c5a1aa49/320 x3",
+"sql #2 sha12/len=f06e06048874/321 x3",
 "sql #3 sha12/len=aecd9e0c6b0b/135",
-"sql #4 sha12/len=5aa2bc41273a/190",
+"sql #4 sha12/len=55f0c8932dd5/190",
 "sql COMMIT",
 "log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
 "log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
 "sql BEGIN IMMEDIATE",
 "sql #1 sha12/len=4097279ac758/482",
 "sql COMMIT",
-"return sha12/len=0d0116001133/13294",
+"return sha12/len=9bbd7971b96a/15907",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
-"message user 7403e148889c/1733",
-"message assistant 63393eb669ff/1266",
+"message user 5c39a140e2fd/1733",
+"message assistant 1d3aa33ccd2c/1266",
+"message user d932be6f1500/1267",
+"message assistant 5112d3181a5e/1266",
 "message user d403af208259/1267",
 "message assistant 23e7a56837ee/1266",
 "message user 848f65aa4811/1267",
@@ -11494,30 +11662,146 @@
 "attr _compress_hidden_rows_consumed=0",
 "attr _compress_host_rows_consumed=4",
 "attr _compress_occurrences=null",
-"attr _compress_run=sha12/len=903114f374d3/249",
-"attr _dag=sha12/len=61d36a34d1eb/686",
+"attr _compress_run=sha12/len=7d27c5bea89c/283",
+"attr _dag=sha12/len=71e59e2c0a9a/688",
 "attr _foreground_budget=sha12/len=362eb82ba6e6/379",
-"attr _ingest_cursor=10",
-"attr _last_compacted_store_id=8",
+"attr _ingest_cursor=12",
 "attr _last_compression_status=\"compacted\"",
 "attr _last_leaf_content_filter_error=false",
 "attr _last_leaf_level_3_verbatim=false",
 "attr _last_leaf_summary_model=\"\"",
-"attr _lifecycle=sha12/len=ad7a839340c4/391",
 "attr _no_progress_observed_tokens=3000",
 "attr _no_progress_public_rows=sha12/len=43639987ef45/21000",
-"attr _pending_emission_candidates=sha12/len=960a2e34e8da/3896",
-"attr _store=sha12/len=847b0f21ed3a/26793",
+"attr _pending_emission_candidates=sha12/len=7f2af5094075/3896",
+"attr _store=sha12/len=b3edb149340b/28362",
 "attr _store_complete_blocked=null",
 "attr _store_complete_copy_exclusion_proofs={}",
-"attr _store_complete_cut=false",
+"attr _store_complete_cut=true",
 "attr _store_complete_empty_reason=\"\"",
 "attr _store_complete_escaped=[]",
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_coverage_audit=sha12/len=716c680709bc/149",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=2",
-"attrs count=146 sha256=2d0f614e18dc463dd230643161d50256f205b4cbd9c917b7910fd1d6fd477af2"
+"attrs count=153 sha256=90e93ea31388d5f54c91eef5bb628acb7e2aa1f7d94e8a8d8d83ce3e370e08a6"
+],
+"retained-tail-occurrence-escape": [
+"compress attempt=1",
+"leaf_prep before {\"chain\":[],\"counters\":{}}",
+"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
+"sql BEGIN IMMEDIATE",
+"sql shape=1 conn=_host_rewrite_store INSERT INTO metadata(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+"sql #1 sha12/len=52614d71143e/151",
+"sql COMMIT",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=285dd361d900/6566",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql shape=2 conn=_dag INSERT INTO summary_nodes (session_id, depth, summary, token_count, source_token_count, source_ids, source_type, created_at, earliest_at, latest_at, expand_hint) VALUES (?, ?,?, ?, ?,?,?, ?, ?, ?,?)",
+"sql #2 sha12/len=641c900973e9/320 x3",
+"sql shape=3 conn=_dag INSERT OR REPLACE INTO summary_node_provenance (node_id, escalation_level, model, created_at) VALUES (?, ?,?, ?)",
+"sql #3 sha12/len=bd12465197ec/135",
+"sql shape=4 conn=_dag UPDATE lcm_lifecycle_state SET current_frontier_store_id = MAX(current_frontier_store_id, ?), updated_at = ? WHERE conversation_id =?AND current_session_id =?",
+"sql #4 sha12/len=55f0c8932dd5/190",
+"sql COMMIT",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4702b2b116a4/157",
+"sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=1ddc1221da37/482",
+"sql COMMIT",
+"return sha12/len=2782856eb58a/15781",
+"leaf_prep after {\"chain\":[],\"counters\":{}}",
+"assemble",
+"message user f4e4f5948832/1495",
+"message assistant 55698fcd55cb/1266",
+"message user 6c12f191db5f/1267",
+"message assistant 63393eb669ff/1266",
+"message user d403af208259/1267",
+"message assistant 23e7a56837ee/1266",
+"message user 848f65aa4811/1267",
+"message assistant 7c6b372997fd/1266",
+"message user a036540eca3b/1267",
+"message assistant 5af94fa49bf3/1266",
+"message user 3966be03c944/1267",
+"message assistant 7a468e7d082c/1266",
+"compress attempt=2",
+"leaf_prep before {\"chain\":[],\"counters\":{}}",
+"log hermes_lcm.engine INFO \"LCM identity-anchor recognised %d replayed rows: session=%s cursor=%d incoming=%d\"",
+"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
+"sql BEGIN IMMEDIATE",
+"sql shape=5 conn=_host_rewrite_store INSERT INTO messages (session_id, source, conversation_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_estimate, pinned, ingested_at, observed_at, observed_at_source) VALUES (?,?,?,?,?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)",
+"sql #5 sha12/len=7201fd996872/1578 x5",
+"sql #5 sha12/len=5928522868b9/1578 x5",
+"sql COMMIT",
+"log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=45b7ac9c89a5/6566",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql #2 sha12/len=f06e06048874/321 x3",
+"sql #3 sha12/len=aecd9e0c6b0b/135",
+"sql #4 sha12/len=55f0c8932dd5/190",
+"sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4097279ac758/482",
+"sql COMMIT",
+"return sha12/len=9bbd7971b96a/15907",
+"leaf_prep after {\"chain\":[],\"counters\":{}}",
+"assemble",
+"message user 5c39a140e2fd/1733",
+"message assistant 1d3aa33ccd2c/1266",
+"message user d932be6f1500/1267",
+"message assistant 5112d3181a5e/1266",
+"message user d403af208259/1267",
+"message assistant 23e7a56837ee/1266",
+"message user 848f65aa4811/1267",
+"message assistant 7c6b372997fd/1266",
+"message user a036540eca3b/1267",
+"message assistant 5af94fa49bf3/1266",
+"message user 3966be03c944/1267",
+"message assistant 7a468e7d082c/1266",
+"attr _compress_escaped=[]",
+"attr _compress_forced_overflow=false",
+"attr _compress_hidden_rows_consumed=0",
+"attr _compress_host_rows_consumed=4",
+"attr _compress_occurrences=null",
+"attr _compress_run=sha12/len=7d27c5bea89c/283",
+"attr _dag=sha12/len=71e59e2c0a9a/688",
+"attr _foreground_budget=sha12/len=362eb82ba6e6/379",
+"attr _ingest_cursor=12",
+"attr _last_compression_status=\"compacted\"",
+"attr _last_leaf_content_filter_error=false",
+"attr _last_leaf_level_3_verbatim=false",
+"attr _last_leaf_summary_model=\"\"",
+"attr _no_progress_observed_tokens=3000",
+"attr _no_progress_public_rows=sha12/len=43639987ef45/21000",
+"attr _pending_emission_candidates=sha12/len=7f2af5094075/3896",
+"attr _store=sha12/len=b3edb149340b/28362",
+"attr _store_complete_blocked=null",
+"attr _store_complete_copy_exclusion_proofs={}",
+"attr _store_complete_cut=true",
+"attr _store_complete_empty_reason=\"\"",
+"attr _store_complete_escaped=[]",
+"attr _store_complete_excluded=[]",
+"attr _store_complete_order={}",
+"attr _survival_pass_observed=true",
+"attr _uid_coverage_audit=sha12/len=716c680709bc/149",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
+"attr compression_count=2",
+"attrs count=153 sha256=f8602d1b7297532cb5a3171278d7575cebf81cea88ce53d04c07e79ab39b57cb"
 ],
 "route-unavailable": [
 "compress attempt=1",
@@ -11616,7 +11900,10 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1300.0",
-"attrs count=146 sha256=7c92d476a0885a7e2cc90cc65c558e2e8fd1efd4ba2b425d0e4e2e50728eebb9"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=b8436b506748582514f33d48b404141983a214ad19a096eec67e364d99c74bb2"
 ],
 "route-unavailable-adopt-commit": [
 "compress attempt=1",
@@ -11768,8 +12055,11 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1300.0",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=b237a0e1c995804a97dd94b7cfa8c495306bc8b015b67c5da2b7fb16a5bf4bf6"
+"attrs count=153 sha256=2647028f5421310f9ae69f06b5298dabd63f4b02b0bc9db745abb4f3837e5bc4"
 ],
 "route-unavailable-full-tail": [
 "compress attempt=1",
@@ -11832,7 +12122,7 @@
 "attr _store=sha12/len=ea1402633a11/3476",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1300.0",
-"attrs count=146 sha256=88f323b9f6964f5e3fe3f2fa6b47d935ce521394fb8016238510bb78116ce491"
+"attrs count=153 sha256=bbc36d5ec6ec1df049de9d1aaeb426a21577cd661a8d7d633d08da98c3435150"
 ],
 "selection-deferred-critical-False": [
 "compress attempt=1",
@@ -11946,8 +12236,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=a7c61550089fcb7646fece313776b04380384c25b038e0639d3e921df1e9aa21"
+"attrs count=153 sha256=7540725f36fca3a825ea29ffc4ccf6a761afc76c7090481bc080d796c8bda92e"
 ],
 "selection-deferred-critical-True": [
 "compress attempt=1",
@@ -12061,8 +12354,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=6af870046558c18ce09f0e5cffe8e0fc3257b4940b68c0205a2104ab471d29b5"
+"attrs count=153 sha256=734c9a816497ed04b3f70134746b2ada3dafcc427b7612519ac0c012e9d57a81"
 ],
 "selection-empty-filtered": [
 "compress attempt=1",
@@ -12106,7 +12402,7 @@
 "attr _no_progress_public_rows=sha12/len=d6453683c669/1491",
 "attr _pending_emission_candidates=[]",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=71b95a21f10160de5fd283d756b8c349f85130d191cb510f836b0f20fb1ef13f"
+"attrs count=153 sha256=89a8d10d518becd6b7dedd0ee13189b75a790d2590631d39c44293bddc74aafe"
 ],
 "selection-objective-sweep": [
 "compress attempt=1",
@@ -12175,7 +12471,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=25ee3a20c4e0/15841",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=a9fa539b43a6bdfd0d43455ff66cb45ad28f7bc8cef8d2a6a2609d901a3bb460"
+"attrs count=153 sha256=733522030f13562bbcdd34042ec681728951017fc9b61608b59728a132b2f0fa"
 ],
 "selection-prepared-hidden": [
 "compress attempt=1",
@@ -12240,8 +12536,11 @@
 "attr _store_complete_excluded=[1]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=ba0a2d767cc7900a8fa87675565594ad21607ef30aa7fa6968f332b769cbac22"
+"attrs count=153 sha256=c1bc9e848419b0c9b3fa10a00c6ec31173a281824db2d52c147902a6191aac40"
 ],
 "selection-prepared-input-price-change": [
 "compress attempt=1",
@@ -12325,8 +12624,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=20f620572394a94528d3f77056fa832594926b097e81ce36b2a361e00e538a5c"
+"attrs count=153 sha256=3d15ce438dde405cd2cbb8390012ae0a04f84b4a2aa162f9f2fb608d588fe68d"
 ],
 "selection-prepared-match": [
 "compress attempt=1",
@@ -12436,8 +12738,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=055f50520793c3febf2b828a5a1532efbb7886ed585fcb09d45f469a29e540fa"
+"attrs count=153 sha256=06ed5b1400731a4ac4ab6a7853bb9d7b415abd9dfbd94230eef9530f768556db"
 ],
 "selection-prepared-no-call": [
 "compress attempt=1",
@@ -12496,7 +12801,10 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1300.0",
-"attrs count=146 sha256=68b552e16c417e271578961a8010ed1cf71bde66914be48e627b3edb91bd70c7"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=a8a81ccc44927ed50909d4c35576c82e7b699087b2f2914a2af1ad8b92864918"
 ],
 "selection-prepared-overflow": [
 "compress attempt=1",
@@ -12561,8 +12869,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=adb41c068e353d4717eafa862aeacaf14c8d1d184b39e4780950608989b1717d"
+"attrs count=153 sha256=9980c12c09d89877500ab53899e073340d7120822f555fac422ecf9b43dc55cb"
 ],
 "selection-prepared-split": [
 "compress attempt=1",
@@ -12645,8 +12956,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=ee160afd28d4fca49d8b90e436c035a330ff54eb5d2323fef01381ef431e6b5c"
+"attrs count=153 sha256=9601c3271da510b42fcebb1555ad3e73defb306f82700bbe6fc32d0b13f46e70"
 ],
 "selection-pressure-sweep": [
 "compress attempt=1",
@@ -12801,8 +13115,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=702a7fbf2b73c0ba5d9ec86930eb8718fcf51a79cb5564d5fb461335f32d74b1"
+"attrs count=153 sha256=1a182fccb2ef87e832b34e0e8077bd0a2fb82d2ed8162192e3009965b7ac5b99"
 ],
 "selection-unattributed": [
 "compress attempt=1",
@@ -12868,22 +13185,32 @@
 "sql #5 sha12/len=7201fd996872/1578 x5",
 "sql COMMIT",
 "log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
-"log hermes_lcm.compaction WARNING \"LCM leaf chunk has no durable source above the frontier: frontier=%d rows=%d first_mapped_store_id=%s\"",
-"log hermes_lcm.compaction INFO \"LCM compression no-op: %s%s\"",
-"selection probes {\"chunks\":1,\"extraction\":0,\"match\":0,\"matched\":0,\"matched_input\":0,\"refused\":1,\"rerun\":0,\"selected\":1,\"split_input\":0} rejections=[]",
-"return sha12/len=dd9925fdd7f3/20961",
+"log hermes_lcm.extraction DEBUG \"Extraction LLM call failed: %s\"",
+"log hermes_lcm.extraction DEBUG \"Pre-compaction extraction: nothing to extract\"",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=2cec208ba274/6566",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql #2 sha12/len=f789ff25c97a/320 x3",
+"sql #3 sha12/len=aecd9e0c6b0b/135",
+"sql #4 sha12/len=f2d86a8c69c7/191",
+"sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4097279ac758/482",
+"sql COMMIT",
+"selection probes {\"chunks\":1,\"extraction\":1,\"match\":0,\"matched\":0,\"matched_input\":0,\"refused\":0,\"rerun\":0,\"selected\":1,\"split_input\":0} rejections=[]",
+"return sha12/len=9ce3a4c1c427/16005",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
 "message system 5ebbb9a2c7c7/25",
-"message user 67e4e8b1c7a0/112",
+"message user 2954dc3014b3/231",
+"message user 2954dc3014b3/231",
 "message user 3966be03c944/1267",
 "message assistant 7a468e7d082c/1266",
 "message user f6149929fcde/1267",
 "message assistant 1d3aa33ccd2c/1266",
-"message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
 "message user 6c12f191db5f/1267",
 "message assistant 63393eb669ff/1266",
 "message user d403af208259/1267",
@@ -12895,33 +13222,35 @@
 "attr _compress_escaped=[]",
 "attr _compress_forced_overflow=false",
 "attr _compress_hidden_rows_consumed=0",
-"attr _compress_host_rows_consumed=0",
+"attr _compress_host_rows_consumed=4",
 "attr _compress_occurrences=null",
 "attr _compress_run=sha12/len=01ec622968aa/232",
-"attr _dag=sha12/len=e9089ed1d2e5/344",
-"attr _foreground_budget=sha12/len=7a2d4cf6af78/368",
-"attr _last_compacted_store_id=5",
-"attr _last_compression_noop_reason=\"selected leaf chunk lacks raw store lineage\"",
-"attr _last_compression_status=\"noop\"",
+"attr _dag=sha12/len=5912e00d92bc/687",
+"attr _foreground_budget=sha12/len=362eb82ba6e6/379",
+"attr _ingest_cursor=14",
+"attr _last_compacted_store_id=15",
+"attr _last_compression_status=\"compacted\"",
 "attr _last_leaf_content_filter_error=false",
 "attr _last_leaf_level_3_verbatim=false",
 "attr _last_leaf_summary_model=\"\"",
 "attr _no_progress_observed_tokens=3000",
-"attr _no_progress_proof_complete=false",
-"attr _no_progress_proof_fingerprint=null",
-"attr _pending_emission_candidates=sha12/len=37741e1df74c/449",
+"attr _pending_emission_candidates=sha12/len=b1a566a92f5f/827",
 "attr _store=sha12/len=37764ed55ba9/28686",
 "attr _store_complete_blocked=null",
 "attr _store_complete_copy_exclusion_proofs={}",
-"attr _store_complete_cut=false",
+"attr _store_complete_cut=true",
 "attr _store_complete_empty_reason=\"\"",
 "attr _store_complete_escaped=[]",
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attr _unattributed_leaf_warned=[[\"trace-conversation\",15]]",
-"attr compression_count=1",
-"attrs count=146 sha256=11b5e55fb6444d1f6556960126554836c37d862e2a4b454a13192c910ffb02be"
+"attr _uid_coverage_audit=sha12/len=9f2753c99bf0/228",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
+"attr compression_count=2",
+"attrs count=153 sha256=3975326658e308e4a516fdc2c62087c340ab06788c67905c079bb0b44df23e82"
 ],
 "single-below-minimum-no-fit": [
 "compress attempt=1",
@@ -13013,7 +13342,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=f8618c558404/25548",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=8e0f90e8400c592ca04af102798fddcaf82b71c2efaf25977c0c7ea3f14689ac"
+"attrs count=153 sha256=a77ab5e3aaa6877f1508e19b6ac77d984f272007fa27e821ae9f882316ad2314"
 ],
 "single-small-backlog-yields": [
 "compress attempt=1",
@@ -13122,8 +13451,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=74aa079727314e45887a331be7064b4ce92acf43f9834fca140ddad622fbf340"
+"attrs count=153 sha256=7145c65fec2dd7d7852292f84f06b0a0545b5e3880d202ac9f6ec1e74ebc63bb"
 ],
 "stateless-bypass-missing": [
 "compress attempt=1",
@@ -13186,7 +13518,7 @@
 "attr _last_compression_noop_reason=\"LCM bypassed below threshold: stateless session\"",
 "attr _last_compression_status=\"noop\"",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=e2c98ddfe7735941d7e0c3393e09d1f9bd407775b8811202d374b9faf067e98b"
+"attrs count=153 sha256=45ce83ee58a6fb0faf7266c576bfbe6fac21df208a10963e14d30dd0e07f7b0a"
 ],
 "stateless-bypass-negative": [
 "compress attempt=1",
@@ -13249,7 +13581,7 @@
 "attr _last_compression_noop_reason=\"LCM bypassed below threshold: stateless session\"",
 "attr _last_compression_status=\"noop\"",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=e2c98ddfe7735941d7e0c3393e09d1f9bd407775b8811202d374b9faf067e98b"
+"attrs count=153 sha256=45ce83ee58a6fb0faf7266c576bfbe6fac21df208a10963e14d30dd0e07f7b0a"
 ],
 "stateless-bypass-zero": [
 "compress attempt=1",
@@ -13312,7 +13644,7 @@
 "attr _last_compression_noop_reason=\"LCM bypassed below threshold: stateless session\"",
 "attr _last_compression_status=\"noop\"",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=e2c98ddfe7735941d7e0c3393e09d1f9bd407775b8811202d374b9faf067e98b"
+"attrs count=153 sha256=45ce83ee58a6fb0faf7266c576bfbe6fac21df208a10963e14d30dd0e07f7b0a"
 ],
 "stop-hang-False-False-False": [
 "compress attempt=1",
@@ -13422,7 +13754,10 @@
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_turn_paced=true",
 "attr _sweep_budget_hold_until=1715.0",
-"attrs count=146 sha256=3ce5206a4ebc549cf7f81b4c911999700ef76bb9da957d1f6aa9c5a36b8f6bfc"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=4ed6f03fbe0c29febfba8b0b8e80af20f32d299c75162ec52b3ebdac30a5add2"
 ],
 "stop-hang-False-False-True": [
 "compress attempt=1",
@@ -13530,7 +13865,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=fd7291bc60f05078b73c37aba1afe5ee632a37bd758c353d12a671b7a11875b4"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=db7c5a2dc6b48f2484a102ad95e7f760a3ac6efdaa59561438cd2004e691e1d6"
 ],
 "stop-hang-False-True-False": [
 "compress attempt=1",
@@ -13619,7 +13957,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=b4761101c6d982d92fa7be53b934f004c746f2b5720c4cfe19acf81a4a560efe"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=06de10a9512d30704a32bcf6776d737f18da25b5a7f1ffc9ff34e8a7755b9654"
 ],
 "stop-hang-False-True-True": [
 "compress attempt=1",
@@ -13708,7 +14049,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=7e63b25c98b170b7b56c72c548e748f84e6bb6843e76f4e3b37f851720b7d35d"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=928f17e04335dcdacba10244b2b8a727da3109dce30f807bf42c4af2c096f490"
 ],
 "stop-hang-True-False-False": [
 "compress attempt=1",
@@ -13750,7 +14094,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _sweep_budget_hold_turn_paced=false",
 "attr _sweep_budget_hold_until=2131.0",
-"attrs count=146 sha256=06501a13411b1f836d939a9a81c98b57cfa92c70c175ac0cd7ccf3c182203d53"
+"attrs count=153 sha256=428b22662b01d9e38473f5a7286d79db6af21bb7e35ffdaa94db068610f1f45f"
 ],
 "stop-hang-True-False-True": [
 "compress attempt=1",
@@ -13790,7 +14134,7 @@
 "message assistant 5af94fa49bf3/1266",
 "attr _foreground_budget=sha12/len=958f78f7b178/442",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=7394ae2c64eb337f66994b7542d9b4d0ae74384493326576b81a715dfcb4af9f"
+"attrs count=153 sha256=edc2d9e95944a53ff0952fa5945e4cddb44fc923be337537ee7f77eee6b49be3"
 ],
 "stop-hang-True-True-False": [
 "compress attempt=1",
@@ -13822,7 +14166,7 @@
 "attr _no_progress_observed_tokens=250000",
 "attr _pending_emission_candidates=[]",
 "attr _sweep_budget_hold_turn_paced=false",
-"attrs count=146 sha256=a1f32fc279bbf75c491750da5f021d067f886e25ccc773bfb096cfb14af4db13"
+"attrs count=153 sha256=b3c54a6712e2aecbe0757e742de0dd8013559e475491ec6f496b175844032b8b"
 ],
 "stop-hang-True-True-True": [
 "compress attempt=1",
@@ -13853,7 +14197,7 @@
 "attr _last_overflow_recovery_failed=true",
 "attr _no_progress_observed_tokens=250000",
 "attr _pending_emission_candidates=[]",
-"attrs count=146 sha256=aa4e473bafc166ad0e842f235bb7575b93cd679cf16cb0b89b9a1c1c3bbf60dd"
+"attrs count=153 sha256=007a01427d5cd2d16f8b2d16b97977676d65735dc46525ea74d57a502af9838d"
 ],
 "stop-overflow-no-leaf": [
 "compress attempt=1",
@@ -13913,7 +14257,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=ea1402633a11/3476",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=c681c331dc2ff342f9adb8fddadd764cfe67ea33ada63c323c94ff2b80acc0b3"
+"attrs count=153 sha256=9053103b0e5128043b3bfacb4a4a9c9d0cb92c8b32d28b6e453c31196893a12c"
 ],
 "stop-reason-cleared": [
 "compress attempt=1",
@@ -13937,7 +14281,7 @@
 "sql #1 sha12/len=4702b2b116a4/157",
 "sql COMMIT",
 "log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
-"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s\"",
+"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s%s\"",
 "return sha12/len=473ac6071c64/20107",
 "wrapper fit_cause [\"\"]",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
@@ -13973,7 +14317,11 @@
 "attr _no_progress_public_rows=sha12/len=3dace5636f07/21060",
 "attr _pending_emission_candidates=[]",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=5835a01ecaf8196d2eebaf4bdcce618dd636ce124ede9803d3b4979da58281e1"
+"attr _uid_coverage_audit={}",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attrs count=153 sha256=79022dd1a104627c7ab0ddcf818c0f1b771bc05528407ad73a440e6048ec22fb"
 ],
 "stop-reason-retained": [
 "compress attempt=1",
@@ -13983,128 +14331,18 @@
 "sql shape=1 conn=_host_rewrite_store INSERT INTO metadata(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
 "sql #1 sha12/len=52614d71143e/151",
 "sql COMMIT",
-"log hermes_lcm.engine INFO \"LCM active-context cleanup: dropped %d assistant message(s) with no visible content\"",
-"log hermes_lcm.compaction INFO \"LCM compression no-op: %s\"",
-"log hermes_lcm.host_uid INFO \"LCM host-uid shadow: events agree=%d disagree=%d counts=%s\"",
-"log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
-"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s\"",
-"return sha12/len=4910bac0b1c4/21375",
-"wrapper fit_cause sha12/len=87f4d4e2c9ba/93",
-"leaf_prep after {\"chain\":[],\"counters\":{}}",
-"sql BEGIN IMMEDIATE",
-"sql #1 sha12/len=4702b2b116a4/157",
-"sql COMMIT",
-"assemble",
-"message user f6149929fcde/1267",
-"message assistant 1d3aa33ccd2c/1266",
-"message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
-"message user 6c12f191db5f/1267",
-"message assistant 63393eb669ff/1266",
-"message user d403af208259/1267",
-"message assistant 23e7a56837ee/1266",
-"message user 848f65aa4811/1267",
-"message assistant 7c6b372997fd/1266",
-"message user a036540eca3b/1267",
-"message assistant 5af94fa49bf3/1266",
-"message user 3966be03c944/1267",
-"message assistant 7a468e7d082c/1266",
-"compress attempt=2",
-"leaf_prep before {\"chain\":[],\"counters\":{}}",
-"log hermes_lcm.engine INFO \"LCM identity-anchor recognised %d replayed rows: session=%s cursor=%d incoming=%d\"",
-"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
-"sql BEGIN IMMEDIATE",
-"sql shape=2 conn=_host_rewrite_store INSERT INTO messages (session_id, source, conversation_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_estimate, pinned, ingested_at, observed_at, observed_at_source) VALUES (?,?,?,?,?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)",
-"sql #2 sha12/len=2eff5a55ac17/1578 x5",
-"sql #2 sha12/len=4ffb9b84ad94/310 x5",
-"sql #2 sha12/len=7a04e6343cca/1578 x5",
-"sql #2 sha12/len=f5e2163a2704/1578 x5",
-"sql #2 sha12/len=e7eca4415696/1578 x5",
-"sql #2 sha12/len=e55e8e0b11b8/1578 x5",
-"sql #2 sha12/len=aa51efc18eb8/1578 x5",
-"sql #2 sha12/len=7201fd996872/1578 x5",
-"sql #2 sha12/len=5928522868b9/1578 x5",
-"sql COMMIT",
-"sql BEGIN IMMEDIATE",
-"sql #1 sha12/len=8f4593e2ff18/159",
-"sql COMMIT",
-"log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
-"log hermes_lcm.engine INFO \"LCM active-context cleanup: dropped %d assistant message(s) with no visible content\"",
-"log hermes_lcm.compaction INFO \"LCM compression no-op: %s\"",
-"log hermes_lcm.host_uid INFO \"LCM host-uid shadow: events agree=%d disagree=%d counts=%s\"",
-"log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
-"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s\"",
-"return sha12/len=4910bac0b1c4/21375",
-"wrapper fit_cause sha12/len=87f4d4e2c9ba/93",
-"leaf_prep after {\"chain\":[],\"counters\":{}}",
-"assemble",
-"message user f6149929fcde/1267",
-"message assistant 1d3aa33ccd2c/1266",
-"message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
-"message user 6c12f191db5f/1267",
-"message assistant 63393eb669ff/1266",
-"message user d403af208259/1267",
-"message assistant 23e7a56837ee/1266",
-"message user 848f65aa4811/1267",
-"message assistant 7c6b372997fd/1266",
-"message user a036540eca3b/1267",
-"message assistant 5af94fa49bf3/1266",
-"message user 3966be03c944/1267",
-"message assistant 7a468e7d082c/1266",
-"attr _compress_escaped=[]",
-"attr _compress_forced_overflow=false",
-"attr _compress_hidden_rows_consumed=0",
-"attr _compress_host_rows_consumed=0",
-"attr _compress_occurrences=null",
-"attr _compress_run=sha12/len=402c6c834b84/198",
-"attr _ingest_cursor=16",
-"attr _last_compression_noop_reason=sha12/len=e4bb51b72020/91",
-"attr _last_compression_status=\"sanitized\"",
-"attr _no_progress_observed_tokens=3000",
-"attr _no_progress_proof_complete=true",
-"attr _no_progress_proof_fingerprint=\"<proof-digest-0>\"",
-"attr _no_progress_public_rows=sha12/len=1ceddb0c481c/21519",
-"attr _pending_emission_candidates=[]",
-"attr _store=sha12/len=8408194ced13/38077",
-"attr _store_complete_blocked=[1,\"user\",\"shown\",3]",
-"attr _store_complete_copy_exclusion_proofs={}",
-"attr _store_complete_cut=false",
-"attr _store_complete_empty_reason=\"\"",
-"attr _store_complete_escaped=[]",
-"attr _store_complete_excluded=[]",
-"attr _store_complete_order={}",
-"attr _survival_pass_observed=true",
-"attrs count=146 sha256=ea786c068c5b543bdd15c8d838d2049ec2caf4927ba99dbc135fd724d597a884"
-],
-"stop-reason-retained-escape": [
-"compress attempt=1",
-"leaf_prep before {\"chain\":[],\"counters\":{}}",
-"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
-"sql BEGIN IMMEDIATE",
-"sql shape=1 conn=_host_rewrite_store INSERT INTO metadata(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-"sql #1 sha12/len=52614d71143e/151",
-"sql COMMIT",
-"log hermes_lcm.store_complete INFO \"LCM store-complete leaf: frontier=%d last=%d rows=%d host_rows=%d/%d hidden=%d excluded=%d copies=%d cut=%s\"",
 "log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
-"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=71e04201f1ea/6566",
+"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=285dd361d900/6566",
 "log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
 "sql BEGIN IMMEDIATE",
 "sql shape=2 conn=_dag INSERT INTO summary_nodes (session_id, depth, summary, token_count, source_token_count, source_ids, source_type, created_at, earliest_at, latest_at, expand_hint) VALUES (?, ?,?, ?, ?,?,?, ?, ?, ?,?)",
-"sql #2 sha12/len=9865418aee5a/319 x3",
+"sql #2 sha12/len=641c900973e9/320 x3",
 "sql shape=3 conn=_dag INSERT OR REPLACE INTO summary_node_provenance (node_id, escalation_level, model, created_at) VALUES (?, ?,?, ?)",
 "sql #3 sha12/len=bd12465197ec/135",
 "sql shape=4 conn=_dag UPDATE lcm_lifecycle_state SET current_frontier_store_id = MAX(current_frontier_store_id, ?), updated_at = ? WHERE conversation_id =?AND current_session_id =?",
-"sql #4 sha12/len=db40c02d9788/190",
+"sql #4 sha12/len=55f0c8932dd5/190",
 "sql COMMIT",
-"sql BEGIN IMMEDIATE",
-"sql #1 sha12/len=04dc23c75f8d/325",
-"sql COMMIT",
-"log hermes_lcm.compaction WARNING \"LCM retained-occurrence fallback: leaf includes %d retained row(s) whole (store_id=%d role=%s kind=%s%s) frontier=%d; the host view still holds them, so their content is also summarised; source rows stay stored; cause: host order disagrees with store order (#1162)\"",
+"log hermes_lcm.engine INFO \"LCM active-context cleanup: dropped %d assistant message(s) with no visible content\"",
 "sql BEGIN IMMEDIATE",
 "sql #1 sha12/len=4702b2b116a4/157",
 "sql COMMIT",
@@ -14114,19 +14352,17 @@
 "sql #1 sha12/len=1ddc1221da37/482",
 "sql COMMIT",
 "sql BEGIN IMMEDIATE",
-"sql #1 sha12/len=809ec308f545/2962",
-"sql #1 sha12/len=5ea2f6627130/2148",
+"sql #1 sha12/len=6f2f455279e5/2690",
+"sql #1 sha12/len=5c94e9b6a7fd/1916",
 "sql COMMIT",
 "log hermes_lcm.host_uid INFO \"LCM host-uid shadow: events agree=%d disagree=%d counts=%s\"",
 "log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
-"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s\"",
-"return sha12/len=b02e91e6c4b9/18777",
+"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s%s\"",
+"return sha12/len=1c9c930dd0df/16106",
 "wrapper fit_cause [\"\"]",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
-"message user 4009495f6e2d/1495",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
+"message user f4e4f5948832/1495",
 "message assistant 55698fcd55cb/1266",
 "message user 6c12f191db5f/1267",
 "message assistant 63393eb669ff/1266",
@@ -14158,25 +14394,34 @@
 "sql #1 sha12/len=8f4593e2ff18/159",
 "sql COMMIT",
 "log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
-"log hermes_lcm.store_complete INFO \"LCM store-complete leaf: frontier=%d last=%d rows=%d host_rows=%d/%d hidden=%d excluded=%d copies=%d cut=%s\"",
 "log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
-"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=d16211f50723/2727",
+"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=7fb9aca5db25/4012",
 "log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
-"log hermes_lcm.compaction WARNING \"LCM leaf chunk has no durable source above the frontier: frontier=%d rows=%d first_mapped_store_id=%s\"",
-"log hermes_lcm.engine INFO \"LCM active-context cleanup: dropped %d assistant message(s) with no visible content\"",
+"sql BEGIN IMMEDIATE",
+"sql #2 sha12/len=0fe96966c335/319 x3",
+"sql #3 sha12/len=aecd9e0c6b0b/135",
+"sql #4 sha12/len=55f0c8932dd5/190",
+"sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4097279ac758/482",
+"sql COMMIT",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=fa314c3c8ac5/3003",
+"sql #1 sha12/len=88357fb90266/2194",
+"sql COMMIT",
 "log hermes_lcm.host_uid INFO \"LCM host-uid shadow: events agree=%d disagree=%d counts=%s\"",
 "log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
-"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s\"",
-"return sha12/len=4910bac0b1c4/21375",
-"wrapper fit_cause [\"selected leaf chunk lacks raw store lineage\"]",
+"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s%s\"",
+"return sha12/len=d813bf2b2ce5/18916",
+"wrapper fit_cause [\"\"]",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
-"message user b46ee3d0307f/1381",
+"message user 5c39a140e2fd/1733",
 "message assistant 1d3aa33ccd2c/1266",
 "message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
 "message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
 "message user 6c12f191db5f/1267",
 "message assistant 63393eb669ff/1266",
 "message user d403af208259/1267",
@@ -14190,25 +14435,21 @@
 "attr _compress_escaped=[]",
 "attr _compress_forced_overflow=false",
 "attr _compress_hidden_rows_consumed=0",
-"attr _compress_host_rows_consumed=0",
+"attr _compress_host_rows_consumed=3",
 "attr _compress_occurrences=null",
-"attr _compress_run=sha12/len=9495f58715a8/182",
-"attr _dag=sha12/len=d158891b634f/343",
-"attr _ingest_cursor=16",
-"attr _last_compacted_store_id=4",
-"attr _last_compression_noop_reason=\"selected leaf chunk lacks raw store lineage\"",
-"attr _last_compression_status=\"sanitized\"",
+"attr _compress_run=sha12/len=402c6c834b84/198",
+"attr _dag=sha12/len=346d186048e9/687",
+"attr _ingest_cursor=14",
+"attr _last_compression_status=\"compacted\"",
 "attr _last_leaf_content_filter_error=false",
 "attr _last_leaf_level_3_verbatim=false",
-"attr _last_leaf_summary_model=\"trace-model\"",
-"attr _lifecycle=sha12/len=8f9dd2b30f6f/391",
+"attr _last_leaf_summary_model=\"\"",
 "attr _no_progress_observed_tokens=3000",
 "attr _no_progress_proof_complete=false",
-"attr _no_progress_proof_fingerprint=null",
 "attr _no_progress_public_rows=sha12/len=1ceddb0c481c/21519",
-"attr _pending_emission_candidates=sha12/len=a41bd420cb7c/3018",
+"attr _pending_emission_candidates=sha12/len=7f2af5094075/3896",
 "attr _store=sha12/len=8408194ced13/38077",
-"attr _store_complete_blocked=[9,\"user\",\"shown\",0]",
+"attr _store_complete_blocked=null",
 "attr _store_complete_copy_exclusion_proofs={}",
 "attr _store_complete_cut=true",
 "attr _store_complete_empty_reason=\"\"",
@@ -14216,9 +14457,155 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attr _unattributed_leaf_warned=[[\"trace-conversation\",4]]",
-"attr compression_count=1",
-"attrs count=146 sha256=5c99306c6205eaef8d247710e64f0685fa80c5db4897118521d1fd3ac479815f"
+"attr _uid_coverage_audit=sha12/len=9be0e3c296bb/198",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
+"attr compression_count=2",
+"attrs count=153 sha256=924fc6058333ab1155cd688eaf2843c6d729291682f4acd0464aa547f565acab"
+],
+"stop-reason-retained-escape": [
+"compress attempt=1",
+"leaf_prep before {\"chain\":[],\"counters\":{}}",
+"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
+"sql BEGIN IMMEDIATE",
+"sql shape=1 conn=_host_rewrite_store INSERT INTO metadata(key, value) VALUES(?,?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+"sql #1 sha12/len=52614d71143e/151",
+"sql COMMIT",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 1 model=trace-model level=1 budget=4000 timeout=115.0 in=285dd361d900/6566",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql shape=2 conn=_dag INSERT INTO summary_nodes (session_id, depth, summary, token_count, source_token_count, source_ids, source_type, created_at, earliest_at, latest_at, expand_hint) VALUES (?, ?,?, ?, ?,?,?, ?, ?, ?,?)",
+"sql #2 sha12/len=641c900973e9/320 x3",
+"sql shape=3 conn=_dag INSERT OR REPLACE INTO summary_node_provenance (node_id, escalation_level, model, created_at) VALUES (?, ?,?, ?)",
+"sql #3 sha12/len=bd12465197ec/135",
+"sql shape=4 conn=_dag UPDATE lcm_lifecycle_state SET current_frontier_store_id = MAX(current_frontier_store_id, ?), updated_at = ? WHERE conversation_id =?AND current_session_id =?",
+"sql #4 sha12/len=55f0c8932dd5/190",
+"sql COMMIT",
+"log hermes_lcm.engine INFO \"LCM active-context cleanup: dropped %d assistant message(s) with no visible content\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4702b2b116a4/157",
+"sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=1ddc1221da37/482",
+"sql COMMIT",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=6f2f455279e5/2690",
+"sql #1 sha12/len=0d673e4d8a62/1870",
+"sql COMMIT",
+"log hermes_lcm.host_uid INFO \"LCM host-uid shadow: events agree=%d disagree=%d counts=%s\"",
+"log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
+"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s%s\"",
+"return sha12/len=1c9c930dd0df/16106",
+"wrapper fit_cause [\"\"]",
+"leaf_prep after {\"chain\":[],\"counters\":{}}",
+"assemble",
+"message user f4e4f5948832/1495",
+"message assistant 55698fcd55cb/1266",
+"message user 6c12f191db5f/1267",
+"message assistant 63393eb669ff/1266",
+"message user d403af208259/1267",
+"message assistant 23e7a56837ee/1266",
+"message user 848f65aa4811/1267",
+"message assistant 7c6b372997fd/1266",
+"message user a036540eca3b/1267",
+"message assistant 5af94fa49bf3/1266",
+"message user 3966be03c944/1267",
+"message assistant 7a468e7d082c/1266",
+"compress attempt=2",
+"leaf_prep before {\"chain\":[],\"counters\":{}}",
+"log hermes_lcm.engine INFO \"LCM identity-anchor recognised %d replayed rows: session=%s cursor=%d incoming=%d\"",
+"log hermes_lcm.engine DEBUG \"Ingest: session=%s cursor=%d incoming=%d\"",
+"sql BEGIN IMMEDIATE",
+"sql shape=5 conn=_host_rewrite_store INSERT INTO messages (session_id, source, conversation_id, role, content, tool_call_id, tool_calls, tool_name, timestamp, token_estimate, pinned, ingested_at, observed_at, observed_at_source) VALUES (?,?,?,?,?, NULL, NULL, NULL, ?, ?, ?, ?, NULL, NULL)",
+"sql #5 sha12/len=2eff5a55ac17/1578 x5",
+"sql #5 sha12/len=4ffb9b84ad94/310 x5",
+"sql #5 sha12/len=7a04e6343cca/1578 x5",
+"sql #5 sha12/len=f5e2163a2704/1578 x5",
+"sql #5 sha12/len=e7eca4415696/1578 x5",
+"sql #5 sha12/len=e55e8e0b11b8/1578 x5",
+"sql #5 sha12/len=aa51efc18eb8/1578 x5",
+"sql #5 sha12/len=7201fd996872/1578 x5",
+"sql #5 sha12/len=5928522868b9/1578 x5",
+"sql COMMIT",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=8f4593e2ff18/159",
+"sql COMMIT",
+"log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=7fb9aca5db25/4012",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql #2 sha12/len=0fe96966c335/319 x3",
+"sql #3 sha12/len=aecd9e0c6b0b/135",
+"sql #4 sha12/len=55f0c8932dd5/190",
+"sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4097279ac758/482",
+"sql COMMIT",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=fa314c3c8ac5/3003",
+"sql #1 sha12/len=2717d978ed6d/2148",
+"sql COMMIT",
+"log hermes_lcm.host_uid INFO \"LCM host-uid shadow: events agree=%d disagree=%d counts=%s\"",
+"log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
+"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s%s\"",
+"return sha12/len=d813bf2b2ce5/18916",
+"wrapper fit_cause [\"\"]",
+"leaf_prep after {\"chain\":[],\"counters\":{}}",
+"assemble",
+"message user 5c39a140e2fd/1733",
+"message assistant 1d3aa33ccd2c/1266",
+"message user d932be6f1500/1267",
+"message user 4915f154ddd8/1267",
+"message user 6c12f191db5f/1267",
+"message assistant 63393eb669ff/1266",
+"message user d403af208259/1267",
+"message assistant 23e7a56837ee/1266",
+"message user 848f65aa4811/1267",
+"message assistant 7c6b372997fd/1266",
+"message user a036540eca3b/1267",
+"message assistant 5af94fa49bf3/1266",
+"message user 3966be03c944/1267",
+"message assistant 7a468e7d082c/1266",
+"attr _compress_escaped=[]",
+"attr _compress_forced_overflow=false",
+"attr _compress_hidden_rows_consumed=0",
+"attr _compress_host_rows_consumed=3",
+"attr _compress_occurrences=null",
+"attr _compress_run=sha12/len=402c6c834b84/198",
+"attr _dag=sha12/len=346d186048e9/687",
+"attr _ingest_cursor=14",
+"attr _last_compression_status=\"compacted\"",
+"attr _last_leaf_content_filter_error=false",
+"attr _last_leaf_level_3_verbatim=false",
+"attr _last_leaf_summary_model=\"\"",
+"attr _no_progress_observed_tokens=3000",
+"attr _no_progress_proof_complete=false",
+"attr _no_progress_public_rows=sha12/len=1ceddb0c481c/21519",
+"attr _pending_emission_candidates=sha12/len=7f2af5094075/3896",
+"attr _store=sha12/len=8408194ced13/38077",
+"attr _store_complete_blocked=null",
+"attr _store_complete_copy_exclusion_proofs={}",
+"attr _store_complete_cut=true",
+"attr _store_complete_empty_reason=\"\"",
+"attr _store_complete_escaped=[]",
+"attr _store_complete_excluded=[]",
+"attr _store_complete_order={}",
+"attr _survival_pass_observed=true",
+"attr _uid_coverage_audit=sha12/len=9be0e3c296bb/198",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
+"attr compression_count=2",
+"attrs count=153 sha256=d6069dae05754e94e2279e1eb2a656025217087fbeeb5051cab65fa7ab8785e7"
 ],
 "stop-reason-unattributed": [
 "compress attempt=1",
@@ -14282,24 +14669,37 @@
 "sql #5 sha12/len=4ffb9b84ad94/310 x5",
 "sql COMMIT",
 "log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
-"log hermes_lcm.compaction WARNING \"LCM leaf chunk has no durable source above the frontier: frontier=%d rows=%d first_mapped_store_id=%s\"",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=2cec208ba274/6566",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql #2 sha12/len=f789ff25c97a/320 x3",
+"sql #3 sha12/len=aecd9e0c6b0b/135",
+"sql #4 sha12/len=f2d86a8c69c7/191",
+"sql COMMIT",
 "log hermes_lcm.engine INFO \"LCM active-context cleanup: dropped %d assistant message(s) with no visible content\"",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4097279ac758/482",
+"sql COMMIT",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=54ea9a243209/2813",
+"sql #1 sha12/len=4abe92b911d3/1996",
+"sql COMMIT",
 "log hermes_lcm.compaction DEBUG \"LCM compaction emission descriptor count=%d\"",
-"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s\"",
-"return sha12/len=dd9925fdd7f3/20961",
-"wrapper fit_cause [\"selected leaf chunk lacks raw store lineage\"]",
+"log hermes_lcm.compaction INFO \"LCM compaction stop: reason=%s leaves=%d progress=%s elapsed=%.1fs pre=%.1fs calls=%.1fs finalize=%.1fs backlog_tokens=%d%s%s%s%s%s%s\"",
+"return sha12/len=9ce3a4c1c427/16005",
+"wrapper fit_cause [\"\"]",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
 "message system 5ebbb9a2c7c7/25",
-"message user 67e4e8b1c7a0/112",
+"message user 2954dc3014b3/231",
+"message user 2954dc3014b3/231",
 "message user 3966be03c944/1267",
 "message assistant 7a468e7d082c/1266",
 "message user f6149929fcde/1267",
 "message assistant 1d3aa33ccd2c/1266",
-"message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
 "message user 6c12f191db5f/1267",
 "message assistant 63393eb669ff/1266",
 "message user d403af208259/1267",
@@ -14311,33 +14711,36 @@
 "attr _compress_escaped=[]",
 "attr _compress_forced_overflow=false",
 "attr _compress_hidden_rows_consumed=0",
-"attr _compress_host_rows_consumed=0",
+"attr _compress_host_rows_consumed=4",
 "attr _compress_occurrences=null",
 "attr _compress_run=sha12/len=5373e16e05c2/250",
-"attr _dag=sha12/len=e9089ed1d2e5/344",
-"attr _last_compacted_store_id=5",
-"attr _last_compression_noop_reason=\"selected leaf chunk lacks raw store lineage\"",
-"attr _last_compression_status=\"sanitized\"",
+"attr _dag=sha12/len=5912e00d92bc/687",
+"attr _ingest_cursor=14",
+"attr _last_compacted_store_id=15",
+"attr _last_compression_status=\"compacted\"",
 "attr _last_leaf_content_filter_error=false",
 "attr _last_leaf_level_3_verbatim=false",
 "attr _last_leaf_summary_model=\"\"",
 "attr _no_progress_observed_tokens=3000",
 "attr _no_progress_proof_complete=false",
-"attr _no_progress_proof_fingerprint=null",
 "attr _no_progress_public_rows=sha12/len=d778395b3217/21120",
-"attr _pending_emission_candidates=sha12/len=37741e1df74c/449",
+"attr _pending_emission_candidates=sha12/len=b1a566a92f5f/827",
 "attr _store=sha12/len=1deac8f0f7e1/28987",
 "attr _store_complete_blocked=null",
 "attr _store_complete_copy_exclusion_proofs={}",
-"attr _store_complete_cut=false",
+"attr _store_complete_cut=true",
 "attr _store_complete_empty_reason=\"\"",
 "attr _store_complete_escaped=[]",
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attr _unattributed_leaf_warned=[[\"trace-conversation\",15]]",
-"attr compression_count=1",
-"attrs count=146 sha256=cebdf7374a95b1816739e856eee491dadafea8d4a22949633b511eeddad9d201"
+"attr _uid_coverage_audit=sha12/len=42f92c20a3fe/294",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
+"attr compression_count=2",
+"attrs count=153 sha256=7f980b6f3476d3b278454af742f26b46924ff03094f0c66342eadaa9556c9822"
 ],
 "stop-refused-restore": [
 "compress attempt=1",
@@ -14407,7 +14810,10 @@
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1300.0",
-"attrs count=146 sha256=299206725a6f79a7b179b1b9f4b615a0a7eb99ff5ed8030a24974d02ba76aa2f"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=b24a6fd692ffe96c5ef9e85f151a95afa21135de64f6daeebeb73b8919acb0b6"
 ],
 "stop-rejection-after-leaf": [
 "compress attempt=1",
@@ -14537,8 +14943,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=7febcfdbb9a811c3f933b803d5b6ab2b548f740a15fed350e29227c39324f5ab"
+"attrs count=153 sha256=2e7d0290d33f9564ebc861dfa7ba549a0bf05b8df8770cc07e3b0aca7ff77b0c"
 ],
 "stop-resumed-anchor": [
 "compress attempt=1",
@@ -14590,7 +14999,7 @@
 "attr _no_progress_proof_fingerprint=null",
 "attr _pending_emission_candidates=sha12/len=7d75449c34c6/416",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=27a935a140521b7d1c59174da3d28337ea990025ce1a174f3f8e95a63ef0889f"
+"attrs count=153 sha256=6cc9c9a64bca40bfa35e3e5bdd3687621b35c47fd2fdf83e6feb64a846ff8ac8"
 ],
 "stop-route-after-leaf": [
 "compress attempt=1",
@@ -14716,8 +15125,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=3151138df54721504a12601e2039cdce75d45ba96253a164a5784cfcd17b166d"
+"attrs count=153 sha256=4bba5ebca589b50bf1d0c2fb96e1546cc7efc1445561fd5f40e3d53cdee250e8"
 ],
 "stop-scaffold-equal": [
 "compress attempt=1",
@@ -14774,7 +15186,7 @@
 "attr _no_progress_public_rows=sha12/len=cfd1777acbed/20979",
 "attr _pending_emission_candidates=[]",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=76efaab47c3a51ed6319a50b3ab61adaedd606dd737cb898c19c60903d6b2361"
+"attrs count=153 sha256=2c244231916d25ccb752381e5849f1d7edc985e3e5144820cc84c7c3e8272b08"
 ],
 "stub-first-exit": [
 "compress attempt=1",
@@ -14879,7 +15291,7 @@
 "attr _store=sha12/len=acd66f87830b/35604",
 "attr _stub_first_exit_now=sha12/len=fd265c889784/84",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=5fb10e36b69a3827b30dda6f6819aedd96a81ab1163ffd1500aa4d0c42beca45"
+"attrs count=153 sha256=32e2c0845f26383bff0021f3651be3d995c06053f8b08c7b7c21edd30aa8e392"
 ],
 "sweep-budget-entry": [
 "compress attempt=1",
@@ -14972,7 +15384,7 @@
 "attr _store=sha12/len=78abcdec3f42/25548",
 "attr _survival_pass_observed=true",
 "attr _sweep_budget_hold_until=1721.0",
-"attrs count=146 sha256=6c0a1c3b3e7bc02f7a262518ec68582b6e752019df2c5204f5c475c0d830943e"
+"attrs count=153 sha256=e28beddca3896a6a04216ccfee648e47de606fd921ee26556160ad22582e2907"
 ],
 "sweep-drain-condense": [
 "compress attempt=1",
@@ -15131,8 +15543,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=76c816998335a533bab0b3855244baa841ffc96f224f8fdbde8ac0108958fbae"
+"attrs count=153 sha256=656bf0c1f3921cb214ac7c4de7afffd97e2aa1beb30c70abf8ad1e7ade1b3e04"
 ],
 "sweep-fresh-tail-yield": [
 "compress attempt=1",
@@ -15286,8 +15701,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=702a7fbf2b73c0ba5d9ec86930eb8718fcf51a79cb5564d5fb461335f32d74b1"
+"attrs count=153 sha256=1a182fccb2ef87e832b34e0e8077bd0a2fb82d2ed8162192e3009965b7ac5b99"
 ],
 "sweep-pass-budget": [
 "compress attempt=1",
@@ -15615,8 +16033,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=f5fe45cc6a4463859dc655ae6671a8fd54ce7ffb790fce4224cea3151a396d45"
+"attrs count=153 sha256=bdce8f1c8e508316cf95a8e182f7896b4e8e2c0ddaec6bbefa8b70af0c3c14f6"
 ],
 "sweep-pre-leaf-condensation": [
 "compress attempt=1",
@@ -15790,8 +16211,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=4583dc4c62cf610b7e1762aa645a276e55d1ba4544415be52ecf288c22ad7fb5"
+"attrs count=153 sha256=07be7252bbca89464305edf42fa1cee95dacec34ce133fb16d8aa06db967efcb"
 ],
 "sweep-stub-first-exit": [
 "compress attempt=1",
@@ -15897,7 +16321,7 @@
 "attr _store=sha12/len=acd66f87830b/35604",
 "attr _stub_first_exit_now=sha12/len=fd265c889784/84",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=1044a8276386d15606e689e2e9cf1176c1e6ebb4babcf7157b6473ff7207932b"
+"attrs count=153 sha256=4fca9e7261e142db389796d0e50f6d11892bd61b7d56c8714b7f47ee7d9d501d"
 ],
 "sweep-tail-drained": [
 "compress attempt=1",
@@ -15962,7 +16386,7 @@
 "attr _pending_emission_candidates=[]",
 "attr _store=sha12/len=ea1402633a11/3476",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=f288694f6fe4299d682ac44f980b641c7efe466a4144deae217b8f2b8c8250e1"
+"attrs count=153 sha256=d596cf3fd8e05d08d87eb14b0fcddc20d88343135014fb2f60c68a00628f52fd"
 ],
 "tool-pair-groups": [
 "compress attempt=1",
@@ -16098,8 +16522,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=a7f81c51b4d5ec77294777fad5c20546bf4ebf5c19e5c8ad55192921a315db12"
+"attrs count=153 sha256=4cb35bf228ff89c70490754725a983e7a8e5d518e1d871d35204184a23ff33fa"
 ],
 "transcript-gc-locked": [
 "compress attempt=1",
@@ -16222,7 +16649,10 @@
 "attr _store_complete_order={}",
 "attr _survival_fit_reason=\"sqlite_publication_locked\"",
 "attr _survival_pass_observed=true",
-"attrs count=146 sha256=c8927b9870d4d7bc59bbd1f04e73392d9f42f849c415ad55af1a4a3805c64534"
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
+"attrs count=153 sha256=884da7b16e3423bd8c8f2ca415b1496682a17790a4b6ba5a3ee3c7a04169ebad"
 ],
 "unattributed-rotated-history": [
 "compress attempt=1",
@@ -16285,21 +16715,29 @@
 "sql #5 sha12/len=7201fd996872/1578 x5",
 "sql COMMIT",
 "log hermes_lcm.engine DEBUG \"Ingested %d messages into LCM store\"",
-"log hermes_lcm.compaction WARNING \"LCM leaf chunk has no durable source above the frontier: frontier=%d rows=%d first_mapped_store_id=%s\"",
-"log hermes_lcm.compaction INFO \"LCM compression no-op: %s%s\"",
-"return sha12/len=dd9925fdd7f3/20961",
+"log hermes_lcm.engine INFO \"LCM leaf summary input: input_tokens=%d source_tokens=%d messages=%d\"",
+"call 2 model=trace-model level=1 budget=4000 timeout=115.0 in=2cec208ba274/6566",
+"log hermes_lcm.escalation DEBUG \"L1 summarization succeeded (%d tokens)\"",
+"sql BEGIN IMMEDIATE",
+"sql #2 sha12/len=f789ff25c97a/320 x3",
+"sql #3 sha12/len=aecd9e0c6b0b/135",
+"sql #4 sha12/len=f2d86a8c69c7/191",
+"sql COMMIT",
+"log hermes_lcm.compaction INFO \"LCM leaf compaction finished in %.1fms\"",
+"log hermes_lcm.compaction INFO \"LCM compaction #%d: %d messages \u2192 %d (%d leaf pass%s, %d\u2192%d tokens%s, %d DAG nodes%s%s)%s\"",
+"sql BEGIN IMMEDIATE",
+"sql #1 sha12/len=4097279ac758/482",
+"sql COMMIT",
+"return sha12/len=9ce3a4c1c427/16005",
 "leaf_prep after {\"chain\":[],\"counters\":{}}",
 "assemble",
 "message system 5ebbb9a2c7c7/25",
-"message user 67e4e8b1c7a0/112",
+"message user 2954dc3014b3/231",
+"message user 2954dc3014b3/231",
 "message user 3966be03c944/1267",
 "message assistant 7a468e7d082c/1266",
 "message user f6149929fcde/1267",
 "message assistant 1d3aa33ccd2c/1266",
-"message user d932be6f1500/1267",
-"message assistant 5112d3181a5e/1266",
-"message user 4915f154ddd8/1267",
-"message assistant 55698fcd55cb/1266",
 "message user 6c12f191db5f/1267",
 "message assistant 63393eb669ff/1266",
 "message user d403af208259/1267",
@@ -16311,33 +16749,35 @@
 "attr _compress_escaped=[]",
 "attr _compress_forced_overflow=false",
 "attr _compress_hidden_rows_consumed=0",
-"attr _compress_host_rows_consumed=0",
+"attr _compress_host_rows_consumed=4",
 "attr _compress_occurrences=null",
 "attr _compress_run=sha12/len=01ec622968aa/232",
-"attr _dag=sha12/len=e9089ed1d2e5/344",
-"attr _foreground_budget=sha12/len=7a2d4cf6af78/368",
-"attr _last_compacted_store_id=5",
-"attr _last_compression_noop_reason=\"selected leaf chunk lacks raw store lineage\"",
-"attr _last_compression_status=\"noop\"",
+"attr _dag=sha12/len=5912e00d92bc/687",
+"attr _foreground_budget=sha12/len=362eb82ba6e6/379",
+"attr _ingest_cursor=14",
+"attr _last_compacted_store_id=15",
+"attr _last_compression_status=\"compacted\"",
 "attr _last_leaf_content_filter_error=false",
 "attr _last_leaf_level_3_verbatim=false",
 "attr _last_leaf_summary_model=\"\"",
 "attr _no_progress_observed_tokens=3000",
-"attr _no_progress_proof_complete=false",
-"attr _no_progress_proof_fingerprint=null",
-"attr _pending_emission_candidates=sha12/len=37741e1df74c/449",
+"attr _pending_emission_candidates=sha12/len=b1a566a92f5f/827",
 "attr _store=sha12/len=37764ed55ba9/28686",
 "attr _store_complete_blocked=null",
 "attr _store_complete_copy_exclusion_proofs={}",
-"attr _store_complete_cut=false",
+"attr _store_complete_cut=true",
 "attr _store_complete_empty_reason=\"\"",
 "attr _store_complete_escaped=[]",
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
-"attr _unattributed_leaf_warned=[[\"trace-conversation\",15]]",
-"attr compression_count=1",
-"attrs count=146 sha256=f3c816fc4ed9233a3ad5da7b4e6f83f4a9d540779ecff72d1a99813d41d4e16c"
+"attr _uid_coverage_audit=sha12/len=9f2753c99bf0/228",
+"attr _uid_coverage_owner=[\"<sandbox>/home\",\"S\",\"trace-conversation\"]",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=true",
+"attr _uid_superseded_store_ids=[]",
+"attr compression_count=2",
+"attrs count=153 sha256=66cfb858caeebcc61d1fc0b0731fb6d704a7a4e1f5d8e28f7f45410cdb2dbe68"
 ],
 "unknown-window-default-target": [
 "compress attempt=1",
@@ -16457,8 +16897,11 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=25f6c6743bcbbe18c523ec9f030e7e37fae573dac9c7b5b1b10770ac5229c965"
+"attrs count=153 sha256=f32130df28b0f95ee3c77d68369e5e3a5e787d274a3bf56cca64f8aee97ee189"
 ],
 "unthresholded-default-target": [
 "compress attempt=1",
@@ -16577,7 +17020,10 @@
 "attr _store_complete_excluded=[]",
 "attr _store_complete_order={}",
 "attr _survival_pass_observed=true",
+"attr _uid_source_bindings={}",
+"attr _uid_sparse_coverage=false",
+"attr _uid_superseded_store_ids=[]",
 "attr compression_count=1",
-"attrs count=146 sha256=cc01cfe6c4a1c7a8b4bcd8519c8ffa55d4cdcccb01f7a577303fe5ca87628e7a"
+"attrs count=153 sha256=219e9f34b6b05b48820ec382d925f3cbc8cbf8c4779d859fe43217fda63efad8"
 ]
 }

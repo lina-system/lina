@@ -79,7 +79,8 @@ OBSERVED_ATTRIBUTES = frozenset({
     "_host_uid_read_error", "_identity_anchor_chain_cache", "_identity_anchor_recent", "_identity_anchor_text_memo",
     "_identity_anchor_recoveries", "_identity_anchor_recovery", "_identity_anchor_user_generation",
     "_identity_anchor_versions", "_pressure_yield_tail_token_limit", "_survival_projected_fields",
-    "_host_uid_lineage_cache", "_engine_uids_pending", "_engine_uids_recorded",
+    "_host_uid_lineage_cache", "_host_uid_unstamped", "_host_uid_unstamped_session",
+    "_engine_uids_pending", "_engine_uids_recorded",
 })
 Trace = list[str]
 Message = dict[str, Any]
@@ -259,6 +260,7 @@ class IngestCanonical(Canonical):
     def __init__(self, root: Path, messages: list[Message]) -> None:
         super().__init__(root, messages)
         self.path_hashes: dict[str, str] = {}
+        self.uid_cache_digests: dict[bytes, str] = {}
         self.replay_digests: dict[str, str] = {}
         # Labels outlive individual snapshots. Keep their objects alive too, so
         # a later placeholder cannot inherit a freed object's address/label.
@@ -275,6 +277,15 @@ class IngestCanonical(Canonical):
         return text
 
     def value(self, value: Any, path: str = "", *, in_payload: bool = False) -> Any:
+        if (path == "_host_uid_unstamped" and isinstance(value, dict)
+                and all(isinstance(key, tuple) and len(key) == 2 for key in value)):
+            # The digest can cover temporary paths. Preserve each digest's
+            # identity and insertion order across snapshots without pinning paths.
+            entries = []
+            for (stamp, digest), item in value.items():
+                label = self.uid_cache_digests.setdefault(digest, f"digest-{len(self.uid_cache_digests)}")
+                entries.append([stamp, label, self.value(item)])
+            return entries
         if path == "_no_progress_replay" and isinstance(value, tuple) and len(value) == 3:
             # The digest includes sandbox paths/file generations. Preserve its
             # equality and every transition; replay bytes are observed separately.
