@@ -412,7 +412,6 @@ _SHARED_HUBS = frozenset({
     "hermes_cli/profiles.py",
     "hermes_cli/version_info.py",
     "utils.py",
-    "hermes_state.py",
     "agent/__init__.py",
     "cron/jobs.py",
     "tools/environments/local.py",

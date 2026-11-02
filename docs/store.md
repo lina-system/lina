@@ -126,7 +126,9 @@ run (system `initdb`/`pg_ctl` when their Postgres has the `vector` extension, el
 `docker run pgvector/pgvector:0.8.7-pg15-bookworm`) unless `LINA_TEST_PG_DSN` names one (a superuser DSN of a
 throwaway cluster). The cluster gets `services/store/initdb` and the migrations once, each test process its own
 database copied from that template, and every test empty tables. Without any Postgres the store-backed tests
-skip with one reason; under `CI=true` they fail.
+skip with one reason; under `CI=true` they fail. The macOS CI job has no Docker: it installs Homebrew `postgresql@17` and `pgvector`
+and puts their `bin` on PATH, so the fixture's `initdb` path runs there (the store SQL uses nothing newer than
+Postgres 15, which the store image runs).
 
 ## Backup and restore
 

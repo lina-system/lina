@@ -132,6 +132,16 @@ def _free_port() -> int:
         return sock.getsockname()[1]
 
 
+def _run_or_explain(argv: list[str], root: Path) -> None:
+    """Run an initdb/pg_ctl step; on failure, raise with its output (and the server log) instead of a bare exit code."""
+    done = subprocess.run(argv, capture_output=True, text=True, timeout=120, check=False)
+    if done.returncode != 0:
+        log = root / "log"
+        detail = (done.stdout + done.stderr + (log.read_text(errors="replace") if log.exists() else "")).strip()
+        shutil.rmtree(root, ignore_errors=True)
+        raise ClusterUnavailable(f"{Path(argv[0]).name} failed ({done.returncode}): {detail[-600:]}")
+
+
 def _start_local() -> Optional[Cluster]:
     initdb, pg_ctl, pg_config = _which("initdb"), _which("pg_ctl"), _which("pg_config")
     if not (initdb and pg_ctl and pg_config):
@@ -141,13 +151,11 @@ def _start_local() -> Optional[Cluster]:
         return None
     root = Path(tempfile.mkdtemp(prefix="lina-test-pg-"))
     data = root / "data"
-    subprocess.run([initdb, "-D", str(data), "-U", "lina", "--auth=trust", "-E", "UTF8", "--no-instructions"],
-                   check=True, capture_output=True, timeout=120)
+    _run_or_explain([initdb, "-D", str(data), "-U", "lina", "--auth=trust", "-E", "UTF8", "--no-instructions"], root)
     port = _free_port()
     options = " ".join([f"-p {port}", "-c listen_addresses=127.0.0.1", f"-k {root}", *(" ".join(_FAST[i:i + 2])
                                                                                       for i in range(0, len(_FAST), 2))])
-    subprocess.run([pg_ctl, "-D", str(data), "-o", options, "-l", str(root / "log"), "-w", "start"],
-                   check=True, capture_output=True, timeout=120)
+    _run_or_explain([pg_ctl, "-D", str(data), "-o", options, "-l", str(root / "log"), "-w", "start"], root)
 
     def stop() -> None:
         subprocess.run([pg_ctl, "-D", str(data), "-m", "immediate", "stop"], capture_output=True, timeout=60, check=False)
