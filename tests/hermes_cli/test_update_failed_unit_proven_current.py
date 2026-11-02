@@ -45,7 +45,7 @@ def test_failed_unit_settles_only_on_its_own_fresh_current_gateway(
         assert cleared == [True]
     else:
         assert "Update incomplete — some units were not restarted" in out
-        assert "    - hermes-gateway" in out
+        assert "    - lina-gateway" in out
         assert followups == ["gateway_restart"]
         assert receipt["gateway_restart"]["incomplete"] is True
         assert cleared == []
@@ -72,7 +72,7 @@ def _update_with_failed_unit(monkeypatch, capsys, main_pid, fleet_rows, dashboar
     monkeypatch.setattr(fleet, "_scoped_manual_gateway_pids", lambda pids, **kw: list(pids))
     monkeypatch.setattr(fleet, "_gateway_drain_budget", lambda: 1.0)
     monkeypatch.setattr(fleet, "_restart_systemd_gateway_units",
-                        lambda restarted, failed, *args: failed.append("hermes-gateway"))
+                        lambda restarted, failed, *args: failed.append("lina-gateway"))
     monkeypatch.setattr(fleet, "_restart_manual_gateways", lambda out, budget: None)
     monkeypatch.setattr(fleet, "_force_kill_stuck_gateways", lambda killed: None)
     monkeypatch.setattr(fleet, "_restart_identity_sha", lambda: "new")

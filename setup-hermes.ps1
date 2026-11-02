@@ -40,7 +40,8 @@ if (-not $artifact) { throw "no uv artifact for $target" }
 $pyPin = $lock.packages.python
 $pyVersion = if ($pyPin) { ($pyPin.version -split '\+')[0] -replace '^(\d+\.\d+).*', '$1' } else { '3.11' }
 
-$store = if ($env:HERMES_RUNTIME_DIR) { $env:HERMES_RUNTIME_DIR } else { Join-Path $HOME '.hermes/tools' }
+$linaRoot = if ($env:LINA_HOME) { $env:LINA_HOME } else { Join-Path $HOME '.lina' }
+$store = if ($env:HERMES_RUNTIME_DIR) { $env:HERMES_RUNTIME_DIR } else { Join-Path $linaRoot 'tools' }
 $entry = Join-Path $store "uv-$($uvPin.version)-$target"
 $uv = Join-Path $entry 'uv.exe'
 
@@ -120,14 +121,20 @@ if (-not (Test-Path $envFile)) {
 }
 
 # ---------------------------------------------------------------------------
-# Seed bundled skills into ~/.hermes/skills/
+# Seed bundled skills into the home the runtime will use (~/.lina/skills/): an inherited
+# HERMES_HOME naming Hermes Agent's home is not it.
 # ---------------------------------------------------------------------------
-$skillsDir = if ($env:HERMES_HOME) { Join-Path $env:HERMES_HOME 'skills' } else { Join-Path $HOME '.hermes/skills' }
-New-Item -ItemType Directory -Force -Path $skillsDir | Out-Null
 $sync = Join-Path $repo 'tools/skills_sync.py'
 $venvPy = Join-Path $repo 'venv/Scripts/python.exe'
 if ((Test-Path $sync) -and (Test-Path $venvPy)) {
-    & $venvPy $sync 2>$null
+    Push-Location $repo
+    try {
+        $linaHome = & $venvPy -c 'import os, hermes_constants as c; c.drop_foreign_hermes_home(os.environ); print(c.get_hermes_home())'
+    } finally { Pop-Location }
+    New-Item -ItemType Directory -Force -Path (Join-Path $linaHome 'skills') | Out-Null
+    $inherited = $env:HERMES_HOME
+    $env:HERMES_HOME = $linaHome
+    try { & $venvPy $sync 2>$null } finally { $env:HERMES_HOME = $inherited }
     Write-Host 'Skills synced' -ForegroundColor Green
 }
 

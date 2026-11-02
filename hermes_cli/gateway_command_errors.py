@@ -17,7 +17,7 @@ class SystemctlUnavailableError(RuntimeError):
         super().__init__("systemctl is not available on this system")
 
 
-_JOURNAL_HINT = 'journalctl --user -u hermes-gateway --since "5 min ago"'
+_JOURNAL_HINT = 'journalctl --user -u lina-gateway --since "5 min ago"'
 
 _SYSTEMCTL_FAILED_LINES = (
     "Could not {verb} the gateway service; systemd reported an error.",

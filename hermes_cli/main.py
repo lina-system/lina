@@ -249,10 +249,10 @@ _EARLY_INTERFACE_CACHE: tuple[str, str] | None = None
 
 def _early_interface_config_path() -> str:
     """config.yaml of the home this process is currently pointed at."""
-    home = os.environ.get("HERMES_HOME")
+    home = os.environ.get("HERMES_HOME") or os.environ.get("LINA_HOME")
     if home:
         return os.path.join(home, "config.yaml")
-    return os.path.join(os.path.expanduser("~"), ".hermes", "config.yaml")
+    return os.path.join(os.path.expanduser("~"), ".lina", "config.yaml")
 
 
 def _config_default_interface_early() -> str:

@@ -14,6 +14,8 @@ from datetime import datetime
 from pathlib import Path
 from typing import BinaryIO, Sequence, TextIO
 
+from hermes_constants import LAUNCHD_LABEL_PREFIX
+
 EXTERNAL_SUPERVISOR_FLAG = "--external-supervisor"
 _LAUNCHD_LABEL_ENV = "HERMES_LAUNCHD_LABEL"
 # gateway.restart.GATEWAY_FATAL_CONFIG_EXIT_CODE. This wrapper is a launcher boot
@@ -119,7 +121,7 @@ def _child_launchd_label_env(environ: Mapping[str, str] | None = None) -> dict[s
     env = os.environ if environ is None else environ
     for variable in ("XPC_SERVICE_NAME", _LAUNCHD_LABEL_ENV):
         label = str(env.get(variable, "") or "").strip()
-        if label.startswith("ai.hermes"):
+        if label.startswith(LAUNCHD_LABEL_PREFIX):
             return {_LAUNCHD_LABEL_ENV: label}
     return {}
 

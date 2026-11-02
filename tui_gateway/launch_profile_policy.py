@@ -59,12 +59,12 @@ def _servable_profile_homes() -> set:
     ``hermes profile create`` leaves behind — counting it would flip a single-profile host
     fail-closed at its next boot.
     """
-    from hermes_constants import named_profile_has_servable_identity
+    from hermes_constants import get_process_hermes_home, named_profile_has_servable_identity
     from hermes_cli.profiles import profiles_to_serve
 
     homes = {Path(home).resolve() for name, home in profiles_to_serve(multiplex=True, include_standalone=True, include_parked=True)
              if name == "default" or named_profile_has_servable_identity(home)}
-    homes.add(Path(os.environ.get("HERMES_HOME") or Path.home() / ".hermes").resolve())
+    homes.add(get_process_hermes_home().resolve())
     return homes
 
 

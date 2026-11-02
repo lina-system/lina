@@ -106,7 +106,7 @@ uv_version="$(pin version)"
 py_version="$(pin version python | cut -d+ -f1 | cut -d. -f1,2)"
 [ -n "$uv_version" ] || { echo -e "${RED}✗${NC} no uv pin in pm/lock.json" >&2; exit 1; }
 
-store="${HERMES_RUNTIME_DIR:-$HOME/.hermes/tools}"
+store="${HERMES_RUNTIME_DIR:-${LINA_HOME:-$HOME/.lina}/tools}"
 entry="$store/uv-$uv_version-$target"
 uv="$entry/uv"; [ "$os" = win32 ] && uv="$entry/uv.exe"
 
@@ -215,7 +215,7 @@ echo -e "${CYAN}→${NC} Setting up hermes command..."
 # Reuse the bootstrap interpreter only to run the shared launcher writer.
 bin_dir="$HOME/.local/bin"
 if [ "$os" = win32 ]; then
-    bin_dir="$(cygpath -am "${HERMES_HOME:-${LOCALAPPDATA:-$HOME/AppData/Local}/hermes}/bin")"
+    bin_dir="$(cygpath -am "${LINA_HOME:-${LOCALAPPDATA:-$HOME/AppData/Local}/lina}/bin")"
 fi
 if ! "$boot_py" -I -X utf8 hermes_cli/_launchers.py "$bin_dir"; then
     echo -e "${RED}✗${NC} launcher publication failed" >&2
@@ -262,15 +262,17 @@ if [ "$os" != win32 ]; then
 fi
 
 # ============================================================================
-# Seed bundled skills into ~/.hermes/skills/
+# Seed bundled skills into ~/.lina/skills/
 # ============================================================================
 
-HERMES_SKILLS_DIR="${HERMES_HOME:-$HOME/.hermes}/skills"
+# The home the runtime will use: an inherited HERMES_HOME naming Hermes Agent's home is not it.
+lina_home="$("$boot_py" -c 'import os, hermes_constants as c; c.drop_foreign_hermes_home(os.environ); print(c.get_hermes_home())')"
+HERMES_SKILLS_DIR="$lina_home/skills"
 mkdir -p "$HERMES_SKILLS_DIR"
 
 echo ""
-echo "Syncing bundled skills to ~/.hermes/skills/ ..."
-if "$boot_py" -m tools.skills_sync 2>/dev/null; then
+echo "Syncing bundled skills to $HERMES_SKILLS_DIR ..."
+if HERMES_HOME="$lina_home" "$boot_py" -m tools.skills_sync 2>/dev/null; then
     echo -e "${GREEN}✓${NC} Skills synced"
 else
     # Fallback: copy if sync script fails (missing deps, etc.)

@@ -51,6 +51,20 @@ def test_adopt_keeps_files_and_numbered_folders_and_refuses_without_adopt(root_h
     assert desk_mod.desk_info()["folders"]["Projects"] == "1_Projects"
 
 
+def test_a_rerun_without_a_path_keeps_the_configured_desk(root_home, tmp_path):
+    """Regression for lina-system/lina#76: both installers rerun `desk init --adopt` with no path,
+    so a reinstall must not move a Desk made with `desk init --path` back to ~/Desk."""
+    custom = tmp_path / "Documents" / "Desk"
+    init_desk(custom)
+    configured = (root_home / "config.yaml").read_text(encoding="utf-8")
+
+    assert init_desk(adopt=True) == custom
+    assert desk_mod.configured_desk_path() == custom
+    assert (root_home / "config.yaml").read_text(encoding="utf-8") == configured
+    assert not (tmp_path / "Desk").exists()
+    assert sorted(p.name for p in custom.iterdir()) == ["AGENTS.md", "Archive", "Areas", "Inbox", "Projects", "Resources"]
+
+
 def test_refs_stay_on_the_desk(root_home, tmp_path):
     desk = init_desk(tmp_path / "Desk")
     (tmp_path / "secret.txt").write_text("x", encoding="utf-8")

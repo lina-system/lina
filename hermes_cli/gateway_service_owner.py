@@ -111,6 +111,8 @@ def foreign_systemd_unit_home(system: bool) -> str | None:
     Foreign means: the unit pins a home, it differs from this process's home, and this process's home
     is not the account's own default root. The last clause keeps the ``sudo`` remap (#108674): root's
     default home operating a unit that pins the invoking user's home is the operator, not a stranger.
+    That exception covers LINA homes only: a unit pinning Hermes Agent's ``~/.hermes`` (or any home
+    that is not LINA's) is another product's gateway.
     """
     from hermes_cli import gateway as gw
     unit_home = gw._hermes_home_pinned_by_unit(gw.get_systemd_unit_path(system=system))
@@ -123,8 +125,8 @@ def foreign_systemd_unit_home(system: bool) -> str | None:
         return None
     if unit == mine:
         return None
-    from hermes_constants import account_default_hermes_home
-    if mine == account_default_hermes_home().resolve():
+    from hermes_constants import account_default_hermes_home, is_lina_home
+    if mine == account_default_hermes_home().resolve() and is_lina_home(unit):
         return None
     return unit_home
 

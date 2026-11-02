@@ -8,6 +8,7 @@ import sys
 from collections.abc import Callable, Mapping
 
 from hermes_cli.config import DEFAULT_CONFIG
+from hermes_constants import LAUNCHD_LABEL_PREFIX
 
 # EX_TEMPFAIL (sysexits.h): ask the service manager to restart after a graceful drain/reload.
 GATEWAY_SERVICE_RESTART_EXIT_CODE = 75
@@ -102,7 +103,7 @@ def launchd_job_label(environ: Mapping[str, str] | None = None) -> str | None:
     env = os.environ if environ is None else environ
     for var in ("XPC_SERVICE_NAME", LAUNCHD_LABEL_ENV):
         label = str(env.get(var, "") or "").strip()
-        if label.startswith("ai.hermes"):
+        if label.startswith(LAUNCHD_LABEL_PREFIX):
             return label
     return None
 

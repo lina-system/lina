@@ -167,10 +167,11 @@ def _check_sensitive_path(filepath: str, task_id: str = "default") -> str | None
     # prompt-injected agent could silently disable exec approval by editing it.
     hermes_config = _get_hermes_config_resolved()
     if hermes_config and hermes_config in candidates:
+        from hermes_constants import display_hermes_home
         return (
             f"Refusing to write to Hermes config file: {filepath}\n"
             "Agent cannot modify security-sensitive configuration. "
-            "Edit ~/.hermes/config.yaml directly or use 'hermes config' instead.")
+            f"Edit {display_hermes_home()}/config.yaml directly or use 'hermes config' instead.")
     return None
 
 
