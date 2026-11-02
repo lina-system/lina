@@ -210,6 +210,46 @@ def test_cli_handoff_refused_while_gate_fails_without_judge(kanban_home, workspa
     assert _task(tid)[0].status == landed
 
 
+def _gate_once(tid):
+    from hermes_cli.kanban_goal_gates import run_card_gates
+
+    with kbc.connect_closing() as conn:
+        failure = run_card_gates(conn, kb.get_task(conn, tid))
+    return failure, [e.payload for e in _task(tid)[1] if e.kind == "goal_gate"]
+
+
+def test_card_gate_cannot_read_host_provider_credentials(kanban_home, workspace, monkeypatch):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-gate-sentinel-108")
+    tid, _ = _card(workspace, ['env | grep -c . ; env | grep -F "sk-gate"; echo "key=${OPENAI_API_KEY:-unset}"; exit 1'])
+
+    failure, events = _gate_once(tid)
+
+    assert failure is not None and "key=unset" in failure.output
+    assert "sk-gate-sentinel-108" not in failure.output
+    assert "sk-gate-sentinel-108" not in json.dumps(events)
+
+
+def test_card_gate_runs_in_local_backend_in_card_workspace(kanban_home, workspace):
+    (workspace / "marker").write_text("x")
+    tid, _ = _card(workspace, ["pwd; test -f marker"])
+
+    failure, events = _gate_once(tid)
+
+    assert failure is None
+    assert events[-1]["passed"] is True and str(workspace) in events[-1]["output_tail"]
+
+
+def test_card_gate_fails_closed_when_backend_unreachable(kanban_home, workspace, monkeypatch):
+    monkeypatch.setenv("TERMINAL_ENV", "no-such-backend-108")
+    (workspace / "marker").write_text("x")
+    tid, _ = _card(workspace, ["test -f marker"])
+
+    failure, events = _gate_once(tid)
+
+    assert failure is not None and failure.exit_code == -1
+    assert "no-such-backend-108" in failure.output and events[-1]["passed"] is False
+
+
 def test_legacy_board_without_goal_gates_column_opens(tmp_path, monkeypatch):
     home = tmp_path / ".hermes"
     home.mkdir()

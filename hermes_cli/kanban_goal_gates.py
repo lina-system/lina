@@ -2,8 +2,11 @@
 
 A card may carry ``goal_gates``: a JSON list in the ``GoalGate`` shape ``/goal`` uses. The card
 goal loop runs them at every turn boundary before the judge, and ``kanban_complete`` /
-``kanban_request_review`` refuse while one fails. Gate execution is ``goals.run_gate``; this
-module only adds the card side: the workspace, the per-card retry state and the event trail.
+``kanban_request_review`` refuse while one fails. The card side lives here: the workspace, the
+per-card retry state, the event trail, and execution. Card gates can be written by a model
+(``kanban_create goal_gates``), so unlike ``/goal``'s operator-typed gates (``goals.run_gate``)
+they never run as a host shell: they go through the profile's configured terminal backend with
+its scrubbed child environment, exactly like a terminal-tool command.
 """
 
 from __future__ import annotations
@@ -18,11 +21,40 @@ from hermes_cli.goals import (
     CONTINUATION_PROMPT_GATE_FAILED_TEMPLATE,
     GATE_WAIT_EXIT_CODE,
     GoalGate,
-    run_gate,
 )
 
 GATE_EVENT_KIND = "goal_gate"
 _EVENT_TAIL_CHARS = 1000
+_PROMPT_TAIL_CHARS = 3000
+
+
+def run_card_gate(gate: GoalGate, *, cwd: str, task_id: str) -> tuple[bool, int, str]:
+    """Run one card gate in the profile's terminal backend (local, container, ssh, ...), never
+    as a host shell: the backend's child environment carries no provider credentials, and a
+    sandboxed backend confines the command like any model-issued shell command (SECURITY.md,
+    terminal-backend isolation). A backend that cannot be brought up fails the gate closed.
+    Returns ``(passed, exit_code, output_tail)``."""
+    from tools.terminal_tool import _get_env_config, _select_image, resolve_task_overrides
+    from tools.terminal_tool_lifecycle import _cleanup_env, _create_configured_env
+
+    key = f"kanban-gate-{task_id}"
+    env_type = "terminal"
+    try:
+        config = _get_env_config()
+        env_type = config["env_type"]
+        env = _create_configured_env(
+            config, env_type, image=_select_image(env_type, resolve_task_overrides(key), config),
+            cwd=cwd, timeout=int(gate.timeout_seconds), task_id=key, host_cwd=None)
+    except Exception as exc:  # health: allow BLE001 -- any backend bring-up failure must fail the gate closed, and the reason is the gate's output
+        return False, -1, f"[gate not run: the {env_type} backend could not be reached: {exc}]"
+    try:
+        result = env.execute(gate.command, cwd=cwd, timeout=int(gate.timeout_seconds))
+    except Exception as exc:  # health: allow BLE001 -- a backend error mid-run fails the gate closed with its reason as output
+        return False, -1, f"[gate not run: the {env_type} backend failed: {exc}]"
+    finally:
+        _cleanup_env(env)
+    exit_code = int(result.get("returncode", -1))
+    return exit_code == 0, exit_code, str(result.get("output") or "")[-_PROMPT_TAIL_CHARS:]
 
 
 def normalize_gates(value: Optional[Iterable[Any]], *, goal_mode: bool) -> Optional[str]:
@@ -114,7 +146,7 @@ def run_card_gates(conn: sqlite3.Connection, task, *, workspace: Optional[str] =
         return GateFailure(None, -1, refusal, exhausted=True)
     failure, events = None, []
     for gate in gates:
-        passed, exit_code, tail = run_gate(gate, cwd=cwd)
+        passed, exit_code, tail = run_card_gate(gate, cwd=cwd, task_id=task.id)
         gate.last_exit_code, gate.last_output_tail = exit_code, tail
         events.append({"command": gate.command, "exit_code": exit_code, "passed": passed,
                        "output_tail": tail[-_EVENT_TAIL_CHARS:]})
