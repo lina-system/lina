@@ -4,7 +4,16 @@ from urllib.parse import parse_qs, urlparse
 
 import pytest
 
+from plugins.memory.honcho import attribution
 from plugins.memory.honcho.attribution import HONCHO_APP_URL, HONCHO_DOCS_URL, attribution_url
+
+_real_consent = attribution.telemetry_consented
+
+
+@pytest.fixture(autouse=True)
+def _consented(monkeypatch):
+    """The tagging rules below apply once the user opts in; the default is covered at the end."""
+    monkeypatch.setattr(attribution, "telemetry_consented", lambda: True)
 
 
 def _q(url: str) -> dict[str, list[str]]:
@@ -45,9 +54,9 @@ def test_non_web_or_malformed_input_comes_back_unchanged(url):
     assert attribution_url(url, "x") == url
 
 
-def test_config_panel_docs_link_matches_the_helper():
-    # config_schema.py can't import the helper (Hermes loads it standalone), so it hardcodes the URL.
+def test_links_stay_untagged_without_the_opt_in(monkeypatch):
+    monkeypatch.setattr(attribution, "telemetry_consented", _real_consent)  # no honcho.json: no consent
     from plugins.memory.honcho.config_schema import CONFIG_SCHEMA
 
-    assert CONFIG_SCHEMA.docs_url == attribution_url(HONCHO_DOCS_URL, "config-panel")
-
+    assert attribution_url(HONCHO_APP_URL, "apikey-prompt") == HONCHO_APP_URL
+    assert CONFIG_SCHEMA.docs_url == HONCHO_DOCS_URL

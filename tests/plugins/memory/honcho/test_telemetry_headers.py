@@ -1,8 +1,9 @@
-"""Client-identity headers the plugin attaches to every Honcho request."""
+"""Client-identity headers the plugin attaches to Honcho requests once the user opts in."""
 
 import sys
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -53,11 +54,33 @@ def test_host_header_omits_an_unresolvable_hermes_version(monkeypatch):
     assert telemetry_headers()["X-Honcho-Host"] == f"hermes ({sys.platform})"
 
 
-def test_built_client_sends_the_telemetry_headers():
-    pytest.importorskip("honcho")  # the opt-in `honcho` extra is outside the default [all] test env
-    cfg = HonchoClientConfig(api_key="k", base_url="http://localhost:8000", workspace_id="hermes")
+def _fake_sdk(monkeypatch) -> MagicMock:
+    """Stand-in for `from honcho import Honcho`, so the client build runs without the opt-in SDK extra."""
+    honcho_cls = MagicMock(name="Honcho")
+    monkeypatch.setitem(sys.modules, "honcho", SimpleNamespace(Honcho=honcho_cls))
+    return honcho_cls
 
-    with patch("honcho.Honcho", return_value=MagicMock(name="Honcho")) as mock_honcho:
-        get_honcho_client(cfg)
 
-    assert mock_honcho.call_args.kwargs["default_headers"] == telemetry_headers()
+def test_default_client_sends_no_attribution_headers(monkeypatch):
+    """lina#14: without the telemetry opt-in no request carries X-Honcho-Host / X-Honcho-Plugin."""
+    honcho_cls = _fake_sdk(monkeypatch)
+    get_honcho_client(HonchoClientConfig(api_key="k", base_url="http://localhost:8000", workspace_id="hermes"))
+
+    headers = honcho_cls.call_args.kwargs.get("default_headers") or {}
+    assert "X-Honcho-Host" not in headers and "X-Honcho-Plugin" not in headers
+
+
+def test_opted_in_client_sends_the_telemetry_headers(monkeypatch):
+    honcho_cls = _fake_sdk(monkeypatch)
+    get_honcho_client(HonchoClientConfig(api_key="k", base_url="http://localhost:8000", workspace_id="hermes",
+                                         telemetry=True))
+
+    assert honcho_cls.call_args.kwargs["default_headers"] == telemetry_headers()
+
+
+def test_telemetry_opt_in_is_read_from_honcho_json():
+    from hermes_constants import get_hermes_home
+
+    assert HonchoClientConfig.from_global_config().telemetry is False
+    (get_hermes_home() / "honcho.json").write_text('{"apiKey": "k", "telemetry": true}', encoding="utf-8")
+    assert HonchoClientConfig.from_global_config().telemetry is True

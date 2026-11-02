@@ -338,6 +338,7 @@ def _behavior_fields(look: _HostLookup, explicitly_configured: bool) -> dict[str
         "session_strategy": look.pick("sessionStrategy", "per-directory"),
         "session_peer_prefix": look.pick_set("sessionPeerPrefix", False),
         "a2a_sessions": look.flag("a2aSessions", default=True),
+        "telemetry": look.flag("telemetry", default=False),
         "session_ai_peer_prefix": look.pick_set("sessionAiPeerPrefix", False),
     }
 
@@ -406,6 +407,8 @@ class HonchoClientConfig:
     # Prefixes every resolved session name with ``{ai_peer}-``. The gateway_session_key branch is
     # AI-peer-agnostic, so several AI peers sharing one workspace + peerName + chat key would collide.
     session_ai_peer_prefix: bool = False
+    # Explicit opt-in for the X-Honcho-Host / X-Honcho-Plugin headers and UTM-tagged links; off by default.
+    telemetry: bool = False
     sessions: dict[str, str] = field(default_factory=dict)
     raw: dict[str, Any] = field(default_factory=dict)
     # A hosts.<host> block or explicit enabled flag, vs auto-enabled from a stray env key.
@@ -710,7 +713,9 @@ def _build_client(config: HonchoClientConfig) -> Honcho:
     explicit_key = _host_block(raw, config.host).get("apiKey") or raw.get("apiKey")
     api_key = "local" if _is_local_base_url(base_url) and not explicit_key else config.api_key
     kwargs: dict = {"workspace_id": config.workspace_id, "api_key": api_key, "environment": config.environment,
-                    "timeout": timeout, "default_headers": telemetry_headers()}
+                    "timeout": timeout}
+    if config.telemetry:  # attribution ships only with the user's explicit honcho.json opt-in
+        kwargs["default_headers"] = telemetry_headers()
     if base_url:
         # The SDK's route builders already carry the version prefix ("/v3/..."), so
         # strip a trailing version segment from any base_url to avoid "/v3/v3/...".

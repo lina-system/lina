@@ -17,7 +17,14 @@ from urllib.parse import parse_qs, urlparse
 import httpx
 import pytest
 
-from plugins.memory.honcho import oauth, oauth_flow
+from plugins.memory.honcho import attribution, oauth, oauth_flow
+
+
+@pytest.fixture
+def consented(monkeypatch):
+    """The user opted in to attribution (honcho.json telemetry: true)."""
+    monkeypatch.setattr(attribution, "telemetry_consented", lambda: True)
+
 
 # Opt-in: эти тесты поднимают собственный loopback OAuth-сервер внутри теста
 # и коннектятся к нему же - внешней сети нет (guard B8 это разрешает явно).
@@ -230,7 +237,7 @@ def test_source_tags_the_authorize_link(fake_as):
     assert "source" not in parse_qs(urlparse(untagged).query)
 
 
-def test_authorize_link_carries_hermes_attribution(fake_as):
+def test_authorize_link_carries_hermes_attribution(fake_as, consented):
     """Web analytics on the dashboard attributes the sign-in to Hermes, not "Direct"."""
     endpoints = oauth_flow.resolve_endpoints()
     for source in ("hermes-cli", None):
@@ -241,7 +248,7 @@ def test_authorize_link_carries_hermes_attribution(fake_as):
 
 
 
-def test_authorize_url_override_with_a_query_is_extended(fake_as):
+def test_authorize_url_override_with_a_query_is_extended(fake_as, consented):
     """An overridden /authorize URL that already has a query keeps it, and its utm_* values win."""
     endpoints = oauth_flow.resolve_endpoints()
     endpoints = dataclasses.replace(endpoints, authorize_url=f"{endpoints.authorize_url}?tenant=x&utm_source=staging")
@@ -365,7 +372,7 @@ def test_supports_device_login_from_metadata(fake_as):
     assert oauth_flow.supports_device_login(dead, timeout=0.2) is False
 
 
-def test_request_device_code_parses_response_and_sends_identity(fake_as):
+def test_request_device_code_parses_response_and_sends_identity(fake_as, consented):
     endpoints = oauth_flow.resolve_endpoints()
     device = oauth_flow.request_device_code(endpoints, source="hermes-cli")
     assert device.device_code == "dev-code-1"

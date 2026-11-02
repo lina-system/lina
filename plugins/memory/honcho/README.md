@@ -261,6 +261,7 @@ With multiple profiles: saving a root-cascading map asks whether the edit applie
 | Key | Type | Default | Description |
 |-----|------|---------|-------------|
 | `writeFrequency` | string/int | `"async"` | `"async"` (background), `"turn"` (sync per turn), `"session"` (batch on end), or integer N (every N turns) |
+| `telemetry` | bool | `false` | Explicit opt-in: send `X-Honcho-Host` (Hermes version, OS) and `X-Honcho-Plugin` headers and add `utm_*` parameters to Honcho links. Off by default, so nothing is attributed. |
 | `saveMessages` | bool | `true` | Persist messages to Honcho API. When `false`, all automatic writes are skipped — raw turns (`sync_turn`), conclusion mirroring (`on_memory_write`), the first-session upload of `MEMORY.md` / `USER.md` / `SOUL.md`, and session-end/shutdown flushes — while read and tools paths stay fully functional. |
 
 ### Session Resolution

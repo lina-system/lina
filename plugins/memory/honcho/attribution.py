@@ -6,7 +6,8 @@ starts in Hermes lands in web analytics as its own source instead of "Direct"::
 
     https://app.honcho.dev/?utm_source=hermes&utm_medium=plugin&utm_content=apikey-prompt
 
-Only these three static parameters are added. Nothing user-, machine- or session-identifying goes
+Only these three static parameters are added, and only after the user opts in with ``telemetry: true``
+in honcho.json; by default no link is tagged. Nothing user-, machine- or session-identifying goes
 into a URL.
 
 ``config_schema.py`` can't import this module (Hermes loads that file standalone, outside the package),
@@ -15,7 +16,10 @@ so it carries its tagged docs URL as a literal; ``tests/test_attribution.py`` ke
 
 from __future__ import annotations
 
+import logging
 from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
+
+logger = logging.getLogger(__name__)
 
 HONCHO_APP_URL = "https://app.honcho.dev"
 HONCHO_DOCS_URL = "https://docs.honcho.dev/v3/guides/integrations/hermes"
@@ -29,13 +33,26 @@ def attribution_params(placement: str) -> dict[str, str]:
     return {"utm_source": UTM_SOURCE, "utm_medium": UTM_MEDIUM, "utm_content": placement}
 
 
+def telemetry_consented() -> bool:
+    """True only when the active honcho.json opts in with ``telemetry: true`` (host block or root)."""
+    try:
+        from .client import HonchoClientConfig
+        return HonchoClientConfig.from_global_config().telemetry
+    except Exception:  # an unreadable config is no consent
+        logger.debug("Honcho telemetry consent unreadable; attribution stays off", exc_info=True)
+        return False
+
+
 def attribution_url(url: str, placement: str) -> str:
     """``url`` with the Hermes UTM parameters appended.
 
     Existing query parameters are kept in order, and a ``utm_*`` key the URL already carries wins, so
     an already-tagged link is never re-attributed. Never raises: a URL that can't be parsed comes
-    back unchanged, because a link with no attribution beats a setup step that crashes.
+    back unchanged, because a link with no attribution beats a setup step that crashes. Without the
+    ``telemetry`` opt-in (the default) every URL comes back unchanged.
     """
+    if not telemetry_consented():
+        return url
     try:
         parts = urlsplit(url)
         if parts.scheme not in ("http", "https") or not parts.netloc:
