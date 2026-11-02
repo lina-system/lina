@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Jun, 2026-11-02
 """Native metadata and artifact publication use the same verified bytes."""
 import hashlib
 import copy

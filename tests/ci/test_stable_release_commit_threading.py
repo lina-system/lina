@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Jun, 2026-11-02
 """Stable runs on the default branch, so every lane must be told which commit to test."""
 import re
 from pathlib import Path

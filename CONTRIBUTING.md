@@ -1,8 +1,6 @@
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- Modified by Jun, 2026-11-02 -->
 # Contributing to Hermes Agent
 
-External contributions need the CLA (CLA.md) signed before review.
+Contributions are accepted under the project's license (AGPL-3.0). Please add a `Signed-off-by` line to your commits (`git commit -s`) to certify you have the right to submit them (Developer Certificate of Origin).
 
 Thank you for contributing to Hermes Agent! This guide covers everything you need: setting up your dev environment, understanding the architecture, deciding what to build, and getting your PR merged.
 

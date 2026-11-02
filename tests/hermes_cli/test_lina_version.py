@@ -1,4 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-only
 """LINA identity: the displayed version, the package version and ``hermes --version`` agree."""
 
 import os

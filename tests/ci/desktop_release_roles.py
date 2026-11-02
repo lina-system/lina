@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Jun, 2026-11-02
 """Find desktop release workflow jobs by what they do, not by their ids.
 
 Job ids in desktop-bundled-release.yml change whenever the build graph is

@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Jun, 2026-11-02
 """Gateway launchd (macOS LaunchAgent) backend: plist generation/refresh, bootstrap, start/stop/restart/status.
 
 Extracted from ``hermes_cli/gateway.py``. Bodies read facade helpers through ``_gw()`` (late

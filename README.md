@@ -30,7 +30,7 @@ LINA's engine comes from [Hermes Agent](https://github.com/NousResearch/hermes-a
 
 ## License and contributions
 
-LINA is available under the GNU Affero General Public License v3.0 ([LICENSE](LICENSE)). It is a fork of Hermes Agent, whose code remains under the MIT License; that notice is kept in [LICENSES/Hermes-MIT.txt](LICENSES/Hermes-MIT.txt). Third-party components keep their own licenses. See [NOTICE](NOTICE) for what each license covers.
+LINA is licensed under AGPL-3.0 ([LICENSE](LICENSE)). It is a fork of [Hermes Agent](https://github.com/NousResearch/hermes-agent), whose original code is MIT-licensed ([LICENSES/Hermes-MIT.txt](LICENSES/Hermes-MIT.txt)).
 
 This repository holds LINA. The LINA app for mobile and the Mac launcher is developed in its own repository, [lina-app](https://github.com/lina-system/lina-app). LINA OS is a separate, optional project in [lina-os](https://github.com/lina-system/lina-os).
 
@@ -39,8 +39,6 @@ Report a problem or an idea for LINA in this repository's Issues. App problems g
 ---
 
 The original Hermes Agent README follows below for reference.
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
-<!-- Modified by Jun, 2026-11-02 -->
 
 <p align="center">
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">

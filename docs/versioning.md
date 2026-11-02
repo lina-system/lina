@@ -1,4 +1,3 @@
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Versioning
 
 LINA restarts its version at `0.0.1`. Hermes upstream versions and tags are not carried over.

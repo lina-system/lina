@@ -1,4 +1,3 @@
-<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # CI
 
 LINA runs a small CI of its own. The upstream Hermes workflows are kept, unchanged and inactive, for comparison when upstream is taken in ([forking.md](forking.md)).
@@ -96,7 +95,3 @@ Only public repositories use GitHub CI. Private repositories (for example hermes
 - `windows-desktop-attach-e2e.yml`
 - `windows-install-update-e2e.yml`
 - `windows-venv-e2e.yml`
-
-## Next
-
-- Dependency license check that flags AGPL, GPL and LGPL dependencies.

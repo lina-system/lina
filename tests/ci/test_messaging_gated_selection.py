@@ -1,5 +1,3 @@
-# SPDX-License-Identifier: AGPL-3.0-only
-# Modified by Jun, 2026-11-02
 """Dependency-gated gateway cases run in a job that has their dependency.
 
 The ordinary pytest slices omit the ``messaging`` extra, so a gateway test that probes for the REAL
