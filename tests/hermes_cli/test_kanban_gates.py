@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -225,6 +227,64 @@ def test_artifact_check_that_hangs_fails(tmp_path):
     target = tmp_path / "deliverable.txt"
     target.write_text("data")
     assert _run("artifact", str(target), "--check", "exec sleep 30", "--timeout", "0.5") == gates.FAIL
+
+
+def test_artifact_timeout_kills_descendant_before_release(tmp_path, monkeypatch):
+    target = tmp_path / "deliverable.txt"
+    target.write_text("data")
+    marker = tmp_path / "late-write"
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(10)
+        child = (
+            "import socket; from pathlib import Path; "
+            f"s=socket.create_connection({listener.getsockname()!r}, timeout=10); "
+            "s.sendall(b'ready'); release=s.recv(1); "
+            f"Path({str(marker)!r}).write_text('late') if release else None; "
+            "s.sendall(b'written') if release else None"
+        )
+        check = f"{shlex.quote(sys.executable)} -c {shlex.quote(child)}; :"
+        original_wait = subprocess.Popen.wait
+        connection = None
+
+        def wait_after_ready(proc, timeout=None):
+            nonlocal connection
+            if proc.args == check and connection is None:
+                connection, _ = listener.accept()
+                connection.settimeout(10)
+                assert connection.recv(5) == b"ready"
+            return original_wait(proc, timeout=timeout)
+
+        monkeypatch.setattr(subprocess.Popen, "wait", wait_after_ready)
+        try:
+            assert _run("artifact", str(target), "--check", check, "--timeout", "0.1") == gates.FAIL
+            assert connection is not None
+            try:
+                connection.sendall(b"x")
+            except BrokenPipeError:
+                pass
+            try:
+                response = connection.recv(7)
+            except ConnectionResetError:
+                response = b""
+            assert response == b"", "check descendant survived the timeout and wrote after release"
+            assert not marker.exists()
+        finally:
+            if connection is not None:
+                connection.close()
+
+
+@pytest.mark.parametrize("completion", [{"result": "looks good"}, {"summary": "looks good"}, {}])
+@pytest.mark.parametrize("reviewer, expected", [("bob", gates.PASS), ("alice", gates.FAIL)])
+def test_unclaimed_review_completion_preserves_implementer(board, completion, reviewer, expected):
+    tid = _card()
+    with connect() as conn:
+        assert kb.request_review(conn, tid, summary="ready", reviewer=reviewer, force=True)
+        assert kb.complete_task(conn, tid, **completion)
+    assert _run("review", "--card", tid) == expected
+    with gates.open_board(str(board)) as conn:
+        assert gates.own_names(conn, gates.load_card(conn, tid)) == {"alice"}
 
 
 def _review_flow(tid, reviewer):

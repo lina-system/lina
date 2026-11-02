@@ -123,7 +123,7 @@ def own_names(conn: sqlite3.Connection, card: sqlite3.Row) -> set[str]:
         own.add(payload.get("implementer") or payload.get("reviewer") or "")
     review_runs = _review_run_ids(conn, card["id"])
     for row in conn.execute("SELECT id, profile, metadata FROM task_runs WHERE task_id = ?", (card["id"],)):
-        if row["id"] not in review_runs and not _synthesized_review(row):
+        if row["id"] not in review_runs:
             own.add(row["profile"] or "")
     if card["assignee"] and card["assignee"] not in reviewers:
         own.add(card["assignee"])
@@ -132,18 +132,25 @@ def own_names(conn: sqlite3.Connection, card: sqlite3.Row) -> set[str]:
 
 
 def _review_run_ids(conn: sqlite3.Connection, card_id: str) -> set[int]:
-    rows = conn.execute("SELECT run_id, payload FROM task_events WHERE task_id = ? AND kind = 'claimed'",
-                        (card_id,))
-    return {row["run_id"] for row in rows if _payload(row).get("source_status") == "review"}
-
-
-def _synthesized_review(run: sqlite3.Row) -> bool:
-    """Run row ``complete_task`` synthesizes when a card is approved out of ``review`` unclaimed."""
-    try:
-        metadata = json.loads(run["metadata"] or "null")
-    except ValueError:
-        return False
-    return isinstance(metadata, dict) and metadata.get("source_status") == "review"
+    """Classify claimed and manual review runs from persisted transitions, not optional metadata."""
+    rows = conn.execute(
+        "SELECT e.kind, e.run_id, e.payload, r.profile, r.outcome FROM task_events e "
+        "LEFT JOIN task_runs r ON r.id = e.run_id AND r.task_id = e.task_id "
+        "WHERE e.task_id = ? AND e.kind IN "
+        "('review_requested', 'claimed', 'completed', 'blocked', 'reopened', 'changes_requested') "
+        "ORDER BY e.id", (card_id,))
+    found: set[int] = set()
+    reviewer = None
+    for row in rows:
+        if row["kind"] == "review_requested":
+            reviewer = _payload(row).get("reviewer")
+            continue
+        if (row["kind"] == "claimed" and _payload(row).get("source_status") == "review"
+                or row["kind"] == "completed" and reviewer and row["profile"] == reviewer
+                and row["outcome"] == "completed"):
+            found.add(row["run_id"])
+        reviewer = None
+    return found
 
 
 
@@ -304,6 +311,17 @@ def _non_empty(path: Path) -> bool:
 
 
 def gate_artifact(args: argparse.Namespace, report: Report) -> None:
+    if __package__:
+        from hermes_cli._subprocess_compat import kill_process_tree, windows_detach_popen_kwargs
+    else:  # Plain-file execution, including python -I: resolve the stdlib-only sibling locally.
+        import importlib.util
+        spec = importlib.util.spec_from_file_location(
+            "_subprocess_compat", Path(__file__).with_name("_subprocess_compat.py"))
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        kill_process_tree = module.kill_process_tree
+        windows_detach_popen_kwargs = module.windows_detach_popen_kwargs
+
     path = Path(args.path).expanduser()
     if not path.exists():
         report.line(FAIL, f"{path}: does not exist")
@@ -313,12 +331,17 @@ def gate_artifact(args: argparse.Namespace, report: Report) -> None:
         return
     report.line(PASS, f"{path}: exists and is not empty")
     sys.stdout.flush()
-    try:
-        result = subprocess.run(args.check, shell=True, stdin=subprocess.DEVNULL, check=False, timeout=args.timeout)
-    except subprocess.TimeoutExpired:
-        report.line(FAIL, f"check timed out after {args.timeout}s: {args.check}")
-        return
-    report.line(PASS if result.returncode == 0 else FAIL, f"check exited {result.returncode}: {args.check}")
+    with subprocess.Popen(args.check, shell=True, stdin=subprocess.DEVNULL,
+                          # detached-spawn: ok -- awaited check owns its group, tree-killed on timeout.
+                          **windows_detach_popen_kwargs()) as proc:
+        try:
+            proc.wait(timeout=args.timeout)
+        except subprocess.TimeoutExpired:
+            kill_process_tree(proc)
+            proc.wait(timeout=args.timeout)
+            report.line(FAIL, f"check timed out after {args.timeout}s: {args.check}")
+            return
+        report.line(PASS if proc.returncode == 0 else FAIL, f"check exited {proc.returncode}: {args.check}")
 
 
 
@@ -327,7 +350,7 @@ def _approvals(conn, card, own, owners) -> list[tuple[int, str]]:
     review_runs = _review_run_ids(conn, card["id"])
     for run in conn.execute("SELECT id, profile, metadata, ended_at FROM task_runs "
                             "WHERE task_id = ? AND outcome = 'completed'", (card["id"],)):
-        if (run["id"] in review_runs or _synthesized_review(run)) and run["profile"] and run["profile"] not in own:
+        if run["id"] in review_runs and run["profile"] and run["profile"] not in own:
             found.append((run["ended_at"] or 0, f"review run {run['id']} by {run['profile']} completed"))
     for row in conn.execute("SELECT id, author, body, created_at FROM task_comments WHERE task_id = ?",
                             (card["id"],)):
