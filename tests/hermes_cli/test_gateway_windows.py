@@ -25,7 +25,7 @@ def test_exec_schtasks_decodes_ansi_output_under_utf8_mode(monkeypatch):
     monkeypatch.setattr(gateway_windows.shutil, "which", lambda name: "schtasks.exe")
     monkeypatch.setattr(gateway_windows.locale, "getpreferredencoding", lambda *a, **k: "utf-8")
     monkeypatch.setattr(gateway_windows, "_windows_console_encodings", lambda: ["cp936"], raising=False)
-    xml = r'<Arguments>//B //Nologo "C:\Users\方舟\AppData\Local\hermes\gateway-service\Hermes_Gateway.vbs"</Arguments>'
+    xml = r'<Arguments>//B //Nologo "C:\Users\方舟\AppData\Local\hermes\gateway-service\LINA_Gateway.vbs"</Arguments>'
 
     def fake_run(argv, **kwargs):
         # schtasks writes cp936 bytes; honour text/encoding like the real subprocess would.
@@ -37,7 +37,7 @@ def test_exec_schtasks_decodes_ansi_output_under_utf8_mode(monkeypatch):
 
     monkeypatch.setattr(gateway_windows.subprocess, "run", fake_run)
 
-    code, out, err = gateway_windows._exec_schtasks(["/Query", "/TN", "Hermes_Gateway", "/XML"])
+    code, out, err = gateway_windows._exec_schtasks(["/Query", "/TN", "LINA_Gateway", "/XML"])
 
     assert (code, out) == (0, xml)
     assert gateway_windows._is_access_denied(err) and gateway_windows._should_fall_back(1, err)
@@ -45,16 +45,16 @@ def test_exec_schtasks_decodes_ansi_output_under_utf8_mode(monkeypatch):
 
 @pytest.mark.platforms("windows")
 def test_registered_task_launchers_reads_each_hermes_task_action(monkeypatch):
-    """The install probe's view of the Scheduled Tasks: the launcher each ``Hermes_Gateway*`` task
+    """The install probe's view of the Scheduled Tasks: the launcher each ``LINA_Gateway*`` task
     starts, as the task XML this module writes names it, and a pre-``wscript`` task's ``.cmd``."""
-    launcher = r"C:\Users\Ann Lee\custom hermes\gateway-service\Hermes_Gateway_work.vbs"
-    legacy = r"C:\Users\ann\h2\gateway-service\Hermes_Gateway.cmd"
-    current = gateway_windows._build_scheduled_task_xml("Hermes_Gateway_work", Path(launcher), "PC\\ann")
+    launcher = r"C:\Users\Ann Lee\custom hermes\gateway-service\LINA_Gateway_work.vbs"
+    legacy = r"C:\Users\ann\h2\gateway-service\LINA_Gateway.cmd"
+    current = gateway_windows._build_scheduled_task_xml("LINA_Gateway_work", Path(launcher), "PC\\ann")
     older = current.replace("<Command>wscript.exe</Command>", f"<Command>{legacy}</Command>").replace(
         f'//B //Nologo "{launcher}"', "")
     listing = ('\r\n"\\Microsoft\\Windows\\Defrag\\ScheduledDefrag","N/A","Ready"\r\n'
-               '"\\Hermes_Gateway_work","N/A","Ready"\r\n"\\Hermes_Gateway","N/A","Running"\r\n')
-    xml = {"Hermes_Gateway_work": current, "Hermes_Gateway": older}
+               '"\\LINA_Gateway_work","N/A","Ready"\r\n"\\LINA_Gateway","N/A","Running"\r\n')
+    xml = {"LINA_Gateway_work": current, "LINA_Gateway": older}
     monkeypatch.setattr(gateway_windows, "_exec_schtasks",
                         lambda args, timeout=None: (0, listing if "/FO" in args else xml[args[2]], ""))
 
@@ -327,7 +327,7 @@ def test_install_scheduled_task_recreates_instead_of_change(monkeypatch, tmp_pat
     external dependency), so no platform fake is needed.
     """
     calls = []
-    script_path = tmp_path / "Hermes_Gateway_alice.cmd"
+    script_path = tmp_path / "LINA_Gateway_alice.cmd"
     xml_seen = {}
 
     monkeypatch.setattr(gateway_windows, "_resolve_task_user", lambda: r"DOMAIN\\alice")
@@ -343,11 +343,11 @@ def test_install_scheduled_task_recreates_instead_of_change(monkeypatch, tmp_pat
         raise AssertionError(f"unexpected schtasks args: {args}")
 
     monkeypatch.setattr(gateway_windows, "_exec_schtasks", fake_schtasks)
-    ok, _detail = gateway_windows._install_scheduled_task("Hermes_Gateway_alice", script_path)
+    ok, _detail = gateway_windows._install_scheduled_task("LINA_Gateway_alice", script_path)
 
     assert ok is True
     assert "/Change" not in [arg for call in calls for arg in call]
-    assert calls[0][:4] == ("/Delete", "/F", "/TN", "Hermes_Gateway_alice")
+    assert calls[0][:4] == ("/Delete", "/F", "/TN", "LINA_Gateway_alice")
     assert calls[1][0] == "/Create"
     assert "/XML" in calls[1]
     assert "/SC" not in calls[1]
@@ -363,7 +363,7 @@ def test_install_scheduled_task_recreates_instead_of_change(monkeypatch, tmp_pat
     # (issue #45599 fix A: no console -> no logon CTRL_CLOSE_EVENT / 0xC000013A).
     assert "<Command>wscript.exe</Command>" in xml_seen["text"]
     assert "//B //Nologo" in xml_seen["text"]
-    assert "Hermes_Gateway_alice.vbs" in xml_seen["text"]
+    assert "LINA_Gateway_alice.vbs" in xml_seen["text"]
     assert "cmd.exe" not in xml_seen["text"]
 
 
@@ -397,7 +397,7 @@ def test_atomic_write_leaves_no_staging_file_when_swap_fails(monkeypatch, tmp_pa
     """The Startup folder is the staging dir: a leftover .tmp there is opened by Windows at every login."""
     startup = tmp_path / "Startup"
     startup.mkdir()
-    entry, staging = startup / "Hermes_Gateway.vbs", startup / "Hermes_Gateway.tmp"
+    entry, staging = startup / "LINA_Gateway.vbs", startup / "LINA_Gateway.tmp"
 
     def _denied(self, target):
         raise PermissionError(5, "Access is denied")
@@ -414,14 +414,14 @@ def test_uninstall_and_reinstall_sweep_stale_startup_staging_file(monkeypatch, t
     Scheduled Task path (which never rewrites the Startup folder itself)."""
     startup = tmp_path / "Startup"
     startup.mkdir()
-    entry, staging = startup / "Hermes_Gateway_alice.vbs", startup / "Hermes_Gateway_alice.tmp"
-    script = tmp_path / "task" / "Hermes_Gateway_alice.cmd"
+    entry, staging = startup / "LINA_Gateway_alice.vbs", startup / "LINA_Gateway_alice.tmp"
+    script = tmp_path / "task" / "LINA_Gateway_alice.cmd"
 
     monkeypatch.setattr(gateway_windows, "_assert_windows", lambda: None)
-    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "Hermes_Gateway_alice")
+    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "LINA_Gateway_alice")
     monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: script)
     monkeypatch.setattr(gateway_windows, "get_startup_entry_path", lambda: entry)
-    monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: startup / "Hermes_Gateway_alice.cmd")
+    monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: startup / "LINA_Gateway_alice.cmd")
     monkeypatch.setattr(gateway_windows, "is_task_registered", lambda: False)
 
     staging.write_text("stale", encoding="utf-8")
@@ -442,12 +442,12 @@ def _startup_with_fallback_and_legacy_entries(monkeypatch, tmp_path):
     """A Startup folder holding both the .vbs fallback and the pre-#45610 .cmd launcher."""
     startup = tmp_path / "Startup"
     startup.mkdir(parents=True)
-    script = tmp_path / "gateway-service" / "Hermes_Gateway_alice.cmd"
-    vbs, cmd = startup / "Hermes_Gateway_alice.vbs", startup / "Hermes_Gateway_alice.cmd"
+    script = tmp_path / "gateway-service" / "LINA_Gateway_alice.cmd"
+    vbs, cmd = startup / "LINA_Gateway_alice.vbs", startup / "LINA_Gateway_alice.cmd"
     vbs.write_text(gateway_windows._build_startup_launcher(script), encoding="utf-8")
     cmd.write_text("@echo off", encoding="utf-8")
     monkeypatch.setattr(gateway_windows, "_assert_windows", lambda: None)
-    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "Hermes_Gateway_alice")
+    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "LINA_Gateway_alice")
     monkeypatch.setattr(gateway_windows, "get_startup_entry_path", lambda: vbs)
     monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: cmd)
     monkeypatch.setattr(gateway_windows, "_write_task_script", lambda: script)
@@ -489,7 +489,7 @@ def test_reconcile_leaves_one_autostart_mechanism(monkeypatch, tmp_path):
     assert [p.suffix for p in gateway_windows.redundant_autostart_entries()] == [".cmd"]
     gateway_windows.reconcile_autostart_launchers()
     assert gateway_windows.redundant_autostart_entries() == []
-    assert [p.name for p in (tmp_path / "no-task" / "Startup").iterdir()] == ["Hermes_Gateway_alice.vbs"]
+    assert [p.name for p in (tmp_path / "no-task" / "Startup").iterdir()] == ["LINA_Gateway_alice.vbs"]
 
 
 def test_reconcile_rewrites_an_older_startup_entry_as_utf16(monkeypatch, tmp_path):
@@ -498,15 +498,15 @@ def test_reconcile_rewrites_an_older_startup_entry_as_utf16(monkeypatch, tmp_pat
     reconcile rewrites it as UTF-16 with a BOM."""
     import codecs
     startup, script = _startup_with_fallback_and_legacy_entries(monkeypatch, tmp_path / "Usuário 方舟")
-    (startup / "Hermes_Gateway_alice.cmd").unlink()
+    (startup / "LINA_Gateway_alice.cmd").unlink()
     monkeypatch.setattr(gateway_windows, "is_task_registered", lambda: False)
     monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: script)
 
     assert gateway_windows.reconcile_autostart_launchers() == ([], [])
-    raw = (startup / "Hermes_Gateway_alice.vbs").read_bytes()
+    raw = (startup / "LINA_Gateway_alice.vbs").read_bytes()
     assert raw.startswith(codecs.BOM_UTF16_LE)
     assert raw.decode("utf-16") == gateway_windows._build_startup_launcher(script)
-    assert sorted(p.name for p in startup.iterdir()) == ["Hermes_Gateway_alice.vbs"]
+    assert sorted(p.name for p in startup.iterdir()) == ["LINA_Gateway_alice.vbs"]
 
 
 def test_reconcile_warns_when_legacy_entry_cannot_be_removed(monkeypatch, tmp_path):
@@ -517,7 +517,7 @@ def test_reconcile_warns_when_legacy_entry_cannot_be_removed(monkeypatch, tmp_pa
     from hermes_cli.doctor_report import Finding
 
     startup, _script = _startup_with_fallback_and_legacy_entries(monkeypatch, tmp_path)
-    (startup / "Hermes_Gateway_alice.vbs").unlink()   # legacy-only install
+    (startup / "LINA_Gateway_alice.vbs").unlink()   # legacy-only install
     monkeypatch.setattr(gateway_windows, "is_task_registered", lambda: False)
     real_unlink = Path.unlink
 
@@ -529,8 +529,8 @@ def test_reconcile_warns_when_legacy_entry_cannot_be_removed(monkeypatch, tmp_pa
     monkeypatch.setattr(Path, "unlink", locked_unlink)
 
     done, warnings = gateway_windows.reconcile_autostart_launchers()
-    assert done == [] and len(warnings) == 1 and "Hermes_Gateway_alice.cmd" in warnings[0]
-    assert sorted(p.name for p in startup.iterdir()) == ["Hermes_Gateway_alice.cmd", "Hermes_Gateway_alice.vbs"]
+    assert done == [] and len(warnings) == 1 and "LINA_Gateway_alice.cmd" in warnings[0]
+    assert sorted(p.name for p in startup.iterdir()) == ["LINA_Gateway_alice.cmd", "LINA_Gateway_alice.vbs"]
     assert [p.suffix for p in gateway_windows.redundant_autostart_entries()] == [".cmd"]
 
     monkeypatch.setattr(sys, "platform", "win32")
@@ -540,19 +540,19 @@ def test_reconcile_warns_when_legacy_entry_cannot_be_removed(monkeypatch, tmp_pa
 
 
 def test_status_names_and_uninstall_removes_pre_suffix_launchers(monkeypatch, tmp_path, capsys):
-    """#116157: a Scheduled Task ``Hermes_Gateway`` and a Startup ``Hermes_Gateway.vbs`` left from before
+    """#116157: a Scheduled Task ``LINA_Gateway`` and a Startup ``LINA_Gateway.vbs`` left from before
     per-profile suffixes are invisible to every ``get_task_name()``-keyed operation. ``status`` must name
     them and ``uninstall`` must remove them (files unlinked, ``schtasks /Delete`` issued for the task)."""
     startup, home = tmp_path / "Startup", tmp_path / "home"
     (home / "gateway-service").mkdir(parents=True)
     startup.mkdir()
-    legacy_vbs = startup / "Hermes_Gateway.vbs"
-    legacy_vbs.write_text(gateway_windows._build_startup_launcher(home / "gateway-service" / "Hermes_Gateway.cmd"), encoding="utf-8")
-    legacy_pair = home / "gateway-service" / "Hermes_Gateway.cmd"
+    legacy_vbs = startup / "LINA_Gateway.vbs"
+    legacy_vbs.write_text(gateway_windows._build_startup_launcher(home / "gateway-service" / "LINA_Gateway.cmd"), encoding="utf-8")
+    legacy_pair = home / "gateway-service" / "LINA_Gateway.cmd"
     legacy_pair.write_text("legacy", encoding="utf-8")
     schtasks_calls = []
-    registered = {"Hermes_Gateway"}
-    task_xml = gateway_windows._build_scheduled_task_xml("Hermes_Gateway", home / "gateway-service" / "Hermes_Gateway.vbs", None)
+    registered = {"LINA_Gateway"}
+    task_xml = gateway_windows._build_scheduled_task_xml("LINA_Gateway", home / "gateway-service" / "LINA_Gateway.vbs", None)
 
     def fake_schtasks(args):
         schtasks_calls.append(args)
@@ -563,10 +563,10 @@ def test_status_names_and_uninstall_removes_pre_suffix_launchers(monkeypatch, tm
         return (0, task_xml, "") if name in registered else (1, "", "ERROR: The system cannot find the file specified.")
 
     monkeypatch.setattr(gateway_windows, "_assert_windows", lambda: None)
-    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "Hermes_Gateway_alice")
-    monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: home / "gateway-service" / "Hermes_Gateway_alice.cmd")
-    monkeypatch.setattr(gateway_windows, "get_startup_entry_path", lambda: startup / "Hermes_Gateway_alice.vbs")
-    monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: startup / "Hermes_Gateway_alice.cmd")
+    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "LINA_Gateway_alice")
+    monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: home / "gateway-service" / "LINA_Gateway_alice.cmd")
+    monkeypatch.setattr(gateway_windows, "get_startup_entry_path", lambda: startup / "LINA_Gateway_alice.vbs")
+    monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: startup / "LINA_Gateway_alice.cmd")
     monkeypatch.setattr(gateway_windows, "_startup_dir", lambda: startup)
     monkeypatch.setattr(gateway_windows, "_hermes_home", lambda: home)
     monkeypatch.setattr(gateway_windows, "_exec_schtasks", fake_schtasks)
@@ -577,41 +577,41 @@ def test_status_names_and_uninstall_removes_pre_suffix_launchers(monkeypatch, tm
     out = capsys.readouterr().out
     assert f"legacy pre-suffix Windows login item still installed: {legacy_vbs}" in out
     assert f"legacy pre-suffix task script still installed: {legacy_pair}" in out
-    assert "legacy pre-suffix Scheduled Task still installed: Hermes_Gateway" in out
+    assert "legacy pre-suffix Scheduled Task still installed: LINA_Gateway" in out
 
     gateway_windows.uninstall()
     out = capsys.readouterr().out
-    assert "Removed legacy pre-suffix Scheduled Task 'Hermes_Gateway'" in out
+    assert "Removed legacy pre-suffix Scheduled Task 'LINA_Gateway'" in out
     assert not legacy_vbs.exists() and not legacy_pair.exists()
-    assert ["/Delete", "/F", "/TN", "Hermes_Gateway"] in schtasks_calls
+    assert ["/Delete", "/F", "/TN", "LINA_Gateway"] in schtasks_calls
     gateway_windows.status()
     assert "legacy pre-suffix" not in capsys.readouterr().out
 
 
 def test_secondary_profile_leaves_default_profiles_bare_launchers_alone(monkeypatch, tmp_path, capsys):
-    """The bare ``Hermes_Gateway`` task and Startup entry are the LIVE identity of the default ``~/.hermes``
+    """The bare ``LINA_Gateway`` task and Startup entry are the LIVE identity of the default ``~/.hermes``
     profile. From a secondary profile they are a sibling install, not this home's pre-suffix stray:
     ``uninstall`` / ``install --force`` must issue no ``schtasks /Delete`` and unlink nothing."""
     startup, home, default_home = tmp_path / "Startup", tmp_path / "profiles" / "work", tmp_path / "default"
     (home / "gateway-service").mkdir(parents=True)
     (default_home / "gateway-service").mkdir(parents=True)
     startup.mkdir()
-    default_vbs = startup / "Hermes_Gateway.vbs"
-    default_vbs.write_text(gateway_windows._build_startup_launcher(default_home / "gateway-service" / "Hermes_Gateway.cmd"), encoding="utf-8")
-    task_xml = gateway_windows._build_scheduled_task_xml("Hermes_Gateway", default_home / "gateway-service" / "Hermes_Gateway.vbs", None)
+    default_vbs = startup / "LINA_Gateway.vbs"
+    default_vbs.write_text(gateway_windows._build_startup_launcher(default_home / "gateway-service" / "LINA_Gateway.cmd"), encoding="utf-8")
+    task_xml = gateway_windows._build_scheduled_task_xml("LINA_Gateway", default_home / "gateway-service" / "LINA_Gateway.vbs", None)
     schtasks_calls = []
 
     def fake_schtasks(args):
         schtasks_calls.append(args)
-        if args[0] == "/Query" and args[args.index("/TN") + 1] == "Hermes_Gateway":
+        if args[0] == "/Query" and args[args.index("/TN") + 1] == "LINA_Gateway":
             return (0, task_xml, "")
         return (1, "", "ERROR: The system cannot find the file specified.")
 
     monkeypatch.setattr(gateway_windows, "_assert_windows", lambda: None)
-    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "Hermes_Gateway_work")
-    monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: home / "gateway-service" / "Hermes_Gateway_work.cmd")
-    monkeypatch.setattr(gateway_windows, "get_startup_entry_path", lambda: startup / "Hermes_Gateway_work.vbs")
-    monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: startup / "Hermes_Gateway_work.cmd")
+    monkeypatch.setattr(gateway_windows, "get_task_name", lambda: "LINA_Gateway_work")
+    monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: home / "gateway-service" / "LINA_Gateway_work.cmd")
+    monkeypatch.setattr(gateway_windows, "get_startup_entry_path", lambda: startup / "LINA_Gateway_work.vbs")
+    monkeypatch.setattr(gateway_windows, "_legacy_startup_entry_path", lambda: startup / "LINA_Gateway_work.cmd")
     monkeypatch.setattr(gateway_windows, "_startup_dir", lambda: startup)
     monkeypatch.setattr(gateway_windows, "_hermes_home", lambda: home)
     monkeypatch.setattr(gateway_windows, "_exec_schtasks", fake_schtasks)
@@ -623,7 +623,7 @@ def test_secondary_profile_leaves_default_profiles_bare_launchers_alone(monkeypa
     gateway_windows.uninstall()
     capsys.readouterr()
     assert default_vbs.exists()
-    assert not any(call[0] == "/Delete" and "Hermes_Gateway" in call for call in schtasks_calls)
+    assert not any(call[0] == "/Delete" and "LINA_Gateway" in call for call in schtasks_calls)
 
 
 # Reporter's `Export-ScheduledTask` of a task registered before the hardened template (#113670).
@@ -642,7 +642,7 @@ _PRE_HARDENING_TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
   <Actions Context="Author">
     <Exec>
       <Command>wscript.exe</Command>
-      <Arguments>"C:\\Users\\me\\.hermes\\gateway-service\\Hermes_Gateway.vbs"</Arguments>
+      <Arguments>"C:\\Users\\me\\.hermes\\gateway-service\\LINA_Gateway.vbs"</Arguments>
     </Exec>
   </Actions>
 </Task>
@@ -652,8 +652,8 @@ _PRE_HARDENING_TASK_XML = """<?xml version="1.0" encoding="UTF-16"?>
 def test_scheduled_task_drift_names_missing_hardening_leaves(monkeypatch):
     """A pre-hardening registration is reported leaf by leaf, and the report is what
     ``hermes gateway status`` prints together with the ``hermes gateway install`` repair hint."""
-    launcher = Path(r"C:\Users\me\.hermes\gateway-service\Hermes_Gateway.vbs")
-    template = gateway_windows._build_scheduled_task_xml("Hermes_Gateway", launcher, r"PC\me")
+    launcher = Path(r"C:\Users\me\.hermes\gateway-service\LINA_Gateway.vbs")
+    template = gateway_windows._build_scheduled_task_xml("LINA_Gateway", launcher, r"PC\me")
     drift = gateway_windows.compare_scheduled_task_drift(_PRE_HARDENING_TASK_XML, template)
     assert drift == [
         "missing: RestartOnFailure, LogonTrigger Delay",
@@ -666,7 +666,7 @@ def test_scheduled_task_drift_names_missing_hardening_leaves(monkeypatch):
     monkeypatch.setattr(gateway_windows, "get_task_script_path", lambda: launcher.with_suffix(".cmd"))
     monkeypatch.setattr(gateway_windows, "_resolve_task_user", lambda: r"PC\me")
     monkeypatch.setattr("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a))))
-    gateway_windows._print_scheduled_task_drift("Hermes_Gateway")
+    gateway_windows._print_scheduled_task_drift("LINA_Gateway")
     assert printed[0].startswith("⚠ Scheduled Task registration predates the current template (missing: RestartOnFailure")
     assert "hermes gateway install" in printed[1]
 
@@ -674,8 +674,8 @@ def test_scheduled_task_drift_names_missing_hardening_leaves(monkeypatch):
 def test_scheduled_task_drift_is_silent_when_aligned_or_unqueryable(monkeypatch):
     """The template compared to itself (with the SID-style <UserId> schtasks exports) is not drift, and
     a failed ``schtasks /Query /XML`` prints nothing — status must never nag a healthy install."""
-    launcher = Path(r"C:\Users\me\.hermes\gateway-service\Hermes_Gateway.vbs")
-    template = gateway_windows._build_scheduled_task_xml("Hermes_Gateway", launcher, r"PC\me")
+    launcher = Path(r"C:\Users\me\.hermes\gateway-service\LINA_Gateway.vbs")
+    template = gateway_windows._build_scheduled_task_xml("LINA_Gateway", launcher, r"PC\me")
     exported = template.replace(r"<UserId>PC\me</UserId>", "<UserId>S-1-5-21-1-2-3-1001</UserId>")
     assert exported != template
     assert gateway_windows.compare_scheduled_task_drift(exported, template) == []
@@ -684,7 +684,7 @@ def test_scheduled_task_drift_is_silent_when_aligned_or_unqueryable(monkeypatch)
     printed: list[str] = []
     monkeypatch.setattr(gateway_windows, "_exec_schtasks", lambda args: (1, "", "ERROR: The system cannot find the file specified."))
     monkeypatch.setattr("builtins.print", lambda *a, **k: printed.append(" ".join(map(str, a))))
-    gateway_windows._print_scheduled_task_drift("Hermes_Gateway")
+    gateway_windows._print_scheduled_task_drift("LINA_Gateway")
     assert printed == []
 
 
@@ -694,7 +694,7 @@ def test_reconcile_scheduled_task_reregisters_only_on_drift(monkeypatch, tmp_pat
     logon ``Delay`` reach existing installs), while an aligned one is left alone."""
     script_path = tmp_path / "gateway.cmd"
     launcher = script_path.with_suffix(".vbs")
-    template = gateway_windows._build_scheduled_task_xml("Hermes_Gateway", launcher, r"PC\me")
+    template = gateway_windows._build_scheduled_task_xml("LINA_Gateway", launcher, r"PC\me")
     calls: list[list[str]] = []
     registered = {"xml": _PRE_HARDENING_TASK_XML}
 
@@ -712,13 +712,13 @@ def test_reconcile_scheduled_task_reregisters_only_on_drift(monkeypatch, tmp_pat
     monkeypatch.setattr(gateway_windows, "_resolve_task_user", lambda: r"PC\me")
     monkeypatch.setattr("builtins.print", lambda *a, **k: None)
 
-    assert gateway_windows.reconcile_scheduled_task("Hermes_Gateway") is True
+    assert gateway_windows.reconcile_scheduled_task("LINA_Gateway") is True
     assert [c[0] for c in calls if c[0] in ("/Delete", "/Create")] == ["/Delete", "/Create"]
     assert "<RestartOnFailure>" in registered["xml"]
     assert gateway_windows.compare_scheduled_task_drift(registered["xml"], template) == []
 
     calls.clear()
-    assert gateway_windows.reconcile_scheduled_task("Hermes_Gateway") is False
+    assert gateway_windows.reconcile_scheduled_task("LINA_Gateway") is False
     assert not any(c[0] in ("/Delete", "/Create") for c in calls)
 
 

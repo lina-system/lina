@@ -101,3 +101,76 @@ def test_create_backend_forces_standard(provider, monkeypatch):
     monkeypatch.setattr(actions, "resolve", lambda name: types.SimpleNamespace(host="local"))
     for mode in ("standard", "bounded", "unrestricted"):
         assert provider.prov.create_backend(permission_mode=mode).permission_mode == "standard"
+
+
+def test_bundled_driver_recovers_and_cli_fallback_uses_the_helper_endpoint(provider, monkeypatch):
+    """An install with only the helper's bundled driver has no PM cua-driver.
+
+    A closed MCP transport must come back through the session endpoint, and the CLI fallback must call that
+    same endpoint. Both used to resolve the default driver again and fail once start()'s override was gone.
+    """
+    import contextlib
+    from unittest.mock import AsyncMock, MagicMock, patch
+
+    from anyio import ClosedResourceError
+    from tools.computer_use.cua_backend_session import _AsyncBridge
+
+    monkeypatch.delenv("HERMES_CUA_DRIVER_CMD", raising=False)
+    monkeypatch.setattr("pm.installed_package", lambda *args, **kwargs: None)
+    backend = provider.cls(session_id="remote", helper=Helper())
+    session = backend._session
+    bridge = _AsyncBridge()
+    session._bridge = bridge
+    bridge.start()
+    initial = MagicMock()
+    initial.call_tool = AsyncMock(side_effect=ClosedResourceError())
+    session._session = initial
+    session._started = True
+    spawned = {}
+    ready = MagicMock()
+    ready.content = []
+    ready.isError = False
+    ready.structuredContent = None
+    live = MagicMock()
+    live.initialize = AsyncMock()
+    live.list_tools = AsyncMock(return_value=MagicMock(tools=[]))
+    live.call_tool = AsyncMock(return_value=ready)
+
+    def spawn(params):
+        spawned["command"] = params.command
+        spawned["args"] = list(params.args)
+        spawned["env"] = dict(params.env)
+        client = MagicMock()
+        client.__aenter__ = AsyncMock(return_value=(MagicMock(), MagicMock()))
+        client.__aexit__ = AsyncMock(return_value=None)
+        return client
+
+    try:
+        with patch("mcp.client.stdio.stdio_client", side_effect=spawn), \
+                patch("mcp.ClientSession") as client_session:
+            client_session.return_value.__aenter__ = AsyncMock(return_value=live)
+            client_session.return_value.__aexit__ = AsyncMock(return_value=None)
+            out = session.call_tool("list_windows", {}, timeout=5)
+        assert out.get("isError") is not True
+        assert spawned["command"] == provider.mod.WRAPPER
+        assert spawned["args"] == ["mcp"]
+        assert spawned["env"]["LINA_HELPER_CUA_HOST"] == "box-1"
+        assert spawned["env"]["LINA_HELPER_CUA_HOLDER"] == backend._session_id
+        proc = MagicMock(stdout="{}", stderr="", returncode=0)
+        with patch("subprocess.run", return_value=proc) as run:
+            session._call_tool_via_cli("list_windows", {}, timeout=5)
+        cmd = run.call_args.args[0]
+        env = run.call_args.kwargs["env"]
+        assert cmd[0] == provider.mod.WRAPPER
+        assert cmd[1:3] == ["call", "list_windows"]
+        assert env["LINA_HELPER_CUA_HOST"] == "box-1"
+        assert env["LINA_HELPER_CUA_HOLDER"] == backend._session_id
+    finally:
+        loop, event = session._bridge._loop, session._shutdown_event
+        if loop is not None and event is not None and loop.is_running():
+            loop.call_soon_threadsafe(event.set)
+        future = session._lifecycle_future
+        if future is not None:
+            with contextlib.suppress(Exception):
+                future.result(timeout=5)
+        bridge.stop()

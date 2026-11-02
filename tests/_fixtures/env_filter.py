@@ -146,6 +146,8 @@ _HERMES_BEHAVIORAL_VARS = frozenset({
     # HOME (test_subprocess_home_isolation red locally, green on CI).
     "HERMES_REAL_HOME",
     "TERMINAL_HOME_MODE",
+    # Names the root every home resolves under; a leak would move tests onto the live LINA root.
+    "LINA_HOME",
     "HERMES_INTERACTIVE",
     "HERMES_QUIET",
     "HERMES_TOOL_PROGRESS",

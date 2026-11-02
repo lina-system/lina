@@ -70,7 +70,7 @@ def _live_profile(root: Path, name: str) -> None:
 
 
 def _launch_command(tmp_path, monkeypatch, argv: list[str], *, active_profile: str | None = None) -> list[str]:
-    hermes_root = tmp_path / ".hermes"
+    hermes_root = tmp_path / ".lina"
     hermes_root.mkdir()
     if active_profile and active_profile != "default":
         _live_profile(hermes_root, active_profile)

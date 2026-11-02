@@ -58,22 +58,23 @@ def project_root_str() -> str:
 
 
 def normalize_hermes_home_env() -> None:
-    """Expand ``~``/``$VAR`` in ``HERMES_HOME`` once, at process entry, and write it back.
+    """Expand ``~``/``$VAR`` in ``HERMES_HOME`` and ``LINA_HOME`` once, at process entry, and write them back.
 
     fish does not expand ``~`` inside ``VAR=~/...`` and every shell passes a quoted value
-    through verbatim, so a literal tilde reaches the process. ``Path("~/.hermes")`` is
+    through verbatim, so a literal tilde reaches the process. ``Path("~/.lina")`` is
     *relative*: the many raw ``os.environ["HERMES_HOME"]`` readers (this fast path, the
     active_profile probe, profile re-home, the dotenv loader) would each resolve it against
-    cwd and scaffold a full home under ``<cwd>/~/.hermes``. One expansion here gives every
+    cwd and scaffold a full home under ``<cwd>/~/.lina``. One expansion here gives every
     reader the same absolute spelling; ``hermes_constants`` expands as well for non-CLI
     entry points. A relative value that is not tilde/variable-shaped is left alone.
     """
-    raw = os.environ.get("HERMES_HOME", "")
-    if not raw.strip():
-        return
-    expanded = os.path.expanduser(os.path.expandvars(raw.strip()))
-    if expanded != raw:
-        os.environ["HERMES_HOME"] = expanded
+    for name in ("HERMES_HOME", "LINA_HOME"):
+        raw = os.environ.get(name, "")
+        if not raw.strip():
+            continue
+        expanded = os.path.expanduser(os.path.expandvars(raw.strip()))
+        if expanded != raw:
+            os.environ[name] = expanded
 
 
 def _realpath_or_self(path: str) -> str:
@@ -129,7 +130,7 @@ def active_profile_may_override_home(hermes_root: str) -> bool:
 
 
 def _default_home() -> str:
-    return os.path.join(os.path.expanduser("~"), ".hermes")
+    return os.environ.get("LINA_HOME", "").strip() or os.path.join(os.path.expanduser("~"), ".lina")
 
 
 def _resolved_home() -> str:

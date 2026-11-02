@@ -19,10 +19,10 @@ from hermes_cli import gateway_service_owner
 @pytest.fixture
 def host(tmp_path, monkeypatch):
     """A production system unit pinned to ``prod``; the account's own default root is ``account``."""
-    prod = tmp_path / "prod" / ".hermes"
-    account = tmp_path / "account" / ".hermes"
+    prod = tmp_path / "prod" / ".lina"
+    account = tmp_path / "account" / ".lina"
     sandbox_home = tmp_path / "sandbox"
-    for p in (prod, account, sandbox_home / ".hermes"):
+    for p in (prod, account, sandbox_home / ".lina"):
         p.mkdir(parents=True)
     unit_dir = tmp_path / "systemd"
     unit_dir.mkdir()
@@ -49,7 +49,7 @@ def _sandbox(monkeypatch, host):
     naming root no longer gives a throwaway HOME the bare name, but names still collide (a custom root's
     ``profiles/<name>``, a pre-pinning unit), so the guard is what keeps the verb off that unit."""
     monkeypatch.setenv("HOME", str(host["sandbox_home"]))
-    monkeypatch.setenv("HERMES_HOME", str(host["sandbox_home"] / ".hermes"))
+    monkeypatch.setenv("HERMES_HOME", str(host["sandbox_home"] / ".lina"))
     collided = gateway_cli._SYSTEM_UNIT_DIR / f"{gateway_cli.get_service_name()}.service"
     collided.write_text(f'[Service]\nEnvironment="HERMES_HOME={host["prod"]}"\nExecStart=/bin/true\n', encoding="utf-8")
 
@@ -71,14 +71,14 @@ def test_direct_service_verbs_refuse_a_foreign_unit_without_touching_systemd(hos
         getattr(gateway_cli, f"systemd_{verb}")(system=True)
     assert exc.value.code == 1
     assert host["calls"] == []
-    assert os.environ["HERMES_HOME"] == str(host["sandbox_home"] / ".hermes")   # never adopted prod's home
+    assert os.environ["HERMES_HOME"] == str(host["sandbox_home"] / ".lina")   # never adopted prod's home
 
 
 @pytest.mark.platforms("linux")
 def test_uninstall_guard_checks_before_the_home_sync(host, monkeypatch):
     _sandbox(monkeypatch, host)
     assert gateway_cli._systemd_unit_belongs_to_current_home(system=True) is False
-    assert os.environ["HERMES_HOME"] == str(host["sandbox_home"] / ".hermes")
+    assert os.environ["HERMES_HOME"] == str(host["sandbox_home"] / ".lina")
 
 
 @pytest.mark.platforms("linux")

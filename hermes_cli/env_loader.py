@@ -1118,4 +1118,4 @@ def _process_hermes_home() -> Path:
 
         return get_routing_process_hermes_home()
     except Exception:
-        return Path.home() / ".hermes"
+        return Path.home() / ".lina"
