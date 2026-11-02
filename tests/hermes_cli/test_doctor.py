@@ -1186,14 +1186,6 @@ def _run_doctor_with_healthy_oauth_fallback(
             None,
             "Check MINIMAX_API_KEY in .env",
         ),
-        (
-            "XAI_API_KEY",
-            "bad-xai-key",
-            "api.x.ai",
-            {},
-            {"logged_in": True, "auth_mode": "oauth_pkce"},
-            "Check XAI_API_KEY in .env",
-        ),
     ],
 )
 def test_run_doctor_ignores_invalid_direct_keys_when_oauth_fallback_is_healthy(

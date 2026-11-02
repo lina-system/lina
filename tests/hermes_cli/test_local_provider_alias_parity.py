@@ -23,7 +23,7 @@ from hermes_cli.models import normalize_provider as models_normalize
 from hermes_cli.providers import LLAMACPP_ALIASES, normalize_provider as providers_normalize
 from providers import get_provider_profile
 
-_CUSTOM_ALIASES = tuple(get_provider_profile("custom").aliases)
+_CUSTOM_ALIASES = ("ollama", "local", "vllm", *LLAMACPP_ALIASES)
 
 
 @pytest.mark.parametrize("alias", _CUSTOM_ALIASES)

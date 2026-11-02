@@ -8,6 +8,7 @@ export (``ocx export --client hermes``): chat completions, Bearer admission key,
 """
 
 from typing import Any
+from urllib.parse import urlparse
 
 from agent.portal_tags import get_affinity_scope, get_conversation_context
 from agent.reasoning_effort import OPENAI_COMPAT_WIRE_EFFORTS, clamp_effort
@@ -22,6 +23,11 @@ SESSION_AFFINITY_HEADER = "session-id"
 class OcxProfile(ProviderProfile):
     def supported_reasoning_efforts(self, model: str | None) -> tuple[str, ...]:
         return OPENAI_COMPAT_WIRE_EFFORTS
+
+    def default_reasoning_config(self, model: str | None = None) -> dict | None:
+        """Unset ``agent.reasoning_effort`` -> ``medium``: a relayed reasoning model's own default
+        can be its ceiling (3x the tokens and latency of medium)."""
+        return {"enabled": True, "effort": "medium"}
 
     def build_api_kwargs_extras(
         self, *, reasoning_config: dict | None = None, session_id: str | None = None, **context: Any
@@ -49,6 +55,9 @@ ocx = OcxProfile(
     description="OCX — the local model proxy every model call goes through",
     env_vars=("OCX_API_KEY", "OCX_BASE_URL"),
     base_url=OCX_DEFAULT_BASE_URL,
+    # URL->provider inference matches this against the host:port, so only OCX's own port maps to
+    # ocx; a bare loopback host would claim every local server (Ollama, llama.cpp, LM Studio).
+    hostname=urlparse(OCX_DEFAULT_BASE_URL).netloc,
     supports_vision=True,
 )
 

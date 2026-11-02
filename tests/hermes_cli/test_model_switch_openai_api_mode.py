@@ -114,7 +114,7 @@ def test_generic_endpoint_keeps_explicit_api_mode():
     assert host_mandated_api_mode("https://api.anthropic.com") == "anthropic_messages"
 
 @pytest.mark.parametrize("models_dev_registry", [_MODELS_DEV_WITH_META, {}], ids=["catalog", "offline"])
-def test_stale_chat_overridden_on_meta_direct(models_dev_registry):
+def test_stale_chat_overridden_on_meta_direct(models_dev_registry, monkeypatch):
     """Stale chat_completions on api.meta.ai → codex_responses (like openai direct).
 
     Switching from openrouter/chat_completions to muse-spark on meta's
@@ -122,17 +122,26 @@ def test_stale_chat_overridden_on_meta_direct(models_dev_registry):
     alias of the bundled ``meta-ai`` plugin, so the switch lands on ``meta-ai``
     whether or not models.dev (which keys the same API ``meta``) is reachable.
     """
+    import providers
+    from providers.base import ProviderProfile
+
+    monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
+    monkeypatch.setattr(providers, "_ALIASES", dict(providers._ALIASES))
+    providers.register_provider(ProviderProfile(
+        name="switch-native", aliases=("switch-alias",),
+        env_vars=("SWITCH_API_KEY",), base_url="https://api.meta.ai/v1",
+    ))
     result = _run_openai_switch(
         models_dev_registry=models_dev_registry,
         raw_input="muse-spark-1.2",
         current_provider="openrouter",
         current_model="anthropic/claude-opus-4.8",
-        explicit_provider="meta",
+        explicit_provider="switch-alias",
         runtime_api_mode="chat_completions",  # stale
         runtime_base_url="https://api.meta.ai/v1",
     )
     assert result.success, f"switch_model failed: {result.error_message}"
-    assert result.target_provider == "meta-ai"
+    assert result.target_provider == "switch-native"
     assert result.new_model == "muse-spark-1.2"
     assert result.api_mode == "codex_responses"
 

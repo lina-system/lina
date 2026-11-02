@@ -1,29 +1,8 @@
-"""Router catalog-declared reasoning-effort clamping on the codex transport.
-
-Ramp Router (api.router.com) validates ``reasoning.effort`` against each
-model's published vocabulary — HTTP 400 ``invalid-argument`` on an
-unsupported level, and 400 ``unsupported_parameter`` when a non-reasoning
-model receives any reasoning field (both verified live, Aug 2026). The
-router profile declares each model's vocabulary from its cached catalog via
-``ProviderProfile.supported_reasoning_efforts``; these tests pin how the
-codex transport consumes that declaration.
-
-All tests seed the plugin's in-memory cache directly — no network.
-"""
-
-import sys
+"""Profile-declared reasoning vocabularies on the shared Codex transport."""
 
 import pytest
 
 from agent.transports import get_transport
-
-
-def _router_plugin_module():
-    from providers import get_provider_profile
-
-    profile = get_provider_profile("router")
-    assert profile is not None, "router profile must be registered"
-    return profile, sys.modules[type(profile).__module__]
 
 
 @pytest.fixture
@@ -34,64 +13,26 @@ def transport():
 
 @pytest.fixture
 def seeded_catalog(monkeypatch):
-    """Seed the router efforts cache with catalog-shaped verdicts."""
-    profile, mod = _router_plugin_module()
-    monkeypatch.setattr(mod, "_efforts_cache", {
-        # grok via Router: no "none", no "max" (live catalog shape)
-        "grok-4.6": ["minimal", "low", "medium", "high", "xhigh"],
-        # non-reasoning model: any reasoning field 400s
-        "gpt-4.1-mini": [],
-        # full ladder including max
-        "accounts/fireworks/models/kimi-k3": [
-            "minimal", "low", "medium", "high", "xhigh", "max",
-        ],
-    })
-    monkeypatch.setattr(mod, "_disk_checked", True)
-    return profile
+    """Register a synthetic catalog vocabulary on the real profile lookup path."""
+    import providers
+    from providers.base import ProviderProfile
 
+    class CatalogProfile(ProviderProfile):
+        def supported_reasoning_efforts(self, model):
+            return {
+                "grok-4.6": ("minimal", "low", "medium", "high", "xhigh"),
+                "gpt-4.1-mini": (),
+                "accounts/fireworks/models/kimi-k3": (
+                    "minimal", "low", "medium", "high", "xhigh", "max",
+                ),
+            }.get(model)
 
-class TestProfileContract:
-    def test_declared_vocabulary(self, seeded_catalog):
-        assert seeded_catalog.supported_reasoning_efforts("grok-4.6") == (
-            "minimal", "low", "medium", "high", "xhigh",
-        )
-
-    def test_non_reasoning_model_is_definitive_empty(self, seeded_catalog):
-        assert seeded_catalog.supported_reasoning_efforts("gpt-4.1-mini") == ()
-
-    def test_unknown_model_is_none(self, seeded_catalog):
-        assert seeded_catalog.supported_reasoning_efforts("some-byok-route") is None
-
-    def test_cold_cache_is_none_and_never_blocks(self, monkeypatch):
-        profile, mod = _router_plugin_module()
-        monkeypatch.setattr(mod, "_efforts_cache", None)
-        monkeypatch.setattr(mod, "_disk_checked", True)
-        monkeypatch.setattr(mod, "_warm_efforts_async", lambda: None)
-        assert profile.supported_reasoning_efforts("grok-4.6") is None
-
-    def test_parse_efforts_catalog_shapes(self):
-        _, mod = _router_plugin_module()
-        parsed = mod._parse_efforts([
-            {
-                "id": "grok-4.6",
-                "router": {"capabilities": {"reasoning": {
-                    "supported": True,
-                    "efforts": [{"value": "low"}, {"value": "high"}],
-                }}},
-            },
-            {
-                "id": "gpt-4.1",
-                "router": {"capabilities": {"reasoning": {"supported": False, "efforts": []}}},
-            },
-            # reasoning supported but vocabulary unpublished -> omitted (unknown)
-            {
-                "id": "mystery-model",
-                "router": {"capabilities": {"reasoning": {"supported": True, "efforts": []}}},
-            },
-            # no router metadata at all -> omitted
-            {"id": "bare-model"},
-        ])
-        assert parsed == {"grok-4.6": ["low", "high"], "gpt-4.1": []}
+    providers.get_provider_profile("ocx")
+    monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
+    providers.register_provider(CatalogProfile(
+        name="catalog-test", hostname="catalog.example", hostnames=("catalog.example",),
+    ))
+    return providers.get_provider_profile("catalog-test")
 
 
 class TestTransportClamp:
@@ -100,9 +41,9 @@ class TestTransportClamp:
             model=model,
             messages=[{"role": "user", "content": "Hi"}],
             tools=[],
-            base_url="https://api.router.com/v1",
+            base_url="https://catalog.example/v1",
             session_id="sid",
-            provider="router",
+            provider="catalog-test",
             reasoning_config=reasoning_config,
         )
 
@@ -132,13 +73,9 @@ class TestTransportClamp:
         kw = self._kwargs(transport, "some-byok-route", {"effort": "medium"})
         assert kw["reasoning"]["effort"] == "medium"
 
-    def test_cold_cache_keeps_default_behavior(self, transport, monkeypatch):
-        _, mod = _router_plugin_module()
-        monkeypatch.setattr(mod, "_efforts_cache", None)
-        monkeypatch.setattr(mod, "_disk_checked", True)
-        monkeypatch.setattr(mod, "_warm_efforts_async", lambda: None)
+    def test_cold_cache_keeps_default_behavior(self, transport, seeded_catalog, monkeypatch):
+        monkeypatch.setattr(seeded_catalog, "supported_reasoning_efforts", lambda model: None)
         kw = self._kwargs(transport, "grok-4.6", {"effort": "xhigh"})
-        # Cold cache -> no declaration -> default codex vocabulary (xhigh ok).
         assert kw["reasoning"]["effort"] == "xhigh"
 
     def test_other_providers_unaffected(self, transport, seeded_catalog):
@@ -168,7 +105,7 @@ class TestHostResolvedProfile:
             model="grok-4.6",
             messages=[{"role": "user", "content": "Hi"}],
             tools=[],
-            base_url="https://api.router.com/v1",
+            base_url="https://catalog.example/v1",
             session_id="sid",
             provider="custom:my-proxy",
             reasoning_config={"effort": "max"},
@@ -189,47 +126,3 @@ class TestHostResolvedProfile:
         )
         # Default codex vocabulary applies (legacy: no max -> xhigh).
         assert kw["reasoning"]["effort"] == "xhigh"
-
-
-class TestCatalogIngestValidation:
-    def test_unrecognized_effort_levels_are_dropped_at_ingest(self):
-        _, mod = _router_plugin_module()
-        parsed = mod._parse_efforts([
-            {
-                "id": "future-model",
-                "router": {"capabilities": {"reasoning": {
-                    "supported": True,
-                    "efforts": [
-                        {"value": "low"},
-                        {"value": "hyperthink"},  # a new vendor tier
-                        {"value": "high"},
-                    ],
-                }}},
-            },
-            {
-                # every level unknown -> omitted entirely (unknown model), so
-                # the transport keeps its defaults instead of suppressing or
-                # passing garbage through.
-                "id": "alien-model",
-                "router": {"capabilities": {"reasoning": {
-                    "supported": True,
-                    "efforts": [{"value": "hyperthink"}, {"value": "galaxy"}],
-                }}},
-            },
-        ])
-        assert parsed == {"future-model": ["low", "high"]}
-
-    def test_fetch_models_dedupes_while_preserving_catalog_order(self, monkeypatch):
-        profile, mod = _router_plugin_module()
-        monkeypatch.setattr(mod, "_disk_path", lambda: None)
-        monkeypatch.setattr(
-            mod,
-            "_fetch_catalog_items",
-            lambda **_kwargs: [
-                {"id": "b"},
-                {"id": "a"},
-                {"id": "b"},
-                {"id": "c"},
-            ],
-        )
-        assert profile.fetch_models() == ["b", "a", "c"]

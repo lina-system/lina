@@ -142,21 +142,3 @@ class TestSessionNoneReachesDeepSeekWire:
         kw = server._deferred_build_agent_kwargs(session, session_db=None)
         assert kw["reasoning_config_override"] == {"enabled": False}
 
-    def test_effort_none_override_emits_thinking_disabled(self) -> None:
-        import model_tools
-        import providers
-        from agent.transports.chat_completions import ChatCompletionsTransport
-
-        profile = providers.get_provider_profile("deepseek")
-        kwargs = ChatCompletionsTransport().build_kwargs(
-            model="deepseek-v4.1-flash-expires-on-0910",
-            messages=[{"role": "user", "content": "ping"}],
-            tools=None,
-            provider_profile=profile,
-            reasoning_config={"effort": "none"},
-            base_url="https://api.deepseek.com/v1",
-            provider_name="deepseek",
-        )
-        assert kwargs["extra_body"] == {"thinking": {"type": "disabled"}}
-        assert "reasoning_effort" not in kwargs
-

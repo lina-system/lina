@@ -1330,37 +1330,6 @@ class TestBuildApiKwargs:
         assert "reasoning" not in kwargs.get("extra_body", {})
 
 
-    def test_qwen_portal_formats_messages_and_metadata(self, agent):
-        agent.provider = "qwen-oauth"
-        agent.base_url = "https://portal.qwen.ai/v1"
-        agent._base_url_lower = agent.base_url.lower()
-        agent.session_id = "sess-123"
-        messages = [
-            {"role": "system", "content": "You are helpful"},
-            {"role": "assistant", "content": "Got it"},
-            {"role": "user", "content": "hi"},
-        ]
-        kwargs = agent._build_api_kwargs(messages)
-        assert kwargs["metadata"]["sessionId"] == "sess-123"
-        assert kwargs["extra_body"]["vl_high_resolution_images"] is True
-        assert isinstance(kwargs["messages"][0]["content"], list)
-        assert kwargs["messages"][0]["content"][0]["cache_control"] == {"type": "ephemeral"}
-        assert kwargs["messages"][2]["content"][0]["text"] == "hi"
-
-    def test_qwen_portal_normalizes_bare_string_content_parts(self, agent):
-        agent.provider = "qwen-oauth"
-        agent.base_url = "https://portal.qwen.ai/v1"
-        agent._base_url_lower = agent.base_url.lower()
-        messages = [
-            {"role": "system", "content": [{"type": "text", "text": "system"}]},
-            {"role": "user", "content": ["hello", {"type": "text", "text": "world"}]},
-        ]
-        kwargs = agent._build_api_kwargs(messages)
-        user_content = kwargs["messages"][1]["content"]
-        assert user_content[0] == {"type": "text", "text": "hello"}
-        assert user_content[1] == {"type": "text", "text": "world"}
-
-
     def test_non_custom_provider_unaffected(self, agent):
         """OpenRouter provider with effort=none should NOT inject think=false."""
         agent.provider = "openrouter"

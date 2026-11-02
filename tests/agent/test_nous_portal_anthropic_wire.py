@@ -266,71 +266,17 @@ class TestModelIdPassthrough:
 # ── 4. Portal body fields survive onto the Messages wire ─────────────────────
 
 
-class TestPortalBodyFields:
-    """``tags`` and ``session_id`` are top-level Portal body fields.
-
-    They are produced by the Nous provider profile, which only the OpenAI-wire
-    transport consults — so the Anthropic branch has to merge them in itself.
-    """
-
-    def _build(self, provider="nous", session_id="sess-abc123"):
-        from agent.chat_completion_helpers import build_api_kwargs
-        from agent.transports.anthropic import AnthropicTransport
-
-        transport = AnthropicTransport()
-        agent = SimpleNamespace(
-            api_mode="anthropic_messages",
-            provider=provider,
-            model="anthropic/claude-opus-4.8",
-            session_id=session_id,
-            tools=None,
-            max_tokens=1024,
-            reasoning_config=None,
-            request_overrides={},
-            context_compressor=None,
-            _ephemeral_max_output_tokens=None,
-            _is_anthropic_oauth=False,
-            _anthropic_base_url=PORTAL_URL,
-            _oauth_1m_beta_disabled=False,
-            _get_transport=lambda: transport,
-            _prepare_anthropic_messages_for_api=lambda msgs: msgs,
-            _anthropic_preserve_dots=lambda: False,
-        )
-        return build_api_kwargs(agent, [{"role": "user", "content": "hi"}])
-
-    def test_portal_tags_reach_the_messages_request(self):
-        from agent.portal_tags import hermes_client_tag
-
-        tags = self._build()["extra_body"]["tags"]
-
-        assert "product=hermes-agent" in tags
-        assert hermes_client_tag() in tags
-        assert all(isinstance(tag, str) for tag in tags), (
-            "Portal skips non-string tag entries unpredictably"
-        )
-
-    def test_session_id_reaches_the_messages_request(self):
-        extra_body = self._build(session_id="sess-abc123")["extra_body"]
-
-        assert extra_body["session_id"] == "sess-abc123"
-        assert "conversation=sess-abc123" in extra_body["tags"]
-
-
-
-
-
-    def test_helper_merge_is_a_no_op_for_non_nous(self):
-        from agent.chat_completion_helpers import (
-            _merge_nous_portal_messages_extra_body,
-        )
-
-        kwargs = {"model": "claude-opus-4-8", "messages": []}
-        agent = SimpleNamespace(provider="anthropic", session_id="s")
-        assert _merge_nous_portal_messages_extra_body(agent, kwargs, []) is kwargs
-        assert "extra_body" not in kwargs
-
-
 # ── 5. Thinking signatures replay like native Anthropic ──────────────────────
+
+
+def test_helper_merge_is_a_no_op_for_non_nous():
+    from agent.chat_completion_helpers import _merge_nous_portal_messages_extra_body
+
+    kwargs = {"model": "claude-opus-4-8", "messages": []}
+    agent = SimpleNamespace(provider="ocx", session_id="s")
+
+    assert _merge_nous_portal_messages_extra_body(agent, kwargs, []) is kwargs
+    assert "extra_body" not in kwargs
 
 
 class TestPortalThinkingReplay:

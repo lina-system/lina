@@ -235,14 +235,14 @@ def test_custom_pick_over_unrecorded_or_auto_profile_keeps_its_endpoint(tmp_path
 
 
 def test_provider_alias_spelling_and_auto_pick_keep_the_profiles_route(tmp_path, monkeypatch):
-    """`deepinfra` and `deep-infra` are one provider, and an explicit `auto` pick (the thin-client
+    """`ocx` and `opencodex` are one provider, and an explicit `auto` pick (the thin-client
     sentinel) means "the profile's route": neither drops the configured proxy and wire mode."""
     from gateway.session_policy import build_policy
     from hermes_cli.runtime_provider import frozen_runtime_config, resolve_runtime_provider
     for var in ('CUSTOM_BASE_URL', 'OPENAI_BASE_URL'):
         monkeypatch.delenv(var, raising=False)
-    monkeypatch.setenv('DEEPINFRA_API_KEY', 'sk-deepinfra')
-    for held, picked in (('deepinfra', 'deep-infra'), ('deep-infra', 'deepinfra')):
+    monkeypatch.setenv('OCX_API_KEY', 'sk-ocx')
+    for held, picked in (('ocx', 'opencodex'), ('opencodex', 'ocx')):
         cfg = {'model': {'default': 'm', 'provider': held, 'base_url': 'http://localhost:4321/v1',
                          'api_mode': 'chat_completions'}}
         model = build_policy(dict(cwd=str(tmp_path), model='m', provider=picked), cfg).config()['model']
@@ -250,7 +250,7 @@ def test_provider_alias_spelling_and_auto_pick_keep_the_profiles_route(tmp_path,
     monkeypatch.setenv('LOCAL_KEY', 'sk-local')
     cfg = {'model': {'default': 'qwen', 'provider': 'custom', 'base_url': 'http://localhost:1234/v1',
                      'key_env': 'LOCAL_KEY'}}
-    monkeypatch.delenv('DEEPINFRA_API_KEY')
+    monkeypatch.delenv('OCX_API_KEY')
     policy = build_policy(dict(cwd=str(tmp_path), model='qwen', provider='auto'), cfg)
     assert policy.config()['model']['provider'] == 'custom'
     with frozen_runtime_config(policy.config()):
