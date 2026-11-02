@@ -60,7 +60,7 @@ def scoped(home: Path):
         reset_hermes_home_override(token)
 
 
-def _agent(session_id: str):
+def _agent(session_id: str, engine_name: str = "lcm-x"):
     from run_agent import AIAgent
 
     with (
@@ -70,7 +70,8 @@ def _agent(session_id: str):
     ):
         agent = AIAgent(api_key="test-key-1234567890", base_url="https://openrouter.ai/api/v1", quiet_mode=True,
                         skip_context_files=True, skip_memory=True, session_id=session_id)
-    assert agent.context_compressor.name == "lcm-x"
+    assert type(agent.context_compressor).__module__ == "plugins.context_engine.lcm-x.engine"
+    assert agent.context_compressor.name == engine_name
     return agent
 
 
@@ -205,3 +206,61 @@ def test_user_dir_copy_does_not_load_next_to_the_bundled_engine(tmp_path, monkey
     assert not (copy / "registered").exists()
     assert _hook_counts() == dict.fromkeys(LCM_HOOKS, 1)
     assert _stored(home, "sess-copy") == [("user", "hello"), ("assistant", "hi")]
+
+
+def _plugin_surface():
+    from hermes_cli.plugins import get_plugin_manager
+
+    manager = get_plugin_manager()
+    return {**_hook_counts(), "skill": manager.find_plugin_skill("hermes-lcm-x:hermes-lcm") is not None,
+            "prompt_section": "lcm-x" in manager._system_prompt_sections}
+
+
+def test_forced_plugin_discovery_keeps_the_engine_hooks_of_a_cached_agent(home, tmp_path, monkeypatch):
+    """A plugin install/enable in a running gateway runs ``discover_plugins(force=True)``, whose unload-all
+    disposed the engine's group; a cached agent never reruns the engine loader."""
+    from hermes_cli.plugins import discover_plugins
+
+    monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(tmp_path / "no-bundled-plugins"))
+    agent = _agent("sess-cached")
+    one_set = {**dict.fromkeys(LCM_HOOKS, 1), "skill": True, "prompt_section": True}
+    assert _plugin_surface() == one_set
+
+    discover_plugins(force=True)
+    assert _plugin_surface() == one_set
+    _turn(agent, "asked after the rescan", "answered after the rescan")
+    assert _stored(home, "sess-cached") == [
+        ("user", "asked after the rescan"), ("assistant", "answered after the rescan")]
+
+    _agent("sess-built-after")  # a later build replaces the group, never adds a second one
+    discover_plugins(force=True)
+    assert _plugin_surface() == one_set
+
+
+@pytest.mark.parametrize("enabled", ["hermes-lcm-x", "hermes-lcm", None], ids=["copy-x", "copy-legacy", "no-plugins"])
+def test_legacy_engine_name_lcm_runs_the_bundled_engine(tmp_path, monkeypatch, enabled):
+    """``context.engine: lcm`` (the pre-rename name) is how homes moving to LINA are configured (lina#41)."""
+    extra = f"plugins:\n  enabled: [{enabled}]\n" if enabled else ""
+    home = tmp_path / ".hermes"
+    home.mkdir()
+    (home / "config.yaml").write_text("context:\n  engine: lcm\n" + extra, encoding="utf-8")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HERMES_BUNDLED_PLUGINS", str(tmp_path / "no-bundled-plugins"))
+    if enabled:
+        copy = home / "plugins" / enabled
+        copy.mkdir(parents=True)
+        (copy / "plugin.yaml").write_text(f"name: {enabled}\nversion: 0.29.1\n", encoding="utf-8")
+        (copy / "__init__.py").write_text(
+            f"from pathlib import Path\n\ndef register(ctx):\n"
+            f"    Path({str(copy / 'registered')!r}).write_text('loaded', encoding='utf-8')\n", encoding="utf-8")
+
+    from hermes_cli.plugins import discover_plugins
+
+    discover_plugins(force=True)
+    # LCM-X answers to the legacy name while the config still uses it (plugin_identity.py), and warns.
+    agent = _agent("sess-legacy", engine_name="lcm")
+    assert agent.context_compressor.identity_migration["legacy_engine_alias_active"] is True
+    _turn(agent, "legacy config asks", "bundled engine answers")
+    assert _stored(home, "sess-legacy") == [("user", "legacy config asks"), ("assistant", "bundled engine answers")]
+    if enabled:
+        assert not (home / "plugins" / enabled / "registered").exists()

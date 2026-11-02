@@ -18,6 +18,12 @@ logger = logging.getLogger(__name__)
 _CONTEXT_ENGINE_PLUGINS_DIR = Path(__file__).parent
 # Synthetic parent package for user-installed engines (keeps them out of the bundled namespace).
 _USER_NAMESPACE = "_hermes_user_context_engine"
+# Engine names a config may still use for a bundled engine. ``lcm`` is LCM-X's pre-rename name; LCM-X itself
+# accepts it and warns that the config should say ``lcm-x`` (plugin_identity.identity_migration_notice).
+_ENGINE_ALIASES = {"lcm": "lcm-x"}
+# The engines this process loaded in-process, per profile home key: a forced plugin discovery (an install or
+# enable in a running gateway) unloads every registration, and cached agents never rerun the loader.
+_LOADED_ENGINE_DIRS: dict[str, dict[str, Path]] = {}
 
 
 def _is_context_engine_dir(path: Path) -> bool:
@@ -49,7 +55,8 @@ def discover_context_engines() -> list[tuple[str, str, bool]]:
 
 
 def find_engine_dir(name: str) -> Optional[Path]:
-    """Resolve an engine name to its directory (bundled first, then user-installed)."""
+    """Resolve an engine name (or a legacy alias of a bundled engine) to its directory, bundled first."""
+    name = _ENGINE_ALIASES.get(name, name)
     bundled = _CONTEXT_ENGINE_PLUGINS_DIR / name
     if bundled.is_dir():
         return bundled
@@ -87,8 +94,22 @@ def _load_engine_from_dir(engine_dir: Path) -> Optional[ContextEngine]:
         return None
     collector = _EngineCollector(engine_name=name, engine_dir=engine_dir)
     with collector.replacing_previous_build():
-        return _loader.instance_from_module(
+        engine = _loader.instance_from_module(
             mod, collector=collector, collected_attr="engine", base_cls=ContextEngine, name=name, logger=logger)
+    if engine is not None:
+        from hermes_constants import hermes_home_key
+        _LOADED_ENGINE_DIRS.setdefault(hermes_home_key(), {})[name] = engine_dir
+    return engine
+
+
+def re_register_config_hooks() -> None:
+    """After a forced plugin discovery cleared them, register again the hooks, skill and prompt section of
+    every engine this process loaded in the active home, by rerunning the engine's own ``register(ctx)``.
+    The hooks resolve the agent's engine through the engine's registry, so cached agents get them back;
+    the instance this builds is dropped, and the next agent build replaces the group as usual."""
+    from hermes_constants import hermes_home_key
+    for engine_dir in list(_LOADED_ENGINE_DIRS.get(hermes_home_key(), {}).values()):
+        _load_engine_from_dir(engine_dir)
 
 
 class _EngineCollector:
