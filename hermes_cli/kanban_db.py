@@ -1554,7 +1554,7 @@ def link_tasks(
     if parent_id == child_id:
         raise ValueError("a task cannot depend on itself")
     gated = False
-    with write_txn(conn):
+    with write_txn(conn, allow_nested=True):
         missing = _missing_task_ids(conn, [parent_id, child_id])
         if missing:
             raise ValueError(f"unknown task(s): {', '.join(missing)}")
