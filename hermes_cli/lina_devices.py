@@ -50,7 +50,8 @@ def omo_status(dev: settings.Device) -> dict:
     remote = shlex.join([*shlex.split(dev.lina), "omo", "status", "--json"])
     try:
         done = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", dev.host, remote],
-                              capture_output=True, text=True, timeout=120, check=False)
+                              capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
+                              check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         return {"error": str(exc)}
     try:

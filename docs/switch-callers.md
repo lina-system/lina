@@ -66,7 +66,7 @@ the tasks `lina worker` started; the old tool's own `list` still shows the old o
 6. **Check one agent end to end.** From that agent's shell (same user, same PATH):
 
    ```sh
-   omo-task submit --brief /tmp/brief.md --topic switch-check --wait 1800
+   omo-task submit --brief "$TMPDIR/brief.md" --topic switch-check --wait 1800
    omo-task status <ID>            # same text as `lina worker status <ID>`
    omo-task result <ID>
    omo-task status <an ID from before the switch>   # answered by the old tool

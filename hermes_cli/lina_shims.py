@@ -86,7 +86,7 @@ def install(base: Path | None = None, *, out=print) -> int:
     bin_dir.mkdir(parents=True, exist_ok=True)
     values = {"@PYTHON@": sys.executable, "@PYTHONPATH@": child_pythonpath(), "@LINA_HOME@": str(root)}
     for tool in TOOLS:
-        text = (TEMPLATES / tool).read_text(encoding="utf-8")
+        text = (TEMPLATES / tool).read_text(encoding="utf-8-sig")
         for key, value in values.items():
             text = text.replace(key, value)
         target = bin_dir / tool
