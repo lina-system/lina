@@ -182,12 +182,28 @@ def _migrate_checkpoint_identity(old_canon: str, new_canon: str) -> bool:
     return False
 
 
-def require_message_store_for_rename(profile_dir: Path) -> None:
-    """Refuse a rename the memory store could not follow: the agent id is the profile's directory name, so
-    renaming moves its message text to the new agent, and a profile renamed without it would read empty."""
+def require_message_store_for_rename(profile_dir: Path, old_canon: str, new_canon: str) -> None:
+    """Refuse, before anything changes, a rename the memory store could not follow: the agent id is the profile's
+    directory name, so renaming moves its message text to the new agent (StoreUnavailableError when the store
+    owner cannot connect, MessageTextRestoreError when the new uids are taken by other text)."""
     if (profile_dir / "state.db").exists():
-        from hermes_state_store import check_owner_reachable
-        check_owner_reachable()
+        from hermes_state_store import check_agent_move
+        check_agent_move(old_canon, new_canon)
+
+
+@contextlib.contextmanager
+def text_moved_for_rename(profile_dir: Path, old_canon: str, new_canon: str):
+    """Move the profile's message text to the new agent before the directory moves; move it back when the
+    directory move fails, so a failed rename leaves the store as it was. The state.db follows after the move
+    (``_move_message_text``)."""
+    from hermes_state_store import move_agent_rows, return_agent_rows
+    moved = move_agent_rows(old_canon, new_canon) if (profile_dir / "state.db").exists() else []
+    try:
+        yield
+    except BaseException:
+        if moved:
+            return_agent_rows(moved, old_canon, new_canon)
+        raise
 
 
 def _move_message_text(old_canon: str, new_canon: str) -> bool:

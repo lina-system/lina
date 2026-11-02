@@ -449,8 +449,20 @@ def import_profile(archive_path: str, name: Optional[str] = None) -> Path:
                     shutil.rmtree(child)
                 else:
                     child.unlink()
+        _stage_profile_texts(final_source, profile_dir, staging_root / ".message-text")
         shutil.move(str(final_source), str(profile_dir))
-        from hermes_cli.backup_message_text import restore_snapshot_texts
-        restore_snapshot_texts(profile_dir / "state.db", profile_dir / "state.db")
     return profile_dir
+
+
+def _stage_profile_texts(staged_profile: Path, profile_dir: Path, workdir: Path) -> None:
+    """Validate and write the archived profile's message text under the agent it is imported as, and point the
+    staged state.db at it, before the profile is published (MessageTextRestoreError, nothing published)."""
+    from hermes_cli.backup_message_text import TEXT_EXPORT_NAME, stage_with_texts
+    incoming, sidecar = staged_profile / "state.db", staged_profile / TEXT_EXPORT_NAME
+    if incoming.exists():
+        workdir.mkdir()
+        ready = stage_with_texts(incoming, profile_dir / "state.db", sidecar if sidecar.is_file() else None, workdir)
+        if ready != incoming:
+            os.replace(ready, incoming)
+    sidecar.unlink(missing_ok=True)
 

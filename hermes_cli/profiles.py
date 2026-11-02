@@ -1881,8 +1881,8 @@ def rename_profile(old_name: str, new_name: str) -> Path:
         raise _unknown_profile_error(old_canon)
     if new_dir.exists():
         raise _profile_exists_error(new_canon)
-    from hermes_cli.profile_identity import _migrate_profile_identity, require_message_store_for_rename
-    require_message_store_for_rename(old_dir)
+    from hermes_cli.profile_identity import _migrate_profile_identity, require_message_store_for_rename, text_moved_for_rename
+    require_message_store_for_rename(old_dir, old_canon, new_canon)
 
     # 1. Remove the old name's service even when its gateway is stopped: the unit is named after
     # the old profile and runs ``--profile <old>``, so the service manager would crash-loop it on
@@ -1912,12 +1912,13 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     from tools.mcp_tool_lifecycle import shutdown_mcp_servers
     shutdown_mcp_servers(scope=hermes_home_key(old_dir))
 
-    # 2. Rename directory. If the move fails (cross-device EXDEV, permissions, a racing writer),
-    # undo the unroute so the profile is never stranded tombstoned-but-present.
+    # 2. Rename directory (the message text moves with it). If the move fails (EXDEV, permissions, a racing
+    # writer), undo the unroute so the profile is never stranded tombstoned-but-present.
     try:
         if live_mux and not wait_profile_unowned(old_dir):  # same owner wait as delete_profile
             raise RuntimeError("a running gateway still owns this profile; retry the rename once it settles")
-        old_dir.rename(new_dir)
+        with text_moved_for_rename(old_dir, old_canon, new_canon):
+            old_dir.rename(new_dir)
     except Exception:
         if live_mux:
             clear_named_profile_deleted(old_dir)
@@ -1932,9 +1933,8 @@ def rename_profile(old_name: str, new_name: str) -> Path:
     if live_mux:
         clear_named_profile_deleted(old_dir)
 
-    # 2b. Record the rename so Bot Mode group chats can re-link persisted
-    # member descriptors to the new slug (#110200). Best-effort: a metadata
-    # write failure must never fail the rename itself.
+    # 2b. Record the rename so Bot Mode group chats can re-link persisted member descriptors to the new
+    # slug (#110200). Best-effort: a metadata write failure must never fail the rename itself.
     _record_profile_rename(new_dir, old_canon)
 
     # 3. Update profile-scoped Honcho host blocks, preserving aiPeer identity

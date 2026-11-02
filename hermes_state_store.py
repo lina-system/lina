@@ -25,7 +25,7 @@ import os
 import threading
 from collections import OrderedDict
 from collections.abc import Callable, Iterable, Iterator, Sequence
-from contextlib import contextmanager
+from contextlib import closing, contextmanager
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
@@ -215,11 +215,6 @@ def _owner_connection():
         return psycopg.connect(resolve_owner_dsn())
     except psycopg.OperationalError as exc:
         raise StoreUnavailableError(f"cannot reach the memory store: {exc}".strip()) from exc
-
-
-def check_owner_reachable() -> None:
-    """Raise StoreUnavailableError unless the store owner can connect (asked before a profile rename)."""
-    _owner_connection().close()
 
 
 def agent_id_for(db_path: Path) -> str:
@@ -768,15 +763,18 @@ def rows_with_text(store: MessageStore, rows: Iterable[Any]) -> list[dict[str, A
 
 
 def _state_db_text_uids(db_path: Path) -> list[str]:
+    """The text uids *db_path*'s transcript references; none for a state.db without text_uid placements, or for a
+    damaged image (the restore's own integrity check refuses that one)."""
     import sqlite3
-    conn = sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)
     try:
-        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (PLACEMENT_TABLE,)).fetchone() is None:
-            return []
-        return [row[0] for row in conn.execute(
-            f"SELECT DISTINCT text_uid FROM {PLACEMENT_TABLE} WHERE text_uid IS NOT NULL")]
-    finally:
-        conn.close()
+        with closing(sqlite3.connect(f"{Path(db_path).resolve().as_uri()}?mode=ro", uri=True)) as conn:
+            columns = {row[1] for row in conn.execute(f"PRAGMA table_info({PLACEMENT_TABLE})")}
+            if "text_uid" not in columns:
+                return []
+            return [row[0] for row in conn.execute(
+                f"SELECT DISTINCT text_uid FROM {PLACEMENT_TABLE} WHERE text_uid IS NOT NULL")]
+    except sqlite3.DatabaseError:
+        return []
 
 
 def export_state_db_texts(db_path: Path, out_path: Path, *, dsn: Optional[str] = None) -> int:
@@ -827,67 +825,162 @@ def _remap_state_db_uids(db_path: Path, agent: str) -> list[str]:
         conn.close()
 
 
-def import_state_db_texts(db_path: Path, jsonl_path: Path, *, dsn: Optional[str] = None) -> int:
-    """Put the text rows of a backup's JSONL back into the store under the agent *db_path* (the restored
-    state.db) belongs to, before that state.db is used. Restored under another profile, the rows and the
-    state.db's text_uids move from ``agent:<old>:`` to ``agent:<new>:`` (uids are unique across agents, and a
-    row another agent owns is invisible here). Then every text_uid the state.db references must resolve to a
-    row this agent reads with the archived content; otherwise MessageTextRestoreError. Returns rows inserted."""
-    agent = agent_id_for(db_path)
-    with open(jsonl_path, encoding="utf-8-sig") as src:
-        rows = [json.loads(line) for line in src if line.strip()]
+def _sidecar_rows(sidecar: Optional[Path], agent: str) -> list[dict[str, Any]]:
+    """A backup's text rows, each checked against its content_sha256 and renamed to *agent*'s uid."""
+    if sidecar is None:
+        return []
+    try:
+        with open(sidecar, encoding="utf-8-sig") as src:
+            rows = [json.loads(line) for line in src if line.strip()]
+    except (OSError, ValueError) as exc:
+        raise MessageTextRestoreError(f"cannot read the backup's message text {sidecar.name}: {exc}") from exc
     for row in rows:
+        if not isinstance(row, dict) or _sha256(row.get("content") or "") != row.get("content_sha256"):
+            raise MessageTextRestoreError(
+                f"message text {row.get('uid') if isinstance(row, dict) else row!r} in {sidecar.name} does not match "
+                "its content_sha256: the backup is damaged")
         row["uid"] = _remapped_uid(row["uid"], agent)
-    referenced = _remap_state_db_uids(db_path, agent)
+    return rows
+
+
+def _stage_remapped(incoming_db: Path, agent: str, workdir: Path) -> Path:
+    """A copy of *incoming_db* in *workdir* whose text_uids name *agent*; the incoming file is never changed."""
+    import sqlite3
+    staged = Path(workdir) / "state.db"
+    with closing(sqlite3.connect(f"{Path(incoming_db).resolve().as_uri()}?mode=ro", uri=True)) as src, \
+            closing(sqlite3.connect(staged)) as dst:
+        src.backup(dst)
+    _remap_state_db_uids(staged, agent)
+    return staged
+
+
+def stage_text_restore(incoming_db: Path, destination_db: Path, sidecar: Optional[Path], workdir: Path, *,
+                       dsn: Optional[str] = None) -> Path:
+    """Get the message text of a state.db that is about to replace *destination_db* into the store, before the
+    caller replaces anything. Returns the file to publish: *incoming_db*, or a copy in *workdir* whose text_uids
+    name the destination's agent (a backup restored under another profile).
+
+    1. Validate, changing nothing: *sidecar* (the backup's JSONL, or None) is read and every row checked against
+       its content_sha256; every text_uid *incoming_db* references must be in it or already readable by the
+       destination agent, with the same content_sha256 when it is both.
+    2. Write the rows (ON CONFLICT DO NOTHING, so a re-run changes nothing) and refresh observed_at of every
+       referenced row in one transaction, so the collection cannot take one before the caller publishes.
+    Any failure raises MessageTextRestoreError with nothing written. After this returns, a failure of the caller's
+    swap leaves only extra immutable rows here, which ``collect_unreferenced`` reclaims after its grace period."""
+    import psycopg
+    agent = agent_id_for(destination_db)
+    rows = _sidecar_rows(sidecar, agent)
+    raw = _state_db_text_uids(incoming_db)
+    referenced = sorted({_remapped_uid(uid, agent) for uid in raw})
+    if not referenced and not rows:
+        return incoming_db
+    archived = {row["uid"]: row.get("content_sha256") for row in rows}
     store = MessageStore(agent, dsn=dsn)
     try:
-        inserted = store.import_texts(rows)
-        archived = {row["uid"]: row.get("content_sha256") for row in rows}
         found: dict[str, Optional[str]] = {}
         for start in range(0, len(referenced), 1000):
             with store._cursor() as cur:
                 cur.execute("SELECT uid, content_sha256 FROM memory.messages WHERE uid = ANY(%s)",
                             (referenced[start:start + 1000],))
                 found.update(cur.fetchall())
+        missing = [uid for uid in referenced if uid not in archived and uid not in found]
+        differs = [uid for uid, digest in archived.items() if uid in found and found[uid] != digest]
+        if missing or differs:
+            raise MessageTextRestoreError(
+                f"{destination_db}: {len(missing)} message text(s) its transcript references are in neither the "
+                f"backup nor the store for agent {agent!r}, and {len(differs)} differ from the backup "
+                f"(first: {(missing + differs)[0]}). Nothing was restored.")
+        staged = _stage_remapped(incoming_db, agent, workdir) if any(
+            _remapped_uid(uid, agent) != uid for uid in raw) else incoming_db
+        with store.write():
+            store.import_texts(rows)
+            touched: set[str] = set()
+            for start in range(0, len(referenced), 1000):
+                with store._writer_cursor() as cur:
+                    cur.execute("UPDATE memory.messages SET observed_at = now() WHERE uid = ANY(%s) RETURNING uid",
+                                (referenced[start:start + 1000],))
+                    touched.update(row[0] for row in cur.fetchall())
+            if len(touched) != len(referenced):
+                raise MessageTextRestoreError(
+                    f"{destination_db}: {len(referenced) - len(touched)} message text(s) vanished while restoring. "
+                    "Nothing was restored.")
+    except (StoreUnavailableError, psycopg.Error) as exc:
+        raise MessageTextRestoreError(f"{destination_db}: cannot restore its message text: {exc}. "
+                                      "Nothing was restored.") from exc
     finally:
         store.close()
-    missing = [uid for uid in referenced if uid not in found]
-    differs = [uid for uid, digest in archived.items() if uid in found and found[uid] != digest]
-    if missing or differs:
-        raise MessageTextRestoreError(
-            f"{db_path}: {len(missing)} message text(s) its transcript references are in neither the backup nor "
-            f"the store for agent {agent!r}, and {len(differs)} differ from the backup "
-            f"(first: {(missing + differs)[0]}). The restored transcript would read empty messages.")
-    return inserted
+    return staged
 
-def move_agent_texts(db_path: Path, old_agent: str, new_agent: str) -> int:
-    """Hand *old_agent*'s text rows to *new_agent* (a renamed profile: the agent id is its directory name), then
-    point *db_path*'s transcript at the moved uids. Postgres moves first in one transaction, then state.db; each
-    step leaves rows already on ``agent:<new>:`` alone, so running this again repairs an interrupted rename.
-    A row whose new uid is already taken by the same text is dropped in favour of it; one taken by other text
-    fails the move. Returns the rows moved."""
+def _agent_prefixes(old_agent: str, new_agent: str) -> tuple[str, str]:
+    return f"{SOURCE_AGENT}:{old_agent}:", f"{SOURCE_AGENT}:{new_agent}:"
+
+
+def check_agent_move(old_agent: str, new_agent: str) -> None:
+    """Validate a move of *old_agent*'s text to *new_agent*, changing nothing: the owner role connects
+    (StoreUnavailableError otherwise) and no new uid is held by different text (MessageTextRestoreError)."""
     import psycopg
-    old_prefix, new_prefix = f"{SOURCE_AGENT}:{old_agent}:", f"{SOURCE_AGENT}:{new_agent}:"
+    old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
+    conn = _owner_connection()
+    try:
+        clash = conn.execute(
+            "SELECT count(*), min(n.uid) FROM memory.messages o JOIN memory.messages n ON n.uid = %s || substr(o.uid, %s)"
+            " WHERE o.agent_id = %s AND starts_with(o.uid, %s)"
+            " AND n.native->>'payload_sha256' IS DISTINCT FROM o.native->>'payload_sha256'",
+            (new_prefix, len(old_prefix) + 1, old_agent, old_prefix)).fetchone()
+    except psycopg.Error as exc:
+        raise StoreUnavailableError(f"cannot check the memory store: {exc}".strip()) from exc
+    finally:
+        conn.close()
+    if clash[0]:
+        raise MessageTextRestoreError(
+            f"{clash[0]} message text(s) of {old_agent!r} would take uids that other text of {new_agent!r} already "
+            f"holds (first: {clash[1]}); nothing was moved")
+
+
+def move_agent_rows(old_agent: str, new_agent: str) -> list[str]:
+    """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
+    lina_app inside one agent): agent_id and the uid prefix ``agent:<old>:`` -> ``agent:<new>:``. A row whose new
+    uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
+    Returns the new uids, so ``return_agent_rows`` can undo exactly this move."""
+    import psycopg
+    old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
     try:
         with conn.transaction(), conn.cursor() as cur:
             cur.execute(
-                "DELETE FROM memory.messages o USING memory.messages n WHERE o.agent_id = %s AND starts_with(o.uid, %s)"
-                " AND n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256'",
-                (old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
-            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s)"
-                        " WHERE agent_id = %s AND starts_with(uid, %s)",
-                        (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix))
-            moved = cur.rowcount
+                "UPDATE memory.messages o SET agent_id = %s, uid = %s || substr(o.uid, %s)"
+                " WHERE o.agent_id = %s AND starts_with(o.uid, %s) AND NOT EXISTS (SELECT 1 FROM memory.messages n"
+                " WHERE n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256')"
+                " RETURNING o.uid",
+                (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
+            return [row[0] for row in cur.fetchall()]
     except psycopg.Error as exc:
         raise StoreUnavailableError(
             f"could not move message text from agent {old_agent!r} to {new_agent!r}: {exc}".strip()) from exc
     finally:
         conn.close()
+
+
+def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> None:
+    """Undo ``move_agent_rows``: the rows it moved (*uids*) go back to *old_agent*."""
+    old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
+    conn = _owner_connection()
+    try:
+        with conn.transaction():
+            conn.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
+                         (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
+    finally:
+        conn.close()
+
+
+def move_agent_texts(db_path: Path, old_agent: str, new_agent: str) -> int:
+    """``move_agent_rows``, then point *db_path*'s transcript at the moved uids (one SQLite transaction). Both
+    steps leave what is already on ``agent:<new>:`` alone, so running this again repairs an interrupted rename.
+    Returns the rows moved."""
+    moved = move_agent_rows(old_agent, new_agent)
     if Path(db_path).exists():
         _remap_state_db_uids(db_path, new_agent)
-    return moved
-
+    return len(moved)
 
 def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
     """``collect_unreferenced`` for a SessionDB's agent, counting references in its state.db."""

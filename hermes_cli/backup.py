@@ -23,6 +23,7 @@ from hermes_constants import (
 )
 from hermes_state_dbfile import RETIRED_GENERATION_DIR_SUFFIX
 from hermes_state_holders import read_only_db_uri
+from hermes_state_store import TEXT_EXPORT_NAME, MessageTextRestoreError
 
 from agent.provider_media import GENERATED_SUBDIR
 from hermes_cli.archive_safe import normalize_archive_parts
@@ -809,7 +810,7 @@ def run_import(args) -> Optional[int]:
         try:
             restored, restored_external, errors, skipped_runtime, db_shrunk = _import_members(
                 zf, members, prefix, hermes_root, file_count)
-        except OwnershipConflict as exc:
+        except (OwnershipConflict, MessageTextRestoreError) as exc:
             print(f"\nImport refused; no files restored: {exc}")
             sys.exit(1)
         elapsed = time.monotonic() - t0
@@ -926,6 +927,7 @@ def _import_members(
     from gateway.runtime_ownership import exclusive_maintenance
     root_res = hermes_root.resolve()
     homes = {hermes_root}
+    texts: list[tuple[str, Path]] = []
     for member in members:
         if member.startswith(_EXTERNAL_PREFIX):
             continue  # restored under $HOME, outside every runtime authority
@@ -938,7 +940,11 @@ def _import_members(
         target = hermes_root / rel
         if target.suffix == ".db" and target.resolve().is_relative_to(root_res):
             homes.update([target.absolute().parent, target.resolve().parent])
+            if target.name == "state.db":
+                texts.append((member, target))
     with exclusive_maintenance(homes):
+        from hermes_cli.backup_message_text import preflight_zip_texts
+        preflight_zip_texts(zf, texts)  # refuses before any file is published
         return _import_members_exclusive(zf, members, prefix, hermes_root, file_count)
 
 
@@ -1022,6 +1028,8 @@ def _import_members_exclusive(
         # reconciler on the target and disconnects hosted instances from the
         # Nous portal. Matched by basename so both the root profile and
         # named profiles (profiles/<name>/gateway_state.json) are covered.
+        if parts[-1] == TEXT_EXPORT_NAME:
+            continue  # message text: written by preflight_zip_texts, not a profile file
         if parts[-1] in _IMPORT_SKIP_NAMES:
             skipped_runtime.append(rel)
             continue
@@ -1066,7 +1074,7 @@ def _import_members_exclusive(
             if target.name in _SECRET_FILE_NAMES:
                 os.chmod(target, 0o600)
             restored += 1
-        except (OSError, *_ZIP_MEMBER_READ_ERRORS) as exc:
+        except (OSError, MessageTextRestoreError, *_ZIP_MEMBER_READ_ERRORS) as exc:
             errors.append(f"  {rel}: {exc}")
 
         if restored % 500 == 0:
@@ -1318,6 +1326,17 @@ def restore_quick_snapshot(
         return False
 
 
+def _preflight_snapshot_texts(files, entry_paths) -> None:
+    """Validate and write the snapshot's message text before the restore copies any file
+    (MessageTextRestoreError otherwise, with the profile untouched)."""
+    from hermes_cli.backup_message_text import sidecar_beside, stage_with_texts
+    for rel in files:
+        entry = entry_paths(rel)
+        if entry and entry[0].exists() and entry[1].name == "state.db":
+            with tempfile.TemporaryDirectory(prefix="hermes-restore-text-") as work:
+                stage_with_texts(entry[0], entry[1], sidecar_beside(entry[0]), Path(work))
+
+
 def _snapshot_epochs_restorable(files, entry_paths) -> bool:
     """False (logged) when any listed ``state.db`` destination cannot prove its runtime epoch."""
     for rel in files:
@@ -1414,6 +1433,7 @@ def _restore_quick_snapshot_exclusive(snapshot_id: str, home: Path) -> bool:
         # both partially roll back the profile and report a refused DB as success.
         if not _snapshot_epochs_restorable(meta.get("files", {}), _entry_paths):
             return False
+        _preflight_snapshot_texts(meta.get("files", {}), _entry_paths)  # raises before any file is copied
 
         restored = 0
         auth_restore_failed = False
