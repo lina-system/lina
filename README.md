@@ -29,7 +29,7 @@ LINA's engine comes from [Hermes Agent](https://github.com/NousResearch/hermes-a
 
 ## License and contributions
 
-LINA is licensed under AGPL-3.0 ([LICENSE](LICENSE)). It is a fork of [Hermes Agent](https://github.com/NousResearch/hermes-agent), whose original code is MIT-licensed ([LICENSES/Hermes-MIT.txt](LICENSES/Hermes-MIT.txt)).
+LINA is licensed under AGPL-3.0 ([LICENSE](LICENSE)). It is a fork of [Hermes Agent](https://github.com/NousResearch/hermes-agent), whose original code is MIT-licensed ([LICENSES/Hermes-MIT.txt](LICENSES/Hermes-MIT.txt)). The `code-review` and `verification-gate` skills are adapted from [oh-my-hermes](https://github.com/rlaope/oh-my-hermes) (commit `59270ab4`), MIT License, Copyright (c) 2026 oh-my-hermes contributors; each skill carries the notice.
 
 The LINA app is developed in [lina-app](https://github.com/lina-system/lina-app). LINA OS is a separate, optional project in [lina-os](https://github.com/lina-system/lina-os).
 

@@ -82,7 +82,7 @@ Author the JSON spec with `write_file`, inspect script JSON output with
    scales), `charts` (bar/line/pie from cell ranges),
    `validations` (list dropdowns), `tables` (native Excel tables with
    a style name), and `protection`. Workbook-level `defined_names`
-   maps names to refs. Cell objects also take `hyperlink` and `note`.
+   binds names to refs. Cell objects also take `hyperlink` and `note`.
    Typed values: JSON numbers/bools
    pass through; dates use `{"value": "2026-01-31", "type": "date"}`.
    Number formats are Excel format strings: currency `"$#,##0.00"`,

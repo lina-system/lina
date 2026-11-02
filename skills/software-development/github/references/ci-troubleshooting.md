@@ -136,26 +136,6 @@ The job running on runner ... has exceeded the maximum execution time
 
 ---
 
-### Docker / Container Failures
-
-**Signatures in logs:**
-```
-docker: Error response from daemon
-failed to solve: ... not found
-COPY failed: file not found in build context
-```
-
-**Diagnosis:**
-1. Check Dockerfile for the failing step
-2. Verify the referenced files exist in the repo
-
-**Common fixes:**
-- Fix path in COPY/ADD command
-- Update base image tag
-- Add missing file to `.dockerignore` exclusion or remove from it
-
----
-
 ## Auto-Fix Decision Tree
 
 ```
