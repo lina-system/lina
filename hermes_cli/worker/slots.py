@@ -20,13 +20,13 @@ RESERVE_TTL_S = 600.0  # a reservation the hub never followed with a request (it
 CAP_FILE = "cap"
 
 
-def _requested(task_dir: Path) -> int:
+def requested(task_dir: Path) -> int:
     runs = [int(p.name.split(".")[1]) for p in task_dir.glob("request.*") if p.name.split(".")[1].isdigit()]
     return max(runs, default=0)
 
 
 def holds_slot(task_dir: Path) -> bool:
-    run = _requested(task_dir)
+    run = requested(task_dir)
     if run:
         return not (task_dir / f"rc.{run}").exists()
     reserved = task_dir / RESERVED
@@ -35,7 +35,7 @@ def holds_slot(task_dir: Path) -> bool:
 
 def launched(task_dir: Path) -> bool:
     """A run of this task was handed to its own process and has not ended."""
-    run = _requested(task_dir)
+    run = requested(task_dir)
     return bool(run) and (task_dir / f"taken.{run}").exists() and not (task_dir / f"rc.{run}").exists()
 
 

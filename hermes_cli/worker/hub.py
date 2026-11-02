@@ -445,8 +445,7 @@ class Hub:
                                "again when this run ends")
             if reply.get("action") == "error":
                 raise HubError(f"steer failed: {reply.get('reason')}")
-            remote = self.meta(job)
-        return self._next_run(job, int(remote.get("run") or job.get("runs", 1)) + 1, message)
+        return self._next_run(job, message)
 
     def _closed(self, job: dict, run: int) -> bool:
         """After an answer closed run *run* on its question: wait for its end, recorded here once and silently (the
@@ -465,10 +464,26 @@ class Hub:
                                                                                         "by send")
         return True
 
-    def _next_run(self, job: dict, run: int, message: str) -> int:
-        transport = self.transport(job)
-        put(transport, job["id"], f"prompt.{run}", follow_up_prompt(job.get("mode") or "ulw", message))
-        put(transport, job["id"], f"request.{run}", json.dumps({"run": run, "at": time.time()}))
+    def _next_run(self, job: dict, message: str) -> int:
+        """Ask the device for the next run; it serializes this against a run still waiting, starting or running."""
+        payload = {"prompt": follow_up_prompt(job.get("mode") or "ulw", message), "message": message}
+        reply = self.transport(job).call(["follow_up", job["id"]], json.dumps(payload).encode("utf-8"),
+                                         timeout=180).json()
+        action, run = reply.get("action"), reply.get("run")
+        if action == "queued":
+            self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run, queued=True)
+            self.out(f"{job['id']} run {run} has not started yet: the instruction was added to it.")
+            return 0
+        if action in ("steered", "started"):
+            self.store.receipt(job["id"], "steer", run=run, response=reply)
+            self.out(f"{job['id']} took the instruction into run {run}: it applies after the current tool call, before "
+                     "the next decision.")
+            return 0
+        if action in ("busy", "refused"):
+            raise HubError(f"{job['id']} run {run} is starting or running and cannot take an instruction now; send it "
+                           "again when it is live or has ended")
+        if action != "requested":
+            raise HubError(f"follow-up failed: {reply.get('reason') or reply}")
         job = self.store.load(job["id"]) or job
         job.update(runs=run, state="running", delivery="pending", verdict=None)
         self.store.save(job)
