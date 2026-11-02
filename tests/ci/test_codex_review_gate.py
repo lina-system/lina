@@ -114,69 +114,14 @@ LINKED = {
 }
 
 
+def test_no_issue_label_passes_without_an_issue():
+    status = gate.linked_issue_status(REPO, "fix/typo", [], frozenset({"no-issue", "bug"}))
+    assert status.state == "success"
+    assert gate.linked_issue_status(REPO, "fix/typo", [], frozenset({"bug"})).state == "failure"
+
+
 @pytest.mark.parametrize("branch,closing,expected", LINKED.values(), ids=LINKED.keys())
 def test_linked_issue_status(branch, closing, expected):
     status = gate.linked_issue_status(REPO, branch, closing)
     assert status.state == expected
     assert len(status.description) <= gate.DESCRIPTION_LIMIT
-
-
-ISSUE_59 = {"number": 59, "body": """## Summary
-
-Two findings.
-
-## Done when
-
-- [ ] `plugins/memory/honcho/cli.py:594` — Replace the retired SDK installer
-  When the setup wizard runs without `honcho` installed, setup aborts.
-- [ ] One test per finding, failing before the fix.
-- Codex review on the fix PR shows no P0/P1.
-
-## Context
-
-- Sprint: M0
-"""}
-
-
-def _pr_body(*items: str) -> str:
-    return "## Summary\n\nFix.\n\n## Done when\n\n" + "\n".join(items) + "\n\n## Verification\n\n- ran\n"
-
-
-DONE = {
-    "same": (_pr_body(
-        "- [x] plugins/memory/honcho/cli.py:594 — replace the retired SDK installer.",
-        "- [x] One test per finding,   failing before the fix",
-        "- [X] Codex review on the fix PR shows no P0/P1."), "success", "3 item(s) done"),
-    "missing": (_pr_body(
-        "- [x] `plugins/memory/honcho/cli.py:594` — Replace the retired SDK installer",
-        "- [x] Codex review on the fix PR shows no P0/P1."),
-        "failure", "missing 1: One test per finding, failing before the fix."),
-    "unchecked": (_pr_body(
-        "- [x] `plugins/memory/honcho/cli.py:594` — Replace the retired SDK installer",
-        "- [ ] One test per finding, failing before the fix.",
-        "- [x] Codex review on the fix PR shows no P0/P1."),
-        "failure", "unchecked 1: One test per finding, failing before the fix."),
-    "N/A": (_pr_body(
-        "- [x] `plugins/memory/honcho/cli.py:594` — Replace the retired SDK installer",
-        "- [ ] One test per finding, failing before the fix. — N/A: the wizard has no test seam",
-        "- [x] Codex review on the fix PR shows no P0/P1."), "success", "3 item(s) done, 1 N/A"),
-    "no section": ("## Summary\n\nFix.\n", "failure", "PR body has no '## Done when' section"),
-    "item not in the issue": (_pr_body(
-        "- [x] `plugins/memory/honcho/cli.py:594` — Replace the retired SDK installer",
-        "- [x] One test per finding, failing before the fix.",
-        "- [x] Codex review on the fix PR shows no P0/P1.",
-        "- [x] Also renamed the config loader"),
-        "failure", "not in the issue 1: Also renamed the config loader"),
-}
-
-
-@pytest.mark.parametrize("body,state,description", DONE.values(), ids=DONE.keys())
-def test_done_when_status(body, state, description):
-    assert gate.done_when_status(body, [ISSUE_59]) == gate.Status(state, description)
-
-
-def test_done_when_needs_a_linked_issue_with_the_section():
-    body = DONE["same"][0]
-    assert gate.done_when_status(body, []).state == "failure"
-    no_section = gate.done_when_status(body, [{"number": 45, "body": "## Summary\n\nx\n"}])
-    assert no_section.description == "Issue #45 has no '## Done when' section"

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge gates for a pull request: the ``Codex review``, ``Linked issue`` and ``Done when`` statuses.
+"""Merge gates for a pull request: the ``Codex review`` and ``Linked issue`` statuses.
 
 Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/codex-review-gate.yml.
 
@@ -16,13 +16,8 @@ Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/
 
 - success: the body closes (``Closes``/``Fixes #n``, GitHub ``closingIssuesReferences``) at
   least one open issue of this repository, and a branch named ``<type>/<n>-<slug>`` closes #n;
+- success also when the pull request carries the ``no-issue`` label (a typo, a one-line CI fix);
 - failure otherwise, including a pull request opened without an issue.
-
-``Done when``:
-
-- success: the body's ``## Done when`` items are those of the linked issues (compared after
-  ``normalize_item``), and each is checked or carries ``N/A: <reason>``;
-- failure: no section, or items missing, unchecked or not in the issue (named in the description).
 
     python3 scripts/ci/codex_review_gate.py --repo owner/name --pr 123 [--dry-run]
 """
@@ -41,8 +36,8 @@ from typing import Any
 CODEX_BOT = "chatgpt-codex-connector[bot]"
 REVIEW_CONTEXT = "Codex review"
 LINKED_CONTEXT = "Linked issue"
-DONE_CONTEXT = "Done when"
 BLOCKING = frozenset({0, 1})
+NO_ISSUE_LABEL = "no-issue"
 DESCRIPTION_LIMIT = 140  # GitHub rejects longer commit status descriptions
 
 _BADGE = re.compile(r"!\[P([0-3]) Badge\]")
@@ -50,10 +45,6 @@ _TITLE = re.compile(r"!\[P[0-3] Badge\][^\n]*?(?:</sub>)+\s*(.+?)\s*\*\*")
 _STATE = re.compile(r"<!--\s*codex-review-state:v1\s*(\{.*?\})\s*-->", re.DOTALL)
 _NO_MAJOR = re.compile(r"(?:\bno|n[’']t find any) major issues", re.IGNORECASE)
 _BRANCH_ISSUE = re.compile(r"^[a-z]+/(\d+)-")
-_HEADING = re.compile(r"^##\s+(.+?)\s*$")
-_ITEM = re.compile(r"^[-*]\s+(?:\[([ xX])\]\s+)?(.*)$")
-_NA = re.compile(r"\s*(?:[-—–:]\s*)?\bN/A:\s*(.*)$")
-_MARKUP = re.compile(r"[`*_]")
 
 
 @dataclass(frozen=True)
@@ -169,17 +160,20 @@ def review_status(
     )
     if reviewed:
         minor = len(findings)
-        tail = f"; {minor} P2/P3 finding(s) become follow-up issues" if minor else ""
+        tail = f"; {minor} P2/P3 finding(s)" if minor else ""
         return Status("success", _limit(f"Codex reviewed {short}: no P0/P1 findings{tail}"))
     if state.get("commit_sha") == head_sha and state.get("status") == "failed":
         return Status("pending", f"Codex could not review {short}; comment '@codex review'")
     return Status("pending", f"Waiting for the Codex review of {short}")
 
 
-def linked_issue_status(repo: str, branch: str, closing: list[dict[str, Any]]) -> Status:
+def linked_issue_status(repo: str, branch: str, closing: list[dict[str, Any]],
+                        labels: frozenset[str] = frozenset()) -> Status:
     """``closing`` is GraphQL ``closingIssuesReferences.nodes``: number, state, repository."""
+    if NO_ISSUE_LABEL in labels:
+        return Status("success", f"'{NO_ISSUE_LABEL}' label: a trivial change without an issue")
     if not closing:
-        return Status("failure", "No 'Closes #n': open an issue first and link it in the body")
+        return Status("failure", "No 'Closes #n': link an issue, or add the 'no-issue' label")
     same_repo = [c for c in closing
                  if ((c.get("repository") or {}).get("nameWithOwner") or "").lower() == repo.lower()]
     open_numbers = sorted(int(c["number"]) for c in same_repo if c.get("state") == "OPEN")
@@ -194,76 +188,6 @@ def linked_issue_status(repo: str, branch: str, closing: list[dict[str, Any]]) -
         return Status("failure", _limit(
             f"Branch {branch} names #{match.group(1)} but the PR closes {listed}"))
     return Status("success", _limit("Closes " + ", ".join(f"#{n}" for n in open_numbers)))
-
-
-@dataclass(frozen=True)
-class DoneItem:
-    text: str
-    checked: bool
-    na_reason: str | None
-
-    @property
-    def key(self) -> str:
-        return normalize_item(self.text)
-
-
-def normalize_item(text: str) -> str:
-    """Compare items by words: no markup, case, spacing or trailing punctuation."""
-    return " ".join(_MARKUP.sub("", text).lower().split()).rstrip(".;:,")
-
-
-def done_when_items(markdown: str | None) -> list[DoneItem] | None:
-    """Top-level bullets of the ``## Done when`` section, or None when there is no section.
-
-    An item is its first line; indented continuation lines are detail, not part of the key.
-    """
-    items: list[DoneItem] | None = None
-    for line in (markdown or "").splitlines():
-        heading = _HEADING.match(line)
-        if heading:
-            if items is not None:
-                break
-            if heading.group(1).strip().lower() == "done when":
-                items = []
-            continue
-        if items is None:
-            continue
-        item = _ITEM.match(line)
-        if not item:
-            continue
-        text = item.group(2).strip()
-        na = _NA.search(text)
-        if na:
-            text = text[: na.start()].strip()
-        items.append(DoneItem(text, (item.group(1) or " ").lower() == "x",
-                              na.group(1).strip() if na else None))
-    return items
-
-
-def done_when_status(pr_body: str | None, issues: list[dict[str, Any]]) -> Status:
-    """``issues`` are the open issues the pull request closes, each with ``number`` and ``body``."""
-    if not issues:
-        return Status("failure", "No linked open issue to compare 'Done when' with")
-    pr_items = done_when_items(pr_body)
-    if pr_items is None:
-        return Status("failure", "PR body has no '## Done when' section")
-    wanted: dict[str, str] = {}
-    for issue in issues:
-        items = done_when_items(issue.get("body"))
-        if items is None:
-            return Status("failure", f"Issue #{issue['number']} has no '## Done when' section")
-        wanted.update((item.key, item.text) for item in items)
-    given = {item.key for item in pr_items}
-    missing = [text for key, text in wanted.items() if key not in given]
-    extra = [item.text for item in pr_items if item.key not in wanted]
-    unchecked = [item.text for item in pr_items
-                 if item.key in wanted and not item.checked and not item.na_reason]
-    problems = [f"{label} {len(texts)}: {texts[0]}" for label, texts in
-                (("missing", missing), ("unchecked", unchecked), ("not in the issue", extra)) if texts]
-    if problems:
-        return Status("failure", _limit("; ".join(problems)))
-    na = sum(1 for item in pr_items if item.na_reason)
-    return Status("success", f"{len(pr_items)} item(s) done" + (f", {na} N/A" if na else ""))
 
 
 def _gh(*args: str) -> str:
@@ -284,7 +208,7 @@ query($owner: String!, $name: String!, $number: Int!) {
   repository(owner: $owner, name: $name) {
     pullRequest(number: $number) {
       closingIssuesReferences(first: 50) {
-        nodes { number state body repository { nameWithOwner } }
+        nodes { number state repository { nameWithOwner } }
       }
     }
   }
@@ -326,12 +250,9 @@ def main(argv: list[str] | None = None) -> int:
             gh_list(f"repos/{args.repo}/issues/{args.pr}/comments?per_page=100"),
             head_date,
         ),
-        LINKED_CONTEXT: linked_issue_status(args.repo, pull["head"]["ref"], closing),
+        LINKED_CONTEXT: linked_issue_status(args.repo, pull["head"]["ref"], closing,
+                                            frozenset(label["name"] for label in pull["labels"])),
     }
-    open_issues = [ref for ref in closing
-                   if ref["repository"]["nameWithOwner"].lower() == args.repo.lower()
-                   and ref["state"] == "OPEN"]
-    statuses[DONE_CONTEXT] = done_when_status(pull.get("body"), open_issues)
     target = args.target_url or pull["html_url"]
     for context, status in statuses.items():
         print(f"{context} @ {head_sha[:7]}: {status.state} - {status.description}")

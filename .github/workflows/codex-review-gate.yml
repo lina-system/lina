@@ -2,7 +2,8 @@ name: Merge gates
 
 # Sets two commit statuses on a pull request's head commit, both required by the dev ruleset
 # (docs/ci.md): "Codex review" (the Codex reviewer looked at this head and left no P0/P1
-# finding on it) and "Linked issue" (the body closes an open issue of this repository).
+# finding on it) and "Linked issue" (the body closes an open issue of this repository, or the
+# pull request carries the `no-issue` label).
 # Judged by scripts/ci/codex_review_gate.py.
 #
 # pull_request_target, not pull_request: the run uses the workflow and the gate script from dev,
@@ -12,7 +13,7 @@ name: Merge gates
 
 on:
   pull_request_target:
-    types: [opened, synchronize, reopened, edited]
+    types: [opened, synchronize, reopened, edited, labeled, unlabeled]
     branches: [dev]
   pull_request_review:
     types: [submitted]
