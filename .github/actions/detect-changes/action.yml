@@ -72,6 +72,12 @@ outputs:
   catalog:
     description: Run the plugin-catalog tests (catalog-only diffs run these instead of the Python suite).
     value: ${{ steps.classify.outputs.catalog }}
+  helper:
+    description: Run the LINA Helper macOS job (helper/ changes).
+    value: ${{ steps.classify.outputs.helper }}
+  macos:
+    description: Run LINA's macOS-marked tests (a marked test file or a module it imports changed, or the dev-red-fix label).
+    value: ${{ steps.classify.outputs.macos }}
 
 runs:
   using: composite
@@ -88,15 +94,17 @@ runs:
         GH_TOKEN: ${{ inputs.github-token || github.token }}
         REPO: ${{ github.repository }}
         EVENT_NAME: ${{ github.event_name }}
-        BASE_SHA: ${{ github.event.pull_request.base.sha }}
-        HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.merge_group.base_sha }}
+        HEAD_SHA: ${{ github.event.pull_request.head.sha || github.event.merge_group.head_sha }}
       run: |
         set -euo pipefail
 
         # Only pull_request events are gated. Other events (push, release,
         # dispatch) leave CHANGED empty, so the classifier fails open and every
         # lane runs. Post-merge / on-demand validation is never weakened.
-        if [ "$EVENT_NAME" = "pull_request" ]; then
+        # A merge-queue entry (merge_group) compares its base and head the same way; the
+        # classifier then turns every test suite on for it (classify_changes.py, merge_group).
+        if [ "$EVENT_NAME" = "pull_request" ] || [ "$EVENT_NAME" = "merge_group" ]; then
           # Use the compare endpoint with the pinned base/head SHAs from the
           # event payload instead of the "current PR files" endpoint. The SHAs
           # are frozen at trigger time, so the file list is deterministic even
