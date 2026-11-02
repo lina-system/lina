@@ -1,0 +1,12 @@
+# Optional dependencies for LCM-X semantic/hybrid retrieval (#674, #1186).
+# Semantic retrieval remains OPT-IN in this slice.
+# The host installs and retains these through the stable dependency companion:
+#   hermes plugins install electricsheephq/lcm-x/companions/hermes-lcm-x-local-embeddings --ref <LCM-X-40-character-SHA>
+# If installed but disabled, explicitly consent with:
+#   hermes plugins enable hermes-lcm-x-local-embeddings
+# Restart Hermes after enable; /lcm doctor reports provider availability.
+# Keep this range identical to the companion plugin.yaml (regression-tested).
+# Last-resort unmanaged recovery only: pip install -r requirements-semantic.txt
+# A manual install is not retained by the host's dependency manager.
+
+fastembed>=0.8.0,<1.0
