@@ -487,10 +487,8 @@ def _card_gates_gate(tool_name: str, conn, task, tid: str) -> None:
     """Deterministic half of the handoff gate: a goal-mode card's own gates must pass in its
     workspace. Unlike the judge this never fails open, so it runs whether or not a judge is
     reachable."""
-    if not task or not task.goal_mode or not task.goal_gates:
-        return
-    from hermes_cli.kanban_goal_gates import run_card_gates
-    failure = run_card_gates(conn, task, workspace=_own_task_env(tid, "HERMES_KANBAN_WORKSPACE"))
+    from hermes_cli.kanban_goal_gates import handoff_gate_failure
+    failure = handoff_gate_failure(conn, task)
     if failure is not None:
         raise _Reject(
             f"{tool_name} refused: {failure.describe()}\nThe task is still in-flight (no state "
