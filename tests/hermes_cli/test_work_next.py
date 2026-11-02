@@ -124,3 +124,46 @@ def test_submit_hands_a_pick_to_its_runner_and_records_it_on_the_work_card(tmp_p
         started = [e for e in kb.list_events(conn, card) if e.kind == "worker_run"]
     assert [(e.payload["run_id"], e.payload["runner"]) for e in started] == [(job["id"], "dsh")]
     assert plan["decisions"][0]["submit"] == {"ok": True, "id": job["id"]}
+
+
+def _issue(n, title, body="", labels=("omo",)):
+    return {"n": n, "title": title, "body": "Sprint: M0 S3\n" + body, "labels": list(labels), "parent": False}
+
+
+def _two(issues, blocked=None, pulls=(), jobs=()):
+    repo = {"issues": issues, "blocked_by": blocked or {}, "pulls": list(pulls), "branches": [], "dev_red": None,
+            "error": None}
+    return {"sprint": ("M0", 3), "repos": {REPO: repo}, "jobs": list(jobs), "runners": {"omo": "omo"},
+            "scopes": ["store"]}
+
+
+def _kinds(plan):
+    return {d["issue"]: (d["kind"], d["reason"]) for d in plan["decisions"]}
+
+
+def test_serial_with_holds_both_ways_when_the_naming_issue_opens_first():
+    # #1 names #2 and ranks first (#9 waits behind it): #2 must not open in the same pass.
+    issues = [_issue(1, "feat(ui): one", "Serial with: #2"), _issue(2, "feat(ui): two"), _issue(9, "feat(ui): nine")]
+    plan = picker.decide(_two(issues, blocked={9: [{"repo": REPO, "n": 1, "state": "open"}]}))
+    kinds = _kinds(plan)
+    assert kinds[1][0] == "open"
+    assert kinds[2] == ("scope", "same contract running: Serial with #1 opened now")
+
+
+def test_serial_with_holds_the_named_issue_while_the_naming_one_runs():
+    issues = [_issue(1, "feat(ui): one", "Serial with: #2"), _issue(2, "feat(ui): two")]
+    plan = picker.decide(_two(issues, jobs=[{"id": "OT-1", "state": "running", "text": f"{REPO}#1"}]))
+    kinds = _kinds(plan)
+    assert kinds[1][0] == "running"
+    assert kinds[2] == ("scope", "same contract running: Serial with #1")
+
+
+def test_an_open_pull_request_without_a_running_job_holds_only_its_own_issue():
+    issues = [_issue(5, "feat(store): five"), _issue(6, "feat(store): six")]
+    plan = picker.decide(_two(issues, pulls=[{"n": 50, "head": "feat/5-five", "body": "Closes #5"}]))
+    kinds = _kinds(plan)
+    assert kinds[5] == ("running", "already running: PR #50")
+    assert kinds[6][0] == "open"
+    busy = picker.decide(_two(issues, pulls=[{"n": 50, "head": "feat/5-five", "body": "Closes #5"}],
+                              jobs=[{"id": "OT-5", "state": "running", "text": f"{REPO}#5"}]))
+    assert _kinds(busy)[6] == ("scope", "same contract running: store #5")

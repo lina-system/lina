@@ -1,8 +1,10 @@
 """``lina work next``: which issues to open now, and why the others wait (docs/delivery.md steps 2 and 5).
 
 ``collect`` reads everything once into a snapshot; ``decide`` is a pure function of that snapshot. Only two things
-hold a start back: an open issue in the Blocked by list, or work already running on the same contract scope
-(the title scope ``feat(<scope>):`` in ``work.contract_scopes``, or a ``Serial with:`` line). There are no caps on
+hold a start back: an open issue in the Blocked by list, or work already running on the same contract: the title
+scope ``feat(<scope>):`` in ``work.contract_scopes``, or a ``Serial with:`` line (a two-way relation: either side
+names the other). Contracts are held by active jobs and by what this pass opens, never by an open pull request or
+branch alone: finished work waiting on CI or a merge holds only its own issue. There are no caps on
 open pull requests or running jobs, and a red ``dev`` holds merges only: it is shown, it never holds a start.
 Issues the most others wait on open first, then the longest dependency chain.
 """
@@ -114,6 +116,13 @@ def running_work(snapshot: dict) -> dict[tuple[str, int], str]:
     return running
 
 
+def active_work(snapshot: dict) -> set[tuple[str, int]]:
+    """Issues a running job of the work record works on: the only work that holds a contract."""
+    repos = list(snapshot["repos"])
+    return {key for job in snapshot.get("jobs", []) if job.get("state") == "running"
+            for key in _refs(job.get("text") or "", repos)}
+
+
 def graph(snapshot: dict):
     """Open issues, their open blockers, how many open issues wait behind each and its longest chain."""
     issues = {(full, i["n"]): dict(i, repo=full) for full, repo in snapshot["repos"].items()
@@ -159,6 +168,17 @@ def graph(snapshot: dict):
     return issues, blockers, waiting, chain
 
 
+def serial_relation(issues: dict, repos: list[str]) -> dict[tuple[str, int], set[tuple[str, int]]]:
+    """``Serial with:`` as a two-way relation: when #1 names #2, #1 conflicts with #2 and #2 with #1."""
+    relation: dict[tuple[str, int], set[tuple[str, int]]] = {}
+    for key, issue in issues.items():
+        for other in _serial(issue["body"], key[0], repos):
+            if other != key:
+                relation.setdefault(key, set()).add(other)
+                relation.setdefault(other, set()).add(key)
+    return relation
+
+
 def _serial(body: str, home: str, repos: list[str]) -> list[tuple[str, int]]:
     by_short = {_short(full): full for full in repos}
     refs = []
@@ -175,12 +195,14 @@ def decide(snapshot: dict) -> dict:
     running = running_work(snapshot)
     issues, blockers, waiting, chain = graph(snapshot)
     longest = max(chain.values(), default=0)
+    active = active_work(snapshot)
+    relation = serial_relation(issues, repos)
     taken = {}
-    for key in running:
+    for key in sorted(active):
         scope = scope_of(issues[key]["title"]) if key in issues else ""
         if scope in scopes:
             taken.setdefault((key[0], scope), (key, ""))
-    in_flight = dict(running)
+    holding = {key: "running" for key in active}
     decisions = []
     for key in sorted(issues, key=lambda k: (-waiting[k], -chain[k], repos.index(k[0]), k[1])):
         issue, full = issues[key], key[0]
@@ -192,7 +214,7 @@ def decide(snapshot: dict) -> dict:
 
         scope = scope_of(issue["title"])
         holder = taken.get((full, scope)) if scope in scopes else None
-        serial = [r for r in _serial(issue["body"], full, repos) if r in in_flight]
+        serial = sorted(r for r in relation.get(key, ()) if r in holding)
         if issue["parent"] or issue["title"].strip() == "Roadmap":
             hold("parent", "parent issue" if issue["parent"] else "Roadmap", shown=False)
         elif not settings.in_sprint(issue["body"], sprint):
@@ -208,14 +230,15 @@ def decide(snapshot: dict) -> dict:
         elif holder:
             hold("scope", f"same contract running: {scope} {_ref(holder[0], full)}" + (f" {holder[1]}" if holder[1] else ""))
         elif serial:
-            hold("scope", "same contract running: Serial with " + ", ".join(_ref(r, full) for r in serial))
+            hold("scope", "same contract running: Serial with " + ", ".join(
+                _ref(r, full) + (" opened now" if holding[r] == "opened now" else "") for r in serial))
         elif not base["runner"]:
             hold("unrouted", "not routed yet (" + (NEEDS_ROUTING if NEEDS_ROUTING in issue["labels"]
                                                    else "no runner label") + ")")
         else:
             if scope in scopes:
                 taken[(full, scope)] = (key, "opened now")
-            in_flight[key] = "opened now"
+            holding[key] = "opened now"
             decisions.append(dict(base, action="open", kind="open", reason="", shown=True))
     red = {full: repo["dev_red"] for full, repo in snapshot["repos"].items() if repo.get("dev_red")}
     return {"sprint": sprint, "red": red, "decisions": decisions, "running": len(running)}
