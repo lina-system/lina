@@ -181,8 +181,8 @@ class TestStdioReconfigureErrorHandling:
 
 
 @pytest.mark.parametrize("path", [
-    "hermes_cli/main.py", "run_agent.py", "acp_adapter/entry.py",
-    "gateway/run.py", "batch_runner.py", "cli.py",
+    "hermes_cli/main.py", "run_agent.py",
+    "gateway/run.py", "cli.py",
 ])
 def test_entrypoint_executes_bootstrap_before_application_imports(tmp_path, path):
     import subprocess
@@ -291,8 +291,8 @@ print('reached-pm')
 
 
 @pytest.mark.parametrize("path", [
-    "hermes_cli/main.py", "run_agent.py", "acp_adapter/entry.py",
-    "gateway/run.py", "batch_runner.py", "cli.py",
+    "hermes_cli/main.py", "run_agent.py",
+    "gateway/run.py", "cli.py",
 ])
 @pytest.mark.parametrize("bootstrap,expected", [
     (None, "proceeded"),

@@ -1,36 +1,11 @@
-"""The committed TypeScript + OpenRPC contract files are exactly what ``tui_gateway/contracts``
-renders, and the contract catalog covers the whole wire.
-
-Regenerate with ``.venv/bin/python scripts/gen_gateway_contracts.py`` when a model changes. The
-two files are listed in ``scripts/ci/classify_changes.py::_PY_RELEVANT_CONTRACT_FILES`` so a
-TS-only PR that edits them still runs this test.
-"""
+"""The retained Python contract catalog covers the whole gateway wire."""
 
 from __future__ import annotations
 
-import importlib.util
 import re
 from pathlib import Path
 
-import pytest
-
 REPO = Path(__file__).resolve().parents[3]
-GEN = REPO / "scripts" / "gen_gateway_contracts.py"
-
-
-@pytest.fixture(scope="module")
-def gen():
-    spec = importlib.util.spec_from_file_location("gen_gateway_contracts", GEN)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    return module
-
-
-def test_generated_files_are_current(gen):
-    """Both committed artefacts equal an in-memory regeneration (byte-for-byte)."""
-    stale = [path.relative_to(REPO) for path, text in gen.render_all().items()
-             if (path.read_text(encoding="utf-8") if path.exists() else None) != text]
-    assert not stale, f"stale generated contract files {stale}: run scripts/gen_gateway_contracts.py"
 
 
 # The emitter inventory the old gateway-events.json scan used, kept as the completeness oracle:

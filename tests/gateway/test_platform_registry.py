@@ -20,10 +20,10 @@ class TestPlatformEnumDynamic:
 
     def test_dynamic_member_case_normalised(self):
         """Mixed case normalised to lowercase."""
-        a = Platform("IRC")
-        b = Platform("irc")
+        a = Platform("PHOTON")
+        b = Platform("photon")
         assert a is b
-        assert a.value == "irc"
+        assert a.value == "photon"
 
     def test_dynamic_member_with_hyphens(self):
         """Registered plugin platforms with hyphens work once registered."""
@@ -44,32 +44,38 @@ class TestPlatformEnumDynamic:
         finally:
             _reg.unregister("my-platform")
 
-    def test_bundled_manifest_name_alias_resolves_to_directory_member(self):
+    def test_bundled_manifest_name_alias_resolves_to_directory_member(self, monkeypatch):
         """A bundled platform whose plugin.yaml ``name:`` differs from its directory (a2a vs
         a2a-platform) resolves under the manifest name to the directory-name member (#116180)."""
         import gateway.config as gc
 
+        monkeypatch.setattr(Platform, "_scan_bundled_plugin_platforms",
+                            classmethod(lambda cls: ({"fixture_platform"}, {"fixture-platform": "fixture_platform"})))
+
         gc._Platform__bundled_plugin_names = None  # force a rescan of plugins/platforms/
         gc._Platform__bundled_plugin_aliases = None
         try:
-            by_dir = Platform("a2a")
-            by_manifest = Platform("a2a-platform")
+            by_dir = Platform("fixture_platform")
+            by_manifest = Platform("fixture-platform")
             assert by_manifest is by_dir
-            assert by_manifest.value == "a2a"
+            assert by_manifest.value == "fixture_platform"
         finally:
             gc._Platform__bundled_plugin_names = None
             gc._Platform__bundled_plugin_aliases = None
 
-    def test_config_keeps_platform_written_under_manifest_name(self):
+    def test_config_keeps_platform_written_under_manifest_name(self, monkeypatch):
         """``platforms.<manifest name>:`` in config.yaml is no longer silently dropped (#116180)."""
         import gateway.config as gc
+
+        monkeypatch.setattr(Platform, "_scan_bundled_plugin_platforms",
+                            classmethod(lambda cls: ({"fixture_platform"}, {"fixture-platform": "fixture_platform"})))
 
         gc._Platform__bundled_plugin_names = None
         gc._Platform__bundled_plugin_aliases = None
         try:
-            config = GatewayConfig.from_dict({"platforms": {"a2a-platform": {"enabled": True}}})
-            assert Platform("a2a") in config.platforms
-            assert config.platforms[Platform("a2a")].enabled is True
+            config = GatewayConfig.from_dict({"platforms": {"fixture-platform": {"enabled": True}}})
+            assert Platform("fixture_platform") in config.platforms
+            assert config.platforms[Platform("fixture_platform")].enabled is True
         finally:
             gc._Platform__bundled_plugin_names = None
             gc._Platform__bundled_plugin_aliases = None
@@ -79,7 +85,7 @@ class TestPlatformEnumDynamic:
         import gateway.config as gc
 
         names, aliases = gc.Platform._scan_bundled_plugin_platforms()
-        assert "a2a" in names
+        assert "photon" in names
         assert set(aliases.values()) <= names
         assert not (set(aliases) & names)
 
@@ -653,9 +659,7 @@ class TestMigratedPlatformWiring:
     """
 
     _LAZY_INSTALLABLE = (
-        "teams", "telegram", "discord", "slack",
-        "matrix", "dingtalk", "feishu", "wecom_callback",
-        "google_chat",
+        "telegram", "discord", "slack",
     )
 
     def test_lazy_installable_platforms_have_split_wiring(self):

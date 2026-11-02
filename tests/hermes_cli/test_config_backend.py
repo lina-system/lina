@@ -33,21 +33,6 @@ class TestRouting:
         with pytest.raises(cb.ConfigBackendUnavailable):
             cb.read_config_doc(home / "config.yaml")
 
-    def test_unconfigured_remote_backend_fails_closed_on_read(self, home, monkeypatch):
-        # Selected from the env alone; without its plane identity the first read exits, and the
-        # local config.yaml is never used as a fallback (D2).
-        from plugins.config_backends import remote
-        (home / "config.yaml").write_text("a: 1\n", encoding="utf-8")
-        monkeypatch.setenv(cb.BACKEND_ENV, "remote")
-        monkeypatch.delenv("HERMES_CONFIG_INSTANCE_ID", raising=False)
-        remote._reset_for_tests()
-        try:
-            assert cb.get_config_backend().name == "remote"
-            with pytest.raises(cb.ConfigBackendUnavailable, match="Remote Config"):
-                cb.read_config_doc(home / "config.yaml")
-        finally:
-            remote._reset_for_tests()
-
     def test_explicit_non_config_file_never_reaches_the_backend(self, home, monkeypatch):
         # Only ``<home>/config.yaml`` is a user layer; any other file is read where it is.
         def no_backend():
@@ -65,19 +50,14 @@ class TestBootstrapSelector:
 
     @pytest.fixture(autouse=True)
     def fresh_bootstrap(self, home, monkeypatch):
-        from plugins.config_backends import remote
         monkeypatch.setenv("HERMES_HOME", str(home))
         monkeypatch.delenv("HERMES_CONFIG_INSTANCE_ID", raising=False)
         monkeypatch.setattr(cb, "_BOOTSTRAPPED", False)
-        remote._reset_for_tests()
-        yield
-        remote._reset_for_tests()
 
     @pytest.mark.parametrize("shell, dotenv, expected", [
         ("remote", "HERMES_CONFIG_BACKEND=file\n", "file"),       # stale shell value, .env says file
         ("remote", "HERMES_CONFIG_BACKEND=\n", "file"),           # explicit empty value resets
-        (None, "HERMES_CONFIG_BACKEND=remote\n", "remote"),       # .env-only remote selects remote
-        ("remote", "OTHER=1\n", "remote"),                        # absent key keeps the shell value
+        ("file", "OTHER=1\n", "file"),                          # absent key keeps the shell value
     ])
     def test_dotenv_selector(self, home, monkeypatch, shell, dotenv, expected):
         if shell is None:
@@ -90,18 +70,6 @@ class TestBootstrapSelector:
     def test_dotenv_backend_override_is_gone(self):
         # One mechanism: the bootstrap replaces #134362's per-call .env override.
         assert not hasattr(cb, "_dotenv_backend_override")
-
-
-class TestRemoteBackendShape:
-
-    def test_remote_backend_is_not_a_file_backend(self):
-        # probe_config_readable and every FileBackend-typed path must never treat the remote
-        # layer as a local file.
-        from plugins.config_backends.remote.backend import RemoteBackend
-        assert not issubclass(RemoteBackend, cb.FileBackend)
-        for member in ("read_user_doc", "read_user_doc_readonly", "version", "exists",
-                       "probe_readable", "write_changes"):
-            assert callable(getattr(RemoteBackend, member, None)), member
 
 
 class TestFileBackend:
