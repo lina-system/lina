@@ -420,6 +420,16 @@ def command_uid(b, user):
     return b.uid_of(user)
 
 
+def agent_plist(adhoc):
+    plist = {'Label': LABEL, 'ProgramArguments': [EXE, 'serve'], 'KeepAlive': True,
+             'RunAtLoad': True, 'LimitLoadToSessionType': 'Aqua', 'ProcessType': 'Interactive'}
+    if adhoc:
+        # An ad-hoc helper has no team, so it rejects every client unless development mode is explicit.
+        # A team-signed helper ignores this variable, and a signed install never gets it.
+        plist['EnvironmentVariables'] = {'LINA_HELPER_DEV': '1'}
+    return plistlib.dumps(plist)
+
+
 # ---------------------------------------------------------------- commands
 
 def cmd_install(b, user, app, team, allow_adhoc):
@@ -433,7 +443,7 @@ def cmd_install(b, user, app, team, allow_adhoc):
             raise InstallError(f'{path} exists and is not ours; refusing to overwrite')
     try:
         stage(b, app)
-        verify_candidate(b, b.paths.STAGED, team, allow_adhoc)
+        info = verify_candidate(b, b.paths.STAGED, team, allow_adhoc)
         state = State(b)
         state.data.update(user=user, team=team)
         make_dirs(b, state, b.paths.STATE_DIR, 0o700)
@@ -446,9 +456,7 @@ def cmd_install(b, user, app, team, allow_adhoc):
         if b.mode == 'root' and not b.exists(POLICY):
             b.write_file(POLICY, json.dumps(DEFAULT_POLICY, indent=2).encode() + b'\n', 0o644)
             state.record(POLICY, 'file')
-        plist = {'Label': LABEL, 'ProgramArguments': [EXE, 'serve'], 'KeepAlive': True,
-                 'RunAtLoad': True, 'LimitLoadToSessionType': 'Aqua', 'ProcessType': 'Interactive'}
-        b.write_file(b.paths.AGENT_PLIST, plistlib.dumps(plist), 0o644)
+        b.write_file(b.paths.AGENT_PLIST, agent_plist(info.adhoc), 0o644)
         state.record(b.paths.AGENT_PLIST, 'file')
         if b.mode == 'root':
             b.symlink(CTL_IN_APP, CTL_LINK)
@@ -513,6 +521,9 @@ def cmd_upgrade(b, user, app, allow_adhoc, skip_grant_check=False):
                 b.rmtree(b.paths.PREVIOUS_DIR)
             b.makedirs(b.paths.PREVIOUS_DIR, 0o755)
             state.record(b.paths.PREVIOUS_DIR, 'tree')
+            # Same signing mode as the installed bundle (checked above); this also repairs ad-hoc agents
+            # written before they carried development mode.
+            b.write_file(b.paths.AGENT_PLIST, agent_plist(cand.adhoc), 0o644)
         except BaseException:
             bootstrap(b, uid)  # put the untouched installed agent back
             raise
