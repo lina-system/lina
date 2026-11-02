@@ -36,7 +36,7 @@ def test_unit_transaction_budget_preserves_scope_and_health(monkeypatch, gracefu
     monkeypatch.setattr(fleet, "_drain_or_signal_gateway_for_update", lambda *a, **kw: True)
     health = iter([False, True] if retry else [True])
     monkeypatch.setattr(fleet, "_wait_for_service_active", lambda *a, **kw: next(health))
-    name = "hermes-gateway-test" if graceful else "hermes-serve-test"
+    name = "hermes-gateway-test" if graceful else "lina-serve-test"
     restarted, failed = [], []
     fleet._restart_one_systemd_gateway_unit(
         name, scope="system", scope_cmd=scope, drain_budget=45,
@@ -54,7 +54,7 @@ def test_fleet_restart_budget_preserves_user_scope_and_verifies_health(monkeypat
     scope = ["systemctl", "--user"]
     manage = [*scope, "--no-ask-password"]
     calls, health_checks = [], []
-    name = "hermes-serve-test"
+    name = "lina-serve-test"
 
     def systemctl(cmd, *, timeout):
         calls.append((cmd, timeout))
@@ -108,11 +108,11 @@ def test_budget_fallback_keeps_real_errors(monkeypatch, limits, outcome):
         clock = [0.0]
         monkeypatch.setattr(budget, "time", types.SimpleNamespace(
             monotonic=lambda: clock[0], sleep=lambda s: clock.__setitem__(0, clock[0] + s)))
-        result = fleet._systemctl_reset_and_restart(["systemctl"], "hermes-serve-test")
+        result = fleet._systemctl_reset_and_restart(["systemctl"], "lina-serve-test")
         assert result.returncode == budget.UNIT_JOB_STILL_RUNNING
         assert clock[0] <= budget._UNIT_JOB_HARD_CAP_S
     else:
-        result = fleet._systemctl_reset_and_restart(["systemctl"], "hermes-serve-test")
+        result = fleet._systemctl_reset_and_restart(["systemctl"], "lina-serve-test")
         assert result.returncode == outcome
         assert result.stderr == "manager diagnostic"
 

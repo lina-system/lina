@@ -63,6 +63,16 @@ GATEWAY_SERVICE_BASE = "lina-gateway"
 GATEWAY_LAUNCHD_LABEL_BASE = "ai.lina.gateway"
 GATEWAY_WINDOWS_TASK_BASE = "LINA_Gateway"
 LAUNCHD_LABEL_PREFIX = "ai.lina."
+# LINA's serve/dashboard systemd units and one-off launchd runtime jobs, by the same rule: where Hermes Agent
+# says ``hermes`` (``hermes-serve``, ``hermes-dashboard``, ``com.nousresearch.hermes.runtime.``), LINA says
+# ``lina``. The runtime prefix stays outside ``ai.lina.``: every launchd scan reads that as an installed
+# KeepAlive service.
+SERVE_SERVICE_BASE = "lina-serve"
+DASHBOARD_SERVICE_BASE = "lina-dashboard"
+LAUNCHD_RUNTIME_LABEL_PREFIX = "com.nousresearch.lina.runtime."
+# The gateway label LINA used before #93. A LaunchAgent under it is LINA's only when it pins a LINA home;
+# otherwise it is Hermes Agent's.
+LEGACY_GATEWAY_LAUNCHD_LABEL_BASE = "ai.hermes.gateway"
 
 
 def _platform_default_hermes_home(

@@ -25,13 +25,13 @@ _FLEET_PROBE_SETTLE_TIMEOUT_SECONDS = 120.0
 
 
 def _print_legacy_units_warning() -> None:
-    """Legacy hermes.service fights hermes-gateway.service over the bot token; warn on
+    """LINA's legacy hermes.service fights lina-gateway.service over the bot token; warn on
     every update until migrated."""
     from hermes_cli.gateway import (has_legacy_hermes_units, _find_legacy_hermes_units, supports_systemd_services)
     if not (supports_systemd_services() and has_legacy_hermes_units()):
         return
     print()
-    print("⚠ Legacy Hermes gateway unit(s) detected:")
+    print("⚠ Legacy LINA gateway unit(s) detected:")
     for name, path, is_sys in _find_legacy_hermes_units():
         scope = "system" if is_sys else "user"
         print(f"    {path}  ({scope} scope)")
@@ -40,7 +40,7 @@ def _print_legacy_units_warning() -> None:
     print("  lina-gateway.service for the bot token and cause SIGTERM")
     print("  flap loops. Remove them with:")
     print()
-    print("    hermes gateway migrate-legacy")
+    print("    lina gateway migrate-legacy")
     print()
     print("  (add `sudo` if any are in system scope)")
 
@@ -239,7 +239,7 @@ def _named_gateways_still_owed() -> bool:
 
 
 def _is_serve_unit(name: object) -> bool:
-    """A serve/dashboard unit by the fleet loop's own name gate (``hermes-serve*``/``hermes-dashboard*``,
+    """A serve/dashboard unit by the fleet loop's own name gate (``lina-serve*``/``lina-dashboard*``,
     bare or ``.service``). Anything else it records as failed (gateway units, launchd labels,
     listing-failure markers) is gateway evidence."""
     from hermes_cli.update_cmd_fleet import _is_serve_or_dashboard_unit

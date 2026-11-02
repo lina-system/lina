@@ -21,9 +21,13 @@ import time
 import uuid
 from pathlib import Path
 
-# Never ``ai.hermes.*``: that prefix is what the gateway's restart route, its control-socket
-# supervisor declaration and every fleet scan read as "an installed, KeepAlive service".
-LABEL_PREFIX = "com.nousresearch.hermes.runtime."
+from hermes_constants import LAUNCHD_RUNTIME_LABEL_PREFIX
+
+# Never ``ai.lina.*``: that prefix is what the gateway's restart route, its control-socket
+# supervisor declaration and every fleet scan read as "an installed, KeepAlive service". Never
+# Hermes Agent's ``com.nousresearch.hermes.runtime.*`` either: the finished-job sweep below would
+# remove its jobs.
+LABEL_PREFIX = LAUNCHD_RUNTIME_LABEL_PREFIX
 _POLL_INTERVAL_S = 0.5
 
 
