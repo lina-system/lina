@@ -7,7 +7,7 @@ Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/
 
 - success: ``chatgpt-codex-connector[bot]`` reviewed the head commit (a pull request review on
   it, its review-summary comment marking a finished review of it with no findings, or a
-  "no major issues" comment newer than it), and none of its review comments on that commit
+  "no major issues" comment naming it), and none of its review comments on that commit
   carries a P0 or P1 badge;
 - failure: the bot left P0/P1 findings on the head commit (count and first finding title);
 - pending: no review of the head commit yet. A review of an earlier head never counts.
@@ -47,7 +47,6 @@ import re
 import subprocess
 import sys
 from dataclasses import dataclass
-from datetime import datetime
 from typing import Any
 
 CODEX_BOT = "chatgpt-codex-connector[bot]"
@@ -93,10 +92,6 @@ def _limit(text: str) -> str:
 
 def _is_bot(item: dict[str, Any]) -> bool:
     return (item.get("user") or {}).get("login") == CODEX_BOT
-
-
-def _parse_time(value: str | None) -> datetime | None:
-    return datetime.fromisoformat(value) if value else None
 
 
 def finding_priority(body: str) -> int | None:
@@ -146,17 +141,12 @@ def _summary_state(issue_comments: list[dict[str, Any]]) -> dict[str, Any]:
     return {}
 
 
-def _no_major_comment(head_sha: str, head_date: datetime | None,
-                      issue_comments: list[dict[str, Any]]) -> bool:
-    """A "no major issues" comment that names the head commit or is newer than it."""
+def _no_major_comment(head_sha: str, issue_comments: list[dict[str, Any]]) -> bool:
+    """A "no major issues" comment that names the head commit. Its time proves nothing: a commit
+    made before the previous head's review finished and pushed after it is older than the comment."""
     for comment in issue_comments:
         body = comment.get("body") or ""
-        if not _is_bot(comment) or not _NO_MAJOR.search(body):
-            continue
-        if head_sha[:7] in body:
-            return True
-        updated = _parse_time(comment.get("updated_at") or comment.get("created_at"))
-        if head_date and updated and updated >= head_date:
+        if _is_bot(comment) and _NO_MAJOR.search(body) and head_sha[:7] in body:
             return True
     return False
 
@@ -166,7 +156,6 @@ def review_status(
     reviews: list[dict[str, Any]],
     review_comments: list[dict[str, Any]],
     issue_comments: list[dict[str, Any]],
-    head_date: str | None = None,
 ) -> Status:
     short = head_sha[:7]
     findings = head_findings(head_sha, review_comments)
@@ -179,7 +168,7 @@ def review_status(
         any(_is_bot(r) and r.get("commit_id") == head_sha for r in reviews)
         or (state.get("commit_sha") == head_sha and state.get("status") == "completed"
             and state.get("has_any_findings") is False)
-        or _no_major_comment(head_sha, _parse_time(head_date), issue_comments)
+        or _no_major_comment(head_sha, issue_comments)
     )
     if reviewed:
         minor = len(findings)
@@ -289,16 +278,26 @@ def post_status(repo: str, sha: str, context: str, status: Status, target_url: s
         "-f", f"description={status.description}", "-f", f"target_url={target_url}")
 
 
+def pick_dev_run(runs: list[dict[str, Any]]) -> dict[str, Any] | None:
+    """The newest finished push run on dev that has a verdict. A run cancelled because a newer push
+    took its place in the concurrency group, or skipped, says nothing about dev. A run still going
+    is not waited on: the merge queue tests dev with the pull request before anything merges."""
+    for run in runs:
+        if run.get("status") == "completed" and run.get("conclusion") not in ("cancelled", "skipped"):
+            return run
+    return None
+
+
 def latest_dev_run(repo: str) -> tuple[dict[str, Any] | None, frozenset[str]]:
-    runs = gh_json(f"repos/{repo}/actions/workflows/ci.yml/runs"
-                   "?branch=dev&event=push&status=completed&per_page=1")["workflow_runs"]
-    if not runs:
+    run = pick_dev_run(gh_json(f"repos/{repo}/actions/workflows/ci.yml/runs"
+                               "?branch=dev&event=push&status=completed&per_page=20")["workflow_runs"])
+    if run is None:
         return None, frozenset()
-    out = _gh("api", "--paginate", f"repos/{repo}/actions/runs/{runs[0]['id']}/jobs?per_page=100",
+    out = _gh("api", "--paginate", f"repos/{repo}/actions/runs/{run['id']}/jobs?per_page=100",
               "--jq", ".jobs[] | select(.conclusion != null) | [.name, .conclusion] | @tsv")
     red = {name for name, _, conclusion in (line.partition("\t") for line in out.splitlines())
            if conclusion in RED}
-    return runs[0], frozenset(red)
+    return run, frozenset(red)
 
 
 def owner_approved(repo: str, pr: int) -> bool:
@@ -322,14 +321,12 @@ def judge(repo: str, pr: int, dev: tuple[dict[str, Any] | None, frozenset[str]])
     pull = gh_json(f"repos/{repo}/pulls/{pr}")
     head_sha = pull["head"]["sha"]
     labels = frozenset(label["name"] for label in pull["labels"])
-    head_date = gh_json(f"repos/{repo}/commits/{head_sha}")["commit"]["committer"]["date"]
     return pull, {
         REVIEW_CONTEXT: review_status(
             head_sha,
             gh_list(f"repos/{repo}/pulls/{pr}/reviews?per_page=100"),
             gh_list(f"repos/{repo}/pulls/{pr}/comments?per_page=100"),
             gh_list(f"repos/{repo}/issues/{pr}/comments?per_page=100"),
-            head_date,
         ),
         LINKED_CONTEXT: linked_issue_status(repo, pull["head"]["ref"], closing_references(repo, pr), labels),
         DEV_CONTEXT: dev_green_status(*dev, labels, head_check_runs(repo, head_sha),

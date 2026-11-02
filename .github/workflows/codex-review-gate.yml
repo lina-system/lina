@@ -71,6 +71,14 @@ jobs:
           QUEUE_SHA: ${{ github.event.merge_group.head_sha }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
         run: |
+          # The gate script comes from dev. Until the pull request that adds it has merged, a review
+          # or comment event on that pull request finds no script on dev: say so and post nothing.
+          # Once it is on dev a missing script cannot pass anything, since the required statuses
+          # then never arrive and the pull request waits.
+          if [ ! -f scripts/ci/codex_review_gate.py ]; then
+            echo "::notice::scripts/ci/codex_review_gate.py is not on dev yet; no statuses posted"
+            exit 0
+          fi
           if [ -n "$QUEUE_REF" ]; then WHICH=(--merge-group "$QUEUE_REF" --sha "$QUEUE_SHA")
           elif [ -n "$PR" ]; then WHICH=(--pr "$PR"); else WHICH=(--all); fi
           python3 scripts/ci/codex_review_gate.py --repo "$REPO" "${WHICH[@]}" --target-url "$RUN_URL"

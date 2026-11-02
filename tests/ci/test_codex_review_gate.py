@@ -4,6 +4,7 @@ Regression for #55 and #57, merged with Codex P1 findings on their head commits.
 """
 
 import importlib.util
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -59,15 +60,15 @@ CASES = {
     "P2 only on the head": (
         [_review(HEAD)], [_finding(6, HEAD, 2, "Preserve driver resolution")],
         [_summary(HEAD, findings=True)], "success"),
-    "no major issues comment": (
+    "no major issues comment naming the head": (
         [], [], [{"id": 3, "user": BOT, "updated_at": "2026-11-02T02:00:00Z",
-                  "body": "Codex Review: Didn't find any major issues. Keep them coming!"}], "success"),
+                  "body": f"Codex Review: Didn't find any major issues (reviewed {HEAD[:10]})."}], "success"),
 }
 
 
 @pytest.mark.parametrize("reviews,comments,issue_comments,expected", CASES.values(), ids=CASES.keys())
 def test_review_status(reviews, comments, issue_comments, expected):
-    status = gate.review_status(HEAD, reviews, comments, issue_comments, "2026-11-02T01:30:00Z")
+    status = gate.review_status(HEAD, reviews, comments, issue_comments)
     assert status.state == expected
     assert len(status.description) <= gate.DESCRIPTION_LIMIT
 
@@ -82,7 +83,35 @@ def test_failure_counts_blocking_findings_and_names_the_first():
 def test_no_major_issues_comment_older_than_the_head_does_not_count():
     old = [{"id": 3, "user": BOT, "updated_at": "2026-11-01T00:00:00Z",
             "body": "Codex Review: Didn't find any major issues."}]
-    assert gate.review_status(HEAD, [], [], old, "2026-11-02T01:30:00Z").state == "pending"
+    assert gate.review_status(HEAD, [], [], old).state == "pending"
+
+
+def test_a_clean_comment_newer_than_the_head_does_not_pass_an_unreviewed_head(monkeypatch):
+    # A commit made before the previous head's review finished and pushed after it has an older
+    # committer date than that clean comment, though Codex never looked at it. Judged end to end,
+    # with the head's commit date available, the time must not count as a review.
+    pull = {"number": 101, "head": {"sha": HEAD, "ref": "ci/61-delivery-procedure"}, "labels": [],
+            "html_url": "https://github.com/lina-system/lina/pull/101"}
+    clean = {"id": 3, "user": BOT, "updated_at": "2026-11-02T02:00:00Z",
+             "body": "Codex Review: Didn't find any major issues. Keep them coming!"}
+    closing = {"data": {"repository": {"pullRequest": {"closingIssuesReferences": {"nodes": [
+        {"number": 61, "state": "OPEN", "repository": {"nameWithOwner": REPO}}]}}}}}
+
+    def fake_gh(*args: str) -> str:
+        path = next((a for a in args if a.startswith("repos/") or a == "graphql"), "")
+        if path == "graphql":
+            return json.dumps(closing)
+        if path == f"repos/{REPO}/pulls/101":
+            return json.dumps(pull)
+        if path == f"repos/{REPO}/commits/{HEAD}":
+            return json.dumps({"commit": {"committer": {"date": "2026-11-02T01:30:00Z"}}})
+        if path.startswith(f"repos/{REPO}/issues/101/comments"):
+            return json.dumps(clean) + "\n"
+        return ""
+
+    monkeypatch.setattr(gate, "_gh", fake_gh)
+    _, statuses = gate.judge(REPO, 101, ({"conclusion": "success", "head_sha": "d" * 40}, frozenset()))
+    assert statuses[gate.REVIEW_CONTEXT].state == "pending"
 
 
 def test_comments_from_other_authors_never_count():
@@ -179,3 +208,16 @@ def test_queue_ref_names_its_pull_request(ref, number):
 def test_other_refs_are_not_queue_refs(ref):
     with pytest.raises(ValueError):
         gate.queue_pull_request(ref)
+
+
+def _run(conclusion: str | None, status: str = "completed", sha: str = "a" * 40) -> dict[str, Any]:
+    return {"id": 1, "status": status, "conclusion": conclusion, "head_sha": sha}
+
+
+def test_dev_state_skips_runs_cancelled_by_a_newer_push():
+    # Pushes that land seconds apart cancel each other's CI in one concurrency group; the
+    # cancelled run is no verdict on dev, so the newest finished run with one decides.
+    runs = [_run("cancelled", sha="c" * 40), _run("cancelled", sha="b" * 40), _run("success")]
+    assert gate.pick_dev_run(runs)["head_sha"] == "a" * 40
+    assert gate.pick_dev_run([_run("cancelled"), _run("failure", sha="f" * 40)])["conclusion"] == "failure"
+    assert gate.pick_dev_run([_run("cancelled"), _run("skipped")]) is None
