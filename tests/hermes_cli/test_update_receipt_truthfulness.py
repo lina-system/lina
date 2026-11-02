@@ -228,7 +228,7 @@ class TestSuccessImpliesAccounting:
             relaunched_profiles=[],
             externally_supervised_profiles=[],
             killed_pids=set(),
-            failed_units=["hermes-gateway.service"],
+            failed_units=["lina-gateway.service"],
         )
         assert outcomes[0]["outcome"] == "failed"
         ur.finalize_update_receipt("partial")

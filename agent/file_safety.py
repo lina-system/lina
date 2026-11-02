@@ -16,13 +16,13 @@ from hermes_cli.home_data_layout import SECRET_CACHE_STORES
 
 
 def _constants_path(getter_name: str) -> Path:
-    """Call ``hermes_constants.<getter_name>()`` (local import avoids cycles); ``~/.hermes`` on any failure."""
+    """Call ``hermes_constants.<getter_name>()`` (local import avoids cycles); ``~/.lina`` on any failure."""
     try:
         import hermes_constants
 
         return getattr(hermes_constants, getter_name)()
     except Exception:
-        return Path(os.path.expanduser("~/.hermes"))
+        return Path(os.path.expanduser("~/.lina"))
 
 
 def _hermes_home_path() -> Path:

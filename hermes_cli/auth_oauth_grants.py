@@ -732,9 +732,10 @@ def _heal_forked_single_use_oauth_grants(provider_id: str) -> Optional[dict[str,
         return None  # classic mode: nothing to consolidate into
     if os.environ.get("PYTEST_CURRENT_TEST"):
         # Same seat belt as the write-through paths: never touch the real user's
-        # ~/.hermes/auth.json from a test that forgot to isolate HOME.
+        # ~/.lina/auth.json from a test that forgot to isolate HOME.
+        from hermes_constants import LINA_HOME_DIRNAME
         real_home_env = os.environ.get("HOME", "")
-        if real_home_env and _same_path(root_path, Path(real_home_env) / ".hermes" / "auth.json"):
+        if real_home_env and _same_path(root_path, Path(real_home_env) / LINA_HOME_DIRNAME / "auth.json"):
             return None
     profile_path = _auth_file_path()
     profile_home = profile_path.parent

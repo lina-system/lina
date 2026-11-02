@@ -13,6 +13,7 @@ import time as _time
 from contextlib import suppress
 
 from hermes_cli.update_cmd_common import _best_effort
+from hermes_constants import GATEWAY_SERVICE_BASE
 
 # Log-record parity with the origin module.
 logger = logging.getLogger("hermes_cli.update_cmd")
@@ -36,7 +37,7 @@ def _print_legacy_units_warning() -> None:
         print(f"    {path}  ({scope} scope)")
     print()
     print("  These pre-rename units (hermes.service) fight the current")
-    print("  hermes-gateway.service for the bot token and cause SIGTERM")
+    print("  lina-gateway.service for the bot token and cause SIGTERM")
     print("  flap loops. Remove them with:")
     print()
     print("    hermes gateway migrate-legacy")
@@ -136,7 +137,7 @@ def _gateway_unit_runs_one_of(unit: str, pids: set) -> bool:
     in the other scope that is not proven keeps the failure. Anything unreadable proves nothing.
     """
     from hermes_cli import update_cmd_fleet as fleet
-    if not pids or not (unit == "hermes-gateway" or unit.startswith("hermes-gateway-")):
+    if not pids or not (unit == GATEWAY_SERVICE_BASE or unit.startswith(f"{GATEWAY_SERVICE_BASE}-")):
         return False
     loaded = False
     for _scope, scope_cmd in fleet._SYSTEMD_SCOPES:

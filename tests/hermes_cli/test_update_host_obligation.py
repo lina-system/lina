@@ -111,15 +111,15 @@ def test_leftover_per_profile_units_restart_their_one_host_process_once(monkeypa
 
     failed: list = []
     fleet._restart_systemd_gateway_units_best_effort(
-        failed, _listing(["hermes-gateway.service", "hermes-gateway-coder.service", "hermes-gateway-writer.service"]))
+        failed, _listing(["lina-gateway.service", "lina-gateway-coder.service", "lina-gateway-writer.service"]))
 
-    assert restarted == ["hermes-gateway"]
+    assert restarted == ["lina-gateway"]
     assert failed == []
 
 
 def test_units_with_distinct_live_pids_are_each_restarted(monkeypatch):
     """Control: genuinely separate processes are still separate restart targets."""
-    pids = {"hermes-gateway": 1, "hermes-gateway-coder": 2}
+    pids = {"lina-gateway": 1, "lina-gateway-coder": 2}
     monkeypatch.setattr(fleet, "_unit_main_pid", lambda scope_cmd, svc: pids[svc], raising=False)
     restarted: list[str] = []
     monkeypatch.setattr(
@@ -129,9 +129,9 @@ def test_units_with_distinct_live_pids_are_each_restarted(monkeypatch):
     monkeypatch.setattr(fleet, "_SYSTEMD_SCOPES", (("user", ["systemctl", "--user"]),))
 
     fleet._restart_systemd_gateway_units_best_effort(
-        [], _listing(["hermes-gateway.service", "hermes-gateway-coder.service"]))
+        [], _listing(["lina-gateway.service", "lina-gateway-coder.service"]))
 
-    assert sorted(restarted) == ["hermes-gateway", "hermes-gateway-coder"]
+    assert sorted(restarted) == ["lina-gateway", "lina-gateway-coder"]
 
 
 def _host_record(tmp_path, monkeypatch, profiles: list[str]) -> None:

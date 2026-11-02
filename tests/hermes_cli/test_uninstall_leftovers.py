@@ -30,11 +30,11 @@ def launch_agents(fake_home, monkeypatch):
     agents.mkdir(parents=True)
     monkeypatch.setattr(
         uninstall, "get_launchd_plist_path",
-        lambda: agents / "ai.hermes.gateway.plist", raising=False,
+        lambda: agents / "ai.lina.gateway.plist", raising=False,
     )
     # _remove_launchd_gateway imports it from hermes_cli.gateway at call time.
     from hermes_cli import gateway
-    monkeypatch.setattr(gateway, "get_launchd_plist_path", lambda: agents / "ai.hermes.gateway.plist")
+    monkeypatch.setattr(gateway, "get_launchd_plist_path", lambda: agents / "ai.lina.gateway.plist")
     return agents
 
 
@@ -45,23 +45,24 @@ def _fake_launchctl(monkeypatch, calls):
     monkeypatch.setattr(uninstall.subprocess, "run", fake_run)
 
 
-def test_remove_launchd_gateway_sweeps_both_label_patterns(launch_agents, monkeypatch):
-    current = launch_agents / "ai.hermes.gateway.plist"
-    profiled = launch_agents / "ai.hermes.gateway-work.plist"
-    legacy = launch_agents / "io.nousresearch.hermes-agent.gateway.plist"
+def test_remove_launchd_gateway_sweeps_lina_labels_and_leaves_hermes_agents(launch_agents, monkeypatch):
+    current = launch_agents / "ai.lina.gateway.plist"
+    profiled = launch_agents / "ai.lina.gateway-work.plist"
+    hermes_agent = (launch_agents / "ai.hermes.gateway.plist",
+                    launch_agents / "io.nousresearch.hermes-agent.gateway.plist")
     unrelated = launch_agents / "com.other.agent.plist"
-    for p in (current, profiled, legacy, unrelated):
+    for p in (current, profiled, *hermes_agent, unrelated):
         p.write_text("<plist/>", encoding="utf-8")
 
     calls: list[list[str]] = []
     _fake_launchctl(monkeypatch, calls)
 
     assert uninstall._remove_launchd_gateway() is True
-    assert not current.exists() and not profiled.exists() and not legacy.exists()
+    assert not current.exists() and not profiled.exists()
+    assert all(p.exists() for p in hermes_agent)  # Hermes Agent may share this account
     assert unrelated.exists()  # never touch another app's agent
     labels = {c[-1].rsplit("/", 1)[-1] for c in calls if c[1] == "bootout"}
-    assert labels == {"ai.hermes.gateway", "ai.hermes.gateway-work",
-                      "io.nousresearch.hermes-agent.gateway"}
+    assert labels == {"ai.lina.gateway", "ai.lina.gateway-work"}
     assert all(c[1] == "unload" for c in calls if c[1] == "unload")
 
 

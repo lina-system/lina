@@ -173,11 +173,16 @@ def _read_marker(marker: Path) -> Any:
 
 def candidate_roots(places: Places) -> Iterator[Path]:
     """Each named root once, existing directories only. A root inside a protected folder is yielded
-    unresolved: :func:`root_evidence` reports it without touching it."""
+    unresolved: :func:`root_evidence` reports it without touching it. A root under Hermes Agent's
+    home (named by a Hermes gateway service, say) is never yielded: it is not this install's."""
+    from hermes_constants import is_hermes_agent_path
+
     seen: set[Path] = set()
     for source in places.sources:
         for raw in source():
             path = Path(os.path.abspath(os.path.expanduser(str(raw))))
+            if is_hermes_agent_path(path):
+                continue
             if not _is_protected(path, places):
                 try:
                     path = path.resolve()

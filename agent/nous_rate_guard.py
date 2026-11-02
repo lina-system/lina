@@ -40,7 +40,7 @@ def _state_path(*, anonymous: bool = False) -> str:
         from hermes_constants import get_hermes_home
         base = get_hermes_home()
     except ImportError:
-        base = os.path.join(os.path.expanduser("~"), ".hermes")
+        base = os.path.join(os.path.expanduser("~"), ".lina")
     # Signing in must not inherit the anonymous allowance's cooldown (or clear it for
     # another anonymous session). Keep the existing named-account file unchanged.
     return os.path.join(base, "rate_limits", "nous-anonymous.json" if anonymous else "nous.json")
