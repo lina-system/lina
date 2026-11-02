@@ -32,6 +32,16 @@ def test_local_review_reviews_the_stored_conversation_once_the_cached_agent_is_g
     home.mkdir(mode=0o700)
     user.mkdir()
     work.mkdir()
+    plugin = home / 'plugins' / 'model-providers' / 'review-test'
+    plugin.mkdir(parents=True)
+    (plugin / '__init__.py').write_text(
+        'from providers import register_provider\n'
+        'from providers.base import ProviderProfile\n'
+        'class ReviewProfile(ProviderProfile):\n'
+        '    def build_extra_body(self, **context):\n'
+        '        return {"provider": context["provider_preferences"]}\n'
+        'register_provider(ReviewProfile(name="review-test", env_vars=("REVIEW_TEST_API_KEY",)))\n'
+    )
     peer = ThreadingHTTPServer(('127.0.0.1', 0), Model)
     peer.requests = []
     peer.blocked, peer.release = threading.Event(), threading.Event()
@@ -40,7 +50,7 @@ def test_local_review_reviews_the_stored_conversation_once_the_cached_agent_is_g
     url = f'http://127.0.0.1:{peer.server_port}/v1'
     config = {
         'gateway': {'multiplex_profiles': False},
-        'model': {'provider': 'openrouter', 'default': 'openai/gpt-5', 'base_url': url,
+        'model': {'provider': 'review-test', 'default': 'openai/gpt-5', 'base_url': url,
                   'api_key': 'loopback-only', 'api_mode': 'chat_completions'},
         'auxiliary': {'title_generation': {'enabled': False}},
         'provider_routing': {'only': ['daemon-start'], 'data_collection': 'allow'},
@@ -51,7 +61,7 @@ def test_local_review_reviews_the_stored_conversation_once_the_cached_agent_is_g
     (home / 'config.yaml').write_text(json.dumps(config))
     env = child_env()
     env.update(HOME=str(user), USERPROFILE=str(user), HERMES_HOME=str(home), PYTHONPATH=str(root),
-               OPENROUTER_API_KEY='loopback-only', OPENAI_API_KEY='loopback-only', PYTHONUNBUFFERED='1')
+               REVIEW_TEST_API_KEY='loopback-only', OPENAI_API_KEY='loopback-only', PYTHONUNBUFFERED='1')
     out = {}
 
     def settled():

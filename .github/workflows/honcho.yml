@@ -1,0 +1,134 @@
+name: Honcho
+
+# LINA CI (docs/ci.md, docs/honcho.md). The Honcho server in services/honcho, a squashed subtree of
+# plastic-labs/honcho: the subtree check, the server's own test suite and its Docker image build.
+# GitHub-hosted runners only; no upstream organisation secrets, runners or apps.
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'services/**'
+      - 'scripts/ci/check_honcho_subtree.py'
+      - '.github/workflows/honcho.yml'
+  push:
+    branches: [dev]
+    paths:
+      - 'services/**'
+      - 'scripts/ci/check_honcho_subtree.py'
+      - '.github/workflows/honcho.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  subtree:
+    # The ledger, the squash commit, the honcho-upstream mirror, untouched LICENSE files and
+    # headers, and the modification notice in services/honcho/README.md.
+    name: Honcho subtree check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the honcho-upstream mirror
+        run: git fetch --no-tags origin +refs/heads/honcho-upstream:refs/remotes/origin/honcho-upstream
+
+      - name: Check the subtree
+        run: python3 scripts/ci/check_honcho_subtree.py --mirror origin/honcho-upstream
+
+  tests:
+    # Upstream unittest.yml "test-python", without its LLM secrets and coverage report.
+    name: Honcho tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 45
+    services:
+      database:
+        image: pgvector/pgvector:pg15
+        env:
+          POSTGRES_DB: test_db
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_HOST_AUTH_METHOD: trust
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+    defaults:
+      run:
+        working-directory: services/honcho
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39 # 8.2.0
+        with:
+          enable-cache: true
+          cache-dependency-glob: services/honcho/uv.lock
+
+      - name: Install the locked project
+        run: uv sync --frozen --all-extras --dev
+
+      - name: Run tests
+        run: uv run --frozen pytest -x --fuzz
+        env:
+          DB_CONNECTION_URI: postgresql+psycopg://postgres:postgres@localhost:5432/test_db
+          AUTH_USE_AUTH: false
+          SENTRY_ENABLED: false
+          # Upstream passes its OpenAI secret; the mocked summarizer tests only need a key set.
+          # Live-provider tests stay skipped without --live-llm.
+          LLM_OPENAI_API_KEY: test-key
+          LLM_OPENAI_COMPATIBLE_API_KEY: test-key
+          LLM_OPENAI_COMPATIBLE_BASE_URL: http://localhost:8000
+          DERIVER_PROVIDER: openai
+          DERIVER_MODEL: test
+          DIALECTIC_LEVELS__minimal__PROVIDER: openai
+          DIALECTIC_LEVELS__minimal__MODEL: test
+          DIALECTIC_LEVELS__minimal__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__minimal__MAX_TOOL_ITERATIONS: 2
+          DIALECTIC_LEVELS__low__PROVIDER: openai
+          DIALECTIC_LEVELS__low__MODEL: test
+          DIALECTIC_LEVELS__low__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__low__MAX_TOOL_ITERATIONS: 5
+          DIALECTIC_LEVELS__medium__PROVIDER: openai
+          DIALECTIC_LEVELS__medium__MODEL: test
+          DIALECTIC_LEVELS__medium__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__medium__MAX_TOOL_ITERATIONS: 4
+          DIALECTIC_LEVELS__high__PROVIDER: openai
+          DIALECTIC_LEVELS__high__MODEL: test
+          DIALECTIC_LEVELS__high__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__high__MAX_TOOL_ITERATIONS: 4
+          DIALECTIC_LEVELS__max__PROVIDER: openai
+          DIALECTIC_LEVELS__max__MODEL: test
+          DIALECTIC_LEVELS__max__THINKING_BUDGET_TOKENS: 0
+          DIALECTIC_LEVELS__max__MAX_TOOL_ITERATIONS: 10
+          DIALECTIC_QUERY_GENERATION_PROVIDER: openai
+          DIALECTIC_QUERY_GENERATION_MODEL: test
+          SUMMARY_PROVIDER: openai
+          SUMMARY_MODEL: test
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
+
+  build:
+    # The server image from services/honcho/Dockerfile; built, not pushed.
+    name: Honcho image build
+    runs-on: ubuntu-24.04
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Build the image
+        run: docker build --tag lina-honcho:ci services/honcho
+        env:
+          DOCKER_BUILDKIT: 1  # the Dockerfile uses RUN --mount

@@ -91,6 +91,8 @@ def provider_catalog() -> list[ProviderDescriptor]:
             api_key_vars, base_url_var = tuple(cfg.api_key_env_vars), cfg.base_url_env_var or ""
         elif prof and prof.env_vars:
             api_key_vars, base_url_var = _split_env_vars(tuple(prof.env_vars))
+        elif overlay and overlay.extra_env_vars:  # core-routed provider with no registry row or profile
+            api_key_vars, base_url_var = tuple(overlay.extra_env_vars), overlay.base_url_env_var or ""
         else:
             api_key_vars, base_url_var = (), ""
         label = (prof.display_name if prof else "") or entry.label or slug

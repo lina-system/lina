@@ -1,0 +1,5 @@
+name: ocx-provider
+kind: model-provider
+version: 1.0.0
+description: OCX — the local model proxy every model call goes through
+author: LINA

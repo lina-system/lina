@@ -1,17 +1,14 @@
 # Model Provider Plugins
 
-Each subdirectory is a self-contained provider profile plugin. The
+Each subdirectory is a self-contained provider profile plugin. LINA ships one:
+`ocx/`, because every model call goes through the local OCX proxy. The
 directory layout mirrors `plugins/platforms/`:
 
 ```
 plugins/model-providers/
-├── openrouter/
-│   ├── __init__.py      # registers the ProviderProfile
-│   └── plugin.yaml      # manifest: name, kind, version, description
-├── anthropic/
-│   ├── __init__.py
-│   └── plugin.yaml
-└── ...
+└── ocx/
+    ├── __init__.py      # registers the ProviderProfile
+    └── plugin.yaml      # manifest: name, kind, version, description
 ```
 
 ## How discovery works
@@ -64,7 +61,6 @@ chat_completions transport all auto-wire from the registry.
 ## Non-trivial profiles
 
 Override the `ProviderProfile` hooks in a subclass for per-provider
-quirks — see `plugins/model-providers/openrouter/__init__.py` for
-`build_extra_body` and `build_api_kwargs_extras` examples, and
-`plugins/model-providers/gemini/__init__.py` for `thinking_config`
-translation.
+quirks — see `plugins/model-providers/ocx/__init__.py` for a
+`build_api_kwargs_extras` example (reasoning effort and a session
+affinity header).

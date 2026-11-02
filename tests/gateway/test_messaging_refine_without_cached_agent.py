@@ -66,9 +66,20 @@ class _Model(BaseHTTPRequestHandler):
 
 def _gateway(root, url, **overrides):
     gw = GatewayProc(root=root, base_url=url, tag=f'refine-cold-{root.name}')
+    home = gw.hermes_home
+    plugin = home / 'plugins' / 'model-providers' / 'review-test'
+    plugin.mkdir(parents=True, exist_ok=True)
+    (plugin / '__init__.py').write_text(
+        'from providers import register_provider\n'
+        'from providers.base import ProviderProfile\n'
+        'class ReviewProfile(ProviderProfile):\n'
+        '    def build_extra_body(self, **context):\n'
+        '        return {"provider": context["provider_preferences"]}\n'
+        'register_provider(ReviewProfile(name="review-test", env_vars=("REVIEW_TEST_API_KEY",)))\n'
+    )
     config = {
         '_config_version': 52,
-        'model': {'provider': 'openrouter', 'default': 'openai/gpt-5', 'base_url': url,
+        'model': {'provider': 'review-test', 'default': 'openai/gpt-5', 'base_url': url,
                   'api_key': 'loopback-only', 'api_mode': 'chat_completions'},
         'provider_routing': {'only': ['probe-route'], 'data_collection': 'deny'},
         'prefill_messages_file': 'prefill.json',
@@ -86,7 +97,7 @@ def _gateway(root, url, **overrides):
     (gw.hermes_home / 'config.yaml').write_text(json.dumps(config))
     (gw.hermes_home / 'prefill.json').write_text(json.dumps([
         {'role': 'user', 'content': 'PREFILL_EXAMPLE'}, {'role': 'assistant', 'content': 'Noted.'}]))
-    (gw.hermes_home / '.env').write_text('OPENROUTER_API_KEY=loopback-only\n')
+    (gw.hermes_home / '.env').write_text('REVIEW_TEST_API_KEY=loopback-only\n')
     memories = gw.hermes_home / 'memories'
     if not memories.exists():
         memories.mkdir()

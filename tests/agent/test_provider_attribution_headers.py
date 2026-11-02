@@ -52,22 +52,28 @@ def test_nvidia_cloud_base_url_applies_billing_origin_header(mock_openai):
 
 
 @patch("agent.process_bootstrap.OpenAI")
-def test_opencode_go_applies_attribution_via_profile_fallback(mock_openai):
-    """OpenCode (Zen/Go) attributes traffic by header like OpenRouter does.
-    Without profile.default_headers the relay only sees the OpenAI SDK's
-    generic User-Agent and Hermes Agent traffic shows up unattributed."""
+def test_registered_profile_applies_attribution_via_profile_fallback(mock_openai, monkeypatch):
+    import providers
+    from providers.base import ProviderProfile
+
+    providers.list_providers()
+    profile = ProviderProfile(
+        name="attributed-relay",
+        default_headers={
+            "HTTP-Referer": "https://hermes-agent.nousresearch.com",
+            "X-Title": "Hermes Agent",
+            "User-Agent": f"HermesAgent/{get_version_info().base_version}",
+        },
+    )
+    monkeypatch.setitem(providers._REGISTRY, profile.name, profile)
     mock_openai.return_value = MagicMock()
     agent = AIAgent(
-        api_key="test-key",
-        base_url="https://opencode.ai/zen/go/v1",
-        model="glm-5",
-        provider="opencode-go",
-        quiet_mode=True,
-        skip_context_files=True,
-        skip_memory=True,
+        api_key="test-key", base_url="https://attributed-relay.example/v1",
+        model="relay-model", provider=profile.name,
+        quiet_mode=True, skip_context_files=True, skip_memory=True,
     )
 
-    agent._apply_client_headers_for_base_url("https://opencode.ai/zen/go/v1")
+    agent._apply_client_headers_for_base_url("https://attributed-relay.example/v1")
 
     headers = agent._client_kwargs["default_headers"]
     assert headers["HTTP-Referer"] == "https://hermes-agent.nousresearch.com"

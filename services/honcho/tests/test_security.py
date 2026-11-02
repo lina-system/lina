@@ -1,0 +1,400 @@
+"""Auth scope tests — regression coverage.
+
+Prior to this fix `auth()` walked the route's declared scope first and fell
+through to a workspace check, so a `{w, p}` token authorized any peer in `w`.
+The contract now is: authorize by the token's narrowest claim, never widen.
+"""
+
+import datetime
+from contextlib import asynccontextmanager
+from typing import Any
+
+import jwt as pyjwt
+import pytest
+from fastapi.security import HTTPAuthorizationCredentials
+
+from src.config import settings
+from src.exceptions import AuthenticationException, ValidationException
+from src.security import NAMED_SCOPE_AUDIENCE, JWTParams, auth, create_jwt, verify_jwt
+
+
+@pytest.fixture(autouse=True)
+def _enable_auth(monkeypatch: pytest.MonkeyPatch):  # pyright: ignore[reportUnusedFunction]
+    monkeypatch.setattr(settings.AUTH, "USE_AUTH", True)
+    monkeypatch.setattr(settings.AUTH, "JWT_SECRET", "test-secret")
+
+
+def _bearer(token: str) -> HTTPAuthorizationCredentials:
+    return HTTPAuthorizationCredentials(scheme="Bearer", credentials=token)
+
+
+class TestVerifyJWTShape:
+    @pytest.mark.parametrize(
+        "claims",
+        [
+            {"sc": "private"},
+            {"w": "ws", "sc": ""},
+            {"w": "ws", "sc": None},
+            {"w": "ws", "sc": ["private"]},
+            {"w": "ws", "sc": "scope.private"},
+            {"w": "ws", "sc": "x" * 507},
+            {"w": "ws", "sc": True},
+            {"w": "ws", "sc": "private", "ad": True},
+            {"w": "ws", "sc": "private", "p": "alice"},
+            {"w": "ws", "sc": "private", "s": "session"},
+        ],
+    )
+    def test_invalid_named_scope_claims_rejected(self, claims: dict[str, Any]):
+        token = pyjwt.encode(
+            {"aud": NAMED_SCOPE_AUDIENCE, **claims}, b"test-secret", algorithm="HS256"
+        )
+        with pytest.raises(AuthenticationException):
+            verify_jwt(token)
+
+    def test_named_scope_key_roundtrip(self):
+        token = create_jwt(JWTParams(w="ws", sc="private"))
+        params = verify_jwt(token)
+        assert (params.w, params.sc) == ("ws", "private")
+
+    def test_old_verifier_rejects_new_scope_keys(self):
+        token = create_jwt(JWTParams(w="ws", sc="private"))
+        # This is the decode call used by Honcho before named-scope support.
+        with pytest.raises(pyjwt.InvalidAudienceError):
+            pyjwt.decode(token, b"test-secret", algorithms=["HS256"])
+
+    @pytest.mark.parametrize(
+        "claims",
+        [
+            {"w": "ws", "sc": "private"},
+            {"w": "ws", "aud": NAMED_SCOPE_AUDIENCE},
+            {"w": "ws", "sc": "private", "aud": "another-service"},
+            {"w": "ws", "sc": "private", "aud": [NAMED_SCOPE_AUDIENCE]},
+            {"ad": True, "aud": "another-service"},
+        ],
+    )
+    def test_scope_audience_cannot_be_omitted_or_repurposed(
+        self, claims: dict[str, Any]
+    ):
+        token = pyjwt.encode(claims, b"test-secret", algorithm="HS256")
+        with pytest.raises(AuthenticationException):
+            verify_jwt(token)
+
+    @pytest.mark.parametrize(
+        "claims",
+        [
+            {"ad": True},
+            {"w": "ws"},
+            {"w": "ws", "p": "alice"},
+            {"w": "ws", "s": "session"},
+            {"w": "ws", "p": "alice", "s": "session"},
+        ],
+    )
+    def test_preexisting_tokens_remain_valid(self, claims: dict[str, Any]):
+        # A payload issued before named scopes existed, independent of the new minting code.
+        token = pyjwt.encode(
+            {"t": "2025-01-01T00:00:00Z", **claims}, b"test-secret", algorithm="HS256"
+        )
+        decoded = verify_jwt(token)
+        assert decoded.sc is None
+        for name, value in claims.items():
+            assert getattr(decoded, name) == value
+
+    def test_peer_token_without_workspace_rejected(self):
+        token = pyjwt.encode({"p": "alice"}, b"test-secret", algorithm="HS256")
+        with pytest.raises(AuthenticationException):
+            verify_jwt(token)
+
+    def test_session_token_without_workspace_rejected(self):
+        token = pyjwt.encode({"s": "sess-1"}, b"test-secret", algorithm="HS256")
+        with pytest.raises(AuthenticationException):
+            verify_jwt(token)
+
+    def test_workspace_only_token_ok(self):
+        token = create_jwt(JWTParams(w="ws-a"))
+        params = verify_jwt(token)
+        assert params.w == "ws-a"
+
+    def test_workspace_peer_token_ok(self):
+        token = create_jwt(JWTParams(w="ws-a", p="alice"))
+        params = verify_jwt(token)
+        assert params.w == "ws-a"
+        assert params.p == "alice"
+
+
+class TestAuthPeerScope:
+    """`{w: ws-a, p: alice}` may only act on alice in ws-a."""
+
+    @pytest.mark.asyncio
+    async def test_matches_own_peer(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        params = await auth(credentials=creds, workspace_name="ws-a", peer_name="alice")
+        assert params.p == "alice"
+
+    @pytest.mark.asyncio
+    async def test_denies_sibling_peer_same_workspace(self):
+        """The original bug: peer-scoped token fell through to workspace auth."""
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, workspace_name="ws-a", peer_name="bob")
+
+    @pytest.mark.asyncio
+    async def test_denies_workspace_route_with_no_peer(self):
+        """Peer-scoped token cannot use workspace-listing routes."""
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, workspace_name="ws-a")
+
+    @pytest.mark.asyncio
+    async def test_self_authorizing_route_receives_claims(self):
+        """Body-scoped routes use require_auth() and compare claims in-handler."""
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        params = await auth(credentials=creds)
+        assert params.w == "ws-a"
+        assert params.p == "alice"
+
+    @pytest.mark.asyncio
+    async def test_denies_cross_workspace(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, workspace_name="ws-b", peer_name="alice")
+
+
+class TestAuthSessionScope:
+    @pytest.mark.asyncio
+    async def test_matches_own_session(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", s="sess-1")))
+        params = await auth(
+            credentials=creds, workspace_name="ws-a", session_name="sess-1"
+        )
+        assert params.s == "sess-1"
+
+    @pytest.mark.asyncio
+    async def test_denies_sibling_session_same_workspace(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", s="sess-1")))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, workspace_name="ws-a", session_name="sess-2")
+
+    @pytest.mark.asyncio
+    async def test_denies_workspace_route_with_no_session(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", s="sess-1")))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, workspace_name="ws-a")
+
+    @pytest.mark.asyncio
+    async def test_self_authorizing_route_receives_claims(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", s="sess-1")))
+        params = await auth(credentials=creds)
+        assert params.w == "ws-a"
+        assert params.s == "sess-1"
+
+
+class TestAuthWorkspaceScope:
+    @pytest.mark.asyncio
+    async def test_matches_workspace(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))
+        params = await auth(credentials=creds, workspace_name="ws-a")
+        assert params.w == "ws-a"
+
+    @pytest.mark.asyncio
+    async def test_workspace_token_reaches_peer_route(self):
+        """Workspace tokens still authorize narrower routes inside the workspace."""
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))
+        params = await auth(credentials=creds, workspace_name="ws-a", peer_name="alice")
+        assert params.w == "ws-a"
+
+    @pytest.mark.asyncio
+    async def test_denies_cross_workspace(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, workspace_name="ws-b")
+
+    @pytest.mark.asyncio
+    async def test_passes_self_authorizing_route(self):
+        """Routes with no declared scope (e.g. POST /v3/workspaces) self-authorize
+        on the token's `w`. The auth dependency must let workspace tokens through."""
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))
+        params = await auth(credentials=creds)
+        assert params.w == "ws-a"
+
+
+@asynccontextmanager
+async def _fake_tracked_db(*_args: object, **_kwargs: object):
+    """Stand-in for tracked_db; the membership query itself is monkeypatched."""
+    yield None
+
+
+def _patch_membership(monkeypatch: pytest.MonkeyPatch, *, is_member: bool):
+    async def _is_peer_in_session(*_args: object, **_kwargs: object) -> bool:
+        return is_member
+
+    # Names are resolved via lazy imports inside auth(), so patch the source
+    # modules rather than the security namespace.
+    monkeypatch.setattr("src.dependencies.tracked_db", _fake_tracked_db)
+    monkeypatch.setattr("src.crud.session.is_peer_in_session", _is_peer_in_session)
+
+
+class TestAuthMemberRead:
+    """Peer-scoped key gets read-only access to sessions it is a member of."""
+
+    @pytest.mark.asyncio
+    async def test_member_peer_allowed_on_read_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _patch_membership(monkeypatch, is_member=True)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        params = await auth(
+            credentials=creds,
+            workspace_name="ws-a",
+            session_name="sess-1",
+            allow_member_read=True,
+        )
+        assert params.p == "alice"
+
+    @pytest.mark.asyncio
+    async def test_non_member_peer_denied_on_read_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _patch_membership(monkeypatch, is_member=False)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-a",
+                session_name="sess-1",
+                allow_member_read=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_member_peer_denied_on_write_route(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        """Write routes never set allow_member_read, so membership is irrelevant."""
+        _patch_membership(monkeypatch, is_member=True)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-a",
+                session_name="sess-1",
+                allow_member_read=False,
+            )
+
+    @pytest.mark.asyncio
+    async def test_member_peer_denied_cross_workspace(
+        self, monkeypatch: pytest.MonkeyPatch
+    ):
+        _patch_membership(monkeypatch, is_member=True)
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", p="alice")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-b",
+                session_name="sess-1",
+                allow_member_read=True,
+            )
+
+    @pytest.mark.asyncio
+    async def test_session_token_has_no_cross_scope_to_peer_routes(self):
+        """A session key never reaches peer routes, even with allow_member_read."""
+        creds = _bearer(create_jwt(JWTParams(w="ws-a", s="sess-1")))
+        with pytest.raises(AuthenticationException):
+            await auth(
+                credentials=creds,
+                workspace_name="ws-a",
+                peer_name="alice",
+                allow_member_read=True,
+            )
+
+
+class TestCreateKeyValidation:
+    @pytest.mark.asyncio
+    async def test_peer_key_without_workspace_rejected(self):
+        from src.routers.keys import create_key
+
+        with pytest.raises(ValidationException):
+            await create_key(workspace_id=None, peer_id="alice", session_id=None)
+
+    @pytest.mark.asyncio
+    async def test_session_key_without_workspace_rejected(self):
+        from src.routers.keys import create_key
+
+        with pytest.raises(ValidationException):
+            await create_key(workspace_id=None, peer_id=None, session_id="sess-1")
+
+    @pytest.mark.asyncio
+    async def test_peer_key_with_workspace_ok(self):
+        from src.routers.keys import create_key
+
+        result = await create_key(workspace_id="ws-a", peer_id="alice", session_id=None)
+        assert "key" in result
+
+
+class TestAuthAdminAndUnscoped:
+    @pytest.mark.asyncio
+    async def test_admin_passes_any_route(self):
+        creds = _bearer(create_jwt(JWTParams(ad=True)))
+        params = await auth(credentials=creds, workspace_name="ws-a", peer_name="alice")
+        assert params.ad is True
+
+    @pytest.mark.asyncio
+    async def test_non_admin_token_denied_on_admin_route(self):
+        creds = _bearer(create_jwt(JWTParams(w="ws-a")))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, admin=True)
+
+    @pytest.mark.asyncio
+    async def test_unscoped_token_on_self_authorizing_route(self):
+        """A token with no scope claims and a route with no declared scope is the
+        escape hatch for routes that introspect jwt_params themselves."""
+        creds = _bearer(create_jwt(JWTParams()))
+        params = await auth(credentials=creds)
+        assert params.w is None
+        assert params.p is None
+        assert params.s is None
+
+    @pytest.mark.asyncio
+    async def test_unscoped_token_denied_on_scoped_route(self):
+        creds = _bearer(create_jwt(JWTParams()))
+        with pytest.raises(AuthenticationException):
+            await auth(credentials=creds, workspace_name="ws-a")
+
+
+SCOPES = [
+    {"ad": True},
+    {"w": "ws-a"},
+    {"w": "ws-a", "p": "alice"},
+    {"w": "ws-a", "s": "sess-1"},
+]
+
+
+class TestJWTExpiry:
+    """#1016: exp was an ISO string in the reserved NumericDate claim."""
+
+    def _exp(self, **delta: float) -> datetime.datetime:
+        return datetime.datetime.now(datetime.UTC) + datetime.timedelta(**delta)
+
+    @pytest.mark.parametrize("scope", SCOPES)
+    def test_future_expiry_verifies(self, scope: dict[str, Any]):
+        token = create_jwt(JWTParams(exp=self._exp(days=30), **scope))
+        params = verify_jwt(token)
+        assert (params.ad, params.w, params.p, params.s) == (
+            scope.get("ad"),
+            scope.get("w"),
+            scope.get("p"),
+            scope.get("s"),
+        )
+
+    @pytest.mark.parametrize("scope", [{"ad": True}, {"w": "ws-a"}])
+    def test_past_expiry_reports_expired(self, scope: dict[str, Any]):
+        token = create_jwt(JWTParams(exp=self._exp(days=-1), **scope))
+        with pytest.raises(AuthenticationException, match="JWT expired"):
+            verify_jwt(token)
+
+    def test_iso_string_exp_still_accepted_by_the_model(self):
+        token = create_jwt(JWTParams(ad=True, exp="2099-01-01T00:00:00Z"))  # pyright: ignore[reportArgumentType]
+        assert verify_jwt(token).ad is True
+
+    def test_tampered_token_still_reports_invalid(self):
+        token = create_jwt(JWTParams(ad=True, exp=self._exp(days=30)))
+        with pytest.raises(AuthenticationException, match="Invalid JWT"):
+            verify_jwt(token + "x")
