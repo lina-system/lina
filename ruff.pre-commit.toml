@@ -466,7 +466,6 @@ select = [
 "pm.runtime_stage".msg = "PM stages its own worker runtime; consumers call pm operations."
 
 [lint.per-file-ignores]
-"apps/desktop/electron/fixtures/**" = ["TID251"]
 "pm/**" = ["TID251"]
 "tests/pm/**" = ["TID251"]
 

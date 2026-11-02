@@ -29,7 +29,7 @@ def test_config_check_and_migrate_agree_on_stale_platform_toolsets(tmp_path, mon
         tmp_path / "stale",
         "platform_toolsets:\n"
         "  cli: [hermes-cli, messaging, linear, mcp-linear, mcp-portable, mcp-ghost, ghost]\n"
-        "  teams: [hermes-teams]\n"
+        "  bluebubbles: [hermes-bluebubbles]\n"
         "mcp_servers:\n"
         "  linear:\n"
         "    command: linear-mcp\n"
@@ -43,7 +43,7 @@ def test_config_check_and_migrate_agree_on_stale_platform_toolsets(tmp_path, mon
 
     for home, expected in ((stale, {"messaging", "ghost", "mcp-ghost"}), (clean, set()), (stale, {"messaging", "ghost", "mcp-ghost"})):
         output = _check(home, monkeypatch, capsys)
-        for name in ("messaging", "ghost", "mcp-ghost", "linear", "mcp-linear", "mcp-portable", "hermes-teams"):
+        for name in ("messaging", "ghost", "mcp-ghost", "linear", "mcp-linear", "mcp-portable", "hermes-bluebubbles"):
             assert (f"unknown toolset '{name}'" in output) is (name in expected), (home.name, name)
 
         results = {"warnings": []}

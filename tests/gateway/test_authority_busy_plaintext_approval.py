@@ -10,7 +10,7 @@ from gateway.run import GatewayRunner
 from gateway.session_authority import SessionAuthority, initialize_session_authority
 from hermes_state_runtime import list_session_admissions
 
-CHAT = '15551234567@s.whatsapp.net'
+CHAT = '15551234567'
 
 
 class _RunningAgent:
@@ -24,15 +24,15 @@ class _RunningAgent:
 @pytest.mark.asyncio
 @pytest.mark.parametrize('mode', ['interrupt', 'queue'])
 async def test_busy_plaintext_yes_resolves_blocking_approval_not_interrupt_or_queue(tmp_path, monkeypatch, mode):
-    from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
+    from plugins.platforms.telegram.adapter import TelegramAdapter
     from tools.approval import _gateway_queues
     from tools.approval_gateway_wait import _ApprovalEntry
-    monkeypatch.setenv('WHATSAPP_ALLOWED_USERS', '15551234567')
+    monkeypatch.setenv('TELEGRAM_ALLOWED_USERS', '15551234567')
     # No drain: an admitted "yes" would then wait on a turn, which is exactly the regression.
     monkeypatch.setattr(SessionAuthority, '_schedule', lambda self, ref: None)
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / 'sessions'))
-    adapter = WhatsAppAdapter(PlatformConfig(enabled=True, extra={'session_path': str(tmp_path / 'wa')}))
-    adapter.gateway_runner, runner.adapters = runner, {Platform.WHATSAPP: adapter}
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token="test-token", typing_indicator=False))
+    adapter.gateway_runner, runner.adapters = runner, {Platform.TELEGRAM: adapter}
     authority = await initialize_session_authority(runner, profile_id='default', instance_id='approval')
     runner._wire_adapter_handlers(adapter)
     sent = []

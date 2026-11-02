@@ -588,7 +588,6 @@ build-backend = "setuptools.build_meta"
 lina = "hermes_cli.main:main"
 hermes = "hermes_cli.main:main"
 hermes-agent = "agent.legacy_cli:main"
-hermes-acp = "acp_adapter.entry:main"
 
 [tool.hermes]
 # Extras that only an explicit selection installs (setup, sync_venv). Bundles
@@ -701,7 +700,6 @@ include = [
   "tui_gateway.*",
   "cron",
   "cron.*",
-  "acp_adapter",
   "plugins",
   "plugins.*",
   "providers",
@@ -730,9 +728,7 @@ gateway = ["assets/**/*"]
 # Bundled plugin discovery reads these manifests at runtime. Keep them in
 # sealed wheels with the plugin Python modules; without this declaration the
 # wheel contains adapters but discovery finds zero bundled plugins.
-# The remote config backend checks its vendored config-plane conformance fixtures (secret-key
-# list) at runtime: plugins/config_backends/remote/values.py.
-plugins = ["**/plugin.yaml", "**/plugin.yml", "config_backends/remote/vendor/**/*"]
+plugins = ["**/plugin.yaml", "**/plugin.yml"]
 # pm/lock.json is the runtime pin table (uv/python/tool versions + sha256s).
 # Without it a sealed wheel installs the pm package but has no pins to
 # realize — the pm store would be empty.
@@ -802,8 +798,6 @@ select = ["PLW1514", "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC251", "TID251"]
 
 [tool.ruff.lint.per-file-ignores]
 "pm/**" = ["TID251"]
-# Desktop E2E fixtures stand in for PM's worker/runtime and reach into it like tests do.
-"apps/desktop/electron/fixtures/**" = ["TID251"]
 # Tests can intentionally exercise locale-encoding edge cases.
 "tests/**" = [
   "PLW1514",
@@ -815,7 +809,6 @@ select = ["PLW1514", "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC251", "TID251"]
 ]
 # Skills and plugins are partially user-authored — their own conventions.
 "skills/**" = ["PLW1514"]
-"optional-skills/**" = ["PLW1514"]
 # Plugin platform adapters run ON the gateway event loop — the ASYNC gate
 # applies to them with full force; only PLW1514 stays relaxed.
 "plugins/**" = ["PLW1514"]
@@ -833,5 +826,4 @@ select = ["PLW1514", "ASYNC210", "ASYNC220", "ASYNC221", "ASYNC251", "TID251"]
 # Off-loop sweep for these routers is in flight (PR #84376).
 "hermes_cli/web_routers/profiles.py" = ["ASYNC220", "ASYNC221"]
 # Legacy blocking spawn sites in platform adapters, pending their own fixes.
-"plugins/platforms/whatsapp/adapter.py" = ["ASYNC220", "ASYNC221"]
 "plugins/platforms/photon/adapter.py" = ["ASYNC220"]
