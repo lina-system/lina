@@ -257,7 +257,7 @@ def _fs_find_git_root(start: Path) -> str | None:
 
 def _fs_default_cwd(profile: Optional[str] = None) -> str:
     """The host folder a new session or browser terminal of *profile* starts in: its
-    ``terminal.cwd`` when that names a folder, else the home folder."""
+    ``terminal.cwd`` when that names a folder, else the Desk, else the home folder."""
     from tools.terminal_scope import TerminalPolicyUnavailable, build_profile_terminal_scope
 
     with _profile_scope(profile) as scoped:
@@ -283,7 +283,8 @@ def _fs_default_cwd(profile: Optional[str] = None) -> str:
                 return str(candidate)
         except (OSError, RuntimeError):
             pass
-    return str(Path.home())
+    from hermes_cli.desk import default_workdir
+    return default_workdir()
 
 
 def _fs_git_branch(cwd: str) -> str:

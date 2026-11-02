@@ -5,6 +5,13 @@ from __future__ import annotations
 from typing import Callable
 
 
+def cmd_console(args):
+    """Open the safe Hermes command console."""
+    from hermes_cli.console_engine import run_console_repl
+
+    return run_console_repl()
+
+
 def build_console_parser(subparsers, *, cmd_console: Callable) -> None:
     """Attach the safe Hermes Console REPL subcommand."""
     console_parser = subparsers.add_parser(

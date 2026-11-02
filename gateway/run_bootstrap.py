@@ -555,6 +555,7 @@ def _start_gateway_resolve_terminal_cwd() -> None:
     """Messaging-only defaults belong to startup, not incidental imports by the TUI."""
     import os
     from gateway.cwd_placeholder import CWD_PLACEHOLDERS, resolve_placeholder_terminal_cwd
+    from hermes_cli.desk import default_workdir as _desk_default_workdir
     configured_cwd = os.environ.get("TERMINAL_CWD", "")
     if not configured_cwd or configured_cwd in CWD_PLACEHOLDERS:
         resolved_cwd = resolve_placeholder_terminal_cwd(
@@ -564,7 +565,7 @@ def _start_gateway_resolve_terminal_cwd() -> None:
             docker_mount_cwd_to_workspace=os.getenv(
                 "TERMINAL_DOCKER_MOUNT_CWD_TO_WORKSPACE", "false").lower()
             in {"true", "1", "yes"},
-            home_fallback=str(Path.home()))
+            home_fallback=_desk_default_workdir())
         if resolved_cwd is None:
             os.environ.pop("TERMINAL_CWD", None)
         else:
