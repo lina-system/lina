@@ -290,7 +290,7 @@ def test_rollback_reader_accepts_reassembled_objective(engine, tmp_path, reader)
         _skip_or_fail_in_ci(f"the {reader} rollback reader commit is not available")
     emitted = engine.compress(_first_assembly(engine))
     engine.shutdown()
-    archive = subprocess.run(["git", "-C", str(root), "archive", commit], check=True, capture_output=True).stdout
+    archive = subprocess.run(["git", "-C", str(root), "--work-tree=.", "archive", commit], check=True, capture_output=True).stdout
     old = tmp_path / "old-reader"
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(old, filter="data")

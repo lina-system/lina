@@ -169,7 +169,7 @@ def test_v0262_written_origin_schema_and_rows(tmp_path, monkeypatch):
         if os.environ.get("CI"):
             pytest.fail(reason)
         pytest.skip(reason)
-    archive = subprocess.run(["git", "-C", str(root), "archive", OLD_COMMIT],
+    archive = subprocess.run(["git", "-C", str(root), "--work-tree=.", "archive", OLD_COMMIT],
                              check=True, capture_output=True).stdout
     old = tmp_path / "old-writer"
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:

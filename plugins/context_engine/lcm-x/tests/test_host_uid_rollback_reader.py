@@ -81,7 +81,7 @@ def test_persisted_shadow_uids_are_inert_to_rollback_reader(tmp_path, monkeypatc
         _skip_or_fail_in_ci("the agent.context_engine host stub is not importable in this checkout")
     if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{commit}^{{commit}}"], capture_output=True).returncode:
         _skip_or_fail_in_ci(f"the {reader} commit {commit[:8]} is not in this checkout (shallow clone)")
-    archive = subprocess.run(["git", "-C", str(root), "archive", commit], check=True, capture_output=True).stdout
+    archive = subprocess.run(["git", "-C", str(root), "--work-tree=.", "archive", commit], check=True, capture_output=True).stdout
     old = tmp_path / "old-reader"
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(old, filter="data")

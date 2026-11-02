@@ -66,7 +66,7 @@ def test_v0262_writes_main_store_and_rolls_forward(tmp_path, monkeypatch, caplog
     if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{commit}^{{commit}}"],
                       capture_output=True).returncode:
         _skip_or_fail_in_ci(f"the v0.26.2 commit {commit} is not available")
-    archive = subprocess.run(["git", "-C", str(root), "archive", commit],
+    archive = subprocess.run(["git", "-C", str(root), "--work-tree=.", "archive", commit],
                              check=True, capture_output=True).stdout
     old = tmp_path / "old-reader"
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:

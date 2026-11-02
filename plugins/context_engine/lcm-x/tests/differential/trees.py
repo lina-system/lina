@@ -46,7 +46,7 @@ def materialize(ref, cache_dir):
     sha = resolve(ref)
     destination = Path(cache_dir) / sha
     if not destination.exists():
-        archive = subprocess.run(["git", "-C", str(ROOT), "archive", sha], check=True, capture_output=True).stdout
+        archive = subprocess.run(["git", "-C", str(ROOT), "--work-tree=.", "archive", sha], check=True, capture_output=True).stdout
         destination.mkdir(parents=True)
         with tarfile.open(fileobj=io.BytesIO(archive)) as source:
             source.extractall(destination, filter="data")

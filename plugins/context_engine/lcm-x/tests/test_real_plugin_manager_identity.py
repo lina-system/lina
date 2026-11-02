@@ -170,7 +170,7 @@ _TURNS_PROBE = textwrap.dedent(
 def _legacy_checkout(dest: Path) -> bool:
     dest.mkdir(parents=True)
     archive = subprocess.run(
-        ["git", "-C", str(REPO_ROOT), "archive", LEGACY_GA_SHA],
+        ["git", "-C", str(REPO_ROOT), "--work-tree=.", "archive", LEGACY_GA_SHA],
         capture_output=True, check=False,
     )
     if archive.returncode != 0:

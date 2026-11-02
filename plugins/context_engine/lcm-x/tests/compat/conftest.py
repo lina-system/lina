@@ -36,7 +36,7 @@ def old_tree(tmp_path_factory, host_root):
             if subprocess.run(["git", "-C", str(root), "cat-file", "-e", f"{commit}^{{commit}}"],
                               capture_output=True).returncode:
                 missing_prerequisite(f"the {reader} commit {commit} is not available")
-            archive = subprocess.run(["git", "-C", str(root), "archive", commit],
+            archive = subprocess.run(["git", "-C", str(root), "--work-tree=.", "archive", commit],
                                      check=True, capture_output=True).stdout
             old = tmp_path_factory.mktemp(reader)
             with tarfile.open(fileobj=io.BytesIO(archive)) as tar:

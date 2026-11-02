@@ -44,7 +44,7 @@ def test_previous_fork_drains_sparse_gap_without_rewriting_history(tmp_path):
     root = Path(__file__).resolve().parents[1]
     if subprocess.run(['git', '-C', str(root), 'cat-file', '-e', f'{BASE}^{{commit}}'], capture_output=True).returncode:
         _skip_or_fail_in_ci('the previous fork commit is required for sparse rollback validation')
-    archive = subprocess.run(['git', '-C', str(root), 'archive', BASE], check=True, capture_output=True).stdout
+    archive = subprocess.run(['git', '-C', str(root), '--work-tree=.', 'archive', BASE], check=True, capture_output=True).stdout
     old = tmp_path / 'old-reader'
     with tarfile.open(fileobj=io.BytesIO(archive)) as tar:
         tar.extractall(old, filter='data')
