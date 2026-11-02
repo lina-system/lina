@@ -1,4 +1,4 @@
-"""``lina services``: one line per LINA service with its label, and the reserved OCX / worker entries (lina#31)."""
+"""``lina services``: one line per LINA service with its label, and the reserved entries (lina#31)."""
 import argparse
 import plistlib
 import subprocess
@@ -23,6 +23,8 @@ def account(tmp_path, monkeypatch):
     hermes_constants._default_hermes_root_memo = None
     monkeypatch.setattr("hermes_cli.store.store_dir", lambda: tmp_path / "store")
     monkeypatch.setattr(gateway_cli, "_is_service_installed", lambda: False)
+    # OCX's unit lives under the account's real config dir; keep `all` from seeing (and stopping) a real one.
+    monkeypatch.setattr("hermes_cli.lina_ocx_service.definition_path", lambda kind: tmp_path / "units" / "lina-ocx")
     verbs = []
     monkeypatch.setattr(gateway_cli, "gateway_command", lambda args: verbs.append(vars(args)))
     return {"store": tmp_path / "store", "verbs": verbs}
@@ -122,6 +124,29 @@ def test_all_goes_on_after_a_service_exits_0(account, monkeypatch):
     monkeypatch.setitem(lina_services._VERBS, "store", lambda v: calls.append("store"))
     assert lina_services.act("stop", "all") == 0
     assert calls == ["gateway", "store"]
+
+
+@pytest.mark.parametrize(("verb", "order"), [("start", ["store", "ocx", "gateway"]),
+                                             ("stop", ["gateway", "ocx", "store"])])
+def test_all_runs_ocx_between_the_store_and_the_gateway_and_stops_when_it_fails(account, monkeypatch, capsys,
+                                                                               verb, order):
+    """The gateway's model calls go through OCX: it comes up after OCX and goes down before it."""
+    calls = []
+    for name in order:
+        monkeypatch.setitem(lina_services._VERBS, name, lambda v, name=name: calls.append(name))
+    assert lina_services.act(verb, "all") == 0
+    assert calls == order
+
+    calls.clear()
+
+    def ocx_fails(v):
+        calls.append("ocx")
+        raise SystemExit(1)
+
+    monkeypatch.setitem(lina_services._VERBS, "ocx", ocx_fails)
+    assert lina_services.act(verb, "all") == 1
+    assert calls == order[:2]
+    assert f"left {order[2]} as it was" in capsys.readouterr().out
 
 
 def test_start_installs_the_missing_gateway_service_through_the_gateway_verbs(account):
