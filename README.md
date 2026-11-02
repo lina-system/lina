@@ -1,3 +1,45 @@
+# LINA
+
+*Lifelong Intelligent Navigator & Ally.*
+
+**Your world. One connected mind.**
+
+Agents to think aloud with. LINA is the first of them.
+
+We’re building agents that know you and that you can count on. Create the agents you want from presets; LINA is the first. A conversation is worth having even when it produces no deliverable.
+
+Talk about your day. Think aloud. Bring a problem. Your agents carry your shared history across conversations and devices, notice what needs doing, turn it into goals and to-dos, and follow through to verified outcomes. What every agent should know is shared; what only one of them knows stays with it. Whichever one you talk to, you are never the messenger or the manager.
+
+[Read our manifesto](MANIFESTO.md). The roadmap is [issue #1](https://github.com/lina-system/lina/issues/1).
+
+> Alpha: `0.0.1-alpha`. Expect rough edges and frequent changes.
+
+## Built to finish
+
+LINA takes responsibility for the work and proves the result, without making you manage every step.
+
+LINA's engine comes from [Hermes Agent](https://github.com/NousResearch/hermes-agent) by Nous Research, and its way of working is inspired by the ultrawork spirit of [omo](https://omo.dev).
+
+**Humanity has spent enough time implementing the clipboard interface.**
+
+## Repository
+
+- `upstream` mirrors Hermes Agent unchanged. `dev` is where LINA is developed and the default branch. `main` holds LINA releases. See [docs/forking.md](docs/forking.md) for how upstream changes are taken.
+- Versions follow `0.0.1-alpha.YYYYMMDD.N` during alpha. See [docs/versioning.md](docs/versioning.md) and [CHANGELOG.md](CHANGELOG.md).
+- The command, package and data directory keep their upstream names (`hermes`, `~/.hermes`) for now.
+
+## License and contributions
+
+LINA is available under the GNU Affero General Public License v3.0 ([LICENSE](LICENSE)). It is a fork of Hermes Agent, whose code remains under the MIT License; that notice is kept in [LICENSES/Hermes-MIT.txt](LICENSES/Hermes-MIT.txt). Third-party components keep their own licenses.
+
+This repository holds LINA, including the desktop app. The LINA app for mobile and the Mac launcher is developed in its own repository, [lina-app](https://github.com/lina-system/lina-app). LINA OS is a separate, optional project in [lina-os](https://github.com/lina-system/lina-os).
+
+Report a problem or an idea for LINA in this repository's Issues. App problems go to the [lina-app Issues](https://github.com/lina-system/lina-app/issues).
+
+---
+
+The original Hermes Agent README follows below for reference.
+
 <p align="center">
   <img src="assets/banner.png" alt="Hermes Agent" width="100%">
 </p>
@@ -238,6 +280,6 @@ for activation, daily use, dependency changes, and leaving the environment.
 
 ## License
 
-MIT — see [LICENSE](LICENSE).
+MIT — see [LICENSES/Hermes-MIT.txt](LICENSES/Hermes-MIT.txt).
 
 Built by [Nous Research](https://nousresearch.com).

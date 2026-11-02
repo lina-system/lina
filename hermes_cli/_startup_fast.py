@@ -190,6 +190,9 @@ def print_fast_version_info(*, check_updates: bool = True) -> None:
     Every lazy block degrades gracefully — a broken/heavy import can never take the basic version
     output down.
     """
+    from hermes_cli.lina_version import lina_version_line
+
+    print(lina_version_line())
     # Registry-owned banner label (includes "· upstream <sha>" for git installs); banner.py keeps
     # rich/prompt_toolkit lazy, so this import is light.
     try:
