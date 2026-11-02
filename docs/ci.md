@@ -14,7 +14,7 @@ Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the 
 | **Lint** (required) | always | `ruff check .` with the ruff version pinned by `scripts/code_health` | `lint.yml`, job "ruff enforcement (blocking)" |
 | Python tests (Linux n/8) | `python` lane | `scripts/run_tests.sh` on Ubuntu, in 8 slices, with the per-file duration cache (`test_durations.json`; pull requests read it, `dev` pushes write it) | `tests.yml`, job "Run tests" |
 | **Python tests (Linux)** (required) | always | Green when every slice passed, or when detect skipped the slices because the change cannot reach Python | `ci.yaml`, job `all-checks-pass` |
-| **Python tests (macOS)** (required) | `macos` lane | macOS-marked tests | `tests-os.yml`, macOS jobs |
+| **Python tests (macOS)** (required) | `macos` lane (macOS paths or the `dev-red-fix` label) | macOS-marked tests | `tests-os.yml`, macOS jobs |
 | **LINA Helper (macOS)** (required) | `helper` lane | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
 | Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
 | uv.lock check | `uv_lock` lane | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
@@ -25,7 +25,7 @@ Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead 
 
 Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_env --source . --check-lock`, `python scripts/ci/check_blob_size.py --base origin/dev`, `python3 scripts/ci/check_prune_list.py`.
 
-The `macos` lane is on when a changed path names macOS (`macos`, `darwin`, `launchd`, `keychain`, `osascript`), is under `helper/` or `hermes_platform/`, is the test harness or the dependency set (`pyproject.toml`, `uv.lock`, `scripts/run_tests*.`, `tests/conftest.py`, the platform-gating fixture, `scripts/ci/list_os_marked_tests.py`), or is a `.py` file whose checkout text has a darwin branch or a `platforms(...)` gate that reaches the macOS lane. The `helper` lane is on for `helper/`. Like every lane, both are on for pushes, manual runs and `.github/` changes. Upstream ran its macOS tests on every Python change; LINA narrows that to macOS paths, so `detect` checks out the whole tree to read the changed files.
+The `macos` lane is on when a changed path names macOS (`macos`, `darwin`, `launchd`, `keychain`, `osascript`), is under `helper/` or `hermes_platform/`, is the test harness or the dependency set (`pyproject.toml`, `uv.lock`, `scripts/run_tests*.`, `tests/conftest.py`, the platform-gating fixture, `scripts/ci/list_os_marked_tests.py`), or is a `.py` file whose checkout text has a darwin branch or a `platforms(...)` gate that reaches the macOS lane (the files `scripts/ci/list_os_marked_tests.py macos` lists). A pull request labelled `dev-red-fix` also turns it on, and CI runs on `labeled` so adding the label starts it. The `helper` lane is on for `helper/`. Like every lane, both are on for pushes, manual runs and `.github/` changes. Upstream ran its macOS tests on every Python change; LINA narrows that to macOS paths, so `detect` checks out the whole tree to read the changed files.
 
 ## Required checks
 
@@ -35,7 +35,7 @@ The `macos` lane is on when a changed path names macOS (`macos`, `darwin`, `laun
 | --- | --- | --- |
 | Lint | `ci.yml` job | `ruff check .` passes |
 | Python tests (Linux) | `ci.yml` job | every slice passed, or `detect` found no change the suite can see; fails when `detect` fails |
-| Python tests (macOS) | `ci.yml` job | the macOS tests passed, or skipped: no macOS path changed |
+| Python tests (macOS) | `ci.yml` job | the macOS tests passed, or skipped: a pull request that changes no macOS path and has no `dev-red-fix` label |
 | LINA Helper (macOS) | `ci.yml` job | Swift tests, native checks and the ad-hoc build passed, or skipped: `helper/` did not change. The Linux half of its `make test` runs inside Python tests (Linux) (`tests/helper/`) |
 | Codex review | `codex-review-gate.yml` status | `chatgpt-codex-connector[bot]` reviewed this head (a review on it, its summary comment marking a finished review of it without findings, or a "no major issues" comment newer than it) and none of its review comments made on this head carries a P0 or P1 badge. Red with the count and the first finding; pending until the review of this head arrives. A review of an earlier head never counts |
 | Linked issue | `codex-review-gate.yml` status | the body closes (`Closes`/`Fixes #n`, GitHub `closingIssuesReferences`) an open issue of this repository, and a branch named `<type>/<n>-<slug>` closes #n; or the pull request carries the `no-issue` label (a typo, a one-line CI fix) |

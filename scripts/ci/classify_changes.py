@@ -561,6 +561,8 @@ _NIX_LANE_PATHS = (*_NIX_PATHS, *_NIX_FILES, *_DEP_MANIFESTS, *_NPM_MANIFESTS)
 
 # A pull request with this label runs every slow lane, whatever it touches.
 RUN_E2E_LABEL = "run-e2e"
+# LINA: a pull request that fixes a red dev runs the macOS tests too (docs/delivery.md, step 7).
+DEV_RED_FIX_LABEL = "dev-red-fix"
 
 def _is_docs(p: str) -> bool:
     if p.startswith(("skills/", "optional-skills/")):
@@ -655,12 +657,13 @@ def _slow_lanes(files: list[str]) -> dict[str, bool]:
     return lanes
 
 
-def classify(files: list[str], run_e2e: bool = False, root: Path | None = None) -> dict[str, bool]:
+def classify(files: list[str], run_e2e: bool = False, root: Path | None = None,
+             dev_red_fix: bool = False) -> dict[str, bool]:
     """Map changed paths to ``{lane: should_run}``.
 
     ``run_e2e`` is the pull request's ``run-e2e`` label: it turns every slow
     lane on. ``root`` is the checkout the macOS lane reads file contents from;
-    without it only paths count.
+    without it only paths count. ``dev_red_fix`` (the ``dev-red-fix`` label) turns the macOS lane on.
     """
     files = [f.strip() for f in files if f.strip()]
     catalog = any(_is_catalog_data(f) for f in files)
@@ -696,7 +699,7 @@ def classify(files: list[str], run_e2e: bool = False, root: Path | None = None) 
         "catalog": catalog,
         # LINA: helper/macos (LINA Helper) runs its Swift and native checks on macOS.
         "helper": any(f.startswith(_HELPER_PATHS) for f in files),
-        "macos": any(_is_macos(f, root) for f in files),
+        "macos": dev_red_fix or any(_is_macos(f, root) for f in files),
         **{lane: run_e2e or on for lane, on in _slow_lanes(files).items()},
     }
     consumers = [c for f in files for c in _SHARED_FIXTURE_CONSUMERS.get(f, ())]
@@ -812,7 +815,9 @@ def main() -> int:
                 file=sys.stderr,
             )
             files = recovered
-    lanes = classify(files, run_e2e=RUN_E2E_LABEL in pull_request_labels(), root=Path.cwd())
+    labels = pull_request_labels()
+    lanes = classify(files, run_e2e=RUN_E2E_LABEL in labels, root=Path.cwd(),
+                     dev_red_fix=DEV_RED_FIX_LABEL in labels)
     out = "\n".join(f"{key}={str(value).lower()}" for key, value in lanes.items())
     if dest := os.environ.get("GITHUB_OUTPUT"):
         with open(dest, "a", encoding="utf-8") as fh:

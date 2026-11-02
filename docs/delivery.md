@@ -13,7 +13,7 @@ How a change reaches `dev`. GitHub enforces the required checks; the rest is the
    | --- | --- |
    | Lint | `ruff check .` passes |
    | Python tests (Linux) | every test slice passed, or the change cannot reach Python |
-   | Python tests (macOS) | macOS tests passed; skipped (green) when no macOS path changed |
+   | Python tests (macOS) | macOS tests passed. Runs on `dev` pushes, manual runs, and pull requests that change a macOS path or carry `dev-red-fix`; skipped (green) on other pull requests |
    | LINA Helper (macOS) | Swift and native checks passed; skipped (green) when `helper/` did not change |
    | Codex review | Codex reviewed this head and left no P0/P1 finding on it |
    | Linked issue | the body closes an open issue of this repository (the branch number among them), or `no-issue` |

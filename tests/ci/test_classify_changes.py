@@ -477,6 +477,16 @@ def test_macos_lane_reads_darwin_branches_and_macos_test_gates_from_the_checkout
     assert classify(["hermes_cli/gateway_launchd.py"])["macos"]
 
 
+@pytest.mark.parametrize("files", [["gateway/run.py"], ["README.md"]])
+def test_dev_red_fix_label_turns_the_macos_lane_on_and_nothing_else(files):
+    """LINA: a pull request fixing a red dev runs the macOS tests whatever it touches."""
+    labelled = classify(files, dev_red_fix=True)
+    unlabelled = classify(files)
+    assert labelled["macos"] and not unlabelled["macos"]
+    assert {k: v for k, v in labelled.items() if k != "macos"} == \
+        {k: v for k, v in unlabelled.items() if k != "macos"}
+
+
 @pytest.mark.parametrize("files", [["README.md"], ["gateway/run.py"], ["apps/desktop/src/app.tsx"]])
 def test_run_e2e_label_turns_every_slow_lane_on_and_nothing_else(files):
     labelled = classify(files, run_e2e=True)
