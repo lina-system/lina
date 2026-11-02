@@ -143,11 +143,11 @@ def test_current_custom_endpoint_passthrough_marks_current_row(monkeypatch):
 # ---------------------------------------------------------------------------
 #
 # A single Kimi credential used to surface TWO picker rows: the alias slug
-# "kimi" (emitted by the PROVIDER_TO_MODELS_DEV pass) plus its canonical
-# "kimi-coding" (re-emitted by the CANONICAL_PROVIDERS cross-check pass),
-# both backed by the same kimi-for-coding models.dev provider. The picker
+# "opencodex" (emitted by the PROVIDER_TO_MODELS_DEV pass) plus its canonical
+# "ocx" (re-emitted by the CANONICAL_PROVIDERS cross-check pass),
+# both backed by the same ocx-catalog models.dev provider. The picker
 # must list each authenticated credential exactly once, under the CANONICAL
-# slug ("kimi-coding") — matching list_authenticated_providers' other alias
+# slug ("ocx") — matching list_authenticated_providers' other alias
 # rows and the overlay slug-resolution contract (see
 # test_overlay_slug_resolution.py).
 
@@ -160,22 +160,31 @@ def _stub_kimi_discovery(monkeypatch, *, canonical):
     offline and deterministic. ``canonical`` is the CANONICAL_PROVIDERS list
     the 2b cross-check pass should iterate.
     """
+    import providers
+    from providers.base import ProviderProfile
+
+    monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
+    monkeypatch.setattr(providers, "_ALIASES", dict(providers._ALIASES))
+    providers.register_provider(ProviderProfile(name="ocx", aliases=("opencodex", "ocx-alias"),
+        env_vars=("OCX_API_KEY",), base_url="http://127.0.0.1:10100/v1"))
+    providers.register_provider(ProviderProfile(name="ocx-cn", env_vars=("OCX_CN_API_KEY",),
+        base_url="https://regional.invalid/v1"))
     import agent.models_dev as md
     import hermes_cli.models as hm
     import hermes_cli.models_catalog_static as hermes_cli_models_catalog_static
     from hermes_cli import models_catalog_static
 
     kimi_map = {
-        "kimi": "kimi-for-coding",
-        "kimi-coding": "kimi-for-coding",
-        "moonshot": "kimi-for-coding",
-        "kimi-coding-cn": "kimi-for-coding",
+        "opencodex": "ocx-catalog",
+        "ocx": "ocx-catalog",
+        "ocx-alias": "ocx-catalog",
+        "ocx-cn": "ocx-catalog",
     }
     monkeypatch.setattr(md, "PROVIDER_TO_MODELS_DEV", kimi_map)
     monkeypatch.setattr(
         md, "fetch_models_dev",
         lambda *a, **k: {
-            "kimi-for-coding": {"name": "Kimi For Coding", "env": ["KIMI_API_KEY"]},
+            "ocx-catalog": {"name": "Kimi For Coding", "env": ["OCX_API_KEY"]},
         },
     )
 
@@ -192,31 +201,31 @@ def _stub_kimi_discovery(monkeypatch, *, canonical):
 
 
 def test_single_kimi_credential_yields_one_canonical_row(monkeypatch):
-    """One Kimi key yields a single row under the canonical 'kimi-coding' slug."""
+    """One Kimi key yields a single row under the canonical 'ocx' slug."""
     import hermes_cli.models as hm
     from hermes_cli import models_catalog_static
 
     _stub_kimi_discovery(
         monkeypatch,
-        canonical=[models_catalog_static.ProviderEntry("kimi-coding", "Kimi / Kimi Coding Plan", "desc")],
+        canonical=[models_catalog_static.ProviderEntry("ocx", "Kimi / Kimi Coding Plan", "desc")],
     )
-    monkeypatch.setenv("KIMI_API_KEY", "sk-test-kimi")
+    monkeypatch.setenv("OCX_API_KEY", "sk-test-kimi")
 
     rows = model_switch.list_authenticated_providers(max_models=10)
     slugs = [r["slug"] for r in rows]
 
-    # Exactly one Kimi / kimi-for-coding-backed row, under the canonical slug —
-    # not both the alias ("kimi") and its canonical ("kimi-coding").
-    kimi_rows = [s for s in slugs if s in {"kimi", "kimi-coding"}]
-    assert kimi_rows == ["kimi-coding"], (
+    # Exactly one Kimi / ocx-catalog-backed row, under the canonical slug —
+    # not both the alias ("opencodex") and its canonical ("ocx").
+    kimi_rows = [s for s in slugs if s in {"opencodex", "ocx"}]
+    assert kimi_rows == ["ocx"], (
         f"expected a single canonical Kimi row, got: {slugs}"
     )
-    assert slugs.count("kimi-coding") == 1
-    assert "kimi" not in slugs
+    assert slugs.count("ocx") == 1
+    assert "opencodex" not in slugs
 
 
 def test_distinct_kimi_china_credential_still_listed(monkeypatch):
-    """A separate China (kimi-coding-cn) credential remains its own row.
+    """A separate China (ocx-cn) credential remains its own row.
 
     Negative-control guard: the de-dup must collapse only the alias/canonical
     pair that share a credential, not legitimately distinct providers.
@@ -227,20 +236,20 @@ def test_distinct_kimi_china_credential_still_listed(monkeypatch):
     _stub_kimi_discovery(
         monkeypatch,
         canonical=[
-            models_catalog_static.ProviderEntry("kimi-coding", "Kimi / Kimi Coding Plan", "desc"),
-            models_catalog_static.ProviderEntry("kimi-coding-cn", "Kimi / Moonshot (China)", "desc"),
+            models_catalog_static.ProviderEntry("ocx", "Kimi / Kimi Coding Plan", "desc"),
+            models_catalog_static.ProviderEntry("ocx-cn", "Kimi / Moonshot (China)", "desc"),
         ],
     )
-    monkeypatch.setenv("KIMI_API_KEY", "sk-test-kimi")
-    monkeypatch.setenv("KIMI_CN_API_KEY", "sk-test-kimi-cn")
+    monkeypatch.setenv("OCX_API_KEY", "sk-test-kimi")
+    monkeypatch.setenv("OCX_CN_API_KEY", "sk-test-kimi-cn")
 
     rows = model_switch.list_authenticated_providers(max_models=10)
     slugs = [r["slug"] for r in rows]
 
-    assert "kimi-coding" in slugs       # canonical global row
-    assert slugs.count("kimi-coding") == 1
-    assert "kimi" not in slugs          # alias collapsed into the canonical row
-    assert "kimi-coding-cn" in slugs    # distinct China endpoint preserved
+    assert "ocx" in slugs       # canonical global row
+    assert slugs.count("ocx") == 1
+    assert "opencodex" not in slugs          # alias collapsed into the canonical row
+    assert "ocx-cn" in slugs    # distinct China endpoint preserved
 
 
 def test_non_blocking_listing_opens_no_socket(monkeypatch, tmp_path):

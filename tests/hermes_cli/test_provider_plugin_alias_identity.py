@@ -20,13 +20,14 @@ def _entry(key: str, api: str) -> dict:
 
 # Each alias as models.dev lists it, so the catalog leg has the colliding entry to resolve to.
 _CATALOG = {
+    "opencodex": _entry("opencodex", "http://127.0.0.1:10100/v1"),
     "meta": _entry("meta", "https://api.meta.ai/v1"),
     "azure": _entry("azure", "https://example.openai.azure.com/openai"),
     "google": _entry("google", "https://generativelanguage.googleapis.com/v1beta"),
     "google-vertex": _entry("google-vertex", "https://aiplatform.googleapis.com/v1"),
 }
 
-_ALIASES = {"meta": "meta-ai", "azure": "azure-foundry", "google": "gemini", "google-vertex": "vertex"}
+_ALIASES = {"opencodex": "ocx"}
 
 
 @pytest.mark.parametrize("registry", [_CATALOG, {}], ids=["catalog", "offline"])

@@ -1,0 +1,29 @@
+---
+title: "Integrations"
+sidebarTitle: "All Integrations"
+description: "Give the agents and tools you already use long-term memory with Honcho"
+icon: "grid-2"
+mode: "wide"
+---
+
+import { IntegrationsCatalog } from "/snippets/integrations-catalog.jsx";
+
+Install a plugin and your agent remembers who you are, what you're working on, and what it was doing — across sessions, restarts, and tools. All integrations share one Honcho workspace, so memory formed in one carries over to the rest.
+
+<IntegrationsCatalog />
+
+## Don't see your tool?
+
+<Columns cols={3}>
+  <Card title="Use the MCP server" icon="star-of-life" href="/v3/guides/integrations/mcp">
+    Works with any MCP-compatible client.
+  </Card>
+  <Card title="Build with the SDK" icon="code" href="/v3/documentation/introduction/quickstart">
+    Add Honcho to your own agent in Python or TypeScript.
+  </Card>
+  <Card title="Share memory across tools" icon="diagram-project" href="/v3/guides/recipes/unified-memory-setup">
+    One workspace for your chat companion, coding agent, and ingestion jobs.
+  </Card>
+</Columns>
+
+Looking for end-to-end builds? See the tutorials for [Discord](/v3/guides/discord), [Telegram](/v3/guides/telegram), and a [voice robot](/v3/guides/integrations/reachy-mini).

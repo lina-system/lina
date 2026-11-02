@@ -303,11 +303,7 @@ class _LmStudioSourceHandler(BaseHTTPRequestHandler):
 
 
 def test_anthropic_profile_drops_x_api_key_on_redirect(monkeypatch):
-    import importlib
-
-    AnthropicProfile = importlib.import_module(
-        "plugins.model-providers.anthropic"
-    ).AnthropicProfile
+    from hermes_cli.models import _fetch_anthropic_models
 
     source = _server()
     sink = _server()
@@ -320,11 +316,12 @@ def test_anthropic_profile_drops_x_api_key_on_redirect(monkeypatch):
     def local_anthropic_request(url, *args, **kwargs):
         if url.startswith("https://api.anthropic.com/v1/models"):
             url = f"http://127.0.0.1:{source.server_port}/redirect"
+        kwargs.setdefault("headers", {})["Accept"] = "application/json"
         return original_request(url, *args, **kwargs)
 
     monkeypatch.setattr(urllib.request, "Request", local_anthropic_request)
     try:
-        result = AnthropicProfile(name="anthropic").fetch_models(
+        result = _fetch_anthropic_models(
             api_key="anthropic-secret", timeout=3
         )
     finally:
