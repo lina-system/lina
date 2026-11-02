@@ -274,8 +274,8 @@ class TestNamedProfileHome:
         assert named_profile_home(worker / "logs") == worker
         assert named_profile_home(worker) == worker
 
-    def test_dot_hermes_layout_resolves_without_markers(self, tmp_path):
-        worker = tmp_path / ".hermes" / "profiles" / "worker"
+    def test_dot_lina_layout_resolves_without_markers(self, tmp_path):
+        worker = tmp_path / ".lina" / "profiles" / "worker"
         assert named_profile_home(worker / "logs") == worker
         assert named_profile_home(worker) == worker
 

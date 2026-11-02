@@ -13,9 +13,9 @@ Like upstream `ci.yaml`, the first job (`Detect affected areas`) classifies the 
 | Detect affected areas | always | Picks the lanes below | `ci.yaml`, job `detect` |
 | **Lint** (required) | always | `ruff check .` with the ruff version pinned by `scripts/code_health` | `lint.yml`, job "ruff enforcement (blocking)" |
 | Python tests (Linux n/8) | `python` lane | `scripts/run_tests.sh` on Ubuntu, in 8 slices, with the per-file duration cache (`test_durations.json`; pull requests read it, `dev` pushes write it) | `tests.yml`, job "Run tests" |
-| **Python tests (Linux)** (required) | always | Green when every slice passed, or when detect skipped the slices because the change cannot reach Python | `ci.yaml`, job `all-checks-pass` |
+| Catalog tests | `catalog` lane | The tests that read `plugin-catalog/` entries and contributor email maps, discovered by `scripts/ci/catalog_test_files.py` and run through `scripts/run_tests.sh`. A catalog-only pull request runs this instead of the Linux slices | `catalog-tests.yml` |
+| **Python tests (Linux)** (required) | always | Green when every slice passed (or detect skipped the slices because the change cannot reach Python) and the `catalog` tests passed (or the lane was not needed) | `ci.yaml`, job `all-checks-pass` |
 | **Python tests (macOS)** (required) | pushes to `dev`, manual runs; a pull request on the `macos` lane | macOS-marked tests. A pull request runs them when it changes a test file `scripts/ci/list_os_marked_tests.py macos` lists or a module such a file imports, or carries the `dev-red-fix` label (added after the last push, it counts on a re-run); other pull requests skip them (runner cost; a skip passes the check). Upstream runs them on every pull request with a Python change | `tests-os.yml`, macOS jobs |
-| LINA Helper (macOS) | always | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
 | **LINA Helper (macOS)** (required) | `helper` lane | On `macos-latest`: Swift tests, the unlock package's native checks and an ad-hoc build of `helper/macos` (LINA Helper). Its sign-and-notarise job is a placeholder that does not run | LINA's own (from the LINA Helper repository's `check.yml`) |
 | Diff checks | always | Blob size check (a binary over 500 KiB fails; exceptions: `.github/blob-size-allowlist.txt`), and on the `scan`/`deps` lanes the supply-chain scan (added lines that decode base64 into `exec`/`eval` or run an encoded subprocess command) | `blob-size-check.yml`, `supply-chain-audit.yml` job "scan" |
 | uv.lock check | `uv_lock` lane | `uv.lock` agrees with `pyproject.toml` | `uv-lockfile-check.yml` |
@@ -35,7 +35,7 @@ The `macos` lane (`classify_changes.macos_lane`) is on for a pull request that c
 | Check | Source | Green when |
 | --- | --- | --- |
 | Lint | `ci.yml` job | `ruff check .` passes |
-| Python tests (Linux) | `ci.yml` job | every slice passed, or `detect` found no change the suite can see; fails when `detect` fails |
+| Python tests (Linux) | `ci.yml` job | every slice passed (or `detect` found no change the suite can see) and the Catalog tests passed (or the `catalog` lane was off); fails when `detect` fails |
 | Python tests (macOS) | `ci.yml` job | the macOS tests passed, or skipped: a pull request off the `macos` lane (no macOS-marked test file or module one imports changed, no `dev-red-fix` label) |
 | LINA Helper (macOS) | `ci.yml` job | Swift tests, native checks and the ad-hoc build passed, or skipped: `helper/` did not change. The Linux half of its `make test` runs inside Python tests (Linux) (`tests/helper/`) |
 | Codex review | `codex-review-gate.yml` status | `chatgpt-codex-connector[bot]` reviewed this head (a review on it, its summary comment marking a finished review of it without findings, or a "no major issues" comment newer than it) and none of its review comments made on this head carries a P0 or P1 badge. Red with the count and the first finding; pending until the review of this head arrives. A review of an earlier head never counts |
@@ -69,7 +69,7 @@ Only public repositories use GitHub CI. Private repositories (for example hermes
 - `bootstrap-installer.yml`
 - `canary-release.yml`
 - `case-collision-check.yml`
-- `catalog-tests.yml`
+- `catalog-tests.yml` (LINA version: a job in `.github/workflows/ci.yml`)
 - `ci-review-comment.yml`
 - `ci.yaml`
 - `contributor-check.yml`

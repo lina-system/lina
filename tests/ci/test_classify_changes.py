@@ -17,6 +17,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.ci.check_prune_list import is_pruned, load
+
 _PATH = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "classify_changes.py"
 _spec = importlib.util.spec_from_file_location("classify_changes", _PATH)
 if _spec is None or _spec.loader is None:
@@ -483,11 +485,13 @@ def test_every_slow_lane_path_matches_a_tracked_file():
     files = tracked.stdout.splitlines()
     tables = {**_mod._E2E_LANES, "docker": _mod._DOCKER_PATHS, "nix": _mod._NIX_LANE_PATHS,
               "remote_backends": _mod._REMOTE_BACKEND_PATHS}
+    rules = load(_REPO)
     dead = {
         (lane, prefix)
         for lane, prefixes in tables.items()
         for prefix in prefixes
-        if not any(f.startswith(prefix) for f in files)
+        if not is_pruned(rules, prefix.rstrip("/"))
+        and not any(f.startswith(prefix) for f in files)
     }
     assert dead == set()
 
@@ -529,15 +533,6 @@ _UPDATE_PATH_FILES = (
     "scripts/desktop-update/posix.sh",
 )
 _DESKTOP_UPDATE_PATH_FILES = (
-    "apps/desktop/electron/main.ts",
-    "apps/desktop/electron/update-marker.ts",
-    "apps/desktop/electron/update-gate.ts",
-    "apps/desktop/electron/updater-process.ts",
-    "apps/desktop/electron/updater/checkout.ts",
-    "apps/desktop/electron/handoff-result.ts",
-    "apps/desktop/electron/desktop-installation.ts",
-    "apps/desktop/electron/backend-discovery.ts",
-    "apps/desktop/electron/local-gateway.ts",
     "scripts/desktop-update/windows.ps1",
     "scripts/desktop-update/posix.sh",
     "hermes_cli/desktop_update_verify.py",
@@ -787,7 +782,6 @@ def test_catalog_lane_runs_every_test_that_reads_the_shipped_catalog():
         "tests/hermes_cli/test_plugin_catalog.py",
         "tests/scripts/test_validate_plugin_catalog.py",
         "tests/scripts/test_contributor_map.py",
-        "tests/website/test_extract_plugins.py",
     ):
         assert must in files
     assert not any(f.startswith("tests/e2e/") for f in files)

@@ -42,6 +42,8 @@ import time
 from contextlib import suppress
 from pathlib import Path
 
+from hermes_constants import GATEWAY_SERVICE_BASE
+
 #: This run's token: armed in ``_cmd_update_impl``, filled at the commit point. Same dict object
 #: the completion request carries, so the paused set reaches the completion child.
 _RUN: dict | None = None
@@ -136,7 +138,7 @@ def _discover_systemd() -> list[dict]:
         _for_each_systemd_gateway_unit(listing.stdout, process_unit=names.append,
                                        on_unit_timeout=lambda name, exc: None)
         for name in names:
-            if not name.startswith("hermes-gateway"):
+            if not name.startswith(GATEWAY_SERVICE_BASE):
                 continue  # serve/dashboard units are not gateways: the post-commit restart owns them
             pid = _unit_main_pid(scope_cmd, name)
             if pid <= 0 or pid in seen_pids or not _systemd_unit_owned_by_update(scope_cmd, name):
@@ -319,7 +321,7 @@ def _manage_cmd(scope: str) -> list | None:
     cmd = cmd + ["--no-ask-password"]
     if scope == "system" and _needs_sudo(scope):
         sudo = ["sudo", "-n", *cmd]
-        return sudo if _sudo_noninteractive_ok(cmd + ["show", "-p", "Id", "hermes-gateway"]) else None
+        return sudo if _sudo_noninteractive_ok(cmd + ["show", "-p", "Id", GATEWAY_SERVICE_BASE]) else None
     return cmd
 
 

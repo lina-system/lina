@@ -128,7 +128,8 @@ class CodexAppServerClient:
         # workspace: keep the sandbox on, add the Kanban root as writable.
         if owned_task:
             kanban_db = spawn_env.get("HERMES_KANBAN_DB")
-            default_root = os.path.join(spawn_env.get("HERMES_HOME", os.path.expanduser("~/.hermes")), "kanban")
+            from hermes_constants import get_hermes_home
+            default_root = os.path.join(spawn_env.get("HERMES_HOME") or str(get_hermes_home()), "kanban")
             kanban_root = os.path.dirname(kanban_db) if kanban_db else spawn_env.get("HERMES_KANBAN_ROOT", default_root)
             cmd += [
                 "-c", 'sandbox_mode="workspace-write"',

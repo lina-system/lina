@@ -1,0 +1,73 @@
+# LINA's memory store: one Postgres with pgvector, and the Honcho server built from services/honcho.
+# Run through `lina store ...` (hermes_cli/store.py), which passes the generated env file
+# (<LINA root>/store/store.env) and orders the steps: database, migration job, then api and deriver.
+name: lina-store
+
+x-honcho: &honcho
+  image: lina-honcho:local
+  pull_policy: never
+  env_file:
+    - path: ${LINA_HONCHO_ENV:-/dev/null}
+      required: false
+  environment: &honcho-env
+    DB_CONNECTION_URI: postgresql+psycopg://honcho:${HONCHO_DB_PASSWORD:?run lina store install}@db:5432/lina
+    DB_SCHEMA: ltm
+  depends_on:
+    db:
+      condition: service_healthy
+
+services:
+  db:
+    image: pgvector/pgvector:0.8.7-pg15-bookworm@sha256:88164492558c9773a1e17a8305abaca7863e05b3d8bbcdb792774890a2047e06
+    restart: unless-stopped
+    command: ["postgres", "-c", "max_connections=200"]
+    environment:
+      POSTGRES_USER: lina
+      POSTGRES_DB: lina
+      POSTGRES_PASSWORD: ${LINA_STORE_PASSWORD:?run lina store install}
+      LINA_APP_PASSWORD: ${LINA_APP_PASSWORD:?run lina store install}
+      HONCHO_DB_PASSWORD: ${HONCHO_DB_PASSWORD:?run lina store install}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    ports:
+      - "127.0.0.1:${LINA_STORE_PORT:-54320}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./initdb:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U lina -d lina"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+
+  # The one migration job: runs Honcho's Alembic migrations once, then exits.
+  honcho-migrate:
+    <<: *honcho
+    profiles: ["job"]
+    restart: "no"
+    entrypoint: ["/app/.venv/bin/python", "scripts/migrate_db.py"]
+
+  honcho-api:
+    <<: *honcho
+    build:
+      context: ../honcho
+    restart: unless-stopped
+    # Upstream's entrypoint migrates on every start; here only honcho-migrate does.
+    entrypoint: ["/app/.venv/bin/fastapi", "run", "--host", "0.0.0.0", "src/main.py"]
+    ports:
+      - "127.0.0.1:${LINA_HONCHO_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD", "/app/.venv/bin/python", "-c",
+             "import urllib.request; urllib.request.urlopen('http://localhost:8000/health', timeout=2).read()"]
+      interval: 2s
+      timeout: 5s
+      retries: 30
+      start_period: 5s
+
+  honcho-deriver:
+    <<: *honcho
+    restart: unless-stopped
+    entrypoint: ["/app/.venv/bin/python", "-m", "src.deriver"]
+
+volumes:
+  pgdata:
+    name: ${LINA_STORE_VOLUME:-lina-store-pgdata}

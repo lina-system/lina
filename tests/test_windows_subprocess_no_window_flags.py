@@ -481,7 +481,7 @@ def test_gateway_scheduled_task_state_hides_powershell_window(monkeypatch):
     monkeypatch.setattr(gateway.subprocess, "run", fake_run)
     monkeypatch.setattr(gateway.shutil, "which", lambda name: r"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.EXE")
 
-    assert gateway._windows_scheduled_task_state("hermes-gateway") == "Ready"
+    assert gateway._windows_scheduled_task_state("LINA_Gateway") == "Ready"
     assert len(captured) == 1, captured
     cmd, kwargs = captured[0]
     assert cmd[0].lower().endswith("powershell.exe"), cmd

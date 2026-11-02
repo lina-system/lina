@@ -361,25 +361,6 @@ class TestDefaultModelFromCache:
             fetch.assert_not_called()
 
 
-    def test_shipped_manifest_labels_the_silent_default(self, isolated_home):
-        """Contract with the in-repo manifest: both provider blocks label the
-        same default entry the code constant points at."""
-        from hermes_cli import model_catalog
-        from hermes_cli.models import PREFERRED_SILENT_DEFAULT_MODEL
-
-        repo_root = Path(model_catalog.__file__).resolve().parent.parent
-        manifest = json.loads(
-            (repo_root / "website" / "static" / "api" / "model-catalog.json").read_text()
-        )
-        for provider in ("openrouter", "nous"):
-            block = manifest["providers"][provider]
-            labeled = [m["id"] for m in block["models"] if m.get("default")]
-            assert labeled == [PREFERRED_SILENT_DEFAULT_MODEL], (
-                f"{provider}: exactly one entry must be labeled default and it "
-                f"must match PREFERRED_SILENT_DEFAULT_MODEL"
-            )
-
-
 class TestProviderOverride:
     def test_override_url_takes_precedence(self, isolated_home):
         from hermes_cli import model_catalog

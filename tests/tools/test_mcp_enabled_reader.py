@@ -2,19 +2,95 @@
 
 The MCP client, the toolset resolver, the profile editor, the catalog and the list/status
 surfaces used to parse the key four different ways, so ``enabled: 0`` was off for the resolver
-and on for the client, and ``enabled: "false"`` was on in the server list. The case table is
-shared with the desktop (``apps/desktop/src/lib/mcp-enabled-cases.json``).
+and on for the client, and ``enabled: "false"`` was on in the server list. The case table covers the retained Python readers.
 """
 
 from __future__ import annotations
 
-import json
-from pathlib import Path
 
 import pytest
 
-CASES = json.loads(
-    (Path(__file__).resolve().parents[2] / "apps/desktop/src/lib/mcp-enabled-cases.json").read_text(encoding="utf-8"))
+CASES = [
+  {
+    "enabled": True,
+    "on": True
+  },
+  {
+    "enabled": False,
+    "on": False
+  },
+  {
+    "enabled": 1,
+    "on": True
+  },
+  {
+    "enabled": 0,
+    "on": False
+  },
+  {
+    "enabled": 0.0,
+    "on": False
+  },
+  {
+    "enabled": 2,
+    "on": True
+  },
+  {
+    "enabled": -0.0,
+    "on": False
+  },
+  {
+    "enabled": [],
+    "on": True
+  },
+  {
+    "enabled": "true",
+    "on": True
+  },
+  {
+    "enabled": "Yes",
+    "on": True
+  },
+  {
+    "enabled": " on ",
+    "on": True
+  },
+  {
+    "enabled": "1",
+    "on": True
+  },
+  {
+    "enabled": "false",
+    "on": False
+  },
+  {
+    "enabled": "OFF",
+    "on": False
+  },
+  {
+    "enabled": "no",
+    "on": False
+  },
+  {
+    "enabled": "0",
+    "on": False
+  },
+  {
+    "enabled": "",
+    "on": True
+  },
+  {
+    "enabled": "maybe",
+    "on": True
+  },
+  {
+    "enabled": None,
+    "on": True
+  },
+  {
+    "on": True
+  }
+]
 
 
 def _readers():

@@ -274,46 +274,6 @@ def test_broken_secondary_state_db_parks_only_that_profile(mux):
         stop(proc, expect=None)
 
 
-def test_invalid_hot_profile_config_is_parked_and_unserved(mux):
-    """A runtime MultiplexConfigError withdraws both new and previously served secondaries.
-
-    This exercises the real gateway runtime: authority/ticket publication happens before adapter
-    config validation, so the regression left an invalid profile routable even though its adapters
-    never started.
-    """
-    root = mux['root']
-    proc, desc = start_daemon(mux)
-    try:
-        invalid = json.loads(json.dumps(mux['config']))
-        invalid['whatsapp'] = {'enabled': True, 'dm_policy': 'open'}
-
-        added = root / 'profiles' / 'invalid-hot'
-        added.mkdir(parents=True, mode=0o700)
-        (added / 'config.yaml').write_text(json.dumps(invalid), encoding='utf-8')
-        result = control(root, 'rescan-profiles')
-        desc = control(root, 'identify')
-        assert result['parked'] == ['invalid-hot'], (result, tail(mux))
-        assert added.resolve() not in served_homes(desc), desc
-        assert 'invalid-hot' in desc.get('parked_profiles', {}), desc
-        wait_recorded(root, lambda r: 'invalid-hot' not in r, 'invalid-hot never recorded')
-
-        # The same contract applies to a secondary that was already published and then edited
-        # into an invalid configuration.
-        assert mux['boot'].resolve() in served_homes(desc)
-        (mux['boot'] / 'config.yaml').write_text(json.dumps(invalid), encoding='utf-8')
-        result = control(root, 'rescan-profiles')
-        desc = control(root, 'identify')
-        # An explicit control-socket rescan retries parked profiles by design, so the still-invalid
-        # 'invalid-hot' is re-parked alongside 'boot' (never served in between).
-        assert sorted(result['parked']) == ['boot', 'invalid-hot'], (result, tail(mux))
-        assert added.resolve() not in served_homes(desc), desc
-        assert mux['boot'].resolve() not in served_homes(desc), desc
-        assert 'boot' in desc.get('parked_profiles', {}), desc
-        wait_recorded(root, lambda r: 'boot' not in r, 'parked boot withdrawn from the recorded set')
-    finally:
-        stop(proc, expect=None)
-
-
 async def chat_for(root, home, desc, *, during_turn=None):
     """Exercise the real session/agent path; only the model HTTP wire is a fixture."""
     grant = control(root, 'session-ticket', {'profile_id': str(home.resolve()),

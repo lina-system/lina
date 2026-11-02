@@ -577,31 +577,6 @@ method("model.options", params=ModelOptionsParams, result=ModelOptionsResult,
        doc="Provider/model inventory for the picker, layered over the session's live provider when given.")
 
 
-# ── image.generate ────────────────────────────────────────────────────────────────────────────
-
-
-class ImageGenerateParams(Params):
-    prompt: str | None = None
-    aspect_ratio: str | None = None
-    probe: JsonValue | None = None  # truthy word/flag: availability check only
-    max_bytes: int | None = None
-
-
-class ImageGenerateResult(Result):
-    """``probe`` answers ``{available}`` alone; ``image_data`` (data URL) is omitted when the
-    download failed or exceeded ``max_bytes`` so callers fall back to ``image``."""
-
-    available: bool
-    success: bool | None = None
-    image: str | None = None
-    image_data: str | None = None
-    error: str | None = None
-
-
-method("image.generate", params=ImageGenerateParams, result=ImageGenerateResult,
-       doc="Generate an image through the tool's provider dispatcher and hand the renderer a data URL.")
-
-
 # ── session.control ───────────────────────────────────────────────────────────────────────────
 
 
