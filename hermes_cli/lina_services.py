@@ -23,6 +23,7 @@ import shlex
 import subprocess
 import sys
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Callable
 
 # Hermes Agent's gateway names (the product LINA was forked from; it may run on the same account).
@@ -132,9 +133,24 @@ def _gateway(verb: str) -> None:
     gw.gateway_command(argparse.Namespace(gateway_command=verb))
 
 
+def _root_homes(root: Path) -> set[Path]:
+    """The homes of one LINA root: the root and every ``profiles/<name>`` under it."""
+    profiles = root / "profiles"
+    homes = {root, *(p for p in profiles.iterdir() if p.is_dir())} if profiles.is_dir() else {root}
+    return {home.resolve() for home in homes}
+
+
 def gateway_running() -> bool:
-    """Any gateway process of this LINA root, whichever profile it serves."""
-    return bool(_gw().find_gateway_pids(all_profiles=True))
+    """Any gateway process of this LINA root, whichever profile it serves.
+
+    ``find_gateway_pids(all_profiles=True)`` is host-wide (every ``gateway run`` of this account: another root's,
+    a test's, Hermes Agent's beside LINA), so only the PIDs whose live home is this root or one of its profiles
+    count; a gateway whose home cannot be read is not this root's."""
+    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.update_fleet_scope import partition_gateway_pids_by_scope
+    owned, _foreign = partition_gateway_pids_by_scope(_gw().find_gateway_pids(all_profiles=True),
+                                                      _root_homes(lina_root()))
+    return bool(owned)
 
 
 def _store_verb(verb: str) -> None:

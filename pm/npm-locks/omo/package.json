@@ -1,0 +1,7 @@
+{
+  "name": "lina-omo",
+  "private": true,
+  "dependencies": {
+    "omo-ai": "5.1.51"
+  }
+}
