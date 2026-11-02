@@ -768,17 +768,70 @@ def export_state_db_texts(db_path: Path, out_path: Path, *, dsn: Optional[str] =
     return count
 
 
+class MessageTextRestoreError(ValueError):
+    """A restored state.db points at message text the store cannot give its agent."""
+
+
+def _remapped_uid(uid: str, agent: str) -> str:
+    """``agent:<other>:<rest>`` as ``agent:<agent>:<rest>``; uids of another shape are left alone."""
+    source, _, rest = uid.partition(":")
+    owner, sep, tail = rest.partition(":")
+    if source != SOURCE_AGENT or not sep or owner == agent:
+        return uid
+    return f"{SOURCE_AGENT}:{agent}:{tail}"
+
+
+def _remap_state_db_uids(db_path: Path, agent: str) -> list[str]:
+    """Point *db_path*'s transcript rows at *agent*'s uids (an archive restored under another profile still
+    names its old agent); returns the distinct text uids it then references."""
+    import sqlite3
+    conn = sqlite3.connect(Path(db_path), timeout=30)
+    try:
+        if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name=?", (PLACEMENT_TABLE,)).fetchone() is None:
+            return []
+        uids = [row[0] for row in conn.execute(
+            f"SELECT DISTINCT text_uid FROM {PLACEMENT_TABLE} WHERE text_uid IS NOT NULL")]
+        moved = [(new, old) for old in uids if (new := _remapped_uid(old, agent)) != old]
+        if moved:
+            with conn:
+                conn.executemany(f"UPDATE {PLACEMENT_TABLE} SET text_uid = ? WHERE text_uid = ?", moved)
+        return sorted({_remapped_uid(uid, agent) for uid in uids})
+    finally:
+        conn.close()
+
+
 def import_state_db_texts(db_path: Path, jsonl_path: Path, *, dsn: Optional[str] = None) -> int:
-    """Put the text rows of a backup's JSONL back into the store, under the agent *db_path* (the restored
-    state.db) belongs to, before that state.db is used. Returns the rows that were missing."""
+    """Put the text rows of a backup's JSONL back into the store under the agent *db_path* (the restored
+    state.db) belongs to, before that state.db is used. Restored under another profile, the rows and the
+    state.db's text_uids move from ``agent:<old>:`` to ``agent:<new>:`` (uids are unique across agents, and a
+    row another agent owns is invisible here). Then every text_uid the state.db references must resolve to a
+    row this agent reads with the archived content; otherwise MessageTextRestoreError. Returns rows inserted."""
+    agent = agent_id_for(db_path)
     with open(jsonl_path, encoding="utf-8-sig") as src:
         rows = [json.loads(line) for line in src if line.strip()]
-    store = MessageStore(agent_id_for(db_path), dsn=dsn)
+    for row in rows:
+        row["uid"] = _remapped_uid(row["uid"], agent)
+    referenced = _remap_state_db_uids(db_path, agent)
+    store = MessageStore(agent, dsn=dsn)
     try:
-        return store.import_texts(rows)
+        inserted = store.import_texts(rows)
+        archived = {row["uid"]: row.get("content_sha256") for row in rows}
+        found: dict[str, Optional[str]] = {}
+        for start in range(0, len(referenced), 1000):
+            with store._cursor() as cur:
+                cur.execute("SELECT uid, content_sha256 FROM memory.messages WHERE uid = ANY(%s)",
+                            (referenced[start:start + 1000],))
+                found.update(cur.fetchall())
     finally:
         store.close()
-
+    missing = [uid for uid in referenced if uid not in found]
+    differs = [uid for uid, digest in archived.items() if uid in found and found[uid] != digest]
+    if missing or differs:
+        raise MessageTextRestoreError(
+            f"{db_path}: {len(missing)} message text(s) its transcript references are in neither the backup nor "
+            f"the store for agent {agent!r}, and {len(differs)} differ from the backup "
+            f"(first: {(missing + differs)[0]}). The restored transcript would read empty messages.")
+    return inserted
 
 def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
     """``collect_unreferenced`` for a SessionDB's agent, counting references in its state.db."""

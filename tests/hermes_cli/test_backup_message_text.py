@@ -128,3 +128,81 @@ def test_emergency_preflight_restores_collected_text(home, memory_store_sql):
 
     # Then its external bodies are available.
     assert _content(home, "emergency-collected") == ["Remember this after collection."]
+
+
+def _uids(memory_store_sql, agent):
+    return [row[0] for row in memory_store_sql(
+        "SELECT uid FROM memory.messages WHERE agent_id = %s ORDER BY uid", (agent,))]
+
+
+def test_profile_imported_under_another_name_reads_its_text_beside_the_original(
+        home, tmp_path, monkeypatch, memory_store_sql):
+    from hermes_cli import profiles
+
+    monkeypatch.setattr(profiles, "_get_profiles_root", lambda: home / "profiles")
+    source = home / "profiles" / "original"
+    source.mkdir(parents=True)
+    (source / "config.yaml").write_text("model: test\n", encoding="utf-8")
+    _seed(source, "renamed-session")
+    original_uids = _uids(memory_store_sql, "original")
+    archive = profiles.export_profile("original", str(tmp_path / "profile.tar.gz"))
+    TEXT_CACHE.clear()
+
+    restored = profiles.import_profile(str(archive), name="renamed")
+
+    TEXT_CACHE.clear()
+    assert _content(restored, "renamed-session") == ["Remember this after collection."]
+    assert _content(source, "renamed-session") == ["Remember this after collection."]
+    assert _uids(memory_store_sql, "original") == original_uids
+    renamed = _uids(memory_store_sql, "renamed")
+    assert renamed and all(uid.startswith("agent:renamed:") for uid in renamed)
+
+
+def test_full_backup_of_two_profiles_imported_into_another_profile_home(home, tmp_path, monkeypatch, memory_store_sql):
+    from hermes_cli import profiles
+
+    _seed(home, "root-session")
+    nested = home / "profiles" / "alpha"
+    nested.mkdir(parents=True)
+    _seed(nested, "alpha-session")
+    monkeypatch.setattr(profiles, "create_wrapper_script", lambda name: None)
+    archive = tmp_path / "two.zip"
+    assert backup.run_backup(Namespace(output=str(archive)))
+    default_uids = _uids(memory_store_sql, "default")
+
+    # Imported into a named profile's home while the originals are still in the store.
+    target = tmp_path / "other" / "profiles" / "beta"
+    target.mkdir(parents=True)
+    monkeypatch.setenv("HERMES_HOME", str(target))
+    monkeypatch.setattr(backup, "get_default_hermes_root", lambda: target)
+    TEXT_CACHE.clear()
+    assert backup.run_import(Namespace(zipfile=str(archive), force=True)) is None
+
+    TEXT_CACHE.clear()
+    assert _content(target, "root-session") == ["Remember this after collection."]
+    assert _content(target / "profiles" / "alpha", "alpha-session") == ["Remember this after collection."]
+    assert _uids(memory_store_sql, "default") == default_uids
+    beta = _uids(memory_store_sql, "beta")
+    assert beta and all(uid.startswith("agent:beta:") for uid in beta)
+
+
+def test_restore_whose_text_is_missing_a_referenced_row_fails(home, memory_store_sql):
+    from hermes_state_store import MessageTextRestoreError
+
+    db = SessionDB(db_path=home / "state.db")
+    try:
+        db.create_session("gap", "cli")
+        db.append_message("gap", "user", content="first kept line")
+        db.append_message("gap", "assistant", content="second line the sidecar lost")
+    finally:
+        db.close()
+    snapshot_id = backup.create_quick_snapshot(hermes_home=home)
+    sidecar = home / "state-snapshots" / snapshot_id / "memory-messages.jsonl"
+    lines = sidecar.read_text(encoding="utf-8").splitlines()
+    assert len(lines) == 2
+    sidecar.write_text(lines[0] + "\n", encoding="utf-8")
+    memory_store_sql("TRUNCATE memory.messages")
+    TEXT_CACHE.clear()
+
+    with pytest.raises(MessageTextRestoreError, match="1 message text"):
+        backup.restore_quick_snapshot(snapshot_id, hermes_home=home)
