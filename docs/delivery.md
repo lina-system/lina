@@ -17,11 +17,15 @@ How a change reaches `dev`. GitHub enforces the required checks; the rest is the
    | LINA Helper (macOS) | Swift and native checks passed; skipped (green) when `helper/` did not change |
    | Codex review | Codex reviewed this head and left no P0/P1 finding on it |
    | Linked issue | the body closes an open issue of this repository (the branch number among them), or `no-issue` |
+   | dev green | the latest `dev` push CI passed; or this is a `dev-red-fix` pull request that removes red from `dev` and adds none; or the owner approved (step 7) |
 
    Details: [ci.md](ci.md). Codex follows `## Code Review Rules` in [AGENTS.md](../AGENTS.md).
 
    A pull request that changes a screen (label `ui`) also gets one browser QA pass against the feature map. A defect (it breaks Intended behavior or a `Done when` item) blocks the merge like a P1; improvement ideas go into one issue per sprint. Details: [lina-system/lina-app#16](https://github.com/lina-system/lina-app/issues/16).
-7. **Merge** with a merge commit and delete the branch. Not while the latest `dev` push CI is red, except the pull request that fixes it (title `fix(ci)` or label `dev-red-fix`). Never `--admin` or a bypass. If Codex is down, `Codex review` stays pending: wait.
+7. **Merge only when green**: every check on the head and the latest `dev` push CI. Merge commit, delete the branch, never `--admin` or a bypass. If Codex is down, `Codex review` stays pending: wait.
+   - While `dev` is red, only the pull request that fixes it merges (label `dev-red-fix`; it removes red and adds none). Every other pull request waits for `dev` to turn green.
+   - No intended red: a new check lands in the same pull request as the fix that makes it pass, or is switched on after that fix merged.
+   - The one exception, merging while `dev` stays red: before merging, show Jun why the red must stay, when it turns green and what it blocks meanwhile, and get his approval. He records it with the `dev-red-approved` label. Without it there is no merge over a red `dev` except `dev-red-fix`.
 8. **After merge.** File each P2/P3 finding as a follow-up issue (`Follow-up to #<pr>`, same milestone). If `dev` turns red, fix the cause or revert the pull request.
 9. **Sprint close.** The owner checks the sprint; only the owner opens the next one. Releases need the owner's approval.
 

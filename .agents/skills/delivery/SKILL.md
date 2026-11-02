@@ -32,7 +32,7 @@ Run each command with `terminal`.
    `gh pr create --base dev --title "<type>(<scope>): <what>" --body-file <file>`.
    The body has `Closes #<n>`, the issue's `## Done when` with each box checked (or
    `N/A: <reason>`), and `## Verification`.
-4. Wait for the required checks on the head, `Codex review` and `Linked issue` included:
+4. Wait for the required checks on the head, `Codex review`, `Linked issue` and `dev green` included:
    `gh pr checks <pr> --required --watch`
 5. On a P0/P1 finding, fix it on the branch; the new head gets its own review.
 6. Merge: `lina-merge <owner/repo> <pr> --wait 30` (from #63: `lina work merge`).
@@ -41,7 +41,8 @@ Run each command with `terminal`.
 ## Pitfalls
 
 - Never merge with `--admin`, a ruleset bypass, squash or rebase.
-- Never merge while the latest `dev` push CI is red, unless the pull request fixes it.
+- Never merge while the latest `dev` push CI is red, unless the pull request is the fix
+  (`dev-red-fix`) or Jun approved it after seeing why (`dev-red-approved`).
 - One issue per pull request. No pull request without an issue, except a typo or one-line
   CI fix with the `no-issue` label.
 - Never disable, skip or weaken a test to turn a check green.

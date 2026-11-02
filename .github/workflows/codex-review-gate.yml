@@ -1,15 +1,19 @@
 name: Merge gates
 
-# Sets two commit statuses on a pull request's head commit, both required by the dev ruleset
+# Sets three commit statuses on a pull request's head commit, all required by the dev ruleset
 # (docs/ci.md): "Codex review" (the Codex reviewer looked at this head and left no P0/P1
-# finding on it) and "Linked issue" (the body closes an open issue of this repository, or the
-# pull request carries the `no-issue` label).
+# finding on it), "Linked issue" (the body closes an open issue of this repository, or the
+# pull request carries the `no-issue` label) and "dev green" (the latest dev push CI passed, or
+# this is a `dev-red-fix` pull request that removes dev's red and adds none, or the owner set
+# `dev-red-approved`).
 # Judged by scripts/ci/codex_review_gate.py.
 #
 # pull_request_target, not pull_request: the run uses the workflow and the gate script from dev,
 # so a pull request cannot edit the gate that judges it. Nothing from the pull request is
 # checked out or run. Codex edits one summary comment per pull request when it finishes a
-# review without findings, hence issue_comment `edited`.
+# review without findings, hence issue_comment `edited`. A finished CI run (a dev push, or a
+# pull request's own checks) changes "dev green" for every open pull request, so workflow_run
+# rejudges them all.
 
 on:
   pull_request_target:
@@ -19,23 +23,30 @@ on:
     types: [submitted]
   issue_comment:
     types: [created, edited]
+  workflow_run:
+    workflows: [CI]
+    types: [completed]
 
 permissions: {}
 
 concurrency:
-  group: merge-gates-${{ github.event.pull_request.number || github.event.issue.number }}
+  group: merge-gates-${{ github.event.pull_request.number || github.event.issue.number || 'all' }}
   cancel-in-progress: false
 
 jobs:
   gates:
     name: Set merge gate statuses
     if: >-
+      github.event_name == 'workflow_run' ||
       (github.event_name == 'issue_comment' && github.event.issue.pull_request) ||
       (github.event_name != 'issue_comment' && github.event.pull_request.base.ref == 'dev')
     runs-on: ubuntu-24.04
-    timeout-minutes: 5
+    timeout-minutes: 10
     permissions:
+      actions: read
+      checks: read
       contents: read
+      issues: read
       pull-requests: read
       statuses: write
     steps:
@@ -52,4 +63,6 @@ jobs:
           REPO: ${{ github.repository }}
           PR: ${{ github.event.pull_request.number || github.event.issue.number }}
           RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
-        run: python3 scripts/ci/codex_review_gate.py --repo "$REPO" --pr "$PR" --target-url "$RUN_URL"
+        run: |
+          if [ -n "$PR" ]; then WHICH=(--pr "$PR"); else WHICH=(--all); fi
+          python3 scripts/ci/codex_review_gate.py --repo "$REPO" "${WHICH[@]}" --target-url "$RUN_URL"

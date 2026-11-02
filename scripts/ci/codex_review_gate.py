@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Merge gates for a pull request: the ``Codex review`` and ``Linked issue`` statuses.
+"""Merge gates for a pull request: the ``Codex review``, ``Linked issue`` and ``dev green`` statuses.
 
 Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/codex-review-gate.yml.
 
@@ -19,7 +19,18 @@ Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/
 - success also when the pull request carries the ``no-issue`` label (a typo, a one-line CI fix);
 - failure otherwise, including a pull request opened without an issue.
 
-    python3 scripts/ci/codex_review_gate.py --repo owner/name --pr 123 [--dry-run]
+``dev green``: only the pull request that fixes a red ``dev`` may merge while ``dev`` is red.
+
+- success: the latest completed push CI run on ``dev`` passed; or the pull request carries the
+  ``dev-red-fix`` label, and its head's red checks are a strict subset of that run's red jobs
+  (it removes red and adds none);
+- pending: ``dev`` is red and the pull request is not a fix (wait for ``dev`` to turn green),
+  or a fix whose checks are still running;
+- failure: a ``dev-red-fix`` pull request that adds a red check or removes none;
+- success also when a repository admin (the owner) put the ``dev-red-approved`` label on the pull
+  request after seeing why ``dev`` must stay red (docs/delivery.md, step 7).
+
+    python3 scripts/ci/codex_review_gate.py --repo owner/name (--pr 123 | --all) [--dry-run]
 """
 
 from __future__ import annotations
@@ -38,6 +49,11 @@ REVIEW_CONTEXT = "Codex review"
 LINKED_CONTEXT = "Linked issue"
 BLOCKING = frozenset({0, 1})
 NO_ISSUE_LABEL = "no-issue"
+DEV_CONTEXT = "dev green"
+DEV_FIX_LABEL = "dev-red-fix"
+DEV_APPROVED_LABEL = "dev-red-approved"
+RED = frozenset({"failure", "cancelled", "timed_out", "action_required", "startup_failure"})
+GATE_JOB = "Set merge gate statuses"
 DESCRIPTION_LIMIT = 140  # GitHub rejects longer commit status descriptions
 
 _BADGE = re.compile(r"!\[P([0-3]) Badge\]")
@@ -190,6 +206,35 @@ def linked_issue_status(repo: str, branch: str, closing: list[dict[str, Any]],
     return Status("success", _limit("Closes " + ", ".join(f"#{n}" for n in open_numbers)))
 
 
+def dev_green_status(dev_run: dict[str, Any] | None, dev_red: frozenset[str],
+                     labels: frozenset[str], head_checks: list[dict[str, Any]],
+                     owner_approved: bool = False) -> Status:
+    """``dev_run``: the latest completed push CI run on dev (``conclusion``, ``head_sha``);
+    ``dev_red``: its red job names; ``head_checks``: the head's check runs (``name``,
+    ``status``, ``conclusion``); ``owner_approved``: an admin set ``dev-red-approved``."""
+    if dev_run is None:
+        return Status("pending", "No completed push CI run on dev yet")
+    at = dev_run["head_sha"][:7]
+    if dev_run["conclusion"] == "success":
+        return Status("success", f"dev push CI is green at {at}")
+    reds = ", ".join(sorted(dev_red)) or dev_run["conclusion"]
+    if owner_approved and DEV_APPROVED_LABEL in labels:
+        return Status("success", _limit(f"Owner approved merging while dev is red at {at} ({reds})"))
+    if DEV_FIX_LABEL not in labels:
+        return Status("pending", _limit(f"dev is red at {at} ({reds}); only a '{DEV_FIX_LABEL}' PR merges"))
+    checks = [c for c in head_checks if c.get("name") != GATE_JOB]
+    added = sorted({c["name"] for c in checks if c.get("conclusion") in RED} - dev_red)
+    if added:
+        return Status("failure", _limit("Adds red: " + ", ".join(added)))
+    if any(c.get("status") != "completed" for c in checks):
+        return Status("pending", f"Waiting for this fix's checks; dev is red at {at}")
+    still = {c["name"] for c in checks if c.get("conclusion") in RED}
+    fixed = sorted(dev_red - still)
+    if not fixed:
+        return Status("failure", _limit(f"Fixes none of dev's red at {at}: {reds}"))
+    return Status("success", _limit("Fixes dev's red: " + ", ".join(fixed)))
+
+
 def _gh(*args: str) -> str:
     return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
 
@@ -230,34 +275,74 @@ def post_status(repo: str, sha: str, context: str, status: Status, target_url: s
         "-f", f"description={status.description}", "-f", f"target_url={target_url}")
 
 
+def latest_dev_run(repo: str) -> tuple[dict[str, Any] | None, frozenset[str]]:
+    runs = gh_json(f"repos/{repo}/actions/workflows/ci.yml/runs"
+                   "?branch=dev&event=push&status=completed&per_page=1")["workflow_runs"]
+    if not runs:
+        return None, frozenset()
+    out = _gh("api", "--paginate", f"repos/{repo}/actions/runs/{runs[0]['id']}/jobs?per_page=100",
+              "--jq", ".jobs[] | select(.conclusion != null) | [.name, .conclusion] | @tsv")
+    red = {name for name, _, conclusion in (line.partition("\t") for line in out.splitlines())
+           if conclusion in RED}
+    return runs[0], frozenset(red)
+
+
+def owner_approved(repo: str, pr: int) -> bool:
+    """The last actor who added ``dev-red-approved`` has admin permission on the repository."""
+    out = _gh("api", "--paginate", f"repos/{repo}/issues/{pr}/events?per_page=100", "--jq",
+              f'.[] | select(.event == "labeled" and .label.name == "{DEV_APPROVED_LABEL}") | .actor.login')
+    actors = out.split()
+    if not actors:
+        return False
+    permission = gh_json(f"repos/{repo}/collaborators/{actors[-1]}/permission")["permission"]
+    return permission == "admin"
+
+
+def head_check_runs(repo: str, sha: str) -> list[dict[str, Any]]:
+    out = _gh("api", "--paginate", f"repos/{repo}/commits/{sha}/check-runs?per_page=100",
+              "--jq", ".check_runs[] | {name, status, conclusion}")
+    return [json.loads(line) for line in out.splitlines() if line.strip()]
+
+
+def judge(repo: str, pr: int, dev: tuple[dict[str, Any] | None, frozenset[str]]) -> tuple[dict[str, Any], dict[str, Status]]:
+    pull = gh_json(f"repos/{repo}/pulls/{pr}")
+    head_sha = pull["head"]["sha"]
+    labels = frozenset(label["name"] for label in pull["labels"])
+    head_date = gh_json(f"repos/{repo}/commits/{head_sha}")["commit"]["committer"]["date"]
+    return pull, {
+        REVIEW_CONTEXT: review_status(
+            head_sha,
+            gh_list(f"repos/{repo}/pulls/{pr}/reviews?per_page=100"),
+            gh_list(f"repos/{repo}/pulls/{pr}/comments?per_page=100"),
+            gh_list(f"repos/{repo}/issues/{pr}/comments?per_page=100"),
+            head_date,
+        ),
+        LINKED_CONTEXT: linked_issue_status(repo, pull["head"]["ref"], closing_references(repo, pr), labels),
+        DEV_CONTEXT: dev_green_status(*dev, labels, head_check_runs(repo, head_sha),
+                                      DEV_APPROVED_LABEL in labels and owner_approved(repo, pr)),
+    }
+
+
 def main(argv: list[str] | None = None) -> int:
-    parser = argparse.ArgumentParser(description="Set the Codex review and Linked issue statuses.")
+    parser = argparse.ArgumentParser(description="Set the merge gate statuses.")
     parser.add_argument("--repo", required=True)
-    parser.add_argument("--pr", type=int, required=True)
+    which = parser.add_mutually_exclusive_group(required=True)
+    which.add_argument("--pr", type=int)
+    which.add_argument("--all", action="store_true", help="Every open pull request into dev.")
     parser.add_argument("--target-url", default="")
     parser.add_argument("--dry-run", action="store_true", help="Print the statuses, post nothing.")
     args = parser.parse_args(argv)
 
-    pull = gh_json(f"repos/{args.repo}/pulls/{args.pr}")
-    head_sha = pull["head"]["sha"]
-    closing = closing_references(args.repo, args.pr)
-    head_date = gh_json(f"repos/{args.repo}/commits/{head_sha}")["commit"]["committer"]["date"]
-    statuses = {
-        REVIEW_CONTEXT: review_status(
-            head_sha,
-            gh_list(f"repos/{args.repo}/pulls/{args.pr}/reviews?per_page=100"),
-            gh_list(f"repos/{args.repo}/pulls/{args.pr}/comments?per_page=100"),
-            gh_list(f"repos/{args.repo}/issues/{args.pr}/comments?per_page=100"),
-            head_date,
-        ),
-        LINKED_CONTEXT: linked_issue_status(args.repo, pull["head"]["ref"], closing,
-                                            frozenset(label["name"] for label in pull["labels"])),
-    }
-    target = args.target_url or pull["html_url"]
-    for context, status in statuses.items():
-        print(f"{context} @ {head_sha[:7]}: {status.state} - {status.description}")
-        if not args.dry_run:
-            post_status(args.repo, head_sha, context, status, target)
+    numbers = [args.pr] if args.pr else [
+        p["number"] for p in gh_list(f"repos/{args.repo}/pulls?state=open&base=dev&per_page=100")]
+    dev = latest_dev_run(args.repo)
+    for number in numbers:
+        pull, statuses = judge(args.repo, number, dev)
+        head_sha = pull["head"]["sha"]
+        for context, status in statuses.items():
+            print(f"#{number} {context} @ {head_sha[:7]}: {status.state} - {status.description}")
+            if not args.dry_run:
+                post_status(args.repo, head_sha, context, status, args.target_url or pull["html_url"])
     return 0
 
 

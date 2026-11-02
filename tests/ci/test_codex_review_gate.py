@@ -125,3 +125,41 @@ def test_linked_issue_status(branch, closing, expected):
     status = gate.linked_issue_status(REPO, branch, closing)
     assert status.state == expected
     assert len(status.description) <= gate.DESCRIPTION_LIMIT
+
+
+DEV_GREEN = {"conclusion": "success", "head_sha": "df74379616710654957481dda9035122cad73760"}
+DEV_RED = {"conclusion": "failure", "head_sha": "df74379616710654957481dda9035122cad73760"}
+RED_JOBS = frozenset({"Prune check", "Python tests (macOS)"})
+
+
+def _check(name: str, conclusion: str | None = "success", status: str = "completed") -> dict[str, Any]:
+    return {"name": name, "status": status, "conclusion": conclusion}
+
+
+FIX = frozenset({"dev-red-fix"})
+DEV = {
+    "dev green": (DEV_GREEN, frozenset(), frozenset(), [], "success"),
+    "dev red, not a fix: wait": (DEV_RED, RED_JOBS, frozenset({"bug"}), [_check("Lint")], "pending"),
+    "fix removes a red, adds none": (DEV_RED, RED_JOBS, FIX, [
+        _check("Prune check"), _check("Python tests (macOS)", "failure"), _check("Lint"),
+        _check("Set merge gate statuses", None, "in_progress")], "success"),
+    "fix adds a red": (DEV_RED, RED_JOBS, FIX, [_check("Prune check"), _check("Lint", "failure")], "failure"),
+    "fix removes nothing": (DEV_RED, RED_JOBS, FIX, [
+        _check("Prune check", "failure"), _check("Python tests (macOS)", "failure")], "failure"),
+    "fix still running": (DEV_RED, RED_JOBS, FIX, [_check("Prune check", None, "in_progress")], "pending"),
+    "no completed dev run": (None, frozenset(), frozenset(), [], "pending"),
+}
+
+
+def test_owner_approval_is_the_only_way_over_a_red_dev():
+    labels = frozenset({"dev-red-approved"})
+    assert gate.dev_green_status(DEV_RED, RED_JOBS, labels, [], owner_approved=True).state == "success"
+    assert gate.dev_green_status(DEV_RED, RED_JOBS, labels, [], owner_approved=False).state == "pending"
+    assert gate.dev_green_status(DEV_RED, RED_JOBS, frozenset(), [], owner_approved=True).state == "pending"
+
+
+@pytest.mark.parametrize("run,red,labels,checks,expected", DEV.values(), ids=DEV.keys())
+def test_dev_green_status(run, red, labels, checks, expected):
+    status = gate.dev_green_status(run, red, labels, checks)
+    assert status.state == expected
+    assert len(status.description) <= gate.DESCRIPTION_LIMIT
