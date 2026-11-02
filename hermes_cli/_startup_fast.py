@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """Pre-import startup fast paths — THE canonical lightweight helpers.
 
 This module is imported by ``hermes_cli/main.py`` BEFORE its heavy import

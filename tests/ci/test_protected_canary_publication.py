@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """Execute protected canary workflow/controller with local Git and HTTP only.
 
 The packages and codesign/GitHub executables are transport fixtures, not native

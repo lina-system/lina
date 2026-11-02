@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """A job reads another job's result only through a `needs` entry it declares.
 
 GitHub rejects a job graph that references an unknown job or needs itself, so

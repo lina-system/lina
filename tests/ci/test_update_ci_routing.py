@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """Update-path CI routing: ownership-derived selectors and the full dispatch chain.
 
 Two failure modes this file pins (independent review R15):

@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 name: Supply chain audit
 
 # LINA CI (docs/ci.md). Runs on pull requests into dev or main and on pushes to dev.

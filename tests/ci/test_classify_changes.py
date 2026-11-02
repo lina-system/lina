@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """Tests for scripts/ci/classify_changes.py.
 
 Check some common patterns of file modifications and the CI lanes they should run.

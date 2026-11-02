@@ -1,4 +1,8 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
+<!-- Modified by Junsoo Kim, 2026-11-02 -->
 # Contributing to Hermes Agent
+
+External contributions need the CLA (CLA.md) signed before review.
 
 Thank you for contributing to Hermes Agent! This guide covers everything you need: setting up your dev environment, understanding the architecture, deciding what to build, and getting your PR merged.
 

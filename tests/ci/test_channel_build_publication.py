@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """Execute channel workflow seams and receipt transport; fixture bytes are not native qualification."""
 from __future__ import annotations
 

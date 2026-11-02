@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """The Windows update E2E, judged on this OS: the workflow's selection runs every cell, and a
 verdict the crash cells can only reach on a Windows runner says pass exactly when the user's
 update was what the cell claims."""

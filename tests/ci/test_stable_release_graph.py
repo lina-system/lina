@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """The release workflow's dependency graph enforces publication ordering."""
 import json
 import os

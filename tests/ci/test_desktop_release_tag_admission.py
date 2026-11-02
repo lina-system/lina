@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """Tag admission for .github/workflows/desktop-bundled-release.yml (plan item 7).
 
 The release build runs under the ``release-signing`` environment, so the

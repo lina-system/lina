@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """The catalog admission gate must validate the pinned clone's own files only.
 
 These tests execute the real ``run:`` blocks of plugin-catalog-ci.yml against

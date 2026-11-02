@@ -1,3 +1,5 @@
+# SPDX-License-Identifier: AGPL-3.0-only
+# Modified by Junsoo Kim, 2026-11-02
 """The release/dispatch E2E lane fails, not skips, when the classic-CLI tmux suites lose tmux.
 
 The tmux suites (``tests/e2e/core/cli_tmux`` and the Vertex ``/bg`` CLI test) skip without tmux,

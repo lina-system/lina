@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Changelog
 
 All notable changes to LINA are documented in this file.

@@ -1,3 +1,4 @@
+<!-- SPDX-License-Identifier: AGPL-3.0-only -->
 # Forking and upstream
 
 LINA is a full fork of [Hermes Agent](https://github.com/NousResearch/hermes-agent) (MIT, Nous Research).
@@ -44,6 +45,8 @@ git fetch upstream main --no-tags
 5. Open a pull request into `dev`, add one `CHANGELOG.md` line under `## [Unreleased]` (for example "Took Hermes upstream up to <hash>"), and merge it with a merge commit once the checks are green.
 
 Never rebase `dev` onto upstream and never force-push any of the three branches.
+
+When taking upstream changes, keep these notices and never change an upstream copyright notice. `LICENSES/Hermes-MIT.txt` stays the upstream LICENSE word for word, upstream copyright and license headers stay in place, an upstream file LINA changes gets `# SPDX-License-Identifier: AGPL-3.0-only` and `# Modified by <name>, <date>`, a new file gets the SPDX line only, and untouched upstream files get nothing. `uv lock` drops the two header lines of `uv.lock`; put them back after regenerating.
 
 ## Our patches on top of upstream
 

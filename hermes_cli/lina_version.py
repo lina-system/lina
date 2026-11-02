@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: AGPL-3.0-only
 """LINA release identity.
 
 LINA is a fork of Hermes Agent. ``LINA_VERSION`` is the one place the displayed (SemVer) version lives;
