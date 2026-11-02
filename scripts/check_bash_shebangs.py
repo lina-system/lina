@@ -10,6 +10,11 @@ import argparse
 from pathlib import Path
 import re
 import subprocess
+import sys
+
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.vendored_subtrees import is_vendored
 
 
 FIXED_BASH = re.compile(rb"#![ \t]*/(?:usr/)?bin/bash\b")
@@ -25,7 +30,7 @@ def check(root: Path) -> list[str]:
             continue
         relative = name.decode("utf-8", errors="surrogateescape")
         path = root / relative
-        if path.is_symlink() or not path.is_file():
+        if is_vendored(relative) or path.is_symlink() or not path.is_file():
             continue
         data = path.read_bytes()
         if b"\0" in data:

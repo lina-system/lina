@@ -1,0 +1,119 @@
+name: LCM-X
+
+# LINA CI (docs/ci.md, docs/lcm-x.md). The LCM-X context engine in plugins/context_engine/lcm-x, a squashed
+# subtree of electricsheephq/lcm-x: the subtree check and LCM-X's own test suite against the real LINA tree.
+# Not a required check. GitHub-hosted runners only; no upstream organisation secrets, runners or apps.
+
+on:
+  pull_request:
+    branches: [dev, main]
+    paths:
+      - 'plugins/context_engine/lcm-x/**'
+      - 'plugins/context_engine/lcm-x-intake.md'
+      - 'plugins/context_engine/__init__.py'
+      - 'plugins/plugin_loader.py'
+      - 'hermes_cli/plugins_ledger.py'
+      - 'hermes_cli/plugins_discovery.py'
+      - 'scripts/ci/check_lcm_x_subtree.py'
+      - 'scripts/ci/subtree_check.py'
+      - '.github/lcm-x-known-failures.txt'
+      - '.github/workflows/lcm-x.yml'
+  push:
+    branches: [dev]
+    paths:
+      - 'plugins/context_engine/lcm-x/**'
+      - 'plugins/context_engine/lcm-x-intake.md'
+      - 'plugins/context_engine/__init__.py'
+      - 'plugins/plugin_loader.py'
+      - 'hermes_cli/plugins_ledger.py'
+      - 'hermes_cli/plugins_discovery.py'
+      - 'scripts/ci/check_lcm_x_subtree.py'
+      - 'scripts/ci/subtree_check.py'
+      - '.github/lcm-x-known-failures.txt'
+      - '.github/workflows/lcm-x.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  subtree:
+    # The ledger, the squash commit, the lcm-x-upstream mirror, untouched LICENSE files and headers.
+    name: LCM-X subtree check
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the lcm-x-upstream mirror
+        run: git fetch --no-tags origin +refs/heads/lcm-x-upstream:refs/remotes/origin/lcm-x-upstream
+
+      - name: Check the subtree
+        run: python3 scripts/ci/check_lcm_x_subtree.py --mirror origin/lcm-x-upstream
+
+  tests:
+    # Upstream ci.yml "test", against LINA's own agent package and locked environment instead of the
+    # ContextEngine stub upstream writes; the known failures are deselected, one reason each.
+    name: LCM-X tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the old releases the rollback-reader tests archive
+        # The mirror carries the releases on upstream main; two release-branch commits and the fork's
+        # 2133610f (the base of test_fork_uid_sparse_rollback) are fetched by sha, as upstream's ci.yml does.
+        run: |
+          git fetch --no-tags origin +refs/heads/lcm-x-upstream:refs/remotes/origin/lcm-x-upstream
+          git fetch --no-tags --depth=1 https://github.com/electricsheephq/lcm-x.git \
+            f47b55e031b507b424ff5f480d8f2a80d358f1f0 6800cf45ad05280e6cf6fa9e1ad96c62b7132646
+          git fetch --no-tags --depth=1 https://github.com/thisisjun786/lcm-x.git 2133610fddba06cc92a0984012793f5c98da8fa1
+
+      - name: Set up locked Python and the LINA test environment
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '[]'
+          test-environment: 'true'
+
+      - name: Add LCM-X's own test dependencies
+        # The versions upstream's ci.yml installs (ruff for the maintainability report); numpy at LINA's pin.
+        # tiktoken is a LINA dependency, but LCM-X's suite is calibrated on its character estimate (upstream's
+        # ci.yml installs no tiktoken) and with it the counts would depend on a network fetch of the BPE file.
+        # tests/plugins/context_engine covers the engine in LINA's own environment.
+        run: |
+          uv pip install --python "$HERMES_PYTHON" pytest-xdist==3.8.0 hypothesis==6.141.1 numpy==2.5.4 ruff==0.15.13
+          uv pip uninstall --python "$HERMES_PYTHON" tiktoken
+
+      - name: Run LCM-X's suite
+        working-directory: plugins/context_engine/lcm-x
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          # LCM-X's real-host probes run this interpreter from the LINA root, so the plugin's own
+          # tools.py / config.py never shadow LINA's packages.
+          LCM_REAL_HERMES_PYTHON: ${{ env.HERMES_PYTHON }}
+          LCM_REAL_HERMES_SRC: ${{ github.workspace }}
+        run: |
+          export PATH="$(dirname "$HERMES_PYTHON"):$PATH"  # the ruff installed above
+          deselect=()
+          while IFS= read -r line; do
+            id="${line%%#*}"; id="${id%"${id##*[![:space:]]}"}"
+            [ -n "$id" ] && deselect+=(--deselect "$id")
+          done < "$GITHUB_WORKSPACE/.github/lcm-x-known-failures.txt"
+          echo "Deselecting ${#deselect[@]} known-failure argument(s)"
+          ulimit -n 1024
+          "$HERMES_PYTHON" -m pytest tests/ -q -m "not latency" -n 4 -p no:cacheprovider \
+            --ignore=tests/test_embedding_privacy.py "${deselect[@]}"
+          # Runs alone, as upstream does: one of its tests asserts a wall-clock budget.
+          "$HERMES_PYTHON" -m pytest tests/test_embedding_privacy.py -q -m "not latency" -p no:cacheprovider \
+            "${deselect[@]}"
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree

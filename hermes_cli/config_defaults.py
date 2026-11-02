@@ -1281,8 +1281,8 @@ DEFAULT_CONFIG = {
     "human_delay": {"mode": "off", "min_ms": 800, "max_ms": 2500},
 
     # Context engine — how the context window is managed near the token limit. "compressor" =
-    # built-in lossy summarization; or a plugin name (e.g. "lcm") installed in
-    # plugins/context_engine/<name>/ or ~/.hermes/plugins/.
+    # built-in lossy summarization; or an engine name: "lcm-x" (bundled, what new homes get from
+    # cli-config.yaml.example, docs/lcm-x.md) or one in plugins/context_engine/<name>/ or ~/.hermes/plugins/.
     "context": {
         "engine": "compressor",
         # Return freed glibc pages at agent/TUI cleanup boundaries (no-op elsewhere).
