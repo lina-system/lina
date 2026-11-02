@@ -370,7 +370,7 @@ def bundle(worker_root: Path, task_id: str, ref: str = "HEAD") -> tuple[int, byt
     if not (work / ".git").exists():
         return _ok({"action": "error", "reason": "the task has no git work folder"})
     done = subprocess.run(["git", "bundle", "create", "-", ref], cwd=work, capture_output=True, timeout=600, check=False,
-                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+                          env=_git_env())
     if done.returncode != 0:
         return _ok({"action": "error", "reason": done.stderr.decode("utf-8", "replace").strip()[-300:]})
     return 0, done.stdout

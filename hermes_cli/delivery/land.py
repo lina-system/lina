@@ -10,7 +10,6 @@ request opened, and the same gates as ``lina work merge <repo> <pr>`` decide.
 from __future__ import annotations
 
 import re
-import shutil
 import subprocess
 import tempfile
 from pathlib import Path
@@ -18,6 +17,7 @@ from typing import Protocol
 
 from hermes_cli.delivery import settings
 from hermes_cli.delivery.merge import merge_pr
+from hermes_platform.resolver import locate_command
 
 NOREPLY = "@users.noreply.github.com"
 
@@ -118,8 +118,9 @@ def check_result(clone: Path, onto: str, worker_head: str, base: Path | None) ->
     hits = sum(1 for line in added if any(p.search(line) for p in patterns))
     if hits:
         raise LandError(f"{hits} added line(s) match work.forbidden_patterns")
-    if shutil.which("gitleaks"):
-        done = subprocess.run(["gitleaks", "git", f"--log-opts={onto}..HEAD", "--no-banner", "--redact"], cwd=clone,
+    gitleaks = locate_command("gitleaks")
+    if gitleaks.found:
+        done = subprocess.run([*gitleaks.command, "git", f"--log-opts={onto}..HEAD", "--no-banner", "--redact"], cwd=clone,
                               capture_output=True, check=False, timeout=600)
         if done.returncode != 0:
             raise LandError("gitleaks found a secret in the branch")
