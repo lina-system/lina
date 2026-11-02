@@ -21383,7 +21383,7 @@ def test_prompt_submit_row_id_real_sessiondb_resolve_without_memory_stamps(
         {"role": "user", "content": "third"},
         {"role": "assistant", "content": "reply 3"},
     ]
-    with db._lock:
+    with db._lock, db.message_store.write():
         db._insert_message_rows(db._conn, session_key, msgs)
         db._conn.commit()
     row_ids = [m["_row_id"] for m in msgs]
@@ -21449,7 +21449,7 @@ def test_prompt_submit_row_id_real_sessiondb_unknown_refuses_despite_ordinal(
         {"role": "user", "content": "second"},
         {"role": "assistant", "content": "reply 2"},
     ]
-    with db._lock:
+    with db._lock, db.message_store.write():
         db._insert_message_rows(db._conn, session_key, msgs)
         db._conn.commit()
 
@@ -21507,7 +21507,7 @@ def test_prompt_submit_row_id_misaligned_memory_refuses_content_swap(
         {"role": "user", "content": "B"},
         {"role": "assistant", "content": "rb"},
     ]
-    with db._lock:
+    with db._lock, db.message_store.write():
         db._insert_message_rows(db._conn, session_key, msgs)
         db._conn.commit()
     rid_b = msgs[2]["_row_id"]
@@ -21578,7 +21578,7 @@ def test_prompt_submit_row_id_misaligned_memory_role_shift_targets_real_turn(
         {"role": "user", "content": "B"},
         {"role": "assistant", "content": "rb"},
     ]
-    with db._lock:
+    with db._lock, db.message_store.write():
         db._insert_message_rows(db._conn, session_key, msgs)
         db._conn.commit()
     rid_b = msgs[2]["_row_id"]
@@ -21745,7 +21745,7 @@ def test_prompt_submit_consecutive_rewinds_with_returned_survivor_row_ids(
         {"role": "user", "content": "third"},
         {"role": "assistant", "content": "reply 3"},
     ]
-    with db._lock:
+    with db._lock, db.message_store.write():
         db._insert_message_rows(db._conn, session_key, msgs)
         db._conn.commit()
     original_row_ids = [m["_row_id"] for m in msgs]
@@ -21853,7 +21853,7 @@ def test_prompt_submit_rebind_map_clears_active_row_hidden_by_sequence_repair(
         {"role": "user", "content": "target"},
         {"role": "assistant", "content": "target reply"},
     ]
-    with db._lock:
+    with db._lock, db.message_store.write():
         db._insert_message_rows(db._conn, session_key, physical)
         db._conn.commit()
     physical_ids = [message["_row_id"] for message in physical]

@@ -1244,6 +1244,21 @@ def _summary_notes(
     return notes
 
 
+def _parse_slice(slice_raw: str | None) -> tuple[int | None, int]:
+    """``--slice I/N`` (or HERMES_TEST_SLICE) as ``(I, N)``; exits 2 on malformed input."""
+    # Read once, here: test processes inherit this env, and a runner they start (the
+    # runner's own probe tests) must run its whole file set, not "its" slice of it.
+    os.environ.pop("HERMES_TEST_SLICE", None)
+    if not slice_raw:
+        return None, 1
+    try:
+        idx_s, count_s = slice_raw.split("/", 1)
+        return int(idx_s), int(count_s)
+    except (ValueError, AttributeError):
+        print(f"error: --slice must be I/N (e.g. 1/4), got: {slice_raw!r}", file=sys.stderr)
+        sys.exit(2)
+
+
 def _provide_test_store(repo_root: Path) -> bool:
     """One Postgres for the whole run (lina#12): every test process gets its own database in it.
 
@@ -1256,7 +1271,7 @@ def _provide_test_store(repo_root: Path) -> bool:
     from tests._fixtures.memory_store import UNAVAILABLE_ENV, in_ci, start_cluster
     try:
         cluster = start_cluster()
-    except Exception as exc:
+    except Exception as exc:  # health: allow BLE001 -- any start failure means no store; CI fails, local skips
         if in_ci():
             print(f"error: no Postgres for the memory store tests under CI: {exc}", file=sys.stderr)
             return False
@@ -1508,20 +1523,7 @@ def main() -> int:
 
     # Parse --slice (or HERMES_TEST_SLICE) early so we can exit on bad input
     # before doing any expensive discovery.
-    slice_raw = args.slice or os.environ.get("HERMES_TEST_SLICE")
-    # Read once, here: test processes inherit this env, and a runner they start (the
-    # runner's own probe tests) must run its whole file set, not "its" slice of it.
-    os.environ.pop("HERMES_TEST_SLICE", None)
-    slice_index: int | None = None
-    slice_count: int = 1
-    if slice_raw:
-        try:
-            idx_s, count_s = slice_raw.split("/", 1)
-            slice_index = int(idx_s)
-            slice_count = int(count_s)
-        except (ValueError, AttributeError):
-            print(f"error: --slice must be I/N (e.g. 1/4), got: {slice_raw!r}", file=sys.stderr)
-            sys.exit(2)
+    slice_index, slice_count = _parse_slice(args.slice or os.environ.get("HERMES_TEST_SLICE"))
 
     repo_root = Path(__file__).resolve().parent.parent
 

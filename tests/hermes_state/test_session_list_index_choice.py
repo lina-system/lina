@@ -1,6 +1,6 @@
 """Session-list reads stay on the (session_id, timestamp) index whatever the planner stats say (#119403).
 
-A ``sqlite_stat1`` written before ``idx_messages_session_id`` existed has no row for that index, so the
+A ``sqlite_stat1`` written before ``idx_transcript_rows_session_id`` existed has no row for that index, so the
 planner guesses it is selective and routes the per-session last-active and preview subqueries through
 it: every listed session then reads all of its message rows (≈0.5 GB per sidebar list on a 125k-message
 store before this fix).
@@ -33,7 +33,7 @@ def _stale_stats_db(path):
     db.close()
     raw = sqlite3.connect(path)
     raw.execute("ANALYZE")
-    raw.execute("DELETE FROM sqlite_stat1 WHERE idx = 'idx_messages_session_id'")
+    raw.execute("DELETE FROM sqlite_stat1 WHERE idx = 'idx_transcript_rows_session_id'")
     raw.commit()
     raw.close()
 
@@ -59,10 +59,11 @@ def test_session_listings_search_messages_only_through_the_timestamp_index(tmp_p
 
     assert rows and all(r["preview"] for r in rows)
     reads = [s for s in statements if s.lstrip().split(None, 1)[0].upper() in ("SELECT", "WITH")]
-    plan_conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+    plan_db = SessionDB(db_path=path, read_only=True)
+    plan_conn = plan_db._conn
     plans = [row[3] for sql in reads for row in plan_conn.execute("EXPLAIN QUERY PLAN " + sql)]
-    plan_conn.close()
+    plan_db.close()
     message_searches = [p for p in plans if re.match(r"(SEARCH|SCAN) (m|_act_m)\b", p)]
-    # Preview (m) and last-active (_act_m) both run, and both only through idx_messages_session.
+    # Preview (m) and last-active (_act_m) both run, and both only through idx_transcript_rows_session.
     assert {p.split()[1] for p in message_searches} == {"m", "_act_m"}, plans
-    assert all(re.search(r"INDEX idx_messages_session \(", p) for p in message_searches), message_searches
+    assert all(re.search(r"INDEX idx_transcript_rows_session \(", p) for p in message_searches), message_searches

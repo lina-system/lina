@@ -91,8 +91,9 @@ def default_db_path() -> Path:
     return get_hermes_home() / "state.db"
 
 
-def _connect_readonly(db_path: Path) -> sqlite3.Connection:
-    return sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+def _connect_readonly(db_path: Path):
+    from hermes_state import SessionDB
+    return SessionDB(db_path=db_path, read_only=True)
 
 
 def _fetch_rows(cur) -> Iterator[tuple]:
@@ -111,7 +112,8 @@ def _json_or_none(raw):
 def _iter_terminal_calls(con: sqlite3.Connection, since_ts: float) -> Iterator[tuple[str, str]]:
     """Yield ``(tool_call_id, command)`` for every terminal tool call."""
     cur = con.execute(
-        "SELECT tool_calls FROM messages WHERE role='assistant' AND tool_calls IS NOT NULL "
+        "SELECT msg_text(text_uid, 'tool_calls') AS tool_calls FROM transcript_rows "
+        "WHERE role='assistant' AND tool_call_count > 0 "
         "AND tool_calls LIKE '%terminal%' AND timestamp >= ?",
         (since_ts,),
     )
@@ -132,7 +134,7 @@ def _iter_terminal_calls(con: sqlite3.Connection, since_ts: float) -> Iterator[t
 def _blocked_tool_call_ids(con: sqlite3.Connection, since_ts: float) -> set:
     """Collect tool_call_ids whose result shows the command never ran freely."""
     cur = con.execute(
-        "SELECT tool_call_id, content FROM messages "
+        "SELECT tool_call_id, msg_text(text_uid, 'content') AS content FROM transcript_rows "
         "WHERE role='tool' AND tool_call_id IS NOT NULL AND timestamp >= ? "
         "AND (content LIKE '%BLOCKED%' OR content LIKE '%approval%')",
         (since_ts,),
@@ -156,8 +158,9 @@ def scan_approval_history(db_path: Optional[Path] = None, days: int = 90) -> lis
     since_ts = 0.0 if days <= 0 else time.time() - days * 86400
 
     records: list[tuple[str, str]] = []
-    con = _connect_readonly(path)
+    db = _connect_readonly(path)
     try:
+        con = db._conn
         blocked = _blocked_tool_call_ids(con, since_ts)
         for tool_call_id, command in _iter_terminal_calls(con, since_ts):
             if tool_call_id in blocked:
@@ -170,7 +173,7 @@ def scan_approval_history(db_path: Optional[Path] = None, days: int = 90) -> lis
             if is_dangerous:
                 records.append((command, description))
     finally:
-        con.close()
+        db.close()
     return records
 
 

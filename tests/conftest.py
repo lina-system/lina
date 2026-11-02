@@ -1217,6 +1217,9 @@ def pytest_configure(config):
         "markers", "allow_real_home_io: explicitly bypass the test-only home I/O guard."
     )
     config.addinivalue_line(
+        "markers", "memory_store_per_module: empty the test Postgres after the module, not after each test "
+        "(module-scoped fixtures that keep transcripts across tests).")
+    config.addinivalue_line(
         "markers", "real_release_channels: keep the real R2 channel reader (no local source-branch stub)."
     )
     config.addinivalue_line(

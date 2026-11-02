@@ -144,7 +144,7 @@ class TestSystemErrorTransactionBoundary:
         before = db._write_count
         maintenance_calls = {"n": 0}
 
-        def fail_once(*, max_pages):
+        def fail_once(*_still_held):
             maintenance_calls["n"] += 1
             if maintenance_calls["n"] == 1:
                 raise SystemError(
@@ -153,8 +153,7 @@ class TestSystemErrorTransactionBoundary:
                 )
             return 0
 
-        monkeypatch.setattr(db, "_FTS_MERGE_EVERY_N_WRITES", 1)
-        monkeypatch.setattr(db, "_merge_fts_incrementally", fail_once)
+        monkeypatch.setattr(db.message_store, "flush_forgotten", fail_once)
 
         message_id = db.append_message("s1", "user", "exactly-once")
         matching = [

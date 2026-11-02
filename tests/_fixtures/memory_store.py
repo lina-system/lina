@@ -125,6 +125,13 @@ def _which(name: str) -> Optional[str]:
     return command[0] if command else None
 
 
+def _free_port() -> int:
+    import socket
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        return sock.getsockname()[1]
+
+
 def _start_local() -> Optional[Cluster]:
     initdb, pg_ctl, pg_config = _which("initdb"), _which("pg_ctl"), _which("pg_config")
     if not (initdb and pg_ctl and pg_config):
@@ -136,10 +143,7 @@ def _start_local() -> Optional[Cluster]:
     data = root / "data"
     subprocess.run([initdb, "-D", str(data), "-U", "lina", "--auth=trust", "-E", "UTF8", "--no-instructions"],
                    check=True, capture_output=True, timeout=120)
-    import socket
-    with socket.socket() as sock:
-        sock.bind(("127.0.0.1", 0))
-        port = sock.getsockname()[1]
+    port = _free_port()
     options = " ".join([f"-p {port}", "-c listen_addresses=127.0.0.1", f"-k {root}", *(" ".join(_FAST[i:i + 2])
                                                                                       for i in range(0, len(_FAST), 2))])
     subprocess.run([pg_ctl, "-D", str(data), "-o", options, "-l", str(root / "log"), "-w", "start"],
@@ -159,18 +163,20 @@ def _start_docker() -> Optional[Cluster]:
         return None
     password = uuid.uuid4().hex
     name = f"lina-test-pg-{uuid.uuid4().hex[:12]}"
+    port = _free_port()
+    # Host networking: hundreds of test processes connecting at once overran docker's userland port proxy
+    # ("server closed the connection unexpectedly" with nothing in the server log).
     started = subprocess.run(
-        [docker, "run", "-d", "--rm", "--name", name, "-p", "127.0.0.1::5432", "--tmpfs", "/var/lib/postgresql/data",
+        [docker, "run", "-d", "--rm", "--name", name, "--network", "host", "--tmpfs", "/var/lib/postgresql/data",
          "-e", "POSTGRES_USER=lina", "-e", f"POSTGRES_PASSWORD={password}", "-e", "POSTGRES_DB=postgres", IMAGE,
-         "postgres", *_FAST], capture_output=True, text=True, timeout=600, check=False)
+         "postgres", "-c", f"port={port}", "-c", "listen_addresses=127.0.0.1", *_FAST],
+        capture_output=True, text=True, timeout=600, check=False)
     if started.returncode != 0:
         raise ClusterUnavailable(f"docker run {IMAGE} failed: {started.stderr.strip()[-300:]}")
 
     def stop() -> None:
         subprocess.run([docker, "rm", "-f", name], capture_output=True, timeout=60, check=False)
     try:
-        port = subprocess.run([docker, "port", name, "5432/tcp"], capture_output=True, text=True,
-                              timeout=60, check=True).stdout.split(":")[-1].strip()
         dsn = f"host=127.0.0.1 port={port} user=lina password={password} dbname=postgres"
         _wait_ready(dsn)
     except BaseException:
@@ -207,6 +213,7 @@ class ProcessStore:
         self.unavailable: Optional[str] = os.environ.get(UNAVAILABLE_ENV) or None
         self._tables: Optional[list[str]] = None
         self.refused_this_test = False
+        self.kept_for_module: Optional[str] = None
 
     def app_dsn(self) -> str:
         from hermes_state_store import StoreUnavailableError
@@ -266,21 +273,59 @@ class ProcessStore:
 PROCESS_STORE = ProcessStore()
 
 
+def _carry_store_dsn_into_children() -> None:
+    """Many tests start a gateway, worker or probe with an environment built from an allowlist (PATH, LANG,
+    HERMES_HOME...). A real install's child finds the store through ``store/store.env`` under its LINA root; a
+    test's child has no such file, so the test store's DSN rides along in every child environment instead."""
+    original = subprocess.Popen.__init__
+
+    def __init__(self, *args, **kwargs):
+        env = kwargs.get("env")
+        dsn = os.environ.get("LINA_STORE_DSN")
+        if env is not None and dsn and "LINA_STORE_DSN" not in env:
+            kwargs["env"] = {**env, "LINA_STORE_DSN": dsn}
+        original(self, *args, **kwargs)
+
+    subprocess.Popen.__init__ = __init__
+
+
+_carry_store_dsn_into_children()
+
+
 def in_ci() -> bool:
     return os.environ.get("CI", "").strip().lower() in {"1", "true", "yes"}
 
 
+PER_MODULE_MARK = "memory_store_per_module"
+
+
 @pytest.fixture(autouse=True)
-def _memory_store(_hermetic_environment, monkeypatch):
-    """Point the message store at this process's test database, empty after the test."""
+def _memory_store(_hermetic_environment, monkeypatch, request):
+    """Point the message store at this process's test database, empty after the test (after the module,
+    for a module marked ``memory_store_per_module`` whose module-scoped fixtures keep state across tests)."""
     import hermes_state_store
+    module = request.node.module.__name__ if request.node.module else ""
+    if PROCESS_STORE.kept_for_module and PROCESS_STORE.kept_for_module != module:
+        PROCESS_STORE.kept_for_module = None
+        hermes_state_store.TEXT_CACHE.clear()
+        PROCESS_STORE.reset()
     PROCESS_STORE.refused_this_test = False
     monkeypatch.setattr(hermes_state_store, "resolve_dsn", PROCESS_STORE.app_dsn)
+    if not PROCESS_STORE.started and os.environ.get(CLUSTER_ENV) and not PROCESS_STORE.unavailable:
+        # A run's cluster is already up: make the database now, so a child process the test starts before
+        # its own first store use (a gateway daemon, a worker) inherits LINA_STORE_DSN.
+        try:
+            PROCESS_STORE.app_dsn()
+        except hermes_state_store.StoreUnavailableError:
+            pass  # recorded in PROCESS_STORE.unavailable; the test's own store use reports it
     if PROCESS_STORE.started:
         monkeypatch.setenv("LINA_STORE_DSN", PROCESS_STORE.app_dsn())
     else:
         monkeypatch.delenv("LINA_STORE_DSN", raising=False)
     yield PROCESS_STORE
+    if request.node.get_closest_marker(PER_MODULE_MARK) is not None:
+        PROCESS_STORE.kept_for_module = module
+        return
     hermes_state_store.TEXT_CACHE.clear()
     PROCESS_STORE.reset()
 

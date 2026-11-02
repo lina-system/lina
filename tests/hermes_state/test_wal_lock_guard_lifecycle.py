@@ -64,13 +64,13 @@ def test_guard_never_outlives_the_handle_under_fd_reuse(tmp_path, monkeypatch):
             os.close(os.open(tmp_path / name, os.O_RDONLY))
         subprocess.run([sys.executable, "-c",
                         f"import sqlite3; c = sqlite3.connect({str(path)!r}); "
-                        "c.execute('select count(*) from messages').fetchone(); c.close()"], check=True)
+                        "c.execute('select count(*) from transcript_rows').fetchone(); c.close()"], check=True)
         c.append_message("s", role="user", content="still writes")
     finally:
         c.close()
     assert _foreign_exclusive_ok(str(path)), "a lock survived the last handle's close"
     assert not lg._HANDLES
-    assert sqlite3.connect(path).execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 2
+    assert sqlite3.connect(path).execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0] == 2
 
 
 def test_closing_writer_stays_guarded_until_sqlite_closes(tmp_path, monkeypatch):
@@ -91,7 +91,7 @@ def test_closing_writer_stays_guarded_until_sqlite_closes(tmp_path, monkeypatch)
     def _sibling_closes_in_the_gap(conn):
         subprocess.run([sys.executable, "-c",
                         f"import sqlite3; c = sqlite3.connect({str(path)!r}); "
-                        "c.execute('select count(*) from messages').fetchone(); c.close()"], check=True)
+                        "c.execute('select count(*) from transcript_rows').fetchone(); c.close()"], check=True)
         in_gap["shm"] = os.stat(f"{path}-shm").st_ino if os.path.exists(f"{path}-shm") else None
         real_close(conn)
 

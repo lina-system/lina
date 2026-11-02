@@ -36,7 +36,7 @@ def _literal(text: str) -> str:
 def migration_script(path: Path) -> str:
     """One transaction: the file's statements and its ledger row, so a failed file records nothing."""
     version = _NAME.match(path.name).group(1)
-    body = path.read_text(encoding="utf-8")
+    body = path.read_text(encoding="utf-8-sig")
     return (f"BEGIN;\n{body.rstrip()}\n"
             f"INSERT INTO memory.schema_migrations (version, name) VALUES ({_literal(version)}, {_literal(path.name)});\n"
             "COMMIT;\n")

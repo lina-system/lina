@@ -112,7 +112,7 @@ def _latest_message_preview(db, session_id):
     try:
         with db._lock:
             row = db._conn.execute(
-                "SELECT content FROM messages"
+                "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows"
                 " WHERE session_id = ? AND role IN ('user', 'assistant')"
                 " AND active = 1 AND content IS NOT NULL AND TRIM(content) != ''"
                 " ORDER BY id DESC LIMIT 1",

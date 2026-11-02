@@ -1,5 +1,5 @@
 """SessionStore transcript I/O: SQLite append with a per-session retry queue, compression-reroute
-following, FTS corruption recovery, rewrite/rewind/load. Mixin split out of ``gateway/session.py``;
+following, rewrite/rewind/load. Mixin split out of ``gateway/session.py``;
 bound onto ``SessionStore`` via the MRO."""
 
 from __future__ import annotations
@@ -95,13 +95,9 @@ def transcript_append_kwargs(session_id: str, message: dict[str, Any], *, fallba
 
 class SessionTranscriptMixin:
     """SessionStore transcript I/O: SQLite append with a per-session retry queue,
-    compression-reroute following, FTS corruption recovery, rewrite/rewind/load."""
+    compression-reroute following, rewrite/rewind/load."""
 
     _MAX_PENDING_PER_SESSION = 200  # in-memory pending messages per session (DB broken)
-    # Cooldown between FTS5 rebuild attempts (see _rebuild_fts_once); avoids permanently
-    # disabling recovery after one failed attempt while still avoiding a rebuild storm against
-    # a database that is corrupt on every write.
-    _FTS_REBUILD_COOLDOWN_SECONDS = 300
     # Consecutive transcript-append failures for one session before escalating from WARNING to
     # ERROR (see _append_to_transcript_serialized); a session stalled past this many attempts is
     # no longer a transient blip and needs operator attention.
@@ -203,7 +199,7 @@ class SessionTranscriptMixin:
         self, session_id: str, queue_session_id: str, exc: Exception
     ) -> None:
         """Stop SQLite writes on a replaced/quarantined handle and divert the backlog to the on-disk
-        spool + JSONL fallback: retrying cannot succeed and the FTS rebuild must never run here."""
+        spool + JSONL fallback: retrying cannot succeed and retries must never run here."""
         logger.error(
             "Session DB refused further writes on this handle for %s (%s); stopping SQLite writes "
             "and diverting pending transcripts to the on-disk fallback: %s", session_id,
@@ -343,17 +339,6 @@ class SessionTranscriptMixin:
                             "Session DB transcript append rejected for compression-ended %s with "
                             "no unique live child; not retrying", session_id)
                         return
-                if self._is_fts_corruption_error(exc) and self._rebuild_fts_once():
-                    if spool_exc is not None:
-                        continue  # repaired: drain the older spool again before ``msg``
-                    try:
-                        self._append_transcript_message(session_id, msg)
-                    except Exception as retry_exc:
-                        exc = retry_exc
-                    else:
-                        with self._transcript_retry_lock:
-                            _ack_head()
-                        continue
                 with self._transcript_retry_lock:
                     failures = self._transcript_append_failures.get(session_id, 0) + 1
                     self._transcript_append_failures[session_id] = failures
@@ -449,59 +434,6 @@ class SessionTranscriptMixin:
             raise RuntimeError(
                 f"no owning session store for {session_id}; deferring transcript write")
         _db.append_message(**transcript_append_kwargs(session_id, message))
-
-    @staticmethod
-    def _is_fts_corruption_error(exc: Exception) -> bool:
-        """True only when the failure is provably scoped to the FTS index. A bare SQLITE_CORRUPT
-        can mean structural B-tree damage; only errors naming ``messages_fts`` or carrying FTS
-        provenance (``SessionDB._is_fts_write_corruption_error``) may authorize the one-shot
-        rebuild-and-retry; everything else takes the retry path.
-
-        A generic ``database disk image is malformed`` (bare SQLITE_CORRUPT) can mean structural damage to
-        canonical B-trees, not just the FTS shadow tables — treating it as FTS-only here made the store
-        rebuild the index and retry transcript writes against a structurally corrupt database (#97940).
-        """
-        if "messages_fts" in str(exc).lower():
-            return True
-        import sqlite3
-        from hermes_state import SessionDB
-        return isinstance(exc, sqlite3.DatabaseError) and SessionDB._is_fts_write_corruption_error(exc)
-
-    def _rebuild_fts_once(self) -> bool:
-        """Attempt FTS5 ``rebuild``, at most once per ``_FTS_REBUILD_COOLDOWN_SECONDS`` window;
-        True if any index was rebuilt.
-
-        A permanent one-shot flag meant a single rebuild failure (e.g. a transient WAL
-        split-brain guard hit) permanently disabled recovery for the life of the process, even
-        though later corruption on the same store could be fixable. Retrying on a cooldown lets
-        the store try again after the underlying condition (e.g. a foreign holder) has likely
-        cleared, without hammering a database that is corrupt on every write.
-        """
-        now = time.monotonic()
-        last_attempt = self._fts_rebuild_last_attempt_at
-        if last_attempt is not None and (now - last_attempt) < self._FTS_REBUILD_COOLDOWN_SECONDS:
-            return False
-        db = self._db
-        if db is None or not hasattr(db, "rebuild_fts"):
-            return False
-        self._fts_rebuild_last_attempt_at = now
-        # WAL split-brain guard: skip when a foreign process holds state.db.
-        foreign_holders = None
-        if hasattr(db, "_foreign_state_db_holders"):
-            foreign_holders = db._foreign_state_db_holders()
-        if foreign_holders:
-            logger.warning(
-                "Skipping Session DB FTS rebuild while foreign processes hold the database or "
-                "WAL sidecars (%s); canonical transcript writes remain available.", foreign_holders)
-            return False
-        try:
-            rebuilt = db.rebuild_fts()
-        except Exception as exc:
-            logger.warning("Session DB FTS rebuild failed: %s", exc)
-            return False
-        if rebuilt:
-            logger.warning("Rebuilt %d Session DB FTS index(es) after append corruption", rebuilt)
-        return rebuilt > 0
 
     def _clear_dirty_transcript(self, session_id: str) -> None:
         """Drop queued pending messages so a rewrite/rewind doesn't re-insert them."""

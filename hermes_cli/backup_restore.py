@@ -555,7 +555,7 @@ def _count_session_rows(path: Path) -> Optional[tuple[int, int]]:
         return None
     try:
         sessions = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-        messages = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        messages = conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
         return int(sessions), int(messages)
     except (sqlite3.Error, TypeError, ValueError):
         return None

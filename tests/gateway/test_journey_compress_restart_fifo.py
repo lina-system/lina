@@ -19,6 +19,7 @@ import pytest
 
 from tests.gateway.fixtures.local_recovery_probe import child_env, daemon, rpc, websocket
 from tests.waiting import async_wait_until
+from hermes_state import SessionDB
 
 FOLLOWERS = ('FOLLOWER_1', 'FOLLOWER_2', 'FOLLOWER_3')
 
@@ -99,16 +100,15 @@ def test_followers_survive_compression_and_restart_in_order_exactly_once(tmp_pat
                              PYTHONUNBUFFERED='1')
 
     def rows(sql, args=()):
-        with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
-            db.row_factory = sqlite3.Row
-            return [dict(row) for row in db.execute(sql, args)]
+        with SessionDB(db_path=home / 'state.db', read_only=True) as db:
+            return [dict(row) for row in db._read_all(sql, args)]
 
     def admissions():
         return rows('SELECT admission_id,request_id,target_session_id,status,outcome,seq FROM session_admissions ORDER BY seq')
 
     def transcript(session_id):
         return [(r['id'], r['role'], r['content']) for r in rows(
-            'SELECT id,role,content FROM messages WHERE session_id=? AND active=1 ORDER BY id', (session_id,))]
+            "SELECT id,role,msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? AND active=1 ORDER BY id", (session_id,))]
 
     def executed(marker):
         return sum(r['model'] == 'original' and r['text'].startswith(marker) for r in peer.requests)
@@ -209,7 +209,7 @@ def test_followers_survive_compression_and_restart_in_order_exactly_once(tmp_pat
         assert rows('SELECT end_reason FROM sessions WHERE id=?', (sid,)) == [{'end_reason': 'compression'}]
         assert any('SUMMARY_RETAINED_FACTS' in str(c) for _, _, c in before['compacted'])
         assert transcript(before['child'])[:len(before['compacted'])] == before['compacted']
-        stored = rows("SELECT session_id FROM messages WHERE role='user' AND content IN (?,?,?)", FOLLOWERS)
+        stored = rows("SELECT session_id FROM transcript_rows WHERE role='user' AND msg_text(text_uid, 'content') IN (?,?,?)", FOLLOWERS)
         assert [r['session_id'] for r in stored] == [before['child']] * 3, stored
         assert sum(r['model'] == 'summary' for r in peer.requests) == 1
         history = json.dumps(final['messages'])

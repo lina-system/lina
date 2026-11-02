@@ -127,7 +127,7 @@ def unused_session(conn, session_id):
     """*session_id* holds nothing: no transcript, ledger rows or children (what the SessionStore's
     stale-route heal, #54878, mints as a route's replacement before any turn runs on it)."""
     return conn.execute(
-        'SELECT 1 FROM messages WHERE session_id=? UNION ALL SELECT 1 FROM session_admissions '
+        'SELECT 1 FROM transcript_rows WHERE session_id=? UNION ALL SELECT 1 FROM session_admissions '
         'WHERE target_session_id=? UNION ALL SELECT 1 FROM worker_executions WHERE session_id=? '
         'UNION ALL SELECT 1 FROM sessions WHERE parent_session_id=? LIMIT 1',
         (session_id, session_id, session_id, session_id)).fetchone() is None

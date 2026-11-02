@@ -150,7 +150,7 @@ def _compress(agent, history, raw):
 
 def _flags(db, content):
     """``(active, compacted)`` of every stored row with this exact content."""
-    rows = db._conn.execute("SELECT active, compacted FROM messages WHERE session_id = 'sid' AND content = ?",
+    rows = db._conn.execute("SELECT active, compacted FROM transcript_rows WHERE session_id = 'sid' AND msg_text(text_uid, 'content') = ?",
                             (content,)).fetchall()
     return sorted(tuple(row) for row in rows)
 

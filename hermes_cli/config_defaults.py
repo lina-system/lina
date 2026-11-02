@@ -2253,8 +2253,8 @@ DEFAULT_CONFIG = {
         # edit is sent as a fresh message so the timestamp reflects completion.
         "fresh_final_after_seconds": 0.0,
     },
-    # Automatic cleanup of ~/.hermes/state.db, which otherwise grows without bound and slows FTS5
-    # inserts, /resume listing, and insights queries.
+    # Automatic cleanup of ~/.hermes/state.db, which otherwise grows without bound and slows
+    # transcript writes, /resume listing, and insights queries.
     "sessions": {
         # Prune ENDED sessions inactive for retention_days (activity = freshest of live activity /
         # latest message / creation) about once per min_interval_hours at CLI/gateway/cron startup.
@@ -2283,19 +2283,8 @@ DEFAULT_CONFIG = {
         # processes).
         "min_interval_hours": 24,
 
-        # Notice about the compact FTS layout (reclaims ~60%+ of state.db). OPT-IN: legacy indexes
-        # stay until `hermes sessions optimize-storage` runs, since the rebuild is disk-heavy on
-        # large DBs. advise = `hermes update` prints a one-line notice with reclaimable size when a
-        # legacy index is detected (a later layout change gets a rebuild notice without a size estimate);
-        # require = the same notices worded as REQUIRED (tooling may gate on it); off = none.
-        "fts_optimize_notice": "advise",
-        # CJK-bigram search index (messages_fts_cjk). When the extension is built
-        # (native/fts5_cjk/build.sh → ~/.hermes/lib/libfts5_cjk.so), 1-2 char CJK terms get exact
-        # index matches instead of LIKE scans. True = use when present (inert otherwise); False =
-        # never load/serve it. Bridged to HERMES_CJK_FTS.
-        "cjk_fts": True,
         # Slow session-search threshold (ms): searches at/above it log one INFO line with the
-        # routing path (fts_cjk / fts5 / trigram / like_scan). 0 logs every search. Bridged to
+        # Postgres search path. 0 logs every search. Bridged to
         # HERMES_SEARCH_SLOW_MS.
         "search_slow_ms": 1000,
         # Transcript guards (a runaway 100k+ row session can exhaust memory when materialized at
