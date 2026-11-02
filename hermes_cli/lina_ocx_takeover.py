@@ -35,6 +35,7 @@ OLD_SYSTEMD_UNIT = "opencodex-proxy"  # OCX 2.95.0 src/service/state.ts TASK
 KEYCHAIN_SERVICE = "opencodex.provider-api-key.v1"  # OCX 2.95.0 src/providers/api-key-resolve.ts
 SECRET_FILES = ("auth.json", "service-api-token", "service-api-token.prev", "admin-api-token")
 SQLITE_MAGIC = b"SQLite format 3\x00"
+SQLITE_BUSY_S = 30.0
 
 # (glob on the entry name, reason). Matched at every depth; the first match wins.
 SKIP_RULES: tuple[tuple[str, str], ...] = (
@@ -261,17 +262,24 @@ def _copy_bytes(src: Path, dst: Path) -> str:
 
 
 def _copy_sqlite(src: Path, dst: Path) -> str:
-    """SQLite backup API from a read-only connection: one consistent snapshot, WAL content included.
+    """SQLite backup API from a locking read-only connection: one committed snapshot in any journal mode.
 
-    With no ``-wal`` file nobody has the database open, and a read-only open of a WAL database would create an
-    empty ``-wal`` / ``-shm`` beside the source; ``immutable=1`` reads it without creating anything."""
-    quiet = not Path(f"{src}-wal").exists()
-    source = sqlite3.connect(f"{src.resolve().as_uri()}?mode=ro{'&immutable=1' if quiet else ''}", uri=True)
+    Never ``immutable=1``: it skips locks, so a rollback-journal writer's uncommitted pages would be copied. A
+    writer holding the lock past ``SQLITE_BUSY_S`` makes the copy refuse rather than wait forever: the read lock is
+    taken by a read transaction, which honours the busy timeout, because ``Connection.backup`` retries a busy
+    source without end. A read-only open of a closed WAL database creates the empty ``-wal`` / ``-shm`` any SQLite
+    reader creates."""
+    source = sqlite3.connect(f"{src.resolve().as_uri()}?mode=ro", uri=True, timeout=SQLITE_BUSY_S,
+                             isolation_level=None)
     target = sqlite3.connect(dst)
     try:
+        source.execute("BEGIN")
+        source.execute("SELECT count(*) FROM sqlite_master").fetchone()
         source.backup(target)
         result = target.execute("PRAGMA integrity_check").fetchone()[0]
         target.execute("PRAGMA wal_checkpoint(TRUNCATE)")
+    except sqlite3.OperationalError as exc:
+        raise TakeoverError(f"{src.name}: {exc}; a writer holds it, copy again when the proxy is quiet") from exc
     finally:
         target.close()
         source.close()

@@ -46,9 +46,11 @@ def old_data_dir(path: Path, *, hostname="127.0.0.2", port=18555, loopback_port=
 
 
 def _state(path: Path) -> dict[str, tuple[str, int]]:
-    """sha256 and mtime_ns of every file except SQLite's shared-memory index, which any reader maps and writes."""
+    """sha256 and mtime_ns of every file except SQLite's shared-memory index, which any reader maps and writes, and
+    an empty WAL, which a read-only open of a closed WAL database creates (no data in it)."""
     return {str(p.relative_to(path)): (hashlib.sha256(p.read_bytes()).hexdigest(), p.stat().st_mtime_ns)
-            for p in sorted(path.rglob("*")) if p.is_file() and not p.name.endswith("-shm")}
+            for p in sorted(path.rglob("*")) if p.is_file() and not p.name.endswith("-shm")
+            and not (p.name.endswith("-wal") and p.stat().st_size == 0)}
 
 
 def _models(*argv) -> int:
@@ -145,6 +147,34 @@ def test_copy_uses_the_backup_api_with_a_writer_open_verifies_and_leaves_the_sou
     assert takeover.verify(data, manifest) == []
     (data / "usage.jsonl").write_text("changed\n")
     assert takeover.verify(data, manifest) == ["usage.jsonl"]
+
+
+@pytest.mark.platforms("posix")
+def test_copy_never_takes_a_rollback_journal_writer_s_uncommitted_rows(root, tmp_path, monkeypatch):
+    source = old_data_dir(tmp_path / "old")
+    db = source / "spend-ledger-owner.sqlite"
+    setup = sqlite3.connect(db)
+    setup.execute("CREATE TABLE ledger (id INTEGER PRIMARY KEY, note TEXT)")
+    setup.execute("INSERT INTO ledger (note) VALUES ('committed')")
+    setup.commit()
+    setup.close()
+    writer = sqlite3.connect(db, isolation_level=None)
+    writer.execute("PRAGMA cache_size=1")  # spill: uncommitted pages reach the database file under its lock
+    writer.execute("BEGIN")
+    writer.executemany("INSERT INTO ledger (note) VALUES (?)", [("x" * 500,) for _ in range(2000)])
+    assert (source / "spend-ledger-owner.sqlite-journal").exists()
+    monkeypatch.setattr(takeover, "SQLITE_BUSY_S", 0.2)
+    try:
+        with pytest.raises(takeover.TakeoverError, match="writer"):
+            takeover.copy(source, root, out=lambda line: None)
+        assert not (lina_ocx.data_dir(root) / "spend-ledger-owner.sqlite").exists()
+    finally:
+        writer.execute("ROLLBACK")
+        writer.close()
+    assert takeover.copy(source, root, out=lambda line: None) == 0
+    copied = sqlite3.connect(lina_ocx.data_dir(root) / "spend-ledger-owner.sqlite")
+    assert copied.execute("SELECT note FROM ledger").fetchall() == [("committed",)]
+    copied.close()
 
 
 def test_copy_refuses_existing_data_and_replace_moves_it_aside(root, tmp_path, capsys):
