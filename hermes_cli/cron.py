@@ -731,8 +731,9 @@ def _cron_doctor_issues_for_job(job: dict[str, Any]) -> list[str]:
         issues.append("no-agent job has no script")
     if script and (script_issue := _script_health_issue(script)):
         issues.append(script_issue)
+    from hermes_cli.desk import resolve_workdir
     workdir = str(job.get("workdir") or "").strip()
-    if workdir and not Path(workdir).expanduser().exists():
+    if workdir and not Path(resolve_workdir(workdir, strict=False) or workdir).expanduser().exists():
         issues.append(f"workdir not found: {workdir}")
     if job.get("timezone"):
         from cron.jobs_time import zone_for_job
