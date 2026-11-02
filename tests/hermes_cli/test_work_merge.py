@@ -63,15 +63,22 @@ CASES = [
     ("skipped required is green", {"runs": [run("Lint"), run("tests", "skipped", run_id=2)]}, rules.PASS,
      "required check tests: skipped"),
     ("Codex P1 on an older head only", {"review_comments": [finding("P1", OLD)]}, rules.PASS,
-     "Codex reviewed head"),
+     "no P0/P1 findings"),
     ("Codex P1 on the current head", {"review_comments": [finding("P1", HEAD)]}, rules.FAIL,
-     "Codex left 1 P0/P1 finding(s)"),
-    ("Codex P2 on the current head", {"review_comments": [finding("P2", HEAD)]}, rules.PASS, "Codex reviewed head"),
+     "1 P0/P1 finding(s) on hhhhhhh"),
+    ("Codex P2 on the current head", {"review_comments": [finding("P2", HEAD)]}, rules.PASS,
+     "no P0/P1 findings; 1 P2/P3 finding(s)"),
     ("no Codex review on this head", {"reviews": [{"user": CODEX, "commit_id": OLD}]}, rules.WAIT,
-     "no Codex review on head"),
+     "Waiting for the Codex review of hhhhhhh"),
     ("Codex summary names this head", {"reviews": [], "issue_comments": [{"user": CODEX, "body":
-     '{"code_review":{"commit_sha":"' + HEAD + '","has_any_findings":false,"status":"completed"}}'}]},
-     rules.PASS, "Codex reviewed head"),
+     '<!-- codex-review-state:v1 {"code_review":{"commit_sha":"' + HEAD + '","status":"completed"}} -->'}]},
+     rules.PASS, "Codex reviewed hhhhhhh"),
+    ("Codex 'no major issues' comment names this head", {"reviews": [], "issue_comments": [{"user": CODEX, "body":
+     f"Codex Review: Didn't find any major issues. Reviewed commit: `{HEAD[:10]}`"}]},
+     rules.PASS, "Codex reviewed hhhhhhh"),
+    ("Codex 'no major issues' comment names an older head", {"reviews": [], "issue_comments": [{"user": CODEX,
+     "body": f"Codex Review: Didn't find any major issues. Reviewed commit: `{OLD[:10]}`"}]},
+     rules.WAIT, "Waiting for the Codex review"),
     ("dev red, normal pull request", DEV_RED, rules.FAIL, "dev is red (macOS tests, tests)"),
     ("dev red, dev-red-fix fails fewer and adds none",
      {**DEV_RED, "labels": ["dev-red-fix"], "runs": [run("Lint"), run("tests", run_id=2),
@@ -251,3 +258,15 @@ def test_a_label_by_someone_else_is_refused_through_the_merge_path(monkeypatch):
     gh, lines = _github(snapshot(**{**APPROVED, "label_events": [labeled("someone-else")]}), queue=False), []
     assert _merge(gh, lines) == rules.FAIL
     assert gh.commands == [] and gh.writes == []
+
+
+def test_the_merge_verdict_on_codex_is_the_required_status_verdict():
+    """``lina work merge`` and the ``Codex review`` status share one recognition (``codex_review_gate``)."""
+    gate = rules.review_gate()
+    cases = [snapshot(review_comments=[finding("P1", HEAD)]), snapshot(reviews=[]),
+             snapshot(reviews=[], issue_comments=[{"user": CODEX, "body": f"No major issues found in {HEAD[:7]}."}])]
+    for snap in cases:
+        status = gate.review_status(HEAD, snap["reviews"], snap["review_comments"], snap["issue_comments"])
+        verdict = rules.codex_review(HEAD, snap["reviews"], snap["review_comments"], snap["issue_comments"])
+        assert verdict.lines == [({"success": rules.PASS, "failure": rules.FAIL, "pending": rules.WAIT}[status.state],
+                                  status.description)]

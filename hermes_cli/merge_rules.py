@@ -18,8 +18,11 @@ Standard library only: ``kanban_gates.py`` loads this file by path when it runs 
 """
 from __future__ import annotations
 
+import importlib.util
 import re
+import sys
 from dataclasses import dataclass, field
+from pathlib import Path
 
 PASS, FAIL, WAIT = 0, 1, 75
 LABEL = {PASS: "PASS", FAIL: "FAIL", WAIT: "WAIT"}
@@ -30,7 +33,6 @@ DEV_RED_FIX, DEV_RED_APPROVED, NO_ISSUE = "dev-red-fix", "dev-red-approved", "no
 
 _BOX = re.compile(r"^(\s*[-*]\s+\[)([ xX])(\]\s+)")
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
-_P01 = re.compile(r"!\[(P0|P1) Badge\]")
 _CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+(?:([\w.-]+/[\w.-]+))?#(\d+)\b", re.IGNORECASE)
 _BRANCH = re.compile(r"^[a-z]+/(\d+)-")
 
@@ -142,26 +144,37 @@ def required_checks(required: list[str], runs: list[dict], statuses: list[dict] 
 
 
 
-def _codex(item: dict) -> bool:
-    return str((item.get("user") or {}).get("login", "")).startswith(CODEX)
+_GATE = Path(__file__).resolve().parents[1] / "scripts" / "ci" / "codex_review_gate.py"
+_STATUS_CODE = {"success": PASS, "failure": FAIL, "pending": WAIT}
+
+
+def review_gate():
+    """``scripts/ci/codex_review_gate.py``, the script that sets the required ``Codex review`` status: its
+    recognition of a Codex review is the only copy (the gate's workflow checks out that one file, so the rules
+    live there). None when this install carries no ``scripts/`` (a packaged wheel)."""
+    if "codex_review_gate" in sys.modules:
+        return sys.modules["codex_review_gate"]
+    if not _GATE.is_file():
+        return None
+    spec = importlib.util.spec_from_file_location("codex_review_gate", _GATE)
+    if spec is None or spec.loader is None:
+        return None
+    module = importlib.util.module_from_spec(spec)
+    sys.modules["codex_review_gate"] = module
+    spec.loader.exec_module(module)
+    return module
 
 
 def codex_review(head: str, reviews: list[dict], review_comments: list[dict], issue_comments: list[dict]) -> Verdict:
+    """The required ``Codex review`` status's own verdict on ``head`` (``review_status`` of the gate script)."""
     verdict = Verdict()
-    findings = [c for c in review_comments if _codex(c) and not c.get("in_reply_to_id")
-                and (c.get("original_commit_id") or c.get("commit_id")) == head and _P01.search(c.get("body") or "")]
-    summary = re.compile(r'"code_review":\{"commit_sha":"' + re.escape(head) + r'"[^}]*"status":"completed"')
-    reviewed = any(_codex(r) and r.get("commit_id") == head for r in reviews) or any(
-        _codex(c) and summary.search(c.get("body") or "") for c in issue_comments)
-    if findings:
-        where = ", ".join(f"{c.get('path')}:{c.get('line') or c.get('original_line') or '?'}" for c in findings)
-        verdict.add(FAIL, f"Codex left {len(findings)} P0/P1 finding(s) on head {head[:10]}: {where}")
-    elif reviewed:
-        verdict.add(PASS, f"Codex reviewed head {head[:10]} with no P0/P1")
-    else:
-        verdict.add(WAIT, f"no Codex review on head {head[:10]} yet")
+    gate = review_gate()
+    if gate is None:
+        verdict.add(WAIT, f"cannot judge the Codex review here: {_GATE.name} is not in this install")
+        return verdict
+    status = gate.review_status(head, reviews, review_comments, issue_comments)
+    verdict.add(_STATUS_CODE.get(status.state, FAIL), status.description)
     return verdict
-
 
 
 def owner_approved(labels: set[str], label_events: list[dict], owner_login: str | None) -> tuple[bool, str]:
