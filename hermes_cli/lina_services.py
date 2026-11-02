@@ -109,12 +109,21 @@ def list_lines() -> list[str]:
 
 
 def _gateway(verb: str) -> None:
-    """The ``hermes gateway`` verbs, unchanged. ``start`` installs the service first when there is none."""
+    """The ``hermes gateway`` verbs, unchanged. ``start`` installs the service first when there is none.
+
+    ``stop`` and ``restart`` name the whole host gateway (``--all``): the memory store is one per LINA root and every
+    profile the host serves uses it, so "the gateway is down" has to mean the host, not one parked profile. The
+    gateway verb itself asks before interrupting live sessions and exits 1 when they are kept."""
     gw = _gw()
     if verb == "start" and not gw._is_service_installed():
         gw.gateway_command(argparse.Namespace(gateway_command="install", start_now=True, start_on_login=True))
         return
-    gw.gateway_command(argparse.Namespace(gateway_command=verb))
+    gw.gateway_command(argparse.Namespace(gateway_command=verb, all=verb in ("stop", "restart")))
+
+
+def gateway_running() -> bool:
+    """Any gateway process of this LINA root, whichever profile it serves."""
+    return bool(_gw().find_gateway_pids(all_profiles=True))
 
 
 def _store_verb(verb: str) -> None:
@@ -141,30 +150,58 @@ def _run_store(verb: str) -> None:
 
 _VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store}
 
+# Startup order: a service may need the ones before it (the gateway uses the memory store). Stopping runs it backwards.
+START_ORDER = ("store", "gateway")
 
-def act(verb: str, name: str) -> int:
-    """``start``/``stop``/``restart`` one service, or ``all`` of those that exist (store first up, last down).
 
-    ``all`` stops at the first failure: the gateway depends on the store, so a store that did not come up must not
-    get a gateway started on it, and a gateway that refused to stop (live sessions the person kept) must keep its
-    store."""
-    if name != "all":
-        service = BY_NAME[name]
-        if service.issue:
-            print(f"{name} is not installed yet: lina{service.issue} adds it.")
-            return 1
-        _VERBS[name](verb)
-        return 0
-    order = ("store", "gateway") if verb == "start" else ("gateway", "store")
-    for index, each in enumerate(order):
+def _phase(verb: str, names: tuple[str, ...]) -> int:
+    """Run ``verb`` on ``names`` in order and stop at the first failure, saying what was left as it was."""
+    for index, each in enumerate(names):
         try:
             _VERBS[each](verb)
         except SystemExit as exc:
             if exc.code in (None, 0):  # the gateway verbs exit 0 on success
                 continue
-            code = exc.code if isinstance(exc.code, int) else 1
-            if index + 1 < len(order):
-                print(f"{each} {verb} failed; left {', '.join(order[index + 1:])} as it was.")
+            if index + 1 < len(names):
+                print(f"{each} {verb} failed; left {', '.join(names[index + 1:])} as it was.")
+            return exc.code if isinstance(exc.code, int) else 1
+    return 0
+
+
+def _plan(verb: str, name: str) -> list[tuple[str, tuple[str, ...]]]:
+    """The phases one request runs, from the dependency order.
+
+    * ``start X`` starts X; ``stop X`` stops X. Stopping a service another one still uses is refused in ``act``.
+    * ``restart X`` stops what depends on X and X (top down), then starts them again (bottom up), so nothing runs on a
+      service while that service is down.
+    * ``all`` is every service that exists."""
+    existing = tuple(each for each in START_ORDER if not BY_NAME[each].issue)
+    if name == "all":
+        chosen = existing
+    else:
+        chosen = existing[existing.index(name):] if verb == "restart" else (name,)
+    down, up = tuple(reversed(chosen)), chosen
+    return {"start": [("start", up)], "stop": [("stop", down)], "restart": [("stop", down), ("start", up)]}[verb]
+
+
+def act(verb: str, name: str) -> int:
+    """``start``/``stop``/``restart`` one service, or ``all`` of those that exist.
+
+    The gateway uses the memory store, so services come up bottom-up and go down top-down, each phase stops at its
+    first failure (a gateway that kept its live sessions keeps its store; a store that did not come up gets no
+    gateway), and the store is not stopped alone while any gateway of this root still runs."""
+    if name != "all" and BY_NAME[name].issue:
+        print(f"{name} is not installed yet: lina{BY_NAME[name].issue} adds it.")
+        return 1
+    if verb == "stop" and name == "store" and gateway_running():
+        print("store stop refused: the gateway still runs on it. Stop both with `lina services stop all`.")
+        return 1
+    if name != "all" and verb != "restart":
+        _VERBS[name](verb)
+        return 0
+    for phase_verb, names in _plan(verb, name):
+        code = _phase(phase_verb, names)
+        if code:
             return code
     return 0
 

@@ -124,6 +124,51 @@ def test_all_goes_on_after_a_service_exits_0(account, monkeypatch):
     assert calls == ["gateway", "store"]
 
 
+@pytest.fixture
+def recorded(monkeypatch):
+    """Every service verb recorded as ``(service, verb)`` instead of run."""
+    calls = []
+    for name in lina_services.START_ORDER:
+        monkeypatch.setitem(lina_services._VERBS, name, lambda verb, name=name: calls.append((name, verb)))
+    return calls
+
+
+@pytest.mark.parametrize("name", ["all", "store"])
+def test_restart_takes_the_gateway_down_before_the_store_and_up_after_it(account, recorded, name):
+    """No gateway runs on a store while that store restarts (restarting the store restarts what uses it)."""
+    assert lina_services.act("restart", name) == 0
+    assert recorded == [("gateway", "stop"), ("store", "stop"), ("store", "start"), ("gateway", "start")]
+
+
+def test_restart_stops_before_starting_when_a_phase_fails(account, monkeypatch, recorded):
+    def store_stop_fails(verb):
+        recorded.append(("store", verb))
+        if verb == "stop":
+            raise SystemExit(1)
+
+    monkeypatch.setitem(lina_services._VERBS, "store", store_stop_fails)
+    assert lina_services.act("restart", "all") == 1
+    assert recorded == [("gateway", "stop"), ("store", "stop")]
+
+
+def test_the_store_is_not_stopped_alone_while_a_gateway_runs(account, monkeypatch, recorded, capsys):
+    """A gateway of any profile on this root still uses the one store."""
+    monkeypatch.setattr(gateway_cli, "find_gateway_pids", lambda **kw: [4242] if kw.get("all_profiles") else [])
+    assert lina_services.act("stop", "store") == 1
+    assert recorded == [] and "stop all" in capsys.readouterr().out
+    monkeypatch.setattr(gateway_cli, "find_gateway_pids", lambda **kw: [])
+    assert lina_services.act("stop", "store") == 0
+    assert recorded == [("store", "stop")]
+
+
+@pytest.mark.parametrize("verb", ["stop", "restart"])
+def test_stopping_the_gateway_names_the_whole_host(account, verb):
+    """From a profile the host serves, a plain ``gateway stop`` only parks that profile; the store is shared by every
+    profile, so the services verbs stop the host gateway (``--all``)."""
+    lina_services._gateway(verb)
+    assert account["verbs"] == [{"gateway_command": verb, "all": True}]
+
+
 def test_start_installs_the_missing_gateway_service_through_the_gateway_verbs(account):
     assert _run("start", "gateway") == 0
     assert account["verbs"] == [{"gateway_command": "install", "start_now": True, "start_on_login": True}]
