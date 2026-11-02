@@ -4,7 +4,7 @@ Issue #92145: ``hermes update`` moves the checkout from generation N to N+1
 while the updater still holds the pre-pull module graph.  When the in-process
 restart phase raises, a fresh process retries the *gateway* profiles — but
 ``hermes serve`` is not a gateway profile.  It hosts ``tui_gateway.server``,
-systemd lists ``lina-gateway.service`` before ``hermes-serve.service`` (so
+systemd lists ``lina-gateway.service`` before ``lina-serve.service`` (so
 the serve unit is the one an abort typically never reaches), and the final
 read-back (``collect_fleet_versions``) only inspects gateway state.  A serve
 process left on generation N is therefore invisible to every check, and the
@@ -128,7 +128,7 @@ def test_recovery_is_complete_when_no_runtime_survived():
 
 def test_failed_serve_unit_blocks_completion():
     result = _gateway_only_success()
-    result["serve_units"] = {"verified": [], "failed": ["hermes-serve"]}
+    result["serve_units"] = {"verified": [], "failed": ["lina-serve"]}
     assert (
         update_cmd._abort_recovery_is_complete(
             planned_gateway_profiles={"default"},
@@ -343,23 +343,23 @@ def linux_systemctl(monkeypatch):
 
 def test_serve_unit_verified_when_main_pid_changes(linux_systemctl):
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": True},
-        main_pids={"hermes-serve.service": 4242},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": True},
+        main_pids={"lina-serve.service": 4242},
     )
     out = recovery.restart_serve_units(run=fake, sleep=lambda _: None)
     # Identity stays scope-qualified: the same unit name can exist in the
     # system manager as a different process (#92145 review).
-    assert out == {"verified": ["user/hermes-serve"], "failed": []}
-    assert fake.restarted == ["hermes-serve.service"]
+    assert out == {"verified": ["user/lina-serve"], "failed": []}
+    assert fake.restarted == ["lina-serve.service"]
 
 
 def test_unchanged_main_pid_is_not_verified(linux_systemctl):
     """rc 0 with the same main process means the stale interpreter survived."""
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": True},
-        main_pids={"hermes-serve.service": 4242},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": True},
+        main_pids={"lina-serve.service": 4242},
     )
     original_call = fake.__call__
 
@@ -370,45 +370,45 @@ def test_unchanged_main_pid_is_not_verified(linux_systemctl):
         return original_call(argv, **kwargs)
 
     out = recovery.restart_serve_units(run=frozen, sleep=lambda _: None)
-    assert out == {"verified": [], "failed": ["user/hermes-serve"]}
+    assert out == {"verified": [], "failed": ["user/lina-serve"]}
 
 
 def test_unit_that_does_not_come_back_active_is_failed(linux_systemctl):
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": True},
-        main_pids={"hermes-serve.service": 4242},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": True},
+        main_pids={"lina-serve.service": 4242},
     )
     original_call = fake.__call__
 
     def dies(argv, **kwargs):
         if "restart" in argv:
             fake.restarted.append(argv[-1])
-            fake.active["hermes-serve.service"] = False
+            fake.active["lina-serve.service"] = False
             return _Completed(0)
         return original_call(argv, **kwargs)
 
     out = recovery.restart_serve_units(run=dies, sleep=lambda _: None)
-    assert out == {"verified": [], "failed": ["user/hermes-serve"]}
+    assert out == {"verified": [], "failed": ["user/lina-serve"]}
 
 
 def test_nonzero_restart_is_failed_not_silently_skipped(linux_systemctl):
     """The unprivileged system-scope case must read as failure, not absence."""
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": True},
-        main_pids={"hermes-serve.service": 4242},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": True},
+        main_pids={"lina-serve.service": 4242},
         restart_rc=1,
     )
     out = recovery.restart_serve_units(run=fake, sleep=lambda _: None)
-    assert out == {"verified": [], "failed": ["user/hermes-serve"]}
+    assert out == {"verified": [], "failed": ["user/lina-serve"]}
 
 
 def test_restart_timeout_is_failed(linux_systemctl):
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": True},
-        main_pids={"hermes-serve.service": 4242},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": True},
+        main_pids={"lina-serve.service": 4242},
     )
     original_call = fake.__call__
 
@@ -418,15 +418,15 @@ def test_restart_timeout_is_failed(linux_systemctl):
         return original_call(argv, **kwargs)
 
     out = recovery.restart_serve_units(run=timing_out, sleep=lambda _: None)
-    assert out == {"verified": [], "failed": ["user/hermes-serve"]}
+    assert out == {"verified": [], "failed": ["user/lina-serve"]}
 
 
 def test_inactive_serve_unit_is_left_alone(linux_systemctl):
     """Nothing inactive can be serving a stale generation."""
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": False},
-        main_pids={"hermes-serve.service": 0},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": False},
+        main_pids={"lina-serve.service": 0},
     )
     out = recovery.restart_serve_units(run=fake, sleep=lambda _: None)
     assert out == {"verified": [], "failed": []}
@@ -435,29 +435,29 @@ def test_inactive_serve_unit_is_left_alone(linux_systemctl):
 
 def test_units_already_restarted_by_the_phase_are_skipped(linux_systemctl):
     fake = _Systemctl(
-        listed=["hermes-serve.service", "hermes-serve-work.service"],
-        active={"hermes-serve.service": True, "hermes-serve-work.service": True},
-        main_pids={"hermes-serve.service": 1, "hermes-serve-work.service": 2},
+        listed=["lina-serve.service", "lina-serve-work.service"],
+        active={"lina-serve.service": True, "lina-serve-work.service": True},
+        main_pids={"lina-serve.service": 1, "lina-serve-work.service": 2},
     )
     out = recovery.restart_serve_units(
-        skip_units=[{"scope": "user", "unit": "hermes-serve"}],
+        skip_units=[{"scope": "user", "unit": "lina-serve"}],
         run=fake,
         sleep=lambda _: None,
     )
-    assert fake.restarted == ["hermes-serve-work.service"]
-    assert out == {"verified": ["user/hermes-serve-work"], "failed": []}
+    assert fake.restarted == ["lina-serve-work.service"]
+    assert out == {"verified": ["user/lina-serve-work"], "failed": []}
 
 
 def test_unrelated_hermes_server_service_is_never_touched(linux_systemctl):
-    """``hermes-serve*`` is a systemd glob, not a name gate (review on #83595)."""
+    """``lina-serve*`` is a systemd glob, not a name gate (review on #83595)."""
     fake = _Systemctl(
-        listed=["hermes-server.service", "hermes-serve.service"],
-        active={"hermes-server.service": True, "hermes-serve.service": True},
-        main_pids={"hermes-server.service": 7, "hermes-serve.service": 8},
+        listed=["lina-server.service", "lina-serve.service"],
+        active={"lina-server.service": True, "lina-serve.service": True},
+        main_pids={"lina-server.service": 7, "lina-serve.service": 8},
     )
     out = recovery.restart_serve_units(run=fake, sleep=lambda _: None)
-    assert fake.restarted == ["hermes-serve.service"]
-    assert out["verified"] == ["user/hermes-serve"]
+    assert fake.restarted == ["lina-serve.service"]
+    assert out["verified"] == ["user/lina-serve"]
 
 
 def test_gateway_units_are_not_restarted_by_the_serve_pass(linux_systemctl):
@@ -476,29 +476,29 @@ def test_dashboard_unit_is_restarted_and_verified_by_the_serve_pass(linux_system
     """#125297: a systemd-supervised dashboard is the same stale-generation risk
     as a serve unit — the abort-recovery pass must enumerate and restart it too."""
     fake = _Systemctl(
-        listed=["hermes-serve.service", "hermes-dashboard-work.service"],
-        active={"hermes-serve.service": True, "hermes-dashboard-work.service": True},
-        main_pids={"hermes-serve.service": 7, "hermes-dashboard-work.service": 8},
+        listed=["lina-serve.service", "lina-dashboard-work.service"],
+        active={"lina-serve.service": True, "lina-dashboard-work.service": True},
+        main_pids={"lina-serve.service": 7, "lina-dashboard-work.service": 8},
     )
     out = recovery.restart_serve_units(run=fake, sleep=lambda _: None)
-    assert fake.restarted == ["hermes-serve.service", "hermes-dashboard-work.service"]
+    assert fake.restarted == ["lina-serve.service", "lina-dashboard-work.service"]
     assert out == {
-        "verified": ["user/hermes-dashboard-work", "user/hermes-serve"],
+        "verified": ["user/lina-dashboard-work", "user/lina-serve"],
         "failed": [],
     }
 
 
 def test_default_profile_dashboard_unit_is_restarted_by_the_serve_pass(linux_systemctl):
-    """#125297: the unprofiled ``hermes-dashboard.service`` — the exact unit from the
+    """#125297: the unprofiled ``lina-dashboard.service`` — the exact unit from the
     report's receipts — is enumerated and restarted alongside serve units."""
     fake = _Systemctl(
-        listed=["hermes-dashboard.service"],
-        active={"hermes-dashboard.service": True},
-        main_pids={"hermes-dashboard.service": 9},
+        listed=["lina-dashboard.service"],
+        active={"lina-dashboard.service": True},
+        main_pids={"lina-dashboard.service": 9},
     )
     out = recovery.restart_serve_units(run=fake, sleep=lambda _: None)
-    assert fake.restarted == ["hermes-dashboard.service"]
-    assert out == {"verified": ["user/hermes-dashboard"], "failed": []}
+    assert fake.restarted == ["lina-dashboard.service"]
+    assert out == {"verified": ["user/lina-dashboard"], "failed": []}
 
 
 def test_no_systemctl_means_no_serve_pass(monkeypatch):
@@ -518,12 +518,12 @@ def test_no_systemctl_means_no_serve_pass(monkeypatch):
 def test_active_unit_with_no_readable_main_pid_is_failed(linux_systemctl):
     """No observable main process means no observable replacement."""
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": True},
-        main_pids={"hermes-serve.service": 0},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": True},
+        main_pids={"lina-serve.service": 0},
     )
     out = recovery.restart_serve_units(run=fake, sleep=lambda _: None)
-    assert out == {"verified": [], "failed": ["user/hermes-serve"]}
+    assert out == {"verified": [], "failed": ["user/lina-serve"]}
     assert fake.restarted == []
 
 
@@ -537,7 +537,7 @@ def test_same_unit_name_in_both_scopes_is_proven_in_both(linux_systemctl):
         scope = "user" if "--user" in argv else "system"
         calls.append((scope, list(argv)))
         if "list-units" in argv:
-            return _Completed(0, stdout="hermes-serve.service loaded active running x")
+            return _Completed(0, stdout="lina-serve.service loaded active running x")
         if "is-active" in argv:
             return _Completed(0, stdout="active")
         if "show" in argv:
@@ -556,8 +556,8 @@ def test_same_unit_name_in_both_scopes_is_proven_in_both(linux_systemctl):
     assert restarts == ["user", "system"]
     # One name, two processes, two independent outcomes.
     assert out == {
-        "verified": ["user/hermes-serve"],
-        "failed": ["system/hermes-serve"],
+        "verified": ["user/lina-serve"],
+        "failed": ["system/lina-serve"],
     }
 
 
@@ -565,9 +565,9 @@ def test_restart_is_invoked_without_an_interactive_auth_prompt(linux_systemctl):
     """A polkit prompt inside a captured subprocess hangs the whole update."""
     seen = []
     fake = _Systemctl(
-        listed=["hermes-serve.service"],
-        active={"hermes-serve.service": True},
-        main_pids={"hermes-serve.service": 4242},
+        listed=["lina-serve.service"],
+        active={"lina-serve.service": True},
+        main_pids={"lina-serve.service": 4242},
     )
     original_call = fake.__call__
 
@@ -594,13 +594,13 @@ def test_skip_unit_names_are_filtered_to_the_serve_family():
                     "serve_units": {
                         "recover": True,
                         "skip": [
-                            "hermes-serve",
-                            "hermes-serve-work.service",
-                            {"scope": "system", "unit": "hermes-serve"},
-                            {"scope": "user", "unit": "hermes-serve-work.service"},
-                            "hermes-server",
+                            "lina-serve",
+                            "lina-serve-work.service",
+                            {"scope": "system", "unit": "lina-serve"},
+                            {"scope": "user", "unit": "lina-serve-work.service"},
+                            "lina-server",
                             "../../etc/systemd/evil",
-                            "hermes-serve; rm -rf /",
+                            "lina-serve; rm -rf /",
                             "lina-gateway",
                         ],
                     },
@@ -611,10 +611,10 @@ def test_skip_unit_names_are_filtered_to_the_serve_family():
     assert recover_serve is True
     # Qualified entries keep their scope; the legacy bare shape stays bare.
     assert skip == [
-        "hermes-serve",
-        "hermes-serve-work",
-        "system/hermes-serve",
-        "user/hermes-serve-work",
+        "lina-serve",
+        "lina-serve-work",
+        "system/lina-serve",
+        "user/lina-serve-work",
     ]
 
 
@@ -664,7 +664,7 @@ def test_serve_only_fleet_still_spawns_the_recovery_child(monkeypatch):
                     "verified": [],
                     "relaunch_attempted": [],
                     "failed": [],
-                    "serve_units": {"verified": ["hermes-serve"], "failed": []},
+                    "serve_units": {"verified": ["lina-serve"], "failed": []},
                 }
             ),
         )
@@ -678,7 +678,7 @@ def test_serve_only_fleet_still_spawns_the_recovery_child(monkeypatch):
     payload = json.loads(calls[0][1]["input"])
     assert payload["profiles"] == []
     assert payload["serve_units"]["recover"] is True
-    assert result["serve_units"] == {"verified": ["hermes-serve"], "failed": []}
+    assert result["serve_units"] == {"verified": ["lina-serve"], "failed": []}
 
 
 
@@ -722,12 +722,12 @@ def test_already_restarted_units_are_forwarded_as_skips(monkeypatch):
     update_cmd._recover_gateway_restart_after_abort(
         _plan(_runtime("gateway", "default", "systemd", 111)),
         gateway_mode=False,
-        skip_units={"user/hermes-serve"},
+        skip_units={"user/lina-serve"},
     )
-    # The scope travels with the unit: settling `user/hermes-serve` must not
+    # The scope travels with the unit: settling `user/lina-serve` must not
     # suppress recovery of a stale system-scope unit of the same name.
     assert captured["payload"]["serve_units"]["skip"] == [
-        {"scope": "user", "unit": "hermes-serve"}
+        {"scope": "user", "unit": "lina-serve"}
     ]
 
 
@@ -825,8 +825,8 @@ def test_serve_coverage_reaches_the_persisted_receipt(tmp_path, monkeypatch):
             "failed": [],
             "skipped": [],
             "serve_units": {
-                "verified": ["user/hermes-serve"],
-                "failed": ["system/hermes-serve-work"],
+                "verified": ["user/lina-serve"],
+                "failed": ["system/lina-serve-work"],
             },
             "stale_runtimes": [
                 {
@@ -846,8 +846,8 @@ def test_serve_coverage_reaches_the_persisted_receipt(tmp_path, monkeypatch):
     # The receipt keeps the scope: an operator reading it must know WHICH
     # manager owns the unit that could not be proven (#96235 review).
     assert persisted["serve_units"] == {
-        "verified": ["user/hermes-serve"],
-        "failed": ["system/hermes-serve-work"],
+        "verified": ["user/lina-serve"],
+        "failed": ["system/lina-serve-work"],
     }
     assert persisted["stale_runtimes"] == [
         {
@@ -881,8 +881,8 @@ def _fake_systemctl_path(tmp_path):
 
     The child interpreter is outside the in-process live-system guard and resolves
     ``systemctl`` through ``shutil.which``; without this it restarted the developer's
-    real hermes-serve / hermes-dashboard units. The fake lists one active user-scope
-    ``hermes-serve.service`` whose ``MainPID`` changes once it is restarted.
+    real lina-serve / lina-dashboard units. The fake lists one active user-scope
+    ``lina-serve.service`` whose ``MainPID`` changes once it is restarted.
     """
     bin_dir = tmp_path / "bin"
     bin_dir.mkdir()
@@ -893,7 +893,7 @@ def _fake_systemctl_path(tmp_path):
         "#!/bin/sh\n"
         f"printf '%s\\n' \"$*\" >> '{log}'\n"
         'case " $* " in\n'
-        '  *" --user list-units hermes-serve* "*) echo "hermes-serve.service loaded active running Hermes" ;;\n'
+        '  *" --user list-units lina-serve* "*) echo "lina-serve.service loaded active running Hermes" ;;\n'
         '  *" is-active "*) echo active ;;\n'
         f"  *\" show \"*) if [ -e '{marker}' ]; then echo 200; else echo 100; fi ;;\n"
         f"  *\" restart \"*) : > '{marker}' ;;\n"
@@ -920,9 +920,9 @@ def test_recovery_module_reports_serve_units_in_a_real_process(tmp_path):
     )
     assert result.returncode == 0, result.stderr
     payload = json.loads(result.stdout)
-    assert payload["serve_units"] == {"verified": ["user/hermes-serve"], "failed": []}
+    assert payload["serve_units"] == {"verified": ["user/lina-serve"], "failed": []}
     restarts = [line for line in log.read_text().splitlines() if " restart " in f" {line} "]
-    assert restarts == ["--user --no-ask-password restart hermes-serve.service"]
+    assert restarts == ["--user --no-ask-password restart lina-serve.service"]
 
 
 @pytest.mark.platforms("not linux")
@@ -963,11 +963,11 @@ def test_restarted_dashboard_unit_is_not_killed_by_the_continued_scan(monkeypatc
     killed: list[int] = []
     _stub_dashboard_helpers(
         monkeypatch,
-        _DASHBOARD_SYSTEMD_UNIT="hermes-dashboard.service",
+        _DASHBOARD_SYSTEMD_UNIT="lina-dashboard.service",
         _restart_managed_dashboard_service=lambda reason, *a, **k: True,
         _find_stale_dashboard_pids=lambda **kwargs: [4242],
         _get_pid_cgroup_path=lambda pid: None,
-        _get_systemd_service_for_pid=lambda pid: "hermes-dashboard.service",
+        _get_systemd_service_for_pid=lambda pid: "lina-dashboard.service",
         _dashboard_cmdline_for_pid=lambda pid: None,
     )
     monkeypatch.setattr(dashboard_procs, "_lock_owned_serve_pids", lambda: set())
@@ -991,11 +991,11 @@ def test_serve_backend_survives_selection_when_the_dashboard_unit_restarts(monke
     restarted: list[str] = []
     _stub_dashboard_helpers(
         monkeypatch,
-        _DASHBOARD_SYSTEMD_UNIT="hermes-dashboard.service",
+        _DASHBOARD_SYSTEMD_UNIT="lina-dashboard.service",
         _restart_managed_dashboard_service=lambda reason, *a, **k: True,
         _find_stale_dashboard_pids=lambda **kwargs: [7001],
-        _get_pid_cgroup_path=lambda pid: "/user.slice/hermes-serve.service",
-        _get_systemd_service_for_pid=lambda pid: "hermes-serve.service",
+        _get_pid_cgroup_path=lambda pid: "/user.slice/lina-serve.service",
+        _get_systemd_service_for_pid=lambda pid: "lina-serve.service",
         _dashboard_cmdline_for_pid=lambda pid: None,
         _try_restart_systemd_service=lambda svc, cg: restarted.append(svc) or True,
         _respawn_dashboard_processes=lambda cmds: [],
@@ -1012,7 +1012,7 @@ def test_serve_backend_survives_selection_when_the_dashboard_unit_restarts(monke
     result = dashboard_procs._kill_stale_dashboard_processes(restart_managed=True)
 
     assert signalled == [7001]
-    assert restarted == ["hermes-serve.service"]
+    assert restarted == ["lina-serve.service"]
     assert result["killed"] == [7001]
 
 
@@ -1022,7 +1022,7 @@ def test_serve_backend_survives_selection_when_the_dashboard_unit_restarts(monke
 
 
 def _dual_scope_systemctl(*, user_pid=10, system_pid=20, settle=("user", "system")):
-    """Both managers own a ``hermes-serve.service``; each is its own process."""
+    """Both managers own a ``lina-serve.service``; each is its own process."""
     state = {"user": user_pid, "system": system_pid}
     calls: list[tuple[str, list]] = []
 
@@ -1030,7 +1030,7 @@ def _dual_scope_systemctl(*, user_pid=10, system_pid=20, settle=("user", "system
         scope = "user" if "--user" in argv else "system"
         calls.append((scope, list(argv)))
         if "list-units" in argv:
-            return _Completed(0, stdout="hermes-serve.service loaded active running x")
+            return _Completed(0, stdout="lina-serve.service loaded active running x")
         if "is-active" in argv:
             return _Completed(0, stdout="active")
         if "show" in argv:
@@ -1049,20 +1049,20 @@ def test_settled_user_scope_does_not_suppress_the_stale_system_scope(
 ):
     """The dual-scope skip collision (review on #96235).
 
-    ``user/hermes-serve`` was restarted before the phase aborted;
-    ``system/hermes-serve`` is a different process still on the pre-update
-    generation. A bare ``hermes-serve`` skip token suppressed BOTH, leaving
+    ``user/lina-serve`` was restarted before the phase aborted;
+    ``system/lina-serve`` is a different process still on the pre-update
+    generation. A bare ``lina-serve`` skip token suppressed BOTH, leaving
     the stale one running with nothing reporting it.
     """
     run, calls = _dual_scope_systemctl()
     out = recovery.restart_serve_units(
-        skip_units=[{"scope": "user", "unit": "hermes-serve"}],
+        skip_units=[{"scope": "user", "unit": "lina-serve"}],
         run=run,
         sleep=lambda _: None,
     )
     restarted_scopes = [scope for scope, argv in calls if "restart" in argv]
     assert restarted_scopes == ["system"]
-    assert out == {"verified": ["system/hermes-serve"], "failed": []}
+    assert out == {"verified": ["system/lina-serve"], "failed": []}
 
 
 def test_settled_system_scope_does_not_suppress_the_stale_user_scope(
@@ -1072,13 +1072,13 @@ def test_settled_system_scope_does_not_suppress_the_stale_user_scope(
     either direction."""
     run, calls = _dual_scope_systemctl()
     out = recovery.restart_serve_units(
-        skip_units=["system/hermes-serve"],
+        skip_units=["system/lina-serve"],
         run=run,
         sleep=lambda _: None,
     )
     restarted_scopes = [scope for scope, argv in calls if "restart" in argv]
     assert restarted_scopes == ["user"]
-    assert out == {"verified": ["user/hermes-serve"], "failed": []}
+    assert out == {"verified": ["user/lina-serve"], "failed": []}
 
 
 
@@ -1095,7 +1095,7 @@ def test_legacy_unqualified_skip_is_honoured_in_both_scopes(linux_systemctl):
     """
     run, calls = _dual_scope_systemctl()
     out = recovery.restart_serve_units(
-        skip_units=["hermes-serve"], run=run, sleep=lambda _: None
+        skip_units=["lina-serve"], run=run, sleep=lambda _: None
     )
     assert [argv for scope, argv in calls if "restart" in argv] == []
     assert out == {"verified": [], "failed": []}
@@ -1104,17 +1104,17 @@ def test_legacy_unqualified_skip_is_honoured_in_both_scopes(linux_systemctl):
 def test_qualified_skip_payload_shape():
     """``restarted_scoped_units`` reaches the child as scope + unit."""
     assert update_cmd._qualified_serve_skips(
-        {"user/hermes-serve", "system/hermes-serve-work"}
+        {"user/lina-serve", "system/lina-serve-work"}
     ) == [
-        {"scope": "system", "unit": "hermes-serve-work"},
-        {"scope": "user", "unit": "hermes-serve"},
+        {"scope": "system", "unit": "lina-serve-work"},
+        {"scope": "user", "unit": "lina-serve"},
     ]
 
 
 def test_unscoped_bookkeeping_entries_are_forwarded_without_a_scope():
     """A name with no scope must not be given one it was never proven for."""
-    assert update_cmd._qualified_serve_skips({"hermes-serve"}) == [
-        {"unit": "hermes-serve"}
+    assert update_cmd._qualified_serve_skips({"lina-serve"}) == [
+        {"unit": "lina-serve"}
     ]
 
 
@@ -1129,8 +1129,8 @@ def test_scope_qualified_failure_blocks_completion():
                 "relaunch_attempted": [],
                 "failed": [],
                 "serve_units": {
-                    "verified": ["user/hermes-serve"],
-                    "failed": ["system/hermes-serve"],
+                    "verified": ["user/lina-serve"],
+                    "failed": ["system/lina-serve"],
                 },
             },
             stale_runtime_rows=[],

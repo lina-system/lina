@@ -83,4 +83,5 @@ def _obj_dict(obj: Any, fields: tuple[str, ...]) -> dict[str, Any]:
 def _task_to_dict(t: kb.Task) -> dict[str, Any]:
     d = _obj_dict(t, _TASK_DICT_FIELDS)
     d["skills"] = list(t.skills) if t.skills else []
+    d["goal_gates"] = json.loads(t.goal_gates) if t.goal_gates else []
     return d
