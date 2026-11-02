@@ -17,6 +17,7 @@ another OCX on this account, so ``own_proxy_running`` is asked before any client
 
 from __future__ import annotations
 
+import contextlib
 import hashlib
 import json
 import os
@@ -270,13 +271,26 @@ def install_step(out=print) -> int:
 
 
 def configured_port(root: Path | None = None) -> int:
-    """``ocx.port`` from the LINA root's ``config.yaml``: one OCX serves every profile."""
-    from hermes_cli.config_backend import config_exists, read_config_doc_readonly
-    path = (root or lina_root()) / "config.yaml"
-    config = read_config_doc_readonly(path) if config_exists(path) else None
-    section = config.get("ocx") if isinstance(config, dict) else None
-    port = section.get("port") if isinstance(section, dict) else None
-    return int(port) if port else DEFAULT_PORT
+    """``ocx.port`` of the LINA root through the config loader (``DEFAULT_CONFIG`` registers 10100): one OCX serves
+    every profile, so the root is bound explicitly whatever profile this process runs as."""
+    from hermes_cli.config import load_config_readonly
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    token = set_hermes_home_override(root or lina_root())
+    try:
+        return int(load_config_readonly()["ocx"]["port"])
+    finally:
+        reset_hermes_home_override(token)
+
+
+@contextlib.contextmanager
+def recovering(recover: Callable[[], object]):
+    """For the steps after a serving proxy was stopped: when the block raises, *recover* brings a proxy back before
+    the exception goes on, so no failure leaves nothing serving."""
+    try:
+        yield
+    except BaseException:
+        recover()
+        raise
 
 
 def write_start_port(data: Path, port: int) -> None:
