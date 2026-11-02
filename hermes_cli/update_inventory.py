@@ -14,7 +14,8 @@ from contextlib import contextmanager, suppress
 from dataclasses import dataclass, field, asdict, fields as dataclass_fields
 from typing import Any, Callable, Optional
 
-from hermes_constants import GATEWAY_LAUNCHD_LABEL_BASE, GATEWAY_SERVICE_BASE
+from hermes_constants import (
+    DASHBOARD_SERVICE_BASE, GATEWAY_LAUNCHD_LABEL_BASE, GATEWAY_SERVICE_BASE, SERVE_SERVICE_BASE)
 
 logger = logging.getLogger(__name__)
 
@@ -376,16 +377,16 @@ def print_update_plan(plan: UpdatePlan) -> None:
 
 
 def _serve_unit_matches_profile(profile: str, unit: object) -> bool:
-    """Does *unit* name a ``hermes-serve*``/``hermes-dashboard*`` unit for *profile*? (OWN vocabulary;
+    """Does *unit* name a ``lina-serve*``/``lina-dashboard*`` unit for *profile*? (OWN vocabulary;
     the gateway's ``hermes-gateway*`` names never cover serve/dashboard runtimes.)
 
-    Exact names only — ``work`` must not claim ``hermes-serve-workbench`` — and a scope prefix
-    (``user/hermes-serve``) is tolerated because the restart phase records scope-qualified identities in
+    Exact names only — ``work`` must not claim ``lina-serve-workbench`` — and a scope prefix
+    (``user/lina-serve``) is tolerated because the restart phase records scope-qualified identities in
     some lists. See #100479.
     """
     name = str(unit).removesuffix(".service").rsplit("/", 1)[-1]
     suffix = "" if profile == "default" else f"-{profile}"
-    return name in {f"hermes-serve{suffix}", f"hermes-dashboard{suffix}"}
+    return name in {f"{SERVE_SERVICE_BASE}{suffix}", f"{DASHBOARD_SERVICE_BASE}{suffix}"}
 
 
 def _gateway_service_matches_profile(profile: str, service: object) -> bool:
@@ -617,7 +618,7 @@ def report_unaccounted_runtimes(outcomes: list[dict[str, Any]]) -> bool:
                     print(f"      {command}   # pid {o['pid']}")
         if any(o.get("kind") in _SERVE_KINDS and not o.get("systemd_unit") for o in missed):
             if sys.platform == "linux":
-                print("      systemctl --user restart hermes-serve.service   # unit-managed serve")
+                print("      systemctl --user restart lina-serve.service   # unit-managed serve")
             print("      relaunch `hermes serve` / `hermes dashboard`")
     return True
 

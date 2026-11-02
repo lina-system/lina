@@ -89,15 +89,15 @@ class TestFleetRestartTimeoutIsolation:
 
     def test_hermes_serve_units_are_included(self):
         # #83438 — hermes update restarted lina-gateway* units but left
-        # hermes-serve* (the Desktop app's backend) on stale pre-update code.
+        # lina-serve* (the Desktop app's backend) on stale pre-update code.
         seen: list[str] = []
 
         _for_each_systemd_gateway_unit(
             "\n".join(
                 [
                     "ssh.service loaded active running",
-                    "hermes-serve.service loaded active running",
-                    "hermes-serve-work.service loaded active running",
+                    "lina-serve.service loaded active running",
+                    "lina-serve-work.service loaded active running",
                     "lina-gateway.service loaded active running",
                     "",
                 ]
@@ -106,13 +106,13 @@ class TestFleetRestartTimeoutIsolation:
             on_unit_timeout=lambda *_: pytest.fail("unexpected timeout"),
         )
 
-        assert seen == ["hermes-serve", "hermes-serve-work", "lina-gateway"]
+        assert seen == ["lina-serve", "lina-serve-work", "lina-gateway"]
 
     def test_hermes_dashboard_units_are_included(self):
         # #125297 — the same blind spot for the systemd-supervised dashboard: the
-        # unit pass skipped hermes-dashboard*, so a successful update left the
+        # unit pass skipped lina-dashboard*, so a successful update left the
         # dashboard on pre-update code with outcome "deferred" and nothing
-        # restarted it. Reconciliation already credits hermes-dashboard{,-<profile>}
+        # restarted it. Reconciliation already credits lina-dashboard{,-<profile>}
         # unit restarts; the pass must produce one.
         seen: list[str] = []
 
@@ -120,9 +120,9 @@ class TestFleetRestartTimeoutIsolation:
             "\n".join(
                 [
                     "ssh.service loaded active running",
-                    "hermes-dashboard.service loaded active running",
-                    "hermes-dashboard-work.service loaded active running",
-                    "hermes-serve.service loaded active running",
+                    "lina-dashboard.service loaded active running",
+                    "lina-dashboard-work.service loaded active running",
+                    "lina-serve.service loaded active running",
                     "",
                 ]
             ),
@@ -130,30 +130,30 @@ class TestFleetRestartTimeoutIsolation:
             on_unit_timeout=lambda *_: pytest.fail("unexpected timeout"),
         )
 
-        assert seen == ["hermes-dashboard", "hermes-dashboard-work", "hermes-serve"]
+        assert seen == ["lina-dashboard", "lina-dashboard-work", "lina-serve"]
 
     def test_hermes_dashboard_near_prefix_is_rejected(self):
         # Same strict shape on the dashboard side: a bare
-        # ``startswith("hermes-dashboard")`` gate would also accept the
-        # unrelated ``hermes-dashboardd.service``.
+        # ``startswith("lina-dashboard")`` gate would also accept the
+        # unrelated ``lina-dashboardd.service``.
         seen: list[str] = []
 
         _for_each_systemd_gateway_unit(
-            _list_units_stdout(["hermes-dashboardd", "hermes-dashboard-work"]),
+            _list_units_stdout(["lina-dashboardd", "lina-dashboard-work"]),
             process_unit=seen.append,
             on_unit_timeout=lambda *_: pytest.fail("unexpected timeout"),
         )
 
-        assert seen == ["hermes-dashboard-work"]
+        assert seen == ["lina-dashboard-work"]
 
     def test_hermes_server_near_prefix_is_rejected(self):
-        # Review on #83595: a bare ``startswith("hermes-serve")`` gate also
-        # accepts the unrelated ``hermes-server.service``. Only the exact
+        # Review on #83595: a bare ``startswith("lina-serve")`` gate also
+        # accepts the unrelated ``lina-server.service``. Only the exact
         # base unit or the hyphenated profile family should pass.
         seen: list[str] = []
 
         _for_each_systemd_gateway_unit(
-            _list_units_stdout(["hermes-server"]),
+            _list_units_stdout(["lina-server"]),
             process_unit=seen.append,
             on_unit_timeout=lambda *_: pytest.fail("unexpected timeout"),
         )
@@ -183,12 +183,12 @@ class TestGracefulSigusr1Eligibility:
         )
 
     def test_serve_units_are_not_eligible(self):
-        # hermes-serve doesn't run gateway/run.py, so it never installs the
+        # lina-serve doesn't run gateway/run.py, so it never installs the
         # SIGUSR1 handler — sending it the signal would just terminate the
         # process (the default action) instead of draining gracefully.
-        assert not _service_unit_supports_graceful_sigusr1_restart("hermes-serve")
+        assert not _service_unit_supports_graceful_sigusr1_restart("lina-serve")
         assert not _service_unit_supports_graceful_sigusr1_restart(
-            "hermes-serve-work"
+            "lina-serve-work"
         )
 
     def test_process_errors_other_than_timeout_still_propagate(self):

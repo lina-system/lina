@@ -15,6 +15,16 @@ GATEWAY_LIFECYCLE_LAUNCHCTL = (
     "launchctl bootout gui/501/ai.hermes.gateway",
     "launchctl remove ai.hermes.gateway",
     "launchctl disable gui/501/ai.hermes.gateway",
+    # LINA's own gateway label (#93); Hermes Agent's above may run on the same account.
+    "launchctl kickstart -k gui/501/ai.lina.gateway",
+    "launchctl bootout gui/501/ai.lina.gateway-work",
+)
+
+# LINA's spellings of the same lifecycle operations (#94).
+LINA_GATEWAY_LIFECYCLE = (
+    "launchctl kickstart -k gui/501/ai.lina.gateway",
+    "lina gateway restart",
+    "lina gateway stop",
 )
 
 
@@ -38,6 +48,17 @@ class TestLifecycleGuardLaunchctlParity:
         from cron.lifecycle_guard import contains_gateway_lifecycle_command
 
         for cmd in GATEWAY_LIFECYCLE_LAUNCHCTL:
+            assert contains_gateway_lifecycle_command(cmd) is True, cmd
+
+    def test_lina_gateway_lifecycle_needs_approval_and_is_hard_blocked(self):
+        from cron.lifecycle_guard import contains_gateway_lifecycle_command
+
+        for cmd in LINA_GATEWAY_LIFECYCLE:
+            dangerous, _, _ = detect_dangerous_command(cmd)
+            assert dangerous, cmd
+            assert contains_gateway_lifecycle_command(cmd) is True, cmd
+        for cmd in ('pkill -f "lina gateway"', 'kill $(pgrep -f "lina gateway run")',
+                    "taskkill /F /FI \"WINDOWTITLE eq lina gateway\""):
             assert contains_gateway_lifecycle_command(cmd) is True, cmd
 
     def test_bypassable_layer_is_never_stricter(self):
