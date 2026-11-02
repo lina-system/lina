@@ -134,7 +134,6 @@ After difficult/iterative tasks, offer to save as a skill. If a skill you loaded
   - xurl: X/Twitter via xurl CLI: raw post search, posting, DM, media.
   software-development:
     - codebase-inspection: Inspect codebases w/ pygount: LOC, languages, ratios.
-    - delivery: Take an issue to a merged pull request under the checks.
     - dogfood: Exploratory QA of web apps: find bugs, evidence, reports.
     - github: GitHub via gh CLI: PRs, issues, reviews, repos, auth.
     - requesting-code-review: Pre-commit review: security scan, quality gates, auto-fix.

@@ -70,7 +70,7 @@ pulling to refresh the hook). `# noqa` does not waive a ratchet finding:
 
 ## Project Structure
 
-Load-bearing entry points (the filesystem is canonical):
+Load-bearing entry points (filesystem is canonical):
 
 ```
 hermes-agent/
@@ -167,7 +167,7 @@ Every former god file is a **facade** (public entry points + the names other pac
 
 ## Code Review Rules
 
-Procedure: `docs/delivery.md`, skill `delivery`. P1 unless noted:
+`docs/delivery.md`, `.agents/skills/delivery/SKILL.md`. P1 unless noted:
 - The diff misses an item of the PR's `## Done when`.
-- Behaviour changed outside the issue's scope (formatting or renames there: P2).
+- Behaviour changed outside the issue's scope (formatting, renames there: P2).
 - A test disabled, skipped, weakened.
