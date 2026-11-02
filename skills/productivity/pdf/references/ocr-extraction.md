@@ -15,7 +15,7 @@ This skill covers **text extraction from PDFs and scanned documents**.
 If the document has a URL, **always try `web_extract` first**:
 
 ```
-web_extract(urls=["https://arxiv.org/pdf/2402.03300"])
+web_extract(urls=["https://example.org/papers/2402.03300.pdf"])
 web_extract(urls=["https://example.com/report.pdf"])
 ```
 
@@ -53,8 +53,7 @@ If the user needs marker capabilities but the system lacks ~5GB free disk:
 
 Give it a separate side environment (~110 MB with its deps; never
 `pip install` into Hermes's own interpreter): Hermes builds it when `hermes`
-is on PATH, otherwise (a Docker sandbox without Hermes) a venv in the sandbox
-home takes the same requirements. Then run the helper and the inline snippet
+is on PATH; otherwise a venv under the user home takes the same requirements. Then run the helper and the inline snippet
 below with `"$PY"` instead of `python`:
 
 ```bash
@@ -148,17 +147,17 @@ export PY
 
 ---
 
-## Arxiv Papers
+## Research papers
 
 ```
 # Abstract only (fast)
-web_extract(urls=["https://arxiv.org/abs/2402.03300"])
+web_extract(urls=["https://example.org/papers/2402.03300"])
 
 # Full paper
-web_extract(urls=["https://arxiv.org/pdf/2402.03300"])
+web_extract(urls=["https://example.org/papers/2402.03300.pdf"])
 
 # Search
-web_search(query="arxiv GRPO reinforcement learning 2026")
+web_search(query="GRPO reinforcement learning 2026")
 ```
 
 ## Split, Merge & Search

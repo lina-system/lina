@@ -33,7 +33,8 @@ class _Model(BaseHTTPRequestHandler):
 
     def do_POST(self):
         body = json.loads(self.rfile.read(int(self.headers['Content-Length'])))
-        self.server.requests.append(body)
+        # OCX routes on the model id and keeps a conversation on its upstream by the session-id header.
+        self.server.requests.append({**body, '_session_id': self.headers.get('session-id')})
         messages = body.get('messages', [])
         if _is_review(body) and messages[-1].get('role') != 'tool':
             # A user-asked review may delete memory (an unattended one only stages the removal).
@@ -66,22 +67,10 @@ class _Model(BaseHTTPRequestHandler):
 
 def _gateway(root, url, **overrides):
     gw = GatewayProc(root=root, base_url=url, tag=f'refine-cold-{root.name}')
-    home = gw.hermes_home
-    plugin = home / 'plugins' / 'model-providers' / 'review-test'
-    plugin.mkdir(parents=True, exist_ok=True)
-    (plugin / '__init__.py').write_text(
-        'from providers import register_provider\n'
-        'from providers.base import ProviderProfile\n'
-        'class ReviewProfile(ProviderProfile):\n'
-        '    def build_extra_body(self, **context):\n'
-        '        return {"provider": context["provider_preferences"]}\n'
-        'register_provider(ReviewProfile(name="review-test", env_vars=("REVIEW_TEST_API_KEY",)))\n'
-    )
     config = {
         '_config_version': 52,
-        'model': {'provider': 'review-test', 'default': 'openai/gpt-5', 'base_url': url,
+        'model': {'provider': 'ocx', 'default': 'openai/gpt-5', 'base_url': url,
                   'api_key': 'loopback-only', 'api_mode': 'chat_completions'},
-        'provider_routing': {'only': ['probe-route'], 'data_collection': 'deny'},
         'prefill_messages_file': 'prefill.json',
         'agent': {'api_max_retries': 0},
         'auxiliary': {'title_generation': {'enabled': False}},
@@ -97,7 +86,7 @@ def _gateway(root, url, **overrides):
     (gw.hermes_home / 'config.yaml').write_text(json.dumps(config))
     (gw.hermes_home / 'prefill.json').write_text(json.dumps([
         {'role': 'user', 'content': 'PREFILL_EXAMPLE'}, {'role': 'assistant', 'content': 'Noted.'}]))
-    (gw.hermes_home / '.env').write_text('REVIEW_TEST_API_KEY=loopback-only\n')
+    (gw.hermes_home / '.env').write_text('OCX_API_KEY=loopback-only\n')
     memories = gw.hermes_home / 'memories'
     if not memories.exists():
         memories.mkdir()
@@ -122,7 +111,7 @@ def test_messaging_refine_reviews_the_stored_conversation_once_the_cached_agent_
         review = next((r for r in peer.requests[before:] if _is_review(r)), None)
         assert summary is not None and review is not None, (focus, gw.sends_since(mark), gw.log_tail())
         text = json.dumps(review['messages'])
-        return {'chat': summary.data['chat'], 'model': review.get('model'), 'provider': review.get('provider'),
+        return {'chat': summary.data['chat'], 'model': review.get('model'), 'route': review.get('_session_id'),
                 'session_id': review.get('session_id'), 'prefill': 'PREFILL_EXAMPLE' in text,
                 'saw_conversation': 'OPENED_PR_42' in text,
                 'tools': sorted(t['function']['name'] for t in review.get('tools') or [])}
@@ -154,7 +143,7 @@ def test_messaging_refine_reviews_the_stored_conversation_once_the_cached_agent_
     # Each /refine applied its removal as the user's own request (both surfaces pass explicit=True).
     memory = out['memory_file'].read_text()
     assert 'WARM_FACT' not in memory and 'COLD_FACT' not in memory and 'KEEP_FACT' in memory, memory
-    assert out['warm']['provider'] == {'only': ['probe-route'], 'data_collection': 'deny'}, out
+    assert out['warm']['model'] == 'openai/gpt-5' and out['warm']['route'], out
     assert out['cold'] == out['warm'], ('a cold /refine must send what a resident one sends', out)
 
 

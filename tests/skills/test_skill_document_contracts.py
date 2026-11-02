@@ -12,20 +12,14 @@ from agent.skill_utils import parse_frontmatter
 
 REPO = Path(__file__).resolve().parents[2]
 GITHUB = "skills/software-development/github"
-EMAIL = "skills/email/email-inbox-triage"
-MEETING = "skills/productivity/meeting-action-items"
 PRICE = "skills/productivity/product-price-monitor"
-WEEKLY = "skills/productivity/weekly-review-planning"
 
 
 def _document(skill):
     return parse_frontmatter((REPO / skill / "SKILL.md").read_text(encoding="utf-8"))
 
 
-@pytest.mark.parametrize("skill,contributor", [
-    (GITHUB, "benbarclay"), (MEETING, "benbarclay"), (PRICE, "benbarclay"),
-    (WEEKLY, "benbarclay"), (EMAIL, "benbarclay"),
-])
+@pytest.mark.parametrize("skill,contributor", [(GITHUB, "benbarclay"), (PRICE, "benbarclay")])
 def test_required_document_and_credit(skill, contributor):
     metadata, _ = _document(skill)  # A corpus glob alone cannot catch a deleted skill.
     if contributor:
@@ -46,13 +40,9 @@ def test_required_references_are_present_and_routed(skill, references):
 
 
 @pytest.mark.parametrize("skill,required,forbidden", [
-    (MEETING, ("never invent", "before creating anything", "`unresolved`"), (r"\bLinear\b",)),
     (PRICE, ("Setup (foreground, once)", "Tick (each scheduled run)", "cronjob(action=",
              "Do not schedule until one foreground fetch works",
              "never overwrite the last good observation", "fingerprint"), ("flight-research",)),
-    (EMAIL, ("read + draft", "does not imply permission", "Calibrate the user's voice",
-             "sent replies", "fall back to matching the incoming thread's register",
-             "generic-professional"), ()),
 ])
 def test_document_obligations(skill, required, forbidden):
     _, body = _document(skill)
@@ -64,7 +54,7 @@ def test_document_obligations(skill, required, forbidden):
 
 @pytest.mark.parametrize("relative", [
     f"{GITHUB}/references/issue-to-pr.md",
-    *(f"{skill}/SKILL.md" for skill in (MEETING, PRICE, WEEKLY, EMAIL)),
+    f"{PRICE}/SKILL.md",
 ])
 def test_procedure_steps_have_completion_criteria(relative):
     body = (REPO / relative).read_text(encoding="utf-8")

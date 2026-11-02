@@ -761,22 +761,22 @@ def test_built_in_restore_survives_leftovers_and_records_every_outcome_as_bundle
     rows = []
     monkeypatch.setattr("hermes_cli.observability.shared_metrics_events.record_extension_install",
                         lambda **row: rows.append((row["source"], row["outcome"])))
-    src = dict(skills_sync._discover_bundled_skills(skills_sync._get_bundled_dir()))["obsidian"]
-    dest = skill_usage._skills_dir() / src.parent.name / "obsidian"
+    src = dict(skills_sync._discover_bundled_skills(skills_sync._get_bundled_dir()))["llm-wiki"]
+    dest = skill_usage._skills_dir() / src.parent.name / "llm-wiki"
     console, _sink = _sink_console()
 
     (dest / "wiki").mkdir(parents=True)  # stranded: user data kept, SKILL.md gone
     (dest / "wiki" / "index.md").write_text("mine\n")
-    assert cli_hub.do_install("obsidian", console=console, skip_confirm=True) is True
+    assert cli_hub.do_install("llm-wiki", console=console, skip_confirm=True) is True
     assert (dest / "SKILL.md").is_file() and (dest / "wiki" / "index.md").read_text() == "mine\n"
 
     real = tmp_path / "real-category"
     dest.parent.rename(real)
     dest.parent.symlink_to(real, target_is_directory=True)
-    assert cli_hub.do_install("obsidian", console=console, skip_confirm=True) is None  # present, no-op
+    assert cli_hub.do_install("llm-wiki", console=console, skip_confirm=True) is None  # present, no-op
 
-    (real / "obsidian" / "SKILL.md").unlink()  # missing behind the symlink: refused, and still bundled
-    assert cli_hub.do_install("obsidian", console=console, skip_confirm=True) is False
+    (real / "llm-wiki" / "SKILL.md").unlink()  # missing behind the symlink: refused, and still bundled
+    assert cli_hub.do_install("llm-wiki", console=console, skip_confirm=True) is False
     assert rows == [("bundled", "success"), ("bundled", "failed")]
 
 
@@ -787,21 +787,21 @@ def test_built_in_restore_into_a_leftover_dir_never_writes_through_links_or_over
     from tools import skill_usage, skills_sync
     from tools.skills_sync_bundled_ops import ensure_bundled_skill
 
-    src = dict(skills_sync._discover_bundled_skills(skills_sync._get_bundled_dir()))["arxiv"]
-    dest = skill_usage._skills_dir() / src.parent.name / "arxiv"
+    src = dict(skills_sync._discover_bundled_skills(skills_sync._get_bundled_dir()))["youtube-content"]
+    dest = skill_usage._skills_dir() / src.parent.name / "youtube-content"
     victim = tmp_path / "victim.txt"
     victim.write_text("USER SECRET\n")
     (dest / "scripts").mkdir(parents=True)
-    (dest / "scripts" / "search_arxiv.py").symlink_to(victim)
-    assert ensure_bundled_skill("arxiv")["action"] == "not_restored"
+    (dest / "scripts" / "fetch_transcript.py").symlink_to(victim)
+    assert ensure_bundled_skill("youtube-content")["action"] == "not_restored"
     assert victim.read_text() == "USER SECRET\n" and not (dest / "SKILL.md").exists()
 
-    (dest / "scripts" / "search_arxiv.py").unlink()
-    (dest / "scripts" / "search_arxiv.py").write_text("# my local edits\n")
-    assert ensure_bundled_skill("arxiv")["action"] == "restored"
-    assert (dest / "scripts" / "search_arxiv.py").read_text() == "# my local edits\n"
+    (dest / "scripts" / "fetch_transcript.py").unlink()
+    (dest / "scripts" / "fetch_transcript.py").write_text("# my local edits\n")
+    assert ensure_bundled_skill("youtube-content")["action"] == "restored"
+    assert (dest / "scripts" / "fetch_transcript.py").read_text() == "# my local edits\n"
     assert (dest / "SKILL.md").read_bytes() == (src / "SKILL.md").read_bytes()
 
     (dest / "SKILL.md").write_text("---\nname: my-own-thing\ndescription: x\n---\nmine\n")
-    assert ensure_bundled_skill("arxiv")["action"] == "not_restored"
+    assert ensure_bundled_skill("youtube-content")["action"] == "not_restored"
     assert "my-own-thing" in (dest / "SKILL.md").read_text()
