@@ -45,7 +45,7 @@ def test_config_import_and_provider_env_catalog_never_read_config(tmp_path):
         def importer():
             import hermes_cli.config
             outcomes.append("import-returned")
-            assert "ANTHROPIC_API_KEY" in hermes_cli.config.OPTIONAL_ENV_VARS
+            assert "OCX_API_KEY" in hermes_cli.config.OPTIONAL_ENV_VARS
             outcomes.append("fill-returned")
 
         def opener():

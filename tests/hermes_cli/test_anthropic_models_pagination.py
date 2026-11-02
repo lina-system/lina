@@ -69,17 +69,6 @@ def paged_server():
         srv.shutdown()
 
 
-def _load_plugin_profile():
-    root = Path(__file__).resolve().parents[2]
-    spec = importlib.util.spec_from_file_location(
-        "anthropic_provider_under_test",
-        root / "plugins" / "model-providers" / "anthropic" / "__init__.py",
-    )
-    mod = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(mod)
-    return mod.anthropic
-
-
 class TestFetchAnthropicModelsPagination:
     def test_follows_cursor_across_all_pages(self, paged_server):
         base, _handler = paged_server
@@ -101,16 +90,3 @@ class TestFetchAnthropicModelsPagination:
         # Must not hang or loop forever; returns the de-duped pages it saw.
         assert got is not None
         assert 0 < len(got) <= len(MODELS)
-
-
-class TestPluginFetchModelsPagination:
-    def test_follows_cursor_across_all_pages(self, paged_server):
-        base, _handler = paged_server
-        profile = _load_plugin_profile()
-        got = profile.fetch_models(api_key="sk-ant-api-test", base_url=base)
-        assert got is not None
-        assert len(got) == len(MODELS)
-
-    def test_no_api_key_returns_none(self):
-        profile = _load_plugin_profile()
-        assert profile.fetch_models(api_key=None) is None

@@ -1,0 +1,284 @@
+import logging
+import os
+
+import pytest
+
+from src.config import (
+    AppSettings,
+    ConfiguredModelSettings,
+    DeriverSettings,
+    LLMSettings,
+)
+
+
+def _make_deriver_settings(
+    *,
+    MAX_INPUT_TOKENS: int = 25000,
+    MAX_CUSTOM_INSTRUCTIONS_TOKENS: int = 2000,
+    REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS: int = 512,
+    REPRESENTATION_BATCH_TARGET_INPUT_TOKENS: int = 1024,
+    REPRESENTATION_BATCH_MAX_AGE_SECONDS: int = 1800,
+) -> DeriverSettings:
+    return DeriverSettings(
+        MODEL_CONFIG=ConfiguredModelSettings(
+            model="gpt-5.4-mini",
+            transport="openai",
+        ),
+        MAX_INPUT_TOKENS=MAX_INPUT_TOKENS,
+        MAX_CUSTOM_INSTRUCTIONS_TOKENS=MAX_CUSTOM_INSTRUCTIONS_TOKENS,
+        REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS,
+        REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=REPRESENTATION_BATCH_TARGET_INPUT_TOKENS,
+        REPRESENTATION_BATCH_MAX_AGE_SECONDS=REPRESENTATION_BATCH_MAX_AGE_SECONDS,
+    )
+
+
+def test_deriver_defaults_enable_custom_instructions_at_supported_cap() -> None:
+    settings = _make_deriver_settings()
+
+    assert settings.MAX_INPUT_TOKENS == 25000
+    assert settings.MAX_CUSTOM_INSTRUCTIONS_TOKENS == 2000
+    assert settings.REPRESENTATION_BATCH_MAX_AGE_SECONDS == 1800
+
+
+def test_custom_instructions_tokens_can_be_disabled_with_zero() -> None:
+    settings = _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=0)
+
+    assert settings.MAX_CUSTOM_INSTRUCTIONS_TOKENS == 0
+
+
+def test_custom_instructions_tokens_cannot_exceed_supported_cap() -> None:
+    with pytest.raises(ValueError, match="less than or equal to 2000"):
+        _make_deriver_settings(MAX_CUSTOM_INSTRUCTIONS_TOKENS=2001)
+
+
+def test_representation_batch_age_can_be_disabled_with_zero() -> None:
+    settings = _make_deriver_settings(REPRESENTATION_BATCH_MAX_AGE_SECONDS=0)
+
+    assert settings.REPRESENTATION_BATCH_MAX_AGE_SECONDS == 0
+
+
+def test_representation_batch_age_rejects_negative_values() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        _make_deriver_settings(REPRESENTATION_BATCH_MAX_AGE_SECONDS=-1)
+
+
+def test_representation_batch_work_unit_target_can_be_disabled_with_zero() -> None:
+    settings = _make_deriver_settings(REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=0)
+
+    assert settings.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS == 0
+
+
+def test_representation_batch_work_unit_target_rejects_negative_values() -> None:
+    with pytest.raises(ValueError, match="greater than or equal to 0"):
+        _make_deriver_settings(REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=-1)
+
+
+def test_representation_batch_tokens_can_diverge() -> None:
+    settings = _make_deriver_settings(
+        REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS=4096,
+        REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=1024,
+    )
+
+    assert settings.REPRESENTATION_BATCH_WORK_UNIT_TARGET_TOKENS == 4096
+    assert settings.REPRESENTATION_BATCH_TARGET_INPUT_TOKENS == 1024
+
+
+def test_representation_batch_target_input_cannot_exceed_max_input_tokens() -> None:
+    with pytest.raises(ValueError, match="cannot exceed max deriver input tokens"):
+        _make_deriver_settings(
+            MAX_INPUT_TOKENS=1000,
+            REPRESENTATION_BATCH_TARGET_INPUT_TOKENS=2048,
+        )
+
+
+def _configured_with_timeout(timeout: object) -> ConfiguredModelSettings:
+    return ConfiguredModelSettings.model_validate(
+        {
+            "model": "gpt-5.4-mini",
+            "transport": "openai",
+            "overrides": {"provider_params": {"timeout": timeout}},
+        }
+    )
+
+
+@pytest.mark.parametrize("timeout", [30, 42.5, "42.5", " 60 "])
+def test_provider_timeout_is_normalized_at_config_load(timeout: object) -> None:
+    settings = _configured_with_timeout(timeout)
+
+    normalized = settings.overrides.provider_params["timeout"]
+    assert isinstance(normalized, float)
+    assert normalized == float(str(timeout).strip())
+
+
+@pytest.mark.parametrize(
+    "timeout",
+    ["slow", "", 0, -1, True, float("nan"), float("inf"), "nan", "inf", None, [30]],
+)
+def test_provider_timeout_is_rejected_at_config_load(timeout: object) -> None:
+    with pytest.raises(
+        ValueError, match=r"provider_params\.timeout must be a positive number"
+    ):
+        _configured_with_timeout(timeout)
+
+
+def test_provider_timeout_on_fallback_overrides_is_validated_at_config_load() -> None:
+    with pytest.raises(
+        ValueError, match=r"provider_params\.timeout must be a positive number"
+    ):
+        ConfiguredModelSettings.model_validate(
+            {
+                "model": "gpt-5.4-mini",
+                "transport": "openai",
+                "fallback": {
+                    "model": "gpt-4.1",
+                    "transport": "openai",
+                    "overrides": {"provider_params": {"timeout": "slow"}},
+                },
+            }
+        )
+
+
+def test_unused_provider_keys_warn_without_exposing_values(
+    caplog: pytest.LogCaptureFixture, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Run against the built-in workload defaults (all openai): drop workload
+    # overrides from env (.env is already loaded into it) and config.toml.
+    monkeypatch.setattr("src.config.TOML_CONFIG", {})
+    for name in list(os.environ):
+        if name.startswith(
+            ("DERIVER_", "SUMMARY_", "DREAM_", "DIALECTIC_", "EMBEDDING_")
+        ):
+            monkeypatch.delenv(name)
+
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        AppSettings(
+            LLM=LLMSettings(
+                OPENAI_API_KEY="fake-openai-key",
+                ANTHROPIC_API_KEY="fake-unused-anthropic-key",
+                GEMINI_API_KEY="fake-unused-gemini-key",
+            )
+        )
+
+    assert "LLM_ANTHROPIC_API_KEY" in caplog.text
+    assert "LLM_GEMINI_API_KEY" in caplog.text
+    assert "LLM_OPENAI_API_KEY" not in caplog.text
+    assert "fake-" not in caplog.text
+
+
+@pytest.mark.parametrize(
+    "workload",
+    [
+        {"DERIVER": {"MODEL_CONFIG": {"transport": "gemini"}}},
+        {"SUMMARY": {"MODEL_CONFIG": {"transport": "gemini"}}},
+        {"DREAM": {"DEDUCTION_MODEL_CONFIG": {"transport": "gemini"}}},
+        {"DREAM": {"INDUCTION_MODEL_CONFIG": {"transport": "gemini"}}},
+        *[
+            {
+                "DIALECTIC": {
+                    "LEVELS": {level: {"MODEL_CONFIG": {"transport": "gemini"}}}
+                }
+            }
+            for level in ("minimal", "low", "medium", "high", "max")
+        ],
+        {"EMBEDDING": {"MODEL_CONFIG": {"transport": "gemini"}}},
+        {
+            "DERIVER": {
+                "MODEL_CONFIG": {
+                    "fallback": {"transport": "gemini", "model": "gemini-test"}
+                }
+            }
+        },
+    ],
+)
+def test_key_used_by_any_workload_does_not_warn(
+    workload: dict[str, object], caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        AppSettings.model_validate(
+            {
+                "LLM": {
+                    "OPENAI_API_KEY": None,
+                    "ANTHROPIC_API_KEY": None,
+                    "GEMINI_API_KEY": "fake-used-key",
+                },
+                **workload,
+            }
+        )
+
+    assert "LLM_GEMINI_API_KEY" not in caplog.text
+
+
+@pytest.mark.parametrize("key", [None, ""])
+def test_absent_provider_keys_do_not_warn(
+    key: str | None, caplog: pytest.LogCaptureFixture
+) -> None:
+    with caplog.at_level(logging.WARNING, logger="src.config"):
+        AppSettings(
+            LLM=LLMSettings(
+                OPENAI_API_KEY=key, ANTHROPIC_API_KEY=key, GEMINI_API_KEY=key
+            )
+        )
+
+    assert "API_KEY" not in caplog.text
+
+
+def _configured_with_conflict_mode(mode: object) -> ConfiguredModelSettings:
+    return ConfiguredModelSettings.model_validate(
+        {
+            "model": "claude-via-proxy",
+            "transport": "openai",
+            "overrides": {"provider_params": {"thinking_tool_choice_conflict": mode}},
+        }
+    )
+
+
+@pytest.mark.parametrize("mode", ["throw", "override_thinking", "override_tool"])
+def test_thinking_tool_choice_conflict_is_accepted_at_config_load(mode: str) -> None:
+    settings = _configured_with_conflict_mode(mode)
+
+    assert settings.overrides.provider_params["thinking_tool_choice_conflict"] == mode
+
+
+@pytest.mark.parametrize("mode", ["override-thinking", "OVERRIDE_THINKING", "", 1])
+def test_thinking_tool_choice_conflict_is_rejected_at_config_load(mode: object) -> None:
+    with pytest.raises(
+        ValueError, match=r"provider_params\.thinking_tool_choice_conflict must be"
+    ):
+        _configured_with_conflict_mode(mode)
+
+
+def test_thinking_tool_choice_conflict_from_env_is_validated_at_config_load(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv(
+        "DIALECTIC_LEVELS__medium__MODEL_CONFIG__OVERRIDES__PROVIDER_PARAMS__"
+        + "THINKING_TOOL_CHOICE_CONFLICT",
+        "override-thinking",
+    )
+
+    with pytest.raises(ValueError, match="thinking_tool_choice_conflict must be"):
+        AppSettings()
+
+
+def test_dialectic_query_limit_is_read_from_env() -> None:
+    """The peer chat query limit binds when the schema module is imported."""
+    import subprocess
+    import sys
+
+    probe = (
+        "from src.schemas.api import DialecticOptions\n"
+        + "DialecticOptions(query='x' * 40_000)\n"
+        + "try:\n"
+        + "    DialecticOptions(query='x' * 40_001)\n"
+        + "except ValueError:\n"
+        + "    print('rejected')\n"
+    )
+    result = subprocess.run(
+        [sys.executable, "-c", probe],
+        env={**os.environ, "DIALECTIC_MAX_QUERY_LENGTH": "40000"},
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "rejected"

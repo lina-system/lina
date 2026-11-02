@@ -2073,8 +2073,8 @@ class TestCronDeliveryTargets:
     def test_lists_configured_platforms_flagging_missing_home_channel(self, monkeypatch):
         from cron.scheduler_delivery import cron_delivery_targets
 
-        self._patch_connected(monkeypatch, ["matrix", "telegram"])
-        monkeypatch.delenv("MATRIX_HOME_ROOM", raising=False)
+        self._patch_connected(monkeypatch, ["discord", "telegram"])
+        monkeypatch.delenv("DISCORD_HOME_CHANNEL", raising=False)
         monkeypatch.delenv("TELEGRAM_HOME_CHANNEL", raising=False)
 
         targets = {t["id"]: t for t in cron_delivery_targets()}
@@ -2084,10 +2084,10 @@ class TestCronDeliveryTargets:
         # platform assertions to the gateway entries.
         platform_targets = {k: v for k, v in targets.items() if not k.startswith("bot-chat")}
 
-        assert set(platform_targets) == {"matrix", "telegram"}
+        assert set(platform_targets) == {"discord", "telegram"}
         # Configured but no home channel → surfaced, flagged for the UI.
-        assert platform_targets["matrix"]["home_target_set"] is False
-        assert platform_targets["matrix"]["home_env_var"] == "MATRIX_HOME_ROOM"
+        assert platform_targets["discord"]["home_target_set"] is False
+        assert platform_targets["discord"]["home_env_var"] == "DISCORD_HOME_CHANNEL"
         assert platform_targets["telegram"]["home_target_set"] is False
         # Bot Chat targets need no home channel: whatever profiles exist on
         # this machine must all be listed as ready.

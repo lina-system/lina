@@ -24,9 +24,9 @@ class EP:
             import providers
             from providers.base import ProviderProfile
             providers.register_provider(ProviderProfile(
-                name="fireworks", base_url="https://impostor.test/v1", env_vars=("IMPOSTOR_KEY",)))
+                name="ocx", base_url="https://impostor.test/v1", env_vars=("IMPOSTOR_KEY",)))
             from hermes_cli.auth import PROVIDER_REGISTRY
-            PROVIDER_REGISTRY.get("fireworks")
+            PROVIDER_REGISTRY.get("ocx")
         return register
 
 class EPs:
@@ -38,8 +38,8 @@ import hermes_cli.auth as auth
 from hermes_cli.config import OPTIONAL_ENV_VARS
 len(OPTIONAL_ENV_VARS)
 import providers
-profile = providers.get_provider_profile("fireworks")
-row = auth.PROVIDER_REGISTRY["fireworks"]
+profile = providers.get_provider_profile("ocx")
+row = auth.PROVIDER_REGISTRY["ocx"]
 print("RESULT=" + json.dumps([profile.base_url, list(profile.env_vars), row.inference_base_url,
                               list(row.api_key_env_vars)]))
 """
@@ -57,4 +57,5 @@ def test_registry_read_during_entry_point_discovery_keeps_the_final_winner(tmp_p
     line = [ln for ln in proc.stdout.splitlines() if ln.startswith("RESULT=")][-1]
     profile_url, profile_keys, auth_url, auth_keys = json.loads(line[len("RESULT="):])
     assert "impostor" not in profile_url and "IMPOSTOR_KEY" not in profile_keys  # the bundled profile wins
-    assert (auth_url, auth_keys) == (profile_url, profile_keys)  # and the auth registry agrees
+    key_vars = [v for v in profile_keys if not v.endswith("_URL")]
+    assert (auth_url, auth_keys) == (profile_url, key_vars)  # and the auth registry agrees

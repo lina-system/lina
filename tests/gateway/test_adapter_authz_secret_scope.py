@@ -9,7 +9,6 @@ scoped gate; the scope's own opt-in/allowlist does.
 """
 
 import contextlib
-from types import SimpleNamespace
 
 import pytest
 
@@ -18,11 +17,7 @@ from gateway.config import PlatformConfig
 
 _DEFAULT_ENV = {
     "GATEWAY_ALLOW_ALL_USERS": "true", "GATEWAY_ALLOWED_USERS": "default-admin",
-    "TEAMS_ALLOW_ALL_USERS": "true", "TEAMS_ALLOWED_USERS": "default-admin",
-    "MATRIX_ALLOWED_USERS": "@default-admin:example.org", "MATRIX_IGNORE_USER_PATTERNS": r"^@spam:.*",
     "WHATSAPP_ALLOWED_USERS": "+15550001111", "SLACK_ALLOW_BOTS": "all", "SLACK_API_HUMAN_USERS": "U0DEFAULT",
-    "LINE_ALLOW_ALL_USERS": "true", "LINE_ALLOWED_USERS": "Udefault", "DINGTALK_ALLOWED_USERS": "default-admin",
-    "EMAIL_ALLOWED_USERS": "bot2-admin@example.org",
 }
 
 
@@ -59,40 +54,8 @@ def _slack():
     return adapter
 
 
-def _dingtalk():
-    from plugins.platforms.dingtalk.adapter import DingTalkAdapter
-
-    adapter = DingTalkAdapter.__new__(DingTalkAdapter)
-    adapter.config = PlatformConfig(enabled=True, extra={})
-    return adapter
-
-
-def _email():
-    from plugins.platforms.email.adapter import EmailAdapter
-
-    return EmailAdapter(PlatformConfig(enabled=True, extra={"address": "bot2@example.org"}))
-
-
-def _line():
-    from plugins.platforms.line.adapter import LineAdapter
-
-    return LineAdapter(PlatformConfig(enabled=True, extra={"channel_access_token": "t", "channel_secret": "s"}))
-
-
 # (label, opt-in the SECONDARY scope grants, gate(scope) -> observed value, closed value, open value)
 _GATES = [
-    ("email.allow_all", {"GATEWAY_ALLOW_ALL_USERS": "true"},
-     lambda: __import__("plugins.platforms.email.adapter", fromlist=["EmailAdapter"]).EmailAdapter._allow_all_senders(),
-     False, True),
-    ("email.allowlist", {"EMAIL_ALLOWED_USERS": "bot2-admin@example.org"},
-     lambda: _email()._sender_accepted("bot2-admin@example.org", {"sender_authenticated": True}),
-     False, True),
-    ("email.gateway_allowlist", {"GATEWAY_ALLOWED_USERS": "bot2-admin@example.org"},
-     lambda: _email()._sender_accepted("bot2-admin@example.org", {"sender_authenticated": True}),
-     False, True),
-    ("qqbot.open_dm", {"QQ_ALLOW_ALL_USERS": "true"},
-     lambda: __import__("plugins.platforms.qqbot.adapter", fromlist=["QQAdapter"]).QQAdapter._open_dm_opted_in(object.__new__(__import__("plugins.platforms.qqbot.adapter", fromlist=["QQAdapter"]).QQAdapter)),
-     False, True),
     ("whatsapp.open_dm", {"GATEWAY_ALLOW_ALL_USERS": "true"},
      lambda: __import__("gateway.platforms.whatsapp_common", fromlist=["WhatsAppBehaviorMixin"]).WhatsAppBehaviorMixin._open_dm_opted_in(_whatsapp()),
      False, True),
@@ -102,10 +65,6 @@ _GATES = [
     ("slack.allow_bots", {"SLACK_ALLOW_BOTS": "mentions"}, lambda: _slack()._slack_allow_bots(), "none", "mentions"),
     ("slack.api_human_users", {"SLACK_API_HUMAN_USERS": "U0BOT2"},
      lambda: set(_slack()._slack_api_human_users()), set(), {"U0BOT2"}),
-    ("line.allow_all", {"LINE_ALLOW_ALL_USERS": "true"}, lambda: _line().allow_all, False, True),
-    ("line.allowed_users", {"LINE_ALLOWED_USERS": "Ubot2"}, lambda: _line().allowed_users, set(), {"Ubot2"}),
-    ("dingtalk.allowed_users", {"DINGTALK_ALLOWED_USERS": "Bot2Admin"},
-     lambda: {u.lower() for u in _dingtalk()._csv_setting("allowed_users", "DINGTALK_ALLOWED_USERS")}, set(), {"bot2admin"}),
 ]
 
 

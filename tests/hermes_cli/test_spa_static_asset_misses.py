@@ -9,7 +9,6 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 HTML = "<html><head></head><body>spa shell</body></html>"
-WEB_PUBLIC = Path(__file__).resolve().parents[2] / "web" / "public"
 
 
 def _spa(monkeypatch, dist: Path, *, surface) -> TestClient:
@@ -34,17 +33,6 @@ def _login_font_urls() -> list[str]:
     urls = re.findall(r"url\('(/fonts/[^']+)'\)", render_login_html())
     assert urls
     return sorted(set(urls))
-
-
-@pytest.mark.parametrize("surface", ["webapp", None], ids=["webapp", "dashboard"])
-def test_the_sign_in_page_fonts_load_as_fonts(monkeypatch, tmp_path, surface):
-    client = _spa(monkeypatch, tmp_path, surface=surface)
-
-    for url in _login_font_urls():
-        response = client.get(url)
-        assert response.status_code == 200, url
-        assert response.headers["content-type"] == "font/woff2", url
-        assert response.content == (WEB_PUBLIC / url.lstrip("/")).read_bytes()
 
 
 def test_a_font_in_the_served_bundle_wins(monkeypatch, tmp_path):

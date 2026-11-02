@@ -39,6 +39,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
+from gateway.platforms.base import BasePlatformAdapter, SendResult
+
 
 @pytest.fixture(autouse=True)
 def _join_api_turn_workers():
@@ -74,33 +76,6 @@ def private_db_probe_cleanup(tmp_path):
             if Path(key).is_relative_to(tmp_path):
                 fd, _dev, _ino = dbfile._HEADER_PROBE_FDS.pop(key)
                 os.close(fd)
-
-
-@pytest.fixture(scope="session", autouse=True)
-def _bind_lark_sdk_globals_when_installed():
-    """Bind the feishu adapter's lark SDK globals once per test session.
-
-    The adapter defers ``import lark_oapi`` to first use
-    (``_load_lark_oapi`` — called from connect()/probe_bot()/standalone
-    send), so the request-builder globals (``CreateMessageRequestBody``
-    etc.) stay ``None`` at module import time. Feishu tests across many
-    files inject a mock ``_client`` and skip connect() entirely, then call
-    send paths that reference those globals. Bind them eagerly when the
-    SDK is installed; when it isn't, the affected tests already skip via
-    their own ``skipUnless`` guards.
-    """
-    try:
-        import lark_oapi
-    except ImportError:
-        yield
-        return
-    try:
-        from plugins.platforms.feishu.adapter import _load_lark_oapi
-
-        _load_lark_oapi()
-    except Exception:
-        pass  # adapter not importable in this environment — tests will skip
-    yield
 
 
 def make_async_session_db(sync_mock=None):
@@ -740,3 +715,20 @@ def hosted_owner(tmp_path, monkeypatch):
     thread.join()
     loop.close()
     store._db.close()
+
+
+class WireAdapter(BasePlatformAdapter):
+    """In-memory transport exercising the real base adapter lifecycle."""
+
+    async def connect(self, *, is_reconnect=False):
+        return True
+
+    async def disconnect(self):
+        pass
+
+    async def get_chat_info(self, chat_id):
+        return {}
+
+    async def send(self, chat_id, content, reply_to=None, metadata=None):
+        self.wire.append(content)
+        return SendResult(success=True, message_id=str(len(self.wire)))

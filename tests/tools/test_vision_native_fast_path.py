@@ -79,6 +79,18 @@ def _track_validated_frame_loads(monkeypatch):
 
 
 class TestSupportsMediaInToolResults:
+    @staticmethod
+    def _register_veto(monkeypatch):
+        import providers
+        from providers.base import ProviderProfile
+
+        providers.get_provider_profile("ocx")
+        monkeypatch.setattr(providers, "_REGISTRY", dict(providers._REGISTRY))
+        providers.register_provider(ProviderProfile(
+            name="vision-veto-test", supports_vision=True,
+            supports_vision_tool_messages=False,
+        ))
+
     def test_anthropic_native_yes(self):
         assert _supports_media_in_tool_results("anthropic", "claude-opus-4-6") is True
 
@@ -90,20 +102,22 @@ class TestSupportsMediaInToolResults:
         assert _supports_media_in_tool_results("", "anything") is False
         assert _supports_media_in_tool_results(None, "anything") is False  # type: ignore[arg-type]
 
-    def test_profile_tool_message_veto_overrides_supports_vision(self):
+    def test_profile_tool_message_veto_overrides_supports_vision(self, monkeypatch):
         """supports_vision_tool_messages=False is a hard veto even when the
         profile declares supports_vision=True (xiaomi/MiMo 400s on list-type
         tool-result content, #89981)."""
-        assert _supports_media_in_tool_results("xiaomi", "mimo-v2.5") is False
+        self._register_veto(monkeypatch)
+        assert _supports_media_in_tool_results("vision-veto-test", "vision-model") is False
 
-    def test_profile_veto_applies_even_when_vision_capable_lookup_agrees(self):
+    def test_profile_veto_applies_even_when_vision_capable_lookup_agrees(self, monkeypatch):
         """A capability source marking the model vision-capable must not
         re-open the native fast path for a provider that rejects it."""
+        self._register_veto(monkeypatch)
         from tools.vision_tools import _should_use_native_vision_fast_path
         from agent.auxiliary_client import set_runtime_main, clear_runtime_main
         from agent import image_routing
 
-        set_runtime_main("xiaomi", "mimo-v2.5")
+        set_runtime_main("vision-veto-test", "vision-model")
         try:
             with patch.object(
                 image_routing, "decide_image_input_mode", return_value="native"
@@ -114,13 +128,14 @@ class TestSupportsMediaInToolResults:
         finally:
             clear_runtime_main()
 
-    def test_openrouter_xiaomi_route_vetoes_native_fast_path(self):
-        """A vision-capable catalog entry cannot override a routed Xiaomi veto."""
+    def test_openrouter_target_profile_vetoes_native_fast_path(self, monkeypatch):
+        """A vision-capable catalog entry cannot override a routed target's veto."""
+        self._register_veto(monkeypatch)
         from tools.vision_tools import _should_use_native_vision_fast_path
         from agent.auxiliary_client import set_runtime_main, clear_runtime_main
         from agent import image_routing
 
-        set_runtime_main("openrouter", "xiaomi/mimo-v2.5")
+        set_runtime_main("openrouter", "vision-veto-test/vision-model")
         try:
             with patch.object(
                 image_routing, "decide_image_input_mode", return_value="native"

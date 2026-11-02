@@ -1,25 +1,13 @@
-"""Text-batch debounce defaults must not exceed Telegram's cadence (#44883, #25056).
-
-WhatsApp (5s/10s) and Weixin (3s/5s) used to hold every reply for seconds
-before dispatching; Telegram waits 0.3s (1.0s near a split chunk).
-"""
-
-import pytest
-
+"""Telegram text-batch configuration is clamped to the shared ceilings."""
 from gateway.config import PlatformConfig
-from plugins.platforms.weixin.adapter import WeixinAdapter
-from plugins.platforms.whatsapp.adapter import WhatsAppAdapter
+from plugins.platforms.telegram.adapter import TelegramAdapter
 
 
-
-
-@pytest.mark.parametrize(
-    "adapter_cls", [WhatsAppAdapter, WeixinAdapter], ids=["whatsapp", "weixin"],
-)
-def test_text_batch_delays_clamped_to_shared_ceilings(adapter_cls, tmp_path, monkeypatch):
+def test_text_batch_delays_clamped_to_shared_ceilings(tmp_path, monkeypatch):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path))
-    adapter = adapter_cls(PlatformConfig(
-        enabled=True, extra={"text_batch_delay_seconds": "2.5", "text_batch_split_delay_seconds": 7}))
+    monkeypatch.setenv("HERMES_TELEGRAM_TEXT_BATCH_DELAY_SECONDS", "2.5")
+    monkeypatch.setenv("HERMES_TELEGRAM_TEXT_BATCH_SPLIT_DELAY_SECONDS", "7")
+    adapter = TelegramAdapter(PlatformConfig(enabled=True, token="test-token"))
 
     assert adapter._text_batch_delay_seconds == adapter._TEXT_BATCH_MAX_DELAY_S
     assert adapter._text_batch_split_delay_seconds == adapter._TEXT_BATCH_MAX_SPLIT_DELAY_S

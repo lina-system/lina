@@ -506,9 +506,9 @@ class TestPerResponseRunNonceIsolation:
 
         assert chat_key(self.RESPONSE_1) != chat_key(self.RESPONSE_2)
 
-    @pytest.mark.parametrize("profile_name", ["openrouter", "nous"])
+    @pytest.mark.parametrize("profile_name", ["ocx"])
     def test_distinct_ids_keep_distinct_provider_sticky_keys(self, profile_name):
-        """OpenRouter/Nous route by this key, and it isolates distinct ids.
+        """OCX routes by this key, and it isolates distinct ids.
 
         Same invariant as above on the sticky-routing surface: two ids of one
         Studio conversation re-key it on every reply, and a declared logical
@@ -527,7 +527,7 @@ class TestPerResponseRunNonceIsolation:
             token = set_conversation_context(session_id)
             try:
                 keys.append(
-                    profile.build_extra_body(session_id=session_id)["session_id"]
+                    profile.build_api_kwargs_extras(session_id=session_id)[1]["extra_headers"]["session-id"]
                 )
             finally:
                 reset_conversation_context(token)

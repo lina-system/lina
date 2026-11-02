@@ -215,6 +215,11 @@ def _has_named_custom_provider(name: str, home: Path | None, hkey: str) -> bool:
     return memo[name]
 
 
+# The profile whose wire policy configured custom routes (``custom``, ``custom:<name>``, a named
+# ``providers:`` entry) use: every model call goes through OCX, so there is no separate custom profile.
+CUSTOM_ROUTE_PROFILE = "ocx"
+
+
 def get_provider_profile(name: str) -> ProviderProfile | None:
     """Look up a provider profile by name or alias.
 
@@ -238,21 +243,21 @@ def get_provider_profile(name: str) -> ProviderProfile | None:
     # re-checks the plugin dirs now (unless this call just did) instead of waiting for the
     # periodic check. ``custom:<route>`` misses resolve to the generic profile below and the
     # picker asks for them once per model, so they wait for the periodic check.
-    is_custom_route = isinstance(name, str) and name.lower().startswith("custom:")
+    is_custom_route = isinstance(name, str) and (name.lower() == "custom" or name.lower().startswith("custom:"))
     if profile is None and not is_custom_route and not checked and _miss_recheck_due(layer, name):
         if _refresh_home_layer(layer, home, key, force=True):
             profile = lookup(name)
-    # Named custom routes share the generic wire policy unless a plugin
-    # explicitly registered that route. Other names retain exact lookup.
+    # Custom routes share the OCX wire policy (OpenAI-compatible chat completions) unless a
+    # plugin explicitly registered that route. Other names retain exact lookup.
     if profile is None and is_custom_route:
-        profile = lookup("custom")
+        profile = lookup(CUSTOM_ROUTE_PROFILE)
     # Bare named custom providers (not ``custom:<name>``) that are configured in
     # ``providers:`` / ``custom_providers:`` but lack an explicit profile entry
     # also share the generic wire policy. The helper is memoized (see
     # ``_has_named_custom_provider``) so the miss path stays cheap for per-model loops.
     if profile is None and isinstance(name, str) and not is_custom_route:
         if _has_named_custom_provider(name, home, key):
-            profile = lookup("custom")
+            profile = lookup(CUSTOM_ROUTE_PROFILE)
     return profile
 
 

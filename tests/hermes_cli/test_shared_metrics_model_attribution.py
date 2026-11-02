@@ -152,7 +152,7 @@ def test_user_provider_plugin_name_and_model_never_leave(direct_runtime, tmp_pat
                 assert dims[key] == "custom", (name, dims)
         if "model" in dims:
             assert dims["model"] == "custom", (name, dims)
-    assert catalog.provider_metric_name("deepinfra") == "deepinfra"
+    assert catalog.provider_metric_name("ocx") == "ocx"
 
 
 def test_network_address_model_ids_and_raw_injected_marks_never_reach_counters(direct_runtime, tmp_path):
@@ -168,12 +168,8 @@ def test_network_address_model_ids_and_raw_injected_marks_never_reach_counters(d
     for provider, model in (("bedrock", "arn:aws:bedrock:us-east-1:123456789012:inference-profile/x"),
                             ("lm-studio", "my-model-x"), ("lm_studio", "my-model-x")):
         assert model_route(provider, model)["model"] == "custom", (provider, model)
-    # Azure deployment names are chosen by their owner: only a public model id passes.
-    for provider in ("azure-foundry", "azure"):
-        assert model_route(provider, "acme-legal-prod-eastus")["model"] == "custom"
-        assert model_route(provider, "GPT-4o")["model"] == "gpt-4o"
     for provider, model in (("bedrock", "anthropic.claude-3-5-sonnet-20241022-v2:0"),
-                            ("openrouter", "openai/gpt-4o:free"), ("ollama-cloud", "gpt-oss:120b")):
+                            ("openrouter", "openai/gpt-4o:free")):
         assert model_route(provider, model)["model"] == model
 
     runtime = relay_shared_metrics._get_runtime(retry_failed=True)

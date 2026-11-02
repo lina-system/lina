@@ -73,7 +73,7 @@ def test_explicit_reasoning_choices_survive_shared_resolution_and_wire(tmp_path,
     model_id = catalog.catalog_by_id()["qwen3.8-27b"].variants[0].model_id
     config_path = tmp_path / "config.yaml"
     transport = ChatCompletionsTransport()
-    profile = get_provider_profile("llamacpp")
+    profile = get_provider_profile("custom")
     assert profile is not None
     # The Off control uses "none"; YAML's unquoted off/false becomes False.
     for effort in (None, "none", False, "low", "medium", "high", "xhigh"):
