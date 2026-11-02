@@ -11,7 +11,7 @@ import psutil
 import pytest
 
 from hermes_cli.worker import device, serve
-from hermes_cli.worker.hub import Hub
+from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.runners.base import Task
 from hermes_platform.resolver.core import Resolution
 from tests.hermes_cli import _worker_fakes as fakes
@@ -88,6 +88,45 @@ def test_a_run_cancelled_after_launch_opens_no_session(lane):
     assert device.run_task(lane["root"], task_id, 1) == "cancelled"
     assert not (task_dir / "handle.json").exists()
     assert not (lane["tmp"] / "fake" / "cli.jsonl").exists()
+
+
+def _ended(lane, task_id):
+    serve.serve_once(lane["root"])
+    (lane["root"] / "tasks" / task_id / "rc.1").write_text("0\n")
+
+
+def test_two_sends_before_the_next_pass_make_one_run(lane):
+    """Codex's case on #128: two follow-ups between a run's end and the device's next pass."""
+    (task_id,) = _submit(lane, "SCENARIO:done one")
+    _ended(lane, task_id)
+    hub, task_dir = lane["hub"], lane["root"] / "tasks" / task_id
+    assert hub.send(task_id, "first follow-up") == 0
+    assert hub.send(task_id, "second follow-up") == 0
+    serve.serve_once(lane["root"])
+    serve.serve_once(lane["root"])
+    assert lane["launched"] == [(task_id, 1), (task_id, 2)]
+    assert not (task_dir / "request.3").exists()
+    prompt = (task_dir / "prompt.2").read_text()
+    assert "first follow-up" in prompt and "second follow-up" in prompt
+    with pytest.raises(HubError, match="starting or running"):
+        hub.send(task_id, "third follow-up")
+    assert not (task_dir / "request.3").exists()
+
+
+def test_serve_never_starts_a_second_run_of_a_task(lane):
+    """Requests already on disk (written before the device serialized follow-ups) still run one at a time."""
+    (task_id,) = _submit(lane, "SCENARIO:done one")
+    _ended(lane, task_id)
+    task_dir = lane["root"] / "tasks" / task_id
+    for run in (2, 3):
+        (task_dir / f"prompt.{run}").write_text("ulw more")
+        (task_dir / f"request.{run}").write_text("{}")
+    serve.serve_once(lane["root"])
+    serve.serve_once(lane["root"])
+    assert lane["launched"] == [(task_id, 1), (task_id, 2)]
+    (task_dir / "rc.2").write_text("0\n")
+    serve.serve_once(lane["root"])
+    assert lane["launched"][-1] == (task_id, 3)
 
 
 @pytest.mark.platforms("posix")
