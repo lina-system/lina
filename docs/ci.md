@@ -26,7 +26,7 @@ Changes from upstream in the kept checks: `ubuntu-24.04`/`macos-latest` instead 
 
 Local equivalents: `ruff check .`, `scripts/run_tests.sh`, `python -m pm.build_env --source . --check-lock`, `python scripts/ci/check_blob_size.py --base origin/dev`, `python3 scripts/ci/check_prune_list.py`.
 
-The `macos` lane is on when a changed path names macOS (`macos`, `darwin`, `launchd`, `keychain`, `osascript`), is under `helper/` or `hermes_platform/`, is the test harness or the dependency set (`pyproject.toml`, `uv.lock`, `scripts/run_tests*.`, `tests/conftest.py`, the platform-gating fixture, `scripts/ci/list_os_marked_tests.py`), or is a `.py` file whose checkout text has a darwin branch or a `platforms(...)` gate that reaches the macOS lane (the files `scripts/ci/list_os_marked_tests.py macos` lists). A pull request labelled `dev-red-fix` also turns it on, and CI runs on `labeled` so adding the label starts it. The `helper` lane is on for `helper/`. Like every lane, both are on for pushes, manual runs and `.github/` changes. Upstream ran its macOS tests on every Python change; LINA narrows that to macOS paths, so `detect` checks out the whole tree to read the changed files.
+The `macos` lane (`classify_changes.macos_lane`) is on for a pull request that changes a test file `scripts/ci/list_os_marked_tests.py macos` lists or a module such a file imports, or that carries the `dev-red-fix` label (a label added after the last push counts on a re-run). `detect` checks out `tests/` and the lister to read that list. The `helper` lane is on for `helper/`. Like every lane, both are on for pushes, manual runs, an empty diff and `.github/` changes. Upstream ran its macOS tests on every Python change; LINA narrows that to keep the macOS runner cost.
 
 ## Required checks
 
@@ -36,7 +36,7 @@ The `macos` lane is on when a changed path names macOS (`macos`, `darwin`, `laun
 | --- | --- | --- |
 | Lint | `ci.yml` job | `ruff check .` passes |
 | Python tests (Linux) | `ci.yml` job | every slice passed, or `detect` found no change the suite can see; fails when `detect` fails |
-| Python tests (macOS) | `ci.yml` job | the macOS tests passed, or skipped: a pull request that changes no macOS path and has no `dev-red-fix` label |
+| Python tests (macOS) | `ci.yml` job | the macOS tests passed, or skipped: a pull request off the `macos` lane (no macOS-marked test file or module one imports changed, no `dev-red-fix` label) |
 | LINA Helper (macOS) | `ci.yml` job | Swift tests, native checks and the ad-hoc build passed, or skipped: `helper/` did not change. The Linux half of its `make test` runs inside Python tests (Linux) (`tests/helper/`) |
 | Codex review | `codex-review-gate.yml` status | `chatgpt-codex-connector[bot]` reviewed this head (a review on it, its summary comment marking a finished review of it without findings, or a "no major issues" comment newer than it) and none of its review comments made on this head carries a P0 or P1 badge. Red with the count and the first finding; pending until the review of this head arrives. A review of an earlier head never counts |
 | Linked issue | `codex-review-gate.yml` status | the body closes (`Closes`/`Fixes #n`, GitHub `closingIssuesReferences`) an open issue of this repository, and a branch named `<type>/<n>-<slug>` closes #n; or the pull request carries the `no-issue` label (a typo, a one-line CI fix) |

@@ -674,6 +674,9 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         "catalog": catalog,
         # LINA: helper/macos (LINA Helper) runs its Swift and native checks on macOS.
         "helper": any(f.startswith(_HELPER_PATHS) for f in files),
+        # Every detect output needs a key here (ci.yaml replays them). main() replaces this with
+        # macos_lane(), which reads the test tree and the labels; only the fail-open stays True.
+        "macos": False,
         **{lane: run_e2e or on for lane, on in _slow_lanes(files).items()},
     }
     consumers = [c for f in files for c in _SHARED_FIXTURE_CONSUMERS.get(f, ())]
@@ -697,6 +700,7 @@ def classify(files: list[str], run_e2e: bool = False) -> dict[str, bool]:
         ret["remote_backends"] = True
         ret["catalog"] = True
         ret["helper"] = True
+        ret["macos"] = True
         ret.update(dict.fromkeys(_slow_lanes([]), True))
     return ret
 
