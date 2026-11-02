@@ -1,7 +1,8 @@
 """The one short notice a run's end sends to the agent that handed it out: state, where the result is, what to do.
 
 It never pastes ``report.md`` or the final answer. It goes to the agent's chat through ``worker.notice.command``
-(argv, ``{agent}`` filled in, the body on stdin) and is always kept in ``hub/notices/``.
+(argv, ``{agent}`` filled in, the body on stdin) and is always kept in ``hub/notices/``; a run started from a work
+card also gets it as a comment on that card (``kanban_link``).
 """
 
 from __future__ import annotations

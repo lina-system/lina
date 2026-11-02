@@ -2,7 +2,8 @@
 schedules, the tick and the end notice.
 
 A task goes to the device that wins the bid (or the one named with ``--host``), or waits in the queue until one is
-free. Its first prompt carries the mode prefix and the report contract. When a run ends the device reports it (``_notify``); the hub fetches the results, checks them against the
+free. Its first prompt carries the mode prefix and the report contract; a run started from a work card is recorded on
+that card. When a run ends the device reports it (``_notify``); the hub fetches the results, checks them against the
 device's manifest and sends one notice. ``tick`` (run by the service on the hub) catches what a device could not
 report.
 """
@@ -15,7 +16,7 @@ import re
 import time
 from pathlib import Path
 
-from hermes_cli.worker import bidding, models, notice, runners, settings
+from hermes_cli.worker import bidding, kanban_link, models, notice, runners, settings
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt
 from hermes_cli.worker.runners.base import RunnerError
@@ -90,12 +91,24 @@ class Hub:
                "model": model.as_dict() if model else None, "created": time.time(), "runs": 1, "notified": [],
                "extra": opts.get("note"), "dry_notify": bool(opts.get("dry_notify")), "inputs": opts["inputs"],
                "prompt": first_prompt(opts["mode"], brief.read_text(encoding="utf-8-sig"), branch), "state": "new",
-               "grant": grant, "delivery": "pending", "verdict": None, "group": group, "next_notes_rule": True}
+               "grant": grant, "delivery": "pending", "verdict": None, "group": group, "next_notes_rule": True,
+               "card": opts.get("card")}
         self.store.save(job)
         self.store.receipt(tid, "submitted", bot=agent, topic=job["topic"], mode=job["mode"], runner=runner,
                            model=job["model"], brief=str(brief), repo=job["repo"], group=group, grant=grant,
-                           input_id=f"{tid}.1")
+                           card=job["card"], input_id=f"{tid}.1")
         return job
+
+    def _link_card(self, job: dict) -> None:
+        if not job.get("card"):
+            return
+        try:
+            kanban_link.record_run(job["card"], job)
+        except (ValueError, OSError) as exc:
+            self.store.receipt(job["id"], "card_link_failed", error=str(exc)[:300])
+            self.out(f"lina worker: could not record {job['id']} on card {job['card']['task']}: {exc}")
+            return
+        self.store.receipt(job["id"], "card_linked", card=job["card"])
 
     def _notify_spec(self, dev: settings.Device) -> dict:
         if dev.local:
@@ -166,7 +179,8 @@ class Hub:
             if not brief.is_file():
                 raise HubError(f"brief not found: {brief}")
         opts.setdefault("bot", caller_agent())
-        opts["topic"] = opts.get("topic") or opts.get("todo")
+        opts.setdefault("card", kanban_link.card_from_env())
+        opts["topic"] = opts.get("topic") or opts.get("todo") or (opts["card"] or {}).get("task")
         if not opts["topic"]:
             raise HubError("--todo <to-do ID> is required (or --topic <short name> for work without a to-do)")
         if opts.get("at") or opts.get("every"):
@@ -187,6 +201,7 @@ class Hub:
         if opts.get("wait") is not None and not group:
             job["waiter"] = os.getpid()
             self.store.save(job)
+        self._link_card(job)
         try:
             host = self.place(job)
         except (TransportError, HubError, RunnerError, OSError) as exc:
@@ -526,6 +541,8 @@ class Hub:
         job["notice"] = text
         self.store.save(job)
         how = self.group_notice(job["group"]) if job.get("group") else self._deliver(job, text, f"{kind}-{run}")
+        if job.get("card"):
+            self._card_end(job, kind, run, text)
         self.store.receipt(job["id"], "notified", how=how[:200], state=kind, run=run)
         self.store.log(f"{job['id']} {kind}: {how}")
         return how
@@ -534,6 +551,14 @@ class Hub:
         command = (self.worker.get("notice") or {}).get("command") if isinstance(self.worker.get("notice"), dict) \
             else None
         return notice.deliver(job, text, tag, self.store.notices, command)
+
+    def _card_end(self, job: dict, kind: str, run: str, text: str) -> None:
+        try:
+            kanban_link.record_end(job["card"], job, kind, run, text)
+        except (ValueError, OSError) as exc:
+            self.store.receipt(job["id"], "card_notice_failed", error=str(exc)[:300])
+            return
+        self.store.receipt(job["id"], "card_noticed", card=job["card"], state=kind, run=run)
 
     def group_notice(self, group: str) -> str:
         members = [job for job in self.store.all() if job.get("group") == group]
@@ -605,6 +630,8 @@ class Hub:
             job.setdefault("notified", []).append(marker)
             how = self._deliver(job, notice.body(job, "human", run, self.store.out_dir(job), {}), f"human-{run}")
             self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run)
+            if job.get("card"):
+                self._card_end(job, "human", run, notice.body(job, "human", run, self.store.out_dir(job), {}))
         self.store.save(job)
 
 
