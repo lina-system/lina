@@ -143,7 +143,11 @@ _VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_s
 
 
 def act(verb: str, name: str) -> int:
-    """``start``/``stop``/``restart`` one service, or ``all`` of those that exist (store first up, last down)."""
+    """``start``/``stop``/``restart`` one service, or ``all`` of those that exist (store first up, last down).
+
+    ``all`` stops at the first failure: the gateway depends on the store, so a store that did not come up must not
+    get a gateway started on it, and a gateway that refused to stop (live sessions the person kept) must keep its
+    store."""
     if name != "all":
         service = BY_NAME[name]
         if service.issue:
@@ -152,13 +156,17 @@ def act(verb: str, name: str) -> int:
         _VERBS[name](verb)
         return 0
     order = ("store", "gateway") if verb == "start" else ("gateway", "store")
-    worst = 0
-    for each in order:
+    for index, each in enumerate(order):
         try:
             _VERBS[each](verb)
-        except SystemExit as exc:  # one service failing must not leave the other untouched
-            worst = max(worst, exc.code if isinstance(exc.code, int) else 1)
-    return worst
+        except SystemExit as exc:
+            if exc.code in (None, 0):  # the gateway verbs exit 0 on success
+                continue
+            code = exc.code if isinstance(exc.code, int) else 1
+            if index + 1 < len(order):
+                print(f"{each} {verb} failed; left {', '.join(order[index + 1:])} as it was.")
+            return code
+    return 0
 
 
 def install_gateway_step(*, services: bool, out=print) -> int:

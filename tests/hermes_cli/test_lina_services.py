@@ -94,6 +94,36 @@ def test_a_reserved_service_exits_1_naming_its_issue(account, monkeypatch, capsy
     assert account["verbs"] == []
 
 
+@pytest.mark.parametrize(("verb", "first", "second"), [("stop", "gateway", "store"), ("start", "store", "gateway")])
+def test_all_stops_at_the_first_failure_and_leaves_the_rest(account, monkeypatch, capsys, verb, first, second):
+    """A gateway that refused to stop (live sessions kept) keeps its store; a store that did not come up gets no
+    gateway started on it."""
+    calls = []
+
+    def failing(v):
+        calls.append(first)
+        raise SystemExit(1)
+
+    monkeypatch.setitem(lina_services._VERBS, first, failing)
+    monkeypatch.setitem(lina_services._VERBS, second, lambda v: calls.append(second))
+    assert lina_services.act(verb, "all") == 1
+    assert calls == [first]
+    assert second in capsys.readouterr().out
+
+
+def test_all_goes_on_after_a_service_exits_0(account, monkeypatch):
+    calls = []
+
+    def ok_exit(v):
+        calls.append("gateway")
+        raise SystemExit(0)
+
+    monkeypatch.setitem(lina_services._VERBS, "gateway", ok_exit)
+    monkeypatch.setitem(lina_services._VERBS, "store", lambda v: calls.append("store"))
+    assert lina_services.act("stop", "all") == 0
+    assert calls == ["gateway", "store"]
+
+
 def test_start_installs_the_missing_gateway_service_through_the_gateway_verbs(account):
     assert _run("start", "gateway") == 0
     assert account["verbs"] == [{"gateway_command": "install", "start_now": True, "start_on_login": True}]
