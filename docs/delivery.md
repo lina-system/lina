@@ -4,7 +4,7 @@ How a change reaches `dev`. GitHub enforces the required checks; the rest is the
 
 1. **Issue.** `## Summary`, `## Done when` (observable checks, as `- [ ]` boxes), `## Context` with `Sprint:`, `Depends on: #n` (or `none`), `Size: S|M|L` and `Runner:`. The forms are in [lina-system/.github](https://github.com/lina-system/.github/tree/main/ISSUE_TEMPLATE).
 2. **Start** an issue only when every `Depends on` issue is closed (label `ready`) and it is in the current sprint. A chained issue starts after the one before it merged into `dev`.
-3. **Runner**, one label per issue: `dsh` tiny change (1-2 files, ~50 lines), `grok-cursor` medium single-area change, `agy` docs and wording, `omo` large, multi-area, device or research work.
+3. **Size and runner** follow the `issue_labels` rules of [lina-system/.github](https://github.com/lina-system/.github/blob/main/scripts/issue_labels.py).
 4. **One pull request per issue**, into `dev`, from branch `<type>/<issue>-<slug>` (`ci/61-delivery-procedure`). The body has `Closes #<issue>`, the issue's `## Done when` with each box checked (or `N/A: <reason>`), and `## Verification` (commands run and what you saw). A typo or one-line CI fix may skip the issue with the `no-issue` label.
 5. **Parallel.** Open the issues the most others wait on first. Never two at once that touch the same contract (storage or config format, command name, shared module, safety path). Open nothing new while 4 pull requests are unmerged or the latest `dev` push CI is red.
 6. **Required checks** on the head commit:
