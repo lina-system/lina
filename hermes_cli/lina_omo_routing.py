@@ -53,7 +53,7 @@ def build(root: Path, node: Path, source: Path = SOURCE,
     """The built ocx-omo CLI under ``vendor/ocx-omo``; rebuilt only when the sources changed."""
     dest, digest = build_dir(root), source_digest(source)
     stamp = dest / ".source-sha256"
-    if cli_path(root).exists() and stamp.exists() and stamp.read_text(encoding="utf-8").strip() == digest:
+    if cli_path(root).exists() and stamp.exists() and stamp.read_text(encoding="utf-8-sig").strip() == digest:
         return cli_path(root)
     staging = dest.with_name(".ocx-omo.partial")
     shutil.rmtree(staging, ignore_errors=True)
