@@ -34,9 +34,12 @@ function grabBalanced(source: string, start: number): string {
 
 const withoutStrings = (text: string) => text.replace(/"(?:[^"\\]|\\.)*"/g, '""');
 
+/** `text` as a RegExp that matches it literally: every metacharacter, the backslash included, is escaped. */
+export const escapeRegExp = (text: string) => text.replace(/[\\^$.*+?()[\]{}|\/-]/g, "\\$&");
+
 /** Find the literal assigned to `name` that defines every property the chains read from it. */
 function resolveConstant(source: string, name: string, props: Set<string>): unknown {
-  const assignment = new RegExp(`(?:^|[,;{(\\s])${name.replace(/\$/g, "\\$")}=\\{`, "g");
+  const assignment = new RegExp(`(?:^|[,;{(\\s])${escapeRegExp(name)}=\\{`, "g");
   for (const match of source.matchAll(assignment)) {
     const start = match.index + match[0].length - 1;
     try {

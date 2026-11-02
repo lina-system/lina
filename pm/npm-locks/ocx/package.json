@@ -1,0 +1,7 @@
+{
+  "name": "lina-ocx",
+  "private": true,
+  "dependencies": {
+    "@bitkyc08/opencodex": "2.95.0"
+  }
+}

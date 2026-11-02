@@ -63,6 +63,12 @@ def omo_task_path(root: Path) -> Path:
     return vendor_dir(root) / "current" / "node_modules" / omo_pin().package / "plugin" / "extensions" / "omo-task.js"
 
 
+def agent_dir() -> Path:
+    """omo's agent dir as omo resolves it: ``OMO_CODING_AGENT_DIR``, else the account's ``~/.omo/agent``."""
+    configured = os.environ.get("OMO_CODING_AGENT_DIR", "").strip()
+    return Path(configured).expanduser() if configured else Path.home() / ".omo" / "agent"
+
+
 def shim_path(root: Path) -> Path:
     return root / "bin" / "omo"
 
@@ -72,8 +78,10 @@ def node_bin(root: Path) -> Path:
 
 
 def omo_env() -> dict[str, str]:
-    """The person's environment (omo's home stays ``~/.omo``), with omo held on Node."""
-    return {**os.environ, "OMO_RUNTIME": "node"}
+    """The person's environment with omo held on Node. omo is the person's own tool and its home is the account's
+    ``~/.omo``, so HOME is not moved to a profile home and its own credentials are not scrubbed."""
+    from tools.environments.local import build_subprocess_env
+    return build_subprocess_env(scrub_secrets=False, inherit_profile_home=False, extra={"OMO_RUNTIME": "node"})
 
 
 def write_shim(root: Path, node: Path) -> Path:
