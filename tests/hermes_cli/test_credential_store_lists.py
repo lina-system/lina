@@ -31,10 +31,9 @@ def home(tmp_path, monkeypatch):
 def _current(home: Path) -> tuple[str, ...]:
     from agent.secret_sources import bitwarden as bw
     from agent.secret_sources import onepassword as op
-    from plugins.platforms.photon import adapter as photon
 
     paths = (bw._disk_cache_path(home), bw._encrypted_disk_cache_path(home), op._STORE.disk.path(home),
-             photon._runtime_record_path())
+             home / "photon-sidecar.json")
     return tuple(p.relative_to(home).as_posix() for p in paths)
 
 

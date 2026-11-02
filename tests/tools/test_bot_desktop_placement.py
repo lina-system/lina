@@ -57,7 +57,7 @@ class _FakeDocker:
 
 
 def test_sandbox_rfb_and_cua_ride_the_exec_prefix(monkeypatch):
-    from tools.environments.docker import DockerEnvironment
+    from tools.environments.base import BaseEnvironment
     env = _FakeDocker()
     monkeypatch.setattr(streams, "exec_prefix", lambda e, *, user=None, interactive=True:
                         ["docker", "exec", "-i", "-u", user, e._container_id] if user else ["docker", "exec", "-i", e._container_id])
@@ -78,7 +78,7 @@ def test_sandbox_rfb_and_cua_ride_the_exec_prefix(monkeypatch):
     command, args = sandbox_host.cua_mcp_invocation(env, "p1", {"DISPLAY": ":20"})
     assert command == "docker" and args[:5] == ["exec", "-i", "-u", "pn", "c0ffee"]
     assert "cua-driver mcp" in args[-1] and "export DISPLAY=:20" in args[-1]
-    assert not isinstance(env, DockerEnvironment)  # the fake never touched a real daemon
+    assert not isinstance(env, BaseEnvironment)  # duck-typed provider, no real daemon
 
 
 def test_sandbox_status_offers_the_image_switch_instead_of_a_config_hint(monkeypatch):

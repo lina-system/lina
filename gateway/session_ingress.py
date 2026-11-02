@@ -226,8 +226,9 @@ def row_turn_author(policy, row):
         author = (payload.get(key) or {}).get('turn_author')
         if author is not None:
             return author
-    from gateway.session_a2a import forward_author
-    return forward_author(policy)
+    from gateway.session_sources import policy_hooks
+    hooks = policy_hooks(policy)
+    return hooks.turn_author(policy) if hooks is not None else None
 
 
 async def execute_admission(authority, ref, row):

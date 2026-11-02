@@ -17,6 +17,7 @@ import pytest
 from aiohttp import web
 from aiohttp.test_utils import TestClient, TestServer
 
+from cron.scheduler_provider import CronScheduler
 from gateway.config import PlatformConfig
 from gateway.platforms import api_server_fire_startup
 from gateway.platforms.api_server import APIServerAdapter, cors_middleware
@@ -27,7 +28,12 @@ def adapter():
     return APIServerAdapter(PlatformConfig(enabled=True, extra={"key": "sk-secret"}))
 
 
-class _SpyProvider:
+class _SpyProvider(CronScheduler):
+    name = "test"
+
+    def start(self, stop_event, **kwargs):
+        pass
+
     def __init__(self):
         self.claimed = []
         self.fired = []
@@ -46,8 +52,8 @@ def provider(monkeypatch):
     spy = _SpyProvider()
     monkeypatch.setattr("cron.scheduler_provider.resolve_cron_scheduler", lambda: spy)
     monkeypatch.setattr(
-        "plugins.cron_providers.chronos.verify.get_fire_verifier",
-        lambda: (lambda **kw: {"purpose": "cron_fire"}),
+        "cron.scheduler_provider.CronScheduler.verify_fire_token",
+        lambda self, **kw: {"purpose": "cron_fire"},
     )
     return spy
 
@@ -173,11 +179,11 @@ async def test_slow_token_verify_spends_the_startup_budget(adapter, provider, mo
     forwarder's timeout, NAS would retry while this handler still ran the job, and it would run twice."""
     monkeypatch.setattr(api_server_fire_startup, "FIRE_STARTUP_WAIT_SECONDS", 0.2)
 
-    async def _slow_verifier(**_kw):  # outlasts the whole budget; host load only makes it slower
+    async def _slow_verifier(self, **_kw):  # outlasts the whole budget; host load only makes it slower
         await asyncio.sleep(0.5)
         return {"purpose": "cron_fire"}
 
-    monkeypatch.setattr("plugins.cron_providers.chronos.verify.get_fire_verifier", lambda: _slow_verifier)
+    monkeypatch.setattr("cron.scheduler_provider.CronScheduler.verify_fire_token", _slow_verifier)
     runner = _StartingRunner()
     # Startup completes as soon as the gate first looks: a budget measured from the gate would then
     # admit the fire on its next poll; one measured from entry is already spent and refuses at once.

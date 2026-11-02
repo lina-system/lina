@@ -26,8 +26,11 @@ def test_every_canonical_verb_has_a_declared_contract(owner):
     """Each name the authority answers is a ``METHODS`` (shared with the sidecar) or
     ``CANONICAL_METHODS`` declaration, so it is rendered into the generated TypeScript and
     OpenRPC; and no canonical declaration outlives its handler."""
+    from gateway.session_sources import rpc_handlers
     connection, _ = owner
     served = set(connection.handlers()) | set(GROUP_METHODS) | {'profiles.list'}
+    # Verbs a registered session source contributes (gateway/session_sources.py) are served too.
+    served |= {name for name in CANONICAL_METHODS if name in rpc_handlers(connection, name)}
     assert sorted(served - set(METHODS) - set(CANONICAL_METHODS)) == []
     assert sorted(set(CANONICAL_METHODS) - served) == []
 

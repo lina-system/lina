@@ -152,7 +152,7 @@ def cwd_follows_host_mount(cwd: str, mount: str) -> bool:
     return cwd == "/workspace" and mount != "/workspace"
 
 _CONTAINER_BACKENDS = frozenset({"docker", "modal", "daytona", "vercel_sandbox"})
-_BUILTIN_BACKENDS = _CONTAINER_BACKENDS | {"local", "ssh", "managed_modal"}
+_BUILTIN_BACKENDS = {"local", "ssh"}
 
 
 def _plugin_registry_lookup(env_type: str, fn_name: str, default, *args):
@@ -164,6 +164,9 @@ def _plugin_registry_lookup(env_type: str, fn_name: str, default, *args):
         return default
     try:
         import agent.terminal_env_registry as reg
+        from tools.environments.discovery import discover_environment_providers
+
+        discover_environment_providers()
 
         return getattr(reg, fn_name)(env_type, *args)
     except Exception:

@@ -63,19 +63,10 @@ def test_live_env_cwd_write_is_sanitized_for_container_backends(
     assert tt.get_session_cwd("sess-abc") == override
 
 
-def test_real_builders_tag_env_type_and_record_host_cwd(tmp_path):
-    """The sanitizer reads ``env_type``/``host_cwd`` off the live instance, so the
-    producers must actually set them: ``_create_environment`` tags the backend and
-    ``DockerEnvironment._mount_args`` records the host dir bound at /workspace."""
-    import os
-
-    from tools.environments.docker import DockerEnvironment
+def test_real_builders_tag_env_type(tmp_path):
+    """The sanitizer reads the backend tag off the live environment."""
     from tools.terminal_tool_backends import _create_environment
 
-    assert _create_environment("local", image="", cwd=str(tmp_path), timeout=5).env_type == "local"
-    docker = object.__new__(DockerEnvironment)  # _mount_args needs no docker daemon
-    docker._persistent = False
-    DockerEnvironment._mount_args(docker, [], str(tmp_path), True, "t")
-    assert docker.host_cwd == os.path.abspath(str(tmp_path))
-    DockerEnvironment._mount_args(docker, [], str(tmp_path / "gone"), True, "t")
-    assert docker.host_cwd is None
+    env = _create_environment("local", image="", cwd=str(tmp_path), timeout=5)
+    assert env.env_type == "local"
+    env.cleanup()

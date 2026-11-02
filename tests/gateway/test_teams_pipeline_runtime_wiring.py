@@ -29,12 +29,7 @@ def test_gateway_runner_skips_wiring_without_msgraph_adapter(monkeypatch):
         return True
 
     monkeypatch.setattr("plugins.teams_pipeline.runtime.bind_gateway_runtime", _bind)
-    monkeypatch.setattr(
-        "gateway.run._load_gateway_config",
-        lambda: {"plugins": {"enabled": ["teams_pipeline"]}},
-    )
-
-    GatewayRunner._wire_teams_pipeline_runtime(runner)
+    assert bind_gateway_runtime(runner) is False
 
     assert called is False
 

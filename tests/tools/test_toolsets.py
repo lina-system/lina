@@ -136,6 +136,33 @@ class TestCreateCustomToolset:
             del TOOLSETS["_test_custom"]
 
 class TestRegistryOwnedToolsets:
+    def test_startup_contributions_join_defaults_without_runtime_overlay_leaks(self, monkeypatch):
+        from tools.registry_contributions import StartupContribution
+
+        reg = ToolRegistry()
+        reg.register(name="optional_create", toolset="optional_creative",
+                     schema=_make_schema("optional_create"), handler=_dummy_handler,
+                     startup=StartupContribution(bundles=("core", "safe"), description="Optional creation"))
+        reg.register(name="runtime_extra", toolset="optional_creative",
+                     schema=_make_schema("runtime_extra"), handler=_dummy_handler)
+        monkeypatch.setattr("tools.registry.registry", reg)
+
+        for include_registry in (False, True):
+            assert "optional_create" in resolve_toolset("hermes-cli", include_registry=include_registry)
+            assert "optional_create" in resolve_toolset("safe", include_registry=include_registry)
+            assert "optional_create" not in resolve_toolset("coding", include_registry=include_registry)
+            assert "optional_create" not in resolve_toolset("hermes-webhook", include_registry=include_registry)
+        assert resolve_toolset("optional_creative", include_registry=False) == ["optional_create"]
+        assert resolve_toolset("optional_creative") == ["optional_create", "runtime_extra"]
+        assert "optional_create" not in toolsets_mod.bundle_non_core_tools("hermes-cli")
+
+        import pytest
+        with pytest.raises(ValueError, match="frozen"):
+            reg.register(name="late_create", toolset="late_creative",
+                         schema=_make_schema("late_create"), handler=_dummy_handler,
+                         startup=StartupContribution(bundles=("core",)))
+        assert "late_create" not in resolve_toolset("hermes-cli")
+
     def test_registry_membership_is_live(self, monkeypatch):
         reg = ToolRegistry()
         reg.register(

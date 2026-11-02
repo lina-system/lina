@@ -88,7 +88,6 @@ def test_model_receipt_changes_next_wire_and_branch_keeps_independent_history(tm
             params = dict(session_id=sid, request_id='switch', operation='model', payload={'model': 'switched'},
                 expected_revision=before['revision'], expected_generation=before['execution_generation'])
             from hermes_cli.gateway_chat_view import GatewayChatView
-            from acp_adapter.gateway_server import GatewayACPAgent
             class Client:
                 async def rpc(self, method, _timeout=None, **kwargs):  # the client budget is never on the wire
                     return await call(method, **kwargs)
@@ -100,11 +99,8 @@ def test_model_receipt_changes_next_wire_and_branch_keeps_independent_history(tm
             after = await turn(sid, 'AFTER_SWITCH')
             assert peer.requests[-1]['model'] == 'switched'
             assert peer.requests[0]['model'] == 'original'
-            agent = GatewayACPAgent()
-            agent._gateway = client
-            agent._snapshots[sid] = after
-            fork = await agent.fork_session(cwd=(await call('session.info', session_id=sid))['cwd'], session_id=sid)
-            child = fork.session_id
+            await view.command('/branch')
+            child = view.session_id
             branched = await call('session.resume', session_id=child)
             # Same logical history; each copy has its own physical ``row_id`` (rewind target).
             def logical(rows):

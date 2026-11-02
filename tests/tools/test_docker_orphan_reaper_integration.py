@@ -13,12 +13,12 @@ opt-out would silently do nothing.
 import os
 from unittest.mock import patch
 
-from tools import terminal_tool
+from tools.environments import docker
 
 
 def _reset_reaper_gate():
     """Clear the once-per-process flag between tests."""
-    terminal_tool._docker_orphan_reaper_ran = False
+    docker._docker_orphan_reaper_ran = False
 
 
 def test_maybe_reap_runs_once_per_process(monkeypatch):
@@ -35,9 +35,9 @@ def test_maybe_reap_runs_once_per_process(monkeypatch):
 
     with patch("tools.environments.docker.reap_orphan_containers", _fake_reap):
         config = {"docker_orphan_reaper": True}
-        terminal_tool._maybe_reap_docker_orphans(config)
-        terminal_tool._maybe_reap_docker_orphans(config)
-        terminal_tool._maybe_reap_docker_orphans(config)
+        docker._maybe_reap_docker_orphans(config)
+        docker._maybe_reap_docker_orphans(config)
+        docker._maybe_reap_docker_orphans(config)
 
     assert call_count["reap"] == 1, (
         f"reaper must run exactly once per process; got {call_count['reap']} calls"
@@ -57,7 +57,7 @@ def test_maybe_reap_passes_current_profile_as_filter(monkeypatch):
 
     with patch("tools.environments.docker.reap_orphan_containers", _fake_reap), \
          patch("tools.environments.docker._get_active_profile_name", return_value="research-bot"):
-        terminal_tool._maybe_reap_docker_orphans({"docker_orphan_reaper": True})
+        docker._maybe_reap_docker_orphans({"docker_orphan_reaper": True})
 
     assert captured_args.get("profile_filter") == "research-bot", (
         f"expected profile_filter='research-bot', got {captured_args.get('profile_filter')!r}"
@@ -75,4 +75,4 @@ def test_maybe_reap_swallows_exceptions(monkeypatch):
 
     with patch("tools.environments.docker.reap_orphan_containers", _exploding_reap):
         # Must not raise
-        terminal_tool._maybe_reap_docker_orphans({"docker_orphan_reaper": True})
+        docker._maybe_reap_docker_orphans({"docker_orphan_reaper": True})

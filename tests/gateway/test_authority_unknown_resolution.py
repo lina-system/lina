@@ -166,7 +166,7 @@ async def test_discarded_lost_turn_is_closed_and_never_merged_into_the_follower_
     glue it onto the follower (consecutive-user merge): it is closed like a failed turn."""
     from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND, PARTIAL_FAILED_TURN_NOTICE
     from run_agent import AIAgent
-    from tests.acp_adapter.test_failed_turn_closure import _LoopbackProvider
+    from tests.gateway.fixtures.loopback_provider import _LoopbackProvider
     monkeypatch.setenv('HERMES_DISABLE_PLUGINS', '1')
     monkeypatch.setenv('NO_PROXY', '127.0.0.1,localhost')
     store, authority, _ref, unknown, _follower = await _restarted_owner_with_unknown_head(tmp_path, monkeypatch, [])

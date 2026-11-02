@@ -105,11 +105,12 @@ class LocalSessionAdapter(BasePlatformAdapter):
         policy = self.policies.get(chat_id)
         if policy is None:
             return None
-        from gateway.session_a2a import is_forward_policy
+        from gateway.session_sources import policy_hooks
         if policy.source == 'bot_room':
             return 'Clarification is unavailable in hosted rooms'
-        if is_forward_policy(policy):
-            return 'Clarification is unavailable to a forwarded peer'
+        hooks = policy_hooks(policy)
+        if hooks is not None:
+            return hooks.clarification_error
         live = self.authority.sessions.get(chat_id)
         if live is None:
             return None

@@ -101,6 +101,13 @@ def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
                         help="Prepare PM's pinned Chromium for browser_exec.")
     parser.add_argument("--yes", "-y", action="store_true", dest="assume_yes",
                         help="Accept setup prompts.")
+    parser.add_argument("--model", "-m")
+    parser.add_argument("--provider")
+    parser.add_argument("--accept-hooks", action="store_true")
+    parser.add_argument("--ignore-rules", action="store_true")
+    parser.add_argument("--yolo", action="store_true")
+    parser.add_argument("--safe-mode", action="store_true")
+    parser.add_argument("--ignore-user-config", action="store_true")
     return parser.parse_args(argv)
 
 
@@ -163,6 +170,8 @@ def _warm_memory_provider_import(logger: logging.Logger) -> None:
 def main(argv: list[str] | None = None) -> None:
     """Entry point: load env, configure logging, run the ACP agent."""
     args = _parse_args(argv)
+    from acp_adapter.cli import apply_launch_flags
+    apply_launch_flags(args)
     for flag, action in (("version", _print_version), ("check", _run_check), ("setup", _run_setup)):
         if getattr(args, flag):
             return action()

@@ -7,7 +7,7 @@ import logging
 import os
 from pathlib import Path
 from tools import tool_backend_helpers
-from tools.environments.docker import docker_runtime_name, find_docker
+from tools.environments.container_runtime import docker_runtime_name, find_docker
 from hermes_cli import nous_subscription
 
 logger = logging.getLogger("hermes_cli.setup")
@@ -286,6 +286,8 @@ def setup_terminal_backend(config: dict):
         from agent.terminal_env_registry import list_providers
         for provider in list_providers():
             pname = provider.name.strip().lower()
+            if any(name == pname for name, _label in backends):
+                continue
             backends.append((pname, f"{provider.display_name} - {provider.description}"))
             plugin_backend_names.append(pname)
     except Exception:

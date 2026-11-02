@@ -25,6 +25,25 @@ class FakeGraphClient:
         self.downloaded = False
 
 
+def test_plugin_factory_binds_before_adapter_publication(monkeypatch):
+    from plugins.teams_pipeline import register, runtime
+
+    factories = {}
+    ctx = SimpleNamespace(
+        register_platform_handler=lambda platform, factory: factories.update({platform: factory}),
+        register_cli_command=lambda **kwargs: None,
+    )
+    register(ctx)
+    gateway = SimpleNamespace(adapters={})
+    adapter = SimpleNamespace(gateway_runner=gateway)
+    bound = []
+    monkeypatch.setattr(runtime, "bind_gateway_runtime", lambda runner, **kwargs: bound.append((runner, kwargs["adapter"])))
+
+    factories["msgraph_webhook"](object(), adapter)
+
+    assert bound == [(gateway, adapter)]
+
+
 async def _transcript_meeting_resolver(
     client, *, meeting_id=None, join_web_url=None, tenant_id=None, organizer_user_id=None
 ):

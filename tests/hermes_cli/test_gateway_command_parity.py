@@ -32,12 +32,12 @@ def test_committed_parity_table_matches_every_client_verdict():
 
 
 def test_acp_column_is_the_table_acp_dispatch_reads(monkeypatch):
-    """ACP's routes have one source (``acp_adapter.gateway_commands.ROUTES``): a route it changes
+    """Editor route labels have one source shared with ACP dispatch: a route it changes
     changes the documented cell, and a command it drops falls back to the owner's ``slash.exec``."""
-    from acp_adapter import gateway_commands
+    from hermes_cli.gateway_command_routes import EDITOR_COMMAND_ROUTES
     gen = _generator()
-    assert gen.acp_cell('undo', 'refused') == gateway_commands.ROUTES['undo'][0]
-    monkeypatch.setitem(gateway_commands.ROUTES, 'undo', ('moved route', gateway_commands.ROUTES['undo'][1]))
+    assert gen.acp_cell('undo', 'refused') == EDITOR_COMMAND_ROUTES['undo']
+    monkeypatch.setitem(EDITOR_COMMAND_ROUTES, 'undo', 'moved route')
     assert gen.acp_cell('undo', 'refused') == 'moved route'
-    monkeypatch.delitem(gateway_commands.ROUTES, 'undo')
+    monkeypatch.delitem(EDITOR_COMMAND_ROUTES, 'undo')
     assert gen.acp_cell('undo', 'refused') == 'slash.exec: refused'

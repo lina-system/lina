@@ -505,32 +505,12 @@ def _detect_active_provider_index(providers: list, config: dict, *, force_fresh:
     return 0
 
 
-def _fal_model_catalog(config: dict):
-    """Lazy-load the FAL model catalog."""
-    from tools.image_generation_catalog import FAL_MODELS, DEFAULT_MODEL
-    return FAL_MODELS, DEFAULT_MODEL
-
-
-def _managed_image_catalog(config: dict):
-    """The managed row's union catalog (FAL + Krea + Portal), minus the gateways this account cannot use.
-
-    A free-pool account is funded for FAL only, so its picker never offers a Krea or Portal model it
-    would be denied at generation time; a logged-out or paid account sees everything."""
-    from hermes_cli.tools_config import get_nous_subscription_features
-    from tools.image_generation_managed import managed_image_catalog
-
-    acct = get_nous_subscription_features(config).account_info
-    pool_only = bool(acct and acct.logged_in and acct.paid_service_access is not True)
-    return managed_image_catalog(
-        include_krea=not pool_only or acct.tool_gateway_entitled_for("krea"), include_portal=not pool_only)
-
-
 # Per-backend model catalog (config_key = top-level config.yaml section, catalog_fn(config) -> ({model_id:
 # metadata}, default_model)); a TOOL_CATEGORIES row tagged `imagegen_backend: "<name>"` selects the catalog at
 # picker time. "nous" is the single managed row: one catalog spanning the FAL, Krea and Portal gateways.
-IMAGEGEN_BACKENDS = {
-    "fal": {"display": "FAL.ai", "config_key": "image_gen", "catalog_fn": _fal_model_catalog},
-    "nous": {"display": "Nous Subscription", "config_key": "image_gen", "catalog_fn": _managed_image_catalog}}
+from hermes_cli.tools_config_contributions import model_catalogs
+
+IMAGEGEN_BACKENDS = model_catalogs()
 
 
 def _plugin_model_catalog(registry_module: str, plugin_name: str):

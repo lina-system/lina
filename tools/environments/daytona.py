@@ -205,3 +205,22 @@ class DaytonaEnvironment(BaseEnvironment):
             except Exception as e:
                 logger.warning("Daytona: cleanup failed: %s", e)
             self._sandbox = None
+
+from agent.terminal_env_registry import register_provider
+from tools.environments.provider import EnvironmentProvider
+from tools.terminal_tool_backends import _resources
+
+
+def _build_daytona_env(*, image, cwd, timeout, cc, task_id, **_):
+    resources = _resources(cc)
+    resources["cpu"] = int(resources["cpu"])
+    return DaytonaEnvironment(image=image, cwd=cwd, timeout=timeout, task_id=task_id, **resources)
+
+
+def _check_daytona(config):
+    from daytona import Daytona
+    from agent.secret_scope import get_secret
+    return get_secret("DAYTONA_API_KEY") is not None
+
+
+register_provider(EnvironmentProvider("daytona", _build_daytona_env, _check_daytona))

@@ -233,7 +233,8 @@ class TestPermissionRequestToolCallReachesATerminalStatus:
         assert [(u.tool_call_id, u.status) for u in sent] == [(requested.tool_call_id, status)]
 
     def test_denied_edit_approval_request_is_closed_as_failed(self):
-        from acp_adapter.edit_approval import EditProposal, make_acp_edit_approval_requester
+        from tools.edit_approval import EditProposal
+        from acp_adapter.edit_approval import make_acp_edit_approval_requester
 
         proposal = EditProposal(tool_name="write_file", path="/tmp/x", old_text="", new_text="y", arguments={})
         requested, sent = self._run(
@@ -244,7 +245,8 @@ class TestPermissionRequestToolCallReachesATerminalStatus:
     def test_allowed_edit_approval_request_is_closed_as_completed_once(self):
         """Live regression: a client answering with a plain ``selected`` outcome (not the SDK
         ``AllowedOutcome`` class) had the edit applied but the bubble closed ``failed``."""
-        from acp_adapter.edit_approval import EditProposal, make_acp_edit_approval_requester
+        from tools.edit_approval import EditProposal
+        from acp_adapter.edit_approval import make_acp_edit_approval_requester
 
         proposal = EditProposal(tool_name="write_file", path="/tmp/x", old_text="", new_text="y", arguments={})
         decisions = []

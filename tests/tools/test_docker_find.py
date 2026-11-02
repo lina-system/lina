@@ -1,10 +1,10 @@
-"""Tests for tools.environments.docker.find_docker — Docker CLI discovery."""
+"""Tests for tools.environments.container_runtime.find_docker — Docker CLI discovery."""
 
 from unittest.mock import patch
 
 import pytest
 
-from tools.environments import docker as docker_mod
+from tools.environments import container_runtime as docker_mod
 
 
 @pytest.fixture(autouse=True)
@@ -23,8 +23,8 @@ class TestFindDocker:
         fake_docker.write_text("#!/bin/sh\n")
         fake_docker.chmod(0o755)
 
-        with patch("tools.environments.docker.shutil.which", return_value=None), \
-             patch("tools.environments.docker._DOCKER_SEARCH_PATHS", [str(fake_docker)]):
+        with patch("tools.environments.container_runtime.shutil.which", return_value=None), \
+             patch("tools.environments.container_runtime._DOCKER_SEARCH_PATHS", [str(fake_docker)]):
             result = docker_mod.find_docker()
         assert result == str(fake_docker)
 
@@ -38,7 +38,7 @@ class TestFindDocker:
                 return "/usr/bin/podman"
             return None
 
-        with patch("tools.environments.docker.shutil.which", side_effect=which_side_effect):
+        with patch("tools.environments.container_runtime.shutil.which", side_effect=which_side_effect):
             result = docker_mod.find_docker()
         assert result == "/usr/bin/docker"
 

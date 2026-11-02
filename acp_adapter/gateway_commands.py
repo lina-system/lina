@@ -12,6 +12,7 @@ refusal reaches the editor as a reply naming the command, never a failed prompt.
 from __future__ import annotations
 
 from hermes_cli.gateway_client import GatewayClientError, GatewayRPCError
+from hermes_cli.gateway_command_routes import EDITOR_COMMAND_ROUTES
 
 
 class CommandRefused(GatewayClientError):
@@ -279,17 +280,17 @@ def _tools_text(info):
 # Any command not here goes to the owner's ``slash.exec`` (``_forward``). ``/clear`` is main's
 # "new session + clear screen"; here it is ``/new``'s reset of this session.
 ROUTES = {
-    'branch': ('ACP fork_session', _branch),
-    'discard': ('prompt.resolve_unknown', _discard_unknown),
-    'help': ('local', _help),
-    'steer': ('session.steer', _prompt),
-    'queue': ('prompt.submit', _prompt),
-    'title': ('session.mutate rename (bare: slash.exec)', _title),
-    'undo': ('session.mutate rewind', _rewind_command),
-    'retry': ('session.mutate rewind + resubmit', _rewind_command),
-    'tools': ('session.info', _info),
-    'model': ('session.mutate model', _info),
-    'compress': ('session.mutate compress', _mutation),
-    'new': ('session.mutate reset', _mutation),
-    'clear': ('session.mutate reset', _mutation),
+    'branch': (EDITOR_COMMAND_ROUTES['branch'], _branch),
+    'discard': (EDITOR_COMMAND_ROUTES['discard'], _discard_unknown),
+    'help': (EDITOR_COMMAND_ROUTES['help'], _help),
+    'steer': (EDITOR_COMMAND_ROUTES['steer'], _prompt),
+    'queue': (EDITOR_COMMAND_ROUTES['queue'], _prompt),
+    'title': (EDITOR_COMMAND_ROUTES['title'], _title),
+    'undo': (EDITOR_COMMAND_ROUTES['undo'], _rewind_command),
+    'retry': (EDITOR_COMMAND_ROUTES['retry'], _rewind_command),
+    'tools': (EDITOR_COMMAND_ROUTES['tools'], _info),
+    'model': (EDITOR_COMMAND_ROUTES['model'], _info),
+    'compress': (EDITOR_COMMAND_ROUTES['compress'], _mutation),
+    'new': (EDITOR_COMMAND_ROUTES['new'], _mutation),
+    'clear': (EDITOR_COMMAND_ROUTES['clear'], _mutation),
 }

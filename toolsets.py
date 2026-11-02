@@ -1,6 +1,7 @@
 """Toolset helpers: get/resolve/validate named tool groups (static TOOLSETS + registry-registered)."""
 
 from typing import Dict, List, Any, Set, Optional, Tuple
+from tools.registry_contributions import CoreTools, bundle_tools, startup_entries
 
 
 # Shared tool list for CLI and all messaging platform toolsets (edit once, all
@@ -8,11 +9,11 @@ from typing import Dict, List, Any, Set, Optional, Tuple
 # in `desktop_ui`/`project`, enabled per desktop-sourced session by the GUI gateway
 # (tui_gateway/server.py::_load_enabled_toolsets). HA, kanban and computer_use
 # entries are further gated by their tools' check_fns.
-_HERMES_CORE_TOOLS = [
+_HERMES_CORE_TOOLS = CoreTools([
     "web_search", "web_extract",
     "terminal", "process_manage",
     "read_file", "write_file", "patch", "search_files",
-    "vision_analyze", "image_generate",
+    "vision_analyze",
     "skills_list", "skill_view", "skill_manage",
     "browser_exec",  # THE browser: Python over CDP (browser-harness)
     "browser_cdp", "browser_dialog",
@@ -35,7 +36,7 @@ _HERMES_CORE_TOOLS = [
     "mac_use", "mac_status", "mac_screenshot", "mac_unlock_status", "mac_unlock", "mac_unlock_revoke",
     # Service-gated connector account status and authorization links.
     "manage_connections",
-]
+])
 
 # Webhook payloads are untrusted third-party content: no file/system execution.
 _HERMES_WEBHOOK_SAFE_TOOLS = ["web_search", "web_extract", "vision_analyze", "clarify"]
@@ -53,17 +54,17 @@ def _ts(description, tools=(), includes=(), **extra):
 
 def _bundle(description, extras=()):
     """A `hermes-*` platform bundle: the shared core tools plus optional platform extras."""
-    return _ts(description, _HERMES_CORE_TOOLS + list(extras))
+    return _ts(description, [*list.__iter__(_HERMES_CORE_TOOLS), *extras], startup_bundle="core")
 
 
 def _core_without(*excluded, kanban=True):
     """_HERMES_CORE_TOOLS minus *excluded* (and, unless kanban=True, every kanban_* tool); order preserved."""
-    return [t for t in _HERMES_CORE_TOOLS if t not in excluded and (kanban or not t.startswith("kanban_"))]
+    return [t for t in list.__iter__(_HERMES_CORE_TOOLS) if t not in excluded and (kanban or not t.startswith("kanban_"))]
 
 
 # Coding posture: everything you reach for while pairing on code; drops messaging,
 # tts, image_gen, cron, kanban and computer-use.
-_CODING_TOOLS = _core_without("image_generate", "text_to_speech", "cronjob_manage", "computer_use", kanban=False)
+_CODING_TOOLS = _core_without("text_to_speech", "cronjob_manage", "computer_use", kanban=False)
 
 # Toolsets a CLIENT adds to its own sessions (tui_gateway/server.py::_gui_surface_toolsets), never
 # config: another surface lacking them made no configuration choice.
@@ -84,14 +85,6 @@ TOOLSETS = {
     ),
     "vision": _ts("Image analysis and vision tools", ["vision_analyze"]),
     "video": _ts("Video analysis and understanding tools (opt-in, not in default toolset)", ["video_analyze"]),
-    "image_gen": _ts("Creative generation tools (images)", ["image_generate"]),
-    "video_gen": _ts(
-        "Video generation tools. Single ``video_generate`` tool covers text-to-video "
-        "(prompt only) and image-to-video (prompt + image_url), plus "
-        "reference-to-video. Provider-specific edit/extend workflows may appear as "
-        "separate tools. Configure via ``hermes tools`` → Video Generation.",
-        ["video_generate", "xai_video_edit", "xai_video_extend"],
-    ),
     "computer_use": _ts(
         "Background desktop control via cua-driver (macOS/Windows/Linux) — "
         "screenshots, mouse, keyboard, scroll, drag. Does NOT steal the user's cursor "
@@ -175,7 +168,7 @@ TOOLSETS = {
 
     # Scenario-specific toolsets
     "debugging": _ts("Debugging and troubleshooting toolkit", ["terminal", "process_manage"], includes=["web", "file"]),
-    "safe": _ts("Safe toolkit without terminal access", [], includes=["web", "vision", "image_gen"]),
+    "safe": _ts("Safe toolkit without terminal access", [], includes=["web", "vision"], startup_bundle="safe"),
 
     # Coding posture, auto-selected in a code workspace (agent/coding_context.py).
     # `desktop_ui` is folded in separately by the GUI gateway for desktop sessions.
@@ -200,6 +193,7 @@ TOOLSETS = {
         "OpenAI-compatible API server — full agent tools accessible via HTTP (no "
         "interactive UI tools like clarify or send_message)",
         _core_without("text_to_speech", "clarify", "computer_use", kanban=False),
+        startup_bundle="core",
     ),
     "hermes-cli": _bundle("Full interactive CLI toolset - all default tools plus cronjob management"),
 
@@ -227,9 +221,10 @@ TOOLSETS = {
     "hermes-wecom-callback": _bundle("WeCom callback toolset - enterprise self-built app messaging (full access)"),
     "hermes-yuanbao": {
         "description": "Yuanbao Bot 元宝消息平台工具集 - 群信息、成员查询、私聊、贴纸表情",
-        "tools": _HERMES_CORE_TOOLS + _YUANBAO_TOOLS,
+        "tools": [*list.__iter__(_HERMES_CORE_TOOLS), *_YUANBAO_TOOLS],
         "module": "tools.yuanbao_tools",
         "includes": [],
+        "startup_bundle": "core",
     },
     "hermes-sms": _bundle("SMS bot toolset - interact with Hermes via SMS (Twilio)"),
     "hermes-webhook": _ts("Webhook toolset - receive and process external webhook events", _HERMES_WEBHOOK_SAFE_TOOLS),
@@ -251,8 +246,8 @@ TOOLSET_SESSION_PLATFORMS = {name: spec["platforms"] for name, spec in TOOLSETS.
 
 # Captured before create_custom_toolset() can add user-named tools: shared metrics may export only
 # these names, so a plugin, MCP server or custom toolset name never leaves the machine.
-BUILTIN_TOOL_NAMES = frozenset(tool for spec in TOOLSETS.values() for tool in spec["tools"])
-BUILTIN_TOOLSET_NAMES = frozenset(TOOLSETS)
+_STATIC_BUILTIN_TOOL_NAMES = frozenset(tool for spec in TOOLSETS.values() for tool in spec["tools"])
+_STATIC_BUILTIN_TOOLSET_NAMES = frozenset(TOOLSETS)
 
 
 def _registry():
@@ -282,15 +277,23 @@ def get_toolset(name: str, *, include_registry: bool = True) -> Optional[dict[st
 
     include_registry=True merges plugin/overlay tools registered into this toolset
     and resolves registry-only (plugin/MCP) toolsets and aliases; False returns a
-    copy of the static TOOLSETS entry only, so platform reverse-mapping is
-    unaffected by registry additions.
+    copy of the static TOOLSETS entry plus startup declarations, so platform
+    reverse-mapping is unaffected by runtime registry additions.
 
     Args: name (str): Name of the toolset include_registry (bool): When True (default), merge in tools that
     plugins/overlays registered into this toolset via the registry. Platform reverse-mapping in
     ``_get_platform_tools`` uses False so that a tool registered into a toolset but absent from a platform's
     static composite does not drop the whole toolset from inference. See issue #49622.
     """
+    entries = startup_entries()
     toolset = TOOLSETS.get(name)
+    declared = [entry for entry in entries if entry.toolset == name]
+    if toolset:
+        contributed = bundle_tools(toolset.get("startup_bundle", ""), discover=False)
+        toolset = {**toolset, "tools": list(dict.fromkeys([*toolset["tools"], *contributed]))}
+    elif declared:
+        toolset = {"description": declared[0].startup.description,
+                   "tools": [entry.name for entry in declared], "includes": []}
     if not include_registry:
         return {**toolset, "tools": list(toolset.get("tools", [])), "includes": list(toolset.get("includes", []))} if toolset else None
 
@@ -368,7 +371,7 @@ def _plugin_platform_bundle(name: str) -> list[str]:
 
 def resolve_toolset(name: str, visited: set[str] | None = None, *, include_registry: bool = True) -> list[str]:
     """Recursively resolve a toolset (and its includes) to a sorted tool-name list.
-    include_registry=False resolves the static TOOLSETS view only.
+    include_registry=False resolves static definitions plus startup declarations.
 
     Args: name (str): Name of the toolset to resolve visited (Set[str]): Set of already visited toolsets
     (for cycle detection) include_registry (bool): When True (default), include tools that plugins/overlays
@@ -435,7 +438,7 @@ def _plugin_display_names() -> list[str]:
 
 def get_all_toolsets() -> dict[str, dict[str, Any]]:
     """All toolset definitions: static plus plugin-registered."""
-    result = dict(TOOLSETS)
+    result = {name: get_toolset(name) for name in TOOLSETS}
     aliases = _get_registry_toolset_aliases()
     for display_name in _plugin_display_names():
         toolset = None if display_name in result else get_toolset(display_name)
@@ -513,3 +516,12 @@ def get_toolset_info(name: str) -> dict[str, Any]:
         "resolved_tools": resolved_tools, "tool_count": len(resolved_tools),
         "is_composite": bool(toolset["includes"]),
     }
+
+
+def __getattr__(name: str):
+    """Metrics identities include installed built-ins, never runtime/plugin names."""
+    if name == "BUILTIN_TOOL_NAMES":
+        return _STATIC_BUILTIN_TOOL_NAMES | frozenset(entry.name for entry in startup_entries())
+    if name == "BUILTIN_TOOLSET_NAMES":
+        return _STATIC_BUILTIN_TOOLSET_NAMES | frozenset(entry.toolset for entry in startup_entries())
+    raise AttributeError(name)

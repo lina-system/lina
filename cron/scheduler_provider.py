@@ -146,6 +146,10 @@ class CronScheduler(ABC):
         """Whether this provider can run here. MUST NOT make network calls; False → built-in."""
         return True
 
+    def verify_fire_token(self, *, token: str) -> dict[str, Any] | None:
+        """Authenticate an inbound fire; providers without external triggers reject it."""
+        return None
+
     @abstractmethod
     def start(
         self, stop_event: threading.Event, *, adapters: Any = None, loop: Any = None,

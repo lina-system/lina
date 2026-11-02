@@ -59,6 +59,18 @@ def test_valid_token_returns_claims(rsa_keys):
     assert claims["purpose"] == "cron_fire"
     assert claims["aud"] == AUD
 
+
+def test_provider_verifies_with_its_configured_identity(rsa_keys, monkeypatch):
+    from plugins.cron_providers import chronos
+
+    priv, pub = rsa_keys
+    config = {"expected_audience": AUD, "nas_jwks_url": pub, "portal_url": ISS}
+    monkeypatch.setattr(chronos, "_cfg", lambda *keys, **kwargs: config[keys[-1]])
+    provider = chronos.ChronosCronScheduler()
+
+    assert provider.verify_fire_token(token=_mint(priv, _base_claims()))["aud"] == AUD
+    assert provider.verify_fire_token(token=_mint(priv, _base_claims(aud="agent:wrong"))) is None
+
 def test_wrong_audience_rejected(rsa_keys):
     from plugins.cron_providers.chronos.verify import verify_nas_fire_token
 

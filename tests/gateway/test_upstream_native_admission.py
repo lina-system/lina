@@ -6,7 +6,7 @@ The unified gateway's durable admission re-checks authorization inside
 relay seal / role reauthorization only. A direct adapter whose entire authorization model
 IS the upstream (A2A peers: bearer-token authenticated in ``do_POST``) has no relay seal
 and no roles, so the re-check fell to the principal allowlist and — with no
-``A2A_ALLOWED_USERS`` — default-denied every fresh native message that the same gateway's
+``DISCORD_ALLOWED_USERS`` — default-denied every fresh native message that the same gateway's
 inbound filter had just accepted.
 """
 
@@ -24,8 +24,8 @@ from hermes_state_runtime import RuntimeStoreError
 
 def _clear_authz_env(monkeypatch) -> None:
     for key in (
-        "A2A_ALLOWED_USERS",
-        "A2A_ALLOW_ALL_USERS",
+        "DISCORD_ALLOWED_USERS",
+        "DISCORD_ALLOW_ALL_USERS",
         "DISCORD_ALLOWED_USERS",
         "GATEWAY_ALLOWED_USERS",
         "GATEWAY_ALLOW_ALL_USERS",
@@ -45,12 +45,17 @@ def _fresh_native_event(
 async def test_upstream_authorized_adapter_admits_fresh_native_without_allowlist(
     tmp_path, monkeypatch
 ):
-    from plugins.platforms.a2a.adapter import A2AAdapter
+    from plugins.platforms.discord.adapter import DiscordAdapter
+
+    class UpstreamAdapter(DiscordAdapter):
+        @property
+        def authorization_is_upstream(self) -> bool:
+            return True
 
     _clear_authz_env(monkeypatch)
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / "sessions"))
-    adapter = A2AAdapter(PlatformConfig(enabled=True))
-    runner.adapters = {Platform("a2a"): adapter}
+    adapter = UpstreamAdapter(PlatformConfig(enabled=True))
+    runner.adapters = {Platform.DISCORD: adapter}
     source = adapter.build_source(
         chat_id="ctx-1",
         chat_name="a2a:peer",
@@ -99,13 +104,18 @@ async def test_upstream_authorized_a2a_input_admits_durally_with_provenance(
     from gateway.session_ingress_context import native_callback, register_transport_home
     from hermes_constants import get_hermes_home
     from hermes_state_runtime import list_session_admissions
-    from plugins.platforms.a2a.adapter import A2AAdapter
+    from plugins.platforms.discord.adapter import DiscordAdapter
+
+    class UpstreamAdapter(DiscordAdapter):
+        @property
+        def authorization_is_upstream(self) -> bool:
+            return True
 
     _clear_authz_env(monkeypatch)
     monkeypatch.setattr(SessionAuthority, "_schedule", lambda self, ref: None)
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / "sessions"))
-    adapter = A2AAdapter(PlatformConfig(enabled=True))
-    runner.adapters = {Platform("a2a"): adapter}
+    adapter = UpstreamAdapter(PlatformConfig(enabled=True))
+    runner.adapters = {Platform.DISCORD: adapter}
     authority = await initialize_session_authority(
         runner, profile_id="default", instance_id="a2a-upstream"
     )
@@ -124,7 +134,7 @@ async def test_upstream_authorized_a2a_input_admits_durally_with_provenance(
         authority.db, session_id=receipt.ref.session_id, pending_only=False
     )[-1]["payload"]
     assert payload["text"] == "a2a task from a bearer-authenticated peer"
-    assert payload["native_text_v1"]["provenance"]["platform"] == "a2a"
+    assert payload["native_text_v1"]["provenance"]["platform"] == "discord"
 
 
 @pytest.mark.asyncio
@@ -138,9 +148,14 @@ async def test_same_principal_without_adapter_declaration_is_refused_by_native_a
     from gateway.session_authority import SessionAuthority, initialize_session_authority
     from gateway.session_ingress_context import native_callback, register_transport_home
     from hermes_constants import get_hermes_home
-    from plugins.platforms.a2a.adapter import A2AAdapter
+    from plugins.platforms.discord.adapter import DiscordAdapter
 
-    class UndeclaredAdapter(A2AAdapter):
+    class UpstreamAdapter(DiscordAdapter):
+        @property
+        def authorization_is_upstream(self) -> bool:
+            return True
+
+    class UndeclaredAdapter(UpstreamAdapter):
         @property
         def authorization_is_upstream(self) -> bool:
             return False
@@ -149,7 +164,7 @@ async def test_same_principal_without_adapter_declaration_is_refused_by_native_a
     monkeypatch.setattr(SessionAuthority, "_schedule", lambda self, ref: None)
     runner = GatewayRunner(GatewayConfig(sessions_dir=tmp_path / "sessions"))
     adapter = UndeclaredAdapter(PlatformConfig(enabled=True))
-    runner.adapters = {Platform("a2a"): adapter}
+    runner.adapters = {Platform.DISCORD: adapter}
     authority = await initialize_session_authority(
         runner, profile_id="default", instance_id="a2a-undeclared"
     )
