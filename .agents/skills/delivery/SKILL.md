@@ -25,18 +25,20 @@ rules themselves are in `docs/delivery.md`; this skill does not restate them.
 
 Run each command with `terminal`.
 
-1. Check the issue can start (every `Depends on` issue closed, current sprint):
+1. Check the issue can start (no open issue in its Blocked by list, current sprint):
    `gh issue view <n> --json body,labels,milestone`
 2. Branch from the latest `dev`: `git switch -c <type>/<n>-<slug> origin/dev`
 3. Open one pull request for the issue, into `dev`:
    `gh pr create --base dev --title "<type>(<scope>): <what>" --body-file <file>`.
    The body has `Closes #<n>`, the issue's `## Done when` with each box checked (or
-   `N/A: <reason>`), and `## Verification`.
+   `N/A: <reason>`), and `## Verification`. A change users see adds one line under
+   `## [Unreleased]` in `CHANGELOG.md`; otherwise add the `no-changelog` label.
 4. Wait for the required checks on the head, `Codex review`, `Linked issue` and `dev green` included:
    `gh pr checks <pr> --required --watch`
 5. On a P0/P1 finding, fix it on the branch; the new head gets its own review.
 6. Merge: `lina-merge <owner/repo> <pr> --wait 30` (from #63: `lina work merge`).
-7. File each P2/P3 finding as a follow-up issue (`Follow-up to #<pr>`, same milestone).
+7. P2/P3 findings: `review-followups` adds each as a checkbox to the one open `follow-up` issue
+   of its area and sprint, skipping findings already listed.
 
 ## Pitfalls
 

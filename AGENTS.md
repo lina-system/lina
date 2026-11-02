@@ -32,7 +32,7 @@ The project's intent layer, for contributors and for the triage sweeper (which m
 call, and when in doubt a PR stays open). Long form with examples:
 `website/docs/developer-guide/contributing.md` § Contribution rubric.
 
-**Wanted:** real bug fixes (repro on `main`, the exact line, the whole class incl. sibling paths);
+**Wanted:** real bug fixes (repro on `dev`, the exact line, the whole class incl. sibling paths);
 reach at the edges (adapters, providers, models, UI features) wired into the existing setup UX;
 god-file → module refactors; extending before duplicating (3+ PRs in one category → an ABC +
 orchestrator); behaviour-contract tests; E2E with real imports against a temp `HERMES_HOME` for
@@ -49,9 +49,9 @@ standalone plugin repo).
 isolation is often the design (profiles are islands on purpose), an absence can be load-bearing,
 and a fix that cannot point to the line where the bug manifests has an unverified premise.
 
-**Security:** `SECURITY.md` is the scope authority. A §3.1 finding goes private (GitHub Security
-Advisories or security@nousresearch.com), never into a public issue, PR, commit or comment; §3.2
-hardening is ordinary public work. Name the §2 boundary crossed, with a repro on `main`.
+**Security:** `SECURITY.md` is the scope authority. A §3.1 finding goes private (this repo's
+Security Advisories, Report a vulnerability), never into a public issue, PR, commit or comment;
+§3.2 hardening is ordinary public work. Name the §2 boundary crossed, with a repro on `dev`.
 
 **Footprint ladder** (take the highest rung that solves it): extend existing code → CLI command +
 skill → service-gated tool (`check_fn` answers reachability/opt-in, never per-session surface:
@@ -138,8 +138,8 @@ Every former god file is a **facade** (public entry points + the names other pac
   roots, narrow hooks and colocated action modules, `interface` for props and shared shapes,
   table-driven dispatch over condition ladders; `src/app` routes, `src/store` atoms, `src/lib` pure
   helpers.
-- **Commits and PRs:** rebase onto `main` before merging (a squash from a stale branch silently
-  reverts newer fixes); 1–2 invariant tests per fix, proven red on the base.
+- **Commits and PRs:** merge `dev` into the branch before merging; PRs join `dev` as merge
+  commits (docs/delivery.md); 1–2 invariant tests per fix, proven red on the base.
 - **Tests:** always `scripts/run_tests.sh`, never bare `pytest`; behaviour contracts, never
   change-detectors or source-reading tests; host-specific behaviour is tested on that host with
   `@pytest.mark.platforms(...)`, never by faking `sys.platform`; tests never write to `~/.hermes/`.

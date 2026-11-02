@@ -22,11 +22,11 @@ Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/
 ``dev green``: only the pull request that fixes a red ``dev`` may merge while ``dev`` is red.
 
 - success: the latest completed push CI run on ``dev`` passed; or the pull request carries the
-  ``dev-red-fix`` label, and its head's red checks are a strict subset of that run's red jobs
-  (it removes red and adds none);
+  ``dev-red-fix`` label, at least one of that run's red jobs passes on its head (skipped is not
+  passing) and the head adds no red;
 - pending: ``dev`` is red and the pull request is not a fix (wait for ``dev`` to turn green),
   or a fix whose checks are still running;
-- failure: a ``dev-red-fix`` pull request that adds a red check or removes none;
+- failure: a ``dev-red-fix`` pull request that adds a red check or makes none of dev's red pass;
 - success also when a repository admin (the owner) put the ``dev-red-approved`` label on the pull
   request after seeing why ``dev`` must stay red (docs/delivery.md, step 7).
 
@@ -228,8 +228,7 @@ def dev_green_status(dev_run: dict[str, Any] | None, dev_red: frozenset[str],
         return Status("failure", _limit("Adds red: " + ", ".join(added)))
     if any(c.get("status") != "completed" for c in checks):
         return Status("pending", f"Waiting for this fix's checks; dev is red at {at}")
-    still = {c["name"] for c in checks if c.get("conclusion") in RED}
-    fixed = sorted(dev_red - still)
+    fixed = sorted(dev_red & {c["name"] for c in checks if c.get("conclusion") == "success"})
     if not fixed:
         return Status("failure", _limit(f"Fixes none of dev's red at {at}: {reds}"))
     return Status("success", _limit("Fixes dev's red: " + ", ".join(fixed)))

@@ -147,6 +147,8 @@ DEV = {
     "fix removes nothing": (DEV_RED, RED_JOBS, FIX, [
         _check("Prune check", "failure"), _check("Python tests (macOS)", "failure")], "failure"),
     "fix still running": (DEV_RED, RED_JOBS, FIX, [_check("Prune check", None, "in_progress")], "pending"),
+    "fix only skips dev's red": (DEV_RED, RED_JOBS, FIX, [
+        _check("Prune check", "skipped"), _check("Python tests (macOS)", "skipped"), _check("Lint")], "failure"),
     "no completed dev run": (None, frozenset(), frozenset(), [], "pending"),
 }
 
