@@ -50,7 +50,7 @@ When taking upstream changes, do not change upstream LICENSE files or copyright 
 ## Our patches on top of upstream
 
 Changes we carry that upstream does not have are ordinary commits on `dev`. When upstream fixes the same problem, prefer upstream's fix and remove ours in the merge pull request.
-The hub-mac production checkout carried three uncommitted patches. At the fork:
+Our production checkout carried three uncommitted patches. At the fork:
 
 - launchd `MaterializeDatalessFiles` (`hermes_cli/gateway_launchd.py`): carried as a commit on `dev`.
 - 1Password service-account vault: not carried; upstream fixed it (b45971380c, d7c4d49db9: `op item get` names the item's vault).
