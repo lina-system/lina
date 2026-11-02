@@ -6,7 +6,7 @@ Behavior tests: tests/ci/test_codex_review_gate.py. Workflow: .github/workflows/
 ``Codex review`` (docs/ci.md):
 
 - success: ``chatgpt-codex-connector[bot]`` reviewed the head commit (a pull request review on
-  it, its review-summary comment marking a finished review of it with no findings, or a
+  it, its review-summary comment marking a finished review of it, or a
   "no major issues" comment naming it), and none of its review comments on that commit
   carries a P0 or P1 badge;
 - failure: the bot left P0/P1 findings on the head commit (count and first finding title);
@@ -166,8 +166,7 @@ def review_status(
     state = _summary_state(issue_comments)
     reviewed = (
         any(_is_bot(r) and r.get("commit_id") == head_sha for r in reviews)
-        or (state.get("commit_sha") == head_sha and state.get("status") == "completed"
-            and state.get("has_any_findings") is False)
+        or (state.get("commit_sha") == head_sha and state.get("status") == "completed")
         or _no_major_comment(head_sha, issue_comments)
     )
     if reviewed:

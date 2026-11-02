@@ -1,38 +1,23 @@
 ---
 name: computer-use
 description: "Drive the desktop background-first; escalate on signal."
-version: 2.1.0
+version: 1.0.0
 author: Francesco Bonacci (f-trycua), Hermes Agent
 license: MIT
 platforms: [macos, windows, linux]
 metadata:
   hermes:
     tags: [computer-use, desktop, automation, gui, cross-platform]
-    category: desktop
+    category: autonomous-ai-agents
     related_skills: []
 ---
 
 # Computer Use (universal, any-model, cross-platform)
 
-You have a `computer_use` tool that drives the user's desktop in the
-**background** — your actions do NOT move the user's cursor, steal
-keyboard focus, or switch virtual desktops / Spaces. The user can keep
-typing in their editor while you click around in a browser in another
-window. This is the opposite of pyautogui-style automation.
-
-Everything here works with any tool-capable model — Claude, GPT, Gemini,
-or an open model on a local OpenAI-compatible endpoint. There is no
-Anthropic-native schema to learn.
-
-Hermes drives [cua-driver](https://github.com/trycua/cua) under the hood.
-This skill teaches the Hermes `computer_use` **action vocabulary**, which is
-NOT the driver's raw MCP vocabulary. Call the actions documented below and
-never the driver's tools by name: `capture` is a Hermes action that maps to
-the driver's `get_window_state`; `element=N` is a Hermes argument that the
-wrapper translates into the driver's `element_token` handle. If you see a
-driver-side error mentioning `snapshot_id`, `element_token`, or "no reviewed
-risk classification", you (or a stale description) called the raw driver
-vocabulary — go back to the actions below.
+`computer_use` drives desktop apps background-first without moving the user's
+cursor or switching Spaces. Use its action vocabulary, not raw cua-driver MCP
+tools: the wrapper translates `capture` and `element=N` into driver snapshots
+and opaque tokens. Follow structured refusals and verify every effect.
 
 ## The canonical workflow
 
@@ -159,17 +144,9 @@ Walk it in order:
    (it's a visible focus change) and is only appropriate when the user isn't
    actively working. Classic cases: Electron/Chromium consent dialogs (e.g.
    tldraw offline's "Run Script"), DirectInput games, raw-input canvases.
-5. **Keystrokes verified-lost on a KDE/Qt editor → use the app's own I/O.**
-   Some Qt text components (KTextEditor: Kate, KWrite, KDevelop) discard
-   SYNTHETIC X keystrokes entirely — foreground `type` reports ok
-   ("Typed N characters into the focused widget", `effect:"unverifiable"`)
-   but a fresh AX capture shows the text never arrived, and raw XTest fails
-   identically (proven live, Aug 2026 — it is the toolkit, not the driver;
-   the same foreground route works on kcalc/Chrome). After ONE such
-   verified-lost round trip, stop retrying input rungs: write the file with
-   terminal/file tools and let the editor reload it, or drive the app's
-   DBus/CLI interface. Never loop the ladder against a surface that
-   verifiably swallows synthetic input.
+5. **Verified-lost keys in a Qt editor:** if fresh read-back shows foreground
+   typing vanished, use file tools or the app's own I/O. Do not repeat the ladder
+   against a surface that demonstrably discards synthetic input.
 
 ```
 computer_use(action="click", element=7)
@@ -192,8 +169,9 @@ inferring support from the executable's reported version.
 `computer_use` is desktop-only: it does not expose a typed route for browser
 page content (no `cua_browser_*` actions). For reading or acting on a page's
 DOM — navigation, clicking a link by text, typed input into a form field —
-use the separate `browser_exec` tool (Python CDP helpers driving a headless
-Chromium); its own schema documents the current contract. Reserve `computer_use` for browser
+use the available `browser_navigate`, `browser_click`, `browser_type` and
+`browser_snapshot` tools, or `browser_exec` for backends exposing that interface.
+Read the live schema. Reserve `computer_use` for browser
 *chrome* (the address bar, permission prompts, extension popups, native
 dialogs) and anything else on screen that isn't page content.
 
@@ -307,12 +285,19 @@ in your conversation context.
 | Type text disappears into a terminal emulator | cua-driver detects terminals (Ghostty, iTerm2, Terminal.app, Windows Terminal, mintty, etc.) and routes through key-event synthesis — should "just work" on a recent cua-driver. If it doesn't, ask the user to run `hermes computer-use doctor` |
 | `blocked pattern in type text` | You tried to `type` a shell command matching the dangerous-pattern block list (`curl ... \| bash`, `sudo rm -rf`, etc.). Break the command up or reconsider |
 | `hermes computer-use doctor` says "could not be started … Access is denied" (Windows) | The Hermes venv interpreter can't execute a binary under `C:\Program Files\WindowsApps`; the tool itself may still work because the shell resolves another copy on PATH. Fix once: reinstall cua-driver with the upstream installer (lands under the user profile) or set `HERMES_CUA_DRIVER_CMD` to a copy outside `WindowsApps`. The same denial spams `errors.log` for any other `WindowsApps` binary Hermes spawns (e.g. `bws.exe`) |
+| macOS Open/Save panel has no elements and `px_capture_unavailable` | A system process may own the panel. Prefer file tools; a foreground app shortcut is appropriate only under the escalation and focus rules above |
+| `off_space_or_ax_unresolved` | Re-capture the target. A sheet may own the window; do not send background input to an unresolved sibling |
+| AXPress fails on a text area | It may not support pressing. Type into the already-focused field and verify its value instead of repeatedly clicking |
+| App name finds no window on localized macOS | Use `list_windows`, then target the returned `pid` and `window_id` |
+| Grants enabled but still reported missing | Check LINA Helper's own permissions and policy; restart its process through the supported installer lifecycle, then verify again |
+| Tool missing from the session | Check the owning profile's `agent.disabled_toolsets`; a platform toolset listing alone does not prove availability. Start a fresh session after a config change |
+| Headless Linux says X11 is unreachable | Check `lina computer-use screen status`, start the intended profile's screen, then run doctor again. No running display is not a driver failure |
 | Anything else weird | **First action: ask the user to run `hermes computer-use doctor`.** It runs the cua-driver `health_report` MCP tool and prints a structured per-check matrix. Their output tells you (and them) exactly what's wrong |
 
 ## When NOT to use `computer_use`
 
-- **Web automation you can do via the separate headless `browser_exec` tool** — it drives a
-  real headless Chromium and are more reliable than driving the user's
+- **Web automation handled by the available browser tools** — they are
+  more reliable than driving the user's
   GUI browser. Reach for `computer_use` specifically when the task
   needs the user's actual native apps (Finder/Explorer/Files, Mail/
   Outlook/Thunderbird, native chat clients, Figma, Logic, games,
@@ -322,34 +307,29 @@ in your conversation context.
 - **Shell commands** — use `terminal`, not `type` into Terminal.app /
   Windows Terminal / gnome-terminal.
 
-## Going deeper — read the cua-driver skill pack
+## macOS: LINA Helper permissions
 
-Hermes intentionally keeps THIS skill focused on the Hermes-side
-`computer_use` action vocabulary. The platform-specific deep dives
-(macOS no-foreground contract, Windows UIA + Session 0, Linux AT-SPI +
-X11/Wayland nuances, recording trajectory + video, browser-page
-interaction, etc.) live in cua-driver's skill pack — same content the
-cua-driver team ships and maintains for every other agent harness.
+LINA Helper is the first-party signed app that holds Accessibility and Screen
+Recording grants. `lina install` installs or updates it on macOS, checks its
+permissions and names the remaining person steps; other platforms skip this
+install step. See `references/lina-helper.md` for setup and verification.
 
-```
-cua-driver skills install
-```
+Select `computer_use.backend: lina_helper` and configure targets in `devices.macs`
+with `devices.default_mac`. Use `mac_use` to choose the session target before
+input. Do not install the old external helper plugins or rely on a driver-command
+environment override as proof of routing. Input uses the helper's embedded
+cua-driver under its policy and audit gate; a per-Mac lease prevents competing
+sessions from typing at once. Reads do not require an input lease.
 
-links the pack into `~/.hermes/skills/cua-driver` (Hermes is a detected
-agent; `cua-driver skills status` shows the link state). You'll then have:
+A locked or absent GUI session is different from missing permission. Verify the
+live state before explaining a failure. Empty or off-screen windows and a degraded
+capture are not grounds to escalate against a locked screen. Do not change lock
+settings or invent an unlock path; use the separately configured helper unlock
+interface only when the task authorizes it.
 
-- `SKILL.md` — the cross-platform core (snapshot invariant, no-
-  foreground contract, click dispatch, AX tree mechanics)
-- `MACOS.md` — macOS specifics (no-foreground contract, AXMenuBar
-  navigation, SkyLight click dispatch, Apple Events JS bridge)
-- `WINDOWS.md` — Windows specifics (UIA tree, UWP / ApplicationFrameHost
-  hosting, Session 0 isolation, autostart pattern for SSH)
-- `LINUX.md` — Linux specifics (AT-SPI tree, X11 / Wayland, terminal
-  emulator detection)
-- `RECORDING.md` — trajectory + video recording semantics
-- `WEB_APPS.md` — browser page interaction tips
-- `TESTS.md` — replay-by-trajectory workflow
+## Verification
 
-Those files describe the driver's OWN MCP tools (`get_window_state`,
-`element_token`, `snapshot_id`, …). Read them for platform context; keep
-calling the Hermes actions from this file — the wrapper does the translation.
+Confirm the target, grants, policy and live window before input. After each
+state-changing action, inspect a fresh capture rather than trusting delivery.
+For platform internals consult the installed cua-driver documentation, but keep
+calling `computer_use` actions: raw driver tokens are not wrapper arguments.

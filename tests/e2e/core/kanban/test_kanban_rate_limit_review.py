@@ -4,7 +4,7 @@ card's later review handoff (#119070).
 Real processes end to end: every tick is a real ``hermes kanban dispatch`` process, every worker a
 real ``hermes chat -q`` process spawned by it, talking to the recording fake provider (the only
 fake — it stands in for the vendor HTTP API). The fake plays two roles, told apart structurally:
-the scratch home carries its own ``sdlc-review`` skill whose body holds a unique marker, and the
+the scratch home carries its own ``code-review`` skill whose body holds a unique marker, and the
 review lane preloads that skill into the worker it spawns, so only a reviewer's prompt carries it.
 
 Flow under test (``HERMES_KANBAN_RATE_LIMIT_COOLDOWN_SECONDS=0``, ``agent.api_max_retries: 1``):
@@ -40,9 +40,9 @@ pytestmark = [
 ]
 
 # The review lane preloads the review skill by name (kanban.md: "spawn the assigned profile with
-# the bundled sdlc-review skill"). A same-named user skill wins over the bundled copy, so seeding one
+# the bundled code-review skill"). A same-named user skill wins over the bundled copy, so seeding one
 # with a marker in the scratch home tells a reviewer's prompt apart without reading prompt wording.
-REVIEW_SKILL = "sdlc-review"
+REVIEW_SKILL = "code-review"
 REVIEW_MARK = "E2E_REVIEW_LANE_SKILL_5d21c9"
 RATE_LIMIT_EXIT_CODE = 75  # KANBAN_RATE_LIMIT_EXIT_CODE — documented worker exit contract
 MAX_TICKS = 6  # a healthy rate-limited card is done on tick 3; the rest prove "forever"

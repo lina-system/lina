@@ -1,151 +1,132 @@
 ---
 name: codex
-description: "Delegate coding to OpenAI Codex CLI (features, PRs)."
-version: 1.0.1
+description: "Run delegated coding tasks and local reviews."
+version: 1.0.0
 author: Hermes Agent
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
-    tags: [Coding-Agent, Codex, OpenAI, Code-Review, Refactoring]
-    related_skills: [claude-code, hermes-agent]
+    tags: [coding, runner, codex, review]
+    category: autonomous-ai-agents
+    related_skills: [claude-code, github, code-review]
 ---
 
-# Codex CLI
+# Codex Skill
 
-Delegate coding tasks to [Codex](https://github.com/openai/codex) via the Hermes terminal. Codex is OpenAI's autonomous coding agent CLI.
+Codex is a coding runner that LINA dispatches bounded work to. LINA owns the
+work record, routing, follow-ups and acceptance; a runner's exit is evidence to
+review, not automatic permission to commit, push or merge.
 
-## When to use
+## When to Use
 
-- Building features
-- Refactoring
-- PR reviews
-- Batch issue fixing
-
-Requires the codex CLI and a git repository.
+- Implement a scoped feature or fix in an isolated checkout.
+- Review a diff locally or run independent tasks in separate worktrees.
+- Continue work assigned to this runner rather than starting a duplicate run.
 
 ## Prerequisites
 
-- Codex installed: `npm install -g @openai/codex`
-- OpenAI auth configured: either `OPENAI_API_KEY` or Codex OAuth credentials
-  from the Codex CLI login flow
-- **Must run inside a git repository** — Codex refuses to run outside one
-- Use `pty=true` in terminal calls — Codex is an interactive terminal app
+- Install the Codex CLI and check `codex --version` and `codex exec --help`.
+- Use a repository with its instructions available and a dedicated worktree for
+  each writing run. Record the initial status and base revision.
+- Configure model access through OCX. Never read or copy authentication files.
+- Use `terminal` with a PTY for interactive runs and `process` for session input,
+  logs and cancellation. Keep long runs in a background session.
 
-For Hermes itself, `model.provider: openai-codex` uses Hermes-managed Codex
-OAuth from `~/.hermes/auth.json` after `hermes auth add openai-codex`. For the
-standalone Codex CLI, a valid CLI OAuth session may live under
-`~/.codex/auth.json`; do not treat a missing `OPENAI_API_KEY` alone as proof
-that Codex auth is missing.
+## How to Run
 
-## One-Shot Tasks
-
-```
-terminal(command="codex exec 'Add dark mode toggle to settings'", workdir="~/project", pty=true)
+```text
+terminal(command="codex exec --sandbox workspace-write 'Read BRIEF.md and complete its scoped task; report checks and remaining blockers.'", workdir="~/project", background=true, pty=true)
 ```
 
-For scratch work (Codex needs a git repo):
-```
-terminal(command="cd $(mktemp -d) && git init && codex exec 'Build a snake game in Python'", pty=true)
-```
+Write the full brief with `write_file`: goal, allowed edit paths, read-only
+inputs, non-goals, acceptance checks and report location. The runner does not
+inherit the conversation. The dispatch contract in LINA issue #35 covers start,
+follow-up, state, result and stop; the work ledger in #36 tracks acceptance.
+Those issues describe planned integration, not an available work subcommand.
 
-## Background Mode (Long Tasks)
+## Quick Reference
 
-```
-# Start in background with PTY
-terminal(command="codex exec --sandbox workspace-write 'Refactor the auth module'", workdir="~/project", background=true, pty=true)
-# Returns session_id
+| Command | Purpose |
+|---|---|
+| `codex exec '<task>'` | Bounded one-shot task |
+| `--sandbox workspace-write` | Permit workspace edits within the sandbox |
+| `--sandbox read-only` | Read-only investigation or review |
+| `codex review --base origin/main` | Review against the merge base |
+| `codex review --commit <sha>` | Review one commit |
+| `codex review --uncommitted` | Review staged, unstaged and untracked changes |
+| `-c review_model='<catalog-model>'` | Choose the reviewer model |
 
-# Monitor progress
-process(action="poll", session_id="<id>")
-process(action="log", session_id="<id>")
+## Procedure
 
-# Send input if Codex asks a question
-process(action="submit", session_id="<id>", data="yes")
+1. Confirm the canonical repository, issue, base and existing work. Put the
+   complete contract in the brief before launch, including confidentiality rules
+   for scratch files and reports. Done when the runner can work without chat context.
+2. Launch in its own worktree with the intended permissions. Inspect the initial
+   pane or log: a trust dialog or idle prompt means the task has not started.
+   Read the selected trust option before answering; never send blind input.
+   Done when the actual task is running.
+3. Retain the session handle and observe logs or completion notifications. An
+   `exec` run does not accept conversational steering: finish and amend locally,
+   or stop and relaunch with a corrected brief when the goal materially changes.
+   Done when the report or an explicit blocker arrives.
+4. Read the diff, tests and report yourself. Check build/CI changes for sandbox-only
+   workarounds. Do not alter tests to conceal environment failures. Run required
+   host checks before accepting. Done when the result meets the brief with evidence.
+5. LINA's orchestrator handles acceptance and authorized landing outside the
+   runner. Check shared history for unexpected commits; never use Git plumbing
+   to evade a sandbox's inability to write repository metadata.
+   Done when the work record reflects verified results and remaining blockers.
 
-# Kill if needed
-process(action="kill", session_id="<id>")
-```
+## OCX Configuration
 
-## Key Flags
+LINA model calls use the `ocx` provider (`opencodex` alias), with `OCX_BASE_URL`
+and secret `OCX_API_KEY`; the default local API is `http://127.0.0.1:10100/v1`.
+LINA's provider setting does not configure the standalone Codex process.
 
-| Flag | Effect |
-|------|--------|
-| `exec "prompt"` | One-shot execution, exits when done |
-| `--sandbox workspace-write` (`-s`) | Sandboxed but auto-approves file changes in the workspace (the recommended auto-build mode) |
-| `--dangerously-bypass-approvals-and-sandbox` | No sandbox, no approvals (fastest, most dangerous; `--yolo` still works as a hidden alias) |
-| `--sandbox danger-full-access` | No Codex sandbox; useful when the host service context breaks bubblewrap |
+For Codex, use its existing OCX provider entry in `~/.codex/config.toml`:
 
-> **Deprecated:** `--full-auto` still works but the live CLI warns to use `--sandbox workspace-write` instead.
+```toml
+model_provider = "opencodex"
+model = "<OCX catalog model id>"
 
-## Hermes Gateway Caveat
-
-When invoking the Codex CLI from a Hermes gateway/service context (for example,
-Telegram-driven agent sessions), Codex `workspace-write` sandboxing may fail even
-when the same command works in the user's interactive shell. A typical symptom is
-bubblewrap/user-namespace errors such as `setting up uid map: Permission denied`
-or `loopback: Failed RTM_NEWADDR: Operation not permitted`.
-
-In that context, prefer:
-
-```
-codex exec --sandbox danger-full-access "<task>"
-```
-
-Use process boundaries as the safety layer instead: explicit `workdir`, clean git
-status before launch, narrow task prompts, `git diff` review, targeted tests, and
-human/agent confirmation before committing broad changes.
-
-## PR Reviews
-
-Clone to a temp directory for safe review:
-
-```
-terminal(command="REVIEW=$(mktemp -d) && git clone https://github.com/user/repo.git $REVIEW && cd $REVIEW && gh pr checkout 42 && codex review --base origin/main", pty=true)
+[model_providers.opencodex]
+name = "OCX"
+base_url = "<OCX endpoint compatible with this Codex version>"
+env_key = "OCX_API_KEY"
 ```
 
-## Parallel Issue Fixing with Worktrees
+Preserve the installation's transport settings; LINA's chat-completions endpoint
+alone does not prove Codex Responses compatibility. Check `ocx inspect catalog
+--json` for models and supported reasoning settings. Never replace routing with
+direct vendor auth to work around a proxy failure.
 
-```
-# Create worktrees
-terminal(command="git worktree add -b fix/issue-78 ~/.hermes/cache/scratch/issue-78 main", workdir="~/project")
-terminal(command="git worktree add -b fix/issue-99 ~/.hermes/cache/scratch/issue-99 main", workdir="~/project")
+Project agent roles belong in `.codex/agents/<name>.toml`; keep reusable brief
+instructions in `AGENTS.md` and project skills in `.agents/skills/`. Ask explicitly
+for delegation, isolate each writer, and verify installed-version role settings.
+Verify the actual model/provider and real tool execution in OCX logs; text that
+looks like a tool call is not proof it ran. Keep trial settings project-local.
 
-# Launch Codex in each
-terminal(command="codex --sandbox workspace-write exec 'Fix issue #78: <description>. Commit when done.'", workdir="~/.hermes/cache/scratch/issue-78", background=true, pty=true)
-terminal(command="codex --sandbox workspace-write exec 'Fix issue #99: <description>. Commit when done.'", workdir="~/.hermes/cache/scratch/issue-99", background=true, pty=true)
+## Pitfalls
 
-# Monitor
-process(action="list")
+- A sandbox failure is not a product failure. On macOS, repository locks outside
+  the worktree, Unix socket binding, nested SwiftPM sandboxes, signature trust
+  checks and network access can fail only inside the sandbox. Reproduce on the
+  appropriate host before changing product code. Report sandbox limits in the brief.
+- Do not automatically switch to unrestricted execution when a sandbox fails.
+  Use a host with a working sandbox or report the blocker.
+- Inspect structured logs read-only under `~/.codex/` before blaming the model.
+  Session transcripts may omit transport errors. A websocket 426 followed by
+  successful HTTP fallback is not a failed run.
+- For an expired MCP OAuth grant, reauthenticate through `codex mcp login <server>`
+  and verify a real server call in a new session. A remote callback needs an SSH
+  loopback tunnel; the owner approves in their browser. Do not copy login files.
+- Cloud capacity and account pooling are not LINA's active routing path. Do not
+  dispatch to a paused runner or change global account configuration for a trial.
 
-# After completion, push and create PRs
-terminal(command="cd ~/.hermes/cache/scratch/issue-78 && git push -u origin fix/issue-78")
-terminal(command="gh pr create --repo user/repo --head fix/issue-78 --title 'fix: ...' --body '...'")
+## Verification
 
-# Cleanup
-terminal(command="git worktree remove ~/.hermes/cache/scratch/issue-78", workdir="~/project")
-```
-
-## Batch PR Reviews
-
-```
-# Fetch all PR refs
-terminal(command="git fetch origin '+refs/pull/*/head:refs/remotes/origin/pr/*'", workdir="~/project")
-
-# Review multiple PRs in parallel
-terminal(command="codex exec 'Review PR #86. git diff origin/main...origin/pr/86'", workdir="~/project", background=true, pty=true)
-terminal(command="codex exec 'Review PR #87. git diff origin/main...origin/pr/87'", workdir="~/project", background=true, pty=true)
-
-# Post results
-terminal(command="gh pr comment 86 --body '<review>'", workdir="~/project")
-```
-
-## Rules
-
-1. **Always use `pty=true`** — Codex is an interactive terminal app and hangs without a PTY
-2. **Git repo required** — Codex won't run outside a git directory. Use `mktemp -d && git init` for scratch
-3. **Use `exec` for one-shots** — `codex exec "prompt"` runs and exits cleanly
-4. **`--sandbox workspace-write` for building** — auto-approves changes within the sandbox (`--full-auto` is deprecated for this)
-5. **Background for long tasks** — use `background=true` and monitor with `process` tool
-6. **Don't interfere** — monitor with `poll`/`log`, be patient with long-running tasks
-7. **Parallel is fine** — run multiple Codex processes at once for batch work
+Check the diff and actual command exit results, not only the runner's summary.
+Re-run sandbox-sensitive failures on the intended host and record limitations.
+For reviews, confirm the reviewed head matches the proposed change. Use the
+GitHub skill's issue, label, review and merge-commit rules when landing is requested.
