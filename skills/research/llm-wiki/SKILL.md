@@ -43,8 +43,9 @@ Use this skill when the user:
 **Location:** the `wiki.path` skill setting, stored as `skills.config.wiki.path` in
 `config.yaml` (set it with `lina config set skills.config.wiki.path <dir>`, which saves it and may
 note that the key is not a core setting, which is expected).
-When the skill loads, its resolved value appears in the `[Skill config ...]` block as
-`wiki.path = <dir>`; it defaults to `~/wiki`. Use that directory as `$WIKI` below. It is not a
+When the skill loads, the resolved value is given to you: as `wiki.path = <dir>` in the
+`[Skill config ...]` block, or, when you load it with `skill_view(name="llm-wiki")`, in the
+result's `skill_config` field (`{"wiki.path": "<dir>"}`). It defaults to `~/wiki`. Use that directory as `$WIKI` below. It is not a
 secret, so it does not go in `.env`.
 
 The wiki is a directory of markdown files, usable in any editor.
