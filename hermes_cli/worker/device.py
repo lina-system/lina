@@ -337,6 +337,19 @@ def pack(worker_root: Path, task_id: str) -> bytes:
     return buffer.getvalue()
 
 
+def bundle(worker_root: Path, task_id: str, ref: str = "HEAD") -> tuple[int, bytes]:
+    """``git bundle create - <ref>`` in the task's work folder: the branch with its whole history (merges included),
+    for landing it on the hub. Read-only: nothing in the work folder changes."""
+    work = task_of(worker_root, task_id).work
+    if not (work / ".git").exists():
+        return _ok({"action": "error", "reason": "the task has no git work folder"})
+    done = subprocess.run(["git", "bundle", "create", "-", ref], cwd=work, capture_output=True, timeout=600, check=False,
+                          env={**os.environ, "GIT_TERMINAL_PROMPT": "0"})
+    if done.returncode != 0:
+        return _ok({"action": "error", "reason": done.stderr.decode("utf-8", "replace").strip()[-300:]})
+    return 0, done.stdout
+
+
 def _ok(value: dict) -> tuple[int, bytes]:
     code = 1 if value.get("action") == "error" else 0
     return code, (json.dumps(value, ensure_ascii=False) + "\n").encode("utf-8")
@@ -357,6 +370,7 @@ def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[in
             "answer": lambda: _ok(answer(worker_root, args[0], text)),
             "cancel": lambda: _ok(cancel(worker_root, args[0], text)),
             "pack": lambda: (0, pack(worker_root, args[0])),
+            "bundle": lambda: bundle(worker_root, *args[:2]),
         }
         if name not in table:
             return _ok({"action": "error", "reason": f"unknown verb {name}"})

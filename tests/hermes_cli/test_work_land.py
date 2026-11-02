@@ -147,3 +147,42 @@ def test_a_forbidden_name_in_an_added_line_stops_the_landing(world):
     with pytest.raises(LandError, match="forbidden_patterns"):
         land(fake_github(), BRANCH, TASK, "docs: hosts", 12, base=world["base"], out=lambda _line: None)
     assert f"refs/heads/{BRANCH}" not in git(world["origin"], "for-each-ref", "--format=%(refname)")
+
+
+def test_a_remote_device_hands_out_the_branch_as_a_bundle_and_its_merge_survives(world, monkeypatch):
+    from hermes_cli.worker import hub as hub_module
+    from hermes_cli.worker.transport import LocalTransport
+    base, root = world["base"], world["base"] / "worker"
+    config = base / "config.yaml"
+    config.write_text(config.read_text(encoding="utf-8").replace(
+        "here: {host: local, cap: 1}", "remote-a: {host: remote-a, cap: 1}"), encoding="utf-8")
+    Store(root).save({"id": TASK, "repo": REPO, "host": "remote-a", "bot": "sion", "created": 0})
+    calls = []
+
+    class Recording(LocalTransport):
+        def call(self, verb, stdin=b"", timeout=120):
+            calls.append(verb)
+            return super().call(verb, stdin, timeout)
+
+    monkeypatch.setattr(hub_module, "for_device", lambda dev, worker_root: Recording(worker_root))
+    work = world["work"]
+    commit(work, "app/feature.py", "VALUE = 2\n", "feat(app): the feature")
+    import_subtree(work, world["vendor"])
+    before = (git(work, "rev-parse", "HEAD"), git(work, "status", "--porcelain"))
+
+    code = land(fake_github(), BRANCH, TASK, "feat(vendor): import the server", 12, base=base, out=lambda _line: None)
+
+    assert code == rules.WAIT
+    assert calls == [["bundle", TASK, "HEAD"]]
+    assert (git(work, "rev-parse", "HEAD"), git(work, "status", "--porcelain")) == before, "bundle is read-only"
+    landed = git(world["origin"], "rev-parse", f"refs/heads/{BRANCH}")
+    subprocess.run(["git", "merge-base", "--is-ancestor", before[0], landed], cwd=world["origin"], check=True)
+    assert "feat(vendor): import the server as a subtree" in git(world["origin"], "log", "--merges", "--format=%s",
+                                                                  landed)
+    assert "vendor/server/main.py" in git(world["origin"], "ls-tree", "-r", "--name-only", landed)
+
+
+def test_the_bundle_verb_refuses_a_task_without_a_work_repository(tmp_path):
+    (tmp_path / "lina").mkdir()
+    code, out = device.dispatch(tmp_path / "lina" / "worker", ["bundle", "OT-NONE"])
+    assert code == 1 and b"no git work folder" in out

@@ -75,6 +75,15 @@ def fetch(transport: Transport, task_id: str, dest: Path) -> list[str]:
         return archive.getnames()
 
 
+def fetch_bundle(transport: Transport, task_id: str, dest: Path, ref: str = "HEAD") -> Path:
+    """The task's work-folder branch as a git bundle (``_device bundle``) written to *dest*."""
+    reply = transport.call(["bundle", task_id, ref], timeout=600)
+    if reply.code != 0 or not reply.out.startswith(b"# v"):
+        raise TransportError(f"bundle {task_id}: {reply.err.strip()[-300:] or reply.json().get('reason') or 'no bundle'}")
+    dest.write_bytes(reply.out)
+    return dest
+
+
 class SshTransport:
     def __init__(self, device: Device, connect_timeout: int = 10):
         self.device, self.connect_timeout = device, connect_timeout

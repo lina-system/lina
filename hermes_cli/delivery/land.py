@@ -41,7 +41,7 @@ def git(*args: str, cwd: Path, check: bool = True, env: dict | None = None) -> s
 
 class WorkerBranchSource:
     """The branch of a ``lina worker`` run (#35): read from the task's work folder on a local device; from a remote
-    device through the transport's ``bundle`` verb, a git bundle of the work folder's checked-out branch."""
+    device as a git bundle of the work folder's checked-out branch through the transport (``_device bundle``)."""
 
     def __init__(self, base: Path | None = None):
         from hermes_cli.worker import settings as worker_settings
@@ -58,14 +58,14 @@ class WorkerBranchSource:
             head = git("rev-parse", "HEAD", cwd=work)
             git("fetch", "-q", str(work), f"HEAD:refs/heads/{branch}", cwd=clone)
         else:
-            reply = hub.transport(job).call(["bundle", job["id"]], timeout=600)
-            if reply.code != 0 or not reply.out.startswith(b"# v"):
-                raise LandError(f"{job['host']} cannot hand out the branch of {job['id']}: its lina worker has no "
-                                "`_device bundle` verb yet")
-            bundle = clone / ".git" / "worker.bundle"
-            bundle.write_bytes(reply.out)
-            head = git("bundle", "list-heads", str(bundle), cwd=clone).split()[0]
-            git("fetch", "-q", str(bundle), f"{head}:refs/heads/{branch}", cwd=clone)
+            from hermes_cli.worker.transport import TransportError, fetch_bundle
+            with tempfile.TemporaryDirectory(prefix="lina-bundle-") as tmp:
+                try:
+                    bundle = fetch_bundle(hub.transport(job), job["id"], Path(tmp) / "worker.bundle")
+                except TransportError as exc:
+                    raise LandError(f"{job['host']}: {exc}") from None
+                head = git("bundle", "list-heads", str(bundle), cwd=clone).split()[0]
+                git("fetch", "-q", str(bundle), f"{head}:refs/heads/{branch}", cwd=clone)
         if git("rev-parse", f"refs/heads/{branch}", cwd=clone) != head:
             raise LandError("the fetched head differs from the work folder's head")
         return head
