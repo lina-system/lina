@@ -455,6 +455,15 @@ _SPECS = [
              "class is reported and left untouched (fail-closed). Exits 0 when the DB is healthy "
              "or was repaired, non-zero when it is still corrupt."
          )),
+    _cmd("outcomes", [
+        _arg("--agent", help="Only cards assigned to this profile"),
+        _arg("--kind", help="Only cards of this kind (the title word before ':', else 'general')"),
+        _arg("--last", type=int, default=20, metavar="N", help="Newest N rows (default 20)"),
+        _arg("--refresh", action="store_true",
+             help="First fill closed GitHub to-dos left unknown at the transition (asks gh)"),
+        _json_flag(),
+    ], help="Planned against actual outcome of finished goal-mode work cards, "
+            "with one summary line per agent and kind"),
     _cmd("gate", [_arg("gate_argv", nargs=argparse.REMAINDER, metavar="prs|dev|artifact|review|ask ...")],
          help="Deterministic work-card gates (exit 0 pass, 1 fail, 75 waiting); "
               "`hermes kanban gate <gate> --help` for each gate"),
