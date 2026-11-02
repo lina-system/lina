@@ -1,0 +1,15 @@
+# Blocklist for plugins pulled from the catalog for security or policy
+# reasons. The installer refuses to install anything whose name or repo URL
+# matches an entry here (unless the caller explicitly bypasses the check).
+# Each entry: {name, repo, reason, date}. Removals land via reviewed PRs,
+# same as additions.
+#
+# Name only. Do not set repo: a repo match would also refuse installs that
+# name the repository directly.
+removed:
+- name: hermes-lcm-x
+  reason: "Bundled in core as plugins/context_engine/lcm-x. Nothing to install: set context.engine: lcm-x."
+  date: "2026-11-02"
+- name: hermes-lcm
+  reason: "Renamed to hermes-lcm-x, which is bundled in core as plugins/context_engine/lcm-x. Nothing to install: set context.engine: lcm-x."
+  date: "2026-11-02"

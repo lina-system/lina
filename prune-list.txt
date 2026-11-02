@@ -131,6 +131,8 @@ plugins/model-providers/zai
 # can be chosen later: plugins/platforms/bluebubbles, plugins/platforms/photon and the catalog
 # entry below.
 !plugin-catalog/hermes-rustpush-imessage.yaml
+# The kill list: plugins LINA bundles in core (hermes-lcm-x) are refused from the live catalog.
+!plugin-catalog/removed.yaml
 
 # Tests that only cover the paths above.
 tests/acp_adapter
