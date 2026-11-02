@@ -377,6 +377,7 @@ def _cmd_create(args: argparse.Namespace) -> int:
             goal_mode=bool(getattr(args, "goal_mode", False)),
             goal_max_turns=getattr(args, "goal_max_turns", None),
             completion_contract=getattr(args, "completion_contract", None),
+            goal_gates=getattr(args, "goal_gates", None),
             initial_status=getattr(args, "initial_status", "running"),
             creator_task_id=(os.environ.get("HERMES_KANBAN_TASK")
                              if is_dispatcher_owned_worker_context() else None),
@@ -474,6 +475,12 @@ def _print_section(title: str, lines) -> None:
         print(line)
 
 
+def _print_goal_gates(task: kb.Task) -> None:
+    if task.goal_gates:
+        from hermes_cli.kanban_goal_gates import render_gates
+        _print_section("Goal gates:", render_gates(task))
+
+
 def _cmd_show(args: argparse.Namespace) -> int:
     rsk, rc = _run_state_kwargs(args, "show")
     if rc:
@@ -546,6 +553,7 @@ def _cmd_show(args: argparse.Namespace) -> int:
         field("children", ", ".join(children))
     if task.body:
         _print_section("Body:", [task.body])
+    _print_goal_gates(task)
     if task.result:
         _print_section("Result:", [task.result])
     elif latest_summary:
@@ -884,9 +892,15 @@ def _goal_mode_handoff_rejection(task: Optional[kb.Task], evidence: str):
 def _goal_gate_error(conn, tid: str, evidence: str, handoff: str, blocked_hint: str,
                      continue_hint: str) -> Optional[str]:
     """Goal-mode judge gate shared by ``complete`` / ``request-review`` (mirrors tools/kanban_tools.py);
-    applied to every terminal handoff so request-review can't bypass it. Returns the error line, or
-    None to allow."""
-    verdict, rejection = _goal_mode_handoff_rejection(kb.get_task(conn, tid), evidence)
+    applied to every terminal handoff so request-review can't bypass it. The card's own gates run
+    first and do not depend on the judge. Returns the error line, or None to allow."""
+    from hermes_cli.kanban_goal_gates import handoff_gate_failure
+
+    task = kb.get_task(conn, tid)
+    failure = handoff_gate_failure(conn, task)
+    if failure is not None:
+        return f"kanban: goal {handoff} of {tid} refused: {failure.describe()}"
+    verdict, rejection = _goal_mode_handoff_rejection(task, evidence)
     if verdict == "blocked":
         return (f"kanban: goal {handoff} of {tid} rejected: judge ruled "
                 f"the goal unachievable — {rejection}. {blocked_hint}")
