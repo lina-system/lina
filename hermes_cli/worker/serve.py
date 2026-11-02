@@ -12,7 +12,7 @@ import os
 import time
 from pathlib import Path
 
-from hermes_cli.worker import device, settings
+from hermes_cli.worker import device, settings, slots
 from hermes_cli.worker.runners.base import Task
 from hermes_cli.worker.task import read_json
 
@@ -31,6 +31,10 @@ def _take(task: Task, run: int) -> bool:
 
 
 def _start(worker_root: Path, task: Task, run: int) -> None:
+    if task.path("cancelled").exists():  # cancelled before this pass: nothing is prepared and no session opened
+        task.path(f"rc.{run}").write_text("0\n", encoding="utf-8")
+        device.finish_run(worker_root, task, run, "cancelled")
+        return
     if run == 1 and not task.path("prepared").exists():
         try:
             device.prepare(worker_root, task)
@@ -53,10 +57,17 @@ def serve_once(worker_root: Path) -> None:
     tasks = settings.tasks_dir(worker_root)
     tasks.mkdir(parents=True, exist_ok=True)
     (worker_root / device.HEARTBEAT).write_text(f"{time.time():.3f}\n", encoding="utf-8")
+    device.reap()
+    cap = slots.cap(worker_root)
     for task_dir in sorted(tasks.glob("O*-*")):
         task = device.task_of(worker_root, task_dir.name)
         for request in sorted(task_dir.glob("request.*")):
             run = int(request.name.split(".")[1])
+            if task.path(f"taken.{run}").exists():
+                continue
+            if (cap is not None and not task.path("cancelled").exists()
+                    and slots.running_others(worker_root, task.id) >= cap):
+                continue  # the device is full: the request waits for a later pass
             if _take(task, run):
                 _start(worker_root, task, run)
         for pending in task_dir.glob("notify_pending.*"):

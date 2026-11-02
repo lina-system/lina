@@ -24,12 +24,13 @@ Every launch goes through ``/bin/sh`` writing the exit code to ``exit.<run>.<ste
 from __future__ import annotations
 
 import os
-import shutil
 import signal
 import subprocess
 import time
 from pathlib import Path
 
+from hermes_platform.resolver import locate_command
+from tools.environments.local import build_subprocess_env
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
 
 _WRAP = 'rc_file=$1; shift; "$@"; echo $? > "$rc_file"'
@@ -63,9 +64,14 @@ class CommandRunner:
         self.env = {str(k): str(v) for k, v in (spec.get("env") or {}).items()}
         self.limits = limits or {}
 
+    def _child_env(self) -> dict[str, str]:
+        """The configured CLI signs in with its own credentials from the environment (API keys) and reads its own
+        config under the person's real HOME, so neither is scrubbed or re-pointed; ``env`` from config goes last."""
+        return build_subprocess_env(scrub_secrets=False, inherit_profile_home=False, extra=self.env)
+
     def available(self) -> tuple[bool, str]:
-        found = shutil.which(self.argv[0])
-        return (True, found) if found else (False, f"{self.argv[0]} not found on PATH")
+        found = locate_command(self.argv[0]).command
+        return (True, found[0]) if found else (False, f"{self.argv[0]} not found on PATH")
 
     def _stall_s(self) -> float:
         return float(self.limits.get("stall_grace_s", 600.0))
@@ -88,7 +94,7 @@ class CommandRunner:
                 task.path(f"stderr.{run}.txt").open("ab") as err:
             # detached-spawn: ok — its own group so `stop` ends the whole CLI tree, and a service restart does not
             proc = subprocess.Popen(["/bin/sh", "-c", _WRAP, "sh", str(rc_file), *argv], start_new_session=True,
-                                    cwd=task.work, stdin=stdin, stdout=out, stderr=err, env={**os.environ, **self.env})
+                                    cwd=task.work, stdin=stdin, stdout=out, stderr=err, env=self._child_env())
         task.event(run, "launched", step=step, argv=argv[:1])
         handle = Handle(task, run, {"runner": self.name, "pid": proc.pid, "step": step, "since": time.time(),
                                     "model": model.as_dict() if model else None})

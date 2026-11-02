@@ -20,6 +20,7 @@ import pytest
 
 from hermes_cli import lina_ocx, lina_omo, lina_omo_routing
 from hermes_cli.subcommands.omo import build_omo_parser
+from tests.hermes_cli._lina_ocx_fakes import installed_root
 
 INTEGRITY = "sha512-" + "A" * 86 + "=="
 PINNED = "5.1.51"
@@ -46,15 +47,16 @@ import json, os, runpy, sys
 script, args = sys.argv[1], sys.argv[2:]
 if script.endswith("npm-cli.js"):
     open(os.path.join(os.environ["HOME"], "npm-was-here"), "w").close()
-    if args[0] == "install":
-        prefix = args[args.index("--prefix") + 1]
-        name, version = args[-1].rsplit("@", 1)
-        os.makedirs(os.path.join(prefix, "node_modules", name, "bin"))
-        with open(os.path.join(prefix, "node_modules", name, "bin", "omo.js"), "w") as fh:
-            fh.write({omo!r}.format(version=version))
-        lock = {{"packages": {{"node_modules/" + name: {{"version": version, "integrity": {integrity!r}}}}}}}
-        with open(os.path.join(prefix, "package-lock.json"), "w") as fh:
+    deps = json.load(open("package.json")).get("dependencies", {{}})
+    if args[0] == "install" and "--package-lock-only" in args:
+        lock = {{"packages": {{"node_modules/" + name: {{"version": version, "integrity": {integrity!r}}}
+                               for name, version in deps.items()}}}}
+        with open("package-lock.json", "w") as fh:
             json.dump(lock, fh)
+    elif args[0] == "ci" and "omo-ai" in deps:
+        os.makedirs(os.path.join("node_modules", "omo-ai", "bin"))
+        with open(os.path.join("node_modules", "omo-ai", "bin", "omo.js"), "w") as fh:
+            fh.write({omo!r}.format(version=deps["omo-ai"]))
     elif args == ["run", "build"]:
         os.makedirs(os.path.join("dist", "src"))
         with open(os.path.join("dist", "src", "cli.js"), "w") as fh:
@@ -101,6 +103,7 @@ def world(tmp_path, monkeypatch):
         real.version, real.integrity))
     monkeypatch.setattr(lina_omo, "omo_pin", lambda path=None: lina_omo.OmoPin("omo-ai", PINNED, INTEGRITY))
     monkeypatch.setattr(lina_ocx, "lina_root", lambda: root)
+    monkeypatch.setattr(lina_ocx, "LOCK_DIR", tmp_path / "npm-locks")
 
     def fetch(url, dest):
         Path(dest).write_bytes(tarball)
@@ -109,6 +112,13 @@ def world(tmp_path, monkeypatch):
         return [json.loads(line) for line in log.read_text().splitlines()] if log.exists() else []
 
     return {"tmp": tmp_path, "root": root, "fetch": fetch, "calls": calls, "own": own}
+
+
+def _catalog(world) -> Path:
+    catalog = world["tmp"] / "acct" / ".omo" / "agent" / "models.json"
+    catalog.parent.mkdir(parents=True)
+    catalog.write_text(json.dumps({"providers": {"opencodex": {"models": [{"id": "gpt-fake"}]}}}))
+    return catalog
 
 
 def _install(world) -> None:
@@ -187,12 +197,14 @@ def test_lina_omo_routing_check_passes_ocx_omo_s_exit_code_through(world, monkey
     monkeypatch.setenv("FAKE_CODES", json.dumps({"check": code}))
     assert _lina_omo("routing", "check", "--json") == code
     assert world["calls"]()[-1] == ["ocx-omo", "check", "--json", "--omo-task",
-                                    str(lina_omo.omo_task_path(world["root"]))]
+                                    str(lina_omo.omo_task_path(world["root"])), "--models",
+                                    str(world["tmp"] / "acct" / ".omo" / "agent" / "models.json")]
 
 
 @pytest.mark.platforms("posix")
 def test_install_shows_pending_routing_and_applies_it_only_with_apply(world, monkeypatch):
     monkeypatch.setenv("FAKE_CODES", json.dumps({"check": 10}))
+    _catalog(world)
     quiet = {"root": world["root"], "fetch": world["fetch"], "out": lambda line: None}
     assert lina_omo_routing.install_step(**quiet) == 0
     verbs = [call[1] for call in world["calls"]() if call[:1] == ["ocx-omo"]]
@@ -200,3 +212,24 @@ def test_install_shows_pending_routing_and_applies_it_only_with_apply(world, mon
     assert lina_omo_routing.install_step(apply=True, **quiet) == 0
     verbs = [call[1] for call in world["calls"]() if call[:1] == ["ocx-omo"]]
     assert verbs == ["check", "plan", "check", "apply"]
+
+
+@pytest.mark.platforms("posix")
+def test_install_on_a_fresh_home_without_lina_s_ocx_reports_routing_not_set_up_and_succeeds(world):
+    lines = []
+    assert lina_omo_routing.install_step(root=world["root"], fetch=world["fetch"], out=lines.append) == 0
+    assert any("not set up" in line and "lina models install" in line for line in lines)
+    assert not [call for call in world["calls"]() if call[:1] == ["ocx-omo"]]
+    assert not (world["tmp"] / "acct" / ".omo").exists()  # nothing written into omo's home
+
+
+@pytest.mark.platforms("posix")
+def test_install_on_a_fresh_home_sets_up_omo_s_catalog_through_lina_s_running_ocx(world, monkeypatch):
+    installed_root(world["root"])
+    monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda root, port: True)
+    lines = []
+    assert lina_omo_routing.install_step(root=world["root"], fetch=world["fetch"], out=lines.append) == 0
+    catalog = world["tmp"] / "acct" / ".omo" / "agent" / "models.json"
+    assert json.loads(catalog.read_text())["providers"]["opencodex"]["models"] == [{"id": "gpt-fake"}]
+    assert [call[1] for call in world["calls"]() if call[:1] == ["ocx-omo"]] == ["check"]
+    assert not any("not set up" in line for line in lines)

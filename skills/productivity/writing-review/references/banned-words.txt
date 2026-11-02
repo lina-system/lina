@@ -1,0 +1,9 @@
+# English prose style warnings; one case-insensitive literal phrase per line.
+delve into
+leverage synergies
+it is worth noting
+in today's fast-paced world
+game-changing
+revolutionary
+seamlessly
+in conclusion

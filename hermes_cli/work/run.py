@@ -106,8 +106,25 @@ def pending() -> list[tuple]:
                                "WHERE done_at IS NULL ORDER BY id").fetchall()
 
 
+def _place_saved(h, job: dict) -> None:
+    """A job the worker saved (``new``) but never placed because the process died: start or queue it now, as
+    ``Hub.submit`` would have, so ``tick`` picks it up instead of leaving it ``new`` for good."""
+    from hermes_cli.worker.hub import HubError
+    from hermes_cli.worker.runners.base import RunnerError
+    from hermes_cli.worker.transport import TransportError
+    try:
+        h.place(job)
+    except (TransportError, HubError, RunnerError, OSError) as exc:
+        job["state"] = "queued"
+        h.store.save(job)
+        h.store.receipt(job["id"], "start_failed_requeued", error=str(exc)[:300])
+
+
 def _submit(h, run_id: str, payload: dict) -> None:
-    if h.store.load(run_id):
+    job = h.store.load(run_id)
+    if job:
+        if job.get("state") == "new":
+            _place_saved(h, job)
         return  # the worker took it before the crash: nothing to hand out again
     opts = dict(payload["opts"])
     if opts.get("card"):
