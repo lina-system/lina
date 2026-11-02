@@ -84,7 +84,7 @@ gh repo create my-new-project --private --description "A useful tool" --license 
 gh repo create my-org/my-new-project --public --clone
 
 # From existing local directory
-cd /path/to/existing/project
+cd ~/project
 gh repo create my-project --source . --public --push
 ```
 
@@ -108,7 +108,7 @@ git clone https://github.com/$GH_USER/my-new-project.git
 cd my-new-project
 
 # -- OR -- push an existing local directory to the new repo
-cd /path/to/existing/project
+cd ~/project
 git init
 git add .
 git commit -m "Initial commit"
@@ -487,6 +487,34 @@ for g in json.load(sys.stdin):
     files = ', '.join(g['files'].keys())
     print(f\"  {g['id']}  {g['description'] or '(no desc)':40}  {files}\")"
 ```
+
+## 11. Organizations, transfers and exposure
+
+1. Check name availability with `gh api users/<org>`; logins are case-insensitive.
+   The owner creates the organization in GitHub's web UI. Set its public profile
+   in `<org>/.github` under `profile/README.md`; shared templates belong there too.
+2. Transfer only the authorized repositories using the repository transfer API.
+   Preserve visibility. Verify the new owner, default branch, rulesets and Actions.
+3. Update clone remotes, automation and repository discovery to the new owner.
+   Redirects are not proof that a hardcoded API target has been corrected.
+4. Review deletion/force-push protections, secret scanning, vulnerability alerts
+   and organization permissions. Do not request broader token scopes merely to
+   change one setting that the owner can handle.
+5. Check a fresh PR's CI and reviewer integration. Inspect queued job details
+   before cancelling runs after a transfer.
+
+Before making a repository public, scan full history for secrets and inspect
+issue/PR bodies and comments for private details. Check licensing and dependent
+documentation. A clean HEAD alone is insufficient.
+
+For a public fork exposure question, inspect the fork's actual snapshot, not just
+current HEAD. Separate leaked secrets and reachable services from names or
+attribution. Check collaborator access and account protection before drawing a
+conclusion; do not infer a forker's intent from the fork alone. Later cleanup
+does not erase existing copies. Visibility changes remain the owner's decision.
+
+Archived repositories are read-only: an authorized metadata update requires
+unarchive, edit, then rearchive.
 
 ## Quick Reference Table
 

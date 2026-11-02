@@ -17,7 +17,7 @@ lets the model type a URL into the Sources block gives the guarantee back.
 
 ## Cite while writing, not after
 
-ALCE (arXiv:2305.14627) evaluates attribution for LLM answers and finds that
+ALCE (paper 2305.14627) evaluates attribution for LLM answers and finds that
 generating citations during composition, from numbered retrieved snippets,
 produces materially better attribution than post-hoc citation insertion.
 Post-hoc attribution invites the model to find a source that plausibly matches
@@ -29,7 +29,7 @@ a citation dump at the end of a paragraph or document.
 
 ## Verbatim quotes ground claims
 
-WebGPT (arXiv:2112.09332) collects verbatim quotes at browse time and composes
+WebGPT (paper 2112.09332) collects verbatim quotes at browse time and composes
 answers from them. The practical rule for this skill: when a claim carries a
 figure, date, name, or quantity, take it from the source's own words rather
 than paraphrasing from a summary of a summary. Each summarization hop is a
@@ -37,7 +37,7 @@ chance for a number to drift.
 
 ## Formatting conventions
 
-From Perplexity's leaked system prompts (jujumilk3/leaked-system-prompts) — the
+From Perplexity's published prompt conventions — the
 conventions are worth copying because they're the ones users have been trained
 to read:
 

@@ -25,9 +25,9 @@ Use `terminal` with the Python from a PM-prepared Hermes source checkout. The
 `youtube` extra declares the helper's dependency; do not install packages into
 Hermes with raw pip or project-discovering `uv run`.
 
-From that checkout, first follow the isolated development-home setup in
-[Package Management](https://hermes-agent.nousresearch.com/docs/reference/package-management#developer-workflow),
-then prepare the extra and reactivate before running the helper:
+From that checkout, first pick an isolated `HERMES_HOME` (the checkout's
+`AGENTS.md`, Development Environment), then prepare the extra and reactivate
+before running the helper:
 
 ```bash
 source ./activate

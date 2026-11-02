@@ -42,10 +42,10 @@ source "${HERMES_HOME:-$HOME/.hermes}/skills/github/github-auth/scripts/gh-env.s
 ### PR Merge Body
 
 ```json
-{"merge_method": "squash", "commit_title": "feat: description (#N)"}
+{"merge_method": "merge", "commit_title": "feat: description (#N)"}
 ```
 
-Merge methods: `"merge"`, `"squash"`, `"rebase"`
+LINA requires `"merge"` (a merge commit), not squash or rebase.
 
 ### PR Review Events
 
