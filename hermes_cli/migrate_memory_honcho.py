@@ -22,6 +22,7 @@ from hermes_cli.migrate_memory_honcho_graph import (
 )
 from hermes_cli.migrate_memory_honcho_stage import ROOT, restored_database, upgrade
 from hermes_cli.migrate_memory_honcho_scope import map_peer, scoped_graph, selection
+from hermes_cli.migrate_memory_honcho_ids import integer_id, namespace, staging_references
 
 
 def _prepare(conn, schema: str, workspace: str, agent: str) -> tuple[str, dict]:
@@ -62,9 +63,7 @@ def _prepare(conn, schema: str, workspace: str, agent: str) -> tuple[str, dict]:
 
 def _text(conn, row: dict, meta: dict, agent: str, claimed: set[int]) -> tuple[int, bool]:
     """Apply l13's UID then digest/session/time/agent matching at destination."""
-    uid = row["uid"]
-    if uid.startswith("honcho:"):
-        uid = f"honcho:{agent}:{meta['public_id']}"
+    uid = f"honcho:{agent}:{meta['public_id']}"
     with conn.cursor(row_factory=dict_row) as cur:
         cur.execute("SELECT * FROM memory.messages WHERE uid=%s", (uid,))
         candidate = cur.fetchone()
@@ -83,8 +82,8 @@ def _text(conn, row: dict, meta: dict, agent: str, claimed: set[int]) -> tuple[i
     if candidate is not None:
         uid = f"honcho:{agent}:{meta['public_id']}"
     payload = {k: v for k, v in row.items() if k not in {"message_id", "tsv", "conversation_id"}}
-    payload.update(uid=uid, agent_id=agent)
-    saved = insert(conn, "memory", "messages", payload)
+    payload.update(uid=uid, agent_id=agent, message_id=integer_id(agent, "messages", meta["public_id"]))
+    saved = insert(conn, "memory", "messages", payload, override_identity=True)
     claimed.add(saved["message_id"])
     return saved["message_id"], True
 
@@ -148,7 +147,7 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
     inserted_text = 0
     if rerun:
         stored = existing["workspaces"][0]["internal_metadata"].get("lina_dump_import", {})
-        if {key: value for key, value in stored.items() if key != "generated_ids"} != receipt:
+        if {key: value for key, value in stored.items() if key not in {"generated_ids", "message_ids"}} != receipt:
             raise ValueError("destination workspace exists and is not this exact import")
         generated = {table: {int(old): new for old, new in mapping.items()}
                      for table, mapping in stored["generated_ids"].items()}
@@ -156,6 +155,8 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
         if not {r["public_id"] for r in data["message_meta"]} <= set(by_public):
             raise ValueError("destination message placements differ from the imported dump")
         ids = {r["message_id"]: by_public[r["public_id"]] for r in data["message_meta"]}
+        if {str(old): new for old, new in ids.items()} != stored["message_ids"]:
+            raise ValueError("destination shared message identities differ from the import receipt")
     else:
         claimed = {r[0] for r in conn.execute("SELECT message_id FROM ltm.message_meta")}
         for meta in sorted(data["message_meta"], key=lambda r: r["message_id"]):
@@ -164,20 +165,26 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
             ids[meta["message_id"]], added = _text(conn, row, meta, agent, claimed)
             inserted_text += added
         _registry(conn, data, ids, workspace, agent)
+        _text_metadata(conn, data, ids, agent)
         transformed = renamed(data, workspace, agent, ids)
         transformed["workspaces"][0]["internal_metadata"]["lina_dump_import"] = receipt
         for table in TABLES:
             for record in transformed[table]:
-                old = record.pop(GENERATED.get(table, ""), None)
+                old = record.get(GENERATED.get(table, ""))
+                if table in GENERATED:
+                    record[GENERATED[table]] = integer_id(agent, table, old)
                 saved = insert(conn, "ltm", table, record)
                 if table in GENERATED:
                     generated[table][old] = saved[GENERATED[table]]
         receipt["generated_ids"] = generated
+        receipt["message_ids"] = ids
         conn.execute("UPDATE ltm.workspaces SET internal_metadata=jsonb_set(internal_metadata,"
                      "'{lina_dump_import}',%s) WHERE name=%s", (Jsonb(receipt), agent))
     destination = graph(conn, "ltm", agent)
     destination_texts = {r["message_id"]: r for r in rows(conn, "memory", "messages",
         "message_id = ANY(%s)", (list(ids.values()),))}
+    if rerun:
+        _text_metadata(conn, data, ids, agent)
     expected = renamed(data, workspace, agent, ids)
     expected_texts = {ids[k]: {**v, "agent_id": agent} for k, v in texts.items()}
     verified = destination
@@ -204,6 +211,18 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
                               "current_rows": len(destination["queue"]), "rewritten": 0},
             "document_sources": source_links(verified), "message_id_map": ids,
             "generated_id_maps": generated}
+
+
+def _text_metadata(conn, data: dict, ids: dict, agent: str) -> None:
+    """Keep l13's explicit identity metadata linked to the chosen destination text."""
+    uids = dict(conn.execute("SELECT message_id,uid FROM memory.messages WHERE message_id=ANY(%s)",
+                            (list(ids.values()),)).fetchall())
+    for row in data["message_meta"]:
+        for field in ("metadata", "internal_metadata"):
+            if "uid" in row[field]:
+                row[field]["uid"] = uids[ids[row["message_id"]]]
+            if "agent_id" in row[field]:
+                row[field]["agent_id"] = agent
 
 
 def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, *,
@@ -250,13 +269,23 @@ def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, 
             upgrade(staging, schema, "c4d8e2f6a1b3", honcho_python, work_dir, installed_store=installed_store)
         with psycopg.connect(staging) as source:
             _, decisions = _prepare(source, schema, workspace, agent)
+            legacy_messages = dict(source.execute(sql.SQL("SELECT id,public_id FROM {}.messages").format(
+                sql.Identifier(schema))).fetchall())
+            source_uids = dict(source.execute(sql.SQL("SELECT public_id,(metadata || internal_metadata)->>'uid' "
+                                                       "FROM {}.messages").format(sql.Identifier(schema))).fetchall())
         upgrade(staging, schema, "l13_message_split", honcho_python, work_dir, installed_store=installed_store)
         with psycopg.connect(staging) as source:
             data = graph(source, schema, workspace)
             if len(data["workspaces"]) != 1:
                 raise ValueError(f"source workspace not found: {workspace}")
+            staging_references(data, legacy_messages)
             data, excluded, dependencies = scoped_graph(source, schema, data, selected)
             data = map_peer(data, selected.ai_peer, agent)
+            data, identity_maps = namespace(data, agent)
+            receipt["identity_maps"] = identity_maps
+            receipt["source_message_ids"] = {str(old): public for old, public in legacy_messages.items()
+                                              if public in identity_maps["message_meta"]}
+            receipt["source_uids"] = {public: source_uids[public] for public in identity_maps["message_meta"]}
             texts = {r["message_id"]: r for r in rows(source, "memory", "messages",
                 "message_id = ANY(%s)", ([r["message_id"] for r in data["message_meta"]],))}
         with psycopg.connect(destination_dsn) as destination:
@@ -268,5 +297,6 @@ def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, 
         report.update(source_revision=original_revision, destination_revision="l13_message_split",
                       embeddings=decisions, source_workspace=workspace, destination_workspace=agent,
                       source_peer=selected.ai_peer, destination_peer=agent, person_peer=selected.person_peer,
-                      observation_mode=selected.observation_mode, excluded=excluded, dependencies=dependencies)
+                      observation_mode=selected.observation_mode, excluded=excluded, dependencies=dependencies,
+                      identity_maps=identity_maps)
         return report

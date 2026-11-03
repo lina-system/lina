@@ -248,6 +248,12 @@ unrelated session participants, messages or private recall siblings.
 Source transport URLs and keys are not published into the new home; its Honcho config points to the
 destination store's local Honcho port.
 
+Several source profiles may share one Honcho workspace. Each destination agent receives deterministic
+global row IDs derived from its name and the source identity; scoped session and ordinary peer names are
+preserved. The import receipt retains original IDs, explicit source UIDs, and destination maps. Foreign keys,
+citations and typed JSON identity fields use those maps, so importing a second profile cannot link it to the
+first agent's rows. Existing matching destination-agent text may still be reused after content verification.
+
 The archive is restored into a disposable database and upgraded with Honcho's actual Alembic chain in
 the installed store's Honcho image. No separate Python environment or `--honcho-python` is needed;
 that option is only an explicit interpreter override. The API and deriver are never started. Existing

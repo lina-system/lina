@@ -10,6 +10,7 @@ import json
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
+from hermes_cli.migrate_memory_honcho_ids import mapped_integers
 
 TABLES = (
     "workspaces", "peers", "sessions", "session_peers", "collections",
@@ -43,10 +44,11 @@ def graph(conn, schema: str, workspace: str) -> dict[str, list[dict]]:
     return result
 
 
-def insert(conn, schema: str, table: str, row: dict) -> dict:
+def insert(conn, schema: str, table: str, row: dict, *, override_identity: bool = False) -> dict:
     values = [Jsonb(value) if isinstance(value, (dict, list)) else value for value in row.values()]
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(sql.SQL("INSERT INTO {}.{} ({}) VALUES ({}) RETURNING *").format(
+        cur.execute(sql.SQL("INSERT INTO {}.{} ({}) " + ("OVERRIDING SYSTEM VALUE " if override_identity else "")
+                           + "VALUES ({}) RETURNING *").format(
             sql.Identifier(schema), sql.Identifier(table),
             sql.SQL(", ").join(map(sql.Identifier, row)),
             sql.SQL(", ").join(sql.Placeholder() for _ in row)), values)
@@ -83,10 +85,15 @@ def renamed(data: dict[str, list[dict]], source: str, destination: str,
                 row["workspace_name"] = destination
             if table == "sessions":
                 summary_ids(row["internal_metadata"], ids)
+            if table == "documents" and row["internal_metadata"].get("message_ids"):
+                row["internal_metadata"]["message_ids"] = mapped_integers(row["internal_metadata"]["message_ids"], ids)
             if table == "queue":
                 payload = row["payload"]
                 if payload.get("workspace_name") == source:
                     payload["workspace_name"] = destination
+                if payload.get("event_type") in {"queue.empty", "test.event"}:
+                    if payload["data"].get("workspace_id") == source:
+                        payload["data"]["workspace_id"] = destination
                 if isinstance(payload.get("message_id"), int):
                     payload["message_id"] = ids[payload["message_id"]]
             if table in {"queue", "message_meta"} and row.get("message_id") is not None:

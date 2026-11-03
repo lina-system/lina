@@ -2,7 +2,9 @@
 
 from functools import partial
 import json
+import os
 import subprocess
+import sys
 import uuid
 
 import psycopg
@@ -24,7 +26,6 @@ def test_installed_compose_import_without_honcho_python(tmp_path, monkeypatch, h
 
     ready = subprocess.run(["docker", "compose", "version"], capture_output=True, check=False)
     if ready.returncode:
-        import os
         reason = "installed Honcho migration test needs Docker Compose"
         if os.environ.get("CI", "").lower() == "true":
             pytest.fail(reason)
@@ -64,5 +65,37 @@ def test_installed_compose_import_without_honcho_python(tmp_path, monkeypatch, h
         with psycopg.connect(target) as conn:
             assert conn.execute("SELECT count(*) FROM ltm.message_meta WHERE workspace_name='installed-ai'").fetchone()[0] == 4
             assert conn.execute("SELECT DISTINCT observer FROM ltm.collections").fetchall() == [("installed-ai",)]
+
+        # The actual entrypoint must also process two source profiles sharing this archive.
+        from tests.hermes_cli.migrate_memory_fixtures import legacy_home
+        from tests._fixtures.memory_store import APP_PASSWORD
+
+        source = legacy_home(tmp_path / "source")
+        home = tmp_path / "lina"
+        (home / "store").mkdir(parents=True)
+        (home / "store/store.env").write_text("")
+        for profile, peer in (("alpha", "source-ai"), ("beta", "other-ai")):
+            (source / "profiles" / profile / "honcho.json").write_text(json.dumps({"hosts": {
+                f"hermes_{profile}": {"workspace": "alpha", "aiPeer": peer, "peerName": "user"}}}))
+        entry = ("import json,sys; from pathlib import Path; from functools import partial; "
+                 "from hermes_cli import store; import hermes_state_store as s; "
+                 "c=json.loads(sys.stdin.readline()); s.resolve_owner_dsn=lambda:c['dsn']; "
+                 "store.COMPOSE_FILE=Path(c['compose']); store.Store=partial(store.Store,project=c['project']); "
+                 "store.HONCHO_IMAGE=c['image']; from hermes_cli.main import main; main()")
+        context = json.dumps({"dsn": target, "compose": str(compose), "project": project,
+                              "image": store.HONCHO_IMAGE}) + "\n"
+        command = [sys.executable, "-c", entry, "migrate", "memory", "--from", str(source),
+                   "--all-source-profiles", "--as", "copied", "--work-dir", str(tmp_path / "copy"),
+                   "--honcho-dump", str(dump)]
+        env = {**os.environ, "LINA_HOME": str(home), "HERMES_HOME": str(home),
+               "LINA_STORE_DSN": target.replace("user=lina password=fixture", f"user=lina_app password={APP_PASSWORD}")}
+        for repeated in (False, True):
+            done = subprocess.run(command, input=context, env=env, capture_output=True,
+                                  text=True, check=False, timeout=180)
+            assert done.returncode == 0, done.stdout + done.stderr
+            result = json.loads(done.stdout)
+            assert result["ok"] and len(result["profiles"]) == 2
+            if repeated:
+                assert all(row["honcho"]["inserted"] == 0 for row in result["profiles"])
     finally:
         subprocess.run(installed.compose_argv("down", "--volumes"), capture_output=True, check=True, timeout=90)

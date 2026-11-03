@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 
 from hermes_cli.migrate_memory_honcho_graph import TABLES, rows
+from hermes_cli.migrate_memory_honcho_ids import metadata_references, row_identity
 
 
 @dataclass(frozen=True)
@@ -85,9 +86,9 @@ def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[di
     dependencies = _close_dependencies(data, result)
     excluded = []
     for table in TABLES:
-        retained = {json.dumps(row, sort_keys=True, default=str) for row in result[table]}
+        retained = {row_identity(table, row) for row in result[table]}
         for row in rows(conn, schema, table):
-            if json.dumps(row, sort_keys=True, default=str) in retained:
+            if row_identity(table, row) in retained:
                 continue
             owner = row.get("workspace_name", row.get("name") if table == "workspaces" else None)
             if table == "active_queue_sessions":
@@ -116,18 +117,13 @@ def _close_dependencies(data: dict, result: dict) -> list[dict]:
     }
     dependencies = []
     while True:
-        required = []
+        required = metadata_references(result)
         for table, constraints in references.items():
             for row in result[table]:
                 for parent, keys, fields in constraints:
                     values = tuple(row[field] for field in fields)
                     if None not in values:
                         required.append((parent, keys, values))
-        for row in result["sessions"]:
-            for label in ("honcho_chat_summary_short", "honcho_chat_summary_long"):
-                boundary = row["internal_metadata"].get("summaries", {}).get(label, {})
-                if "message_id" in boundary:
-                    required.append(("message_meta", ("message_id",), (boundary["message_id"],)))
         for row in result["queue"]:
             if isinstance(row["payload"].get("message_id"), int):
                 required.append(("message_meta", ("message_id",), (row["payload"]["message_id"],)))
@@ -168,10 +164,19 @@ def map_peer(data: dict, source: str, destination: str) -> dict:
     for table, records in result.items():
         for row in records:
             fields = ("name",) if table == "peers" else ("peer_name", "observer", "observed")
+            if table == "peers" and source != destination:
+                metadata = row["internal_metadata"]
+                label = f"{source}_peer_card"
+                if label in metadata:
+                    metadata[f"{destination}_peer_card"] = metadata.pop(label)
             for field in fields:
                 if row.get(field) == source:
                     row[field] = destination
             if table == "queue":
+                if row["payload"].get("event_type") == "queue.empty":
+                    for field in ("observer", "observed"):
+                        if row["payload"]["data"].get(field) == source:
+                            row["payload"]["data"][field] = destination
                 for field in ("observer", "observed", "scope_peer", "peer_name"):
                     if row["payload"].get(field) == source:
                         row["payload"][field] = destination
@@ -179,7 +184,10 @@ def map_peer(data: dict, source: str, destination: str) -> dict:
                 if isinstance(observers, list):
                     row["payload"]["observers"] = [destination if p == source else p for p in observers]
                 parts = row["work_unit_key"].split(":")
-                # Workspace occupies slot 1 (slot 2 for dream); peer slots follow.
-                start = 3 if parts[0] == "dream" else 2
-                row["work_unit_key"] = ":".join(parts[:start] + [destination if p == source else p for p in parts[start:]])
+                positions = {"representation": range(3, len(parts)), "summary": (3, 4),
+                             "dream": (3, 4), "scope_backfill": (2,), "scope_removal": (2,)}
+                for index in positions.get(parts[0], ()):
+                    if index < len(parts) and parts[index] == source:
+                        parts[index] = destination
+                row["work_unit_key"] = ":".join(parts)
     return result
