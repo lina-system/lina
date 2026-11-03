@@ -29,6 +29,11 @@ class HandOffError(RuntimeError):
     """The worker refused the hand-off for good (bad brief, unknown runner): the run is recorded as failed."""
 
 
+class HandOffNotYet(RuntimeError):
+    """The worker could not carry the hand-off out now (a cancel no device acknowledged): the outbox row stays
+    pending and the next ``lina work`` call tries again. Nothing is recorded as done."""
+
+
 # ---------------------------------------------------------------- the worker seam
 def _worker_root() -> Path:
     from hermes_cli.worker import settings
@@ -163,7 +168,12 @@ def _call_worker(op: str, run_id: str, payload: dict) -> None:
     h = hub(run_id if op == "submit" else None)
     try:
         CALLS[op](h, run_id, dict(payload, op=op))
-    except (HubError, RunnerError) as exc:
+    except HubError as exc:
+        # A cancel the device did not acknowledge leaves the run going there: never record it cancelled.
+        if op == "cancel" and h.store.load(run_id):
+            raise HandOffNotYet(str(exc)) from exc
+        raise HandOffError(str(exc)) from exc
+    except RunnerError as exc:
         raise HandOffError(str(exc)) from exc
     for line in h.lines:
         print(line)
@@ -201,7 +211,7 @@ def dispatch() -> int:
             _finish(oid, run_id, op, str(exc)[:500])
             warn(t("{run}: 작업이 받지 않았다 — {why}", run=run_id, why=exc))
             continue
-        except (TransportError, OSError) as exc:
+        except (HandOffNotYet, TransportError, OSError) as exc:
             _retry_later(oid, str(exc))
             warn(t("{run}: 작업에 아직 못 넘김, 다음 호출 때 다시 — {why}", run=run_id, why=exc))
             break
