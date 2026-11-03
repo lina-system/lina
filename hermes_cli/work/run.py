@@ -115,8 +115,12 @@ def _place_saved(h, job: dict) -> None:
     try:
         h.place(job)
     except (TransportError, HubError, RunnerError, OSError) as exc:
-        job["state"] = "queued"
-        h.store.save(job)
+        if (h.store.load(job["id"]) or {}).get("state") == "placing":
+            # The placement is recorded and may already be on the device: the tick resumes it there, as
+            # ``Hub._submit_one`` leaves it; re-queuing would let a second bid start the task twice.
+            h.store.receipt(job["id"], "publish_failed_resumes", error=str(exc)[:300])
+            return
+        job.update(h.store.update(job["id"], state="queued") or {})
         h.store.receipt(job["id"], "start_failed_requeued", error=str(exc)[:300])
 
 
