@@ -51,8 +51,10 @@ def build_memory_parser(subparsers, *, cmd_memory: Callable) -> None:
     _cache_parser.add_argument("--format", choices=["md", "tsv"], default="md")
     memory_parser.set_defaults(func=cmd_memory)
     from hermes_cli.external_messages import ingest_command
-    external = memory_sub.add_parser("external-messages", help="Ingest the collector's append-only spool")
+    external = memory_sub.add_parser("external-messages", help="Control external message collection")
     external_sub = external.add_subparsers(dest="external_messages_command", required=True)
+    for action in ("on", "off", "status"):
+        external_sub.add_parser(action, help=f"External messages: {action}")
     ingest = external_sub.add_parser("ingest", help="Ingest new complete spool events")
     ingest.add_argument("--spool", default=None, help="Override memory.external_messages.spool")
     ingest.set_defaults(func=ingest_command)

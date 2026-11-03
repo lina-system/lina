@@ -45,6 +45,71 @@ def test_answer_and_matching_unblock_are_one_touch(board, actor, kind, answers):
     assert row["stops"][0]["resumed_by"] == actor
 
 
+@pytest.mark.parametrize("actor,kind,answers,hands",
+                         [("owner", "answer", 1, 0), ("sion", "unblock", 0, 0), ("lina", "unblock", 0, 1)])
+def test_cli_unblock_with_reason_is_one_touch(board, actor, kind, answers, hands):
+    conn, clock = board
+    tid = blocked_card(conn, clock)
+    clock[0] += 10
+    text = "approved " + "x" * 230 + "\nextra detail"
+    kb.add_comment(conn, tid, actor, f"UNBLOCK: {text}", source={"surface": "cli"})
+    kb.unblock_task(conn, tid, by=actor, reason=text)
+    row = ko.compute_outcome(conn, tid, include_active=True)
+    assert [(t["by"], t["kind"], t["source"]) for t in row["touches"]] == [
+        (actor, kind, {"surface": "cli"})]
+    assert row["owner_answers"] == answers
+    assert row["main_session_touches"] == hands
+    assert row["stops"][0]["resumed_by"] == actor
+
+
+def test_cli_block_and_unblock_are_two_touches_not_three(board):
+    conn, clock = board
+    tid = kb.create_task(conn, title="work", assignee="lina", goal_mode=True)
+    kb.claim_task(conn, tid)
+    clock[0] += 10
+    kb.add_comment(conn, tid, "sion", "BLOCKED: waiting", source={"surface": "cli"})
+    kb.block_task(conn, tid, reason="waiting")
+    clock[0] += 10
+    kb.add_comment(conn, tid, "sion", "UNBLOCK: waiting", source={"surface": "cli"})
+    kb.unblock_task(conn, tid, by="sion", reason="waiting")
+    row = ko.compute_outcome(conn, tid, include_active=True)
+    assert [(t["by"], t["kind"], t["line"]) for t in row["touches"]] == [
+        ("sion", "comment", "BLOCKED: waiting"), ("sion", "unblock", "UNBLOCK: waiting")]
+
+
+@pytest.mark.parametrize("actor,kind,answers", [("owner", "answer", 1), ("sion", "unblock", 0)])
+def test_legacy_unblock_pairs_with_the_comment_that_names_its_actor(board, actor, kind, answers):
+    conn, clock = board
+    tid = blocked_card(conn, clock)
+    clock[0] += 10
+    kb.add_comment(conn, tid, actor, "UNBLOCK: approved", source={"surface": "cli"})
+    kb.unblock_task(conn, tid)
+    row = ko.compute_outcome(conn, tid, include_active=True)
+    assert [(t["by"], t["kind"], t["source"]) for t in row["touches"]] == [
+        (actor, kind, {"surface": "cli"})]
+    assert row["owner_answers"] == answers
+    assert row["stops"][0]["resumed_by"] == actor
+
+
+@pytest.mark.parametrize("case", ["text", "second", "author", "prefix"])
+def test_comment_and_unblock_that_are_two_acts_stay_two_touches(board, case):
+    conn, clock = board
+    tid = blocked_card(conn, clock)
+    clock[0] += 10
+    body, author, reason, shift = {
+        "text": ("UNBLOCK: other words", "sion", "approved", 0),
+        "second": ("UNBLOCK: approved", "sion", "approved", 1),
+        "author": ("UNBLOCK: approved", "reviewer", "approved", 0),
+        "prefix": ("note: approved", "sion", None, 0),
+    }[case]
+    kb.add_comment(conn, tid, author, body, source={"surface": "cli"})
+    clock[0] += shift
+    kb.unblock_task(conn, tid, by="sion", reason=reason)
+    row = ko.compute_outcome(conn, tid, include_active=True)
+    assert [(t["by"], t["kind"], t["line"]) for t in row["touches"]] == [
+        (author, "comment", body), ("sion", "unblock", reason or "")]
+
+
 def test_standalone_owner_unblock_does_not_count_as_an_answer(board):
     conn, clock = board
     tid = blocked_card(conn, clock)

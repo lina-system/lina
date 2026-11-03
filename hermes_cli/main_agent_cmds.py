@@ -7,7 +7,7 @@ are imported lazily inside the functions that use them (avoids an import cycle).
 import sys
 
 
-def _cmd_memory_off():
+def _cmd_memory_off(args):
     from hermes_cli.config import load_config, save_config
     config = load_config()
     if not isinstance(config.get("memory"), dict):
@@ -66,16 +66,22 @@ def _cmd_memory_cache_report(args):
     sys.exit(run(args))
 
 
+def _cmd_memory_external_messages(args):
+    from hermes_cli.external_messages_cmd import external_messages_command
+    external_messages_command(args)
+
+
 def _cmd_memory_setup(args):
     from hermes_cli.memory_setup import memory_command
     memory_command(args)
 
 
 _MEMORY_SUBCOMMANDS = {
-    "off": lambda args: _cmd_memory_off(),
+    "off": _cmd_memory_off,
     "reset": _cmd_memory_reset,
     "eval-search": _cmd_memory_eval_search,
     "cache-report": _cmd_memory_cache_report,
+    "external-messages": _cmd_memory_external_messages,
 }
 
 
