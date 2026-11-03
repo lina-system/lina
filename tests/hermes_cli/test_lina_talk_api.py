@@ -60,6 +60,7 @@ class FakeGateway:
         self.turns: list[dict] = []
         self.calls: list[str] = []
         self.busy = False
+        self.cancelled = False
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         self.calls.append(f"{request.method} {request.url.path}")
@@ -81,12 +82,15 @@ class FakeGateway:
             body = json.loads(request.content)
             self.turns.append({"session_id": sid, **body})
             return httpx.Response(200, headers={"content-type": "text/event-stream"},
-                                  content=self._stream(sid, body["message"]))
+                                  content=self._stream(sid, body["message"], cancelled=self.cancelled))
         return httpx.Response(404, json={"error": {"message": "not found"}})
 
     @staticmethod
-    def _stream(sid: str, message: str) -> bytes:
+    def _stream(sid: str, message: str, *, cancelled: bool = False) -> bytes:
+        """The gateway's frames for one turn; the terminal fields are ``api_server_runs.terminal_run_status``'s."""
         reply, seq = fake_model(message), [0]
+        status = "cancelled" if cancelled else "completed"
+        fields = {"completed": not cancelled, "partial": False, "interrupted": cancelled}
 
         def frame(name, payload):
             seq[0] += 1
@@ -98,8 +102,8 @@ class FakeGateway:
             ": keepalive\n\n",
             frame("assistant.delta", {"message_id": "msg_1", "delta": reply[:3]}),
             frame("assistant.delta", {"message_id": "msg_1", "delta": reply[3:]}),
-            frame("assistant.completed", {"message_id": "msg_1", "content": reply, "runtime": {}}),
-            frame("run.completed", {"message_id": "msg_1", "messages": [], "usage": {}, "runtime": {}}),
+            frame("assistant.completed", {"message_id": "msg_1", "content": reply, **fields, "runtime": {}}),
+            frame(f"run.{status}", {"message_id": "msg_1", **fields, "messages": [], "usage": {}, "runtime": {}}),
             frame("done", {}),
         ]).encode()
 
@@ -228,6 +232,31 @@ def test_bad_input_answers_4xx_and_runs_nothing(work, gateway, client, item, mes
     assert resp.status_code == status
     assert _valid("Error", resp.json())["error"]["code"] == code
     assert gateway.calls == [] and not (gateway.homes["alpha"] / "app_talk").exists()
+
+
+def test_the_note_is_kept_when_the_app_goes_away_at_the_completed_frame(work, gateway):
+    """The app disconnects right after ``assistant.completed``: the response iterator is closed at that yield (what
+    Starlette does on a client disconnect), and the agent's next DM still has the exchange."""
+    import asyncio
+
+    async def talk_and_leave():
+        target = await asyncio.to_thread(lina_talk.resolve, "T1")
+        opened = await lina_talk.open_talk(target, "색은 파랑으로 해")
+        async for chunk in opened.stream:
+            if chunk.startswith(b"event: assistant.completed"):
+                break
+        await opened.stream.aclose()
+
+    asyncio.run(talk_and_leave())
+    seen = _telegram_turn(gateway.homes["alpha"], "했어?")
+    assert "Owner: 색은 파랑으로 해" in seen and f"You replied: {fake_model('색은 파랑으로 해')}" in seen
+
+
+def test_a_cancelled_turn_leaves_no_note(work, gateway, client):
+    gateway.cancelled = True
+    names = [f["event"] for f in _frames(_talk(client, "T1", "그만").text)]
+    assert "assistant.completed" in names and "talk.carried" not in names and names[-2:] == ["run.cancelled", "done"]
+    assert not (gateway.homes["alpha"] / "app_talk").exists()
 
 
 def test_a_busy_agent_answers_the_gateways_own_busy_response(work, gateway, client):

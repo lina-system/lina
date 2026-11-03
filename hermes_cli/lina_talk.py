@@ -175,9 +175,22 @@ async def _events(upstream) -> AsyncIterator[tuple[Optional[str], str]]:
             event, data = None, []
 
 
+def _settled_reply(data: str) -> str:
+    """The reply of an ``assistant.completed`` frame for a turn that finished (``completed: true``, the gateway's
+    ``terminal_run_status``); ``""`` for a failed, partial or cancelled turn."""
+    try:
+        payload = json.loads(data)
+    except ValueError:
+        return ""
+    if not isinstance(payload, dict) or payload.get("completed") is not True:
+        return ""
+    return payload.get("content") or ""
+
+
 async def _relay(client, upstream, target: Target, message: str, session_id: str) -> AsyncIterator[bytes]:
     """``talk.started``, then the gateway's frames as they are, with ``talk.carried`` after the reply's
-    ``assistant.completed`` once the exchange is noted for the agent's next messaging turn."""
+    ``assistant.completed``. The note for the agent's next messaging turn is written before that frame is yielded:
+    a client that goes away at any yield (the generator is closed there) can no longer skip it."""
     import asyncio
     from gateway.app_talk_carry import write_carry
     try:
@@ -187,17 +200,13 @@ async def _relay(client, upstream, target: Target, message: str, session_id: str
             if event is None:
                 yield (data + "\n\n").encode()
                 continue
-            yield f"event: {event}\ndata: {data}\n\n".encode()
-            if event != "assistant.completed":
-                continue
-            try:
-                reply = json.loads(data).get("content") or ""
-            except ValueError:
-                reply = ""
+            reply = _settled_reply(data) if event == "assistant.completed" else ""
             if reply:
                 note = {"item": target.item, "title": target.title, "message": message, "reply": reply,
                         "session_id": session_id}
                 await asyncio.to_thread(write_carry, profile_home(target.agent), note)
+            yield f"event: {event}\ndata: {data}\n\n".encode()
+            if reply:
                 yield _frame("talk.carried", {"agent": target.agent, "item": target.item})
     finally:
         await upstream.aclose()
