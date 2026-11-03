@@ -71,6 +71,10 @@ class CLIProcessNotificationsMixin:
                 from agent.notification_presentation import diagnostic_process_event
                 if diagnostic_process_event(event) and not isinstance(pending, TimelineNotification):
                     pending = TimelineNotification(text, text, "internal_notification", "diagnostic")
+                elif not isinstance(pending, TimelineNotification):
+                    # A watch match (or any other process event) is machine output: stamp its route so memory
+                    # never takes it as the person's words (lina#20; the old Honcho text filter is gone).
+                    pending = TimelineNotification(text, text, "internal_notification")
             self._pending_input.put(pending)
 
     def _tui_unwrap_input(self, user_input):

@@ -170,8 +170,16 @@ def board(now: float | None = None) -> dict:
     review = [c for c in cards or [] if c["state"] == "waiting"]
     with _WORK_LOCK:
         lines = _source("work", errors, lambda: _notices_in_locale(root, work, review))
+    counts = _counts(work, cards, review, now)
+    if lines is not None:
+        from hermes_cli.lina_board_write import read_marks
+        read = read_marks(root)
+        for note in lines:
+            note["read"] = note["key"] in read
+    counts["unread"] = (sum(not note["read"] for note in lines)
+                        if lines is not None and work is not None and cards is not None else None)
     return {
-        "version": API_VERSION, "at": now, "errors": errors, "counts": _counts(work, cards, review, now),
+        "version": API_VERSION, "at": now, "errors": errors, "counts": counts,
         "cards": cards or [],
         "inbox": {"decide": (work or {}).get("decide", []), "review": [c["id"] for c in review],
                   "mine": [{k: row[k] for k in ("id", "title", "waiting", "due", "agent")} for row in (work or {}).get("mine", [])]},
