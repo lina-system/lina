@@ -575,6 +575,10 @@ def _notif_dispatch_event(sid: str, session: dict, evt: dict, text: str) -> None
         # honour ``hidden``). Only what the agent says about the new output is visible.
         from tools.process_registry_notifications import HEARTBEAT_DISPLAY_KIND
         kwargs = {"display_kind": HEARTBEAT_DISPLAY_KIND}
+    else:
+        # A watch match (or any other process event) is machine output: stamp its route so memory never takes it
+        # as the person's words (lina#20; the old Honcho text filter is gone).
+        kwargs = {"display_kind": "internal_notification"}
     from agent.notification_presentation import diagnostic_process_event
     if diagnostic_process_event(evt):
         kwargs.setdefault("display_metadata", {})["notification_category"] = "diagnostic"

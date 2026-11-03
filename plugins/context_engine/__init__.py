@@ -7,6 +7,8 @@ general plugin system: ``context.engine`` in config.yaml names the active engine
 from __future__ import annotations
 
 import logging
+import threading
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
@@ -151,6 +153,55 @@ def re_register_config_hooks() -> None:
         _load_engine_from_dir(engine_dir)
 
 
+# Turn handover: a memory provider that hands its own agent's finished turns to the context engine registers that
+# session here, and the engine's ``post_llm_call`` ingest then leaves those turns to it (one ingest per turn either
+# way). Keyed by session id; a weak method, so a dropped agent holds no claim. lina-memory is the one user today
+# (plugins/memory/lina/lcm.py, lina#20); an agent with no claim keeps the engine's own ingest.
+_TURN_HANDOVERS: dict[str, weakref.WeakMethod] = {}
+_TURN_HANDOVERS_LOCK = threading.Lock()
+
+
+def claim_turn_handover(session_id: str, take_turn) -> None:
+    """``take_turn(history, *, session_id=..., turn_start=...)`` receives this session's finished turns instead of the
+    engine hook; ``turn_start`` is the hook payload's index of the turn's first row in ``history`` (None when unknown)."""
+    if session_id:
+        with _TURN_HANDOVERS_LOCK:
+            _TURN_HANDOVERS[session_id] = weakref.WeakMethod(take_turn)
+
+
+def release_turn_handover(session_id: str, take_turn) -> None:
+    """Drop the claim if *take_turn* still holds it (a later agent of the same session may have claimed it)."""
+    with _TURN_HANDOVERS_LOCK:
+        claim = _TURN_HANDOVERS.get(session_id)
+        if claim is not None and claim() in (None, take_turn):
+            del _TURN_HANDOVERS[session_id]
+
+
+def turn_handover_for(session_id: str):
+    """The callable that takes this session's finished turn, or None when the engine's own hook ingests it."""
+    with _TURN_HANDOVERS_LOCK:
+        claim = _TURN_HANDOVERS.get(session_id) if session_id else None
+    return claim() if claim is not None else None
+
+
+def _handed_over_by_memory_layer(callback):
+    """The engine's ``post_llm_call`` ingest, unless a memory provider claimed the turn's session
+    (``claim_turn_handover``): that provider then hands the turn to the engine itself, so the turn is one ingest
+    either way. Decided per turn from the session, never per home: an agent without such a provider
+    (``skip_memory`` children, background review, the curator) keeps the engine's own ingest."""
+    def post_llm_call(**kwargs):
+        session_id = str(kwargs.get("session_id") or "")
+        take_turn = turn_handover_for(session_id)
+        if take_turn is None:
+            # The dispatcher sees this wrapper's ``**kwargs`` and passes the whole payload: hand the original only
+            # what its own signature accepts, as the dispatcher would have (narrow legacy hooks stay callable).
+            from hermes_cli.plugins_dispatch import PluginDispatchMixin
+            return callback(**PluginDispatchMixin._hook_callback_kwargs(callback, kwargs))
+        take_turn(kwargs.get("conversation_history") or [], session_id=session_id, turn_start=kwargs.get("turn_start"))
+        return None
+    return post_llm_call
+
+
 class _ProbeCollector:
     """Plugin context for an availability probe: keeps the engine, drops every other ``register_*`` call."""
 
@@ -199,6 +250,8 @@ class _EngineCollector:
         self.engine = engine
 
     def register_hook(self, hook_name, callback, *, hold_stream=False):
+        if hook_name == "post_llm_call":
+            callback = _handed_over_by_memory_layer(callback)
         context = self._plugin_context()
         with context._manager._discovery_lock:
             return context._manager._register_fallback_hook(
