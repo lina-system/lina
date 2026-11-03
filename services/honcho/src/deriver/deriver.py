@@ -75,7 +75,7 @@ async def process_representation_tasks_batch(
 
     overall_start = time.perf_counter()
 
-    messages.sort(key=lambda x: x.id)
+    messages.sort(key=lambda x: x.seq_in_session)
     latest_message = messages[-1]
     earliest_message = messages[0]
 

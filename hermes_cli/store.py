@@ -20,6 +20,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
 
+from agent.embedding_client import DEFAULT_DIMENSIONS, DEFAULT_MODEL
+
 SERVICES_DIR = Path(__file__).resolve().parents[1] / "services"
 COMPOSE_FILE = SERVICES_DIR / "store" / "compose.yaml"
 HONCHO_DIR = SERVICES_DIR / "honcho"
@@ -30,6 +32,13 @@ SECRET_KEYS = ("LINA_STORE_PASSWORD", "LINA_APP_PASSWORD", "HONCHO_DB_PASSWORD")
 DEFAULTS = {"LINA_STORE_PORT": "54320", "LINA_HONCHO_PORT": "8000", "LINA_STORE_VOLUME": "lina-store-pgdata"}
 # store.env key -> role whose password it is (the cluster superuser is POSTGRES_USER=lina in compose.yaml).
 ROLE_PASSWORDS = {"LINA_STORE_PASSWORD": "lina", "LINA_APP_PASSWORD": "lina_app", "HONCHO_DB_PASSWORD": "honcho"}
+# Honcho's embedding settings: LINA's model at the width of vec.embeddings (migration 0003; the two widths are
+# compared in tests/hermes_cli/test_store_honcho_env.py). Honcho's own default (1536) makes it refuse to start.
+# ensure_env adds the keys honcho.env does not set; what the person set there stays.
+HONCHO_DEFAULTS = {"EMBEDDING_MODEL_CONFIG__TRANSPORT": "openai", "EMBEDDING_MODEL_CONFIG__MODEL": DEFAULT_MODEL,
+                   "EMBEDDING_VECTOR_DIMENSIONS": str(DEFAULT_DIMENSIONS),
+                   "EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE": "always"}
+HONCHO_ENV_HEADER = "# Honcho settings (LLM_*, EMBEDDING_*, AUTH_*), one KEY=value per line. See services/honcho.\n"
 
 
 class StoreError(Exception):
@@ -51,22 +60,34 @@ def read_env(path: Path) -> dict[str, str]:
     return values
 
 
-def write_env(path: Path, values: dict[str, str]) -> None:
+def _write_private(path: Path, text: str) -> None:
     tmp = path.with_name(path.name + ".tmp")
     fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w", encoding="utf-8") as fh:
-        fh.write("".join(f"{key}={value}\n" for key, value in values.items()))
+        fh.write(text)
     os.replace(tmp, path)
+
+
+def write_env(path: Path, values: dict[str, str]) -> None:
+    _write_private(path, "".join(f"{key}={value}\n" for key, value in values.items()))
+
+
+def ensure_honcho_env(path: Path) -> None:
+    """Create ``honcho.env`` and append the HONCHO_DEFAULTS it does not set, after the person's own lines."""
+    text = path.read_text(encoding="utf-8-sig") if path.exists() else HONCHO_ENV_HEADER
+    missing = {key: value for key, value in HONCHO_DEFAULTS.items() if key not in read_env(path)}
+    if not missing and path.exists():
+        return
+    if text and not text.endswith("\n"):
+        text += "\n"
+    _write_private(path, text + "".join(f"{key}={value}\n" for key, value in missing.items()))
 
 
 def ensure_env(directory: Path) -> dict[str, str]:
     """Create ``store.env`` on first use (random passwords, default ports) and keep what is already there."""
     directory.mkdir(parents=True, exist_ok=True, mode=0o700)
     honcho_env = directory / "honcho.env"
-    if not honcho_env.exists():
-        fd = os.open(honcho_env, os.O_WRONLY | os.O_CREAT, 0o600)
-        with os.fdopen(fd, "w", encoding="utf-8") as fh:
-            fh.write("# Honcho settings (LLM_*, EMBEDDING_*, AUTH_*), one KEY=value per line. See services/honcho.\n")
+    ensure_honcho_env(honcho_env)
     values = read_env(directory / "store.env")
     wanted = {**{key: secrets.token_urlsafe(24) for key in SECRET_KEYS}, **DEFAULTS,
               "LINA_HONCHO_ENV": str(honcho_env)}
