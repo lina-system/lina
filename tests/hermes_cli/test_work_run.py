@@ -172,6 +172,31 @@ def test_hand_off_verbs_write_their_event_before_the_worker_call(work, monkeypat
     assert _rows(work, "SELECT status FROM v_run WHERE id = ?", (run_id,)) == [("dropped",)]
 
 
+def test_a_cancel_the_device_did_not_acknowledge_stays_pending_and_the_run_is_not_cancelled(work, monkeypatch):
+    """An unreachable device answers the cancel with a HubError ("the task is not cancelled, try again"). The run
+    keeps going there, so the record must not say cancelled: the outbox row stays pending, ``cancelled_at`` stays
+    empty, and the next ``lina work`` call tries the cancel again."""
+    from hermes_cli.worker.hub import Hub, HubError
+    work.ok("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = list(_jobs(work))
+    real = Hub.cancel
+
+    def unreachable(self, task_id, why=""):
+        raise HubError(f"{task_id}: the cancel did not reach build-a (rc 255: ssh: connect timed out); "
+                       "the task is not cancelled, try again")
+
+    monkeypatch.setattr(Hub, "cancel", unreachable)
+    work.run("run", "cancel", run_id, "--why", "the plan changed")
+    assert _rows(work, "SELECT cancelled_at FROM run WHERE id = ?", (run_id,)) == [(None,)]
+    assert _rows(work, "SELECT op FROM outbox WHERE done_at IS NULL") == [("cancel",)]
+    assert _rows(work, "SELECT status FROM v_run WHERE id = ?", (run_id,)) != [("dropped",)]
+
+    monkeypatch.setattr(Hub, "cancel", real)
+    work.ok("list")
+    assert _rows(work, "SELECT count(*) FROM outbox WHERE done_at IS NULL") == [(0,)]
+    assert _rows(work, "SELECT cancelled_at IS NOT NULL FROM run WHERE id = ?", (run_id,)) == [(1,)]
+
+
 def test_a_work_card_hands_out_every_todo_linked_to_it(work):
     work.ok("card", "link", "t_0123abcd", "--goal", "G1")
     work.ok("card", "link", "t_0123abcd", "--todo", "T1", "T2")
