@@ -558,12 +558,40 @@ def _prune_inactive_memory_provider_skills(active_provider: Optional[str] = None
         registered.pop(qualified_name, None)
 
 
+def driven_providers(name: Optional[str]) -> list[str]:
+    """The providers *name* drives as adapters from the one memory slot (``drives:`` in its ``plugin.yaml``):
+    their CLI commands are offered while it holds the slot, and their setup keeps it there."""
+    plugin_dir = find_provider_dir(name) if name else None
+    if plugin_dir is None:
+        return []
+    try:
+        from utils import fast_safe_load
+        with open(plugin_dir / "plugin.yaml", encoding="utf-8-sig") as f:
+            drives = (fast_safe_load(f) or {}).get("drives") or []
+    except Exception:  # health: allow BLE001 -- an unreadable manifest drives nothing
+        return []
+    return [d for d in drives if isinstance(d, str) and d != name] if isinstance(drives, list) else []
+
+
+def slot_provider_for(name: str) -> str:
+    """The provider that should hold the memory slot when *name* is set up: the active one if it drives *name*."""
+    active = _get_active_memory_provider()
+    return active if active and name in driven_providers(active) else name
+
+
 def discover_plugin_cli_commands() -> list[dict]:
-    """CLI commands for the **active** memory plugin only. Imports just its ``cli.py``
-    (``register_cli(subparser)``), never the provider module, so it is safe during
-    argparse setup. At most one dict: name/help/description/setup_fn/handler_fn/plugin."""
+    """CLI commands for the **active** memory plugin and the providers it drives (``drives:``). Imports just
+    their ``cli.py`` (``register_cli(subparser)``), never a provider module, so it is safe during argparse
+    setup. One dict per provider with a CLI: name/help/description/setup_fn/handler_fn/plugin."""
     active_provider = _get_active_memory_provider() if _MEMORY_PLUGINS_DIR.is_dir() else None
-    plugin_dir = find_provider_dir(active_provider) if active_provider else None
+    if not active_provider:
+        return []
+    return [cmd for name in (active_provider, *driven_providers(active_provider))
+            for cmd in _provider_cli_command(name)]
+
+
+def _provider_cli_command(active_provider: str) -> list[dict]:
+    plugin_dir = find_provider_dir(active_provider)
     if not plugin_dir or not (plugin_dir / "cli.py").exists():
         return []
 

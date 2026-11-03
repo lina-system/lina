@@ -887,12 +887,14 @@ def _setup_wizard(args) -> None:
     _write_config(cfg)
     print(f"\n  Config written to {write_path}")
 
-    try:  # auto-enable Honcho as memory provider in config.yaml
+    try:  # auto-enable Honcho as memory provider in config.yaml (or keep the provider that drives it there)
         from hermes_cli.config import load_config, save_config
+        from plugins.memory import slot_provider_for
+        slot = slot_provider_for("honcho")
         hermes_config = load_config()
-        hermes_config.setdefault("memory", {})["provider"] = "honcho"
+        hermes_config.setdefault("memory", {})["provider"] = slot
         save_config(hermes_config)
-        print("  Memory provider set to 'honcho' in config.yaml")
+        print(f"  Memory provider set to '{slot}' in config.yaml")
     except Exception as e:
         logger.debug("Honcho _setup_wizard failed", exc_info=True)
         print(f"  Could not auto-enable in config.yaml: {e}\n  Run: hermes config set memory.provider honcho")
@@ -1925,7 +1927,8 @@ def honcho_command(args) -> None:
     if sub == "setup":  # honcho setup goes through the unified memory-provider path
         print("\n  Honcho is configured via the memory provider system.\n  Running 'hermes memory setup'...\n")
         from hermes_cli.memory_setup import cmd_setup_provider
-        return cmd_setup_provider("honcho")
+        from plugins.memory import slot_provider_for
+        return cmd_setup_provider(slot_provider_for("honcho"))
     handler = cmd_status if sub is None else _HANDLERS.get(sub)
     if handler is None:
         return print(f"  Unknown honcho command: {sub}\n"
