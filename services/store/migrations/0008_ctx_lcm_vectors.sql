@@ -160,7 +160,9 @@ BEGIN
                               'this profile writes ' || width);
     END IF;
     SELECT * INTO msg FROM ctx.lcm_chunk_message(NEW.chunk_id);
-    IF model_name IS NOT NULL AND msg.message_id IS NULL AND NEW.chunk_id !~ '^[0-9]+:[0-9]+$' THEN
+    -- A vector whose message is not (yet) known waits for its lcm_chunk_meta row: an opaque id has no place until then,
+    -- and SQLite keeps a chunk vector whatever its id names.
+    IF model_name IS NOT NULL AND msg.message_id IS NULL THEN
         INSERT INTO ctx.lcm_chunk_vectors_pending (chunk_id, identity_hash, vec)
         VALUES (NEW.chunk_id, NEW.identity_hash, NEW.vec)
         ON CONFLICT (agent_id, chunk_id, identity_hash) DO UPDATE SET vec = EXCLUDED.vec;

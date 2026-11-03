@@ -1333,6 +1333,9 @@ CREATE INDEX IF NOT EXISTS lcm_trajectory_states_search_trgm
 CREATE INDEX IF NOT EXISTS messages_content_lcm_unicode61
     ON memory.messages USING gin (to_tsvector('simple', ctx.lcm_unicode61(content)));
 CREATE INDEX IF NOT EXISTS lcm_messages_text_uid ON ctx.lcm_messages (text_uid);
+-- LCM-X finds the text row Hermes wrote for a message it stores by its uid family and content digest
+-- (hermes_state_store.text_uids_with_digest: uid = x OR uid LIKE 'x#%'); the digest makes that a lookup.
+CREATE INDEX IF NOT EXISTS messages_content_sha256 ON memory.messages (content_sha256);
 
 -- PRAGMA table_info(t) / pragma_table_info(t): LCM-X's columns of a ctx table or view (agent_id is the store's).
 CREATE OR REPLACE FUNCTION ctx.pragma_table_info(relation text)

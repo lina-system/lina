@@ -145,7 +145,7 @@ def _sqlite_error(exc: Exception) -> sqlite3.Error:
     """The ``sqlite3`` exception LCM-X catches for a psycopg error: integrity (class 23) or operational."""
     import psycopg
     sqlstate = getattr(exc, "sqlstate", None) or ""
-    message = (exc.diag.message_primary if isinstance(exc, psycopg.Error) else str(exc)).strip()
+    message = ((exc.diag.message_primary if isinstance(exc, psycopg.Error) else None) or str(exc)).strip()
     if sqlstate == "40001":
         # A write on a snapshot another connection's commit made stale: SQLite's SQLITE_BUSY_SNAPSHOT, which LCM-X
         # retries on a fresh transaction (waiting cannot fix it).
@@ -225,6 +225,8 @@ def _between_bound(m: re.Match) -> bool:
 
 
 _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
+    # SQLite takes an empty list: x IN () is false, x NOT IN () true; Postgres refuses the syntax.
+    (re.compile(r"\bIN\s*\(\s*\)", re.IGNORECASE), "IN (SELECT NULL WHERE false)"),
     (re.compile(r"\bCAST\s*\(((?:[^()]|\([^()]*\))*?)\s+AS\s+INTEGER\s*\)", re.IGNORECASE), r"CAST(\1 AS bigint)"),
     (re.compile(r"\bCAST\s*\(((?:[^()]|\([^()]*\))*?)\s+AS\s+REAL\s*\)", re.IGNORECASE), r"CAST(\1 AS double precision)"),
     (re.compile(r"\bIS\s+NOT\s+(?!NULL\b|DISTINCT\b|TRUE\b|FALSE\b)", re.IGNORECASE), "IS DISTINCT FROM "),
