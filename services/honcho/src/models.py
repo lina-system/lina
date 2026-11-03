@@ -1,7 +1,7 @@
 import datetime
 import re
 from logging import getLogger
-from typing import Any, cast, final, override
+from typing import Any, ClassVar, cast, final, override
 
 from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
@@ -20,7 +20,9 @@ from sqlalchemy import (
     Integer,
     Table,
     UniqueConstraint,
+    and_,
     event,
+    inspect,
     select,
     text,
 )
@@ -29,9 +31,11 @@ from sqlalchemy.orm import (
     Mapped,
     MappedColumn,
     column_property,
+    foreign,
     mapped_column,
     relationship,
 )
+from sqlalchemy.orm import Session as OrmSession
 from sqlalchemy.sql import func
 
 from src.config import settings
@@ -43,6 +47,15 @@ from .db import Base
 load_dotenv(override=True)
 
 _VECTOR_DIM: int = settings.EMBEDDING.VECTOR_DIMENSIONS
+
+# LINA: vectors live in the store's shared vec.embeddings (lina#19), not in Honcho's own tables.
+VEC_SCHEMA = "vec"
+
+
+def embedding_model_name() -> str:
+    """The model name vec.embeddings rows are written and searched under."""
+    return settings.EMBEDDING.MODEL_CONFIG.model
+
 
 logger = getLogger(__name__)
 
@@ -334,14 +347,94 @@ event.listen(
 
 
 @final
-class MessageEmbedding(Base):
+class VecEmbedding(Base):
+    """One row of LINA's vec.embeddings (services/store/migrations/0003_vec_embeddings.sql).
+
+    Honcho writes kind ``message`` (item_id = message_embeddings.id) and kind
+    ``document`` (item_id = documents.vec_id); agent_id is the workspace name.
+    """
+
+    __tablename__: str = "embeddings"
+
+    kind: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    item_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
+    model: Mapped[str] = mapped_column(TEXT, primary_key=True)
+    agent_id: Mapped[str] = mapped_column(TEXT, nullable=False)
+    dim: Mapped[int] = mapped_column(Integer, nullable=False)
+    embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=False)
+
+    __table_args__ = (
+        Index(
+            "ix_embeddings_embedding_hnsw",
+            "embedding",
+            postgresql_using="hnsw",
+            postgresql_with={"m": 16, "ef_construction": 64},
+            postgresql_ops={"embedding": "vector_cosine_ops"},
+        ),
+        {"schema": VEC_SCHEMA},
+    )
+
+
+class VecEmbedded:
+    """``embedding`` of a row whose vector is kept in vec.embeddings.
+
+    Reading gives the vector (or None); assigning a vector writes the
+    vec.embeddings row with the owning row's flush, assigning None deletes it.
+    """
+
+    vec_kind: ClassVar[str]
+    vec_row: Any
+    workspace_name: Any
+
+    @property
+    def embedding(self) -> Any:
+        row = self.vec_row
+        return None if row is None else row.embedding
+
+    @embedding.setter
+    def embedding(self, value: Any) -> None:
+        if value is None:
+            self.vec_row = None
+            return
+        if self.vec_row is not None:
+            self.vec_row.embedding = value
+            self.vec_row.dim = len(value)
+            return
+        self.vec_row = VecEmbedding(
+            kind=self.vec_kind,
+            model=embedding_model_name(),
+            dim=len(value),
+            embedding=value,
+        )
+
+
+def _vec_relationship(owner: str, key_column: str) -> Any:
+    return relationship(
+        VecEmbedding,
+        primaryjoin=lambda: and_(
+            foreign(VecEmbedding.item_id) == getattr(_OWNERS[owner], key_column),
+            VecEmbedding.kind == _OWNERS[owner].vec_kind,
+            VecEmbedding.model == embedding_model_name(),
+        ),
+        uselist=False,
+        lazy="selectin",
+        cascade="all, delete-orphan",
+        single_parent=True,
+        # Both owners write item_id; kind keeps their rows apart.
+        overlaps="vec_row",
+    )
+
+
+@final
+class MessageEmbedding(VecEmbedded, Base):
     __tablename__: str = "message_embeddings"
+    vec_kind: ClassVar[str] = "message"
 
     id: Mapped[int] = mapped_column(
         BigInteger, Identity(), primary_key=True, autoincrement=True
     )
     content: Mapped[str] = mapped_column(TEXT)
-    embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
+    vec_row: Mapped[VecEmbedding | None] = _vec_relationship("message", "id")
     message_id: Mapped[str] = mapped_column(
         ForeignKey("message_meta.public_id", ondelete="CASCADE"),
         nullable=False,
@@ -375,14 +468,6 @@ class MessageEmbedding(Base):
         ForeignKeyConstraint(
             ["peer_name", "workspace_name"],
             ["peers.name", "peers.workspace_name"],
-        ),
-        # HNSW index on embedding column for efficient similarity search
-        Index(
-            "ix_message_embeddings_embedding_hnsw",
-            "embedding",
-            postgresql_using="hnsw",
-            postgresql_with={"m": 16, "ef_construction": 64},
-            postgresql_ops={"embedding": "vector_cosine_ops"},
         ),
         # Composite index for efficient reconciliation queries
         Index(
@@ -446,9 +531,16 @@ SOURCE_ID_RE = re.compile(r"^[A-Za-z0-9_-]{21}$")
 
 
 @final
-class Document(Base):
+class Document(VecEmbedded, Base):
     __tablename__: str = "documents"
+    vec_kind: ClassVar[str] = "document"
+    # vec_id is server-generated and keys the vec.embeddings row: fetch it on insert.
+    __mapper_args__: ClassVar[dict[str, Any]] = {"eager_defaults": True}
     id: Mapped[str] = mapped_column(TEXT, default=generate_nanoid, primary_key=True)
+    # The integer id vec.embeddings.item_id needs (id is text).
+    vec_id: Mapped[int] = mapped_column(
+        BigInteger, Identity(), nullable=False, unique=True
+    )
     internal_metadata: Mapped[dict[str, Any]] = mapped_column(
         "internal_metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -459,7 +551,7 @@ class Document(Base):
     times_derived: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("1")
     )
-    embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
+    vec_row: Mapped[VecEmbedding | None] = _vec_relationship("document", "vec_id")
     created_at: Mapped[datetime.datetime] = mapped_column(
         DateTime(timezone=True), server_default=func.now(), index=True
     )
@@ -591,16 +683,6 @@ class Document(Base):
         ForeignKeyConstraint(
             ["session_name", "workspace_name"],
             ["sessions.name", "sessions.workspace_name"],
-        ),
-        # HNSW index on embedding column
-        Index(
-            "ix_documents_embedding_hnsw",
-            "embedding",
-            postgresql_using="hnsw",  # HNSW index type
-            postgresql_with={"m": 16, "ef_construction": 64},  # HNSW parameters
-            postgresql_ops={
-                "embedding": "vector_cosine_ops"
-            },  # Cosine distance operator
         ),
         # Composite index for efficient reconciliation queries
         Index(
@@ -810,3 +892,52 @@ class SessionPeer(Base):
     internal_metadata: Mapped[dict[str, Any]]
     joined_at: Mapped[datetime.datetime]
     left_at: Mapped[datetime.datetime | None]
+
+
+_OWNERS: dict[str, type[Any]] = {"message": MessageEmbedding, "document": Document}
+
+
+@event.listens_for(OrmSession, "before_flush")
+def _vec_rows_carry_workspace(
+    session: OrmSession, _flush_context: Any, _instances: Any
+) -> None:
+    """A new vec.embeddings row takes its owner's workspace as agent_id."""
+    for obj in (*session.new, *session.dirty):
+        if not isinstance(obj, VecEmbedded) or "vec_row" in inspect(obj).unloaded:
+            continue
+        row = obj.vec_row
+        if row is not None and row.agent_id is None:
+            row.agent_id = obj.workspace_name
+
+
+def vector_cleanup_statements(owner_schema: str, vec_schema: str) -> list[str]:
+    """Triggers that delete an owner row's vec.embeddings rows with it, however it is
+    deleted (ORM, bulk DELETE, foreign-key cascade). The migration installs the same."""
+    statements: list[str] = []
+    for table, kind, key in (
+        ("documents", "document", "vec_id"),
+        ("message_embeddings", "message", "id"),
+    ):
+        function = f'"{owner_schema}".lina_drop_{table}_vectors'
+        statements += [
+            f"""CREATE OR REPLACE FUNCTION {function}() RETURNS trigger
+                LANGUAGE plpgsql AS $fn$
+                BEGIN
+                    DELETE FROM "{vec_schema}".embeddings e USING old_rows o
+                    WHERE e.kind = '{kind}' AND e.item_id = o.{key};
+                    RETURN NULL;
+                END $fn$""",
+            f'DROP TRIGGER IF EXISTS lina_drop_vectors ON "{owner_schema}".{table}',
+            f"""CREATE TRIGGER lina_drop_vectors AFTER DELETE ON "{owner_schema}".{table}
+                REFERENCING OLD TABLE AS old_rows FOR EACH STATEMENT
+                EXECUTE FUNCTION {function}()""",
+        ]
+    return statements
+
+
+@event.listens_for(Base.metadata, "after_create")
+def _install_vector_cleanup(_target: Any, connection: Any, **_kw: Any) -> None:
+    owner_schema = Document.__table__.schema or "public"
+    vec_schema = VecEmbedding.__table__.schema or "public"
+    for statement in vector_cleanup_statements(owner_schema, vec_schema):
+        connection.exec_driver_sql(statement)

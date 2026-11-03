@@ -1,0 +1,48 @@
+{"ref": "agent:default:eval-a01", "source": "agent", "agent": "default", "role": "user", "text": "Can you move the staging database backup job from 2am to 4am so it stops colliding with the log rotation?"}
+{"ref": "agent:default:eval-a02", "source": "agent", "agent": "default", "role": "assistant", "text": "The flaky checkout test was caused by a timezone assumption in the invoice date formatter; I pinned it to UTC."}
+{"ref": "agent:default:eval-a03", "source": "agent", "agent": "default", "role": "user", "text": "Please draft release notes for version 3.2 focusing on the new offline mode and the faster sync."}
+{"ref": "agent:default:eval-a04", "source": "agent", "agent": "default", "role": "assistant", "text": "I rotated the webhook signing secret and updated both the receiver and the sender configuration."}
+{"ref": "agent:default:eval-a05", "source": "agent", "agent": "default", "role": "user", "text": "Remind me that the conference talk slides are due to the organizers next Thursday."}
+{"ref": "agent:default:eval-a06", "source": "agent", "agent": "default", "role": "assistant", "text": "The memory leak came from the image thumbnail cache never evicting entries; I added an LRU limit of 500."}
+{"ref": "agent:default:eval-a07", "source": "agent", "agent": "default", "role": "user", "text": "Switch the documentation site build from the old static generator to the new one before the redesign launch."}
+{"ref": "agent:default:eval-a08", "source": "agent", "agent": "default", "role": "assistant", "text": "The nightly export failed because the disk on the worker filled up with temporary parquet files."}
+{"ref": "agent:default:eval-a09", "source": "agent", "agent": "default", "role": "user", "text": "Book a recurring thirty minute sync with the design team every other Monday morning."}
+{"ref": "agent:default:eval-a10", "source": "agent", "agent": "default", "role": "assistant", "text": "I set the rate limiter on the public search endpoint to sixty requests per minute per token."}
+{"ref": "agent:default:eval-a11", "source": "agent", "agent": "default", "role": "user", "text": "Archive the old analytics dashboard but keep its saved queries exported as CSV files."}
+{"ref": "agent:default:eval-a12", "source": "agent", "agent": "default", "role": "assistant", "text": "The mobile build broke because the signing certificate expired; I renewed it and re-ran the pipeline."}
+{"ref": "agent:default:eval-an01", "source": "agent", "agent": "default", "role": "user", "text": "Let's look at the backlog tomorrow afternoon."}
+{"ref": "agent:default:eval-an02", "source": "agent", "agent": "default", "role": "assistant", "text": "Done, the branch is merged and the pipeline is green."}
+{"ref": "agent:default:eval-an03", "source": "agent", "agent": "default", "role": "user", "text": "Can you check the logs for anything unusual this week?"}
+{"ref": "agent:default:eval-an04", "source": "agent", "agent": "default", "role": "assistant", "text": "I updated the dependency lockfile and ran the full test suite."}
+{"ref": "messages:eval-m01", "source": "messages", "agent": "default", "role": "user", "text": "The plumber can come on Saturday between nine and eleven to fix the kitchen sink."}
+{"ref": "messages:eval-m02", "source": "messages", "agent": "default", "role": "user", "text": "Our book club picked a mystery novel set on a lighthouse island for next month."}
+{"ref": "messages:eval-m03", "source": "messages", "agent": "default", "role": "user", "text": "The parking permit renewal form has to be submitted at the city office before the end of the month."}
+{"ref": "messages:eval-m04", "source": "messages", "agent": "default", "role": "user", "text": "Grandma's birthday dinner moved to the Italian place downtown at seven."}
+{"ref": "messages:eval-m05", "source": "messages", "agent": "default", "role": "user", "text": "The gym is closed for floor repairs until the fifteenth, classes moved to the community hall."}
+{"ref": "messages:eval-m06", "source": "messages", "agent": "default", "role": "user", "text": "Reminder: bring two passport photos for the visa appointment on Tuesday."}
+{"ref": "messages:eval-m07", "source": "messages", "agent": "default", "role": "user", "text": "The landlord said the heating inspection is scheduled for next Wednesday morning."}
+{"ref": "messages:eval-m08", "source": "messages", "agent": "default", "role": "user", "text": "Team dinner budget is forty dollars per person, receipts go to the shared folder."}
+{"ref": "messages:eval-m09", "source": "messages", "agent": "default", "role": "user", "text": "The school trip to the science museum needs signed consent forms by Friday."}
+{"ref": "messages:eval-m10", "source": "messages", "agent": "default", "role": "user", "text": "Our hiking group is meeting at the north trailhead at six thirty to catch the sunrise."}
+{"ref": "messages:eval-m11", "source": "messages", "agent": "default", "role": "user", "text": "The bakery on the corner now sells sourdough only on weekends."}
+{"ref": "messages:eval-m12", "source": "messages", "agent": "default", "role": "user", "text": "The car service appointment is confirmed for the twenty second, oil change and tire rotation."}
+{"ref": "messages:eval-mn01", "source": "messages", "agent": "default", "role": "user", "text": "Running late, see you soon."}
+{"ref": "messages:eval-mn02", "source": "messages", "agent": "default", "role": "user", "text": "Thanks for yesterday, it was fun."}
+{"ref": "messages:eval-mn03", "source": "messages", "agent": "default", "role": "user", "text": "Did anyone see my umbrella?"}
+{"ref": "messages:eval-mn04", "source": "messages", "agent": "default", "role": "user", "text": "Weather looks great for the weekend."}
+{"ref": "eval-doc-000000000001", "source": "memory", "agent": "hermes", "text": "The owner prefers short morning summaries instead of long evening reports.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000002", "source": "memory", "agent": "hermes", "text": "The owner is allergic to peanuts and avoids restaurants that cannot guarantee peanut free dishes.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000003", "source": "memory", "agent": "hermes", "text": "The owner drinks green tea in the afternoon and avoids coffee after noon.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000004", "source": "memory", "agent": "hermes", "text": "The owner is learning to play the cello and practices on weekday evenings.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000005", "source": "memory", "agent": "hermes", "text": "The owner wants pull request reviews to focus on correctness before style.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000006", "source": "memory", "agent": "hermes", "text": "The owner runs a five kilometer route along the river on Sunday mornings.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000007", "source": "memory", "agent": "hermes", "text": "The owner keeps a vegetable garden with tomatoes, basil and peppers on the balcony.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000008", "source": "memory", "agent": "hermes", "text": "The owner prefers trains over flights for trips shorter than four hours.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000009", "source": "memory", "agent": "hermes", "text": "The owner reads science fiction novels before going to sleep.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000010", "source": "memory", "agent": "hermes", "text": "The owner dislikes notification sounds and keeps the phone on silent at work.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000011", "source": "memory", "agent": "hermes", "text": "The owner saves a fixed share of each salary payment into a travel fund.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-doc-000000000012", "source": "memory", "agent": "hermes", "text": "The owner volunteers at an animal shelter on the first Saturday of every month.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-dnz-000000000001", "source": "memory", "agent": "hermes", "text": "The owner mentioned the weather was cold this week.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-dnz-000000000002", "source": "memory", "agent": "hermes", "text": "The owner asked for a reminder about a delivery.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-dnz-000000000003", "source": "memory", "agent": "hermes", "text": "The owner said the new keyboard feels comfortable.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"ref": "eval-dnz-000000000004", "source": "memory", "agent": "hermes", "text": "The owner likes to keep the desk tidy.", "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}

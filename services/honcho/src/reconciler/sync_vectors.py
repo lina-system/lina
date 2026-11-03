@@ -9,7 +9,7 @@ import datetime
 import logging
 import time
 from dataclasses import dataclass
-from typing import Any, cast
+from typing import cast
 
 import sentry_sdk
 from sqlalchemy import and_, delete, or_, select, update
@@ -26,6 +26,7 @@ from src.exceptions import VectorStoreError
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
+from src.vec_embeddings import put_vectors
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -472,8 +473,6 @@ async def _sync_message_embeddings(
 
             for emb, new_emb in zip(embs_needing_embed, new_embeddings, strict=False):
                 freshly_embedded[emb.id] = new_emb
-                if store_in_postgres:
-                    emb.embedding = new_emb
         except Exception:
             logger.exception(
                 "Failed to re-embed %s message embeddings", len(embs_needing_embed)
@@ -502,14 +501,18 @@ async def _sync_message_embeddings(
             await db.execute(
                 update(models.MessageEmbedding)
                 .where(models.MessageEmbedding.id == emb.id)
-                .values(
-                    sync_state="synced",
-                    last_sync_at=func.now(),
-                    sync_attempts=0,
-                    **({"embedding": new_emb} if new_emb is not None else {}),
-                )
+                .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
             )
             embs_done.append(emb)
+        await put_vectors(
+            db,
+            "message",
+            (
+                (emb.id, emb.workspace_name, freshly_embedded[emb.id])
+                for emb in embs_done
+                if emb.id in freshly_embedded
+            ),
+        )
         synced_count += len(embs_done)
         return synced_count, failed_count
 
@@ -565,19 +568,20 @@ async def _sync_message_embeddings(
             # Per-row UPDATEs so freshly-embedded rows persist the vector
             # alongside sync_state. Session has autoflush=False so the ORM
             # mutation above isn't sufficient on its own.
-            for emb in embs_to_sync:
-                new_emb = freshly_embedded.get(emb.id)
-                values: dict[str, Any] = {
-                    "sync_state": "synced",
-                    "last_sync_at": func.now(),
-                    "sync_attempts": 0,
-                }
-                if new_emb is not None and store_in_postgres:
-                    values["embedding"] = new_emb
-                await db.execute(
-                    update(models.MessageEmbedding)
-                    .where(models.MessageEmbedding.id == emb.id)
-                    .values(**values)
+            await db.execute(
+                update(models.MessageEmbedding)
+                .where(models.MessageEmbedding.id.in_([e.id for e in embs_to_sync]))
+                .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
+            )
+            if store_in_postgres:
+                await put_vectors(
+                    db,
+                    "message",
+                    (
+                        (e.id, e.workspace_name, freshly_embedded[e.id])
+                        for e in embs_to_sync
+                        if e.id in freshly_embedded
+                    ),
                 )
             synced_count += len(embs_to_sync)
         except VectorStoreError:

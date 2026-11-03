@@ -1,7 +1,7 @@
 """Move message text to the immutable shared store.
 
 Revision ID: l13_message_split
-Revises: c4d8e2f6a1b3
+Revises: l19_vec_embeddings
 
 One shared ID can own only one metadata row. In old-ID order, the first
 matching placement claims it; later placements get their own
@@ -18,7 +18,7 @@ from alembic import op
 from migrations.utils import get_schema
 
 revision: str = "l13_message_split"
-down_revision: str | None = "c4d8e2f6a1b3"
+down_revision: str | None = "l19_vec_embeddings"
 branch_labels: str | Sequence[str] | None = None
 depends_on: str | Sequence[str] | None = None
 
