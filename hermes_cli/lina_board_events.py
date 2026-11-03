@@ -9,7 +9,8 @@ Three append-only stores are tailed, each by its own position, and the three pos
 
 Each socket polls with one connection per store on its own single-thread executor (the kanban plugin's tailer
 pattern), at most every ``BATCH_SECONDS``. No ``since``: the first message is the tail with no events. A ``since``
-that does not decode, or points past what a store holds or before what it kept, gets one ``resync``. Events name
+that does not decode, points past what a store holds, was taken from another store (each position travels with its
+store's identity, see ``Stream.identity``) or has rows missing right after it, gets one ``resync``. Events name
 what changed (``source``, ``kind``, ``id``, ``at``) and carry no item bodies; the client refetches the snapshot.
 """
 
@@ -18,6 +19,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import hashlib
 import json
 import logging
 import sqlite3
@@ -33,7 +35,7 @@ from hermes_cli.lina_board import _WORK_LOCK, _root
 
 BATCH_SECONDS = 0.3
 PAGE = 200
-CURSOR_PREFIX = "c1."
+CURSOR_PREFIX = "c2."  # c1 had positions only: an old cursor gets one resync
 WORKER_STATE_KINDS = frozenset({"submitted", "placed", "queued", "run_started", "start_failed_requeued", "follow_up",
                                 "exec_end", "delivery", "verdict"})
 log = logging.getLogger(__name__)
@@ -43,11 +45,12 @@ class Cursor(NamedTuple):
     work: int
     worker: int
     kanban: int
+    ids: tuple[str, str, str] = ("", "", "")  # the store identity each position was taken in ("" = empty store)
 
 
 def encode(cursor: Cursor) -> str:
-    raw = f"{cursor.work}.{cursor.worker}.{cursor.kanban}".encode()
-    return CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    raw = ".".join([str(cursor.work), str(cursor.worker), str(cursor.kanban), *(i or "-" for i in cursor.ids)])
+    return CURSOR_PREFIX + base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
 def decode(text: str) -> Cursor | None:
@@ -56,12 +59,16 @@ def decode(text: str) -> Cursor | None:
     body = text[len(CURSOR_PREFIX):]
     try:
         parts = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode().split(".")
-        values = [int(p) for p in parts]
+        values = [int(p) for p in parts[:3]]
     except ValueError:
         return None
-    if len(values) != 3 or any(v < 0 for v in values):
+    if len(parts) != 6 or any(v < 0 for v in values):
         return None
-    return Cursor(*values)
+    return Cursor(*values, ids=tuple("" if i == "-" else i for i in parts[3:]))
+
+
+def _digest(*parts: Any) -> str:
+    return hashlib.sha256(repr(parts).encode()).hexdigest()[:16]
 
 
 def _epoch(value: Any) -> int | None:
@@ -115,21 +122,45 @@ class Stream:
     def _worker_size(self) -> int:
         return self.receipts.stat().st_size if self.receipts.is_file() else 0
 
-    def _kanban_bounds(self) -> tuple[int, int]:
-        """(max id, lowest id still kept apart from rows the board never prunes) of ``task_events``."""
+    def _kanban_top(self) -> int:
         db = self._kanban()
-        if db is None:
-            return 0, 0
-        top, low = db.execute("SELECT COALESCE(max(id), 0), COALESCE(min(CASE WHEN kind != 'decomposed' THEN id END), 0) "
-                              "FROM task_events").fetchone()
-        return int(top), int(low)
+        return 0 if db is None else int(db.execute("SELECT COALESCE(max(id), 0) FROM task_events").fetchone()[0])
+
+    def identity(self) -> tuple[str, str, str]:
+        """One identity per store, so a position is never read in another store that grew past it ("" = empty):
+
+        - work: the first event row (id, at). The table is append-only (nothing deletes from ``event``), so the
+          first row stays while the store lives, and a new store starts with new rows. The store has no id of its
+          own (``setting`` holds fixed defaults only).
+        - worker: the receipts file's inode and its first line (a recreated or rotated file differs).
+        - kanban: the database file's inode and the oldest task (id, created_at). Not the first ``task_events``
+          row, which pruning moves. Deleting that oldest task changes the identity too: one spare resync,
+          never a miss.
+        """
+        first = self._work().execute("SELECT id, at FROM event ORDER BY id LIMIT 1").fetchone()
+        work = _digest(int(first[0]), str(first[1])) if first else ""
+        worker = ""
+        if self.receipts.is_file():
+            with self.receipts.open("rb") as fh:
+                line = fh.readline()
+            worker = _digest(self.receipts.stat().st_ino, line) if line else ""
+        kanban, db = "", self._kanban()
+        if db is not None:
+            oldest = db.execute("SELECT id, created_at FROM tasks ORDER BY created_at, id LIMIT 1").fetchone()
+            from hermes_cli.kanban_db import kanban_db_path
+            kanban = _digest(Path(kanban_db_path()).stat().st_ino, *oldest) if oldest else ""
+        return work, worker, kanban
 
     def tail(self) -> Cursor:
-        return Cursor(self._work_bounds(), self._worker_size(), self._kanban_bounds()[0])
+        return Cursor(self._work_bounds(), self._worker_size(), self._kanban_top(), self.identity())
 
     def kept(self, since: Cursor) -> bool:
-        """The stores still hold everything after *since*: no position past a store's end (another or a reset
-        store), the worker offset on a line boundary, and the board has not pruned rows right after its position."""
+        """The stores still hold everything after *since*: each position was taken in the store there now, none is
+        past a store's end, the worker offset is on a line boundary, and no kanban row after the position is gone."""
+        ids = self.identity()
+        for position, was, now in zip(since[:3], since.ids, ids):
+            if position and was != now:  # a position 0 replays the whole store, whichever it is
+                return False
         if since.work > self._work_bounds() or since.worker > self._worker_size():
             return False
         if since.worker:
@@ -137,8 +168,15 @@ class Stream:
                 fh.seek(since.worker - 1)
                 if fh.read(1) != b"\n":
                     return False
-        top, low = self._kanban_bounds()
-        return since.kanban <= top and not (low and since.kanban < top and since.kanban + 1 < low)
+        top = self._kanban_top()
+        return since.kanban <= top and (since.kanban == top or not self._kanban_gap(since.kanban, top))
+
+    def _kanban_gap(self, since: int, top: int) -> bool:
+        """Rows after *since* were deleted. ``task_events`` ids are AUTOINCREMENT and never reused, so every id up
+        to the max was written once: fewer rows than ids means ``gc_events`` pruned some (it can remove a done
+        task's old events while an older event of an active task stays, so the lowest id does not move)."""
+        kept = self._kanban().execute("SELECT count(*) FROM task_events WHERE id > ? AND id <= ?", (since, top))
+        return int(kept.fetchone()[0]) < top - since
 
     # ---------------------------------------------------------------- reads
     def _work_events(self, after: int) -> tuple[int, list[dict]]:
@@ -175,7 +213,7 @@ class Stream:
 
     def fetch(self, since: Cursor) -> tuple[Cursor, list[dict]]:
         """What each store holds after *since*. A store that fails to read keeps its position and is tried again."""
-        positions, events = [], []
+        positions, events, ids = [], [], since.ids
         for name, read, after in (("work", self._work_events, since.work), ("worker", self._worker_events, since.worker),
                                   ("kanban", self._kanban_events, since.kanban)):
             try:
@@ -184,7 +222,12 @@ class Stream:
             except (OSError, sqlite3.Error, RuntimeError) as exc:
                 log.warning("lina events: %s source failed: %s", name, exc)
             positions.append(after)
-        return Cursor(*positions), events
+        if positions != list(since[:3]) or "" in ids:  # a store that just got its first rows has its identity now
+            try:
+                ids = self.identity()
+            except (OSError, sqlite3.Error, RuntimeError) as exc:
+                log.warning("lina events: store identity failed: %s", exc)
+        return Cursor(*positions, ids=ids), events
 
     def close(self) -> None:
         for db in (self.work_db, self.kanban_db):

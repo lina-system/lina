@@ -184,6 +184,117 @@ def test_a_kanban_cursor_before_pruned_events_gets_a_resync(work, client, pool):
         assert _next(ws, pool)["resync"] is True
 
 
+def _receipts(work: WorkEnv) -> Path:
+    from hermes_cli.worker import settings
+    from hermes_cli.worker.hub_store import Store
+    return Store(settings.root(work.root)).receipts
+
+
+def _replace_work(work: WorkEnv, rows: int) -> None:
+    from hermes_cli.work import ledger
+    (work.work / "work.db").unlink()
+    work.clock[0] += 3600  # a new store is made later: its first row is not the old one's
+    work.goal_and_todos(todos=2)
+    n = 0
+    while True:
+        db = ledger.open_db()
+        try:
+            if db.execute("SELECT max(id) FROM event").fetchone()[0] >= rows:
+                return
+        finally:
+            db.close()
+        work.ok("note", "T1", f"새 기록 {n}")
+        n += 1
+
+
+def _replace_worker(work: WorkEnv, rows: int) -> None:
+    _receipts(work).unlink()  # a recreated file: same line lengths, so the old offset still ends a line
+    for n in range(rows + 1):
+        _receipt(work, f"OT-BET{n:04d}", "queued")
+
+
+def _replace_kanban(work: WorkEnv, rows: int) -> None:
+    from hermes_cli.kanban_db import kanban_db_path
+    path = Path(kanban_db_path())
+    for extra in ("", "-wal", "-shm"):
+        Path(f"{path}{extra}").unlink(missing_ok=True)
+    for n in range(rows + 1):
+        _card(f"새 보드 카드 {n}")
+
+
+def _kanban_max() -> int:
+    from hermes_cli import kanban_db_connect as kbc
+    conn = kbc.connect()
+    try:
+        return int(conn.execute("SELECT COALESCE(max(id), 0) FROM task_events").fetchone()[0])
+    finally:
+        conn.close()
+
+
+@pytest.mark.parametrize("store", ["work", "worker", "kanban"])
+def test_a_cursor_from_a_replaced_store_that_grew_past_it_gets_one_resync(work, client, pool, store):
+    from hermes_cli.work import ledger
+    for n in range(3):
+        work.ok("note", "T1", f"메모 {n}")
+        _receipt(work, f"OT-ALP{n:04d}", "queued")
+        _card(f"카드 {n}")
+    with client.websocket_connect(_url()) as ws:
+        old = _next(ws, pool)["cursor"]
+    db = ledger.open_db()
+    try:
+        rows = {"work": int(db.execute("SELECT max(id) FROM event").fetchone()[0]),
+                "worker": len(_receipts(work).read_text(encoding="utf-8").splitlines()), "kanban": _kanban_max()}[store]
+    finally:
+        db.close()
+    {"work": _replace_work, "worker": _replace_worker, "kanban": _replace_kanban}[store](work, rows)
+
+    with client.websocket_connect(_url(old)) as ws:
+        assert _next(ws, pool)["resync"] is True
+        _receipt(work, "OT-ALP0009", "run_started")
+        assert _events(_next(ws, pool)) == [("worker", "run_started", "OT-ALP0009")]
+
+
+def test_a_cursor_of_the_old_format_gets_one_resync(work, client, pool):
+    import base64
+    old = "c1." + base64.urlsafe_b64encode(b"1.0.0").decode().rstrip("=")
+    with client.websocket_connect(_url(old)) as ws:
+        assert _next(ws, pool)["resync"] is True
+        work.ok("comment", "T1", "봐 줘")
+        assert _events(_next(ws, pool)) == [("work", "comment", "T1")]
+
+
+def test_a_kanban_cursor_before_a_selectively_pruned_gap_gets_a_resync_and_one_after_it_does_not(work, client, pool):
+    from hermes_cli import kanban_db
+    from hermes_cli import kanban_db_connect as kbc
+    _card("진행 카드")  # an active task: its event stays and keeps the lowest id
+    with client.websocket_connect(_url()) as ws:
+        before_gap = _next(ws, pool)["cursor"]
+    done = _card("끝난 카드")
+    conn = kbc.connect()
+    try:
+        assert kanban_db.complete_task(conn, done, result="끝", fire_lifecycle_hook=False)
+    finally:
+        conn.close()
+    with client.websocket_connect(_url()) as ws:
+        after_gap = _next(ws, pool)["cursor"]
+    later = _card("다음 카드")
+    conn = kbc.connect()
+    try:
+        with conn:
+            conn.execute("UPDATE task_events SET created_at = created_at - 100000000 WHERE task_id = ?", (done,))
+        assert kanban_db.gc_events(conn, older_than_seconds=3600) >= 2  # the done task's old events, by gc's own rule
+        low = conn.execute("SELECT min(id) FROM task_events").fetchone()[0]
+    finally:
+        conn.close()
+    assert low == 1  # the lowest id did not move: only the gap tells
+
+    with client.websocket_connect(_url(before_gap)) as ws:
+        assert _next(ws, pool)["resync"] is True
+    with client.websocket_connect(_url(after_gap)) as ws:
+        replay = _next(ws, pool)
+    assert "resync" not in replay and ("kanban", "created", later) in _events(replay)
+
+
 def test_the_stream_is_behind_the_dashboard_socket_credential(work, client, pool):
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/lina/events?token=wrong") as ws:
         ws.receive_json()
