@@ -316,6 +316,8 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
             elif calls:
                 db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('stopped_since', ?)",
                            (meta.get("stopped_since") or now,))
+            elif not due:  # nothing left to write (a failing source went away): no line is missing, so not stopped
+                db.execute("DELETE FROM writer WHERE key = 'stopped_since'")
             db.execute("INSERT OR REPLACE INTO writer (key, value) VALUES ('pending', ?)", (pending,))
     finally:
         db.close()

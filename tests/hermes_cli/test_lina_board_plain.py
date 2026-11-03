@@ -432,3 +432,18 @@ def test_fields_whose_calls_fail_on_every_pass_do_not_keep_others_from_being_wri
     results = [write(failing + [good], work.root, NOW + 60 * n) for n in range(2)]
     assert lookup("card", ["t_00c0ffee"], work.root, board="default")["t_00c0ffee"]["title"] == GOOD["title"]
     assert results[1]["failed"] == MAX_CALLS - 1  # the failing ones are still retried, the good one took a slot
+
+
+def test_the_writer_is_ok_again_once_its_failing_source_is_gone(work, model):
+    """A field whose call kept failing set the writer stopped; when that source goes away and nothing is left to
+    write, no line is missing, so the writer is no longer stopped."""
+    from hermes_cli import lina_board_plain as plain
+    from hermes_cli.lina_board_plain import Source, write
+    model.fail = True
+    gone = Source("card", "t_0000dead", "title", "A card that is about to be archived", "default")
+    assert write([gone], work.root, NOW)["failed"] == 1
+    assert plain.writer_state(work.root, NOW + 1)["state"] == "stopped"
+
+    model.fail = False
+    assert write([], work.root, NOW + 60) == {"called": 0, "failed": 0, "pending": 0}
+    assert plain.writer_state(work.root, NOW + 61)["stoppedSince"] is None
