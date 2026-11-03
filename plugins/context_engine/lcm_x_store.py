@@ -219,6 +219,10 @@ _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\bLIMIT\s+-1\b", re.IGNORECASE), "LIMIT ALL"),
     (re.compile(r"\s+WITHOUT\s+ROWID\b", re.IGNORECASE), ""),
     (re.compile(r"\s+(?:INDEXED\s+BY\s+\w+|NOT\s+INDEXED)\b", re.IGNORECASE), ""),
+    # SQLite's unary plus on a column (`WHERE +identity_hash = ?`) keeps the planner off its index; it is a no-op on
+    # the value, and Postgres has no unary plus on text.
+    (re.compile(r"(\b(?:WHERE|AND|OR|ON|NOT|WHEN|THEN|ELSE|SELECT|BY)\s+|[(,=<>]\s*)\+\s*(?=[A-Za-z_\"])",
+                re.IGNORECASE), r"\1"),
     # SQLite's CROSS JOIN with ON is an inner join that fixes the join order; Postgres takes no ON there.
     (re.compile(r"\bCROSS\s+JOIN(\s+[\w.]+(?:\s+(?:AS\s+)?(?!ON\b)\w+)?\s+ON\b)", re.IGNORECASE), r"JOIN\1"),
     # SQLite's 0/1 in a boolean position (`NOT 0`, `(0 AND x)`, `WHERE 1`) and a parameter there (`AND ?`).

@@ -53,6 +53,20 @@ CREATE OR REPLACE FUNCTION ctx.json_object(VARIADIC kv text[]) RETURNS text
 CREATE OR REPLACE FUNCTION ctx.json_set(doc text, path text, value text) RETURNS text
     LANGUAGE sql IMMUTABLE AS $$
     SELECT jsonb_set(doc::jsonb, string_to_array(ltrim(ltrim(path, '$'), '.'), '.'), to_jsonb(value), true)::text $$;
+-- A number set with json_set stays a JSON number, as SQLite writes it.
+CREATE OR REPLACE FUNCTION ctx.json_set(doc text, path text, value bigint) RETURNS text
+    LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_set(doc::jsonb, string_to_array(ltrim(ltrim(path, '$'), '.'), '.'), to_jsonb(value), true)::text $$;
+CREATE OR REPLACE FUNCTION ctx.json_set(doc text, path text, value numeric) RETURNS text
+    LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_set(doc::jsonb, string_to_array(ltrim(ltrim(path, '$'), '.'), '.'), to_jsonb(value), true)::text $$;
+CREATE OR REPLACE FUNCTION ctx.json_set(doc text, path text, value double precision) RETURNS text
+    LANGUAGE sql IMMUTABLE AS $$
+    SELECT jsonb_set(doc::jsonb, string_to_array(ltrim(ltrim(path, '$'), '.'), '.'), to_jsonb(value), true)::text $$;
+-- SQLite's comparisons are the integers 0 and 1, so LCM-X sums them (SUM(expires_at < ?)): the same over booleans.
+CREATE OR REPLACE FUNCTION ctx.lcm_sum_bool_step(state bigint, value boolean) RETURNS bigint
+    LANGUAGE sql IMMUTABLE AS $$ SELECT CASE WHEN value IS NULL THEN state ELSE coalesce(state, 0) + value::int END $$;
+CREATE OR REPLACE AGGREGATE ctx.sum(boolean) (SFUNC = ctx.lcm_sum_bool_step, STYPE = bigint);
 CREATE OR REPLACE FUNCTION ctx.json_remove(doc text, path text) RETURNS text
     LANGUAGE sql IMMUTABLE AS $$ SELECT (doc::jsonb #- string_to_array(ltrim(ltrim(path, '$'), '.'), '.'))::text $$;
 CREATE OR REPLACE FUNCTION ctx.json_group_array_step(state jsonb, value anyelement) RETURNS jsonb
