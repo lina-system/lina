@@ -678,7 +678,7 @@ class BaseEnvironment(ABC):
         yield_handler: Callable[[ProcessHandle, str], dict] | None = None) -> dict:
         """Execute a command, return {"output": str, "returncode": int}. ``bounded_capture=True``
         caps retention at ``tool_output.max_bytes`` WHILE draining; only the foreground terminal
-        tool may set it — internal full-fidelity consumers (file-op ``cat`` reads feeding the
+        tool and card gates may set it — internal full-fidelity consumers (file-op ``cat`` reads feeding the
         patch engine, RPC reads, log reads) MUST leave it False or data is corrupted. The wait is
         bounded by ``agent.deadline.run_bounded_sync`` so a wedged poll loop cannot hang past
         ``timeout`` and silently disable every asyncio timer in the process.

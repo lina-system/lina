@@ -47,6 +47,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.vendored_subtrees import is_vendored
 MARKER = "detached-spawn: ok"
 # The helper itself: the one place a detached spawn is the point.
 HELPER_FILES = {"hermes_cli/process_identity.py"}
@@ -130,7 +133,8 @@ def _tracked_files(root: Path) -> list[Path]:
 
 def _in_scope(rel: str) -> bool:
     parts = Path(rel).parts
-    return not (SKIP_PARTS & set(parts)) and not Path(rel).name.startswith("test_") and rel not in HELPER_FILES
+    return (not (SKIP_PARTS & set(parts)) and not Path(rel).name.startswith("test_") and rel not in HELPER_FILES
+            and not is_vendored(rel))
 
 
 def scan(paths=None, root: Path | None = None) -> dict[str, list[tuple[int, str]]]:

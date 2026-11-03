@@ -88,8 +88,10 @@ def test_followers_survive_compression_and_restart_in_order_exactly_once(tmp_pat
         'model': {'provider': 'custom', 'default': 'original', 'base_url': url, 'context_length': 64000},
         'auxiliary': {'title_generation': {'enabled': False},
                       'compression': {'provider': 'custom', 'model': 'summary', 'base_url': url}},
+        # protect_last_n is a floor, not a cap. Pin the narrow tail this journey needs:
+        # the default lean budget can retain PRESSURE_1 when preflight fires on PRESSURE_3.
         'compression': {'protect_first_n': 1, 'protect_last_n': 2, 'threshold_tokens': 12000,
-                        'threshold': 0.5, 'in_place': False},
+                        'threshold': 0.5, 'in_place': False, 'tail_mode': 'legacy', 'target_ratio': 0.2},
         'platform_toolsets': {'cli': []}}))
     (home / 'models_dev_cache.json').write_text(json.dumps({'custom': {'id': 'custom', 'models': {
         name: {'id': name, 'name': name, 'limit': {'context': 64000 if name == 'original' else 1000000,

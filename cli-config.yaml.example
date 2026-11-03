@@ -657,6 +657,17 @@ tool_loop_guardrails:
     idempotent_no_progress: 5
 
 # =============================================================================
+# Context Engine
+# =============================================================================
+# lcm-x (bundled in plugins/context_engine/lcm-x, see docs/lcm-x.md) stores
+# every turn losslessly in $HERMES_HOME/lcm.db and compacts it into a summary
+# DAG the agent can expand again. "compressor" is the built-in lossy summarizer
+# (the default when this key is absent); the compression: settings below apply
+# only to it.
+context:
+  engine: lcm-x
+
+# =============================================================================
 # Context Compression (Auto-shrinks long conversations)
 # =============================================================================
 # When conversation approaches model's context limit, middle turns are

@@ -1,0 +1,450 @@
+"""Work API for the app: goals, work cards, their worker runs and the owner inbox (lina#112).
+
+Mounted by ``plugin_api.py`` under ``/api/plugins/kanban/work`` (behind the dashboard auth gate).
+A work card is a goal-mode card that is a link-parent of another card; that child is its goal
+card. Reads open the board read-only; the one write (answer) reuses ``add_comment`` and
+``unblock_task``. ``work_state`` is the only place the five app states are computed. The schema
+the app's client generator reads is ``docs/api/work-client.yaml``.
+"""
+
+from __future__ import annotations
+
+import re
+import sqlite3
+import time
+from contextlib import closing, contextmanager
+from dataclasses import dataclass, field
+from typing import Any, Iterator, Optional
+
+from fastapi import APIRouter, HTTPException, Query
+from pydantic import BaseModel
+
+from hermes_cli import kanban_db
+from hermes_cli import kanban_db_connect as kbc
+from hermes_cli.goals import GATE_WAIT_EXIT_CODE
+from hermes_cli.kanban_goal_gates import GATE_EVENT_KIND
+
+router = APIRouter(prefix="/work")
+
+WORK_STATES = ("planned", "in_progress", "waiting", "stopped", "done")
+_PLANNED_STATUSES = {"triage", "todo", "scheduled", "ready"}
+# A run is alive while its claim holds or it beat within this window (the claim TTL default).
+LIVE_WINDOW_SECONDS = kanban_db.DEFAULT_CLAIM_TTL_SECONDS
+NOW_LINE_CHARS = 120
+_BLOCK_EVENT_KINDS = ("blocked", "block_loop_detected")
+_TODO_HEADING = re.compile(r"^##\s+To-?dos\s*$", re.IGNORECASE)
+_TODO_LINE = re.compile(r"^\s*[-*]\s+(?:\[(?P<box>[ xX])\]\s+)?(?P<text>\S.*?)\s*$")
+_ISSUE_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")
+_PRS_GATE = re.compile(r"\bgate\s+prs\b")
+_QUESTION_PREFIXES = ("질문:", "Q:")
+# Worker run IDs pasted into comments: omo jobs, single-issue runs, ``lina worker`` runs.
+_WORKER_ID_PATTERNS = (
+    ("omo", re.compile(r"\b(OT-[A-Z0-9]{6,})\b")),
+    ("quick-issue", re.compile(r"\bquick-issue[:\s]+(?:run\s+)?([A-Za-z0-9][\w.-]{2,})")),
+    ("lina-worker", re.compile(r"\blina[ -]worker[:\s]+(?:run\s+)?([A-Za-z0-9][\w.-]{2,})")),
+)
+
+
+# --- Board access ------------------------------------------------------------
+
+def _board_slug(board: Optional[str]) -> Optional[str]:
+    """The slug of an existing board, taken from the board list rather than from the request, so
+    the database path is never built from caller input (400 malformed, 404 unknown)."""
+    if not board:
+        return None
+    try:
+        wanted = kanban_db._normalize_board_slug(board)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    if not wanted:
+        return None
+    from hermes_cli.kanban_db_boards import list_boards
+    for meta in list_boards(include_archived=False):
+        if meta.get("slug") == wanted:
+            return str(meta["slug"])
+    raise HTTPException(status_code=404, detail=f"board {wanted!r} does not exist")
+
+
+@contextmanager
+def _read_conn(board: Optional[str]) -> Iterator[Optional[sqlite3.Connection]]:
+    """Read-only connection to the board, or None when the board has no database yet."""
+    path = kanban_db.kanban_db_path(board=_board_slug(board))
+    if not path.exists():
+        yield None
+        return
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+    conn.row_factory = sqlite3.Row
+    conn.text_factory = kanban_db._lossy_text
+    with closing(conn):
+        yield conn
+
+
+# --- Card facts ----------------------------------------------------------------
+
+@dataclass
+class CardFacts:
+    task: kanban_db.Task
+    events: list[kanban_db.Event] = field(default_factory=list)
+    comments: list[kanban_db.Comment] = field(default_factory=list)
+    runs: list[kanban_db.Run] = field(default_factory=list)
+
+
+def _facts(conn: sqlite3.Connection, task: kanban_db.Task) -> CardFacts:
+    return CardFacts(task, kanban_db.list_events(conn, task.id),
+                     kanban_db.list_comments(conn, task.id), kanban_db.list_runs(conn, task.id))
+
+
+def _work_card_ids(conn: sqlite3.Connection) -> list[str]:
+    rows = conn.execute(
+        "SELECT DISTINCT t.id FROM task_links l JOIN tasks t ON t.id = l.parent_id "
+        "JOIN tasks c ON c.id = l.child_id "
+        "WHERE t.goal_mode = 1 AND t.status != 'archived' AND c.status != 'archived' "
+        "ORDER BY t.created_at, t.rowid").fetchall()
+    return [r["id"] for r in rows]
+
+
+def _goal_work_cards(conn: sqlite3.Connection) -> dict[str, list[str]]:
+    """``{goal_card_id: [work_card_id, ...]}``."""
+    work = set(_work_card_ids(conn))
+    goals: dict[str, list[str]] = {}
+    rows = conn.execute(
+        "SELECT l.parent_id, l.child_id FROM task_links l JOIN tasks c ON c.id = l.child_id "
+        "JOIN tasks p ON p.id = l.parent_id "
+        "WHERE c.status != 'archived' ORDER BY c.created_at, c.rowid, p.created_at, p.rowid").fetchall()
+    for r in rows:
+        if r["parent_id"] in work:
+            goals.setdefault(r["child_id"], []).append(r["parent_id"])
+    return goals
+
+
+def _latest_gate_results(events: list[kanban_db.Event]) -> list[dict[str, Any]]:
+    """Latest ``goal_gate`` event per command, in first-run order."""
+    latest: dict[str, kanban_db.Event] = {}
+    for ev in events:
+        if ev.kind == GATE_EVENT_KIND and ev.payload and ev.payload.get("command"):
+            latest[ev.payload["command"]] = ev
+    return [{
+        "command": cmd, "exitCode": ev.payload.get("exit_code"), "passed": bool(ev.payload.get("passed")),
+        "waiting": ev.payload.get("exit_code") == GATE_WAIT_EXIT_CODE,
+        "outputTail": ev.payload.get("output_tail") or "", "at": ev.created_at,
+    } for cmd, ev in latest.items()]
+
+
+def _latest_gate_event(events: list[kanban_db.Event], run_id: Optional[int]) -> Optional[kanban_db.Event]:
+    return next((ev for ev in reversed(events) if ev.kind == GATE_EVENT_KIND and ev.run_id == run_id), None)
+
+
+def _current_run(facts: CardFacts) -> Optional[kanban_db.Run]:
+    run_id = facts.task.current_run_id
+    return next((r for r in facts.runs if r.id == run_id and r.ended_at is None), None)
+
+
+def run_is_live(run: Optional[kanban_db.Run], now: int) -> bool:
+    """An open run whose claim still holds or that beat (or started) within the live window."""
+    if run is None or run.ended_at is not None:
+        return False
+    last_beat = run.last_heartbeat_at or run.started_at or 0
+    return (run.claim_expires or 0) > now or now - last_beat <= LIVE_WINDOW_SECONDS
+
+
+def _latest_block_payload(events: list[kanban_db.Event]) -> dict[str, Any]:
+    ev = next((e for e in reversed(events) if e.kind in _BLOCK_EVENT_KINDS), None)
+    return (ev.payload or {}) if ev else {}
+
+
+def _block_reason_word(task: kanban_db.Task, events: list[kanban_db.Event]) -> Optional[str]:
+    """Block kind when typed; otherwise ``gate`` / ``budget`` read from the goal loop's block text."""
+    if task.block_kind:
+        return task.block_kind
+    text = str(_latest_block_payload(events).get("reason") or "").lower()
+    if "goal gate" in text or "gate still failing" in text:
+        return "gate"
+    if "turn budget" in text or "never called kanban_complete" in text:
+        return "budget"
+    return None
+
+
+def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Optional[str]]:
+    """``(state, reason)`` for one card: the single source of the app's five states.
+
+    planned = triage/todo/scheduled/ready; in_progress = running with a live current run;
+    waiting = review, or running while the current run's latest gate exited 75; stopped = blocked
+    (reason: block kind, ``gate`` or ``budget``) or running with no live run
+    (``unresponsive``); done = done. The kanban goal loop turns a judge ``wait`` into
+    ``continue`` and records nothing, so a judge wait has no board signal to read.
+    """
+    now = int(time.time()) if now is None else now
+    status = facts.task.status
+    if status == "done":
+        return "done", None
+    if status == "review":
+        return "waiting", "review"
+    if status == "blocked":
+        return "stopped", _block_reason_word(facts.task, facts.events)
+    if status != "running":
+        return "planned", status if status in _PLANNED_STATUSES else None
+    if not run_is_live(_current_run(facts), now):
+        return "stopped", "unresponsive"
+    gate = _latest_gate_event(facts.events, facts.task.current_run_id)
+    if gate is not None and (gate.payload or {}).get("exit_code") == GATE_WAIT_EXIT_CODE:
+        return "waiting", "gate"
+    return "in_progress", None
+
+
+# --- To-dos, now line, worker runs ---------------------------------------------------
+
+def _todo_section(body: Optional[str]) -> list[str]:
+    lines, inside = [], False
+    for line in (body or "").splitlines():
+        if _TODO_HEADING.match(line.strip()):
+            inside = True
+        elif inside and re.match(r"^#{1,2}\s", line):
+            break
+        elif inside:
+            lines.append(line)
+    return lines
+
+
+def _prs_passed_refs(gates: list[dict[str, Any]]) -> tuple[set[str], bool]:
+    """Issue refs a passing ``gate prs`` vouches for; ``True`` = it named none, so all of them."""
+    refs: set[str] = set()
+    covers_all = False
+    for gate in gates:
+        if gate["passed"] and _PRS_GATE.search(gate["command"]):
+            named = set(_ISSUE_REF.findall(gate["command"]))
+            refs |= named
+            covers_all = covers_all or not named
+    return refs, covers_all
+
+
+def parse_todos(body: Optional[str], gates: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """``## To-dos`` lines: ``- owner/repo#n`` (done when ticked or a passing ``prs`` gate covers
+    it) and ``- [ ] text`` / ``- [x] text`` checklist items. Other lines are notes."""
+    passed_refs, prs_all = _prs_passed_refs(gates)
+    todos = []
+    for line in _todo_section(body):
+        m = _TODO_LINE.match(line)
+        if not m:
+            continue
+        text, ticked = m["text"], (m["box"] or " ").lower() == "x"
+        ref = _ISSUE_REF.match(text)
+        if ref:
+            done = ticked or prs_all or ref.group(0) in passed_refs
+            todos.append({"id": ref.group(0), "title": text, "kind": "issue", "done": done})
+        elif m["box"] is not None:
+            todos.append({"id": f"check-{len(todos) + 1}", "title": text, "kind": "check", "done": ticked})
+    return todos
+
+
+def _plain_line(text: str) -> str:
+    plain = " ".join(re.sub(r"[`*_>#]+", " ", text).split())
+    return plain if len(plain) <= NOW_LINE_CHARS else plain[:NOW_LINE_CHARS - 1].rstrip() + "…"
+
+
+def now_line(facts: CardFacts) -> Optional[str]:
+    """Latest comment or heartbeat note, plain and at most 120 chars."""
+    notes = [(c.created_at, c.id, c.body) for c in facts.comments]
+    notes += [(e.created_at, e.id, e.payload["note"]) for e in facts.events
+              if e.kind == "heartbeat" and e.payload and e.payload.get("note")]
+    notes = [n for n in notes if str(n[2]).strip()]
+    return _plain_line(str(max(notes)[2])) if notes else None
+
+
+def worker_runs(comments: list[kanban_db.Comment]) -> list[dict[str, Any]]:
+    seen: dict[tuple[str, str], dict[str, Any]] = {}
+    for c in comments:
+        for kind, pattern in _WORKER_ID_PATTERNS:
+            for run_id in pattern.findall(c.body or ""):
+                entry = seen.setdefault((kind, run_id), {
+                    "id": run_id, "kind": kind, "firstSeenAt": c.created_at, "lastSeenAt": c.created_at})
+                entry["firstSeenAt"] = min(entry["firstSeenAt"], c.created_at)
+                entry["lastSeenAt"] = max(entry["lastSeenAt"], c.created_at)
+    return list(seen.values())  # comments come in id order, so this is first-seen order
+
+
+def open_questions(facts: CardFacts) -> list[kanban_db.Comment]:
+    """Assignee comments starting ``질문:`` / ``Q:`` with no later comment by someone else."""
+    assignee = facts.task.assignee
+    pending: list[kanban_db.Comment] = []
+    for c in facts.comments:
+        if assignee and c.author == assignee:
+            if (c.body or "").lstrip().startswith(_QUESTION_PREFIXES):
+                pending.append(c)
+        else:
+            pending.clear()
+    return pending
+
+
+# --- Serialization ---------------------------------------------------------------
+
+def _elapsed_seconds(task: kanban_db.Task, now: int) -> int:
+    start = task.started_at or task.created_at
+    if not start:
+        return 0
+    end = task.completed_at if task.status == "done" and task.completed_at else now
+    return max(0, end - start)
+
+
+def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
+    state, reason = work_state(facts, now)
+    todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
+    return {
+        "id": facts.task.id, "title": facts.task.title, "agent": facts.task.assignee,
+        "state": state, "reason": reason, "elapsedSeconds": _elapsed_seconds(facts.task, now),
+        "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
+        "now": now_line(facts),
+    }
+
+
+def _run_dict(run: kanban_db.Run, now: int) -> dict[str, Any]:
+    return {
+        "id": run.id, "profile": run.profile, "status": run.status, "outcome": run.outcome,
+        "startedAt": run.started_at, "endedAt": run.ended_at, "lastHeartbeatAt": run.last_heartbeat_at,
+        "summary": run.summary, "live": run_is_live(run, now),
+    }
+
+
+def card_detail(facts: CardFacts, now: int) -> dict[str, Any]:
+    gates = _latest_gate_results(facts.events)
+    return {
+        **card_summary(facts, now),
+        "todos": parse_todos(facts.task.body, gates),
+        "workerRuns": worker_runs(facts.comments),
+        "gates": gates,
+        "comments": [{"id": c.id, "author": c.author, "body": c.body, "createdAt": c.created_at}
+                     for c in facts.comments],
+        "runs": [_run_dict(r, now) for r in facts.runs],
+    }
+
+
+def _evidence(facts: CardFacts) -> Optional[dict[str, Any]]:
+    """What closed a done card: its latest completed run's summary and metadata (or result)."""
+    if facts.task.status != "done":
+        return None
+    run = next((r for r in reversed(facts.runs) if r.outcome == "completed"), None)
+    return {
+        "cardId": facts.task.id, "title": facts.task.title,
+        "summary": (run.summary if run and run.summary else facts.task.result),
+        "metadata": run.metadata if run else None, "completedAt": facts.task.completed_at,
+    }
+
+
+def _goal_dict(conn: sqlite3.Connection, goal: kanban_db.Task, work_ids: list[str], now: int) -> dict[str, Any]:
+    goal_facts = _facts(conn, goal)
+    work = [_facts(conn, t) for t in filter(None, (kanban_db.get_task(conn, i) for i in work_ids))]
+    state, reason = work_state(goal_facts, now)
+    return {
+        "id": goal.id, "title": goal.title, "agent": goal.assignee, "state": state, "reason": reason,
+        "elapsedSeconds": _elapsed_seconds(goal, now),
+        "workCards": [card_summary(f, now) for f in work],
+        "evidence": [e for e in map(_evidence, [goal_facts, *work]) if e is not None],
+    }
+
+
+def _inbox_blocked(facts: CardFacts, now: int) -> dict[str, Any]:
+    state, reason = work_state(facts, now)
+    payload = _latest_block_payload(facts.events)
+    return {
+        "cardId": facts.task.id, "title": facts.task.title, "agent": facts.task.assignee,
+        "state": state, "reason": reason, "blockKind": facts.task.block_kind,
+        "blockReason": payload.get("reason"),
+    }
+
+
+# --- Routes ------------------------------------------------------------------
+
+def _require_card(conn: Optional[sqlite3.Connection], card_id: str) -> kanban_db.Task:
+    task = kanban_db.get_task(conn, card_id) if conn is not None else None
+    if task is None or task.status == "archived":
+        raise HTTPException(status_code=404, detail=f"card {card_id} not found")
+    return task
+
+
+@router.get("/goals")
+def list_goals(board: Optional[str] = Query(None)):
+    now = int(time.time())
+    with _read_conn(board) as conn:
+        if conn is None:
+            return {"goals": []}
+        goals = []
+        for goal_id, work_ids in _goal_work_cards(conn).items():
+            goal = kanban_db.get_task(conn, goal_id)
+            if goal is not None:
+                goals.append(_goal_dict(conn, goal, work_ids, now))
+        return {"goals": goals}
+
+
+@router.get("/goals/{goal_id}")
+def get_goal(goal_id: str, board: Optional[str] = Query(None)):
+    with _read_conn(board) as conn:
+        goal = _require_card(conn, goal_id)
+        work_ids = _goal_work_cards(conn).get(goal_id)
+        if not work_ids:
+            raise HTTPException(status_code=404, detail=f"card {goal_id} is not a goal card")
+        return _goal_dict(conn, goal, work_ids, int(time.time()))
+
+
+@router.get("/cards")
+def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(None),
+               board: Optional[str] = Query(None)):
+    if state is not None and state not in WORK_STATES:
+        raise HTTPException(status_code=400, detail=f"state must be one of {list(WORK_STATES)}")
+    now = int(time.time())
+    with _read_conn(board) as conn:
+        if conn is None:
+            return {"cards": []}
+        cards = []
+        for task in filter(None, (kanban_db.get_task(conn, i) for i in _work_card_ids(conn))):
+            if agent is not None and task.assignee != agent:
+                continue
+            summary = card_summary(_facts(conn, task), now)
+            if state is None or summary["state"] == state:
+                cards.append(summary)
+        return {"cards": cards}
+
+
+@router.get("/cards/{card_id}")
+def get_card(card_id: str, board: Optional[str] = Query(None)):
+    with _read_conn(board) as conn:
+        return card_detail(_facts(conn, _require_card(conn, card_id)), int(time.time()))
+
+
+@router.get("/inbox")
+def get_inbox(board: Optional[str] = Query(None)):
+    now = int(time.time())
+    with _read_conn(board) as conn:
+        if conn is None:
+            return {"blocked": [], "questions": []}
+        blocked, questions = [], []
+        for task in kanban_db.list_tasks(conn):
+            facts = _facts(conn, task)
+            if task.status == "blocked":
+                blocked.append(_inbox_blocked(facts, now))
+            questions += [{
+                "cardId": task.id, "title": task.title, "agent": task.assignee,
+                "commentId": c.id, "body": c.body, "askedAt": c.created_at,
+            } for c in open_questions(facts)]
+        return {"blocked": blocked, "questions": questions}
+
+
+class AnswerBody(BaseModel):
+    text: str
+    author: str = "owner"
+
+
+@router.post("/inbox/{card_id}/answer")
+def answer_inbox_item(card_id: str, payload: AnswerBody, board: Optional[str] = Query(None)):
+    """Comment as the owner; unblock the card when it is blocked waiting for input."""
+    text = payload.text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="text is required")
+    with closing(kbc.connect(board=_board_slug(board))) as conn:
+        task = _require_card(conn, card_id)
+        if payload.author == task.assignee:
+            raise HTTPException(status_code=400, detail="the answer must come from someone other than the assignee")
+        comment_id = kanban_db.add_comment(conn, card_id, author=payload.author, body=text)
+        unblocked = (task.status == "blocked" and task.block_kind == "needs_input"
+                     and kanban_db.unblock_task(conn, card_id))
+        state, reason = work_state(_facts(conn, _require_card(conn, card_id)))
+        return {"ok": True, "cardId": card_id, "commentId": comment_id, "unblocked": bool(unblocked),
+                "state": state, "reason": reason}

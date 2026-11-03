@@ -815,8 +815,7 @@ DEFAULT_CONFIG = {
         # calls: ...]` lines; False shows them inline.
         "resume_skip_tool_only": True,
         "busy_input_mode": "interrupt",  # interrupt | queue | steer
-        # steer mode: false hides only the "Steered into current run" bubble; steering itself still
-        # happens.
+        # steer mode: false hides only the "Steered into current run" bubble; steering itself still happens.
         "busy_steer_ack_enabled": True,
         # Classic CLI multiline beyond Alt+Enter: Ctrl+J newline, trailing backslash+Enter
         # continues, Shift+Enter reported distinctly. False restores the c-j submit fallback for
@@ -1282,8 +1281,8 @@ DEFAULT_CONFIG = {
     "human_delay": {"mode": "off", "min_ms": 800, "max_ms": 2500},
 
     # Context engine — how the context window is managed near the token limit. "compressor" =
-    # built-in lossy summarization; or a plugin name (e.g. "lcm") installed in
-    # plugins/context_engine/<name>/ or ~/.hermes/plugins/.
+    # built-in lossy summarization; or an engine name: "lcm-x" (bundled, what new homes get from
+    # cli-config.yaml.example, docs/lcm-x.md) or one in plugins/context_engine/<name>/ or ~/.hermes/plugins/.
     "context": {
         "engine": "compressor",
         # Return freed glibc pages at agent/TUI cleanup boundaries (no-op elsewhere).
@@ -2594,6 +2593,7 @@ DEFAULT_CONFIG = {
         # (`*.foo.com`) supported.
         "extra_allowed_hosts": [],
     },
+    "ocx": {"port": 10100},  # LINA's one pinned OCX per root (hermes_cli/lina_ocx.py configured_port)
     "desktop": {  # Hermes Desktop (Electron) launch options; only affect `hermes desktop`.
         # CSS font-family for the app's chat and UI text (e.g. "OpenDyslexic"). Layered in front
         # of the active theme's own sans stack so missing glyphs still fall through. Empty = the

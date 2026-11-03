@@ -89,6 +89,10 @@ dependencies = [
   # Requirement and version checks must work in lean installs without
   # relying on another package to bring packaging in transitively.
   "packaging==26.3; python_version >= '3.14'",
+  # Token counts of the bundled LCM-X context engine (plugins/context_engine/lcm-x/tokens.py), the
+  # engine new homes run. Without it LCM-X counts by characters. No Windows ARM64 or Android wheel
+  # (a Rust build), so those keep the character count.
+  "tiktoken==0.14.0; python_version >= '3.14' and sys_platform != 'android' and (sys_platform != 'win32' or platform_machine != 'ARM64')",
   # Markdown -> HTML conversion for rich message delivery (Matrix
   # `formatted_body`, and the `send_message` tool's HTML path). Now on the
   # DEFAULT delivery path, not matrix-specific: without it both

@@ -21,6 +21,10 @@ import subprocess
 import sys
 from pathlib import Path, PurePosixPath
 
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
+from scripts.vendored_subtrees import is_vendored
+
 ROOT_MAX_CHARS = 12_000
 CHAIN_MAX_CHARS = 30_000
 
@@ -44,7 +48,8 @@ def main(repo: Path) -> int:
         ["git", "ls-files", "-z", "--", "AGENTS.md", "*/AGENTS.md"], cwd=repo, capture_output=True,
         check=True, stdin=subprocess.DEVNULL, timeout=60,
     ).stdout.decode("utf-8").split("\0")
-    sizes = {rel: len((repo / rel).read_text(encoding="utf-8-sig")) for rel in filter(None, tracked)}
+    sizes = {rel: len((repo / rel).read_text(encoding="utf-8-sig")) for rel in filter(None, tracked)
+             if not is_vendored(rel)}  # upstream's AGENTS.md stays unedited; its chain is not LINA's to size
     over = []
     for rel, size in sorted(sizes.items()):
         cap = ROOT_MAX_CHARS if rel == "AGENTS.md" else hint_cap
