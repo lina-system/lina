@@ -52,16 +52,20 @@ CREATE OR REPLACE TRIGGER lcm_embedding_vectors_delete INSTEAD OF DELETE ON ctx.
 
 -- vec.chunks holds the text chunks of memory.messages for every source (lina#19). A chunk that is a part of one
 -- message, as LCM-X's are, says which part: chunk_index (NULL for a chunk that is whole messages, as #19's are).
+-- A source that keeps its own id for a chunk says so in source_ref (LCM-X: its chunk id `<store_id>:<chunk_index>`), so
+-- two messages of the same text (one memory.messages row) keep a chunk each, each with its own vector. Both are NULL
+-- for #19's rows, which are keyed as before.
 ALTER TABLE vec.chunks ADD COLUMN IF NOT EXISTS chunk_index int;
+ALTER TABLE vec.chunks ADD COLUMN IF NOT EXISTS source_ref text;
 DROP INDEX IF EXISTS vec.chunks_source_messages;
 CREATE UNIQUE INDEX IF NOT EXISTS chunks_source_messages_part
-    ON vec.chunks (source, message_ids, chunk_index) NULLS NOT DISTINCT;
+    ON vec.chunks (source, message_ids, chunk_index, source_ref) NULLS NOT DISTINCT;
 
 -- LCM-X's chunk vectors: a chunk is a span of one message (chunk_id `<store_id>:<chunk_index>`). It is one vec.chunks
--- row (source 'lcm-x', message_ids = the memory.messages id of the message's text, chunk_index, text = the span)
--- and one vec.embeddings row of kind 'chunk'. LCM-X writes the vector before its lcm_chunk_meta row, so the
--- chunk starts with the message's whole text and lcm_chunk_meta narrows it to the span. Two LCM-X messages with
--- the same text share their memory.messages row, and so their chunks and vectors.
+-- row (source 'lcm-x', message_ids = the memory.messages id of the message's text, chunk_index, source_ref = the
+-- chunk id, text = the span) and one vec.embeddings row of kind 'chunk'. LCM-X writes the vector before its
+-- lcm_chunk_meta row, so the chunk starts with the message's whole text and lcm_chunk_meta narrows it to the span.
+-- Two LCM-X messages with the same text share their memory.messages row but not their chunks.
 CREATE OR REPLACE FUNCTION ctx.lcm_chunk_message(chunk_id text, OUT message_id bigint, OUT content text)
     LANGUAGE sql STABLE AS $$
     SELECT m.message_id, m.content FROM ctx.lcm_messages AS p JOIN memory.messages AS m ON m.uid = p.text_uid
@@ -69,14 +73,14 @@ CREATE OR REPLACE FUNCTION ctx.lcm_chunk_message(chunk_id text, OUT message_id b
 
 CREATE OR REPLACE VIEW ctx.lcm_chunk_vectors WITH (security_invoker = true) AS
 SELECT c.chunk_id AS rowid,
-       p.store_id || ':' || c.chunk_index AS chunk_id,
+       c.source_ref AS chunk_id,
        prof.identity_hash,
        subvector(e.embedding, 1, prof.dim::int)::vector AS vec,
        NULL::text AS access_scope
 FROM vec.chunks AS c
 JOIN vec.embeddings AS e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
 JOIN memory.messages AS m ON m.message_id = c.message_ids[1]
-JOIN ctx.lcm_messages AS p ON p.text_uid = m.uid
+JOIN ctx.lcm_messages AS p ON p.store_id = split_part(c.source_ref, ':', 1)::bigint AND p.text_uid = m.uid
 JOIN ctx.lcm_embedding_profile AS prof ON prof.model_name = e.model AND prof.dim <= e.dim
 WHERE c.source = 'lcm-x';
 
@@ -94,7 +98,7 @@ BEGIN
         DELETE FROM vec.embeddings AS e
          USING vec.chunks AS c, ctx.lcm_embedding_profile AS p
          WHERE e.kind = 'chunk' AND e.item_id = c.chunk_id AND c.source = 'lcm-x'
-           AND c.chunk_index = split_part(OLD.chunk_id, ':', 2)::int
+           AND c.source_ref = OLD.chunk_id
            AND c.message_ids = ARRAY[msg.message_id] AND p.identity_hash = OLD.identity_hash AND e.model = p.model_name;
         RETURN OLD;
     END IF;
@@ -112,10 +116,10 @@ BEGIN
         PERFORM ctx.lcm_raise('chunk vectors on the memory store are 1024 wide (the one embedding model, lina#19); '
                               'this profile writes ' || width);
     END IF;
-    INSERT INTO vec.chunks (source, agent_id, message_ids, chunk_index, text)
+    INSERT INTO vec.chunks (source, agent_id, message_ids, chunk_index, source_ref, text)
     VALUES ('lcm-x', public.lina_current_agent(), ARRAY[msg.message_id], split_part(NEW.chunk_id, ':', 2)::int,
-            coalesce(msg.content, ''))
-    ON CONFLICT (source, message_ids, chunk_index) DO UPDATE SET source = EXCLUDED.source
+            NEW.chunk_id, coalesce(msg.content, ''))
+    ON CONFLICT (source, message_ids, chunk_index, source_ref) DO UPDATE SET source = EXCLUDED.source
     RETURNING chunk_id INTO vec_chunk;
     INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding)
     VALUES ('chunk', vec_chunk, public.lina_current_agent(), model_name, 1024,
@@ -138,7 +142,7 @@ BEGIN
     IF msg.message_id IS NOT NULL AND NEW.char_end > NEW.char_start THEN
         UPDATE vec.chunks
            SET text = substr(coalesce(msg.content, ''), (NEW.char_start + 1)::int, (NEW.char_end - NEW.char_start)::int)
-         WHERE source = 'lcm-x' AND chunk_index = NEW.chunk_index AND message_ids = ARRAY[msg.message_id];
+         WHERE source = 'lcm-x' AND source_ref = NEW.chunk_id AND message_ids = ARRAY[msg.message_id];
     END IF;
     RETURN NULL;
 END $$;
