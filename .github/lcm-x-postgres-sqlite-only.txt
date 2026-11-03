@@ -320,3 +320,4 @@ tests/test_lcm_core.py::TestMessageStore::test_init_recreates_missing_message_ft
 tests/test_lcm_core.py::TestSummaryDAG::test_init_recreates_missing_nodes_fts_trigger  # seeds a legacy SQLite schema and checks LCM-X's in-place SQLite migration of it; a home's lcm.db moves to the store with lina#24
 tests/test_lcm_core.py::TestSummaryDAG::test_init_repairs_malformed_nodes_fts_and_sets_schema_version  # seeds a legacy SQLite schema and checks LCM-X's in-place SQLite migration of it; a home's lcm.db moves to the store with lina#24
 tests/test_lcm_core.py::TestLifecycleStateStore::test_init_upgrades_existing_lifecycle_table_with_rotation_columns  # seeds a legacy SQLite schema and checks LCM-X's in-place SQLite migration of it; a home's lcm.db moves to the store with lina#24
+tests/test_fork_late_uid.py::test_backfill_dry_run_and_apply  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup

@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import hashlib
 import importlib.util
+import json
 import os
 import sqlite3
 import sys
@@ -70,6 +71,7 @@ def _lcm_x_on_store(monkeypatch):
     monkeypatch.setenv("LINA_STORE_DSN", dsn)
     monkeypatch.setattr(hermes_state_store, "resolve_dsn", lambda: dsn)
     lcm_x_store.route_every_database(_agent_for)
+    monkeypatch.setenv(lcm_x_store.TEST_ROUTES_ENV, "{}")  # what a child process of the test routes
     original_connect = sqlite3.connect
 
     def connect(database, *args, **kwargs):
@@ -100,6 +102,11 @@ def _carry_seeded_file(lcm_x_store, original_connect):
     def carried(database, *, opening=False):
         seen = opening and lcm_x_store._route_key(database) in lcm_x_store._route_every_seen
         factory = backend_for(database, opening=opening)
+        if opening and not seen and factory is not None:
+            routes = json.loads(os.environ.get(lcm_x_store.TEST_ROUTES_ENV) or "{}")
+            key = lcm_x_store._route_key(database)
+            routes[key] = _agent_for(key)
+            os.environ[lcm_x_store.TEST_ROUTES_ENV] = json.dumps(routes)
         if not opening or seen or factory is None or not Path(str(database)).is_file():
             return factory
         seeded = []

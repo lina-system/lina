@@ -17,6 +17,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import re
 import sqlite3
 import threading
@@ -1289,3 +1290,18 @@ def split_statements(script: str) -> list[str]:
         text = re.sub(r"\x00(\d+)\x00", lambda m: literals[int(m.group(1))].replace("%%", "%"), text)
         return re.sub(r"\x01(\d+)\x01", lambda m: _slots[int(m.group(1))], text)
     return [restore(s).strip() for s in out if restore(s).strip().strip(";").strip()]
+
+# Tests only: the suite plugin (lcm_x_store_pytest) publishes the paths it routed, so a script a test runs as a
+# child process routes them to the same agents.
+TEST_ROUTES_ENV = "LINA_LCM_X_TEST_ROUTES"
+
+
+def _routes_from_environment() -> None:
+    raw = os.environ.get(TEST_ROUTES_ENV)
+    if raw:
+        for path, agent in json.loads(raw).items():
+            route(path, agent)
+
+
+_routes_from_environment()
+
