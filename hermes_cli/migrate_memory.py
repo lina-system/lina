@@ -1,4 +1,4 @@
-"""Round-one memory migration from retained copies into a separate agent home."""
+"""Memory migration from retained copies into the running installation's new agent."""
 
 from __future__ import annotations
 
@@ -18,8 +18,13 @@ from hermes_state_store import StoreUnavailableError, _owner_connection
 
 
 def _paths(args) -> tuple[Path, Path, Path]:
+    from hermes_cli.store import store_dir
+
+    running_home = store_dir().parent.absolute()
     source, home, work = (Path(value).expanduser().absolute()
-                          for value in (args.from_, args.home, args.work_dir))
+                          for value in (args.from_, args.home or running_home, args.work_dir))
+    if home != running_home:
+        raise ValueError("--home must equal the running LINA root; run LINA from the destination home")
     if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_-]*", args.agent) or args.agent == args.profile:
         raise ValueError("--as must name a distinct new agent using letters, digits, underscores or hyphens")
     for path in (source, home, work):
@@ -50,6 +55,23 @@ def _publish_files(copied: Path, destination: Path) -> list[str]:
     return files
 
 
+def _publish_honcho_config(selection: Path, destination: Path, profile: str, agent: str, store: Path) -> None:
+    """Publish new transport settings, never the source endpoint or credentials."""
+    from hermes_cli.store import DEFAULTS, read_env
+    from plugins.memory.honcho.client import profile_host_key
+
+    block = json.loads(selection.read_text(encoding="utf-8"))["hosts"][profile_host_key(profile)]
+    port = int(read_env(store / "store.env").get("LINA_HONCHO_PORT", DEFAULTS["LINA_HONCHO_PORT"]))
+    config = {"hosts": {profile_host_key(agent): {
+        "workspace": agent, "aiPeer": agent, "peerName": block["peerName"],
+        "observationMode": block["observationMode"], "baseUrl": f"http://127.0.0.1:{port}", "enabled": True}}}
+    target = _safe(destination / "honcho.json")
+    if target.exists() and json.loads(target.read_text(encoding="utf-8")) != config:
+        raise ValueError("destination Honcho configuration differs from this import")
+    if not target.exists():
+        target.write_text(json.dumps(config, indent=2) + "\n", encoding="utf-8")
+
+
 def _profile(args) -> dict:
     source, home, work = _paths(args)
     spool = Path(args.spool).expanduser() if args.spool else None
@@ -58,6 +80,8 @@ def _profile(args) -> dict:
     copied = snapshot(source, args.profile, work,
                       honcho_dump=Path(args.honcho_dump).expanduser() if args.honcho_dump else None,
                       spool=spool, work_db=Path(args.work_db).expanduser() if args.work_db else None)
+    if copied.honcho_dump is not None and not (copied.root / "external/honcho-config.json").is_file():
+        raise ValueError("Honcho dump requires the selected source profile's honcho.json host configuration")
     destination = _safe(home / "profiles" / args.agent)
     receipt_path = _safe(work / "destination.json")
     receipt = {"home": str(home), "agent": args.agent, "profile": args.profile,
@@ -83,6 +107,7 @@ def _profile(args) -> dict:
         from hermes_cli.migrate_memory_honcho import migrate_honcho
         honcho = migrate_honcho(copied.honcho_dump, args.profile, args.agent, work,
                                workspace=args.honcho_workspace,
+                               selection_path=copied.root / "external/honcho-config.json",
                                honcho_python=Path(args.honcho_python) if args.honcho_python else None)
     if copied.spool is not None and spool is not None:
         reports.append(migrate_external(copied.spool, spool).as_dict())
@@ -91,17 +116,21 @@ def _profile(args) -> dict:
         from hermes_cli.migrate_memory_work import migrate_work
         work_report = migrate_work(copied.work_db, home, args.profile, args.agent)
     files = _publish_files(copied.profile_dir, destination)
+    if copied.honcho_dump is not None:
+        _publish_honcho_config(copied.root / "external/honcho-config.json", destination,
+                               args.profile, args.agent, home / "store")
+        files.append("honcho.json")
     duplicates = duplicate_report(args.agent)
-    gaps = [work_report["gap"]] if work_report.get("status") == "gap" else []
-    return {"format": 1, "round": 1, "profile": args.profile, "agent": args.agent,
+    return {"format": 1, "round": 2, "profile": args.profile, "agent": args.agent,
             "destination_home": str(destination), "copies": [asdict(row) for row in copied.receipt],
             "sources": reports, "lcm": lcm, "honcho": honcho, "work": work_report,
-            "files": files, "duplicates": duplicates, "gaps": gaps,
+            "files": files, "duplicates": duplicates,
             "complete": False,
             "embeddings": {"status": "deferred", "command": "lina store reembed",
                            "reason": "No embedding endpoint is called; Honcho reports legacy vector disposition."},
             "ok": all(report["ok"] for report in reports) and duplicates["ok"]
-                  and honcho.get("ok", honcho.get("status") == "not_supplied")}
+                  and honcho.get("ok", honcho.get("status") == "not_supplied")
+                  and work_report.get("ok", work_report.get("status") == "not_supplied")}
 
 
 def run(args) -> int:
@@ -132,7 +161,7 @@ def run(args) -> int:
                     json.dumps(current, ensure_ascii=False, indent=2, default=str) + "\n")
                 if not current["ok"]:
                     break
-            report = {"format": 1, "round": 1, "profiles": reports, "complete": False,
+            report = {"format": 1, "round": 2, "profiles": reports, "complete": False,
                       "ok": len(reports) == len(profiles) and all(item["ok"] for item in reports),
                       "lcm": lcm_waiting_for_issue_16()}
         else:
@@ -141,7 +170,7 @@ def run(args) -> int:
     except (OSError, ValueError, RuntimeError, subprocess.SubprocessError, StoreUnavailableError, psycopg.Error) as exc:
         # PostgreSQL errors may include source text or credentials: expose only their type.
         detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
-        report = {"format": 1, "round": 1, "ok": False, "error": detail,
+        report = {"format": 1, "round": 2, "ok": False, "error": detail,
                   "lcm": lcm_waiting_for_issue_16()}
     text = json.dumps(report, ensure_ascii=False, indent=2, default=str)
     if work is not None and work.is_dir():

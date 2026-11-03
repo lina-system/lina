@@ -213,3 +213,24 @@ def test_failed_backup_can_retry_and_explicit_work_db_is_copied(tmp_path: Path) 
     result = snapshot(home, "default", work, work_db=external_work)
     with closing(sqlite3.connect(result.work_db)) as copied:
         assert copied.execute("SELECT value FROM records").fetchall() == [("original",)]
+
+
+@pytest.mark.parametrize("profile,host", [("default", "hermes"), ("alpha", "hermes_alpha")])
+def test_honcho_snapshot_keeps_only_selected_host_identity(tmp_path: Path, profile: str, host: str) -> None:
+    home = tmp_path / "source"
+    selected = home if profile == "default" else home / "profiles" / profile
+    database(selected / "state.db")
+    legacy = {"baseUrl": "https://OLD-ENDPOINT-DO-NOT-COPY.example", "apiKey": "SYNTHETIC-KEY",
+              "observationMode": "directional", "hosts": {
+                  host: {"workspace": "shared", "aiPeer": "agent-a", "peerName": "person"},
+                  "hermes_other": {"workspace": "other", "aiPeer": "agent-b", "peerName": "other-person"}}}
+    (selected / "honcho.json").write_text(json.dumps(legacy))
+
+    copied = snapshot(home, profile, tmp_path / "work")
+
+    identity = copied.root / "external/honcho-config.json"
+    assert json.loads(identity.read_text()) == {"hosts": {host: {
+        "workspace": "shared", "aiPeer": "agent-a", "peerName": "person", "observationMode": "directional"}}}
+    assert not (copied.profile_dir / "honcho.json").exists()
+    assert "OLD-ENDPOINT-DO-NOT-COPY" not in identity.read_text()
+    assert "SYNTHETIC-KEY" not in identity.read_text()

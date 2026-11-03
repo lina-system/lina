@@ -131,6 +131,32 @@ def _config_bytes(home: Path) -> bytes:
     return (json.dumps({"memory": safe}, sort_keys=True, indent=2) + "\n").encode()
 
 
+def _honcho_identity_bytes(path: Path, profile: str) -> bytes:
+    """Retain source selection, not transport credentials or another profile's host."""
+    from plugins.memory.honcho.client import _OBSERVATION_MODES, _normalize_choice, profile_host_key
+
+    raw = json.loads(path.read_text(encoding="utf-8-sig"))
+    host = profile_host_key(profile)
+    block = raw.get("hosts", {}).get(host)
+    if not isinstance(block, dict):
+        raise SnapshotError(path, "selected profile has no Honcho host block")
+    identity = {field: block.get(field) for field in ("workspace", "aiPeer", "peerName")}
+    if any(not isinstance(value, str) or not value for value in identity.values()):
+        raise SnapshotError(path, "Honcho host requires workspace, aiPeer and peerName")
+    mode = _normalize_choice(block.get("observationMode") or raw.get("observationMode") or "unified",
+                             _OBSERVATION_MODES)
+    identity["observationMode"] = mode
+    return (json.dumps({"hosts": {host: identity}}, sort_keys=True, indent=2) + "\n").encode()
+
+
+def _copied_file_bytes(path: Path, relative: Path, profile_dir: Path, profile: str) -> bytes:
+    if relative == Path("profile/config.yaml"):
+        return _config_bytes(profile_dir)
+    if relative == Path("external/honcho-config.json"):
+        return _honcho_identity_bytes(path, profile)
+    return path.read_bytes()
+
+
 def snapshot(
     source_home: Path, profile: str, work_dir: Path, *,
     honcho_dump: Path | None = None, spool: Path | None = None,
@@ -162,6 +188,9 @@ def snapshot(
     # Each tuple is (source, relative destination, online SQLite backup).
     inputs = [(path, Path("profile") / path.relative_to(profile_dir), False)
               for path in _inventory(profile_dir)]
+    honcho_config = _safe(profile_dir / "honcho.json")
+    if honcho_config.exists():
+        inputs.append((honcho_config, Path("external/honcho-config.json"), False))
     state = _safe(profile_dir / "state.db")
     inputs.append((state, Path("profile/state.db"), True))
     lcm = _safe(profile_dir / "lcm.db")
@@ -187,7 +216,7 @@ def snapshot(
     def receipts(base: Path) -> tuple[CopyReceipt, ...]:
         return tuple(CopyReceipt(path, root / relative,
                                  "sqlite-backup" if database else
-                                 "sanitized-config" if relative.name == "config.yaml" else "file",
+                                 "sanitized-config" if relative.name in {"config.yaml", "honcho-config.json"} else "file",
                                  "" if database else _digest(path), _digest(base / relative),
                                  (base / relative).stat().st_size,
                                  "online-backup" if database else "unchanged-file")
@@ -211,8 +240,7 @@ def snapshot(
                         # so even mode=ro consumers cannot create WAL/SHM sidecars.
                         target.execute("PRAGMA journal_mode=DELETE")
             else:
-                data = _config_bytes(profile_dir) if relative == Path("profile/config.yaml") else path.read_bytes()
-                destination.write_bytes(data)
+                destination.write_bytes(_copied_file_bytes(path, relative, profile_dir, profile))
         if any(not database and _fingerprint(path, False) != provenance[index][3]
                for index, (path, _, database) in enumerate(inputs)):
             raise SnapshotError(profile_dir, "file source changed during snapshot; retry with stable files")

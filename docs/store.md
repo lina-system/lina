@@ -221,36 +221,49 @@ leaves a text row nothing points at, never a placement row without text.
 ### Copying legacy memory into a new agent
 
 ```sh
-lina migrate memory --from /path/to/old-home --source-profile alpha --as alpha-copy \
-  --home /path/to/new-lina --work-dir /path/to/migration-copy \
-  --honcho-dump /path/to/honcho.dump --honcho-workspace alpha \
-  --honcho-python /path/to/honcho-environment/bin/python \
+LINA_HOME=/path/to/new-lina HERMES_HOME=/path/to/new-lina \
+  lina migrate memory --from /path/to/old-home --source-profile alpha --as alpha-copy \
+  --work-dir /path/to/migration-copy --honcho-dump /path/to/honcho.dump \
   --spool /path/to/spool --work-db /path/to/work.db
 ```
 
 `--source-profile` selects the old profile; global `--profile` still selects the profile running LINA.
-The destination is `--home/profiles/<new name>`, with an independent agent identity. The store must
-already be installed and reachable. The command uses SQLite's online backup API, never opens an original
+The destination is the running LINA root's `profiles/<new name>`, with an independent agent identity.
+`--home` defaults to that root; an explicitly different root is refused before copying or writing. Run the
+command from the new agent's destination installation, whose store must already be installed and reachable.
+Global `--profile` may select a runtime profile within that root; it does not change the source selection.
+The command uses SQLite's online backup API, never opens an original
 database for writing, and reads only retained snapshots after the copy step. It copies skills, persona
 and memory files; credentials are excluded and config is limited to non-secret memory settings.
 Each database snapshot is consistent on its own, not a common snapshot instant across databases.
 
-The copied Honcho input is a pre-split logical `pg_dump` archive, not a physical store backup. It is restored
-into a disposable database, upgraded with Honcho's actual Alembic chain, and the selected workspace is
-merged under the new agent name. The API and deriver are never started. Existing unrelated destination
-workspaces remain intact. Legacy vectors are explicitly left for `lina store reembed`; migration never
-calls an embedding endpoint.
+The copied Honcho input is a pre-split logical `pg_dump` archive, not a physical store backup. The selected
+profile's `honcho.json` supplies its host (`hermes` for default, `hermes_<profile>` for a named profile):
+workspace, AI peer, person peer and observation mode. A shared workspace is not imported wholesale. The
+migration selects the profile's recall-visible observer/target collections and sessions containing its AI
+peer, maps that AI peer to the new agent, and reports excluded other-agent and other-workspace rows.
+Source transport URLs and keys are not published into the new home; its Honcho config points to the
+destination store's local Honcho port.
 
-Round 1 reports `lcm: waiting for #16` and excludes LCM messages and summary nodes from imported counts.
-The copied `lcm.db` is retained for Round 2. The old work ledger is copied and inventoried by profile, but
-its existing importer has global item/run IDs and cannot create an independent renamed agent's record
-without collisions. The report names this gap and does not count those rows as migrated.
+The archive is restored into a disposable database and upgraded with Honcho's actual Alembic chain in
+the installed store's Honcho image. No separate Python environment or `--honcho-python` is needed;
+that option is only an explicit interpreter override. The API and deriver are never started. Existing
+unrelated destination workspaces remain intact. Legacy vectors, including 1536-wide ones, are explicitly
+left for `lina store reembed`; migration never calls an embedding endpoint.
+
+Round 2 still reports `lcm: waiting for #16` and excludes LCM messages and summary nodes from imported
+counts. The copied `lcm.db` is retained for Round 3. The copied work ledger imports the selected profile's
+records and relations, renaming its owner to the new agent. Required area/project/goal ancestors retain
+their original owners and are listed separately. Existing IDs with different content are refused before
+writing; counts and manifests compare only the selected subset, not unrelated destination rows.
 
 The command prints JSON and writes the same result to `--work-dir/migration-report.json`. It includes copy
 receipts, per-source accounting and bidirectional manifests, actual duplicate queries, and reference checks.
 Agent manifests hash the full immutable text payload, including tool/API fields, not just visible content.
+Large agent imports keep hash-only manifests in JSONL sidecars beside the destination state database and
+include their paths, counts and file SHA256 values in the report; text is read and verified in bounded batches.
 Raw native identities can legitimately have several immutable versions; the report discloses them separately
-from duplicate version identities. `ok` means the included Round 1 checks passed; `complete` remains false
+from duplicate version identities. `ok` means the included migration checks passed; `complete` remains false
 while LCM is deferred. An accounting mismatch exits nonzero.
 
 Repeating the same command verifies and reuses the same snapshots without rereading changing originals;

@@ -126,3 +126,40 @@ def test_destination_profile_symlink_cannot_redirect_writes(tmp_path, _memory_st
 
     assert done.returncode != 0
     assert list(other.iterdir()) == []
+
+
+def test_default_destination_is_running_lina_home(tmp_path, _memory_store):
+    command = _command(tmp_path, _memory_store)
+    index = command.index("--home")
+    del command[index:index + 2]
+
+    done = _run(command, tmp_path)
+
+    assert done.returncode == 0, done.stdout + done.stderr
+    assert json.loads(done.stdout)["destination_home"] == str(tmp_path / "lina/profiles/alpha-copy")
+
+
+def test_different_destination_home_refused_before_copy_or_store_write(tmp_path, _memory_store, memory_store_sql):
+    command = _command(tmp_path, _memory_store)
+    other = tmp_path / "different-lina"
+    command[command.index("--home") + 1] = str(other)
+
+    done = _run(command, tmp_path)
+
+    assert done.returncode != 0
+    assert not other.exists()
+    assert not (tmp_path / "copy").exists()
+    assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(0,)]
+
+
+def test_missing_honcho_host_config_refused_before_agent_rows(tmp_path, _memory_store, memory_store_sql):
+    command = _command(tmp_path, _memory_store)
+    dump = tmp_path / "old.dump"
+    dump.write_bytes(b"synthetic archive; preflight must not reach restore")
+    command.extend(["--honcho-dump", str(dump)])
+
+    done = _run(command, tmp_path)
+
+    assert done.returncode != 0
+    assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(0,)]
+    assert not (tmp_path / "lina/profiles/alpha-copy").exists()
