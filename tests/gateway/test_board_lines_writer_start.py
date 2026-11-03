@@ -51,35 +51,37 @@ def test_an_install_without_worker_devices_gets_card_lines_from_the_gateway_star
 
 
 def test_a_writer_that_cannot_start_leaves_the_gateway_starting(tmp_path, monkeypatch):
-    """The board lines are a side feature: a raising start is logged and the cron and housekeeping start returns."""
-    import asyncio
+    """The board lines are a side feature: a raising start is logged and returns None, so the bootstrap goes on."""
+    from gateway.run_bootstrap import _start_board_lines_writer
+    from hermes_cli import lina_board_plain
 
-    from cron import scheduler_provider, scheduler_thread
-    from gateway import run_bootstrap
-
-    class _Thread:
-        def __init__(self, *_args, **_kwargs):
-            pass
-
-        def start(self):
-            pass
-
-    def _boom(_stop):
+    def _boom(_root, _stop):
         raise RuntimeError("no LINA root")
 
-    monkeypatch.setattr(run_bootstrap, "_start_board_lines_writer", _boom)
-    monkeypatch.setattr(scheduler_thread, "SupervisedTickerThread", _Thread)
-    monkeypatch.setattr(scheduler_provider, "scheduler_for_profile_mode",
-                        lambda _p, multiplex_profiles=False: scheduler_provider.InProcessCronScheduler())
-    import gateway.run as gw_run
+    monkeypatch.setattr(lina_board_plain, "writer_thread", _boom)
+    assert _start_board_lines_writer(threading.Event()) is None
+
+
+def test_the_gateway_s_board_lines_writer_never_holds_the_profile_lock(tmp_path, monkeypatch):
+    """A live writer pass must not keep the gateway's profile lock after shutdown cleanup (the runtime writer drain)."""
+    from gateway.run_bootstrap import _start_board_lines_writer
     from gateway.runtime_ownership import process_ownership
-    monkeypatch.setattr(process_ownership, "start_writer", lambda _thread: None)  # nothing really starts
-    monkeypatch.setattr(gw_run, "_cron_tick_profile_homes", lambda _cfg: [("default", tmp_path)])
-    runner = SimpleNamespace(config={}, adapters={}, _profile_adapters=None, _primary_profile_name="default",
-                             _draining=False, _external_drain_active=False)
-
-    async def _go():
-        return run_bootstrap._start_gateway_start_cron_and_housekeeping(runner)
-
-    stop, _provider, _cron, _housekeeping = asyncio.run(_go())
-    assert isinstance(stop, threading.Event)
+    from hermes_cli import lina_board_plain
+    WorkEnv(tmp_path, monkeypatch)
+    in_pass, release = threading.Event(), threading.Event()
+    monkeypatch.setattr(lina_board_plain, "write_board", lambda: (in_pass.set(), release.wait(20)))
+    home = tmp_path / "profile"
+    stop = threading.Event()
+    thread = _start_board_lines_writer(stop)
+    try:
+        assert in_pass.wait(10)
+        assert thread.name == "lina-board-lines"
+        assert not any(t.name == "lina-board-lines" for t in process_ownership._writers)
+        process_ownership.reserve([home])
+        process_ownership.close()
+        assert not process_ownership.owns(home)
+    finally:
+        stop.set()
+        release.set()
+        thread.join(10)
+    assert not thread.is_alive()
