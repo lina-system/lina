@@ -79,6 +79,14 @@ def _answered(item: dict) -> bool:
                for c in item.get("comments") or [])
 
 
+def decision_of(item: dict) -> dict | None:
+    """What the owner is asked on one item, read as the inbox's decision rows read it; None when nothing is asked."""
+    text, kind = _decision_text(item)
+    if not text:
+        return None
+    return {"text": text, "kind": kind, "at": int(item.get("created") or 0), "answered": _answered(item)}
+
+
 def decisions(recs: dict, order: list[str]) -> list[dict]:
     """One row per open item that asks the owner something, oldest first; answered rows wait at the bottom."""
     rows = []

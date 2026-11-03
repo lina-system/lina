@@ -985,7 +985,7 @@ DEFAULT_CONFIG = {
     "webapp": {"enabled": False, "host": "127.0.0.1", "port": 9120, "public_url": ""},  # gateway/webapp_listener.py
     "dashboard": {
         # Visual theme: "default" | "midnight" | "ember" | "mono" | "cyberpunk" | "rose"
-        "theme": "default",
+        "theme": "default", "app_dist": "",  # app_dist: lina-app build served at /app/; LINA_APP_DIST wins
         # Process-isolation rollout controls. Read via the raw config loader, so tui_gateway.server
         # also owns explicit defaults.
         "turn_isolation": False,

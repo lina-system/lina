@@ -65,13 +65,14 @@ def rule_types(gh, repo: str, branch: str) -> list[dict]:
     return gh.json(f"repos/{repo}/rules/branches/{branch}") or []
 
 
-def required_contexts(rules: list[dict]) -> list[str]:
+def required_contexts(rules: list[dict]) -> list[tuple[str, int | None]]:
     found = []
     for rule in rules:
         if rule.get("type") == "required_status_checks":
             for check in (rule.get("parameters") or {}).get("required_status_checks") or []:
-                if check.get("context") not in found:
-                    found.append(check["context"])
+                required = (check["context"], check.get("integration_id"))
+                if required not in found:
+                    found.append(required)
     return found
 
 

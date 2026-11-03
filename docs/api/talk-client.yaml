@@ -1,0 +1,292 @@
+# Talking with the agent that owns a to-do (lina#167). Served by hermes_cli/web_routers/lina_talk.py behind the
+# dashboard auth gate (session token); the turn runs on the agent's own gateway (hermes_cli/lina_talk.py).
+# tests/hermes_cli/test_lina_talk_api.py validates every streamed frame against TalkEvent, so a shape change here and
+# in the code land together. Frames other than talk.* are the gateway's own session chat stream
+# (POST /api/sessions/{id}/chat/stream, gateway/platforms/api_server.py), relayed as they are.
+openapi: 3.0.3
+info:
+  title: LINA talk API
+  version: 0.1.0
+  description: >
+    The owner writes to the agent that owns a work record item (the item's own agent, else its nearest parent's; for
+    the owner's own to-do the agent that asked for it). The turn runs in that agent's app conversation, a session
+    titled "LINA app: <agent>" on its gateway, authored by the owner, its first line naming the app and the to-do. The
+    agent's next direct-message turn on a messaging platform (Telegram) reads the exchange ahead of the owner's new
+    message. When the gateway does not stream (the agent is busy, the gateway refuses or is down) its own status and
+    body are answered as they are.
+servers:
+  - url: /api/lina
+paths:
+  /work/items/{item_id}/talk:
+    post:
+      operationId: talkWithItemAgent
+      summary: One turn with the agent that owns the item; the reply streams as server-sent events.
+      parameters:
+        - name: item_id
+          in: path
+          required: true
+          schema:
+            type: string
+          example: T1
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TalkRequest"
+      responses:
+        "200":
+          description: >
+            The turn's events, one SSE frame each (`event:` its name, `data:` one JSON object). Lines starting with
+            ":" are keepalive comments. The stream ends after the `done` frame.
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/TalkEvent"
+        "400":
+          description: The message is empty (`empty_message`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such item in the work record (`unknown_item`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "409":
+          description: The item answers to no agent (`no_owning_agent`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: The message is longer than 4000 characters (`message_too_long`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: The agent's gateway is busy; its own response body, as it answered.
+        "503":
+          description: The agent's gateway is unreachable (`gateway_unreachable`), or its own 503.
+components:
+  schemas:
+    TalkRequest:
+      type: object
+      required: [message]
+      properties:
+        message:
+          type: string
+          minLength: 1
+          maxLength: 4000
+          description: The owner's words; surrounding whitespace is dropped.
+    Error:
+      type: object
+      required: [error]
+      properties:
+        error:
+          type: object
+          required: [code, message]
+          properties:
+            code:
+              type: string
+            message:
+              type: string
+    TalkEvent:
+      description: One frame as {event, data}.
+      oneOf:
+        - $ref: "#/components/schemas/TalkStartedEvent"
+        - $ref: "#/components/schemas/TalkCarriedEvent"
+        - $ref: "#/components/schemas/RunStartedEvent"
+        - $ref: "#/components/schemas/MessageStartedEvent"
+        - $ref: "#/components/schemas/AssistantDeltaEvent"
+        - $ref: "#/components/schemas/AssistantCompletedEvent"
+        - $ref: "#/components/schemas/RunEndedEvent"
+        - $ref: "#/components/schemas/ProgressEvent"
+        - $ref: "#/components/schemas/ErrorEvent"
+        - $ref: "#/components/schemas/DoneEvent"
+    TalkStartedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [talk.started]
+        data:
+          type: object
+          required: [item, agent, session_id]
+          properties:
+            item:
+              type: object
+              required: [id, title]
+              properties:
+                id:
+                  type: string
+                title:
+                  type: string
+            agent:
+              type: string
+              description: The owning agent (its profile name).
+            session_id:
+              type: string
+              description: The agent's app conversation on its gateway.
+    TalkCarriedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [talk.carried]
+        data:
+          type: object
+          required: [agent, item]
+          description: Sent right after assistant.completed once the exchange waits for the agent's next DM turn.
+          properties:
+            agent:
+              type: string
+            item:
+              type: string
+    GatewayFrame:
+      type: object
+      required: [session_id, run_id, seq, ts]
+      properties:
+        session_id:
+          type: string
+        run_id:
+          type: string
+        seq:
+          type: integer
+          minimum: 1
+        ts:
+          type: number
+    RunStartedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [run.started]
+        data:
+          allOf:
+            - $ref: "#/components/schemas/GatewayFrame"
+            - type: object
+              required: [user_message]
+              properties:
+                user_message:
+                  type: object
+                  required: [role, content]
+                  properties:
+                    role:
+                      type: string
+                      enum: [user]
+                    content: {}
+    MessageStartedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [message.started]
+        data:
+          allOf:
+            - $ref: "#/components/schemas/GatewayFrame"
+            - type: object
+              required: [message]
+              properties:
+                message:
+                  type: object
+                  required: [id, role]
+                  properties:
+                    id:
+                      type: string
+                    role:
+                      type: string
+                      enum: [assistant]
+    AssistantDeltaEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [assistant.delta]
+        data:
+          allOf:
+            - $ref: "#/components/schemas/GatewayFrame"
+            - type: object
+              required: [message_id, delta]
+              properties:
+                message_id:
+                  type: string
+                delta:
+                  type: string
+    AssistantCompletedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [assistant.completed]
+        data:
+          allOf:
+            - $ref: "#/components/schemas/GatewayFrame"
+            - type: object
+              required: [message_id, content]
+              properties:
+                message_id:
+                  type: string
+                content:
+                  type: string
+                  description: The whole reply.
+    RunEndedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [run.completed, run.failed, run.cancelled]
+        data:
+          allOf:
+            - $ref: "#/components/schemas/GatewayFrame"
+            - type: object
+              required: [message_id]
+              properties:
+                message_id:
+                  type: string
+                usage:
+                  type: object
+    ProgressEvent:
+      type: object
+      required: [event, data]
+      description: Tool and commentary progress, and approval prompts, as the gateway sends them.
+      properties:
+        event:
+          type: string
+          enum: [tool.progress, tool.started, tool.completed, tool.failed, assistant.commentary, approval.request]
+        data:
+          $ref: "#/components/schemas/GatewayFrame"
+    ErrorEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [error]
+        data:
+          allOf:
+            - $ref: "#/components/schemas/GatewayFrame"
+            - type: object
+              required: [message]
+              properties:
+                message:
+                  type: string
+    DoneEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [done]
+        data:
+          $ref: "#/components/schemas/GatewayFrame"
