@@ -983,11 +983,26 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
             f"holds (first: {clash[1]}); nothing was moved")
 
 
+def _follow_text_owner(cur, from_agent: str, to_agent: str) -> None:
+    """Give *to_agent* the vec.chunks rows (and their kind ``chunk`` vectors) of *from_agent* whose message now
+    belongs to *to_agent*: embedded text follows its memory.messages row. A store from before migration 0003 has
+    no vec tables and nothing to move."""
+    cur.execute("SELECT to_regclass('vec.chunks') IS NOT NULL")
+    if not cur.fetchone()[0]:
+        return
+    cur.execute("UPDATE vec.chunks c SET agent_id = %s FROM memory.messages m"
+                " WHERE m.message_id = c.message_ids[1] AND c.agent_id = %s AND m.agent_id = %s",
+                (to_agent, from_agent, to_agent))
+    cur.execute("UPDATE vec.embeddings e SET agent_id = %s FROM vec.chunks c"
+                " WHERE e.kind = 'chunk' AND e.item_id = c.chunk_id AND e.agent_id = %s AND c.agent_id = %s",
+                (to_agent, from_agent, to_agent))
+
+
 def move_agent_rows(old_agent: str, new_agent: str) -> list[str]:
     """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
     lina_app inside one agent): agent_id and the uid prefix ``agent:<old>:`` -> ``agent:<new>:``. A row whose new
     uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
-    Returns the new uids, so ``return_agent_rows`` can undo exactly this move."""
+    The embedded text and vectors of the moved rows (vec.chunks, kind ``chunk``) move with them. Returns the new uids, so ``return_agent_rows`` can undo exactly this move."""
     import psycopg
     old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
@@ -999,7 +1014,9 @@ def move_agent_rows(old_agent: str, new_agent: str) -> list[str]:
                 " WHERE n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256')"
                 " RETURNING o.uid",
                 (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
-            return [row[0] for row in cur.fetchall()]
+            moved = [row[0] for row in cur.fetchall()]
+            _follow_text_owner(cur, old_agent, new_agent)
+            return moved
     except psycopg.Error as exc:
         raise StoreUnavailableError(
             f"could not move message text from agent {old_agent!r} to {new_agent!r}: {exc}".strip()) from exc
@@ -1012,9 +1029,10 @@ def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> No
     old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
     try:
-        with conn.transaction():
-            conn.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
-                         (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
+        with conn.transaction(), conn.cursor() as cur:
+            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
+                        (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
+            _follow_text_owner(cur, new_agent, old_agent)
     finally:
         conn.close()
 

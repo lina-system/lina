@@ -200,7 +200,9 @@ lina memory eval-search --questions <file.jsonl> [--honcho-url http://127.0.0.1:
 `reembed` runs as the store owner, goes through `memory.messages` (`agent`: roles user and assistant;
 `messages`: external messages) and Honcho's conclusions in id order, a batch per transaction (`--batch-size`,
 default `embedding.batch_size`), and records the last id of each batch, so a stopped run continues where it
-stopped (`--from-start` starts over). It prints a line per batch and the counts per source.
+stopped (`--from-start` starts over). It prints a line per batch and the counts per source. Renaming a profile moves its
+`vec.chunks` rows and their `chunk` vectors to the new agent with its messages, in the same transaction (and back
+when the rename fails); `hermes profile migrate-identity` moves any a rename left behind.
 
 `eval-search` scores the top-5 hit rate per source: today's search of each source (the store's full-text search
 for `agent` and `messages`, Honcho's conclusion search for `memory`) against one vector search over all of the
