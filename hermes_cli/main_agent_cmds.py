@@ -56,18 +56,31 @@ def _cmd_memory_reset(args):
     print(f"  Files were in: {display_hermes_home()}/memories/\n")
 
 
+def _cmd_memory_eval_search(args):
+    from hermes_cli.memory_eval_search import run
+    sys.exit(run(args))
+
+
+def _cmd_memory_cache_report(args):
+    from hermes_cli.cache_measure import run
+    sys.exit(run(args))
+
+
+def _cmd_memory_setup(args):
+    from hermes_cli.memory_setup import memory_command
+    memory_command(args)
+
+
+_MEMORY_SUBCOMMANDS = {
+    "off": lambda args: _cmd_memory_off(),
+    "reset": _cmd_memory_reset,
+    "eval-search": _cmd_memory_eval_search,
+    "cache-report": _cmd_memory_cache_report,
+}
+
+
 def cmd_memory(args):
-    sub = getattr(args, "memory_command", None)
-    if sub == "off":
-        _cmd_memory_off()
-    elif sub == "reset":
-        _cmd_memory_reset(args)
-    elif sub == "eval-search":
-        from hermes_cli.memory_eval_search import run
-        sys.exit(run(args))
-    else:
-        from hermes_cli.memory_setup import memory_command
-        memory_command(args)
+    _MEMORY_SUBCOMMANDS.get(getattr(args, "memory_command", None), _cmd_memory_setup)(args)
 
 
 

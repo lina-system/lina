@@ -167,10 +167,30 @@ components:
         total:
           type: integer
           minimum: 0
+    PlainLines:
+      type: object
+      additionalProperties: false
+      description: >
+        Checked model-written lines (lina#151). A field that failed its check, or was never written, is null; the
+        raw source text is never served in its place.
+      required: [title, now, result]
+      properties:
+        title:
+          type: string
+          nullable: true
+          maxLength: 25
+        now:
+          type: string
+          nullable: true
+          maxLength: 60
+        result:
+          type: string
+          nullable: true
+          maxLength: 80
     WorkCardSummary:
       type: object
       additionalProperties: false
-      required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now]
+      required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now, plain]
       properties:
         id:
           type: string
@@ -193,6 +213,8 @@ components:
           nullable: true
           maxLength: 120
           description: The latest comment or heartbeat note, plain text.
+        plain:
+          $ref: "#/components/schemas/PlainLines"
     WorkCardList:
       type: object
       additionalProperties: false
@@ -294,7 +316,7 @@ components:
     WorkCardDetail:
       type: object
       additionalProperties: false
-      required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now,
+      required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now, plain,
                  todos, workerRuns, gates, comments, runs]
       properties:
         id:
@@ -317,6 +339,8 @@ components:
           type: string
           nullable: true
           maxLength: 120
+        plain:
+          $ref: "#/components/schemas/PlainLines"
         todos:
           type: array
           items:

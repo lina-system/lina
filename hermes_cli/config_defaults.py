@@ -779,7 +779,7 @@ DEFAULT_CONFIG = {
         # kanban_decomposer emits a JSON graph of child tasks (more tokens).
         "triage_specifier": _aux(120),
         "kanban_decomposer": _aux(180),
-        "profile_describer": _aux(60),   # 1-2 sentence profile blurb; short, cheap
+        "profile_describer": _aux(60), "board_lines": _aux(60),  # profile blurb; board card lines (lina#151)
         "goal_judge": _aux(60),          # /goal satisfaction + contract drafting; JSON calls
         # Curator skill-usage review can take minutes on reasoning models (umbrellas over hundreds
         # of skills); route cheaper via `hermes model` → auxiliary → Curator.
@@ -1308,7 +1308,7 @@ DEFAULT_CONFIG = {
         "nudge_interval": 10,
         "external_messages": {"spool": ""},  # Host-level append-only collector spool; empty does nothing.
         "provider": "",  # One external provider; empty = built-in only.
-        "auto_recall_append": False,  # Recall spliced into the user message, not a tool result (lina#21).
+        "auto_recall_append": False, "prefix_fingerprints": False,  # Recall in the user message (#21); prefix hashes, no text (#25).
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.
     "delegation": {

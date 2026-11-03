@@ -87,11 +87,12 @@ class CardFacts:
     events: list[kanban_db.Event] = field(default_factory=list)
     comments: list[kanban_db.Comment] = field(default_factory=list)
     runs: list[kanban_db.Run] = field(default_factory=list)
+    board: Optional[str] = None  # the board the request resolved (``_board_slug``); None = the default board
 
 
-def _facts(conn: sqlite3.Connection, task: kanban_db.Task) -> CardFacts:
-    return CardFacts(task, kanban_db.list_events(conn, task.id),
-                     kanban_db.list_comments(conn, task.id), kanban_db.list_runs(conn, task.id))
+def _facts(conn: sqlite3.Connection, task: kanban_db.Task, board: Optional[str] = None) -> CardFacts:
+    return CardFacts(task, kanban_db.list_events(conn, task.id), kanban_db.list_comments(conn, task.id),
+                     kanban_db.list_runs(conn, task.id), board)
 
 
 def _work_card_ids(conn: sqlite3.Connection) -> list[str]:
@@ -286,6 +287,7 @@ def _elapsed_seconds(task: kanban_db.Task, now: int) -> int:
 
 
 def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
+    from hermes_cli.lina_board_plain import board_key, lookup  # checked model-written lines (lina#151), cache only
     state, reason = work_state(facts, now)
     todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
     return {
@@ -293,6 +295,7 @@ def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
         "state": state, "reason": reason, "elapsedSeconds": _elapsed_seconds(facts.task, now),
         "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
         "now": now_line(facts),
+        "plain": lookup("card", [facts.task.id], board=board_key(facts.board))[facts.task.id],
     }
 
 
@@ -329,9 +332,10 @@ def _evidence(facts: CardFacts) -> Optional[dict[str, Any]]:
     }
 
 
-def _goal_dict(conn: sqlite3.Connection, goal: kanban_db.Task, work_ids: list[str], now: int) -> dict[str, Any]:
-    goal_facts = _facts(conn, goal)
-    work = [_facts(conn, t) for t in filter(None, (kanban_db.get_task(conn, i) for i in work_ids))]
+def _goal_dict(conn: sqlite3.Connection, goal: kanban_db.Task, work_ids: list[str], now: int,
+               board: Optional[str] = None) -> dict[str, Any]:
+    goal_facts = _facts(conn, goal, board)
+    work = [_facts(conn, t, board) for t in filter(None, (kanban_db.get_task(conn, i) for i in work_ids))]
     state, reason = work_state(goal_facts, now)
     return {
         "id": goal.id, "title": goal.title, "agent": goal.assignee, "state": state, "reason": reason,
@@ -362,7 +366,7 @@ def _require_card(conn: Optional[sqlite3.Connection], card_id: str) -> kanban_db
 
 @router.get("/goals")
 def list_goals(board: Optional[str] = Query(None)):
-    now = int(time.time())
+    now, board = int(time.time()), _board_slug(board)
     with _read_conn(board) as conn:
         if conn is None:
             return {"goals": []}
@@ -370,18 +374,19 @@ def list_goals(board: Optional[str] = Query(None)):
         for goal_id, work_ids in _goal_work_cards(conn).items():
             goal = kanban_db.get_task(conn, goal_id)
             if goal is not None:
-                goals.append(_goal_dict(conn, goal, work_ids, now))
+                goals.append(_goal_dict(conn, goal, work_ids, now, board))
         return {"goals": goals}
 
 
 @router.get("/goals/{goal_id}")
 def get_goal(goal_id: str, board: Optional[str] = Query(None)):
+    board = _board_slug(board)
     with _read_conn(board) as conn:
         goal = _require_card(conn, goal_id)
         work_ids = _goal_work_cards(conn).get(goal_id)
         if not work_ids:
             raise HTTPException(status_code=404, detail=f"card {goal_id} is not a goal card")
-        return _goal_dict(conn, goal, work_ids, int(time.time()))
+        return _goal_dict(conn, goal, work_ids, int(time.time()), board)
 
 
 @router.get("/cards")
@@ -389,7 +394,7 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
                board: Optional[str] = Query(None)):
     if state is not None and state not in WORK_STATES:
         raise HTTPException(status_code=400, detail=f"state must be one of {list(WORK_STATES)}")
-    now = int(time.time())
+    now, board = int(time.time()), _board_slug(board)
     with _read_conn(board) as conn:
         if conn is None:
             return {"cards": []}
@@ -397,7 +402,7 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
         for task in filter(None, (kanban_db.get_task(conn, i) for i in _work_card_ids(conn))):
             if agent is not None and task.assignee != agent:
                 continue
-            summary = card_summary(_facts(conn, task), now)
+            summary = card_summary(_facts(conn, task, board), now)
             if state is None or summary["state"] == state:
                 cards.append(summary)
         return {"cards": cards}
@@ -405,8 +410,9 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
 
 @router.get("/cards/{card_id}")
 def get_card(card_id: str, board: Optional[str] = Query(None)):
+    board = _board_slug(board)
     with _read_conn(board) as conn:
-        return card_detail(_facts(conn, _require_card(conn, card_id)), int(time.time()))
+        return card_detail(_facts(conn, _require_card(conn, card_id), board), int(time.time()))
 
 
 @router.get("/inbox")

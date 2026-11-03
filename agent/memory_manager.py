@@ -367,11 +367,30 @@ class MemoryManager:
         )
         return "\n\n".join(p for p in parts if p and p.strip())
 
-    def _prefetch_provider(self, provider: MemoryProvider, query: str, *, session_id: str = "") -> str:
+    def recall_explicit(self, query: str, *, session_id: str = "") -> str:
+        """Merge an explicit ``memory_recall`` across providers. Bypasses the cadence-gated prefetch."""
+        clean_query = self._strip_skill_scaffolding(query)
+        if not clean_query or not self._owner_allows("prefetch"):
+            return ""
+        clean_query = _redact_for_provider(clean_query)
+        parts = self._each_provider(
+            "explicit recall failed (non-fatal)",
+            lambda p: self._prefetch_provider(p, clean_query, session_id=session_id, explicit=True),
+        )
+        return "\n\n".join(p for p in parts if p and p.strip())
+
+    def _prefetch_provider(self, provider: MemoryProvider, query: str, *, session_id: str = "",
+                           explicit: bool = False) -> str:
         """Run one provider's prefetch; external providers are bounded by a timeout. A stuck external
-        call keeps running on its daemon thread; _PREFETCH_GATE decides whether later turns call again."""
+        call keeps running on its daemon thread; _PREFETCH_GATE decides whether later turns call again.
+        ``explicit`` calls :meth:`MemoryProvider.recall_query` instead of the cadence-gated prefetch."""
+        def _call() -> str:
+            if explicit:
+                return provider.recall_query(query, session_id=session_id) or ""
+            return provider.prefetch(query, session_id=session_id) or ""
+
         if provider.name == "builtin":
-            return provider.prefetch(query, session_id=session_id)
+            return _call()
 
         result_box: dict[str, Any] = {}
 
@@ -379,7 +398,7 @@ class MemoryManager:
 
         def _run() -> None:
             try:
-                result_box["value"] = provider.prefetch(query, session_id=session_id) or ""
+                result_box["value"] = _call() or ""
             except Exception as exc:  # pragma: no cover - re-raised by caller
                 result_box["error"] = exc
             finally:
@@ -634,7 +653,9 @@ class MemoryManager:
             query = str((args or {}).get("query") or "").strip()
             if not query:
                 return tool_error("memory_recall needs a query; this turn's own recall is already shown.")
-            found = self.prefetch_all(query, session_id=str(kwargs.get("session_id") or ""))
+            # Not prefetch_all: that path is the turn-start injection, and Honcho's prefetch_sync
+            # refuses a second query in the same turn after it advances the cadence counters.
+            found = self.recall_explicit(query, session_id=str(kwargs.get("session_id") or ""))
             return build_memory_context_block(found) if found else json.dumps({"result": "Nothing found."})
         kwargs = {**kwargs, **scope}
         # A provider written against ``handle_tool_call(tool_name, args)`` gets only what it declares.
