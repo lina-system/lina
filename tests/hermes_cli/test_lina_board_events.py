@@ -295,6 +295,41 @@ def test_a_kanban_cursor_before_a_selectively_pruned_gap_gets_a_resync_and_one_a
     assert "resync" not in replay and ("kanban", "created", later) in _events(replay)
 
 
+def test_every_receipt_kind_the_code_writes_is_streamed_or_noise_with_a_reason():
+    import re
+
+    from hermes_cli import lina_board_events as events
+    written = set()
+    for folder in ("hermes_cli/worker", "hermes_cli/work"):
+        for path in (REPO / folder).glob("*.py"):
+            written |= set(re.findall(r'\.receipt\(\s*[^,()]+,\s*"([a-z_]+)"', path.read_text(encoding="utf-8")))
+    assert {"submitted", "exec_end", "notified", "answer"} <= written  # the scan itself finds the writers
+    noise, board = events.WORKER_NOISE_KINDS, events.WORKER_BOARD_KINDS
+    assert not set(noise) & set(board)
+    assert written - set(noise) - set(board) == set(), "classify each new receipt kind (board change or noise)"
+    assert set(noise) | set(board) <= written, "a listed kind nothing writes any more"
+    assert all(reason.strip() for reason in [*noise.values(), *board.values()])
+
+
+def test_a_run_waiting_for_a_person_and_the_answer_each_reach_the_socket(work, client, pool):
+    from hermes_cli.worker import settings
+    from hermes_cli.worker.hub import HUMAN_NOTICE_AFTER_S, Hub
+    from hermes_cli.worker.hub_store import Store
+    worker_root = settings.root(work.root)
+    store = Store(worker_root)
+    store.save({"id": "OT-ALP0001", "bot": "alpha", "topic": "t", "mode": "ulw", "state": "running", "runs": 1,
+                "host": "here", "created": NOW - 600, "started": NOW - 500, "prompt": "ulw # 디스크 점검\n",
+                "human_since": NOW - HUMAN_NOTICE_AFTER_S - 1})
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        Hub(worker_root, out=lambda *_: None)._human_notice(store.load("OT-ALP0001"), "1", NOW)  # the run asks a person
+        asked = _next(ws, pool)
+        assert _events(asked) == [("worker", "notified", "OT-ALP0001")]
+        store.receipt("OT-ALP0001", "answer", run=1, response={"action": "answer", "steps": 1})  # as hub.send does
+        answered = _next(ws, pool)
+        assert _events(answered) == [("worker", "answer", "OT-ALP0001")]
+
+
 def test_the_stream_is_behind_the_dashboard_socket_credential(work, client, pool):
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/lina/events?token=wrong") as ws:
         ws.receive_json()

@@ -4,7 +4,8 @@ Three append-only stores are tailed, each by its own position, and the three pos
 
 - ``work``: the work record's ``event`` table (one row per record line and run hand-off), by event id.
 - ``worker``: ``lina worker``'s ``receipts.jsonl`` (the hub appends a receipt on every run state change, next to the
-  job file it rewrites), by byte offset; only the receipts that change a run's state are sent.
+  job file it rewrites), by byte offset; every receipt is sent except the few that change nothing on the board
+  (``WORKER_NOISE_KINDS``): a dropped change leaves a stale screen, an extra event costs one refetch.
 - ``kanban``: the board's ``task_events`` table, by row id, read-only (the plugin's ``/events`` source).
 
 Each socket polls with one connection per store on its own single-thread executor (the kanban plugin's tailer
@@ -36,8 +37,43 @@ from hermes_cli.lina_board import _WORK_LOCK, _root
 BATCH_SECONDS = 0.3
 PAGE = 200
 CURSOR_PREFIX = "c2."  # c1 had positions only: an old cursor gets one resync
-WORKER_STATE_KINDS = frozenset({"submitted", "placed", "queued", "run_started", "start_failed_requeued", "follow_up",
-                                "exec_end", "delivery", "verdict"})
+# Receipts that change nothing the board shows of a run (``worker/board.py``: state and reason from ``work_state``,
+# host, startedAt, endedAt, the now line, the verdict). Every other kind is streamed, kinds added later included.
+WORKER_NOISE_KINDS = {
+    "card_linked": "a kanban card run's link: board.cards leaves card runs out, the kanban stream covers the card",
+    "card_link_failed": "the same link failing: nothing on the board changes",
+    "card_noticed": "the end written on the kanban card: the kanban stream carries that comment",
+    "card_notice_failed": "the same card note failing: nothing on the board changes",
+    "award": "the bid winner, recorded just before start_on: the placed receipt that follows carries host and state",
+    "publish_failed_resumes": "the job stays placing, as placed already said; the resumed placement ends in run_started",
+    "fetch_failed": "the result fetch for the end notice failed: state and delivery come as exec_end and delivery",
+    "group_notified": "keyed by a group, not a run; each member's own exec_end was streamed",
+    "cancel_requested": "only the request (cancel_why, not on the board); the cancel itself comes as exec_end",
+    "steer": "the instruction reached the running run; the job is unchanged and the now line comes from the runner's "
+             "live view, not from this receipt",
+}
+# What each streamed kind changes on the board. Not a filter (unknown kinds stream too): it is the other half of the
+# classification the drift test holds every receipt kind the code writes against.
+WORKER_BOARD_KINDS = {
+    "submitted": "a new run appears (planned / new)",
+    "placed": "host set, placing (in progress)",
+    "queued": "planned / queued",
+    "run_started": "in progress, startedAt",
+    "start_failed_requeued": "back to planned / queued",
+    "follow_up": "a new run of the same task: in progress again, verdict cleared",
+    "answer": "the person answered: the wait for a decision ends",
+    "notified": "state human only: the run waits for a person (waiting / decision); an end notice follows its exec_end",
+    "exec_end": "the run ended: state, reason, endedAt",
+    "delivery": "the result check: done or result missing",
+    "verdict": "accepted or rejected: done or stopped",
+}
+
+
+def _streamed(rec: dict) -> bool:
+    kind = rec.get("kind")
+    if kind == "notified":
+        return rec.get("state") == "human"
+    return kind not in WORKER_NOISE_KINDS
 log = logging.getLogger(__name__)
 
 
@@ -133,9 +169,9 @@ class Stream:
           first row stays while the store lives, and a new store starts with new rows. The store has no id of its
           own (``setting`` holds fixed defaults only).
         - worker: the receipts file's inode and its first line (a recreated or rotated file differs).
-        - kanban: the database file's inode and the oldest task (id, created_at). Not the first ``task_events``
-          row, which pruning moves. Deleting that oldest task changes the identity too: one spare resync,
-          never a miss.
+        - kanban: the database file's inode and the first task inserted (id, created_at; by rowid, since
+          created_at ties within a second and task ids are random). Not the first ``task_events`` row, which
+          pruning moves. Deleting that task changes the identity too: one spare resync, never a miss.
         """
         first = self._work().execute("SELECT id, at FROM event ORDER BY id LIMIT 1").fetchone()
         work = _digest(int(first[0]), str(first[1])) if first else ""
@@ -146,7 +182,7 @@ class Stream:
             worker = _digest(self.receipts.stat().st_ino, line) if line else ""
         kanban, db = "", self._kanban()
         if db is not None:
-            oldest = db.execute("SELECT id, created_at FROM tasks ORDER BY created_at, id LIMIT 1").fetchone()
+            oldest = db.execute("SELECT id, created_at FROM tasks ORDER BY rowid LIMIT 1").fetchone()
             from hermes_cli.kanban_db import kanban_db_path
             kanban = _digest(Path(kanban_db_path()).stat().st_ino, *oldest) if oldest else ""
         return work, worker, kanban
@@ -198,7 +234,7 @@ class Stream:
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(rec, dict) and rec.get("kind") in WORKER_STATE_KINDS and rec.get("task"):
+            if isinstance(rec, dict) and rec.get("kind") and rec.get("task") and _streamed(rec):
                 out.append({"source": "worker", "kind": rec["kind"], "id": rec["task"], "at": _epoch(rec.get("ts"))})
         return after + end, out
 
