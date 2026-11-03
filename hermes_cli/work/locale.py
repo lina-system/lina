@@ -52,6 +52,8 @@ LABELS: dict[str, dict[str, object]] = {
 # Reply results are stored in Korean (the record's data words); en accepts its own words for them.
 REPLY_RESULTS = ("반영함", "답변 필요", "반영 안 함")
 REPLY_ALIASES = {"applied": "반영함", "needs-answer": "답변 필요", "wont-apply": "반영 안 함"}
+# Where an owner's write came from (``--via``): the dashboard or the app's client API.
+VIAS = ("board", "app")
 STAGES = LABELS["ko"]["stage"]
 
 
