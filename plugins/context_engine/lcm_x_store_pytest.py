@@ -60,15 +60,25 @@ def pytest_collection_modifyitems(config, items) -> None:
         items[:] = selected
 
 
+def _host_store(request):
+    """LCM-X's conftest gives its host probes a real store (lina#173): this run keeps LCM-X's data in that same
+    store, set up after that fixture so both point at one database."""
+    try:
+        request.getfixturevalue("_real_host_store_dsn")
+        return request.getfixturevalue("_real_host_store")
+    except pytest.FixtureLookupError:
+        return None
+
+
 def _agent_for(path: str) -> str:
     return "lcm-test-" + hashlib.sha256(path.encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
 
 @pytest.fixture(autouse=True)
-def _lcm_x_on_store(monkeypatch):
+def _lcm_x_on_store(monkeypatch, request):
     import hermes_state_store
     from plugins.context_engine import lcm_x_store
-    store = _memory_store_fixture().PROCESS_STORE
+    store = _host_store(request) or _memory_store_fixture().PROCESS_STORE
     dsn = store.app_dsn()
     monkeypatch.setenv("LINA_STORE_DSN", dsn)
     monkeypatch.setattr(hermes_state_store, "resolve_dsn", lambda: dsn)
