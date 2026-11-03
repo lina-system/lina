@@ -55,6 +55,18 @@ def connect_database(opener: Callable[..., sqlite3.Connection], database: str | 
     return opener(database, **kwargs)
 
 
+def route_to_host_store(database: object, backend: str) -> bool:
+    """LINA: route *database* to the host's store when ``lcm.store_backend`` is ``auto`` or ``postgres`` and the home
+    has no ``lcm.db`` yet (a home with one stays on SQLite until lina#24 moves it). Returns whether it was routed."""
+    if str(backend).strip().lower() not in ("auto", "postgres"):
+        return False
+    try:
+        from plugins.context_engine.lcm_x_store import route_home
+    except ImportError:
+        return False
+    return route_home(database)
+
+
 def is_store_connection(conn: object) -> bool:
     """LINA: whether *conn* is a store connection (its schema is the host's migrations, not this plugin's DDL)."""
     return getattr(conn, "is_lina_store", False) is True

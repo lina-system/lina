@@ -48,6 +48,19 @@ def route(database: str | Path, agent_id: Optional[str] = None) -> str:
     return agent
 
 
+def route_home(database: str | Path) -> bool:
+    """``lcm.store_backend: auto|postgres``: a home with no ``lcm.db`` (or ``:memory:``) keeps its LCM-X data on the
+    store; an existing ``lcm.db`` stays the home's store until lina#24 moves it in (nothing is read from it here)."""
+    path = Path(str(database))
+    if str(database).startswith((":memory:", "file:")):
+        return False
+    if path.exists():
+        logger.warning("LCM-X keeps using %s: a home's lcm.db moves to the memory store with lina#24", path)
+        return False
+    route(path)
+    return True
+
+
 def unroute(database: str | Path) -> None:
     with _ROUTES_LOCK:
         _ROUTES.pop(_route_key(database), None)

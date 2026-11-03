@@ -154,6 +154,22 @@ def test_chunk_vectors_live_in_vec_chunks_and_embeddings(routed, memory_store_sq
         dag.close()
 
 
+@pytest.mark.parametrize("backend", ["auto", "postgres"])
+def test_store_backend_routes_a_fresh_home_and_keeps_an_existing_lcm_db(tmp_path, backend):
+    session = _lcm("sqlite_session")
+    fresh = tmp_path / "profiles" / "fresh" / "lcm.db"
+    old = tmp_path / "profiles" / "old" / "lcm.db"
+    old.parent.mkdir(parents=True)
+    old.write_bytes(b"SQLite format 3\x00")
+    try:
+        assert session.route_to_host_store(fresh, "sqlite") is False and lcm_x_store.backend_for(fresh) is None
+        assert session.route_to_host_store(fresh, backend) is True and lcm_x_store.backend_for(fresh) is not None
+        assert session.route_to_host_store(old, backend) is False and lcm_x_store.backend_for(old) is None
+        assert old.read_bytes() == b"SQLite format 3\x00"
+    finally:
+        lcm_x_store.unroute(fresh)
+
+
 def test_each_profile_sees_only_its_own_rows(routed):
     first, second = routed("alpha"), routed("beta")
     store_a, dag_a = _stores(first)

@@ -33,6 +33,30 @@ def _memory_store_fixture():
     return sys.modules[name]
 
 
+SQLITE_ONLY_LIST = _REPO / ".github" / "lcm-x-postgres-sqlite-only.txt"
+
+
+def sqlite_only_entries(path: Path = SQLITE_ONLY_LIST) -> list[str]:
+    """The node ids (or whole test files) of ``.github/lcm-x-postgres-sqlite-only.txt``: one per line, then ``#`` and
+    the reason. They test SQLite itself and keep running on the SQLite job."""
+    entries = []
+    for line in path.read_text(encoding="utf-8-sig").splitlines():
+        entry = line.split("#", 1)[0].strip()
+        if entry:
+            entries.append(entry)
+    return entries
+
+
+def pytest_collection_modifyitems(config, items) -> None:
+    entries = set(sqlite_only_entries())
+    selected, deselected = [], []
+    for item in items:
+        (deselected if item.nodeid in entries or item.nodeid.split("::", 1)[0] in entries else selected).append(item)
+    if deselected:
+        config.hook.pytest_deselected(items=deselected)
+        items[:] = selected
+
+
 def _agent_for(path: str) -> str:
     return "lcm-test-" + hashlib.sha256(path.encode("utf-8", "surrogatepass")).hexdigest()[:16]
 
