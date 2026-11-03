@@ -76,31 +76,8 @@ def _render_state_db_stats(stats: dict, holders=None, host_note: str = "") -> li
     )
     if row_bits:
         lines.append(("info", ", ".join(row_bits), ""))
-    fts = stats.get("fts_tables")
-    if fts:
-        present = [t for t, ok in fts.items() if ok]
-        lines.append(("info", "FTS tables: " + (", ".join(present) if present else "none"), ""))
-    deferral = stats.get("fts_rebuild_deferral")
-    if isinstance(deferral, dict):
-        pids = deferral.get("holder_pids") or "unknown"
-        if deferral.get("futile"):
-            lines.append(("warn", f"state.db FTS repair is blocked by the same holder(s) PID(s) {pids} for "
-                          f"{deferral.get('holders_attempts') or '?'} consecutive deferral(s); waiting is futile",
-                          "(stop ONLY the listed process(es) — the host gateway keeps running and its own "
-                          "retry rebuilds within a minute of the holder leaving)"))
-        else:
-            lines.append(("warn", f"state.db FTS repair is blocked after {deferral.get('attempts') or '?'} deferral(s) "
-                          f"by PID(s) {pids}",
-                          "(stop the listed processes; the host gateway's own retry then rebuilds, or run "
-                          "'hermes sessions optimize-storage' with every holder stopped)"))
-    # Oversized DB: suggest auto_prune, plus the offline optimize-storage pass when the FTS rebuild is
-    # pending, an earlier run stopped before tearing down the old index, or the stored FTS layout is an
-    # older release's (not just a lagging marker).
     if logical is not None and logical > STATE_DB_SIZE_WARN_BYTES:
         detail = "consider enabling sessions.auto_prune in config.yaml to bound growth"
-        structural_fts_upgrade = bool(stats.get("fts_storage_upgrade_needed"))
-        if stats.get("fts_rebuild_pending") or stats.get("fts_teardown_pending") or structural_fts_upgrade:
-            detail += "; run 'hermes sessions optimize-storage' offline (with the host gateway stopped) to compact FTS storage"
         lines.append(("warn", f"state.db is large ({_human_bytes(logical)})", f"({detail})"))
     # WAL runaway is deliberately NOT warned here: _state_db_wal already warns above 50 MB and offers --fix.
     return lines
@@ -292,7 +269,7 @@ _WRITE_PROBE_SNAPSHOT_MAX_BYTES = 1 << 30
 
 
 def _write_health_reason(state_db_path: Path, *, should_fix: bool):
-    """FTS/write-health probe (a rolled-back BEGIN IMMEDIATE). Against a store a live writer holds,
+    """SQLite integrity and placement-table probe. Against a store a live writer holds,
     that probe is the second-writer class (#103339), so probe a read-only snapshot instead; a quiet
     store is probed in place. Returns the failure reason, or None when healthy or skipped."""
     from hermes_state_repair import _db_opens_cleanly, _live_writer_holds_db
@@ -322,10 +299,6 @@ def _write_health_reason(state_db_path: Path, *, should_fix: bool):
 # ``structural`` has no in-place repair: an FTS rebuild cannot fix a canonical b-tree, and the
 # ``.malformed-backup`` the repair path would leave beside state.db is a copy of the same damage (#88587).
 _STATE_DB_REPAIRS = {
-    "fts": ("Repaired state.db FTS write health",
-            "state.db FTS write-health repair did not recover automatically",
-            "state.db FTS write corruption and auto-repair failed — restore from the backup copy beside state.db",
-            "state.db FTS write corruption — run 'hermes doctor --fix' (or 'hermes sessions repair') to rebuild the FTS index"),
     "schema": ("Repaired state.db schema ({count} sessions recovered)",
                "state.db schema repair did not recover automatically",
                "state.db schema malformed and auto-repair failed — restore from the backup copy beside state.db",
@@ -382,25 +355,24 @@ def _classify_unreadable_state_db(f: Finding, should_fix: bool, state_db_path: P
         return
     if not is_malformed_db_error(exc):
         return check_warn(f"{_DHH}/state.db exists but has issues: {exc}")
-    # sqlite_master itself is malformed (e.g. duplicate messages_fts): every statement fails before it runs,
+    # sqlite_master itself is malformed (e.g. duplicate schema entry): every statement fails before it runs,
     # so this is NOT a plain FTS rebuild — repair sqlite_master in place (backup first).
     check_warn(f"{_DHH}/state.db schema is malformed (sessions hidden until repaired)", f"({exc})")
     _repair_state_db(f, should_fix, state_db_path, "schema")
 
 
 def _state_db_health(f: Finding, should_fix: bool, state_db_path: Path, _DHH: str) -> None:
-    """Session count + FTS write-health probe; malformed-schema path when even COUNT(*) fails."""
+    """Session count + SQLite integrity probe; malformed-schema path when even COUNT(*) fails."""
     try:
         check_ok(f"{_DHH}/state.db exists ({_session_count(state_db_path)} sessions)")
-        # COUNT(*) succeeds even when the FTS index is corrupt and every write fails through the triggers.
         _write_reason = _write_health_reason(state_db_path, should_fix=should_fix)
     except Exception as e:
         return _classify_unreadable_state_db(f, should_fix, state_db_path, _DHH, e)
     if _write_reason is not None:
         if _report_structural_damage(f, should_fix, state_db_path, _DHH, _write_reason):
             return
-        check_warn(f"{_DHH}/state.db fails a write-health probe (FTS index may be corrupt)", f"({_write_reason})")
-        _repair_state_db(f, should_fix, state_db_path, "fts")
+        check_warn(f"{_DHH}/state.db fails a write-health probe (schema or placement tables may be damaged)", f"({_write_reason})")
+        _repair_state_db(f, should_fix, state_db_path, "schema")
 
 
 def _state_db_stats(issues: list, state_db_path: Path) -> None:
@@ -416,8 +388,7 @@ def _state_db_stats(issues: list, state_db_path: Path) -> None:
                 continue
             check_warn(_text, _detail)
             if "auto_prune" in _detail:
-                issues.append("state.db is large — enable sessions.auto_prune in config.yaml"
-                              + (" and run 'hermes sessions optimize-storage' offline (gateway stopped)" if "optimize-storage" in _detail else ""))
+                issues.append("state.db is large — enable sessions.auto_prune in config.yaml")
 
 
 def _state_db_wal(f: Finding, should_fix: bool, state_db_path: Path) -> None:

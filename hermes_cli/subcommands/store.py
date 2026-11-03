@@ -21,6 +21,27 @@ def _list_backups(store) -> None:
         print(f"{generation.name}  {manifest.get('bytes', '?')} bytes  {len(manifest.get('fingerprint', {}))} tables")
 
 
+def _collect_text(older_than_days) -> None:
+    """Reclaim message text no profile's transcript points at any more (``MessageStore.collect_unreferenced``)."""
+    from hermes_cli.config import load_config
+    from hermes_cli.profiles import list_profiles
+    from hermes_state import SessionDB
+    from hermes_state_store import DEFAULT_COLLECT_DAYS, collect_session_db_text
+    if older_than_days is None:
+        older_than_days = float((load_config().get("sessions") or {}).get("message_text_grace_days",
+                                                                       DEFAULT_COLLECT_DAYS))
+    for profile in list_profiles(lazy_skill_count=True):
+        db_path = profile.path / "state.db"
+        if not db_path.exists():
+            continue
+        db = SessionDB(db_path)
+        try:
+            count = collect_session_db_text(db, older_than_days=older_than_days)
+        finally:
+            db.close()
+        print(f"{profile.name}: reclaimed {count} message texts no session uses (older than {older_than_days:g} days)")
+
+
 def _run_action(args) -> int:
     from hermes_cli import store as store_mod
     from hermes_cli import store_backup, store_upgrade
@@ -31,6 +52,7 @@ def _run_action(args) -> int:
         "backups": lambda: _list_backups(store),
         "restore": lambda: store_backup.restore(store, args.generation),
         "upgrade": lambda: store_upgrade.upgrade(store),
+        "gc": lambda: _collect_text(args.older_than_days),
     }
     if args.store_action == "status":
         return store_mod.status(store)
@@ -64,5 +86,9 @@ def build_store_parser(subparsers) -> None:
     sub.add_parser("backups", help="List the backup generations")
     restore = sub.add_parser("restore", help="Restore a generation into a new volume (the current one is kept)")
     restore.add_argument("generation", nargs="?", help="generation name (default: the newest)")
+    gc = sub.add_parser("gc", help="Delete message text no profile's sessions use any more, after a grace period")
+    gc.add_argument("--older-than-days", type=float, default=None,
+                    help="Keep rows written or re-used more recently (default sessions.message_text_grace_days, 30; "
+                         "at least 2)")
     sub.add_parser("upgrade", help="Upgrade Honcho: backup, rehearsal migration, one migration job, smoke test")
     parser.set_defaults(func=_cmd_store, store_parser=parser)

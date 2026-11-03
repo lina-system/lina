@@ -7,6 +7,8 @@ from __future__ import annotations
 import json
 from typing import Any, Optional
 
+from hermes_state_store import text_sql
+
 _TODO_TOOLS = "tool_name IN ('todo_list', 'todo')"
 
 
@@ -34,10 +36,10 @@ class SessionTodoResultMixin:
                 before_id = 2**63 - 1
                 while True:
                     rows = conn.execute(
-                        "SELECT id, role, content, timestamp, tool_call_id, tool_calls, tool_name, message_uid, "
-                        "absorbed_message_uids FROM messages INDEXED BY idx_messages_session_id "
+                        f"SELECT id, role, {text_sql('content')} AS content, timestamp, tool_call_id, {text_sql('tool_calls')} AS tool_calls, tool_name, message_uid, "
+                        "absorbed_message_uids FROM transcript_rows INDEXED BY idx_transcript_rows_session_id "
                         f"WHERE session_id = ? AND id < ? AND role = 'tool' AND {_TODO_TOOLS} AND (active = 1 OR compacted = 1) "
-                        "AND length(content) <= ? ORDER BY id DESC LIMIT 100",
+                        f"AND length({text_sql('content')}) <= ? ORDER BY id DESC LIMIT 100",
                         (sid, before_id, max_chars),
                     ).fetchall()
                     if not rows:
@@ -47,7 +49,7 @@ class SessionTodoResultMixin:
                         if not call_id or self._todo_copy_removed(row, removed):
                             continue
                         prior = conn.execute(
-                            "SELECT role, tool_calls FROM messages INDEXED BY idx_messages_session_id "
+                            f"SELECT role, {text_sql('tool_calls')} AS tool_calls FROM transcript_rows INDEXED BY idx_transcript_rows_session_id "
                             "WHERE session_id = ? AND id < ? AND role IN ('assistant', 'user', 'system') "
                             "AND (active = 1 OR compacted = 1) ORDER BY id DESC LIMIT 1",
                             (sid, row["id"]),
@@ -99,9 +101,9 @@ class SessionTodoResultMixin:
         """Copy identity -> newest removed (``active=0, compacted=0``) Todo result row id in the lineage."""
         removed: dict[Any, int] = {}
         for row in conn.execute(
-                "SELECT id, role, timestamp, tool_call_id, tool_calls, tool_name, message_uid, absorbed_message_uids, "
-                "display_identity, CASE WHEN display_identity IS NULL THEN content END AS content "
-                f"FROM messages WHERE session_id IN ({','.join('?' * len(session_ids))}) AND active = 0 "
+                f"SELECT id, role, timestamp, tool_call_id, {text_sql('tool_calls')} AS tool_calls, tool_name, message_uid, absorbed_message_uids, "
+                f"display_identity, CASE WHEN display_identity IS NULL THEN {text_sql('content')} END AS content "
+                f"FROM transcript_rows WHERE session_id IN ({','.join('?' * len(session_ids))}) AND active = 0 "
                 f"AND compacted = 0 AND role = 'tool' AND {_TODO_TOOLS}", tuple(session_ids)):
             for copy in self._todo_copies(row, row["display_identity"]):
                 removed[copy] = max(removed.get(copy, 0), row["id"])

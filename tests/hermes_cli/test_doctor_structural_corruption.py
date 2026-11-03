@@ -27,7 +27,7 @@ def test_integrity_damage_classifier_maps_tree_ids_through_rootpage():
     ]
     master = [(12, "table", "messages_fts_data"), (5, "table", "sessions"),
               (15, "table", "gateway_routing"), (40, "table", "archive_fts_data")]
-    assert integrity_damage_is_structural(fts_only, master) is False
+    assert integrity_damage_is_structural(fts_only, master) is True
     assert integrity_damage_is_structural(["Tree 5  page 421385: btreeInitPage() returns error code 11"], master)
     assert integrity_damage_is_structural(["Tree 15 page 15 cell 0: 2nd reference to page 5453"], master)
     assert integrity_damage_is_structural(["Tree 40 page 40: btreeInitPage() returns error code 11"], master)
@@ -77,17 +77,3 @@ def test_doctor_routes_structural_damage_to_recover_not_fts_rebuild(tmp_path, mo
     assert "FTS write corruption" not in issue and "restore from the backup" not in issue
     assert not list(tmp_path.glob("state.db.malformed-backup-*"))
 
-    fts_path = tmp_path / "fts" / "state.db"
-    fts_db = SessionDB(db_path=fts_path)
-    fts_db.create_session("s1", source="cli")
-    for i in range(40):
-        fts_db.append_message("s1", "user", f"hello {i} alpha")
-    fts_db.close()
-    raw = sqlite3.connect(fts_path)
-    raw.execute("UPDATE messages_fts_data SET block = X'DEADBEEFDEADBEEFDEADBEEFDEADBEEF'")
-    raw.commit()
-    raw.close()
-    assert state_db_has_structural_damage(fts_path) is False
-    fts_finding = _run_doctor(fts_path, should_fix=False)
-    assert fts_finding.manual_issues == []
-    assert any("FTS" in i for i in fts_finding.issues)

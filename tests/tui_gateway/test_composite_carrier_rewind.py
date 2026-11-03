@@ -128,12 +128,10 @@ def test_rewind_matches_cold_sanitized_carrier_to_unchanged_warm_ask(
     sid, session_key, session = install(
         [carrier, {"role": "assistant", "content": "failed"}]
     )
-    db._conn.execute(
-        "UPDATE messages SET api_content = ? "
-        "WHERE session_id = ? AND role = 'user'",
-        (carrier["content"], session_key),
-    )
-    db._conn.commit()
+    from hermes_state_store import rewrite_rows
+    ids = [row[0] for row in db._conn.execute(
+        "SELECT id FROM transcript_rows WHERE session_id = ? AND role = 'user'", (session_key,))]
+    db._execute_write(lambda conn: rewrite_rows(conn, db.message_store, ids, {"api_content": carrier["content"]}))
     # A live agent still has the raw wire form while a cold DB projection has
     # already applied the role-aware sanitize_context(...).strip() rule and
     # retained the raw provider wire in api_content.
@@ -169,7 +167,7 @@ def test_retry_fails_closed_when_transcript_changes_after_snapshot(
     assert "active transcript changed" in response["error"]["message"]
     assert session["history"] == before_history
     rows = db._conn.execute(
-        "SELECT content, active, display_kind FROM messages "
+        "SELECT msg_text(text_uid, 'content') AS content, active, display_kind FROM transcript_rows "
         "WHERE session_id = ? ORDER BY id",
         (session_key,),
     ).fetchall()

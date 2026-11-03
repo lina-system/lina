@@ -40,7 +40,7 @@ def _backdate_session(db: SessionDB, session_id: str, ts: float) -> None:
 
 def _set_message_timestamps(db: SessionDB, session_id: str, ts: float) -> None:
     db._conn.execute(
-        "UPDATE messages SET timestamp = ? WHERE session_id = ?", (ts, session_id)
+        "UPDATE transcript_rows SET timestamp = ? WHERE session_id = ?", (ts, session_id)
     )
     db._conn.commit()
 
@@ -618,7 +618,7 @@ class TestSweepOrphanedSessions:
         raw.execute("DELETE FROM sessions WHERE id IN ('lost-old', 'lost-fresh')")
         assert _reconstruct_missing_sessions(raw)["sessions_reconstructed"] == 2
         raw.execute("UPDATE sessions SET started_at = ?, last_activity_at = ? WHERE id = 'lost-old'", (stale, stale))
-        raw.execute("UPDATE messages SET timestamp = ? WHERE session_id = 'lost-old'", (stale,))
+        raw.execute("UPDATE transcript_rows SET timestamp = ? WHERE session_id = 'lost-old'", (stale,))
         raw.commit()
         raw.close()
 

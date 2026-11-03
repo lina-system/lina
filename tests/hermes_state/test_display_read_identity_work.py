@@ -54,7 +54,7 @@ def test_a_display_read_with_no_removed_row_hashes_nothing(tmp_path, monkeypatch
 def test_a_display_read_hashes_only_rows_at_a_removed_rows_timestamp(tmp_path, monkeypatch):
     with SessionDB(db_path=tmp_path / 'state.db') as db:
         _session(db, rewind=True)
-        removed = db._read_one('SELECT COUNT(*) FROM messages WHERE active = 0 AND compacted = 0')[0]
+        removed = db._read_one('SELECT COUNT(*) FROM transcript_rows WHERE active = 0 AND compacted = 0')[0]
         assert removed == 2
         for read in _reads(db):
             shown, hashes = _hashes(db, monkeypatch, read)

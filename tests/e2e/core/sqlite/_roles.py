@@ -214,7 +214,7 @@ def role_churn(a: dict, out: Out) -> int:
     def _raw_cycle() -> None:
         conn = sqlite3.connect(str(db_path), timeout=30.0)
         try:
-            conn.execute("SELECT count(*) FROM messages").fetchone()
+            conn.execute("SELECT count(*) FROM transcript_rows").fetchone()
         finally:
             conn.close()
 
@@ -239,7 +239,7 @@ def role_opener(a: dict, out: Out) -> int:
         if a.get("raw"):
             conn = sqlite3.connect(str(db_path), timeout=30.0)
             try:
-                return conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+                return conn.execute("SELECT count(*) FROM transcript_rows").fetchone()[0]
             finally:
                 conn.close()
         from hermes_state import SessionDB
@@ -265,7 +265,7 @@ def role_opener(a: dict, out: Out) -> int:
 def _raw_count(db_path: Path) -> int:
     conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30.0)
     try:
-        return conn.execute("SELECT count(*) FROM messages").fetchone()[0]
+        return conn.execute("SELECT count(*) FROM transcript_rows").fetchone()[0]
     finally:
         conn.close()
 

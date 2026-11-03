@@ -119,7 +119,7 @@ def test_missing_history_table_is_refused_not_recreated(tmp_path):
     path = _pre_merge_store(tmp_path / "state.db")
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("PRAGMA foreign_keys=OFF")
-        conn.execute("DROP TABLE messages")
+        conn.execute("DROP TABLE transcript_rows")
         conn.commit()
     before = path.read_bytes()
     with pytest.raises(HTTPException) as caught:
@@ -136,7 +136,7 @@ def test_version_bump_migration_is_additive_and_idempotent(tmp_path):
     for _ in range(2):
         with SessionDB(db_path=path) as db:
             assert db._conn.execute("SELECT version FROM schema_version").fetchone()[0] == SCHEMA_VERSION
-            assert db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 1
+            assert db._conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0] == 1
     assert set(_ADDED_TABLES) <= _tables(path)
     with closing(sqlite3.connect(path)) as conn:
         for table, column in _ADDED_COLUMNS:
@@ -269,7 +269,8 @@ def _lagging_store_with_history(home, rows=400):
     with SessionDB(db_path=path) as db:
         db.create_session("kept", source="cli")
         for i in range(rows):
-            db.append_message("kept", role="user", content=f"history {i} " * 40)
+            db.append_message("kept", role="user", content=f"history {i} " * 40,
+                              display_metadata={"padding": "x" * 2000})
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
         conn.execute("DROP INDEX IF EXISTS idx_sessions_effective_activity")
@@ -291,7 +292,7 @@ def test_corrupt_non_root_page_plus_drift_is_not_written(tmp_path):
     path = _lagging_store_with_history(_profile_home(tmp_path))
     with closing(sqlite3.connect(path)) as conn:
         page_size = conn.execute("PRAGMA page_size").fetchone()[0]
-        root = conn.execute("SELECT rootpage FROM sqlite_master WHERE name='messages'").fetchone()[0]
+        root = conn.execute("SELECT rootpage FROM sqlite_master WHERE name='transcript_rows'").fetchone()[0]
         pages = conn.execute("PRAGMA page_count").fetchone()[0]
     victim = max(root + 5, pages // 2)  # a messages leaf, never page 1 / sqlite_master
     with open(path, "r+b") as fh:

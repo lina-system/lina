@@ -10,6 +10,8 @@ from types import SimpleNamespace
 
 import pytest
 
+from hermes_state import SessionDB
+
 from tests.gateway.fixtures.local_recovery_probe import Model, child_env, daemon, rpc, websocket
 from tests.gateway.test_surface_admission import _admissions, _authority, _wait_for
 
@@ -105,8 +107,10 @@ def test_real_daemon_persists_hidden_rows_and_the_paste_title_preview(tmp_path, 
         model.server_close()
         thread.join(timeout=5)
 
-    with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
-        rows = {sid: db.execute("SELECT content, display_kind, display_metadata FROM messages WHERE session_id=? AND role='user'",
+    with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+        db = state_db._conn
+        db.row_factory = None
+        rows = {sid: db.execute("SELECT msg_text(text_uid, 'content') AS content, display_kind, display_metadata FROM transcript_rows WHERE session_id=? AND role='user'",
                                 (sid,)).fetchall() for sid in sids.values()}
     [(hidden_text, hidden_kind, _)] = rows[sids['hidden']]
     assert (hidden_text, hidden_kind) == ('HIDDEN_WIDGET_INTENT', 'hidden'), 'a hidden widget intent never persists as a user bubble'

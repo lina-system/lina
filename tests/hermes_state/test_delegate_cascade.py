@@ -11,6 +11,7 @@ the deletion set, permanently deleting the parent session and its messages.
 import json
 import sqlite3
 
+from hermes_state import SessionDB
 from hermes_state_schema import reconcile_state_schema
 from hermes_state_sessions import _collect_delegate_child_ids, _delete_delegate_children
 
@@ -33,7 +34,7 @@ def _add_session(conn, sid, *, delegate_from=None, parent_session_id=None, messa
     )
     for _ in range(messages):
         conn.execute(
-            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, 'user', 'x', 0)", (sid,)
+            "INSERT INTO transcript_rows (session_id, role, timestamp) VALUES (?, 'user', 0)", (sid,)
         )
 
 
@@ -88,16 +89,21 @@ class TestCollectDelegateChildIds:
 
 
 class TestDeleteDelegateChildrenPreservesParent:
-    def test_cycle_does_not_delete_parent_or_its_messages(self):
-        conn = _make_conn()
-        _add_session(conn, "A", delegate_from="B", messages=3)
-        _add_session(conn, "B", delegate_from="A", messages=2)
+    def test_cycle_does_not_delete_parent_or_its_messages(self, tmp_path):
+        db = SessionDB(tmp_path / "state.db")
+        try:
+            db.create_session("A", source="cli", model_config={"_delegate_from": "B"})
+            db.create_session("B", source="cli", model_config={"_delegate_from": "A"})
+            for sid, count in (("A", 3), ("B", 2)):
+                for _ in range(count):
+                    db.append_message(sid, "user", "x")
 
-        removed = _delete_delegate_children(conn, ["A"])
+            removed = db._execute_write(lambda conn: _delete_delegate_children(conn, ["A"], db.message_store))
 
-        assert "A" not in removed
-        # Parent A and its messages survive; only delegate child B is gone.
-        assert conn.execute("SELECT COUNT(*) FROM sessions WHERE id='A'").fetchone()[0] == 1
-        assert conn.execute("SELECT COUNT(*) FROM messages WHERE session_id='A'").fetchone()[0] == 3
-        assert conn.execute("SELECT COUNT(*) FROM sessions WHERE id='B'").fetchone()[0] == 0
-        assert conn.execute("SELECT COUNT(*) FROM messages WHERE session_id='B'").fetchone()[0] == 0
+            assert "A" not in removed
+            assert db.get_session("A") is not None
+            assert [row["content"] for row in db.get_messages("A")] == ["x"] * 3
+            assert db.get_session("B") is None
+            assert db.get_messages("B") == []
+        finally:
+            db.close()

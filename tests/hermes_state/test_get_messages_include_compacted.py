@@ -26,6 +26,7 @@ from agent.context_compressor import (
     _SUMMARY_END_MARKER,
 )
 from hermes_state import SessionDB
+from hermes_state_store import insert_rows, rewrite_rows
 
 
 @pytest.fixture
@@ -102,7 +103,7 @@ class TestIncludeCompacted:
         db = _seed(SessionDB(path))
         expected = db.get_messages("s1", include_inactive=True)
         db._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET display_order = NULL, display_identity = NULL"))
+            "UPDATE transcript_rows SET display_order = NULL, display_identity = NULL"))
         if read_only:
             db.close()
             db = SessionDB(path, read_only=True)
@@ -159,12 +160,12 @@ class TestDisplayDedupe:
             placeholders = ",".join("?" * len(ids))
             conn.execute(
                 f"""
-                INSERT INTO messages
-                    (session_id, role, content, tool_call_id, tool_calls,
+                INSERT INTO transcript_rows
+                    (session_id, role, text_uid, content_digest, tool_call_count, tool_call_id,
                      tool_name, timestamp, active, compacted)
-                SELECT session_id, role, content, tool_call_id, tool_calls,
+                SELECT session_id, role, text_uid, content_digest, tool_call_count, tool_call_id,
                        tool_name, timestamp, 0, 1
-                FROM messages
+                FROM transcript_rows
                 WHERE session_id = ? AND id IN ({placeholders})
                 """,
                 [sid, *ids],
@@ -188,7 +189,7 @@ class TestDisplayDedupe:
         db.append_messages_batch(sid, [
             {"role": "assistant", "content": chr(65 + i) * payload_size} for i in range(12)])
         db._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET display_order = NULL, display_identity = NULL WHERE session_id = ?", (sid,)))
+            "UPDATE transcript_rows SET display_order = NULL, display_identity = NULL WHERE session_id = ?", (sid,)))
         if read_only:
             db.close()
             db = SessionDB(path, read_only=True)
@@ -203,10 +204,10 @@ class TestDisplayDedupe:
             assert peak < payload_size * 5
             if not read_only:
                 missing = db._read_one(
-                    "SELECT COUNT(*) FROM messages WHERE display_order IS NULL OR display_identity IS NULL")
+                    "SELECT COUNT(*) FROM transcript_rows WHERE display_order IS NULL OR display_identity IS NULL")
                 assert missing is not None and missing[0] == 0
                 assert [row[0] for row in db._read_all(
-                    "SELECT display_order FROM messages WHERE content = ? ORDER BY id", ("small-0",))] == [first_id, first_id]
+                    "SELECT display_order FROM transcript_rows WHERE msg_text(text_uid, 'content') = ? ORDER BY id", ("small-0",))] == [first_id, first_id]
         finally:
             db.close()
 
@@ -223,14 +224,15 @@ class TestDisplayDedupe:
         writer.create_session("snapshot", source="desktop")
         writer.append_message("snapshot", "assistant", "visible-at-scan")
         writer._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET display_order = NULL, display_identity = NULL"))
+            "UPDATE transcript_rows SET display_order = NULL, display_identity = NULL"))
         writer._conn.execute("PRAGMA busy_timeout = 0")
         reader = SessionDB(path, read_only=True)
         identity = reader._display_identity
 
         def rewind():
-            writer._execute_write(lambda conn: conn.execute(
-                "UPDATE messages SET content = 'rewound', active = 0, compacted = 0"), patience_s=0)
+            writer._execute_write(lambda conn: rewrite_rows(
+                conn, writer.message_store, [row[0] for row in conn.execute("SELECT id FROM transcript_rows")],
+                {"content": "rewound", "active": 0, "compacted": 0}), patience_s=0)
 
         def rewind_after_identity(key):
             result = identity(key)
@@ -263,7 +265,7 @@ class TestDisplayDedupe:
         writer.create_session("error", source="desktop")
         writer.append_message("error", "assistant", "message")
         writer._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET display_order = NULL, display_identity = NULL"))
+            "UPDATE transcript_rows SET display_order = NULL, display_identity = NULL"))
         writer.close()
         reader = SessionDB(path, read_only=True)
         identity = reader._display_identity
@@ -320,11 +322,9 @@ class TestDisplayDedupe:
 
         def seed(sid, count):
             db.create_session(sid, source="desktop")
-            db._execute_write(lambda conn: conn.executemany(
-                "INSERT INTO messages (session_id, role, content, timestamp, display_order) "
-                "VALUES (?, 'assistant', ?, ?, ?)",
-                [(sid, f"row-{index}", 100_000.0, index + 1) for index in range(count)],
-            ))
+            db._execute_write(lambda conn: insert_rows(conn, db.message_store, [
+                {"session_id": sid, "role": "assistant", "content": f"row-{index}",
+                 "timestamp": 100_000.0, "display_order": index + 1} for index in range(count)]))
 
         seed("write-small", 2_000)
         seed("write-large", 20_000)
@@ -356,7 +356,7 @@ class TestDisplayDedupe:
         original_id = db.append_message(sid, role="user", content="live ask", timestamp=100.0)
         later_id = db.append_message(sid, role="assistant", content="later answer", timestamp=200.0)
         db._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET active = 0, compacted = 1 WHERE session_id = ?", (sid,)))
+            "UPDATE transcript_rows SET active = 0, compacted = 1 WHERE session_id = ?", (sid,)))
         carrier = (
             f"{_MERGED_PRIOR_CONTEXT_HEADER}\n"
             "live ask\n\n"
@@ -369,7 +369,7 @@ class TestDisplayDedupe:
         # Simulate rows written before display_order existed; lazy backfill must use
         # the same normalized user-turn key as the historical Python projection.
         db._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET display_order = NULL WHERE session_id = ?", (sid,)))
+            "UPDATE transcript_rows SET display_order = NULL WHERE session_id = ?", (sid,)))
 
         reader = SessionDB(db.db_path, read_only=True) if read_only else db
         try:
@@ -396,16 +396,16 @@ class TestDisplayDedupe:
         path = tmp_path / "state.db"
         SessionDB(path).close()
         conn = sqlite3.connect(path)
-        conn.execute("DROP TRIGGER IF EXISTS messages_display_identity_update")
+        conn.execute("DROP TRIGGER IF EXISTS transcript_rows_display_identity_update")
         conn.execute(
-            "CREATE TRIGGER messages_display_identity_update AFTER UPDATE OF role, content, timestamp, "
-            "tool_call_id, tool_calls, tool_name, display_kind, display_metadata ON messages "
-            "BEGIN UPDATE messages SET display_identity = NULL, display_order = NULL WHERE id = new.id; END")
+            "CREATE TRIGGER transcript_rows_display_identity_update AFTER UPDATE OF role, text_uid, timestamp, "
+            "tool_call_id, tool_name, display_kind, display_metadata ON transcript_rows "
+            "BEGIN UPDATE transcript_rows SET display_identity = NULL, display_order = NULL WHERE id = new.id; END")
         conn.commit()
         conn.close()
         db = SessionDB(path)
         trigger_sql = db._conn.execute(
-            "SELECT sql FROM sqlite_master WHERE name = 'messages_display_identity_update'").fetchone()[0]
+            "SELECT sql FROM sqlite_master WHERE name = 'transcript_rows_display_identity_update'").fetchone()[0]
         assert "display_metadata" not in trigger_sql and "display_kind" in trigger_sql
 
         sid = "metadata"
@@ -415,7 +415,7 @@ class TestDisplayDedupe:
             for index in range(3)
         ]
         before = db._conn.execute(
-            "SELECT id, display_order, display_identity FROM messages WHERE session_id = ? ORDER BY id",
+            "SELECT id, display_order, display_identity FROM transcript_rows WHERE session_id = ? ORDER BY id",
             (sid,),
         ).fetchall()
 
@@ -423,7 +423,7 @@ class TestDisplayDedupe:
         db.set_message_reaction(sid, row_ids[1], "👍", author="user")
         assert db._conn.total_changes - changes == 1
         assert db._conn.execute(
-            "SELECT id, display_order, display_identity FROM messages WHERE session_id = ? ORDER BY id",
+            "SELECT id, display_order, display_identity FROM transcript_rows WHERE session_id = ? ORDER BY id",
             (sid,),
         ).fetchall() == before
 
@@ -438,21 +438,21 @@ class TestDisplayDedupe:
         db.append_message(sid, role="assistant", content="same", timestamp=100.0)
         unaffected = db.append_message(sid, role="assistant", content="other", timestamp=100.0)
         unaffected_before = db._conn.execute(
-            "SELECT display_order, display_identity FROM messages WHERE id = ?", (unaffected,)
+            "SELECT display_order, display_identity FROM transcript_rows WHERE id = ?", (unaffected,)
         ).fetchone()
-        db._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET content = ? WHERE id = ?", ('"changed"', first)))
+        db._execute_write(lambda conn: rewrite_rows(
+            conn, db.message_store, [first], {"content": '"changed"'}))
 
         changes = db._conn.total_changes
         db.get_messages(sid, include_compacted=True)
         assert db._conn.total_changes - changes == 2
         assert db._conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE session_id = ? "
+            "SELECT COUNT(*) FROM transcript_rows WHERE session_id = ? "
             "AND (display_order IS NULL OR display_identity IS NULL)",
             (sid,),
         ).fetchone()[0] == 0
         assert db._conn.execute(
-            "SELECT display_order, display_identity FROM messages WHERE id = ?", (unaffected,)
+            "SELECT display_order, display_identity FROM transcript_rows WHERE id = ?", (unaffected,)
         ).fetchone() == unaffected_before
 
     def test_legacy_store_is_readable_then_lazily_migrated(self, tmp_path):
@@ -462,24 +462,24 @@ class TestDisplayDedupe:
         writer.append_message("legacy", role="assistant", content="same", timestamp=1.0)
         writer.append_message("legacy", role="assistant", content="same", timestamp=1.0)
         new_store_missing = writer._read_one(
-            "SELECT COUNT(*) FROM messages "
+            "SELECT COUNT(*) FROM transcript_rows "
             "WHERE display_order IS NULL OR display_identity IS NULL")
         assert new_store_missing is not None and new_store_missing[0] == 0
         writer.close()
 
         conn = sqlite3.connect(path)
-        conn.execute("DROP TRIGGER IF EXISTS messages_display_order_insert")
-        conn.execute("DROP TRIGGER IF EXISTS messages_display_visibility_update")
-        conn.execute("DROP TRIGGER IF EXISTS messages_display_identity_update")
-        conn.execute("DROP TRIGGER IF EXISTS messages_display_identity_delete")
-        conn.execute("DROP INDEX IF EXISTS idx_messages_display_page")
-        conn.execute("DROP INDEX IF EXISTS idx_messages_display_backfill")
-        conn.execute("DROP INDEX IF EXISTS idx_messages_display_identity")
-        conn.execute("DROP INDEX IF EXISTS idx_messages_session_id")
-        columns = {row[1] for row in conn.execute("PRAGMA table_info(messages)")}
+        conn.execute("DROP TRIGGER IF EXISTS transcript_rows_display_order_insert")
+        conn.execute("DROP TRIGGER IF EXISTS transcript_rows_display_visibility_update")
+        conn.execute("DROP TRIGGER IF EXISTS transcript_rows_display_identity_update")
+        conn.execute("DROP TRIGGER IF EXISTS transcript_rows_display_identity_delete")
+        conn.execute("DROP INDEX IF EXISTS idx_transcript_rows_display_page")
+        conn.execute("DROP INDEX IF EXISTS idx_transcript_rows_display_backfill")
+        conn.execute("DROP INDEX IF EXISTS idx_transcript_rows_display_identity")
+        conn.execute("DROP INDEX IF EXISTS idx_transcript_rows_session_id")
+        columns = {row[1] for row in conn.execute("PRAGMA table_info(transcript_rows)")}
         for column in ("display_order", "display_identity"):
             if column in columns:
-                conn.execute(f"ALTER TABLE messages DROP COLUMN {column}")
+                conn.execute(f"ALTER TABLE transcript_rows DROP COLUMN {column}")
         conn.commit()
         conn.close()
 
@@ -489,17 +489,17 @@ class TestDisplayDedupe:
             assert len(legacy_messages) == 1
             json.dumps(legacy_messages)
             assert "display_order" not in {
-                row[1] for row in reader._conn.execute("PRAGMA table_info(messages)")}
+                row[1] for row in reader._conn.execute("PRAGMA table_info(transcript_rows)")}
         finally:
             reader.close()
 
         migrated = SessionDB(path)
         try:
             assert len(migrated.get_messages("legacy", include_compacted=True)) == 1
-            columns = {row[1] for row in migrated._conn.execute("PRAGMA table_info(messages)")}
+            columns = {row[1] for row in migrated._conn.execute("PRAGMA table_info(transcript_rows)")}
             assert {"display_order", "display_identity"} <= columns
             assert migrated._conn.execute(
-                "SELECT COUNT(*) FROM messages "
+                "SELECT COUNT(*) FROM transcript_rows "
                 "WHERE display_order IS NULL OR display_identity IS NULL").fetchone()[0] == 0
         finally:
             migrated.close()
@@ -537,7 +537,7 @@ class TestDisplayDedupe:
         original = _row_ids(db, sid)
         db._execute_write(
             lambda conn: conn.execute(
-                "UPDATE messages SET active = 0, compacted = 1 WHERE session_id = ?",
+                "UPDATE transcript_rows SET active = 0, compacted = 1 WHERE session_id = ?",
                 [sid],
             )
         )
@@ -563,7 +563,7 @@ class TestDisplayDedupe:
         # Archive the live row and copy again: the newest compacted copy wins.
         db._execute_write(
             lambda conn: conn.execute(
-                "UPDATE messages SET active = 0, compacted = 1 WHERE session_id = ?",
+                "UPDATE transcript_rows SET active = 0, compacted = 1 WHERE session_id = ?",
                 [sid],
             )
         )
@@ -607,12 +607,9 @@ class TestDisplayDedupe:
         def _seed_tool_rows(conn):
             ts = 1700000000.0
             for cid in ("call-1", "call-2"):
-                conn.execute(
-                    "INSERT INTO messages (session_id, role, content, tool_call_id,"
-                    " tool_name, timestamp, active, compacted)"
-                    " VALUES (?, ?, ?, ?, ?, ?, 1, 0)",
-                    (sid, "tool", "identical result", cid, "search", ts),
-                )
+                insert_rows(conn, db.message_store, [{"session_id": sid, "role": "tool",
+                    "content": "identical result", "tool_call_id": cid, "tool_name": "search",
+                    "timestamp": ts, "active": 1, "compacted": 0}])
 
         db._execute_write(_seed_tool_rows)
         msgs = db.get_messages(sid, include_compacted=True)
@@ -626,12 +623,9 @@ class TestDisplayDedupe:
         db.create_session(sid, source="cli")
 
         def _seed_tool_row(conn):
-            conn.execute(
-                "INSERT INTO messages (session_id, role, content, tool_call_id,"
-                " tool_name, timestamp, active, compacted)"
-                " VALUES (?, ?, ?, ?, ?, ?, 1, 0)",
-                (sid, "tool", "result", "call-1", "search", 1700000000.0),
-            )
+            insert_rows(conn, db.message_store, [{"session_id": sid, "role": "tool", "content": "result",
+                "tool_call_id": "call-1", "tool_name": "search", "timestamp": 1700000000.0,
+                "active": 1, "compacted": 0}])
 
         db._execute_write(_seed_tool_row)
         orig = _row_ids(db, sid)

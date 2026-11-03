@@ -181,7 +181,7 @@ def test_delete_session_removes_session_and_messages(db, tmp_path):
     assert db.delete_session("doomed", sessions_dir=tmp_path / "sessions") is True
     assert db.get_session("doomed") is None
     remaining = db._conn.execute(
-        "SELECT COUNT(*) FROM messages WHERE session_id = ?", ("doomed",)
+        "SELECT COUNT(*) FROM transcript_rows WHERE session_id = ?", ("doomed",)
     ).fetchone()[0]
     assert remaining == 0
     # Deleting again reports False (not found)

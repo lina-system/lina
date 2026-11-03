@@ -224,6 +224,16 @@ jobs:
           test-environment: 'true'
           prune-python-cache: true
 
+      - name: Install Postgres with pgvector
+        # The memory store tests (lina#12) need a Postgres with pgvector and this runner has no Docker:
+        # the test fixture starts its own cluster with initdb/pg_ctl from PATH. Homebrew's pgvector bottle
+        # exists for postgresql@17 and @18 only; no brew service is started.
+        shell: bash
+        run: |
+          set -euo pipefail
+          brew install postgresql@17 pgvector
+          echo "$(brew --prefix postgresql@17)/bin" >> "$GITHUB_PATH"
+
       - name: Run macOS tests
         shell: bash
         run: |

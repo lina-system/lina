@@ -11,6 +11,7 @@ import threading
 from automation_peer import Model
 from local_recovery_probe import daemon, websocket, rpc
 from tests.waiting import async_wait_until
+from hermes_state import SessionDB
 
 
 def probe(base, source):
@@ -32,7 +33,7 @@ def probe(base, source):
         'terminal': {'cwd': str(home)}, 'approvals': {'mode': 'off'},
         'auxiliary': {'title_generation': {'enabled': False}}}
     (home / 'config.yaml').write_text(json.dumps(cfg))
-    env = {k: os.environ[k] for k in ('PATH', 'LANG', 'TZ', 'TIRITH_ENABLED') if k in os.environ}
+    env = {k: os.environ[k] for k in ('PATH', 'LANG', 'TZ', 'TIRITH_ENABLED', 'LINA_STORE_DSN') if k in os.environ}
     env.update(HOME=str(user), USERPROFILE=str(user), HERMES_HOME=str(home), PYTHONPATH=str(root),
         OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=url, PYTHONUNBUFFERED='1')
 
@@ -45,9 +46,10 @@ def probe(base, source):
         await async_wait_until(predicate, timeout=30)
 
     def notes():
-        with sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True) as db:
-            return db.execute("SELECT display_kind, json_extract(display_metadata, '$.display_text') FROM messages"
-                              " WHERE role='user' AND content LIKE ?", ('%REAL_TERMINAL_COMPLETION%',)).fetchall()
+        with SessionDB(db_path=home / 'state.db', read_only=True) as db:
+            return [tuple(row) for row in db._read_all(
+                "SELECT display_kind, json_extract(display_metadata, '$.display_text') FROM transcript_rows"
+                " WHERE role='user' AND msg_text(text_uid, 'content') LIKE ?", ('%REAL_TERMINAL_COMPLETION%',))]
 
     def completion_turns():
         # Model calls whose newest user input is the completion: an automation turn for it.

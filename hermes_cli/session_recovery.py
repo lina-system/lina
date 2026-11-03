@@ -18,13 +18,13 @@ from typing import Any, Callable, Iterator, Optional
 
 from hermes_cli.timefmt import EPOCH_MAX, EPOCH_MIN
 from hermes_state import SessionDB
-from hermes_state_common import FTS_STORAGE_VERSION, SCHEMA_VERSION
+from hermes_state_common import SCHEMA_VERSION
 from hermes_state_repair import _db_opens_cleanly
 
 
 ProgressCallback = Callable[[dict[str, Any]], None]
 _CANONICAL_TABLES = (
-    "system_prompts", "sessions", "messages", "session_model_usage", "compression_locks", "gateway_routing",
+    "system_prompts", "sessions", "transcript_rows", "session_model_usage", "compression_locks", "gateway_routing",
     "async_delegations",
 )
 _TOPIC_TABLES = ("telegram_dm_topic_mode", "telegram_dm_topic_bindings")
@@ -318,7 +318,7 @@ def _inspect_connection(conn: sqlite3.Connection) -> dict[str, Any]:
         # Journal metadata is context, not canonical data: a damaged pragma must not block readable rows.
         report["warnings"].append(f"journal mode: {exc}")
     report["tables"] = {table: _table_inventory(conn, table) for table in _INVENTORY_TABLES}
-    for required in ("sessions", "messages"):
+    for required in ("sessions", "transcript_rows"):
         table_report = report["tables"][required]
         if not table_report.get("available") or table_report.get("rows") is None:
             report["errors"].append(f"required table {required} is not completely readable")
@@ -718,10 +718,10 @@ def _reconstruct_missing_sessions(destination: sqlite3.Connection) -> dict[str, 
     orphaned ``session_id`` (``started_at`` = earliest surviving message) so FKs hold.
     """
     result: dict[str, Any] = {"sessions_reconstructed": 0, "messages_retained": 0}
-    if not (_table_columns(destination, "sessions") and _table_columns(destination, "messages")):
+    if not (_table_columns(destination, "sessions") and _table_columns(destination, "transcript_rows")):
         return result
     orphaned = destination.execute(
-        "SELECT m.session_id, MIN(m.timestamp), COUNT(*) FROM messages AS m WHERE m.session_id IS NOT NULL AND NOT "
+        "SELECT m.session_id, MIN(m.timestamp), COUNT(*) FROM transcript_rows AS m WHERE m.session_id IS NOT NULL AND NOT "
         "EXISTS (SELECT 1 FROM sessions WHERE sessions.id = m.session_id) GROUP BY m.session_id"
     ).fetchall()
     if not orphaned:
@@ -749,7 +749,7 @@ def _reconcile(destination: sqlite3.Connection, table: str, where: str, mutation
     return count
 
 
-_DEPENDENT_TABLES = ("messages", "session_model_usage", "compression_locks", "telegram_dm_topic_bindings")
+_DEPENDENT_TABLES = ("transcript_rows", "session_model_usage", "compression_locks", "telegram_dm_topic_bindings")
 _DANGLING_TOOL_PIN = (
     "length(tool_names) = 64 AND NOT EXISTS (SELECT 1 FROM system_prompts WHERE system_prompts.hash = sessions.tool_names)")
 _RELINK_COUNTERS = ("session_prompt_refs_cleared", "sessions_parent_cleared")
@@ -798,6 +798,7 @@ def _cleanup_partial_orphans(destination: sqlite3.Connection) -> dict[str, Any]:
                     f'NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = "{table}".session_id)',
                     f'DELETE FROM "{table}"',
                 )
+    result["messages_removed"] = result["transcript_rows_removed"]
     # Only destructive/relinking actions count: reconstruction counters describe RETAINED data.
     result["total_removed_or_relinked"] = sum(
         int(result[key]) for key in (*_RELINK_COUNTERS, *(f"{table}_removed" for table in _DEPENDENT_TABLES))
@@ -821,34 +822,6 @@ def _verify_structure(conn: sqlite3.Connection, verification: dict[str, Any]) ->
     verification["schema_version"] = int(schema_row[0]) if schema_row else None
     if verification["schema_version"] != SCHEMA_VERSION:
         errors.append(f"schema version is {verification['schema_version']}, expected {SCHEMA_VERSION}")
-    meta = dict(conn.execute("SELECT key, value FROM state_meta WHERE key LIKE 'fts_%'").fetchall())
-    meta = {str(key): value for key, value in meta.items()}
-    verification["fts_meta"] = meta
-    if meta.get("fts_storage_version") != str(FTS_STORAGE_VERSION):
-        errors.append("fresh FTS storage version was not established")
-    pending_keys = sorted(
-        key for key in _GENERATED_META_KEYS if key.startswith("fts_") and key != "fts_storage_version" and key in meta
-    )
-    verification["pending_fts_keys"] = pending_keys
-    if pending_keys:
-        errors.append("derived FTS transition markers remain in the recovered database")
-
-
-def _verify_fts_indexes(conn: sqlite3.Connection, verification: dict[str, Any]) -> None:
-    fts_checks: dict[str, str] = {}
-    for table in ("messages_fts", "messages_fts_trigram", "messages_fts_cjk"):
-        if not _table_columns(conn, table):
-            continue
-        try:
-            conn.execute(f'INSERT INTO "{table}" ("{table}") VALUES (\'integrity-check\')')
-            conn.execute(f'SELECT 1 FROM "{table}" WHERE "{table}" MATCH \'""\' LIMIT 1').fetchone()
-            fts_checks[table] = "ok"
-        except sqlite3.DatabaseError as exc:
-            fts_checks[table] = str(exc)
-            verification["errors"].append(f"{table} integrity check failed: {exc}")
-    verification["fts_checks"] = fts_checks
-
-
 def _verify_row_counts(
     conn: sqlite3.Connection, verification: dict[str, Any], *, expected_counts: dict[str, Optional[int]],
     copy_report: dict[str, dict[str, Any]], allow_partial: bool, orphan_cleanup: Optional[dict[str, Any]],
@@ -864,7 +837,7 @@ def _verify_row_counts(
             verification["errors"].append(message)
     counts = {table: _count_rows(conn, table) for table in _INVENTORY_TABLES if _table_columns(conn, table)}
     verification["table_counts"] = counts
-    for table in ("sessions", "messages", *_AUXILIARY_TABLES):
+    for table in ("sessions", "transcript_rows", *_AUXILIARY_TABLES):
         expected = expected_counts.get(table)
         if expected is not None and counts.get(table) != expected:
             flag(f"{table} count is {counts.get(table)}, expected {expected}", soft=allow_partial)
@@ -876,14 +849,14 @@ def _verify_row_counts(
     # the surviving messages and none were dropped: data loss, but not structural failure.
     sessions_fully_reconstructed = bool(
         rebuilt_sessions > 0 and counts.get("sessions") == rebuilt_sessions
-        and counts.get("messages") == retained_messages and removed_messages == 0
+        and counts.get("transcript_rows") == retained_messages and removed_messages == 0
     )
     for table, table_report in copy_report.items():
         status = table_report.get("status")
         if status not in {"failed", "partial"}:
             continue
         tolerable = (
-            status == "partial" or table not in {"sessions", "messages"}
+            status == "partial" or table not in {"sessions", "transcript_rows"}
             or (table == "sessions" and sessions_fully_reconstructed)
         )
         flag(f"{table} copy status is {status}", soft=allow_partial and tolerable)
@@ -916,7 +889,6 @@ def _verify_recovered_database(
             conn, verification, expected_counts=expected_counts, copy_report=copy_report, allow_partial=allow_partial,
             orphan_cleanup=orphan_cleanup,
         )
-        _verify_fts_indexes(conn, verification)
     except sqlite3.DatabaseError as exc:
         verification["errors"].append(f"verification query failed: {exc}")
     finally:
@@ -958,25 +930,25 @@ def _repair_out_of_window_timestamps(destination: sqlite3.Connection) -> int:
     order), then its session's start, then now; ``started_at`` takes the earliest valid message; the
     nullable ``ended_at``/``last_activity_at`` become NULL.
     """
-    message_columns, session_columns = _table_columns(destination, "messages"), _table_columns(destination, "sessions")
+    message_columns, session_columns = _table_columns(destination, "transcript_rows"), _table_columns(destination, "sessions")
     ok = f"BETWEEN {EPOCH_MIN!r} AND {EPOCH_MAX!r}"
     now = "CAST(strftime('%s', 'now') AS REAL)"
     repaired = 0
     with _immediate_transaction(destination):
         if "timestamp" in message_columns:
             repaired += _reconcile(
-                destination, "messages", f"NOT (timestamp {ok})",
-                "UPDATE messages SET timestamp = COALESCE("
-                f"(SELECT p.timestamp FROM messages p WHERE p.session_id = messages.session_id AND p.id < messages.id"
+                destination, "transcript_rows", f"NOT (timestamp {ok})",
+                "UPDATE transcript_rows SET timestamp = COALESCE("
+                f"(SELECT p.timestamp FROM transcript_rows p WHERE p.session_id = transcript_rows.session_id AND p.id < transcript_rows.id"
                 f" AND p.timestamp {ok} ORDER BY p.id DESC LIMIT 1),"
-                f"(SELECT n.timestamp FROM messages n WHERE n.session_id = messages.session_id AND n.id > messages.id"
+                f"(SELECT n.timestamp FROM transcript_rows n WHERE n.session_id = transcript_rows.session_id AND n.id > transcript_rows.id"
                 f" AND n.timestamp {ok} ORDER BY n.id LIMIT 1),"
-                f"(SELECT s.started_at FROM sessions s WHERE s.id = messages.session_id AND s.started_at {ok}), {now})",
+                f"(SELECT s.started_at FROM sessions s WHERE s.id = transcript_rows.session_id AND s.started_at {ok}), {now})",
             )
         if "started_at" in session_columns:
             repaired += _reconcile(
                 destination, "sessions", f"NOT (started_at {ok})",
-                "UPDATE sessions SET started_at = COALESCE((SELECT MIN(m.timestamp) FROM messages m"
+                "UPDATE sessions SET started_at = COALESCE((SELECT MIN(m.timestamp) FROM transcript_rows m"
                 f" WHERE m.session_id = sessions.id AND m.timestamp {ok}), {now})",
             )
         for column in ("ended_at", "last_activity_at"):
@@ -990,28 +962,7 @@ def _finalize_derived_metadata(destination: sqlite3.Connection) -> dict[str, Any
     """Sanitize copied JSON columns and timestamps, and stamp metadata the new destination actually owns."""
     model_config_reset = _sanitize_session_model_config(destination)
     timestamps_repaired = _repair_out_of_window_timestamps(destination)
-    fts_tables = {
-        str(row[0])
-        for row in destination.execute(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name IN ('messages_fts', 'messages_fts_trigram')"
-        ).fetchall()
-    }
-    result: dict[str, Any] = {
-        "fts_tables": sorted(fts_tables), "finalized": False, "model_config_reset": model_config_reset,
-        "timestamps_repaired": timestamps_repaired}
-    if fts_tables != {"messages_fts", "messages_fts_trigram"}:
-        result["error"] = "fresh destination is missing required FTS tables"
-        return result
-    fts_keys = tuple(key for key in _GENERATED_META_KEYS if key.startswith("fts_"))
-    placeholders = ", ".join("?" for _ in fts_keys)
-    with _immediate_transaction(destination):
-        destination.execute(f"DELETE FROM state_meta WHERE key IN ({placeholders})", fts_keys)
-        destination.execute(
-            "INSERT INTO state_meta(key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value = excluded.value",
-            ("fts_storage_version", str(FTS_STORAGE_VERSION)),
-        )
-    result["finalized"] = True
-    return result
+    return {"finalized": True, "model_config_reset": model_config_reset, "timestamps_repaired": timestamps_repaired}
 
 
 def _lost_and_found_plausibility_errors(
@@ -1036,7 +987,7 @@ def _lost_and_found_plausibility_errors(
     errors: list[str] = []
     checks = (
         ("sessions", "started_at", f"WHERE COALESCE(title, '') NOT LIKE '{STUB_TITLE_PREFIX}%'"),
-        ("messages", "timestamp", ""),
+        ("transcript_rows", "timestamp", ""),
     )
     for table, column, mapped_filter in checks:
         (total,) = conn.execute(f"SELECT COUNT(*) FROM {table} {mapped_filter}").fetchone()
@@ -1066,7 +1017,7 @@ def _recover_via_lost_and_found(
     is then heuristically mapped into a fresh current-schema database."""
     from hermes_cli.session_lost_and_found import (
         SQLITE3_CLI_GUIDANCE, LostAndFoundError, find_sqlite3_cli, find_sqlite3_cli_refusal, map_lost_and_found_rows,
-        rebuild_fts_indexes, run_cli_lost_and_found_recover, stub_missing_parent_sessions,
+        run_cli_lost_and_found_recover, stub_missing_parent_sessions,
     )
     missing = ", ".join(missing_required)
     sqlite3_bin = find_sqlite3_cli()
@@ -1097,7 +1048,6 @@ def _recover_via_lost_and_found(
     try:
         mapping = map_lost_and_found_rows(lf_conn, destination_conn)
         stubbing = stub_missing_parent_sessions(destination_conn)
-        fts = rebuild_fts_indexes(destination_conn)
         derived_metadata = _finalize_derived_metadata(destination_conn)
     finally:
         lf_conn.close()
@@ -1109,14 +1059,14 @@ def _recover_via_lost_and_found(
             "error": "recovered via page-level lost_and_found salvage; "
             "row completeness cannot be verified against the source",
         }
-        for table in ("sessions", "messages", "session_model_usage")
+        for table in ("sessions", "transcript_rows", "session_model_usage")
     }
     orphan_cleanup = {
         "sessions_reconstructed": stubbing["sessions_stubbed"], "messages_retained": stubbing["messages_retained"],
         "messages_removed": 0, "total_removed_or_relinked": 0,
     }
     verification = _verify_recovered_database(
-        output, expected_counts={"sessions": None, "messages": None}, copy_report=copy_report, allow_partial=True,
+        output, expected_counts={"sessions": None, "transcript_rows": None}, copy_report=copy_report, allow_partial=True,
         orphan_cleanup=orphan_cleanup,
     )
     verification["warnings"].append(
@@ -1159,7 +1109,7 @@ def _recover_via_lost_and_found(
     return _recovery_report(
         source, output, inspection, disk_space, verification, on_source_change="healthy",
         allow_partial=True, mode="lost_and_found_salvage", best_effort=True, unreadable_schemas=missing_required,
-        sqlite3_cli=cli_report, lost_and_found=mapping, session_stubs=stubbing, fts_rebuild=fts, copy=copy_report,
+        sqlite3_cli=cli_report, lost_and_found=mapping, session_stubs=stubbing, copy=copy_report,
         orphan_cleanup=orphan_cleanup, derived_metadata=derived_metadata,
     )
 
@@ -1240,7 +1190,7 @@ def _recover_session_database_output(
                 "Re-run with --allow-partial to salvage every readable row "
                 "into a new database (the source is never modified)."
             )
-        missing_required = [t for t in ("sessions", "messages") if not inspection["tables"][t].get("available")]
+        missing_required = [t for t in ("sessions", "transcript_rows") if not inspection["tables"][t].get("available")]
         if allow_partial and missing_required:  # no readable schema -> page-level lost_and_found salvage
             return _recover_via_lost_and_found(
                 source=source, snapshot_source=snapshot_source, snapshot_dir=Path(temp_dir.name), output=output,

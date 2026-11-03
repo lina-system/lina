@@ -114,10 +114,13 @@ def _epoch(store):
 
 def _default_profile_state(home):
     path = home.parent.parent / "state.db"
-    with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True)) as db:
-        return (db.execute("SELECT epoch FROM runtime_epoch WHERE singleton=1").fetchone(),
-                db.execute("SELECT id FROM sessions ORDER BY id").fetchall(),
-                db.execute("SELECT session_id,role,content FROM messages ORDER BY id").fetchall())
+    from hermes_state import SessionDB
+    with SessionDB(path, read_only=True) as store:
+        db = store._conn
+        return (tuple(db.execute("SELECT epoch FROM runtime_epoch WHERE singleton=1").fetchone()),
+                [tuple(row) for row in db.execute("SELECT id FROM sessions ORDER BY id")],
+                [tuple(row) for row in db.execute(
+                    "SELECT session_id,role,msg_text(text_uid, 'content') FROM transcript_rows ORDER BY id")])
 
 
 def _legacy_row(home):

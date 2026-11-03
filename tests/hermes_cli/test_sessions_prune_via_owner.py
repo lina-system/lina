@@ -34,7 +34,7 @@ def _aged(db, sid, days, *, ended=True):
     def write(conn):  # last activity = freshest of row activity and the latest message
         conn.execute('UPDATE sessions SET started_at=?, last_activity_at=?, ended_at=? WHERE id=?',
                      (at, at, at if ended else None, sid))
-        conn.execute('UPDATE messages SET timestamp=? WHERE session_id=?', (at, sid))
+        conn.execute('UPDATE transcript_rows SET timestamp=? WHERE session_id=?', (at, sid))
     db._execute_write(write)
 
 

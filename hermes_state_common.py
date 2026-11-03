@@ -58,13 +58,13 @@ def escape_like(text: str) -> str:
     return text.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
 
 
-_PREVIEW_CONTENT_SQL = "REPLACE(REPLACE(m.content, X'0A', ' '), X'0D', ' ')"
+_PREVIEW_CONTENT_SQL = "REPLACE(REPLACE(msg_text(m.text_uid, 'content'), X'0A', ' '), X'0D', ' ')"
 # User-invoked and gateway auto-load scaffolds both get the head+tail excerpt window:
 # the typed request sits at the tail (auto-load) or behind the instruction marker.
 # No LIKE wildcards in either prefix, so no ESCAPE clause is needed.
 _PREVIEW_SCAFFOLDED_SQL = (
-    f"(m.content LIKE '{SKILL_SCAFFOLD_SQL_LIKE}'"
-    f" OR m.content LIKE '{AUTO_LOAD_SCAFFOLD_SQL_LIKE}')")
+    f"(msg_text(m.text_uid, 'content') LIKE '{SKILL_SCAFFOLD_SQL_LIKE}'"
+    f" OR msg_text(m.text_uid, 'content') LIKE '{AUTO_LOAD_SCAFFOLD_SQL_LIKE}')")
 _SQL_WHITESPACE = "CHAR(9) || CHAR(10) || CHAR(13) || CHAR(32)"
 
 
@@ -105,20 +105,20 @@ def _sql_starts_with(expression: str, prefixes: tuple[str, ...]) -> str:
 
 
 def _sql_after_marker(marker: str) -> str:
-    """``m.content`` after the first occurrence of *marker*."""
-    return f"SUBSTR(m.content, INSTR(m.content, {_sql_literal(marker)}) + {len(marker)})"
+    """``msg_text(m.text_uid, 'content')`` after the first occurrence of *marker*."""
+    return f"SUBSTR(msg_text(m.text_uid, 'content'), INSTR(msg_text(m.text_uid, 'content'), {_sql_literal(marker)}) + {len(marker)})"
 
 
 # Match the whole introduction shared by current and legacy prefixes, so a message that merely starts with the
 # bracketed label is not a compaction carrier.
 _PREVIEW_LONG_FORM_PREFIX = SUMMARY_PREFIX.split("Do NOT answer", 1)[0]
 _PREVIEW_SUMMARY_PREFIXES = (_PREVIEW_LONG_FORM_PREFIX, LEGACY_SUMMARY_PREFIX)
-_PREVIEW_STANDALONE_SUMMARY_SQL = _sql_starts_with("m.content", _PREVIEW_SUMMARY_PREFIXES)
+_PREVIEW_STANDALONE_SUMMARY_SQL = _sql_starts_with("msg_text(m.text_uid, 'content')", _PREVIEW_SUMMARY_PREFIXES)
 _PREVIEW_MERGED_AFTER_SQL = _sql_after_marker(_MERGED_SUMMARY_DELIMITER)
-_PREVIEW_MERGED_SUMMARY_SQL = (f"(INSTR(m.content, {_sql_literal(_MERGED_SUMMARY_DELIMITER)}) > 0"
+_PREVIEW_MERGED_SUMMARY_SQL = (f"(INSTR(msg_text(m.text_uid, 'content'), {_sql_literal(_MERGED_SUMMARY_DELIMITER)}) > 0"
     f" AND {_sql_starts_with(_PREVIEW_MERGED_AFTER_SQL, _PREVIEW_SUMMARY_PREFIXES)})")
 _PREVIEW_MERGED_PRIOR_SQL = _sql_trim_whitespace(
-    f"SUBSTR(m.content, 1, INSTR(m.content, {_sql_literal(_MERGED_SUMMARY_DELIMITER)}) - 1)")
+    f"SUBSTR(msg_text(m.text_uid, 'content'), 1, INSTR(msg_text(m.text_uid, 'content'), {_sql_literal(_MERGED_SUMMARY_DELIMITER)}) - 1)")
 _PREVIEW_MERGED_PRIOR_LTRIMMED_SQL = _sql_ltrim_whitespace(_PREVIEW_MERGED_PRIOR_SQL)
 _PREVIEW_MERGED_PRIOR_UNWRAPPED_SQL = (f"CASE WHEN SUBSTR({_PREVIEW_MERGED_PRIOR_LTRIMMED_SQL}, 1,"
     f" {len(_MERGED_PRIOR_CONTEXT_HEADER)}) = {_sql_literal(_MERGED_PRIOR_CONTEXT_HEADER)}"
@@ -130,7 +130,7 @@ _PREVIEW_FORCE_USER_REMAINDER_SQL = _sql_after_marker(_SUMMARY_END_MARKER)
 # A display_kind="hidden" row is model-facing scaffolding the gateway never paints; the preview must not paint it either.
 _PREVIEW_ELIGIBLE_SQL = (f"(COALESCE(m.display_kind, '') <> 'hidden'"
     f" AND ((NOT {_PREVIEW_STANDALONE_SUMMARY_SQL} AND NOT {_PREVIEW_MERGED_SUMMARY_SQL})"
-    f" OR ({_PREVIEW_STANDALONE_SUMMARY_SQL} AND INSTR(m.content, {_sql_literal(_SUMMARY_END_MARKER)}) > 0"
+    f" OR ({_PREVIEW_STANDALONE_SUMMARY_SQL} AND INSTR(msg_text(m.text_uid, 'content'), {_sql_literal(_SUMMARY_END_MARKER)}) > 0"
     f" AND LENGTH({_sql_trim_whitespace(_PREVIEW_FORCE_USER_REMAINDER_SQL)}) > 0)"
     f" OR ({_PREVIEW_MERGED_SUMMARY_SQL}"
     f" AND LENGTH({_sql_trim_whitespace(_PREVIEW_MERGED_PRIOR_UNWRAPPED_SQL)}) > 0)))")
@@ -139,7 +139,7 @@ _PREVIEW_ELIGIBLE_SQL = (f"(COALESCE(m.display_kind, '') <> 'hidden'"
 _PREVIEW_RAW_SELECT = (
     f"CASE WHEN {_PREVIEW_STANDALONE_SUMMARY_SQL} THEN {_PREVIEW_FORCE_USER_REMAINDER_SQL}"
     f" WHEN {_PREVIEW_MERGED_SUMMARY_SQL} THEN {_PREVIEW_MERGED_PRIOR_UNWRAPPED_SQL}"
-    f" WHEN {_PREVIEW_SCAFFOLDED_SQL} AND LENGTH(m.content) > {_PREVIEW_SCAFFOLD_WINDOW * 2}"
+    f" WHEN {_PREVIEW_SCAFFOLDED_SQL} AND LENGTH(msg_text(m.text_uid, 'content')) > {_PREVIEW_SCAFFOLD_WINDOW * 2}"
     f" THEN SUBSTR({_PREVIEW_CONTENT_SQL}, 1, {_PREVIEW_SCAFFOLD_WINDOW}) || '{SKILL_EXCERPT_JOINT}'"
     f" || SUBSTR({_PREVIEW_CONTENT_SQL}, -{_PREVIEW_SCAFFOLD_WINDOW})"
     f" WHEN {_PREVIEW_SCAFFOLDED_SQL} THEN SUBSTR({_PREVIEW_CONTENT_SQL}, 1, {_PREVIEW_SCAFFOLD_WINDOW * 2})"
@@ -161,8 +161,8 @@ def _sql_preview_raw(session_id_expr: str = "s.id") -> str:
     """Correlated ``_preview_raw`` column: the first eligible user message of *session_id_expr*.
     ``INDEXED BY`` walks the session in timestamp order and stops at the first eligible row; with planner
     stats older than idx_messages_session_id, SQLite otherwise reads and sorts the whole session (#119403)."""
-    return (f"COALESCE((SELECT {_PREVIEW_RAW_SELECT} FROM messages m INDEXED BY idx_messages_session"
-        f" WHERE m.session_id = {session_id_expr} AND m.role = 'user' AND m.content IS NOT NULL"
+    return (f"COALESCE((SELECT {_PREVIEW_RAW_SELECT} FROM transcript_rows m INDEXED BY idx_transcript_rows_session"
+        f" WHERE m.session_id = {session_id_expr} AND m.role = 'user' AND msg_text(m.text_uid, 'content') IS NOT NULL"
         f" AND {_PREVIEW_ELIGIBLE_SQL} ORDER BY m.timestamp, m.id LIMIT 1), '') AS _preview_raw")
 
 # ── Session lineage predicates ({a} = sessions alias) ───────────────────────
@@ -262,7 +262,7 @@ def _sql_freshest_of(activity: str, session_id_expr: str, started: str) -> str:
     skipped, fallback included, or one bad row pins the session's recency to ``5e+246`` (#91536); a
     session with no trusted cell at all is NULL."""
     # Pinned for the same reason as _sql_preview_raw (#119403).
-    msg_max = (f"(SELECT MAX(_act_m.timestamp) FROM messages _act_m INDEXED BY idx_messages_session"
+    msg_max = (f"(SELECT MAX(_act_m.timestamp) FROM transcript_rows _act_m INDEXED BY idx_transcript_rows_session"
         f" WHERE _act_m.session_id = {session_id_expr}"
         f" AND _act_m.timestamp {_SQL_IN_WINDOW})")
     return (f"COALESCE((SELECT MAX(_act_v.v) FROM (SELECT {activity} AS v UNION ALL SELECT {msg_max}) _act_v"
@@ -281,12 +281,13 @@ def _sql_session_last_active_by_id(session_id_expr: str) -> str:
         f"(SELECT started_at FROM sessions _act_s WHERE _act_s.id = {session_id_expr})")
 
 
+# v33 (lina#12): message text moved to the memory store; state.db keeps text-free transcript_rows and no FTS.
 # v32 (#140315): no data migration. #106742 added runtime_epoch, session_admissions, worker_executions,
 # worker_receipts and three columns to SCHEMA_SQL under v31. Drift is detected by the schema read probe
 # (schema_read_probe_statements), never by this number, and its catch-up is the declarative
 # executescript(SCHEMA_SQL) + _reconcile_columns() every writable open already runs (additive,
 # idempotent). The bump only records that the declared shape changed; a new table or column needs no bump.
-SCHEMA_VERSION = 32
+SCHEMA_VERSION = 33
 
 # Auto-maintenance VACUUMs only above this freelist fraction; below it a rewrite costs more I/O than it returns.
 # Auto-maintenance only VACUUMs when at least this fraction of the database file is reclaimable (``PRAGMA
@@ -294,46 +295,6 @@ SCHEMA_VERSION = 32
 # handful of small sessions on a dense multi-GB state.db should never rewrite the whole file to reclaim a
 # few MB (#54189). Composes with ``min_vacuum_interval_days``.
 AUTO_VACUUM_MIN_FREELIST_RATIO = 0.25
-
-# FTS storage-layout version, tracked INDEPENDENTLY of SCHEMA_VERSION in the
-# state_meta key ``fts_storage_version``. The main schema version advances
-# freely on open (so future migrations always land); the FTS *layout* only
-# reaches the current version when a DB is either born fresh or explicitly
-# optimized via ``hermes sessions optimize-storage``. A legacy DB sits at
-# layout 0 (marker absent) with a working inline index until the user opts in.
-#   1 = v23 external-content layout with a tool-row-excluded trigram
-#   2 = trigram also excludes structured tool_calls JSON
-#   3 = messages_fts source aligned to a stable projection view
-#       (``messages_fts_src``): always-truncate tool rows to the prefix, no
-#       moving high-water boundary. The external-content source now reads
-#       back EXACTLY what the triggers indexed, so the rank=1
-#       'integrity-check' probe cannot drift from the stored index (the
-#       recurring fts5 "checksum mismatch" / leaked-token failures).
-FTS_STORAGE_VERSION = 3
-
-# Tool results are often multi-megabyte machine payloads. The base FTS index
-# stores only a bounded prefix of every tool row; tool rows are skipped by
-# default in search, and explicit tool-only search uses a LIKE fallback over
-# the full stored content, so no search capability is lost. The projection
-# below is STABLE — it depends only on the row being written, never on
-# mutable ``state_meta`` markers — which is what keeps the external-content
-# integrity checker and the trigger 'delete'/'update' commands in agreement
-# with the stored index forever.
-FTS_TOOL_CONTENT_PREFIX_CHARS = 8_192
-
-
-def _fts_indexed_content_sql(alias: str) -> str:
-    return f"""CASE WHEN {alias}.role = 'tool'
-         THEN substr(COALESCE({alias}.content, ''), 1, {FTS_TOOL_CONTENT_PREFIX_CHARS})
-         ELSE {alias}.content END"""
-
-
-_FTS_NEW_INDEXED_CONTENT_SQL = _fts_indexed_content_sql("new")
-_FTS_OLD_INDEXED_CONTENT_SQL = _fts_indexed_content_sql("old")
-
-# Cap on user-controlled FTS5 query input before sanitizer processing.
-MAX_FTS5_QUERY_CHARS = 2_048
-
 
 def stat_db_file_identity(path) -> tuple[int, int] | None:
     """``(st_dev, st_ino)`` for *path*, or None.  st_ino=0 (Windows, some network FS) would false-positive
@@ -445,9 +406,6 @@ def emit_session_deleted(db, deleted_ids, *, reason, primary=None, sessions_dir=
         logger.warning("on_session_delete dispatch failed", exc_info=True)
 
 
-_FTS_TRIGGERS = ("messages_fts_insert", "messages_fts_delete", "messages_fts_update",
-                 "messages_fts_trigram_insert", "messages_fts_trigram_delete", "messages_fts_trigram_update")
-
 SCHEMA_SQL = """
 CREATE TABLE IF NOT EXISTS schema_version (
     version INTEGER NOT NULL
@@ -528,29 +486,24 @@ CREATE TABLE IF NOT EXISTS sessions (
     FOREIGN KEY (system_prompt_hash) REFERENCES system_prompts(hash)
 );
 
-CREATE TABLE IF NOT EXISTS messages (
+-- Where each message sits in its session: text-free (lina#12). The text lives once in the memory store
+-- (memory.messages, hermes_state_store.py) under text_uid; content_digest and tool_call_count are kept
+-- here for the equality lookups and counts the transcript code runs inside its write transactions.
+CREATE TABLE IF NOT EXISTS transcript_rows (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     session_id TEXT NOT NULL REFERENCES sessions(id),
     role TEXT NOT NULL,
-    content TEXT,
     tool_call_id TEXT,
-    tool_calls TEXT,
     tool_name TEXT,
     effect_disposition TEXT,
     timestamp REAL NOT NULL,
     token_count INTEGER,
     finish_reason TEXT,
-    reasoning TEXT,
-    reasoning_content TEXT,
-    reasoning_details TEXT,
-    codex_reasoning_items TEXT,
-    codex_message_items TEXT,
     platform_message_id TEXT,
     observed INTEGER DEFAULT 0,
     _compressed_summary INTEGER NOT NULL DEFAULT 0,
     active INTEGER NOT NULL DEFAULT 1,
     compacted INTEGER NOT NULL DEFAULT 0,
-    api_content TEXT,
     display_kind TEXT,
     display_metadata TEXT,
     display_identity BLOB,
@@ -558,7 +511,10 @@ CREATE TABLE IF NOT EXISTS messages (
     message_uid TEXT,
     absorbed_message_uids TEXT,
     tool_call_uids TEXT,
-    tool_call_uid TEXT
+    tool_call_uid TEXT,
+    text_uid TEXT,
+    content_digest TEXT,
+    tool_call_count INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS session_model_usage (
@@ -751,16 +707,15 @@ CREATE INDEX IF NOT EXISTS idx_sessions_source ON sessions(source);
 CREATE INDEX IF NOT EXISTS idx_sessions_source_id ON sessions(source, id);
 CREATE INDEX IF NOT EXISTS idx_sessions_parent ON sessions(parent_session_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_started ON sessions(started_at DESC);
-CREATE INDEX IF NOT EXISTS idx_messages_session ON messages(session_id, timestamp);
-CREATE INDEX IF NOT EXISTS idx_messages_session_id ON messages(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_session ON transcript_rows(session_id, timestamp);
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_session_id ON transcript_rows(session_id, id);
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_text_uid ON transcript_rows(text_uid);
 -- Partial index for the Insights assistant tool-call scan
 -- (agent/insights.py _get_tool_usage / _get_skill_usage): those queries filter
--- messages by role='assistant' AND tool_calls IS NOT NULL, a small fraction of
--- rows on a large state.db. role and tool_calls are base columns, so this can
--- live in SCHEMA_SQL rather than DEFERRED_INDEX_SQL.
-CREATE INDEX IF NOT EXISTS idx_messages_assistant_calls_by_session
-    ON messages(session_id)
-    WHERE role = 'assistant' AND tool_calls IS NOT NULL;
+-- rows by role='assistant' AND tool_call_count > 0, a small fraction of rows.
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_assistant_calls_by_session
+    ON transcript_rows(session_id)
+    WHERE role = 'assistant' AND tool_call_count > 0;
 CREATE INDEX IF NOT EXISTS idx_compression_locks_expires ON compression_locks(expires_at);
 CREATE INDEX IF NOT EXISTS idx_session_turn_leases_expires ON session_turn_leases(expires_at);
 CREATE INDEX IF NOT EXISTS idx_session_model_usage_session ON session_model_usage(session_id);
@@ -784,107 +739,94 @@ WHEN EXISTS (SELECT 1 FROM session_admissions WHERE target_session_id = old.id)
 BEGIN
     SELECT RAISE(ABORT, 'Refused to delete a session that has gateway runtime history: state.db was upgraded by a newer Hermes, and this older Hermes cannot delete such sessions. Downgrading is unsupported. Run hermes update to go back to the newer release, or restore the pre-update snapshot: https://hermes-agent.nousresearch.com/docs/getting-started/updating#rolling-back-to-an-older-release');
 END;
-DROP TRIGGER IF EXISTS messages_transcript_revision_update;
-CREATE TRIGGER IF NOT EXISTS messages_transcript_revision_update
-AFTER UPDATE OF role, content, api_content, tool_calls, tool_call_id, tool_name, reasoning, reasoning_content,
-    reasoning_details ON messages
+DROP TRIGGER IF EXISTS transcript_rows_transcript_revision_update;
+CREATE TRIGGER IF NOT EXISTS transcript_rows_transcript_revision_update
+AFTER UPDATE OF role, text_uid, tool_call_id, tool_name ON transcript_rows
 BEGIN
     -- An in-place rewrite (prompt expansion, multimodal context, a redaction) moves neither the
     -- active row count nor the highest id; this write-side revision is what a transcript-derived
     -- cache keys on (conversation_revision). Whoever wrote the row, old builds included.
     UPDATE sessions SET transcript_revision = transcript_revision + 1 WHERE id = new.session_id;
 END;
-CREATE INDEX IF NOT EXISTS idx_messages_session_active
-    ON messages(session_id, active, timestamp);
-CREATE INDEX IF NOT EXISTS idx_messages_display_page
-    ON messages(session_id, display_order, active DESC, id DESC)
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_session_active
+    ON transcript_rows(session_id, active, timestamp);
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_display_page
+    ON transcript_rows(session_id, display_order, active DESC, id DESC)
     WHERE active = 1 OR compacted = 1;
-CREATE INDEX IF NOT EXISTS idx_messages_display_backfill
-    ON messages(session_id) WHERE (display_order IS NULL OR display_identity IS NULL)
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_display_backfill
+    ON transcript_rows(session_id) WHERE (display_order IS NULL OR display_identity IS NULL)
     AND (active = 1 OR compacted = 1);
-CREATE INDEX IF NOT EXISTS idx_messages_display_identity
-    ON messages(session_id, display_identity, display_order)
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_display_identity
+    ON transcript_rows(session_id, display_identity, display_order)
     WHERE display_identity IS NOT NULL AND (active = 1 OR compacted = 1);
-DROP TRIGGER IF EXISTS messages_message_uid_insert;
-CREATE TRIGGER IF NOT EXISTS messages_message_uid_insert
-AFTER INSERT ON messages WHEN new.message_uid IS NULL
+DROP TRIGGER IF EXISTS transcript_rows_display_order_insert;
+CREATE TRIGGER IF NOT EXISTS transcript_rows_display_order_insert
+AFTER INSERT ON transcript_rows WHEN new.display_order IS NULL
 BEGIN
-    -- Every row carries a message_uid, whoever wrote it: a build that predates the column binds NULL, so
-    -- the store mints one on its behalf (the current build always binds a uid; this never fires for it).
-    -- The note lives inside the body: a comment before DROP/CREATE would defeat the settled-trigger skip.
-    UPDATE messages SET message_uid = lower(hex(randomblob(16))) WHERE id = new.id;
-END;
-DROP TRIGGER IF EXISTS messages_display_order_insert;
-CREATE TRIGGER IF NOT EXISTS messages_display_order_insert
-AFTER INSERT ON messages WHEN new.display_order IS NULL
-BEGIN
-    UPDATE messages SET display_order = COALESCE((
-        SELECT display_order FROM messages
+    UPDATE transcript_rows SET display_order = COALESCE((
+        SELECT display_order FROM transcript_rows
         WHERE session_id = new.session_id AND id <> new.id
           AND (active = 1 OR compacted = 1)
           AND display_identity = new.display_identity AND display_order IS NOT NULL
         ORDER BY display_order LIMIT 1
     ), new.id) WHERE id = new.id;
 END;
-DROP TRIGGER IF EXISTS messages_display_visibility_update;
-CREATE TRIGGER IF NOT EXISTS messages_display_visibility_update
-AFTER UPDATE OF active, compacted ON messages
+DROP TRIGGER IF EXISTS transcript_rows_display_visibility_update;
+CREATE TRIGGER IF NOT EXISTS transcript_rows_display_visibility_update
+AFTER UPDATE OF active, compacted ON transcript_rows
 WHEN (new.active = 1 OR new.compacted = 1) <> (old.active = 1 OR old.compacted = 1)
 BEGIN
-    UPDATE messages SET display_order = MIN(new.id, COALESCE((
-        SELECT display_order FROM messages
+    UPDATE transcript_rows SET display_order = MIN(new.id, COALESCE((
+        SELECT display_order FROM transcript_rows
         WHERE session_id = new.session_id AND id <> new.id
           AND (active = 1 OR compacted = 1)
           AND display_identity = new.display_identity AND display_order IS NOT NULL
         ORDER BY display_order LIMIT 1
     ), new.id)) WHERE id = new.id
       AND (new.active = 1 OR new.compacted = 1);
-    UPDATE messages SET display_order = (SELECT display_order FROM messages WHERE id = new.id)
+    UPDATE transcript_rows SET display_order = (SELECT display_order FROM transcript_rows WHERE id = new.id)
     WHERE session_id = new.session_id AND id <> new.id AND (active = 1 OR compacted = 1)
       AND display_identity = new.display_identity
       AND (new.active = 1 OR new.compacted = 1);
-    UPDATE messages SET display_order = (
-        SELECT MIN(peer.id) FROM messages AS peer
+    UPDATE transcript_rows SET display_order = (
+        SELECT MIN(peer.id) FROM transcript_rows AS peer
         WHERE peer.session_id = old.session_id AND (peer.active = 1 OR peer.compacted = 1)
           AND peer.display_identity = old.display_identity
     ) WHERE session_id = old.session_id AND (active = 1 OR compacted = 1)
       AND display_identity = old.display_identity
       AND NOT (new.active = 1 OR new.compacted = 1);
 END;
-DROP TRIGGER IF EXISTS messages_display_identity_update;
-CREATE TRIGGER IF NOT EXISTS messages_display_identity_update
-AFTER UPDATE OF role, content, timestamp, tool_call_id, tool_calls, tool_name,
-                display_kind ON messages
+DROP TRIGGER IF EXISTS transcript_rows_display_identity_update;
+CREATE TRIGGER IF NOT EXISTS transcript_rows_display_identity_update
+AFTER UPDATE OF role, text_uid, timestamp, tool_call_id, tool_name,
+                display_kind ON transcript_rows
 WHEN new.role IS NOT old.role
-  OR new.content IS NOT old.content
+  OR new.text_uid IS NOT old.text_uid
   OR new.timestamp IS NOT old.timestamp
   OR new.tool_call_id IS NOT old.tool_call_id
-  OR new.tool_calls IS NOT old.tool_calls
   OR new.tool_name IS NOT old.tool_name
   OR new.display_kind IS NOT old.display_kind
 BEGIN
-    UPDATE messages SET display_identity = NULL, display_order = NULL
+    UPDATE transcript_rows SET display_identity = NULL, display_order = NULL
     WHERE id = new.id OR (
         session_id = old.session_id AND display_identity = old.display_identity
         AND (active = 1 OR compacted = 1)
     );
 END;
-DROP TRIGGER IF EXISTS messages_display_identity_delete;
-CREATE TRIGGER IF NOT EXISTS messages_display_identity_delete
-AFTER DELETE ON messages WHEN old.active = 1 OR old.compacted = 1
+DROP TRIGGER IF EXISTS transcript_rows_display_identity_delete;
+CREATE TRIGGER IF NOT EXISTS transcript_rows_display_identity_delete
+AFTER DELETE ON transcript_rows WHEN old.active = 1 OR old.compacted = 1
 BEGIN
-    UPDATE messages SET display_order = (
-        SELECT MIN(peer.id) FROM messages AS peer
+    UPDATE transcript_rows SET display_order = (
+        SELECT MIN(peer.id) FROM transcript_rows AS peer
         WHERE peer.session_id = old.session_id AND (peer.active = 1 OR peer.compacted = 1)
           AND peer.display_identity = old.display_identity
     ) WHERE session_id = old.session_id AND (active = 1 OR compacted = 1)
       AND display_identity = old.display_identity;
 END;
-CREATE INDEX IF NOT EXISTS idx_messages_active_null
-    ON messages(active) WHERE active IS NULL;
 -- Logical-identity recovery (agent.transcript_repair._active_logical_message_row) runs inside the write lock.
-CREATE INDEX IF NOT EXISTS idx_messages_session_uid
-    ON messages(session_id, message_uid) WHERE active = 1;
+CREATE INDEX IF NOT EXISTS idx_transcript_rows_session_uid
+    ON transcript_rows(session_id, message_uid) WHERE active = 1;
 CREATE INDEX IF NOT EXISTS idx_sessions_session_key
     ON sessions(session_key, started_at DESC);
 CREATE INDEX IF NOT EXISTS idx_sessions_gateway_peer
@@ -910,341 +852,8 @@ CREATE INDEX IF NOT EXISTS idx_sessions_local_created_started
 """
 
 
-# ── Deferred FTS rebuild bookkeeping (schema v23) ──
-# While a background index rebuild is pending, two state_meta keys define
-# which message rows are currently IN the FTS indexes:
-#
-#   fts_rebuild_high_water  H — MAX(messages.id) at the moment the old
-#                                indexes were dropped
-#   fts_rebuild_progress    P — highest id the chunked backfill has indexed
-#
-# A row is indexed iff  id <= P  (backfilled)  OR  id > H  (inserted after
-# the drop; ids are AUTOINCREMENT so new rows are always > H and the insert
-# triggers index them live).  Rows in (P, H] are not yet indexed.
-#
-# Every trigger below gates on that same predicate: firing an FTS5
-# external-content 'delete' for a row that is NOT in the index corrupts the
-# index, and skipping it for a row that IS indexed leaves a stale entry.
-# When no rebuild is pending both keys are absent and COALESCE turns the
-# predicate into a tautology (id > -1 OR id <= -1), i.e. normal operation.
-# The two state_meta PK probes per write are negligible next to the FTS
-# insert itself.
-#
-# messages_fts_src: the base word index no longer reads raw `messages` as its
-# external content. Tool rows are indexed as a bounded prefix, so the index
-# must read that SAME projection back or FTS5's 'integrity-check' / 'delete'
-# commands disagree with the stored tokens and corrupt the index (the
-# recurring fts5 checksum-mismatch drift: the projection used to depend on a
-# moving state_meta high-water key). The view/trigger/backfill all share the
-# one expression in `_fts_indexed_content_sql` — a fixed per-row function
-# with no marker lookups — so the boundary can never move again.
-FTS_SQL = f"""
--- Stable projection the base word index reads and writes through: the view
--- computes EXACTLY what the triggers/backfill insert, so 'rebuild' and the
--- integrity checker always agree with the stored index.
-CREATE VIEW IF NOT EXISTS messages_fts_src AS
-    SELECT id,
-           CASE WHEN role = 'tool'
-                THEN substr(COALESCE(content, ''), 1, {FTS_TOOL_CONTENT_PREFIX_CHARS})
-                ELSE content END AS content,
-           tool_name, tool_calls
-    FROM messages;
-
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    content,
-    tool_name,
-    tool_calls,
-    content='messages_fts_src',
-    content_rowid='id'
-);
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages
-WHEN (new.id > COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                         WHERE key = 'fts_rebuild_high_water'), -1)
-   OR new.id <= COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                          WHERE key = 'fts_rebuild_progress'), -1))
-BEGIN
-    INSERT INTO messages_fts(rowid, content, tool_name, tool_calls)
-    VALUES (
-        new.id,
-        {_FTS_NEW_INDEXED_CONTENT_SQL},
-        new.tool_name,
-        new.tool_calls
-    );
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages
-WHEN (old.id > COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                         WHERE key = 'fts_rebuild_high_water'), -1)
-   OR old.id <= COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                          WHERE key = 'fts_rebuild_progress'), -1))
-BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content, tool_name, tool_calls)
-    VALUES (
-        'delete',
-        old.id,
-        {_FTS_OLD_INDEXED_CONTENT_SQL},
-        old.tool_name,
-        old.tool_calls
-    );
-END;
-
--- UPDATE OF skips the trigger entirely for non-content column writes
--- (status/compacted/observed/etc.), which is stronger than the WHEN gate
--- alone and avoids FTS I/O saturation on large state.db (#68858 / #73639).
-CREATE TRIGGER IF NOT EXISTS messages_fts_update
-AFTER UPDATE OF content, tool_name, tool_calls, role ON messages
-WHEN (old.content IS NOT new.content
-    OR old.tool_name IS NOT new.tool_name
-    OR old.tool_calls IS NOT new.tool_calls
-    OR old.role IS NOT new.role)
-   AND (old.id > COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                           WHERE key = 'fts_rebuild_high_water'), -1)
-     OR old.id <= COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                            WHERE key = 'fts_rebuild_progress'), -1))
-BEGIN
-    INSERT INTO messages_fts(messages_fts, rowid, content, tool_name, tool_calls)
-    VALUES (
-        'delete',
-        old.id,
-        {_FTS_OLD_INDEXED_CONTENT_SQL},
-        old.tool_name,
-        old.tool_calls
-    );
-    INSERT INTO messages_fts(rowid, content, tool_name, tool_calls)
-    VALUES (
-        new.id,
-        {_FTS_NEW_INDEXED_CONTENT_SQL},
-        new.tool_name,
-        new.tool_calls
-    );
-END;
-"""
-
-
-# Trigram FTS5 table for CJK substring search.  The default unicode61
-# tokenizer splits CJK characters into individual tokens, breaking phrase
-# matching.  The trigram tokenizer creates overlapping 3-byte sequences so
-# substring queries work natively for any script (CJK, Thai, etc.).
-#
-# The trigram index is the most expensive index in state.db (~2.6x the size
-# of the text it covers). Tool output (~90% of message bytes, machine noise)
-# and cron transcripts are excluded: the index reads through
-# ``messages_fts_trigram_src``, a view that skips both classes. They stay
-# fully stored in ``messages`` and searchable via the standard
-# ``messages_fts`` index; they just don't get trigram (CJK substring)
-# treatment. ``search_messages`` routes explicit tool/cron CJK searches to
-# LIKE for the same reason. Structured ``tool_calls`` JSON likewise stays
-# searchable through ``messages_fts``; excluding it here avoids indexing
-# repetitive JSON syntax as trigrams (FTS_STORAGE_VERSION 2).
-#
-# Delegate-child (subagent) transcripts are excluded the same way (v30):
-# on a fan-out-heavy install they were ~70% of all message bytes and
-# ``session_search`` hides ``source='subagent'`` sessions anyway. A child
-# is recognised by its source OR by the ``_delegate_from`` creation marker
-# (children spawned under a gateway turn inherit the gateway's source).
-# Compression/branch continuations of interactive sessions also carry
-# ``parent_session_id`` but NOT the marker, so they stay trigram-indexed.
-FTS_TRIGRAM_EXCLUDED_SOURCES = ("cron", "subagent")
-
-def fts_trigram_session_sql(alias: str = "") -> str:
-    """Predicate over a ``sessions`` row selecting sessions whose rows belong in
-    the trigram index; ``alias`` qualifies every column for joins. Shared by the
-    view, the sync triggers, and the deferred-backfill INSERT ... SELECTs so they
-    can never disagree about the index boundary."""
-    q = f"{alias}." if alias else ""
-    return (
-        f"{q}source NOT IN ("
-        + ", ".join(f"'{src}'" for src in FTS_TRIGRAM_EXCLUDED_SOURCES)
-        + f") AND {_sql_json_extract(q + 'model_config', '$._delegate_from')} IS NULL"
-    )
-
-
-FTS_TRIGRAM_SESSION_SQL = fts_trigram_session_sql()
-
-
-FTS_TRIGRAM_SQL = f"""
-CREATE VIEW IF NOT EXISTS messages_fts_trigram_src AS
-    SELECT m.id, m.role, m.content, m.tool_name
-    FROM messages AS m
-    JOIN sessions AS s ON s.id = m.session_id
-    WHERE m.role <> 'tool' AND {fts_trigram_session_sql('s')};
-
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
-    content,
-    tool_name,
-    content='messages_fts_trigram_src',
-    content_rowid='id',
-    tokenize='trigram'
-);
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_insert AFTER INSERT ON messages
-WHEN new.role <> 'tool'
-   AND EXISTS (SELECT 1 FROM sessions
-               WHERE id = new.session_id AND {FTS_TRIGRAM_SESSION_SQL})
-   AND (new.id > COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                           WHERE key = 'fts_rebuild_high_water'), -1)
-     OR new.id <= COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                            WHERE key = 'fts_rebuild_progress'), -1))
-BEGIN
-    INSERT INTO messages_fts_trigram(rowid, content, tool_name)
-    VALUES (new.id, new.content, new.tool_name);
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_delete AFTER DELETE ON messages
-WHEN old.role <> 'tool'
-   AND EXISTS (SELECT 1 FROM sessions
-               WHERE id = old.session_id AND {FTS_TRIGRAM_SESSION_SQL})
-   AND (old.id > COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                           WHERE key = 'fts_rebuild_high_water'), -1)
-     OR old.id <= COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                            WHERE key = 'fts_rebuild_progress'), -1))
-BEGIN
-    INSERT INTO messages_fts_trigram(messages_fts_trigram, rowid, content, tool_name)
-    VALUES ('delete', old.id, old.content, old.tool_name);
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_update
-AFTER UPDATE OF content, tool_name, role ON messages
-WHEN (old.content IS NOT new.content
-    OR old.tool_name IS NOT new.tool_name
-    OR old.role IS NOT new.role)
-   AND (old.id > COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                           WHERE key = 'fts_rebuild_high_water'), -1)
-     OR old.id <= COALESCE((SELECT CAST(value AS INTEGER) FROM state_meta
-                            WHERE key = 'fts_rebuild_progress'), -1))
-BEGIN
-    INSERT INTO messages_fts_trigram(messages_fts_trigram, rowid, content, tool_name)
-    SELECT 'delete', old.id, old.content, old.tool_name
-    WHERE old.role <> 'tool'
-      AND EXISTS (SELECT 1 FROM sessions
-                  WHERE id = old.session_id AND {FTS_TRIGRAM_SESSION_SQL});
-    INSERT INTO messages_fts_trigram(rowid, content, tool_name)
-    SELECT new.id, new.content, new.tool_name
-    WHERE new.role <> 'tool'
-      AND EXISTS (SELECT 1 FROM sessions
-                  WHERE id = new.session_id AND {FTS_TRIGRAM_SESSION_SQL});
-END;
-"""
-
-_FTS_CJK_TRIGGERS = ("messages_fts_cjk_insert", "messages_fts_cjk_delete", "messages_fts_cjk_update")
-
-# Set when a tokenizer-less process dropped the cjk triggers to keep writes alive: the cjk index is missing rows
-# and must not serve reads until `hermes sessions optimize-storage` rebuilds it on a capable host.
-FTS_CJK_STALE_KEY = "fts_cjk_stale"
-
-# Set when a base/trigram FTS index was detached after runtime corruption; startup must rebuild the complete
-# index before reinstalling sync triggers (rows written while they were absent leave an unknown gap).
-FTS_STALE_KEY = "fts_stale"
-
-# Durable diagnostic for stale FTS recovery blocked across process restarts.
-FTS_REBUILD_DEFERRAL_KEY = "fts_rebuild_deferral"
-
-
-# ── Legacy (v22 / inline-content) FTS DDL ──────────────────────────────
-# Used ONLY to keep an existing pre-v23 install's search working and its
-# triggers repairable UNTIL the user opts into `hermes db optimize`. This is
-# the exact inline shape v11..v22 shipped: each virtual table stores its own
-# copy of ``content || tool_name || tool_calls`` and the trigram table indexes
-# every row (including role='tool'). We never CREATE these on a fresh install —
-# fresh installs are born on the v23 external-content schema above. These
-# constants exist so a legacy DB is never accidentally handed the v23 DDL
-# (which would create the external-content trigram source VIEW and leave the
-# DB in a mixed, broken state). `optimize_fts_storage()` is what migrates a
-# legacy DB to the v23 shape.
-LEGACY_FTS_SQL = f"""
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts USING fts5(
-    content
-);
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_insert AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts(rowid, content) VALUES (
-        new.id,
-        COALESCE({_FTS_NEW_INDEXED_CONTENT_SQL}, '')
-        || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-    );
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_delete AFTER DELETE ON messages BEGIN
-    DELETE FROM messages_fts WHERE rowid = old.id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_update
-AFTER UPDATE OF content, tool_name, tool_calls, role ON messages BEGIN
-    DELETE FROM messages_fts WHERE rowid = old.id;
-    INSERT INTO messages_fts(rowid, content) VALUES (
-        new.id,
-        COALESCE({_FTS_NEW_INDEXED_CONTENT_SQL}, '')
-        || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-    );
-END;
-"""
-
-
-LEGACY_FTS_TRIGRAM_SQL = f"""
-CREATE VIRTUAL TABLE IF NOT EXISTS messages_fts_trigram USING fts5(
-    content,
-    tokenize='trigram'
-);
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_insert AFTER INSERT ON messages BEGIN
-    INSERT INTO messages_fts_trigram(rowid, content) VALUES (
-        new.id,
-        COALESCE({_FTS_NEW_INDEXED_CONTENT_SQL}, '')
-        || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-    );
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_delete AFTER DELETE ON messages BEGIN
-    DELETE FROM messages_fts_trigram WHERE rowid = old.id;
-END;
-
-CREATE TRIGGER IF NOT EXISTS messages_fts_trigram_update
-AFTER UPDATE OF content, tool_name, tool_calls, role ON messages BEGIN
-    DELETE FROM messages_fts_trigram WHERE rowid = old.id;
-    INSERT INTO messages_fts_trigram(rowid, content) VALUES (
-        new.id,
-        COALESCE({_FTS_NEW_INDEXED_CONTENT_SQL}, '')
-        || ' ' || COALESCE(new.tool_name, '') || ' ' || COALESCE(new.tool_calls, '')
-    );
-END;
-"""
-
-# Cross-process full-FTS-rebuild admission (single authority).  Several processes share one state.db and a
-# structural rebuild (FTS5 'rebuild' or `_recover_stale_fts`'s drop/recreate) must run in ONE at a time —
-# concurrent rebuilds corrupted state.db in production.  Gates `rebuild_fts()`, `_rebuild_fts_indexes()`,
-# `_recover_stale_fts()`; the chunked backfill (`fts_rebuild_step`) is deliberately NOT routed through it (it
-# claims progress under SQLite transaction authority).  Mirrors `hermes_state_repair._cross_process_repair_lock`:
-# portable (msvcrt/flock), bounded wait, FAIL CLOSED; orphaned-fd holders (see `_acquire_db_flock`) are broken
-# only when provably dead, indeterminate liveness defers.  `<db>.fts_rebuild.lock` is distinct from
-# `<db>.repair.lock` (offline schema surgery, minutes in VACUUM).  Lives here: mixins cannot import hermes_state.
-
-# ── Cross-process full-FTS-rebuild admission (single authority) ────────────── Several independent Hermes
-# processes routinely share one state.db (gateway service, the Desktop app's `hermes serve` backend,
-# interactive CLI sessions, the TUI slash worker). A full structural FTS rebuild — the FTS5 'rebuild'
-# command or the drop/recreate script in `_recover_stale_fts` — must only ever run in ONE of them at a time:
-# two concurrent rebuilds collide on write and have structurally corrupted state.db in production (PR
-# #93200; the 2026-08-15 / 2026-08-23 incidents and issues #89293 / #90950). This is the single admission
-# authority for every full structural rebuild entry point: `SessionSearchMixin.rebuild_fts()`,
-# `SessionSchemaMixin._rebuild_fts_indexes()` (via `_init_schema`), and
-# `SessionSchemaMixin._recover_stale_fts()`. The chunked deferred backfill (`fts_rebuild_step`) is
-# deliberately NOT routed through it — it claims progress under `_execute_write`'s SQLite transaction
-# authority and is intentionally multi-process. Semantics mirror `hermes_state_repair._cross_process_repair_lock`
-# (the schema- surgery authority): portable (msvcrt on Windows, flock elsewhere), bounded wait, and FAIL
-# CLOSED — a caller that cannot acquire the lock must NOT rebuild. The kernel drops both lock types when the
-# holder dies — UNLESS a forked child inherited the lock fd (flock rides the open file description, which
-# fork() duplicates), in which case the orphaned descriptor holds the lock forever (issue #100108).
-# `_acquire_db_flock` therefore records the holder's pid + start time under the lock and, when the recorded
-# holder is provably dead, breaks the orphaned lock by unlinking and retaking it on a fresh inode;
-# indeterminate liveness still defers. It lives here (not hermes_state) because the search/schema mixins
-# cannot import hermes_state (cycle). The lock file is `<db>.fts_rebuild.lock`, distinct from
-# `<db>.repair.lock`: schema surgery runs on an EXCLUSIVE offline connection and can legitimately take
-# minutes in VACUUM, while runtime rebuilds run on live connections. The timeout is sized for a full
-# 'rebuild' of both indexes on a large DB.
 logger = logging.getLogger("hermes_state")
 
-_FTS_REBUILD_LOCK_TIMEOUT_SECONDS = 120.0
-_FTS_REBUILD_LOCK_POLL_SECONDS = 0.1
 _IS_WINDOWS = sys.platform == "win32"
 # Post-break re-acquire budget: the fresh inode is contended only by live processes — never the full timeout.
 _LOCK_BREAK_REACQUIRE_SECONDS = 5.0
@@ -1407,84 +1016,6 @@ def _describe_lock_holder(record) -> str:
         if record.get("acquired_at") is not None:
             age = f", acquired {time.time() - float(record['acquired_at']):.0f}s ago"
     return f"pid {record.get('pid')}{age}"
-
-
-def _acquire_msvcrt_lock(lock_path, handle, timeout):
-    """Windows counterpart of ``_acquire_db_flock`` (no orphan break); same True / False / None contract."""
-    import msvcrt
-    deadline = time.monotonic() + timeout
-    while True:
-        try:
-            handle.seek(0)
-            msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
-            return True
-        except (BlockingIOError, OSError) as exc:
-            if not is_advisory_lock_contention(exc):
-                logger.warning("Could not acquire FTS rebuild lock %s (%s) — deferring on a non-contention error.",
-                               lock_path, exc)
-                return None
-            if time.monotonic() >= deadline:
-                return False
-            time.sleep(_FTS_REBUILD_LOCK_POLL_SECONDS)
-
-
-@contextlib.contextmanager
-def fts_rebuild_admission(db_path, *, timeout_seconds=None):
-    """Serialize full structural FTS rebuilds on *db_path* across processes.  Yields True when this process
-    holds the authority, False when the bounded acquire timed out or the lock file could not be opened: the
-    caller must NOT rebuild (fail closed; the stale breadcrumb guarantees a retry).  ``db_path`` None
-    (in-memory) yields True.  In-process retries pass ``timeout_seconds=0`` so a live holder never stalls a
-    long-lived writer; the orphan break still applies."""
-    if db_path is None:
-        yield True
-        return
-    timeout = _FTS_REBUILD_LOCK_TIMEOUT_SECONDS if timeout_seconds is None else max(float(timeout_seconds), 0.0)
-    lock_path = f"{db_path}.fts_rebuild.lock"
-    try:
-        handle = open(lock_path, "a+b")
-    except OSError as exc:
-        # Fail closed like a timed-out acquire: an unopenable lock file means the FS is out of
-        # space/inodes/descriptors and a sibling that opened earlier may still be rebuilding — yielding True
-        # gave every process on a full disk a concurrent rebuild.  Deferring is free: the breadcrumb retries.
-        logger.warning("Could not open FTS rebuild lock %s (%s) — deferring this rebuild "
-                       "rather than running it without cross-process authority.", lock_path, exc)
-        yield False
-        return
-    acquired = False
-    try:
-        if _IS_WINDOWS:
-            acquired = _acquire_msvcrt_lock(lock_path, handle, timeout)
-        else:
-            acquired, handle = _acquire_db_flock(
-                lock_path, handle, timeout, _FTS_REBUILD_LOCK_POLL_SECONDS, "FTS rebuild lock")
-        if acquired is None:
-            # Already logged with the real errno; "held by another process" would be a lie.
-            acquired = False
-        elif not acquired:
-            record = None if _IS_WINDOWS else _read_lock_holder_record(handle)
-            if timeout <= 0:
-                # Non-blocking probe from an in-process retry: keep it quiet.
-                logger.info("FTS rebuild lock %s is busy — deferring this retry "
-                            "(the stale-FTS breadcrumb keeps it retryable). Recorded holder: %s.",
-                            lock_path, _describe_lock_holder(record))
-            else:
-                logger.warning("FTS rebuild lock %s held by another process for more than %.0fs — deferring "
-                               "this rebuild to avoid racing the holder (the stale-FTS breadcrumb keeps it "
-                               "retryable). Recorded holder: %s.", lock_path, timeout, _describe_lock_holder(record))
-        yield acquired
-    finally:
-        try:
-            with contextlib.suppress(OSError):  # best-effort release
-                if acquired and _IS_WINDOWS:
-                    import msvcrt
-                    handle.seek(0)
-                    msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
-                elif acquired:
-                    import fcntl
-                    _clear_lock_holder_record(handle)
-                    fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
-        finally:
-            handle.close()
 
 
 def _json_or(raw: Any, fallback: Any, warning: str) -> Any:

@@ -217,44 +217,17 @@ SCHEMA_HISTORY: dict[str, _TableHistory] = {
         ('32 2026-10-18T10:11Z 1fc1999769', (('+', 'transcript_revision', 'tool_names'),)),
         ),
     ),
-    "messages": _TableHistory(
+    # lina#12: the text-free placement table that replaced ``messages`` (whose text moved to the memory store).
+    # A pre-v33 ``messages`` table is not salvaged here: moving that data in is lina#24's import.
+    "transcript_rows": _TableHistory(
         base=(
-            'id', 'session_id', 'role', 'content', 'tool_call_id',
-            'tool_calls', 'tool_name', 'timestamp', 'token_count',
+            'id', 'session_id', 'role', 'tool_call_id', 'tool_name', 'effect_disposition', 'timestamp',
+            'token_count', 'finish_reason', 'platform_message_id', 'observed', '_compressed_summary', 'active',
+            'compacted', 'display_kind', 'display_metadata', 'display_identity', 'display_order', 'message_uid',
+            'absorbed_message_uids', 'tool_call_uids', 'tool_call_uid', 'text_uid', 'content_digest',
+            'tool_call_count',
         ),
-        events=(
-        ('01 2026-02-21T08:05Z b33ed9176f', (('+', 'finish_reason', 'token_count'),)),
-        ('02 2026-03-25T16:47Z 42fec19151', (
-            ('+', 'reasoning', 'finish_reason'),
-            ('+', 'reasoning_details', 'reasoning'),
-            ('+', 'codex_reasoning_items', 'reasoning_details'),
-        )),
-        ('03 2026-04-22T11:31Z a7d78d3bfd', (('+', 'reasoning_content', 'reasoning'),)),
-        ('04 2026-04-26T01:22Z 81e01f6ee9', (('+', 'codex_message_items', 'codex_reasoning_items'),)),
-        ('05 2026-05-20T20:00Z 31a0100104', (('+', 'platform_message_id', 'codex_message_items'),)),
-        ('06 2026-05-23T08:33Z 4a91e36495', (('+', 'observed', 'platform_message_id'),)),
-        ('07 2026-06-01T08:22Z 3e59be0c41', (('+', 'active', 'observed'),)),
-        ('08 2026-06-11T03:45Z aaccaada28', (('+', 'anthropic_content_blocks', 'reasoning_details'),)),
-        ('09 2026-06-11T03:45Z efcbbde48c', (('-', 'anthropic_content_blocks'),)),
-        ('10 2026-06-20T17:57Z 854d75723f', (('+', 'compacted', 'active'),)),
-        ('11 2026-07-11T12:41Z a0a6cd80f5', (('+', 'effect_disposition', 'tool_name'),)),
-        ('12 2026-07-19T02:55Z 7b3dcee928', (('+', 'api_content', 'compacted'),)),
-        ('13 2026-07-23T18:46Z a4bc1ca502', (
-            ('+', 'display_kind', 'api_content'),
-            ('+', 'display_metadata', 'display_kind'),
-        )),
-        ('14 2026-08-25T10:55Z 1104ffe0b9', (('+', '_compressed_summary', 'observed'),)),
-        ('15 2026-09-09T17:05Z 1c6683e8e0', (
-            ('+', 'display_identity', 'display_metadata'),
-            ('+', 'display_order', 'display_identity'),
-        )),
-        ('16 2026-09-28T08:42Z eed37d63ce', (
-            ('+', 'message_uid', 'display_order'),
-            ('+', 'absorbed_message_uids', 'message_uid'),
-            ('+', 'tool_call_uids', 'absorbed_message_uids'),
-            ('+', 'tool_call_uid', 'tool_call_uids'),
-        )),
-        ),
+        events=(),
     ),
     "session_model_usage": _TableHistory(
         base=(

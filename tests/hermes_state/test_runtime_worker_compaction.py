@@ -21,7 +21,7 @@ def test_watermarked_compaction_preserves_foreign_tail_and_rejects_stale_holder(
     rows = store.get_messages_as_conversation('owned', include_row_ids=True)
     assert rows[-1]['content'] == 'foreign tail' and rows[-1]['api_content'] == ' EXACT '
     assert rows[-1]['display_metadata'] == {'_accepted_input_id': 'input-tail'}
-    assert db._read_one("SELECT COUNT(*) FROM messages WHERE session_id='owned' AND compacted=1")[0] == 1
+    assert db._read_one("SELECT COUNT(*) FROM transcript_rows WHERE session_id='owned' AND compacted=1")[0] == 1
     assert store.get_session_model_config_value('owned', '_proactive_prune_rearm_tokens') == 42
 
 
@@ -66,7 +66,7 @@ def test_in_place_archive_without_a_lease_persists_from_a_worker(worker):
     assert store.failure is None and store.journal['pending'] == []
     rows = store.get_messages_as_conversation('owned')
     assert [r['content'] for r in rows] == ['pruned']
-    assert db._read_one("SELECT COUNT(*) FROM messages WHERE session_id='owned' AND compacted=1")[0] == 2
+    assert db._read_one("SELECT COUNT(*) FROM transcript_rows WHERE session_id='owned' AND compacted=1")[0] == 2
     store.append_messages_batch('owned', [{'role': 'user', 'content': 'after'}])
     assert [r['content'] for r in store.get_messages_as_conversation('owned')] == ['pruned', 'after']
 

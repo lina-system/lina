@@ -9,6 +9,7 @@ from agent.compaction_display import project_compaction_message_for_display
 from agent.context_compressor import user_originated_turn_view
 from hermes_state_compaction_display import not_a_later_tool_copy_sql
 from hermes_state_messages import DISPLAY_VISIBLE_SQL
+from hermes_state_store import text_columns_sql, text_sql
 
 
 _SYNTHETIC_PROMPT = re.compile(
@@ -60,28 +61,28 @@ def _display_rows_sql(conn, session_id, *, users_only=False):
     """
     filters = (" AND role = 'user'" if users_only else "") + DISPLAY_VISIBLE_SQL
     indexed = conn.execute(
-        "SELECT 1 FROM messages WHERE session_id = ? AND (active = 1 OR compacted = 1) "
+        "SELECT 1 FROM transcript_rows WHERE session_id = ? AND (active = 1 OR compacted = 1) "
         f"{filters} AND (display_order IS NULL OR display_identity IS NULL) LIMIT 1",
         (session_id,),
     ).fetchone() is None
     if indexed:
         return f"""WITH display_rows AS (
-            SELECT (SELECT candidate.id FROM messages candidate
+            SELECT (SELECT candidate.id FROM transcript_rows candidate
                     WHERE candidate.session_id = :sid
                       AND candidate.display_order = m.display_order
                       AND (candidate.active = 1 OR candidate.compacted = 1){DISPLAY_VISIBLE_SQL}{not_a_later_tool_copy_sql('candidate')}
                     ORDER BY candidate.active DESC, candidate.id DESC LIMIT 1) AS row_id,
                    m.display_order AS sort_id
-            FROM messages m WHERE session_id = :sid AND (active = 1 OR compacted = 1){filters}{not_a_later_tool_copy_sql('m')}
+            FROM transcript_rows m WHERE session_id = :sid AND (active = 1 OR compacted = 1){filters}{not_a_later_tool_copy_sql('m')}
             GROUP BY m.display_order
         )"""
     return f"""WITH ranked AS (
         SELECT id, MIN(id) OVER identity AS sort_id,
                ROW_NUMBER() OVER (identity ORDER BY active DESC, id DESC) AS preference
-        FROM messages WHERE session_id = :sid AND (active = 1 OR compacted = 1){filters}
+        FROM transcript_rows WHERE session_id = :sid AND (active = 1 OR compacted = 1){filters}
         WINDOW identity AS (PARTITION BY role,
-            CASE WHEN role = 'user' THEN timeline_identity_content(content, display_kind) ELSE content END,
-            timestamp, tool_call_id, tool_calls, tool_name)
+            CASE WHEN role = 'user' THEN timeline_identity_content({text_sql('content')}, display_kind) ELSE {text_sql('content')} END,
+            timestamp, tool_call_id, {text_sql('tool_calls')}, tool_name)
     ), display_rows AS (SELECT id AS row_id, sort_id FROM ranked WHERE preference = 1)"""
 
 
@@ -108,7 +109,7 @@ def get_session_messages_around(db, session_id, row_id, *, limit=120):
     with _snapshot(db) as conn:
         _register_functions(db, conn)
         anchor = conn.execute(
-            "SELECT content, display_kind, _compressed_summary FROM messages "
+            f"SELECT {text_sql('content')} AS content, display_kind, _compressed_summary FROM transcript_rows "
             "WHERE session_id = ? AND id = ? AND role = 'user' AND (active = 1 OR compacted = 1)",
             (session_id, row_id),
         ).fetchone()
@@ -125,10 +126,10 @@ def get_session_messages_around(db, session_id, row_id, *, limit=120):
         counts = conn.execute(sql + """
             SELECT COUNT(*) AS total, COALESCE(SUM(sort_id < :start), 0) AS offset FROM display_rows
         """, params).fetchone()
-        rows = conn.execute(sql + """
-            SELECT m.* FROM (SELECT row_id, sort_id FROM display_rows
+        rows = conn.execute(sql + f"""
+            SELECT m.*, {text_columns_sql('m.')} FROM (SELECT row_id, sort_id FROM display_rows
                             WHERE sort_id >= :start ORDER BY sort_id LIMIT :limit) AS page
-            JOIN messages m ON m.id = page.row_id ORDER BY page.sort_id
+            JOIN transcript_rows m ON m.id = page.row_id ORDER BY page.sort_id
         """, params).fetchall()
     messages = [db._row_to_message_dict(row, warn_context="timeline jump", summary_flag=True) for row in rows]
     return {"messages": messages, "pagination": {
@@ -143,11 +144,11 @@ def get_session_timeline(db, session_id, *, limit=500, after_row_id=0):
     """Chronological prompts. Cursor is the first physical row id of a logical turn."""
     with _snapshot(db) as conn:
         _register_functions(db, conn)
-        sql = _display_rows_sql(conn, session_id, users_only=True) + """,
+        sql = _display_rows_sql(conn, session_id, users_only=True) + f""",
             prompts AS MATERIALIZED (
                 SELECT row_id, sort_id, m.timestamp,
-                       timeline_preview(m.content, m.display_kind, m._compressed_summary) AS preview
-                FROM display_rows JOIN messages m ON m.id = row_id
+                       timeline_preview({text_sql('content', 'm.')}, m.display_kind, m._compressed_summary) AS preview
+                FROM display_rows JOIN transcript_rows m ON m.id = row_id
             ), eligible AS MATERIALIZED (SELECT * FROM prompts WHERE preview <> '')
         """
         params = {"sid": session_id, "after": after_row_id, "limit": limit + 1}

@@ -139,8 +139,9 @@ def test_ordinary_owner_launches_tool_worker_and_detach_does_not_cancel(tmp_path
                OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=url)
 
     def query(sql, args=()):
-        with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
-            return db.execute(sql, args).fetchall()
+        from hermes_state import SessionDB
+        with SessionDB(home / 'state.db', read_only=True) as db:
+            return [tuple(row) for row in db._read_all(sql, args)]
 
     async def exercise(desc, owner):
         import psutil
@@ -234,7 +235,7 @@ def test_ordinary_owner_launches_tool_worker_and_detach_does_not_cancel(tmp_path
             assert start['args']['command'] == peer.command and done['is_error'] is False, tools
             if not peer.control_mode and worker_action != 'background':
                 assert 'MANAGED_TOOL_EFFECT' in done['result'], tools
-        rows = query('SELECT role,content FROM messages WHERE session_id=? ORDER BY id', (sid,))
+        rows = query("SELECT role,msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? ORDER BY id", (sid,))
         assert sum(role == 'user' and 'DO_MANAGED_TOOL' in content for role, content in rows) == 1, rows
         assert sum(role == 'assistant' and 'MANAGED_TOOL_DONE' in (content or '') for role, content in rows) == 1, rows
         if peer.control_mode:

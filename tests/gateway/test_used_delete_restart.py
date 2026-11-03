@@ -127,7 +127,7 @@ def test_used_api_and_native_delete_restart_exact_retry(tmp_path):
             with sqlite3.connect(home / 'state.db') as db:
                 for sid in receipts:
                     assert db.execute('SELECT 1 FROM sessions WHERE id=?', (sid,)).fetchone() is None
-                    assert db.execute('SELECT 1 FROM messages WHERE session_id=?', (sid,)).fetchone() is None
+                    assert db.execute('SELECT 1 FROM transcript_rows WHERE session_id=?', (sid,)).fetchone() is None
                     assert db.execute('SELECT 1 FROM session_admissions WHERE target_session_id=?', (sid,)).fetchone() is None
                 assert not db.execute('PRAGMA foreign_key_check').fetchall()
             assert len(peer.requests) == before

@@ -29,7 +29,7 @@ def test_compacted_messages_keep_current_row_ids_across_repeated_compaction(tmp_
                 store.archive_and_compact(parent, messages, lock_holder='holder')
             current = store.scope['session_id']
             assert messages[0]['_row_id'] != old_id
-            assert db._read_one('SELECT session_id,active FROM messages WHERE id=?',
+            assert db._read_one('SELECT session_id,active FROM transcript_rows WHERE id=?',
                                 (messages[0]['_row_id'],))[:] == (current, 1)
     finally:
         store.failure = None
@@ -49,7 +49,7 @@ def test_owner_minted_message_uid_round_trips_through_append_and_archive(worker)
     def stored():
         with db._read_ctx() as conn:
             return [r[0] for r in conn.execute(
-                'SELECT message_uid FROM messages WHERE session_id=? AND active=1 ORDER BY id', ('owned',))]
+                'SELECT message_uid FROM transcript_rows WHERE session_id=? AND active=1 ORDER BY id', ('owned',))]
 
     first = stored()
     assert [m.get('message_uid') for m in messages] == first and all(first)

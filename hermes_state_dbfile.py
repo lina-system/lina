@@ -25,9 +25,7 @@ from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from hermes_state_holders import canonical_sqlite_path, read_only_db_uri
-from hermes_state_common import (
-    FTS_REBUILD_DEFERRAL_KEY, stat_db_file_identity as _stat_db_file_identity
-)
+from hermes_state_common import stat_db_file_identity as _stat_db_file_identity
 
 # Log-record parity with the origin module (caplog tests pin "hermes_state").
 logger = logging.getLogger("hermes_state")
@@ -71,7 +69,6 @@ def _prepare_connection_retirement():
 _HEADER_PROBE_LOCK = threading.Lock()
 _HEADER_PROBE_FDS: dict[str, tuple[int, int, int]] = {}  # key -> (fd, dev, ino)
 _RETIRED_HEADER_PROBE_FDS: list[int] = []  # intentionally never closed
-_FTS_TABLE_NAMES = ("messages_fts", "messages_fts_trigram", "messages_fts_cjk")
 
 
 def _pread_db_range(db_path: Path, offset: int, length: int) -> Optional[bytes]:
@@ -747,14 +744,12 @@ def collect_state_db_stats(db_path: Path) -> dict[str, Any]:
     timeout so it can run against a *live* database without taking a write lock.  Every field is
     collected independently (a failed pragma/SELECT yields ``None`` for it); never raises.
     Deliberately does NOT instantiate :class:`SessionDB` — its constructor runs DDL.
-    ``wal_size_bytes`` is 0 when the sidecar is absent; ``fts_storage_version`` None means the
-    legacy inline layout; ``fts_rebuild_deferral`` is the durable blocked-repair diagnostic."""
+    ``wal_size_bytes`` is 0 when the sidecar is absent; ``messages`` counts transcript rows (their
+    text is in the memory store)."""
     from hermes_state import _connect_tracked_db
     stats: dict[str, Any] = dict.fromkeys((
         "page_count", "page_size", "freelist_count", "logical_size_bytes", "wal_size_bytes", "journal_mode",
-        "messages", "sessions", "fts_tables", "fts_storage_version", "fts_storage_upgrade_needed",
-        "fts_teardown_pending", "fts_rebuild_pending",
-        "fts_rebuild_high_water", "fts_rebuild_progress", "fts_rebuild_deferral"))
+        "messages", "sessions"))
     # WAL sidecar size needs no connection at all.
     with contextlib.suppress(OSError):
         wal_path = Path(str(db_path) + "-wal")
@@ -776,11 +771,6 @@ def collect_state_db_stats(db_path: Path) -> dict[str, Any]:
     def _int(sql: str, params=()) -> Optional[int]:
         value = _scalar(sql, params)
         return int(value) if value is not None else None
-    def _meta_int(key: str) -> Optional[int]:
-        try:  # a non-numeric meta value must yield None, not fail the snapshot
-            return _int("SELECT value FROM state_meta WHERE key = ?", (key,))
-        except Exception:
-            return None
 
     try:
         stats["page_count"] = _int("PRAGMA page_count")
@@ -790,34 +780,8 @@ def collect_state_db_stats(db_path: Path) -> dict[str, Any]:
         stats["freelist_count"] = _int("PRAGMA freelist_count")
         jm = _scalar("PRAGMA journal_mode")
         stats["journal_mode"] = str(jm) if jm is not None else None
-        stats["messages"] = _int("SELECT COUNT(*) FROM messages")
+        stats["messages"] = _int("SELECT COUNT(*) FROM transcript_rows")
         stats["sessions"] = _int("SELECT COUNT(*) FROM sessions")
-        # FTS table presence via sqlite_master (never SELECTs from the
-        # virtual tables themselves — a corrupt index must not fail stats).
-        with contextlib.suppress(Exception):
-            names = {row[0] for row in conn.execute(
-                "SELECT name FROM sqlite_master WHERE type = 'table' AND name IN (?, ?, ?)",
-                _FTS_TABLE_NAMES).fetchall()}
-            stats["fts_tables"] = {t: (t in names) for t in _FTS_TABLE_NAMES}
-        # Raw state_meta reads — cheap, and independent of SessionDB.
-        stats["fts_storage_version"] = _meta_int("fts_storage_version")
-        with contextlib.suppress(Exception):
-            from hermes_state_fts import fts_layout_drift
-            stats["fts_storage_upgrade_needed"] = bool(fts_layout_drift(conn.cursor()))
-        with contextlib.suppress(Exception):
-            # Demoted old-index tables still awaiting teardown: an optimize-storage run stopped after its backfill.
-            stats["fts_teardown_pending"] = conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name LIKE 'fts\\_v22\\_trash\\_%' ESCAPE '\\' "
-                "LIMIT 1").fetchone() is not None
-        stats["fts_rebuild_high_water"] = high_water = _meta_int("fts_rebuild_high_water")
-        stats["fts_rebuild_progress"] = progress = _meta_int("fts_rebuild_progress")
-        stats["fts_rebuild_pending"] = False if high_water is None else (progress or 0) < high_water
-        with contextlib.suppress(Exception):
-            row = conn.execute("SELECT value FROM state_meta WHERE key = ? LIMIT 1",
-                               (FTS_REBUILD_DEFERRAL_KEY,)).fetchone()
-            parsed = json.loads(row[0]) if row else None
-            if isinstance(parsed, dict):
-                stats["fts_rebuild_deferral"] = parsed
     finally:
         with contextlib.suppress(Exception):
             conn.close()

@@ -17,6 +17,7 @@ import re
 import pytest
 
 from hermes_state import SessionDB
+from hermes_state_store import insert_rows
 
 UID_RE = re.compile(r"^[0-9a-f]{32}$")
 
@@ -51,9 +52,9 @@ def db(tmp_path):
 
 def _rows(db, sid, *, active_only=True, include_session=False):
     clause = " AND active = 1" if active_only else ""
-    cols = "id, session_id, role, content, message_uid, active, compacted"
+    cols = "id, session_id, role, msg_text(text_uid, 'content') AS content, message_uid, active, compacted"
     return [dict(r) for r in db._conn.execute(
-        f"SELECT {cols} FROM messages WHERE session_id = ?{clause} ORDER BY id", (sid,)).fetchall()]
+        f"SELECT {cols} FROM transcript_rows WHERE session_id = ?{clause} ORDER BY id", (sid,)).fetchall()]
 
 
 def _seed(db, sid, n=4):
@@ -90,68 +91,12 @@ class TestMintAndRestore:
         assert [m["message_uid"] for m in model_history] == [r["message_uid"] for r in stored]
         assert [m["message_uid"] for m in display_history] == [r["message_uid"] for r in stored]
 
-    def test_legacy_rows_are_backfilled_in_bounded_slices_across_opens(self, tmp_path, monkeypatch):
-        """A single full-table UPDATE held the write lock for minutes on a large store; each open now
-        mints at most one chunk past its time budget, keeps earlier uids, and converges."""
-        import hermes_state_schema
-
-        monkeypatch.setattr(hermes_state_schema, "_MESSAGE_UID_BACKFILL_CHUNK", 2)
-        monkeypatch.setattr(hermes_state_schema, "_MESSAGE_UID_BACKFILL_BUDGET_S", 0.0)
-        path = tmp_path / "legacy.db"
-        first = SessionDB(db_path=path)
-        try:
-            _seed(first, "s", n=5)
-            # Rows written by a build that predates the column: NULL uid, no backfill marker.
-            first._conn.execute("UPDATE messages SET message_uid = NULL")
-            first._conn.execute("DELETE FROM state_meta WHERE key = 'message_uid_backfill'")
-            first._conn.commit()
-        finally:
-            first.close()
-        seen = []
-        for _ in range(3):
-            handle = SessionDB(db_path=path)
-            try:
-                seen.append([r["message_uid"] for r in _rows(handle, "s")])
-                done = handle.get_meta("message_uid_backfill")
-            finally:
-                handle.close()
-        assert [sum(u is not None for u in uids) for uids in seen] == [2, 4, 5]
-        assert seen[1][:2] == seen[0][:2] and seen[2][:4] == seen[1][:4]
-        assert all(UID_RE.match(u) for u in seen[2]) and len(set(seen[2])) == 5
-        assert done == "1"
-
-    def test_a_jsonl_converted_store_with_text_ids_opens_and_backfills(self, tmp_path, monkeypatch):
-        """``_reconcile_columns`` adds the declared columns but never rebuilds the key, so a converted store
-        keeps ``id TEXT`` with no PRIMARY KEY: ``MAX(id)`` is a str and an ``id`` range compares as text.
-        The walk keys on rowid, so the open does not raise and every row is minted, whatever its id sorts
-        like (#141467)."""
-        import sqlite3
-
-        import hermes_state_schema
-
-        monkeypatch.setattr(hermes_state_schema, "_MESSAGE_UID_BACKFILL_CHUNK", 2)
-        path = tmp_path / "legacy.db"
-        conn = sqlite3.connect(path)
-        conn.executescript(_JSONL_CONVERTED_STORE_SQL)
-        conn.close()
-        handle = SessionDB(db_path=path)
-        try:
-            rows = handle._conn.execute("SELECT id, message_uid FROM messages ORDER BY rowid").fetchall()
-            done = handle.get_meta("message_uid_backfill")
-        finally:
-            handle.close()
-        assert [r[0] for r in rows] == ["11022", "11023", "5078"]
-        assert all(UID_RE.match(u) for _, u in rows) and len({u for _, u in rows}) == 3
-        assert done == "1"
-
     def test_a_row_inserted_without_a_uid_by_an_older_writer_gets_one(self, db):
         """The store mints for a build that predates the column (its INSERT binds no uid)."""
         db.create_session("s", "cli", model="test/model")
-        db._conn.execute(
-            "INSERT INTO messages (session_id, role, content, timestamp) VALUES ('s', 'user', 'old writer', 1.0)"
-        )
-        db._conn.commit()
-        uid = db._conn.execute("SELECT message_uid FROM messages WHERE content = 'old writer'").fetchone()[0]
+        db._execute_write(lambda conn: insert_rows(conn, db.message_store, [{
+            "session_id": "s", "role": "user", "content": "old writer", "timestamp": 1.0}]))
+        uid = db._conn.execute("SELECT message_uid FROM transcript_rows WHERE msg_text(text_uid, 'content') = 'old writer'").fetchone()[0]
         assert uid and UID_RE.match(uid)
         assert db.get_messages_as_conversation("s")[0]["message_uid"] == uid
 
@@ -254,7 +199,7 @@ class TestCopyPathsKeepTheUid:
 
 def _absorbed(db, sid):
     return [r[0] for r in db._conn.execute(
-        "SELECT absorbed_message_uids FROM messages WHERE session_id = ? AND active = 1 ORDER BY id", (sid,))]
+        "SELECT absorbed_message_uids FROM transcript_rows WHERE session_id = ? AND active = 1 ORDER BY id", (sid,))]
 
 
 class TestPersistedMergeWitness:
@@ -294,7 +239,7 @@ class TestPersistedMergeWitness:
         assert first["_tool_call_uid"] == uids["call_1"]
         # The provider-facing entries are untouched: the stored tool_calls JSON carries no uid.
         stored_calls = db._conn.execute(
-            "SELECT tool_calls FROM messages WHERE session_id = ? AND role = 'assistant'", ("s",)).fetchone()[0]
+            "SELECT msg_text(text_uid, 'tool_calls') AS tool_calls FROM transcript_rows WHERE session_id = ? AND role = 'assistant'", ("s",)).fetchone()[0]
         assert "uid" not in stored_calls and [c["id"] for c in calls] == ["call_1", "call_2"]
         # A result that lands in a LATER batch with no live list to pair it: stored NULL, derived on restore
         # from the assistant row that named it (rows are read in id order).
@@ -343,13 +288,10 @@ class TestPersistedMergeWitness:
         db.append_message(session_id=sid, role="tool", content="r1", tool_call_id="call_x", tool_name="t")
         db.append_message(session_id=sid, role="user", content="q2")
         # An older writer's rows: same provider id, no uid map on the call, no uid on the result.
-        db._conn.execute(
-            "INSERT INTO messages (session_id, role, content, tool_calls, timestamp) VALUES (?, 'assistant', '', ?, 5.0)",
-            (sid, json.dumps(call)))
-        db._conn.execute(
-            "INSERT INTO messages (session_id, role, content, tool_call_id, tool_name, timestamp) "
-            "VALUES (?, 'tool', 'r2', 'call_x', 't', 6.0)", (sid,))
-        db._conn.commit()
+        db._execute_write(lambda conn: insert_rows(conn, db.message_store, [
+            {"session_id": sid, "role": "assistant", "content": "", "tool_calls": json.dumps(call), "timestamp": 5.0},
+            {"session_id": sid, "role": "tool", "content": "r2", "tool_call_id": "call_x",
+             "tool_name": "t", "timestamp": 6.0}]))
         db.append_message(session_id=sid, role="user", content="q3")
         db.append_message(session_id=sid, role="assistant", content="", tool_calls=call)
         db.append_message(session_id=sid, role="tool", content="r3", tool_call_id="call_x", tool_name="t")
@@ -365,7 +307,7 @@ class TestPersistedMergeWitness:
         assert "_tool_call_uid" not in by_content["stray"]
         # The same rule at batch insert: a result after a user turn pairs with nothing.
         assert db._conn.execute(
-            "SELECT tool_call_uid FROM messages WHERE content = 'stray'").fetchone()[0] is None
+            "SELECT tool_call_uid FROM transcript_rows WHERE msg_text(text_uid, 'content') = 'stray'").fetchone()[0] is None
 
     def test_a_composite_rewind_reports_the_replacement_rows_uid(self, db):
         from agent.context_compressor import HISTORICAL_TASK_HEADING, SUMMARY_PREFIX, _SUMMARY_END_MARKER
@@ -500,7 +442,7 @@ def test_a_result_pairs_with_the_assistant_that_named_it_not_the_nearest_one(db)
             {"role": "tool", "content": "r1", "tool_call_id": "call_1"}]
     db.append_messages_batch("s", msgs)
     first, second = msgs[1]["_tool_call_uids"]["call_1"], msgs[2]["_tool_call_uids"]["call_2"]
-    db._conn.execute("UPDATE messages SET tool_call_uid = NULL")  # results written by an older build
+    db._conn.execute("UPDATE transcript_rows SET tool_call_uid = NULL")  # results written by an older build
     db._conn.commit()
     restored = [m for m in db.get_messages_as_conversation("s", repair_alternation=False) if m["role"] == "tool"]
     assert [m.get("_tool_call_uid") for m in restored] == [second, first]
@@ -556,7 +498,7 @@ def test_a_rewrite_that_drops_a_call_does_not_write_its_uid_back(db):
     assistant["tool_calls"] = [_call("c1")]
     assistant["_tool_call_uids"] = {"c1": assistant["_tool_call_uids"]["c1"]}
     db.append_messages_batch("s", [assistant])
-    stored = db._conn.execute("SELECT tool_call_uids FROM messages").fetchone()[0]
+    stored = db._conn.execute("SELECT tool_call_uids FROM transcript_rows").fetchone()[0]
     assert sorted(json.loads(stored)) == ["c1"]
 
 
@@ -580,5 +522,5 @@ def test_a_chunked_copy_pairs_a_result_with_a_call_in_the_previous_chunk(db):
     call = {"role": "assistant", "content": "", "tool_calls": [_call("call_1")]}
     result = {"role": "tool", "content": "r", "tool_call_id": "call_1", "tool_name": "t"}
     db.append_messages_batch("s", [{"role": "user", "content": "q"}, call, result], chunk_rows=2)
-    stored = db._conn.execute("SELECT tool_call_uid FROM messages WHERE role = 'tool'").fetchone()[0]
+    stored = db._conn.execute("SELECT tool_call_uid FROM transcript_rows WHERE role = 'tool'").fetchone()[0]
     assert stored == call["_tool_call_uids"]["call_1"]

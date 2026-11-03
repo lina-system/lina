@@ -44,7 +44,7 @@ _PEER_SELECT_HEAD = """
                        COALESCE(sp.prompt, s.system_prompt)
                            AS _system_prompt_resolved,
                        (COALESCE(s.message_count, 0) > 0 OR EXISTS (
-                           SELECT 1 FROM messages WHERE messages.session_id = s.id LIMIT 1
+                           SELECT 1 FROM transcript_rows WHERE transcript_rows.session_id = s.id LIMIT 1
                        )) AS _has_messages
                 FROM sessions s
                 LEFT JOIN system_prompts sp ON sp.hash = s.system_prompt_hash
@@ -83,7 +83,7 @@ _PEER_BY_TUPLE_SQL = f"""{_PEER_SELECT_HEAD}                WHERE s.source = ?
                   AND (s.ended_at IS NULL OR s.end_reason IN ({_RECOVERABLE_END_REASONS_SQL})
                        OR {_HANDOFF_OWNED_ROW_SQL})
                   AND (COALESCE(s.message_count, 0) > 0 OR EXISTS (
-                      SELECT 1 FROM messages WHERE messages.session_id = s.id LIMIT 1
+                      SELECT 1 FROM transcript_rows WHERE transcript_rows.session_id = s.id LIMIT 1
                   ))
                   AND NOT EXISTS (
                       SELECT 1 FROM sessions b
@@ -110,11 +110,11 @@ _ORPHANS_SQL = f"""
                 SELECT o.id, o.source, o.user_id, o.started_at,
                        o.parent_session_id, o.profile_name,
                        {_sql_session_last_active("o")} AS last_active,
-                       (SELECT COUNT(*) FROM messages m
+                       (SELECT COUNT(*) FROM transcript_rows m
                          WHERE m.session_id = o.id) AS message_count
                 FROM sessions o
                 WHERE o.session_key IS NULL
-                  AND EXISTS (SELECT 1 FROM messages m
+                  AND EXISTS (SELECT 1 FROM transcript_rows m
                                WHERE m.session_id = o.id)
                   AND COALESCE(o.source, '') != 'tool'
                   AND {_sql_json_extract('o.model_config', '$._branched_from')} IS NULL
@@ -372,7 +372,7 @@ class SessionGatewayMixin:
                AND s.started_at IS NOT NULL
                AND s.started_at < ?
                AND NOT EXISTS (
-                       SELECT 1 FROM messages m WHERE m.session_id = s.id
+                       SELECT 1 FROM transcript_rows m WHERE m.session_id = s.id
                    )
              ORDER BY s.started_at
             """,
