@@ -1,13 +1,19 @@
 """``lina services``: one line per LINA service with its label, and the reserved entries (lina#31)."""
 import argparse
+import contextlib
+import os
 import plistlib
 import subprocess
+import sys
+from pathlib import Path
 
+import psutil
 import pytest
 
 import hermes_cli.gateway as gateway_cli
 from hermes_cli import lina_services
 from hermes_cli.subcommands.services import build_services_parser
+from tests.waiting import wait_until
 
 
 @pytest.fixture
@@ -121,11 +127,44 @@ def test_a_service_is_not_stopped_while_a_service_that_uses_it_runs(account, mon
         recorded.clear()
 
 
-def test_the_store_is_used_by_the_gateway(account, monkeypatch):
-    """The relation the refusal rests on, read through the real probe: any gateway process of this root counts."""
+@contextlib.contextmanager
+def _gateway_process(tmp_path, home):
+    """A process the gateway scan takes for ``gateway run`` (a ``gateway/run.py``), running on *home*."""
+    script = tmp_path / f"gw-{home.name}" / "gateway" / "run.py"
+    script.parent.mkdir(parents=True)
+    script.write_text("import time\ntime.sleep(120)\n")
+    proc = subprocess.Popen([sys.executable, str(script)], env={**os.environ, "HERMES_HOME": str(home)})
+    try:
+        wait_until(lambda: str(script) in " ".join(psutil.Process(proc.pid).cmdline()), what="the gateway started")
+        yield proc
+    finally:
+        proc.kill()
+        proc.wait(timeout=10)
+
+
+@pytest.mark.spawns_gateway_lookalike
+@pytest.mark.platforms("linux")
+def test_only_a_gateway_of_this_lina_root_holds_the_store(account, tmp_path):
+    """The store and OCX refuse to stop while a gateway of THIS root runs; another home's gateway (a second root,
+    a test's, Hermes Agent's beside LINA) on the same account does not count."""
     assert "gateway" in lina_services.USED_BY["store"]
-    monkeypatch.setattr(gateway_cli, "find_gateway_pids", lambda **kw: [4242] if kw.get("all_profiles") else [])
-    assert lina_services._RUNNING["gateway"]() is True
+    root = Path(os.environ["HERMES_HOME"])
+    other = tmp_path / "other-home"
+    other.mkdir()
+    with _gateway_process(tmp_path, other):
+        assert lina_services._RUNNING["gateway"]() is False
+    profile = root / "profiles" / "ops"
+    profile.mkdir(parents=True)
+    with _gateway_process(tmp_path, profile):
+        assert lina_services._RUNNING["gateway"]() is True
+
+
+def test_the_worker_counts_only_in_its_own_lina_root(account, tmp_path):
+    from hermes_cli.worker import serve
+    serve.serve_once(tmp_path / "other-root" / "worker")
+    assert lina_services._RUNNING["worker"]() is False
+    serve.serve_once(Path(os.environ["HERMES_HOME"]) / "worker")
+    assert lina_services._RUNNING["worker"]() is True
 
 
 @pytest.mark.parametrize("verb", ["start", "stop", "restart"])

@@ -22,8 +22,8 @@ def build_services_parser(subparsers) -> None:
     parser = subparsers.add_parser(
         "services", help="LINA's services: gateway, memory store, OCX, worker",
         description="One line per LINA service: name, label, state. The gateway runs as a launchd/systemd "
-                    "service; the memory store runs in the Docker compose project lina-store. OCX (#32) and the "
-                    "worker (#35) are not installed yet.")
+                    "service; the memory store runs in the Docker compose project lina-store; OCX (#32) and the "
+                    "worker (#35, `lina worker serve`) run as launchd/systemd services too.")
     sub = parser.add_subparsers(dest="services_action")
     sub.add_parser("list", help="One line per service (the default)")
     sub.add_parser("status", help="Same as list")
