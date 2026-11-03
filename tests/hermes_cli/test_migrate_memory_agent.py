@@ -92,6 +92,25 @@ def test_rerun_matches_all_placements_without_adding_text(tmp_path, memory_store
     assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(3,)]
 
 
+def test_rerun_verifies_copied_subset_after_new_live_messages(tmp_path, memory_store_sql):
+    # Given: the migrated agent has written a new live message through its normal state store.
+    from hermes_state import SessionDB
+
+    source, destination = _snapshot(tmp_path)
+    migrate_agent(source, destination, "migrated")
+    with closing(SessionDB(db_path=destination)) as live:
+        live.create_session("live-session", source="cli")
+        live.append_message("live-session", "user", "new live conversation")
+    before = memory_store_sql("SELECT uid,content FROM memory.messages ORDER BY message_id")
+
+    # When: the retained legacy snapshot is rerun.
+    report = migrate_agent(source, destination, "migrated")
+
+    # Then: only copied placements are counted and live text stays untouched.
+    assert report.ok and (report.matched, report.inserted) == (4, 0)
+    assert memory_store_sql("SELECT uid,content FROM memory.messages ORDER BY message_id") == before
+
+
 @pytest.mark.parametrize("damage", ["placement", "text", "extra", "extra_missing_text", "api"])
 @pytest.mark.parametrize("report_limit", [4096, 2])
 def test_verification_detects_missing_extra_and_changed_destination(

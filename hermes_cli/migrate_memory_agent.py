@@ -129,6 +129,9 @@ def _report(source: sqlite3.Connection, dest: sqlite3.Connection, store: Message
     with closing(scratch()) as ledger:
         for kind in ("source", "destination"):
             ledger.execute(f"CREATE TABLE {kind}_manifest (native_id TEXT PRIMARY KEY, sha256 TEXT)")
+        ledger.execute("CREATE TABLE copied_uids (uid TEXT PRIMARY KEY)")
+        ledger.executemany("INSERT OR IGNORE INTO copied_uids VALUES (?)",
+                           ((row["message_uid"],) for row in _source(source)))
         originals = iter(_source(source))
         original = next(originals, None)
         for batch in batches(dest.execute("SELECT * FROM transcript_rows ORDER BY id")):
@@ -141,6 +144,12 @@ def _report(source: sqlite3.Connection, dest: sqlite3.Connection, store: Message
                     original = next(originals, None)
                 expected = original if original is not None and original["id"] == placement["id"] else None
                 text = exported.get(placement["text_uid"])
+                if (expected is None and placement.get("message_uid") and text is not None
+                        and not ledger.execute("SELECT 1 FROM copied_uids WHERE uid=?",
+                                               (placement["message_uid"],)).fetchone()):
+                    # New live identities are outside the snapshot, not extra imported placements.
+                    _verified_manifest(placement, text, None)
+                    continue
                 if text is not None:
                     item = _verified_manifest(placement, text, expected)
                     ledger.execute("INSERT INTO destination_manifest VALUES (?, ?)", (item.native_id, item.sha256))
