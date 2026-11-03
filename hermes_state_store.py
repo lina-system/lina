@@ -1207,6 +1207,15 @@ def _put_external_message(conn, message: ExternalMessage) -> int:
     return int(written is not None)
 
 
+def external_messages_status() -> tuple[int, Optional[str]]:
+    """Stored external row count and latest collection timestamp, without collector identifiers."""
+    with _owner_connection() as conn:
+        count, collected_at = conn.execute(
+            "SELECT count(*), max(observed_at) FROM memory.messages WHERE source = 'messages'"
+        ).fetchone()
+    return count, collected_at.isoformat() if collected_at is not None else None
+
+
 def ingest_external_batch(spool: str, read_batch: Callable[[int, str], ExternalBatch]) -> tuple[ExternalBatch, int]:
     """Atomically consume complete lines, their immutable versions and the owner-only cursor.
 

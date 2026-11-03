@@ -1306,7 +1306,7 @@ DEFAULT_CONFIG = {
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
-        "external_messages": {"spool": ""},  # Host-level append-only collector spool; empty does nothing.
+        "external_messages": {"enabled": True, "spool": ""},  # Host-level collector source and spool.
         "provider": "",  # One external provider; empty = built-in only.
         "auto_recall_append": False, "prefix_fingerprints": False,  # Recall in the user message (#21); prefix hashes, no text (#25).
     },
