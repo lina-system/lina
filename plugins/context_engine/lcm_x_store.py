@@ -386,6 +386,13 @@ def _qualify_upsert(masked: str, catalog: Catalog) -> str:
 
 def _messages_target(masked: str) -> str:
     """Writes to LCM's ``messages`` go to the placement table; reads keep the view."""
+    head = re.match(r"^(\s*(?:UPDATE|DELETE\s+FROM)\s+)messages\b(.*?)\bWHERE\b(.*?)(\s+RETURNING\b.*)?$", masked,
+                    re.IGNORECASE | re.DOTALL)
+    if head and re.search(r"\b(?:role|content|tool_call_id|tool_calls|tool_name)\b", head.group(3), re.IGNORECASE):
+        # The WHERE reads the message's text, which lives in memory.messages: pick the rows through the view.
+        return (f"{head.group(1)}ctx.lcm_messages AS lcm_target{head.group(2)}WHERE lcm_target.agent_id = "
+                f"public.lina_current_agent() AND lcm_target.store_id IN (SELECT messages.store_id FROM messages "
+                f"WHERE{head.group(3)}){head.group(4) or ''}")
     masked = re.sub(r"^(\s*UPDATE\s+)messages\b", r"\1ctx.lcm_messages", masked, flags=re.IGNORECASE)
     return re.sub(r"^(\s*DELETE\s+FROM\s+)messages\b", r"\1ctx.lcm_messages", masked, flags=re.IGNORECASE)
 
