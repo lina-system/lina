@@ -25,6 +25,7 @@ from agent.message_content import flatten_message_text
 from agent.lsp.deferred import forward_to_agent as forward_lsp_verdicts
 from agent.plugin_live_notes import pop_plugin_notices
 from agent.skills_index_delta import stage_skills_index_note
+from agent.date_note import stage_date_note
 from agent.prompt_refresh import refresh_warm_prompt
 from agent.message_metadata import (
     PERSISTENCE_ONLY_MESSAGE_FIELDS, PRE_LLM_BLOCK_WITHHELD_PROMPT, append_message, stamp_message_timestamp,
@@ -180,6 +181,36 @@ def consume_surface_switch_note(agent: Any) -> str:
 def consume_skills_index_note(agent: Any) -> str:
     """Pop the skills-index delta staged by the system-prompt restore; same channel as above."""
     return _pop_turn_note(agent, "_skills_index_note")
+
+
+def consume_date_note(agent: Any) -> str:
+    """Pop the date line staged when the day changed since the model was last told; same channel."""
+    return _pop_turn_note(agent, "_date_note")
+
+
+RECALL_TOOL_NAME = "memory_recall"
+
+
+def recall_tool_rows(agent: Any, ext_prefetch_cache: str, at: int) -> list[dict[str, Any]]:
+    """The turn's recall as a tool round the runtime makes right after the user message (lina#21):
+    ``assistant(tool_calls=[memory_recall])`` then its ``tool`` result, the fenced block. Found memory
+    is the last thing in the request and is never spliced into a user row or the system prompt, so the
+    cached prefix ends where this turn began. Both rows join the transcript and replay byte-stable."""
+    from agent.turn_scripted_prelude import prelude_call_id
+
+    call_id = prelude_call_id(getattr(agent, "session_id", "") or "", RECALL_TOOL_NAME, {}, at)
+    call = {"id": call_id, "type": "function", "function": {"name": RECALL_TOOL_NAME, "arguments": "{}"}}
+    return [{"role": "assistant", "content": "", "tool_calls": [call]},
+            {"role": "tool", "tool_call_id": call_id, "name": RECALL_TOOL_NAME,
+             "content": build_memory_context_block(ext_prefetch_cache)}]
+
+
+def _recall_as_tool_result(agent: Any, moa_active: bool) -> bool:
+    """Recall rides a tool result unless the home opted into the old append (``memory.auto_recall_append``)
+    or the route never stamps sidecars (MoA, codex_app_server), which keeps composing it live."""
+    manager = getattr(agent, "_memory_manager", None)
+    return not (moa_active or getattr(agent, "api_mode", None) == "codex_app_server"
+                or getattr(manager, "auto_recall_append", False))
 
 
 def append_notes_to_multimodal_content(content: Any, notes: Optional[str]) -> bool:
@@ -921,7 +952,7 @@ def _merge_gateway_notes(
     _turn_notes = "\n\n".join(
         part for part in (consume_gateway_turn_context_notes(agent), pop_plugin_notices(agent),
                           consume_surface_switch_note(agent),
-                          consume_skills_index_note(agent)) if part
+                          consume_skills_index_note(agent), consume_date_note(agent)) if part
     )
     if not _turn_notes:
         return plugin_user_context
@@ -1252,6 +1283,7 @@ def build_turn_context(
     # Every turn, not only on a prompt restore: a long-lived agent (CLI, TUI, Desktop) keeps its
     # prompt in memory for the whole conversation and would never re-check its skills index.
     stage_skills_index_note(agent, active_system_prompt, messages)
+    stage_date_note(agent, messages)
     plugin_user_context = _merge_gateway_notes(
         agent, messages, current_turn_user_idx, plugin_user_context
     )
@@ -1260,6 +1292,10 @@ def build_turn_context(
     # A vetoed prompt never leaves the host: no external-memory prefetch, no titling call.
     ext_prefetch_cache = "" if plugin_block_message else _memory_turn_start_and_prefetch(
         agent, original_user_message, turn_author)
+    recall_rows: list[dict[str, Any]] = []
+    if ext_prefetch_cache and _recall_as_tool_result(agent, moa_active) and current_turn_user_idx == len(messages) - 1:
+        recall_rows = recall_tool_rows(agent, ext_prefetch_cache, len(messages))
+        ext_prefetch_cache = ""
 
     # Title the session now: titling depends only on the user's ask (before any injected
     # context lands on list content), so it runs concurrently with the turn. Daemon thread,
@@ -1281,6 +1317,9 @@ def build_turn_context(
                 agent, messages, current_turn_user_idx, ext_prefetch_cache,
                 plugin_user_context, preflight_compressed=compaction.compressed,
             )
+
+    for row in recall_rows:
+        append_message(messages, row)
 
     _persist_turn_start(agent, messages, conversation_history, pending_cli_message)
 

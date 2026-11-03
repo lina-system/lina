@@ -213,6 +213,8 @@ class MemoryManager:
         self._providers: list[MemoryProvider] = []
         self._tool_to_provider: dict[str, MemoryProvider] = {}
         self._external_prefetch_spill_config: Optional[dict[str, Any]] = None
+        # memory.auto_recall_append: splice recall into the user message instead of a tool result (lina#21).
+        self.auto_recall_append = False
         self._has_external: bool = False
         timeout = external_prefetch_timeout
         timeout = _EXTERNAL_PREFETCH_TIMEOUT_S if timeout is None else float(timeout)
@@ -297,6 +299,7 @@ class MemoryManager:
                 # Off by default, but keep a ceiling so a runaway provider can't overflow the context.
                 spill_config["max_chars"] = max(spill_config["max_chars"] * 10, 100_000)
             self._external_prefetch_spill_config = spill_config
+            self.auto_recall_append = isinstance(memory, dict) and memory.get("auto_recall_append", False) is True
             self._has_external = True
 
         self._providers.append(provider)

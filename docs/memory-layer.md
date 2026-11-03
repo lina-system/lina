@@ -37,6 +37,24 @@ adapter when Honcho is configured. `lina-memory`'s `plugin.yaml` names the adapt
 `hermes honcho ...` stays available while `lina-memory` holds the slot, and setting Honcho up (`hermes honcho
 setup`, `hermes memory setup`) keeps `lina-memory` there.
 
+## Context order
+
+Every request is composed so the provider's prompt cache keeps the longest possible prefix: each part
+changes less often than the one after it, and only a compaction may rewrite bytes already sent (lina#21).
+
+| Part | Built in | Changes |
+| --- | --- | --- |
+| System and persona (identity, SOUL, guidance, context files, skills index, profile and model lines, runtime environment) | `agent/system_prompt.py` `build_system_prompt_parts` | frozen per session; rebuilt at a compaction |
+| Notes and person card (MEMORY.md, USER.md, the memory provider's block), closing the prompt between `# Notes and person card` and its end marker | same, `_memory_parts` | frozen per session; reread at a compaction |
+| Upper summary DAG: LCM-X's condensed nodes (depth 1 and up), deepest first | LCM-X `_assemble_context` | appended to or rewritten only when they are themselves condensed |
+| Lower summary nodes (depth 0) and the recent turns | LCM-X, then the transcript | appended every turn; replaced at a compaction |
+| Found memory: the turn's recall as a `memory_recall` tool call and its result, after the user message | `agent/turn_context.py` `recall_tool_rows` | per turn |
+
+What changes mid-session reaches the model as a note on the turn's user message, behind the cached prefix:
+the date (`agent/date_note.py`, sent when the day changes), the skill set (`agent/skills_index_delta.py`)
+and a surface switch (`agent/surface_switch.py`). `memory.auto_recall_append: true` puts the recall back
+into the user message instead of a tool result (off by default; lina#25 decides it from measurements).
+
 ## The policy table
 
 `plugins/memory/lina/policy.yaml` is data: per route, whether the turn goes to LCM, to Honcho, and as whose

@@ -83,7 +83,7 @@ def test_real_aiagent_freezes_section_within_life_and_rerenders_on_invalidate(mo
     assert calls[0]["session_id"] == agent.session_id
     assert calls[1]["session_id"] == agent.session_id
     assert "## Plugin Context: example.rules" in rebuilt
-    assert rebuilt.index("## Plugin Context: example.rules") < rebuilt.index("Conversation started:")
+    assert rebuilt.index("## Plugin Context: example.rules") < rebuilt.index("Active Hermes profile:")
     assert "example.rules" not in agent._cached_system_prompt_static
 
 

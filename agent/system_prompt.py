@@ -4,8 +4,10 @@ Built once per session and reused across turns (only context compression
 triggers a rebuild) so the upstream prefix cache stays warm.  Three tiers are
 joined with ``\\n\\n``: ``stable`` (identity, guidance, env hints, coding brief,
 platform hints), ``context`` (workspace snapshot, caller ``system_message``,
-context files) and ``volatile`` (skills index, memory, USER.md, external memory
-provider, timestamp line).  See ``references/system-prompt-invariant.md``.
+context files) and ``volatile`` (skills index, plugin sections, profile and
+identity lines, runtime environment, then the notes and person card: memory,
+USER.md, external memory provider).  The date changes with the day, so it rides
+a turn note (``agent/date_note.py``).  See ``references/system-prompt-invariant.md``.
 """
 
 from __future__ import annotations
@@ -148,7 +150,7 @@ def _restore_plugin_prompt_sections(prompt: str) -> tuple:
     if end < 0:
         return ()
     after_end = end + len(PLUGIN_SECTIONS_END)
-    if not prompt[after_end:].startswith("\n\nConversation started:"):
+    if not prompt[after_end:].startswith("\n\nActive Hermes profile:"):
         return ()
     framed = prompt[start:after_end]
     restored = []
@@ -492,37 +494,31 @@ def _zone_bits(now: Any, tz: Any) -> list[str]:
     return bits
 
 
-def _timestamp_line(agent: Any) -> str:
-    """Date-only so the prompt is byte-stable for the day; zone + offset so
-    tools needn't guess EST vs EDT. Long-lived sessions get an "as of" line on
-    rebuild days (the cache prefix is already invalidated at that boundary)."""
+def date_line(agent: Any) -> str:
+    """The conversation's start date and today's date, zone + offset so tools needn't guess EST vs EDT.
+    It changes with the day, so it rides the per-turn note channel (``agent/date_note.py``), never the
+    cached prompt (lina#21). Bot Mode's eternal chat gets today's date only: its birth date misleads."""
     from hermes_time import get_timezone as _hermes_tz, now as _hermes_now, safe_strftime
     now = _hermes_now()
     _bits = _zone_bits(now, _hermes_tz())
     _zone_suffix = f" ({', '.join(_bits)})" if _bits else ""
-    _start = _session_start_like(agent, now)
-    timestamp_line = f"Conversation started: {safe_strftime(_start, '%A, %B %d, %Y')}{_zone_suffix}"
-    # Second line (maintainer design, salvaging #96224's anchor): long-lived sessions — Bot Mode
-    # forever-chats, messenger channels people never close — span many days and many compactions. A lone
-    # birth date leads the model to believe it is still living in that old day. The prompt is rebuilt at
-    # every compaction boundary, so stamp the rebuild day too: 'started' stays anchored and byte-stable, 'as
-    # of' refreshes exactly when the cache prefix is already being invalidated (compaction), so the added
-    # line costs no extra cache churn. Same-day sessions skip the second line entirely — nothing to correct,
-    # and the single-line shape stays byte-identical for the day (prefix-cache safe).
-    if now.strftime("%Y%m%d") != _start.strftime("%Y%m%d"):
-        timestamp_line += (f"\nToday's date (as of the last context rebuild): {safe_strftime(now, '%A, %B %d, %Y')} "
-                           "— trust this over the start date for what day it is now; query tools for exact time.")
+    today = f"Today's date: {safe_strftime(now, '%A, %B %d, %Y')}{_zone_suffix}"
     if getattr(agent, "_bot_chat_timeless_prompt", False):
-        timestamp_line = f"Timezone: {', '.join(_bits)}" if _bits else ""
+        return today
+    return f"Conversation started: {safe_strftime(_session_start_like(agent, now), '%A, %B %d, %Y')}. {today}"
+
+
+def _identity_trailer(agent: Any) -> str:
+    """``Label: value`` lines that close the identity portion (``surface_switch.identity_line_value``)."""
     trailer = (("Session ID", agent.session_id if agent.pass_session_id else None), ("Model", agent.model),
                ("Provider", agent.provider), ("Platform", agent.platform))
-    return timestamp_line + "".join(f"\n{label}: {value}" for label, value in trailer if value)
+    return "\n".join(f"{label}: {value}" for label, value in trailer if value)
 
 
 def _memory_parts(agent: Any) -> list[str]:
-    """Built-in memory/USER.md blocks plus the external provider block (gated on
-    the same check ``inject_memory_provider_tools`` uses, so we never advertise
-    tools the toolset config gated off)."""
+    """Notes and person card: built-in memory/USER.md blocks plus the external provider block (gated
+    on the same check ``inject_memory_provider_tools`` uses, so we never advertise tools the toolset
+    config gated off). Read at prompt build only: once per session and again after a compaction."""
     parts: list[str] = []
     if agent._memory_store:
         for enabled, kind in ((agent._memory_enabled, "memory"), (agent._user_profile_enabled, "user")):
@@ -739,8 +735,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     """Assemble the system prompt as three ordered cache tiers: ``stable`` (identity,
     guidance and the coding brief), ``context`` (caller ``system_message``, project
     context files, workspace snapshot and remaining workspace guidance) and
-    ``volatile`` (skills index, memory, user profile, external memory block,
-    timestamp line, runtime environment hints).  Worktree-dependent blocks follow project context so a
+    ``volatile`` (skills index, plugin sections, profile and identity lines, runtime
+    environment hints, then the notes and person card: memory, user profile, external memory block).  Worktree-dependent blocks follow project context so a
     shared context file can remain in the longest common prefix across worktrees.
     Never re-rendered mid-session."""
     # Model context window scales the context-file caps; stable per conversation.
@@ -784,20 +780,28 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # ── Volatile tier (most likely to differ on a rebuild; kept last so the stable prefix stays reusable) ──
     # Skills are runtime-mutable, so the index leads the volatile band: on a longest-prefix
     # backend an unchanged index stays inside the reused prefix; a changed one re-prefills from here.
-    volatile_parts: list[str] = [skills_prompt, *_memory_parts(agent)]
+    # Mid-session changes reach the model as a turn note (agent/skills_index_delta.py).
+    volatile_parts: list[str] = [skills_prompt]
     # Plugin sections are confined to one coarse anchor in the volatile tail so
     # a resumed process can reconstruct the stable prefix without re-running plugins.
     volatile_parts.extend(_plugin_section_blocks(_frozen_plugin_prompt_sections(agent), "after_memory"))
     # The profile line names this home's path, so it rides in the volatile tier: the stable
     # prefix then stays byte-identical across every profile (and home) on the host.
     volatile_parts.append(_active_profile_line(agent))
-    volatile_parts.append(_timestamp_line(agent))
+    volatile_parts.append(_identity_trailer(agent))
     # Keep the renderer-owned runtime anchor after all user/plugin prose so quoted
     # host examples cannot shadow it during persisted-prompt validation.
     if environment_hints:
         # Embedder hints are prose too; reserve the delimiter for the renderer.
         environment_hints = environment_hints.replace(_pb.RUNTIME_ENVIRONMENT_HEADING, "> " + _pb.RUNTIME_ENVIRONMENT_HEADING)
         volatile_parts.append(f"{_pb.RUNTIME_ENVIRONMENT_HEADING}\n\n{environment_hints}\n\n{_pb.RUNTIME_ENVIRONMENT_END}")
+    # Notes and person card close the prompt (lina#21 order: system and persona, then notes and card).
+    # They are user prose behind the runtime anchor, so the notes delimiter is reserved like the heading.
+    notes = _join_tier(_memory_parts(agent))
+    if notes:
+        for heading in (_pb.NOTES_HEADING, _pb.RUNTIME_ENVIRONMENT_HEADING):
+            notes = notes.replace(heading, "> " + heading)
+        volatile_parts.append(f"{_pb.NOTES_HEADING}\n\n{notes}\n\n{_pb.NOTES_END}")
     return {"stable": _join_tier(stable_parts), "context": _join_tier(context_parts), "volatile": _join_tier(volatile_parts)}
 
 
