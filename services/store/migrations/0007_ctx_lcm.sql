@@ -513,6 +513,36 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_backfill_inflight (
     PRIMARY KEY (agent_id, embedded_id, identity_hash)
 );
 
+-- scripts/import_lossless_claw.py's record of imported messages.
+CREATE TABLE IF NOT EXISTS ctx.lcm_imported_messages (
+    agent_id text NOT NULL DEFAULT public.lina_current_agent(),
+    import_id text NOT NULL,
+    source_message_id bigint NOT NULL,
+    source_message_key text,
+    source_conversation_id bigint NOT NULL,
+    source_session text NOT NULL,
+    target_store_id bigint NOT NULL,
+    imported_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
+    PRIMARY KEY (agent_id, import_id, source_message_id)
+);
+CREATE INDEX IF NOT EXISTS idx_lcm_imported_messages_target ON ctx.lcm_imported_messages (agent_id, target_store_id);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_lcm_imported_messages_key
+    ON ctx.lcm_imported_messages (agent_id, import_id, source_message_key) WHERE source_message_key IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS ctx.lcm_imported_summaries (
+    agent_id text NOT NULL DEFAULT public.lina_current_agent(),
+    import_id text NOT NULL,
+    source_summary_id text NOT NULL,
+    source_conversation_id bigint NOT NULL,
+    source_session text NOT NULL,
+    target_node_id bigint NOT NULL,
+    imported_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
+    PRIMARY KEY (agent_id, import_id, source_summary_id)
+);
+CREATE INDEX IF NOT EXISTS idx_lcm_imported_summaries_target ON ctx.lcm_imported_summaries (agent_id, target_node_id);
+
 -- lcm_embedding_vectors is a view over vec.embeddings (0008).
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_binary (
