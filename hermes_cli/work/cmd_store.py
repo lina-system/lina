@@ -109,7 +109,13 @@ def _info(row: dict) -> dict:
     return dict(info, at=at, link_at={(row.get("id"), link): at for link in row.get("links") or []})
 
 
-def _import_line(db, n: int, text: str, row: dict) -> None:
+def _import_line(db, n: int, text: str, row: dict, *, stored_event: dict | None = None) -> None:
+    # A SQLite source has authoritative projections and event metadata (answers,
+    # thread parents, native IDs). Its selected-row importer supplies those intact.
+    if stored_event is not None:
+        store.upsert(db, "event", stored_event["id"],
+                     {c: v for c, v in stored_event.items() if c != "id"})
+        return
     data_line = text
     if row.get("_meta"):
         eid = store.insert_event(db, row, data_line, "import")
@@ -141,6 +147,38 @@ def _copy_runs(db, runs, pairs) -> int:
                        "ON CONFLICT DO NOTHING", (run_id, todo_id, closes, added_by, added_at))
             copied += 1
     return copied
+
+
+def import_selected_rows(db, selected: dict) -> None:
+    """Import absent, preflighted SQLite rows, preserving their authoritative projection.
+
+    The caller owns the transaction and collision checks. Unlike JSONL replay,
+    table-backed import must not rebuild relations or discard run event metadata.
+    """
+    for records in selected.values():
+        for row in records:
+            for column in ("agent_id", "created_by", "owner_id", "actor_id", "asked_by", "answered_by",
+                           "added_by", "relayed_by", "closed_by_id"):
+                if row.get(column):
+                    store.actor(db, row[column])
+    for kind in ("area", "project", "goal"):
+        for row in selected[kind]:
+            store.upsert(db, kind, row["id"], {c: v for c, v in row.items() if c != "id"})
+    _copy_runs(db, [tuple(row[c] for c in RUN_COLUMNS) for row in selected["run"]], [])
+    for kind in ("todo", "wait", "decision", "link"):
+        for row in selected[kind]:
+            store.upsert(db, kind, row["id"], {c: v for c, v in row.items() if c != "id"})
+    _copy_runs(db, [], [tuple(row[c] for c in ("run_id", "todo_id", "closes", "added_by", "added_at"))
+                       for row in selected["run_todo"]])
+    for row in selected["event"]:
+        data = json.loads(row["data"])
+        text = data.get("ledger", "{}")
+        _import_line(db, row["id"], text, json.loads(text), stored_event=row)
+    if db.dialect == "postgres":
+        for kind in ("event", "wait", "decision", "link"):
+            if selected[kind]:
+                db.execute(f"SELECT setval(pg_get_serial_sequence('work.{kind}', 'id'), "
+                           f"GREATEST(COALESCE((SELECT max(id) FROM {kind}), 0), 1), true)")
 
 
 def _check_counts(src: Source, db, lines, skipped) -> tuple[bool, list[str]]:

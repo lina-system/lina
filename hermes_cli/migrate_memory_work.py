@@ -1,89 +1,70 @@
-"""Inventory a copied work ledger without claiming an unsafe identity import."""
+"""Import a copied profile work graph through the configured work store."""
 
 from __future__ import annotations
 
-import hashlib
-from collections import Counter
 from contextlib import closing
 from pathlib import Path
 
-from hermes_cli.work import env, store
-from hermes_cli.work.cmd_store import RUN_COLUMNS, Source, latest
+from hermes_cli.migrate_memory_work_rows import KINDS, key, manifest, preflight, rows, select_graph
+from hermes_cli.work import env, ledger, store
+from hermes_cli.work.cmd_store import Source, import_selected_rows
+
+
+def _destination_db():
+    """Open the destination backend without ledger.open_db's preflight seed writes."""
+    current = env.current()
+    if ledger.backend() == "postgres":
+        from hermes_cli.work import store_pg
+        return store_pg.connect(ledger._psql_argv(), current.owner, current.names, ensure_schema=False)
+    from hermes_cli.work import store_sqlite
+    return store_sqlite.connect(current.root / "work.db", current.owner, current.names, create=True)
 
 
 def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: str) -> dict:
-    """Report the importer gap; never open a live ledger or write either home.
-
-    Ownership follows the latest item's ``by`` (the projection's ``agent_id``),
-    not its writer/actor: those identify collaborators, not the owning profile.
-    Ancestry is inventoried separately, never copied with another profile's body.
-    """
-    # Source needs actor display metadata even for read-only SQLite access.
-    # Supply it explicitly rather than letting current() discover a live home.
+    """Import a selected graph atomically, refusing different-content ID collisions."""
     previous = env._CURRENT[:]
-    env.bind(env.Env(destination_home, {}, "en", "owner", "owner", {}))
+    env.bind(env.load(destination_home))
     try:
         with closing(Source(copied_db)) as source:
-            lines = source.lines()
-            runs, pairs = source.runs()
-            counts = source.counts()
+            if source.db is None:
+                raise ValueError("work migration requires a copied SQLite store")
+            all_rows = rows(source.db)
+            source_counts = source.counts()
+        selected, ancestors, owned = select_graph(all_rows, profile, agent)
+        with closing(_destination_db()) as db:
+            with store.transaction(db):
+                if db.dialect == "postgres":
+                    db.execute("LOCK TABLE " + ", ".join(KINDS) + " IN EXCLUSIVE MODE")
+                matched = preflight(db, selected)
+                expected = manifest(db, selected)
+                import_selected_rows(db, {kind: [row for row in selected[kind]
+                                                if key(kind, row) not in matched[kind]] for kind in KINDS})
+                actual_rows = rows(db)
+                actual = {kind: [row for row in actual_rows[kind]
+                                 if key(kind, row) in {key(kind, item) for item in selected[kind]}]
+                          for kind in KINDS}
+                observed = manifest(db, actual)
+                if expected != observed:
+                    raise ValueError("work import verification mismatch")
+        counts = {kind: len(selected[kind]) for kind in KINDS}
+        matched_counts = {kind: len(matched[kind]) for kind in KINDS}
+        inserted_counts = {kind: counts[kind] - matched_counts[kind] for kind in KINDS}
+        return {"source": "work", "copied_path": str(copied_db), "destination_home": str(destination_home),
+                "profile": profile, "agent": agent, "status": "imported", "ok": True,
+                "source_counts": counts, "whole_source_counts": source_counts, "selected_counts": counts, "migrated_counts": counts,
+                "matched_counts": matched_counts, "inserted_counts": inserted_counts,
+                "matched": sum(matched_counts.values()), "inserted": sum(inserted_counts.values()),
+                "selected_ids": sorted(set().union(*(owned[k] for k in ("area", "goal", "todo")))),
+                "required_ancestors": ancestors, "missing_ancestors": [],
+                "source_rows": sum(counts.values()), "selected_rows": sum(counts.values()),
+                "selected_event_rows": counts["event"],
+                "whole_source_rows": sum(len(records) for records in all_rows.values()),
+                "excluded_rows": sum(len(all_rows[kind]) - counts[kind] for kind in KINDS),
+                "excluded_event_rows": len(all_rows["event"]) - counts["event"], "invalid_rows": 0,
+                "excluded_run_ids": [row["id"] for row in all_rows["run"] if row["id"] not in owned["run"]],
+                "excluded_items": [{"id": row["id"], "kind": kind, "reason": "other_profile"}
+                                   for kind in ("area", "project", "goal", "todo") for row in all_rows[kind]
+                                   if row["id"] not in {r["id"] for r in selected[kind]}],
+                "source_manifest": expected, "destination_manifest": observed}
     finally:
         env._CURRENT[:] = previous
-    records, order = latest(row for _, _, row in lines if row is not None)
-    selected = {i for i, row in records.items() if row.get("by") == profile}
-    ancestors = set()
-    missing = set()
-    pending = list(selected)
-    visited = set(selected)
-    while pending:
-        parent = records[pending.pop()].get("parent")
-        if not parent or parent in visited:
-            continue
-        visited.add(parent)
-        if parent not in records:
-            missing.add(parent)
-            continue
-        ancestors.add(parent)
-        pending.append(parent)
-    selected_lines = [(n, text, row) for n, text, row in lines
-                      if row is not None and row.get("id") in selected and row.get("by") == profile]
-    run_ids = {run[0] for run in runs if run[RUN_COLUMNS.index("agent_id")] == profile}
-    kinds = Counter(store.table_of(records[i]) or "unknown" for i in selected)
-    kinds.update(run=len(run_ids), run_todo=sum(1 for pair in pairs
-                                             if pair[0] in run_ids and pair[1] in selected),
-                 event=len(selected_lines))
-    manifest = [{"native_id": str(n), "item_id": row["id"],
-                 "kind": store.table_of(row) or "unknown",
-                 "sha256": hashlib.sha256(text.encode("utf-8")).hexdigest()}
-                for n, text, row in selected_lines]
-    # _import_line -> project_item -> upsert conflicts on id alone, not
-    # (agent_id, id). _imported also keys receipts by source line alone.
-    # Do not invent a second writer or silently overwrite an original import.
-    return {
-        "source": "work", "copied_path": str(copied_db),
-        "destination_home": str(destination_home), "profile": profile, "agent": agent,
-        "status": "gap", "ok": False, "inserted": 0, "matched": 0,
-        "gap": {
-            "code": "work_import_identity_namespace",
-            "reason": "The existing importer has global item/run IDs and source-line receipts, "
-                      "with no identity-remap namespace. Changing agent_id leaves item IDs unchanged; "
-                      "_import_line/project_item/upsert overwrites an original import on id. "
-                      "_copy_runs keeps the original run on id conflict. Profile subsets also cannot "
-                      "use _check_counts, which compares whole-source and whole-destination counts.",
-        },
-        "source_counts": counts, "selected_counts": dict(kinds),
-        "source_rows": len(lines), "selected_rows": len(selected_lines),
-        "excluded_rows": len(lines) - len(selected_lines),
-        "invalid_rows": sum(row is None for _, _, row in lines),
-        "selected_ids": [i for i in order if i in selected],
-        "required_ancestors": [{"id": i, "kind": store.table_of(records[i]),
-                                "profile": records[i].get("by")}
-                               for i in order if i in ancestors],
-        "missing_ancestors": sorted(missing),
-        "excluded_items": [{"id": i, "kind": store.table_of(records[i]),
-                            "reason": "other_profile", "required_ancestor": i in ancestors}
-                           for i in order if i not in selected],
-        "excluded_run_ids": [run[0] for run in runs if run[0] not in run_ids],
-        "source_manifest": manifest, "destination_manifest": [],
-        "migrated_counts": {kind: 0 for kind in kinds},
-    }
