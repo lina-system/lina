@@ -294,6 +294,8 @@ def _pinned_counter(monkeypatch):
 def _engine(tmp_path, sweep: bool = True) -> LCMEngine:
     engine = LCMEngine(config=LCMConfig(
         fresh_tail_count=2, leaf_chunk_tokens=400, context_threshold=0.001, threshold_full_sweep_enabled=sweep,
+        # These tests count foreground route calls, not independent background rollups.
+        temporal_rollups_enabled=False,
         max_assembly_tokens=100_000, database_path=str(tmp_path / "lcm.db")))
     engine.on_session_start("S", platform="telegram", context_length=200_000, conversation_id="conv")
     return engine

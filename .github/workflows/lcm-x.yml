@@ -14,6 +14,27 @@ on:
       - 'plugins/plugin_loader.py'
       - 'hermes_cli/plugins_ledger.py'
       - 'hermes_cli/plugins_discovery.py'
+      - 'agent/**'
+      - 'run_agent.py'
+      - 'hermes_state*.py'
+      - 'hermes_constants.py'
+      - 'hermes_cli/**'
+      - 'hermes_platform/**'
+      - 'model_tools.py'
+      - 'toolsets.py'
+      - 'tools/**'
+      - 'utils.py'
+      - 'registration_lifecycle.py'
+      - 'services/store/**'
+      - 'tests/_fixtures/memory_store.py'
+      - 'tests/waiting.py'
+      - 'scripts/run_tests.sh'
+      - 'scripts/run_tests_parallel.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'pm/**'
+      - '.github/actions/setup-pm/**'
+      - 'scripts/ci/setup_toolchain.py'
       - 'scripts/ci/check_lcm_x_subtree.py'
       - 'scripts/ci/subtree_check.py'
       - '.github/lcm-x-known-failures.txt'
@@ -27,6 +48,27 @@ on:
       - 'plugins/plugin_loader.py'
       - 'hermes_cli/plugins_ledger.py'
       - 'hermes_cli/plugins_discovery.py'
+      - 'agent/**'
+      - 'run_agent.py'
+      - 'hermes_state*.py'
+      - 'hermes_constants.py'
+      - 'hermes_cli/**'
+      - 'hermes_platform/**'
+      - 'model_tools.py'
+      - 'toolsets.py'
+      - 'tools/**'
+      - 'utils.py'
+      - 'registration_lifecycle.py'
+      - 'services/store/**'
+      - 'tests/_fixtures/memory_store.py'
+      - 'tests/waiting.py'
+      - 'scripts/run_tests.sh'
+      - 'scripts/run_tests_parallel.py'
+      - 'pyproject.toml'
+      - 'uv.lock'
+      - 'pm/**'
+      - '.github/actions/setup-pm/**'
+      - 'scripts/ci/setup_toolchain.py'
       - 'scripts/ci/check_lcm_x_subtree.py'
       - 'scripts/ci/subtree_check.py'
       - '.github/lcm-x-known-failures.txt'
@@ -109,10 +151,16 @@ jobs:
           done < "$GITHUB_WORKSPACE/.github/lcm-x-known-failures.txt"
           echo "Deselecting ${#deselect[@]} known-failure argument(s)"
           ulimit -n 1024
-          "$HERMES_PYTHON" -m pytest tests/ -q -m "not latency" -n 4 -p no:cacheprovider \
+          # The main suite's real Postgres fixture owns startup, migrations and teardown.
+          # Run its command from the host root so LCM-X's tests package cannot shadow tests.waiting.
+          run_with_store() {
+            (cd "$GITHUB_WORKSPACE" && "$HERMES_PYTHON" tests/_fixtures/memory_store.py \
+              bash -c 'cd "$1"; shift; exec "$@"' -- "$GITHUB_WORKSPACE/plugins/context_engine/lcm-x" "$@")
+          }
+          run_with_store "$HERMES_PYTHON" -m pytest tests/ -q -m "not latency" -n 4 -p no:cacheprovider \
             --ignore=tests/test_embedding_privacy.py "${deselect[@]}"
           # Runs alone, as upstream does: one of its tests asserts a wall-clock budget.
-          "$HERMES_PYTHON" -m pytest tests/test_embedding_privacy.py -q -m "not latency" -p no:cacheprovider \
+          run_with_store "$HERMES_PYTHON" -m pytest tests/test_embedding_privacy.py -q -m "not latency" -p no:cacheprovider \
             "${deselect[@]}"
 
       - name: Check the checkout is clean

@@ -43,6 +43,7 @@ from agent.session_activity import ActivityProvenance, normalize_activity_proven
 from agent.usage_anchor import set_usage_anchor
 from hermes_state_ids import new_session_id as mint_session_id
 from hermes_state_pidns import holder_namespace_token
+from hermes_state_store import StoreUnavailableError
 from agent.conversation_compression_watermark import held_archive_watermark
 
 logger = logging.getLogger(__name__)
@@ -3756,6 +3757,10 @@ def _commit_compaction(
                 agent.context_compressor._record_compression_failure_cooldown(
                     _SPLIT_FAILURE_COOLDOWN_SECONDS, f"session_split_failed: {e}"
                 )
+            if isinstance(e, StoreUnavailableError):
+                # A missing text store is not a completed compression boundary.
+                # Rollback/cooldown above remain intact; callers must see the failure.
+                raise
     return _CommitOutcome(
         compressed=compressed, commit_started_at=commit_started_at, old_session_id=old_session_id,
         split_status=split_status, session_commit_succeeded=session_commit_succeeded,
