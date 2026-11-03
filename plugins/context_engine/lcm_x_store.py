@@ -240,6 +240,31 @@ _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
 )
 
 
+_RECURSIVE_CTE = re.compile(r"\bWITH\s+RECURSIVE\s+(\w+)(\s*\([^()]*\))?\s+AS\s*\(", re.IGNORECASE)
+_TRAILING_LIMIT = re.compile(r"\s+LIMIT\s+(\x01\d+\x01|\d+)\s*$", re.IGNORECASE)
+
+
+def _recursive_limit(masked: str) -> str:
+    """SQLite's ``LIMIT`` at the end of a recursive CTE stops the recursion after that many rows; Postgres refuses
+    it there. The recursion goes unbounded into ``<name>__lcm_walk`` and the CTE of the original name takes its first
+    rows: Postgres evaluates a recursive CTE only as far as its reader pulls, so the work stays bounded."""
+    m = _RECURSIVE_CTE.search(masked)
+    if not m:
+        return masked
+    depth, i = 1, m.end()
+    while i < len(masked) and depth:
+        depth += {"(": 1, ")": -1}.get(masked[i], 0)
+        i += 1
+    body = masked[m.end():i - 1]
+    limit = _TRAILING_LIMIT.search(body)
+    if depth or not limit:
+        return masked
+    name, inner = m.group(1), m.group(1) + "__lcm_walk"
+    walk = re.sub(rf"\b{name}\b", inner, body[:limit.start()])
+    head = f"WITH RECURSIVE {inner}{m.group(2) or ''} AS ({walk}), {name} AS (SELECT * FROM {inner} LIMIT {limit.group(1)})"
+    return masked[:m.start()] + head + masked[i:]
+
+
 def _apply_rewrites(masked: str) -> str:
     for pattern, repl in _REWRITES:
         masked = pattern.sub(repl, masked)
@@ -594,7 +619,7 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
         masked = re.sub(r"\bBLOB\b", "bytea", masked, flags=re.IGNORECASE)
     masked = _expand_stars(masked, catalog)
     masked = _bare_joins(masked)
-    masked = _apply_rewrites(masked)
+    masked = _apply_rewrites(_recursive_limit(masked))
     masked = masked.rstrip().rstrip(";")
     returning = None
     m = re.match(r"\s*INSERT\s+INTO\s+(\w+)", masked, re.IGNORECASE)
