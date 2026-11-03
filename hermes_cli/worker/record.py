@@ -80,7 +80,7 @@ def rounds(job: dict, receipts: list[dict]) -> list[dict]:
             run = _run_number(row.get("run")) or (1 if kind == "run_started" else None)
             if run is not None and run not in starts:
                 starts[run] = float(row["ts"])
-    if not starts and isinstance(job.get("started"), (int, float)):
+    if 1 not in starts and isinstance(job.get("started"), (int, float)):  # run 1's own start receipt fell out
         starts[1] = float(job["started"])
     ordered = sorted(starts.items(), key=lambda pair: pair[1])
     if not ordered:

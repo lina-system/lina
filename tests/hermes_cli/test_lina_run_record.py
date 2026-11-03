@@ -93,6 +93,20 @@ def test_a_round_s_end_comes_only_from_its_own_end_receipt(fakes, client):
     assert (second["endedAt"], second["endKnown"], second["stopped"]) == (E2, True, True)
 
 
+
+def test_the_first_round_takes_the_job_s_start_when_its_start_receipt_is_gone_and_a_follow_up_is_kept(fakes, client):
+    """Run 1's ``run_started`` fell out of the receipts but the job keeps ``started``; run 2's follow-up is kept. The
+    first round is run 1 from the job's start, not a round with no start."""
+    fakes.job("OT-ALP0009", state="done", runs=2, created=S1 - 60)  # the job's started = S1
+    _receipt(fakes, "OT-ALP0009", "exec_end", E1, state="done", run="1")
+    _receipt(fakes, "OT-ALP0009", "follow_up", S2, run=2, input_id="OT-ALP0009.2")
+    _receipt(fakes, "OT-ALP0009", "exec_end", E2, state="done", run="2")
+
+    rounds = _record(client, "OT-ALP0009")["rounds"]
+
+    assert [(r["run"], r["startedAt"], r["endedAt"], r["startUnknown"]) for r in rounds] == [
+        (2, S2, E2, False), (1, S1, E1, False)]
+
 def test_tool_steps_fold_to_a_count_without_names_and_a_repeated_sentence_is_one_row(fakes, client):
     fakes.job("OT-ALP0003", state="running")
     _receipt(fakes, "OT-ALP0003", "run_started", S1, run=1)
@@ -128,11 +142,11 @@ def test_a_row_belongs_to_the_round_going_at_its_time_and_a_gap_comment_stands_o
 
 
 def test_a_round_whose_start_fell_out_of_history_is_served_only_with_content(fakes, client):
-    fakes.job("OT-ALP0005", state="done", runs=2)
+    fakes.job("OT-ALP0005", state="done", runs=2, started=None)  # neither run 1's receipt nor the job keeps its start
     _receipt(fakes, "OT-ALP0005", "exec_end", E1, state="done", run="1")  # run 1's start is not on record
     _receipt(fakes, "OT-ALP0005", "follow_up", S2, run=2)
     _receipt(fakes, "OT-ALP0005", "exec_end", E2, state="done", run="2")
-    fakes.job("OT-ALP0006", state="done", runs=2)
+    fakes.job("OT-ALP0006", state="done", runs=2, started=None)  # no start on record anywhere
     _receipt(fakes, "OT-ALP0006", "award", S1, host="here")  # prepares a round, holds nothing of its own
     _receipt(fakes, "OT-ALP0006", "follow_up", S2, run=2)
     _receipt(fakes, "OT-ALP0006", "exec_end", E2, state="done", run="2")
