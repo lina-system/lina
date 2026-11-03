@@ -11,8 +11,8 @@ from hermes_cli.config import cfg_get, load_config
 @pytest.fixture
 def wizard(tmp_path, monkeypatch):
     """A home with ``memory.provider: <before>`` and Honcho's wizard answered with its defaults, offline."""
+    from hermes_cli import memory_setup
     from plugins.memory import import_provider_module
-    import hermes_cli.memory_setup as memory_setup
 
     cli = import_provider_module("honcho", "cli")
     monkeypatch.setattr(memory_setup, "_install_dependencies", lambda name: None)
