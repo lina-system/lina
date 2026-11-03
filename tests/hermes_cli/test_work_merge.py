@@ -4,12 +4,15 @@ the head is enqueued and the queue's verdict (merged / dropped) is reported; aft
 closed with its Done when ticked and Codex P2/P3 findings on the merged head go to a follow-up issue."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hermes_cli import merge_rules as rules
 from hermes_cli.delivery import merge
 from tests.hermes_cli._work_fakes import FakeGh
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 REPO, HEAD, OLD = "acme/app", "h" * 40, "o" * 40
 CODEX = {"login": "chatgpt-codex-connector[bot]"}
 
@@ -282,6 +285,17 @@ def test_the_merge_verdict_on_codex_is_the_required_status_verdict():
         verdict = rules.codex_review(HEAD, snap["reviews"], snap["review_comments"], snap["issue_comments"])
         assert verdict.lines == [({"success": rules.PASS, "failure": rules.FAIL, "pending": rules.WAIT}[status.state],
                                   status.description)]
+
+
+def test_the_codex_review_rules_come_from_the_package_not_the_source_tree(monkeypatch):
+    """An installed ``lina`` has no ``scripts/``: the verdict must come from ``hermes_cli.codex_review_gate``, and a
+    reviewed head with no P0/P1 passes there (before the fix it waited forever without the source tree)."""
+    from hermes_cli import codex_review_gate
+    assert rules.review_gate() is codex_review_gate
+    assert "scripts" not in Path(codex_review_gate.__file__).resolve().relative_to(REPO_ROOT).parts
+    reviewed = snapshot()
+    verdict = rules.codex_review(HEAD, reviewed["reviews"], reviewed["review_comments"], reviewed["issue_comments"])
+    assert verdict.lines and verdict.lines[0][0] == rules.PASS, verdict.lines
 
 
 def test_a_pull_request_into_another_branch_is_refused_before_any_merge_or_issue_edit():

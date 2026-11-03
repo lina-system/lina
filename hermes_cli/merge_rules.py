@@ -18,11 +18,8 @@ Standard library only: ``kanban_gates.py`` loads this file by path when it runs 
 """
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 
 PASS, FAIL, WAIT = 0, 1, 75
 LABEL = {PASS: "PASS", FAIL: "FAIL", WAIT: "WAIT"}
@@ -151,35 +148,20 @@ def required_checks(required: list[str], runs: list[dict], statuses: list[dict] 
 
 
 
-_GATE = Path(__file__).resolve().parents[1] / "scripts" / "ci" / "codex_review_gate.py"
 _STATUS_CODE = {"success": PASS, "failure": FAIL, "pending": WAIT}
 
 
 def review_gate():
-    """``scripts/ci/codex_review_gate.py``, the script that sets the required ``Codex review`` status: its
-    recognition of a Codex review is the only copy (the gate's workflow checks out that one file, so the rules
-    live there). None when this install carries no ``scripts/`` (a packaged wheel)."""
-    if "codex_review_gate" in sys.modules:
-        return sys.modules["codex_review_gate"]
-    if not _GATE.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location("codex_review_gate", _GATE)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["codex_review_gate"] = module
-    spec.loader.exec_module(module)
-    return module
+    """``hermes_cli.codex_review_gate``, which also sets the required ``Codex review`` status: its recognition of
+    a Codex review is the only copy, and it ships in the package, so an installed ``lina`` judges the same way."""
+    from hermes_cli import codex_review_gate
+    return codex_review_gate
 
 
 def codex_review(head: str, reviews: list[dict], review_comments: list[dict], issue_comments: list[dict]) -> Verdict:
     """The required ``Codex review`` status's own verdict on ``head`` (``review_status`` of the gate script)."""
     verdict = Verdict()
-    gate = review_gate()
-    if gate is None:
-        verdict.add(WAIT, f"cannot judge the Codex review here: {_GATE.name} is not in this install")
-        return verdict
-    status = gate.review_status(head, reviews, review_comments, issue_comments)
+    status = review_gate().review_status(head, reviews, review_comments, issue_comments)
     verdict.add(_STATUS_CODE.get(status.state, FAIL), status.description)
     return verdict
 
@@ -212,8 +194,7 @@ def dev_green(labels: set[str], head_runs: list[dict], dev_ok: bool, dev_failed:
     head_fail = {name for name, run in latest.items() if run.get("conclusion") in RED}
     passed = {name for name, run in latest.items() if run.get("conclusion") == "success"}
     gate = review_gate()
-    own = {gate.REVIEW_CONTEXT, gate.LINKED_CONTEXT, gate.DEV_CONTEXT} if gate else {"Codex review", "Linked issue",
-                                                                                    "dev green"}
+    own = {gate.REVIEW_CONTEXT, gate.LINKED_CONTEXT, gate.DEV_CONTEXT}
     for context, status in latest_statuses(head_statuses).items():
         if context in own:  # the gate's own statuses: judged by codex_review / linked_issue / this guard
             continue
