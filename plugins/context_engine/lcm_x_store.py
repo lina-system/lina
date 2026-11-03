@@ -853,7 +853,7 @@ _STORE_FUNCTIONS = frozenset({"lcm_summary_has_text"})
 # and then reads at once, and planned on the empty table's statistics a join can cross every row with every row.
 _ANALYZE_AFTER_ROWS = 1000
 _ANALYZE_TARGETS = {"messages": ("ctx.lcm_messages",), "lcm_embedding_vectors": ("vec.embeddings",),
-                    "lcm_chunk_vectors": ("vec.chunks", "vec.embeddings")}
+                    "lcm_chunk_vectors": ("vec.chunks", "vec.embeddings", "ctx.lcm_chunk_vectors_pending")}
 _INSERT_TARGET = re.compile(r"\s*INSERT\s+INTO\s+(?:ctx\.)?(\w+)\b", re.IGNORECASE)
 _written_rows: dict[str, int] = {}
 _written_lock = threading.Lock()
@@ -1107,6 +1107,7 @@ class PgCursor:
 _WRITABLE_KINDS = frozenset(("sql", "message_insert", "message_content_update", "ddl"))
 _CREATE_TEMP = re.compile(r"\s*CREATE\s+(?:TEMP|TEMPORARY)\s+(TABLE|VIEW|TRIGGER|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?"
                           r"[\"`]?(\w+)", re.IGNORECASE)
+_DROP_TABLE = re.compile(r"\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?(?:temp\.|pg_temp\.)?[\"`]?(\w+)", re.IGNORECASE)
 _WRITE_TARGET = re.compile(
     r"\s*(?:WITH\b.*?\)\s*)?(INSERT|REPLACE|UPDATE|DELETE|DROP|CREATE|ALTER|REINDEX)\b"
     r"(?:\s+OR\s+\w+)?(?:\s+INTO|\s+FROM|\s+(?:TABLE|INDEX|VIEW|TRIGGER)(?:\s+IF\s+(?:NOT\s+)?EXISTS)?)?"
@@ -1212,6 +1213,7 @@ class PgConnection:
         self._readonly = readonly
         self._query_only = False
         self._temp_tables: set[str] = set()
+        self._temp_rows: dict[str, list[int]] = {}  # temp table -> [rows written, rows when last analyzed]
         self._catalog = Catalog.shared(self._pg)
         self._vector_oid = self._pg.execute("SELECT to_regtype('vector')::oid").fetchone()[0]
         self._lock = threading.RLock()
@@ -1473,6 +1475,10 @@ class PgConnection:
                 raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
             if template.kind in _WRITABLE_KINDS and (self._readonly or self._query_only):
                 self._refuse_write(sql)
+            elif (create_temp := _CREATE_TEMP.match(sql)) and create_temp.group(1).upper() == "TABLE":
+                self._temp_rows[create_temp.group(2).lower()] = [0, 0]
+            elif self._temp_rows and (dropped := _DROP_TABLE.match(sql)):
+                self._temp_rows.pop(dropped.group(1).lower(), None)
             handler = _KINDS.get(template.kind)
             if handler is not None:
                 handler(self, cur, template, params)
@@ -1493,6 +1499,16 @@ class PgConnection:
             return
         with self._writing():
             self._statement(cur, text, args, template.returning)
+        # SQLite plans a join over a temp table (LCM-X's id lists) from its real size; Postgres never analyzes a temp
+        # table by itself and guesses 1,360 rows, so a 16-id lookup hash-joins the whole identity. Analyzed again
+        # each time it doubles: a list loaded in many batches costs a logarithmic number of ANALYZEs.
+        target = _INSERT_TARGET.match(text) if self._temp_rows else None
+        counts = self._temp_rows.get(target.group(1).lower()) if target else None
+        if counts is not None and cur.rowcount > 0:
+            counts[0] += cur.rowcount
+            if counts[0] >= 2 * counts[1]:
+                self._pg.execute(f'ANALYZE "{target.group(1)}"')
+                counts[1] = counts[0]
 
     def _statement(self, cur: PgCursor, text: str, args: list[Any], returning: Optional[str]) -> None:
         import psycopg

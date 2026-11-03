@@ -109,11 +109,16 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_chunk_vectors_pending (
     PRIMARY KEY (agent_id, chunk_id, identity_hash)
 );
 
+-- The arms pass the stored vector through and the outer SELECT cuts it to the profile's width: a join that keeps a
+-- few rows (LCM-X's selected chunk ids) then reads only those vectors, not every vector of the identity.
 CREATE OR REPLACE VIEW ctx.lcm_chunk_vectors WITH (security_invoker = true) AS
+SELECT u.rowid, u.chunk_id, u.identity_hash, subvector(u.stored, 1, u.dim)::vector AS vec, u.access_scope
+FROM (
 SELECT c.chunk_id AS rowid,
        c.source_ref AS chunk_id,
        prof.identity_hash,
-       subvector(e.embedding, 1, prof.dim::int)::vector AS vec,
+       e.embedding AS stored,
+       prof.dim::int AS dim,
        NULL::text AS access_scope
 FROM vec.chunks AS c
 JOIN vec.embeddings AS e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
@@ -125,9 +130,10 @@ JOIN ctx.lcm_embedding_profile AS prof ON prof.identity_hash = c.lcm_identity_ha
     AND prof.model_name = e.model AND prof.dim <= e.dim
 WHERE c.source = 'lcm-x'
 UNION ALL
-SELECT -w.rowid, w.chunk_id, w.identity_hash, subvector(w.vec, 1, prof.dim::int)::vector, NULL::text
+SELECT -w.rowid, w.chunk_id, w.identity_hash, w.vec, prof.dim::int, NULL::text
 FROM ctx.lcm_chunk_vectors_pending AS w
-JOIN ctx.lcm_embedding_profile AS prof ON prof.identity_hash = w.identity_hash;
+JOIN ctx.lcm_embedding_profile AS prof ON prof.identity_hash = w.identity_hash
+) AS u;
 
 CREATE OR REPLACE FUNCTION ctx.lcm_chunk_vectors_write() RETURNS trigger
     LANGUAGE plpgsql AS $$
@@ -225,3 +231,5 @@ CREATE OR REPLACE TRIGGER lcm_chunk_vectors_update INSTEAD OF UPDATE ON ctx.lcm_
 
 -- As for ctx (0007): lina_app refreshes the statistics of the vector tables after a bulk write.
 GRANT MAINTAIN ON vec.embeddings, vec.chunks TO lina_app;
+-- and on the ctx tables this file adds (0007 granted those that existed then).
+GRANT MAINTAIN ON ALL TABLES IN SCHEMA ctx TO lina_app;
