@@ -176,7 +176,10 @@ SCHEMA_VERSION = 2
 _SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
            "field TEXT NOT NULL, source_hash TEXT NOT NULL, text TEXT, error TEXT, at INTEGER NOT NULL, "
            "PRIMARY KEY (kind, board, id, field))",
-           "CREATE TABLE IF NOT EXISTS writer (key TEXT PRIMARY KEY, value INTEGER)")
+           "CREATE TABLE IF NOT EXISTS writer (key TEXT PRIMARY KEY, value INTEGER)",
+           # When each field's model call was last made, answered or not: the order of the next pass's queue.
+           "CREATE TABLE IF NOT EXISTS attempt (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
+           "field TEXT NOT NULL, at INTEGER NOT NULL, PRIMARY KEY (kind, board, id, field))")
 
 
 def _root(root: Path | None) -> Path:
@@ -257,10 +260,16 @@ def writer_state(root: Path | None = None, now: float | None = None) -> dict:
 
 
 # ---------------------------------------------------------------- the writer
+def _key(s: Source) -> tuple[str, str, str, str]:
+    return (s.kind, s.board, s.id, s.field)
+
+
 def write(sources: list[Source], root: Path | None = None, now: float | None = None) -> dict:
     """Write what changed: one call per field whose source hash moved (at most MAX_CALLS and PASS_S a run), the check's verdict
     stored either way; a field whose source is gone is cleared. A call that fails stores nothing and is tried again
-    next run. -> {called, failed, pending}."""
+    next run. The due fields queue by how long they have waited: never attempted first, then the oldest last
+    attempt (a failed call counts as an attempt), so sources that change on every pass cannot keep a field waiting
+    for more than a few passes. -> {called, failed, pending}."""
     now = int(time.time() if now is None else now)
     db = _open(root, write=True)
     try:
@@ -268,16 +277,22 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
             meta = _meta(db)
             db.execute("INSERT OR IGNORE INTO writer (key, value) VALUES ('first_run_at', ?)", (now,))
             cached = {key[:4]: key[4] for key in db.execute("SELECT kind, board, id, field, source_hash FROM line")}
+            tried = {key[:4]: key[4] for key in db.execute("SELECT kind, board, id, field, at FROM attempt")}
             for s in sources:
                 if not s.text.strip():
-                    db.execute("DELETE FROM line WHERE kind = ? AND board = ? AND id = ? AND field = ?",
-                               (s.kind, s.board, s.id, s.field))
-        due = [s for s in sources if s.text.strip() and cached.get((s.kind, s.board, s.id, s.field)) != _hash(s)]
+                    for table in ("line", "attempt"):
+                        db.execute(f"DELETE FROM {table} WHERE kind = ? AND board = ? AND id = ? AND field = ?",
+                                   (s.kind, s.board, s.id, s.field))
+        due = sorted((s for s in sources if s.text.strip() and cached.get(_key(s)) != _hash(s)),
+                     key=lambda s: tried.get(_key(s), -1))  # stable: source order among equals
         calls, failed, deadline = [], 0, _clock() + PASS_S
         for s in due[:MAX_CALLS]:
             if _clock() >= deadline:
                 break
             calls.append(s)
+            with db:
+                db.execute("INSERT OR REPLACE INTO attempt (kind, board, id, field, at) VALUES (?, ?, ?, ?, ?)",
+                           (*_key(s), now))
             try:
                 answer = ask(s.field, s.text.strip())
             except Exception:  # any provider error; the field is tried again on the next run

@@ -401,3 +401,34 @@ def test_a_pass_stops_at_its_wall_time_bound_and_leaves_the_rest_pending(work, f
     assert plain.writer_state(work.root, NOW + 1)["state"] == "ok"
     assert plain.write_board(work.root, NOW + 60) == {"called": 1, "failed": 0, "pending": 0}
     assert len(_rows(work)) == 4
+
+
+def _changing_runs(n: int, pass_no: int):
+    from hermes_cli.lina_board_plain import Source
+    return [Source("run", f"OT-RUN{i:04d}", "now", f"running step {pass_no} of job {i}") for i in range(n)]
+
+
+def test_a_card_title_is_written_while_run_lines_change_on_every_pass(work, model):
+    """20 run now lines that change on every pass fill MAX_CALLS; an unchanged card title still gets its turn."""
+    from hermes_cli.lina_board_plain import MAX_CALLS, Source, lookup, write
+    title = Source("card", "t_00c0ffee", "title", "Weekly photo backup check", "default")
+    for pass_no in range(2):
+        write(_changing_runs(MAX_CALLS, pass_no) + [title], work.root, NOW + 60 * pass_no)
+    assert lookup("card", ["t_00c0ffee"], work.root, board="default")["t_00c0ffee"]["title"] == GOOD["title"]
+
+
+def test_fields_whose_calls_fail_on_every_pass_do_not_keep_others_from_being_written(work, model, monkeypatch):
+    from agent import auxiliary_client
+    from hermes_cli.lina_board_plain import MAX_CALLS, Source, lookup, write
+    answer = model.__call__
+
+    def flaky(*args, messages, **kwargs):
+        if "unreachable" in messages[1]["content"]:
+            raise ConnectionError("this field's call always fails")
+        return answer(*args, messages=messages, **kwargs)
+    monkeypatch.setattr(auxiliary_client, "call_llm", flaky)
+    failing = [Source("card", f"t_{i:08x}", "title", f"unreachable card {i}", "default") for i in range(MAX_CALLS)]
+    good = Source("card", "t_00c0ffee", "title", "Weekly photo backup check", "default")
+    results = [write(failing + [good], work.root, NOW + 60 * n) for n in range(2)]
+    assert lookup("card", ["t_00c0ffee"], work.root, board="default")["t_00c0ffee"]["title"] == GOOD["title"]
+    assert results[1]["failed"] == MAX_CALLS - 1  # the failing ones are still retried, the good one took a slot
