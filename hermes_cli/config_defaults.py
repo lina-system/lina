@@ -1308,7 +1308,7 @@ DEFAULT_CONFIG = {
         "nudge_interval": 10,
         "external_messages": {"spool": ""},  # Host-level append-only collector spool; empty does nothing.
         "provider": "",  # One external provider; empty = built-in only.
-        "prefix_fingerprints": False,  # Per-request prefix hashes, no text, in <home>/state (lina#25).
+        "auto_recall_append": False, "prefix_fingerprints": False,  # Recall in the user message (#21); prefix hashes, no text (#25).
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.
     "delegation": {

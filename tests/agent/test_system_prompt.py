@@ -708,6 +708,7 @@ class TestMemoryProviderSystemPromptGating:
         from unittest.mock import MagicMock
         mgr = MagicMock()
         mgr.build_system_prompt.return_value = prompt_block
+        mgr.build_session_cards.return_value = ""
         return mgr
 
     def _agent(self, *, enabled_toolsets, disabled_toolsets, prompt_block):
@@ -911,10 +912,9 @@ def test_conversation_start_uses_session_start_not_build_time(monkeypatch):
     assert "Conversation started: Friday" not in prompt
 
 class TestConversationStartedTwoLine:
-    """Maintainer design on top of #96224's anchor: long-lived sessions get a
-    second 'as of the last context rebuild' line so a model in a forever-chat
-    (Bot Mode, messenger channels) is not led to believe it still lives on
-    the session's birth day. Same-day sessions keep the one-line shape."""
+    """Long-lived sessions (Bot Mode, messenger channels) must not be led to believe they still live on the
+    session's birth day. The prompt keeps only the byte-stable start date; today's date, once it differs,
+    rides a turn note (``agent/date_note.py``) so the cached prompt never changes with the day (lina#21)."""
 
     def _agent(self, session_id):
         return _make_agent(
@@ -927,17 +927,22 @@ class TestConversationStartedTwoLine:
         parts = sp.build_system_prompt_parts(agent)
         return parts["volatile"]
 
-    def test_old_session_gets_rebuild_date_line(self):
-        vol = self._volatile(self._agent("20200110_090000_old"))
-        assert "Conversation started:" in vol
-        assert "as of the last context rebuild" in vol
+    def test_old_session_gets_today_as_a_note_not_in_the_prompt(self):
+        from agent.system_prompt import date_line
+        agent = self._agent("20200110_090000_old")
+        vol = self._volatile(agent)
+        assert "Conversation started: Friday, January 10, 2020" in vol
+        assert "Today's date" not in vol
+        assert date_line(agent).startswith("Today's date: ")
 
     def test_same_day_session_keeps_single_line(self):
         from hermes_time import now as hermes_now
+        from agent.system_prompt import date_line
         sid = hermes_now().strftime("%Y%m%d_%H%M%S_fresh")
         vol = self._volatile(self._agent(sid))
         assert "Conversation started:" in vol
-        assert "as of the last context rebuild" not in vol
+        assert "Today's date" not in vol
+        assert date_line(self._agent(sid)) == ""
 
     def test_surrogate_zone_name_does_not_abort_prompt(self):
         # Windows cp1252 zone name decoded under a UTF-8 LC_CTYPE; strftime("%Z") raised (#102910).
@@ -955,4 +960,4 @@ class TestConversationStartedTwoLine:
         agent._bot_chat_timeless_prompt = True
         vol = self._volatile(agent)
         assert "Conversation started:" not in vol
-        assert "as of the last context rebuild" not in vol
+        assert "Today's date" not in vol

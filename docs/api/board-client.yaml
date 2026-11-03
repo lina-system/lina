@@ -1,6 +1,8 @@
 # Board endpoints the app reads beyond docs/api/work-client.yaml (lina#112): the owner's to-dos, decisions and due
 # groups from the work record, `lina worker` runs that are not kanban work cards, devices, quota and the inbox
-# notices; each agent's goals and to-dos (lina#166); the owner's writes and read marks (lina#149). Served by hermes_cli/web_routers/lina_board.py behind the dashboard auth gate (session token).
+# notices; each agent's goals and to-dos (lina#166); the owner's writes and read marks (lina#149); the
+# change stream's messages (lina#150, a WebSocket: see ChangeMessage). Served by hermes_cli/web_routers/lina_board.py
+# behind the dashboard auth gate (session token).
 # tests/hermes_cli/test_lina_board_api.py validates served JSON against it, so a shape change here and in the code
 # land together. WorkState is the same enum as work-client.yaml.
 openapi: 3.0.3
@@ -1068,6 +1070,63 @@ components:
           allOf:
             - $ref: "#/components/schemas/OwnerDone"
           nullable: true
+    ChangeEvent:
+      type: object
+      additionalProperties: false
+      description: One change; no item body (refetch the snapshot it touches).
+      required: [source, kind, id, at]
+      properties:
+        source:
+          type: string
+          enum: [work, worker, kanban]
+          description: >
+            work = the work record's event table; worker = a `lina worker` run state change (hub receipts);
+            kanban = a kanban task event.
+        kind:
+          type: string
+          description: The store's own event kind (work event kind, worker receipt kind, kanban task event kind).
+        id:
+          type: string
+          description: The item, run or card the event is about.
+        at:
+          type: integer
+          nullable: true
+    ChangeBatch:
+      type: object
+      additionalProperties: false
+      required: [cursor, events]
+      properties:
+        cursor:
+          type: string
+          description: Opaque; send it back as since= to resume after a reconnect.
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeEvent"
+    ChangeResync:
+      type: object
+      additionalProperties: false
+      required: [cursor, resync]
+      properties:
+        cursor:
+          type: string
+        resync:
+          type: boolean
+          enum: [true]
+          description: >
+            The since cursor was unreadable or older than the kept history, or a store that could not be read when
+            the cursor was taken reads again (what it wrote meanwhile is not known); refetch every snapshot.
+    ChangeMessage:
+      description: >
+        A message of the change stream (lina#150). GET /api/lina/events is a WebSocket, not a JSON route (OpenAPI
+        cannot describe it as a path): upgrade with the dashboard credential (?token=, as the other dashboard
+        sockets) and optional since=<cursor>. Without since the first message is a ChangeBatch with the tail cursor
+        and no events; with a kept since it is the missed events; otherwise one ChangeResync. Then a ChangeBatch
+        whenever something changed, at most every 300 ms, and one ChangeResync when a store that was down when the
+        cursor was taken reads again.
+      oneOf:
+        - $ref: "#/components/schemas/ChangeBatch"
+        - $ref: "#/components/schemas/ChangeResync"
     ActionResult:
       type: object
       additionalProperties: false
