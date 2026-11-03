@@ -7,6 +7,7 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Optional, Tuple
 
+from hermes_state_store import delete_rows
 from hermes_state_common import (
     AUTO_VACUUM_MIN_FREELIST_RATIO, _id_chunks, _non_continuation_child_sql, _placeholders, _sql_session_last_active,
     escape_like as _escape_like, emit_session_deleted,
@@ -121,7 +122,7 @@ class SessionMaintenanceMixin:
                   AND ended_at IS NOT NULL
                   AND started_at < ?
                   AND NOT EXISTS (
-                      SELECT 1 FROM messages WHERE messages.session_id = sessions.id
+                      SELECT 1 FROM transcript_rows WHERE transcript_rows.session_id = sessions.id
                   )
             """, (cutoff,)).fetchall()]
             from hermes_state_mutation_retirement import retire_prunable
@@ -393,7 +394,7 @@ class SessionMaintenanceMixin:
             for chunk in _id_chunks(session_ids):
                 ph = _placeholders(chunk)
                 conn.execute(f"UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id IN ({ph})", chunk)
-                conn.execute(f"DELETE FROM messages WHERE session_id IN ({ph})", chunk)
+                delete_rows(conn, self.message_store, f"session_id IN ({ph})", chunk)
                 conn.execute(f"DELETE FROM sessions WHERE id IN ({ph})", chunk)
                 removed_ids.extend(chunk)
             self._delete_unreferenced_system_prompts(conn)
@@ -448,18 +449,11 @@ class SessionMaintenanceMixin:
 
     def vacuum(self) -> int:
         """VACUUM to reclaim space after large deletes (SQLite never shrinks on its own).
-        Takes an exclusive lock — callers must ensure no other writers are active.  FTS5
-        segments are merged first (:meth:`optimize_fts`) so their pages are reclaimed too;
-        returns the number of FTS indexes optimized (0 on merge failure / no FTS). A quarantined
+        Takes an exclusive lock; callers must ensure no other writers are active. Returns 0. A quarantined
         handle (corrupt image, replaced file, lost WAL generation) raises before any rewrite: a
         VACUUM reads every page and commits the result back, turning contained damage into an
         amplified one (#105670). Same guard ``_execute_write`` applies to every write."""
         self._raise_if_db_corrupt()
-        optimized = 0
-        try:
-            optimized = self.optimize_fts()  # manages its own lock
-        except Exception as exc:
-            logger.warning("FTS optimize before VACUUM failed: %s", exc)
         with self._lock:
             self._raise_if_db_replaced()
             if self._conn is None:
@@ -473,7 +467,7 @@ class SessionMaintenanceMixin:
             # TRUNCATE may replace the WAL inode; adopt the new sidecars so the
             # write-path generation guard does not halt this connection.
             self._record_db_file_identity()
-        return optimized
+        return 0
 
     def maybe_auto_prune_and_vacuum(
         self, retention_days: int = 90, min_interval_hours: int = 24, vacuum: bool = True,

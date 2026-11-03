@@ -7,9 +7,7 @@ next turn: the request grows by everything the budget removed (past ``context_le
 repro) and its cached prefix diverges at the first spilled row.
 """
 
-import contextlib
 import os
-import sqlite3
 import uuid
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -104,10 +102,11 @@ def test_spilled_full_body_stays_searchable_and_next_flush_appends_once(agent_an
     calls = [_tc("web_search", '{"query":"a"}', "q-large-1"), _tc("web_search", '{"query":"b"}', "q-large-2")]
     messages = _run_batch(agent, calls)
 
-    with contextlib.closing(sqlite3.connect(db.db_path)) as conn:
-        full_bodies = conn.execute(
-            "SELECT active FROM messages WHERE session_id = ? AND role = 'tool' AND instr(content, ?) > 0 "
-            "ORDER BY id", (agent.session_id, _LARGE)).fetchall()
+    with db._read_ctx() as conn:
+        full_bodies = [tuple(row) for row in conn.execute(
+            "SELECT active FROM transcript_rows WHERE session_id = ? AND role = 'tool' "
+            "AND instr(msg_text(text_uid, 'content'), ?) > 0 "
+            "ORDER BY id", (agent.session_id, _LARGE)).fetchall()]
     # The result the budget kept inline, plus the archived twin of the one it spilled.
     assert full_bodies == [(1,), (0,)]
 

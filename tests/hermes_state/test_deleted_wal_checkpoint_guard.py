@@ -75,8 +75,6 @@ def test_close_after_halt_runs_no_checkpoint(tmp_path, force_wal):
     # Neither the periodic checkpoint, the stale-FTS retry, VACUUM, nor close() may touch the file now.
     with patch.object(db._conn, "execute", wraps=db._conn.execute) as mock_execute:
         db._try_wal_checkpoint()
-        db._fts_stale = True
-        assert db.retry_deferred_fts_recovery() is False
         with pytest.raises(DeletedWalGenerationError):
             db.vacuum()
         assert not [c for c in mock_execute.call_args_list if "vacuum" in str(c).lower()], "VACUUM ran on a quarantined handle"

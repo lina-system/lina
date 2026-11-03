@@ -344,7 +344,7 @@ class GatewaySessionStore:
             with db._read_ctx() as conn:
                 empty = conn.execute(
                     "SELECT 1 FROM sessions WHERE id = ? AND title IS NULL"
-                    " AND NOT EXISTS (SELECT 1 FROM messages WHERE messages.session_id = sessions.id)"
+                    " AND NOT EXISTS (SELECT 1 FROM transcript_rows WHERE transcript_rows.session_id = sessions.id)"
                     " AND NOT EXISTS (SELECT 1 FROM sessions child WHERE child.parent_session_id = sessions.id)",
                     (session_id,)).fetchone()
         except Exception as exc:  # health: allow BLE001 -- a failed probe keeps the row (never deletes on doubt)

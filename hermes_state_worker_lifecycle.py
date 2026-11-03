@@ -3,6 +3,7 @@ import json
 import time
 
 from hermes_state_runtime import RuntimeStoreError
+from hermes_state_store import content_digest, rewrite_rows
 
 
 _IDENTITY_FIELDS = frozenset({
@@ -52,8 +53,8 @@ def worker_lifecycle(db, conn, session_id, payload):
     from hermes_state_sessions import classify_session_status
     if payload:
         raise RuntimeStoreError('invalid_params')
-    row = conn.execute("SELECT role,tool_calls IS NOT NULL AS has_tool_calls,finish_reason "
-                       "FROM messages WHERE session_id=? ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+    row = conn.execute("SELECT role,tool_call_count > 0 AS has_tool_calls,finish_reason "
+                       "FROM transcript_rows WHERE session_id=? ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
     value = classify_session_status(role=row['role'], has_tool_calls=bool(row['has_tool_calls']),
                                     finish_reason=row['finish_reason']) if row else 'empty'
     return {'value': value}
@@ -149,10 +150,12 @@ def worker_api_content(db, conn, session_id, payload):
     from hermes_state_messages import _scrub_surrogates
     if set(payload) != {'content', 'api_content'} or not isinstance(payload['api_content'], str):
         raise RuntimeStoreError('invalid_params')
-    value = conn.execute(
-        "UPDATE messages SET api_content=? WHERE id=(SELECT id FROM messages WHERE session_id=? "
-        "AND role='user' AND active=1 ORDER BY id DESC LIMIT 1) AND content IS ?",
-        (_scrub_surrogates(payload['api_content']), session_id, db._encode_content(payload['content']))).rowcount
+    row = conn.execute(
+        "SELECT id FROM transcript_rows WHERE id=(SELECT id FROM transcript_rows WHERE session_id=? "
+        "AND role='user' AND active=1 ORDER BY id DESC LIMIT 1) AND content_digest IS ?",
+        (session_id, content_digest(db._encode_content(payload['content'])))).fetchone()
+    value = rewrite_rows(conn, db.message_store, [row['id']] if row else [],
+                         {'api_content': _scrub_surrogates(payload['api_content'])})
     return {'value': value}
 
 
@@ -168,25 +171,22 @@ def worker_message_api_content(db, conn, session_id, payload):
     from hermes_state_messages import _scrub_surrogates
     if set(payload) != {'row_id', 'content', 'api_content'} or not isinstance(payload['api_content'], str):
         raise RuntimeStoreError('invalid_params')
-    return {'value': conn.execute(
-        "UPDATE messages SET api_content=? WHERE id=? AND session_id=? AND role='user' AND active=1 AND content IS ?",
-        (_scrub_surrogates(payload['api_content']), _row_id(payload), session_id,
-         db._encode_content(payload['content']))).rowcount}
+    return {'value': rewrite_rows(conn, db.message_store, [_row_id(payload)],
+        {'api_content': _scrub_surrogates(payload['api_content'])},
+        where_sql=" AND session_id=? AND role='user' AND active=1 AND content_digest IS ?",
+        where_params=(session_id, content_digest(db._encode_content(payload['content']))))}
 
 
 def worker_user_content(db, conn, session_id, payload):
     """Rewrite ONE active user row of this session, same guards as ``SessionDB.set_user_message_content``."""
     if set(payload) - {'display_metadata'} != {'row_id', 'content'}:
         raise RuntimeStoreError('invalid_params')
-    if 'display_metadata' not in payload:
-        return {'value': conn.execute(
-            "UPDATE messages SET content=? WHERE id=? AND session_id=? AND role='user' AND active=1",
-            (db._encode_content(payload['content']), _row_id(payload), session_id)).rowcount}
-    return {'value': conn.execute(
-        "UPDATE messages SET content=?, api_content=NULL, display_metadata=? "
-        "WHERE id=? AND session_id=? AND role='user' AND active=1",
-        (db._encode_content(payload['content']), db._encode_display_metadata(payload['display_metadata']),
-         _row_id(payload), session_id)).rowcount}
+    changes = {'content': db._encode_content(payload['content'])}
+    if 'display_metadata' in payload:
+        changes.update(api_content=None,
+                       display_metadata=db._encode_display_metadata(payload['display_metadata']))
+    return {'value': rewrite_rows(conn, db.message_store, [_row_id(payload)], changes,
+        where_sql=" AND session_id=? AND role='user' AND active=1", where_params=(session_id,))}
 
 
 WORKER_LIFECYCLE_HANDLERS = {

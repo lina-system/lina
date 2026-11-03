@@ -29,8 +29,8 @@ def machine(tmp_path, monkeypatch):
 def _messages_db(path: Path) -> None:
     with sqlite3.connect(path) as conn:
         conn.execute("CREATE TABLE sessions (id TEXT PRIMARY KEY)")
-        conn.execute("CREATE TABLE messages (id INTEGER PRIMARY KEY, session_id TEXT, content TEXT)")
-        conn.execute("INSERT INTO messages (session_id, content) VALUES ('s', 'hi')")
+        conn.execute("CREATE TABLE transcript_rows (id INTEGER PRIMARY KEY, session_id TEXT, text_uid TEXT)")
+        conn.execute("INSERT INTO transcript_rows (session_id, text_uid) VALUES ('s', 'hi')")
     conn.close()
 
 
@@ -54,7 +54,7 @@ def test_a_machine_with_only_install_time_files_is_fresh(machine):
     (other / ".env").write_text('TERMINAL_ENV=local\n# OPENROUTER_API_KEY=\nOPENROUTER_API_KEY="" # optional\n',
                                 encoding="utf-8")
     (other / "auth.json").write_text(json.dumps({"credential_pool": {"openrouter": [{"source": "env:OPENROUTER_API_KEY"}]}}), encoding="utf-8")
-    sqlite3.connect(other / "state.db").execute("CREATE TABLE messages (id INTEGER)").connection.close()
+    sqlite3.connect(other / "state.db").execute("CREATE TABLE transcript_rows (id INTEGER)").connection.close()
     (other / "installs" / "k" / "bootstrap").mkdir(parents=True)
     (other / "installs" / "k" / "bootstrap" / "default.json").write_text("{}", encoding="utf-8")
 
@@ -109,7 +109,7 @@ def test_a_file_linked_into_a_protected_folder_is_existing_without_being_opened(
     if name == "profiles":
         target.mkdir()
     elif name == "state.db":
-        sqlite3.connect(target).execute("CREATE TABLE messages (id INTEGER)").connection.close()
+        sqlite3.connect(target).execute("CREATE TABLE transcript_rows (id INTEGER)").connection.close()
     else:
         target.write_text("{}\n", encoding="utf-8")
     (other / name).symlink_to(target)
@@ -218,7 +218,7 @@ def test_a_gateway_service_counts_only_for_the_account_it_runs_as(tmp_path, monk
 def test_a_state_db_another_process_holds_locked_is_not_use(machine, monkeypatch):
     other, _places = machine
     db = other / "state.db"
-    sqlite3.connect(db).execute("CREATE TABLE messages (id INTEGER)").connection.close()
+    sqlite3.connect(db).execute("CREATE TABLE transcript_rows (id INTEGER)").connection.close()
     monkeypatch.setattr(install_state, "_DB_BUSY_SECONDS", 0.05, raising=False)
     # A first boot creating or healing this state.db holds a write lock while the probe runs.
     holder = sqlite3.connect(db, isolation_level=None)

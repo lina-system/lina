@@ -60,6 +60,11 @@ def _run_state_db_auto_maintenance(session_db) -> None:
                 min_interval_hours=int(cfg.get("min_interval_hours", 24)),
             )
 
+        try:
+            _collect_message_text(session_db, cfg)
+        except Exception:  # health: allow BLE001 -- best-effort reclaim; it must not stop the prune below
+            logger.warning("Message text collection skipped", exc_info=True)
+
         if not cfg.get("auto_prune", False):
             return
         session_db.maybe_auto_prune_and_vacuum(
@@ -71,6 +76,22 @@ def _run_state_db_auto_maintenance(session_db) -> None:
         )
     except Exception as exc:
         logger.debug("state.db auto-maintenance skipped: %s", exc)
+
+
+def _collect_message_text(session_db, cfg: dict) -> None:
+    """Reclaim memory-store text no transcript row of this profile points at any more, once per
+    ``sessions.min_interval_hours``, keeping rows for ``sessions.message_text_grace_days`` (default 30)."""
+    import time
+
+    from hermes_state_store import DEFAULT_COLLECT_DAYS, collect_session_db_text
+    last = float(session_db.get_meta("message_text_collected_at") or 0)
+    if time.time() - last < float(cfg.get("min_interval_hours", 24)) * 3600:
+        return
+    count = collect_session_db_text(
+        session_db, older_than_days=float(cfg.get("message_text_grace_days", DEFAULT_COLLECT_DAYS)))
+    session_db.set_meta("message_text_collected_at", str(time.time()))
+    if count:
+        logger.info("Reclaimed %d message texts no session uses any more", count)
 
 
 def _run_checkpoint_auto_maintenance() -> None:

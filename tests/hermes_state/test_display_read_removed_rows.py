@@ -38,10 +38,10 @@ def _big_bodies_read(db, monkeypatch, read):
 def test_display_reads_fetch_no_body_of_a_removed_copy(tmp_path, monkeypatch):
     with SessionDB(db_path=tmp_path / 'state.db') as db:
         _compacted_repeatedly(db, 6)
-        removed = db._read_one("SELECT COUNT(*) FROM messages WHERE content = ? AND active = 0 AND compacted = 0",
+        removed = db._read_one("SELECT COUNT(*) FROM transcript_rows WHERE msg_text(text_uid, 'content') = ? AND active = 0 AND compacted = 0",
                                (BIG,))[0]
         assert removed >= 5  # the fixture really leaves removed copies behind
-        archived = db._read_one("SELECT COUNT(*) FROM messages WHERE content = ? AND compacted = 1", (BIG,))[0]
+        archived = db._read_one("SELECT COUNT(*) FROM transcript_rows WHERE msg_text(text_uid, 'content') = ? AND compacted = 1", (BIG,))[0]
         for read in (
             lambda: db.get_messages_as_conversation('s', include_ancestors=True, include_compacted=True),
             lambda: db.get_resume_conversations('s')[1],

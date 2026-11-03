@@ -112,25 +112,25 @@ class InsightsEngine:
     # raises ``no such index``): read-only opens skip ``_init_schema``, so an
     # older writer's DB may lack it — ``__init__`` probes once and falls back
     # to the unpinned variants (identical rows, optimizer-chosen plan).
-    _MESSAGES_ASSISTANT_CALLS_INDEX = "idx_messages_assistant_calls_by_session"
+    _MESSAGES_ASSISTANT_CALLS_INDEX = "idx_transcript_rows_assistant_calls_by_session"
     _ASSISTANT_CALLS = (
-        f" FROM messages m INDEXED BY {_MESSAGES_ASSISTANT_CALLS_INDEX}"
+        f" FROM transcript_rows m INDEXED BY {_MESSAGES_ASSISTANT_CALLS_INDEX}"
         " JOIN sessions s ON s.id = m.session_id"
         " WHERE s.started_at >= ?"
     )
     _GET_TOOL_CALLS_ALL, _GET_TOOL_CALLS_WITH_SOURCE = _scoped(
-        "SELECT m.session_id, m.tool_calls" + _ASSISTANT_CALLS,
-        " AND m.role = 'assistant' AND m.tool_calls IS NOT NULL",
+        "SELECT m.session_id, msg_text(m.text_uid, 'tool_calls') AS tool_calls" + _ASSISTANT_CALLS,
+        " AND m.role = 'assistant' AND m.tool_call_count > 0",
     )
     _GET_SKILL_CALLS_ALL, _GET_SKILL_CALLS_WITH_SOURCE = _scoped(
-        "SELECT m.tool_calls, m.timestamp" + _ASSISTANT_CALLS,
-        " AND m.role = 'assistant' AND m.tool_calls IS NOT NULL"
-        " AND (instr(m.tool_calls, 'skill_view') > 0"
-        " OR instr(m.tool_calls, 'skill_manage') > 0)",
+        "SELECT msg_text(m.text_uid, 'tool_calls') AS tool_calls, m.timestamp" + _ASSISTANT_CALLS,
+        " AND m.role = 'assistant' AND m.tool_call_count > 0"
+        " AND (instr(msg_text(m.text_uid, 'tool_calls'), 'skill_view') > 0"
+        " OR instr(msg_text(m.text_uid, 'tool_calls'), 'skill_manage') > 0)",
     )
     _GET_TOOL_NAMES_ALL, _GET_TOOL_NAMES_WITH_SOURCE = _scoped(
         """SELECT m.session_id, m.tool_name, COUNT(*) as count
-                   FROM messages m
+                   FROM transcript_rows m
                    JOIN sessions s ON s.id = m.session_id
                    WHERE s.started_at >= ?""",
         """
@@ -143,7 +143,7 @@ class InsightsEngine:
                      SUM(CASE WHEN m.role = 'user' THEN 1 ELSE 0 END) as user_messages,
                      SUM(CASE WHEN m.role = 'assistant' THEN 1 ELSE 0 END) as assistant_messages,
                      SUM(CASE WHEN m.role = 'tool' THEN 1 ELSE 0 END) as tool_messages
-                   FROM messages m
+                   FROM transcript_rows m
                    JOIN sessions s ON s.id = m.session_id
                    WHERE s.started_at >= ?""",
     )

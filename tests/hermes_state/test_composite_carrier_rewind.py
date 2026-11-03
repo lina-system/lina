@@ -14,6 +14,7 @@ from agent.context_compressor import (
 )
 from hermes_state import SessionCompressionInProgressError, SessionDB
 from hermes_state_errors import CompressionSessionClosedError, SessionTurnLeaseLostError
+from hermes_state_store import rewrite_rows
 
 
 def _carrier(ask: str = "REAL ASK") -> str:
@@ -43,8 +44,8 @@ def _row_state(db: SessionDB, session_id: str) -> list[tuple]:
     return [
         tuple(row)
         for row in db._conn.execute(
-            "SELECT id, role, content, active, display_kind "
-            "FROM messages WHERE session_id = ? ORDER BY id",
+            "SELECT id, role, msg_text(text_uid, 'content'), active, display_kind "
+            "FROM transcript_rows WHERE session_id = ? ORDER BY id",
             (session_id,),
         ).fetchall()
     ]
@@ -91,7 +92,7 @@ def test_composite_rewind_archives_tail_and_inserts_its_hidden_scaffold(db):
     assert SUMMARY_PREFIX in active[-1]["content"]
     assert "REAL ASK" not in active[-1]["content"]
     archived = db._conn.execute(
-        "SELECT active FROM messages WHERE id IN (?, ?) ORDER BY id",
+        "SELECT active FROM transcript_rows WHERE id IN (?, ?) ORDER BY id",
         (target_id, target_id + 1),
     ).fetchall()
     assert [row[0] for row in archived] == [0, 0]
@@ -214,10 +215,7 @@ def test_guarded_rewind_rejects_selected_target_content_change(db):
 
     sibling = SessionDB(db_path=db.db_path)
     sibling._execute_write(
-        lambda conn: conn.execute(
-            "UPDATE messages SET content = ? WHERE id = ?",
-            ("changed second", target_id),
-        )
+        lambda conn: rewrite_rows(conn, sibling.message_store, [target_id], {"content": "changed second"})
     )
     sibling.close()
     before_rows = _row_state(db, sid)

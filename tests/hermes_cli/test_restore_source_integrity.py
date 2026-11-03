@@ -17,9 +17,9 @@ HOME_NAMES = ["x#y", "x%23y", "x y"]
 def _database(path, count):
     with closing(sqlite3.connect(path)) as conn:
         conn.execute("CREATE TABLE sessions(id INTEGER PRIMARY KEY)")
-        conn.execute("CREATE TABLE messages(id INTEGER PRIMARY KEY)")
+        conn.execute("CREATE TABLE transcript_rows(id INTEGER PRIMARY KEY)")
         conn.executemany("INSERT INTO sessions VALUES (?)", [(n,) for n in range(count)])
-        conn.executemany("INSERT INTO messages VALUES (?)", [(n,) for n in range(count)])
+        conn.executemany("INSERT INTO transcript_rows VALUES (?)", [(n,) for n in range(count)])
         conn.commit()
 
 
@@ -74,9 +74,9 @@ def test_restore_uses_literal_paths_and_preserves_live_connection(
         assert _restore(entry, home, "saved", source)
         if entry == "import":
             assert "3 session(s) / 3 message(s) -> 1 / 1" in capsys.readouterr().out
-        assert holder.execute("SELECT id FROM messages").fetchall() == [(0,)]
+        assert holder.execute("SELECT id FROM transcript_rows").fetchall() == [(0,)]
         with closing(sqlite3.connect(target)) as reopened:
-            assert reopened.execute("SELECT id FROM messages").fetchall() == [(0,)]
+            assert reopened.execute("SELECT id FROM transcript_rows").fetchall() == [(0,)]
     finally:
         holder.close()
     _assert_no_decoy(tmp_path, home.name)

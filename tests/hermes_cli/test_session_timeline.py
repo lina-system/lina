@@ -84,9 +84,9 @@ def test_compacted_timeline_and_jump_share_display_order_and_visibility(timeline
         {"role": "user", "content": "rewound ask"},
     ])
     rewound_id = db.get_messages(sid)[-1]["id"]
-    db._write_sql("UPDATE messages SET active = 0, compacted = 0 WHERE id = ?", (rewound_id,))
+    db._write_sql("UPDATE transcript_rows SET active = 0, compacted = 0 WHERE id = ?", (rewound_id,))
     if legacy:
-        db._write_sql("UPDATE messages SET display_identity = NULL, display_order = NULL WHERE session_id = ?", (sid,))
+        db._write_sql("UPDATE transcript_rows SET display_identity = NULL, display_order = NULL WHERE session_id = ?", (sid,))
     timeline = client.get(f"/api/sessions/{sid}/timeline").json()
     assert [entry["preview"] for entry in timeline["entries"]] == ["old ask", "retained ask", "live ask"]
     anchor = timeline["entries"][1]["row_id"]
@@ -189,7 +189,7 @@ def test_timeline_sql_never_reads_tool_columns_or_writes(timeline_store, monkeyp
     def authorize(action, table, column, *_):
         if action == sqlite3.SQLITE_READ:
             accesses.append((table, column))
-            if table == "messages" and column in {"tool_calls", "reasoning", "api_content", "codex_reasoning_items"}:
+            if table == "transcript_rows" and column in {"tool_calls", "reasoning", "api_content", "codex_reasoning_items"}:
                 return sqlite3.SQLITE_DENY
         if action in {sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_INSERT, sqlite3.SQLITE_DELETE}:
             return sqlite3.SQLITE_DENY

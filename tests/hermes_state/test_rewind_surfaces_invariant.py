@@ -38,7 +38,7 @@ def _seed(db: SessionDB, sid: str, turns: int = 3, rich: bool = False) -> None:
 
 def _active_rows(db: SessionDB, sid: str):
     return [tuple(r) for r in db._conn.execute(
-        "SELECT id, role, content, active FROM messages WHERE session_id = ? ORDER BY id", (sid,)).fetchall()]
+        "SELECT id, role, msg_text(text_uid, 'content'), active FROM transcript_rows WHERE session_id = ? ORDER BY id", (sid,)).fetchall()]
 
 
 def _rewind_via(surface: str, db: SessionDB, sid: str, n: int):

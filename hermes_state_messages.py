@@ -25,25 +25,27 @@ from hermes_state_common import (
 from hermes_state_compaction_display import later_tool_copy_ids, not_a_later_tool_copy_sql
 from hermes_state_detached_results import SessionDetachedResultsMixin
 from hermes_state_todo import SessionTodoResultMixin
+from hermes_state_store import (
+    content_digest, delete_rows, insert_rows, rewrite_rows, rows_with_text, text_columns_sql, text_sql)
 from hermes_state_identity import (
     _absorbed_uids_json, _restore_identity_columns, _stable_tool_key, _tool_call_uid_map, _tool_call_uid_or_none, _tool_call_uids_json, _uid_list)
 
 logger = logging.getLogger("hermes_state")  # caplog tests pin the origin module's name
 
-# One INSERT shape for every message writer (append, batch, replace, compact, import).
-_INSERT_MESSAGE_SQL = """INSERT INTO messages (session_id, role, content, tool_call_id,
-                   tool_calls, tool_name, effect_disposition, timestamp, token_count, finish_reason,
-                   reasoning, reasoning_content, reasoning_details, codex_reasoning_items,
-                   codex_message_items, platform_message_id, observed, _compressed_summary, active, api_content, display_kind,
-                   display_metadata, display_identity, message_uid, absorbed_message_uids, tool_call_uids,
-                   tool_call_uid)
-                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)"""
+# One row shape for every message writer (append, batch, replace, compact, import), in the old ``messages``
+# column order: ``insert_rows`` sends the text columns to the memory store and the rest to transcript_rows.
+_MESSAGE_WRITE_COLUMNS = (
+    "session_id", "role", "content", "tool_call_id", "tool_calls", "tool_name", "effect_disposition", "timestamp",
+    "token_count", "finish_reason", "reasoning", "reasoning_content", "reasoning_details", "codex_reasoning_items",
+    "codex_message_items", "platform_message_id", "observed", "_compressed_summary", "active", "api_content",
+    "display_kind", "display_metadata", "display_identity", "message_uid", "absorbed_message_uids", "tool_call_uids",
+    "tool_call_uid")
 # Every column this module knows how to read: the ones it writes plus the three SQLite/compaction
 # owns. `_row_to_message_dict` drops raw bytes ONLY outside this set — a schema column keeps its
 # key (and its typed decoder) even when a row holds a BLOB, so no reader ever loses msg["content"].
-_MESSAGE_WRITE_COLUMNS = tuple(
-    re.findall(r"\w+", _INSERT_MESSAGE_SQL.split("(", 1)[1].split(")", 1)[0])
-)
+_TEXT_COLUMNS = text_columns_sql()
+_PLACEMENT_ONLY_KEYS = ("text_uid", "content_digest", "tool_call_count")
+_CHOSEN_TEXT_COLUMNS = text_columns_sql("chosen.")
 _MESSAGE_SCHEMA_KEYS = frozenset(_MESSAGE_WRITE_COLUMNS) | {"id", "compacted", "display_order"}
 _BUMP_GENERATION_SQL = """
             INSERT INTO conversation_generations (source, session_key, generation)
@@ -59,21 +61,22 @@ _DISPLAY_ACTIVE_CLAUSE = " AND (active = 1 OR compacted = 1)"
 # purpose: inside a correlated subquery it binds to the innermost ``messages`` alias.
 DISPLAY_VISIBLE_SQL = (
     f" AND COALESCE({_sql_json_extract('display_metadata', '$.' + MODEL_ONLY_DISPLAY_METADATA_KEY)}, 0) = 0")
-_DISPLAY_META_ROW_SQL = "SELECT display_metadata FROM messages WHERE id = ? AND session_id IN ({ids})" + _DISPLAY_ACTIVE_CLAUSE
+_DISPLAY_META_ROW_SQL = "SELECT display_metadata FROM transcript_rows WHERE id = ? AND session_id IN ({ids})" + _DISPLAY_ACTIVE_CLAUSE
 # A display row is indexed only when both halves are set; the read path backfills before projecting, so
 # the in-transaction delete fence must refuse (not project) any session this probe still matches.
-_DISPLAY_INDEX_MISSING_SQL = ("SELECT 1 FROM messages WHERE session_id = ?" + _DISPLAY_ACTIVE_CLAUSE
+_DISPLAY_INDEX_MISSING_SQL = ("SELECT 1 FROM transcript_rows WHERE session_id = ?" + _DISPLAY_ACTIVE_CLAUSE
                               + " AND (display_order IS NULL OR display_identity IS NULL) LIMIT 1")
-_ACTIVE_IDS_SQL = "SELECT id FROM messages WHERE session_id = ? AND active = 1 ORDER BY id"
-_LIVE_IDENTITY_SQL = ("SELECT id, role, content, tool_call_id, tool_calls, message_uid FROM messages "
+_ACTIVE_IDS_SQL = "SELECT id FROM transcript_rows WHERE session_id = ? AND active = 1 ORDER BY id"
+_LIVE_IDENTITY_SQL = (f"SELECT id, role, {text_sql('content')}, tool_call_id, {text_sql('tool_calls')}, message_uid "
+                      "FROM transcript_rows "
                       "WHERE session_id = ? AND active = 1 ORDER BY id LIMIT ?")
 _SET_COUNTERS_SQL = "UPDATE sessions SET message_count = ?, tool_call_count = ?"
 _RESET_COUNTERS_SQL = "UPDATE sessions SET message_count = 0, tool_call_count = 0 WHERE id = ?"
-_SET_DISPLAY_META_SQL = "UPDATE messages SET display_metadata = ? WHERE id = ?"
-_ARCHIVE_ACTIVE_SQL = "UPDATE messages SET active = 0, compacted = 1 WHERE session_id = ? AND active = 1"
-_SHADOWED_CHECKPOINT_ROWS_SQL = ("SELECT id, codex_reasoning_items FROM messages WHERE session_id = ? AND active = 1 "
-    "AND role = 'assistant' AND id < ? AND codex_reasoning_items LIKE '%\"compaction\"%'")
-_SET_CODEX_REASONING_SQL = "UPDATE messages SET codex_reasoning_items = ? WHERE id = ?"
+_SET_DISPLAY_META_SQL = "UPDATE transcript_rows SET display_metadata = ? WHERE id = ?"
+_ARCHIVE_ACTIVE_SQL = "UPDATE transcript_rows SET active = 0, compacted = 1 WHERE session_id = ? AND active = 1"
+_SHADOWED_CHECKPOINT_ROWS_SQL = (f"SELECT id, {text_sql('codex_reasoning_items')} FROM transcript_rows "
+    "WHERE session_id = ? AND active = 1 AND role = 'assistant' AND id < ? "
+    f"AND {text_sql('codex_reasoning_items')} LIKE '%\"compaction\"%'")
 _INVALID = object()  # _json_or sentinel where the fallback must be distinguishable from JSON null
 
 
@@ -122,6 +125,9 @@ def _stale_holder(row, now: float) -> bool:
 
 class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
     """Message append/replace/rewind, reactions, resume conversations, replay dedupe (detached results: the base)."""
+
+    def _with_text(self, rows) -> list[dict[str, Any]]:
+        return rows_with_text(self.message_store, rows)
 
     def _bump_conversation_generation(self, conn, session_id: str, end_reason: str) -> None:
         """Advance the peer's conversation generation past a boundary, in the txn that writes it. Only
@@ -420,7 +426,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         def _do(conn):
             self._check_transcript_write_guards(conn, session_id, compression_lock_holder,
                 turn_lease_holder=turn_lease_holder, turn_lease_ttl_seconds=turn_lease_ttl_seconds)
-            msg_id = conn.execute(_INSERT_MESSAGE_SQL, params).lastrowid
+            msg_id = insert_rows(conn, self.message_store, [dict(zip(_MESSAGE_WRITE_COLUMNS, params))])[0]
             self._bump_session_counters(conn, session_id, 1, _tool_calls_count(tool_calls), unit=True)
             return msg_id
         # THE critical write (failure aborts the turn): long patience so a sibling legitimately
@@ -463,6 +469,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
                 session_id, msg, timestamp
             ),
             decode_row_fn=self._decoded_repair_row,
+            store=self.message_store,
         )
         inserted, tool_calls_total = self._insert_message_rows(conn, session_id, inserted_rows)
         self._bump_session_counters(conn, session_id, inserted, tool_calls_total, unit=False)
@@ -505,12 +512,12 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if not session_id or not content or not display_kind:
             return False
         def _do(conn):
-            row = conn.execute("SELECT id FROM messages WHERE session_id = ? AND role = ? "
-                "AND content = ? AND active = 1 ORDER BY id DESC LIMIT 1",
-                (session_id, role, self._encode_content(content))).fetchone()
+            row = conn.execute("SELECT id FROM transcript_rows WHERE session_id = ? AND role = ? "
+                "AND content_digest = ? AND active = 1 ORDER BY id DESC LIMIT 1",
+                (session_id, role, content_digest(self._encode_content(content)))).fetchone()
             if row is None:
                 return False
-            conn.execute("UPDATE messages SET display_kind = ?, display_metadata = ? WHERE id = ?",
+            conn.execute("UPDATE transcript_rows SET display_kind = ?, display_metadata = ? WHERE id = ?",
                 (_scrub_surrogates(display_kind), self._encode_display_metadata(display_metadata), row[0]))
             return True
         return self._execute_write(_do)
@@ -572,7 +579,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             pending = []
             # Only reaction-bearing rows cross into Python: display_metadata also carries delivery /
             # attachment markers on most rows, and the lineage scan grows with the session's age.
-            for row in conn.execute("SELECT id, role, content, display_metadata FROM messages "
+            for row in conn.execute(f"SELECT id, role, {text_sql('content')} AS content, display_metadata FROM transcript_rows "
                     f"WHERE session_id IN ({_placeholders(lineage)}){_DISPLAY_ACTIVE_CLAUSE} "
                     f"AND {_sql_json_extract('display_metadata', '$.' + self.REACTIONS_METADATA_KEY)} IS NOT NULL "
                     "ORDER BY id", tuple(lineage)).fetchall():
@@ -601,8 +608,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         skips rows without plain-text content so "the latest message" never resolves to an invisible bubble."""
         if not session_id or role not in {"user", "assistant"} or offset < 0:
             return None
-        text_filter = "AND content IS NOT NULL AND TRIM(content) != '' " if require_text else ""
-        row = self._read_one("SELECT id FROM messages WHERE session_id = ? AND role = ? "
+        text_filter = f"AND TRIM(COALESCE({text_sql('content')}, '')) != '' " if require_text else ""
+        row = self._read_one("SELECT id FROM transcript_rows WHERE session_id = ? AND role = ? "
             f"AND active = 1 {text_filter}ORDER BY id DESC LIMIT 1 OFFSET ?",
             (session_id, role, int(offset)))
         return row[0] if row else None
@@ -612,7 +619,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         ``system`` rows are transcript bookkeeping stripped before the model sees history, so
         they must not hide an open user tail from the failed-turn boundary check."""
         row = self._read_one(
-            "SELECT role FROM messages WHERE session_id = ? AND active = 1 "
+            "SELECT role FROM transcript_rows WHERE session_id = ? AND active = 1 "
             "AND role NOT IN ('session_meta', 'system') ORDER BY id DESC LIMIT 1", (session_id,))
         return row[0] if row else None
 
@@ -620,7 +627,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         """Role of the active message at *row_id* in *session_id*, or ``None``."""
         if not session_id:
             return None
-        row = self._read_one("SELECT role FROM messages WHERE id = ? AND session_id = ? AND active = 1", (int(row_id), session_id))
+        row = self._read_one("SELECT role FROM transcript_rows WHERE id = ? AND session_id = ? AND active = 1", (int(row_id), session_id))
         return row[0] if row else None
 
     def _carry_parent_timestamps(self, conn, parent_session_id: str, messages: list[dict[str, Any]]) -> None:
@@ -640,7 +647,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
                 return
             donors: dict[tuple[Any, ...], list[Any]] = {}
             for row in conn.execute(
-                    "SELECT id, role, content, timestamp, tool_call_id, tool_calls, tool_name FROM messages "
+                    f"SELECT id, role, {text_sql('content')} AS content, timestamp, tool_call_id, "
+                    f"{text_sql('tool_calls')} AS tool_calls, tool_name FROM transcript_rows "
                     "WHERE session_id = ? AND active = 1 ORDER BY id", (parent_session_id,)).fetchall():
                 donors.setdefault((row["role"], row["content"], row["tool_call_id"], row["tool_calls"],
                     row["tool_name"]), []).append(row["timestamp"])
@@ -674,15 +682,14 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             # the live dict never disagree. Tool calls get their per-occurrence ids the same way.
             stamp_message_uid(msg)
             self._stamp_tool_call_uids(msg, tool_calls, batch_tool_index)
-            cur = conn.execute(_INSERT_MESSAGE_SQL, self._message_row_params(
-                session_id, role, msg, tool_calls, message_timestamp, keep_reasoning=role == "assistant"))
+            row_id = insert_rows(conn, self.message_store, [dict(zip(_MESSAGE_WRITE_COLUMNS, self._message_row_params(
+                session_id, role, msg, tool_calls, message_timestamp, keep_reasoning=role == "assistant")))])[0]
             # Keep the caller's live row aligned with the durable identity. Rows created without an explicit
             # timestamp (notably mid-turn steers) may be carried through several compaction generations; if
             # the generated timestamp exists only in SQLite, every copy receives a new identity and renders
             # as another logical message.
             msg["timestamp"] = message_timestamp
-            if cur.lastrowid is not None:
-                msg["_row_id"] = cur.lastrowid
+            msg["_row_id"] = row_id
             inserted += 1
             tool_calls_total += _tool_calls_count(tool_calls)
             now_ts = max(now_ts, message_timestamp) + 1e-6
@@ -713,7 +720,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             if not isinstance(items, list) or not any(_is_checkpoint_item(item) for item in items):
                 continue
             kept = [item for item in items if not _is_checkpoint_item(item)]
-            conn.execute(_SET_CODEX_REASONING_SQL, (self._reasoning_json_text(kept), row_id))
+            rewrite_rows(conn, self.message_store, [row_id], {"codex_reasoning_items": self._reasoning_json_text(kept)})
             rewritten += 1
         return rewritten
 
@@ -768,10 +775,10 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             kept_tool_calls = sum(_tool_calls_len(row[4], scalar=1) for row in live[:kept])
             if kept < len(live):
                 # FTS triggers don't fire on `active`: replaced turns stay searchable (include_inactive=True).
-                conn.execute("UPDATE messages SET active = 0 WHERE session_id = ? AND active = 1 AND id >= ?",
+                conn.execute("UPDATE transcript_rows SET active = 0 WHERE session_id = ? AND active = 1 AND id >= ?",
                              (session_id, live[kept][0]))
         else:
-            conn.execute(f"DELETE FROM messages WHERE session_id = ?{' AND active = 1' if active_only else ''}", (session_id,))
+            delete_rows(conn, self.message_store, f"session_id = ?{' AND active = 1' if active_only else ''}", (session_id,))
         inserted, inserted_tool_calls = self._insert_message_rows(conn, session_id, messages[kept:])
         conn.execute(f"{_SET_COUNTERS_SQL} WHERE id = ?",
                      (kept + inserted, kept_tool_calls + inserted_tool_calls, session_id))
@@ -819,7 +826,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         ``archive_and_compact``, #80216); kept for tests and diagnostics.
         """
         return self._read_one(
-            "SELECT 1 FROM messages WHERE session_id = ? AND active = 0 LIMIT 1", (session_id,)) is not None
+            "SELECT 1 FROM transcript_rows WHERE session_id = ? AND active = 0 LIMIT 1", (session_id,)) is not None
 
     def get_active_message_watermark(self, session_id: str) -> int:
         """MAX(id) of the active rows (0 if none), captured at compression START: every active row above it
@@ -827,12 +834,12 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if not session_id:
             return 0
         return int(self._read_one(
-            "SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id = ? AND active = 1", (session_id,))[0])
+            "SELECT COALESCE(MAX(id), 0) FROM transcript_rows WHERE session_id = ? AND active = 1", (session_id,))[0])
 
     def _tail_rows_after_watermark(self, conn, sql: str, params) -> tuple[list[int], int]:
         """``(ids, tool_call_count)`` of the concurrent-tail rows selected by *sql* (``SELECT id, tool_calls``)."""
         rows = conn.execute(sql, params).fetchall()
-        return [int(r["id"]) for r in rows], sum(_tool_calls_len(r["tool_calls"]) for r in rows)
+        return [int(r["id"]) for r in rows], sum(int(r["tool_call_count"] or 0) for r in rows)
 
     def _clone_message_rows(self, conn, tail_ids: list[int], *, session_id: Optional[str] = None) -> None:
         """Pure-SQL clone of *tail_ids* as fresh live rows (new id/display order, active=1, compacted=0;
@@ -844,8 +851,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         skip = ("id", "active", "compacted", "display_order") + (("session_id",) if retarget else ())
         col_list = ", ".join(c for c in self._message_column_names(conn) if c not in skip)
         conn.execute(
-            f"INSERT INTO messages ({col_list}, {'session_id, ' if retarget else ''}active, compacted) "
-            f"SELECT {col_list}, {'?, ' if retarget else ''}1, 0 FROM messages "
+            f"INSERT INTO transcript_rows ({col_list}, {'session_id, ' if retarget else ''}active, compacted) "
+            f"SELECT {col_list}, {'?, ' if retarget else ''}1, 0 FROM transcript_rows "
             f"WHERE id IN ({_placeholders(tail_ids)}) ORDER BY id",
             [session_id, *tail_ids] if retarget else tail_ids)
 
@@ -879,7 +886,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if rewind_ids:
             placeholders = _placeholders(rewind_ids)
             conn.execute(
-                "UPDATE messages SET active = 0, compacted = 0 "
+                "UPDATE transcript_rows SET active = 0, compacted = 0 "
                 f"WHERE session_id = ? AND id IN ({placeholders})",
                 [session_id, *rewind_ids])
         conn.execute(_ARCHIVE_ACTIVE_SQL, (session_id,))
@@ -891,7 +898,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if clone_ids:
             _ids, unseen_tool_calls = self._tail_rows_after_watermark(
                 conn,
-                f"SELECT id, tool_calls FROM messages WHERE id IN ({_placeholders(clone_ids)}) ORDER BY id",
+                f"SELECT id, tool_call_count FROM transcript_rows WHERE id IN ({_placeholders(clone_ids)}) ORDER BY id",
                 tuple(clone_ids))
             self._clone_message_rows(conn, clone_ids)
             inserted += len(clone_ids)
@@ -987,14 +994,14 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
                 carried_messages=carried_messages, patched_model_config=patched_model_config, patch=patch,
                 merged_away=proved[1])
         tail_ids: list[int] = [] if watermark is None else [int(row["id"]) for row in conn.execute(
-            "SELECT id FROM messages WHERE session_id = ? AND active = 1 AND id > ? ORDER BY id",
+            "SELECT id FROM transcript_rows WHERE session_id = ? AND active = 1 AND id > ? ORDER BY id",
             (session_id, int(watermark))).fetchall()]
         # A concurrent-tail row the compacted set already carries is superseded by that copy, not
         # cloned beside it (#137197); its carried dict then has no original below the watermark.
         carried_tail, weak_claims = self._carried_tail_ids(conn, tail_ids, compacted_messages)
         clone_ids = [row_id for row_id in tail_ids if row_id not in carried_tail]
         _ids, tail_tool_calls = ([], 0) if not clone_ids else self._tail_rows_after_watermark(
-            conn, f"SELECT id, tool_calls FROM messages WHERE id IN ({_placeholders(clone_ids)}) ORDER BY id",
+            conn, f"SELECT id, tool_call_count FROM transcript_rows WHERE id IN ({_placeholders(clone_ids)}) ORDER BY id",
             tuple(clone_ids))
         tail_below = tail_count - self._carried_tail_slots(carried_tail, len(compacted_messages), tail_count)
         # Rewind targets sit AT/BELOW the watermark (all the compressor saw); unbounded, a
@@ -1004,7 +1011,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if tail_below > 0:
             bound = watermark is not None
             rewind_ids += [int(row["id"]) for row in conn.execute(
-                f"SELECT id FROM messages WHERE session_id = ? AND active = 1{' AND id <= ?' if bound else ''} "
+                f"SELECT id FROM transcript_rows WHERE session_id = ? AND active = 1{' AND id <= ?' if bound else ''} "
                 "ORDER BY id DESC LIMIT ?",
                 (session_id, *((int(watermark),) if bound else ()),
                  int(tail_below) + self._uncounted_merged_rows(compacted_messages[-int(tail_count):]))).fetchall()]
@@ -1013,7 +1020,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         rewind_ids = list(dict.fromkeys(rewind_ids))
         if rewind_ids:
             placeholders = _placeholders(rewind_ids)
-            conn.execute("UPDATE messages SET active = 0, compacted = 0 "
+            conn.execute("UPDATE transcript_rows SET active = 0, compacted = 0 "
                 f"WHERE session_id = ? AND id IN ({placeholders})", [session_id, *rewind_ids])
             conn.execute(f"{_ARCHIVE_ACTIVE_SQL} AND id NOT IN ({placeholders})", [session_id, *rewind_ids])
         else:
@@ -1037,7 +1044,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
     def _message_column_names(self, conn) -> list[str]:
         """Column names of the messages table, cached per-connection era."""
         if not getattr(self, "_message_columns_cache", None):
-            self._message_columns_cache = [r[1] for r in conn.execute("PRAGMA table_info(messages)").fetchall()]
+            self._message_columns_cache = [r[1] for r in conn.execute("PRAGMA table_info(transcript_rows)").fetchall()]
         return self._message_columns_cache
 
     def set_user_message_content(self, session_id: str, row_id: int, content: Any,
@@ -1050,13 +1057,13 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if not session_id or isinstance(row_id, bool) or not isinstance(row_id, int) or row_id <= 0:
             return 0
         if display_metadata is None:
-            return self._write_rowcount(
-                "UPDATE messages SET content = ? WHERE id = ? AND session_id = ? AND role = 'user' AND active = 1",
-                (self._encode_content(content), row_id, session_id))
-        return self._write_rowcount(
-            "UPDATE messages SET content = ?, api_content = NULL, display_metadata = ? "
-            "WHERE id = ? AND session_id = ? AND role = 'user' AND active = 1",
-            (self._encode_content(content), self._encode_display_metadata(display_metadata), row_id, session_id))
+            changes = {"content": self._encode_content(content)}
+        else:
+            changes = {"content": self._encode_content(content), "api_content": None,
+                       "display_metadata": self._encode_display_metadata(display_metadata)}
+        return self._execute_write(lambda conn: rewrite_rows(
+            conn, self.message_store, [row_id], changes,
+            where_sql=" AND session_id = ? AND role = 'user' AND active = 1", where_params=(session_id,)))
 
     def deactivate_message(self, session_id: str, row_id: int) -> int:
         """Deactivate ONE known row (id-addressed, idempotent; returns the affected row count). Used by
@@ -1067,7 +1074,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if not session_id or isinstance(row_id, bool) or not isinstance(row_id, int) or row_id <= 0:
             return 0
         return self._write_rowcount(
-            "UPDATE messages SET active = 0 WHERE id = ? AND session_id = ?",
+            "UPDATE transcript_rows SET active = 0 WHERE id = ? AND session_id = ?",
             (row_id, session_id))
 
     def resolve_active_row_id(self, session_id: str, row_id: int) -> Optional[int]:
@@ -1078,15 +1085,15 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         before deactivating or rewriting the row (#123675)."""
         if not session_id or isinstance(row_id, bool) or not isinstance(row_id, int) or row_id <= 0:
             return None
-        origin = self._read_one("SELECT active FROM messages WHERE id = ? AND session_id = ?", (row_id, session_id))
+        origin = self._read_one("SELECT active FROM transcript_rows WHERE id = ? AND session_id = ?", (row_id, session_id))
         if origin is None:
             return None
         if origin[0]:
             return row_id
         clones = self._read_all(
-            "SELECT c.id FROM messages c JOIN messages o ON o.id = ? "
+            "SELECT c.id FROM transcript_rows c JOIN transcript_rows o ON o.id = ? "
             "WHERE c.session_id = ? AND c.active = 1 AND c.id > o.id AND c.role = o.role "
-            "AND c.content IS o.content AND c.timestamp = o.timestamp",
+            "AND c.content_digest IS o.content_digest AND c.timestamp = o.timestamp",
             (row_id, session_id))
         return int(clones[0][0]) if len(clones) == 1 else None
 
@@ -1100,7 +1107,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         if not session_id or not display_kind:
             return 0
         return self._write_rowcount(
-            "UPDATE messages SET active = 0 WHERE session_id = ? AND display_kind = ? AND active = 1",
+            "UPDATE transcript_rows SET active = 0 WHERE session_id = ? AND display_kind = ? AND active = 1",
             (session_id, _scrub_surrogates(display_kind)))
 
     def _display_dedupe_key(self, row) -> tuple[Any, ...]:
@@ -1208,9 +1215,10 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         last_id = 0
         while True:
             rows = conn.execute(
-                "SELECT id, role, content, timestamp, tool_call_id, tool_calls, tool_name, "
-                "display_kind, display_metadata, display_order, display_identity, message_uid, _compressed_summary "
-                "FROM messages INDEXED BY idx_messages_session_id "
+                f"SELECT id, role, {text_sql('content')} AS content, timestamp, tool_call_id, "
+                f"{text_sql('tool_calls')} AS tool_calls, tool_name, display_kind, display_metadata, display_order, "
+                "display_identity, message_uid, _compressed_summary "
+                "FROM transcript_rows INDEXED BY idx_transcript_rows_session_id "
                 "WHERE session_id = ? AND id > ? AND (active = 1 OR compacted = 1) "
                 "ORDER BY id LIMIT 1000",
                 (session_id, last_id))
@@ -1230,7 +1238,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             if last_id == batch_start:
                 break
             conn.executemany(
-                "UPDATE messages SET display_order = ?, display_identity = ? WHERE id = ?", updates)
+                "UPDATE transcript_rows SET display_order = ?, display_identity = ? WHERE id = ?", updates)
 
     def _ensure_display_order(self, session_id: str) -> bool:
         """Backfill one legacy session once, preserving the pre-index display identity exactly."""
@@ -1261,12 +1269,13 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             try:
                 has_session_index = conn.execute(
                     "SELECT 1 FROM sqlite_master WHERE type = 'index' AND name = ?",
-                    ("idx_messages_session_id",),
+                    ("idx_transcript_rows_session_id",),
                 ).fetchone() is not None
-                index_hint = "INDEXED BY idx_messages_session_id" if has_session_index else "NOT INDEXED"
+                index_hint = "INDEXED BY idx_transcript_rows_session_id" if has_session_index else "NOT INDEXED"
                 rows = conn.execute(
-                    "SELECT id, role, content, timestamp, tool_call_id, tool_calls, tool_name, active, "
-                    f"display_kind, display_metadata FROM messages {index_hint} "
+                    f"SELECT id, role, {text_sql('content')} AS content, timestamp, tool_call_id, "
+                    f"{text_sql('tool_calls')} AS tool_calls, tool_name, active, "
+                    f"display_kind, display_metadata FROM transcript_rows {index_hint} "
                     f"WHERE session_id = ?{active_clause} ORDER BY id ASC",
                     (session_id,))
                 for row in rows:
@@ -1286,7 +1295,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
                 for start in range(0, len(selected_ids), 900):
                     chunk = selected_ids[start:start + 900]
                     selected.update({row["id"]: row for row in conn.execute(
-                        f"SELECT * FROM messages WHERE session_id = ?{active_clause} "
+                        f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE session_id = ?{active_clause} "
                         f"AND id IN ({_placeholders(chunk)})",
                         (session_id, *chunk))})
                 return [selected[row_id] for row_id in selected_ids if row_id in selected]
@@ -1300,6 +1309,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         msg = dict(row)
         msg.pop("display_identity", None)
         msg.pop("display_order", None)
+        for key in _PLACEMENT_ONLY_KEYS:
+            msg.pop(key, None)
         if summary_flag and msg.pop("_compressed_summary", 0):
             msg["_compressed_summary"] = True
         msg["content"] = self._decode_content(msg["content"])
@@ -1325,14 +1336,14 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         direction = "DESC" if latest else "ASC"
         return conn.execute(
             f"""WITH page AS (
-                   SELECT display_order FROM messages
-                   WHERE session_id = ? AND (active = 1 OR compacted = 1){DISPLAY_VISIBLE_SQL}{not_a_later_tool_copy_sql("messages")}
+                   SELECT display_order FROM transcript_rows
+                   WHERE session_id = ? AND (active = 1 OR compacted = 1){DISPLAY_VISIBLE_SQL}{not_a_later_tool_copy_sql("transcript_rows")}
                    GROUP BY display_order ORDER BY display_order {direction}
                    LIMIT ? OFFSET ?
                )
-               SELECT chosen.* FROM page
-               JOIN messages AS chosen ON chosen.id = (
-                   SELECT candidate.id FROM messages AS candidate
+               SELECT chosen.*, {_CHOSEN_TEXT_COLUMNS} FROM page
+               JOIN transcript_rows AS chosen ON chosen.id = (
+                   SELECT candidate.id FROM transcript_rows AS candidate
                    WHERE candidate.session_id = ?
                      AND candidate.display_order = page.display_order
                      AND (candidate.active = 1 OR candidate.compacted = 1){DISPLAY_VISIBLE_SQL}{not_a_later_tool_copy_sql("candidate")}
@@ -1347,8 +1358,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         ``_display_rows_from_conn``'s set. Unindexed legacy rows count as one group (the read
         backfills them), so the count is zero exactly when the read paints nothing."""
         row = self._read_one(
-            "SELECT COUNT(*) FROM (SELECT DISTINCT display_order FROM messages WHERE session_id = ?"
-            f"{_DISPLAY_ACTIVE_CLAUSE}{DISPLAY_VISIBLE_SQL}{not_a_later_tool_copy_sql('messages')})", (session_id,))
+            "SELECT COUNT(*) FROM (SELECT DISTINCT display_order FROM transcript_rows WHERE session_id = ?"
+            f"{_DISPLAY_ACTIVE_CLAUSE}{DISPLAY_VISIBLE_SQL}{not_a_later_tool_copy_sql('transcript_rows')})", (session_id,))
         return int(row[0])
 
     def _display_messages_from_conn(self, conn, session_id: str) -> Optional[list[dict[str, Any]]]:
@@ -1391,8 +1402,9 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             # (display_order is per-segment and not comparable across segments, so the per-segment
             # display_order paging below does not apply across a lineage.)
             display = include_compacted and not include_inactive  # removed rows too: see drop_removed
-            rows = self._read_all(f"SELECT * FROM messages WHERE session_id IN ({_placeholders(session_ids)})"
-                                  + active_clause + " ORDER BY id ASC", session_ids)
+            rows = self._with_text(self._read_all(
+                f"SELECT * FROM transcript_rows WHERE session_id IN ({_placeholders(session_ids)})"
+                + active_clause + " ORDER BY id ASC", session_ids))
             rows = self._dedupe_display_generations(
                 self._with_removed_identities(rows, session_ids) if display else rows, drop_removed=display)
             rows = rows[::-1][offset:][:limit][::-1] if latest else rows[offset:][:limit]
@@ -1407,14 +1419,14 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             rows = self._legacy_display_page(
                 session_id, active_clause=active_clause, limit=limit, offset=offset, latest=latest)
         else:
-            sql = (f"SELECT * FROM messages WHERE session_id = ?{active_clause}"
+            sql = (f"SELECT * FROM transcript_rows WHERE session_id = ?{active_clause}"
                 f"{' AND id > ?' if after_id is not None else ''} ORDER BY id {'DESC' if latest else 'ASC'}")
             params: list = [session_id] if after_id is None else [session_id, after_id]
             if limit is not None or offset:
                 # SQLite's OFFSET requires LIMIT; -1 means "no limit".
                 sql += " LIMIT ? OFFSET ?"
                 params.extend([-1 if limit is None else limit, offset])
-            rows = self._read_all(sql, params)
+            rows = self._with_text(self._read_all(sql, params))
             if latest:
                 rows.reverse()
         return [self._row_to_message_dict(row, warn_context="get_messages", summary_flag=True) for row in rows]
@@ -1424,10 +1436,10 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         ids = [s for s in session_ids if s]
         chunks = (ids[start : start + 900] for start in range(0, len(ids), 900))  # SQLite's bound-variable ceiling.
         return [{"session_id": row[0], "content": row[1]} for chunk in chunks for row in self._read_all(
-                f"""SELECT session_id, content FROM messages
-                    WHERE session_id IN ({_placeholders(chunk)})
-                      AND role = 'tool' AND content LIKE '%/pull/%'
-                    ORDER BY id ASC""",
+                f"""SELECT session_id, content FROM (
+                        SELECT session_id, id, {text_sql('content')} AS content FROM transcript_rows
+                        WHERE session_id IN ({_placeholders(chunk)}) AND role = 'tool')
+                    WHERE content LIKE '%/pull/%' ORDER BY id ASC""",
                 chunk)]
 
     def get_messages_around(self, session_id: str, around_message_id: int, window: int = 5) -> dict[str, Any]:
@@ -1435,14 +1447,14 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         strictly around the anchor (fewer than *window* = session boundary). Empty for a foreign anchor."""
         window = max(window, 0)
         with self._read_ctx() as conn:
-            if not conn.execute("SELECT 1 FROM messages WHERE id = ? AND session_id = ? LIMIT 1",
+            if not conn.execute("SELECT 1 FROM transcript_rows WHERE id = ? AND session_id = ? LIMIT 1",
                                 (around_message_id, session_id)).fetchone():
                 return {"window": [], "messages_before": 0, "messages_after": 0}
             before_rows = conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? AND id <= ? ORDER BY id DESC LIMIT ?",
+                f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE session_id = ? AND id <= ? ORDER BY id DESC LIMIT ?",
                 (session_id, around_message_id, window + 1)).fetchall()
             after_rows = conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? AND id > ? ORDER BY id ASC LIMIT ?",
+                f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE session_id = ? AND id > ? ORDER BY id ASC LIMIT ?",
                 (session_id, around_message_id, window)).fetchall()
         window_msgs = [self._row_to_message_dict(r, warn_context="get_messages_around", summary_flag=False)
                        for r in (*reversed(before_rows), *after_rows)]
@@ -1472,7 +1484,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             best = None  # deepest node with messages
             for _ in range(32):
                 try:
-                    if conn.execute("SELECT 1 FROM messages WHERE session_id = ? LIMIT 1", (current,)).fetchone() is not None:
+                    if conn.execute("SELECT 1 FROM transcript_rows WHERE session_id = ? LIMIT 1", (current,)).fetchone() is not None:
                         best = current
                     child_row = conn.execute(
                         "SELECT id FROM sessions AS child WHERE child.parent_session_id = ? "
@@ -1495,11 +1507,11 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         """``_CONVERSATION_ROW_COLUMNS`` rows for *session_ids* ORDER BY id (timestamps are not monotonic
         and would break tool-call adjacency). ``with_compacted``: the display set (``active_clause`` is
         ignored) with the ``compacted`` column, plus the removed rows' identities for ``drop_removed``."""
-        rows = self._read_all(
+        rows = self._with_text(self._read_all(
             f"SELECT {'session_id, ' if with_session_id or with_compacted else ''}{'compacted, display_order, ' if with_compacted else ''}"
             f"{self._CONVERSATION_ROW_COLUMNS} "
-            f"FROM messages WHERE session_id IN ({_placeholders(session_ids)})"
-            f"{_DISPLAY_ACTIVE_CLAUSE if with_compacted else active_clause} ORDER BY id", tuple(session_ids))
+            f"FROM transcript_rows WHERE session_id IN ({_placeholders(session_ids)})"
+            f"{_DISPLAY_ACTIVE_CLAUSE if with_compacted else active_clause} ORDER BY id", tuple(session_ids)))
         return self._with_removed_identities(rows, session_ids) if with_compacted else rows
 
     def _with_removed_identities(self, rows, session_ids: list[str]) -> list[Any]:
@@ -1507,10 +1519,10 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         compacted=0``), which ``_dedupe_display_generations(drop_removed=True)`` needs only to hide a copy, never
         to show: no body (a legacy row without a stored display identity keeps its content for the key)."""
         removed = self._read_all(
-            "SELECT session_id, id, role, timestamp, tool_call_id, tool_calls, tool_name, display_kind, display_metadata, "
-            "message_uid, absorbed_message_uids, display_identity, active, compacted, "
-            "CASE WHEN display_identity IS NULL THEN content END AS content "
-            f"FROM messages WHERE session_id IN ({_placeholders(session_ids)}) AND active = 0 AND compacted = 0 "
+            f"SELECT session_id, id, role, timestamp, tool_call_id, {text_sql('tool_calls')} AS tool_calls, tool_name, "
+            "display_kind, display_metadata, message_uid, absorbed_message_uids, display_identity, active, compacted, "
+            f"CASE WHEN display_identity IS NULL THEN {text_sql('content')} END AS content "
+            f"FROM transcript_rows WHERE session_id IN ({_placeholders(session_ids)}) AND active = 0 AND compacted = 0 "
             "ORDER BY id", tuple(session_ids))
         return sorted([*rows, *removed], key=lambda row: row["id"]) if removed else list(rows)
 
@@ -1543,7 +1555,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         marks = _placeholders(ids)
         row = self._read_one(
             f"SELECT COUNT(*), COALESCE(MAX(id), 0), (SELECT COALESCE(SUM(transcript_revision), 0) FROM sessions"
-            f" WHERE id IN ({marks})) FROM messages WHERE session_id IN ({marks}) AND active = 1", (*ids, *ids))
+            f" WHERE id IN ({marks})) FROM transcript_rows WHERE session_id IN ({marks}) AND active = 1", (*ids, *ids))
         return (tuple(ids), int(row[0]), int(row[1]), int(row[2]))
 
     def _dedupe_replayed_user(self, messages, msg, exact_user_clones) -> tuple[bool, Any]:
@@ -1728,7 +1740,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         """Count the rows a resume would materialize (see ``_resume_count_scope``)."""
         session_ids, active_clause = self._resume_count_scope(session_id, tip_only)
         return int(self._read_one(
-            f"SELECT COUNT(*) FROM messages WHERE session_id IN ({_placeholders(session_ids)}) AND {active_clause}",
+            f"SELECT COUNT(*) FROM transcript_rows WHERE session_id IN ({_placeholders(session_ids)}) AND {active_clause}",
             tuple(session_ids))[0])
 
     def assert_resume_safe(self, session_id: str, max_messages: Optional[int] = None, *, tip_only: bool = False) -> int:
@@ -1744,7 +1756,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             return 0
         session_ids, active_clause = self._resume_count_scope(session_id, tip_only)
         message_count = int(self._read_one("SELECT COUNT(*) FROM ("
-            f"SELECT 1 FROM messages WHERE session_id IN ({_placeholders(session_ids)}) "
+            f"SELECT 1 FROM transcript_rows WHERE session_id IN ({_placeholders(session_ids)}) "
             f"AND {active_clause} LIMIT ?)", (*session_ids, max_messages + 1))[0])
         if message_count > max_messages:
             raise SessionResumeTooLargeError(
@@ -1825,8 +1837,9 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
     @staticmethod
     def _active_transcript_counts(conn, session_id: str) -> tuple[int, int]:
         """Return active message/tool-call counts inside the caller's txn."""
-        rows = conn.execute("SELECT tool_calls FROM messages WHERE session_id = ? AND active = 1", (session_id,)).fetchall()
-        return len(rows), sum(_tool_calls_len(row[0], scalar=1) for row in rows)
+        row = conn.execute("SELECT COUNT(*), COALESCE(SUM(tool_call_count), 0) FROM transcript_rows "
+                           "WHERE session_id = ? AND active = 1", (session_id,)).fetchone()
+        return int(row[0]), int(row[1])
 
     def _split_rewind_target(self, target_row: dict[str, Any], expected_target_content: Any, preserve_compaction_handoff: bool):
         """Validate an active rewind target; return its handoff scaffold (or None). ``ValueError``: inactive /
@@ -1866,7 +1879,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
             # The scaffold insert stamped a ``message_uid``; read it back in the same txn so the
             # caller can address the new head by its durable identity.
             replacement_uid = replacement_id and conn.execute(
-                "SELECT message_uid FROM messages WHERE id = ?", (replacement_id,)).fetchone()[0]
+                "SELECT message_uid FROM transcript_rows WHERE id = ?", (replacement_id,)).fetchone()[0]
             return target_row, ids, head_id, replacement_id, replacement_uid
         target_row, rewound, new_head_id, replacement_message_id, replacement_message_uid = self._execute_write(_do)
         # Decode for the prompt-buffer prefill without a second fallible DB operation.
@@ -1878,13 +1891,13 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
 
     def message_count(self, session_id: str | None = None) -> int:
         """Count messages, optionally for a specific session."""
-        sql = "SELECT COUNT(*) FROM messages" + (" WHERE session_id = ?" if session_id else "")
+        sql = "SELECT COUNT(*) FROM transcript_rows" + (" WHERE session_id = ?" if session_id else "")
         return self._read_one(sql, (session_id,) if session_id else ())[0]
 
     def has_gateway_input_owner(self, session_id: str, owner: str) -> bool:
         """Probe the accepted-input marker without allocating message bodies or archives."""
         return self._read_one(
-            "SELECT 1 FROM messages WHERE session_id = ? AND role = 'user' "
+            "SELECT 1 FROM transcript_rows WHERE session_id = ? AND role = 'user' "
             "AND observed = 0 AND (active = 1 OR compacted = 1) "
             "AND CASE WHEN json_valid(display_metadata) "
             "THEN json_extract(display_metadata, '$.gateway_input_owner') END = ? LIMIT 1",
@@ -1893,12 +1906,12 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
     def has_platform_message_id(self, session_id: str, platform_message_id: str) -> bool:
         """True when *platform_message_id* exists (partial-index probe; the gateway's transient-failure dedupe).
 
-        Uses the idx_messages_platform_msg_id partial index for efficient lookup. Used by the gateway's
+        Uses the idx_transcript_rows_platform_msg_id partial index for efficient lookup. Used by the gateway's
         transient-failure dedupe guard (#47237) to skip re-persisting a user message that was already saved
         on a prior retry of the same inbound platform message.
         """
         return self._read_one(
-            "SELECT 1 FROM messages WHERE session_id = ? AND platform_message_id = ? LIMIT 1",
+            "SELECT 1 FROM transcript_rows WHERE session_id = ? AND platform_message_id = ? LIMIT 1",
             (session_id, platform_message_id)) is not None
 
     def _is_explicit_fork_child_row(self, session: dict[str, Any], *, include_reset: bool = False) -> bool:
@@ -1948,7 +1961,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
     def clear_messages(self, session_id: str) -> None:
         """Delete all messages for a session and reset its counters."""
         def _do(conn):
-            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            delete_rows(conn, self.message_store, "session_id = ?", (session_id,))
             conn.execute(_RESET_COUNTERS_SQL, (session_id,))
         self._execute_write(_do)
 
@@ -1958,8 +1971,8 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         ``backup``: ``VACUUM INTO`` snapshot first (none when nothing changes)."""
         from hermes_state import _STALE_TOOL_CALL_MARKER_RE
         def _find_affected(conn) -> list[int]:
-            cursor = conn.execute("SELECT id, content FROM messages "
-                "WHERE role = 'assistant' AND tool_calls IS NOT NULL AND tool_calls != ''")
+            cursor = conn.execute(f"SELECT id, {text_sql('content')} AS content FROM transcript_rows "
+                "WHERE role = 'assistant' AND tool_call_count > 0")
             return [row["id"] for row in cursor.fetchall()
                 if isinstance(row["content"], str) and _STALE_TOOL_CALL_MARKER_RE.fullmatch(row["content"].strip())]
         def _result(affected, backup_path=None):
@@ -1979,7 +1992,7 @@ class SessionMessagesMixin(SessionDetachedResultsMixin, SessionTodoResultMixin):
         def _do(conn):
             ids = _find_affected(conn)
             if ids:
-                conn.execute(f"UPDATE messages SET content = '' WHERE id IN ({_placeholders(ids)})", ids)
+                rewrite_rows(conn, self.message_store, ids, {"content": ""})
             return ids
         affected_ids = self._execute_write(_do)
         if affected_ids:

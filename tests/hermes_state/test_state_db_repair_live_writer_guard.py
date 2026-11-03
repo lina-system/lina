@@ -78,7 +78,7 @@ def test_repair_refuses_while_another_connection_holds_the_db(tmp_path):
     db = _make_wal_db(tmp_path)
 
     holder = sqlite3.connect(str(db))
-    holder.execute("SELECT count(*) FROM messages").fetchone()
+    holder.execute("SELECT count(*) FROM transcript_rows").fetchone()
     try:
         report = repair_state_db_schema(db, backup=False)
     finally:

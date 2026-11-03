@@ -50,7 +50,6 @@ from tests.e2e.core.sqlite._helpers import (
     counts,
     episode_seed,
     exactly_once_problems,
-    fts_problems,
     integrity_rows,
     journal_mode_problems,
     skip_unless_deployable,
@@ -59,6 +58,7 @@ from tests.e2e.core.sqlite._helpers import (
 from tests.fakes.fake_llm_provider import FakeLLMServer, Text, ToolCall, write_hermes_home
 
 pytestmark = [
+    pytest.mark.memory_store_per_module,
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc fd scan and POSIX lock semantics"),
 ]
 
@@ -77,8 +77,8 @@ def _text(content) -> str:
 def _responder(record: dict):
     """Main turns: a user turn gets a terminal tool call, the tool result gets the final answer."""
     messages = record["body"]["messages"]
-    last_user = next(_text(m.get("content")) for m in reversed(messages) if m.get("role") == "user")
-    base = Q_TOKEN.findall(last_user)[-1][:-1]
+    base = next(tokens[-1][:-1] for m in reversed(messages)
+                if m.get("role") == "user" and (tokens := Q_TOKEN.findall(_text(m.get("content")))))
     if messages[-1].get("role") == "tool":
         return Text(f"{base}A answer. {ANSWER_FILLER}", chunk_chars=2000)
     return ToolCall("terminal", {"command": f"echo {base}T"})
@@ -214,7 +214,7 @@ def _resume_problems(rig: Rig, sid: str, runs: list[str], first_request: int) ->
 def _compacted_rows(ch: Chamber, sid: str) -> int:
     conn = sqlite3.connect(f"file:{ch.db}?mode=ro", uri=True, timeout=30.0)
     try:
-        return conn.execute("SELECT count(*) FROM messages WHERE session_id = ? AND compacted = 1",
+        return conn.execute("SELECT count(*) FROM transcript_rows WHERE session_id = ? AND compacted = 1",
                             (sid,)).fetchone()[0]
     finally:
         conn.close()
@@ -291,7 +291,6 @@ def test_compaction_episode(rig, fault):
     problems += _turn_problems(ch, tui, compacting=True)
     problems += _resume_problems(rig, gw_sid, [gw], first)
     problems += exactly_once_problems(ch)
-    problems += fts_problems(ch.db, [])
     if not compress_journal(ch, tui):
         problems.append("the TUI agent never ran /compress here")
     for sid in (gw_sid, tui_sid):  # vacuity guard: a compaction commit really landed in this episode

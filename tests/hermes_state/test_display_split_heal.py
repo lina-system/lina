@@ -29,18 +29,18 @@ def _carry_and_split(db, sid, reply_text):
 
     def _split(conn):
         copy_id = conn.execute(
-            "SELECT MAX(id) FROM messages WHERE session_id = ? AND active = 1 AND role = 'assistant'",
+            "SELECT MAX(id) FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = 'assistant'",
             (sid,)).fetchone()[0]
         # A generation that computed the identity differently leaves the copy
         # in its own display_order group: order == own id, foreign identity.
         conn.execute(
-            "UPDATE messages SET display_order = id, display_identity = zeroblob(32) "
+            "UPDATE transcript_rows SET display_order = id, display_identity = zeroblob(32) "
             "WHERE id = ?", (copy_id,))
         # ...while the carried original was archived (still display-visible)
         # instead of rewound — the issue's measured end-state: both rowids
         # display-visible, one logical message in two display_order groups.
         conn.execute(
-            "UPDATE messages SET compacted = 1 WHERE session_id = ? AND role = 'assistant' "
+            "UPDATE transcript_rows SET compacted = 1 WHERE session_id = ? AND role = 'assistant' "
             "AND active = 0 AND id <> ?", (sid, copy_id))
         return copy_id
 
@@ -96,8 +96,8 @@ class TestSplitDisplayGenerationProjectsOnce:
         assert _reply_count(db, "chat", "same reply") == 1
 
         orders = db._read_all(
-            "SELECT DISTINCT display_order FROM messages WHERE session_id = ? "
-            "AND role = 'assistant' AND content = ? AND (active = 1 OR compacted = 1)",
+            "SELECT DISTINCT display_order FROM transcript_rows WHERE session_id = ? "
+            "AND role = 'assistant' AND msg_text(text_uid, 'content') = ? AND (active = 1 OR compacted = 1)",
             ("chat", db._encode_content("same reply")))
 
         assert len(orders) == 1

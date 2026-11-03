@@ -8,10 +8,10 @@ import pytest
 
 
 def _trace_messages_scans(db):
-    """Record every statement that searches messages.content, on read and writer connections."""
+    """Record every statement that searches transcript text, on read and writer connections."""
     seen = []
     def trace(sql):
-        if 'messages' in sql and 'instr(' in sql:
+        if 'transcript_rows' in sql and 'instr(' in sql:
             seen.append(sql)
     original = db._read_ctx
     @contextmanager

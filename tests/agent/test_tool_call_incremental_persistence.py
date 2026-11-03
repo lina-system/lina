@@ -261,7 +261,6 @@ def test_locked_flush_exception_surfaces_locked_cause_in_result_contract():
     'session_persistence_failed:locked' and result['error'] is a non-empty
     string whose wording talks about busy storage, NOT disk space.
     """
-    import sqlite3
 
     agent = _make_agent()
     tool_call = _mock_tool_call(call_id="must-not-run")
@@ -295,7 +294,6 @@ def test_locked_flush_exception_surfaces_locked_cause_in_result_contract():
 
 def test_persistence_cause_resets_between_turns():
     """A locked failure on turn 1 must not leak its cause into turn 2."""
-    import sqlite3
 
     agent = _make_agent()
     tool_call = _mock_tool_call(call_id="must-not-run")
@@ -811,10 +809,10 @@ def test_flush_sanitized_active_user_and_tool_rows_do_not_append_duplicates(tmp_
     durable_ids = [message["_row_id"] for message in messages]
 
     # Another writer replaces the tool row after our flush; our live dict still carries the old version.
-    other = sqlite3.connect(tmp_path / "state.db")
-    with other:
-        other.execute("UPDATE messages SET content = ? WHERE id = ?", ("winner", durable_ids[2]))
-    other.close()
+    from hermes_state import SessionDB
+    from hermes_state_store import rewrite_rows
+    with SessionDB(tmp_path / "state.db") as other:
+        other._execute_write(lambda conn: rewrite_rows(conn, other.message_store, [durable_ids[2]], {"content": "winner"}))
     # A same-process metadata write (reaction) changes the user row's digest but not its content.
     assert db.set_message_reaction(session_id, durable_ids[0], "\U0001F44D")
     # ...followed by a real in-place live edit: the row is still ours, so the edit must win and be persisted.
@@ -1035,10 +1033,9 @@ def test_flush_concurrent_nonblank_winner_adopts_canonical_content(tmp_path):
 
     # Concurrent writer updates the row in SQLite to non-blank canonical content
     def _concurrent_write(conn):
-        conn.execute(
-            "UPDATE messages SET content = ? WHERE id = ?",
-            (db._encode_content("Canonical winner answer from sibling"), row_id),
-        )
+        from hermes_state_store import rewrite_rows
+        rewrite_rows(conn, db.message_store, [row_id],
+                     {"content": db._encode_content("Canonical winner answer from sibling")})
 
     db._execute_write(_concurrent_write)
 

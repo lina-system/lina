@@ -67,7 +67,7 @@ def pick_longest_session(db: Path) -> str:
     conn = sqlite3.connect(db)
     row = conn.execute(
         "SELECT id FROM sessions s ORDER BY "
-        "(SELECT COUNT(*) FROM messages m WHERE m.session_id = s.id) DESC LIMIT 1"
+        "(SELECT COUNT(*) FROM transcript_rows m WHERE m.session_id = s.id) DESC LIMIT 1"
     ).fetchone()
     if not row:
         sys.exit(f"no sessions in {db}")
