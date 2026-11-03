@@ -1232,8 +1232,6 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
             self._discovered = True
             try:
                 self._discover_and_load_inner()
-                # Persistent registrations survived the unload-all; now that plugins re-registered,
-                # dispose the ones whose plugin did not come back.
                 # Now that plugins have had their chance to re-register, dispose the ones whose plugin did
                 # not come back (disabled, removed, or omitted from this discovery pass) so e.g. a disabled
                 # auth plugin's provider does not stay live process-wide until restart. See #91701.
@@ -1255,10 +1253,11 @@ class PluginManager(PluginLoaderMixin, PluginDispatchMixin, PluginLedgerMixin):
         self._notify_plugin_loaded(loaded_before)
 
     def _re_register_config_hooks_after_force(self) -> None:
-        """Restore config-owned shell hooks/outbound webhooks after a force clear; each guarded
+        """Restore config-owned shell hooks/outbound webhooks/context engine hooks after a force clear; each guarded
         independently so one failing does not skip the other."""
         for label, module_name in (("shell-hook", "agent.shell_hooks"),
-                                   ("outbound-webhook", "agent.outbound_webhooks")):
+                                   ("outbound-webhook", "agent.outbound_webhooks"),
+                                   ("context-engine", "plugins.context_engine")):
             try:
                 importlib.import_module(module_name).re_register_config_hooks()
             except Exception as exc:

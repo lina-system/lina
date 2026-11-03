@@ -1,0 +1,135 @@
+# Recall tools
+
+Use recall tools when the answer depends on historical evidence that may have been compacted or lives in another LCM session.
+
+With `LCM_RECALL_DELIVERY_UNIT=session` (opt-in; default `hits`), `lcm_recall`
+returns bounded source-message neighborhoods for either detail. `limit` counts
+ranked seeds; `include` chooses seed arms, while delivery can include raw rows.
+Use `provenance.delivery` to distinguish complete sessions from partial ranges
+and inspect omissions. The entire JSON is capped at 16,000 estimated tokens and
+64,000 characters. Neighbors have zero score and no retrieval arms. Existing
+exact refs, `seen_refs`, occurrence-time validation and explicit exclusions apply.
+
+## Current compacted conversation
+
+### `lcm_grep`
+
+Use for discovery across current-session raw messages and summary nodes.
+
+- `query` is FTS5 text by default; it is not a regex.
+- Indexed history full-text queries AND terms by default; uppercase OR/NOT, quoted phrases, and term* prefixes (2+ alphanumeric characters) are honoured.
+- Indexed history zero hits with multiple terms retry once with any-term matching; `retried='any_term'` reports this. Top-level OR/NOT queries and CJK/emoji substring searches do not retry.
+- `content_scope='externalized'` matches the literal query text; operators and retry do not apply.
+- Keep `sort='recency'` for recent events, use `sort='relevance'` for the strongest older match, and use `sort='hybrid'` when both matter.
+- `mode='semantic'` or `'hybrid'` is useful when embeddings are configured; degraded coverage is reported.
+- Broader `session_scope='all'|'session'` is explicit, bounded, raw-message-only archive recovery inside `lcm.db`.
+- Exact role/time/source/conversation filters apply before limiting where supported.
+- Stamped message copies in the same session/conversation, source, role, tool name and tool-call identity (including assistant tool calls), with one shared recorded occurrence time, count once before the delivery limit. Unstamped rows and groups with multiple recorded times remain separate. Only grouped hits add `duplicate_store_ids` (sorted other ids); `store_id` is the best-ranked copy; the group keeps its best-ranked position. Summaries remain separate. Each listed id still works with `lcm_expand`.
+- Rows repeating the same text at different recorded times are not collapsed, and neither are unstamped repeats.
+- If the payload carries `message_search_error`, the raw-message stage crashed and its
+  results are missing: treat any returned results as INCOMPLETE (they come from the other
+  stages only), never as proof of absence. Retry once, or fall back to `lcm_recall` /
+  narrower filters, and disclose the gap if the answer depends on raw-message coverage.
+  (`lcm_recall` already folds the same failure into `coverage.fts: 'none'`.)
+
+Do not treat a short search snippet as sufficient evidence for a detail-heavy answer.
+
+### `lcm_describe`
+
+Use for inexpensive inspection of a known current-session summary node or externalized payload reference. With no handle it returns a current-session DAG overview. It is a planning step, not broad discovery.
+
+A summary node produced by a model call also reports `escalation_level` (1 = full summary, 2 = compact summary, 3 = deterministic truncation of the source) and `model` (the route that answered; empty = the host default route, `deterministic` = level 3). Nodes written before this record existed report neither. A level-3 node is a lossy stand-in: prefer `lcm_expand` on it before relying on its text.
+
+### `lcm_expand_query`
+
+Use when current-session compacted material must be expanded and synthesized into a precise bounded answer.
+
+- Always provide `prompt`.
+- Provide either a small `query` or explicit `node_ids` when known.
+- `query` ANDs terms and supports quoted phrases; prefer 1-3 distinctive terms.
+- The expansion path is model-backed and bounded by answer/context token limits.
+
+Recommended current-session escalation:
+
+1. `lcm_grep` to locate relevant material.
+2. `lcm_describe` when a known handle needs inspection.
+3. `lcm_expand_query` when exact detail was compressed away.
+
+### `lcm_expand`
+
+Use as low-level drill-down after a known handle:
+
+- `node_id` expands a current-session summary with source pagination;
+- `store_id` recovers one raw message and works across LCM sessions;
+- `externalized_ref` opens a payload of the current session, or of a session it replaced at a compression-boundary rotation, with content pagination.
+
+Do not use it as broad first-step discovery.
+
+Set `include_exact_ref=true` with `store_id` when the recovered slice will be
+cited or passed to `lcm_evidence_pack`/`lcm_compile_evidence`/`lcm_compute`. The default remains off
+for byte compatibility.
+
+## Cross-conversation memory
+
+### `lcm_recall`
+
+Use for semantic discovery across all conversations stored in the local LCM database. It fuses raw full-text, summary-vector, and verbatim-chunk arms when available and degrades honestly when embeddings are unavailable.
+
+- `scope_bias` and recency are ranking boosts, never hard filters.
+- `include` selects all, summary, or verbatim hits.
+- A recorded embedding backlog adds `degraded: true` and a `summary semantic index catching up` or `chunk semantic index catching up` reason, with remaining rows when known. Non-FastEmbed uncertain rows instead report `<corpus> semantic index has N rows awaiting /lcm embed backfill --apply --retry-uncertain --corpus <summary|chunks>`. Ingest marks an existing chunk backlog when automatic chunk passes cannot run; manual backfill clears it. Ordinary automatic ingest lag and no recorded pass add no reason. Coverage values describe the kNN scan and stay unchanged.
+- `detail='snippets'` is the default.
+- `detail='answer_ready'` adds bounded per-session diversity and exact-ref hydration.
+- Stamped message copies (same session/conversation, source, role, tool-call id, assistant tool calls and full content, with one shared recorded occurrence time) count once against delivery, per-session, expansion and response budgets. Unstamped rows and groups with multiple recorded times remain separate. The best-ranked member represents the group at its best-ranked position with the maximum fused score and union of arms; `duplicate_store_ids` lists the sorted other ids only when non-empty. Summaries are never grouped. Raw reads and expansion of any id stay unchanged. Grouping is always on, with no config key; duplicate-free output is unchanged.
+- In both details, a verbatim message hit carries `event_time` (ISO 8601 UTC, e.g. `2024-03-20T13:45:30Z`) when the host recorded when the message happened, plus `event_time_source` when known. A hit without `event_time` has no recorded event time (for example imported history): do not read its `timestamp` as one, since that is when LCM stored the row. Summary hits carry neither field. If the response has `event_time_unavailable: true`, the event time could not be read (`event_time_unavailable_reason` is `deadline`, `read_error`, or `response_cap` when the fields were dropped to fit the response size cap), so a missing `event_time` there says nothing about the row.
+- The full-text arm matches word forms (porter stemming: `visited` finds `visit`) once the stemmed index is built; until then, or if it fails, it uses the unstemmed index. `provenance.fts_index` is `stem` or `plain` and names the index that answered. `lcm_grep`, `lcm_expand_query` and summary search stay unstemmed. `/lcm status` and `/lcm doctor` show `stem index: ready | backfilling <indexed>/<messages> | absent`.
+- With embeddings on, the full-text arm's best match is kept in the ranked window (`LCM_RECALL_FTS_ANCHOR`, default `true`). `provenance.fts_anchor = {fired, position, delivered}` reports whether it moved, its 1-based slot, and whether it is among the returned hits (`null` when it did not fire; `answer_ready` citation and per-session rules and the response cap can still drop it).
+- Follow each result's `expand_hint`: verbatim hits use `lcm_expand(store_id=...)`, current-session summaries use `lcm_expand(node_id=...)`, and cross-session summaries use `lcm_expand(node_id=..., session_id=...)`. Reach for `lcm_load_session` when the whole transcript is wanted rather than one node.
+
+### `lcm_load_session`
+
+Use after a session ID is known. It enumerates raw rows in chronological `store_id` pages; it is not search.
+
+- Continue with `after_store_id` from `next_cursor`.
+- Increase `max_content_chars` only within its hard bound.
+- Recover a truncated individual row with `lcm_expand(store_id=..., content_offset=...)`.
+- Set `include_exact_ref=true` when transcript rows will feed exact evidence or computation.
+
+Use Hermes `session_search` for host-tracked sessions that are not present in `lcm.db`.
+
+## Time-bounded recall
+
+### `lcm_recent`
+
+Use for `today`, `yesterday`, `Nd`, `week`, `month`, `date:YYYY-MM-DD`, or `last Nh`. Periods are UTC. Ready rollups are used only when they cover the entire requested window; otherwise the tool falls back to bounded summaries and reports provenance.
+
+For exact raw-message windows, use `lcm_grep` with explicit `time_from`/`time_to` instead.
+
+## Exact evidence and computation
+
+### `lcm_compile_evidence`
+
+Use when a question needs multiple named facets, exact operands, conflict handling, or latest-state reasoning. Supply one bounded semantic proposal over already retrieved exact refs. When deterministic parsing yields only the catch-all `answer` facet, the proposal may provide up to 12 unique generic `requested_facets`; otherwise those facets can only extend, never erase, deterministic requirements. The proposal is only a hint: every requested facet must be closed by product-validated exact evidence, and product code revalidates every ref, unique quote span, entity, date, value, unit, distinct key, role, and source. Use `answer_sufficient` for a specifically answered open-ended question; require `finite_coverage` or `computation_sufficient` for exhaustive counts, lists, or arithmetic. On `partial`, `conflicted`, or `unknown`, preserve uncertainty and the ordinary answer path.
+
+### `lcm_evidence_pack`
+
+Use after bounded baseline refs exist. It validates/hydrates exact refs, keeps occurrence and observation time distinct, deduplicates, and may return a canonical computation trace. It returns evidence, not final prose. Open-cardinality stays partial unless coverage is product-verifiable.
+
+### `lcm_compute`
+
+Use only over exact cited evidence validated by the compiler for supported date intervals/filters, distinct counts, compatible-unit sums, directed or absolute differences, ordering, and latest-state selection. Invalid spans, mixed units, ambiguity, or unsupported closure fail closed.
+
+## Default-off advanced paths
+
+- `lcm_memory` is hidden until `LCM_ENTITIES_ENABLED=1`. `lookup` searches a name and up to 8 aliases across this profile, with cited sessions, event/write-labelled times and optional question-ranked mentions. Compatible assertion facts appear only with assertions on; `list` groups assertion subjects by namespace. Counts/times cover all matching rows; snippets stay capped. Carried times include `time_uncertain: "carried"`; question ranking searches all entity matches independently. No writes or model calls; namespace ambiguity stays visible.
+
+- `lcm_query_state` is hidden until `LCM_ASSERTIONS_ENABLED=true`, then queries the same-database assertion sidecar.
+- `lcm_retrieve` is hidden until `LCM_ADAPTIVE_RETRIEVAL_ENABLED=true`. It is the default-off bounded adaptive controller, is not required for ordinary recall, and must not replace the stable workflow above without measured benefit.
+
+Both host paths advertise the other 13 schemas by default. `LCM_DISABLED_TOOLS`
+hides any named tool, including a flag-enabled one. Cached dormant calls still
+return their existing `status: disabled` responses.
+
+## Operator tools
+
+`lcm_status`, `lcm_inspect`, and `lcm_doctor` report health and metadata. They do not replace content retrieval.

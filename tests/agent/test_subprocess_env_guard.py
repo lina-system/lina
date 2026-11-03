@@ -21,6 +21,8 @@ hit is in the explicit allowlist below.  If you are adding a new spawn site:
 import re
 from pathlib import Path
 
+from scripts.vendored_subtrees import is_vendored
+
 REPO_ROOT = Path(__file__).resolve().parents[2]
 
 # Directories that make up the shipped source tree.
@@ -76,7 +78,7 @@ def _iter_source_files():
     for d in SCAN_DIRS:
         root = REPO_ROOT / d
         if root.is_dir():
-            yield from root.rglob("*.py")
+            yield from (p for p in root.rglob("*.py") if not is_vendored(p.relative_to(REPO_ROOT)))
     for f in SCAN_ROOT_FILES:
         p = REPO_ROOT / f
         if p.is_file():

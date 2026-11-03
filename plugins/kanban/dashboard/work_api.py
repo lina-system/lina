@@ -130,8 +130,8 @@ def _latest_gate_results(events: list[kanban_db.Event]) -> list[dict[str, Any]]:
     } for cmd, ev in latest.items()]
 
 
-def _latest_gate_event(events: list[kanban_db.Event]) -> Optional[kanban_db.Event]:
-    return next((ev for ev in reversed(events) if ev.kind == GATE_EVENT_KIND), None)
+def _latest_gate_event(events: list[kanban_db.Event], run_id: Optional[int]) -> Optional[kanban_db.Event]:
+    return next((ev for ev in reversed(events) if ev.kind == GATE_EVENT_KIND and ev.run_id == run_id), None)
 
 
 def _current_run(facts: CardFacts) -> Optional[kanban_db.Run]:
@@ -168,7 +168,7 @@ def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Option
     """``(state, reason)`` for one card: the single source of the app's five states.
 
     planned = triage/todo/scheduled/ready; in_progress = running with a live current run;
-    waiting = review, or running while the latest gate run exited 75; stopped = blocked
+    waiting = review, or running while the current run's latest gate exited 75; stopped = blocked
     (reason: block kind, ``gate`` or ``budget``) or running with no live run
     (``unresponsive``); done = done. The kanban goal loop turns a judge ``wait`` into
     ``continue`` and records nothing, so a judge wait has no board signal to read.
@@ -185,7 +185,7 @@ def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Option
         return "planned", status if status in _PLANNED_STATUSES else None
     if not run_is_live(_current_run(facts), now):
         return "stopped", "unresponsive"
-    gate = _latest_gate_event(facts.events)
+    gate = _latest_gate_event(facts.events, facts.task.current_run_id)
     if gate is not None and (gate.payload or {}).get("exit_code") == GATE_WAIT_EXIT_CODE:
         return "waiting", "gate"
     return "in_progress", None
