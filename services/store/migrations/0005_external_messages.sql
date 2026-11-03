@@ -17,7 +17,7 @@ CREATE TABLE IF NOT EXISTS memory.external_message_cursors (
 );
 CREATE TABLE IF NOT EXISTS memory.external_message_heads (
     uid text PRIMARY KEY,
-    current_uid text NOT NULL REFERENCES memory.messages(uid),
+    current_uid text NOT NULL,
     ingest_path text NOT NULL
 );
 REVOKE ALL ON memory.external_message_cursors, memory.external_message_heads FROM lina_app;
