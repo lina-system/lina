@@ -504,6 +504,17 @@ class MessageStore:
             names = [d.name for d in cur.description]
             return [dict(zip(names, row)) for row in cur.fetchall()]
 
+    def set_conversation(self, uids: Iterable[str], conversation_id: str) -> int:
+        """Fill ``conversation_id`` (lina#20) on these rows (``base_uid`` uids), every text version of each, where it
+        is still null. The one change a written row takes: the field is null until identity resolves it."""
+        bases = [uid for uid in dict.fromkeys(uids) if uid]
+        if not bases or not conversation_id:
+            return 0
+        with self._cursor() as cur:
+            cur.execute("UPDATE memory.messages SET conversation_id = %s WHERE split_part(uid, '#', 1) = ANY(%s)"
+                        " AND conversation_id IS NULL", (conversation_id, bases))
+            return cur.rowcount
+
     def collect_unreferenced(self, still_held: Callable[[list[str]], set[str]], *,
                              older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
         """Delete this agent's text rows no transcript row points at any more (*still_held* names the uids its
