@@ -6,7 +6,7 @@ import time
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
-from .policy import Rule, turn_user_index
+from .policy import Rule, turn_start_index
 
 
 @dataclass(frozen=True)
@@ -49,8 +49,8 @@ def _timestamp(message: Mapping[str, Any]) -> Optional[float]:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def turn_rows(messages: Sequence[Any]) -> TurnRows:
-    index = turn_user_index(messages)
+def turn_rows(messages: Sequence[Any], turn_start: Any = None) -> TurnRows:
+    index = turn_start_index(messages, turn_start)
     rows = [m for m in messages[index:] if isinstance(m, Mapping)] if index is not None else []
     replies = [m for m in rows if m.get("role") == "assistant" and m.get("content") and not m.get("tool_calls")]
     stamps = [t for t in (_timestamp(m) for m in rows) if t is not None]

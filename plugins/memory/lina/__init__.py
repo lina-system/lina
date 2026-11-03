@@ -72,7 +72,7 @@ class LinaMemoryProvider(MemoryProvider):
 
     # ── the one receive path ──
 
-    def _take_lcm_turn(self, history, *, session_id: str) -> None:
+    def _take_lcm_turn(self, history, *, session_id: str, turn_start: Optional[int] = None) -> None:
         """LCM-X's ``post_llm_call`` hook hands this session's finished turn here (the context-engine loader's
         ``turn_handover_for``), on the turn thread, with the unredacted transcript; lina-memory routes it and hands it
         to the session's engine.
@@ -80,7 +80,7 @@ class LinaMemoryProvider(MemoryProvider):
         try:
             rule = self._policy.rule(self._policy.route_for(signals_for_turn(
                 list(history), agent_context=self._init.get("agent_context", ""),
-                platform=self._init.get("platform", ""), turn_author=None)))
+                platform=self._init.get("platform", ""), turn_author=None, turn_start=turn_start)))
             if rule.lcm:
                 lcm.hand_turn(history, session_id=session_id)
         except Exception:  # health: allow BLE001 -- the local engine failing must not cost Honcho the turn
@@ -88,24 +88,26 @@ class LinaMemoryProvider(MemoryProvider):
 
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "",
                   messages: Optional[list[dict[str, Any]]] = None, turn_author: Optional[dict[str, Any]] = None,
-                  local_messages: Optional[list[dict[str, Any]]] = None) -> None:
+                  local_messages: Optional[list[dict[str, Any]]] = None, turn_start: Optional[int] = None) -> None:
         """Called on the turn thread (``local_messages`` makes the manager do that), after LCM-X's hook handed the
         turn to ``_take_lcm_turn``. The record (identity lookups in the store), the Honcho write (the
         egress-redacted ``messages`` and turn text) and the conversation fill run on this provider's own worker,
         one turn after another.
 
         Who wrote the turn and the Honcho session it belongs to are fixed here: by the time the worker runs, the
-        next turn may have started and Honcho's own per-turn state names that turn's author."""
+        next turn may have started and Honcho's own per-turn state names that turn's author. The turn starts at
+        ``turn_start``, the row the runtime fixed when the turn began; a ``/steer`` or a stop-gate note it appended later
+        is in the record, never its input or its route."""
         history = local_messages if local_messages is not None else list(messages or ())
         author = dict(turn_author) if isinstance(turn_author, dict) else {}
         honcho_session = self._honcho.session_key if self._honcho_on else ""
         rule = self._policy.rule(self._policy.route_for(signals_for_turn(
             history, agent_context=self._init.get("agent_context", ""), platform=self._init.get("platform", ""),
-            turn_author=author or None)))
+            turn_author=author or None, turn_start=turn_start)))
         lcm_conversation = lcm.conversation_id(session_id)
 
         def deliver() -> None:
-            record = self._record(rule, history, session_id=session_id, author=author,
+            record = self._record(rule, history, session_id=session_id, author=author, turn_start=turn_start,
                                   honcho_session=honcho_session, lcm_conversation=lcm_conversation)
             if record.honcho and self._honcho_on:
                 self._honcho.sync_turn(user_content, assistant_content, session_id=session_id, turn_author=author,
@@ -129,15 +131,15 @@ class LinaMemoryProvider(MemoryProvider):
             except Exception as exc:  # health: allow BLE001 -- a stuck delivery must not hold session end
                 logger.warning("lina-memory: turns still queued at session end: %s", exc)
 
-    def _record(self, rule, history, *, session_id: str, author: dict[str, Any], honcho_session: str,
-                lcm_conversation: Optional[str]) -> TurnRecord:
+    def _record(self, rule, history, *, session_id: str, author: dict[str, Any], turn_start: Optional[int],
+                honcho_session: str, lcm_conversation: Optional[str]) -> TurnRecord:
         honcho_keys = self._honcho.source_keys(author, session_key=honcho_session) if self._honcho_on else {}
         agent = self._agent_name()
         person_id = None if author.get("is_bot") else self._registry.resolve(
             "person", self._person_keys(author, honcho_keys))
         agent_keys: list[SourceKey] = [("profile", agent), ("honcho_peer", honcho_keys.get("agent", ""))]
         return build_record(
-            rule, turn_rows(history), store_uid=self._store_uid, person_id=person_id,
+            rule, turn_rows(history, turn_start), store_uid=self._store_uid, person_id=person_id,
             agent_id=self._registry.resolve("agent", agent_keys) or f"agent:{agent}",
             conversation_id=self._registry.resolve("conversation", self._conversation_keys(
                 session_id, honcho_keys, lcm_conversation)) or "", session_id=session_id, platform=self._init.get("platform", ""),

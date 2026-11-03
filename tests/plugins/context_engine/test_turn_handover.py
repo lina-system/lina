@@ -8,7 +8,7 @@ class _Taker:
     def __init__(self):
         self.turns = []
 
-    def take(self, history, *, session_id):
+    def take(self, history, *, session_id, turn_start=None):
         self.turns.append((session_id, list(history)))
 
 

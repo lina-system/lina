@@ -162,7 +162,8 @@ _TURN_HANDOVERS_LOCK = threading.Lock()
 
 
 def claim_turn_handover(session_id: str, take_turn) -> None:
-    """``take_turn(history, *, session_id=...)`` receives this session's finished turns instead of the engine hook."""
+    """``take_turn(history, *, session_id=..., turn_start=...)`` receives this session's finished turns instead of the
+    engine hook; ``turn_start`` is the hook payload's index of the turn's first row in ``history`` (None when unknown)."""
     if session_id:
         with _TURN_HANDOVERS_LOCK:
             _TURN_HANDOVERS[session_id] = weakref.WeakMethod(take_turn)
@@ -196,7 +197,7 @@ def _handed_over_by_memory_layer(callback):
             # what its own signature accepts, as the dispatcher would have (narrow legacy hooks stay callable).
             from hermes_cli.plugins_dispatch import PluginDispatchMixin
             return callback(**PluginDispatchMixin._hook_callback_kwargs(callback, kwargs))
-        take_turn(kwargs.get("conversation_history") or [], session_id=session_id)
+        take_turn(kwargs.get("conversation_history") or [], session_id=session_id, turn_start=kwargs.get("turn_start"))
         return None
     return post_llm_call
 

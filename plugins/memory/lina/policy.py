@@ -84,10 +84,22 @@ def is_compressor_row(message: Mapping[str, Any]) -> bool:
         isinstance(metadata, Mapping) and bool(metadata.get(_INFLIGHT_RESTATEMENT_KEY)))
 
 
+def turn_start_index(messages: Sequence[Any], turn_start: Any = None) -> Optional[int]:
+    """Index of the turn's first row, the user row it arrived as: ``turn_start`` as the runtime fixed it when the turn
+    began (``AIAgent._persist_user_message_idx``, re-anchored by compaction), while it names a user row of
+    ``messages``. Rows the turn appended after it (a ``/steer``, a stop-gate note) belong to the turn and never start
+    it. Only a caller that knows no start (``turn_start`` None or stale) falls back to ``turn_user_index``."""
+    if (type(turn_start) is int and 0 <= turn_start < len(messages) and isinstance(messages[turn_start], Mapping)
+            and messages[turn_start].get("role") == "user"):
+        return turn_start
+    return turn_user_index(messages)
+
+
 def turn_user_index(messages: Sequence[Any]) -> Optional[int]:
-    """Index of the row the turn's user side arrived as: the last user row of this turn the compressor did not
-    write, else (the turn's input is the compressor's own row) the last compressor-written one. This turn's rows
-    start after the previous turn's final reply, the last assistant row without tool calls before the tail."""
+    """Index of the row the turn's user side arrived as, read from the tail when no turn start is known: the last user
+    row of this turn the compressor did not write, else (the turn's input is the compressor's own row) the last
+    compressor-written one. This turn's rows start after the previous turn's final reply, the last assistant row
+    without tool calls before the tail."""
     end = len(messages)
     while end and isinstance(messages[end - 1], Mapping) and messages[end - 1].get("role") == "assistant":
         end -= 1
@@ -108,9 +120,9 @@ def turn_user_index(messages: Sequence[Any]) -> Optional[int]:
 
 
 def signals_for_turn(messages: Optional[Sequence[Any]], *, agent_context: str = "", platform: str = "",
-                     turn_author: Optional[Mapping[str, Any]] = None) -> TurnSignals:
+                     turn_author: Optional[Mapping[str, Any]] = None, turn_start: Any = None) -> TurnSignals:
     rows = list(messages or ())
-    index = turn_user_index(rows)
+    index = turn_start_index(rows, turn_start)
     row: Mapping[str, Any] = rows[index] if index is not None else {}
     return TurnSignals(
         agent_context=str(agent_context or ""), platform=str(platform or ""),

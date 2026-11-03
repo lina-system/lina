@@ -906,7 +906,9 @@ class AIAgent(
         if not (user_text and response_text):
             return
         try:
-            sync_kwargs = {"session_id": self.session_id or "", **({"messages": messages} if messages is not None else {})}
+            sync_kwargs = {"session_id": self.session_id or "", **({"messages": messages} if messages is not None else {}),
+                           # The turn's first row in ``messages``, fixed at turn start and re-anchored by compaction.
+                           "turn_start": getattr(self, "_persist_user_message_idx", None)}
             # Stashed by build_turn_context() for this turn, None on a human turn.
             turn_author = getattr(self, "_turn_author", None)
             if turn_author is not None:

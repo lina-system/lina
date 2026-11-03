@@ -443,13 +443,16 @@ class MemoryManager:
 
     def sync_all(self, user_content: str, assistant_content: str, *, session_id: str = "",
                  messages: Optional[list[dict[str, Any]]] = None,
-                 turn_author: Optional[dict[str, Any]] = None) -> None:
+                 turn_author: Optional[dict[str, Any]] = None, turn_start: Optional[int] = None) -> None:
         """Sync a completed turn to all providers on the background worker.
 
         Never inline: a provider's ``sync_turn`` may block for minutes, which kept ``run_conversation``
         open after the user saw the response. The single worker also serializes writes (turn N before N+1).
         ``turn_author`` reaches only providers whose ``sync_turn`` accepts it; a person's turn (None) is sent as
         ``human_turn_author()``, fixed here, because the worker may run after the next turn has started (lina#20).
+        ``turn_start`` (the index in ``messages`` of the turn's first row, fixed by the runtime when the turn began)
+        likewise reaches only signatures that accept it: rows a turn appends later (a ``/steer``, a stop-gate note)
+        are inside the turn and never its start.
 
         Everything forwarded is provider egress: turn strings AND the ``messages`` transcript slice
         (tool outputs included) go through ``_redact_for_provider`` so secrets are never archived
@@ -469,7 +472,8 @@ class MemoryManager:
             clean_user_content, assistant_content, messages)
         from agent.turn_author import human_turn_author
         optional_kwargs = {"messages": redacted_messages,
-                           "turn_author": dict(turn_author) if turn_author is not None else human_turn_author()}
+                           "turn_author": dict(turn_author) if turn_author is not None else human_turn_author(),
+                           "turn_start": turn_start}
         local = [p for p in providers if "local_messages" in (_signature_params(p.sync_turn) or {})]
 
         def _sync(provider: MemoryProvider) -> None:
