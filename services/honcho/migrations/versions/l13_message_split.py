@@ -33,7 +33,9 @@ def upgrade() -> None:
     if sa.inspect(connection).has_table("message_meta", schema=schema):
         return
     connection.execute(
-        sa.text(f"LOCK TABLE {ns}.messages, {ns}.queue IN ACCESS EXCLUSIVE MODE")
+        sa.text(
+            f"LOCK TABLE {ns}.messages, {ns}.queue, {ns}.sessions IN ACCESS EXCLUSIVE MODE"
+        )
     )
     connection.execute(
         sa.text(
@@ -137,6 +139,24 @@ def upgrade() -> None:
                 "INSERT INTO message_split_ids (old_id, new_id) VALUES (:old, :new)"
             ),
             {"old": row["id"], "new": new_id},
+        )
+
+    # Summary boundaries are identities, not sequence numbers. Remap them while
+    # the old-to-shared mapping still exists, without replacing sibling metadata.
+    for label in ("honcho_chat_summary_short", "honcho_chat_summary_long"):
+        connection.execute(
+            sa.text(f"""
+            UPDATE {ns}.sessions s
+            SET internal_metadata = jsonb_set(
+                s.internal_metadata,
+                ARRAY['summaries', :label, 'message_id'],
+                to_jsonb(ids.new_id), false
+            )
+            FROM message_split_ids ids
+            WHERE s.internal_metadata #>> ARRAY['summaries', :label, 'message_id']
+                = ids.old_id::text
+            """),
+            {"label": label},
         )
 
     queue_fks = sa.inspect(connection).get_foreign_keys("queue", schema=schema)

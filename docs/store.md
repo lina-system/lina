@@ -123,6 +123,12 @@ preserves public IDs, and remaps integer references. Its parent `l19_vec_embeddi
 already moved vectors to `vec.embeddings`; the split preserves their owner IDs. The upgrade's pre-split physical backup and
 pinned Honcho image remain the restoration path described below.
 
+Shared message IDs are identities, not chronological positions. Honcho history, token windows,
+queue batches and clone cutoffs use `seq_in_session`. ID-valued API and summary boundaries
+resolve to that message's session position before comparison. The split remaps both persisted
+short and long summary boundary IDs in the same transaction; context starts after the summarized
+message, and a late summary cannot overwrite a chronologically newer one.
+
 Deleting shared text cascades to its Honcho metadata and dependent references. Deleting
 Honcho metadata does not delete shared text. Direct `document_sources` edges for the deleted
 public message ID are detached; document-to-document reasoning edges are not reinterpreted.
