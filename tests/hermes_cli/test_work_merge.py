@@ -203,6 +203,47 @@ def _merge(gh, lines):
     return merge.merge_pr(gh, REPO, 7, out=lines.append, sleep=lambda _s: None, poll_s=60, queue_timeout_s=600)
 
 
+@pytest.mark.parametrize("creator,state,expected", [
+    ("a-user", "success", rules.WAIT),
+    ("other-ci[bot]", "success", rules.WAIT),
+    ("custom-ci[bot]", "success", rules.PASS),
+    ("custom-ci[bot]", "failure", rules.FAIL),
+    ("custom-ci[bot]", "pending", rules.WAIT),
+])
+def test_collected_app_pin_controls_status_creator(creator, state, expected):
+    """The real collector must not erase the pin before the merge rule sees the head (#153)."""
+    gh = _github(snapshot(required=["tests"], runs=[
+        {**run("discovery"), "app": {"id": 8675309, "slug": "custom-ci"}}]), queue=False)
+    gh.routes[f"repos/{REPO}/rules/branches/dev"] = [{"type": "required_status_checks", "parameters": {
+        "required_status_checks": [{"context": "tests", "integration_id": 8675309}]}}]
+    gh.routes[f"repos/{REPO}/commits/{HEAD}/statuses"] = [
+        {"id": 8, "context": "tests", "state": state, "creator": {"login": creator}}]
+
+    collected = merge.collect_pr(gh, REPO, 7)
+    verdict = rules.may_merge(collected)
+
+    assert verdict.code == expected, verdict.text()
+    if creator != "custom-ci[bot]":
+        assert "WAIT required check tests: not reported on the head yet" in verdict.text()
+    assert collected["required"] == [("tests", 8675309)]
+    assert gh.commands == [] and gh.writes == []
+
+
+def test_collector_keeps_distinct_app_pins_for_the_same_context():
+    from hermes_cli.delivery.github import required_contexts
+
+    required = required_contexts([{"type": "required_status_checks", "parameters": {
+        "required_status_checks": [{"context": "tests", "integration_id": app_id}
+                                   for app_id in (None, 42, 42)]}}])
+    statuses = [{"id": 8, "context": "tests", "state": "success", "creator": {"login": "a-user"}}]
+
+    verdict = rules.required_checks(required, [], statuses)
+
+    assert verdict.code == rules.WAIT, verdict.text()
+    assert [code for code, _ in verdict.lines] == [rules.PASS, rules.WAIT]
+    assert required == [("tests", None), ("tests", 42)]
+
+
 @pytest.mark.parametrize("over", [{"runs": [run("Lint"), run("tests", "failure", run_id=2)]},
                                   {"review_comments": [finding("P1", HEAD)]}, DEV_RED], ids=["red", "p1", "dev-red"])
 def test_a_refused_head_is_neither_merged_queued_nor_edited(over):
