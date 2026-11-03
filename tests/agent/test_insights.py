@@ -325,7 +325,7 @@ class TestInsightsPopulated:
     # (a) the planner uses that index for BOTH the unfiltered and source-filtered
     # branches on a fresh DB *without* ANALYZE, and (b) the index is a pure
     # optimization — output is identical whether or not it is selected.
-    _INDEX = "idx_messages_assistant_calls_by_session"
+    _INDEX = "idx_transcript_rows_assistant_calls_by_session"
     _PINNED_QUERIES = (
         ("_GET_TOOL_CALLS_ALL", (0.0,)),
         ("_GET_TOOL_CALLS_WITH_SOURCE", (0.0, "cli", "cli")),  # label, then created_source of a local row

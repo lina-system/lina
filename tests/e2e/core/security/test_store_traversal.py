@@ -33,7 +33,10 @@ from tests.e2e.core.security._traversal import digest, result_json, tool_text
 from tests.e2e.core.tenancy._helpers import TuiBackend
 from tests.fakes.fake_llm_provider import FakeLLMServer, Text, ToolCall
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX absolute-path spellings and process groups")
+pytestmark = [
+    pytest.mark.memory_store_per_module,
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX absolute-path spellings and process groups"),
+]
 
 _ISSUE_STORE = "#119997 pending id is used as a path: ../ or absolute ids reach files outside pending/<subsystem>/"
 _ISSUE_DELETE = "#120528 skill_manage delete skips the pin/essential guard for a category/name spelling"

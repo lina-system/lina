@@ -89,7 +89,7 @@ def test_failure_owner_follows_only_live_lineage_markers(tmp_path):
             if location in ("ancestor", "middle-ancestor", "undone"):
                 with sqlite3.connect(db.db_path) as conn:
                     conn.execute(
-                        "UPDATE messages SET active=0, compacted=? WHERE id=?",
+                        "UPDATE transcript_rows SET active=0, compacted=? WHERE id=?",
                         (int(location != "undone"), current_id),
                     )
             store._publish_transcript_reroute(sid, child)

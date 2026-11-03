@@ -24,7 +24,7 @@ def _session(db: SessionDB, sid: str, started: float, message_at=None, **kwargs)
     db.create_session(sid, source="cli", **kwargs)
     if message_at is not None:
         db.append_message(session_id=sid, role="user", content=f"hello from {sid}")
-        db._conn.execute("UPDATE messages SET timestamp = ? WHERE session_id = ?", (message_at, sid))
+        db._conn.execute("UPDATE transcript_rows SET timestamp = ? WHERE session_id = ?", (message_at, sid))
     db._conn.execute(
         "UPDATE sessions SET started_at = ?, last_activity_at = NULL, message_count = 1 WHERE id = ?",
         (started, sid),

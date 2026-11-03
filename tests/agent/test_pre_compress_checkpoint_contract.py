@@ -375,10 +375,10 @@ def test_compressed_summary_column_is_added_to_legacy_databases(tmp_path):
 
     # Simulate a pre-upgrade database: the marker column does not exist.
     conn = sqlite3.connect(db_path)
-    conn.execute("ALTER TABLE messages DROP COLUMN _compressed_summary")
+    conn.execute("ALTER TABLE transcript_rows DROP COLUMN _compressed_summary")
     conn.commit()
     legacy_cols = {
-        row[1] for row in conn.execute("PRAGMA table_info(messages)")
+        row[1] for row in conn.execute("PRAGMA table_info(transcript_rows)")
     }
     conn.close()
     assert "_compressed_summary" not in legacy_cols

@@ -93,7 +93,7 @@ def _post(port, path, body, timeout=180):
         return exc.code, json.loads(exc.read() or b'{}')
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 def overflow_run(tmp_path_factory):
     """Two DMs into a fresh headless Bot Chat: an oversized one, then a short follow-up."""
     tmp_path = tmp_path_factory.mktemp('lc23')
@@ -135,9 +135,10 @@ def overflow_run(tmp_path_factory):
     for name in ('gateway.log', 'errors.log'):
         if (home / 'logs' / name).exists():
             log += (home / 'logs' / name).read_text(errors='replace')
-    with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
-        rows = db.execute("SELECT session_id, role, substr(coalesce(content,''),1,24) FROM messages ORDER BY id").fetchall()
-        bot_chat = db.execute('SELECT end_reason FROM sessions WHERE id=?', (sid,)).fetchone()
+    from hermes_state import SessionDB
+    with SessionDB(home / 'state.db', read_only=True) as db:
+        rows = [tuple(row) for row in db._read_all("SELECT session_id, role, substr(coalesce(msg_text(text_uid,'content'),''),1,24) FROM transcript_rows ORDER BY id")]
+        bot_chat = db._read_one('SELECT end_reason FROM sessions WHERE id=?', (sid,))
     return SimpleNamespace(sid=sid, found=[row['id'] for row in found], first=first, follow=follow, log=log, rows=rows, rejected=model.rejected,
                            bot_chat_end=bot_chat[0])
 
@@ -167,7 +168,7 @@ def _admissions(home):
         return db.execute('SELECT request_id, status FROM session_admissions ORDER BY rowid').fetchall()
 
 
-@pytest.fixture(scope='module')
+@pytest.fixture
 def racing_run(tmp_path_factory):
     """A second DM lands in the Bot Chat while the oversized one's turn still runs, then a third DM.
 
@@ -229,9 +230,10 @@ def racing_run(tmp_path_factory):
     for name in ('gateway.log', 'errors.log'):
         if (home / 'logs' / name).exists():
             log += (home / 'logs' / name).read_text(errors='replace')
-    with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
-        rows = db.execute("SELECT session_id, role, substr(coalesce(content,''),1,24) FROM messages ORDER BY id").fetchall()
-        bot_chat = db.execute('SELECT end_reason FROM sessions WHERE id=?', (sid,)).fetchone()
+    from hermes_state import SessionDB
+    with SessionDB(home / 'state.db', read_only=True) as db:
+        rows = [tuple(row) for row in db._read_all("SELECT session_id, role, substr(coalesce(msg_text(text_uid,'content'),''),1,24) FROM transcript_rows ORDER BY id")]
+        bot_chat = db._read_one('SELECT end_reason FROM sessions WHERE id=?', (sid,))
     return SimpleNamespace(sid=sid, results=results, admissions=admissions, log=log, rows=rows,
                            rejected=model.rejected, bot_chat_end=bot_chat[0])
 

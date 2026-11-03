@@ -9,6 +9,8 @@ import threading
 
 import pytest
 
+from hermes_state import SessionDB
+
 from tests.gateway.fixtures.local_recovery_probe import Model, child_env, daemon, rpc, websocket
 from tests.waiting import async_wait_until
 
@@ -41,7 +43,9 @@ def test_worker_lineage_and_settlement(tmp_path, mode, invariant):
                PYTHONPATH=str(root), OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=url)
 
     def query(sql, args=()):
-        with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
+        with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+            db = state_db._conn
+            db.row_factory = None
             return db.execute(sql, args).fetchall()
 
     async def call(ws, method, **params):
@@ -102,13 +106,13 @@ def test_worker_lineage_and_settlement(tmp_path, mode, invariant):
             if invariant == 'reset':
                 assert 'BEFORE_RESET' not in json.dumps(peer.requests[-1]['messages'])
                 assert 'AFTER_RESET' in json.dumps(snap['messages'])
-                assert query("SELECT session_id FROM messages WHERE role='user' AND content LIKE '%AFTER_RESET%'") == [(target,)]
+                assert query("SELECT session_id FROM transcript_rows WHERE role='user' AND msg_text(text_uid, 'content') LIKE '%AFTER_RESET%'") == [(target,)]
                 assert query('SELECT DISTINCT target_session_id FROM session_admissions') == [(sid,)]
                 if mode != 'normal':
                     assert query("SELECT json_extract(lineage_json,'$[#-1]') FROM session_admissions WHERE request_id='after'") == [(target,)]
             else:
                 await async_wait_until(unwound, timeout=30, what='finished worker and turn lease released')
-                rows = query("SELECT id FROM messages WHERE session_id=? AND role='user'", (target,))
+                rows = query("SELECT id FROM transcript_rows WHERE session_id=? AND role='user'", (target,))
                 assert rows, snap
                 rewound = await mutate(ws, sid, 'rewind', 'rewind', {'target_message_id': rows[-1][0]})
                 assert rewound['rewound_count'] > 0

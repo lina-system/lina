@@ -1,6 +1,6 @@
 """Flush pending messages and agent transcripts to disk before shutdown to prevent data loss.
 
-When FTS5 corruption blocks ``INSERT INTO messages``, ``_pending_messages`` and the live
+When persistence failures block transcript appends, ``_pending_messages`` and the live
 ``agent._session_messages`` are the only surviving copies; shutdown ``.clear()`` would drop them.
 All hooks write atomic JSON payloads under ``<hermes_home>/pending_messages/``:
 ``flush_pending_to_file`` / ``flush_overflow_to_file`` (queue head / FIFO tail, before clear),
@@ -476,7 +476,7 @@ def recover_gateway_pending(runner) -> int:
 
 def flush_agent_history_to_file(session_id: Optional[str], history: list) -> None:
     """Best-effort dump of an agent's in-memory transcript before teardown. Used when
-    ``_flush_messages_to_session_db`` raises (e.g. FTS/SQLite corruption): the transcript is written
+    ``_flush_messages_to_session_db`` raises (e.g. SQLite corruption): the transcript is written
     outside the broken DB so an operator can salvage it after repairing state.db. Failures are
     swallowed — shutdown must never block on a best-effort backup."""
     if not history:
@@ -495,7 +495,7 @@ def flush_agent_history_to_file(session_id: Optional[str], history: list) -> Non
             "session_id": session_id, "count": len(snapshot), "messages": snapshot,
         })
         logger.warning("Preserved %d in-memory message(s) for session %s "
-                       "(possible FTS corruption — recover after repairing state.db)",
+                       "(persistence failure — recover after repairing state.db)",
                        len(snapshot), session_id)
     except Exception as _e:
         logger.warning("Agent-history shutdown preservation failed for session %s: %s", session_id,

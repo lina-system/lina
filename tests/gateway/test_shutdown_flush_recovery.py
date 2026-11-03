@@ -409,38 +409,6 @@ def test_boot_recovery_counts_and_never_repeats_a_file_it_could_not_delete(
     assert _contents(mock_db) == ["old0", "old1", "live"]
 
 
-def test_repairable_spool_replay_failure_still_reaches_fts_rebuild(flush_dir, make_store):
-    """A spool replay failure must keep its own type, so the FTS rebuild still runs. After the
-    repair the older spooled row is written before the live one."""
-    _write_spool(flush_dir, "pending-aaa.json", "sess-1",
-                 {"role": "user", "content": "old"}, ts=100, seq=0)
-
-    class RepairableDb:
-        def __init__(self):
-            self.broken, self.rows, self.repairs = True, [], 0
-
-        def append_message(self, **kwargs):
-            if self.broken:
-                raise RuntimeError("no such table: messages_fts")
-            self.rows.append(kwargs["content"])
-
-        def rebuild_fts(self):
-            self.repairs += 1
-            self.broken = False
-            return 1
-
-    db = RepairableDb()
-    store = make_store(db)
-    store.mark_spooled_drop_sessions({"sess-1"})
-
-    store.append_to_transcript("sess-1", {"role": "user", "content": "live"})
-
-    assert db.repairs == 1
-    assert db.rows == ["old", "live"]
-    assert not list(flush_dir.glob("*.json"))
-    assert not store._dirty_transcripts
-
-
 def test_boot_recovery_runs_before_resume_turns_and_queued_inbound(monkeypatch):
     """Resume turns and queued inbound write live rows. The store knows nothing about the previous
     run's spool until recovery has run, so a live row written first lands ahead of it for good."""

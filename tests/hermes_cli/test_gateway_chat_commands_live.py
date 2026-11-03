@@ -84,8 +84,9 @@ def classic_session(tmp_path):
         raise AssertionError((line, expect, screen(), (home / "gw.log").read_text()))
 
     def db(sql, *args):
-        with sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True) as conn:
-            return conn.execute(sql, args).fetchall()
+        from hermes_state import SessionDB
+        with SessionDB(home / "state.db", read_only=True) as store:
+            return [tuple(row) for row in store._conn.execute(sql, args)]
 
     def session_id():
         """Main's bare `/title` prints the full id (the banner shows main's 8-character label)."""
@@ -138,7 +139,7 @@ def test_classic_view_title_and_usage_match_main(tmp_path):
         assert "Title: View Title" in screen()
         assert db("SELECT title FROM sessions WHERE id=?", sid) == [("View Title",)]
         send("/usage", "Session Token Usage")
-        active = [r[0] for r in db("SELECT content FROM messages WHERE session_id=? AND active=1 AND role='user'", sid)]
+        active = [r[0] for r in db("SELECT msg_text(text_uid, 'content') FROM transcript_rows WHERE session_id=? AND active=1 AND role='user'", sid)]
         assert active == ["first question", "second question"], active
 
 
@@ -172,6 +173,6 @@ def test_classic_view_plan_and_goal_run_on_the_gateway(tmp_path):
         send("/goal ship the cache", "Goal set")
         send("/goal status", "Goal (")
         sid = session_id()
-        users = [r[0] for r in db("SELECT content FROM messages WHERE session_id=? AND role='user'", sid)]
+        users = [r[0] for r in db("SELECT msg_text(text_uid, 'content') FROM transcript_rows WHERE session_id=? AND role='user'", sid)]
         assert any("add a cache" in u and "PLAN MODE" in u for u in users), users
         assert "ship the cache" in users, users

@@ -706,7 +706,8 @@ def _sessions_optimize(_engine: HermesConsoleEngine, args: list[str]) -> None:
             db.db_path, command="optimize", force_hint="`sessions optimize --force`")
         if refusal:
             raise ConsoleCommandError(refusal)
-        print(f"Optimized {db.vacuum()} FTS index(es).")
+        db.vacuum()
+        print("Session store optimized.")
 
 
 @_captured

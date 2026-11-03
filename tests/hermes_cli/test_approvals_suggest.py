@@ -11,7 +11,6 @@ and the --apply merge path.
 from __future__ import annotations
 
 import json
-import sqlite3
 import time
 from argparse import Namespace
 
@@ -27,6 +26,7 @@ from hermes_cli.approvals_suggest import (
     scan_approval_history,
     suggest_command,
 )
+from hermes_state import SessionDB
 
 
 # ---------------------------------------------------------------------------
@@ -34,22 +34,9 @@ from hermes_cli.approvals_suggest import (
 # ---------------------------------------------------------------------------
 
 def _make_db(path):
-    con = sqlite3.connect(path)
-    con.executescript(
-        """
-        CREATE TABLE messages (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            session_id TEXT NOT NULL,
-            role TEXT NOT NULL,
-            content TEXT,
-            tool_call_id TEXT,
-            tool_calls TEXT,
-            timestamp REAL NOT NULL
-        );
-        """
-    )
-    con.commit()
-    return con
+    db = SessionDB(db_path=path)
+    db.create_session(session_id="s1", source="cli")
+    return db
 
 
 _ID_COUNTER = [0]
@@ -72,17 +59,8 @@ def _add_terminal_call(con, command, result="ok: done", ts=None):
             }
         ]
     )
-    con.execute(
-        "INSERT INTO messages (session_id, role, content, tool_calls, timestamp) "
-        "VALUES ('s1', 'assistant', '', ?, ?)",
-        (tool_calls, ts),
-    )
-    con.execute(
-        "INSERT INTO messages (session_id, role, content, tool_call_id, timestamp) "
-        "VALUES ('s1', 'tool', ?, ?, ?)",
-        (result, call_id, ts + 1),
-    )
-    con.commit()
+    con.append_message("s1", role="assistant", content="", tool_calls=tool_calls, timestamp=ts)
+    con.append_message("s1", role="tool", content=result, tool_call_id=call_id, timestamp=ts + 1)
 
 
 @pytest.fixture

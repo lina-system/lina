@@ -50,7 +50,7 @@ def test_reset_receipt_and_physical_target_survive_native_owner_restart(tmp_path
             root = db.execute('SELECT runtime_revision,runtime_generation,end_reason FROM sessions WHERE id=?', (sid,)).fetchone()
             assert root == (previous[1]['revision'], previous[1]['execution_generation'], 'session_reset')
             assert db.execute('SELECT parent_session_id FROM sessions WHERE id=?', (target,)).fetchone()[0] == sid
-            assert db.execute('SELECT COUNT(*) FROM messages WHERE session_id=?', (target,)).fetchone()[0] == 0
+            assert db.execute('SELECT COUNT(*) FROM transcript_rows WHERE session_id=?', (target,)).fetchone()[0] == 0
     with daemon(tmp_path) as (home, descriptor):
         assert asyncio.run(reset_round(home, descriptor, previous)) == previous
     print(json.dumps({'native_reset_restart': previous[1]}))

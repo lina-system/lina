@@ -66,14 +66,15 @@ class TestAppendMessagesBatch:
                     ),
                 )
             cols = (
-                "role, content, tool_call_id, tool_calls, tool_name, "
-                "finish_reason, reasoning_content, observed, active"
+                "role, msg_text(text_uid, 'content') AS content, tool_call_id, "
+                "msg_text(text_uid, 'tool_calls') AS tool_calls, tool_name, "
+                "finish_reason, msg_text(text_uid, 'reasoning_content') AS reasoning_content, observed, active"
             )
             rows_a = db._conn.execute(
-                f"SELECT {cols} FROM messages ORDER BY id"
+                f"SELECT {cols} FROM transcript_rows ORDER BY id"
             ).fetchall()
             rows_b = db2._conn.execute(
-                f"SELECT {cols} FROM messages ORDER BY id"
+                f"SELECT {cols} FROM transcript_rows ORDER BY id"
             ).fetchall()
             assert [tuple(r) for r in rows_a] == [tuple(r) for r in rows_b]
         finally:
@@ -95,7 +96,7 @@ class TestAppendMessagesBatch:
             ],
         )
         row = db._conn.execute(
-            "SELECT reasoning_content FROM messages"
+            "SELECT msg_text(text_uid, 'reasoning_content') AS reasoning_content FROM transcript_rows"
         ).fetchone()
         assert row[0] is None
 
@@ -127,7 +128,7 @@ class TestAppendMessagesBatch:
             calls = {"n": 0}
 
             def exec_counting(sql, *args):
-                if sql.lstrip().startswith("INSERT INTO messages"):
+                if sql.lstrip().startswith("INSERT INTO transcript_rows"):
                     calls["n"] += 1
                     if calls["n"] == 3:
                         raise sqlite3.OperationalError("boom mid-batch")
@@ -144,7 +145,7 @@ class TestAppendMessagesBatch:
             db.append_messages_batch("sess-batch", _turn_messages())
         monkeypatch.undo()
 
-        count = db._conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        count = db._conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
         assert count == 0
         row = db._conn.execute(
             "SELECT message_count, tool_call_count FROM sessions WHERE id = ?",
@@ -174,7 +175,7 @@ class TestAppendMessagesBatch:
             }
         ]
         db.append_messages_batch("sess-batch", msgs)
-        raw = db._conn.execute("SELECT content FROM messages").fetchone()[0]
+        raw = db._conn.execute("SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows").fetchone()[0]
         # encoded via _encode_content — same sentinel prefix as append_message
         loaded = db.get_messages("sess-batch")
         assert loaded, raw
@@ -188,7 +189,7 @@ class TestAppendMessagesBatch:
             }
         ]
         db.append_messages_batch("sess-batch", msgs)
-        raw = db._conn.execute("SELECT tool_calls FROM messages").fetchone()[0]
+        raw = db._conn.execute("SELECT msg_text(text_uid, 'tool_calls') AS tool_calls FROM transcript_rows").fetchone()[0]
         assert json.loads(raw) == [{"name": "t", "arguments": "{}"}]
 
 
@@ -222,7 +223,7 @@ class TestShadowedCheckpointRowsArePruned:
         return [
             (row["id"], json.loads(row["codex_reasoning_items"]) if row["codex_reasoning_items"] else None)
             for row in db._conn.execute(
-                "SELECT id, codex_reasoning_items FROM messages WHERE session_id = ? AND role = 'assistant' "
+                "SELECT id, msg_text(text_uid, 'codex_reasoning_items') AS codex_reasoning_items FROM transcript_rows WHERE session_id = ? AND role = 'assistant' "
                 "AND active = 1 ORDER BY id", ("sess-batch",)).fetchall()
         ]
 

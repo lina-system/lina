@@ -7,11 +7,10 @@ import re
 import sqlite3
 
 # Malformed schema: ``sqlite_master`` itself is inconsistent (typically a DUPLICATE
-# ``CREATE VIRTUAL TABLE messages_fts`` row). SQLite parses the whole schema while
+# ``CREATE TABLE sessions`` row). SQLite parses the whole schema while
 # preparing the FIRST statement, so EVERY statement raises (even ``PRAGMA
 # journal_mode`` during __init__); only ``PRAGMA writable_schema=ON`` +
-# sqlite_master surgery still work. Canonical rows are intact; recovery rebuilds
-# only the FTS layer.
+# sqlite_master surgery still work. Recovery repairs the duplicate schema entries.
 _MALFORMED_SCHEMA_MARKERS = ("malformed database schema",)
 _MALFORMED_DB_MARKERS = (*_MALFORMED_SCHEMA_MARKERS, "database disk image is malformed")
 
@@ -34,9 +33,7 @@ _TRANSIENT_SQLITE_MARKERS = (
 )
 
 
-# Lock contention by result code. SQLite keeps SQLITE_BUSY when FTS5's xConnect loses the race
-# on its %_config read but replaces the text with "vtable constructor failed: messages_fts",
-# so a phrase match read a busy store as a hard failure.
+# SQLite result codes take precedence over wrapped exception wording.
 _SQLITE_LOCK_CODES = (sqlite3.SQLITE_BUSY, sqlite3.SQLITE_LOCKED)
 
 
@@ -97,7 +94,7 @@ def is_disk_full_error(exc: BaseException | str | None) -> bool:
 
 # Every classify_persistence_error bucket; consumers enumerate this tuple.
 PERSISTENCE_ERROR_CAUSES = (
-    "locked", "compression", "compression_closed", "turn_lease", "corrupt", "fts_index",
+    "locked", "compression", "compression_closed", "turn_lease", "corrupt",
     "replaced", "deleted_wal", "disk", "session_row_missing", "unknown",
 )
 
@@ -110,39 +107,6 @@ PERSISTENCE_ERROR_CAUSES = (
 _DB_CORRUPTION_MARKERS = (
     "malformed", "file is not a database", "not a database", "database corruption",
 )
-
-# The module constant exists on Python 3.11+; the numeric value is stable across SQLite releases.
-SQLITE_CORRUPT_VTAB = getattr(sqlite3, "SQLITE_CORRUPT_VTAB", 267)
-
-# Every FTS object hangs off this prefix: the virtual tables and their _data/_idx/_content/
-# _docsize/_config shadow b-trees. FTS5 names the table in its own corruption reports.
-_FTS_OBJECT_RE = re.compile(r"\bmessages_fts\w*")
-
-
-def is_fts_scoped_corruption_error(exc_or_str) -> bool:
-    """Corruption SQLite itself attributes to the FTS index layer: the ONE provenance rule
-    shared by the write-repair gate (``SessionDB._is_fts_write_corruption_error``), the
-    gateway transcript retry and :func:`classify_persistence_error` (#96038, #97794).
-
-    A known result code outranks prose: ``SQLITE_CORRUPT_VTAB`` is FTS-scoped even with
-    the generic malformed-image text older SQLite builds emit, while bare ``SQLITE_CORRUPT``
-    / ``SQLITE_NOTADB`` carry no object scope and any other known code contradicts
-    FTS-looking prose, so both fail closed. Only without a code (Python < 3.11, RPC-wrapped
-    strings) does the text decide, and then only an ``fts5:`` corruption report or a
-    corruption marker that names a ``messages_fts*`` object counts.
-    """
-    if exc_or_str is None:
-        return False
-    code = getattr(exc_or_str, "sqlite_errorcode", None)
-    if code is not None:
-        return code == SQLITE_CORRUPT_VTAB
-    text = (exc_or_str if isinstance(exc_or_str, str) else str(exc_or_str)).lower()
-    if not _FTS_OBJECT_RE.search(text):
-        return False
-    if text.startswith("fts5:") and "corrupt" in text:
-        return True
-    return any(marker in text for marker in _DB_CORRUPTION_MARKERS)
-
 
 class CompressionSessionClosedError(RuntimeError):
     """A durable write targeted a parent already closed by compression."""
@@ -309,10 +273,6 @@ def classify_persistence_error(exc_or_str) -> str:
     for exc_type, cause in _PERSISTENCE_CAUSE_BY_TYPE:
         if isinstance(exc_or_str, exc_type):
             return cause
-    # Provenance before prose: an FTS-scoped result code (or, without one, an fts5 report
-    # naming messages_fts*) is index damage, never whole-file corruption (#97794).
-    if is_fts_scoped_corruption_error(exc_or_str):
-        return "fts_index"
     if _sqlite_primary_code(exc_or_str) in _SQLITE_LOCK_CODES:
         return "locked"
     if getattr(exc_or_str, "sqlite_errorcode", None) == sqlite3.SQLITE_CONSTRAINT_FOREIGNKEY:

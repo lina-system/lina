@@ -67,7 +67,7 @@ async def test_stored_picker_survives_upgrade_and_resumes_without_copying(tmp_pa
     resumed = await native.dispatch({'id': 2, 'method': 'session.resume', 'params': {'session_id': 'old-cli'}})
     assert 'result' in resumed, resumed
     assert [m['content'] for m in resumed['result']['messages']] == ['old-cli question', 'old-cli answer']
-    assert db._conn.execute('SELECT COUNT(*) FROM messages WHERE session_id=?', ('old-cli',)).fetchone()[0] == 2
+    assert db._conn.execute('SELECT COUNT(*) FROM transcript_rows WHERE session_id=?', ('old-cli',)).fetchone()[0] == 2
     assert 'old-cli' not in {r['id'] for r in (await listing(native, scope='stored'))['result']['sessions']}
     assert 'old-cli' in {r['id'] for r in (await listing(native))['result']['sessions']}
     compressed = await native.dispatch({'id': 3, 'method': 'session.resume', 'params': {'session_id': 'tui-tip'}})

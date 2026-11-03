@@ -445,9 +445,9 @@ def _messages(home: _Root) -> bool:
     # Read-only URI, never the state registry: that opens a writer and migrates a schema we do not own.
     try:
         with contextlib.closing(sqlite3.connect(f"{db.as_uri()}?mode=ro", uri=True, timeout=_DB_BUSY_SECONDS)) as conn:
-            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='messages'").fetchone() is None:
+            if conn.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='transcript_rows'").fetchone() is None:
                 return False
-            return conn.execute("SELECT 1 FROM messages LIMIT 1").fetchone() is not None
+            return conn.execute("SELECT 1 FROM transcript_rows LIMIT 1").fetchone() is not None
     except sqlite3.OperationalError as exc:
         # Still locked after sqlite's own retries: a first boot is creating or healing this database
         # right now. A lock is not a message, and reading it as "unreadable" would cost a new user the trial.

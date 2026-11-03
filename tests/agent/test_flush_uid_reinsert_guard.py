@@ -59,7 +59,7 @@ def _make_agent_with_db(tmp_path):
 
 def _row_count(db, session_id):
     return db._read_one(
-        "SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,)
+        "SELECT COUNT(*) FROM transcript_rows WHERE session_id = ?", (session_id,)
     )[0]
 
 
@@ -175,7 +175,7 @@ def test_restore_normalised_rows_are_not_reinserted_but_edits_land(tmp_path, tur
     else:
         live = [{**m, "timestamp": 1000.0 + i} for i, m in enumerate(turn)]
     agent._flush_messages_to_session_db(live)
-    active = lambda: db._read_one("SELECT COUNT(*) FROM messages WHERE session_id = ? AND active = 1", (sid,))[0]
+    active = lambda: db._read_one("SELECT COUNT(*) FROM transcript_rows WHERE session_id = ? AND active = 1", (sid,))[0]
     stored = active()
 
     restored = [{k: v for k, v in m.items() if not (k.startswith("_") if strip_all else k == _DB_PERSISTED_MARKER)}

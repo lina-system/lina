@@ -263,6 +263,7 @@ from tests._fixtures.live_system_guard import (
     _LIVE_SYSTEM_GUARD_BYPASS_MARK,
     _live_system_guard,
 )
+from tests._fixtures.memory_store import PROCESS_STORE, _memory_store, memory_store_sql, skip_if_store_unavailable
 from tests._fixtures.model_peer import model_peer  # fixture registers here
 from tests._fixtures.platform_gating import _platforms_gate_reason, _reject_contradictory_platform_marks
 
@@ -1192,6 +1193,14 @@ def require_mcp_2_sdk():
 def pytest_unconfigure(config):
     _reap_session_hermes_processes(config)
     _remove_relocated_basetemp(config)
+    PROCESS_STORE.close()
+
+
+@pytest.hookimpl(wrapper=True)
+def pytest_runtest_makereport(item, call):
+    report = yield
+    skip_if_store_unavailable(item, report)
+    return report
 
 
 @pytest.hookimpl(trylast=True)  # after _pytest.tmpdir has built config._tmp_path_factory
@@ -1207,6 +1216,9 @@ def pytest_configure(config):
     config.addinivalue_line(
         "markers", "allow_real_home_io: explicitly bypass the test-only home I/O guard."
     )
+    config.addinivalue_line(
+        "markers", "memory_store_per_module: empty the test Postgres after the module, not after each test "
+        "(module-scoped fixtures that keep transcripts across tests).")
     config.addinivalue_line(
         "markers", "real_release_channels: keep the real R2 channel reader (no local source-branch stub)."
     )

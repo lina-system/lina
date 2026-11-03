@@ -233,13 +233,13 @@ def test_message_react_targets_the_row_in_the_session_that_owns_it(monkeypatch, 
         got = server.handle_request({"id": "r1", "method": "message.react", "params": {
             "session_id": sid, "newest_role": "user", "emoji": "thumbsup"}})
         assert "result" in got, got
-        want = db._read_one("SELECT id FROM messages WHERE session_id = ? AND content = ?",
+        want = db._read_one("SELECT id FROM transcript_rows WHERE session_id = ? AND msg_text(text_uid, 'content') = ?",
                             (child, "the turn the user just reacted to"))
         assert want is not None
         row_id = int(got["result"]["row_id"])
         assert row_id == want[0], (
             f"reaction landed on row {row_id} (session "
-            f"{db._read_one('SELECT session_id FROM messages WHERE id = ?', (row_id,))[0]}), "
+            f"{db._read_one('SELECT session_id FROM transcript_rows WHERE id = ?', (row_id,))[0]}), "
             f"not the newest user row {want[0]} in the live session {child}")
     finally:
         server._sessions.pop(sid, None)

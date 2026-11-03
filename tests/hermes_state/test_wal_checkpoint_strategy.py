@@ -171,30 +171,6 @@ class TestVacuumUsesPassive:
         # TRUNCATE must come only AFTER the VACUUM (never before it).
         assert tracking_conn.execute_calls.index(truncate_calls[0]) > vacuum_index
 
-    def test_optimize_storage_uses_passive_after_vacuum(self, db):
-        """optimize_fts_storage() checkpoints PASSIVE after its VACUUM."""
-        real_conn = db._conn
-        tracking_conn = TrackingConnection(real_conn)
-        db._conn = tracking_conn
-
-        result = db.optimize_fts_storage(vacuum=True)
-
-        checkpoint_calls = [
-            c for c in tracking_conn.execute_calls if "wal_checkpoint" in c.lower()
-        ]
-        truncate_calls = [c for c in checkpoint_calls if "TRUNCATE" in c]
-        passive_calls = [c for c in checkpoint_calls if "PASSIVE" in c]
-        vacuum_calls = [
-            c for c in tracking_conn.execute_calls if c.strip().upper() == "VACUUM"
-        ]
-        assert result["ok"] is True
-        assert result["vacuumed"] is True
-        assert truncate_calls == []
-        assert passive_calls == ["PRAGMA wal_checkpoint(PASSIVE)"]
-        assert vacuum_calls == ["VACUUM"]
-        assert tracking_conn.execute_calls.index(
-            vacuum_calls[0]
-        ) < tracking_conn.execute_calls.index(passive_calls[0])
 
 
 class TestCheckpointFrequency:

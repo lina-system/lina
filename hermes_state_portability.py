@@ -23,6 +23,7 @@ from hermes_state_keys import (
 from hermes_state_local import POLICY_PREFIX
 from hermes_state_common import SCHEMA_SQL, _shape_preview, _sql_preview_raw, _sql_session_last_active
 from hermes_state_messages import _parse_tool_calls, _tool_calls_count
+from hermes_state_store import text_columns_sql, text_sql
 import itertools
 
 # Pre-split logger identity so log filtering/capture is unchanged.
@@ -322,16 +323,16 @@ class SessionPortabilityMixin:
         auto-load scaffold (their titles describe the expanded skill body, not the
         request). Returns ``id``, ``title`` and the first-turn ``content`` so callers can
         re-derive what was typed. Newest first."""
-        rows = self._read_rows("""
-                SELECT s.id, s.title, m.content
+        rows = self._read_rows(f"""
+                SELECT s.id, s.title, {text_sql('content', 'm.')} AS content
                 FROM sessions s
-                JOIN messages m ON m.id = (
-                    SELECT m2.id FROM messages m2
+                JOIN transcript_rows m ON m.id = (
+                    SELECT m2.id FROM transcript_rows m2
                     WHERE m2.session_id = s.id AND m2.role = 'user'
-                      AND m2.content IS NOT NULL
+                      AND m2.content_digest IS NOT NULL
                     ORDER BY m2.timestamp, m2.id LIMIT 1
                 )
-                WHERE s.title IS NOT NULL AND (m.content LIKE ? OR m.content LIKE ?)
+                WHERE s.title IS NOT NULL AND ({text_sql('content', 'm.')} LIKE ? OR {text_sql('content', 'm.')} LIKE ?)
                 ORDER BY s.started_at DESC
                 LIMIT ?
                 """, (SKILL_SCAFFOLD_SQL_LIKE, AUTO_LOAD_SCAFFOLD_SQL_LIKE, int(limit)))
@@ -387,7 +388,7 @@ class SessionPortabilityMixin:
         for start in range(0, len(session_ids), 900):
             chunk = session_ids[start:start + 900]
             rows = self._read_all(
-                f"SELECT * FROM messages WHERE session_id IN ({','.join('?' for _ in chunk)}) "
+                f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE session_id IN ({','.join('?' for _ in chunk)}) "
                 f"{active_clause} ORDER BY session_id, id",
                 chunk,
             )
@@ -740,7 +741,7 @@ class SessionPortabilityMixin:
             (live if self._coerce_or(msg.get("active"), int, 1) else archived).append(msg)
         self._insert_message_rows(conn, session_id, sanitized_messages, prune_checkpoints=False)
         if archived:
-            conn.executemany("UPDATE messages SET active = 0, compacted = ? WHERE id = ?",
+            conn.executemany("UPDATE transcript_rows SET active = 0, compacted = ? WHERE id = ?",
                              [(1 if self._coerce_or(msg.get("compacted"), int, 0) else 0, msg["_row_id"])
                               for msg in archived])
         # Pruning keys on live rows, so it runs only now: while every row was still live, an archived row's

@@ -1,28 +1,58 @@
-"""Numbered store migrations, shared by psql connections and Store.psql."""
+"""LINA's numbered schema migrations for ``memory``, ``ctx`` and ``vec`` (lina#12).
 
+Honcho migrates its own schema ``ltm``; everything else in the store is LINA's. Each
+``services/store/migrations/NNNN_<name>.sql`` runs once, in its own transaction, and is recorded in
+``memory.schema_migrations``; running them again applies only the files not yet recorded.
+"""
+
+from __future__ import annotations
+
+import re
 from collections.abc import Callable
 from pathlib import Path
-from typing import Final
 
-MIGRATIONS: Final = Path(__file__).resolve().parents[1] / "services/store/migrations"
-RunSql = Callable[[str], str]
+MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "services" / "store" / "migrations"
+_NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 
-
-def pending(run_sql: RunSql) -> list[tuple[str, Path]]:
-    """Create the migration ledger and return unapplied files in version order."""
-    run_sql("CREATE SCHEMA IF NOT EXISTS memory; CREATE TABLE IF NOT EXISTS memory.schema_migrations ("
-            "version text PRIMARY KEY, name text NOT NULL, applied_at timestamptz NOT NULL DEFAULT now());")
-    applied = set(run_sql("SELECT version FROM memory.schema_migrations ORDER BY version;").splitlines())
-    return [(p.name.split("_", 1)[0], p) for p in sorted(MIGRATIONS.glob("[0-9][0-9][0-9][0-9]_*.sql"))
-            if p.name.split("_", 1)[0] not in applied]
+LEDGER_SQL = """CREATE TABLE IF NOT EXISTS memory.schema_migrations (
+    version text PRIMARY KEY,
+    name text NOT NULL,
+    applied_at timestamptz NOT NULL DEFAULT now()
+);"""
 
 
-def apply(run_sql: RunSql) -> list[str]:
-    """Apply each pending file and its ledger entry in one transaction."""
+def migration_files(directory: Path = MIGRATIONS_DIR) -> list[Path]:
+    files = sorted(p for p in directory.glob("*.sql") if _NAME.match(p.name))
+    versions = [_NAME.match(p.name).group(1) for p in files]
+    if len(set(versions)) != len(versions):
+        raise ValueError(f"two migrations in {directory} share a number")
+    return files
+
+
+def _literal(text: str) -> str:
+    return "'" + text.replace("'", "''") + "'"
+
+
+def migration_script(path: Path) -> str:
+    """One transaction: the file's statements and its ledger row, so a failed file records nothing."""
+    version = _NAME.match(path.name).group(1)
+    body = path.read_text(encoding="utf-8-sig")
+    return (f"BEGIN;\n{body.rstrip()}\n"
+            f"INSERT INTO memory.schema_migrations (version, name) VALUES ({_literal(version)}, {_literal(path.name)});\n"
+            "COMMIT;\n")
+
+
+def apply(run_sql: Callable[[str], str], *, out: Callable[[str], None] = print,
+          directory: Path = MIGRATIONS_DIR) -> list[str]:
+    """Apply the pending migrations through *run_sql* (runs a script as the superuser, returns its output).
+    Returns the file names applied now."""
+    run_sql(LEDGER_SQL)
+    done = set(run_sql("SELECT version FROM memory.schema_migrations;").split())
     applied = []
-    for version, path in pending(run_sql):
-        name = path.name.replace("'", "''")
-        run_sql(f"BEGIN;\n{path.read_text(encoding='utf-8-sig')}\n"
-                f"INSERT INTO memory.schema_migrations (version, name) VALUES ('{version}', '{name}');\nCOMMIT;")
-        applied.append(version)
+    for path in migration_files(directory):
+        if _NAME.match(path.name).group(1) in done:
+            continue
+        run_sql(migration_script(path))
+        applied.append(path.name)
+        out(f"Applied store migration {path.name}.")
     return applied

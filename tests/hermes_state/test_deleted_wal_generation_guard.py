@@ -24,6 +24,7 @@ from hermes_state import (
     classify_persistence_error, refuse_deleted_wal_generation,
 )
 from hermes_state_dbfile import _pread_db_header, iter_deleted_sqlite_sidecar_holders
+from hermes_state_store import content_digest
 from tests.hermes_state._wal_generation_harness import (
     gateway_writer, integrity_ok_path, lose_sidecars, make_db, message_count, pin_wal, require_wal,
     write_second_generation,
@@ -420,7 +421,7 @@ def _assert_retirement_preserves_recoverable_wal(tmp_path, *, fd_directory, also
         control = sqlite3.connect(recovery_path.as_uri() + "?immutable=1", uri=True)
         try:
             assert control.execute(
-                "SELECT COUNT(*) FROM messages WHERE content = ?", (sentinel,)
+                "SELECT COUNT(*) FROM transcript_rows WHERE content_digest = ?", (content_digest(sentinel),)
             ).fetchone()[0] == 0, "control transaction was already in the main database"
         finally:
             control.close()
@@ -428,7 +429,7 @@ def _assert_retirement_preserves_recoverable_wal(tmp_path, *, fd_directory, also
         recovered = sqlite3.connect(str(recovery_path))
         try:
             assert recovered.execute(
-                "SELECT COUNT(*) FROM messages WHERE content = ?", (sentinel,)
+                "SELECT COUNT(*) FROM transcript_rows WHERE content_digest = ?", (content_digest(sentinel),)
             ).fetchone()[0] == 1
             assert recovered.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         finally:

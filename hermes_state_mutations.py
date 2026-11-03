@@ -1,6 +1,7 @@
 """Closed action handlers inside the runtime mutation receipt transaction."""
 import time
 from hermes_state_runtime import RuntimeStoreError
+from hermes_state_store import text_columns_sql
 
 METADATA_FIELDS = {'title': str, 'archived': bool, 'hidden': bool, 'pinned': bool, 'unread': bool}
 
@@ -132,7 +133,7 @@ def _rewind(db, conn, session_id, payload):
     # target. A row compaction archived (still shown, still carrying its id) would deactivate the
     # summary and every later turn, since both have larger ids. That refusal says so (``compacted:``
     # detail); a row a rewind or undo already took back, an assistant row or an unknown id does not.
-    row = conn.execute('SELECT role FROM messages WHERE id=? AND session_id=? AND active=1',
+    row = conn.execute('SELECT role FROM transcript_rows WHERE id=? AND session_id=? AND active=1',
                        (payload['target_message_id'], physical)).fetchone()
     if row is None or row['role'] != 'user':
         if _summarized_by_compaction(conn, physical, payload['target_message_id']):
@@ -167,7 +168,7 @@ def _summarized_by_compaction(conn, physical, message_id):
     archives with ``active=0, compacted=1`` (``_ARCHIVE_ACTIVE_SQL``) while rewind, undo and replace
     mark ``active=0, compacted=0``; a rotating compaction leaves the turn on a compression ancestor of
     *physical*, still displayed (``active=1 OR compacted=1``)."""
-    row = conn.execute('SELECT session_id, role, active, compacted FROM messages WHERE id=?',
+    row = conn.execute('SELECT session_id, role, active, compacted FROM transcript_rows WHERE id=?',
                        (message_id,)).fetchone()
     if row is None or row['role'] != 'user':
         return False
@@ -188,7 +189,7 @@ def _summarized_by_compaction(conn, physical, message_id):
 
 def _carrier_live_view(db, conn, session_id, message_id):
     from agent.context_compressor import split_user_originated_turn
-    row = conn.execute('SELECT * FROM messages WHERE id=? AND session_id=? AND active=1',
+    row = conn.execute(f'SELECT *, {text_columns_sql()} FROM transcript_rows WHERE id=? AND session_id=? AND active=1',
                        (message_id, session_id)).fetchone()
     message = row and db._row_to_message_dict(row, warn_context='rewind target', summary_flag=True)
     handoff, live = split_user_originated_turn(message) if message else (None, None)
