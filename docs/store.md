@@ -24,7 +24,9 @@ revision in `ltm.alembic_version`). Run on a machine that already has a store, i
 (see below).
 
 The files are in `services/store/`: `compose.yaml` (compose project `lina-store`) and
-`initdb/10-lina-store.sh`, which runs once on an empty cluster. One store serves every profile, so
+`initdb/10-lina-store.sh`, which runs once on an empty cluster. They and `migrations/` are package data of
+`services.store`, so an installed wheel carries them; the Honcho build context (`services/honcho`) is not
+packaged, and `install` needs a source checkout for it. One store serves every profile, so
 its settings are under the LINA root, not a profile home, in `store/`:
 
 | File | What it is |

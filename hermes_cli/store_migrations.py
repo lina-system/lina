@@ -9,9 +9,11 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable
+from importlib.resources import files
 from pathlib import Path
 
-MIGRATIONS_DIR = Path(__file__).resolve().parents[1] / "services" / "store" / "migrations"
+# Package data of services.store, so an installed wheel finds them too (lina#145).
+MIGRATIONS_DIR = Path(files("services.store") / "migrations")
 _NAME = re.compile(r"^(\d{4})_[a-z0-9_]+\.sql$")
 
 LEDGER_SQL = """CREATE TABLE IF NOT EXISTS memory.schema_migrations (
