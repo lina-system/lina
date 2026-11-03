@@ -390,7 +390,9 @@ def _fts_parts(masked: str) -> list:
     for m in re.finditer(r"\bsnippet\s*\(\s*(\w+)\s*,[^()]*\)", masked, re.IGNORECASE):
         marks.append((m.start(), m.end(), ("snippet", first_slot, aliases.get(m.group(1), m.group(1)))))
     default_alias = matches[0][1]
-    for m in re.finditer(r"(?<![\w.])rank\b(?!\s*\()", masked, re.IGNORECASE):
+    # `bm25(x) AS rank` names a column: the bare `rank` after it (ORDER BY rank) reads that column.
+    named_rank = re.search(r"\bAS\s+rank\b", masked, re.IGNORECASE)
+    for m in ([] if named_rank else re.finditer(r"(?<![\w.])rank\b(?!\s*\()", masked, re.IGNORECASE)):
         if not any(s <= m.start() < e for s, e, _ in marks):
             marks.append((m.start(), m.end(), ("rank", first_slot, default_alias)))
     marks.sort()
@@ -572,6 +574,19 @@ def render(template: Template, args: Any) -> tuple[str, list[Any]]:
 
 
 _VECTOR_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(?:lcm_embedding_vectors|lcm_chunk_vectors)\b", re.IGNORECASE)
+
+
+_LIMIT_SLOT = re.compile(r"\bLIMIT\s+%s", re.IGNORECASE)
+
+
+def _unbounded_limits(text: str, args: list) -> list:
+    """SQLite reads a negative LIMIT as no limit; Postgres refuses it and reads LIMIT NULL that way."""
+    args = list(args)
+    for index, m in enumerate(re.finditer(r"%s", text)):
+        if re.search(r"\bLIMIT\s+$", text[max(m.start() - 16, 0):m.start()], re.IGNORECASE) \
+                and isinstance(args[index], int) and args[index] < 0:
+            args[index] = None
+    return args
 
 
 def _vector_text(value: Any) -> Any:
@@ -1016,6 +1031,8 @@ class PgConnection:
         text, args = render(template, params)
         if _VECTOR_INSERT.match(text):
             args = [_vector_text(a) for a in args]
+        if _LIMIT_SLOT.search(text):
+            args = _unbounded_limits(text, args)
         writes = bool(re.match(r"\s*(INSERT|UPDATE|DELETE|REPLACE|WITH\b.*\b(INSERT|UPDATE|DELETE)\b)", text, re.IGNORECASE | re.DOTALL))
         if writes and self.isolation_level is not None:
             self._begin()
