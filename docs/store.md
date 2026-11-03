@@ -249,8 +249,12 @@ Source transport URLs and keys are not published into the new home; its Honcho c
 destination store's local Honcho port.
 
 Several source profiles may share one Honcho workspace. Each destination agent receives deterministic
-global row IDs derived from its name and the source identity; scoped session and ordinary peer names are
-preserved. The import receipt retains original IDs, explicit source UIDs, and destination maps. Foreign keys,
+21-character text IDs derived from its name and the source identity; scoped session and ordinary peer names
+are preserved. Integer IDs use each destination table's own identity sequence, allocated in source timestamp
+order with source ID as the tie-break. The receipt retains these allocated IDs for exact replay, alongside
+original IDs and explicit source UIDs. Migrated history lands with IDs after existing destination rows;
+the intended first use is a fresh agent store (lina#41), since ID order is not cross-import timestamp order.
+Pre-existing rows are never rekeyed. Foreign keys,
 citations and typed JSON identity fields use those maps, so importing a second profile cannot link it to the
 first agent's rows. Existing matching destination-agent text may still be reused after content verification.
 
@@ -295,6 +299,68 @@ the copied subset, while missing imported identities or changed durable content 
 
 After checking one profile, `--all-source-profiles --as copied` processes profiles sequentially as
 `copied-default`, `copied-alpha`, and so on, retaining each profile's report under the work directory.
+
+### Migration identity and reference inventory
+
+This inventory follows `services/honcho/src/models.py`, its typed payload consumers, and all 33 Alembic
+revisions from `a1b2c3d4e5f6` through `l13_message_split` (whose parent is `l19_vec_embeddings`, not l12).
+The identity-changing steps are `d429de0e5338` (peer paradigm/text PKs), `917195d9b5e9` (embedding IDs),
+`ec8f94139b02` (queue message/workspace columns), `f1a2b3c4d5e6` (legacy source arrays),
+`a7c3e9f1b2d4` (DDL-only normalized document edges), `c4d8e2f6a1b3` (citations), l19 (vector owner IDs)
+and l13 (shared text IDs). Other revisions preserve these identities while changing indexes, scoped names,
+configuration, counters, tombstones or constraints. The archive is upgraded through that ancestry before
+selection; counts describe the upgraded retained graph, not obsolete pre-upgrade tables.
+
+| Id-bearing columns | Destination identity | References and preserved distinctions |
+| --- | --- | --- |
+| `workspaces.id`, `peers.id`, `sessions.id`, `collections.id` | Deterministic 21-character agent/source IDs | Workspace FKs use `name`, not workspace ID. Queue `session_id` uses the session PK; other session fields use scoped names. Documents refer to collection observer/observed/workspace names, not collection ID. |
+| `documents.id` | Deterministic text ID | `document_sources.derived_id`, citation `conclusion_id`, `copied_from`, legacy source arrays and observation-deletion resource/key. |
+| `message_meta.public_id` | Deterministic text ID | Embedding `message_id`, citation `message_id`, polymorphic source edges/arrays, summary `message_public_id`, queue `payload.message_public_id`. These are not shared bigint IDs. |
+| `memory.messages.message_id`, `message_meta.message_id` | Validated existing text reuse or destination `memory.messages` identity allocation | Queue `message_id`, legacy queue payload integer, both summary integer boundaries, nested document metadata `message_ids`. Receipt retains original pre-l13 integer/public ID and staging-to-destination map. |
+| `documents.vec_id` | Destination documents identity sequence; receipt map | `vec.embeddings(kind='document',item_id)` after reembedding; old vectors are deferred. |
+| `message_embeddings.id` | Destination embedding identity sequence; receipt map | `vec.embeddings(kind='message',item_id)` for Honcho chunks; its own `message_id` is a text public ID. |
+| `queue.id` | Destination queue identity sequence; receipt map | Worker job identity, not message identity. Consumed jobs are not recreated on replay. |
+| `session_peers` composite PK | Workspace and selected-AI name mapping | Preserve session name and ordinary peer name; composite name FKs remain within the destination workspace. |
+| `document_sources` composite PK | Mapped document/public endpoints | Source may be a document or message public ID; missing retained targets fail. Keep edge position. |
+| `conclusion_source_messages` composite PK | Mapped document and public-message endpoints | Both endpoints are text identities; preserve citation position. |
+| `active_queue_sessions.id`, `webhook_endpoints.id` | Excluded from selected imports | Worker leases and webhook endpoints are not migrated memory; zero retained counts do not mean their source tables were empty. |
+| Shared text `uid`, registry identities | Destination-qualified Honcho UID or verified existing UID; registry alias resolution | Top-level message metadata UID/agent bindings follow chosen text. Registry IDs are not Honcho nanoids. |
+
+Typed JSON references include both short/long summary boundaries; nested integer `message_ids`; all three
+legacy document arrays (`source_ids` column, metadata `source_ids`, metadata `premise_ids`); and document-only
+`copied_from`. Valid legacy IDs enter dependency closure before remapping, even in lower-precedence arrays.
+Malformed elements, prose `premises`/`sources`, arbitrary nested metadata and URLs are not rewritten.
+The reconciler has not necessarily drained legacy arrays: a7c3 is DDL-only.
+
+Queue payloads distinguish integer message IDs, public message IDs, scoped peer/session names, and deletion
+resources: observation deletion uses a document ID (including an already-deleted target); session deletion
+uses a session **name**. Encoded work-unit keys remap their workspace/peer slots and observation resource,
+not session names, dream types or global reconciler keys. Known webhook payload workspace/peer fields are
+typed names; arbitrary event data is opaque. Peer-card metadata changes the selected AI's `<peer>_peer_card`
+key, not the card text. Session sequence numbers, edge positions and runtime counters are not identities.
+
+The Honcho JSON report includes `reference_inventory`: class name to occurrence count, including zero-count
+classes, for the retained source graph after closure. Counts include identity columns, relational references,
+typed JSON references and scoped-name fields inspected/preserved by the remapping contract. Each repeated
+array member counts separately; a work-unit key counts once, not once per encoded slot. Generated IDs count
+their owner rows; shared-message references exclude separately reported text-row allocations. Legacy raw
+array counts are separate from normalized edge counts. These counts are not row totals or vector totals.
+The regression runs the real remappers and requires every changed identity field to be covered by the
+inventory, so a newly remapped field cannot silently disappear from reporting.
+
+Per-source policies:
+
+- **Agent transcripts:** local placement IDs stay in each destination profile's SQLite store. Shared text
+  uses agent-qualified UID/version identity; copied immutable payloads are verified without rejecting later live rows.
+- **External messages:** platform/room/native identity plus immutable payload version is globally shared;
+  do not rename or duplicate it per profile. Retain the original spool cursor and verify copied versions.
+- **Work:** preserve native work IDs. Store-owned profile mappings apply to selected rows and ancestors;
+  only receipted unchanged foreign ancestors can later be promoted. Other content collisions fail.
+- **Honcho:** each destination agent owns a separate deterministic text-ID graph and receipt-backed positive
+  integer allocations. Shared source people/sessions do not cause a global rename. Person registry aliases
+  are agent-qualified; equal display names alone do not merge people. Preserve verified conversation aliases.
+- **Files and LCM:** file payloads and arbitrary links are not identity-remapped. LCM remains deferred until #16;
+  legacy vectors require reembedding rather than copying an unverified model's vectors.
 
 ### Search
 

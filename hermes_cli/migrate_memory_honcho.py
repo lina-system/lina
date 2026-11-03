@@ -23,6 +23,7 @@ from hermes_cli.migrate_memory_honcho_graph import (
 from hermes_cli.migrate_memory_honcho_stage import ROOT, restored_database, upgrade
 from hermes_cli.migrate_memory_honcho_scope import map_peer, scoped_graph, selection
 from hermes_cli.migrate_memory_honcho_ids import namespace, staging_references
+from hermes_cli.migrate_memory_honcho_inventory import reference_inventory
 
 
 def _prepare(conn, schema: str, workspace: str, agent: str) -> tuple[str, dict]:
@@ -216,7 +217,7 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
                               "already_imported": len(data["queue"]) if rerun else 0,
                               "current_rows": len(destination["queue"]), "rewritten": 0},
             "document_sources": source_links(verified), "message_id_map": ids,
-            "generated_id_maps": generated}
+            "generated_id_maps": generated, "reference_inventory": reference_inventory(data)}
 
 
 def _text_metadata(conn, data: dict, ids: dict, agent: str) -> None:
