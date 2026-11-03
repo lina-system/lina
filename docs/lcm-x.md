@@ -62,15 +62,17 @@ schema is `services/store/migrations/0007_ctx_lcm.sql`: LCM-X's tables under the
   and `pg_trgm` indexes; `MATCH` becomes a tsquery built from the FTS5 query, `bm25`/`rank` `ts_rank_cd`.
   Korean, Chinese and Japanese queries take LCM-X's LIKE path, which runs as `ILIKE` on the trigram index, so
   `회의` finds `회의록을`.
-- Summary vectors are rows of `vec.embeddings` (`kind = 'summary'`, `item_id` = the node id, the model of LCM-X's
-  embedding profile; `0008_ctx_lcm_vectors.sql`): `lcm_embedding_vectors` is a view over them, and a vector that is
-  not 1024 wide (the one embedding model, [store.md](store.md)) is refused.
-- The schema creators and verifiers of `db_bootstrap.py` return at once on a store connection.
+- Vectors live in `vec` (`0008_ctx_lcm_vectors.sql`), as views under LCM-X's names. A summary vector is a
+  `vec.embeddings` row of kind `summary` (`item_id` = the node id, `model` = the model of LCM-X's embedding
+  profile). A chunk (`<store_id>:<chunk_index>`, a span of one message) is a `vec.chunks` row (source
+  `lcm-x:<chunk_index>`, `message_ids` = the `memory.messages` id, `text` = the span) and a `vec.embeddings` row of
+  kind `chunk`. `vec.embeddings` is 1024 wide (the one embedding model, [store.md](store.md)): a narrower vector is
+  stored zero-padded (cosine and dot products are unchanged) and read back at its width, a wider one is refused.
+- The schema creators and verifiers of `db_bootstrap.py` (and `command.py`'s backfill table) return at once on a
+  store connection. The side readers that open `lcm.db` directly go through `sqlite_session.connect_database`.
 
-What is not done yet, and the order: `.github/workflows/lcm-x.yml` does not run the suite on the store; the chunk
-vectors still use LCM-X's `lcm_chunk_*` tables in `ctx` (they move to `vec.chunks` and `vec.embeddings`
-`kind = 'chunk'`); the direct `sqlite3.connect` side readers (`tools.py`, `retrieval_core.py`, ...) still open
-the file; nothing routes a real home yet (the `lcm.store_backend` setting). An `lcm.db` is never read or changed
+What is not done yet: `.github/workflows/lcm-x.yml` does not run the suite on the store, and LCM-X's suite does
+not pass there yet; nothing routes a real home yet (the `lcm.store_backend` setting). An `lcm.db` is never read or changed
 by any of this; moving its data in is #24. The suite on the store:
 
 ```sh
