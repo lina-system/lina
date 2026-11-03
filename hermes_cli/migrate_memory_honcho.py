@@ -22,7 +22,7 @@ from hermes_cli.migrate_memory_honcho_graph import (
 )
 from hermes_cli.migrate_memory_honcho_stage import ROOT, restored_database, upgrade
 from hermes_cli.migrate_memory_honcho_scope import map_peer, scoped_graph, selection
-from hermes_cli.migrate_memory_honcho_ids import integer_id, namespace, staging_references
+from hermes_cli.migrate_memory_honcho_ids import namespace, staging_references
 
 
 def _prepare(conn, schema: str, workspace: str, agent: str) -> tuple[str, dict]:
@@ -82,8 +82,8 @@ def _text(conn, row: dict, meta: dict, agent: str, claimed: set[int]) -> tuple[i
     if candidate is not None:
         uid = f"honcho:{agent}:{meta['public_id']}"
     payload = {k: v for k, v in row.items() if k not in {"message_id", "tsv", "conversation_id"}}
-    payload.update(uid=uid, agent_id=agent, message_id=integer_id(agent, "messages", meta["public_id"]))
-    saved = insert(conn, "memory", "messages", payload, override_identity=True)
+    payload.update(uid=uid, agent_id=agent)
+    saved = insert(conn, "memory", "messages", payload)
     claimed.add(saved["message_id"])
     return saved["message_id"], True
 
@@ -159,7 +159,9 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
             raise ValueError("destination shared message identities differ from the import receipt")
     else:
         claimed = {r[0] for r in conn.execute("SELECT message_id FROM ltm.message_meta")}
-        for meta in sorted(data["message_meta"], key=lambda r: r["message_id"]):
+        original_ids = {receipt["identity_maps"]["message_meta"][public]: int(old)
+                        for old, public in receipt["source_message_ids"].items()}
+        for meta in sorted(data["message_meta"], key=lambda r: (texts[r["message_id"]]["ts"], original_ids[r["public_id"]])):
             row = dict(texts[meta["message_id"]])
             row["agent_id"] = agent
             ids[meta["message_id"]], added = _text(conn, row, meta, agent, claimed)
@@ -169,10 +171,14 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
         transformed = renamed(data, workspace, agent, ids)
         transformed["workspaces"][0]["internal_metadata"]["lina_dump_import"] = receipt
         for table in TABLES:
-            for record in transformed[table]:
+            records = transformed[table]
+            if table in GENERATED:
+                source_ids = {new: old for old, new in receipt["identity_maps"].get(table, {}).items()}
+                records = sorted(records, key=lambda r: (r["created_at"], source_ids.get(r["id"], r["id"])))
+            for record in records:
                 old = record.get(GENERATED.get(table, ""))
                 if table in GENERATED:
-                    record[GENERATED[table]] = integer_id(agent, table, old)
+                    del record[GENERATED[table]]
                 saved = insert(conn, "ltm", table, record)
                 if table in GENERATED:
                     generated[table][old] = saved[GENERATED[table]]

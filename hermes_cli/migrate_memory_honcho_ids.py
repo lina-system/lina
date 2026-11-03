@@ -35,12 +35,6 @@ def destination_id(agent: str, source: str) -> str:
     return base64.urlsafe_b64encode(digest).decode()[:21]
 
 
-def integer_id(agent: str, kind: str, source: int | str) -> int:
-    digest = hashlib.sha256(json.dumps([agent, kind, source], separators=(",", ":")).encode()).digest()
-    # Negative IDs leave the positive live identity sequences undisturbed.
-    return -1 - (int.from_bytes(digest[:8], "big") % (2**63 - 1))
-
-
 def mapped_integers(value, ids: dict):
     if isinstance(value, list):
         return [mapped_integers(item, ids) for item in value]

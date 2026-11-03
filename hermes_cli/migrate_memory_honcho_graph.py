@@ -44,11 +44,10 @@ def graph(conn, schema: str, workspace: str) -> dict[str, list[dict]]:
     return result
 
 
-def insert(conn, schema: str, table: str, row: dict, *, override_identity: bool = False) -> dict:
+def insert(conn, schema: str, table: str, row: dict) -> dict:
     values = [Jsonb(value) if isinstance(value, (dict, list)) else value for value in row.values()]
     with conn.cursor(row_factory=dict_row) as cur:
-        cur.execute(sql.SQL("INSERT INTO {}.{} ({}) " + ("OVERRIDING SYSTEM VALUE " if override_identity else "")
-                           + "VALUES ({}) RETURNING *").format(
+        cur.execute(sql.SQL("INSERT INTO {}.{} ({}) VALUES ({}) RETURNING *").format(
             sql.Identifier(schema), sql.Identifier(table),
             sql.SQL(", ").join(map(sql.Identifier, row)),
             sql.SQL(", ").join(sql.Placeholder() for _ in row)), values)
