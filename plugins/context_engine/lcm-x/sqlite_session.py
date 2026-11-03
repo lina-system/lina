@@ -29,13 +29,13 @@ class ConnectionPolicy:
     on_setup_error: Callable[[Exception], None] | None
 
 
-def store_backend(database: object) -> Callable[[], sqlite3.Connection] | None:
+def store_backend(database: object, *, opening: bool = False) -> Callable[..., sqlite3.Connection] | None:
     """LINA: a connection factory when the host routes *database* to its Postgres store, else None."""
     try:
         from plugins.context_engine.lcm_x_store import backend_for
     except ImportError:
         return None
-    return backend_for(database)
+    return backend_for(database, opening=opening)
 
 
 def connect_database(database: str | os.PathLike, **kwargs: object) -> sqlite3.Connection:
@@ -60,7 +60,7 @@ def is_store_connection(conn: object) -> bool:
 
 def open_connection(policy: ConnectionPolicy) -> sqlite3.Connection:
     """Run exactly the supplied recipe, preserving caller-owned error cleanup."""
-    backend = store_backend(policy.database)
+    backend = store_backend(policy.database, opening=True)
     if backend is not None:
         # LINA: the SQLite pragmas of before_row_factory do not apply to the store.
         conn = backend(**dict(policy.connect_kwargs))

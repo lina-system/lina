@@ -213,13 +213,16 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_messages (
     observed_at double precision,
     observed_at_source text,
     sender_id text,
-    sender_source text
+    sender_source text,
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS (store_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.metadata (
     agent_id text NOT NULL DEFAULT public.lina_current_agent(),
     key text,
     value text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, key)
 );
 
@@ -227,6 +230,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_migration_state (
     agent_id text NOT NULL DEFAULT public.lina_current_agent(),
     step_name text,
     completed_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, step_name)
 );
 
@@ -246,6 +250,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_lifecycle_state (
     last_rollover_at double precision,
     last_reset_at double precision,
     updated_at double precision NOT NULL DEFAULT (floor(extract(epoch FROM now()))),
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, conversation_id)
 );
 
@@ -262,7 +267,9 @@ CREATE TABLE IF NOT EXISTS ctx.summary_nodes (
     created_at double precision NOT NULL,
     earliest_at double precision,
     latest_at double precision,
-    expand_hint text DEFAULT ''
+    expand_hint text DEFAULT '',
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS (node_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.summary_node_provenance (
@@ -271,6 +278,7 @@ CREATE TABLE IF NOT EXISTS ctx.summary_node_provenance (
     escalation_level bigint NOT NULL,
     model text NOT NULL DEFAULT '',
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS (node_id) STORED,
     PRIMARY KEY (agent_id, node_id)
 );
 
@@ -291,6 +299,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_assertion_sources (
     processed_at double precision NOT NULL DEFAULT (floor(extract(epoch FROM now()))),
     invalidated_at double precision,
     invalidation_reason text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, source_store_id, extraction_version, source_content_sha256),
     CHECK(
                 (invalidated_at IS NULL AND invalidation_reason IS NULL)
@@ -325,6 +334,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_assertions (
     source_quote text NOT NULL,
     confidence double precision NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
     created_at double precision NOT NULL DEFAULT (floor(extract(epoch FROM now()))),
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, assertion_id),
     CHECK(valid_from IS NULL OR valid_to IS NULL OR valid_to > valid_from)
 );
@@ -346,6 +356,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_assertion_relations (
     source_quote text NOT NULL,
     confidence double precision NOT NULL CHECK(confidence >= 0.0 AND confidence <= 1.0),
     created_at double precision NOT NULL DEFAULT (floor(extract(epoch FROM now()))),
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, relation_id),
     CHECK(from_assertion_id <> to_assertion_id)
 );
@@ -357,6 +368,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_query_corpus_state (
     max_store_id bigint NOT NULL DEFAULT 0 CHECK(max_store_id >= 0),
     row_count bigint NOT NULL DEFAULT 0 CHECK(row_count >= 0),
     changed_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS (singleton) STORED,
     PRIMARY KEY (agent_id, singleton)
 );
 
@@ -371,6 +383,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_query_corpus_events (
     role text NOT NULL DEFAULT '',
     source_timestamp double precision,
     changed_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS (generation) STORED,
     PRIMARY KEY (agent_id, generation)
 );
 
@@ -392,6 +405,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_query_views (
     created_at double precision NOT NULL,
     updated_at double precision NOT NULL,
     expires_at double precision,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, view_id)
 );
 
@@ -408,6 +422,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_query_view_versions (
     published_at double precision NOT NULL,
     expires_at double precision,
     supersedes_version bigint,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, view_id, version)
 );
 
@@ -426,6 +441,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_query_view_sources (
     span_end bigint NOT NULL CHECK(span_end > span_start),
     quote text NOT NULL,
     assertion_id text NOT NULL DEFAULT '',
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, view_id, version, source_store_id, span_start, span_end)
 );
 
@@ -443,6 +459,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_profile (
     active bigint DEFAULT 1,
     archived_at text NULL,
     data_version bigint NOT NULL DEFAULT 0,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, identity_hash)
 );
 
@@ -454,6 +471,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_meta (
     embedded_at text,
     source_token_count bigint,
     archived bigint DEFAULT 0,
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, embedded_id, embedded_kind, identity_hash)
 );
 
@@ -468,6 +487,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_backfill_inflight (
     request_id text,
     updated_at double precision,
     last_error text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, embedded_id, identity_hash)
 );
 
@@ -478,6 +498,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_binary (
     embedded_id text,
     identity_hash text,
     bits bytea NOT NULL,
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, embedded_id, identity_hash)
 );
 
@@ -498,6 +520,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_rollups (
     lease_expires_at text,
     lease_nonce text NOT NULL DEFAULT '',
     failed_at text,
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS (rollup_id) STORED,
     UNIQUE (agent_id, period_kind, period_start, scope)
 );
 
@@ -505,6 +529,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_rollup_sources (
     agent_id text NOT NULL DEFAULT public.lina_current_agent(),
     rollup_id bigint NOT NULL,
     node_id bigint NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, rollup_id, node_id)
 );
 
@@ -517,7 +542,9 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_rollup_invalidations (
     covered_end double precision NOT NULL,
     next_day text,
     operation text NOT NULL CHECK(operation IN ('insert', 'delete', 'update')),
-    created_at double precision NOT NULL DEFAULT (floor(extract(epoch FROM now())))
+    created_at double precision NOT NULL DEFAULT (floor(extract(epoch FROM now()))),
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS (event_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_rollup_state (
@@ -526,6 +553,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_rollup_state (
     scope text NOT NULL DEFAULT '',
     last_build_cursor text,
     last_built_at text,
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, period_kind, scope)
 );
 
@@ -540,6 +569,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_chunk_meta (
     token_estimate bigint,
     embedded_at text,
     archived bigint DEFAULT 0,
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, chunk_id, identity_hash)
 );
 
@@ -550,6 +581,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_chunk_binary (
     chunk_id text,
     identity_hash text,
     bits bytea NOT NULL,
+    access_scope text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, chunk_id, identity_hash)
 );
 
@@ -562,6 +595,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_entities (
     status text NOT NULL CHECK(status IN ('active','merged','forgotten')),
     merged_into text,
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, entity_id)
 );
 
@@ -576,7 +610,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_entity_aliases (
     owner_entity_id text,
     source_store_ids text NOT NULL CHECK(ctx.json_type(source_store_ids)='array'),
     created_at double precision NOT NULL,
-    retired_at double precision
+    retired_at double precision,
+    rowid bigint GENERATED ALWAYS AS (alias_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_entity_keys (
@@ -589,7 +624,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_entity_keys (
     source_store_ids text NOT NULL CHECK(ctx.json_type(source_store_ids)='array'),
     scope_key text NOT NULL,
     created_at double precision NOT NULL,
-    retired_at double precision
+    retired_at double precision,
+    rowid bigint GENERATED ALWAYS AS (key_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_memory_notes (
@@ -608,6 +644,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_memory_notes (
     retracts_note_id text,
     retracts_store_ids text NOT NULL CHECK(ctx.json_type(retracts_store_ids)='array'),
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, note_id),
     CHECK(ctx.json_array_length(cites)>0 OR ctx.json_array_length(cites_file_revisions)>0)
 );
@@ -620,7 +657,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_memory_events (
     payload_json text NOT NULL,
     actor text NOT NULL,
     created_at double precision NOT NULL,
-    target_event_id bigint CHECK(target_event_id IS NULL OR op='undo')
+    target_event_id bigint CHECK(target_event_id IS NULL OR op='undo'),
+    rowid bigint GENERATED ALWAYS AS (event_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_memory_host_file_revisions (
@@ -632,6 +670,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_memory_host_file_revisions (
     content_hash text NOT NULL,
     captured_at double precision NOT NULL,
     profile_key text NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, revision_id)
 );
 
@@ -639,6 +678,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_teams_tenants (
     agent_id text NOT NULL DEFAULT public.lina_current_agent(),
     tenant_id text,
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, tenant_id)
 );
 
@@ -649,6 +689,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_teams_principals (
     status text NOT NULL CHECK(status IN ('active', 'suspended')),
     created_at double precision NOT NULL,
     updated_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, principal_id)
 );
 
@@ -658,6 +699,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_teams_collections (
     tenant_id text NOT NULL,
     kind text NOT NULL CHECK(kind IN ('own', 'shared')),
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, collection_id)
 );
 
@@ -667,6 +709,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_teams_memberships (
     collection_id text NOT NULL,
     grants text NOT NULL,
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, principal_id, collection_id)
 );
 
@@ -676,6 +719,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_teams_revisions (
     policy_revision bigint NOT NULL DEFAULT 0,
     membership_revision bigint NOT NULL DEFAULT 0,
     revocation_epoch bigint NOT NULL DEFAULT 0,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, tenant_id)
 );
 
@@ -688,7 +732,8 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_teams_audit (
     operation text NOT NULL,
     allowed bigint NOT NULL CHECK(allowed IN (0, 1)),
     denial_reason text,
-    detail text
+    detail text,
+    rowid bigint GENERATED ALWAYS AS (event_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_teams_requests (
@@ -700,6 +745,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_teams_requests (
     principal_id text,
     recorded_at double precision NOT NULL,
     result_json text,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, tenant_id, request_id)
 );
 
@@ -711,7 +757,8 @@ CREATE TABLE IF NOT EXISTS ctx.message_relations (
     related_store_id bigint,
     ordinal bigint,
     observed_at double precision,
-    created_at double precision
+    created_at double precision,
+    rowid bigint GENERATED ALWAYS AS (relation_id) STORED
 );
 
 CREATE TABLE IF NOT EXISTS ctx.host_uid_bindings (
@@ -724,7 +771,8 @@ CREATE TABLE IF NOT EXISTS ctx.host_uid_bindings (
     proof_kind text,
     created_at double precision,
     first_check text,
-    disagree_seen bigint NOT NULL DEFAULT 0
+    disagree_seen bigint NOT NULL DEFAULT 0,
+    rowid bigint GENERATED ALWAYS AS IDENTITY
 );
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_corpora (
@@ -741,6 +789,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_corpora (
     status text NOT NULL CHECK(status IN ('building', 'complete', 'invalid')),
     created_at double precision NOT NULL,
     completed_at double precision,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, singleton),
     UNIQUE (agent_id, identity_digest)
 );
@@ -757,6 +806,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_sources (
     outcome text,
     state_count bigint NOT NULL CHECK(state_count > 0),
     inserted_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS (source_id) STORED,
     UNIQUE (agent_id, trajectory_id),
     UNIQUE (agent_id, ordinal)
 );
@@ -778,6 +828,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_states (
     occurred_at double precision,
     occurred_at_source text,
     ingested_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS (state_id) STORED,
     UNIQUE (agent_id, source_id, state_index),
     UNIQUE (agent_id, source_id, sequence_ordinal)
 );
@@ -789,6 +840,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_assets (
     relative_path text NOT NULL,
     sha256 text NOT NULL,
     byte_size bigint NOT NULL CHECK(byte_size >= 0),
+    rowid bigint GENERATED ALWAYS AS (asset_id) STORED,
     UNIQUE (agent_id, state_id)
 );
 
@@ -798,6 +850,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_ingest_receipts (
     trajectory_id text NOT NULL,
     source_sha256 text NOT NULL,
     committed_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, ordinal),
     UNIQUE (agent_id, trajectory_id)
 );
@@ -810,6 +863,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_transitions (
     pre_state_id bigint NOT NULL REFERENCES ctx.lcm_trajectory_states(state_id) ON DELETE CASCADE,
     post_state_id bigint NOT NULL REFERENCES ctx.lcm_trajectory_states(state_id) ON DELETE CASCADE,
     incoming_action text,
+    rowid bigint GENERATED ALWAYS AS (transition_id) STORED,
     UNIQUE (agent_id, source_id, sequence_ordinal),
     UNIQUE (agent_id, source_id, post_state_id)
 );
@@ -826,6 +880,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_embedding_profiles (
     index_digest text NOT NULL,
     active bigint NOT NULL DEFAULT 0 CHECK(active IN (0, 1)),
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, profile_digest)
 );
 
@@ -836,6 +891,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_embeddings (
     document_sha256 text NOT NULL,
     vector bytea NOT NULL,
     embedded_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, source_id),
     FOREIGN KEY (agent_id, profile_digest)
         REFERENCES ctx.lcm_trajectory_embedding_profiles (agent_id, profile_digest) ON DELETE CASCADE
@@ -852,6 +908,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_state_embedding_profiles (
     state_count bigint NOT NULL CHECK(state_count >= 0),
     active bigint NOT NULL DEFAULT 0 CHECK(active IN (0, 1)),
     created_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, profile_digest)
 );
 
@@ -862,6 +919,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_trajectory_state_embeddings (
     document_sha256 text NOT NULL,
     vector bytea NOT NULL,
     embedded_at double precision NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
     PRIMARY KEY (agent_id, state_id),
     FOREIGN KEY (agent_id, profile_digest)
         REFERENCES ctx.lcm_trajectory_state_embedding_profiles (agent_id, profile_digest) ON DELETE CASCADE
@@ -942,8 +1000,10 @@ SELECT p.store_id,
        p.observed_at_source,
        p.sender_id,
        p.sender_source,
+       p.access_scope,
        p.text_uid,
-       p.content_sha256
+       p.content_sha256,
+       p.store_id AS rowid
 FROM ctx.lcm_messages AS p
 JOIN memory.messages AS m ON m.uid = p.text_uid;
 
@@ -981,7 +1041,7 @@ CREATE OR REPLACE FUNCTION ctx.pragma_table_info(relation text)
       FROM pg_class AS c
       JOIN pg_attribute AS a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
       LEFT JOIN pg_attrdef AS d ON d.adrelid = c.oid AND d.adnum = a.attnum
-     WHERE c.relnamespace = 'ctx'::regnamespace AND c.relname = relation AND a.attname <> 'agent_id'
+     WHERE c.relnamespace = 'ctx'::regnamespace AND c.relname = relation AND a.attname NOT IN ('agent_id', 'rowid')
      ORDER BY a.attnum $$;
 
 -- sqlite_master for LCM's existence checks ("is this table there"): the ctx tables, views, indexes and triggers.

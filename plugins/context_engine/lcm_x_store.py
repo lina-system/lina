@@ -60,16 +60,26 @@ def route_every_database(agent_for: Optional[Callable[[str], str]]) -> None:
     """Tests only: route every LCM-X database path, acting for ``agent_for(path)`` (None turns it off)."""
     global _route_every
     _route_every = agent_for
+    with _ROUTES_LOCK:
+        _route_every_seen.clear()
 
 
-def backend_for(database: Any) -> Optional[Callable[[], PgConnection]]:
-    """A connection factory when *database* is routed to the store, else None (LCM-X opens SQLite)."""
+_route_every_seen: set[str] = set()
+
+
+def backend_for(database: Any, *, opening: bool = False) -> Optional[Callable[..., PgConnection]]:
+    """A connection factory when *database* is routed to the store, else None (LCM-X opens SQLite). Under
+    ``route_every_database`` a path is routed once an LCM-X store opens it (*opening*); other connects to it follow."""
     if not isinstance(database, (str, Path)) or str(database).startswith(("file:", ":memory:")):
         return None
+    key = _route_key(database)
     with _ROUTES_LOCK:
-        agent = _ROUTES.get(_route_key(database)) if _ROUTES else None
-    if agent is None and _route_every is not None and Path(str(database)).name != "state.db":
-        agent = _route_every(_route_key(database))
+        agent = _ROUTES.get(key) if _ROUTES else None
+        if agent is None and _route_every is not None and Path(key).name != "state.db":
+            if opening:
+                _route_every_seen.add(key)
+            if key in _route_every_seen:
+                agent = _route_every(key)
     if agent is None:
         return None
     def connect(**connect_kwargs: Any) -> PgConnection:
@@ -171,6 +181,15 @@ _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\bLIMIT\s+-1\b", re.IGNORECASE), "LIMIT ALL"),
     (re.compile(r"\s+WITHOUT\s+ROWID\b", re.IGNORECASE), ""),
     (re.compile(r"\s+(?:INDEXED\s+BY\s+\w+|NOT\s+INDEXED)\b", re.IGNORECASE), ""),
+    # SQLite's 0/1 in a boolean position (`NOT 0`, `(0 AND x)`, `WHERE 1`) and a parameter there (`AND ?`).
+    (re.compile(r"\b(NOT|AND|OR|WHERE|ON)\s+([01])\b(?!\s*(?:[-=<>!+*/%|,.]|IS\b|IN\b|BETWEEN\b|LIKE\b))",
+                re.IGNORECASE), lambda m: f"{m.group(1)} {'TRUE' if m.group(2) == '1' else 'FALSE'}"),
+    (re.compile(r"\b(AND|OR|WHERE|NOT|ON)\s*\(\s*([01])\s*\)", re.IGNORECASE),
+     lambda m: f"{m.group(1)} ({'TRUE' if m.group(2) == '1' else 'FALSE'})"),
+    (re.compile(r"\(\s*([01])\s+(AND|OR)\b", re.IGNORECASE),
+     lambda m: f"({'TRUE' if m.group(1) == '1' else 'FALSE'} {m.group(2)}"),
+    (re.compile(r"\b(AND|OR|NOT)\s+(\x01\d+\x01)(?=\s*(?:\)|AND\b|OR\b|$))", re.IGNORECASE),
+     lambda m: f"{m.group(1)} ({m.group(2)} <> 0)"),
     (re.compile(r"\bhex\s*\(", re.IGNORECASE), "ctx.hex("),
     (re.compile(r"\bchar\s*\(", re.IGNORECASE), "ctx.char("),
 )
@@ -368,7 +387,8 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     if insert:
         cols = tuple(c.strip().strip('"') for c in insert.group(2).split(",")) if insert.group(2) else ()
         return Template((), kind="message_insert", detail=((insert.group(1) or "").upper(), cols, insert.group(3)))
-    if re.match(r"\s*UPDATE\s+messages\s+SET\s+(?:[^=]*,\s*)?content\s*=", stripped, re.IGNORECASE):
+    if re.match(r"\s*UPDATE\s+messages\s+SET\s+(?:.*?,\s*)?(content|role|tool_call_id|tool_calls|tool_name)\s*=",
+                stripped, re.IGNORECASE | re.DOTALL):
         return Template((stripped,), kind="message_content_update")
     # strftime('%s','now') is SQLite's "epoch seconds now"; as text it would not go into a REAL column here.
     stripped = re.sub(r"\bstrftime\s*\(\s*'%s'\s*,\s*'now'\s*\)", "ctx.unixepoch()", stripped, flags=re.IGNORECASE)
@@ -532,7 +552,7 @@ class Catalog:
             "WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v') AND a.attnum > 0 "
             "AND NOT a.attisdropped ORDER BY c.relname, a.attnum").fetchall()
         for table, column, _num, identity in rows:
-            if column not in _HIDDEN_COLUMNS.get(table, ()) and column != "agent_id":
+            if column not in _HIDDEN_COLUMNS.get(table, ()) and column not in ("agent_id", "rowid"):
                 self._columns.setdefault(table, []).append(column)
             if identity:
                 self._identity[table] = column
@@ -799,6 +819,7 @@ class PgConnection:
         self.total_changes = 0
         self._message_uid: Optional[str] = None
         self._returned: list[int] = []
+        self._trace: Optional[Callable[[str], None]] = None
         self._text = _TextLink(agent_id)
         self._closed = False
 
@@ -866,7 +887,12 @@ class PgConnection:
         self._progress = (handler, n)
 
     def set_trace_callback(self, callback) -> None:
+        """Statements are reported as LCM-X wrote them (its SQLite SQL), as SQLite reports what it runs."""
         self._trace = callback
+
+    def set_authorizer(self, callback) -> None:
+        """SQLite's statement authorizer; on the store a read-only connection is a read-only transaction."""
+        self._authorizer = callback
 
     def setlimit(self, category: int, limit: int) -> int:
         """SQLite's per-connection limits have no store counterpart; the old value is reported as unlimited."""
@@ -895,8 +921,10 @@ class PgConnection:
         except psycopg.Error as exc:
             raise _sqlite_error(exc) from exc
 
-    def _begin(self) -> None:
+    def _begin(self, *, traced: bool = True) -> None:
         if not self._in_tx:
+            if traced and self._trace is not None:
+                self._trace("BEGIN ")
             self._raw("BEGIN")
             self._in_tx = True
 
@@ -904,6 +932,8 @@ class PgConnection:
         if self._closed:
             raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
         template = translate(sql, self._catalog)
+        if self._trace is not None:
+            self._trace(sql)
         with self._lock:
             handler = _KINDS.get(template.kind)
             if handler is not None:
@@ -963,7 +993,7 @@ class PgConnection:
         stmt = _apply_rewrites(template.parts[0]).strip().rstrip(";")
         word = stmt.split()[0].upper()
         if word == "BEGIN":
-            self._begin()
+            self._begin(traced=False)
         elif word in ("COMMIT", "END"):
             self.commit()
         elif word == "ROLLBACK" and not re.search(r"\bTO\b", stmt, re.IGNORECASE):
@@ -1058,9 +1088,13 @@ class PgConnection:
                 values[name] = (self.execute(f"SELECT {expr}", params[pos:pos + count]).fetchone()[0]
                                 if expr != "?" else params[pos])
                 pos += count
-            content = values.pop("content")
-            uid, digest = self._text.resolve(message_uid=None, session_id=current[0], role=current[1], content=content,
-                                             tool_call_id=current[2], tool_calls=current[3], tool_name=current[4])
+            text = dict(zip(("session_id", "role", "tool_call_id", "tool_calls", "tool_name", "content"), current))
+            for field in ("role", "tool_call_id", "tool_calls", "tool_name", "content"):
+                if field in values:
+                    text[field] = values.pop(field)
+            uid, digest = self._text.resolve(message_uid=None, session_id=text["session_id"], role=text["role"],
+                                             content=text["content"], tool_call_id=text["tool_call_id"],
+                                             tool_calls=text["tool_calls"], tool_name=text["tool_name"])
             values["text_uid"], values["content_sha256"] = uid, digest
             names = list(values)
             if self.isolation_level is not None:

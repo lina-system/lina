@@ -6,7 +6,8 @@ CREATE OR REPLACE VIEW ctx.lcm_embedding_vectors WITH (security_invoker = true) 
 SELECT e.item_id AS rowid,
        e.item_id::text AS embedded_id,
        p.identity_hash,
-       subvector(e.embedding, 1, p.dim::int)::vector AS vec
+       subvector(e.embedding, 1, p.dim::int)::vector AS vec,
+       NULL::text AS access_scope
 FROM vec.embeddings AS e
 JOIN ctx.lcm_embedding_profile AS p ON p.model_name = e.model AND p.dim <= e.dim
 WHERE e.kind = 'summary';
@@ -58,7 +59,8 @@ CREATE OR REPLACE VIEW ctx.lcm_chunk_vectors WITH (security_invoker = true) AS
 SELECT c.chunk_id AS rowid,
        p.store_id || ':' || split_part(c.source, ':', 2) AS chunk_id,
        prof.identity_hash,
-       subvector(e.embedding, 1, prof.dim::int)::vector AS vec
+       subvector(e.embedding, 1, prof.dim::int)::vector AS vec,
+       NULL::text AS access_scope
 FROM vec.chunks AS c
 JOIN vec.embeddings AS e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
 JOIN memory.messages AS m ON m.message_id = c.message_ids[1]
@@ -125,3 +127,15 @@ BEGIN
 END $$;
 CREATE OR REPLACE TRIGGER lcm_chunk_meta_span AFTER INSERT OR UPDATE OF char_start, char_end ON ctx.lcm_chunk_meta
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_chunk_meta_span();
+
+-- LCM-X stamps access_scope on its vector rows too; on the store a vector's scope is its metadata row's, so an UPDATE
+-- of a vector view changes nothing.
+CREATE OR REPLACE FUNCTION ctx.lcm_vector_view_update() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+    RETURN NEW;
+END $$;
+CREATE OR REPLACE TRIGGER lcm_embedding_vectors_update INSTEAD OF UPDATE ON ctx.lcm_embedding_vectors
+    FOR EACH ROW EXECUTE FUNCTION ctx.lcm_vector_view_update();
+CREATE OR REPLACE TRIGGER lcm_chunk_vectors_update INSTEAD OF UPDATE ON ctx.lcm_chunk_vectors
+    FOR EACH ROW EXECUTE FUNCTION ctx.lcm_vector_view_update();
