@@ -10,6 +10,8 @@ from __future__ import annotations
 
 from typing import Any
 
+from hermes_state_store import content_digest, rewrite_rows
+
 
 class SessionApiContentMixin:
     """``SessionDB`` mixin: the ``api_content`` sidecar backfills."""
@@ -32,11 +34,14 @@ class SessionApiContentMixin:
         instead — it addresses the exact row and cannot land on a neighbour.
         """
         from hermes_state_messages import _scrub_surrogates
-        return self._write_rowcount(
-            "UPDATE messages SET api_content = ? WHERE id = (SELECT id FROM messages "
-            "WHERE session_id = ? AND role = 'user' AND active = 1 ORDER BY id DESC LIMIT 1"
-            ") AND content IS ?",
-            (_scrub_surrogates(api_content), session_id, self._encode_content(content)))
+        def _do(conn):
+            row = conn.execute(
+                "SELECT id FROM transcript_rows WHERE session_id = ? AND role = 'user' AND active = 1 "
+                "ORDER BY id DESC LIMIT 1", (session_id,)).fetchone()
+            return rewrite_rows(conn, self.message_store, [row[0]] if row else [],
+                {"api_content": _scrub_surrogates(api_content)}, where_sql=" AND content_digest IS ?",
+                where_params=(content_digest(self._encode_content(content)),))
+        return self._execute_write(_do)
 
     def set_message_api_content(
         self, session_id: str, row_id: int, content: Any, api_content: str
@@ -61,7 +66,7 @@ class SessionApiContentMixin:
         from hermes_state_messages import _scrub_surrogates
         if not session_id or isinstance(row_id, bool) or not isinstance(row_id, int) or row_id <= 0:
             return 0
-        return self._write_rowcount(
-            "UPDATE messages SET api_content = ? WHERE id = ? AND session_id = ? "
-            "AND role = 'user' AND active = 1 AND content IS ?",
-            (_scrub_surrogates(api_content), row_id, session_id, self._encode_content(content)))
+        return self._execute_write(lambda conn: rewrite_rows(
+            conn, self.message_store, [row_id], {"api_content": _scrub_surrogates(api_content)},
+            where_sql=" AND session_id = ? AND role = 'user' AND active = 1 AND content_digest IS ?",
+            where_params=(session_id, content_digest(self._encode_content(content)))))

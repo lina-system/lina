@@ -90,7 +90,7 @@ def test_stale_sweep_does_not_archive_pinned_session(db):
     old = time.time() - 10 * 86400
     db._conn.execute("UPDATE sessions SET started_at = ? WHERE id IN (?, ?)", (old, "keep", "drop"))
     db._conn.execute(
-        "UPDATE messages SET timestamp = ? WHERE session_id IN (?, ?)",
+        "UPDATE transcript_rows SET timestamp = ? WHERE session_id IN (?, ?)",
         (old, "keep", "drop"),
     )
     db._conn.commit()

@@ -84,7 +84,7 @@ def test_repaired_reload_commit_archives_only_held_rows(tmp_path, case):
         assert live == expected
         # A live row is never also summarized away: recall would return it twice.
         recalled = [row[0] for row in db._conn.execute(
-            "SELECT content FROM messages WHERE session_id = 'sid' AND (active = 1 OR compacted = 1)").fetchall()]
+            "SELECT msg_text(text_uid, 'content') FROM transcript_rows WHERE session_id = 'sid' AND (active = 1 OR compacted = 1)").fetchall()]
         assert [recalled.count(content) for content in live] == [1] * len(live)
     finally:
         db.close()

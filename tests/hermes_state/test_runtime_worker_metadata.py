@@ -64,7 +64,7 @@ def test_worker_route_and_api_content_preserve_exact_usage_and_target_fences(tmp
         assert store.set_latest_user_api_content('owned', 'wrong', 'must-not-land') == 0
         assert store.set_latest_user_api_content('owned', [{'type': 'text', 'text': 'visible'}], 'wire-only') == 1
         with db._read_ctx() as conn:
-            assert conn.execute('SELECT api_content FROM messages WHERE session_id=?', ('owned',)).fetchone()[0] == 'wire-only'
+            assert conn.execute("SELECT msg_text(text_uid, 'api_content') FROM transcript_rows WHERE session_id=?", ('owned',)).fetchone()[0] == 'wire-only'
             usage = [tuple(r) for r in conn.execute(
                 'SELECT model,billing_provider,input_tokens,output_tokens FROM session_model_usage WHERE session_id=? ORDER BY model', ('owned',))]
         assert usage == [('first', 'provider-one', 11, 7), ('second', 'provider-two', 13, 3)]
@@ -104,7 +104,7 @@ def test_turn_prologue_row_backfills_land_through_the_worker_like_direct(worker)
 
     def newest_user(sid):
         with db._read_ctx() as conn:
-            return tuple(conn.execute("SELECT content, api_content FROM messages WHERE session_id=? AND role='user' "
+            return tuple(conn.execute("SELECT msg_text(text_uid, 'content'), msg_text(text_uid, 'api_content') FROM transcript_rows WHERE session_id=? AND role='user' "
                                       "ORDER BY id DESC LIMIT 1", (sid,)).fetchone())
 
     durable = {}

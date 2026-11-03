@@ -52,7 +52,7 @@ def _backdate_session(db: SessionDB, session_id: str, ts: float) -> None:
 
 def _set_message_timestamps(db: SessionDB, session_id: str, ts: float) -> None:
     db._conn.execute(
-        "UPDATE messages SET timestamp = ? WHERE session_id = ?", (ts, session_id)
+        "UPDATE transcript_rows SET timestamp = ? WHERE session_id = ?", (ts, session_id)
     )
     db._conn.commit()
 

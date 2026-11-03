@@ -118,8 +118,9 @@ def test_corrupt_epoch_refuses_profile_sweep_with_separate_recovery(tmp_path, mo
     for home in homes:
         report = recover_session_database(snapshots[home], home / 'recovered.db')
         assert report['verified'] and report['source_unchanged']
-        with closing(sqlite3.connect(home / 'recovered.db')) as db:
-            assert db.execute('SELECT content FROM messages').fetchall() == [('snapshot transcript',)]
+        with SessionDB(home / 'recovered.db', read_only=True) as recovered:
+            assert [tuple(r) for r in recovered._conn.execute(
+                "SELECT msg_text(text_uid, 'content') FROM transcript_rows")] == [('snapshot transcript',)]
         assert (home / 'state.db').read_bytes() == originals[home][0]
 
 

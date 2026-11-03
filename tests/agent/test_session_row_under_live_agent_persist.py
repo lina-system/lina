@@ -21,7 +21,8 @@ def _drop_row(db, session_id):
     """The row vanishes under the agent WITHOUT a retirement tombstone (in-place store rebuild,
     profile-repair move). A canonical delete retires the id instead; see the last test."""
     def _do(conn):
-        conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+        from hermes_state_store import delete_rows
+        delete_rows(conn, db.message_store, "session_id = ?", (session_id,))
         assert conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,)).rowcount == 1
     db._execute_write(_do)
 

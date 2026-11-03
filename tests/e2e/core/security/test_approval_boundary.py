@@ -35,7 +35,10 @@ from tests.e2e.core._pending_fixes import known_gate
 from tests.e2e.core.security._helpers import BoundaryBreach, run_hermes, write_home
 from tests.fakes.fake_llm_provider import FakeLLMServer, Text, ToolCall
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell variants + process-group harness")
+pytestmark = [
+    pytest.mark.memory_store_per_module,
+    pytest.mark.skipif(sys.platform == "win32", reason="POSIX shell variants + process-group harness"),
+]
 
 MANUAL = "approvals:\n  mode: manual\n  timeout: 120\n"
 

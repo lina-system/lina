@@ -24,6 +24,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Dict, Iterable, List, Optional, Set, Tuple
 
+from hermes_state_store import delete_rows, insert_rows, text_columns_sql
 from hermes_state_common import (
     _id_chunks,
     _placeholders as _session_ids_placeholders,
@@ -57,7 +58,7 @@ def _table_columns(conn, table: str) -> list[str]:
 
 # Columns a moved message must NOT carry over verbatim: ``id`` is reassigned by the target's
 # AUTOINCREMENT and ``display_order`` points at a message id of the SOURCE store — left NULL, the
-# ``messages_display_order_insert`` trigger recomputes it from ``display_identity`` (a content hash,
+# ``transcript_rows_display_order_insert`` trigger recomputes it from ``display_identity`` (a content hash,
 # store-independent) or the new id.
 _MESSAGE_MOVE_SKIP = frozenset({"id", "display_order"})
 
@@ -154,7 +155,7 @@ class SessionProfileRepairMixin:
         return out
 
     def count_messages_all(self, session_id: str) -> int:
-        row = self._read_one("SELECT COUNT(*) FROM messages WHERE session_id = ?", (session_id,))
+        row = self._read_one("SELECT COUNT(*) FROM transcript_rows WHERE session_id = ?", (session_id,))
         return int(row[0]) if row else 0
 
     # ── in-store fixers ───────────────────────────────────────────────────────
@@ -221,8 +222,9 @@ class SessionProfileRepairMixin:
             prompt = _stored(session["system_prompt_hash"]) if session["system_prompt_hash"] else None
             # The tools[] pin is content-addressed the same way; a legacy inline list resolves to None.
             tool_pin = _stored(session["tool_names"]) if session["tool_names"] else None
-            messages = [dict(r) for r in conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? ORDER BY id", (session_id,))]
+            messages = [{k: v for k, v in dict(r).items()
+                         if k not in {"text_uid", "content_digest", "tool_call_count"}} for r in conn.execute(
+                f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE session_id = ? ORDER BY id", (session_id,))]
             usage = [dict(r) for r in conn.execute(
                 "SELECT * FROM session_model_usage WHERE session_id = ?", (session_id,))]
             return {"session": dict(session), "system_prompt": prompt, "tool_pin": tool_pin, "messages": messages,
@@ -262,7 +264,9 @@ class SessionProfileRepairMixin:
                 session["tool_names"] = self._store_system_prompt(conn, payload.get("tool_pin"))
             self._insert_row(conn, "sessions", session, skip=frozenset())
             for message in payload.get("messages") or []:
-                self._insert_row(conn, "messages", {**message, "session_id": session_id}, skip=_MESSAGE_MOVE_SKIP)
+                insert_rows(conn, self.message_store, [{**{k: v for k, v in message.items()
+                    if k not in _MESSAGE_MOVE_SKIP | {"text_uid", "content_digest", "tool_call_count"}},
+                    "session_id": session_id}])
             for usage in payload.get("usage") or []:
                 self._insert_row(conn, "session_model_usage", {**usage, "session_id": session_id}, skip=frozenset())
             return "imported"
@@ -283,7 +287,7 @@ class SessionProfileRepairMixin:
             if conn.execute("SELECT 1 FROM sessions WHERE id = ?", (session_id,)).fetchone() is None:
                 return False
             conn.execute("UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?", (session_id,))
-            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            delete_rows(conn, self.message_store, "session_id = ?", (session_id,))
             conn.execute("DELETE FROM session_model_usage WHERE session_id = ?", (session_id,))
             conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             self._delete_unreferenced_system_prompts(conn)

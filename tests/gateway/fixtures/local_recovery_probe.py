@@ -48,7 +48,8 @@ class Model(BaseHTTPRequestHandler):
 
 # Windows children need the system environment (Winsock, temp, PATHEXT); POSIX uses the first three.
 CHILD_ENV_KEYS = ('PATH', 'LANG', 'TZ', 'SYSTEMROOT', 'SYSTEMDRIVE', 'WINDIR', 'COMSPEC', 'TEMP', 'TMP', 'PATHEXT',
-                  'LOCALAPPDATA', 'APPDATA', 'PROGRAMDATA', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE')
+                  'LOCALAPPDATA', 'APPDATA', 'PROGRAMDATA', 'NUMBER_OF_PROCESSORS', 'PROCESSOR_ARCHITECTURE',
+                  'LINA_STORE_DSN')
 
 
 def child_env():

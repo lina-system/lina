@@ -105,15 +105,10 @@ class TestInPlaceCompaction:
             assert len(all_rows) == 10
             archived = [m for m in all_rows if not m.get("active", 1)]
             assert len(archived) == 8
-            # The originals remain FTS-searchable (active=0 is a content-
-            # preserving UPDATE; the fts triggers don't key on active).
-            hit = db._conn.execute(
-                "SELECT 1 FROM messages_fts f JOIN messages m ON m.id = f.rowid "
-                "WHERE m.session_id = ? AND messages_fts MATCH 'msg' AND m.active = 0 "
-                "LIMIT 1",
-                (sid,),
-            ).fetchone()
-            assert hit is not None
+            # Archived originals remain searchable through the memory store.
+            hits = db.search_messages("msg", include_inactive=True)
+            archived_ids = {message["id"] for message in archived}
+            assert any(hit["session_id"] == sid and hit["id"] in archived_ids for hit in hits)
             # Flush identity/cursor reset so next-turn appends diff against the
             # compacted transcript (rebuilds the identity set on next flush).
             assert agent._last_flushed_db_idx == 0

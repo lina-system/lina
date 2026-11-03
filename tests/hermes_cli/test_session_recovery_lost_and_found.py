@@ -24,7 +24,6 @@ from hermes_cli.session_lost_and_found import (
     _cli_recover_attempts,
     classify_lost_and_found_row,
     map_lost_and_found_rows,
-    rebuild_fts_indexes,
     stub_missing_parent_sessions,
 )
 from hermes_cli.session_recovery import (
@@ -111,7 +110,7 @@ def _make_schema_unreadable_source(path: Path) -> dict[str, int]:
     finally:
         conn.close()
     _corrupt_schema_page(path)
-    return {"sessions": 3, "messages": 27}
+    return {"sessions": 3, "transcript_rows": 27}
 
 
 # ── issue #80205: recoverable tail row next to a damaged rowid edge ─────────
@@ -158,7 +157,7 @@ def test_exact_lookup_recovers_tail_row_next_to_damaged_high_edge(
         allow_partial=True,
     )
 
-    copied = report["copy"]["messages"]
+    copied = report["copy"]["transcript_rows"]
     bounds = copied["rowid_bounds"]
     # Premise check: the high edge probe really failed; the bound came from the aggregate
     # (#98050) or, when that fails too, the synthetic-domain fallback.
@@ -168,7 +167,7 @@ def test_exact_lookup_recovers_tail_row_next_to_damaged_high_edge(
     conn = sqlite3.connect(str(output))
     try:
         recovered_ids = {
-            int(row[0]) for row in conn.execute("SELECT id FROM messages")
+            int(row[0]) for row in conn.execute("SELECT id FROM transcript_rows")
         }
     finally:
         conn.close()
@@ -233,9 +232,9 @@ def test_unreadable_schema_without_cli_names_the_sqlite3_requirement(
             allow_partial=True,
         )
     message = str(excinfo.value)
-    assert "sessions" in message and "messages" in message
+    assert "sessions" in message and "transcript_rows" in message
     assert "sqlite3" in message
-    assert ".recover" in message
+    assert "salvage" in message
     assert not output.exists()
 
 
@@ -255,7 +254,7 @@ def test_lost_and_found_lane_recovers_schema_unreadable_source(
     probe = sqlite3.connect(str(source))
     try:
         with pytest.raises(sqlite3.DatabaseError):
-            probe.execute("SELECT COUNT(*) FROM messages").fetchone()
+            probe.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()
     finally:
         probe.close()
 
@@ -271,7 +270,7 @@ def test_lost_and_found_lane_recovers_schema_unreadable_source(
     assert report["partial"] is True
     assert report["complete"] is False
     assert report["installed"] is False
-    assert report["unreadable_schemas"] == ["sessions", "messages"]
+    assert report["unreadable_schemas"] == ["sessions", "transcript_rows"]
     assert any(
         "BEST-EFFORT" in warning
         for warning in report["verification"]["warnings"]
@@ -282,22 +281,17 @@ def test_lost_and_found_lane_recovers_schema_unreadable_source(
         assert conn.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         assert conn.execute("PRAGMA foreign_key_check").fetchall() == []
         session_count = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-        message_count = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        message_count = conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
         orphans = conn.execute(
-            "SELECT COUNT(*) FROM messages WHERE session_id NOT IN "
+            "SELECT COUNT(*) FROM transcript_rows WHERE session_id NOT IN "
             "(SELECT id FROM sessions)"
-        ).fetchone()[0]
-        fts_matches = conn.execute(
-            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?",
-            ("payload",),
         ).fetchone()[0]
     finally:
         conn.close()
 
     assert session_count == expected["sessions"]
-    assert message_count == expected["messages"]
+    assert message_count == expected["transcript_rows"]
     assert orphans == 0
-    assert fts_matches == expected["messages"]
 
     # The output must open as a regular current-schema session database.
     recovered_db = SessionDB(db_path=output)
@@ -351,7 +345,7 @@ def test_lost_and_found_lane_recovers_page1_header_damaged_source(tmp_path: Path
     conn = sqlite3.connect(str(output))
     try:
         assert conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0] == 3
-        assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 27
+        assert conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0] == 27
     finally:
         conn.close()
 
@@ -370,7 +364,7 @@ def _make_synthetic_lost_and_found(
             str(row[1]) for row in schema.execute("PRAGMA table_info(sessions)")
         ]
         messages_columns = [
-            str(row[1]) for row in schema.execute("PRAGMA table_info(messages)")
+            str(row[1]) for row in schema.execute("PRAGMA table_info(transcript_rows)")
         ]
         usage_columns = [
             str(row[1])
@@ -476,7 +470,7 @@ def _make_synthetic_lost_and_found(
         conn.close()
     return {
         "sessions": 3,
-        "messages": 4,
+        "transcript_rows": 4,
         "session_model_usage": 1,
         "junk": 3,
     }
@@ -487,7 +481,7 @@ def test_classify_lost_and_found_row_sentinels() -> None:
         classify_lost_and_found_row(
             23, (None, "20260101_010101_aaa001", "user", "hi")
         )
-        == "messages"
+        == "transcript_rows"
     )
     assert (
         classify_lost_and_found_row(
@@ -579,10 +573,9 @@ def test_mapper_rebuilds_sessiondb_from_synthetic_lost_and_found(
         dest.execute("PRAGMA foreign_keys=OFF")
         mapping = map_lost_and_found_rows(lf_conn, dest)
         stubbing = stub_missing_parent_sessions(dest)
-        fts = rebuild_fts_indexes(dest)
 
         assert mapping["mapped"]["sessions"] == expected["sessions"]
-        assert mapping["mapped"]["messages"] == expected["messages"]
+        assert mapping["mapped"]["transcript_rows"] == expected["transcript_rows"]
         assert (
             mapping["mapped"]["session_model_usage"]
             == expected["session_model_usage"]
@@ -593,8 +586,8 @@ def test_mapper_rebuilds_sessiondb_from_synthetic_lost_and_found(
         # Orphaned children got stub parents — never deleted.
         assert stubbing["sessions_stubbed"] == 2  # ddd004 + eee005
         assert stubbing["messages_retained"] == 2
-        message_count = dest.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
-        assert message_count == expected["messages"]
+        message_count = dest.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
+        assert message_count == expected["transcript_rows"]
         usage_count = dest.execute(
             "SELECT COUNT(*) FROM session_model_usage"
         ).fetchone()[0]
@@ -616,12 +609,6 @@ def test_mapper_rebuilds_sessiondb_from_synthetic_lost_and_found(
         ).fetchone()
         assert row == ("telegram", "synthetic 20260202_020202_bbb002")
 
-        assert fts.get("messages_fts") == "rebuilt"
-        fts_hits = dest.execute(
-            "SELECT COUNT(*) FROM messages_fts WHERE messages_fts MATCH ?",
-            ("payload OR hello",),
-        ).fetchone()[0]
-        assert fts_hits == expected["messages"]
 
         assert dest.execute("PRAGMA integrity_check").fetchall() == [("ok",)]
         assert dest.execute("PRAGMA foreign_key_check").fetchall() == []
@@ -690,7 +677,7 @@ def _map_salvage_rows(
             str(row[1]) for row in schema.execute("PRAGMA table_info(sessions)")
         ]
         messages_columns = [
-            str(row[1]) for row in schema.execute("PRAGMA table_info(messages)")
+            str(row[1]) for row in schema.execute("PRAGMA table_info(transcript_rows)")
         ]
     finally:
         schema.close()
@@ -816,7 +803,7 @@ def test_plausibility_gate_flags_mis_mapped_message_timestamps(
     try:
         errors = session_recovery._lost_and_found_plausibility_errors(conn)
         assert len(errors) == 1
-        assert "messages.timestamp" in errors[0]
+        assert "transcript_rows.timestamp" in errors[0]
     finally:
         conn.close()
 
@@ -997,14 +984,14 @@ def test_upgraded_physical_layout_maps_cells_by_name(tmp_path: Path) -> None:
             str(row[1]) for row in declared.execute("PRAGMA table_info(sessions)")
         ]
         messages_declared = [
-            str(row[1]) for row in declared.execute("PRAGMA table_info(messages)")
+            str(row[1]) for row in declared.execute("PRAGMA table_info(transcript_rows)")
         ]
     finally:
         declared.close()
     # Premise: declared order really does differ from the physical order, so
     # a positional map cannot be correct.
     assert sessions_declared[:56] != list(_UPGRADED_SESSIONS_PHYSICAL)
-    assert messages_declared[:24] != list(_UPGRADED_MESSAGES_PHYSICAL)
+    assert "text_uid" in messages_declared and "content" not in messages_declared
 
     session_id = "20260701_101010_abc001"
     started_at = 1_754_000_000.0
@@ -1072,7 +1059,7 @@ def test_upgraded_physical_layout_maps_cells_by_name(tmp_path: Path) -> None:
             )
 
         insert(_UPGRADED_SESSIONS_PHYSICAL, 1, session_cells)
-        insert(_UPGRADED_MESSAGES_PHYSICAL, 100, message_cells)
+        insert(tuple(messages_declared), 100, {**message_cells, "text_uid": "agent:default:salvaged"})
         insert(_UPGRADED_USAGE_PHYSICAL, 200, usage_cells)
     finally:
         lf_conn.close()
@@ -1083,7 +1070,7 @@ def test_upgraded_physical_layout_maps_cells_by_name(tmp_path: Path) -> None:
         dest.execute("PRAGMA foreign_keys=OFF")
         report = map_lost_and_found_rows(lf_conn, dest)
         assert report["mapped"] == {
-            "sessions": 1, "messages": 1, "session_model_usage": 1,
+            "sessions": 1, "transcript_rows": 1, "session_model_usage": 1,
         }
         assert report["unrecognized_layout_rows"] == 0
 
@@ -1107,14 +1094,14 @@ def test_upgraded_physical_layout_maps_cells_by_name(tmp_path: Path) -> None:
         assert session["cwd"] == session_cells["cwd"]
         assert session["title_source"] == session_cells["title_source"]
 
-        timestamp, role, content, disposition, token_count = dest.execute(
-            "SELECT timestamp, role, content, effect_disposition, token_count "
-            "FROM messages WHERE session_id = ?",
+        timestamp, role, text_uid, disposition, token_count = dest.execute(
+            "SELECT timestamp, role, text_uid, effect_disposition, token_count "
+            "FROM transcript_rows WHERE session_id = ?",
             (session_id,),
         ).fetchone()
         assert timestamp == message_timestamp
         assert role == message_cells["role"]
-        assert content == message_cells["content"]
+        assert text_uid == "agent:default:salvaged"
         assert token_count == message_cells["token_count"]
         # The declared-order collision the issue names: timestamp must not
         # have been written into effect_disposition.
@@ -1151,7 +1138,7 @@ def test_plausibility_gate_ignores_stub_only_sessions(tmp_path: Path) -> None:
             ("20260812_140000_aaa000", "recovered", 0.0, "[best-effort recovered 1] session metadata was unreadable"),
         )
         conn.execute(
-            "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+            "INSERT INTO transcript_rows (session_id, role, text_uid, timestamp) VALUES (?, ?, ?, ?)",
             ("20260812_140000_aaa000", "user", "hi", now),
         )
         conn.commit()

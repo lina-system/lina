@@ -26,7 +26,7 @@ _ORIGINAL_VISIBLE_SQL = (
 def not_a_later_tool_copy_sql(alias: str) -> str:
     """Filter that drops *alias* rows that are a later copy of an archived tool result."""
     return (f" AND NOT ({alias}.role = 'tool' AND {alias}.message_uid IS NOT NULL AND EXISTS ("
-            f"SELECT 1 FROM messages AS original WHERE original.session_id = {alias}.session_id "
+            f"SELECT 1 FROM transcript_rows AS original WHERE original.session_id = {alias}.session_id "
             f"AND original.timestamp = {alias}.timestamp AND original.message_uid = {alias}.message_uid "
             "AND original.role = 'tool' AND original.active = 0 AND original.compacted = 1 "
             f"AND +original.display_order < {alias}.display_order AND {_ORIGINAL_VISIBLE_SQL}))")

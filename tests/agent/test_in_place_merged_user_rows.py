@@ -67,11 +67,11 @@ def test_compaction_over_an_unanswered_prompt_keeps_one_copy_of_every_row(sessio
     # The rows the killed turn left are live exactly once (an unanswered prompt only as the merged carried copy).
     assert [c for c in live if "U12x" in c] == expected
     recalled = [row["content"] for row in db._conn.execute(
-        "SELECT content FROM messages WHERE session_id = 'sid' AND (active = 1 OR compacted = 1)").fetchall()]
+        "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id = 'sid' AND (active = 1 OR compacted = 1)").fetchall()]
     carried = live[next(i for i, c in enumerate(live) if "Numbered steps" in c) + 1:]
     assert [recalled.count(content) for content in carried] == [carried.count(content) for content in carried]
     # No turn here uses a tool, so a live tool row is the killed turn's, appended behind the running turn.
     assert db._conn.execute(
-        "SELECT COUNT(*) FROM messages WHERE session_id = 'sid' AND active = 1"
-        " AND (role = 'tool' OR tool_calls IS NOT NULL)").fetchone()[0] == 0
+        "SELECT COUNT(*) FROM transcript_rows WHERE session_id = 'sid' AND active = 1"
+        " AND (role = 'tool' OR tool_call_count > 0)").fetchone()[0] == 0
     assert [c.split(" ")[0] for c in live[-2:]] == ["U15", "A15"]

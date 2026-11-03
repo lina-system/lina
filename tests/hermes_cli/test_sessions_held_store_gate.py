@@ -1,4 +1,4 @@
-"""`hermes sessions optimize|optimize-storage|prune` refuse while another process holds state.db (#110054).
+"""`hermes sessions optimize|prune` refuse while another process holds state.db (#110054).
 
 Running the storage rewrite underneath a fleet of live gateways put every agent into the retired-WAL
 refusal; the command now runs the same fail-closed holder scan doctor/repair use, names each holder as
@@ -63,8 +63,6 @@ def _args(action, force):
         return Namespace(dry_run=False, yes=True, never_active=False, include_archived=False,
                          include_pinned=False, **common,
                          **{name: None for name in sessions_cmd._FILTER_ARGS})
-    if action == "optimize-storage":
-        return Namespace(no_vacuum=False, yes=True, **common)
     return Namespace(**common)
 
 

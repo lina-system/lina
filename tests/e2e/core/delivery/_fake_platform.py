@@ -482,7 +482,7 @@ def _serve(spool: Path) -> None:  # pragma: no cover - runs in the child process
 # Test-process side ----------------------------------------------------------------------------
 
 
-_KEEP_ENV = ("PATH", "LANG", "LC_ALL", "TMPDIR", "PYTHONPATH", "VIRTUAL_ENV", "SYSTEMROOT")
+_KEEP_ENV = ("PATH", "LANG", "LC_ALL", "TMPDIR", "PYTHONPATH", "VIRTUAL_ENV", "SYSTEMROOT", "LINA_STORE_DSN")
 
 
 class GatewayProcess:
@@ -515,6 +515,9 @@ class GatewayProcess:
         return self.spool / f"child-{self.boots}.log"
 
     def env(self) -> dict[str, str]:
+        if not os.environ.get("LINA_STORE_DSN"):
+            from tests._fixtures.memory_store import PROCESS_STORE
+            PROCESS_STORE.app_dsn()
         env = {k: os.environ[k] for k in _KEEP_ENV if k in os.environ}
         env.update({
             "HOME": str(self.home), "HERMES_HOME": str(self.hermes_home),
@@ -719,27 +722,23 @@ def visible_copies(msgs: list[PlatformMessage], aid: str) -> list[Copy]:
 
 
 def persisted_answers(db_path: Path, aid: str) -> list[str]:
-    import sqlite3
+    from hermes_state import SessionDB
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
-    try:
-        rows = conn.execute(
-            "SELECT content FROM messages WHERE role='assistant' AND content LIKE ? ORDER BY id",
-            (f"%{header(aid)}%",)).fetchall()
-    finally:
-        conn.close()
+    with SessionDB(db_path=db_path, read_only=True) as db:
+        rows = db._read_all(
+            "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows "
+            "WHERE role='assistant' AND msg_text(text_uid, 'content') LIKE ? ORDER BY id",
+            (f"%{header(aid)}%",))
     return [r[0] for r in rows]
 
 
 def persisted_user_rows(db_path: Path, token: str) -> list[str]:
-    import sqlite3
+    from hermes_state import SessionDB
 
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
-    try:
-        rows = conn.execute("SELECT content FROM messages WHERE role='user' AND content LIKE ? ORDER BY id",
-                            (f"%{token}%",)).fetchall()
-    finally:
-        conn.close()
+    with SessionDB(db_path=db_path, read_only=True) as db:
+        rows = db._read_all(
+            "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows "
+            "WHERE role='user' AND msg_text(text_uid, 'content') LIKE ? ORDER BY id", (f"%{token}%",))
     return [r[0] for r in rows]
 
 

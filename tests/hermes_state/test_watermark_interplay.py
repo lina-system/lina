@@ -16,7 +16,6 @@ watermark) as if they were carried-forward tail.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -34,19 +33,15 @@ def db(tmp_path: Path):
 
 
 def _flags(db: SessionDB, session_id: str):
-    conn = sqlite3.connect(db.db_path)
-    conn.row_factory = sqlite3.Row
-    try:
+    with db._read_ctx() as conn:
         return [
             dict(r)
             for r in conn.execute(
-                "SELECT id, active, compacted, content FROM messages "
+                "SELECT id, active, compacted, msg_text(text_uid, 'content') AS content FROM transcript_rows "
                 "WHERE session_id = ? ORDER BY id",
                 (session_id,),
             ).fetchall()
         ]
-    finally:
-        conn.close()
 
 
 class TestWatermarkTailCountInterplay:

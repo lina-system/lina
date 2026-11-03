@@ -1,4 +1,4 @@
-"""Post-update maintenance for ``hermes update``: pre-update backup snapshot, state-db verify/restore, curator/FTS notices, FHS path guard, completion summary.
+"""Post-update maintenance for ``hermes update``: pre-update backup snapshot, state-db verify/restore, curator notices, FHS path guard, completion summary.
 
 Split out of ``update_cmd.py``, which re-imports every name so ``hermes_cli.update_cmd.<name>``
 still resolves/monkeypatches. Origin helpers are imported lazily per function (no cycle;
@@ -103,115 +103,6 @@ def _print_curator_first_run_notice() -> None:
     print("  Preview now:  hermes curator run --dry-run")
     print("  Pause it:     hermes curator pause")
     print("  Docs:         https://hermes-agent.nousresearch.com/docs/user-guide/features/curator")
-
-
-def _print_fts_optimize_available_notice() -> None:
-    """Advertise the opt-in FTS storage rebuild when state.db still needs one.
-
-    ``sessions.fts_optimize_notice``: ``advise`` (default), ``require`` (firmer), ``off``.
-    """
-    try:
-        from hermes_cli.config import load_config
-        mode = str(((load_config() or {}).get("sessions") or {}).get("fts_optimize_notice", "advise")).strip().lower()
-    except Exception:
-        mode = "advise"
-    if mode == "off":
-        return
-
-    try:
-        from hermes_constants import get_hermes_home
-        from hermes_state import SessionDB
-    except Exception:
-        return
-    db_path = get_hermes_home() / "state.db"
-    if not db_path.exists():
-        return
-    try:
-        size_gb = db_path.stat().st_size / (1024 ** 3)
-    except OSError:
-        return
-    # Small DBs: the win isn't worth the nag.
-    if size_gb < 0.5:
-        return
-    db = None
-    legacy_inline = False
-    drift: list[str] = []
-    try:
-        db = SessionDB(db_path=db_path, read_only=True)
-        # read_only opens skip schema init; probe the stored layout directly.
-        from hermes_state_fts import fts_layout_drift
-        drift = fts_layout_drift(db._conn)
-        legacy_inline = db._db_has_legacy_inline_fts(db._conn)
-        # Interrupted optimize-storage: v23 table shape but backfill markers / trash
-        # tables remain. Re-running resumes it, so offer the command again.
-        interrupted = bool(
-            db._conn.execute(
-                "SELECT 1 FROM state_meta "
-                "WHERE key = 'fts_rebuild_high_water' LIMIT 1"
-            ).fetchone()
-            or db._conn.execute(
-                "SELECT 1 FROM sqlite_master WHERE type = 'table' "
-                "AND name LIKE 'fts\\_v22\\_trash\\_%' ESCAPE '\\' LIMIT 1"
-            ).fetchone()
-            or db._conn.execute(
-                "SELECT 1 FROM state_meta WHERE key IN "
-                "('fts_cjk_rebuild_high_water', 'fts_cjk_stale') LIMIT 1"
-            ).fetchone()
-        )
-    except Exception:
-        return
-    finally:
-        if db is not None:
-            with suppress(Exception):
-                db.close()
-    if not drift and not interrupted:
-        return  # current layout already present (fresh/optimized)
-
-    if interrupted:
-        print()
-        print("◆ Session database optimization incomplete")
-        print(
-            "  A previous `hermes sessions optimize-storage` run was "
-            "interrupted. Search still works; re-run the command to resume "
-            "and finish reclaiming disk:"
-        )
-        print("    hermes sessions optimize-storage")
-        return
-
-    print()
-    if legacy_inline:
-        # The ~60% figure was measured for this transition only (inline copies of every message dropped).
-        est_reclaim = size_gb * 0.6
-        if mode == "require":
-            print("◆ Session database upgrade required")
-            print(
-                f"  Your search index uses the OLD storage layout and should be "
-                f"upgraded. The new layout typically frees ~60% of state.db "
-                f"(≈{est_reclaim:.1f} GB of your current {size_gb:.1f} GB) and is "
-                f"required for continued optimal operation."
-            )
-        else:
-            print("◆ Reclaim ~60% of your session database disk")
-            print(
-                f"  Your search index uses the old storage layout. Upgrading it "
-                f"typically frees ~60% of state.db — about {est_reclaim:.1f} GB "
-                f"of your current {size_gb:.1f} GB."
-            )
-    else:
-        if mode == "require":
-            print("◆ Search index rebuild required by your notice policy")
-        else:
-            print("◆ Search index update available")
-        print(
-            "  Your search index is on the compact layout from an earlier "
-            "optimization, but a later release changed it. Running the "
-            "command again rebuilds it in the current layout."
-        )
-    print("  Run when convenient:  hermes sessions optimize-storage")
-    print(
-        "  It runs in the foreground with a progress bar, is safe to "
-        "interrupt/re-run, and never changes your conversations."
-    )
 
 
 def _print_curator_recent_run_notice() -> None:
@@ -927,7 +818,7 @@ def _print_checkpoint_footprint_notice() -> None:
 
 
 def _print_post_update_notices_and_self_heals() -> None:
-    """Best-effort notices (FTS optimize, curator) and self-heals (FHS PATH, ACP launcher,
+    """Best-effort notices (curator) and self-heals (FHS PATH, ACP launcher,
     Windows bin launchers, cua-driver refresh) that run after the summary."""
     from hermes_cli.update_cmd import _m, _print_curator_first_run_notice, _print_curator_recent_run_notice
     from hermes_cli import _launchers
@@ -939,8 +830,6 @@ def _print_post_update_notices_and_self_heals() -> None:
         migrate_windows_bin_path(_m().PROJECT_ROOT)
 
     for message, step in (
-        # v23 FTS layout is opt-in (existing indexes untouched); surface the command here.
-        ('FTS optimize notice failed: %s', _print_fts_optimize_available_notice),
         ('Curator first-run notice failed: %s', _print_curator_first_run_notice),
         ('Curator recent-run notice failed: %s', _print_curator_recent_run_notice),
         ('FHS PATH guard check failed: %s', _ensure_fhs_path_guard),

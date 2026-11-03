@@ -8,6 +8,8 @@ import sqlite3
 import threading
 
 import pytest
+
+from hermes_state import SessionDB
 from tests.gateway.fixtures.local_recovery_probe import child_env, daemon, rpc, websocket
 from tests.gateway.test_session_mutation_model import CatalogModel
 from tests.waiting import async_wait_until
@@ -114,9 +116,11 @@ def run_compress_case(tmp_path, mode, in_place):
             # successor carries it, before its first turn and after it.
             assert (await call('session.stats', session_id=sid))['compression_count'] == 1
             retained = 1 if mode == 'safe' else cfg['compression']['min_tail_user_messages']
-            with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
+            with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+                db = state_db._conn
+                db.row_factory = None
                 tail_users = [row[0] for row in db.execute(
-                    "SELECT content FROM messages WHERE session_id=? AND active=1 AND role='user'",
+                    "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? AND active=1 AND role='user'",
                     (result['target_session_id'],))]
             for i in range(history_count - retained, history_count):
                 assert f'HISTORY_{i}' in tail_users, tail_users
@@ -139,19 +143,21 @@ def run_compress_case(tmp_path, mode, in_place):
                 expected_generation=after['execution_generation'])
             child = await call('session.resume', session_id=branch['branched_session_id'])
             assert 'SUMMARY_RETAINED_FACTS' in json.dumps(child['messages'])
-            with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
+            with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+                db = state_db._conn
+                db.row_factory = None
                 assert db.execute('SELECT end_reason FROM sessions WHERE id=?', (physical,)).fetchone()[0] == (
                     None if effective_in_place else 'compression')
                 assert db.execute('SELECT DISTINCT target_session_id FROM session_admissions').fetchall() == [(sid,)]
-                assert db.execute("SELECT session_id FROM messages WHERE role='user' AND content='AFTER_COMPRESSION' AND session_id!=?",
+                assert db.execute("SELECT session_id FROM transcript_rows WHERE role='user' AND msg_text(text_uid, 'content')='AFTER_COMPRESSION' AND session_id!=?",
                                   (branch['branched_session_id'],)).fetchall() == [(result['target_session_id'],)]
-                archived = db.execute('SELECT count(*) FROM messages WHERE session_id=? AND active=0 AND compacted=1', (physical,)).fetchone()[0]
+                archived = db.execute('SELECT count(*) FROM transcript_rows WHERE session_id=? AND active=0 AND compacted=1', (physical,)).fetchone()[0]
                 assert (archived > 0) is effective_in_place
                 if mode != 'normal':
                     assert not db.execute("SELECT execution_id FROM worker_executions WHERE status!='terminal'").fetchall()
                     journals = list((home / 'worker-outboxes').rglob('pending.json'))
                     assert journals and all(json.loads(p.read_text())['pending'] == [] for p in journals)
-                assert db.execute('SELECT count(*) FROM messages WHERE session_id=?', (physical,)).fetchone()[0] > 0
+                assert db.execute('SELECT count(*) FROM transcript_rows WHERE session_id=?', (physical,)).fetchone()[0] > 0
                 receipt = json.loads(db.execute('SELECT value FROM state_meta WHERE key=?',
                     ('gateway.local_policy.v1:' + sid,)).fetchone()[0])
                 assert receipt['entry']['session_id'] == result['target_session_id']

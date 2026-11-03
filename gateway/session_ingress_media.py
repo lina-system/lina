@@ -528,8 +528,10 @@ def _history_mentions(conn, references, after_id=0):
     prefixes = sorted({reference['sha256'] for reference in references})
     # The digests are ONE bound JSON array, never one ``instr`` term each: the statement's size
     # must not grow with the candidate count (SQLite's expression-depth limit fails at ~1000 terms).
-    query = ('WITH digests(value) AS MATERIALIZED (SELECT value FROM json_each(?)) SELECT content FROM messages '
-             'WHERE EXISTS (SELECT 1 FROM digests WHERE instr(content, digests.value))' + (' AND id>?' if after_id else ''))
+    query = ("WITH digests(value) AS MATERIALIZED (SELECT value FROM json_each(?)) "
+             "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows "
+             "WHERE EXISTS (SELECT 1 FROM digests WHERE instr(msg_text(text_uid, 'content'), digests.value))"
+             + (' AND id>?' if after_id else ''))
     mentioned = set()
     for (content,) in conn.execute(query, (json.dumps(prefixes), *((after_id,) if after_id else ()))):
         text = content.decode('utf-8', 'replace') if isinstance(content, bytes) else str(content)
@@ -558,7 +560,7 @@ def release_unheld_media(db, references, *, retain_history=True):
         with db._read_ctx() as conn:
             conn.execute('BEGIN')  # one snapshot: the id watermark and the scan agree
             try:
-                last_id = conn.execute('SELECT coalesce(max(id), 0) FROM messages').fetchone()[0]
+                last_id = conn.execute('SELECT coalesce(max(id), 0) FROM transcript_rows').fetchone()[0]
                 seen = _history_mentions(conn, references)
             finally:
                 if conn.in_transaction:

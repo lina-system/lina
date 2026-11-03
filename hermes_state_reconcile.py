@@ -62,7 +62,7 @@ def _reconcile_snapshot(path, guard):
 
 def _require_history_tables(conn):
     tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-    if {'sessions', 'messages'} - tables:
+    if {'sessions', 'transcript_rows'} - tables:
         raise RuntimeError('canonical history tables are missing; use sessions recover, not additive reconciliation')
 
 
