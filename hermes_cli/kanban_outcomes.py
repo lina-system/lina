@@ -443,10 +443,19 @@ def goal_outcome(conn: sqlite3.Connection, goal_id: str, *, now: Optional[int] =
         if tid != goal_id:
             claims.extend(e["created_at"] for e in events if e["kind"] == "claimed")
             stored = conn.execute("SELECT * FROM work_card_outcomes WHERE task_id=?", (tid,)).fetchone()
-            row = dict(stored) if stored else compute_outcome(conn, tid, now=now, include_active=True)
             if stored:
+                stored = dict(stored)
                 for column, empty in _JSON_COLUMNS.items():
-                    row[column] = json.loads(row[column]) if row[column] else empty.copy()
+                    stored[column] = json.loads(stored[column]) if stored[column] else empty.copy()
+            latest_event = max((e["created_at"] for e in events), default=card["created_at"])
+            if stored and card["status"] in ("done", "blocked") and stored["recorded_at"] >= latest_event:
+                row = stored
+            else:
+                row = compute_outcome(conn, tid, now=now, include_active=True)
+                if stored:
+                    for column in ("actual_size", "todo_sizes", "size_missed"):
+                        if stored[column] is not None:
+                            row[column] = stored[column]
             rows.append(row)
     first = min(claims, default=None)
     added = []

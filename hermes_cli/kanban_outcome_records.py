@@ -15,7 +15,8 @@ RESUME_KINDS = frozenset({"claimed", "unblocked", "promoted", "completed"})
 
 def short_text(value) -> str:
     lines = str(value or "").splitlines()
-    return redact_sensitive_text(lines[0] if lines else "", force=True)[:200]
+    return redact_sensitive_text(lines[0] if lines else "", force=True,
+                                 file_read=True, secret_file=True)[:200]
 
 
 def payload(event) -> dict:
@@ -62,15 +63,29 @@ def touch_records(task, comments, events, runs, own, now) -> list[dict]:
         touches.append({"at": at, "by": author, "source": source or {"surface": "legacy"},
                         "kind": "answer" if author in DEFAULT_OWNERS else "comment",
                         "line": short_text(comment["body"])})
+    _add_event_touches(touches, events, comments)
+    return sorted(touches, key=lambda item: item["at"])
+
+
+def _add_event_touches(touches, events, comments) -> None:
+    paired = set()
     for event in events:
         data = payload(event)
         kind = {"unblocked": "unblock", "edited": "edit", "linked": "link", "unlinked": "link"}.get(event["kind"])
         actor = unblock_actor(event, comments) if event["kind"] == "unblocked" else data.get("by")
         if kind and (actor or event["kind"] == "unblocked") and actor not in TOOL_NAMES:
+            line = short_text(data.get("reason"))
+            match = next((i for i, touch in enumerate(touches)
+                          if i not in paired and touch["kind"] in ("comment", "answer")
+                          and touch["by"] == actor and touch["at"] == event["created_at"]
+                          and touch["line"] == line), None) if kind == "unblock" and line else None
+            if match is not None:
+                touches[match]["kind"] = "answer" if actor in DEFAULT_OWNERS else "unblock"
+                paired.add(match)
+                continue
             touches.append({"at": event["created_at"], "by": actor,
                             "source": data.get("source") or {"surface": "board"},
-                            "kind": kind, "line": short_text(data.get("reason"))})
-    return sorted(touches, key=lambda item: item["at"])
+                            "kind": kind, "line": line})
 
 
 def unblock_actor(event, comments):
@@ -153,9 +168,13 @@ def learning_records(conn, task, comments, events, runs, now) -> dict:
     stops, stopped = stop_records(events, now, comments)
     waits = [e["created_at"] for e in events if e["kind"] == "goal_gate" and payload(e).get("exit_code") == 75]
     terminal = [e["created_at"] for e in events if e["kind"] in ("completed", "blocked", "gave_up")]
-    end = task["completed_at"] if task["status"] == "done" else max(terminal, default=now)
+    end = now
+    if task["status"] == "done":
+        end = task["completed_at"]
+    elif task["status"] == "blocked":
+        end = max(terminal, default=now)
     return {"assignee": implementer, "touches": touches,
-            "owner_answers": sum(t["by"] in DEFAULT_OWNERS for t in touches),
+            "owner_answers": sum(t["kind"] == "answer" and t["by"] in DEFAULT_OWNERS for t in touches),
             "main_session_touches": sum(t["by"] in own and t["by"] not in DEFAULT_OWNERS for t in touches),
             "replans": replan_records(comments, events, runs), "stops": stops,
             "reviews": review_records(runs, own), "stopped_seconds": stopped,
