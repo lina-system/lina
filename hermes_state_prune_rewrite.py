@@ -14,11 +14,11 @@ from typing import Any, Optional
 from agent.context_compressor import _DB_PERSISTED_MARKER as _DB_PERSISTED_MARKER_KEY
 from agent.message_metadata import DB_ROW_SNAPSHOT
 from hermes_state_common import _id_chunks, _placeholders
-from hermes_state_messages import _INSERT_MESSAGE_SQL, _parse_tool_calls
+from hermes_state_messages import _MESSAGE_WRITE_COLUMNS, _parse_tool_calls
+from hermes_state_store import rewrite_rows, text_columns_sql, text_sql
 
-# _INSERT_MESSAGE_SQL's columns in bind order, so a row rewrite can diff _message_row_params by name.
-_MESSAGE_ROW_COLUMNS = tuple(
-    column.strip() for column in _INSERT_MESSAGE_SQL.split("(", 1)[1].split(")", 1)[0].split(","))
+# _message_row_params' columns in bind order, so a row rewrite can diff them by name.
+_MESSAGE_ROW_COLUMNS = _MESSAGE_WRITE_COLUMNS
 # A prune only changes what a message says; who said it, when, and in which row never move.
 _PRUNE_FIXED_COLUMNS = frozenset({"session_id", "role", "tool_call_id", "timestamp", "active", "display_identity"})
 
@@ -58,7 +58,7 @@ class SessionPruneRewriteMixin:
         Chunked like ``stamp_inserted_row_snapshots``: one ``id IN (...)`` per ``_id_chunks`` batch,
         so a long history stays under SQLite's host-parameter limit instead of failing the pass.
         Rows without an exact ``_row_id`` but with both the persist marker and a CAS snapshot are
-        resolved by their logical ``message_uid`` (``idx_messages_session_uid``): the unaddressed
+        resolved by their logical ``message_uid`` (``idx_transcript_rows_session_uid``): the unaddressed
         live-replay loaders stamp exactly that pair, and a rewritten-in-place row is as lost a race
         there as a row-addressed one (#124102).
         """
@@ -92,7 +92,7 @@ class SessionPruneRewriteMixin:
         stored: dict[int, Any] = {}
         for chunk in _id_chunks(by_id):
             for row in conn.execute(
-                f"SELECT * FROM messages WHERE session_id = ? AND id IN ({_placeholders(chunk)})",
+                f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE session_id = ? AND id IN ({_placeholders(chunk)})",
                 (session_id, *chunk)).fetchall():
                 stored[int(row["id"])] = row
         by_uid_row: dict[str, Any] = {}
@@ -104,7 +104,7 @@ class SessionPruneRewriteMixin:
             # the held digest — the newest row was rewritten by another writer, and the lease-less
             # fallback would republish the stale held payload over that newer generation (#124102).
             row = conn.execute(
-                "SELECT * FROM messages WHERE session_id = ? AND active = 1 AND role = ? AND message_uid = ? "
+                f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = ? AND message_uid = ? "
                 "ORDER BY id DESC LIMIT 1",
                 (session_id, message.get("role"), uid)).fetchone()
             if row is not None:
@@ -178,19 +178,19 @@ class SessionPruneRewriteMixin:
                 ids = [row_id]
             elif role == "tool" and original.get("tool_call_id"):
                 ids = [int(row["id"]) for row in conn.execute(
-                    "SELECT id FROM messages WHERE session_id = ? AND active = 1 AND role = 'tool' AND tool_call_id = ?",
+                    "SELECT id FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = 'tool' AND tool_call_id = ?",
                     (session_id, original["tool_call_id"])).fetchall()]
             elif role == "assistant" and _call_ids(original.get("tool_calls")):
                 wanted = _call_ids(original.get("tool_calls"))
                 ids = [int(row["id"]) for row in conn.execute(
-                    "SELECT id, tool_calls FROM messages WHERE session_id = ? AND active = 1 AND role = 'assistant' "
-                    "AND tool_calls IS NOT NULL", (session_id,)).fetchall() if _call_ids(row["tool_calls"]) == wanted]
+                    f"SELECT id, {text_sql('tool_calls')} AS tool_calls FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = 'assistant' "
+                    "AND tool_call_count > 0", (session_id,)).fetchall() if _call_ids(row["tool_calls"]) == wanted]
             else:
                 ids = self._matching_active_ids(conn, session_id, original)
             if len(ids) != 1:
                 raise PruneRowUnresolvedError(f"{len(ids)} live rows match a pruned {role} message")
             row = conn.execute(
-                "SELECT * FROM messages WHERE id = ? AND session_id = ? AND active = 1", (ids[0], session_id)).fetchone()
+                f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE id = ? AND session_id = ? AND active = 1", (ids[0], session_id)).fetchone()
             if row is None or row["role"] != role:
                 raise PruneRowStaleError(f"row {ids[0]} no longer holds the pruned {role} message")
             snapshot = original.get(DB_ROW_SNAPSHOT)
@@ -237,32 +237,33 @@ class SessionPruneRewriteMixin:
             twin_columns = ", ".join(c for c in self._message_column_names(conn)
                                      if c not in ("id", "active", "compacted", "display_order"))
             for row_id, columns, values, identity, order, replacement in updates:
-                twin_id = conn.execute(f"INSERT INTO messages ({twin_columns}, active, compacted) "
-                             f"SELECT {twin_columns}, 0, 1 FROM messages WHERE id = ?", (row_id,)).lastrowid
+                twin_id = conn.execute(f"INSERT INTO transcript_rows ({twin_columns}, active, compacted) "
+                             f"SELECT {twin_columns}, 0, 1 FROM transcript_rows WHERE id = ?", (row_id,)).lastrowid
                 # The content UPDATE fires the identity trigger, which nulls the slot of the live row and of
                 # every visible row sharing its old identity: the twin and any earlier generation's copies.
                 peers = conn.execute(
-                    "SELECT id, display_order FROM messages WHERE session_id = ? AND id <> ? "
+                    "SELECT id, display_order FROM transcript_rows WHERE session_id = ? AND id <> ? "
                     "AND display_identity = ? AND (active = 1 OR compacted = 1)",
                     (session_id, row_id, identity)).fetchall() if identity is not None else [(twin_id, order)]
-                conn.execute(f"UPDATE messages SET {', '.join(f'{column} = ?' for column in columns)} WHERE id = ?",
-                             [*values, row_id])
+                rewrite_rows(conn, self.message_store, [row_id], dict(zip(columns, values)),
+                             where_sql=" AND session_id = ?", where_params=(session_id,))
                 # The superseded bodies keep their identity and slot. The live row takes the identity of what it
                 # now stores, so a later compaction's copy of it joins the same slot, and keeps the slot.
                 # The page shows one row per display_order, preferring the live one: the stub, in place.
-                conn.executemany("UPDATE messages SET display_identity = ?, display_order = ? WHERE id = ?",
+                conn.executemany("UPDATE transcript_rows SET display_identity = ?, display_order = ? WHERE id = ?",
                                  [(identity, order if peer_order is None else peer_order, peer_id)
                                   for peer_id, peer_order in peers])
                 live = conn.execute(
-                    "SELECT role, content, timestamp, tool_call_id, tool_calls, tool_name, display_kind, "
-                    "display_metadata FROM messages WHERE id = ?", (row_id,)).fetchone()
-                conn.execute("UPDATE messages SET display_identity = ?, display_order = ? WHERE id = ?",
+                    f"SELECT role, {text_sql('content')} AS content, timestamp, tool_call_id, "
+                    f"{text_sql('tool_calls')} AS tool_calls, tool_name, display_kind, "
+                    "display_metadata FROM transcript_rows WHERE id = ?", (row_id,)).fetchone()
+                conn.execute("UPDATE transcript_rows SET display_identity = ?, display_order = ? WHERE id = ?",
                              (self._display_identity(self._display_dedupe_key(live)), order, row_id))
                 # Stamp the replacement with the stored row's new CAS digest (read back, not the bind values):
                 # a second prune of this transcript must compare against what this commit wrote, not what it
                 # replaced, or it would false-stale against its own output (#124102).
                 final_row = conn.execute(
-                    "SELECT * FROM messages WHERE id = ?", (row_id,)).fetchone()
+                    f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE id = ?", (row_id,)).fetchone()
                 replacement[DB_ROW_SNAPSHOT] = transcript_row_snapshot(final_row)
             if patch:
                 conn.execute("UPDATE sessions SET model_config = ? WHERE id = ?", (patched_model_config, session_id))

@@ -182,6 +182,48 @@ def _migrate_checkpoint_identity(old_canon: str, new_canon: str) -> bool:
     return False
 
 
+def require_message_store_for_rename(profile_dir: Path, old_canon: str, new_canon: str) -> None:
+    """Refuse, before anything changes, a rename the memory store could not follow: the agent id is the profile's
+    directory name, so renaming moves its message text to the new agent (StoreUnavailableError when the store
+    owner cannot connect, MessageTextRestoreError when the new uids are taken by other text)."""
+    from hermes_state_store import check_agent_move, state_db_has_text
+    if state_db_has_text(profile_dir / "state.db"):
+        check_agent_move(old_canon, new_canon)
+
+
+@contextlib.contextmanager
+def text_moved_for_rename(profile_dir: Path, old_canon: str, new_canon: str):
+    """Move the profile's message text to the new agent before the directory moves; move it back when the
+    directory move fails, so a failed rename leaves the store as it was. The state.db follows after the move
+    (``_move_message_text``)."""
+    from hermes_state_store import move_agent_rows, return_agent_rows, state_db_has_text
+    moved = move_agent_rows(old_canon, new_canon) if state_db_has_text(profile_dir / "state.db") else []
+    try:
+        yield
+    except BaseException:
+        if moved:
+            return_agent_rows(moved, old_canon, new_canon)
+        raise
+
+
+def _move_message_text(old_canon: str, new_canon: str) -> bool:
+    """Move the profile's message text to the new agent (``hermes_state_store.move_agent_texts``)."""
+    import sqlite3
+
+    from hermes_cli.profiles import get_profile_dir
+    from hermes_state_store import StoreUnavailableError, move_agent_texts, state_db_has_text
+    db_path = get_profile_dir(new_canon) / "state.db"
+    if not state_db_has_text(db_path):
+        return True  # nothing to move: a profile without message text renames without the store
+    try:
+        move_agent_texts(db_path, old_canon, new_canon)
+    except (StoreUnavailableError, sqlite3.Error, OSError) as exc:
+        print(f"⚠ Profile was renamed, but its message text was not moved ({exc}). Its history reads empty until "
+              f"you run:\n    hermes profile migrate-identity {old_canon} {new_canon}", file=sys.stderr)
+        return False
+    return True
+
+
 def _migrate_profile_identity(old_canon: str, new_canon: str, live_mux: bool) -> bool:
     """Rekey renamed-profile identity without racing a live gateway's in-memory routing index.
 
@@ -190,7 +232,8 @@ def _migrate_profile_identity(old_canon: str, new_canon: str, live_mux: bool) ->
     project identity is always durable-only. Never fatal to the rename, which has already happened
     by this point.
     """
-    checkpoint_migrated = _migrate_checkpoint_identity(old_canon, new_canon)
+    checkpoint_migrated = all([_migrate_checkpoint_identity(old_canon, new_canon),
+                               _move_message_text(old_canon, new_canon)])
 
     if live_mux:
         from hermes_constants import get_default_hermes_root

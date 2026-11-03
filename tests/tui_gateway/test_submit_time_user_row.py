@@ -207,7 +207,7 @@ def test_the_staged_submit_row_carries_the_uid_its_db_row_was_written_with(monke
             server._start_inflight_turn(session, "please refactor the login page")
         assert server._persist_session_row_for_submit("rid", session, "please refactor the login page", None) is None
         staged = session["_submit_user_row"]
-        stored = db._conn.execute("SELECT message_uid FROM messages WHERE id = ?", (staged["_row_id"],)).fetchone()
+        stored = db._conn.execute("SELECT message_uid FROM transcript_rows WHERE id = ?", (staged["_row_id"],)).fetchone()
         assert staged.get("message_uid") == stored[0]
     finally:
         server._sessions.pop(sid, None)

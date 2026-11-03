@@ -26,8 +26,8 @@ def _damaged_source(path: Path) -> list[float]:
         db.close()
     raw = sqlite3.connect(str(path))
     try:
-        middle = raw.execute("SELECT id FROM messages WHERE session_id = 's' ORDER BY id LIMIT 1 OFFSET 1").fetchone()[0]
-        raw.execute("UPDATE messages SET timestamp = 5.4905047707024164e+246 WHERE id = ?", (middle,))
+        middle = raw.execute("SELECT id FROM transcript_rows WHERE session_id = 's' ORDER BY id LIMIT 1 OFFSET 1").fetchone()[0]
+        raw.execute("UPDATE transcript_rows SET timestamp = 5.4905047707024164e+246 WHERE id = ?", (middle,))
         raw.execute("UPDATE sessions SET started_at = 'garbage', ended_at = 1e300, last_activity_at = -5 WHERE id = 's'")
         raw.commit()
     finally:
@@ -44,7 +44,7 @@ def test_recovery_repairs_out_of_window_timestamps(tmp_path):
     assert report["verification"]["healthy"], report["verification"]["errors"]
     conn = sqlite3.connect(str(output))
     try:
-        messages = [r[0] for r in conn.execute("SELECT timestamp FROM messages WHERE session_id = 's' ORDER BY id")]
+        messages = [r[0] for r in conn.execute("SELECT timestamp FROM transcript_rows WHERE session_id = 's' ORDER BY id")]
         started, ended, active = conn.execute(
             "SELECT started_at, ended_at, last_activity_at FROM sessions WHERE id = 's'").fetchone()
     finally:

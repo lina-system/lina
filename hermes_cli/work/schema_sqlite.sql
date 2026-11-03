@@ -1,5 +1,5 @@
 -- The LINA `work` schema, SQLite edition (lina#36). The Postgres edition is
--- services/store/migrations/0001_work.sql: same tables, same column names, same relations and the same
+-- services/store/migrations/0004_work.sql: same tables, same column names, same relations and the same
 -- status views. Type mapping: enum -> TEXT with the values in CHECK; identity -> INTEGER PRIMARY KEY;
 -- timestamptz -> UTC ISO-8601 TEXT; interval -> TEXT in Postgres interval syntax ('10 minutes'); jsonb -> JSON
 -- TEXT; boolean -> 0/1. todo.goal_id may be NULL (an owner's own to-do without a goal, and memos = inbox to-dos).

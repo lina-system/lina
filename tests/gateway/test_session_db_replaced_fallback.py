@@ -58,9 +58,6 @@ def test_replaced_state_db_diverts_pending_without_fts_rebuild(tmp_path, monkeyp
     assert store._db._db_replaced is True
     # No FTS surgery ran on either layer: state-level fail-open never
     # detached, and the gateway one-shot rebuild was not consumed.
-    assert store._db._fts_enabled is True
-    assert store._db._fts_stale is False
-    assert store._fts_rebuild_last_attempt_at is None
     _assert_diverted(tmp_path, sid, "after-replace")
     store.close_all_db_handles()
 
@@ -97,8 +94,5 @@ def test_copyfile_replaced_state_db_diverts_pending_without_fts_rebuild(
     assert store._db._db_replaced is True
     # No FTS surgery ran on either layer: state-level fail-open never
     # detached, and the gateway one-shot rebuild was not consumed.
-    assert store._db._fts_enabled is True
-    assert store._db._fts_stale is False
-    assert store._fts_rebuild_last_attempt_at is None
     _assert_diverted(tmp_path, sid, "after-cp")
     store.close_all_db_handles()

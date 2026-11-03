@@ -56,6 +56,9 @@ def hermetic_env(home: Path, extra: dict[str, str] | None = None) -> dict[str, s
     """Child env: fake HOME (profile root anchor) + HERMES_HOME under it, nothing credential-shaped."""
     home = home.resolve()
     assert home != real_user_home() and home / ".hermes" != real_user_home() / ".hermes", home
+    if not os.environ.get("LINA_STORE_DSN"):
+        from tests._fixtures.memory_store import PROCESS_STORE
+        PROCESS_STORE.app_dsn()
     env = {k: v for k, v in os.environ.items()
            if not (k.endswith(_STRIP_SUFFIXES) or k.startswith(_STRIP_PREFIXES))}
     for var in ("HTTP_PROXY", "HTTPS_PROXY", "ALL_PROXY", "http_proxy", "https_proxy", "all_proxy", "XDG_STATE_HOME",

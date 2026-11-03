@@ -13,7 +13,7 @@ import pytest
 
 import hermes_state
 from hermes_state import SessionDB
-from hermes_state_common import FTS_STORAGE_VERSION, SCHEMA_VERSION
+from hermes_state_common import SCHEMA_VERSION
 from hermes_cli import session_recovery
 from hermes_cli.session_recovery import (
     SessionRecoverySafetyError,
@@ -99,7 +99,7 @@ def _make_source(path: Path) -> dict[str, int]:
         db.set_meta("fts_tool_full_content_high_water", "7")
     finally:
         db.close()
-    return {"sessions": 3, "messages": 21}
+    return {"sessions": 3, "transcript_rows": 21}
 
 
 def _orphan_fts_schema(path: Path) -> None:
@@ -145,7 +145,7 @@ def _make_page_spanning_source(
         plan = " ".join(
             str(row[3])
             for row in conn.execute(
-                "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM messages"
+                "EXPLAIN QUERY PLAN SELECT COUNT(*) FROM transcript_rows"
             ).fetchall()
         )
         count_index = next(
@@ -153,13 +153,13 @@ def _make_page_spanning_source(
                 str(row[0])
                 for row in conn.execute(
                     "SELECT name FROM sqlite_master "
-                    "WHERE type = 'index' AND tbl_name = 'messages'"
+                    "WHERE type = 'index' AND tbl_name = 'transcript_rows'"
                 ).fetchall()
                 if plan.endswith(str(row[0]))
             ),
             None,
         )
-        names = ["messages"]
+        names = ["transcript_rows"]
         if count_index is not None:
             names.append(count_index)
         placeholders = ", ".join("?" for _ in names)
@@ -171,7 +171,7 @@ def _make_page_spanning_source(
                 tuple(names),
             ).fetchall()
         }
-        return roots["messages"], (
+        return roots["transcript_rows"], (
             roots[count_index] if count_index is not None else None
         )
     finally:
@@ -451,7 +451,7 @@ def test_partial_recovery_keeps_messages_when_sessions_are_unsalvageable(
         recovered_sessions = verify.execute(
             "SELECT id, source, title, message_count FROM sessions ORDER BY id"
         ).fetchall()
-        messages = verify.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        messages = verify.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
     assert messages == 120, f"expected all 120 messages retained, got {messages}"
     assert len(recovered_sessions) == len(messages_per_session)
 
@@ -511,8 +511,8 @@ def test_cli_allow_partial_salvages_rows_across_a_corrupt_leaf(
 
     inspection = inspect_session_database(source, work_dir=tmp_path)
     assert inspection["recoverable"] is False
-    assert inspection["tables"]["messages"]["rows"] is None
-    with pytest.raises(SessionRecoverySourceError, match="messages"):
+    assert inspection["tables"]["transcript_rows"]["rows"] is None
+    with pytest.raises(SessionRecoverySourceError, match="transcript_rows"):
         recover_session_database(
             source,
             rejected_output,
@@ -565,7 +565,7 @@ def test_cli_allow_partial_salvages_rows_across_a_corrupt_leaf(
     assert report["verification"]["foreign_key_check"] == []
     assert report["verification"]["table_counts"]["sessions"] == 1
 
-    copied_messages = report["copy"]["messages"]
+    copied_messages = report["copy"]["transcript_rows"]
     assert copied_messages["status"] == "partial"
     assert copied_messages["copied_rows"] < message_count
     assert copied_messages["copied_rows"] > 0
@@ -579,7 +579,7 @@ def test_cli_allow_partial_salvages_rows_across_a_corrupt_leaf(
     conn = sqlite3.connect(str(output))
     try:
         recovered_ids = {
-            int(row[0]) for row in conn.execute("SELECT id FROM messages")
+            int(row[0]) for row in conn.execute("SELECT id FROM transcript_rows")
         }
         assert 1 in recovered_ids
         assert message_count in recovered_ids
@@ -627,7 +627,7 @@ def test_partial_recovery_clears_only_unreadable_system_prompt_refs(
     assert report["verified"] is True
     assert report["partial"] is True
     assert report["copy"]["sessions"]["status"] == "complete"
-    assert report["copy"]["messages"]["status"] == "complete"
+    assert report["copy"]["transcript_rows"]["status"] == "complete"
     assert report["copy"]["system_prompts"]["status"] == "partial"
     cleared = report["orphan_cleanup"]["session_prompt_refs_cleared"]
     assert 0 < cleared < session_count
@@ -895,7 +895,7 @@ def test_partial_recovery_skips_phantom_row_rejected_by_destination_schema(
     assert report["verified"] is True
     with sqlite3.connect(str(output)) as conn:
         assert conn.execute("SELECT count(*) FROM sessions WHERE id = 'phantom'").fetchone()[0] == 0
-        assert conn.execute("SELECT count(*) FROM messages").fetchone()[0] == 21
+        assert conn.execute("SELECT count(*) FROM transcript_rows").fetchone()[0] == 21
 
 
 
@@ -945,15 +945,15 @@ def test_recover_carries_message_identity_columns(tmp_path):
     try:
         db.create_session("s", "cli", model="m")
         db.append_message(session_id="s", role="user", content="q")
-        db._conn.execute("UPDATE messages SET absorbed_message_uids = ? WHERE content = 'q'", (json.dumps(["b" * 32]),))
+        db._conn.execute("UPDATE transcript_rows SET absorbed_message_uids = ? WHERE msg_text(text_uid, 'content') = 'q'", (json.dumps(["b" * 32]),))
         db._conn.commit()
         db.append_message(
             session_id="s", role="assistant", content="",
             tool_calls=[{"id": "call_1", "type": "function", "function": {"name": "t", "arguments": "{}"}}])
         db.append_message(session_id="s", role="tool", content="r", tool_call_id="call_1", tool_name="t")
         expected = [dict(r) for r in db._conn.execute(
-            "SELECT role, message_uid, absorbed_message_uids, tool_call_uids, tool_call_uid "
-            "FROM messages WHERE session_id = 's' ORDER BY id")]
+            "SELECT role, message_uid, absorbed_message_uids, tool_call_uids, tool_call_uid, text_uid "
+            "FROM transcript_rows WHERE session_id = 's' ORDER BY id")]
     finally:
         db.close()
     assert all(len(r["message_uid"]) == 32 for r in expected)
@@ -965,8 +965,8 @@ def test_recover_carries_message_identity_columns(tmp_path):
     recovered = SessionDB(db_path=output)
     try:
         got = [dict(r) for r in recovered._conn.execute(
-            "SELECT role, message_uid, absorbed_message_uids, tool_call_uids, tool_call_uid "
-            "FROM messages WHERE session_id = 's' ORDER BY id")]
+            "SELECT role, message_uid, absorbed_message_uids, tool_call_uids, tool_call_uid, text_uid "
+            "FROM transcript_rows WHERE session_id = 's' ORDER BY id")]
         assert got == expected
         restored = recovered.get_messages_as_conversation("s")
         assert [m["message_uid"] for m in restored] == [r["message_uid"] for r in expected]

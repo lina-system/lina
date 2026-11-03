@@ -53,7 +53,7 @@ def test_tail_reads_answer_like_the_owner(tmp_path):
                                        {'role': 'user', 'content': 'failed turn'}])
         db.create_session('other', 'cli')
         db.append_messages_batch('other', [{'role': 'assistant', 'content': 'x'}])
-        rows = [r[0] for r in db._read_all('SELECT id FROM messages ORDER BY id')]
+        rows = [r[0] for r in db._read_all('SELECT id FROM transcript_rows ORDER BY id')]
         epoch = begin_runtime_epoch(db, instance_id='fixture')
         scope = dict(epoch=epoch, execution_id='w', session_id='s', generation=0)
         register_worker_execution(db, **scope, kind='compute', adoption_secret='secret')

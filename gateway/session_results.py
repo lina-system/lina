@@ -149,16 +149,17 @@ def close_discarded_turn(db, conn, row, notice=None, *, replace_after=None, disp
     from agent.turn_failure_copy import FAILED_TURN_DISPLAY_KIND, PARTIAL_FAILED_TURN_NOTICE
     from hermes_state_local_lineage import local_physical_target
     from hermes_state_runtime import _canonical_chain
+    from hermes_state_store import rewrite_rows
     target = _canonical_chain(conn, local_physical_target(conn, row['target_session_id']))[-1]
-    tail = conn.execute("SELECT role, tool_calls, id, display_kind FROM messages WHERE session_id=? AND active=1 "
+    tail = conn.execute("SELECT role, tool_call_count, id, display_kind FROM transcript_rows WHERE session_id=? AND active=1 "
                         "AND role NOT IN ('session_meta','system') ORDER BY id DESC LIMIT 1", (target,)).fetchone()
     if (notice is not None and type(replace_after) is int and tail is not None and tail[0] == 'assistant'
             and tail[3] == FAILED_TURN_DISPLAY_KIND and tail[2] > replace_after):
-        conn.execute("UPDATE messages SET content=?, display_metadata=? WHERE id=?",
-                     (notice, db._encode_display_metadata(display_metadata), tail[2]))
+        rewrite_rows(conn, db.message_store, [tail[2]],
+                     {'content': notice, 'display_metadata': db._encode_display_metadata(display_metadata)})
         return True
     if notice is None and (tail is None or not (
-            tail[0] == 'user' or (tail[0] == 'assistant' and tail[1] not in (None, '', '[]')))):
+            tail[0] == 'user' or (tail[0] == 'assistant' and tail[1] > 0))):
         return False
     boundary = {'role': 'assistant', 'content': notice or PARTIAL_FAILED_TURN_NOTICE, 'timestamp': time.time(),
                 'display_kind': FAILED_TURN_DISPLAY_KIND}

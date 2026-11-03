@@ -24,6 +24,7 @@ from hermes_state_common import (
     _source_match_clause, emit_session_deleted, launch_stub_filter_sql,
 )
 from hermes_state_compression import _CHAIN_CAP, _UNSET_CREATED_SQL
+from hermes_state_store import delete_rows
 
 # caplog tests pin the "hermes_state" logger name.
 logger = logging.getLogger("hermes_state")
@@ -220,13 +221,13 @@ def _collect_delegate_child_ids(conn, parent_ids: list[str]) -> list[str]:
     return [sid for sid in found if sid not in seeds]
 
 
-def _delete_delegate_children(conn, parent_ids: list[str]) -> list[str]:
+def _delete_delegate_children(conn, parent_ids: list[str], store) -> list[str]:
     ids = _collect_delegate_child_ids(conn, parent_ids)
     from hermes_state_mutation_retirement import retire_sessions
     retire_sessions(conn, ids)
     for chunk in _id_chunks(ids):
         ph = _session_ids_placeholders(chunk)
-        conn.execute(f"DELETE FROM messages WHERE session_id IN ({ph})", chunk)
+        delete_rows(conn, store, f"session_id IN ({ph})", chunk)
         # FK safety: orphan any untagged stragglers pointing at a doomed row.
         conn.execute(f"UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id IN ({ph})", chunk)
         conn.execute(f"DELETE FROM sessions WHERE id IN ({ph})", chunk)
@@ -494,7 +495,7 @@ class SessionSessionsMixin:
     def _retire_undrained_queue_rows_conn(conn, session_id: str) -> int:
         """The still-marked == never-drained accept-row UPDATE (#125577), on a caller's connection."""
         return conn.execute(
-            "UPDATE messages SET active = 0 "
+            "UPDATE transcript_rows SET active = 0 "
             "WHERE session_id = ? AND role = 'user' AND active = 1 "
             f"AND COALESCE({_sql_json_extract('display_metadata', '$.' + QUEUED_PROMPT_METADATA_KEY)}, 0) = 1",
             (session_id,),
@@ -1467,12 +1468,12 @@ class SessionSessionsMixin:
         statuses: dict[str, str] = {sid: "empty" for sid in ids}
         rows = self._read_all(f"""
             SELECT m.session_id, m.role,
-                   m.tool_calls IS NOT NULL AS has_tool_calls,
+                   m.tool_call_count > 0 AS has_tool_calls,
                    m.finish_reason
-            FROM messages m
+            FROM transcript_rows m
             JOIN (
                 SELECT session_id, MAX(id) AS max_id
-                FROM messages
+                FROM transcript_rows
                 WHERE session_id IN ({_session_ids_placeholders(ids)})
                 GROUP BY session_id
             ) latest ON m.id = latest.max_id
@@ -1497,7 +1498,7 @@ class SessionSessionsMixin:
         if max_messages == 0:
             return 0
         row = self._read_one(
-            "SELECT COUNT(*) FROM (SELECT 1 FROM messages WHERE session_id = ? LIMIT ?)",
+            "SELECT COUNT(*) FROM (SELECT 1 FROM transcript_rows WHERE session_id = ? LIMIT ?)",
             (session_id, max_messages + 1),
         )
         message_count = int(row[0] if row else 0)
@@ -1753,10 +1754,10 @@ class SessionSessionsMixin:
                 return False
             from hermes_state_mutation_retirement import retire_sessions
             retire_sessions(conn, scope)
-            removed_ids.extend(_delete_delegate_children(conn, scope))
+            removed_ids.extend(_delete_delegate_children(conn, scope, self.message_store))
             for sid in scope:  # orphan remaining children (branches) so FK is satisfied
                 conn.execute("UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?", (sid,))
-                conn.execute("DELETE FROM messages WHERE session_id = ?", (sid,))
+                delete_rows(conn, self.message_store, "session_id = ?", (sid,))
             conn.executemany("DELETE FROM sessions WHERE id = ?", [(sid,) for sid in scope])
             self._delete_unreferenced_system_prompts(conn)
             removed_ids.extend(scope)
@@ -1780,7 +1781,7 @@ class SessionSessionsMixin:
                 "SELECT 1 FROM session_admissions WHERE target_session_id=? UNION ALL "
                 "SELECT 1 FROM worker_executions WHERE session_id=? LIMIT 1", (session_id, session_id)).fetchone():
                 return None
-            conn.execute("DELETE FROM messages WHERE session_id = ?", (session_id,))
+            delete_rows(conn, self.message_store, "session_id = ?", (session_id,))
             cur = conn.execute("DELETE FROM sessions WHERE id = ?", (session_id,))
             return cur.rowcount > 0
         result = self._execute_write(_do)
@@ -1804,7 +1805,7 @@ class SessionSessionsMixin:
                 WHERE id = ?
                   AND title IS NULL
                   AND NOT EXISTS (
-                      SELECT 1 FROM messages WHERE messages.session_id = sessions.id
+                      SELECT 1 FROM transcript_rows WHERE transcript_rows.session_id = sessions.id
                   )
                   AND NOT EXISTS (
                       SELECT 1 FROM sessions child
@@ -1898,13 +1899,13 @@ class SessionSessionsMixin:
                 expanded = expand(existing)
             from hermes_state_mutation_retirement import retire_sessions
             retire_sessions(conn, expanded)
-            removed_ids.extend(_delete_delegate_children(conn, expanded))
+            removed_ids.extend(_delete_delegate_children(conn, expanded, self.message_store))
             for chunk in _id_chunks(expanded):
                 ph = _session_ids_placeholders(chunk)
                 conn.execute(  # orphan children whose parent is in the kill list (FK)
                     f"UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id IN ({ph})", chunk,
                 )
-                conn.execute(f"DELETE FROM messages WHERE session_id IN ({ph})", chunk)
+                delete_rows(conn, self.message_store, f"session_id IN ({ph})", chunk)
                 conn.execute(f"DELETE FROM sessions WHERE id IN ({ph})", chunk)
             self._delete_unreferenced_system_prompts(conn)
             removed_ids.extend(expanded)
@@ -1928,7 +1929,7 @@ class SessionSessionsMixin:
     # shape as every : other emptiness guard in this module. (#95868)
     _EMPTY_SESSION_WHERE = (
         "message_count = 0 AND ended_at IS NOT NULL AND archived = 0 AND NOT EXISTS ("
-        "SELECT 1 FROM messages WHERE messages.session_id = sessions.id)"
+        "SELECT 1 FROM transcript_rows WHERE transcript_rows.session_id = sessions.id)"
     )
 
     def count_empty_sessions(self) -> int:
@@ -1950,9 +1951,9 @@ class SessionSessionsMixin:
             for chunk in _id_chunks(session_ids):
                 ph = _session_ids_placeholders(chunk)
                 conn.execute(f"UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id IN ({ph})", chunk)
-                # DELETE FROM messages: a row inserted between the SELECT and here
+                # DELETE FROM transcript_rows: a row inserted between the SELECT and here
                 # would otherwise dangle (clean FK state).
-                conn.execute(f"DELETE FROM messages WHERE session_id IN ({ph})", chunk)
+                delete_rows(conn, self.message_store, f"session_id IN ({ph})", chunk)
                 conn.execute(f"DELETE FROM sessions WHERE id IN ({ph})", chunk)
                 removed_ids.extend(chunk)
             self._delete_unreferenced_system_prompts(conn)

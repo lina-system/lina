@@ -104,7 +104,7 @@ def test_corrupt_timestamp_rows_count_as_missing_instead_of_aborting_export(tmp_
         db.append_message("s1", "user", "hello", timestamp=10.0)
         db.append_message("s1", "assistant", "hi", timestamp=11.0)
         # Writers refuse bad stamps; emulate a pre-existing corrupt row directly.
-        db._conn.execute("UPDATE messages SET timestamp = 8.4e252 WHERE id = 2")
+        db._conn.execute("UPDATE transcript_rows SET timestamp = 8.4e252 WHERE id = 2")
         db._conn.commit()
         timings = db.export_session("s1")["timings"]
     finally:

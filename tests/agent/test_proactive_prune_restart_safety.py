@@ -239,7 +239,7 @@ def test_patch_session_model_config_merge_and_delete(tmp_path: Path) -> None:
 
 def _rows(db: SessionDB, session_id: str) -> list[tuple]:
     return db._conn.execute(
-        "SELECT id, role, content, active, compacted FROM messages WHERE session_id = ? ORDER BY id",
+        "SELECT id, role, msg_text(text_uid, 'content'), active, compacted FROM transcript_rows WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
 
@@ -253,6 +253,8 @@ def test_in_place_prune_grows_by_changed_rows_only(tmp_path: Path) -> None:
     agent = _build_agent(db, session_id)
     _configure_pruning(agent)
     before_rows = _rows(db, session_id)
+    before_text = dict(db._conn.execute(
+        "SELECT id, text_uid FROM transcript_rows WHERE session_id = ?", (session_id,)))
     messages = db.get_messages_as_conversation(session_id)
 
     pruned, count = agent.context_compressor.prune_tool_results_only(messages, current_tokens=120_000)
@@ -265,6 +267,10 @@ def test_in_place_prune_grows_by_changed_rows_only(tmp_path: Path) -> None:
     assert len(after_rows) == len(before_rows) + len(changed)
     assert [row[0] for row in live] == [row[0] for row in before_rows]
     assert sorted(row[2] for row in twins) == sorted(before_rows[i][2] for i in changed)
+    after_text = dict(db._conn.execute(
+        "SELECT id, text_uid FROM transcript_rows WHERE session_id = ?", (session_id,)))
+    assert sorted(after_text[row[0]] for row in twins) == sorted(before_text[before_rows[i][0]] for i in changed)
+    assert all(after_text[before_rows[i][0]] != before_text[before_rows[i][0]] for i in changed)
     assert all(row[4] == 1 for row in twins)  # the demoted full bodies stay searchable
     assert [m["content"] for m in db.get_messages_as_conversation(session_id)] == [m["content"] for m in pruned]
     assert all(m.get("_db_persisted") for m in pruned)
@@ -287,7 +293,7 @@ def test_in_place_prune_display_survives_later_compaction_and_backfill(tmp_path:
     if shape != "first-generation":  # every message already has an archived copy in its display slot
         db.archive_and_compact(session_id, db.get_messages_as_conversation(session_id))
     if shape == "carried-legacy-slots":  # rows written before the display index existed
-        db._conn.execute("UPDATE messages SET display_order = NULL, display_identity = NULL WHERE session_id = ?",
+        db._conn.execute("UPDATE transcript_rows SET display_order = NULL, display_identity = NULL WHERE session_id = ?",
                          (session_id,))
         db._conn.commit()
     agent = _build_agent(db, session_id)
@@ -297,7 +303,7 @@ def test_in_place_prune_display_survives_later_compaction_and_backfill(tmp_path:
     assert count >= 1
     # The prune leaves every visible row its slot, so no whole-session backfill follows it.
     assert db._conn.execute(
-        "SELECT COUNT(*) FROM messages WHERE session_id = ? AND (active = 1 OR compacted = 1) "
+        "SELECT COUNT(*) FROM transcript_rows WHERE session_id = ? AND (active = 1 OR compacted = 1) "
         "AND (display_order IS NULL OR display_identity IS NULL)", (session_id,)).fetchone()[0] == 0
     expected = [m["content"] for m in pruned]
     assert _page(db, session_id) == expected
@@ -307,7 +313,7 @@ def test_in_place_prune_display_survives_later_compaction_and_backfill(tmp_path:
 
     # A later content rewrite elsewhere (the turn prologue's) re-derives the session's display slots.
     db.append_messages_batch(session_id, [{"role": "user", "content": "@notes.md"}])
-    row_id = db._conn.execute("SELECT MAX(id) FROM messages WHERE session_id = ?", (session_id,)).fetchone()[0]
+    row_id = db._conn.execute("SELECT MAX(id) FROM transcript_rows WHERE session_id = ?", (session_id,)).fetchone()[0]
     assert db.set_user_message_content(session_id, row_id, "expanded notes") == 1
     assert _page(db, session_id) == expected + ["expanded notes"]
 
@@ -354,10 +360,10 @@ def test_in_place_prune_skips_when_another_writer_changed_the_stored_body(tmp_pa
     _configure_pruning(agent)
     messages = db.get_messages_as_conversation(session_id)
     # Another surface rewrites the row this agent still holds the pre-edit body of.
-    db._conn.execute(
-        "UPDATE messages SET content = 'edited elsewhere' WHERE session_id = ? AND tool_call_id = 'call_0'",
-        (session_id,))
-    db._conn.commit()
+    from hermes_state_store import rewrite_rows
+    ids = [row[0] for row in db._conn.execute(
+        "SELECT id FROM transcript_rows WHERE session_id = ? AND tool_call_id = 'call_0'", (session_id,))]
+    db._execute_write(lambda conn: rewrite_rows(conn, db.message_store, ids, {"content": "edited elsewhere"}))
     rows_before = _rows(db, session_id)
 
     with patch.object(db, "archive_and_compact", wraps=db.archive_and_compact) as full_rewrite:
@@ -381,10 +387,10 @@ def test_in_place_prune_falls_back_to_full_rewrite_when_a_row_cannot_be_named(tm
     messages = db.get_messages_as_conversation(session_id)
     # Two live rows now carry call_0's current body, so no single row can be named.
     columns = ", ".join(
-        name for name in (row[1] for row in db._conn.execute("PRAGMA table_info(messages)"))
+        name for name in (row[1] for row in db._conn.execute("PRAGMA table_info(transcript_rows)"))
         if name not in ("id", "display_order"))
     db._conn.execute(
-        f"INSERT INTO messages ({columns}) SELECT {columns} FROM messages "
+        f"INSERT INTO transcript_rows ({columns}) SELECT {columns} FROM transcript_rows "
         "WHERE session_id = ? AND tool_call_id = 'call_0' AND active = 1", (session_id,))
     db._conn.commit()
 
@@ -446,10 +452,10 @@ def test_a_stale_generation_with_an_unstamped_trailing_row_still_aborts(tmp_path
     agent = _build_agent(db, session_id)
     _configure_pruning(agent)
     messages = db.get_messages_as_conversation(session_id) + [{"role": "user", "content": "live turn"}]
-    db._conn.execute(
-        "UPDATE messages SET content = 'edited elsewhere' WHERE session_id = ? AND tool_call_id = 'call_0'",
-        (session_id,))
-    db._conn.commit()
+    from hermes_state_store import rewrite_rows
+    ids = [row[0] for row in db._conn.execute(
+        "SELECT id FROM transcript_rows WHERE session_id = ? AND tool_call_id = 'call_0'", (session_id,))]
+    db._execute_write(lambda conn: rewrite_rows(conn, db.message_store, ids, {"content": "edited elsewhere"}))
     rows_before = _rows(db, session_id)
 
     with patch.object(db, "archive_and_compact", wraps=db.archive_and_compact) as full_rewrite:
@@ -519,13 +525,11 @@ def test_an_assistant_tool_calls_rewrite_is_stale_with_and_without_a_snapshot(tm
     messages = db.get_messages_as_conversation(session_id, include_row_ids=True)
     held_assistant = next(m for m in messages if m.get("role") == "assistant" and m.get("tool_calls"))
     # Another writer changes the stored arguments of that row; the content (empty) is untouched.
-    db._conn.execute(
-        "UPDATE messages SET tool_calls = ? WHERE session_id = ? AND id = ?",
-        (json.dumps([{**held_assistant["tool_calls"][0],
+    from hermes_state_store import rewrite_rows
+    db._execute_write(lambda conn: rewrite_rows(conn, db.message_store, [held_assistant["_row_id"]],
+        {"tool_calls": json.dumps([{**held_assistant["tool_calls"][0],
                       "function": {**held_assistant["tool_calls"][0]["function"],
-                                   "arguments": '{"cmd":"winner"}'}}]), session_id,
-         held_assistant["_row_id"]))
-    db._conn.commit()
+                                   "arguments": '{"cmd":"winner"}'}}])}))
 
     # The row-local writer names the row exactly and fails closed through the lens compare.
     stale = dict(held_assistant)

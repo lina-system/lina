@@ -290,7 +290,7 @@ class TestWebServerEndpoints:
             ).fetchone()[0]
             counts_before = monitor.execute(
                 "SELECT (SELECT COUNT(*) FROM sessions), "
-                "(SELECT COUNT(*) FROM messages)"
+                "(SELECT COUNT(*) FROM transcript_rows)"
             ).fetchone()
 
             responses = [
@@ -306,7 +306,7 @@ class TestWebServerEndpoints:
             ).fetchone()[0]
             counts_after = monitor.execute(
                 "SELECT (SELECT COUNT(*) FROM sessions), "
-                "(SELECT COUNT(*) FROM messages)"
+                "(SELECT COUNT(*) FROM transcript_rows)"
             ).fetchone()
 
             assert all(response.status_code == 200 for response in responses)

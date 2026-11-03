@@ -137,7 +137,7 @@ async def test_discard_and_its_transcript_boundary_commit_atomically_on_the_phys
     db.end_session('s', 'compression')
     db.append_message('s-tip', 'user', 'LOST_OPERATION')
     authority._schedule = lambda ref: None
-    db._execute_write(lambda c: c.execute("CREATE TRIGGER deny_boundary BEFORE INSERT ON messages "
+    db._execute_write(lambda c: c.execute("CREATE TRIGGER deny_boundary BEFORE INSERT ON transcript_rows "
                                           "WHEN NEW.role='assistant' BEGIN SELECT RAISE(ABORT,'boundary failed'); END"))
     viewer = AuthorityConnection(authority, Peer(), {'user_id': 'human'})
     params = {'session_id': 's', 'admission_id': unknown['admission_id'], 'execution_generation': unknown['generation']}

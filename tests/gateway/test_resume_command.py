@@ -271,7 +271,7 @@ class TestHandleResumeCommand:
             db.create_session(sid, "telegram", session_key=lane_key, user_id="12345", chat_id="67890")
             db.append_message(sid, "user", "hi")
             db._conn.execute("UPDATE sessions SET started_at=?, last_activity_at=? WHERE id=?", (started, active, sid))
-            db._conn.execute("UPDATE messages SET timestamp=? WHERE session_id=?", (active, sid))
+            db._conn.execute("UPDATE transcript_rows SET timestamp=? WHERE session_id=?", (active, sid))
         db._conn.commit()
         db.set_session_title("old_root", "Old But Active")
         db.set_session_title("new_root", "Newer But Idle")

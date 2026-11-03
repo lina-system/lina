@@ -71,7 +71,10 @@ def _spillover_retention_hours() -> int:
 # Either separator: Windows host paths are backslashed (JSON-escaped as ``\\`` inside structured content).
 _SPILLOVER_NAME_RE = re.compile(r"spillover(?:/|\\+)([A-Za-z0-9_.-]+)")
 # instr(), not LIKE: structured content is stored behind a NUL sentinel and LIKE stops at NUL.
-SPILLOVER_SQL_FILTER = "(instr(content, 'spillover') > 0 OR instr(api_content, 'spillover') > 0)"
+SPILLOVER_SQL_FILTER = (
+    "(instr(msg_text(text_uid, 'content'), 'spillover') > 0 "
+    "OR instr(msg_text(text_uid, 'api_content'), 'spillover') > 0)"
+)
 
 
 _ARCHIVE_PATH_RE = re.compile(r"(?:^|[/\\])(?:spillover|hermes-results)[/\\][^/\\]+$")
@@ -108,15 +111,15 @@ def referenced_spillover_names(spill_dir) -> set | None:
     if not db_path.exists():
         return set()
     try:
-        # as_uri(): a plain f"file:{path}" breaks on Windows drive letters
-        conn = sqlite3.connect(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=5.0)
+        from hermes_state import SessionDB
+        db = SessionDB(db_path=db_path, read_only=True)
         try:
-            rows = conn.execute(
-                f"SELECT content, api_content FROM messages WHERE {SPILLOVER_SQL_FILTER} LIMIT 20001"
-            ).fetchall()
+            rows = db._read_all(
+                "SELECT msg_text(text_uid, 'content') AS content, msg_text(text_uid, 'api_content') AS api_content "
+                f"FROM transcript_rows WHERE {SPILLOVER_SQL_FILTER} LIMIT 20001", [])
         finally:
-            conn.close()
-    except (sqlite3.Error, OSError):
+            db.close()
+    except (sqlite3.Error, OSError, RuntimeError):
         return None
     if len(rows) > 20000:  # truncated reference set: treat as unknown, never guess
         return None
