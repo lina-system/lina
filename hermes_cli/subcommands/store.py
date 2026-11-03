@@ -56,6 +56,9 @@ def _run_action(args) -> int:
     }
     if args.store_action == "status":
         return store_mod.status(store)
+    if args.store_action == "reembed":
+        from hermes_cli.store_reembed import run
+        return run(args)
     actions[args.store_action]()
     return 0
 
@@ -90,5 +93,14 @@ def build_store_parser(subparsers) -> None:
     gc.add_argument("--older-than-days", type=float, default=None,
                     help="Keep rows written or re-used more recently (default sessions.message_text_grace_days, 30; "
                          "at least 2)")
+    reembed = sub.add_parser("reembed", help="Embed messages and Honcho conclusions into vec.embeddings with the "
+                                             "configured model (embedding: in config.yaml)")
+    reembed.add_argument("--source", choices=["agent", "memory", "messages", "all"], default="all",
+                         help="agent turns, Honcho conclusions, external messages, or all three (default)")
+    reembed.add_argument("--batch-size", type=int, default=None, help="rows per request and transaction "
+                                                                     "(default embedding.batch_size, 64)")
+    reembed.add_argument("--from-start", action="store_true",
+                         help="ignore where the last run stopped and go through every row again")
+    reembed.add_argument("--max-batches", type=int, default=None, help="stop after this many batches per source")
     sub.add_parser("upgrade", help="Upgrade Honcho: backup, rehearsal migration, one migration job, smoke test")
     parser.set_defaults(func=_cmd_store, store_parser=parser)

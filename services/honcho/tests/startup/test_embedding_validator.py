@@ -37,7 +37,7 @@ def sampled_store(
     monkeypatch.setattr(settings.EMBEDDING, "VECTOR_DIMENSIONS", 4)
     monkeypatch.setattr(
         "src.startup.embedding_validator._introspect_pgvector_dims_once",
-        AsyncMock(return_value={"documents": 4, "message_embeddings": 4}),
+        AsyncMock(return_value={"embeddings": 4}),
     )
     monkeypatch.setattr(
         "src.startup.embedding_validator._sample_workspace_names",
@@ -103,7 +103,7 @@ def _typmod(dim: int) -> int:
 
 def test_assert_pgvector_dims_match_passes_when_all_dims_align() -> None:
     _assert_pgvector_dims_match(
-        {"documents": _typmod(1536), "message_embeddings": _typmod(1536)},
+        {"embeddings": _typmod(1536)},
         schema="public",
         target_dim=1536,
     )
@@ -112,7 +112,7 @@ def test_assert_pgvector_dims_match_passes_when_all_dims_align() -> None:
 def test_assert_pgvector_dims_match_raises_on_dim_mismatch() -> None:
     with pytest.raises(StartupValidationError, match="dim .* does not match"):
         _assert_pgvector_dims_match(
-            {"documents": _typmod(1536), "message_embeddings": _typmod(768)},
+            {"embeddings": _typmod(768)},
             schema="public",
             target_dim=1536,
         )
@@ -121,26 +121,26 @@ def test_assert_pgvector_dims_match_raises_on_dim_mismatch() -> None:
 def test_assert_pgvector_dims_match_lists_all_missing_columns() -> None:
     with pytest.raises(StartupValidationError) as excinfo:
         _assert_pgvector_dims_match(
-            {"documents": _typmod(1536)},
+            {},
             schema="public",
             target_dim=1536,
         )
     msg = str(excinfo.value)
-    assert "message_embeddings" in msg
+    assert "public.embeddings.embedding" in msg
     assert "alembic upgrade head" in msg
 
 
 def test_assert_pgvector_dims_match_raises_on_unbounded_typmod() -> None:
     with pytest.raises(StartupValidationError, match="unbounded typmod"):
         _assert_pgvector_dims_match(
-            {"documents": -1, "message_embeddings": _typmod(1536)},
+            {"embeddings": -1},
             schema="public",
             target_dim=1536,
         )
 
 
 def test_assert_pgvector_dims_match_respects_non_public_schema() -> None:
-    with pytest.raises(StartupValidationError, match="my_schema.documents"):
+    with pytest.raises(StartupValidationError, match="my_schema.embeddings"):
         _assert_pgvector_dims_match(
             {},
             schema="my_schema",
@@ -209,7 +209,7 @@ async def test_validator_raises_when_schema_dim_diverges_from_settings(
     async with db_engine.begin() as conn:
         await conn.execute(
             text(
-                "ALTER TABLE documents"
+                "ALTER TABLE embeddings"
                 + " ALTER COLUMN embedding TYPE vector(768) USING NULL"
             )
         )
@@ -220,7 +220,7 @@ async def test_validator_raises_when_schema_dim_diverges_from_settings(
         async with db_engine.begin() as conn:
             await conn.execute(
                 text(
-                    "ALTER TABLE documents"
+                    "ALTER TABLE embeddings"
                     + " ALTER COLUMN embedding TYPE vector(1536) USING NULL"
                 )
             )

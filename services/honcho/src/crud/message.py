@@ -19,6 +19,7 @@ from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.path_params import schema_from_path
 from src.utils.scopes import is_scope_peer_name
 from src.utils.types import embedding_call_purpose
+from src.vec_embeddings import cosine_distance, join_vectors
 from src.vector_store import get_external_vector_store
 
 from .peer import reject_scope_peers
@@ -854,17 +855,17 @@ async def _search_messages_pgvector(
     # Oversample because a message with multiple embedding chunks can
     # produce duplicate rows; we deduplicate in Python to preserve HNSW
     # index usage (a DISTINCT ON subquery would prevent the index scan).
+    # The inner join to vec.embeddings drops pending rows that have no vector yet.
     match_stmt = (
-        select(models.Message)
-        .join(
-            models.MessageEmbedding,
-            models.Message.public_id == models.MessageEmbedding.message_id,
+        join_vectors(
+            select(models.Message).join(
+                models.MessageEmbedding,
+                models.Message.public_id == models.MessageEmbedding.message_id,
+            ),
+            "message",
         )
-        # Exclude pending rows that haven't been embedded yet: their NULL
-        # distance sorts last and would pad the window with unranked messages.
-        .where(models.MessageEmbedding.embedding.isnot(None))
         .where(models.MessageEmbedding.workspace_name == workspace_name)
-        .order_by(models.MessageEmbedding.embedding.cosine_distance(query_embedding))
+        .order_by(cosine_distance(query_embedding))
         .limit(limit * 2)
     )
 
