@@ -4,10 +4,30 @@ from copy import deepcopy
 import base64
 import hashlib
 import json
+import re
 
 TEXT_IDS = {"workspaces": "id", "peers": "id", "sessions": "id", "collections": "id",
             "documents": "id", "message_meta": "public_id", "webhook_endpoints": "id",
             "active_queue_sessions": "id"}
+SOURCE_ID = re.compile(r"^[A-Za-z0-9_-]{21}$")
+
+
+def document_references(row: dict) -> list[tuple[str, str]]:
+    """Retain all persisted machine references, not only the ORM's winning array.
+
+    The reconciler ignores malformed values; preserving them verbatim keeps
+    historical prose from becoming newly valid provenance after namespacing.
+    """
+    result = []
+    metadata = row["internal_metadata"]
+    for field, candidate in (("column", row.get("source_ids")),
+                             ("source_ids", metadata.get("source_ids")),
+                             ("premise_ids", metadata.get("premise_ids")),
+                             ("copied_from", [metadata.get("copied_from")])):
+        if isinstance(candidate, list):
+            result.extend((field, value) for value in candidate
+                          if isinstance(value, str) and SOURCE_ID.fullmatch(value))
+    return result
 
 
 def destination_id(agent: str, source: str) -> str:
@@ -105,16 +125,15 @@ def namespace(data: dict, agent: str) -> tuple[dict, dict]:
                         summary["message_public_id"] = maps["message_meta"][summary["message_public_id"]]
             if table == "documents":
                 metadata = row["internal_metadata"]
-                if metadata.get("copied_from"):
-                    value = metadata["copied_from"]
-                    metadata["copied_from"] = evidence.get(value, destination_id(agent, value))
-                if row.get("source_ids"):
-                    row["source_ids"] = [evidence.get(value, destination_id(agent, value))
-                                         for value in row["source_ids"]]
-                for field in ("source_ids", "premise_ids"):
-                    if row["internal_metadata"].get(field):
-                        row["internal_metadata"][field] = [evidence.get(value, destination_id(agent, value))
-                                                           for value in row["internal_metadata"][field]]
+                references = document_references(row)
+                for field, value in references:
+                    if field == "copied_from":
+                        metadata[field] = maps["documents"][value]
+                for field, owner in (("source_ids", row), ("source_ids", metadata), ("premise_ids", metadata)):
+                    candidate = owner.get(field)
+                    if isinstance(candidate, list):
+                        owner[field] = [evidence[value] if isinstance(value, str) and SOURCE_ID.fullmatch(value)
+                                        else value for value in candidate]
             if table == "document_sources":
                 row["derived_id"] = maps["documents"][row["derived_id"]]
                 row["source_id"] = evidence[row["source_id"]]

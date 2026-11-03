@@ -10,7 +10,7 @@ import json
 from psycopg import sql
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
-from hermes_cli.migrate_memory_honcho_ids import mapped_integers
+from hermes_cli.migrate_memory_honcho_ids import document_references, mapped_integers
 
 TABLES = (
     "workspaces", "peers", "sessions", "session_peers", "collections",
@@ -135,6 +135,11 @@ def manifest(data: dict[str, list[dict]], texts: dict[int, dict], workspace: str
 def source_links(data: dict[str, list[dict]]) -> dict:
     messages = {r["public_id"] for r in data["message_meta"]}
     documents = {r["id"] for r in data["documents"]}
+    for row in data["documents"]:
+        for field, value in document_references(row):
+            targets = documents if field == "copied_from" else documents | messages
+            if value not in targets:
+                raise ValueError(f"unresolved document {field} reference: {row['id']} -> {value}")
     for row in data["document_sources"]:
         if row["derived_id"] not in documents or row["source_id"] not in documents | messages:
             raise ValueError(f"unresolved document_sources edge: {row['derived_id']} -> {row['source_id']}")

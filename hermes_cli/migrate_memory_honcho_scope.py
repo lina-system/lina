@@ -7,7 +7,7 @@ import json
 from pathlib import Path
 
 from hermes_cli.migrate_memory_honcho_graph import TABLES, rows
-from hermes_cli.migrate_memory_honcho_ids import metadata_references, row_identity
+from hermes_cli.migrate_memory_honcho_ids import document_references, metadata_references, row_identity
 
 
 @dataclass(frozen=True)
@@ -131,6 +131,12 @@ def _close_dependencies(data: dict, result: dict) -> list[dict]:
             parent = "documents" if any(r["id"] == row["source_id"] for r in data["documents"]) else "message_meta"
             key = "id" if parent == "documents" else "public_id"
             required.append((parent, (key,), (row["source_id"],)))
+        for row in result["documents"]:
+            for field, value in document_references(row):
+                parent = "documents" if field == "copied_from" or any(
+                    r["id"] == value for r in data["documents"]) else "message_meta"
+                key = "id" if parent == "documents" else "public_id"
+                required.append((parent, (key,), (value,)))
         changed = False
         for parent, keys, values in required:
             match = next((row for row in data[parent] if tuple(row[key] for key in keys) == values), None)
