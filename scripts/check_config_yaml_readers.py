@@ -38,6 +38,9 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+if __package__ in (None, ""):
+    sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from scripts.vendored_subtrees import is_vendored
 DEFAULT_TREES = (
     "hermes_cli", "agent", "gateway", "tui_gateway", "cron", "plugins", "tools", "acp_adapter", "pm",
     "cli.py", "utils.py", "hermes_constants.py", "hermes_logging.py", "hermes_time.py", "run_agent.py",
@@ -232,7 +235,8 @@ def main(argv: list[str]) -> int:
     files: list[Path] = []
     for t in targets:
         if t.is_dir():
-            files.extend(p for p in t.rglob("*.py") if "node_modules" not in p.parts and "tests" not in p.parts)
+            files.extend(p for p in t.rglob("*.py") if "node_modules" not in p.parts and "tests" not in p.parts
+                         and not is_vendored(p.relative_to(ROOT)))
         elif t.suffix == ".py" and t.exists():
             files.append(t)
     problems: list[str] = []

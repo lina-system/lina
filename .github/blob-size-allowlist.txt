@@ -22,3 +22,19 @@ services/honcho/tests/unified/test_cases/longmem_triple_7161e7e2_single-session-
 services/honcho/tests/unified/test_cases/longmem_triple_e47becba_single-session-user.json
 services/honcho/tests/unified/test_cases/longmem_triple_gpt4_59149c77_temporal-reasoning.json
 services/honcho/uv.lock
+
+# LCM-X, a squashed git subtree of electricsheephq/lcm-x (docs/lcm-x.md). Upstream ships these at this size,
+# and engine.py, the golden traces and test_lcm_engine.py change in most intakes and fork patches.
+plugins/context_engine/lcm-x/docs/architecture.png
+plugins/context_engine/lcm-x/docs/lcm_compression.png
+plugins/context_engine/lcm-x/docs/media/banner.png
+plugins/context_engine/lcm-x/docs/pr-283-ignored-backlog-compaction.png
+plugins/context_engine/lcm-x/docs/standard_compression.png
+plugins/context_engine/lcm-x/engine.py
+plugins/context_engine/lcm-x/scripts/maintainability/baseline.json
+plugins/context_engine/lcm-x/tests/fixtures/assembly_trace.json
+plugins/context_engine/lcm-x/tests/fixtures/backfill_trace.json
+plugins/context_engine/lcm-x/tests/fixtures/compress_trace.json
+plugins/context_engine/lcm-x/tests/fixtures/ingest_trace.json
+plugins/context_engine/lcm-x/tests/fixtures/reconcile_trace.json
+plugins/context_engine/lcm-x/tests/test_lcm_engine.py

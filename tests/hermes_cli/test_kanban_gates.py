@@ -10,6 +10,8 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
+import socket
 import subprocess
 import sys
 from pathlib import Path
@@ -269,6 +271,64 @@ def test_artifact_check_that_hangs_fails(tmp_path):
     assert _run("artifact", str(target), "--check", "exec sleep 30", "--timeout", "0.5") == gates.FAIL
 
 
+def test_artifact_timeout_kills_descendant_before_release(tmp_path, monkeypatch):
+    target = tmp_path / "deliverable.txt"
+    target.write_text("data")
+    marker = tmp_path / "late-write"
+    with socket.socket() as listener:
+        listener.bind(("127.0.0.1", 0))
+        listener.listen()
+        listener.settimeout(10)
+        child = (
+            "import socket; from pathlib import Path; "
+            f"s=socket.create_connection({listener.getsockname()!r}, timeout=10); "
+            "s.sendall(b'ready'); release=s.recv(1); "
+            f"Path({str(marker)!r}).write_text('late') if release else None; "
+            "s.sendall(b'written') if release else None"
+        )
+        check = f"{shlex.quote(sys.executable)} -c {shlex.quote(child)}; :"
+        original_wait = subprocess.Popen.wait
+        connection = None
+
+        def wait_after_ready(proc, timeout=None):
+            nonlocal connection
+            if proc.args == check and connection is None:
+                connection, _ = listener.accept()
+                connection.settimeout(10)
+                assert connection.recv(5) == b"ready"
+            return original_wait(proc, timeout=timeout)
+
+        monkeypatch.setattr(subprocess.Popen, "wait", wait_after_ready)
+        try:
+            assert _run("artifact", str(target), "--check", check, "--timeout", "0.1") == gates.FAIL
+            assert connection is not None
+            try:
+                connection.sendall(b"x")
+            except BrokenPipeError:
+                pass
+            try:
+                response = connection.recv(7)
+            except ConnectionResetError:
+                response = b""
+            assert response == b"", "check descendant survived the timeout and wrote after release"
+            assert not marker.exists()
+        finally:
+            if connection is not None:
+                connection.close()
+
+
+@pytest.mark.parametrize("completion", [{"result": "looks good"}, {"summary": "looks good"}, {}])
+@pytest.mark.parametrize("reviewer, expected", [("bob", gates.PASS), ("alice", gates.FAIL)])
+def test_unclaimed_review_completion_preserves_implementer(board, completion, reviewer, expected):
+    tid = _card()
+    with connect() as conn:
+        assert kb.request_review(conn, tid, summary="ready", reviewer=reviewer, force=True)
+        assert kb.complete_task(conn, tid, **completion)
+    assert _run("review", "--card", tid) == expected
+    with gates.open_board(str(board)) as conn:
+        assert gates.own_names(conn, gates.load_card(conn, tid)) == {"alice"}
+
+
 def _review_flow(tid, reviewer):
     with connect() as conn:
         assert kb.request_review(conn, tid, summary="ready", reviewer=reviewer, force=True)
@@ -319,6 +379,85 @@ def test_review_owner_name_is_configurable(board):
         kb.add_comment(conn, tid, "jun", "승인")
     assert _run("review", "--card", tid) == gates.FAIL
     assert _run("review", "--card", tid, "--owner", "jun") == gates.PASS
+
+
+@pytest.mark.parametrize("source", ["comment", "run"])
+@pytest.mark.parametrize("approval_after", [False, True], ids=["before_changes", "after_changes"])
+def test_review_same_second_approval_order(board, monkeypatch, source, approval_after):
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    tid = _card()
+
+    def approve():
+        if source == "comment":
+            with connect() as conn:
+                kb.add_comment(conn, tid, "user", "approve")
+        else:
+            _review_flow(tid, "bob")
+
+    if not approval_after:
+        approve()
+    with connect() as conn, kb.write_txn(conn):
+        kb._append_event(conn, tid, "changes_requested", {"reason": "needs another pass"})
+    if approval_after:
+        approve()
+    with connect() as conn:
+        events = kb.list_events(conn, tid)
+        relevant = [e for e in events if e.kind in {"commented", "completed", "changes_requested"}]
+        assert {e.created_at for e in relevant} == {1_800_000_000}
+        assert relevant[-1].kind == ("changes_requested" if not approval_after else
+                                    "commented" if source == "comment" else "completed")
+
+    assert _run("review", "--card", tid) == (gates.PASS if approval_after else gates.FAIL)
+
+
+@pytest.mark.parametrize("approval_before", [True, False])
+def test_review_same_second_ambiguous_history_fails_closed(board, monkeypatch, capsys, approval_before):
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    audit = "Specified — updated title and promoted to todo."
+    approval = "approve" + "x" * 40
+    assert len(audit) == len(approval)
+    with connect() as conn:
+        tid = kb.create_task(conn, title="original", assignee="impl", triage=True)
+        assert kb.specify_triage_task(conn, tid, title="v1", author="user" if approval_before else None)
+        kb.add_comment(conn, tid, "user", approval if approval_before else audit)
+        assert kb.request_review(conn, tid, reviewer="reviewer")
+        claimed = kb.claim_review_task(conn, tid, claimer="fixed-review-claimer")
+        assert kb.request_changes(conn, tid, reason="revise", expected_run_id=claimed.current_run_id)[0]
+        kb.add_comment(conn, tid, "user", audit if approval_before else approval)
+        assert kb.block_task(conn, tid, kind="needs_input", reason="same")
+        assert kb.unblock_task(conn, tid)
+        assert kb.block_task(conn, tid, kind="needs_input", reason="same")
+        assert kb.specify_triage_task(conn, tid, title="v2", author=None if approval_before else "user")
+        assert [c.body for c in kb.list_comments(conn, tid)] == [audit, approval, audit]
+
+    assert _run("review", "--card", tid) == gates.FAIL
+    output = capsys.readouterr().out
+    assert "same second" in output and "approve again" in output
+
+
+@pytest.mark.parametrize("offset,expected", [(-1, gates.FAIL), (1, gates.PASS)])
+def test_review_comment_in_another_second(board, monkeypatch, offset, expected):
+    tid = _card()
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    with connect() as conn, kb.write_txn(conn):
+        kb._append_event(conn, tid, "changes_requested", {"reason": "revise"})
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000 + offset)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "user", "approve")
+
+    assert _run("review", "--card", tid) == expected
+
+
+def test_review_same_second_unique_comment_after_audit_gap(board, monkeypatch):
+    monkeypatch.setattr(kb.time, "time", lambda: 1_800_000_000)
+    with connect() as conn:
+        tid = kb.create_task(conn, title="original", assignee="alice", triage=True)
+        assert kb.specify_triage_task(conn, tid, title="specified", author="user")
+        with kb.write_txn(conn):
+            kb._append_event(conn, tid, "changes_requested", {"reason": "revise"})
+        kb.add_comment(conn, tid, " user ", " approve ")
+
+    assert _run("review", "--card", tid) == gates.PASS
 
 
 
