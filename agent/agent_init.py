@@ -1802,19 +1802,18 @@ def _resolve_context_length(agent, _agent_cfg, base_url):
 
 def _select_context_engine(_agent_cfg):
     """Config-driven context engine: ``context.engine`` → plugins/context_engine/<name>/ →
-    general plugin system → None (built-in ContextCompressor)."""
+    general plugin system → None (built-in ContextCompressor). A safe worker never imports plugins."""
     from agent.safe_worker_policy import safe_worker_enabled
-
     if safe_worker_enabled():
         return None
+    from plugins.context_engine import release_unselected_engines  # the one selection rule; drops unselected groups
+    if release_unselected_engines(_agent_cfg) is None:
+        return None  # built-in compressor; don't auto-activate plugins
     _engine_name = "compressor"
     with suppress(Exception):
         _ctx_cfg = _agent_cfg.get("context", {}) if isinstance(_agent_cfg, dict) else {}
         _engine_name = _ctx_cfg.get("engine", "compressor") or "compressor"
-    if _engine_name == "compressor":
-        return None  # built-in; don't auto-activate plugins
-    _selected_engine = None
-    _copy_failed = False
+    _selected_engine, _copy_failed = None, False
     try:
         from plugins.context_engine import load_context_engine
         _selected_engine = load_context_engine(_engine_name)

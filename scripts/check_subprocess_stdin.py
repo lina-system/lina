@@ -190,6 +190,7 @@ def main() -> int:
     # runs as a standalone subprocess, not as a module).
     sys.path.insert(0, str(repo_root))
     from hermes_constants import get_hermes_home
+    from scripts.vendored_subtrees import is_vendored
 
     all_violations = []
 
@@ -203,7 +204,7 @@ def main() -> int:
 
             # Skip known-safe files.  ``relative_to`` returns a host-separated
             # path (backslashes on Windows) while KNOWN_SAFE is forward-slash.
-            if py_file.relative_to(repo_root).as_posix() in KNOWN_SAFE:
+            if py_file.relative_to(repo_root).as_posix() in KNOWN_SAFE or is_vendored(rel):
                 continue
 
             # Skip test files inside tools/ etc.

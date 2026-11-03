@@ -1,5 +1,5 @@
 {
-  "_comment": "Runtimes LINA installs for itself (lina#32), read by hermes_cli/lina_ocx.py. Node serves OCX, omo and ocx-omo (>= 24); its sha256 per platform comes from nodejs.org/dist/v<version>/SHASUMS256.txt. The OCX integrity is npm's dist.integrity for that exact version; tests/hermes_cli/test_lina_deps_pin.py checks it against the registry.",
+  "_comment": "Runtimes LINA installs for itself (lina#32, lina#34), read by hermes_cli/lina_ocx.py and hermes_cli/lina_omo.py. Node serves OCX, omo and ocx-omo (>= 24); its sha256 per platform comes from nodejs.org/dist/v<version>/SHASUMS256.txt. The OCX and omo integrity is npm's dist.integrity for that exact version; tests/hermes_cli/test_lina_deps_pin.py checks it against the registry.",
   "node": {
     "version": "24.22.2",
     "dist": "https://nodejs.org/dist",
@@ -14,5 +14,11 @@
     "package": "@bitkyc08/opencodex",
     "version": "2.95.0",
     "integrity": "sha512-7P/NZOqEq3EQ8NLvNf3evBvCSgjOkhfFA817KEKTKPIkaDmW0eIlQ4+XAzjj11VMTgNAkt32KJeyL4mJQGdJdg=="
+  },
+  "omo": {
+    "package": "omo-ai",
+    "version": "5.1.51",
+    "integrity": "sha512-SiJt+Apf1UWGX8rJsIbnXWSqyQAcVcDLYBqDAOAdVarzpfifHp6fOH0yYa5R1X9eueQnwOjh/S8iaymCB5VRHg==",
+    "license": "Sustainable Use License 1.0, not open source: installed from npm onto the person's own machine at install time, never vendored, bundled or committed into this repo or a release artifact"
   }
 }

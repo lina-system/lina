@@ -332,6 +332,35 @@ jobs:
       - name: No tracked file matches prune-list.txt
         run: python3 scripts/ci/check_prune_list.py
 
+  ocx-omo:
+    # tools/ocx-omo (lina#34): LINA builds it to JS with the pinned Node and runs `lina omo routing` on it. This job
+    # builds and tests it on the same Node, read from pm/lina-deps.json and checked against its pinned sha256. It runs
+    # on every change (one npm ci and tsc, under a minute) and is not a required check.
+    name: ocx-omo build and tests
+    runs-on: ubuntu-24.04
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+
+      - name: Install the pinned Node
+        run: |
+          set -euo pipefail
+          read -r version dist sha < <(python3 -c 'import json; n = json.load(open("pm/lina-deps.json"))["node"]; print(n["version"], n["dist"], n["sha256"]["linux-x64"])')
+          name="node-v${version}-linux-x64"
+          curl -fsSL --retry 3 -o "$RUNNER_TEMP/$name.tar.gz" "$dist/v$version/$name.tar.gz"
+          echo "$sha  $RUNNER_TEMP/$name.tar.gz" | sha256sum -c -
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "$RUNNER_TEMP/$name/bin" >> "$GITHUB_PATH"
+
+      - name: npm ci, build and test tools/ocx-omo
+        working-directory: tools/ocx-omo
+        run: |
+          set -euo pipefail
+          node --version
+          npm ci --ignore-scripts
+          npm run build
+          npm test
+
   uv-lockfile:
     # uv.lock agrees with pyproject.toml (upstream uv-lockfile-check.yml). Gated like upstream
     # ci.yaml: only pyproject.toml / uv.lock (or a .github/ change) can desync the lock.
