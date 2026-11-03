@@ -203,6 +203,31 @@ def test_entity_names_fold_case_as_python_does(routed, tmp_path):
         engine.shutdown()
 
 
+def test_doctor_lists_the_tables_the_ctx_schema_has(routed, tmp_path, memory_store_sql):
+    """On the store /lcm doctor reports the tables Postgres has in schema ctx (as Postgres's catalog lists them),
+    no missing required table, and the database as present though no lcm.db file exists."""
+    import json
+    db = routed("doctor")
+    config = _lcm("config").LCMConfig(database_path=str(db), embeddings_enabled=False)
+    engine = _lcm("engine").LCMEngine(config=config, hermes_home=str(tmp_path / "home"))
+    try:
+        engine.on_session_start("s1", conversation_id="c1")
+        report = json.loads(_lcm("tools").lcm_doctor({}, engine=engine))
+    finally:
+        engine.shutdown()
+    [schema] = [check["detail"] for check in report["checks"]
+                if isinstance(check.get("detail"), dict) and "existing_tables" in check["detail"]]
+    ctx_tables = [name for (name,) in memory_store_sql(
+        "SELECT table_name::text FROM information_schema.tables WHERE table_schema = 'ctx' "
+        "AND table_name <> 'sqlite_master' ORDER BY 1")]
+    assert schema["existing_tables"] == sorted(ctx_tables)
+    assert set(schema["required_tables"]) <= set(ctx_tables)
+    assert schema["missing_tables"] == []
+    [storage] = [check for check in report["checks"] if check["check"] == "sqlite_storage"]
+    assert storage["detail"]["database_exists"] is True
+    assert not db.exists()
+
+
 def test_one_store_connection_serves_many_threads_and_closes_cleanly(routed):
     """LCM-X shares one connection between threads (check_same_thread=False) and may close it while another thread
     is mid-statement, as SQLite's connection mutex allows: statements wait their turn and a closed connection
