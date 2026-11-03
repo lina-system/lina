@@ -1,6 +1,6 @@
 # Board endpoints the app reads beyond docs/api/work-client.yaml (lina#112): the owner's to-dos, decisions and due
 # groups from the work record, `lina worker` runs that are not kanban work cards, devices, quota and the inbox
-# notices. Served by hermes_cli/web_routers/lina_board.py behind the dashboard auth gate (session token).
+# notices; each agent's goals and to-dos (lina#166). Served by hermes_cli/web_routers/lina_board.py behind the dashboard auth gate (session token).
 # tests/hermes_cli/test_lina_board_api.py validates served JSON against it, so a shape change here and in the code
 # land together. WorkState is the same enum as work-client.yaml.
 openapi: 3.0.3
@@ -87,6 +87,57 @@ paths:
                 $ref: "#/components/schemas/QuotaView"
         "304":
           description: Unchanged since the ETag sent.
+  /work/items:
+    get:
+      operationId: listWorkItems
+      summary: Every open goal and to-do plus those closed in the last three days (lina#166).
+      parameters:
+        - name: agent
+          in: query
+          required: false
+          description: Only the items that answer to this agent.
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The goals and to-dos; a record that fails to read is in errors and items is empty.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemList"
+        "304":
+          description: Unchanged since the ETag sent.
+  /work/items/{id}:
+    get:
+      operationId: getWorkItem
+      summary: One goal or to-do with the owner's words, children, comments, runs, links and decision (lina#166).
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The item.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ItemDetail"
+        "304":
+          description: Unchanged since the ETag sent.
+        "404":
+          description: No such goal or to-do (an unknown id, an area, a memo or a dropped item).
+        "503":
+          description: The work record failed to read.
 components:
   parameters:
     IfNoneMatch:
@@ -484,3 +535,353 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaService"
+    Person:
+      type: object
+      additionalProperties: false
+      required: [id, name]
+      properties:
+        id:
+          type: string
+        name:
+          type: string
+    TodoCount:
+      type: object
+      additionalProperties: false
+      required: [done, total]
+      properties:
+        done:
+          type: integer
+          minimum: 0
+        total:
+          type: integer
+          minimum: 0
+    ItemSummary:
+      type: object
+      additionalProperties: false
+      required: [id, kind, parent, title, agent, addedBy, mine, state, reason, stateSince, lastActivityAt,
+                 createdAt, closedAt, due, doneCondition, area, projects, todos, runCount, commentCount]
+      properties:
+        id:
+          type: string
+          description: G12, T40
+        kind:
+          type: string
+          enum: [goal, todo]
+        parent:
+          type: string
+          nullable: true
+          description: A to-do's goal; a goal's area.
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+          description: The agent the item answers to (agent_of).
+        addedBy:
+          type: string
+          nullable: true
+          description: "First writer: an agent id or the owner id."
+        mine:
+          type: boolean
+          description: The owner's own to-do.
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          type: string
+          nullable: true
+          description: >
+            The store's reason code (v_todo): decision, feedback, review, hold, blocked_by_item, no_response,
+            failed, result_missing; null when there is none (and on goals: v_goal has no reason).
+        stateSince:
+          type: integer
+          nullable: true
+          description: When the item entered its state.
+        lastActivityAt:
+          type: integer
+          nullable: true
+        createdAt:
+          type: integer
+        closedAt:
+          type: integer
+          nullable: true
+        due:
+          type: string
+          nullable: true
+        doneCondition:
+          type: string
+          nullable: true
+        area:
+          type: string
+          nullable: true
+          description: The area's title.
+        projects:
+          type: array
+          items:
+            type: string
+        todos:
+          allOf:
+            - $ref: "#/components/schemas/TodoCount"
+          nullable: true
+          description: Goals only.
+        runCount:
+          type: integer
+          minimum: 0
+        commentCount:
+          type: integer
+          minimum: 0
+    ItemList:
+      type: object
+      additionalProperties: false
+      required: [version, at, errors, owner, agents, items]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        errors:
+          $ref: "#/components/schemas/Errors"
+        owner:
+          allOf:
+            - $ref: "#/components/schemas/Person"
+          nullable: true
+        agents:
+          type: array
+          description: Configured agents in order.
+          items:
+            $ref: "#/components/schemas/Person"
+        items:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemSummary"
+    ItemReply:
+      type: object
+      additionalProperties: false
+      required: [by, at, text, result]
+      properties:
+        by:
+          type: string
+        at:
+          type: integer
+        text:
+          type: string
+        result:
+          type: string
+          nullable: true
+          enum: [applied, needs_answer, not_applied, null]
+    ItemComment:
+      type: object
+      additionalProperties: false
+      required: [cid, by, at, text, status, kind, replies]
+      properties:
+        cid:
+          type: string
+        by:
+          type: string
+        at:
+          type: integer
+        text:
+          type: string
+        status:
+          type: string
+          enum: [open, resolved]
+        kind:
+          type: string
+          enum: [comment, answer]
+        replies:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemReply"
+    ItemRun:
+      type: object
+      additionalProperties: false
+      required: [id, title, state, reason, startedAt, endedAt]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          type: string
+          nullable: true
+        startedAt:
+          type: integer
+          nullable: true
+        endedAt:
+          type: integer
+          nullable: true
+    ItemLink:
+      type: object
+      additionalProperties: false
+      required: [kind, label, url]
+      properties:
+        kind:
+          type: string
+          description: gh_ref, gh_milestone, desk, kanban, todoist, url (the store's link kinds).
+        label:
+          type: string
+        url:
+          type: string
+          nullable: true
+    Decision:
+      type: object
+      additionalProperties: false
+      required: [text, kind, choices, recommended, cid, at, answered]
+      properties:
+        text:
+          type: string
+        kind:
+          type: string
+          enum: [ask, act]
+        choices:
+          type: array
+          items:
+            type: string
+        recommended:
+          type: string
+          nullable: true
+        cid:
+          type: string
+          nullable: true
+        at:
+          type: integer
+          nullable: true
+        answered:
+          type: boolean
+    OwnerDone:
+      type: object
+      additionalProperties: false
+      required: [at, undoUntil, with]
+      properties:
+        at:
+          type: integer
+        undoUntil:
+          type: integer
+        with:
+          type: array
+          description: To-dos closed together with a goal.
+          items:
+            type: string
+    Basis:
+      type: object
+      additionalProperties: false
+      required: [text, at]
+      properties:
+        text:
+          type: string
+        at:
+          type: integer
+          nullable: true
+    ItemDetail:
+      description: ItemSummary's fields (written flat, as the shapes comment allows) and the item's detail.
+      type: object
+      additionalProperties: false
+      required: [id, kind, parent, title, agent, addedBy, mine, state, reason, stateSince, lastActivityAt,
+                 createdAt, closedAt, due, doneCondition, area, projects, todos, runCount, commentCount,
+                 why, basis, children, comments, runs, links, workCards, decision, ownerDone]
+      properties:
+        id:
+          type: string
+          description: G12, T40
+        kind:
+          type: string
+          enum: [goal, todo]
+        parent:
+          type: string
+          nullable: true
+          description: A to-do's goal; a goal's area.
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+          description: The agent the item answers to (agent_of).
+        addedBy:
+          type: string
+          nullable: true
+          description: "First writer: an agent id or the owner id."
+        mine:
+          type: boolean
+          description: The owner's own to-do.
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          type: string
+          nullable: true
+          description: >
+            The store's reason code (v_todo): decision, feedback, review, hold, blocked_by_item, no_response,
+            failed, result_missing; null when there is none (and on goals: v_goal has no reason).
+        stateSince:
+          type: integer
+          nullable: true
+          description: When the item entered its state.
+        lastActivityAt:
+          type: integer
+          nullable: true
+        createdAt:
+          type: integer
+        closedAt:
+          type: integer
+          nullable: true
+        due:
+          type: string
+          nullable: true
+        doneCondition:
+          type: string
+          nullable: true
+        area:
+          type: string
+          nullable: true
+          description: The area's title.
+        projects:
+          type: array
+          items:
+            type: string
+        todos:
+          allOf:
+            - $ref: "#/components/schemas/TodoCount"
+          nullable: true
+          description: Goals only.
+        runCount:
+          type: integer
+          minimum: 0
+        commentCount:
+          type: integer
+          minimum: 0
+        why:
+          type: string
+          nullable: true
+        basis:
+          type: array
+          items:
+            $ref: "#/components/schemas/Basis"
+        children:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemSummary"
+        comments:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemComment"
+        runs:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemRun"
+        links:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemLink"
+        workCards:
+          type: array
+          description: Kanban card ids linked from the item or its to-dos.
+          items:
+            type: string
+        decision:
+          allOf:
+            - $ref: "#/components/schemas/Decision"
+          nullable: true
+        ownerDone:
+          allOf:
+            - $ref: "#/components/schemas/OwnerDone"
+          nullable: true
