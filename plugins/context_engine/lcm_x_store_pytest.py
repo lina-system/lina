@@ -12,6 +12,7 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import re
 import sqlite3
 import sys
 from urllib.parse import unquote, urlsplit
@@ -80,6 +81,9 @@ def _lcm_x_on_store(monkeypatch):
         backend = lcm_x_store.backend_for(path) if not args else None
         if backend is not None:
             return backend(timeout=kwargs.get("timeout", 5.0), isolation_level=kwargs.get("isolation_level", ""))
+        if not args and not kwargs.get("uri") and not Path(path).exists() and Path(path).name != "state.db":
+            return _FirstStatement(lambda: original_connect(database, **kwargs), lambda: lcm_x_store.backend_for(
+                path, opening=True)(timeout=kwargs.get("timeout", 5.0), isolation_level=kwargs.get("isolation_level", "")))
         return original_connect(database, *args, **kwargs)
     monkeypatch.setattr(sqlite3, "connect", connect)
     monkeypatch.setattr(lcm_x_store, "_vector_text", _widened_vector_text(lcm_x_store._vector_text))
@@ -88,6 +92,59 @@ def _lcm_x_on_store(monkeypatch):
     hermes_state_store.TEXT_CACHE.clear()
     _drop_leftover_connections(store)
     store.reset()
+
+
+_LCM_X_TABLE = re.compile(r"^\s*CREATE\s+(?:VIRTUAL\s+)?TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?(?:messages|summary_nodes|lcm_\w+)\b",
+                          re.IGNORECASE)
+
+
+class _FirstStatement:
+    """A new database file a test seeds itself before any LCM-X store opens it (its own minimal ``messages``
+    table, say). The first statement decides: LCM-X's schema goes to the store, like the store that opens the
+    path next; anything else is a plain SQLite file."""
+
+    def __init__(self, open_sqlite, open_store):
+        object.__setattr__(self, "_open", (open_sqlite, open_store))
+        object.__setattr__(self, "_conn", None)
+        object.__setattr__(self, "_pending", {})
+
+    def _decide(self, sql=""):
+        if self._conn is None:
+            conn = self._open[1 if _LCM_X_TABLE.match(sql or "") else 0]()
+            for name, value in self._pending.items():
+                setattr(conn, name, value)
+            object.__setattr__(self, "_conn", conn)
+        return self._conn
+
+    def execute(self, sql, *args, **kwargs):
+        return self._decide(sql).execute(sql, *args, **kwargs)
+
+    def executemany(self, sql, *args, **kwargs):
+        return self._decide(sql).executemany(sql, *args, **kwargs)
+
+    def executescript(self, script):
+        return self._decide(script).executescript(script)
+
+    def close(self):
+        if self._conn is not None:
+            self._conn.close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return self._decide().__exit__(*exc)
+
+    def __getattr__(self, name):
+        if name in self._pending:
+            return self._pending[name]
+        return getattr(self._decide(), name)
+
+    def __setattr__(self, name, value):
+        if self._conn is None:
+            self._pending[name] = value
+        else:
+            setattr(self._conn, name, value)
 
 
 def _widened_vector_text(vector_text):

@@ -219,7 +219,29 @@ _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
 def _apply_rewrites(masked: str) -> str:
     for pattern, repl in _REWRITES:
         masked = pattern.sub(repl, masked)
-    return masked
+    return _mixed_json_arrays(masked)
+
+
+def _mixed_json_arrays(masked: str) -> str:
+    """``json_array(id, length(bits))`` mixes text and numbers, which no SQL-language function signature takes;
+    ``jsonb_build_array`` takes any arguments and prints like ``ctx.json_array``."""
+    out, pos = [], 0
+    for m in re.finditer(r"\bctx\.json_array\(", masked):
+        if m.start() < pos:
+            continue
+        depth, end = 1, m.end()
+        while end < len(masked) and depth:
+            depth += {"(": 1, ")": -1}.get(masked[end], 0)
+            end += 1
+        if depth or not masked[m.end():end - 1].strip():
+            continue
+        inner = _mixed_json_arrays(masked[m.end():end - 1])
+        # Inside json_group_array the array stays JSON (SQLite's JSON subtype), not a quoted string.
+        nested = masked[:m.start()].rstrip().endswith("json_group_array(")
+        out.append(f"{masked[pos:m.start()]}(jsonb_build_array({inner}){'' if nested else '::text'})")
+        pos = end
+    out.append(masked[pos:])
+    return "".join(out)
 
 
 def _insert_or(masked: str, catalog: Catalog) -> str:
