@@ -12,7 +12,6 @@ from __future__ import annotations
 import contextlib
 import re
 import sqlite3
-import threading
 from collections import Counter
 from types import SimpleNamespace
 from unittest.mock import patch
@@ -167,23 +166,32 @@ def test_a_thousand_recorded_turns_land_once_per_engine_as_the_policy_table_says
     assert len({m["metadata"]["lina_conversation"] for m in lina_env.written}) == 1
 
 
-def test_one_turn_is_one_lcm_ingest_with_the_engine_hook_off(home, lina_env):
+def test_one_turn_is_one_lcm_ingest_handed_over_by_lina_memory(home, lina_env):
     from hermes_cli.plugins import get_plugin_manager
     from hermes_state import SessionDB
+    from plugins.memory import import_provider_module
 
     agent = make_agent("one-ingest", SessionDB(home / "state.db"))
+    lcm = import_provider_module("lina-memory", "lcm")
+    taken, hand_turn = [], lcm.hand_turn
+
+    def handing(history, *, session_id):
+        taken.append(session_id)
+        return hand_turn(history, session_id=session_id)
     engine_cls = type(agent.context_compressor)
     calls = []
     original = engine_cls.ingest
 
     def counting(self, messages):
-        calls.append((len(messages), threading.current_thread()))
+        calls.append(len(messages))
         return original(self, messages)
 
-    with patch.object(engine_cls, "ingest", counting):
+    with patch.object(engine_cls, "ingest", counting), patch.object(lcm, "hand_turn", handing):
         run_turn(agent, "Remember the code word PELICAN-7731.", "Noted: PELICAN-7731.")
+        handed_by_turn_end = list(calls)  # the hook ran inside the turn, which waited for it
         drain(agent)
 
-    assert len(get_plugin_manager()._hooks.get("post_llm_call", [])) == 0
-    # One ingest, on the turn thread, where LCM-X's own hook ran: never overlapping the next turn.
-    assert calls == [(2, threading.current_thread())]
+    assert len(get_plugin_manager()._hooks.get("post_llm_call", [])) == 1  # LCM-X's hook stays registered
+    assert taken == ["one-ingest"]  # ...and handed this agent's turn to lina-memory
+    # One ingest, finished before the turn returned, where LCM-X's own hook runs: never queued behind it.
+    assert handed_by_turn_end == calls == [2]

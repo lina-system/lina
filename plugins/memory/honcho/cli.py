@@ -887,17 +887,18 @@ def _setup_wizard(args) -> None:
     _write_config(cfg)
     print(f"\n  Config written to {write_path}")
 
-    try:  # auto-enable Honcho as memory provider in config.yaml (or keep the provider that drives it there)
+    # The slot gets the provider this setup runs for: honcho, or the provider that drives it (lina-memory hands its
+    # own name through post_setup), never one read back from config.yaml.
+    slot = "lina-memory" if getattr(args, "memory_provider", "") == "lina-memory" else "honcho"
+    try:  # auto-enable the memory provider in config.yaml
         from hermes_cli.config import load_config, save_config
-        from plugins.memory import slot_provider_for
-        slot = slot_provider_for("honcho")
         hermes_config = load_config()
         hermes_config.setdefault("memory", {})["provider"] = slot
         save_config(hermes_config)
         print(f"  Memory provider set to '{slot}' in config.yaml")
     except Exception as e:
         logger.debug("Honcho _setup_wizard failed", exc_info=True)
-        print(f"  Could not auto-enable in config.yaml: {e}\n  Run: hermes config set memory.provider honcho")
+        print(f"  Could not auto-enable in config.yaml: {e}\n  Run: hermes config set memory.provider {slot}")
 
     print("  Testing connection... ", end="", flush=True)
     try:

@@ -37,8 +37,15 @@ hermes kanban plan plan.yaml
 hermes kanban plan plan.yaml --json
 ```
 
-`--dry-run` prints the cards, gates and links and writes nothing. The real run creates every card
-and link in one transaction; running the same plan again returns the same card ids.
+`--dry-run` prints the cards, gates and links, the record to-dos each card would create or link and
+the notices that would go out, and writes nothing. The real run creates every card and link in one
+transaction; running the same plan again returns the same card ids.
+
+With `ledger_goal`, the run then writes the work record (`lina work`): the goal card is linked to
+the record goal, each card's `ledger_todos` are created or linked under it, and every other agent
+with a card gets one notice line with only its card id, title and to-do ids. A card for another
+agent is how work is asked of that agent: the work sits in the record as its to-do, and only the
+ids are sent. A re-run creates no to-dos and sends no notices.
 
 ## Quick Reference
 
@@ -50,13 +57,19 @@ goal:
   title: "Run a goal through work sessions"
   assignee: sion
   body: "Why, and what done looks like for the whole goal."
-  ledger_goal: G63                   # optional
+  ledger_goal: G63                   # optional: the open goal in the work record
   # goal_mode: true                  # optional; the goal card is not goal-mode by default
 cards:
   - key: gates
     title: "Gates in the card goal loop"
     assignee: sion
     todos: ["lina-system/lina#108", "[ ] write the gate doc"]
+    ledger_todos:                    # optional, needs ledger_goal: record to-dos of this card
+      - T120                         # an open to-do under G63, linked to the card
+      - title: "게이트 문서 작성"         # a new to-do: by the assignee, run = this card
+        why: "무엇이 카드를 끝내는지 분명해진다"
+        done: "게이트 문서가 병합된다"
+        check: "gh pr list --state merged --search gates"
     outcome: "What exists when the card is done."
     verification: "How it is checked."
     constraints: "Decisions shared with other cards, repeated here."   # optional
@@ -74,6 +87,7 @@ cards:
     title: "Review the gates PR"
     assignee: rev                    # another agent
     todos: ["[ ] review the gates PR, write reviews/gates.md, comment `approve` on the gates card"]
+    ledger_todos: [T121]             # rev is told: card id, title, T121
     outcome: "A review note with a verdict, and rev's approval comment on the gates card."
     verification: "The note has a Verdict line."
     stop_when: "The note is written and the approval is posted."
@@ -104,7 +118,9 @@ writes (`gate artifact`).
 1. Read the goal and list every to-do: GitHub issues as `owner/repo#n`, other items as `[ ] text`.
 2. Group to-dos into cards. One card holds the same code or data, or one dependency chain: about
    3–8 code to-dos, or 1–3 deliverables. Split a card that would touch two unrelated areas.
-3. Put each to-do in exactly one card.
+3. Put each to-do in exactly one card. When the goal is in the work record, set `ledger_goal` and
+   give each card its record to-dos in `ledger_todos` (an existing `T<n>`, or a new to-do with
+   `title`, `why`, `done`, `check` under the record's writing rules).
 4. Order cards with `after:` only when one really needs another's result; leave the rest parallel.
 5. A decision two cards share (a name, a format, an interface) is written into both bodies, in
    `constraints`. Do not rely on one card reading the other.
@@ -119,6 +135,11 @@ writes (`gate artifact`).
 - The plan is refused as a whole, and nothing is written, when a work card has no gate, a to-do is
   in two cards, an assignee is not a profile, `after:` names an unknown card or makes a cycle, or
   the plan or a card sets `triage` / `decompose`. The error names the card.
+- The record side is checked before anything is written, too: `ledger_goal` must be an open record
+  goal, every `T<n>` an open to-do under it and in one card only, every new to-do must pass
+  `lina work add 할 일`, and `ledger_todos` needs `ledger_goal`.
+- When the record step fails after the board was written, the command exits non-zero and names the
+  step and the cards; run the same plan again to finish it (nothing is duplicated).
 - A laid-out plan cannot gain or lose cards: a changed card list under the same `key` is refused.
   Use a new `key`, or add the card with `hermes kanban create` and `hermes kanban link`.
 - Unknown fields are refused, so a typo like `gate:` instead of `gates:` fails loudly.

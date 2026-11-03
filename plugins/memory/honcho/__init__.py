@@ -219,11 +219,12 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             {"key": "baseUrl", "description": "Honcho base URL (for self-hosted)"},
         ]
 
-    def post_setup(self, hermes_home: str, config: dict) -> None:
-        """Run the full Honcho setup wizard after provider selection."""
+    def post_setup(self, hermes_home: str, config: dict, *, memory_provider: str = "honcho") -> None:
+        """Run the full Honcho setup wizard after provider selection. ``memory_provider`` is the provider the user
+        chose, which the wizard puts in the memory slot (lina-memory when it drives Honcho)."""
         import types
         from .cli import cmd_setup
-        cmd_setup(types.SimpleNamespace())
+        cmd_setup(types.SimpleNamespace(memory_provider=memory_provider))
 
     # ----- Session lifecycle -----
 

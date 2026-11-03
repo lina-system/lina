@@ -16,6 +16,8 @@ A card's to-dos are the lines under its ``## To-dos`` heading:
 from __future__ import annotations
 
 import argparse
+import importlib
+import importlib.util
 import json
 import os
 import re
@@ -28,7 +30,6 @@ PASS, FAIL, WAIT = 0, 1, 75
 _LABEL = {PASS: "PASS", FAIL: "FAIL", WAIT: "WAIT"}
 _ISSUE_TODO = re.compile(r"^\s*[-*]\s+([A-Za-z0-9_.-]+)/([A-Za-z0-9_.-]+)#([1-9][0-9]*)\s*$")
 _CHECK_TODO = re.compile(r"^\s*[-*]\s+\[[ xX]\]\s+\S")
-_BOX = re.compile(r"^\s*[-*]\s+\[([ xX])\]\s+")
 _QUESTION = re.compile(r"^\s*(질문\s*:|Q\s*:)", re.IGNORECASE)
 _APPROVAL = re.compile(r"^\s*(승인|approve)", re.IGNORECASE)
 _OK_JOB = {"success", "skipped", "neutral"}
@@ -74,18 +75,6 @@ def load_card(conn: sqlite3.Connection, card: str | None) -> sqlite3.Row:
     if row is None:
         raise GateError(f"card {card} not found on the board")
     return row
-
-
-def section(body: str | None, heading: str) -> list[str]:
-    lines, inside = [], False
-    for raw in (body or "").splitlines():
-        match = re.match(r"^(#{1,6})\s+(.*?)\s*#*\s*$", raw)
-        if match and len(match[1]) <= 2:
-            inside = len(match[1]) == 2 and match[2].strip().lower() == heading.lower()
-            continue
-        if inside:
-            lines.append(raw)
-    return lines
 
 
 def card_todos(body: str | None) -> tuple[list[tuple[str, int]], list[str]]:
@@ -171,7 +160,7 @@ def gh_json(*args: str):
 
 _ISSUE_QUERY = """query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){
 issue(number:$number){state stateReason body closedByPullRequestsReferences(first:20,includeClosedPrs:true){
-nodes{number url merged mergedAt mergeCommit{oid} repository{nameWithOwner}}}}}}"""
+nodes{number url merged mergedAt mergeCommit{oid} repository{nameWithOwner} labels(first:50){nodes{name}}}}}}}"""
 
 
 def fetch_issue(repo: str, number: int) -> dict:
@@ -189,28 +178,47 @@ def merged_prs(issue: dict) -> list[dict]:
     return [pr for pr in nodes if pr and pr.get("merged")]
 
 
-def _collect_acceptance():
+def _sibling(name: str):
     try:
-        from hermes_cli.kanban_pr_acceptance import collect_acceptance
+        return importlib.import_module(f"hermes_cli.{name}")
     except ImportError:  # run as a plain file: load the stdlib-only sibling by path
-        import importlib.util
-        spec = importlib.util.spec_from_file_location(
-            "kanban_pr_acceptance", Path(__file__).with_name("kanban_pr_acceptance.py"))
+        if name in sys.modules:
+            return sys.modules[name]
+        spec = importlib.util.spec_from_file_location(name, Path(__file__).with_name(f"{name}.py"))
         if spec is None or spec.loader is None:
-            raise GateError("kanban_pr_acceptance.py is missing beside this file") from None
+            raise GateError(f"{name}.py is missing beside this file") from None
         module = importlib.util.module_from_spec(spec)
+        sys.modules[name] = module
         spec.loader.exec_module(module)
-        collect_acceptance = module.collect_acceptance
-    return collect_acceptance
+        return module
+
+
+def _collect_acceptance():
+    return _sibling("kanban_pr_acceptance").collect_acceptance
+
+
+# The merge rule's Done-when reading (lina#63): one copy, shared with ``lina work merge``.
+section = _sibling("merge_rules").section
+done_when = _sibling("merge_rules").done_when
 
 
 
-def done_when(body: str | None) -> tuple[int, int]:
-    boxes = [m[1] for m in (_BOX.match(line) for line in section(body, "Done when")) if m]
-    return sum(1 for box in boxes if box in "xX"), len(boxes)
+def _owner_approval(pr: dict, owner_login: str | None) -> tuple[int, str] | None:
+    """A merged pull request labelled ``dev-red-approved`` merged over a red dev: the merge rule's
+    ``owner_approved`` decides whether the owner added that label."""
+    rules = _sibling("merge_rules")
+    labels = {n["name"] for n in (pr.get("labels") or {}).get("nodes") or []}
+    if rules.DEV_RED_APPROVED not in labels:
+        return None
+    pr_repo = (pr.get("repository") or {}).get("nameWithOwner") or ""
+    # Every page, flattened (--paginate --slurp): the newest labeled event may sit past the first 100.
+    pages = gh_json("api", "--paginate", "--slurp", f"repos/{pr_repo}/issues/{pr['number']}/timeline?per_page=100")
+    events = [event for page in pages for event in page] if isinstance(pages, list) else []
+    approved, why = rules.owner_approved(labels, events if isinstance(events, list) else [], owner_login)
+    return (PASS if approved else FAIL), f"#{pr['number']} {why}"
 
 
-def check_issue(repo: str, number: int, issue: dict) -> tuple[int, str]:
+def check_issue(repo: str, number: int, issue: dict, owner_login: str | None = None) -> tuple[int, str]:
     ref = f"{repo}#{number}"
     if issue.get("state") != "CLOSED":
         return FAIL, f"{ref}: issue is still open"
@@ -228,7 +236,11 @@ def check_issue(repo: str, number: int, issue: dict) -> tuple[int, str]:
     worst = PASS
     notes = []
     for pr in prs:
-        receipt = collect(pr["url"], None)
+        approval = _owner_approval(pr, owner_login)
+        if approval and approval[0] == FAIL:
+            worst = FAIL
+            notes.append(approval[1])
+        receipt = collect(pr["url"], None, green=_sibling("merge_rules").GREEN)
         cls = receipt.get("classification")
         if not receipt.get("ok"):
             worst = WAIT if cls == "pending" and worst != FAIL else FAIL
@@ -245,9 +257,10 @@ def gate_prs(args: argparse.Namespace, conn: sqlite3.Connection, report: Report)
     if not issues:
         report.line(FAIL, f"{card['id']}: no owner/repo#n issues under ## To-dos")
         return
+    owner = args.owner_login or _configured_owner()
     for repo, number in issues:
         try:
-            code, text = check_issue(repo, number, fetch_issue(repo, number))
+            code, text = check_issue(repo, number, fetch_issue(repo, number), owner)
         except GateError as exc:
             code, text = FAIL, f"{repo}#{number}: {exc}"
         report.line(code, text)
@@ -431,7 +444,9 @@ def build_parser(prog: str = "kanban gate") -> argparse.ArgumentParser:
     card = argparse.ArgumentParser(add_help=False)
     card.add_argument("--card", default=os.environ.get("HERMES_KANBAN_TASK"),
                       help="Card id (default: $HERMES_KANBAN_TASK)")
-    sub.add_parser("prs", parents=[card], help="Every To-dos issue closed by a merged PR with green required checks")
+    prs = sub.add_parser("prs", parents=[card], help="Every To-dos issue closed by a merged PR with green required checks")
+    prs.add_argument("--owner-login", metavar="LOGIN",
+                     help="the owner account whose dev-red-approved label counts (default: work.owner_login)")
     dev = sub.add_parser("dev", parents=[card], help="Latest push run on the branch after the card's last merge is green")
     dev.add_argument("repo", metavar="owner/repo")
     dev.add_argument("--branch", default="dev")
@@ -445,6 +460,17 @@ def build_parser(prog: str = "kanban gate") -> argparse.ArgumentParser:
                         help=f"Comment author that counts as the owner (repeatable; default: {', '.join(DEFAULT_OWNERS)})")
     sub.add_parser("ask", parents=[card], help="Every question the assignee raised has a later answer")
     return parser
+
+
+def _configured_owner() -> str | None:
+    try:
+        from hermes_cli.delivery.settings import owner_login
+    except ImportError:  # run as a plain file: pass --owner-login
+        return None
+    try:
+        return owner_login()
+    except (OSError, ValueError):
+        return None
 
 
 _BOARD_GATES = {"prs": gate_prs, "dev": gate_dev, "review": gate_review, "ask": gate_ask}

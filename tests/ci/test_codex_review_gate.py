@@ -1,4 +1,4 @@
-"""Behavior tests for the merge gates in scripts/ci/codex_review_gate.py.
+"""Behavior tests for the merge gates in hermes_cli/codex_review_gate.py (entry point scripts/ci/codex_review_gate.py).
 
 Regression for #55 and #57, merged with Codex P1 findings on their head commits.
 """
@@ -11,7 +11,7 @@ from typing import Any
 
 import pytest
 
-SCRIPT = Path(__file__).resolve().parents[2] / "scripts" / "ci" / "codex_review_gate.py"
+SCRIPT = Path(__file__).resolve().parents[2] / "hermes_cli" / "codex_review_gate.py"
 _spec = importlib.util.spec_from_file_location("codex_review_gate", SCRIPT)
 assert _spec and _spec.loader
 gate = importlib.util.module_from_spec(_spec)
