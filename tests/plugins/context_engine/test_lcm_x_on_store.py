@@ -1,0 +1,105 @@
+"""LCM-X on the memory store (lina#16): its stores run on schema ``ctx`` and read message text from
+``memory.messages``, through ``plugins/context_engine/lcm_x_store.py``. Real Postgres (tests/_fixtures/memory_store.py)."""
+
+from __future__ import annotations
+
+import importlib
+import importlib.util
+import sys
+import time
+from pathlib import Path
+
+import pytest
+
+import hermes_state_store
+from plugins.context_engine import lcm_x_store
+
+PLUGIN = Path(__file__).resolve().parents[3] / "plugins" / "context_engine" / "lcm-x"
+PACKAGE = "lina_lcm_x_on_store"
+
+
+def _lcm(module: str):
+    if PACKAGE not in sys.modules:
+        spec = importlib.util.spec_from_file_location(PACKAGE, PLUGIN / "__init__.py",
+                                                      submodule_search_locations=[str(PLUGIN)])
+        package = importlib.util.module_from_spec(spec)
+        package.__path__ = [str(PLUGIN)]
+        sys.modules[PACKAGE] = package
+    return importlib.import_module(f"{PACKAGE}.{module}")
+
+
+@pytest.fixture
+def routed(tmp_path):
+    """A profile home whose lcm.db is routed to the store; unrouted after the test."""
+    paths = []
+
+    def make(profile: str) -> Path:
+        db = tmp_path / "profiles" / profile / "lcm.db"
+        db.parent.mkdir(parents=True)
+        assert lcm_x_store.route(db) == profile
+        paths.append(db)
+        return db
+    yield make
+    for db in paths:
+        lcm_x_store.unroute(db)
+
+
+def _stores(db: Path):
+    return _lcm("store").MessageStore(db), _lcm("dag").SummaryDAG(db)
+
+
+def test_korean_two_character_term_recalls_messages_and_summaries(routed):
+    db = routed("ko")
+    store, dag = _stores(db)
+    try:
+        ids = store.append_batch("s1", [{"role": "user", "content": "어제 회의록을 정리했다"},
+                                        {"role": "assistant", "content": "deploy notes are ready"}])
+        node = _lcm("dag").SummaryNode(session_id="s1", summary="회의록 요약: 출시 일정", source_ids=ids,
+                                       token_count=5, created_at=time.time())
+        node_id = dag.add_node(node)
+
+        assert [row["store_id"] for row in store.search("회의", limit=5)] == [ids[0]]
+        assert [row["store_id"] for row in store.search("deploy", limit=5)] == [ids[1]]
+        assert [n.node_id for n in dag.search("회의", limit=5)] == [node_id]
+        assert not db.exists()
+    finally:
+        store.close()
+        dag.close()
+
+
+def test_a_hermes_turn_is_not_stored_twice(routed, memory_store_sql):
+    db = routed("p1")
+    text = hermes_state_store.MessageStore("p1")
+    values = ("회의는 3시에", None) + (None,) * (len(hermes_state_store.TEXT_FIELDS) - 2)
+    with text.write():
+        uid = text.put_text(message_uid="m-1", values=values, role="user", tool_name=None, tool_call_id=None,
+                            timestamp=time.time(), session_id="hermes-s", seq_in_session=1, meta={})
+    text.close()
+    store, dag = _stores(db)
+    try:
+        [store_id] = store.append_batch("s1", [{"role": "user", "content": "회의는 3시에", "message_uid": "m-1"}])
+        assert store.get(store_id)["content"] == "회의는 3시에"
+        rows = memory_store_sql("SELECT uid FROM memory.messages WHERE agent_id = 'p1'")
+        assert rows == [(uid,)]
+        assert memory_store_sql("SELECT text_uid FROM ctx.lcm_messages WHERE store_id = %s", (store_id,)) == [(uid,)]
+
+        [other] = store.append_batch("s1", [{"role": "assistant", "content": "알겠습니다", "message_uid": "m-2"}])
+        assert store.get(other)["content"] == "알겠습니다"
+        assert len(memory_store_sql("SELECT uid FROM memory.messages WHERE agent_id = 'p1'")) == 2
+    finally:
+        store.close()
+        dag.close()
+
+
+def test_each_profile_sees_only_its_own_rows(routed):
+    first, second = routed("alpha"), routed("beta")
+    store_a, dag_a = _stores(first)
+    store_b, dag_b = _stores(second)
+    try:
+        [mine] = store_a.append_batch("s1", [{"role": "user", "content": "alpha only"}])
+        assert store_b.get(mine) is None
+        assert store_b.search("alpha", limit=5) == []
+        assert store_a.get(mine)["content"] == "alpha only"
+    finally:
+        for closable in (store_a, dag_a, store_b, dag_b):
+            closable.close()

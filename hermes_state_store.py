@@ -574,6 +574,21 @@ class MessageStore:
                     inserted += len(cur.fetchall())
         return inserted
 
+    def text_uids_with_digest(self, message_uid: str, content_sha256: str) -> list[str]:
+        """The uids of *message_uid*'s text versions (``agent:<p>:<uid>`` and its ``#`` versions) whose content has
+        *content_sha256*, first written first: how LCM-X finds the row Hermes wrote for a message it stores."""
+        base = self.base_uid(message_uid)
+        with self._cursor() as cur:
+            cur.execute("SELECT uid FROM memory.messages WHERE (uid = %s OR uid LIKE %s) AND content_sha256 = %s"
+                        " AND forgotten_at IS NULL ORDER BY message_id", (base, _like_escape(base) + "#%", content_sha256))
+            return [row[0] for row in cur.fetchall()]
+
+    def held_by_context(self, uids: Sequence[str]) -> set[str]:
+        """The uids among *uids* an LCM-X message of this agent points at (``ctx.lcm_messages``, lina#16)."""
+        with self._cursor() as cur:
+            cur.execute("SELECT DISTINCT text_uid FROM ctx.lcm_messages WHERE text_uid = ANY(%s)", (list(uids),))
+            return {row[0] for row in cur.fetchall()}
+
     def count(self) -> int:
         with self._cursor() as cur:
             cur.execute("SELECT count(*) FROM memory.messages")
@@ -1054,5 +1069,7 @@ def move_agent_texts(db_path: Path, old_agent: str, new_agent: str) -> int:
 
 def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
     """``collect_unreferenced`` for a SessionDB's agent, counting references in its state.db."""
-    return db.message_store.collect_unreferenced(
-        lambda uids: db._read_retrying_ioerr(lambda conn: held_text_uids(conn, uids)), older_than_days=older_than_days)
+    store = db.message_store
+    return store.collect_unreferenced(
+        lambda uids: db._read_retrying_ioerr(lambda conn: held_text_uids(conn, uids)) | store.held_by_context(uids),
+        older_than_days=older_than_days)

@@ -27,8 +27,31 @@ class ConnectionPolicy:
     on_setup_error: Callable[[Exception], None] | None
 
 
+def store_backend(database: object) -> Callable[[], sqlite3.Connection] | None:
+    """LINA: a connection factory when the host routes *database* to its Postgres store, else None."""
+    try:
+        from plugins.context_engine.lcm_x_store import backend_for
+    except ImportError:
+        return None
+    return backend_for(database)
+
+
+def is_store_connection(conn: object) -> bool:
+    """LINA: whether *conn* is a store connection (its schema is the host's migrations, not this plugin's DDL)."""
+    return getattr(conn, "is_lina_store", False) is True
+
+
 def open_connection(policy: ConnectionPolicy) -> sqlite3.Connection:
     """Run exactly the supplied recipe, preserving caller-owned error cleanup."""
+    backend = store_backend(policy.database)
+    if backend is not None:
+        # LINA: the SQLite pragmas of before_row_factory do not apply to the store.
+        conn = backend()
+        if policy.on_open is not None:
+            policy.on_open(conn)
+        if policy.row_factory is not None:
+            conn.row_factory = policy.row_factory
+        return conn
     conn = sqlite3.connect(policy.database, **dict(policy.connect_kwargs))
     # Some stores publish the handle (and create their lock) before setup.
     # Those operations were outside their setup exception handler as well.

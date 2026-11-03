@@ -19,6 +19,7 @@ import time
 from contextlib import closing, contextmanager
 from typing import Iterable, Sequence
 
+from .sqlite_session import is_store_connection
 from .config import _parse_bool_env, lcm_env_get, sqlite_mmap_size
 from .schema_families import SchemaFinding
 
@@ -216,6 +217,8 @@ def add_column_if_missing(
 
 
 def ensure_metadata_table(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS metadata (
@@ -261,6 +264,8 @@ def read_existing_schema_version(conn: sqlite3.Connection) -> int:
 
 def refuse_schema_version_too_new(conn: sqlite3.Connection) -> None:
     """Raise before any startup DDL when a newer build owns the DB."""
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     current_version = read_existing_schema_version(conn)
     if current_version <= SCHEMA_VERSION:
         return
@@ -661,6 +666,8 @@ def remediate_interim_schema_stamp(
 
 
 def ensure_migration_state_table(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS lcm_migration_state (
@@ -769,6 +776,8 @@ def select_conversation_range(conn: sqlite3.Connection, columns: str, session_id
 
 
 def ensure_lifecycle_state_table(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     conn.execute(
         """
         CREATE TABLE IF NOT EXISTS lcm_lifecycle_state (
@@ -798,6 +807,8 @@ def ensure_lifecycle_state_table(conn: sqlite3.Connection) -> None:
 
 
 def ensure_lifecycle_state_columns(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     ensure_lifecycle_state_table(conn)
     columns = {
         row[1] for row in conn.execute("PRAGMA table_info(lcm_lifecycle_state)").fetchall()
@@ -829,6 +840,8 @@ def ensure_lifecycle_state_columns(conn: sqlite3.Connection) -> None:
 
 
 def ensure_message_origin_columns(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     table_row = conn.execute(
         "SELECT name FROM sqlite_master WHERE type='table' AND name='messages'"
     ).fetchone()
@@ -860,6 +873,8 @@ def ensure_temporal_rollup_tables(conn: sqlite3.Connection) -> None:
     invalidation; ``lease_expires_at`` bounds a ``building`` row so a crashed
     build can be reclaimed. See :mod:`hermes_lcm.rollup_store`.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS lcm_rollups (
@@ -1080,6 +1095,8 @@ def ensure_temporal_rollup_tables(conn: sqlite3.Connection) -> None:
 
 def ensure_temporal_rollup_invalidation_triggers(conn: sqlite3.Connection) -> None:
     """Install transaction-coupled summary mutation outbox triggers when possible."""
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     if conn.execute(
         "SELECT 1 FROM sqlite_master WHERE type='table' AND name='summary_nodes'"
     ).fetchone() is None:
@@ -1202,6 +1219,8 @@ def verify_temporal_rollup_schema(conn: sqlite3.Connection) -> list[str]:
     ``"index:<name>"`` entries for every required object that is missing; an
     empty list means the schema is present and consistent.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return []
     missing: list[str] = []
     for name in REQUIRED_TEMPORAL_ROLLUP_TABLES:
         row = conn.execute(
@@ -1476,6 +1495,8 @@ def ensure_embedding_tables(conn: sqlite3.Connection) -> None:
     per-identity counter bumped inside every vector write/delete transaction so
     the in-process NumPy matrix cache cannot serve cross-process-stale results.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS lcm_embedding_profile (
@@ -1636,6 +1657,8 @@ def embedding_schema_missing(conn: sqlite3.Connection) -> set[str]:
     set means the ``embeddings_v1`` marker cannot be trusted on its own and
     ``ensure_embedding_tables`` must (re-)run to repair the gap.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return set()
     present = {
         str(row[0])
         for row in conn.execute(
@@ -1655,6 +1678,8 @@ def embedding_schema_findings(conn: sqlite3.Connection) -> list[SchemaFinding]:
     ``ensure_embedding_tables``; incompatible same-name objects are rejected
     before the named migration marker is published.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return []
     errors = [SchemaFinding("missing object", name) for name in sorted(embedding_schema_missing(conn))]
     if errors:
         return errors
@@ -1728,6 +1753,8 @@ def embedding_schema_findings(conn: sqlite3.Connection) -> list[SchemaFinding]:
 
 def verify_embedding_schema(conn: sqlite3.Connection) -> list[str]:
     """Return the historical string findings in their original order."""
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return []
     return [str(f) for f in embedding_schema_findings(conn)]
 
 
@@ -1746,6 +1773,8 @@ def ensure_chunk_tables(conn: sqlite3.Connection) -> None:
     vectors, keyed on ``(chunk_id, identity_hash)`` where ``chunk_id`` is
     ``store_id:chunk_index``.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     ensure_metadata_table(conn)
     has_messages = conn.execute("SELECT 1 FROM sqlite_master WHERE name='messages' AND type='table'").fetchone()
     observed = conn.execute(
@@ -1893,6 +1922,8 @@ def chunk_schema_missing(conn: sqlite3.Connection) -> set[str]:
     means the ``chunk_vectors_v1`` marker cannot be trusted on its own and
     ``ensure_chunk_tables`` must (re-)run to repair the gap.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return set()
     present = {
         str(row[0])
         for row in conn.execute(
@@ -1910,6 +1941,8 @@ def verify_chunk_schema(conn: sqlite3.Connection) -> list[str]:
     same-name objects are rejected before the ``chunk_vectors_v1`` marker is
     published so a wrong-shaped table cannot masquerade as a valid corpus.
     """
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return []
     errors = [f"missing object: {name}" for name in sorted(chunk_schema_missing(conn))]
     if errors:
         return errors
@@ -2321,6 +2354,8 @@ def _assertion_schema_statements() -> dict[str, str]:
 
 def ensure_assertion_tables(conn: sqlite3.Connection) -> None:
     """Materialize missing assertion objects; replace the source guard atomically."""
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     statements = _assertion_schema_statements()
     guard = "lcm_assertion_source_insert_guard"
 
@@ -2416,6 +2451,8 @@ def _expected_assertion_schema_contract() -> tuple[
 
 def verify_assertion_schema(conn: sqlite3.Connection) -> list[str]:
     """Return shape findings for the optional assertion tables and triggers."""
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return []
     findings: list[str] = []
     expected_table_shapes, expected_table_checks, expected_trigger_sql = (
         _expected_assertion_schema_contract()
@@ -3265,6 +3302,8 @@ def ensure_message_stem_fts(conn: sqlite3.Connection, spec: ExternalContentFtsSp
 
     Returns False when a busy writer deferred the work to the next open: the caller must not
     read the stem index on this handle, whose state may claim ``ready`` over missing triggers."""
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return False
     if conn.execute("PRAGMA query_only").fetchone()[0]:
         return True
     state = _stem_metadata(conn, "fts_stem_state")
@@ -3588,6 +3627,8 @@ def repair_external_content_fts(
     now: float | None = None,
     throttle: bool = False,
 ) -> dict[str, bool]:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     rebuilt = False
     degraded = False
     # Only a full structural REBUILD subsumes the deep check, so only that case
@@ -3749,10 +3790,14 @@ def ensure_external_content_fts(
 ) -> None:
     # Startup path: throttle the deep integrity-check. Explicit repair callers
     # use ``repair_external_content_fts(..., throttle=False)`` for a forced check.
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     repair_external_content_fts(conn, spec, now=now, throttle=True)
 
 
 def run_versioned_migrations(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     refuse_schema_version_too_new(conn)
 
     ensure_metadata_table(conn)
@@ -3873,6 +3918,8 @@ _ENTITY_TRIGGER_FRAGMENTS = {name: ("lcm_memory_events is append-only",) for nam
 
 
 def ensure_entity_tables(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     statements = _entity_schema_statements()
 
     def pending():
@@ -3892,6 +3939,8 @@ def ensure_entity_tables(conn: sqlite3.Connection) -> None:
 
 
 def verify_entity_schema(conn: sqlite3.Connection) -> list[str]:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return []
     expected = _expected_entity_schema_contract()
     actual = {name: (kind, _normalize_trigger_sql(sql)) for kind, name, sql in conn.execute(
         "SELECT type,name,sql FROM sqlite_master WHERE name LIKE 'lcm_entit%' OR name LIKE 'lcm_memory_%' "
