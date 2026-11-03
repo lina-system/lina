@@ -30,7 +30,7 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | File | What it is |
 | --- | --- |
 | `store.env` | Generated on first install (mode 0600): the three role passwords, the ports (Postgres `54320`, Honcho `8000`, both on 127.0.0.1) and the data volume's name |
-| `honcho.env` | Honcho settings such as LLM and embedding keys (`LLM_*`, `EMBEDDING_*`); read by the api, deriver and migration job |
+| `honcho.env` | Honcho settings such as LLM and embedding keys (`LLM_*`, `EMBEDDING_*`); read by the api, deriver and migration job. Install and upgrade add the embedding defaults it does not set yet (see Configuration) and leave the lines already there alone |
 | `backups/` | Backup generations |
 
 ## Roles and row-level security
@@ -180,20 +180,32 @@ embedding:
 `agent/embedding_client.py` is the one client (`POST {base_url}/embeddings`, `dimensions` sent, a full-width
 answer cut and renormalised). `truncate_stored` there cuts a vector stored at full width (4096 or 1536) by the
 same model to 1024 and refuses one from another model. Honcho is pointed at the same model and width in
-`store/honcho.env`:
+`store/honcho.env`. `lina store install` and `lina store upgrade` write the model and width there for you
+(`HONCHO_DEFAULTS` in `hermes_cli/store.py`), each key only when the file does not set it yet:
 
 ```sh
 EMBEDDING_MODEL_CONFIG__TRANSPORT=openai
 EMBEDDING_MODEL_CONFIG__MODEL=qwen3-embedding-8b
+EMBEDDING_VECTOR_DIMENSIONS=1024
+EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE=always
+```
+
+What you add is the endpoint and its key:
+
+```sh
 EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=<the same endpoint>
 EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 EMBEDDING_CUSTOM_API_KEY=<the key>
-EMBEDDING_VECTOR_DIMENSIONS=1024
-EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE=always
 # Only for the upgrade that runs l19_vec_embeddings, and only when the vectors already in Honcho were written by
 # qwen3-embedding-8b at 1024 dimensions; otherwise leave it out and they are re-embedded.
 # EMBEDDING_LEGACY_MODEL=qwen3-embedding-8b
 ```
+
+A key you set in `honcho.env` wins: edit the written line, and install or upgrade will not change it back.
+`EMBEDDING_MODEL_CONFIG__TRANSPORT`, `EMBEDDING_MODEL_CONFIG__MODEL` and
+`EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE` may be overridden (the model together with `embedding.model` in
+`config.yaml`); `EMBEDDING_VECTOR_DIMENSIONS` must stay the width of `vec.embeddings` (1024), or Honcho does
+not start.
 
 The model name must be the same string on both sides: it is part of every row's key, and searches only read
 rows of the configured model.
