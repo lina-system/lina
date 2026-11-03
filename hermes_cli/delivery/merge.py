@@ -74,14 +74,22 @@ def _wait_queue(gh, repo: str, number: int, out, sleep, timeout_s: float, poll_s
 
 
 def after_merge(gh, repo: str, snapshot: dict, out, base: Path | None = None) -> None:
+    """Close the linked issues with their Done when ticked and file the review follow-ups. Idempotent: a re-run
+    after a failed request finishes what is left and changes nothing already done (follow-ups skip listed boxes)."""
     for n, issue in snapshot["issues"].items():
         if issue.get("pull_request"):
             continue
         current = gh.json(f"repos/{repo}/issues/{n}")
         body = rules.tick_done_when(current.get("body") or "")
-        gh.write("PATCH", f"repos/{repo}/issues/{n}", {"body": body, "state": "closed", "state_reason": "completed"})
+        change = {"body": body} if body != (current.get("body") or "") else {}
+        if str(current.get("state", "")).lower() != "closed":
+            change.update(state="closed", state_reason="completed")
         ticked, total = rules.done_when(body)
-        out(f"#{n} closed, Done when {ticked}/{total} ticked")
+        if change:
+            gh.write("PATCH", f"repos/{repo}/issues/{n}", change)
+            out(f"#{n} closed, Done when {ticked}/{total} ticked")
+        else:
+            out(f"#{n} already closed, Done when {ticked}/{total} ticked")
     for line in followups.file(gh, repo, snapshot["number"], snapshot["head"], base):
         out(line)
 
@@ -89,6 +97,8 @@ def after_merge(gh, repo: str, snapshot: dict, out, base: Path | None = None) ->
 def merge_pr(gh, repo: str, number: int, *, base: Path | None = None, out=print, sleep=time.sleep,
              queue_timeout_s: float = 90 * 60, poll_s: float = 60) -> int:
     snapshot = collect_pr(gh, repo, number, base)
+    if snapshot["state"] == "MERGED":
+        return _finish_merged(gh, repo, snapshot, out, base)
     verdict = rules.may_merge(snapshot)
     for line in verdict.text():
         out(line)
@@ -113,6 +123,17 @@ def merge_pr(gh, repo: str, number: int, *, base: Path | None = None, out=print,
             out(f"#{number} not merged: GitHub did not merge it")
             return rules.FAIL
         out(f"#{number} merged at head {head[:10]} as a merge commit")
+    after_merge(gh, repo, snapshot, out, base)
+    return rules.PASS
+
+
+def _finish_merged(gh, repo: str, snapshot: dict, out, base: Path | None) -> int:
+    """A pull request that is already merged (a post-merge request failed, or the queue merged it after this
+    command stopped waiting): the open-PR gates no longer apply, only the post-merge steps are left."""
+    if snapshot["base"] != snapshot["delivery_branch"]:
+        out(f"FAIL base is {snapshot['base']}, not {snapshot['delivery_branch']}")
+        return rules.FAIL
+    out(f"#{snapshot['number']} is already merged: finishing the post-merge steps")
     after_merge(gh, repo, snapshot, out, base)
     return rules.PASS
 

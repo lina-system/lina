@@ -293,3 +293,58 @@ def test_a_pull_request_into_another_branch_is_refused_before_any_merge_or_issue
     runs = [path for path in gh.reads if path.startswith(f"repos/{REPO}/actions/runs?")]
     assert runs and all("branch=dev&" in path for path in runs), "dev green is read on the delivery branch"
     assert not any(path.startswith(f"repos/{REPO}/rules/branches/main") for path in gh.reads)
+
+
+def _stateful(gh, fail_first_issue_patch=False):
+    """Writes land in the fake: an issue PATCH updates the issue, a POST adds the follow-up issue to the list."""
+    issue = gh.routes[f"repos/{REPO}/issues/12"]
+    listed = gh.routes[f"repos/{REPO}/issues"]
+    failing = {"left": 1 if fail_first_issue_patch else 0}
+
+    def write(method, path, payload=None):
+        gh.writes.append((method, path, payload))
+        if method == "PATCH" and path == f"repos/{REPO}/issues/12":
+            if failing["left"]:
+                failing["left"] -= 1
+                from hermes_cli.delivery.github import GhError
+                raise GhError("gh api -X exited 1: HTTP 502")
+            issue.update(payload)
+        elif method == "POST":
+            made = {"number": 900, "title": payload["title"], "body": payload["body"],
+                    "labels": [{"name": n} for n in payload["labels"]]}
+            listed.append(made)
+            return made
+        return {"number": 900}
+
+    gh.write = write
+    return issue
+
+
+def test_a_failed_post_merge_request_is_finished_by_a_re_run():
+    from hermes_cli.delivery.github import GhError
+    gh, lines = _github(snapshot(review_comments=[finding("P2", HEAD)]), queue=False), []
+    issue = _stateful(gh, fail_first_issue_patch=True)
+    with pytest.raises(GhError):
+        _merge(gh, lines)
+    assert gh.commands == [["pr", "merge", "7", "-R", REPO, "--merge", "--match-head-commit", HEAD]]
+    assert issue["state"] == "open", "the merge went through, the issue update did not"
+
+    lines.clear()
+    assert _merge(gh, lines) == rules.PASS, lines
+    assert "#7 is already merged: finishing the post-merge steps" in lines
+    assert len(gh.commands) == 1, "no second merge"
+    assert issue["state"] == "closed" and rules.done_when(issue["body"]) == (2, 2)
+    assert [w for w in gh.writes if w[0] == "POST"] and "#12 closed, Done when 2/2 ticked" in lines
+
+
+def test_a_second_re_run_after_a_finished_merge_changes_nothing():
+    gh, lines = _github(snapshot(review_comments=[finding("P2", HEAD)]), queue=False), []
+    _stateful(gh)
+    assert _merge(gh, lines) == rules.PASS
+    done = list(gh.writes)
+    lines.clear()
+    assert _merge(gh, lines) == rules.PASS
+    assert gh.writes == done, "no re-tick, no re-close, no duplicate follow-up"
+    assert "#12 already closed, Done when 2/2 ticked" in lines
+    assert "chore(hermes_cli): review follow-ups: every finding already listed" in lines
+    assert len(gh.commands) == 1
