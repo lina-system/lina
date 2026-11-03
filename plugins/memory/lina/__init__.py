@@ -247,7 +247,8 @@ class LinaMemoryProvider(MemoryProvider):
         self._honcho.save_config(values, hermes_home)
 
     def post_setup(self, hermes_home: str, config: dict) -> None:
-        self._honcho.post_setup(hermes_home, config)
+        """Honcho's setup wizard, putting lina-memory (the provider chosen) in the memory slot when it finishes."""
+        self._honcho.post_setup(hermes_home, config, memory_provider=PROVIDER_NAME)
 
     def backup_paths(self) -> list[str]:
         return self._honcho.backup_paths()
