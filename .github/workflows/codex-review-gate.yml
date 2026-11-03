@@ -6,7 +6,7 @@ name: Merge gates
 # pull request carries the `no-issue` label) and "dev green" (the latest dev push CI passed, or
 # this is a `dev-red-fix` pull request that removes dev's red and adds none, or the owner set
 # `dev-red-approved`).
-# Judged by scripts/ci/codex_review_gate.py.
+# Judged by hermes_cli/codex_review_gate.py through its entry point scripts/ci/codex_review_gate.py.
 #
 # pull_request_target, not pull_request: the run uses the workflow and the gate script from dev,
 # so a pull request cannot edit the gate that judges it. Nothing from the pull request is
@@ -59,7 +59,10 @@ jobs:
         with:
           ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
-          sparse-checkout: scripts/ci/codex_review_gate.py
+          # The entry point and the module it loads (the module ships in the package for lina work merge).
+          sparse-checkout: |
+            scripts/ci/codex_review_gate.py
+            hermes_cli/codex_review_gate.py
           sparse-checkout-cone-mode: false
 
       - name: Judge and set the statuses

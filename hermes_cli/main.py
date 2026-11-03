@@ -349,7 +349,6 @@ from hermes_cli.subcommands.gateway import build_gateway_parser
 from hermes_cli.subcommands.profile import build_profile_parser
 from hermes_cli.subcommands.model import build_model_parser
 from hermes_cli.subcommands.setup import build_setup_parser
-
 from hermes_cli.subcommands.whatsapp import build_whatsapp_parser
 from hermes_cli.subcommands.slack import build_slack_parser
 from hermes_cli.subcommands.login import build_login_parser
@@ -3335,7 +3334,6 @@ def _build_cli_parser():
     build_plugins_parser(subparsers, cmd_plugins=cmd_plugins)
 
     _register_plugin_cli_commands(subparsers)
-
     build_curator_parser(subparsers)
     build_pets_parser(subparsers)
     build_journey_parser(subparsers)
