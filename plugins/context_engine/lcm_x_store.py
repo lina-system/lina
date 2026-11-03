@@ -246,7 +246,7 @@ def _mixed_json_arrays(masked: str) -> str:
 
 def _insert_or(masked: str, catalog: Catalog) -> str:
     """``INSERT OR IGNORE`` / ``INSERT OR REPLACE`` / ``REPLACE INTO`` → ``INSERT ... ON CONFLICT``."""
-    m = re.match(r"\s*(?:INSERT\s+OR\s+(IGNORE|REPLACE|ABORT|FAIL|ROLLBACK)|(REPLACE))\s+INTO\s+(\w+)\s*"
+    m = re.match(r"\s*(?:INSERT\s+OR\s+(IGNORE|REPLACE|ABORT|FAIL|ROLLBACK)|(REPLACE))\s+INTO\s+((?:temp\.)?\w+)\s*"
                  r"(\(([^)]*)\))?", masked, re.IGNORECASE)
     if not m:
         return masked
