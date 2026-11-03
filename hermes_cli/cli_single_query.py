@@ -102,6 +102,13 @@ def _run_kanban_goal_loop_q(cli: HermesCLI, first_response: str, run_turn=None, 
         with _kbc.connect_closing() as c:
             _kb.block_task(c, task_id, reason=reason, expected_run_id=worker_run_id)
 
+    def _record_turn(turn: int) -> None:
+        # An absent/invalid carrier must never borrow the card's current attempt.
+        if worker_run_id is None:
+            return
+        with _kbc.connect_closing() as c, _kb.write_txn(c):
+            _kb._append_event(c, task_id, "goal_turn", {"turn": turn}, run_id=worker_run_id)
+
     from hermes_cli.kanban_goal_gates import loop_gate_check, wait_with_heartbeat
 
     _run_loop(
@@ -112,6 +119,7 @@ def _run_kanban_goal_loop_q(cli: HermesCLI, first_response: str, run_turn=None, 
         gate_check=loop_gate_check(task_id, goal_text, run_id=worker_run_id,
                                    workspace=os.environ.get("HERMES_KANBAN_WORKSPACE")),
         wait_fn=wait_with_heartbeat,
+        record_turn=_record_turn,
     )
 
 

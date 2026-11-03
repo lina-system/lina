@@ -102,6 +102,22 @@ def _gate_commands() -> tuple[list[list[str]], set[str]]:
     return commands, named
 
 
+def test_example_metadata_survives_plan_body_rendering():
+    from hermes_cli.kanban_plan import parse_plan, work_card_body
+
+    # Given the executable example with optional work-card metadata.
+    data = hermes_yaml.safe_load(_example_plan())
+
+    # When the actual plan parser and body renderer consume it.
+    plan = parse_plan(data)
+    body = work_card_body(plan.cards[0], "K1", plan.goal.title)
+
+    # Then the work body preserves the machine-consumed field values.
+    fields = dict(line.split(": ", 1) for line in body.splitlines() if ": " in line)
+    assert fields["Size"] == data["cards"][0]["size"]
+    assert fields["Kind"] == data["cards"][0]["kind"]
+
+
 def test_every_named_gate_exists(capsys):
     rc, out, _err = _kanban(capsys, "gate", "--help")
     assert rc == 0

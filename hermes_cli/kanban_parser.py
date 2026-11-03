@@ -275,8 +275,8 @@ _SPECS = [
         _arg("--task", help="Only show diagnostics for one task id"),
         _json_flag(help="Emit JSON (structured) instead of the default human table"),
     ], aliases=["diag"], help="List active diagnostics on the current board"),
-    _cmd("link", [_arg("parent_id"), _arg("child_id")], help="Add a parent->child dependency"),
-    _cmd("unlink", [_arg("parent_id"), _arg("child_id")], help="Remove a parent->child dependency"),
+    _cmd("link", [_arg("parent_id"), _arg("child_id"), _reason("Audit reason")], help="Add a parent->child dependency"),
+    _cmd("unlink", [_arg("parent_id"), _arg("child_id"), _reason("Audit reason")], help="Remove a parent->child dependency"),
     _cmd("claim", [
         _TASK_ID,
         _arg("--ttl", type=int, default=kb.DEFAULT_CLAIM_TTL_SECONDS, help="Claim TTL in seconds (default: 900)"),
@@ -314,6 +314,7 @@ _SPECS = [
         _arg("--body", help="Replace the task body"),
         _arg("--priority", type=int, help="Replace the task priority"),
         _arg("--result", help="Backfilled task result text for a done task"),
+        _reason("Audit reason"),
         *_STEP_HANDOFF,
     ], help="Edit task fields or recovery fields on an already-completed task"),
     _cmd("block", [
@@ -456,6 +457,8 @@ _SPECS = [
              "or was repaired, non-zero when it is still corrupt."
          )),
     _cmd("outcomes", [
+        _arg("--goal", help="Restrict outcomes to this goal card"),
+        _arg("--rebuild", action="store_true", help="Rebuild outcomes from recorded events"),
         _arg("--agent", help="Only cards assigned to this profile"),
         _arg("--kind", help="Only cards of this kind (the title word before ':', else 'general')"),
         _arg("--last", type=int, default=20, metavar="N", help="Newest N rows (default 20)"),

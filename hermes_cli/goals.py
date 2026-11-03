@@ -19,6 +19,7 @@ import time
 from dataclasses import dataclass, field, asdict
 from datetime import datetime, timezone, UTC
 from pathlib import Path
+from collections.abc import Callable
 from typing import Any, Dict, List, Optional, Tuple
 
 from hermes_cli._subprocess_compat import noninteractive_git_env
@@ -1644,6 +1645,16 @@ def _kanban_gate_end(gate: dict, task_id: str, block, log) -> Optional[tuple[str
     return gate["end"], _truncate(gate["reason"], 300)
 
 
+def _record_kanban_turn(record_turn, task_id: str, turn: int) -> None:
+    if record_turn is None:
+        return
+    try:
+        record_turn(turn)
+    except Exception:
+        # Persistence is optional at this boundary; model execution must continue.
+        logger.warning("kanban goal loop: turn record failed for %s turn %s", task_id, turn, exc_info=True)
+
+
 def run_kanban_goal_loop(
     *,
     task_id: str,
@@ -1656,6 +1667,7 @@ def run_kanban_goal_loop(
     log=None,
     gate_check=None,
     wait_fn=time.sleep,
+    record_turn: Callable[[int], None] | None = None,
 ) -> dict[str, Any]:
     """Drive a kanban worker through a Ralph-style goal loop.
 
@@ -1666,6 +1678,8 @@ def run_kanban_goal_loop(
     failing gate's prompt replaces the judge for that boundary; a waiting gate (exit 75) costs no
     turn: ``wait_fn`` backs off (30 s doubling to 10 min) and the boundary is re-checked. A WAIT
     verdict is treated as CONTINUE (workers finish via kanban tools, not by parking).
+    ``record_turn`` persists each continuation's 1-based ordinal before execution; the
+    first turn is implicit. Persistence failure must not prevent model execution.
     """
 
     def _log(msg: str) -> None:
@@ -1777,6 +1791,7 @@ def run_kanban_goal_loop(
             )
             return _result("blocked_budget", "turn budget exhausted")
 
+        _record_kanban_turn(record_turn, task_id, turns_used + 1)
         try:
             result = run_turn(prompt)
             if isinstance(result, dict):

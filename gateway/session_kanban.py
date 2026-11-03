@@ -414,6 +414,10 @@ def _run_task_turns(agent, frame, history, context):
     def block(reason):
         with connect_closing() as conn:
             kb.block_task(conn, context['task_id'], reason=reason, expected_run_id=context['run_id'])
+    def record_turn(turn: int) -> None:
+        # The owner process may carry another board/run in its environment.
+        with connect_closing(Path(context['db'])) as conn, kb.write_txn(conn):
+            kb._append_event(conn, context['task_id'], 'goal_turn', {'turn': turn}, run_id=context['run_id'])
     def turn(prompt):
         nonlocal result
         result = agent.run_conversation(prompt, conversation_history=agent._session_db.get_messages_as_conversation(agent.session_id),
@@ -425,5 +429,5 @@ def _run_task_turns(agent, frame, history, context):
         first_response=result.get('final_response', ''),
         gate_check=loop_gate_check(context['task_id'], context['goal_text'], run_id=context['run_id'],
                                    workspace=context.get('workspace')),
-        wait_fn=wait_with_heartbeat)
+        wait_fn=wait_with_heartbeat, record_turn=record_turn)
     return result
