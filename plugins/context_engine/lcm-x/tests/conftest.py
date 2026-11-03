@@ -4,7 +4,10 @@ Patches the plugin modules so they can be imported both as a package
 (relative imports during plugin loading) and directly during testing.
 """
 import hashlib
+import os
+import runpy
 import sys
+import weakref
 import importlib.util
 from pathlib import Path
 
@@ -104,6 +107,38 @@ def _isolate_product_environment(monkeypatch, request, tmp_path_factory):
     monkeypatch.setenv("HERMES_HOME", str(tmp_path_factory.getbasetemp() / "hermes-home" / test_id))
 
 
+@pytest.fixture(scope="session")
+def _real_host_store():
+    # LINA's tests package is not this suite's tests package. Load its real-store
+    # fixture by path; it also carries the app DSN into allowlisted host envs.
+    fixture = plugin_dir.parents[2] / "tests" / "_fixtures" / "memory_store.py"
+    if not fixture.is_file():
+        yield None
+        return
+    shared = runpy.run_path(str(fixture))
+    store = shared["ProcessStore"]()
+    try:
+        yield store
+    finally:
+        store.close()
+
+
+@pytest.fixture(autouse=True)
+def _real_host_store_dsn(_isolate_product_environment, _real_host_store, monkeypatch):
+    if _real_host_store is None:
+        yield
+        return
+    if not os.environ.get("LINA_TEST_PG_DSN"):
+        pytest.fail("LINA real-host tests require the memory_store.py cluster runner or LINA_TEST_PG_DSN")
+    monkeypatch.setenv("LINA_STORE_DSN", _real_host_store.app_dsn())
+    try:
+        yield
+    finally:
+        from hermes_state_store import TEXT_CACHE
+        TEXT_CACHE.clear()
+        _real_host_store.reset()
+
+
 _MAINTENANCE_SCHEDULERS = ("_ROLLUP_MAINTENANCE_SCHEDULER", "_EMBEDDING_MAINTENANCE_SCHEDULER")
 
 
@@ -136,6 +171,15 @@ def _isolate_embedding_process_state(request):
         maintenance = sys.modules.get("hermes_lcm.embedding_maintenance")
         engine = sys.modules.get("hermes_lcm.engine")
         retrieval = sys.modules.get("hermes_lcm.retrieval_core")
+        engines = []
+        if engine is not None:
+            bind_storage = engine.LCMEngine._bind_storage
+
+            def bind(instance, *args, **kwargs):
+                bind_storage(instance, *args, **kwargs)
+                engines.append(weakref.ref(instance))
+
+            patch.setattr(engine.LCMEngine, "_bind_storage", bind)
         # These caches are keyed by database path. tmp_path_retention_policy=failed deletes a
         # passing test's tmp_path, so a later test can be handed the same path again.
         if engine is not None:
@@ -157,6 +201,11 @@ def _isolate_embedding_process_state(request):
         if thread is not None:
             thread.join(5)
             assert not thread.is_alive(), "model preparation outlived its test"
+        for reference in reversed(engines):
+            if (instance := reference()) is not None:
+                instance.shutdown()
+        if retrieval is not None:
+            retrieval._reset_vector_store_pool()
 
 
 @pytest.fixture(autouse=True)
