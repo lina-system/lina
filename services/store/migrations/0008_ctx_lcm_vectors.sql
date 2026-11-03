@@ -17,6 +17,7 @@ CREATE OR REPLACE FUNCTION ctx.lcm_embedding_vectors_write() RETURNS trigger
     LANGUAGE plpgsql AS $$
 DECLARE
     model_name text;
+    profile_dtype text;
 BEGIN
     IF TG_OP = 'DELETE' THEN
         DELETE FROM vec.embeddings AS e
@@ -25,7 +26,11 @@ BEGIN
            AND e.item_id = (SELECT n.vec_item_id FROM ctx.summary_nodes AS n WHERE n.node_id = OLD.embedded_id::bigint);
         RETURN OLD;
     END IF;
-    SELECT p.model_name INTO model_name FROM ctx.lcm_embedding_profile AS p WHERE p.identity_hash = NEW.identity_hash;
+    SELECT p.model_name, p.dtype INTO model_name, profile_dtype FROM ctx.lcm_embedding_profile AS p WHERE p.identity_hash = NEW.identity_hash;
+    IF profile_dtype IS DISTINCT FROM 'float32' AND model_name IS NOT NULL THEN
+        PERFORM ctx.lcm_raise('vectors on the memory store are float32 (the one embedding model, lina#19); '
+                              'this profile stores ' || profile_dtype);
+    END IF;
     IF model_name IS NULL THEN
         PERFORM ctx.lcm_raise('no embedding profile ' || NEW.identity_hash);
     END IF;
@@ -79,6 +84,7 @@ CREATE OR REPLACE FUNCTION ctx.lcm_chunk_vectors_write() RETURNS trigger
     LANGUAGE plpgsql AS $$
 DECLARE
     model_name text;
+    profile_dtype text;
     msg record;
     vec_chunk bigint;
     width int;
@@ -92,7 +98,11 @@ BEGIN
            AND c.message_ids = ARRAY[msg.message_id] AND p.identity_hash = OLD.identity_hash AND e.model = p.model_name;
         RETURN OLD;
     END IF;
-    SELECT p.model_name INTO model_name FROM ctx.lcm_embedding_profile AS p WHERE p.identity_hash = NEW.identity_hash;
+    SELECT p.model_name, p.dtype INTO model_name, profile_dtype FROM ctx.lcm_embedding_profile AS p WHERE p.identity_hash = NEW.identity_hash;
+    IF profile_dtype IS DISTINCT FROM 'float32' AND model_name IS NOT NULL THEN
+        PERFORM ctx.lcm_raise('vectors on the memory store are float32 (the one embedding model, lina#19); '
+                              'this profile stores ' || profile_dtype);
+    END IF;
     SELECT * INTO msg FROM ctx.lcm_chunk_message(NEW.chunk_id);
     IF model_name IS NULL OR msg.message_id IS NULL THEN
         PERFORM ctx.lcm_raise('no embedding profile or message for chunk ' || NEW.chunk_id);
