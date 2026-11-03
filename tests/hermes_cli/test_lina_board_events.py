@@ -413,6 +413,36 @@ def test_a_run_waiting_for_a_person_and_the_answer_each_reach_the_socket(work, c
         assert _events(answered) == [("worker", "answer", "OT-ALP0001")]
 
 
+def test_a_live_stream_resyncs_when_kanban_rows_after_its_position_are_pruned(work, client, pool):
+    from hermes_cli import kanban_db
+    from hermes_cli import kanban_db_connect as kbc
+    active, done = _card("진행 카드"), _card("끝난 카드")
+    conn = kbc.connect()
+    try:
+        assert kanban_db.complete_task(conn, done, result="끝", fire_lifecycle_hook=False)
+    finally:
+        conn.close()
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        conn = kbc.connect()
+        try:
+            with conn:  # one commit, so the poll sees both rows and the prune at once
+                for task, at in ((done, 1), (active, 2)):  # the done task's event is old, the active one's new
+                    conn.execute("INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'commented', "
+                                 "'{}', ?)", (task, at if task == done else int(NOW)))
+                gone = conn.execute(  # gc_events' own rule: old events of done or archived tasks
+                    "DELETE FROM task_events WHERE created_at < ? AND kind != 'decomposed' AND task_id IN "
+                    "(SELECT id FROM tasks WHERE status IN ('done', 'archived'))", (int(NOW) - 3600,)).rowcount
+        finally:
+            conn.close()
+        assert gone >= 1
+        assert _next(ws, pool)["resync"] is True
+        later = _card("다음 카드")
+        after = _next(ws, pool)
+        assert "resync" not in after and ("kanban", "commented", active) not in _events(after)
+        assert ("kanban", "created", later) in _events(after)
+
+
 def test_the_stream_is_behind_the_dashboard_socket_credential(work, client, pool):
     with pytest.raises(WebSocketDisconnect), client.websocket_connect("/api/lina/events?token=wrong") as ws:
         ws.receive_json()

@@ -71,6 +71,18 @@ def streamed(receipt: dict) -> bool:
     return kind not in WORKER_NOISE_KINDS
 
 
+class _Pruned(Exception):
+    """Kanban rows after the position were deleted: the client must resync."""
+
+
+def _contiguous(since: int, last: int, count: int) -> bool:
+    """No ``task_events`` row after *since* up to *last* is gone, given *count* rows kept there. The ids are
+    AUTOINCREMENT and never reused, so every id was written once: fewer rows than ids means ``gc_events`` pruned
+    some (it removes a done task's old events while an older event of an active task stays, so the lowest id does
+    not move). The one rule for a reconnect (``check``, a range count) and a live page (``fetch``, the ids read)."""
+    return count == last - since
+
+
 def _try(name: str, fn, default):
     try:
         return fn()
@@ -236,14 +248,10 @@ class Stream:
 
     def _kanban_kept(self, position: int) -> bool:
         top = self._kanban_top()
-        return position <= top and (position == top or not self._kanban_gap(position, top))
-
-    def _kanban_gap(self, since: int, top: int) -> bool:
-        """Rows after *since* were deleted. ``task_events`` ids are AUTOINCREMENT and never reused, so every id up
-        to the max was written once: fewer rows than ids means ``gc_events`` pruned some (it can remove a done
-        task's old events while an older event of an active task stays, so the lowest id does not move)."""
-        kept = self._kanban().execute("SELECT count(*) FROM task_events WHERE id > ? AND id <= ?", (since, top))
-        return int(kept.fetchone()[0]) < top - since
+        if position >= top:
+            return position == top
+        kept = self._kanban().execute("SELECT count(*) FROM task_events WHERE id > ? AND id <= ?", (position, top))
+        return _contiguous(position, top, int(kept.fetchone()[0]))
 
     # ---------------------------------------------------------------- reads
     def _work_events(self, after: int) -> tuple[int, list[dict]]:
@@ -275,13 +283,17 @@ class Stream:
             return after, []
         rows = db.execute(f"SELECT id, kind, task_id, created_at FROM task_events WHERE id > ? ORDER BY id LIMIT {PAGE}",
                           (after,)).fetchall()
+        if rows and not _contiguous(after, int(rows[-1][0]), len(rows)):
+            raise _Pruned(after)
         return (int(rows[-1][0]) if rows else after,
                 [{"source": "kanban", "kind": kind, "id": task, "at": _epoch(at)} for _, kind, task, at in rows])
 
     def fetch(self, since: Cursor) -> tuple[Cursor, list[dict], bool]:
         """What each store holds after *since*, and whether the client must resync. A store that fails to read keeps
         its position and is tried again; an ``UNKNOWN`` one that reads now is taken at its tail, and that is a
-        resync (the batch's events are dropped: the refetched snapshot has them)."""
+        resync (the batch's events are dropped: the refetched snapshot has them). So is a kanban page with ids
+        missing after the position (``_contiguous``): the source is taken at its tail and nothing past the gap is
+        sent as if nothing was lost."""
         positions, ids, events, resync = list(since[:3]), list(since.ids), [], False
         for i, (name, at, ident, read, _) in enumerate(self._sources()):
             try:
@@ -290,6 +302,10 @@ class Stream:
                     resync = True
                     continue
                 after, found = read(positions[i])
+            except _Pruned:
+                positions[i], ids[i] = _try(name, lambda: (at(), ident()), (positions[i], ids[i]))
+                resync = True
+                continue
             except _FAILS as exc:
                 log.warning("lina events: %s source failed: %s", name, exc)
                 continue
