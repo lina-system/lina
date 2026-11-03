@@ -26,6 +26,7 @@ from agent.memory_context import StreamingContextScrubber, build_memory_context_
 from agent.memory_manager_tools import (inject_memory_provider_tools, memory_provider_tools_enabled,
                                         memory_provider_tools_exposed, normalize_tool_schema)
 from agent.memory_provider import MemoryProvider, PRE_COMPRESS_CHECKPOINT_API_VERSION, ctx_bound, spawn_context_thread
+from agent.memory_recall_tool import RECALL_TOOL_NAME, RECALL_TOOL_SCHEMA
 from agent.skill_commands import extract_user_instruction_from_skill_message
 from hermes_constants import hermes_home_key
 from tools.hook_output_spill import get_spill_config, spill_if_oversized
@@ -213,6 +214,8 @@ class MemoryManager:
         self._providers: list[MemoryProvider] = []
         self._tool_to_provider: dict[str, MemoryProvider] = {}
         self._external_prefetch_spill_config: Optional[dict[str, Any]] = None
+        # memory.auto_recall_append: splice recall into the user message instead of a tool result (lina#21).
+        self.auto_recall_append = False
         self._has_external: bool = False
         timeout = external_prefetch_timeout
         timeout = _EXTERNAL_PREFETCH_TIMEOUT_S if timeout is None else float(timeout)
@@ -297,6 +300,7 @@ class MemoryManager:
                 # Off by default, but keep a ceiling so a runaway provider can't overflow the context.
                 spill_config["max_chars"] = max(spill_config["max_chars"] * 10, 100_000)
             self._external_prefetch_spill_config = spill_config
+            self.auto_recall_append = isinstance(memory, dict) and memory.get("auto_recall_append", False) is True
             self._has_external = True
 
         self._providers.append(provider)
@@ -339,6 +343,12 @@ class MemoryManager:
     def build_system_prompt(self) -> str:
         """Join every provider's non-empty ``system_prompt_block()`` with blank lines."""
         blocks = self._each_provider("system_prompt_block() failed", lambda p: p.system_prompt_block(),
+                                      level=logging.WARNING)
+        return "\n\n".join(b for b in blocks if b and b.strip())
+
+    def build_session_cards(self) -> str:
+        """Join every provider's non-empty ``session_card_block()``; asked only while the prompt is built."""
+        blocks = self._each_provider("session_card_block() failed", lambda p: p.session_card_block(),
                                       level=logging.WARNING)
         return "\n\n".join(b for b in blocks if b and b.strip())
 
@@ -602,22 +612,30 @@ class MemoryManager:
                     seen.add(schema["name"])
 
         self._each_provider("get_tool_schemas() failed", _collect, level=logging.WARNING)
+        if self._has_external and RECALL_TOOL_NAME not in seen:
+            schemas.append(RECALL_TOOL_SCHEMA)
         return schemas
 
     def get_all_tool_names(self) -> set:
-        return set(self._tool_to_provider)
+        return set(self._tool_to_provider) | ({RECALL_TOOL_NAME} if self._has_external else set())
 
     def has_tool(self, tool_name: str) -> bool:
-        return tool_name in self._tool_to_provider
+        return tool_name in self._tool_to_provider or (tool_name == RECALL_TOOL_NAME and self._has_external)
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         """Route a tool call to its provider; returns a JSON string (tool_error on failure)."""
         provider = self._tool_to_provider.get(tool_name)
-        if provider is None:
+        if provider is None and not self.has_tool(tool_name):
             return tool_error(f"No memory provider handles tool '{tool_name}'")
         scope = caller_scope(self._bound_scope, f"tool {tool_name}")
         if scope is None:
             return tool_error(refused_tool_message(tool_name))
+        if provider is None:
+            query = str((args or {}).get("query") or "").strip()
+            if not query:
+                return tool_error("memory_recall needs a query; this turn's own recall is already shown.")
+            found = self.prefetch_all(query, session_id=str(kwargs.get("session_id") or ""))
+            return build_memory_context_block(found) if found else json.dumps({"result": "Nothing found."})
         kwargs = {**kwargs, **scope}
         # A provider written against ``handle_tool_call(tool_name, args)`` gets only what it declares.
         accepted = self._tool_call_keywords(provider)

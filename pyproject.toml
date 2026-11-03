@@ -651,6 +651,7 @@ include = [
   "pm.*",
   "tools",
   "tools.*",
+  "services.store",
 ]
 
 [tool.setuptools.package-data]
@@ -679,6 +680,10 @@ pm = ["lock.json", "artifact-mirror.json", "pyproject.toml", "uv.lock", "lina-de
 # Bot Desktop starts Xvnc + Xfce through a shell launcher and seeds the wallpaper; both are read
 # via Path(__file__).parent in tools/bot_desktop/runtime.py and vanish from sealed wheels otherwise.
 tools = ["bot_desktop/launcher.sh", "bot_desktop/wallpaper.png"]
+# The store's migrations, compose file and initdb script, read through importlib.resources in
+# hermes_cli/store_migrations.py and hermes_cli/store.py (lina#145). services/ itself stays a namespace:
+# services/honcho is not shipped (its build context is a source tree).
+"services.store" = ["migrations/*.sql", "compose.yaml", "initdb/*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

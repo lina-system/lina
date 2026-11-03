@@ -63,6 +63,8 @@ cards:
   - key: gates
     title: "Gates in the card goal loop"
     assignee: sion
+    size: M                         # optional: S, M or L
+    kind: implementation            # optional: work category, free text
     todos: ["lina-system/lina#108", "[ ] write the gate doc"]
     ledger_todos:                    # optional, needs ledger_goal: record to-dos of this card
       - T120                         # an open to-do under G63, linked to the card
@@ -99,8 +101,14 @@ cards:
 ```
 
 What gets created: a goal card, then one goal-mode work card per entry with its gates, turn budget
-and maximum runtime. A work card body has the sections Goal, To-dos, Outcome, Verification,
-Constraints, Boundaries, Stop when and Worker. Every work card is a link-parent of the goal card,
+and maximum runtime. Optional `size` (`S`, `M`, `L`) and `kind` (free text) become `Size: X` and
+`Kind: X` lines in the work body; omitting them adds no metadata lines. A work card body has the
+sections Goal, To-dos, Outcome, Verification, Constraints, Boundaries, Stop when, Worker and Record.
+Record asks the work session to keep the work record current: add a card comment marking discovered to-dos with
+`added-by: work-session` on checklist lines, for example `- [ ] check migration — added-by: work-session`.
+Record work that needs a bigger runner in a card comment with `escalate: todo -> runner - reason`, replacing `todo` and
+`reason` with the item and why the runner must handle it. These are record markers, not plan fields.
+Every work card is a link-parent of the goal card,
 so the goal card becomes ready only when all of them are done; `after:` adds a link from the named
 card.
 

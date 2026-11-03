@@ -13,7 +13,7 @@ import hashlib
 import json
 from typing import Callable, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Header, HTTPException, Request, Response, WebSocket
 from starlette.concurrency import run_in_threadpool
 
 router = APIRouter()
@@ -109,6 +109,12 @@ async def lina_work_add(request: Request):
 async def lina_notices_read(request: Request):
     from hermes_cli.lina_board_write import mark_read
     return await _act(request, mark_read)
+
+
+@router.websocket("/api/lina/events")
+async def lina_events(ws: WebSocket):
+    from hermes_cli.lina_board_events import serve
+    await serve(ws)
 
 
 @router.get("/api/lina/devices")

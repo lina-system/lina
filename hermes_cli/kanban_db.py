@@ -1379,14 +1379,14 @@ def _inherit_notify_subs(
     Omitting columns here silently degrades routing: a DM-originated child completion falls back to
     chat_type='group' and wakes a fresh group-scoped session instead of the originating DM (issue #73030).
     """
-    parent_ids = tuple(dict.fromkeys(p for p in parents if p))
-    if not parent_ids:
+    parent_task_ids = tuple(dict.fromkeys(p for p in parents if p))
+    if not parent_task_ids:
         return
     row = conn.execute(
         "SELECT COALESCE(MAX(id), 0) AS cursor FROM task_events WHERE task_id = ?", (child_id,),
     ).fetchone()
     cursor = int(row["cursor"] if row is not None else 0)
-    placeholders = ",".join("?" * len(parent_ids))
+    placeholders = ",".join("?" * len(parent_task_ids))
     conn.execute(
         f"""
         INSERT OR IGNORE INTO kanban_notify_subs
@@ -1399,7 +1399,7 @@ def _inherit_notify_subs(
           FROM kanban_notify_subs
          WHERE task_id IN ({placeholders})
         """,
-        (child_id, int(created_at if created_at is not None else time.time()), cursor, *parent_ids),
+        (child_id, int(created_at if created_at is not None else time.time()), cursor, *parent_task_ids),
     )
 
 
@@ -1533,118 +1533,6 @@ def set_reasoning_effort(conn: sqlite3.Connection, task_id: str, effort: Optiona
     )
 
 
-# --- Links ---
-
-def link_tasks(
-    conn: sqlite3.Connection,
-    parent_id: str,
-    child_id: str,
-    *,
-    expected_child_run_id: Optional[int] = None,
-) -> bool:
-    """Link ``parent_id -> child_id``. Returns True when the link gated a
-    ``ready`` child back to ``todo`` (the new parent is not yet terminal), so
-    callers can surface the demotion instead of a silent status flip.
-
-    A running child cannot normally be gated retroactively, so reject the edge
-    rather than record a dependency that did not constrain the active run. The
-    owning worker may link its own active run for a subsequent dependency-block
-    handoff by supplying its trusted ``expected_child_run_id``.
-    """
-    if parent_id == child_id:
-        raise ValueError("a task cannot depend on itself")
-    gated = False
-    with write_txn(conn, allow_nested=True):
-        missing = _missing_task_ids(conn, [parent_id, child_id])
-        if missing:
-            raise ValueError(f"unknown task(s): {', '.join(missing)}")
-        child = conn.execute(
-            "SELECT status, current_run_id FROM tasks WHERE id = ?", (child_id,),
-        ).fetchone()
-        if child["status"] == "running" and (
-            expected_child_run_id is None
-            or child["current_run_id"] != expected_child_run_id
-        ):
-            raise ValueError(f"cannot link {parent_id} -> {child_id}: child is already running")
-        if _would_cycle(conn, parent_id, child_id):
-            raise ValueError(f"linking {parent_id} -> {child_id} would create a cycle")
-        _link(conn, parent_id, child_id)
-        # If child was ready but parent is not yet terminal, demote child to todo
-        # (archived counts as terminal, matching _parents_satisfied/recompute_ready).
-        if _task_status(conn, parent_id) not in ("done", "archived"):
-            cur = conn.execute(
-                "UPDATE tasks SET status = 'todo' WHERE id = ? AND status = 'ready'",
-                (child_id,),
-            )
-            gated = cur.rowcount == 1
-            if gated:
-                _append_event(
-                    conn,
-                    child_id,
-                    "dependency_wait",
-                    {"reason": "parent_not_done", "demoted": True, "parent": parent_id},
-                )
-        _append_event(
-            conn,
-            child_id,
-            "linked",
-            {"parent": parent_id, "child": child_id},
-        )
-        _inherit_notify_subs(conn, child_id, (parent_id,))
-    return gated
-
-
-def _would_cycle(conn: sqlite3.Connection, parent_id: str, child_id: str) -> bool:
-    """True iff ``parent_id`` is already a descendant of ``child_id``."""
-    seen = set()
-    stack = [child_id]
-    while stack:
-        node = stack.pop()
-        if node == parent_id:
-            return True
-        if node in seen:
-            continue
-        seen.add(node)
-        rows = conn.execute(
-            "SELECT child_id FROM task_links WHERE parent_id = ?", (node,)
-        ).fetchall()
-        stack.extend(r["child_id"] for r in rows)
-    return False
-
-
-def unlink_tasks(conn: sqlite3.Connection, parent_id: str, child_id: str) -> bool:
-    with write_txn(conn):
-        cur = conn.execute(
-            "DELETE FROM task_links WHERE parent_id = ? AND child_id = ?", (parent_id, child_id),
-        )
-        removed = cur.rowcount > 0
-        if removed:
-            _append_event(conn, child_id, "unlinked", {"parent": parent_id, "child": child_id})
-    if removed:
-        # Re-gate the child now (as complete_task/unblock_task do) instead of
-        # leaving it in todo until the next tick.
-        recompute_ready(conn)
-    return removed
-
-
-def _linked_ids(conn: sqlite3.Connection, want: str, where: str, task_id: str) -> list[str]:
-    rows = conn.execute(
-        f"SELECT {want} FROM task_links WHERE {where} = ? ORDER BY {want}", (task_id,)
-    ).fetchall()
-    return [r[want] for r in rows]
-
-
-# Dependency edge removed — re-evaluate promotion eligibility for the child immediately. Matches the
-# contract of complete_task and unblock_task; without this the child stays stuck in todo until the next
-# dispatcher tick or a manual `hermes kanban recompute` (issue #22459).
-def parent_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
-    return _linked_ids(conn, "parent_id", "child_id", task_id)
-
-
-def child_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
-    return _linked_ids(conn, "child_id", "parent_id", task_id)
-
-
 def task_graph_contexts(conn: sqlite3.Connection, task_ids: Iterable[str]) -> dict[str, dict]:
     """Bulk-load compact direct graph state for graph-aware diagnostics."""
     ordered_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids if task_id))
@@ -1672,7 +1560,9 @@ def task_graph_context(conn: sqlite3.Connection, task_id: str) -> dict:
 
 # --- Comments & events ---
 
-def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str) -> int:
+def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str, *,
+    source: Optional[dict] = None, run_id: Optional[int] = None,
+) -> int:
     if not body or not body.strip():
         raise ValueError("comment body is required")
     if not author or not author.strip():
@@ -1686,8 +1576,21 @@ def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str) 
             "INSERT INTO task_comments (task_id, author, body, created_at) "
             "VALUES (?, ?, ?, ?)", (task_id, author.strip(), body.strip(), now),
         )
-        _append_event(conn, task_id, "commented", {"author": author, "len": len(body)})
-        return int(cur.lastrowid or 0)
+        comment_id = int(cur.lastrowid or 0)
+        _append_event(conn, task_id, "commented", {
+            "author": author, "len": len(body), "source": source, "comment_id": comment_id,
+        }, run_id=run_id)
+        return comment_id
+
+
+def _actor_payload(by: Optional[str], reason: Optional[str]) -> dict:
+    """Actor audit fields shared by interactive mutations; never persist raw reasons."""
+    from agent.redact import redact_sensitive_text
+
+    payload = {"by": by} if by is not None else {}
+    if reason is not None:
+        payload["reason"] = _first_line(redact_sensitive_text(reason, force=True), 200)
+    return payload
 
 
 def _require_task(conn: sqlite3.Connection, task_id: str) -> None:
@@ -1873,6 +1776,11 @@ def _end_run(
     run_id = _current_run_id(conn, task_id)
     if run_id is None:
         return None
+    prior = conn.execute("SELECT metadata FROM task_runs WHERE id = ?", (run_id,)).fetchone()
+    worker_session = _json_dict(prior["metadata"]).get("worker_session_id")
+    if worker_session:
+        # Session identity remains evidence for comments after terminal metadata replaces progress.
+        metadata = {**(metadata or {}), "worker_session_id": worker_session}
     conn.execute(
         """
         UPDATE task_runs
@@ -3016,6 +2924,7 @@ def edit_task(
     body: Optional[str] = None, priority: Optional[int] = None,
     result: Optional[str] = None, summary: Optional[str] = None,
     metadata: Optional[dict] = None, board: Optional[str] = None,
+    by: Optional[str] = None, reason: Optional[str] = None,
 ) -> bool:
     """Edit task fields, optionally backfilling a completed task's result."""
     changed_fields = [
@@ -3043,11 +2952,11 @@ def edit_task(
             (*params, task_id),
         )
         if priority is not None:
-            _append_event(conn, task_id, "reprioritized", {"priority": priority})
+            _append_event(conn, task_id, "reprioritized", {"priority": priority, **_actor_payload(by, reason)})
         if result is None:
             non_priority_fields = [field for field in changed_fields if field != "priority"]
             if non_priority_fields:
-                _append_event(conn, task_id, "edited", {"fields": non_priority_fields})
+                _append_event(conn, task_id, "edited", {"fields": non_priority_fields, **_actor_payload(by, reason)})
         else:
             handoff_summary = summary if summary is not None else result
             changed_fields.append("summary")
@@ -3081,6 +2990,7 @@ def edit_task(
                     "fields": ["result", "summary"] + (["metadata"] if metadata is not None else []),
                     "result_len": len(result) if result else 0,
                     "summary": _first_line(handoff_summary, 400) or None,
+                    **_actor_payload(by, reason),
                 },
                 run_id=run_id,
             )
@@ -3521,7 +3431,9 @@ def _landing_status_after_parents(conn: sqlite3.Connection, task_id: str) -> str
     return "ready" if _parents_satisfied(conn, task_id) else "todo"
 
 
-def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
+def unblock_task(conn: sqlite3.Connection, task_id: str, *,
+    by: Optional[str] = None, reason: Optional[str] = None,
+) -> bool:
     """``blocked``/``scheduled`` -> its resumable phase (parent re-gated; ``review``
     when that is where it left off), closing any leaked run first."""
     now = int(time.time())
@@ -3554,14 +3466,10 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
         )
         if cur.rowcount != 1:
             return False
-        _append_event(
-            conn, task_id, "unblocked",
-            (
-                {"status": new_status, "resume_status": resume_status}
-                if new_status != "ready" or resume_status != "ready"
-                else None
-            ),
-        )
+        payload = _actor_payload(by, reason)
+        if new_status != "ready" or resume_status != "ready":
+            payload.update(status=new_status, resume_status=resume_status)
+        _append_event(conn, task_id, "unblocked", payload or None)
         return True
 
 
@@ -4156,5 +4064,13 @@ from hermes_cli.kanban_db_dispatch import (
     _worker_terminal_timeout_env,
 )
 from hermes_cli.kanban_db_goal import goal_run_status
+from hermes_cli.kanban_db_links import (
+    link_tasks,
+    unlink_tasks,
+    _would_cycle,
+    _linked_ids,
+    parent_ids,
+    child_ids,
+)
 from hermes_cli.kanban_db_runs import current_run_started_ats, latest_summaries
 from hermes_cli.kanban_outcomes import record_terminal_outcome

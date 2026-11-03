@@ -1043,7 +1043,7 @@ class TestSequentialDispatchRouting:
         mgr.add_provider(external)
 
         names = mgr.get_all_tool_names()
-        assert names == {"builtin_tool", "ext_recall", "ext_retain"}
+        assert names == {"builtin_tool", "ext_recall", "ext_retain", "memory_recall"}
 
 
 # ---------------------------------------------------------------------------
@@ -1319,9 +1319,10 @@ class TestMemoryInjectionRejectsMalformedSchema:
              "function": {"name": "x_grep", "description": "d", "parameters": {}}}
         )
         inject_memory_provider_tools(agent)
-        # Exactly one well-formed tool, with a top-level function name.
-        assert len(agent.tools) == 1
-        fn = agent.tools[0]["function"]
+        # Exactly one well-formed provider tool (beside the manager's memory_recall), with a top-level name.
+        provider_tools = [t for t in agent.tools if t["function"]["name"] != "memory_recall"]
+        assert len(provider_tools) == 1
+        fn = provider_tools[0]["function"]
         assert fn["name"] == "x_grep"
         # No nested double-wrap leaked through.
         assert fn.get("type") != "function"
@@ -1330,8 +1331,8 @@ class TestMemoryInjectionRejectsMalformedSchema:
     def test_nameless_schema_is_skipped(self):
         agent = self._agent_with({"description": "no name at all"})
         inject_memory_provider_tools(agent)
-        assert agent.tools == []
-        assert agent.valid_tool_names == set()
+        assert [t["function"]["name"] for t in agent.tools] == ["memory_recall"]
+        assert agent.valid_tool_names == {"memory_recall"}
 
     def test_good_schema_still_injected_alongside_bad(self):
         agent = self._agent_with(
@@ -1340,8 +1341,8 @@ class TestMemoryInjectionRejectsMalformedSchema:
         )
         inject_memory_provider_tools(agent)
         names = {t["function"]["name"] for t in agent.tools}
-        assert names == {"good_tool"}
-        assert agent.valid_tool_names == {"good_tool"}
+        assert names == {"good_tool", "memory_recall"}
+        assert agent.valid_tool_names == {"good_tool", "memory_recall"}
 
 
 class TestTrivialPromptClassifier:
@@ -1441,6 +1442,6 @@ class TestSystemPromptGateParity:
         )
         assert memory_provider_tools_exposed(agent) is True
         added = inject_memory_provider_tools(agent)
-        assert added == 1
+        assert added == 2  # the provider's tool and the manager's memory_recall (lina#21)
         names = {t["function"]["name"] for t in agent.tools}
         assert "mnemosyne_remember" in names

@@ -442,9 +442,10 @@ def answer_inbox_item(card_id: str, payload: AnswerBody, board: Optional[str] = 
         task = _require_card(conn, card_id)
         if payload.author == task.assignee:
             raise HTTPException(status_code=400, detail="the answer must come from someone other than the assignee")
-        comment_id = kanban_db.add_comment(conn, card_id, author=payload.author, body=text)
+        comment_id = kanban_db.add_comment(conn, card_id, author=payload.author, body=text,
+                                          source={"surface": "app"})
         unblocked = (task.status == "blocked" and task.block_kind == "needs_input"
-                     and kanban_db.unblock_task(conn, card_id))
+                     and kanban_db.unblock_task(conn, card_id, by=payload.author, reason=text))
         state, reason = work_state(_facts(conn, _require_card(conn, card_id)))
         return {"ok": True, "cardId": card_id, "commentId": comment_id, "unblocked": bool(unblocked),
                 "state": state, "reason": reason}

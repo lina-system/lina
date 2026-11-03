@@ -43,12 +43,20 @@ CREATE TABLE IF NOT EXISTS work_card_outcomes (
 )
 """
 
-# Comment authors that are the owner answering (the dashboard and the CLI default identity).
-OWNER_NAMES = frozenset({"user", "dashboard", "default"})
 ADDED_BY_SESSION = "added-by: work-session"
 ESCALATE_MARK = "escalate:"
 GATE_WAIT_EXIT_CODE = 75  # a waiting gate is not a failure (kanban_goal_gates)
 CARD_SCOPE = "(card)"     # worker runs whose comment names no to-do
+SIZE_LIMITS = (("S", 2, 150), ("M", 8, 800))
+_LEARNING_COLUMNS = {
+    "touches": "TEXT", "replans": "TEXT", "stops": "TEXT", "reviews": "TEXT",
+    "size_missed": "TEXT", "planned_size": "TEXT", "actual_size": "TEXT",
+    "todo_sizes": "TEXT", "turn_budget": "INTEGER", "lead_seconds": "INTEGER",
+    "stopped_seconds": "INTEGER", "waiting_gate_checks": "INTEGER",
+    "waiting_gate_seconds": "INTEGER",
+}
+_JSON_COLUMNS = {"worker_runs": {}, "todo_states": {}, "todo_sizes": {},
+                 "touches": [], "replans": [], "stops": [], "reviews": [], "size_missed": []}
 
 # Worker run IDs recorded in comments, by runner: omo jobs, quick-issue runs, ``lina worker`` runs.
 _WORKER_ID_PATTERNS = (
@@ -68,6 +76,9 @@ def ensure_table(conn: sqlite3.Connection) -> None:
     columns = {row[1] for row in conn.execute("PRAGMA table_info(work_card_outcomes)")}
     if "todo_states" not in columns:
         conn.execute("ALTER TABLE work_card_outcomes ADD COLUMN todo_states TEXT")
+    for name, sql_type in _LEARNING_COLUMNS.items():
+        if name not in columns:
+            conn.execute(f"ALTER TABLE work_card_outcomes ADD COLUMN {name} {sql_type}")
     conn.execute("CREATE INDEX IF NOT EXISTS idx_outcomes_agent_kind "
                  "ON work_card_outcomes(assignee, kind)")
 
@@ -187,7 +198,7 @@ def _body_was_edited(events: list[sqlite3.Row]) -> bool:
                for e in events)
 
 
-def _worker_runs(comments: list[sqlite3.Row], todos: list[dict]) -> dict[str, list[dict]]:
+def _worker_runs(comments: list[sqlite3.Row], todos: list[dict], events=()) -> dict[str, list[dict]]:
     runs: dict[str, list[dict]] = {}
     seen: set[str] = set()
     for c in comments:
@@ -197,19 +208,30 @@ def _worker_runs(comments: list[sqlite3.Row], todos: list[dict]) -> dict[str, li
             seen.add(run_id)
             runs.setdefault(_todo_for_comment(c["body"], todos), []).append(
                 {"runner": runner, "id": run_id})
+    for event in events:
+        data = _payload(event)
+        run_id = data.get("run_id")
+        if event["kind"] == "worker_run" and run_id and run_id not in seen:
+            seen.add(run_id)
+            runs.setdefault(CARD_SCOPE, []).append({"runner": data.get("runner") or "lina-worker", "id": run_id})
     return runs
 
 
-def _turns_used(runs: list[sqlite3.Row]) -> Optional[int]:
+def _turns_used(runs: list[sqlite3.Row], events=()) -> Optional[int]:
     total, found = 0, False
+    claimed = {e["run_id"] for e in events if e["kind"] == "claimed"}
     for r in runs:
         try:
             meta = json.loads(r["metadata"] or "{}")
         except (TypeError, ValueError):
-            continue
+            meta = {}
         value = meta.get("turns_used") if isinstance(meta, dict) else None
         if isinstance(value, int) and not isinstance(value, bool):
             total, found = total + value, True
+        else:
+            turns = sum(e["kind"] == "goal_turn" and e["run_id"] == r["id"] for e in events)
+            if turns or r["id"] in claimed:
+                total, found = total + 1 + turns, True
     return total if found else None
 
 
@@ -239,57 +261,50 @@ def _elapsed(task: sqlite3.Row, runs: list[sqlite3.Row], now: int) -> Optional[i
     return max(0, end - start)
 
 
-def _main_session_touches(task: sqlite3.Row, comments: list[sqlite3.Row],
-                          runs: list[sqlite3.Row], now: int) -> int:
-    """Comments by the card's own agent (assignee or creator) written after registration and
-    outside every run of the card: the main session reaching in, not the card's session."""
-    authors = {task["assignee"], task["created_by"]} - {None} - OWNER_NAMES
-    windows = [(int(r["started_at"]), int(r["ended_at"] or now)) for r in runs]
-    return sum(
-        1 for c in comments
-        if c["author"] in authors and int(c["created_at"]) >= int(task["created_at"])
-        and not any(lo <= int(c["created_at"]) <= hi for lo, hi in windows)
-    )
-
-
 def compute_outcome(conn: sqlite3.Connection, task_id: str, *,
-                    now: Optional[int] = None) -> Optional[dict[str, Any]]:
+                    now: Optional[int] = None, include_active: bool = False) -> Optional[dict[str, Any]]:
     """The outcome row for a terminal goal-mode card, or None for any other card."""
     task = conn.execute("SELECT * FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    if task is None or not task["goal_mode"] or task["status"] not in ("done", "blocked"):
+    if task is None or (not include_active and (
+            not task["goal_mode"] or task["status"] not in ("done", "blocked"))):
         return None
     now = int(now if now is not None else time.time())
     comments = _rows(conn, "SELECT * FROM task_comments WHERE task_id = ? ORDER BY id", task_id)
     events = _rows(conn, "SELECT * FROM task_events WHERE task_id = ? ORDER BY id", task_id)
     runs = _rows(conn, "SELECT * FROM task_runs WHERE task_id = ? ORDER BY id", task_id)
     todos = parse_todos(task["body"])
-    added = sum(max(1, len(_todo_lines_anywhere(c["body"]))) for c in comments
-                if ADDED_BY_SESSION in c["body"].lower())
+    from hermes_cli.kanban_outcome_records import learning_records
+
+    learning = learning_records(conn, task, comments, events, runs, now)
+    added = sum(r["kind"] == "added" for r in learning["replans"])
     planned = len(todos)
     if _body_was_edited(events):
         # The creation body is gone: count what the session did not add itself.
         planned = max(0, planned - added)
-    worker_runs = _worker_runs(comments, todos)
+    worker_runs = _worker_runs(comments, todos, events)
     states = todo_states(todos)
     gate_failures, dev_red = _gate_counts(events)
-    return {
-        "task_id": task_id, "assignee": task["assignee"], "kind": card_kind(task["title"]),
+    row = {
+        "task_id": task_id, "assignee": task["assignee"],
+        "kind": body_field(task["body"], "Kind") or card_kind(task["title"]),
         "status": task["status"], "planned_todos": planned, "closed_todos": _closed_count(states),
         "added_todos": added, "worker_runs": worker_runs,
         "worker_run_count": sum(len(v) for v in worker_runs.values()),
-        "escalations": sum(1 for c in comments if ESCALATE_MARK in c["body"].lower()),
-        "turns_used": _turns_used(runs), "gate_failures": gate_failures,
+        "escalations": sum(r["kind"] == "escalation" for r in learning["replans"]),
+        "turns_used": _turns_used(runs, events), "gate_failures": gate_failures,
         "elapsed_seconds": _elapsed(task, runs, now),
-        "owner_answers": sum(1 for c in comments if c["author"] in OWNER_NAMES),
-        "main_session_touches": _main_session_touches(task, comments, runs, now),
         "dev_red_runs": dev_red, "recorded_at": now, "todo_states": states,
+        "planned_size": planned_size(task["body"]), "actual_size": None,
+        "size_missed": [], "todo_sizes": {},
     }
+    row.update(learning)
+    return row
 
 
 _COLUMNS = ("task_id", "assignee", "kind", "status", "planned_todos", "closed_todos",
             "added_todos", "worker_runs", "worker_run_count", "escalations", "turns_used",
             "gate_failures", "elapsed_seconds", "owner_answers", "main_session_touches",
-            "dev_red_runs", "recorded_at", "todo_states")
+            "dev_red_runs", "recorded_at", "todo_states", *_LEARNING_COLUMNS)
 
 
 def write_outcome(conn: sqlite3.Connection, task_id: str) -> Optional[dict[str, Any]]:
@@ -298,7 +313,7 @@ def write_outcome(conn: sqlite3.Connection, task_id: str) -> Optional[dict[str, 
     row = compute_outcome(conn, task_id)
     if row is None:
         return None
-    values = [json.dumps(row[c]) if c in ("worker_runs", "todo_states") else row[c]
+    values = [json.dumps(row[c]) if c in _JSON_COLUMNS else row[c]
               for c in _COLUMNS]
     with write_txn(conn):
         conn.execute(
@@ -327,6 +342,140 @@ def _profile_home(assignee: Optional[str]) -> tuple[bool, Optional[str]]:
         return False, None
 
 
+def body_field(body: Optional[str], name: str) -> Optional[str]:
+    from hermes_cli.kanban_outcome_records import short_text
+
+    match = re.search(rf"^{name}:\s*([^\r\n]+)", body or "", re.MULTILINE | re.IGNORECASE)
+    return short_text(match.group(1).strip()) if match else None
+
+
+def planned_size(body: Optional[str]) -> Optional[str]:
+    value = body_field(body, "Size")
+    return value if value in ("S", "M", "L") else None
+
+
+def actual_size(files: int, lines: int) -> str:
+    return next((size for size, max_files, max_lines in SIZE_LIMITS
+                 if files <= max_files and lines <= max_lines), "L")
+
+
+def _size_json(args: list[str], home: Optional[str]) -> Optional[dict]:
+    from hermes_cli.kanban_pr_acceptance import _gh_env
+
+    try:
+        proc = subprocess.run(["gh", *args], stdin=subprocess.DEVNULL, capture_output=True,
+                              text=True, encoding="utf-8", errors="replace", timeout=15,
+                              check=False, env=_gh_env(home))
+        if proc.returncode:
+            return None
+        data = json.loads(proc.stdout)
+    except (OSError, subprocess.SubprocessError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
+def issue_size(todo: dict, home: Optional[str]) -> dict:
+    result = {"planned_size": None, "actual_size": None, "files": None, "lines": None, "prs": []}
+    issue = _size_json(["issue", "view", str(todo["number"]), "-R", todo["repo"], "--json",
+                        "closedByPullRequestsReferences,labels,body"], home)
+    if issue is None:
+        return result
+    labels = [label.get("name") for label in issue.get("labels", [])]
+    result["planned_size"] = planned_size(issue.get("body")) or next(
+        (size for size in ("S", "M", "L") if f"size/{size}" in labels), None)
+    references = issue.get("closedByPullRequestsReferences") or []
+    if not references:
+        return result
+    prs = []
+    for ref in references:
+        url = ref.get("url")
+        if not url:
+            return result
+        data = _size_json(["pr", "view", url, "--json", "additions,deletions,changedFiles"], home)
+        if data is None or any(not isinstance(data.get(key), int) for key in ("additions", "deletions", "changedFiles")):
+            return result
+        prs.append({"url": url, "files": data["changedFiles"], "lines": data["additions"] + data["deletions"]})
+    files, lines = sum(p["files"] for p in prs), sum(p["lines"] for p in prs)
+    result.update(files=files, lines=lines, actual_size=actual_size(files, lines), prs=prs)
+    return result
+
+
+def refresh_sizes(conn: sqlite3.Connection) -> None:
+    from hermes_cli.kanban_db import write_txn
+
+    for row in conn.execute("SELECT o.task_id, o.assignee, t.body FROM work_card_outcomes o "
+                            "JOIN tasks t ON t.id=o.task_id WHERE o.actual_size IS NULL").fetchall():
+        resolvable, home = _profile_home(row["assignee"])
+        todos = [t for t in parse_todos(row["body"]) if "number" in t]
+        sizes = {t["ref"]: issue_size(t, home) for t in todos} if resolvable else {}
+        missed = [{"todo": ref, **{k: size[k] for k in ("planned_size", "actual_size", "files", "lines")}}
+                  for ref, size in sizes.items() if size["planned_size"] and size["actual_size"]
+                  and "SML".index(size["actual_size"]) > "SML".index(size["planned_size"])]
+        measured = None
+        if todos and len(sizes) == len(todos) and all(s["actual_size"] for s in sizes.values()):
+            prs = {p["url"]: p for s in sizes.values() for p in s["prs"]}
+            measured = actual_size(sum(p["files"] for p in prs.values()), sum(p["lines"] for p in prs.values()))
+        with write_txn(conn):
+            conn.execute("UPDATE work_card_outcomes SET actual_size=?, size_missed=?, todo_sizes=? WHERE task_id=?",
+                         (measured, json.dumps(missed), json.dumps(sizes), row["task_id"]))
+
+
+def goal_outcome(conn: sqlite3.Connection, goal_id: str, *, now: Optional[int] = None) -> dict:
+    from hermes_cli.kanban_outcome_records import learning_records, short_text
+
+    now = int(now if now is not None else time.time())
+    goal = conn.execute("SELECT * FROM tasks WHERE id=?", (goal_id,)).fetchone()
+    if goal is None:
+        raise ValueError(f"unknown goal card: {goal_id}")
+    cards = conn.execute("SELECT t.* FROM tasks t JOIN task_links l ON l.parent_id=t.id "
+                         "WHERE l.child_id=? ORDER BY t.created_at, t.id", (goal_id,)).fetchall()
+    rows, records, claims = [], [], []
+    parent_ids = {c["id"] for c in cards}
+    for card in [goal, *cards]:
+        tid = card["id"]
+        events = _rows(conn, "SELECT * FROM task_events WHERE task_id=? ORDER BY id", tid)
+        if tid == goal_id:
+            events = [e for e in events if not (
+                e["kind"] == "dependency_wait" and _payload(e).get("parent") in parent_ids)]
+        runs = _rows(conn, "SELECT * FROM task_runs WHERE task_id=? ORDER BY id", tid)
+        comments = _rows(conn, "SELECT * FROM task_comments WHERE task_id=? ORDER BY id", tid)
+        records.append((tid, learning_records(conn, card, comments, events, runs, now)))
+        if tid != goal_id:
+            claims.extend(e["created_at"] for e in events if e["kind"] == "claimed")
+            stored = conn.execute("SELECT * FROM work_card_outcomes WHERE task_id=?", (tid,)).fetchone()
+            if stored:
+                stored = dict(stored)
+                for column, empty in _JSON_COLUMNS.items():
+                    stored[column] = json.loads(stored[column]) if stored[column] else empty.copy()
+            latest_event = max((e["created_at"] for e in events), default=card["created_at"])
+            if stored and card["status"] in ("done", "blocked") and stored["recorded_at"] >= latest_event:
+                row = stored
+            else:
+                row = compute_outcome(conn, tid, now=now, include_active=True)
+                if stored:
+                    for column in ("actual_size", "todo_sizes", "size_missed"):
+                        if stored[column] is not None:
+                            row[column] = stored[column]
+            rows.append(row)
+    first = min(claims, default=None)
+    added = []
+    for event in _rows(conn, "SELECT * FROM task_events WHERE task_id=? AND kind='linked' ORDER BY id", goal_id):
+        data = _payload(event)
+        if first is not None and event["created_at"] > first and data.get("parent") in parent_ids:
+            added.append({"task_id": data["parent"], "at": event["created_at"],
+                          "reason": short_text(data.get("reason"))})
+    result = {"task_id": goal_id, "title": goal["title"],
+              "lead_seconds": max(0, (goal["completed_at"] or now) - goal["created_at"]),
+              "rows": rows, "added_later": added,
+              "sizes": [{"task_id": r["task_id"], "planned_size": r["planned_size"], "actual_size": r["actual_size"]} for r in rows]}
+    for name in ("touches", "stops", "replans"):
+        result[name] = sorted([{**item, "task_id": tid} for tid, record in records for item in record[name]],
+                              key=lambda item: item["at"])
+    for name in ("owner_answers", "main_session_touches"):
+        result[name] = sum(record[name] for _, record in records)
+    return result
+
+
 def refresh_closed(conn: sqlite3.Connection) -> tuple[int, int]:
     """Fill GitHub to-do states left unknown at write time by asking gh; ``(filled, still_null)``."""
     from hermes_cli.kanban_db import write_txn
@@ -347,6 +496,7 @@ def refresh_closed(conn: sqlite3.Connection) -> tuple[int, int]:
             pending += 1
         else:
             filled += 1
+    refresh_sizes(conn)
     return filled, pending
 
 
@@ -365,8 +515,8 @@ def list_outcomes(conn: sqlite3.Connection, *, agent: Optional[str] = None,
     out = []
     for r in rows:
         item = dict(r)
-        item["worker_runs"] = json.loads(item["worker_runs"] or "{}")
-        item["todo_states"] = json.loads(item["todo_states"] or "{}")
+        for column, empty in _JSON_COLUMNS.items():
+            item[column] = json.loads(item[column]) if item[column] else empty.copy()
         out.append(item)
     return out
 
@@ -428,7 +578,20 @@ def cmd_outcomes(args) -> int:
     from hermes_cli.kanban_db_connect import connect_closing
 
     with connect_closing() as conn:
-        refreshed = refresh_closed(conn) if getattr(args, "refresh", False) else None
+        if getattr(args, "rebuild", False):
+            for task in conn.execute("SELECT id FROM tasks WHERE goal_mode = 1 AND status IN ('done', 'blocked')").fetchall():
+                write_outcome(conn, task["id"])
+        refreshed = refresh_closed(conn) if (getattr(args, "refresh", False) or getattr(args, "rebuild", False)) else None
+        if getattr(args, "goal", None):
+            data = goal_outcome(conn, args.goal)
+            if getattr(args, "json", False):
+                print(json.dumps(data, indent=2, ensure_ascii=False))
+            else:
+                print(f"{data['task_id']}  {data['title']}  lead {data['lead_seconds']}s")
+                for row in data["rows"]:
+                    print(format_row(row))
+                print(json.dumps({k: v for k, v in data.items() if k != "rows"}, indent=2, ensure_ascii=False))
+            return 0
         rows = list_outcomes(conn, agent=getattr(args, "agent", None),
                              kind=getattr(args, "kind", None), last=getattr(args, "last", 20))
     summary = summarize(rows)

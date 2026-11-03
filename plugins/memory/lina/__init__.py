@@ -6,7 +6,8 @@ hook hands the turn to ``_take_lcm_turn`` instead of ingesting it itself (``lcm.
 per finished turn by ``MemoryManager.sync_all``, builds one turn record (person, agent and conversation ids from
 the identity registry, the turn's message uids, the route it arrived on, platform and timestamps) and hands it to
 the Honcho adapter (``plugins/memory/honcho``, which keeps its code and is driven only from here).
-Every other provider call (recall, tools, session lifecycle) goes to the Honcho adapter when Honcho is configured.
+Every other provider call (recall, tools, session lifecycle) goes to the Honcho adapter when Honcho is configured,
+except ``memory_search`` and ``memory_open`` (``search.py``), lina-memory's own tools over every source (lina#22).
 """
 
 from __future__ import annotations
@@ -17,7 +18,7 @@ from typing import Any, Optional
 
 from agent.memory_provider import MemoryProvider, RecallStatus, ctx_bound
 
-from . import lcm
+from . import lcm, search
 from .identity import IdentityRegistry, SourceKey
 from .policy import load_policy, signals_for_turn
 from .record import TurnRecord, build_record, turn_rows
@@ -38,7 +39,7 @@ def _honcho_provider_class():
 
 class LinaMemoryProvider(MemoryProvider):
     def __init__(self) -> None:
-        self._honcho = _honcho_provider_class()()
+        self._honcho = _honcho_provider_class()(card_in_prompt=True)
         self._honcho_on = False
         self._policy = load_policy()
         self._registry = IdentityRegistry()
@@ -47,6 +48,8 @@ class LinaMemoryProvider(MemoryProvider):
         self._init: dict[str, Any] = {}
         self._worker = None
         self._session_id = ""
+        self._search: Optional[search.MemorySearch] = None
+        self._embedding = None
 
     @property
     def name(self) -> str:
@@ -197,10 +200,44 @@ class LinaMemoryProvider(MemoryProvider):
         except Exception as exc:  # health: allow BLE001 -- the store being down must not cost the engines the turn
             logger.warning("lina-memory could not fill conversation_id: %s", exc)
 
+    # ── memory_search / memory_open ──
+
+    def _memory_search(self) -> search.MemorySearch:
+        if self._search is None:
+            self._search = search.MemorySearch(search.Readers(
+                store=self._message_store, honcho=self._honcho_reader, lcm=self._use_lcm, embedder=self._embedder))
+        return self._search
+
+    def _honcho_reader(self):
+        if not self._honcho_on:
+            raise search.SourceOff("Honcho is not configured for this agent")
+        if not self._honcho._ensure_session():
+            raise search.SourceOff("the Honcho session is not ready")
+        return self._honcho._manager, self._honcho.session_key
+
+    def _use_lcm(self, operation):
+        used, value, why_not = lcm.use_engine(self._session_id, operation)
+        if not used:
+            raise search.SourceOff(why_not)
+        return value
+
+    def _embedder(self):
+        """The embedding client of ``embedding:`` in config.yaml, or None when no endpoint is configured."""
+        if self._embedding is None:
+            from agent.embedding_client import EmbeddingClient, EmbeddingError, EmbeddingSettings
+            try:
+                self._embedding = EmbeddingClient(EmbeddingSettings.from_config())
+            except EmbeddingError:
+                self._embedding = False
+        return self._embedding or None
+
     # ── everything else is the Honcho adapter's ──
 
     def system_prompt_block(self) -> str:
         return self._honcho.system_prompt_block() if self._honcho_on else ""
+
+    def session_card_block(self) -> str:
+        return self._honcho.session_card_block() if self._honcho_on else ""
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         return self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
@@ -213,9 +250,12 @@ class LinaMemoryProvider(MemoryProvider):
         return self._honcho.recall_status() if self._honcho_on else None
 
     def get_tool_schemas(self) -> list[dict[str, Any]]:
-        return self._honcho.get_tool_schemas() if self._honcho.is_available() else []
+        honcho = self._honcho.get_tool_schemas() if self._honcho.is_available() else []
+        return [*honcho, search.SEARCH_SCHEMA, search.OPEN_SCHEMA]
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
+        if tool_name in search.TOOL_NAMES:
+            return search.handle_tool_call(self._memory_search(), tool_name, args)
         return self._honcho.handle_tool_call(tool_name, args, **kwargs)
 
     def on_turn_start(self, turn_number: int, message: str, **kwargs) -> None:
@@ -265,6 +305,9 @@ class LinaMemoryProvider(MemoryProvider):
         if self._honcho_on:
             self._honcho.shutdown()
         self._registry.close()
+        if self._embedding:
+            self._embedding.close()
+            self._embedding = None
         if self._store is not None:
             self._store.close()
 

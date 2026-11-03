@@ -17,12 +17,15 @@ import subprocess
 import urllib.error
 import urllib.request
 from dataclasses import dataclass, field
+from importlib.resources import files
 from pathlib import Path
 from typing import Callable
 
 from agent.embedding_client import DEFAULT_DIMENSIONS, DEFAULT_MODEL
 
-SERVICES_DIR = Path(__file__).resolve().parents[1] / "services"
+# compose.yaml and initdb/ are package data of services.store (lina#145). Honcho's build context is compose.yaml's
+# ../honcho, a source tree a wheel does not carry: preflight says so.
+SERVICES_DIR = Path(files("services.store")).parent
 COMPOSE_FILE = SERVICES_DIR / "store" / "compose.yaml"
 HONCHO_DIR = SERVICES_DIR / "honcho"
 PROJECT = "lina-store"

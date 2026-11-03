@@ -584,7 +584,7 @@ def _drag_to(conn, task_id: str, s: str) -> bool:
     ``review_reopened`` event) instead of a raw write; ``triage`` needs no current-state query."""
     current = kanban_db.get_task(conn, task_id) if s != "triage" else None
     if s == "ready" and current and current.status in ("blocked", "scheduled"):
-        return kanban_db.unblock_task(conn, task_id)
+        return kanban_db.unblock_task(conn, task_id, by="dashboard")
     if current is not None and current.status == "review":
         return kanban_db.reopen_review_task(conn, task_id)
     return _set_status_direct(conn, task_id, s)
@@ -617,7 +617,7 @@ def _apply_status(conn, task_id: str, s: str, p, unknown_detail: str) -> bool:
 
 
 def _set_priority(conn, task_id: str, priority: int, board: Optional[str]) -> None:
-    kanban_db.edit_task(conn, task_id, priority=int(priority), board=board)
+    kanban_db.edit_task(conn, task_id, priority=int(priority), board=board, by="dashboard")
 
 
 def _apply_model_override(conn, task_id: str, p) -> bool:
@@ -672,23 +672,11 @@ def _open_parent_refusal(conn, task_id: str, s: str) -> Optional[str]:
 def _patch_title_body(conn, task_id: str, payload: UpdateTaskBody, board: Optional[str]) -> None:
     """PATCH title/body phase: one UPDATE + ``edited`` event, then the post-commit observer
     (field names only — values never leave the DB via this payload)."""
-    with kanban_db.write_txn(conn):
-        sets, vals = [], []
-        if payload.title is not None:
-            if not payload.title.strip():
-                raise HTTPException(status_code=400, detail="title cannot be empty")
-            sets.append("title = ?")
-            vals.append(payload.title.strip())
-        if payload.body is not None:
-            sets.append("body = ?")
-            vals.append(payload.body)
-        vals.append(task_id)
-        conn.execute(f"UPDATE tasks SET {', '.join(sets)} WHERE id = ?", vals)
-        conn.execute(
-            "INSERT INTO task_events (task_id, kind, payload, created_at) VALUES (?, 'edited', NULL, ?)",
-            (task_id, int(time.time())))
-    kanban_db.notify_task_updated(
-        conn, task_id, [f for f in ("title", "body") if getattr(payload, f) is not None], board=board)
+    if payload.title is not None and not payload.title.strip():
+        raise HTTPException(status_code=400, detail="title cannot be empty")
+    kanban_db.edit_task(
+        conn, task_id, title=payload.title.strip() if payload.title is not None else None,
+        body=payload.body, board=board, by="dashboard")
 
 
 @router.patch("/tasks/{task_id}")
@@ -807,7 +795,8 @@ def add_comment(task_id: str, payload: CommentBody, board: Optional[str] = Query
         raise HTTPException(status_code=400, detail="body is required")
     with _board_conn(board) as (board, conn):
         _require_task(conn, task_id)
-        kanban_db.add_comment(conn, task_id, author=payload.author or "dashboard", body=payload.body)
+        kanban_db.add_comment(conn, task_id, author=payload.author or "dashboard", body=payload.body,
+                              source={"surface": "dashboard"})
         return {"ok": True}
 
 
@@ -819,14 +808,14 @@ class LinkBody(BaseModel):
 @router.post("/links")
 def add_link(payload: LinkBody, board: Optional[str] = Query(None)):
     with _board_conn(board) as (board, conn), _value_error_400():
-        gated = kanban_db.link_tasks(conn, payload.parent_id, payload.child_id)
+        gated = kanban_db.link_tasks(conn, payload.parent_id, payload.child_id, by="dashboard")
         return {"ok": True, "gated": gated}
 
 
 @router.delete("/links")
 def delete_link(parent_id: str = Query(...), child_id: str = Query(...), board: Optional[str] = Query(None)):
     with _board_conn(board) as (board, conn):
-        return {"ok": bool(kanban_db.unlink_tasks(conn, parent_id, child_id))}
+        return {"ok": bool(kanban_db.unlink_tasks(conn, parent_id, child_id, by="dashboard"))}
 
 
 def _bulk_apply_one(conn, tid: str, payload: BulkTaskBody, board: Optional[str], entry: dict) -> None:
