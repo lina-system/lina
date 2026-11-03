@@ -17,7 +17,7 @@ import pytest
 from hermes_cli.worker.runners import command as command_runner
 from hermes_cli.worker.runners.command import _WRAP, CommandRunner
 
-pytestmark = pytest.mark.skipif(sys.platform == "win32", reason="POSIX process groups")
+pytestmark = pytest.mark.platforms("posix")  # POSIX process groups
 
 _STUBBORN = "import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); open({ready!r}, 'w').close(); time.sleep(120)"
 
