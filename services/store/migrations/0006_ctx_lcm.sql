@@ -1206,3 +1206,6 @@ CREATE OR REPLACE TRIGGER lcm_memory_events_no_update BEFORE UPDATE ON ctx.lcm_m
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_memory_events_append_only();
 CREATE OR REPLACE TRIGGER lcm_memory_events_no_delete BEFORE DELETE ON ctx.lcm_memory_events
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_memory_events_append_only();
+
+-- LCM-X names an id outright at times (SQLite then allocates past it); moving the sequence takes UPDATE.
+GRANT UPDATE ON ALL SEQUENCES IN SCHEMA ctx TO lina_app;

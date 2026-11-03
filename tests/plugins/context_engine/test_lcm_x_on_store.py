@@ -109,10 +109,18 @@ def test_summary_vectors_live_in_vec_embeddings(routed, memory_store_sql):
             ("summary", node_id, "vec", "qwen3-embedding-8b")]
         assert conn.execute("SELECT vec FROM lcm_embedding_vectors WHERE embedded_id = ?",
                             (str(node_id),)).fetchone()[0] == blob
-        with pytest.raises(sqlite3.IntegrityError, match="1024 wide"):
+        with pytest.raises(sqlite3.IntegrityError, match="at most 1024 wide"):
             conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
-                         (str(node_id + 1), "h1", array("f", [0.5] * 8).tobytes()))
+                         (str(node_id + 1), "h1", array("f", [0.5] * 1536).tobytes()))
         conn.rollback()
+        conn.execute("INSERT INTO lcm_embedding_profile(identity_hash, provider, model_name, dim) VALUES (?, ?, ?, ?)",
+                     ("h8", "local", "tiny-8", 8))
+        narrow = array("f", [0.25] * 8).tobytes()
+        conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
+                     (str(node_id), "h8", narrow))
+        conn.commit()
+        assert conn.execute("SELECT vec FROM lcm_embedding_vectors WHERE identity_hash = ?", ("h8",)).fetchone()[0] == narrow
+        conn.execute("DELETE FROM lcm_embedding_vectors WHERE identity_hash = ?", ("h8",))
         conn.execute("DELETE FROM lcm_embedding_vectors WHERE embedded_id = ? AND identity_hash = ?",
                      (str(node_id), "h1"))
         conn.commit()

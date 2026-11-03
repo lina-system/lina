@@ -47,7 +47,17 @@ def _lcm_x_on_store(monkeypatch):
     yield
     lcm_x_store.route_every_database(None)
     hermes_state_store.TEXT_CACHE.clear()
+    _drop_leftover_connections(store)
     store.reset()
+
+
+def _drop_leftover_connections(store) -> None:
+    """A test that never closes a store leaves its connection idle in a transaction; on SQLite that held a
+    lock on the test's own file only, here it would hold the emptying ``TRUNCATE`` forever."""
+    import psycopg
+    with psycopg.connect(store.superuser_dsn(), autocommit=True) as conn:
+        conn.execute("SELECT pg_terminate_backend(pid) FROM pg_stat_activity "
+                     "WHERE datname = current_database() AND usename = 'lina_app' AND pid <> pg_backend_pid()")
 
 
 def pytest_unconfigure(config) -> None:

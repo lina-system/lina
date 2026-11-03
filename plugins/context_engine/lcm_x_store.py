@@ -68,13 +68,14 @@ def backend_for(database: Any) -> Optional[Callable[[], PgConnection]]:
         return None
     with _ROUTES_LOCK:
         agent = _ROUTES.get(_route_key(database)) if _ROUTES else None
-    if agent is None and _route_every is not None:
+    if agent is None and _route_every is not None and Path(str(database)).name != "state.db":
         agent = _route_every(_route_key(database))
     if agent is None:
         return None
     def connect(**connect_kwargs: Any) -> PgConnection:
         return PgConnection(str(database), agent, timeout=connect_kwargs.get("timeout", 5.0),
-                            isolation_level=connect_kwargs.get("isolation_level", ""))
+                            isolation_level=connect_kwargs.get("isolation_level", ""),
+                            readonly=bool(connect_kwargs.get("readonly")))
     return connect
 
 
@@ -117,7 +118,7 @@ _FTS_MAINTENANCE = re.compile(r"^\s*INSERT\s+INTO\s+(messages_fts|messages_fts_s
                               r"lcm_trajectory_states_fts)\b", re.IGNORECASE)
 _CONTROL = re.compile(r"^\s*(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b(.*)$", re.IGNORECASE | re.DOTALL)
 _PRAGMA = re.compile(r"^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*(?:\(\s*['\"]?([\w.]+)['\"]?\s*\)|=\s*(.+))?\s*;?\s*$", re.IGNORECASE | re.DOTALL)
-_MESSAGE_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+messages\s*\(([^)]*)\)\s*VALUES\s*\(([^)]*)\)\s*;?\s*$",
+_MESSAGE_INSERT = re.compile(r"^\s*INSERT\s+(?:OR\s+(\w+)\s+)?INTO\s+messages\s*(?:\(([^)]*)\))?\s*((?:VALUES|SELECT|WITH)\b.*?);?\s*$",
                              re.IGNORECASE | re.DOTALL)
 
 
@@ -128,6 +129,7 @@ class Template:
     kind: str = "sql"  # sql | skip | control | pragma | message_insert | message_content_update
     returning: Optional[str] = None
     detail: tuple = ()
+    bump: Optional[tuple] = None  # (table, identity column) of an INSERT that names the identity value
 
 
 def _mask(sql: str) -> tuple[str, list[str], list[str]]:
@@ -364,8 +366,8 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
         return Template((), kind="skip")
     insert = _MESSAGE_INSERT.match(stripped)
     if insert:
-        cols = tuple(c.strip() for c in insert.group(1).split(","))
-        return Template((), kind="message_insert", detail=cols)
+        cols = tuple(c.strip().strip('"') for c in insert.group(2).split(",")) if insert.group(2) else ()
+        return Template((), kind="message_insert", detail=((insert.group(1) or "").upper(), cols, insert.group(3)))
     if re.match(r"\s*UPDATE\s+messages\s+SET\s+(?:[^=]*,\s*)?content\s*=", stripped, re.IGNORECASE):
         return Template((stripped,), kind="message_content_update")
     # strftime('%s','now') is SQLite's "epoch seconds now"; as text it would not go into a REAL column here.
@@ -384,15 +386,19 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     masked = masked.rstrip().rstrip(";")
     returning = None
     m = re.match(r"\s*INSERT\s+INTO\s+(\w+)", masked, re.IGNORECASE)
+    bump = None
     if m and not re.search(r"\bRETURNING\b", masked, re.IGNORECASE):
         returning = catalog.identity(m.group(1))
         if returning:
             masked += f" RETURNING {returning}"
+            cols = re.match(r"\s*INSERT\s+INTO\s+\w+\s*\(([^)]*)\)", masked, re.IGNORECASE)
+            if cols and returning in [c.strip().strip('"') for c in cols.group(1).split(",")]:
+                bump = (m.group(1), returning)
     parts: list = []
     for piece in _fts_parts(masked):
         parts.extend(_unmask(piece, literals) if isinstance(piece, str) else [piece])
     names = _named_order(slots)
-    return Template(tuple(parts), returning=returning, detail=tuple(names) if names else ())
+    return Template(tuple(parts), returning=returning, detail=tuple(names) if names else (), bump=bump)
 
 
 def translate(sql: str, catalog: Catalog) -> Template:
@@ -766,7 +772,7 @@ class PgConnection:
     is_lina_store = True
 
     def __init__(self, database: str, agent_id: str, *, dsn: Optional[str] = None, timeout: float = 5.0,
-                 isolation_level: Optional[str] = "") -> None:
+                 isolation_level: Optional[str] = "", readonly: bool = False) -> None:
         import psycopg
         from hermes_state_store import StoreUnavailableError, resolve_dsn
         self.database = database
@@ -778,8 +784,8 @@ class PgConnection:
         # lock_timeout stands in for SQLite's busy timeout: a writer waiting on another connection gives up with
         # "database is locked" instead of waiting forever.
         self._pg.execute("SELECT set_config('lina.agent_id', %s, false), set_config('search_path', 'ctx, public', false), "
-                         "set_config('lock_timeout', %s, false)",
-                         (agent_id, f"{max(int(float(timeout) * 1000), 1)}ms"))
+                         "set_config('lock_timeout', %s, false), set_config('default_transaction_read_only', %s, false)",
+                         (agent_id, f"{max(int(float(timeout) * 1000), 1)}ms", "on" if readonly else "off"))
         self._catalog = Catalog.shared(self._pg)
         self._vector_oid = self._pg.execute("SELECT to_regtype('vector')::oid").fetchone()[0]
         self._lock = threading.RLock()
@@ -791,6 +797,7 @@ class PgConnection:
         self.text_factory = str
         self.total_changes = 0
         self._message_uid: Optional[str] = None
+        self._returned: list[int] = []
         self._text = _TextLink(agent_id)
         self._closed = False
 
@@ -904,6 +911,14 @@ class PgConnection:
         if writes and self.isolation_level is not None:
             self._begin()
         self._statement(cur, text, args, template.returning)
+        if template.bump is not None and self._returned:
+            self._bump_identity(*template.bump)
+
+    def _bump_identity(self, table: str, column: str) -> None:
+        """An INSERT that named its identity value: move the sequence past it, as SQLite's rowid allocation is."""
+        self._raw("SELECT setval(pg_get_serial_sequence(%s, %s), greatest(%s, (SELECT last_value FROM "
+                  f"{self._raw('SELECT pg_get_serial_sequence(%s, %s)', (f'ctx.{table}', column)).fetchone()[0]})))",
+                  (f"ctx.{table}", column, max(self._returned)))
 
     def _statement(self, cur: PgCursor, text: str, args: list[Any], returning: Optional[str]) -> None:
         import psycopg
@@ -923,6 +938,7 @@ class PgConnection:
                     logger.debug("rollback to the statement savepoint failed", exc_info=True)
             raise _sqlite_error(exc) from exc
         lastrowid = None
+        self._returned = [int(r[0]) for r in rows if r and isinstance(r[0], int)] if returning else []
         description = result.description
         vector_columns = [i for i, d in enumerate(description or ()) if d.type_code == self._vector_oid]
         if vector_columns:
@@ -982,20 +998,36 @@ class PgConnection:
         cur._set_result(None, [], -1, None)
 
     def _message_insert(self, cur: PgCursor, template: Template, params: Any) -> None:
-        cols = template.detail
-        row = dict(zip(cols, params if not isinstance(params, dict) else [params[c] for c in cols]))
-        uid, digest = self._text.resolve(
-            message_uid=self._message_uid, session_id=row.get("session_id"), role=row.pop("role", None),
-            content=row.pop("content", None), tool_call_id=row.pop("tool_call_id", None),
-            tool_calls=row.pop("tool_calls", None), tool_name=row.pop("tool_name", None))
+        mode, cols, source = template.detail
+        query = f"SELECT * FROM ({source}) AS lcm_values" if source.lstrip()[:6].upper() == "VALUES" else source
+        probe = self.cursor()
+        self._run(probe, query, params)
+        names = list(cols) or self._catalog.columns("messages")
+        conflict = {"IGNORE": " ON CONFLICT DO NOTHING"}.get(mode, "")
+        stored: list[int] = []
+        for values in probe._rows:
+            row = dict(zip(names, values))
+            uid, digest = self._text.resolve(
+                message_uid=self._message_uid, session_id=row.get("session_id"), role=row.pop("role", None),
+                content=row.pop("content", None), tool_call_id=row.pop("tool_call_id", None),
+                tool_calls=row.pop("tool_calls", None), tool_name=row.pop("tool_name", None))
+            row["text_uid"], row["content_sha256"] = uid, digest
+            row = {k: v for k, v in row.items() if k not in ("text_uid", "content_sha256") or v is not None}
+            columns = list(row)
+            update = conflict
+            if mode == "REPLACE":
+                update = " ON CONFLICT (store_id) DO UPDATE SET " + ", ".join(
+                    f"{c} = EXCLUDED.{c}" for c in columns if c != "store_id")
+            if self.isolation_level is not None:
+                self._begin()
+            self._statement(cur, f"INSERT INTO ctx.lcm_messages ({', '.join(columns)}) VALUES "
+                                 f"({', '.join(['%s'] * len(columns))}){update} RETURNING store_id",
+                            [_adapt(row[c]) for c in columns], "store_id")
+            stored.extend(self._returned)
+            if "store_id" in row and self._returned:
+                self._bump_identity("lcm_messages", "store_id")
         self._message_uid = None
-        row["text_uid"], row["content_sha256"] = uid, digest
-        names = list(row)
-        sql = (f"INSERT INTO ctx.lcm_messages ({', '.join(names)}) VALUES ({', '.join(['%s'] * len(names))}) "
-               "RETURNING store_id")
-        if self.isolation_level is not None:
-            self._begin()
-        self._statement(cur, sql, [_adapt(row[n]) for n in names], "store_id")
+        cur._set_result(None, [], len(stored), stored[-1] if stored else None)
 
     def _message_content_update(self, cur: PgCursor, template: Template, params: Any) -> None:
         m = re.match(r"\s*UPDATE\s+messages\s+SET\s+(.*?)\s+WHERE\s+store_id\s*=\s*\?\s*;?\s*$",

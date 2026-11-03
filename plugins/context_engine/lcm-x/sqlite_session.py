@@ -5,7 +5,9 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+import os
 import sqlite3
+from urllib.parse import unquote, urlsplit
 
 
 @dataclass(frozen=True)
@@ -34,6 +36,21 @@ def store_backend(database: object) -> Callable[[], sqlite3.Connection] | None:
     except ImportError:
         return None
     return backend_for(database)
+
+
+def connect_database(database: str | os.PathLike, **kwargs: object) -> sqlite3.Connection:
+    """LINA: ``sqlite3.connect(database, **kwargs)``, or the host's store connection when the host routes that
+    database (a path, or a ``file:`` URI with ``uri=True``) to its Postgres store."""
+    path = str(database)
+    if kwargs.get("uri") and path.startswith("file:"):
+        parts = urlsplit(path)
+        path = unquote(parts.path)
+        kwargs = {**kwargs, "readonly": "mode=ro" in parts.query}
+    backend = store_backend(path)
+    if backend is not None:
+        return backend(**{k: v for k, v in kwargs.items() if k in ("timeout", "isolation_level", "readonly")})
+    kwargs.pop("readonly", None)
+    return sqlite3.connect(database, **kwargs)
 
 
 def is_store_connection(conn: object) -> bool:

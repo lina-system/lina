@@ -1,14 +1,14 @@
 -- LCM-X's summary vectors in vec.embeddings (lina#16 on lina#19's table): kind 'summary', item_id = the summary
 -- node id, model = the model of LCM-X's embedding profile. lcm_embedding_vectors keeps LCM-X's name and columns as a
 -- view; its rows are written and deleted through it. vec.embeddings holds 1024-wide vectors of the one embedding
--- model (docs/store.md), so a profile of another width is refused here instead of being stored elsewhere.
+-- model (docs/store.md): a narrower profile is zero-padded to 1024, a wider one refused, never stored elsewhere.
 CREATE OR REPLACE VIEW ctx.lcm_embedding_vectors WITH (security_invoker = true) AS
 SELECT e.item_id AS rowid,
        e.item_id::text AS embedded_id,
        p.identity_hash,
-       e.embedding::vector AS vec
+       subvector(e.embedding, 1, p.dim::int)::vector AS vec
 FROM vec.embeddings AS e
-JOIN ctx.lcm_embedding_profile AS p ON p.model_name = e.model AND p.dim = e.dim
+JOIN ctx.lcm_embedding_profile AS p ON p.model_name = e.model AND p.dim <= e.dim
 WHERE e.kind = 'summary';
 
 CREATE OR REPLACE FUNCTION ctx.lcm_embedding_vectors_write() RETURNS trigger
@@ -27,12 +27,15 @@ BEGIN
     IF model_name IS NULL THEN
         PERFORM ctx.lcm_raise('no embedding profile ' || NEW.identity_hash);
     END IF;
-    IF vector_dims(NEW.vec) <> 1024 THEN
-        PERFORM ctx.lcm_raise('summary vectors on the memory store are 1024 wide (the one embedding model); this '
-                              'profile writes ' || vector_dims(NEW.vec));
+    IF vector_dims(NEW.vec) > 1024 THEN
+        PERFORM ctx.lcm_raise('summary vectors on the memory store are at most 1024 wide (the one embedding model); '
+                              'this profile writes ' || vector_dims(NEW.vec));
     END IF;
+    -- A narrower vector is stored zero-padded (cosine and dot products are unchanged) and read back at its width.
     INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding)
-    VALUES ('summary', NEW.embedded_id::bigint, public.lina_current_agent(), model_name, 1024, NEW.vec)
+    VALUES ('summary', NEW.embedded_id::bigint, public.lina_current_agent(), model_name, 1024,
+            CASE WHEN vector_dims(NEW.vec) = 1024 THEN NEW.vec
+                 ELSE (NEW.vec::real[] || array_fill(0::real, ARRAY[1024 - vector_dims(NEW.vec)]))::vector END)
     ON CONFLICT (kind, item_id, model) DO UPDATE SET embedding = EXCLUDED.embedding;
     RETURN NEW;
 END $$;
