@@ -277,6 +277,15 @@ def _card(sp) -> None:
     q.set_defaults(fn=_fn("cards", "cmd_card_show"))
 
 
+def _probe(sp) -> None:
+    from hermes_cli.work.probe import PROBES, usage
+    p = sp.add_parser("probe", help="read-only check for --check: exit 0 holds, 1 not yet, 2 cannot tell",
+                      epilog=usage(), formatter_class=argparse.RawDescriptionHelpFormatter)
+    p.add_argument("probe", choices=tuple(PROBES))
+    p.add_argument("args", nargs="*")
+    p.set_defaults(fn=_fn("probe", "cmd_probe"), no_resume=True)
+
+
 def build(sp) -> None:
-    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves, _run, _card):
+    for part in (_sprint, _add, _item_writes, _comments, _edit, _reads, _moves, _run, _card, _probe):
         part(sp)
