@@ -124,6 +124,23 @@ def backend_for(database: Any, *, opening: bool = False) -> Optional[Callable[..
 
 # ── errors ──
 
+def _integrity_message(exc: Exception, sqlstate: str, message: str) -> str:
+    """SQLite's spelling of a constraint failure (callers match "UNIQUE constraint failed"), the store's after it."""
+    diag = getattr(exc, "diag", None)
+    table = (getattr(diag, "table_name", None) or "").removeprefix("lcm_messages") or getattr(diag, "table_name", "")
+    if sqlstate == "23505":
+        key = re.search(r"Key \((.*?)\)=", getattr(diag, "message_detail", None) or "")
+        cols = [c.strip() for c in key.group(1).split(",") if c.strip() != "agent_id"] if key else []
+        return f"UNIQUE constraint failed: {', '.join(f'{table}.{c}' for c in cols) or table} ({message})"
+    if sqlstate == "23502":
+        return f"NOT NULL constraint failed: {table}.{getattr(diag, 'column_name', '')} ({message})"
+    if sqlstate == "23514":
+        return f"CHECK constraint failed: {getattr(diag, 'constraint_name', '')} ({message})"
+    if sqlstate == "23503":
+        return f"FOREIGN KEY constraint failed ({message})"
+    return message
+
+
 def _sqlite_error(exc: Exception) -> sqlite3.Error:
     """The ``sqlite3`` exception LCM-X catches for a psycopg error: integrity (class 23) or operational."""
     import psycopg
@@ -134,7 +151,7 @@ def _sqlite_error(exc: Exception) -> sqlite3.Error:
         err: sqlite3.Error = sqlite3.OperationalError(f"database is locked ({message})")
         err.sqlite_errorcode, err.sqlite_errorname = sqlite3.SQLITE_BUSY, "SQLITE_BUSY"
     elif sqlstate.startswith("23"):
-        err = sqlite3.IntegrityError(message)
+        err = sqlite3.IntegrityError(_integrity_message(exc, sqlstate, message))
     elif isinstance(exc, psycopg.errors.FeatureNotSupported):
         err = sqlite3.NotSupportedError(message)
     elif isinstance(exc, (psycopg.ProgrammingError, psycopg.DataError)) and not sqlstate.startswith("57"):
@@ -1517,6 +1534,9 @@ class PgConnection:
             return
         if name in ("table_info", "table_xinfo"):
             self._statement(cur, "SELECT * FROM ctx.pragma_table_info(%s)", [arg], None)
+            return
+        if name == "database_list":  # the routed lcm.db path stands for the store's database, as its main file
+            cur._set_result([("seq",), ("name",), ("file",)], [(0, "main", self.database)], -1, None)
             return
         if name == "data_version":
             self._statement(cur, "SELECT ('x' || substr(md5(pg_current_wal_lsn()::text), 1, 8))::bit(32)::int "
