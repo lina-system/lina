@@ -1,6 +1,7 @@
 """Behavior tests for the merge gates in hermes_cli/codex_review_gate.py (entry point scripts/ci/codex_review_gate.py).
 
 Regression for #55 and #57, merged with Codex P1 findings on their head commits.
+Regression for #180: a pull request that merges during the ``--all`` sweep gets no status.
 """
 
 import importlib.util
@@ -97,7 +98,8 @@ def test_a_clean_comment_newer_than_the_head_does_not_pass_an_unreviewed_head(mo
     # A commit made before the previous head's review finished and pushed after it has an older
     # committer date than that clean comment, though Codex never looked at it. Judged end to end,
     # with the head's commit date available, the time must not count as a review.
-    pull = {"number": 101, "head": {"sha": HEAD, "ref": "ci/61-delivery-procedure"}, "labels": [],
+    pull = {"number": 101, "state": "open", "merged": False,
+            "head": {"sha": HEAD, "ref": "ci/61-delivery-procedure"}, "labels": [],
             "html_url": "https://github.com/lina-system/lina/pull/101"}
     clean = {"id": 3, "user": BOT, "updated_at": "2026-11-02T02:00:00Z",
              "body": "Codex Review: Didn't find any major issues. Keep them coming!"}
@@ -228,3 +230,37 @@ def test_dev_state_skips_runs_cancelled_by_a_newer_push():
     assert gate.pick_dev_run(runs)["head_sha"] == "a" * 40
     assert gate.pick_dev_run([_run("cancelled"), _run("failure", sha="f" * 40)])["conclusion"] == "failure"
     assert gate.pick_dev_run([_run("cancelled"), _run("skipped")]) is None
+
+
+@pytest.mark.parametrize("state,merged", [
+    ("closed", True),   # the sweep's fetch after a merge (#174 / #180)
+    ("closed", False),  # closed without merging: state != "open"
+    ("open", True),     # merged flag alone, even if state still says open
+])
+def test_sweep_posts_nothing_when_the_fetched_pull_request_is_not_open(
+    monkeypatch, capsys, state, merged,
+):
+    """Listed as open, then no longer open at judging time: one skip line, no status."""
+    posted: list[tuple[str, ...]] = []
+    fetched = {"number": 174, "state": state, "merged": merged,
+               "head": {"sha": HEAD, "ref": "fix/166-gate"}, "labels": [],
+               "html_url": "https://github.com/lina-system/lina/pull/174"}
+
+    def fake_gh(*args: str) -> str:
+        if "POST" in args:
+            posted.append(args)
+            return ""
+        path = next(arg for arg in args if arg.startswith("repos/"))
+        if "pulls?state=open" in path:
+            return json.dumps({"number": 174, "state": "open"})
+        if path == f"repos/{REPO}/pulls/174":
+            return json.dumps(fetched)
+        if "/actions/workflows/ci.yml/runs" in path:
+            return json.dumps({"workflow_runs": []})
+        raise AssertionError(args)
+
+    monkeypatch.setattr(gate, "_gh", fake_gh)
+    assert gate.main(["--repo", REPO, "--all"]) == 0
+    assert posted == []
+    lines = [line for line in capsys.readouterr().out.splitlines() if line.strip()]
+    assert lines == ["#174 skipped: pull request is no longer open"]

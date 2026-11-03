@@ -319,6 +319,66 @@ class SessionContextMixin:
             return [{"id": c.id, "content": c.content} for c in self._authed_call("conclusion list", _fetch)]
         return self._guarded_session(session_key, _list, [], logging.DEBUG, "Honcho list_conclusions failed: %s")
 
+    # Structured reads for lina-memory's memory_search and memory_open (lina#22). Unlike the reads above they
+    # raise when Honcho cannot answer, so the caller can tell "Honcho failed" from "Honcho found nothing".
+
+    def _open_session(self, session_key: str) -> Any:
+        session = self._cached_session(session_key)
+        if not session:
+            raise RuntimeError(f"no Honcho session is open for {session_key!r}")
+        return session
+
+    @staticmethod
+    def _message_record(session: Any, message: Any) -> dict[str, Any]:
+        author = getattr(message, "peer_id", "") or ""
+        created = getattr(message, "created_at", None)
+        return {"id": str(message.id), "content": getattr(message, "content", "") or "", "peer_id": author,
+                "session_id": getattr(message, "session_id", "") or "",
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else created,
+                "speaker": "agent" if author == session.assistant_peer_id else "person"}
+
+    @staticmethod
+    def _conclusion_record(conclusion: Any) -> dict[str, Any]:
+        created = getattr(conclusion, "created_at", None)
+        return {"id": str(conclusion.id), "content": getattr(conclusion, "content", "") or "",
+                "observer_id": getattr(conclusion, "observer_id", "") or "",
+                "observed_id": getattr(conclusion, "observed_id", "") or "",
+                "session_id": getattr(conclusion, "session_id", None),
+                "created_at": created.isoformat() if hasattr(created, "isoformat") else created}
+
+    def search_messages(self, session_key: str, query: str, *, limit: int = 10, peer: str = "user") -> list[dict]:
+        """Raw messages visible from ``peer``'s perspective, all sessions, best first, as dicts."""
+        session = self._open_session(session_key)
+        peer_id = self._resolve_peer_id(session, peer)
+        q = (query or "").strip()[:4000]
+        found = self._authed_call("message search", lambda: self.honcho.search(
+            q, filters={"peer_perspective": peer_id}, limit=max(1, min(100, int(limit)))))
+        return [self._message_record(session, m) for m in found or () if (getattr(m, "content", "") or "").strip()]
+
+    def search_conclusions(self, session_key: str, query: str, *, limit: int = 10, peer: str = "user") -> list[dict]:
+        """Conclusions about ``peer`` semantically nearest ``query``, as dicts."""
+        session = self._open_session(session_key)
+        target_peer_id = self._resolve_peer_id(session, peer)
+        if target_peer_id is None:
+            return []
+        found = self._authed_call("conclusion query", lambda: self._conclusions_scope(session, target_peer_id).query(
+            query, top_k=max(1, int(limit))))
+        return [self._conclusion_record(c) for c in found or ()]
+
+    def get_message(self, session_key: str, honcho_session_id: str, message_id: str) -> dict[str, Any]:
+        """One message of a Honcho session, verbatim."""
+        session = self._open_session(session_key)
+        message = self._authed_call("message get", lambda: self.honcho.session(honcho_session_id).get_message(message_id))
+        return self._message_record(session, message)
+
+    def get_conclusion(self, session_key: str, conclusion_id: str, *, peer: str = "user") -> dict[str, Any]:
+        """One conclusion about ``peer``, verbatim; Honcho refuses one outside that observer/observed pair."""
+        session = self._open_session(session_key)
+        target_peer_id = self._resolve_peer_id(session, peer)
+        conclusion = self._authed_call(
+            "conclusion get", lambda: self._conclusions_scope(session, target_peer_id).get(conclusion_id))
+        return self._conclusion_record(conclusion)
+
     def set_peer_card(self, session_key: str, card: list[str], peer: str = "user") -> list[str] | None:
         """Replace a peer's card. Returns the updated card, or None on failure."""
         def _update(session: Any) -> list[str] | None:

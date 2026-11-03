@@ -35,7 +35,7 @@ _APPROVAL = re.compile(r"^\s*(승인|approve)", re.IGNORECASE)
 _OK_JOB = {"success", "skipped", "neutral"}
 # Comment authors the board records for a human: the CLI's profile-less
 # fallback, the dashboard, and the default profile. Override with --owner.
-DEFAULT_OWNERS = ("user", "dashboard", "default")
+DEFAULT_OWNERS = ("user", "dashboard", "default", "owner")
 
 
 class GateError(RuntimeError):

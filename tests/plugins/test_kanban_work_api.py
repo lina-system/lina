@@ -224,6 +224,12 @@ def test_inbox_lists_blocks_and_open_questions_and_answer_unblocks_only_needs_in
 
     ok = _valid("AnswerResult", client.post(f"{WORK}/inbox/{needs_input}/answer", json={"text": "blue"}).json())
     assert (ok["unblocked"], ok["state"]) == (True, "planned")
+    answer_events = kb.list_events(conn, needs_input)
+    comment = [event for event in answer_events if event.kind == "commented"][-1]
+    assert comment.payload["source"] == {"surface": "app"}
+    assert comment.payload["comment_id"] == ok["commentId"]
+    unblocked = [event for event in answer_events if event.kind == "unblocked"][-1]
+    assert (unblocked.payload["by"], unblocked.payload["reason"]) == ("owner", "blue")
     kept = _valid("AnswerResult", client.post(f"{WORK}/inbox/{capability}/answer", json={"text": "wait"}).json())
     assert (kept["unblocked"], kept["state"], kept["reason"]) == (False, "stopped", "capability")
     assert kb.get_task(conn, capability).status == "blocked"

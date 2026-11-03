@@ -34,6 +34,11 @@ queue waits on them for good. ``--merge-group`` judges the pull request the queu
 (``gh-readonly-queue/dev/pr-<n>-<sha>``) exactly as on its head and sets the same verdicts on
 the queue commit.
 
+``--all`` lists open pull requests into ``dev`` and judges each one afterwards. A pull request
+that is no longer open at judging time (``state != "open"`` or ``merged``) is skipped: one line
+is printed and nothing is posted. A merge that lands mid-sweep has just closed its issue, and a
+red ``Linked issue #n is closed`` on that head would be stale.
+
     python3 scripts/ci/codex_review_gate.py --repo owner/name (--pr 123 | --all) [--dry-run]
     python3 scripts/ci/codex_review_gate.py --repo owner/name --merge-group <head_ref> --sha <sha>
 
@@ -321,8 +326,17 @@ def head_check_runs(repo: str, sha: str) -> list[dict[str, Any]]:
     return [json.loads(line) for line in out.splitlines() if line.strip()]
 
 
-def judge(repo: str, pr: int, dev: tuple[dict[str, Any] | None, frozenset[str]]) -> tuple[dict[str, Any], dict[str, Status]]:
+def judge(
+    repo: str, pr: int, dev: tuple[dict[str, Any] | None, frozenset[str]],
+) -> tuple[dict[str, Any], dict[str, Status] | None]:
+    """The three statuses, or ``None`` when the pull request is no longer open.
+
+    ``--all`` lists first. A pull request that merges before this fetch has just closed its
+    issue; posting the resulting red on that head misleads anyone reading the checks.
+    """
     pull = gh_json(f"repos/{repo}/pulls/{pr}")
+    if pull.get("state") != "open" or pull.get("merged"):
+        return pull, None
     head_sha = pull["head"]["sha"]
     labels = frozenset(label["name"] for label in pull["labels"])
     return pull, {
@@ -361,6 +375,9 @@ def main(argv: list[str] | None = None) -> int:
     dev = latest_dev_run(args.repo)
     for number in numbers:
         pull, statuses = judge(args.repo, number, dev)
+        if statuses is None:
+            print(f"#{number} skipped: pull request is no longer open")
+            continue
         target_sha = args.sha if args.merge_group else pull["head"]["sha"]
         for context, status in statuses.items():
             print(f"#{number} {context} @ {target_sha[:7]}: {status.state} - {status.description}")

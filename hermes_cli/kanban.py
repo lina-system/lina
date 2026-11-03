@@ -725,7 +725,8 @@ def _cmd_link(args: argparse.Namespace) -> int:
         if args.child_id == os.environ.get("HERMES_KANBAN_TASK") else None)
     with kbc.connect_closing() as conn:
         gated = kb.link_tasks(conn, args.parent_id, args.child_id,
-                              expected_child_run_id=expected_child_run_id)
+                              expected_child_run_id=expected_child_run_id,
+                              by=_profile_author(), reason=getattr(args, "reason", None))
     print(f"Linked {args.parent_id} -> {args.child_id}")
     if gated:
         print(
@@ -740,7 +741,8 @@ def _cmd_link(args: argparse.Namespace) -> int:
 
 def _cmd_unlink(args: argparse.Namespace) -> int:
     with kbc.connect_closing() as conn:
-        ok = kb.unlink_tasks(conn, args.parent_id, args.child_id)
+        ok = kb.unlink_tasks(conn, args.parent_id, args.child_id,
+                             by=_profile_author(), reason=getattr(args, "reason", None))
     return _ok_or_err(ok, f"No such link: {args.parent_id} -> {args.child_id}",
                       f"Unlinked {args.parent_id} -> {args.child_id}")
 
@@ -770,7 +772,7 @@ def _cmd_comment(args: argparse.Namespace) -> int:
             body = body[: max(0, args.max_len - len(suffix))].rstrip() + suffix
     author = args.author or _profile_author()
     with kbc.connect_closing() as conn:
-        kb.add_comment(conn, args.task_id, author, body)
+        _cli_comment(conn, args.task_id, author, body)
     print(f"Comment added to {args.task_id}")
     return 0
 
@@ -981,6 +983,7 @@ def _cmd_edit(args: argparse.Namespace) -> int:
         ok = kb.edit_task(
             conn, args.task_id, title=title, body=body, priority=priority,
             result=result, summary=summary, metadata=metadata,
+            by=_profile_author(), reason=getattr(args, "reason", None),
         )
     return _ok_or_err(
         ok,
@@ -989,11 +992,21 @@ def _cmd_edit(args: argparse.Namespace) -> int:
     )
 
 
+def _cli_comment(conn, task_id: str, author: str, body: str) -> int:
+    """Record the CLI surface without attributing foreign comments to its target run."""
+    from agent.delegation_context import owned_kanban_task
+
+    run_id = _worker_run_id_for(task_id) if owned_kanban_task() == task_id else None
+    return kb.add_comment(conn, task_id, author, body,
+                          source={"surface": "cli", "session": os.environ.get("HERMES_SESSION_ID") or None},
+                          run_id=run_id)
+
+
 def _commented(conn, reason: Optional[str], author, prefix: str, op):
     """Wrap a per-task ``op`` so a ``reason`` is first recorded as a ``PREFIX: reason`` comment."""
     def run(tid):
         if reason:
-            kb.add_comment(conn, tid, author, f"{prefix}: {reason}")
+            _cli_comment(conn, tid, author, f"{prefix}: {reason}")
         return op(tid)
     return run
 
@@ -1043,10 +1056,11 @@ def _cmd_unblock(args: argparse.Namespace) -> int:
     if rc:
         return rc
     reason = _stripped_or_none(getattr(args, "reason", None))
-    author = _profile_author() if reason else None
+    author = _profile_author()
     suffix = f": {reason}" if reason else ""
     with kbc.connect_closing() as conn:
-        op = _commented(conn, reason, author, "UNBLOCK", lambda tid: kb.unblock_task(conn, tid))
+        op = _commented(conn, reason, author, "UNBLOCK", lambda tid: kb.unblock_task(
+            conn, tid, by=author, reason=reason))
         return _bulk_apply(ids, op, lambda tid: f"Unblocked {tid}{suffix}",
                            lambda tid: f"cannot unblock {tid} (not blocked/scheduled?)")
 
@@ -1100,7 +1114,7 @@ def _cmd_reopen_review(args: argparse.Namespace) -> int:
             if not kb.reopen_review_task(conn, tid):
                 return False
             if reason:
-                kb.add_comment(conn, tid, author or "operator", f"CHANGES REQUESTED: {reason}")
+                _cli_comment(conn, tid, author or "operator", f"CHANGES REQUESTED: {reason}")
             return True
 
         return _bulk_apply(ids, op, lambda tid: f"Reopened {tid}{suffix}",
