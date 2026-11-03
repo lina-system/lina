@@ -630,6 +630,99 @@ class MessageStore:
             cur.execute(sql, args)
             return [(int(row[0]), row[1]) for row in cur.fetchall()]
 
+    # ── memory_search / memory_open (lina#22) ──
+
+    def search_memory(self, query: str, *, sources: Sequence[str], limit: int = 20) -> list[MemoryRow]:
+        """The rows of *sources* (``agent``, ``messages``) this agent may read that match *query*, best first.
+
+        A row matches when its words match (the ``simple`` tsvector) or when one of the query's terms is a
+        substring of its text (``pg_trgm``), so a two-character Korean term hits inside a longer word. Rank: the
+        tsvector rank plus the share of terms found as substrings. Agent rows are its turns (user and assistant
+        text, no tool output); an external message edited later counts once, as its newest version. Forgotten
+        rows are left out. Row-level security decides which rows are this agent's to read."""
+        terms = list(dict.fromkeys(t for t in query.split() if t))[:_MEMORY_TERMS]
+        if not terms or not sources:
+            return []
+        patterns = ["%" + _like_escape(term) + "%" for term in terms]
+        hit_sum = " + ".join(["(content ILIKE %s)::int"] * len(patterns))
+        any_hit = " OR ".join(["content ILIKE %s"] * len(patterns))
+        sql = (
+            f"SELECT {_MEMORY_FIELDS} FROM ("
+            f" SELECT DISTINCT ON (split_part(uid, '#', 1)) {_MEMORY_COLUMNS},"
+            f" ts_rank(tsv, plainto_tsquery('simple', %s)) + ({hit_sum})::float / %s AS score"
+            " FROM memory.messages"
+            " WHERE forgotten_at IS NULL AND content IS NOT NULL AND source = ANY(%s)"
+            " AND (source <> 'agent' OR role IN ('user', 'assistant'))"
+            f" AND (tsv @@ plainto_tsquery('simple', %s) OR {any_hit})"
+            " ORDER BY split_part(uid, '#', 1), message_id DESC"
+            ") hits ORDER BY score DESC, at DESC LIMIT %s")
+        args = [query, *patterns, len(patterns), list(sources), query, *patterns, int(limit)]
+        with self._cursor() as cur:
+            cur.execute(sql, args)
+            return [_memory_row(row) for row in cur.fetchall()]
+
+    def has_memory_vectors(self, *, model: str, sources: Sequence[str]) -> bool:
+        with self._cursor() as cur:
+            cur.execute("SELECT 1 FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
+                        " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s) LIMIT 1", (model, list(sources)))
+            return cur.fetchone() is not None
+
+    def search_memory_vectors(self, embedding: Sequence[float], *, model: str, sources: Sequence[str],
+                              limit: int = 20) -> list[MemoryRow]:
+        """The rows of the embedded chunks (``vec.chunks``, kind ``chunk``) of *sources* nearest *embedding*, nearest
+        first, each row once; empty when nothing of *sources* is embedded with *model*."""
+        vector = "[" + ",".join(repr(float(v)) for v in embedding) + "]"
+        with self._cursor() as cur:
+            cur.execute(
+                "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
+                " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
+                " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), vector, int(limit)))
+            ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
+            if not ordered:
+                return []
+            cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE message_id = ANY(%s)"
+                        " AND forgotten_at IS NULL AND content IS NOT NULL", (ordered,))
+            rows = {row.message_id: row for row in map(_memory_row, cur.fetchall())}
+        return [rows[i] for i in ordered if i in rows][:int(limit)]
+
+    def open_memory(self, uid: str) -> Optional[MemoryRow]:
+        """The row *uid*, when this agent may read it (forgotten rows too: ``forgotten`` says so and the text is
+        withheld); None when there is no such row or it is another agent's."""
+        with self._cursor() as cur:
+            cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE uid = %s", (uid,))
+            row = cur.fetchone()
+        return None if row is None else _memory_row(row)
+
+
+_MEMORY_TERMS = 8
+_MEMORY_COLUMNS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id,"
+                   " coalesce(ts, observed_at) AS at, content, forgotten_at IS NOT NULL AS forgotten")
+_MEMORY_FIELDS = ("message_id, uid, source, role, author, agent_id, conversation_id, session_id, at, content,"
+                  " forgotten")
+
+
+@dataclass(frozen=True)
+class MemoryRow:
+    """One ``memory.messages`` row as memory_search and memory_open show it."""
+    message_id: int
+    uid: str
+    source: str
+    role: Optional[str]
+    author: Optional[str]
+    agent_id: Optional[str]
+    conversation_id: Optional[str]
+    session_id: Optional[str]
+    at: Any  # datetime
+    content: Optional[str]
+    forgotten: bool
+
+
+def _memory_row(row: Sequence[Any]) -> MemoryRow:
+    values = list(row[:11])
+    if values[10]:
+        values[9] = None
+    return MemoryRow(*values)
+
 
 @dataclass(frozen=True)
 class SearchTerm:
