@@ -49,6 +49,21 @@ def route(database: str | Path, agent_id: Optional[str] = None) -> str:
     return agent
 
 
+def store_identity(database: str | Path) -> Optional[dict]:
+    """What a routed *database* is on the store (the agent that owns its rows and the store database), for code
+    that binds a record to its target database the way LCM-X binds one to the ``lcm.db`` file's inode; None when
+    the path is not routed."""
+    factory = backend_for(database)
+    if factory is None:
+        return None
+    conn = factory(readonly=True)
+    try:
+        (name,) = conn._pg.execute("SELECT current_database()").fetchone()
+        return {"store": name, "agent_id": conn.agent_id}
+    finally:
+        conn.close()
+
+
 def route_home(database: str | Path) -> bool:
     """``lcm.store_backend: auto|postgres``: a home with no ``lcm.db`` (or ``:memory:``) keeps its LCM-X data on the
     store; an existing ``lcm.db`` stays the home's store until lina#24 moves it in (nothing is read from it here)."""
@@ -1191,14 +1206,12 @@ class PgConnection:
         cur._set_result(None, [], len(stored), stored[-1] if stored else None)
 
     def _message_content_update(self, cur: PgCursor, template: Template, params: Any) -> None:
-        m = re.match(r"\s*UPDATE\s+messages\s+SET\s+(.*?)\s+WHERE\s+(.*?);?\s*$", template.parts[0],
+        m = re.match(r"\s*UPDATE\s+messages\s+SET\s+(.*?)(?:\s+WHERE\s+(.*?))?;?\s*$", template.parts[0],
                      re.IGNORECASE | re.DOTALL)
-        if not m:
-            raise sqlite3.NotSupportedError("an UPDATE of a message's text needs a WHERE clause on the memory store")
         assignments = _split_top_level(m.group(1))
         set_params = sum(_mask(a)[2].__len__() for a in assignments)
         params = list(params or ())
-        targets = [row[0] for row in self.execute(f"SELECT store_id FROM messages WHERE {m.group(2)}",
+        targets = [row[0] for row in self.execute(f"SELECT store_id FROM messages WHERE {m.group(2) or 'TRUE'}",
                                                   params[set_params:]).fetchall()]
         changed = 0
         for store_id in targets:

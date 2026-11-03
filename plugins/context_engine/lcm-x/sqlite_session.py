@@ -55,6 +55,15 @@ def connect_database(opener: Callable[..., sqlite3.Connection], database: str | 
     return opener(database, **kwargs)
 
 
+def store_identity(database: object) -> dict | None:
+    """LINA: the host store's identity for a routed *database* (``{"store", "agent_id"}``), else None (lina#16)."""
+    try:
+        from plugins.context_engine.lcm_x_store import store_identity as identity
+    except ImportError:
+        return None
+    return identity(database)
+
+
 def configured_store_backend() -> str:
     """LINA: ``lcm.store_backend`` from the profile's config.yaml (``sqlite`` when unset; lina#16)."""
     from .config import _load_hermes_config_yaml
@@ -84,10 +93,19 @@ def open_connection(policy: ConnectionPolicy) -> sqlite3.Connection:
     """Run exactly the supplied recipe, preserving caller-owned error cleanup."""
     backend = store_backend(policy.database, opening=True)
     if backend is not None:
-        # LINA: the SQLite pragmas of before_row_factory do not apply to the store.
+        # LINA: the SQLite pragmas of before_row_factory do not apply to the store; its schema-version refusal does
+        # (ctx.metadata keeps the schema_version a newer build stamps).
+        from .db_bootstrap import refuse_schema_version_too_new
         conn = backend(**dict(policy.connect_kwargs))
         if policy.on_open is not None:
             policy.on_open(conn)
+        if refuse_schema_version_too_new in policy.before_row_factory:
+            try:
+                refuse_schema_version_too_new(conn)
+            except Exception as exc:
+                if policy.on_setup_error is not None:
+                    policy.on_setup_error(exc)
+                raise
         if policy.row_factory is not None:
             conn.row_factory = policy.row_factory
         return conn

@@ -264,8 +264,6 @@ def read_existing_schema_version(conn: sqlite3.Connection) -> int:
 
 def refuse_schema_version_too_new(conn: sqlite3.Connection) -> None:
     """Raise before any startup DDL when a newer build owns the DB."""
-    if is_store_connection(conn):  # LINA: the store's migrations own the schema
-        return
     current_version = read_existing_schema_version(conn)
     if current_version <= SCHEMA_VERSION:
         return
@@ -3798,7 +3796,12 @@ def ensure_external_content_fts(
 
 
 def run_versioned_migrations(conn: sqlite3.Connection) -> None:
-    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+    if is_store_connection(conn):
+        # LINA: the store's migrations own the schema; ctx.metadata still carries this build's schema_version, so a
+        # newer build's stamp is refused as on SQLite.
+        refuse_schema_version_too_new(conn)
+        if get_schema_version(conn) != SCHEMA_VERSION:
+            set_schema_version(conn, SCHEMA_VERSION)
         return
     refuse_schema_version_too_new(conn)
 

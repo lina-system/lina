@@ -195,6 +195,8 @@ class SummaryDAG:
             on_setup_error=None,
         ))
         if is_store_connection(self._conn):  # LINA: the schema is the store's migrations
+            run_versioned_migrations(self._conn)  # refuses a newer build's stamp; records this build's
+            self._conn.commit()
             return
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS summary_nodes (

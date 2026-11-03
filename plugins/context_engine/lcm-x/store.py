@@ -429,6 +429,8 @@ class MessageStore:
         ))
         if is_store_connection(self._conn):  # LINA: the schema is the store's migrations; no stem index
             self._stem_usable = False
+            run_versioned_migrations(self._conn)  # refuses a newer build's stamp; records this build's
+            self._conn.commit()
             return
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS messages (

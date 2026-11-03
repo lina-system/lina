@@ -92,9 +92,9 @@ def _lcm_x_on_store(monkeypatch):
 
 
 def _carry_seeded_file(lcm_x_store, original_connect):
-    """A test that seeds a new database file itself (its own minimal ``messages`` table) before an LCM-X store
-    opens the path: when the store opens it, the seeded messages are carried into the store, as if the test had
-    written them there. Other connects to the path follow the store from then on."""
+    """A test that seeds a new database file itself (its own minimal ``messages`` or ``metadata`` table) before an
+    LCM-X store opens the path: when the store opens it, the seeded rows are carried into the store, as if the test
+    had written them there. Other connects to the path follow the store from then on."""
     backend_for = lcm_x_store.backend_for
 
     def carried(database, *, opening=False):
@@ -102,26 +102,30 @@ def _carry_seeded_file(lcm_x_store, original_connect):
         factory = backend_for(database, opening=opening)
         if not opening or seen or factory is None or not Path(str(database)).is_file():
             return factory
+        seeded = []
         source = original_connect(str(database))
         try:
-            if source.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'messages'").fetchone():
-                cursor = source.execute("SELECT * FROM messages ORDER BY rowid")
-                names = [d[0] for d in cursor.description]
-                rows = cursor.fetchall()
-            else:
-                names, rows = [], []
+            for table in _SEEDED_TABLES:
+                if source.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = ?", (table,)).fetchone():
+                    cursor = source.execute(f"SELECT * FROM {table} ORDER BY rowid")
+                    seeded.append((table, [d[0] for d in cursor.description], cursor.fetchall()))
         finally:
             source.close()
-        if rows:
+        if any(rows for _, _, rows in seeded):
             target = factory()
             try:
-                target.executemany(f"INSERT INTO messages ({', '.join(names)}) VALUES ({', '.join('?' * len(names))})",
-                                   rows)
+                for table, names, rows in seeded:
+                    if rows:
+                        target.executemany(f"INSERT INTO {table} ({', '.join(names)}) "
+                                           f"VALUES ({', '.join('?' * len(names))})", rows)
                 target.commit()
             finally:
                 target.close()
         return factory
     return carried
+
+
+_SEEDED_TABLES = ("metadata", "messages")
 
 
 def _widened_vector_text(vector_text):
