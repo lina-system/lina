@@ -197,6 +197,13 @@ def test_fifty_turns_each_request_starts_with_the_previous_one_except_across_a_c
         assert _wire(after)[:len(_wire(before))] == _wire(before), f"request {n + 1} rewrote request {n}"
     assert crossings >= 2
 
+    # Every tool call in the history names a tool the request defines; memory_recall is there from the start.
+    for request in requests:
+        defined = {t["function"]["name"] for t in request.body.get("tools") or []}
+        called = {c["function"]["name"] for m in request.body["messages"] for c in m.get("tool_calls") or []}
+        assert called <= defined, called - defined
+    assert "memory_recall" in {t["function"]["name"] for t in requests[0].body["tools"]}
+
     # The Honcho person card is fetched only when the prompt is built and sits in it until the next build.
     cards = [re.search(r"HONCHO-CARD build \d+", r.body["messages"][0]["content"]).group(0) for r in requests]
     assert len(set(cards)) == len(CARD_BUILDS) == len({r.compactions for r in requests})

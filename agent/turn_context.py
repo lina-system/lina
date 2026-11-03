@@ -21,6 +21,7 @@ from agent.conversation_compression import recover_rotated_compression_session
 from agent.iteration_budget import IterationBudget
 from agent.memory_context import build_memory_context_block
 from agent.memory_provider import is_trivial_prompt
+from agent.memory_recall_tool import RECALL_TOOL_NAME
 from agent.message_content import flatten_message_text
 from agent.lsp.deferred import forward_to_agent as forward_lsp_verdicts
 from agent.plugin_live_notes import pop_plugin_notices
@@ -188,9 +189,6 @@ def consume_date_note(agent: Any) -> str:
     return _pop_turn_note(agent, "_date_note")
 
 
-RECALL_TOOL_NAME = "memory_recall"
-
-
 def recall_tool_rows(agent: Any, ext_prefetch_cache: str, at: int) -> list[dict[str, Any]]:
     """The turn's recall as a tool round the runtime makes right after the user message (lina#21):
     ``assistant(tool_calls=[memory_recall])`` then its ``tool`` result, the fenced block. Found memory
@@ -207,10 +205,13 @@ def recall_tool_rows(agent: Any, ext_prefetch_cache: str, at: int) -> list[dict[
 
 def _recall_as_tool_result(agent: Any, moa_active: bool) -> bool:
     """Recall rides a tool result unless the home opted into the old append (``memory.auto_recall_append``)
-    or the route never stamps sidecars (MoA, codex_app_server), which keeps composing it live."""
+    or the route never stamps sidecars (MoA, codex_app_server), which keeps composing it live. The call
+    needs ``memory_recall`` in the request's tools (strict providers reject an undefined tool name), so
+    a session whose memory toolset is gated off keeps the append too."""
     manager = getattr(agent, "_memory_manager", None)
-    return not (moa_active or getattr(agent, "api_mode", None) == "codex_app_server"
-                or getattr(manager, "auto_recall_append", False))
+    return RECALL_TOOL_NAME in (getattr(agent, "valid_tool_names", None) or ()) and not (
+        moa_active or getattr(agent, "api_mode", None) == "codex_app_server"
+        or getattr(manager, "auto_recall_append", False))
 
 
 def append_notes_to_multimodal_content(content: Any, notes: Optional[str]) -> bool:

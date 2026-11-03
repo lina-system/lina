@@ -307,5 +307,5 @@ class TestInjectionEndToEnd:
 
         added = inject_memory_provider_tools(agent)
 
-        assert added == 1
+        assert added == 2  # the provider's tool and the manager's memory_recall (lina#21)
         assert "hindsight_retain" in agent.valid_tool_names
