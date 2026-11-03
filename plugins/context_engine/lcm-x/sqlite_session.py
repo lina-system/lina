@@ -6,6 +6,7 @@ from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
 import os
+from pathlib import Path
 import sqlite3
 from urllib.parse import unquote, urlsplit
 
@@ -62,6 +63,11 @@ def store_identity(database: object) -> dict | None:
     except ImportError:
         return None
     return identity(database)
+
+
+def database_present(database: os.PathLike | str) -> bool:
+    """LINA: the LCM database exists: its file, or the host's store it is routed to, reachable (lina#16)."""
+    return Path(database).exists() or store_identity(database) is not None
 
 
 def configured_store_backend() -> str:

@@ -1173,6 +1173,10 @@ CREATE OR REPLACE FUNCTION ctx.pragma_table_info(relation text)
       JOIN pg_attribute AS a ON a.attrelid = c.oid AND a.attnum > 0 AND NOT a.attisdropped
       LEFT JOIN pg_attrdef AS d ON d.adrelid = c.oid AND d.adnum = a.attnum
      WHERE c.relnamespace = 'ctx'::regnamespace AND c.relname = relation AND a.attname NOT IN ('agent_id', 'rowid')
+       -- the store's own columns of the messages view (where its text lives), which LCM-X's table does not have
+       AND NOT (relation = 'messages' AND a.attname IN ('text_uid', 'content_sha256'))
+       AND NOT (relation IN ('messages_fts', 'messages_fts_stem', 'nodes_fts', 'lcm_trajectory_states_fts')
+                AND a.attname = 'tsv')
      ORDER BY a.attnum $$;
 
 -- sqlite_master for LCM's existence checks ("is this table there"): the ctx tables, views, indexes and triggers.

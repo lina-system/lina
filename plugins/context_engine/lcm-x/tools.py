@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Any, Dict, TYPE_CHECKING
 
 from . import recall_delivery
-from .sqlite_session import connect_database
+from .sqlite_session import connect_database, database_present
 from .cpu_capacity import effective_cpus
 from .externalize import (
     _inspect_top_level_json_string_fields_before_content as _externalized_top_level_fields_before_content,
@@ -5436,7 +5436,7 @@ def lcm_doctor(args: Dict[str, Any], **kwargs) -> str:
             "status": "pass" if quick_ok else "fail",
             "detail": {
                 "database_path": str(db_path),
-                "database_exists": db_path.exists(),
+                "database_exists": database_present(db_path),  # LINA: or its store (lina#16)
                 "journal_mode": journal_mode_row[0] if journal_mode_row else "unknown",
                 "quick_check": quick_detail,
                 "database_size_bytes": db_path.stat().st_size if db_path.exists() else 0,

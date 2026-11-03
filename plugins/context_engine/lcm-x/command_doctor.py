@@ -8,6 +8,7 @@ from typing import Any
 
 from .config import companion_enable_command
 from .diagnostics import fresh_sqlite_check
+from .sqlite_session import database_present
 
 
 @dataclass(frozen=True)
@@ -150,8 +151,8 @@ def collect_doctor(engine: Any) -> DoctorFacts:
         "summary_node_sessions_total",
     )
 
-    db_exists = db_path.exists()
-    db_size = db_path.stat().st_size if db_exists else 0
+    db_exists = database_present(db_path)  # LINA: or its store (lina#16)
+    db_size = db_path.stat().st_size if db_path.exists() else 0
     wal_path = command.Path(str(db_path) + "-wal")
     wal_size = wal_path.stat().st_size if wal_path.exists() else 0
     try:
