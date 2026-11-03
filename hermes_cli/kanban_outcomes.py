@@ -404,7 +404,7 @@ def refresh_sizes(conn: sqlite3.Connection) -> None:
     from hermes_cli.kanban_db import write_txn
 
     for row in conn.execute("SELECT o.task_id, o.assignee, t.body FROM work_card_outcomes o "
-                            "JOIN tasks t ON t.id=o.task_id").fetchall():
+                            "JOIN tasks t ON t.id=o.task_id WHERE o.actual_size IS NULL").fetchall():
         resolvable, home = _profile_home(row["assignee"])
         todos = [t for t in parse_todos(row["body"]) if "number" in t]
         sizes = {t["ref"]: issue_size(t, home) for t in todos} if resolvable else {}
@@ -430,9 +430,13 @@ def goal_outcome(conn: sqlite3.Connection, goal_id: str, *, now: Optional[int] =
     cards = conn.execute("SELECT t.* FROM tasks t JOIN task_links l ON l.parent_id=t.id "
                          "WHERE l.child_id=? ORDER BY t.created_at, t.id", (goal_id,)).fetchall()
     rows, records, claims = [], [], []
+    parent_ids = {c["id"] for c in cards}
     for card in [goal, *cards]:
         tid = card["id"]
         events = _rows(conn, "SELECT * FROM task_events WHERE task_id=? ORDER BY id", tid)
+        if tid == goal_id:
+            events = [e for e in events if not (
+                e["kind"] == "dependency_wait" and _payload(e).get("parent") in parent_ids)]
         runs = _rows(conn, "SELECT * FROM task_runs WHERE task_id=? ORDER BY id", tid)
         comments = _rows(conn, "SELECT * FROM task_comments WHERE task_id=? ORDER BY id", tid)
         records.append((tid, learning_records(conn, card, comments, events, runs, now)))
@@ -446,7 +450,6 @@ def goal_outcome(conn: sqlite3.Connection, goal_id: str, *, now: Optional[int] =
             rows.append(row)
     first = min(claims, default=None)
     added = []
-    parent_ids = {c["id"] for c in cards}
     for event in _rows(conn, "SELECT * FROM task_events WHERE task_id=? AND kind='linked' ORDER BY id", goal_id):
         data = _payload(event)
         if first is not None and event["created_at"] > first and data.get("parent") in parent_ids:

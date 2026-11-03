@@ -1379,14 +1379,14 @@ def _inherit_notify_subs(
     Omitting columns here silently degrades routing: a DM-originated child completion falls back to
     chat_type='group' and wakes a fresh group-scoped session instead of the originating DM (issue #73030).
     """
-    parent_ids = tuple(dict.fromkeys(p for p in parents if p))
-    if not parent_ids:
+    parent_task_ids = tuple(dict.fromkeys(p for p in parents if p))
+    if not parent_task_ids:
         return
     row = conn.execute(
         "SELECT COALESCE(MAX(id), 0) AS cursor FROM task_events WHERE task_id = ?", (child_id,),
     ).fetchone()
     cursor = int(row["cursor"] if row is not None else 0)
-    placeholders = ",".join("?" * len(parent_ids))
+    placeholders = ",".join("?" * len(parent_task_ids))
     conn.execute(
         f"""
         INSERT OR IGNORE INTO kanban_notify_subs
@@ -1399,7 +1399,7 @@ def _inherit_notify_subs(
           FROM kanban_notify_subs
          WHERE task_id IN ({placeholders})
         """,
-        (child_id, int(created_at if created_at is not None else time.time()), cursor, *parent_ids),
+        (child_id, int(created_at if created_at is not None else time.time()), cursor, *parent_task_ids),
     )
 
 
@@ -1533,107 +1533,6 @@ def set_reasoning_effort(conn: sqlite3.Connection, task_id: str, effort: Optiona
     )
 
 
-# --- Links ---
-
-def link_tasks(conn: sqlite3.Connection, parent_id: str, child_id: str, *,
-    expected_child_run_id: Optional[int] = None,
-    by: Optional[str] = None, reason: Optional[str] = None,
-) -> bool:
-    """Link parent -> child; return whether a ready child was gated back to todo.
-    Running children require the owner's expected_child_run_id for dependency handoff."""
-    if parent_id == child_id:
-        raise ValueError("a task cannot depend on itself")
-    gated = False
-    with write_txn(conn, allow_nested=True):
-        missing = _missing_task_ids(conn, [parent_id, child_id])
-        if missing:
-            raise ValueError(f"unknown task(s): {', '.join(missing)}")
-        child = conn.execute(
-            "SELECT status, current_run_id FROM tasks WHERE id = ?", (child_id,),
-        ).fetchone()
-        if child["status"] == "running" and (
-            expected_child_run_id is None
-            or child["current_run_id"] != expected_child_run_id
-        ):
-            raise ValueError(f"cannot link {parent_id} -> {child_id}: child is already running")
-        if _would_cycle(conn, parent_id, child_id):
-            raise ValueError(f"linking {parent_id} -> {child_id} would create a cycle")
-        _link(conn, parent_id, child_id)
-        # Match _parents_satisfied: archived parents also satisfy dependencies.
-        if _task_status(conn, parent_id) not in ("done", "archived"):
-            cur = conn.execute(
-                "UPDATE tasks SET status = 'todo' WHERE id = ? AND status = 'ready'",
-                (child_id,),
-            )
-            gated = cur.rowcount == 1
-            if gated:
-                _append_event(
-                    conn,
-                    child_id,
-                    "dependency_wait",
-                    {"reason": "parent_not_done", "demoted": True, "parent": parent_id},
-                )
-        _append_event(
-            conn,
-            child_id,
-            "linked",
-            {"parent": parent_id, "child": child_id, **_actor_payload(by, reason)},
-        )
-        _inherit_notify_subs(conn, child_id, (parent_id,))
-    return gated
-
-
-def _would_cycle(conn: sqlite3.Connection, parent_id: str, child_id: str) -> bool:
-    """True iff ``parent_id`` is already a descendant of ``child_id``."""
-    seen = set()
-    stack = [child_id]
-    while stack:
-        node = stack.pop()
-        if node == parent_id:
-            return True
-        if node in seen:
-            continue
-        seen.add(node)
-        rows = conn.execute(
-            "SELECT child_id FROM task_links WHERE parent_id = ?", (node,)
-        ).fetchall()
-        stack.extend(r["child_id"] for r in rows)
-    return False
-
-
-def unlink_tasks(conn: sqlite3.Connection, parent_id: str, child_id: str, *,
-    by: Optional[str] = None, reason: Optional[str] = None,
-) -> bool:
-    with write_txn(conn):
-        cur = conn.execute(
-            "DELETE FROM task_links WHERE parent_id = ? AND child_id = ?", (parent_id, child_id),
-        )
-        removed = cur.rowcount > 0
-        if removed:
-            _append_event(conn, child_id, "unlinked", {
-                "parent": parent_id, "child": child_id, **_actor_payload(by, reason),
-            })
-    if removed:
-        # Re-gate immediately instead of leaving it in todo until the next tick.
-        recompute_ready(conn)
-    return removed
-
-
-def _linked_ids(conn: sqlite3.Connection, want: str, where: str, task_id: str) -> list[str]:
-    rows = conn.execute(
-        f"SELECT {want} FROM task_links WHERE {where} = ? ORDER BY {want}", (task_id,)
-    ).fetchall()
-    return [r[want] for r in rows]
-
-
-def parent_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
-    return _linked_ids(conn, "parent_id", "child_id", task_id)
-
-
-def child_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
-    return _linked_ids(conn, "child_id", "parent_id", task_id)
-
-
 def task_graph_contexts(conn: sqlite3.Connection, task_ids: Iterable[str]) -> dict[str, dict]:
     """Bulk-load compact direct graph state for graph-aware diagnostics."""
     ordered_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids if task_id))
@@ -1669,7 +1568,8 @@ def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str, 
     if not author or not author.strip():
         raise ValueError("comment author is required")
     now = int(time.time())
-    # Graph builders compose comment writes under one outer commit.
+    # ``allow_nested=True``: graph builders (kanban_swarm blackboard seeding)
+    # compose comment writes under one outer commit.
     with write_txn(conn, allow_nested=True):
         _require_task(conn, task_id)
         cur = conn.execute(
@@ -1876,6 +1776,11 @@ def _end_run(
     run_id = _current_run_id(conn, task_id)
     if run_id is None:
         return None
+    prior = conn.execute("SELECT metadata FROM task_runs WHERE id = ?", (run_id,)).fetchone()
+    worker_session = _json_dict(prior["metadata"]).get("worker_session_id")
+    if worker_session:
+        # Session identity remains evidence for comments after terminal metadata replaces progress.
+        metadata = {**(metadata or {}), "worker_session_id": worker_session}
     conn.execute(
         """
         UPDATE task_runs
@@ -3549,8 +3454,11 @@ def unblock_task(conn: sqlite3.Connection, task_id: str, *,
             if landing_status == "ready" and resume_status == "review"
             else landing_status
         )
-        # Keep block recurrence history (only completion clears it), but reset
-        # the spawn/crash counter so this deliberate unblock gets a fresh budget.
+        # ``block_kind``/``block_recurrences`` deliberately survive the unblock:
+        # resetting them is the amnesia that let cron-unblock <-> re-block loop
+        # unbounded; only complete_task clears them. ``consecutive_failures``
+        # (the dispatcher's spawn/crash counter) IS reset — a deliberate unblock
+        # is a fresh start for the retry budget.
         cur = conn.execute(
             "UPDATE tasks SET status = ?, current_run_id = NULL, "
             "consecutive_failures = 0, last_failure_error = NULL "
@@ -4156,5 +4064,13 @@ from hermes_cli.kanban_db_dispatch import (
     _worker_terminal_timeout_env,
 )
 from hermes_cli.kanban_db_goal import goal_run_status
+from hermes_cli.kanban_db_links import (
+    link_tasks,
+    unlink_tasks,
+    _would_cycle,
+    _linked_ids,
+    parent_ids,
+    child_ids,
+)
 from hermes_cli.kanban_db_runs import current_run_started_ats, latest_summaries
 from hermes_cli.kanban_outcomes import record_terminal_outcome

@@ -984,10 +984,12 @@ def _handle_comment(args: dict, **kw) -> str:
     # with what reads as a system directive. See #19713.
     author = _persisted_identity()
     from agent.delegation_context import owned_kanban_task
+    from gateway.session_context import get_session_env
 
     own = owned_kanban_task()
     run_id = _worker_run_id(own) if own else None
-    source = {"card": own, "run": run_id} if own and own != tid else None
+    source = {"card": own, "run": run_id} if own and own != tid else {"surface": "tool"}
+    source["session"] = get_session_env("HERMES_SESSION_ID") or None
     with _board(args.get("board")) as (kb, conn):
         cid = kb.add_comment(conn, tid, author=author, body=str(body), source=source,
                              run_id=run_id if own == tid else None)

@@ -5,8 +5,8 @@ from __future__ import annotations
 import json
 
 from agent.redact import redact_sensitive_text
+from hermes_cli.kanban_gates import DEFAULT_OWNERS
 
-OWNER_NAMES = frozenset({"user", "owner", "dashboard", "default"})
 TOOL_NAMES = frozenset({"lina-work", "lina-worker", "quick-issue"})
 STOP_KINDS = frozenset({"blocked", "dependency_wait", "block_loop_detected", "timed_out",
                         "gave_up", "crashed", "reclaimed", "spawn_failed"})
@@ -35,6 +35,14 @@ def comment_events(comments, events) -> dict:
 def touch_records(task, comments, events, runs, own, now) -> list[dict]:
     indexed = comment_events(comments, events)
     windows = [(r["started_at"], r["ended_at"] or now) for r in runs]
+    sessions = set()
+    for run in runs:
+        try:
+            metadata = json.loads(run["metadata"] or "{}")
+        except (TypeError, ValueError):
+            continue
+        if isinstance(metadata, dict) and metadata.get("worker_session_id"):
+            sessions.add(metadata["worker_session_id"])
     reviewers = {r["profile"] for r in runs if r["profile"] not in own}
     touches = []
     for comment in comments:
@@ -45,22 +53,33 @@ def touch_records(task, comments, events, runs, own, now) -> list[dict]:
         source = payload(event).get("source") if event is not None else None
         if event is not None and event["run_id"] is not None:
             continue
-        if author in reviewers and author not in OWNER_NAMES:
+        if source and source.get("session") in sessions:
             continue
-        if author in own and source is None and any(lo <= at <= hi for lo, hi in windows):
+        if author in reviewers and author not in DEFAULT_OWNERS:
+            continue
+        if author in own and event is None and any(lo <= at <= hi for lo, hi in windows):
             continue
         touches.append({"at": at, "by": author, "source": source or {"surface": "legacy"},
-                        "kind": "answer" if author in OWNER_NAMES else "comment",
+                        "kind": "answer" if author in DEFAULT_OWNERS else "comment",
                         "line": short_text(comment["body"])})
     for event in events:
         data = payload(event)
         kind = {"unblocked": "unblock", "edited": "edit", "linked": "link", "unlinked": "link"}.get(event["kind"])
-        actor = data.get("by")
-        if kind and actor and actor not in TOOL_NAMES:
+        actor = unblock_actor(event, comments) if event["kind"] == "unblocked" else data.get("by")
+        if kind and (actor or event["kind"] == "unblocked") and actor not in TOOL_NAMES:
             touches.append({"at": event["created_at"], "by": actor,
                             "source": data.get("source") or {"surface": "board"},
                             "kind": kind, "line": short_text(data.get("reason"))})
     return sorted(touches, key=lambda item: item["at"])
+
+
+def unblock_actor(event, comments):
+    actor = payload(event).get("by")
+    if actor is not None:
+        return actor
+    matches = [c for c in comments if c["created_at"] == event["created_at"]
+               and c["task_id"] == event["task_id"] and c["body"].startswith("UNBLOCK:")]
+    return matches[0]["author"] if len(matches) == 1 else None
 
 
 def replan_records(comments, events, runs) -> list[dict]:
@@ -92,7 +111,7 @@ def replan_records(comments, events, runs) -> list[dict]:
     return sorted(records, key=lambda item: item["at"])
 
 
-def stop_records(events, now) -> tuple[list[dict], int]:
+def stop_records(events, now, comments=()) -> tuple[list[dict], int]:
     records, intervals = [], []
     for index, event in enumerate(events):
         if event["kind"] not in STOP_KINDS:
@@ -101,7 +120,7 @@ def stop_records(events, now) -> tuple[list[dict], int]:
         until = resume["created_at"] if resume is not None else None
         by = None
         if resume is not None:
-            by = payload(resume).get("by") if resume["kind"] == "unblocked" else "dispatcher"
+            by = unblock_actor(resume, comments) if resume["kind"] == "unblocked" else "dispatcher"
         data = payload(event)
         at, end = event["created_at"], until if until is not None else now
         records.append({"at": at, "kind": event["kind"],
@@ -131,13 +150,13 @@ def learning_records(conn, task, comments, events, runs, now) -> dict:
     if implementer is None:
         implementer = task["assignee"] if task["assignee"] in own else next(iter(sorted(own)), None)
     touches = touch_records(task, comments, events, runs, own, now)
-    stops, stopped = stop_records(events, now)
+    stops, stopped = stop_records(events, now, comments)
     waits = [e["created_at"] for e in events if e["kind"] == "goal_gate" and payload(e).get("exit_code") == 75]
     terminal = [e["created_at"] for e in events if e["kind"] in ("completed", "blocked", "gave_up")]
     end = task["completed_at"] if task["status"] == "done" else max(terminal, default=now)
     return {"assignee": implementer, "touches": touches,
-            "owner_answers": sum(t["by"] in OWNER_NAMES for t in touches),
-            "main_session_touches": sum(t["by"] in own - OWNER_NAMES for t in touches),
+            "owner_answers": sum(t["by"] in DEFAULT_OWNERS for t in touches),
+            "main_session_touches": sum(t["by"] in own and t["by"] not in DEFAULT_OWNERS for t in touches),
             "replans": replan_records(comments, events, runs), "stops": stops,
             "reviews": review_records(runs, own), "stopped_seconds": stopped,
             "lead_seconds": max(0, (end or now) - task["created_at"]),
