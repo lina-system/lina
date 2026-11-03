@@ -64,8 +64,9 @@ def _evaluate_all(recs: dict, ids: list[str], ctx: dict, st: dict) -> dict:
     return out
 
 
-def _close_passed(ids: list[str], out: dict, dry: bool):
-    """A goal or to-do closes only on its own check: one ``done`` line for each item whose check passed."""
+def _close_passed(recs: dict, ids: list[str], out: dict, dry: bool):
+    """A goal or to-do closes only on its own check: one ``done`` line for each item whose check passed. The check ran
+    outside the lock, so an item another writer changed meanwhile (a new revision) is left for the next check."""
     from hermes_cli.work.waits import release_waits
     closed = []
     _SUPPRESS.append(True)
@@ -75,7 +76,7 @@ def _close_passed(ids: list[str], out: dict, dry: bool):
             for i in ids:
                 c, r = out[i], cur.get(i)
                 if (c.get("pass") and r and r.get("state") == "open" and not r.get("every")
-                        and r["kind"] in ("목표", "할 일") and not dry):
+                        and r.get("rev") == recs[i].get("rev") and r["kind"] in ("목표", "할 일") and not dry):
                     ledger.append(r, "done", "checker", state="done", done_at=now(), done_by=t("검사"),
                                   done_evidence=(c.get("check") or {}).get("out", "")[:400])
                     cur[i] = dict(r, state="done")
@@ -141,7 +142,7 @@ def check(ids: list[str] | None = None, *, dry: bool = False, notify: bool = Fal
     ids = [i for i in ids if i in recs]
     ctx, st = build_ctx(recs)
     out = _evaluate_all(recs, ids, ctx, st)
-    closed, released, cur = _close_passed(ids, out, dry)
+    closed, released, cur = _close_passed(recs, ids, out, dry)
     if not dry:
         tell_released(released, [cur[i] for i in closed])
     alerts = _alerts(recs, ids, out, closed)
