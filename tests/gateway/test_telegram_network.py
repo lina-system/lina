@@ -345,6 +345,17 @@ class TestAdapterFallbackIps:
         adapter = self._make_adapter(extra={"fallback_ips": "149.154.167.220,149.154.167.221"})
         assert adapter._fallback_ips() == ["149.154.167.220", "149.154.167.221"]
 
+    def test_env_ips_used_as_given_without_seeds(self, monkeypatch):
+        """TELEGRAM_FALLBACK_IPS wins verbatim — discovery never appends seeds to it."""
+        from gateway.config import GatewayConfig, Platform, PlatformConfig, _apply_env_overrides
+
+        monkeypatch.setenv("TELEGRAM_FALLBACK_IPS", "149.154.167.221")
+        config = GatewayConfig(platforms={Platform.TELEGRAM: PlatformConfig(enabled=True, token="tok")})
+        _apply_env_overrides(config)
+
+        adapter = self._make_adapter(extra=dict(config.platforms[Platform.TELEGRAM].extra))
+        assert adapter._fallback_ips() == ["149.154.167.221"]
+
 # ═══════════════════════════════════════════════════════════════════════════
 # DoH auto-discovery
 # ═══════════════════════════════════════════════════════════════════════════
@@ -428,23 +439,13 @@ class TestDiscoverFallbackIps:
         assert ips == ["149.154.166.110", "149.154.167.220"]
 
     @pytest.mark.asyncio
-    async def test_doh_results_deduplicated(self, monkeypatch):
-        self._patch_doh(monkeypatch, {
-            "https://dns.google": (200, _doh_answer("149.154.167.220")),
-            "https://cloudflare-dns.com": (200, _doh_answer("149.154.167.220")),
-        }, system_dns_ips=["149.154.166.110"])
+    async def test_single_doh_answer_equal_to_system_resolver_appends_other_seed(self, monkeypatch):
+        """A DoH answer that collapses to the system-resolver address still leaves
+        the other Bot API seed to try.
 
-        ips = await tnet.discover_fallback_ips()
-        assert ips == ["149.154.167.220"]
-
-    @pytest.mark.asyncio
-    async def test_all_doh_ips_same_as_system_dns_kept(self, monkeypatch):
-        """DoH agrees with system DNS — keep that IP instead of seed list (#14520).
-
-        Previous behavior fell through to ``_SEED_FALLBACK_IPS`` here, but the
-        seed addresses are not routable on every network.  When DoH confirms
-        the system IP, that IP is the best candidate we have and should be
-        used as the fallback target.
+        With DoH-only discovery the transport had one real path here: a reset on
+        that address failed both the IP rewrite and the hostname walk, and the
+        other seed was never attempted.
         """
         self._patch_doh(monkeypatch, {
             "https://dns.google": (200, _doh_answer("149.154.166.110")),
@@ -452,7 +453,68 @@ class TestDiscoverFallbackIps:
         }, system_dns_ips=["149.154.166.110"])
 
         ips = await tnet.discover_fallback_ips()
-        assert ips == ["149.154.166.110"]
+        assert ips == ["149.154.166.110", "149.154.167.220"]
+        assert ips[0] == "149.154.166.110"  # #14520: the confirmed address stays first
+
+    @pytest.mark.asyncio
+    async def test_doh_answer_containing_both_seeds_is_unchanged(self, monkeypatch):
+        """Seeds already present in the DoH answer are not appended again."""
+        self._patch_doh(monkeypatch, {
+            "https://dns.google": (200, _doh_answer("149.154.167.220", "149.154.166.110")),
+            "https://cloudflare-dns.com": (200, _doh_answer("149.154.166.110")),
+        }, system_dns_ips=["149.154.166.110"])
+
+        ips = await tnet.discover_fallback_ips()
+        assert ips == ["149.154.167.220", "149.154.166.110"]
+
+    @pytest.mark.asyncio
+    async def test_non_seed_doh_answer_is_followed_by_both_seeds(self, monkeypatch):
+        """DoH addresses keep their order; every missing seed trails them."""
+        self._patch_doh(monkeypatch, {
+            "https://dns.google": (200, _doh_answer("149.154.167.221")),
+            "https://cloudflare-dns.com": (200, _doh_answer("149.154.167.222")),
+        }, system_dns_ips=["149.154.166.110"])
+
+        ips = await tnet.discover_fallback_ips()
+        assert ips == ["149.154.167.221", "149.154.167.222", "149.154.166.110", "149.154.167.220"]
+
+    @pytest.mark.asyncio
+    async def test_empty_doh_falls_back_to_seeds(self, monkeypatch):
+        """No usable DoH answer keeps today's behavior: the seed list alone."""
+        self._patch_doh(monkeypatch, {
+            "https://dns.google": (200, _doh_answer()),
+            "https://cloudflare-dns.com": (200, _doh_answer()),
+        }, system_dns_ips=["149.154.166.110"])
+
+        ips = await tnet.discover_fallback_ips()
+        assert ips == list(tnet.SEED_FALLBACK_IPS)
+
+    @pytest.mark.asyncio
+    async def test_doh_results_deduplicated(self, monkeypatch):
+        self._patch_doh(monkeypatch, {
+            "https://dns.google": (200, _doh_answer("149.154.167.220")),
+            "https://cloudflare-dns.com": (200, _doh_answer("149.154.167.220")),
+        }, system_dns_ips=["149.154.166.110"])
+
+        ips = await tnet.discover_fallback_ips()
+        assert ips == ["149.154.167.220", "149.154.166.110"]
+
+    @pytest.mark.asyncio
+    async def test_all_doh_ips_same_as_system_dns_kept(self, monkeypatch):
+        """DoH agrees with system DNS — keep that IP first instead of seed-first (#14520).
+
+        Previous behavior fell through to ``_SEED_FALLBACK_IPS`` here, but the
+        seed addresses are not routable on every network.  When DoH confirms
+        the system IP, that IP is the best candidate we have and stays in front;
+        the other seed still trails it as a second path.
+        """
+        self._patch_doh(monkeypatch, {
+            "https://dns.google": (200, _doh_answer("149.154.166.110")),
+            "https://cloudflare-dns.com": (200, _doh_answer("149.154.166.110")),
+        }, system_dns_ips=["149.154.166.110"])
+
+        ips = await tnet.discover_fallback_ips()
+        assert ips == ["149.154.166.110", "149.154.167.220"]
 
     @pytest.mark.asyncio
     async def test_hung_system_dns_does_not_gate_doh_results(self, monkeypatch):
@@ -477,5 +539,5 @@ class TestDiscoverFallbackIps:
         ips = await tnet.discover_fallback_ips()
         elapsed = _time.monotonic() - start
 
-        assert ips == ["149.154.167.220"]
+        assert ips == ["149.154.167.220", "149.154.166.110"]
         assert elapsed < 1.4, f"discovery gated on hung system DNS ({elapsed:.2f}s)"
