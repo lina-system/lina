@@ -89,14 +89,17 @@ def tick_done_when(body: str | None) -> str:
 
 
 def _rank(run: dict) -> tuple:
+    """Creation order is the check run's id: GitHub hands ids out as runs are created, so a rerun that is still
+    queued (no start or end time yet) is newer than any run before it. Times are no order: a queued run has none,
+    and a rerun can start before an older run ends."""
     conclusion = run.get("conclusion")
-    return (conclusion != "cancelled", conclusion != "skipped",
-            run.get("started_at") or run.get("completed_at") or "", run.get("id") or 0)
+    unfinished = run.get("status") not in (None, "completed")
+    return (unfinished or conclusion != "cancelled", unfinished or conclusion != "skipped", int(run.get("id") or 0))
 
 
 def latest_run(runs: list[dict]) -> dict | None:
-    """The run that decides one check: the latest one that was not cancelled (nor skipped while a real result
-    exists); a cancelled run decides only when nothing else ran."""
+    """The run that decides one check: the newest one (by creation) that was not cancelled (nor skipped while a
+    real result exists); a cancelled run decides only when nothing else ran, and a run still going always counts."""
     return max(runs, key=_rank, default=None)
 
 
