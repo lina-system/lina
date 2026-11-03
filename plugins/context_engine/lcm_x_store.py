@@ -193,6 +193,8 @@ _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\bLIMIT\s+-1\b", re.IGNORECASE), "LIMIT ALL"),
     (re.compile(r"\s+WITHOUT\s+ROWID\b", re.IGNORECASE), ""),
     (re.compile(r"\s+(?:INDEXED\s+BY\s+\w+|NOT\s+INDEXED)\b", re.IGNORECASE), ""),
+    # SQLite's CROSS JOIN with ON is an inner join that fixes the join order; Postgres takes no ON there.
+    (re.compile(r"\bCROSS\s+JOIN(\s+[\w.]+(?:\s+(?:AS\s+)?(?!ON\b)\w+)?\s+ON\b)", re.IGNORECASE), r"JOIN\1"),
     # SQLite's 0/1 in a boolean position (`NOT 0`, `(0 AND x)`, `WHERE 1`) and a parameter there (`AND ?`).
     (re.compile(r"\b(NOT|AND|OR|WHERE|ON)\s+([01])\b(?!\s*(?:[-=<>!+*/%|,.]|IS\b|IN\b|BETWEEN\b|LIKE\b))",
                 re.IGNORECASE), lambda m: f"{m.group(1)} {'TRUE' if m.group(2) == '1' else 'FALSE'}"),
