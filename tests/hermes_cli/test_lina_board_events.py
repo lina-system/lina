@@ -295,20 +295,103 @@ def test_a_kanban_cursor_before_a_selectively_pruned_gap_gets_a_resync_and_one_a
     assert "resync" not in replay and ("kanban", "created", later) in _events(replay)
 
 
-def test_every_receipt_kind_the_code_writes_is_streamed_or_noise_with_a_reason():
-    import re
+@pytest.mark.parametrize(("receipt", "sent"), [
+    *[({"kind": kind}, True) for kind in ("submitted", "placed", "queued", "run_started", "start_failed_requeued",
+                                          "follow_up", "answer", "exec_end", "delivery", "verdict")],
+    *[({"kind": kind}, False) for kind in ("card_linked", "card_link_failed", "card_noticed", "card_notice_failed",
+                                           "award", "publish_failed_resumes", "fetch_failed", "group_notified",
+                                           "cancel_requested", "steer")],
+    ({"kind": "notified", "state": "human"}, True),
+    ({"kind": "notified", "state": "done"}, False),
+    ({"kind": "notified", "state": "cancelled"}, False),
+    ({"kind": "a_kind_added_later"}, True),
+])
+def test_every_receipt_is_streamed_except_the_noise_and_unknown_kinds_are_streamed(receipt, sent):
+    from hermes_cli.lina_board_events import streamed
+    assert streamed({"task": "OT-ALP0001", **receipt}) is sent
+
+
+@pytest.fixture
+def hub(work, tmp_path, monkeypatch):
+    """The real hub with one local device whose runs are never launched (the placement is what the board shows)."""
+    import json
+    import textwrap
+
+    from hermes_cli.worker import device, serve, settings
+    from hermes_cli.worker.hub import Hub
+    from tests.hermes_cli import _worker_fakes as fakes
+    argv = fakes.install_fake_cli(tmp_path / "fake")
+    work.config(extra=textwrap.dedent(f"""\
+        devices:
+          workers:
+            here: {{host: local, cap: 2}}
+        worker:
+          min_free_gb: 0
+          runners:
+            fakecli: {json.dumps({"type": "command", "argv": argv})}
+        """))
+    monkeypatch.setattr(device, "launch", lambda *_: None)
+    root = settings.root(work.root)
+    serve.serve_once(root)
+    return Hub(root, out=lambda *_: None)
+
+
+def _submit(hub, work: WorkEnv, host: str | None = "here") -> str:
+    """A brief handed to the hub; with *host* it goes to that device without a bid (the fixed test clock makes the
+    device's serve heartbeat look stale to the bidder)."""
+    from tests.hermes_cli import _worker_fakes as fakes
+    hub.submit({"briefs": [fakes.brief(work.tmp, "# 디스크 점검\n")], "mode": "ulw", "topic": "disk", "bot": "alpha",
+                "runner": "fakecli", "wait": None, "host": host})
+    return hub.store.all()[-1]["id"]
+
+
+def _worker_events_until(ws, pool, last: str) -> list[tuple[str, str, str]]:
+    seen: list[tuple[str, str, str]] = []
+    while not seen or seen[-1][1] != last:
+        seen += [e for e in _events(_next(ws, pool)) if e[0] == "worker"]
+    return seen
+
+
+def test_a_placement_and_a_verdict_through_the_hub_reach_the_socket(work, client, pool, hub):
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        task = _submit(hub, work)
+        assert _worker_events_until(ws, pool, "run_started") == [
+            ("worker", "submitted", task), ("worker", "placed", task), ("worker", "run_started", task)]
+        hub.verdict(task, True)
+        assert _events(_next(ws, pool)) == [("worker", "verdict", task)]
+
+
+def test_a_queued_run_cancelled_through_the_hub_reaches_the_socket_as_its_end(work, client, pool, hub, monkeypatch):
+    from hermes_cli.worker import hub as hub_mod
+    monkeypatch.setattr(hub_mod.bidding, "bid", lambda *_a, **_k: (None, []))  # no device free: the run waits
+    with client.websocket_connect(_url()) as ws:
+        _next(ws, pool)
+        task = _submit(hub, work, host=None)
+        assert _worker_events_until(ws, pool, "queued") == [("worker", "submitted", task), ("worker", "queued", task)]
+        hub.cancel(task, "필요 없어졌다")
+        assert _events(_next(ws, pool)) == [("worker", "exec_end", task)]
+
+
+def test_the_stream_opens_with_the_work_store_down_and_picks_it_up_with_one_resync(work, client, pool, monkeypatch):
+    import sqlite3
 
     from hermes_cli import lina_board_events as events
-    written = set()
-    for folder in ("hermes_cli/worker", "hermes_cli/work"):
-        for path in (REPO / folder).glob("*.py"):
-            written |= set(re.findall(r'\.receipt\(\s*[^,()]+,\s*"([a-z_]+)"', path.read_text(encoding="utf-8")))
-    assert {"submitted", "exec_end", "notified", "answer"} <= written  # the scan itself finds the writers
-    noise, board = events.WORKER_NOISE_KINDS, events.WORKER_BOARD_KINDS
-    assert not set(noise) & set(board)
-    assert written - set(noise) - set(board) == set(), "classify each new receipt kind (board change or noise)"
-    assert set(noise) | set(board) <= written, "a listed kind nothing writes any more"
-    assert all(reason.strip() for reason in [*noise.values(), *board.values()])
+    down, real = [True], events.Stream._work_bounds
+
+    def bounds(self):
+        if down[0]:
+            raise sqlite3.OperationalError("the work store is down")
+        return real(self)
+    monkeypatch.setattr(events.Stream, "_work_bounds", bounds)
+    with client.websocket_connect(_url()) as ws:
+        assert _next(ws, pool)["events"] == []
+        _receipt(work, "OT-ALP0001", "run_started")
+        assert _events(_next(ws, pool)) == [("worker", "run_started", "OT-ALP0001")]
+        down[0] = False
+        assert _next(ws, pool)["resync"] is True  # what the store wrote while down is not known: one refetch
+        work.ok("comment", "T1", "봐 줘")
+        assert _events(_next(ws, pool)) == [("work", "comment", "T1")]
 
 
 def test_a_run_waiting_for_a_person_and_the_answer_each_reach_the_socket(work, client, pool):
