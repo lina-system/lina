@@ -506,7 +506,8 @@ class MessageStore:
 
     def set_conversation(self, uids: Iterable[str], conversation_id: str) -> int:
         """Fill ``conversation_id`` (lina#20) on these rows (``base_uid`` uids), every text version of each, where it
-        is still null. The one change a written row takes: the field is null until identity resolves it."""
+        is still null. The one change a written row takes: the field is null until identity resolves it. The match
+        is served by the partial index messages_unfilled_base (migration 0004), never a scan of memory.messages."""
         bases = [uid for uid in dict.fromkeys(uids) if uid]
         if not bases or not conversation_id:
             return 0

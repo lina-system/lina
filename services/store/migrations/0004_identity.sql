@@ -27,3 +27,7 @@ CREATE TABLE IF NOT EXISTS memory.identity_keys (
 
 CREATE INDEX IF NOT EXISTS identity_keys_identity ON memory.identity_keys (identity_id);
 CREATE INDEX IF NOT EXISTS messages_conversation ON memory.messages (conversation_id) WHERE conversation_id IS NOT NULL;
+-- MessageStore.set_conversation finds a turn's rows, every text version of each (<base uid>#<digest>), by base uid while
+-- their conversation is unfilled. The uid's own unique index cannot serve that: under the store's en_US collation a
+-- btree on uid answers no LIKE prefix match. Filled rows leave this index.
+CREATE INDEX IF NOT EXISTS messages_unfilled_base ON memory.messages (split_part(uid, '#', 1)) WHERE conversation_id IS NULL;

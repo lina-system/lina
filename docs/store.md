@@ -87,7 +87,8 @@ text (multimodal parts, NUL or lone surrogates; base64 where JSON cannot carry i
 `absorbed_message_uids`, `tool_call_uids`, `tool_call_uid`, and `payload_sha256` (the version digest).
 None of them is filtered or sorted on in Postgres, so none became a column.
 
-A row is never changed after it is written, except `conversation_id`, filled once while it is null. Hermes writes one message several times: compaction keeps the
+A row is never changed after it is written, except `conversation_id`, filled once while it is null (found by base
+uid through the partial index `messages_unfilled_base`, which holds only rows still waiting for it). Hermes writes one message several times: compaction keeps the
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the
 original beside a shortened copy. Copies with the same text share one row; a copy whose text differs gets its
 own version row. Deleting a session deletes its `transcript_rows`, never the text: `lina store gc` (also run by the
