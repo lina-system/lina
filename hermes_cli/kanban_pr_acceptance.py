@@ -10,9 +10,12 @@ org's private repos (#122689).
 """
 from __future__ import annotations
 
+import importlib
+import importlib.util
 import json
 import re
 import subprocess
+import sys
 from pathlib import Path
 from urllib.parse import quote
 
@@ -105,7 +108,9 @@ def _assignee_profile_home(assignee: str | None) -> str | None:
 
 
 def collect_acceptance(contract: str, published_pr: str | None,
-                       assignee: str | None = None) -> dict:
+                       assignee: str | None = None, *, green: frozenset = frozenset({"success"})) -> dict:
+    """``green``: the conclusions that pass a check. A completion contract accepts ``success`` only;
+    ``kanban gate prs`` passes the merge rule's set (``merge_rules.GREEN``: skipped and neutral too)."""
     receipt = {"ok": False, "classification": "missing", "head_sha": None,
                "pr_url": published_pr, "checks": [],
                "recovery": "Fix required failures, rerun infrastructure checks or wait, then retry completion. "
@@ -144,7 +149,7 @@ def collect_acceptance(contract: str, published_pr: str | None,
         if not required:
             receipt["detail"] = "No repository-required checks are configured; explicitly use a local-only contract for non-CI tasks."
             return receipt
-        pages = _api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100&filter=latest",
+        pages = _api(f"repos/{repo}/commits/{sha}/check-runs?per_page=100&filter=all",
                      paginate=True, profile_home=profile_home)
         runs = [run for page in pages for run in page["check_runs"]]
         if len({r["id"] for r in runs}) != pages[0]["total_count"]:
@@ -153,8 +158,12 @@ def collect_acceptance(contract: str, published_pr: str | None,
                                                        paginate=True, profile_home=profile_home) for s in page]
         outcomes = []
         for context, app_id in sorted(required, key=str):
-            matching = [r for r in runs if r["name"] == context and
-                        (app_id in (None, -1) or r["app"]["id"] == app_id)]
+            by_app: dict = {}
+            for r in runs:
+                if r["name"] == context and (app_id in (None, -1) or r["app"]["id"] == app_id):
+                    by_app.setdefault(r["app"]["id"], []).append(r)
+            # Each app's check is judged by its latest non-cancelled run: the merge rule (lina#63).
+            matching = [_merge_rules().latest_run(group) for group in by_app.values()]
             # A legacy status can satisfy an unpinned context, but never a check pinned to an app.
             legacy = [s for s in statuses if s["context"] == context] if app_id in (None, -1) else []
             selected = matching + ([max(legacy, key=lambda s: s["id"])] if legacy else [])
@@ -164,7 +173,7 @@ def collect_acceptance(contract: str, published_pr: str | None,
             for check in selected:
                 is_run = "conclusion" in check
                 outcome = check.get("conclusion") if is_run else check["state"]
-                classification = _classify(check, sha, outcome, is_run)
+                classification = _classify(check, sha, outcome, is_run, green)
                 outcomes.append(classification)
                 receipt["checks"].append({"name": context, "id": check["id"],
                     "url": check.get("html_url") or check.get("target_url"),
@@ -190,9 +199,24 @@ def collect_acceptance(contract: str, published_pr: str | None,
         return receipt
 
 
-def _classify(check: dict, sha: str, outcome: str | None, is_run: bool) -> str:
+def _classify(check: dict, sha: str, outcome: str | None, is_run: bool, green: frozenset = frozenset({"success"})) -> str:
     if check.get("head_sha", check.get("sha")) != sha:
         return "stale"
     if is_run and check.get("status") != "completed":
         return "pending"
-    return {"success": "success", "failure": "failure", "error": "infra", "pending": "pending"}.get(outcome, "infra")
+    if outcome in green:
+        return "success"
+    return {"failure": "failure", "error": "infra", "pending": "pending"}.get(outcome, "infra")
+
+
+def _merge_rules():
+    """``hermes_cli.merge_rules``, or the sibling file when ``kanban_gates.py`` runs as a plain script."""
+    try:
+        return importlib.import_module("hermes_cli.merge_rules")
+    except ImportError:
+        if "merge_rules" not in sys.modules:
+            spec = importlib.util.spec_from_file_location("merge_rules", Path(__file__).with_name("merge_rules.py"))
+            module = importlib.util.module_from_spec(spec)
+            sys.modules["merge_rules"] = module
+            spec.loader.exec_module(module)
+        return sys.modules["merge_rules"]
