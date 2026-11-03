@@ -456,9 +456,9 @@ class MemoryManager:
         verbatim in a provider's store (#115104).
 
         The one exception is a ``sync_turn`` that names a ``local_messages`` parameter itself (never through
-        ``**kwargs``): a provider that keeps the transcript on this machine, as a context engine's own
-        ``post_llm_call`` ingest did (lina-memory, lina#20). It gets the unredacted transcript too, and it is
-        called here on the turn thread, where that hook ran, so its local write is ordered with the turn and
+        ``**kwargs``): a provider that keeps the transcript on this machine, as the context engine's own
+        ``post_llm_call`` ingest does (lina-memory, lina#20). It gets the unredacted transcript too, and it is
+        called here on the turn thread, right after that hook, so its local work is ordered with the turn and
         never overlaps the next one; its remote work is its own to start on a background thread.
         """
         providers = list(self._providers)

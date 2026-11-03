@@ -7,6 +7,7 @@ general plugin system: ``context.engine`` in config.yaml names the active engine
 from __future__ import annotations
 
 import logging
+import sys
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
@@ -151,12 +152,24 @@ def re_register_config_hooks() -> None:
         _load_engine_from_dir(engine_dir)
 
 
-def _memory_layer_receives_turns() -> bool:
-    """True while the active home's memory slot holds lina-memory (lina#20): its ``sync_turn`` is then the one
-    path a finished turn takes into the engine, so the engine's own per-turn ingest hook would store it twice."""
-    from hermes_cli.config import cfg_get, load_config
+# lina-memory's LCM handover (plugins/memory/lina/lcm.py), read only once lina-memory is loaded in this process.
+_MEMORY_LAYER_HANDOVER = "plugins.memory.lina.lcm"
 
-    return cfg_get(load_config(), "memory", "provider") == "lina-memory"
+
+def _handed_over_by_memory_layer(callback):
+    """The engine's ``post_llm_call`` ingest, unless the turn's agent carries lina-memory (lina#20): lina-memory
+    then hands that session's turn to the engine itself, so the turn is one ingest either way. Decided per turn
+    from the session, never per home: an agent without lina-memory (``skip_memory`` children, background review,
+    the curator) keeps the engine's own ingest."""
+    def post_llm_call(**kwargs):
+        handover = getattr(sys.modules.get(_MEMORY_LAYER_HANDOVER), "handover_for", None)
+        session_id = str(kwargs.get("session_id") or "")
+        take_turn = handover(session_id) if handover is not None else None
+        if take_turn is None:
+            return callback(**kwargs)
+        take_turn(kwargs.get("conversation_history") or [], session_id=session_id)
+        return None
+    return post_llm_call
 
 
 class _ProbeCollector:
@@ -207,10 +220,8 @@ class _EngineCollector:
         self.engine = engine
 
     def register_hook(self, hook_name, callback, *, hold_stream=False):
-        if hook_name == "post_llm_call" and _memory_layer_receives_turns():
-            logger.debug("Context engine '%s': post_llm_call not registered, lina-memory hands it each turn",
-                         self._engine_name)
-            return None
+        if hook_name == "post_llm_call":
+            callback = _handed_over_by_memory_layer(callback)
         context = self._plugin_context()
         with context._manager._discovery_lock:
             return context._manager._register_fallback_hook(

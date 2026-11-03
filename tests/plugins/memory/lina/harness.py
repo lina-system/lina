@@ -64,7 +64,7 @@ def write_home(path: Path, *, memory_provider: str = "lina-memory", honcho: Opti
 
 
 def make_agent(session_id: str, session_db, *, platform: str = "telegram", user_id: Optional[str] = "1001",
-               gateway_session_key: Optional[str] = "agent:main:telegram:dm:1001"):
+               gateway_session_key: Optional[str] = "agent:main:telegram:dm:1001", skip_memory: bool = False):
     from run_agent import AIAgent
 
     identity = {k: v for k, v in (("user_id", user_id), ("gateway_session_key", gateway_session_key)) if v}
@@ -75,7 +75,7 @@ def make_agent(session_id: str, session_db, *, platform: str = "telegram", user_
     ):
         return AIAgent(api_key="test-key-1234567890", base_url="https://openrouter.ai/api/v1", quiet_mode=True,
                        skip_context_files=True, session_id=session_id, platform=platform, session_db=session_db,
-                       **identity)
+                       skip_memory=skip_memory, **identity)
 
 
 def _response(content: Optional[str], tool_calls=None):

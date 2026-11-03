@@ -1,10 +1,11 @@
 """lina-memory: the memory layer in the core's memory-provider slot (``memory.provider: lina-memory``, lina#20).
 
-Its ``sync_turn``, called once per finished turn by ``MemoryManager.sync_all``, is the only ingest: it builds one
-turn record (person, agent and conversation ids from the identity registry, the turn's message uids, the route it
-arrived on, platform and timestamps), looks the route up in the policy table (``policy.yaml``), and hands the same
-record to LCM-X (``lcm.py``; LCM-X's own ``post_llm_call`` ingest is not registered while lina-memory holds the
-slot) and to the Honcho adapter (``plugins/memory/honcho``, which keeps its code and is driven only from here).
+Each finished turn of its agent is received once and routed by the policy table (``policy.yaml``). LCM-X gets it
+where LCM-X's own ``post_llm_call`` hook fires: lina-memory claims its session (``lcm.claim_session``), and the
+hook hands the turn to ``_take_lcm_turn`` instead of ingesting it itself (``lcm.py``). ``sync_turn``, called once
+per finished turn by ``MemoryManager.sync_all``, builds one turn record (person, agent and conversation ids from
+the identity registry, the turn's message uids, the route it arrived on, platform and timestamps) and hands it to
+the Honcho adapter (``plugins/memory/honcho``, which keeps its code and is driven only from here).
 Every other provider call (recall, tools, session lifecycle) goes to the Honcho adapter when Honcho is configured.
 """
 
@@ -45,6 +46,7 @@ class LinaMemoryProvider(MemoryProvider):
         self._home = ""
         self._init: dict[str, Any] = {}
         self._worker = None
+        self._session_id = ""
 
     @property
     def name(self) -> str:
@@ -58,18 +60,38 @@ class LinaMemoryProvider(MemoryProvider):
         self._init = {key: str(kwargs.get(key) or "") for key in (
             "agent_context", "platform", "user_id", "gateway_session_key")}
         self._honcho_on = self._honcho.is_available()
+        self._claim(session_id)
         if self._honcho_on:
             self._honcho.initialize(session_id, **kwargs)
 
+    def _claim(self, session_id: str) -> None:
+        if self._session_id:
+            lcm.release_session(self._session_id, self._take_lcm_turn)
+        self._session_id = session_id or ""
+        lcm.claim_session(self._session_id, self._take_lcm_turn)
+
     # ── the one receive path ──
+
+    def _take_lcm_turn(self, history, *, session_id: str) -> None:
+        """LCM-X's ``post_llm_call`` hook hands this session's finished turn here (``lcm.handover_for``), on the
+        turn thread, with the unredacted transcript; lina-memory routes it and hands it to the session's engine.
+        A failure is logged with its traceback and never reaches the turn or the Honcho delivery."""
+        try:
+            rule = self._policy.rule(self._policy.route_for(signals_for_turn(
+                list(history), agent_context=self._init.get("agent_context", ""),
+                platform=self._init.get("platform", ""), turn_author=None)))
+            if rule.lcm:
+                lcm.hand_turn(history, session_id=session_id)
+        except Exception:  # health: allow BLE001 -- the local engine failing must not cost Honcho the turn
+            logger.warning("lina-memory could not hand a turn of session %s to LCM-X", session_id, exc_info=True)
 
     def sync_turn(self, user_content: str, assistant_content: str, *, session_id: str = "",
                   messages: Optional[list[dict[str, Any]]] = None, turn_author: Optional[dict[str, Any]] = None,
                   local_messages: Optional[list[dict[str, Any]]] = None) -> None:
-        """Called on the turn thread (``local_messages`` makes the manager do that): LCM gets the unredacted
-        transcript here, where its own hook ran, so its ingest never overlaps the next turn's use of the engine.
-        The record (identity lookups in the store), the Honcho write (the egress-redacted ``messages`` and turn
-        text) and the conversation fill run on this provider's own worker, one turn after another.
+        """Called on the turn thread (``local_messages`` makes the manager do that), after LCM-X's hook handed the
+        turn to ``_take_lcm_turn``. The record (identity lookups in the store), the Honcho write (the
+        egress-redacted ``messages`` and turn text) and the conversation fill run on this provider's own worker,
+        one turn after another.
 
         Who wrote the turn and the Honcho session it belongs to are fixed here: by the time the worker runs, the
         next turn may have started and Honcho's own per-turn state names that turn's author."""
@@ -80,8 +102,6 @@ class LinaMemoryProvider(MemoryProvider):
             history, agent_context=self._init.get("agent_context", ""), platform=self._init.get("platform", ""),
             turn_author=author or None)))
         lcm_conversation = lcm.conversation_id(session_id)
-        if rule.lcm:
-            lcm.hand_turn(history, session_id=session_id)
 
         def deliver() -> None:
             record = self._record(rule, history, session_id=session_id, author=author,
@@ -208,6 +228,7 @@ class LinaMemoryProvider(MemoryProvider):
             self._honcho.on_session_end(messages)
 
     def on_session_switch(self, new_session_id: str, **kwargs) -> None:
+        self._claim(new_session_id)
         if self._honcho_on:
             self._honcho.on_session_switch(new_session_id, **kwargs)
 
@@ -232,6 +253,7 @@ class LinaMemoryProvider(MemoryProvider):
         return self._honcho.backup_paths()
 
     def shutdown(self) -> None:
+        lcm.release_session(self._session_id, self._take_lcm_turn)
         self._drain()
         if self._worker is not None:
             self._worker.shutdown(wait=False)
