@@ -41,3 +41,22 @@ def test_a_dropped_claimer_holds_no_claim():
     loader.claim_turn_handover("s-gone", taker.take)
     del taker
     assert loader.turn_handover_for("s-gone") is None
+
+
+def test_an_unclaimed_turn_reaches_a_narrow_legacy_hook_through_the_dispatcher():
+    """The dispatcher hands a ``**kwargs`` callback the whole payload; the wrapper must still give a narrow hook only
+    the names it declares, as the dispatcher does for an unwrapped one."""
+    from hermes_cli.plugins_dispatch import PluginDispatchMixin
+
+    seen = []
+
+    def narrow(conversation_history):
+        seen.append(conversation_history)
+        return "ok"
+
+    payload = {"conversation_history": [{"role": "user", "content": "hi"}], "session_id": "s-narrow",
+               "platform": "cli", "model": "m"}
+    assert PluginDispatchMixin._invoke_hook_callback(narrow, payload) == "ok"
+    wrapped = loader._handed_over_by_memory_layer(narrow)
+    assert PluginDispatchMixin._invoke_hook_callback(wrapped, payload) == "ok"
+    assert seen == [payload["conversation_history"]] * 2

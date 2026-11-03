@@ -192,7 +192,10 @@ def _handed_over_by_memory_layer(callback):
         session_id = str(kwargs.get("session_id") or "")
         take_turn = turn_handover_for(session_id)
         if take_turn is None:
-            return callback(**kwargs)
+            # The dispatcher sees this wrapper's ``**kwargs`` and passes the whole payload: hand the original only
+            # what its own signature accepts, as the dispatcher would have (narrow legacy hooks stay callable).
+            from hermes_cli.plugins_dispatch import PluginDispatchMixin
+            return callback(**PluginDispatchMixin._hook_callback_kwargs(callback, kwargs))
         take_turn(kwargs.get("conversation_history") or [], session_id=session_id)
         return None
     return post_llm_call
