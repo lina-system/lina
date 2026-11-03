@@ -50,11 +50,6 @@ _STORAGE_FAILURES: dict[str, tuple[str, str, str]] = {
         "this session's database row was deleted while the chat was still open and could not be recreated",
         "Try again; if it persists, run `hermes {profile_arg}doctor`.",
     ),
-    "fts_index": (
-        "storage_index_corrupt",
-        "the session search index is damaged (the messages themselves are intact)",
-        "Run `hermes {profile_arg}doctor --fix` (or `hermes {profile_arg}sessions repair`) to rebuild it.",
-    ),
     "replaced": (
         "storage_replaced",
         "the session database file was replaced while Hermes was running",

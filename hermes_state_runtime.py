@@ -234,10 +234,10 @@ def claim_session_input(db, *, epoch: int, session_id: str, _guard=None, head=_A
         if changed.rowcount != 1:
             raise RuntimeStoreError('stale_generation')
         claimed = _row(_admission(conn, row['admission_id']))
-        # The transcript high-water mark at the claim (``messages.id`` is AUTOINCREMENT across every
+        # The transcript high-water mark at the claim (``transcript_rows.id`` is AUTOINCREMENT across every
         # session): a row above it on this conversation was written by this turn, so settlement can
         # tell this turn's own failed-turn boundary from an earlier turn's (#134889 GW-21).
-        claimed['transcript_mark'] = conn.execute('SELECT COALESCE(MAX(id), 0) FROM messages').fetchone()[0]
+        claimed['transcript_mark'] = conn.execute('SELECT COALESCE(MAX(id), 0) FROM transcript_rows').fetchone()[0]
         return claimed
     return db._execute_write(write)
 
@@ -834,7 +834,7 @@ def _worker_append(db, conn, session_id, payload):
             raise RuntimeStoreError('invalid_params')
         # Existing row annotations can adopt only rows in THIS transcript.
         if '_row_id' in msg and not conn.execute(
-                'SELECT 1 FROM messages WHERE id=? AND session_id=?',
+                'SELECT 1 FROM transcript_rows WHERE id=? AND session_id=?',
                 (msg['_row_id'], session_id)).fetchone():
             raise RuntimeStoreError('permission_denied')
     holder = payload.get('turn_lease_holder')

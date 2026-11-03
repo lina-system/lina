@@ -457,7 +457,7 @@ class SessionCompressionMixin:
             # originals stay in the closed parent for lineage recovery.
             bounded = watermark_ceiling is not None
             tail_ids, tail_tool_calls = self._tail_rows_after_watermark(
-                conn, "SELECT id, tool_calls FROM messages "
+                conn, "SELECT id, tool_call_count FROM transcript_rows "
                 "WHERE session_id = ? AND active = 1 AND id > ?"
                 f"{' AND id <= ?' if bounded else ''} ORDER BY id",
                 [parent_session_id, int(watermark), *([int(watermark_ceiling)] if bounded else [])])
@@ -874,7 +874,7 @@ class SessionCompressionMixin:
                         AND p.ended_at IS NOT NULL
                   )
                   AND EXISTS (
-                      SELECT 1 FROM messages m
+                      SELECT 1 FROM transcript_rows m
                       WHERE m.session_id = sessions.id
                   )
                 """,

@@ -14,7 +14,7 @@ from hermes_state import SessionDB
 
 
 @pytest.mark.requires_wal  # the sticky flag exists only for a recorded WAL/SHM generation; DELETE mode has none
-@pytest.mark.parametrize("entry", ["normal", "optimize", "rebuild", "vacuum", "error_branch"])
+@pytest.mark.parametrize("entry", ["normal", "vacuum", "error_branch"])
 def test_clean_close_never_causes_false_sticky_loss(tmp_path, monkeypatch, entry):
     path = tmp_path / "synthetic.db"
     db = SessionDB(db_path=path)
@@ -79,10 +79,6 @@ def test_clean_close_never_causes_false_sticky_loss(tmp_path, monkeypatch, entry
         try:
             if entry == "normal":
                 db.append_message("synthetic", "tool", content="normal-during-close")
-            elif entry == "optimize":
-                db.optimize_fts()
-            elif entry == "rebuild":
-                db.rebuild_fts()
             elif entry == "vacuum":
                 db.vacuum()
             else:
@@ -113,7 +109,7 @@ def test_clean_close_never_causes_false_sticky_loss(tmp_path, monkeypatch, entry
             post_errors.append(type(e).__name__ + ": " + str(e))
         reader = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
         try:
-            rows = reader.execute("SELECT count(*) FROM messages").fetchone()[0]
+            rows = reader.execute("SELECT count(*) FROM transcript_rows").fetchone()[0]
         finally:
             reader.close()
         observed = {"entry": entry, "guard_calls": calls, "sticky": sticky, "errors": errors,

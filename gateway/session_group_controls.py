@@ -326,7 +326,7 @@ def _read_bot_sessions(db, subject, operator):
             tip = db._compression_tip_on(conn, root['id'])
             target = conn.execute('SELECT * FROM sessions WHERE id=?', (tip,)).fetchone() or root
             message = conn.execute(
-                "SELECT content FROM messages WHERE session_id=? AND active=1 "
+                "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? AND active=1 "
                 "AND role IN ('user','assistant') AND TRIM(COALESCE(content,''))!='' "
                 "ORDER BY id DESC LIMIT 1", (tip,)).fetchone()
             text = ' '.join(str(message[0] or '').split()) if message else ''

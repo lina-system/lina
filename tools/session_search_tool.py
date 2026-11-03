@@ -217,7 +217,7 @@ def _get_message_storage_state(db, message_id) -> Optional[dict[str, Any]]:
     def _lookup():
         with db._lock:
             return db._conn.execute(
-                "SELECT session_id, active, compacted FROM messages WHERE id = ?", (message_id,)).fetchone()
+                "SELECT session_id, active, compacted FROM transcript_rows WHERE id = ?", (message_id,)).fetchone()
     row = message_id and _quiet(_lookup, None, "message storage-state lookup failed for %s", message_id)
     return dict(row) if row else None
 
@@ -312,14 +312,8 @@ def _title_match_result(db, query: str, current_lineage_root: Optional[str]) -> 
 
 
 def _discover_payload(db, query: str, detail: str, results: list, **extra) -> str:
-    """Discovery response; notes FTS backfill progress so the agent can explain thin
-    results instead of treating them as ground truth."""
-    status = _quiet(db.fts_rebuild_status, None, "fts_rebuild_status failed")
-    rebuild = {} if status is None else {"index_rebuild": {"percent": status["percent"], "note": (
-        f"The search index is rebuilding in the background ({status['percent']}% done, "
-        f"{status['indexed']:,} of {status['total']:,} messages). Results from older messages "
-        f"may be incomplete until it finishes.")}}
-    return _ok(mode="discover", query=query, detail=detail, results=results, count=len(results), **extra, **rebuild)
+    """Discovery response."""
+    return _ok(mode="discover", query=query, detail=detail, results=results, count=len(results), **extra)
 
 
 def _bookend(view: dict[str, Any], key: str) -> list[dict[str, Any]]:

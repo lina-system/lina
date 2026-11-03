@@ -29,7 +29,6 @@ from typing import Dict, Optional
 
 from hermes_state_errors import (
     classify_persistence_error,
-    is_fts_scoped_corruption_error,
     is_malformed_schema_error,
 )
 
@@ -51,7 +50,6 @@ def is_structural_corruption_error(exc: BaseException) -> bool:
     the FTS index, and not the malformed-schema case the web open path repairs."""
     return (
         isinstance(exc, sqlite3.DatabaseError)
-        and not is_fts_scoped_corruption_error(exc)
         and not is_malformed_schema_error(exc)
         and classify_persistence_error(exc) == "corrupt"
     )

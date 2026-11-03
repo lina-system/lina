@@ -10,7 +10,6 @@ then flags a summarized row as a superseded duplicate instead.
 
 from __future__ import annotations
 
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -40,14 +39,11 @@ def db(tmp_path: Path):
 
 
 def _rows(db: SessionDB) -> list[dict]:
-    conn = sqlite3.connect(db.db_path)
-    conn.row_factory = sqlite3.Row
-    try:
+    with db._read_ctx() as conn:
         return [dict(r) for r in conn.execute(
-            "SELECT id, active, compacted, content, message_uid FROM messages WHERE session_id = ? ORDER BY id",
+            "SELECT id, active, compacted, msg_text(text_uid, 'content') AS content, message_uid "
+            "FROM transcript_rows WHERE session_id = ? ORDER BY id",
             (SID,)).fetchall()]
-    finally:
-        conn.close()
 
 
 def _copies(db: SessionDB, content: str) -> list[dict]:

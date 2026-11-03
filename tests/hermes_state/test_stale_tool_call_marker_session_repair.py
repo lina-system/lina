@@ -168,8 +168,8 @@ class TestPurgeStaleToolCallMarkers:
 
                 # Nothing written: the raw row still has the marker.
                 raw = db._conn.execute(
-                    "SELECT content FROM messages WHERE role = 'assistant' "
-                    "AND tool_calls IS NOT NULL AND tool_calls != ''"
+                    "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE role = 'assistant' "
+                    "AND tool_call_count > 0"
                 ).fetchone()
                 assert raw["content"] == "[memory]"
             finally:
@@ -193,8 +193,8 @@ class TestPurgeStaleToolCallMarkers:
                 assert Path(report["backup_path"]).exists()
 
                 row = db._conn.execute(
-                    "SELECT content, tool_calls FROM messages WHERE role = 'assistant' "
-                    "AND tool_calls IS NOT NULL AND tool_calls != ''"
+                    "SELECT msg_text(text_uid, 'content') AS content, msg_text(text_uid, 'tool_calls') AS tool_calls "
+                    "FROM transcript_rows WHERE role = 'assistant' AND tool_call_count > 0"
                 ).fetchone()
                 assert row["content"] == ""
                 # tool_calls column itself must survive the rewrite untouched.

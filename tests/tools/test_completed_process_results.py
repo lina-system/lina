@@ -17,11 +17,12 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 def _completion_notes(home):
     """Background-process completions the owner wrote into its sessions as notes."""
-    import sqlite3
+    from hermes_state import SessionDB
     if not (home / "state.db").exists():
         return []
-    with sqlite3.connect(f"file:{home / 'state.db'}?mode=ro", uri=True) as db:
-        return db.execute("SELECT content, display_kind FROM messages WHERE role = 'user' AND content LIKE ?",
+    with SessionDB(home / "state.db", read_only=True) as store:
+        return store._conn.execute("SELECT msg_text(text_uid, 'content'), display_kind FROM transcript_rows "
+                                   "WHERE role = 'user' AND msg_text(text_uid, 'content') LIKE ?",
                           ("[IMPORTANT: Background process %",)).fetchall()
 
 

@@ -64,7 +64,6 @@ _FINGERPRINT_VOLATILE_HEADER_RANGES = ((24, 28), (92, 96))
 # the volume, clamped to a modest floor. See #69603.
 _REPAIR_BACKUP_MIN_FREE_BYTES = 256 * 1024 * 1024  # 256 MiB absolute floor
 _REPAIR_BACKUP_FREE_FRACTION = 0.02  # plus 2% of the volume
-_FTS_TABLES = ("messages_fts", "messages_fts_trigram", "messages_fts_cjk")
 _MANUAL_RECOVER_HINT = ("Free disk space, then retry (or recover manually with "
                         "`hermes sessions recover --source {db_path} --inspect-only` first).")
 
@@ -225,7 +224,7 @@ def _bump_schema_cookie(conn: sqlite3.Connection) -> None:
 
     Ordinary DDL bumps it and peers compare it before running a prepared statement (how they discard a cached
     schema); ``writable_schema=ON`` edits do NOT, so live connections would keep firing triggers into
-    ``messages_fts*`` shadow tables that no longer exist. Best-effort, never raises."""
+    obsolete schema objects that no longer exist. Best-effort, never raises."""
     try:
         current = conn.execute("PRAGMA schema_version").fetchone()[0]
         # Wrap within SQLite's 32-bit signed range; peers compare for equality.
@@ -397,7 +396,7 @@ def _persistent_repair_exhausted_error(db_path: Path) -> str:
     from hermes_constants import profile_cli_selector
     profile_arg = profile_cli_selector()
     return (f"automatic repair has already failed {_MAX_PERSISTENT_REPAIR_ATTEMPTS} times on this exact file — the "
-            f"corruption is beyond the schema/FTS repair strategies (likely b-tree page damage). Manual recovery "
+            f"corruption is beyond the schema repair strategies (likely b-tree page damage). Manual recovery "
             f"required: restore a backup, or salvage with `hermes {profile_arg}sessions recover --source {db_path} "
             f"--inspect-only`, then (if it reports recoverable) `hermes {profile_arg}sessions recover --source {db_path} "
             f"--output recovered-state.db` (recovery snapshots the damaged file first, then runs the page-level "
@@ -705,18 +704,13 @@ def _copy_database_snapshot(source_path: Path, destination_path: Path, *,
         source.backup(destination, pages=256, progress=_check_deadline, sleep=_REPAIR_LOCK_POLL_SECONDS)
 
 
-def _schema_not_built(exc: BaseException) -> bool:
-    """``no such table/column``: FTS5 / core tables not created yet (brand new file mid-init)."""
-    return any(m in str(exc).lower() for m in ("no such table", "no such column"))
-
-
-# Hermes-owned FTS5 objects: the virtual tables and their shadow b-trees. Full-matched, so a
-# user-created lookalike (``archive_fts_data``) is not swept into the rebuildable set.
-_FTS_OBJECT_RE = re.compile(
-    r"messages_fts(_trigram|_cjk)?(_data|_idx|_content|_docsize|_config|_segdir|_segments)?"
-)
 _INTEGRITY_TREE_RE = re.compile(r"\bTree (\d+)\b")
 _INTEGRITY_MISSING_INDEX_RE = re.compile(r"missing from index (\S+)")
+
+
+def _schema_not_built(exc: BaseException) -> bool:
+    """``no such table/column``: core tables not created yet (brand new file mid-init)."""
+    return any(m in str(exc).lower() for m in ("no such table", "no such column"))
 
 
 def integrity_damage_is_structural(integrity_lines, master_rows) -> bool:
@@ -734,10 +728,10 @@ def integrity_damage_is_structural(integrity_lines, master_rows) -> bool:
         tree = _INTEGRITY_TREE_RE.search(text)
         if tree:
             name = name_by_rootpage.get(int(tree.group(1)), "")
-            if name and not _FTS_OBJECT_RE.fullmatch(name):
+            if name:
                 return True
         missing = _INTEGRITY_MISSING_INDEX_RE.search(text)
-        if missing and not _FTS_OBJECT_RE.fullmatch(missing.group(1)):
+        if missing:
             return True
     return False
 
@@ -767,16 +761,7 @@ def state_db_has_structural_damage(db_path: Path) -> bool:
 
 
 def _db_opens_cleanly(db_path: Path) -> Optional[str]:
-    """Probe a DB on a fresh connection. Returns None if healthy, else a reason.
-
-    Runs the first statement that trips the malformed-schema parse (``PRAGMA journal_mode``),
-    ``integrity_check``, a ``sessions`` read, FTS5 MATCH probes and a rolled-back ``messages`` write — so FTS5
-    index corruption (reads and ``integrity_check`` pass, every ``INSERT INTO messages`` fails through the FTS
-    triggers) is reported as unhealthy.
-
-    See #50502.
-    """
-    from hermes_state import SessionDB, load_fts5_cjk_extension
+    """Check the SQLite schema, integrity, and canonical placement tables on a fresh connection."""
     # ── Strategy 0.5: rebuild stale B-tree indexes (#63386) ── PRAGMA integrity_check can report "wrong #
     # of entries in index" when a B-tree index (e.g. idx_sessions_handoff_state) falls out of sync with its
     # base table. REINDEX rewrites the index b-tree from the canonical table rows using the existing index
@@ -784,62 +769,13 @@ def _db_opens_cleanly(db_path: Path) -> Optional[str]:
     conn = _connect_repair_durable(db_path)
     try:
         with contextlib.closing(conn):
-            # Best-effort tokenizer load: messages_fts_cjk needs cjk_unicode61 before any statement can touch it;
-            # tokenizer absence must never classify as corruption.
-            load_fts5_cjk_extension(conn)
             conn.execute("PRAGMA journal_mode").fetchone()
             rows = conn.execute("PRAGMA integrity_check").fetchall()
             problems = [str(r[0]) for r in rows if r and str(r[0]).lower() != "ok"]
             if problems:
                 return "; ".join(problems[:3])
             conn.execute("SELECT COUNT(*) FROM sessions").fetchone()
-            # FTS5 read probe: partial shadow-table corruption makes MATCH/snippet/rank raise while integrity_check
-            # reports healthy. MATCH '""' (empty phrase) parses, scans zero rows and exercises the shadow tables;
-            # FTS5 rejects MATCH ''.
-            for fts_table in _FTS_TABLES:
-                try:
-                    conn.execute(f"SELECT 1 FROM {fts_table} WHERE {fts_table} MATCH '\"\"' LIMIT 1").fetchone()
-                except sqlite3.DatabaseError as exc:
-                    # Builds without fts5/trigram raise "no such module|tokenizer"; calling that corruption would
-                    # send the DB into repair, whose final fallback deletes messages_fts%. "no such table/column" =
-                    # not built yet.
-                    benign = SessionDB._is_fts5_unavailable_error(exc) or _schema_not_built(exc)
-                    if not (isinstance(exc, sqlite3.OperationalError) and benign):
-                        # This is the corruption class #66724 actually wants caught: partial shadow-table
-                        # damage where MATCH / snippet / rank queries raise DatabaseError("database disk
-                        # image is malformed") while reads of the FTS5 table itself parse fine.
-                        return f"fts5 read probe failed on {fts_table}: {exc}"
-            # FTS write probe: drive a row through the messages_fts* triggers in a transaction that is always
-            # rolled back. The trigger INSERT alone only buffers the row in FTS5's in-memory segment; the
-            # ``flush`` command writes that segment to ``<fts>_idx``/``_data`` exactly as a committed append
-            # would, so a stale ``_idx`` row at the next segid (IntegrityError "constraint failed", the #100227
-            # class: integrity_check and MATCH both clean, every real append fails) is hit here rather than
-            # by the user's next message.
-            probe_session_id = f"_hermes_fts_health_probe_{time.time_ns()}"
-            try:
-                conn.execute("BEGIN IMMEDIATE")
-                conn.execute("INSERT INTO sessions (id, source, started_at) VALUES (?, ?, ?)",
-                             (probe_session_id, "_health_probe", time.time()))
-                conn.execute("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
-                             (probe_session_id, "user", "_fts_health_probe", time.time()))
-                for fts_table in _FTS_TABLES:
-                    try:
-                        conn.execute(f"INSERT INTO {fts_table}({fts_table}) VALUES('flush')")
-                    except sqlite3.OperationalError as exc:
-                        if not (SessionDB._is_fts5_unavailable_error(exc) or _schema_not_built(exc)):
-                            raise
-            except sqlite3.DatabaseError as exc:
-                # IntegrityError is a DatabaseError sibling of OperationalError, not a child: catching only the
-                # latter let the trigram-segment collision report "healthy".
-                # Missing messages/sessions tables = brand new file mid-init, not corruption. "no such tokenizer":
-                # this process lacks the cjk extension the DB's index needs — capability gap; a tokenizer-less
-                # SessionDB drops the triggers itself.
-                if _schema_not_built(exc) or "no such tokenizer: cjk_unicode61" in str(exc).lower():
-                    return None
-                return f"fts5 write probe failed: {exc}"
-            finally:
-                with contextlib.suppress(sqlite3.Error):
-                    conn.execute("ROLLBACK")
+            conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()
             return None
     except sqlite3.DatabaseError as exc:
         return str(exc)
@@ -868,10 +804,8 @@ def _repair_skip(report: dict[str, Any], verb: str, error: str, exc: Optional[Ba
 
 
 def repair_state_db_schema(db_path: Path, *, backup: bool = True) -> dict[str, Any]:
-    """Repair a state.db whose ``sqlite_master`` is malformed or whose FTS indexes reject writes.
+    """Repair a state.db whose schema or B-tree indexes are malformed.
 
-    Two corruption classes: malformed schema / "duplicate object definition" (even ``PRAGMA`` fails), and FTS
-    write-corruption (reads and ``integrity_check`` pass, writes fail through ``messages_fts*`` triggers).
     ``_REPAIR_STRATEGIES`` run least-destructive first on a complete snapshot; a success is copied back
     transactionally, so canonical rows are never modified by a failed attempt. A raw backup is taken first
     unless ``backup=False``. Serialised across processes (gateway, Desktop backend and CLI open the same file;
@@ -1092,17 +1026,6 @@ def _edit_sqlite_master(conn: sqlite3.Connection, edit) -> None:
     conn.commit()
 
 
-def _strategy_rebuild_fts(conn: sqlite3.Connection) -> None:
-    """FTS5 'rebuild' rewrites each index from the content table: the least-
-    destructive fix for an index that rejects writes while reads work."""
-    from hermes_state import load_fts5_cjk_extension
-    # The cjk index can only be rebuilt with its tokenizer loaded (best-effort).
-    load_fts5_cjk_extension(conn)
-    for table_name in _FTS_TABLES:
-        with contextlib.suppress(sqlite3.OperationalError):  # table absent (FTS disabled / trigram off / cjk absent)
-            conn.execute(f"INSERT INTO {table_name}({table_name}) VALUES('rebuild')")
-
-
 def _strategy_reindex(conn: sqlite3.Connection) -> None:
     """integrity_check reports "wrong # of entries in index" when a B-tree
     index drifts from its base table; REINDEX rewrites it from canonical rows."""
@@ -1113,7 +1036,7 @@ def _strategy_reindex(conn: sqlite3.Connection) -> None:
 
 
 def _strategy_dedup_schema(conn: sqlite3.Connection) -> None:
-    """De-duplicate sqlite_master (lowest rowid per type/name wins), keeping FTS."""
+    """De-duplicate sqlite_master (lowest rowid per type/name wins), preserving canonical tables."""
     def _dedup() -> bool:
         dupes = conn.execute(
             "SELECT type, name, COUNT(*) AS c, MIN(rowid) AS keep FROM sqlite_master GROUP BY type, name HAVING c > 1"
@@ -1126,28 +1049,14 @@ def _strategy_dedup_schema(conn: sqlite3.Connection) -> None:
     _edit_sqlite_master(conn, _dedup)
 
 
-def _strategy_drop_fts_vacuum(conn: sqlite3.Connection) -> None:
-    """Drop all FTS schema and VACUUM; indexes rebuild on the next open. The
-    destructive one, and why strategies run on a scratch copy: on a damaged
-    schema b-tree VACUUM silently drops every table hanging off the unreadable part."""
-    _edit_sqlite_master(conn, lambda: conn.execute("DELETE FROM sqlite_master WHERE name LIKE 'messages_fts%'") or True)
-    # The schema parses now, so the barriers can stick — VACUUM rewrites the whole file.
-    _reapply_durability_barriers(conn)
-    conn.execute("VACUUM")
-
-
 # (name, body, success log, failure log) in escalation order. failure log None =
 # final strategy: its failure lands in report["error"] instead of logged-and-skipped.
 _REPAIR_STRATEGIES = (
-    ("rebuild_fts", _strategy_rebuild_fts, "state.db FTS indexes rebuilt in place (schema preserved): %s",
-     "state.db FTS in-place rebuild pass failed: %s"),
     ("reindex_btree", _strategy_reindex, "state.db B-tree indexes rebuilt via REINDEX: %s",
      "state.db REINDEX pass failed: %s"),
     ("dedup_schema", _strategy_dedup_schema,
-     "state.db schema repaired by de-duplicating sqlite_master (FTS index preserved): %s",
+     "state.db schema repaired by de-duplicating sqlite_master: %s",
      "state.db dedup repair pass failed: %s"),
-    ("drop_fts_rebuild", _strategy_drop_fts_vacuum,
-     "state.db schema repaired by dropping FTS schema; indexes will rebuild from messages on next open: %s", None),
 )
 
 

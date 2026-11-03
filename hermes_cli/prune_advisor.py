@@ -179,12 +179,12 @@ def advise(home: Optional[Path] = None) -> Optional[Advice]:
                 # ones, and message_count skips the soft-archived rows a prune also deletes.
                 row_bytes = _row_bytes_sql(db)
                 prunable_bytes = (db._read_one(
-                    f"SELECT COALESCE(SUM({row_bytes}), 0) FROM messages m WHERE m.session_id IN "
+                    f"SELECT COALESCE(SUM({row_bytes}), 0) FROM transcript_rows m WHERE m.session_id IN "
                     f"(SELECT s.id FROM sessions s WHERE {where})", params) or (0,))[0]
                 total_bytes = _cached_total_bytes(home, snap.db_bytes)
                 if total_bytes is None:
                     total_bytes = (db._read_one(
-                        f"SELECT COALESCE(SUM({row_bytes}), 0) FROM messages m", []) or (0,))[0]
+                        f"SELECT COALESCE(SUM({row_bytes}), 0) FROM transcript_rows m", []) or (0,))[0]
                     _store_estimate(home, total_bytes=total_bytes, total_at_db_bytes=snap.db_bytes)
                 total_bytes = max(total_bytes, prunable_bytes)  # a stale scaled total never under-counts
         finally:
@@ -261,9 +261,9 @@ def cached_advice(home: Optional[Path] = None) -> tuple[Optional[Advice], bool]:
 
 
 def _row_bytes_sql(db) -> str:
-    """Stored size of one ``messages`` row: the byte length of every text/blob column (read from
+    """Stored size of one ``transcript_rows`` row: the byte length of every text/blob column (read from
     the live schema, so a column added later is counted without touching this)."""
-    cols = [r[1] for r in db._read_all("PRAGMA table_info(messages)", [])
+    cols = [r[1] for r in db._read_all("PRAGMA table_info(transcript_rows)", [])
             if str(r[2]).upper() in {"TEXT", "BLOB", ""}]
     return " + ".join(f'COALESCE(LENGTH(CAST(m."{c}" AS BLOB)), 0)' for c in cols) or "0"
 

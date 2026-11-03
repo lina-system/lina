@@ -3,6 +3,7 @@ import hashlib
 import json
 
 from hermes_state_keys import prefix_range
+from hermes_state_store import text_columns_sql
 
 PREFIX = 'gateway.media.retired.v1.'
 SPILLOVER_PREFIX = 'gateway.spillover.retired.v1.'
@@ -25,7 +26,7 @@ def retire_spillover(conn, session_ids):
     from tools.tool_result_storage import SPILLOVER_SQL_FILTER, spillover_names_in_text
     for chunk in _id_chunks(list(session_ids)):
         for content, api_content in conn.execute(
-                f"SELECT content, api_content FROM messages WHERE session_id IN ({_placeholders(chunk)})"
+                f"SELECT {text_columns_sql(fields=('content', 'api_content'))} FROM transcript_rows WHERE session_id IN ({_placeholders(chunk)})"
                 f" AND {SPILLOVER_SQL_FILTER}", chunk).fetchall():
             conn.executemany('INSERT OR IGNORE INTO state_meta(key,value) VALUES(?,?)',
                              [(SPILLOVER_PREFIX + n, json.dumps(n)) for n in spillover_names_in_text(content, api_content)])

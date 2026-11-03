@@ -159,7 +159,7 @@ def build_sessions_parser(subparsers, *, cmd_sessions: Callable) -> None:
     _flag(sessions_archive, "--include-open", help="Also archive never-ended sessions, e.g. Desktop chats")
 
     sessions_optimize = sessions_subparsers.add_parser(
-        "optimize", help="Reclaim disk space: merge FTS5 segments + VACUUM (no data change)")
+        "optimize", help="Reclaim disk space: VACUUM (no data change)")
     _flag(sessions_optimize, "--force",
         help="Run even while another Hermes process (gateway, Desktop, dashboard, cron) holds state.db — rewriting the store under a live writer can leave every agent refusing turns until all writers are stopped")
 
@@ -178,29 +178,12 @@ def build_sessions_parser(subparsers, *, cmd_sessions: Callable) -> None:
     _flag(sessions_clean_markers, "--no-backup", default=False,
         help="Skip the timestamped state.db backup taken before writing (not recommended)")
 
-    sessions_optimize_storage = sessions_subparsers.add_parser("optimize-storage",
-        help="Migrate the search index to the compact v23 layout (reclaims disk on large DBs)",
-        description="Rebuild the full-text search index in the compact v23 "
-            "external-content layout. On large databases this reclaims a "
-            "large fraction of state.db (the old layout stored duplicate "
-            "copies of every message and indexed tool output). Runs "
-            "foreground with progress for every phase (refusing while a gateway "
-            "or other Hermes process holds state.db, pacing itself if one opens it mid-run) and "
-            "VACUUMs at the end. Safe to interrupt and re-run — it resumes where it left off. No conversation data is "
-            "changed; only the search index is rebuilt.")
-    _flag(sessions_optimize_storage, "--no-vacuum", default=False,
-        help="Skip the final VACUUM (index is rebuilt but freed pages aren't returned to the OS until a later VACUUM)")
-    _flag(sessions_optimize_storage, "--yes", "-y", default=False,
-        help="Skip the disk-space confirmation prompt")
-    _flag(sessions_optimize_storage, "--force",
-        help="Run even while another Hermes process (gateway, Desktop, dashboard, cron) holds state.db — rewriting the store under a live writer can leave every agent refusing turns until all writers are stopped; the rebuild then paces itself so that process stays responsive (much slower)")
-
     sessions_repair = sessions_subparsers.add_parser(
         "repair", help="Repair a malformed state.db schema so hidden sessions reappear",
         description="Recover a state.db whose schema is malformed (e.g. 'table "
-            "messages_fts already exists'), which makes Desktop/Dashboard show "
+            "sessions already exists'), which makes Desktop/Dashboard show "
             "no sessions. A backup is made first; sessions and messages are "
-            "preserved and the FTS search index is rebuilt if needed.")
+            "preserved.")
     _flag(sessions_repair, "--check-only",
         help="Only report whether the database opens cleanly; do not modify it")
     _flag(sessions_repair, "--no-backup", help="Skip the timestamped backup copy (not recommended)")

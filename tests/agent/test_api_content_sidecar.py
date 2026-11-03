@@ -5,10 +5,10 @@ because the bytes sent to the API diverged from the bytes replayed from the
 persisted transcript: memory-prefetch / plugin context is injected into the
 API copy of the current turn's user message only, and the persist
 user-message override (#48677) writes cleaned content to the DB row. The fix
-persists the EXACT sent content in a nullable ``messages.api_content`` column
+persists the EXACT sent content in the message store's ``api_content`` sidecar
 and replays it verbatim (no sanitize, no strip).
 
-Covers: SessionDB round-trip and auto-migration, the shared composition
+Covers: SessionDB round-trip and reopening, the shared composition
 helper, prologue stamping order, the flush-override sidecar, and the
 end-to-end wire invariant (turn N+1 replays turn N's bytes) against an
 in-process mock provider.
@@ -19,7 +19,6 @@ from __future__ import annotations
 import json
 import os
 import shutil
-import sqlite3
 import tempfile
 import threading
 import types
@@ -95,59 +94,33 @@ class TestSessionDbSidecar:
             db.close()
 
 
-class TestAutoMigration:
-    def test_reconciliation_adds_api_content_column(self, tmp_path):
-        """Opening a pre-sidecar DB adds the column declaratively (the
-        SCHEMA_SQL diff in _reconcile_columns), no version-gated migration."""
-        db_path = tmp_path / "legacy.db"
-        conn = sqlite3.connect(str(db_path))
-        conn.executescript("""
-            CREATE TABLE schema_version (version INTEGER NOT NULL);
-
-            CREATE TABLE sessions (
-                id TEXT PRIMARY KEY,
-                source TEXT NOT NULL,
-                parent_session_id TEXT,
-                started_at REAL NOT NULL
-            );
-
-            CREATE TABLE messages (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                session_id TEXT NOT NULL,
-                role TEXT NOT NULL,
-                content TEXT,
-                tool_call_id TEXT,
-                tool_calls TEXT,
-                tool_name TEXT,
-                timestamp REAL NOT NULL,
-                token_count INTEGER,
-                finish_reason TEXT,
-                reasoning TEXT
-            );
-        """)
-        conn.execute(
-            "INSERT INTO messages (session_id, role, content, timestamp) "
-            "VALUES (?, ?, ?, ?)",
-            ("s1", "user", "old row", 1000.0),
-        )
-        conn.commit()
-        conn.close()
+class TestSidecarStorage:
+    def test_reopen_keeps_sidecar_out_of_sqlite(self, tmp_path):
+        """Rows without a sidecar stay absent; new sidecars survive reopening through the store."""
+        db_path = tmp_path / "state.db"
+        db = SessionDB(db_path=db_path)
+        try:
+            db.create_session("s1", source="cli")
+            db.append_message("s1", "user", content="old row", timestamp=1000.0)
+        finally:
+            db.close()
 
         db = SessionDB(db_path=db_path)
         try:
-            cols = {
-                row[1]
-                for row in db._conn.execute('PRAGMA table_info("messages")').fetchall()
-            }
-            assert "api_content" in cols
-            # Old rows read back NULL (no key); new writes round-trip.
+            cols = {row[1] for row in db._conn.execute('PRAGMA table_info("transcript_rows")')}
+            assert "api_content" not in cols
             db.append_message("s1", "user", content="new", api_content="new+ctx")
+        finally:
+            db.close()
+
+        db = SessionDB(db_path=db_path)
+        try:
             msgs = db.get_messages_as_conversation("s1")
+            assert msgs[0]["content"] == "old row"
             assert "api_content" not in msgs[0]
             assert msgs[1]["api_content"] == "new+ctx"
         finally:
             db.close()
-
 
 # ---------------------------------------------------------------------------
 # Prologue stamping (build_turn_context)

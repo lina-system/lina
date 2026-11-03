@@ -8,7 +8,6 @@ The store must fail loudly instead of limping.
 import json
 import os
 import shutil
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -53,9 +52,6 @@ def test_replace_with_new_inode_fails_loudly_without_fts_repair(tmp_path):
         db.append_message("live-sess", role="user", content="after-replace")
 
     assert db._db_replaced is True
-    # No FTS surgery ran: fail-open never detached the indexes.
-    assert db._fts_enabled is True
-    assert db._fts_stale is False
     db.close()
 
 
@@ -72,34 +68,8 @@ def test_second_write_after_halt_does_not_attempt_repair(tmp_path):
         db.append_message("s", role="user", content="first")
     with pytest.raises(StateDbReplacedError):
         db.append_message("s", role="user", content="second")
-    assert db._fts_enabled is True
-    assert db._fts_stale is False
     db.close()
 
-
-def test_same_file_fts_corruption_still_fails_open(tmp_path):
-    """Identity guard must not disable genuine in-file FTS recovery.
-
-    Since 18ac3c4fb6 the live write path never rebuilds FTS in place; the
-    recovery contract is the fail-open detach (stale marker + triggers
-    dropped) followed by a successful canonical retry.
-    """
-    db = _make_db(tmp_path / "state.db", "s1", "hello world")
-    _require_identity(db)
-    identity = db._db_file_identity
-    raw = sqlite3.connect(str(tmp_path / "state.db"))
-    raw.execute(
-        "UPDATE messages_fts_data SET block = X'DEADBEEFDEADBEEFDEADBEEFDEADBEEF'"
-    )
-    raw.commit()
-    raw.close()
-    db.append_message("s1", role="user", content="healed append")
-    assert db._db_file_identity == identity
-    assert db._db_replaced is False
-    # Fail-open detach ran: canonical write landed, FTS marked stale.
-    assert db._fts_stale is True
-    assert db._fts_enabled is False
-    db.close()
 
 
 def test_classify_replaced_is_not_disk_or_fts_repair():
@@ -129,29 +99,6 @@ def test_new_sessiondb_on_replaced_path_records_new_identity(tmp_path):
         reopened.close()
 
 
-@pytest.mark.platforms("posix")
-def test_fts_scoped_error_on_replaced_file_skips_fts_fail_open(tmp_path):
-    """Even FTS-provenance corruption must not authorize surgery on a
-    replaced file. (A generic malformed error never reaches fail-open at
-    all since the provenance classifier of #99652 rejects it earlier.)"""
-    live = tmp_path / "state.db"
-    other = tmp_path / "other.db"
-    db = _make_db(live, "s", "a")
-    _require_identity(db)
-    alt = _make_db(other, "t", "b")
-    alt.close()
-    os.replace(other, live)
-
-    with pytest.raises(StateDbReplacedError):
-        db._enter_fts_fail_open(
-            sqlite3.DatabaseError(
-                'fts5: corrupt structure record for table "messages_fts"'
-            )
-        )
-    assert db._fts_enabled is True
-    assert db._fts_stale is False
-    db.close()
-
 
 def test_copyfile_same_inode_fails_loudly_without_fts_repair(tmp_path):
     """``cp`` keeps st_ino; generation stamp must still halt (#89332)."""
@@ -175,8 +122,6 @@ def test_copyfile_same_inode_fails_loudly_without_fts_repair(tmp_path):
     with pytest.raises(StateDbReplacedError, match="replaced underneath"):
         db.append_message("live-sess", role="user", content="after-cp")
     assert db._db_replaced is True
-    assert db._fts_enabled is True
-    assert db._fts_stale is False
     db.close()
 
 

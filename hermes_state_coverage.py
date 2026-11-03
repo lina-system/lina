@@ -14,6 +14,7 @@ from agent.message_metadata import DB_ROW_SNAPSHOT, MESSAGE_UID, message_uid_or_
 from hermes_cli.timefmt import coerce_epoch
 from hermes_state_common import _id_chunks, _placeholders
 from hermes_state_messages import _parse_tool_calls
+from hermes_state_store import content_digest, text_columns_sql, text_sql
 
 
 def _text_of(content: Any) -> str:
@@ -87,7 +88,7 @@ class SessionCoverageMixin:
         by_row, by_uid = self._index_held_dicts(compacted_messages)
         rows = conn.execute(
             # Every column: the claims compare replayed sidecars and the row's version digest (DB_ROW_SNAPSHOT).
-            f"SELECT * FROM messages WHERE id IN ({_placeholders(tail_ids)}) ORDER BY id", tail_ids,
+            f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE id IN ({_placeholders(tail_ids)}) ORDER BY id", tail_ids,
         ).fetchall()
         carried: dict[int, int] = {}
         for row in rows:
@@ -223,7 +224,7 @@ class SessionCoverageMixin:
             found[MESSAGE_UID]
             for chunk in _id_chunks(wanted)
             for found in conn.execute(
-                f"SELECT id, {MESSAGE_UID} FROM messages WHERE session_id = ? AND active = 1 "
+                f"SELECT id, {MESSAGE_UID} FROM transcript_rows WHERE session_id = ? AND active = 1 "
                 f"AND {MESSAGE_UID} IN ({_placeholders(chunk)})", (session_id, *chunk)).fetchall()
             if int(found["id"]) not in tail
         }
@@ -265,7 +266,7 @@ class SessionCoverageMixin:
             by_key: dict[tuple[Any, ...], list[int]] = {}
             narrow = f" AND id IN ({_placeholders(ids)})" if ids else ""
             for row in conn.execute(
-                "SELECT id, role, content, tool_call_id, tool_calls, timestamp FROM messages "
+                f"SELECT id, role, {text_sql('content')} AS content, tool_call_id, {text_sql('tool_calls')} AS tool_calls, timestamp FROM transcript_rows "
                 f"WHERE session_id = ? AND active = 1{narrow} ORDER BY id",
                 (session_id, *(ids or ())),
             ).fetchall():
@@ -305,8 +306,8 @@ class SessionCoverageMixin:
             return []
         stored = self._encode_content(self._loaded_view_content(message.get("role", "unknown"), content))
         return [int(row["id"]) for row in conn.execute(
-            "SELECT id FROM messages WHERE session_id = ? AND active = 1 AND role = ? AND content = ?",
-            (session_id, message.get("role"), stored)).fetchall()]
+            "SELECT id FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = ? AND content_digest = ?",
+            (session_id, message.get("role"), content_digest(stored))).fetchall()]
 
     def _matching_retired_ids(
         self, conn, session_id: str, retired: dict[str, Any], watermark: Optional[int] = None,
@@ -320,7 +321,7 @@ class SessionCoverageMixin:
         role = str(retired.get("role") or "")
         bound = watermark is not None
         rows = conn.execute(
-            "SELECT id, content, tool_call_id, tool_calls FROM messages WHERE session_id = ? AND active = 1 "
+            f"SELECT id, {text_sql('content')} AS content, tool_call_id, {text_sql('tool_calls')} AS tool_calls FROM transcript_rows WHERE session_id = ? AND active = 1 "
             f"AND role = ?{' AND id <= ?' if bound else ''} ORDER BY id",
             (session_id, role, *((int(watermark),) if bound else ()))).fetchall()
         want_calls = list(retired.get("tool_call_ids") or ())
@@ -363,7 +364,7 @@ class SessionCoverageMixin:
         rows = [
             (int(row["id"]), row["role"], self._loaded_view_content(row["role"], self._decode_content(row["content"])))
             for row in conn.execute(
-                f"SELECT id, role, content FROM messages WHERE session_id = ? AND active = 1"
+                f"SELECT id, role, {text_sql('content')} AS content FROM transcript_rows WHERE session_id = ? AND active = 1"
                 f"{' AND id <= ?' if bound else ''} ORDER BY id",
                 (session_id, *((int(watermark),) if bound else ()))).fetchall()]
         # Dropping an orphan can make user rows adjacent only in the repaired view.

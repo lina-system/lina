@@ -88,11 +88,11 @@ def test_canonical_store_is_unchanged(tmp_path, monkeypatch, with_history):
     assert path.read_bytes() == before
 
 
-@pytest.mark.parametrize('missing', ['sessions', 'messages'])
+@pytest.mark.parametrize('missing', ['sessions', 'transcript_rows'])
 def test_missing_history_table_is_not_recreated_as_empty(tmp_path, monkeypatch, missing):
     from hermes_state_reconcile import repair_declarative_schema
     path = tmp_path / 'state.db'
-    kept = 'messages' if missing == 'sessions' else 'sessions'
+    kept = 'transcript_rows' if missing == 'sessions' else 'sessions'
     with closing(sqlite3.connect(path)) as conn:
         conn.execute(f'CREATE TABLE {kept} (id TEXT)')
         conn.execute(f"INSERT INTO {kept} VALUES ('retain-me')")
@@ -115,7 +115,7 @@ def test_snapshot_history_loss_is_not_promoted(tmp_path, monkeypatch):
         copy(source, destination, **kwargs)
         if kwargs.get('source_connection') is not None:
             with closing(sqlite3.connect(destination)) as conn:
-                conn.execute('DROP TABLE messages')
+                conn.execute('DROP TABLE transcript_rows')
                 conn.commit()
 
     monkeypatch.setattr(repair, '_copy_database_snapshot', changed_snapshot)

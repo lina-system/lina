@@ -1649,7 +1649,7 @@ def test_repair_decode_of_durable_sentinel_row_does_not_reappend(tmp_path):
 
     def _active_rows():
         return db._conn.execute(
-            "SELECT role FROM messages WHERE session_id = ? AND active = 1 ORDER BY id",
+            "SELECT role FROM transcript_rows WHERE session_id = ? AND active = 1 ORDER BY id",
             (sid,),
         ).fetchall()
 

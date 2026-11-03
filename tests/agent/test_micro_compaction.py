@@ -854,7 +854,7 @@ def test_superseding_marker_never_shows_a_user_input_twice_in_display_history(tm
     timeline = [e["preview"] for e in get_session_timeline(db, "s")["entries"]]
     assert sorted(timeline) == typed
     # Legacy stores (no display index, read-only so no backfill) take the payload-bounded page.
-    db._execute_write(lambda conn: conn.execute("UPDATE messages SET display_order = NULL"))
+    db._execute_write(lambda conn: conn.execute("UPDATE transcript_rows SET display_order = NULL"))
     legacy = SessionDB(db_path=tmp_path / "state.db", read_only=True)
     try:
         assert shown(legacy.get_messages("s", include_compacted=True)) == typed
@@ -990,8 +990,10 @@ def test_a_freshly_resumed_unchanged_history_is_not_a_stale_generation(tmp_path,
     unchanged history must still be reclaimed."""
     db, cc, held = _held_session(tmp_path, mode)
     # Pad a durable user row; the resume projection loads it stripped.
-    db._execute_write(lambda conn: conn.execute(
-        "UPDATE messages SET content = '  padded start \n' WHERE session_id = 's' AND role = 'user'"))
+    from hermes_state_store import rewrite_rows
+    ids = [row[0] for row in db._conn.execute(
+        "SELECT id FROM transcript_rows WHERE session_id = 's' AND role = 'user'")]
+    db._execute_write(lambda conn: rewrite_rows(conn, db.message_store, ids, {"content": "  padded start \n"}))
     held = db.get_resume_conversations("s")[0]
 
     result = _run_pass(cc, mode, held)
@@ -1063,7 +1065,7 @@ def _uid_rows(db, uid: str):
     compaction can clone a row back beside its archived twin, so one logical message_uid may have
     several live rows; the loader's ``_active_logical_message_row`` always stamps the newest)."""
     return db._execute_write(lambda conn: conn.execute(
-        "SELECT id, content FROM messages WHERE session_id = ? AND active = 1 AND message_uid = ? ORDER BY id",
+        "SELECT id, msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id = ? AND active = 1 AND message_uid = ? ORDER BY id",
         ("s", uid)).fetchall())
 
 
@@ -1085,17 +1087,7 @@ def test_the_uid_fence_cas_against_the_newest_active_copy(tmp_path):
     # Another surface's carried compaction clones the row back beside its twin: two active rows,
     # same uid, same payload. The clone is the newest (AUTOINCREMENT id).
     newest = _uid_rows(db, uid)[-1]
-    db._execute_write(lambda conn: conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_call_id, tool_calls, tool_name, "
-        "effect_disposition, timestamp, token_count, finish_reason, reasoning, reasoning_content, "
-        "reasoning_details, codex_reasoning_items, codex_message_items, platform_message_id, observed, "
-        "_compressed_summary, active, api_content, display_kind, display_metadata, message_uid, "
-        "absorbed_message_uids, tool_call_uids, tool_call_uid) "
-        "SELECT session_id, role, content, tool_call_id, tool_calls, tool_name, effect_disposition, "
-        "timestamp, token_count, finish_reason, reasoning, reasoning_content, reasoning_details, "
-        "codex_reasoning_items, codex_message_items, platform_message_id, observed, _compressed_summary, "
-        "active, api_content, display_kind, display_metadata, message_uid, absorbed_message_uids, "
-        "tool_call_uids, tool_call_uid FROM messages WHERE id = ?", (newest["id"],)))
+    db._execute_write(lambda conn: db._clone_message_rows(conn, [newest["id"]]))
     original_id, clone_id = (row["id"] for row in _uid_rows(db, uid))
     assert clone_id > original_id and len(_uid_rows(db, uid)) == 2
 
@@ -1130,22 +1122,13 @@ def test_the_uid_fence_lets_a_held_digest_stay_current_when_only_an_older_duplic
     uid = target["message_uid"]
 
     newest = _uid_rows(db, uid)[-1]
-    db._execute_write(lambda conn: conn.execute(
-        "INSERT INTO messages (session_id, role, content, tool_call_id, tool_calls, tool_name, "
-        "effect_disposition, timestamp, token_count, finish_reason, reasoning, reasoning_content, "
-        "reasoning_details, codex_reasoning_items, codex_message_items, platform_message_id, observed, "
-        "_compressed_summary, active, api_content, display_kind, display_metadata, message_uid, "
-        "absorbed_message_uids, tool_call_uids, tool_call_uid) "
-        "SELECT session_id, role, content, tool_call_id, tool_calls, tool_name, effect_disposition, "
-        "timestamp, token_count, finish_reason, reasoning, reasoning_content, reasoning_details, "
-        "codex_reasoning_items, codex_message_items, platform_message_id, observed, _compressed_summary, "
-        "active, api_content, display_kind, display_metadata, message_uid, absorbed_message_uids, "
-        "tool_call_uids, tool_call_uid FROM messages WHERE id = ?", (newest["id"],)))
+    db._execute_write(lambda conn: db._clone_message_rows(conn, [newest["id"]]))
     original_id, _clone_id = (row["id"] for row in _uid_rows(db, uid))
 
     # Only the OLDER duplicate is rewritten in place; the newest (the one the loader stamps and the
     # fence must compare against) still holds the held payload.
-    db._execute_write(lambda conn: conn.execute(
-        "UPDATE messages SET content = ? WHERE id = ?", ("[edited in place by another writer]", original_id)))
+    from hermes_state_store import rewrite_rows
+    db._execute_write(lambda conn: rewrite_rows(conn, db.message_store, [original_id],
+        {"content": "[edited in place by another writer]"}))
 
     assert db.rewritten_held_row_ids("s", held) == []

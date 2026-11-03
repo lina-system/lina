@@ -73,6 +73,9 @@ def episode_seed(label: str) -> int:
 
 def child_env(home: Path, hermes_home: Path) -> dict:
     """Probe hygiene: private HOME/HERMES_HOME, no provider credentials, repo importable."""
+    if not os.environ.get("LINA_STORE_DSN"):
+        from tests._fixtures.memory_store import PROCESS_STORE
+        PROCESS_STORE.app_dsn()
     env = {k: v for k, v in os.environ.items() if not k.endswith("_API_KEY")}
     env.update({
         "HOME": str(home),
@@ -330,7 +333,7 @@ def counts(db: Path) -> dict[str, int]:
     """Per-session canonical row counts (plus ``__total__``)."""
     conn = _connect(db)
     try:
-        rows = conn.execute("SELECT session_id, count(*) FROM messages GROUP BY session_id").fetchall()
+        rows = conn.execute("SELECT session_id, count(*) FROM transcript_rows GROUP BY session_id").fetchall()
     finally:
         conn.close()
     out = {sid: n for sid, n in rows}
@@ -340,11 +343,10 @@ def counts(db: Path) -> dict[str, int]:
 
 def token_counts(db: Path) -> dict[str, int]:
     """How many canonical rows carry each writer token (first word of the content)."""
-    conn = _connect(db)
-    try:
-        rows = conn.execute("SELECT content FROM messages WHERE content LIKE 'TK%'").fetchall()
-    finally:
-        conn.close()
+    from hermes_state import SessionDB
+    with SessionDB(db_path=db, read_only=True) as state:
+        rows = state._read_all("SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows "
+                               "WHERE msg_text(text_uid, 'content') LIKE 'TK%'")
     out: dict[str, int] = {}
     for (content,) in rows:
         tok = content.split(" ", 1)[0]
@@ -352,39 +354,15 @@ def token_counts(db: Path) -> dict[str, int]:
     return out
 
 
-def fts_problems(db: Path, sample_tokens: list[str]) -> list[str]:
-    """FTS must mirror canonical rows exactly: docsize == source rows for each external-content index,
-    FTS5's own 'integrity-check' against the content, and a sample of acked tokens found exactly once."""
+def search_problems(db: Path, sample_tokens: list[str]) -> list[str]:
+    """Session search finds each sampled acknowledged token exactly once."""
+    from hermes_state import SessionDB
     problems: list[str] = []
-    conn = _connect(db, ro=False)
-    try:
-        tables = {r[0] for r in conn.execute("SELECT name FROM sqlite_master").fetchall()}
-        meta = dict(conn.execute("SELECT key, value FROM state_meta").fetchall()) if "state_meta" in tables else {}
-        pending = {k: v for k, v in meta.items() if k.startswith("fts_rebuild") or k in ("fts_stale",)}
-        if pending:
-            problems.append(f"FTS recovery still pending in state_meta: {pending}")
-        canon = conn.execute("SELECT count(*) FROM messages").fetchone()[0]
-        pairs = [("messages_fts", "messages_fts_src"), ("messages_fts_trigram", "messages_fts_trigram_src")]
-        for fts, src in pairs:
-            if fts not in tables:
-                problems.append(f"{fts} missing")
-                continue
-            indexed = conn.execute(f"SELECT count(*) FROM {fts}_docsize").fetchone()[0]
-            expected = conn.execute(f"SELECT count(*) FROM {src}").fetchone()[0]
-            if indexed != expected:
-                problems.append(f"{fts}: {indexed} indexed rows vs {expected} source rows (canonical {canon})")
-            try:
-                conn.execute(f"INSERT INTO {fts}({fts}, rank) VALUES('integrity-check', 1)")
-            except sqlite3.DatabaseError as exc:
-                problems.append(f"{fts} integrity-check: {exc}")
+    with SessionDB(db_path=db, read_only=True) as state:
         for tok in sample_tokens:
-            hits = conn.execute("SELECT count(*) FROM messages_fts WHERE messages_fts MATCH ?",
-                                (f'"{tok}"',)).fetchone()[0]
+            hits = len(state.search_messages(f'"{tok}"'))
             if hits != 1:
                 problems.append(f"session search finds acked {tok} {hits}x (expected 1)")
-        conn.rollback()
-    finally:
-        conn.close()
     return problems
 
 
@@ -447,12 +425,10 @@ def compress_journal(chamber: Chamber, run: str) -> list[list[str]]:
 
 def token_flags(db: Path, token: str) -> list[tuple[int, int]]:
     """``(active, compacted)`` of every canonical row whose content carries ``token``."""
-    conn = _connect(db)
-    try:
-        rows = conn.execute("SELECT active, compacted FROM messages WHERE content LIKE ?",
-                            (f"%{token}%",)).fetchall()
-    finally:
-        conn.close()
+    from hermes_state import SessionDB
+    with SessionDB(db_path=db, read_only=True) as state:
+        rows = state._read_all("SELECT active, compacted FROM transcript_rows "
+                               "WHERE msg_text(text_uid, 'content') LIKE ?", (f"%{token}%",))
     return sorted((int(a), int(c)) for a, c in rows)
 
 
