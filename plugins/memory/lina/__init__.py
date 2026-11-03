@@ -243,13 +243,18 @@ class LinaMemoryProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         honcho = self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
-        found = self._memory_search().search(query, sources=["messages"])
-        messages = "\n".join(f"[{hit['ref']}] {hit['excerpt']}" for hit in found["results"])
-        return "\n\n".join(part for part in (honcho, messages) if part)
+        return self._with_external_messages(honcho, query)
 
     def recall_query(self, query: str, *, session_id: str = "") -> str:
         """Explicit ``memory_recall``. Honcho's prefetch is cadence-gated; this is not."""
-        return self._honcho.recall_query(query, session_id=session_id) if self._honcho_on else ""
+        honcho = self._honcho.recall_query(query, session_id=session_id) if self._honcho_on else ""
+        return self._with_external_messages(honcho, query)
+
+    def _with_external_messages(self, honcho: str, query: str) -> str:
+        """Per-turn and explicit recall both carry external-message hits; the source switch empties them (lina#23)."""
+        found = self._memory_search().search(query, sources=["messages"])
+        messages = "\n".join(f"[{hit['ref']}] {hit['excerpt']}" for hit in found["results"])
+        return "\n\n".join(part for part in (honcho, messages) if part)
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         if self._honcho_on:
