@@ -68,6 +68,31 @@ def test_real_cli_missing_fixture_row_exits_nonzero(tmp_path, _memory_store):
     assert "session-a:5" in report["error"]
 
 
+def test_real_cli_snapshot_rerun_after_live_ingest(tmp_path, _memory_store, memory_store_sql):
+    # Given: a real migration followed by the normal live ingestion command.
+    from tests.hermes_cli.test_external_messages import event, message
+
+    command = _command(tmp_path, _memory_store)
+    first = _run(command, tmp_path)
+    assert first.returncode == 0, first.stdout + first.stderr
+    original = tmp_path / "spool/events.jsonl"
+    with original.open("ab") as stream:
+        stream.write(event(message(native="new-live-row"), number=42))
+    live = command[:command.index("migrate")] + ["memory", "external-messages", "ingest", "--spool", str(original)]
+    ingested = _run(live, tmp_path)
+    assert ingested.returncode == 0, ingested.stdout + ingested.stderr
+    cursor = memory_store_sql("SELECT * FROM memory.external_message_cursors")
+
+    # When: the exact original migration command is repeated.
+    repeated = _run(command, tmp_path)
+
+    # Then: copied rows match and the advanced live cursor is untouched.
+    assert repeated.returncode == 0, repeated.stdout + repeated.stderr
+    external = next(row for row in json.loads(repeated.stdout)["sources"] if row["source"] == "external")
+    assert external["inserted"] == 0 and external["matched"] == external["source_rows"] == 4
+    assert memory_store_sql("SELECT * FROM memory.external_message_cursors") == cursor
+
+
 def test_existing_configuration_migration_subcommands_still_dispatch():
     import argparse
 
