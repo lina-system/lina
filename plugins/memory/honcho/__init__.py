@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -35,27 +34,26 @@ from tools.registry import tool_error
 logger = logging.getLogger(__name__)
 
 
-# Gateway-internal notifications arrive through the same user-role channel as genuine
-# user messages; they are execution metadata and must never become durable memory.
-# Deliberately anchored: a human discussing one of these strings mid-message is valid input.
-_INTERNAL_GATEWAY_TURN_RE = re.compile(
-    r"^\s*(?:"
-    r"\[ASYNC (?:DELEGATION )?(?:BATCH )?COMPLETE[^\]]*\]|"
-    r"\[CONTEXT COMPACTION[^\]]*\]|"
-    r"\[CONTEXT SUMMARY\]:?|"
-    r"\[PRIOR CONTEXT[^\]]*\]|"
-    r"\[Your active task list was preserved across context compression\]|"
-    r"\[IMPORTANT: Background process \d+ matched watch pattern[^\n]*|"
-    r"A background fan-out of \d+ subagent\(s\) you dispatched earlier has finished\.|"
-    r"A background subagent you dispatched earlier has finished\."
-    r")",
-    re.IGNORECASE,
-)
+def _turn_rule(messages, *, agent_context: str, platform: str, turn_author, turn_start=None) -> Any:
+    """The policy row for a turn handed straight to this provider (``memory.provider: honcho``): gateway, cron and
+    delegation notices arrive on the user role like a person's message, and only their route tells them apart
+    (lina-memory's policy table, plugins/memory/lina/policy.yaml)."""
+    from plugins.memory import import_provider_module
+
+    policy = import_provider_module("lina-memory", "policy")
+    table = policy.load_policy()
+    return table.rule(table.route_for(policy.signals_for_turn(
+        messages, agent_context=agent_context, platform=platform, turn_author=turn_author, turn_start=turn_start)))
 
 
-def _is_internal_gateway_turn(text: str) -> bool:
-    """Return True for machine-generated gateway/delegation notifications."""
-    return bool(_INTERNAL_GATEWAY_TURN_RE.match(text or ""))
+def _record_metadata(turn_record: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``add_message`` keywords carrying a lina-memory turn record's ids onto the user and the reply message."""
+    if turn_record is None:
+        return {}, {}
+    shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
+              "lina_person": turn_record.person_id, "lina_route": turn_record.route}
+    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid}},
+            {"metadata": {**shared, "lina_uid": turn_record.reply_uid, "lina_route": "agent_reply"}})
 
 
 def _cfg_usable(cfg) -> bool:
@@ -123,7 +121,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             logger.debug("Honcho backup_paths failed", exc_info=True)
             return []
 
-    def __init__(self, query_rewriter: Optional[Callable[[str], str]] = None):
+    def __init__(self, query_rewriter: Optional[Callable[[str], str]] = None, *, card_in_prompt: bool = False):
+        # card_in_prompt: the base layer (representation + card) rides the system prompt via
+        # session_card_block(), so per-turn recall carries only dialectic results (lina#21).
+        self._card_in_prompt = card_in_prompt
         self._manager = None   # HonchoSessionManager
         self._config = None    # HonchoClientConfig
         self._session_key = ""
@@ -188,6 +189,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._init_peer_platform: str = "cli"
         self._init_peer_notice_emitted = False
         self._cron_skipped = False  # cron and flush contexts disable the plugin entirely
+        self._route_context: dict[str, str] = {"agent_context": "", "platform": ""}
 
     @property
     def name(self) -> str:
@@ -220,11 +222,12 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             {"key": "baseUrl", "description": "Honcho base URL (for self-hosted)"},
         ]
 
-    def post_setup(self, hermes_home: str, config: dict) -> None:
-        """Run the full Honcho setup wizard after provider selection."""
+    def post_setup(self, hermes_home: str, config: dict, *, memory_provider: str = "honcho") -> None:
+        """Run the full Honcho setup wizard after provider selection. ``memory_provider`` is the provider the user
+        chose, which the wizard puts in the memory slot (lina-memory when it drives Honcho)."""
         import types
         from .cli import cmd_setup
-        cmd_setup(types.SimpleNamespace())
+        cmd_setup(types.SimpleNamespace(memory_provider=memory_provider))
 
     # ----- Session lifecycle -----
 
@@ -233,6 +236,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._recall_generation = object()
         try:
             agent_context, platform = kwargs.get("agent_context", ""), kwargs.get("platform", "cli")
+            self._route_context = {"agent_context": str(agent_context or ""), "platform": str(platform or "")}
             if agent_context in {"cron", "flush"} or platform == "cron":
                 logger.debug("Honcho skipped: cron/flush context (agent_context=%s, platform=%s)",
                              agent_context, platform)
@@ -468,6 +472,30 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return ""
         return _PROMPT_HEADERS.get(self._recall_mode, _PROMPT_HEADERS["hybrid"])
 
+    def session_card_block(self) -> str:
+        """The base layer for the system prompt in card_in_prompt mode, fetched once per prompt build within
+        the turn-1 base wait that prefetch no longer spends on it. On timeout or error the prompt is built
+        without it (logged)."""
+        if not self._card_in_prompt or self._cron_skipped or self._recall_mode == "tools":
+            return ""
+        wait = self._first_turn_wait(self._FIRST_TURN_BASE_TIMEOUT)
+        deadline = time.monotonic() + wait
+        if not self._session_ready():
+            self._start_session_init_background()
+            if self._init_thread is not None:
+                self._init_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        holder: dict[str, dict] = {}
+        if self._session_ready():
+            def _fetch() -> None:
+                holder["ctx"] = self._manager.get_prefetch_context(self._session_key, None) or {}
+
+            self._spawn_write(_fetch, "honcho-session-card", "Honcho person card failed: %s").join(
+                timeout=max(0.0, deadline - time.monotonic()))
+        if "ctx" not in holder:
+            logger.info("Honcho person card not ready within %.1fs; system prompt built without it", wait)
+            return ""
+        return self._format_first_turn_context(holder["ctx"])
+
     @staticmethod
     def _resolve_injection_log_path(look: _HostLookup) -> Optional[str]:
         """Where to append the injection audit, or None to keep it off.
@@ -606,7 +634,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         # One-time notice, relayed by the model, that auth is dead and memory is paused.
         parts = [self._pop_auth_notice()]
         # First-turn mode suppresses only the base layer; dialectic is independent.
-        if not (self._injection_frequency == "first-turn" and self._turn_count > 1):
+        if not (self._card_in_prompt or self._injection_frequency == "first-turn" and self._turn_count > 1):
             parts.append(self._fetch_base_context_layer(query, first_turn_base_deadline))
         if not waited:
             self._first_turn_dialectic_wait(query)
@@ -667,7 +695,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 query = previous
         if not query or self._is_trivial_prompt(query):
             return False
-        if not (resumed and self._injection_frequency == "first-turn"):
+        if not (self._card_in_prompt or resumed and self._injection_frequency == "first-turn"):
             self._fetch_base_context_layer(query, base_deadline, fired_at=fired_at)
         if not resumed:
             self._first_turn_dialectic_wait(query)
@@ -745,7 +773,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         # First-turn-only base context never needs a later refresh.
         context_due = self._context_cadence <= 1 or (self._turn_count - self._last_context_turn) >= self._context_cadence
-        if self._injection_frequency != "first-turn" and context_due:
+        if self._injection_frequency != "first-turn" and context_due and not self._card_in_prompt:
             self._last_context_turn = self._turn_count
             try:
                 self._manager.prefetch_context(self._session_key, query)
@@ -861,16 +889,29 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def sync_turn(
         self, user_content: str, assistant_content: str, *, session_id: str = "",
-        turn_author: Optional[dict[str, Any]] = None,
+        turn_author: Optional[dict[str, Any]] = None, messages: Optional[list[dict[str, Any]]] = None,
+        turn_record: Any = None, session_key: str = "", turn_start: Optional[int] = None,
     ) -> None:
         """Record the conversation turn in Honcho (non-blocking), chunking messages that
         exceed the Honcho API limit. Honors saveMessages: false. ``turn_author`` names who wrote
         the user side. The ``on_turn_start`` stash is the fallback for callers that never pass it.
-        A bot author's turn is written into that bot's own a2a session, never the human's."""
+        A bot author's turn is written into that bot's own a2a session, never the human's.
+
+        ``turn_record`` is lina-memory's record of the turn (plugins/memory/lina): it has already applied the
+        policy table, and its person, agent, conversation and message ids ride on each message's metadata.
+        Without one, the policy table is applied here to the route ``messages`` and the init context show, read at
+        ``turn_start`` (the turn's first row, as the runtime fixed it) so a later ``/steer`` or stop-gate note never
+        decides it.
+        lina-memory calls this from its worker, possibly after the next turn started, so it passes the author
+        and ``session_key`` (``self.session_key`` when the turn finished) instead of letting them be read here."""
         if not self._writes_enabled():
             return
-        if _is_internal_gateway_turn(user_content):
-            logger.debug("Honcho sync skipped machine-generated gateway turn")
+        author = turn_author if isinstance(turn_author, dict) else self._turn_author
+        base_key = session_key or self._session_key
+        allowed = turn_record.honcho if turn_record is not None else _turn_rule(
+            messages, turn_author=author, turn_start=turn_start, **self._route_context).honcho
+        if not allowed:
+            logger.debug("Honcho sync skipped a turn its route keeps out of Honcho")
             return
         if not self._ready_or_kick_init():
             return
@@ -883,7 +924,6 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if not clean_user_content and not clean_assistant_content:
             return
 
-        author = turn_author if isinstance(turn_author, dict) else self._turn_author
         session_kwargs: dict[str, str] = {}
         if author.get("is_bot"):
             # A bot's turn never lands in the human's session: its own a2a session or nothing.
@@ -895,25 +935,27 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 logger.debug("Honcho sync skipped a bot-authored turn that named no author id")
                 return
             bot_peer_id = self._manager.resolve_author_peer_id(
-                self._session_key, author_id, author.get("name"), is_bot=True)
+                base_key, author_id, author.get("name"), is_bot=True)
             if not bot_peer_id or bot_peer_id == self._manager.assistant_peer_id():
                 logger.debug("Honcho sync skipped a bot-authored turn: author %s has no peer of its own", author_id)
                 return
-            session_key = self._a2a_session_key({**author, "id": author_id})
+            target_key = self._a2a_session_key({**author, "id": author_id}, base_key)
             # The bot is the a2a session's own user peer, so its messages need no per-message author.
             session_kwargs["user_peer_id"] = bot_peer_id
             author_peer_id = None
         else:
-            session_key = self._session_key
+            target_key = base_key
             # Resolved before the thread starts so a following turn cannot retag a queued write.
-            author_peer_id = self._manager.resolve_author_peer_id(session_key, author.get("id"), author.get("name"))
+            author_peer_id = self._manager.resolve_author_peer_id(target_key, author.get("id"), author.get("name"))
+
+        user_meta, reply_meta = _record_metadata(turn_record)
 
         def _sync():
-            session = self._manager.get_or_create(session_key, **session_kwargs)
+            session = self._manager.get_or_create(target_key, **session_kwargs)
             for chunk in self._chunk_message(clean_user_content, msg_limit) if clean_user_content else ():
-                session.add_message("user", chunk, author_peer_id=author_peer_id)
+                session.add_message("user", chunk, author_peer_id=author_peer_id, **user_meta)
             for chunk in self._chunk_message(clean_assistant_content, msg_limit) if clean_assistant_content else ():
-                session.add_message("assistant", chunk)
+                session.add_message("assistant", chunk, **reply_meta)
             # save() (not _flush_session) so writeFrequency batching is honored.
             self._manager.save(session)
 
@@ -921,7 +963,33 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             self._sync_thread.join(timeout=5.0)
         self._sync_thread = self._spawn_write(_sync, "honcho-sync", "Honcho sync_turn failed: %s")
 
-    def _a2a_session_key(self, author: dict[str, Any]) -> str:
+    @property
+    def session_key(self) -> str:
+        """The Honcho session this provider writes the current turn to ("" before Honcho is configured)."""
+        return self._session_key
+
+    def source_keys(self, turn_author: Optional[dict[str, Any]] = None, *, session_key: str = "") -> dict[str, str]:
+        """The Honcho names of this turn's person, agent and conversation, as Honcho derives them today (peerName,
+        aliases and runtime identities; aiPeer; the resolved session key), each prefixed with the workspace. Empty
+        before Honcho is configured. Reading them never creates or renames a peer. ``session_key`` is the session
+        the turn was in when it finished (default: the current one)."""
+        cfg = self._config
+        key = session_key or self._session_key
+        if cfg is None or not key:
+            return {}
+        workspace = str(getattr(cfg, "workspace_id", "") or "")
+        keys = {"agent": f"{workspace}:{assistant_peer_id_for(cfg)}", "conversation": f"{workspace}:{key}"}
+        author = turn_author if isinstance(turn_author, dict) else {}
+        if self._manager is not None and not author.get("is_bot"):
+            try:
+                peer = (self._manager.resolve_author_peer_id(key, author.get("id"), author.get("name"))
+                        or self._manager._resolve_user_peer_id(key))
+                keys["person"] = f"{workspace}:{peer}"
+            except Exception:  # health: allow BLE001 -- a session with no nameable peer has no person key
+                logger.debug("Honcho person key unavailable", exc_info=True)
+        return keys
+
+    def _a2a_session_key(self, author: dict[str, Any], base_key: str = "") -> str:
         """Honcho session for one sender bot's turns into this agent, named from core's ``a2a_key``.
 
         This agent's ``aiPeer`` is in the key because two profiles can share a workspace and a session
@@ -929,7 +997,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         prefix, _, ident = (a2a_key(author) or "").partition(":")
         digest = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:8]
         recipient = assistant_peer_id_for(self._config)
-        key = f"{self._session_key}:{prefix}:{recipient}:{sanitize_peer_id(ident)}-{digest}"
+        key = f"{base_key or self._session_key}:{prefix}:{recipient}:{sanitize_peer_id(ident)}-{digest}"
         return HonchoClientConfig._enforce_session_id_limit(key, key)
 
     def _bot_turn_write_refusal(self) -> Optional[str]:

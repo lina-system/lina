@@ -123,6 +123,96 @@ def test_prs_passes_when_issue_closed_by_green_merged_pr(board, gh, capsys):
     assert not any("number=99" in c for c in gh.calls()), "only ## To-dos lines are to-dos"
 
 
+@pytest.mark.parametrize("creator,state,expected", [
+    ("custom-ci[bot]", "success", "success"),
+    ("a-user", "success", "missing"),
+    ("other-ci[bot]", "success", "missing"),
+    ("custom-ci[bot]", "failure", "failure"),
+    ("custom-ci[bot]", "pending", "pending"),
+])
+def test_pinned_status_creator_matches_in_both_readers(gh, creator, state, expected):
+    """An unrelated same-head run supplies the API app mapping, never a fixed Actions ID (#153)."""
+    from hermes_cli import kanban_pr_acceptance as acceptance
+    from hermes_cli import merge_rules
+
+    records = _acceptance()
+    required = [("tests", 8675309)]
+    records[0][2]["data"]["repository"]["pullRequest"]["baseRef"] = None
+    records[1][2] = [[{"type": "required_status_checks", "parameters": {
+        "required_status_checks": [{"context": "tests", "integration_id": 8675309}]}}]]
+    runs = records[2][2][0]["check_runs"]
+    runs[0].update(name="app discovery", app={"id": 8675309, "slug": "custom-ci"})
+    statuses = [{"id": 8, "context": "tests", "state": state, "creator": {"login": creator}}]
+    records[3][2] = [statuses]
+    gh.set(records)
+
+    receipt = acceptance.collect_acceptance("acme/app", "https://github.com/acme/app/pull/34")
+    assert receipt["classification"] == expected, receipt
+
+    verdict = merge_rules.required_checks(required, runs, statuses)
+    assert verdict.code == {"success": gates.PASS, "missing": gates.WAIT,
+                            "failure": gates.FAIL, "pending": gates.WAIT}[expected], verdict.text()
+
+
+def test_pinned_and_unpinned_statuses_keep_separate_creator_rules(gh):
+    """Pinned bot evidence and unpinned user/other-app evidence can satisfy the same head."""
+    from hermes_cli import kanban_pr_acceptance as acceptance
+
+    records = _acceptance()
+    records[0][2]["data"]["repository"]["pullRequest"]["baseRef"] = None
+    records[1][2] = [[{"type": "required_status_checks", "parameters": {
+        "required_status_checks": [{"context": name, "integration_id": app}
+                                   for name, app in [("tests", 42), ("legacy", None), ("any-app", -1)]]}}]]
+    records[2][2][0]["check_runs"][0].update(name="discovery", app={"id": 42, "slug": "custom-ci"})
+    records[3][2] = [[{"id": i, "context": name, "state": "success", "creator": {"login": creator}}
+                     for i, name, creator in [(8, "tests", "custom-ci[bot]"),
+                                              (9, "legacy", "a-user"), (10, "any-app", "other[bot]")]]]
+    gh.set(records)
+
+    receipt = acceptance.collect_acceptance("acme/app", "https://github.com/acme/app/pull/34")
+
+    assert receipt["ok"], receipt
+    assert {c["name"]: c["classification"] for c in receipt["checks"]} == {
+        "tests": "success", "legacy": "success", "any-app": "success"}
+
+
+def _recorded_pr139(ticked):
+    """Recorded 2026-11-03 gh answers, projected to consumed fields; no network in the replay."""
+    fixture = json.loads((Path(__file__).parent / "fixtures/kanban_gates/pr139.json").read_text())
+    sha, pr = fixture["head"], fixture["pr"]
+    issue = {**fixture["issue"], "stateReason": "COMPLETED",
+             "closedByPullRequestsReferences": {"nodes": [
+                 {**pr, "merged": True, "repository": {"nameWithOwner": "lina-system/lina"}}]}}
+    if ticked:
+        from hermes_cli.merge_rules import tick_done_when
+        issue["body"] = tick_done_when(issue["body"])
+    return [
+        [["closedByPullRequestsReferences", "number=127"], 0, {"data": {"repository": {"issue": issue}}}],
+        [["pullRequest(number:139)"], 0, {"data": {"repository": {"pullRequest": {
+            "headRefOid": sha, "baseRefName": "dev", "state": "MERGED", "baseRef": None}}}}],
+        [["rules/branches/dev"], 0, fixture["rules"]],
+        [[f"commits/{sha}/check-runs"], 0, [{"total_count": len(fixture["runs"]), "check_runs": fixture["runs"]}]],
+        [[f"commits/{sha}/statuses"], 0, [fixture["statuses"]]],
+        [["repos/lina-system/lina/pulls/139"], 0,
+         {"head": {"sha": sha}, "base": {"ref": "dev"}, "state": "closed", "merged": True}],
+    ]
+
+
+def test_recorded_actions_statuses_pass_only_after_done_when_ticked(board, gh):
+    tid = _card("## To-dos\n\n- lina-system/lina#127\n")
+    command = [sys.executable, "-I", str(GATES_FILE), "--db", str(board), "prs", "--card", tid]
+    gh.set(_recorded_pr139(True))
+
+    ticked = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+    gh.set(_recorded_pr139(False))
+    unticked = subprocess.run(command, capture_output=True, text=True, timeout=30, check=False)
+
+    assert ticked.returncode == gates.PASS, ticked.stdout + ticked.stderr
+    assert "#139 checks green; Done when 13/13" in ticked.stdout
+    assert unticked.returncode == gates.FAIL, unticked.stdout + unticked.stderr
+    assert "Done when 0/13 ticked" in unticked.stdout
+
+
 @pytest.mark.parametrize("record, accept, expected, why", [
     (_issue(body="## Done when\n\n- [x] one\n- [ ] two\n"), _acceptance(), gates.FAIL, "Done when 1/2"),
     (_issue(state="OPEN"), _acceptance(), gates.FAIL, "still open"),

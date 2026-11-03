@@ -32,6 +32,10 @@ ENTRY_POINTS_GROUP = "hermes_agent.memory_providers"
 # Per Hermes home (plugin managers are per home too): pruning under one multiplexed profile must
 # only retract that profile's provider skills, never a sibling profile's.
 _REGISTERED_MEMORY_PROVIDER_SKILLS: dict[str, dict[str, Path]] = {}
+# Bundled providers whose directory is not named like the provider: ``memory.provider: lina-memory`` is
+# ``plugins/memory/lina/`` (lina#20).
+_BUNDLED_DIRS = {"lina-memory": "lina"}
+_BUNDLED_NAMES = {directory: name for name, directory in _BUNDLED_DIRS.items()}
 # Native extensions whose first import must not race another thread (#58083 warm-up).
 _NATIVE_WARM_IMPORTS: tuple[str, ...] = ("numpy",)
 
@@ -102,9 +106,9 @@ def _is_bundled(provider_dir: Path) -> bool:
 
 
 def _module_name(provider_dir: Path, name: str) -> str:
-    """``plugins.memory.<name>`` for bundled providers, else under the synthetic user namespace."""
+    """``plugins.memory.<directory>`` for bundled providers, else under the synthetic user namespace."""
     if _is_bundled(provider_dir):
-        return f"plugins.memory.{name}"
+        return f"plugins.memory.{provider_dir.name}"
     # Separate package trees, including relative imports, across homes/sources.
     digest = hashlib.sha256(str(provider_dir.resolve()).encode()).hexdigest()[:16]
     return f"{_USER_NAMESPACE}.{name}__source_{digest}"
@@ -117,7 +121,7 @@ def _external_source_dirs() -> list[Path]:
 
 def _iter_provider_dirs() -> list[tuple[str, Path]]:
     """``(name, path)`` for bundled, then user-installed, then project-local; first-seen wins."""
-    dirs = [(child.name, child) for child in _loader.iter_plugin_dirs(_MEMORY_PLUGINS_DIR)]
+    dirs = [(_BUNDLED_NAMES.get(child.name, child.name), child) for child in _loader.iter_plugin_dirs(_MEMORY_PLUGINS_DIR)]
     seen = {name for name, _ in dirs}
     for source_dir in _external_source_dirs():
         for child in sorted(source_dir.iterdir()):
@@ -149,7 +153,7 @@ def find_provider_dir(name: str) -> Optional[Path]:
     package dir. The entry-point case matters because ``config_schema.py`` and
     ``cli.py`` are read from disk, not imported; without a directory a pip-installed
     provider silently loses its dashboard panel and ``hermes <provider>`` commands."""
-    bundled = _MEMORY_PLUGINS_DIR / name
+    bundled = _MEMORY_PLUGINS_DIR / _BUNDLED_DIRS.get(name, name)
     if bundled.is_dir() and (bundled / "__init__.py").exists():
         return bundled
     for source_dir in _external_source_dirs():
@@ -554,12 +558,40 @@ def _prune_inactive_memory_provider_skills(active_provider: Optional[str] = None
         registered.pop(qualified_name, None)
 
 
+def driven_providers(name: Optional[str]) -> list[str]:
+    """The providers *name* drives as adapters from the one memory slot (``drives:`` in its ``plugin.yaml``):
+    their CLI commands are offered while it holds the slot, and their setup keeps it there."""
+    plugin_dir = find_provider_dir(name) if name else None
+    if plugin_dir is None:
+        return []
+    try:
+        from utils import fast_safe_load
+        with open(plugin_dir / "plugin.yaml", encoding="utf-8-sig") as f:
+            drives = (fast_safe_load(f) or {}).get("drives") or []
+    except Exception:  # health: allow BLE001 -- an unreadable manifest drives nothing
+        return []
+    return [d for d in drives if isinstance(d, str) and d != name] if isinstance(drives, list) else []
+
+
+def slot_provider_for(name: str) -> str:
+    """The provider that should hold the memory slot when *name* is set up: the active one if it drives *name*."""
+    active = _get_active_memory_provider()
+    return active if active and name in driven_providers(active) else name
+
+
 def discover_plugin_cli_commands() -> list[dict]:
-    """CLI commands for the **active** memory plugin only. Imports just its ``cli.py``
-    (``register_cli(subparser)``), never the provider module, so it is safe during
-    argparse setup. At most one dict: name/help/description/setup_fn/handler_fn/plugin."""
+    """CLI commands for the **active** memory plugin and the providers it drives (``drives:``). Imports just
+    their ``cli.py`` (``register_cli(subparser)``), never a provider module, so it is safe during argparse
+    setup. One dict per provider with a CLI: name/help/description/setup_fn/handler_fn/plugin."""
     active_provider = _get_active_memory_provider() if _MEMORY_PLUGINS_DIR.is_dir() else None
-    plugin_dir = find_provider_dir(active_provider) if active_provider else None
+    if not active_provider:
+        return []
+    return [cmd for name in (active_provider, *driven_providers(active_provider))
+            for cmd in _provider_cli_command(name)]
+
+
+def _provider_cli_command(active_provider: str) -> list[dict]:
+    plugin_dir = find_provider_dir(active_provider)
     if not plugin_dir or not (plugin_dir / "cli.py").exists():
         return []
 
@@ -597,6 +629,8 @@ def discover_plugin_cli_commands() -> list[dict]:
             "handler_fn": getattr(cli_mod, f"{active_provider}_command", None),
             "plugin": active_provider,
         }]
-    except Exception as e:
-        logger.debug("Failed to scan CLI for memory plugin '%s': %s", active_provider, e)
+    except Exception:  # health: allow BLE001 -- a provider whose CLI fails to import must not cost hermes its CLI
+        # Fixed text only: a provider's import error can carry config values, so neither the exception nor a
+        # traceback is logged here (CodeQL: clear-text logging). `hermes memory status` shows the provider state.
+        logger.debug("Failed to scan the CLI of a memory plugin")
         return []

@@ -1152,14 +1152,17 @@ components:
         resync:
           type: boolean
           enum: [true]
-          description: The since cursor was unreadable or older than the kept history; refetch every snapshot.
+          description: >
+            The since cursor was unreadable or older than the kept history, or a store that could not be read when
+            the cursor was taken reads again (what it wrote meanwhile is not known); refetch every snapshot.
     ChangeMessage:
       description: >
         A message of the change stream (lina#150). GET /api/lina/events is a WebSocket, not a JSON route (OpenAPI
         cannot describe it as a path): upgrade with the dashboard credential (?token=, as the other dashboard
         sockets) and optional since=<cursor>. Without since the first message is a ChangeBatch with the tail cursor
         and no events; with a kept since it is the missed events; otherwise one ChangeResync. Then a ChangeBatch
-        whenever something changed, at most every 300 ms.
+        whenever something changed, at most every 300 ms, and one ChangeResync when a store that was down when the
+        cursor was taken reads again.
       oneOf:
         - $ref: "#/components/schemas/ChangeBatch"
         - $ref: "#/components/schemas/ChangeResync"

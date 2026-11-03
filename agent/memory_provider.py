@@ -135,6 +135,11 @@ class MemoryProvider(ABC):
         """STATIC system-prompt text; "" to skip. Recalled context goes through prefetch(), not here."""
         return ""
 
+    def session_card_block(self) -> str:
+        """The person card for the notes-and-card block, fetched when the system prompt is built (session
+        start, compaction rebuild) and frozen in it until the next build; "" to skip (lina#21)."""
+        return ""
+
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Formatted recall context for the upcoming turn ("" if none). Must be fast — recall
         in the background and return cached results; ``session_id`` scopes concurrent sessions."""
@@ -154,7 +159,11 @@ class MemoryProvider(ABC):
         turn_author: Optional[dict[str, Any]] = None,
     ) -> None:
         """Persist a completed turn (non-blocking). ``messages`` is the OpenAI-style list so far.
-        ``turn_author`` (``{"id", "name", "is_bot"}``) is who wrote the user side; the manager sends it only to signatures that accept it."""
+        ``turn_author`` (``{"id", "name", "is_bot"}``) is who wrote the user side; the manager sends it only to signatures that accept it,
+        and a person's turn as ``{"id": None, "name": None, "is_bot": False}`` (``agent.turn_author.human_turn_author``).
+        A provider that stores the transcript only on this machine may name a ``local_messages`` parameter: it then
+        gets the unredacted list as well (``MemoryManager.sync_all``). One that names ``turn_start`` gets the index in
+        ``messages`` of the turn's first row, as the runtime fixed it when the turn began (None when unknown)."""
 
     @abstractmethod
     def get_tool_schemas(self) -> list[dict[str, Any]]:

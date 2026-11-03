@@ -5,7 +5,7 @@ All memory lives in one Postgres with pgvector, run in Docker and set up by LINA
 
 | Schema | Holds |
 | --- | --- |
-| `memory` | messages |
+| `memory` | messages, the identity registry (`identities`, `identity_keys`) |
 | `ctx` | context summaries |
 | `ltm` | long-term memory (the Honcho server's tables) |
 | `vec` | embeddings |
@@ -24,7 +24,9 @@ revision in `ltm.alembic_version`). Run on a machine that already has a store, i
 (see below).
 
 The files are in `services/store/`: `compose.yaml` (compose project `lina-store`) and
-`initdb/10-lina-store.sh`, which runs once on an empty cluster. One store serves every profile, so
+`initdb/10-lina-store.sh`, which runs once on an empty cluster. They and `migrations/` are package data of
+`services.store`, so an installed wheel carries them; the Honcho build context (`services/honcho`) is not
+packaged, and `install` needs a source checkout for it. One store serves every profile, so
 its settings are under the LINA root, not a profile home, in `store/`:
 
 | File | What it is |
@@ -88,7 +90,7 @@ profile, so row-level security keeps each profile to its rows. Agents find the s
 | `source` | `agent` for agent turns (`messages` for external messages, #18) |
 | `agent_id` | the profile; row-level security applies through it |
 | `session_id`, `seq_in_session` | the Hermes session that first wrote the row and its row id there |
-| `conversation_id` | channel: `messages:<platform>:<room_id>` for external messages; agent identity is filled by #20 |
+| `conversation_id` | the conversation: from the identity registry for agent turns (#20, [memory-layer.md](memory-layer.md)), null until `lina-memory` resolves the turn; `messages:<platform>:<room_id>` for external messages |
 | `author` | nullable author key: `<platform>:<author_id>` for external messages; NULL for agent rows (not a resolved person) |
 | `role`, `content`, `tool_name`, `tool_call_id`, `ts` | the message; `content` is plain text (the text parts of multimodal content, NUL removed) |
 | `tool_calls` | the tool calls as `jsonb` |
@@ -138,7 +140,8 @@ Deleting shared text cascades to its Honcho metadata and dependent references. D
 Honcho metadata does not delete shared text. Direct `document_sources` edges for the deleted
 public message ID are detached; document-to-document reasoning edges are not reinterpreted.
 
-A row is never changed after it is written. Hermes writes one message several times: compaction keeps the
+A row is never changed after it is written, except `conversation_id`, filled once while it is null (found by base
+uid through the partial index `messages_unfilled_base`, which holds only rows still waiting for it). Hermes writes one message several times: compaction keeps the
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the
 original beside a shortened copy. Copies with the same text share one row; a copy whose text differs gets its
 own version row. Deleting a session deletes its `transcript_rows`, never the text: `lina store gc` (also run by the

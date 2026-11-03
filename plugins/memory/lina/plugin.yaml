@@ -1,0 +1,5 @@
+name: lina-memory
+version: 1.0.0
+description: "LINA's memory layer — one receive path per finished turn, a policy table and an identity registry, driving LCM-X and Honcho."
+# Memory providers this one drives from the slot: their CLI (`hermes honcho ...`) stays available.
+drives: [honcho]

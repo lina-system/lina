@@ -1029,6 +1029,9 @@ def build_environment_hints() -> str:
 # Marks the runtime block after project prose for persisted-prompt cwd validation.
 RUNTIME_ENVIRONMENT_HEADING = "# Hermes runtime environment"
 RUNTIME_ENVIRONMENT_END = "<!-- End Hermes runtime environment -->"
+# Marks the notes and person card that close the prompt, after the runtime block (lina#21).
+NOTES_HEADING = "# Notes and person card"
+NOTES_END = "<!-- End notes and person card -->"
 
 CONTEXT_FILE_MAX_CHARS = 20_000
 CONTEXT_TRUNCATE_HEAD_RATIO = 0.7

@@ -4,8 +4,10 @@ Built once per session and reused across turns (only context compression
 triggers a rebuild) so the upstream prefix cache stays warm.  Three tiers are
 joined with ``\\n\\n``: ``stable`` (identity, guidance, env hints, coding brief,
 platform hints), ``context`` (workspace snapshot, caller ``system_message``,
-context files) and ``volatile`` (skills index, memory, USER.md, external memory
-provider, timestamp line).  See ``references/system-prompt-invariant.md``.
+context files) and ``volatile`` (skills index, plugin sections, profile line,
+session start date and identity lines, runtime environment, then the notes and
+person card: memory, USER.md, external memory provider).  Today's date changes
+with the day, so it rides a turn note (``agent/date_note.py``).  See ``references/system-prompt-invariant.md``.
 """
 
 from __future__ import annotations
@@ -493,36 +495,43 @@ def _zone_bits(now: Any, tz: Any) -> list[str]:
 
 
 def _timestamp_line(agent: Any) -> str:
-    """Date-only so the prompt is byte-stable for the day; zone + offset so
-    tools needn't guess EST vs EDT. Long-lived sessions get an "as of" line on
-    rebuild days (the cache prefix is already invalidated at that boundary)."""
+    """The session's start date (from its id or lineage root, so byte-stable for the session and across
+    compaction rebuilds), zone + offset so tools needn't guess EST vs EDT, then the identity trailer.
+    Today's date changes with the day, so it never sits here: ``date_line`` + ``agent/date_note.py``
+    deliver it as a turn note once it differs from the start date (lina#21)."""
     from hermes_time import get_timezone as _hermes_tz, now as _hermes_now, safe_strftime
     now = _hermes_now()
     _bits = _zone_bits(now, _hermes_tz())
     _zone_suffix = f" ({', '.join(_bits)})" if _bits else ""
     _start = _session_start_like(agent, now)
     timestamp_line = f"Conversation started: {safe_strftime(_start, '%A, %B %d, %Y')}{_zone_suffix}"
-    # Second line (maintainer design, salvaging #96224's anchor): long-lived sessions — Bot Mode
-    # forever-chats, messenger channels people never close — span many days and many compactions. A lone
-    # birth date leads the model to believe it is still living in that old day. The prompt is rebuilt at
-    # every compaction boundary, so stamp the rebuild day too: 'started' stays anchored and byte-stable, 'as
-    # of' refreshes exactly when the cache prefix is already being invalidated (compaction), so the added
-    # line costs no extra cache churn. Same-day sessions skip the second line entirely — nothing to correct,
-    # and the single-line shape stays byte-identical for the day (prefix-cache safe).
-    if now.strftime("%Y%m%d") != _start.strftime("%Y%m%d"):
-        timestamp_line += (f"\nToday's date (as of the last context rebuild): {safe_strftime(now, '%A, %B %d, %Y')} "
-                           "— trust this over the start date for what day it is now; query tools for exact time.")
     if getattr(agent, "_bot_chat_timeless_prompt", False):
+        # Bot Mode's eternal chat: a birth date pinned in a months-long session is misinformation.
         timestamp_line = f"Timezone: {', '.join(_bits)}" if _bits else ""
     trailer = (("Session ID", agent.session_id if agent.pass_session_id else None), ("Model", agent.model),
                ("Provider", agent.provider), ("Platform", agent.platform))
     return timestamp_line + "".join(f"\n{label}: {value}" for label, value in trailer if value)
 
 
+def date_line(agent: Any) -> str:
+    """Today's date for the turn-note channel, or "" while it is still the day the prompt names (the
+    conversation's start). Long-lived sessions (Bot Mode forever-chats, messenger channels people never
+    close) span many days; this keeps the model on the current one without touching the cached prompt."""
+    from hermes_time import get_timezone as _hermes_tz, now as _hermes_now, safe_strftime
+    now = _hermes_now()
+    timeless = getattr(agent, "_bot_chat_timeless_prompt", False)
+    if not timeless and now.strftime("%Y%m%d") == _session_start_like(agent, now).strftime("%Y%m%d"):
+        return ""
+    _bits = _zone_bits(now, _hermes_tz())
+    _zone_suffix = f" ({', '.join(_bits)})" if _bits else ""
+    return (f"Today's date: {safe_strftime(now, '%A, %B %d, %Y')}{_zone_suffix} "
+            "— trust this over the start date for what day it is now; query tools for exact time.")
+
+
 def _memory_parts(agent: Any) -> list[str]:
-    """Built-in memory/USER.md blocks plus the external provider block (gated on
-    the same check ``inject_memory_provider_tools`` uses, so we never advertise
-    tools the toolset config gated off)."""
+    """Notes and person card: built-in memory/USER.md blocks plus the external provider block (gated
+    on the same check ``inject_memory_provider_tools`` uses, so we never advertise tools the toolset
+    config gated off). Read at prompt build only: once per session and again after a compaction."""
     parts: list[str] = []
     if agent._memory_store:
         for enabled, kind in ((agent._memory_enabled, "memory"), (agent._user_profile_enabled, "user")):
@@ -544,6 +553,9 @@ def _memory_parts(agent: Any) -> list[str]:
                 _ext_mem_block = None
             if _ext_mem_block:
                 parts.append(_ext_mem_block)
+        # The person card is no tool advert, so the toolset gate does not withhold it.
+        if card := agent._memory_manager.build_session_cards():
+            parts.append(card)
     return parts
 
 
@@ -739,8 +751,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     """Assemble the system prompt as three ordered cache tiers: ``stable`` (identity,
     guidance and the coding brief), ``context`` (caller ``system_message``, project
     context files, workspace snapshot and remaining workspace guidance) and
-    ``volatile`` (skills index, memory, user profile, external memory block,
-    timestamp line, runtime environment hints).  Worktree-dependent blocks follow project context so a
+    ``volatile`` (skills index, plugin sections, profile line, start date and identity lines,
+    runtime environment hints, then the notes and person card: memory, user profile, external memory block).  Worktree-dependent blocks follow project context so a
     shared context file can remain in the longest common prefix across worktrees.
     Never re-rendered mid-session."""
     # Model context window scales the context-file caps; stable per conversation.
@@ -784,7 +796,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # ── Volatile tier (most likely to differ on a rebuild; kept last so the stable prefix stays reusable) ──
     # Skills are runtime-mutable, so the index leads the volatile band: on a longest-prefix
     # backend an unchanged index stays inside the reused prefix; a changed one re-prefills from here.
-    volatile_parts: list[str] = [skills_prompt, *_memory_parts(agent)]
+    # Mid-session changes reach the model as a turn note (agent/skills_index_delta.py).
+    volatile_parts: list[str] = [skills_prompt]
     # Plugin sections are confined to one coarse anchor in the volatile tail so
     # a resumed process can reconstruct the stable prefix without re-running plugins.
     volatile_parts.extend(_plugin_section_blocks(_frozen_plugin_prompt_sections(agent), "after_memory"))
@@ -798,6 +811,13 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
         # Embedder hints are prose too; reserve the delimiter for the renderer.
         environment_hints = environment_hints.replace(_pb.RUNTIME_ENVIRONMENT_HEADING, "> " + _pb.RUNTIME_ENVIRONMENT_HEADING)
         volatile_parts.append(f"{_pb.RUNTIME_ENVIRONMENT_HEADING}\n\n{environment_hints}\n\n{_pb.RUNTIME_ENVIRONMENT_END}")
+    # Notes and person card close the prompt (lina#21 order: system and persona, then notes and card).
+    # They are user prose behind the runtime anchor, so the notes delimiter is reserved like the heading.
+    notes = _join_tier(_memory_parts(agent))
+    if notes:
+        for heading in (_pb.NOTES_HEADING, _pb.RUNTIME_ENVIRONMENT_HEADING):
+            notes = notes.replace(heading, "> " + heading)
+        volatile_parts.append(f"{_pb.NOTES_HEADING}\n\n{notes}\n\n{_pb.NOTES_END}")
     return {"stable": _join_tier(stable_parts), "context": _join_tier(context_parts), "volatile": _join_tier(volatile_parts)}
 
 

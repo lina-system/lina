@@ -26,6 +26,7 @@ from agent.memory_context import StreamingContextScrubber, build_memory_context_
 from agent.memory_manager_tools import (inject_memory_provider_tools, memory_provider_tools_enabled,
                                         memory_provider_tools_exposed, normalize_tool_schema)
 from agent.memory_provider import MemoryProvider, PRE_COMPRESS_CHECKPOINT_API_VERSION, ctx_bound, spawn_context_thread
+from agent.memory_recall_tool import RECALL_TOOL_NAME, RECALL_TOOL_SCHEMA
 from agent.skill_commands import extract_user_instruction_from_skill_message
 from hermes_constants import hermes_home_key
 from tools.hook_output_spill import get_spill_config, spill_if_oversized
@@ -213,6 +214,8 @@ class MemoryManager:
         self._providers: list[MemoryProvider] = []
         self._tool_to_provider: dict[str, MemoryProvider] = {}
         self._external_prefetch_spill_config: Optional[dict[str, Any]] = None
+        # memory.auto_recall_append: splice recall into the user message instead of a tool result (lina#21).
+        self.auto_recall_append = False
         self._has_external: bool = False
         timeout = external_prefetch_timeout
         timeout = _EXTERNAL_PREFETCH_TIMEOUT_S if timeout is None else float(timeout)
@@ -297,6 +300,7 @@ class MemoryManager:
                 # Off by default, but keep a ceiling so a runaway provider can't overflow the context.
                 spill_config["max_chars"] = max(spill_config["max_chars"] * 10, 100_000)
             self._external_prefetch_spill_config = spill_config
+            self.auto_recall_append = isinstance(memory, dict) and memory.get("auto_recall_append", False) is True
             self._has_external = True
 
         self._providers.append(provider)
@@ -339,6 +343,12 @@ class MemoryManager:
     def build_system_prompt(self) -> str:
         """Join every provider's non-empty ``system_prompt_block()`` with blank lines."""
         blocks = self._each_provider("system_prompt_block() failed", lambda p: p.system_prompt_block(),
+                                      level=logging.WARNING)
+        return "\n\n".join(b for b in blocks if b and b.strip())
+
+    def build_session_cards(self) -> str:
+        """Join every provider's non-empty ``session_card_block()``; asked only while the prompt is built."""
+        blocks = self._each_provider("session_card_block() failed", lambda p: p.session_card_block(),
                                       level=logging.WARNING)
         return "\n\n".join(b for b in blocks if b and b.strip())
 
@@ -443,16 +453,26 @@ class MemoryManager:
 
     def sync_all(self, user_content: str, assistant_content: str, *, session_id: str = "",
                  messages: Optional[list[dict[str, Any]]] = None,
-                 turn_author: Optional[dict[str, Any]] = None) -> None:
+                 turn_author: Optional[dict[str, Any]] = None, turn_start: Optional[int] = None) -> None:
         """Sync a completed turn to all providers on the background worker.
 
         Never inline: a provider's ``sync_turn`` may block for minutes, which kept ``run_conversation``
         open after the user saw the response. The single worker also serializes writes (turn N before N+1).
-        ``turn_author`` reaches only providers whose ``sync_turn`` accepts it.
+        ``turn_author`` reaches only providers whose ``sync_turn`` accepts it; a person's turn (None) is sent as
+        ``human_turn_author()``, fixed here, because the worker may run after the next turn has started (lina#20).
+        ``turn_start`` (the index in ``messages`` of the turn's first row, fixed by the runtime when the turn began)
+        likewise reaches only signatures that accept it: rows a turn appends later (a ``/steer``, a stop-gate note)
+        are inside the turn and never its start.
 
         Everything forwarded is provider egress: turn strings AND the ``messages`` transcript slice
         (tool outputs included) go through ``_redact_for_provider`` so secrets are never archived
         verbatim in a provider's store (#115104).
+
+        The one exception is a ``sync_turn`` that names a ``local_messages`` parameter itself (never through
+        ``**kwargs``): a provider that keeps the transcript on this machine, as the context engine's own
+        ``post_llm_call`` ingest does (lina-memory, lina#20). It gets the unredacted transcript too, and it is
+        called here on the turn thread, right after that hook, so its local work is ordered with the turn and
+        never overlaps the next one; its remote work is its own to start on a background thread.
         """
         providers = list(self._providers)
         clean_user_content = self._strip_skill_scaffolding(user_content) if providers else None
@@ -460,19 +480,30 @@ class MemoryManager:
             return
         clean_user_content, assistant_content, redacted_messages = _redact_for_provider(
             clean_user_content, assistant_content, messages)
-        optional_kwargs = {"messages": redacted_messages, "turn_author": turn_author}
+        from agent.turn_author import human_turn_author
+        optional_kwargs = {"messages": redacted_messages,
+                           "turn_author": dict(turn_author) if turn_author is not None else human_turn_author(),
+                           "turn_start": turn_start}
+        local = [p for p in providers if "local_messages" in (_signature_params(p.sync_turn) or {})]
 
         def _sync(provider: MemoryProvider) -> None:
             kwargs: dict[str, Any] = {"session_id": session_id}
             for keyword, value in optional_kwargs.items():
                 if value is not None and self._provider_sync_accepts(provider, keyword):
                     kwargs[keyword] = value
+            if provider in local:
+                kwargs["local_messages"] = None if messages is None else list(messages)
+                provider.sync_turn(clean_user_content, assistant_content, **kwargs)
+                return
             self._call_unless_stalled(
                 provider, lambda: provider.sync_turn(clean_user_content, assistant_content, **kwargs))
 
-        self._submit_background(
-            lambda: self._each_provider("sync_turn failed", _sync, level=logging.WARNING, providers=providers)
-        )
+        if local:
+            self._each_provider("sync_turn failed", _sync, level=logging.WARNING, providers=local)
+        remote = [p for p in providers if p not in local]
+        if remote:
+            self._submit_background(
+                lambda: self._each_provider("sync_turn failed", _sync, level=logging.WARNING, providers=remote))
 
     def _submit_background(self, fn, *, kind: str = "write") -> None:
         """Queue ``fn`` on the serialized worker (created lazily; None once shutting down) and track its
@@ -581,22 +612,30 @@ class MemoryManager:
                     seen.add(schema["name"])
 
         self._each_provider("get_tool_schemas() failed", _collect, level=logging.WARNING)
+        if self._has_external and RECALL_TOOL_NAME not in seen:
+            schemas.append(RECALL_TOOL_SCHEMA)
         return schemas
 
     def get_all_tool_names(self) -> set:
-        return set(self._tool_to_provider)
+        return set(self._tool_to_provider) | ({RECALL_TOOL_NAME} if self._has_external else set())
 
     def has_tool(self, tool_name: str) -> bool:
-        return tool_name in self._tool_to_provider
+        return tool_name in self._tool_to_provider or (tool_name == RECALL_TOOL_NAME and self._has_external)
 
     def handle_tool_call(self, tool_name: str, args: dict[str, Any], **kwargs) -> str:
         """Route a tool call to its provider; returns a JSON string (tool_error on failure)."""
         provider = self._tool_to_provider.get(tool_name)
-        if provider is None:
+        if provider is None and not self.has_tool(tool_name):
             return tool_error(f"No memory provider handles tool '{tool_name}'")
         scope = caller_scope(self._bound_scope, f"tool {tool_name}")
         if scope is None:
             return tool_error(refused_tool_message(tool_name))
+        if provider is None:
+            query = str((args or {}).get("query") or "").strip()
+            if not query:
+                return tool_error("memory_recall needs a query; this turn's own recall is already shown.")
+            found = self.prefetch_all(query, session_id=str(kwargs.get("session_id") or ""))
+            return build_memory_context_block(found) if found else json.dumps({"result": "Nothing found."})
         kwargs = {**kwargs, **scope}
         # A provider written against ``handle_tool_call(tool_name, args)`` gets only what it declares.
         accepted = self._tool_call_keywords(provider)

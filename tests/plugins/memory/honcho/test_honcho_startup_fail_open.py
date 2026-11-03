@@ -414,21 +414,31 @@ def test_honcho_sync_turn_skips_write_when_save_messages_is_disabled():
     assert manager_calls == []
 
 
-def test_honcho_sync_turn_skips_anchored_gateway_notifications():
-    """Known bracketed gateway wrappers must not become durable messages."""
-    wrappers = (
-        "[ASYNC DELEGATION BATCH COMPLETE — deleg_1]\nworker results follow",
-        "[ASYNC DELEGATION COMPLETE — deleg_2]",
-        "[CONTEXT COMPACTION — REFERENCE ONLY]\nsummary follows",
-        "[CONTEXT COMPACTION - REFERENCE ONLY]",
-        "[CONTEXT COMPACTION]",
-        "[PRIOR CONTEXT — for reference only; not a new message]",
-        "[Your active task list was preserved across context compression]",
-        "[CONTEXT SUMMARY]: previous context",
-        "[IMPORTANT: Background process 12 matched watch pattern \"foo\"\nCommand: x",
-    )
+def _notice_transcript(text: str, signal: dict) -> list[dict]:
+    """The transcript a notice's producer leaves: the notice is the turn's user row, carrying the producer's signal."""
+    return [{"role": "user", "content": text, **signal}, {"role": "assistant", "content": "assistant reply"}]
 
-    for wrapper in wrappers:
+
+_ROUTED_NOTICES = (
+    # (text the old _INTERNAL_GATEWAY_TURN_RE matched, the signal its producer stamps on the user row)
+    ("[ASYNC DELEGATION BATCH COMPLETE — deleg_1]\nworker results follow", {"display_kind": "async_delegation_complete"}),
+    ("[ASYNC DELEGATION COMPLETE — deleg_2]", {"display_kind": "async_delegation_complete"}),
+    ("[CONTEXT COMPACTION — REFERENCE ONLY]\nsummary follows", {"_compressed_summary": True}),
+    ("[CONTEXT COMPACTION - REFERENCE ONLY]", {"_compressed_summary": True}),
+    ("[CONTEXT COMPACTION]", {"_compressed_summary": True}),
+    ("[PRIOR CONTEXT — for reference only; not a new message]", {"_compressed_summary": True}),
+    ("[Your active task list was preserved across context compression]", {"_compressed_summary": True}),
+    ("[CONTEXT SUMMARY]: previous context", {"_compressed_summary": True}),
+    ("[IMPORTANT: Background process 12 matched watch pattern \"foo\"\nCommand: x", {"display_kind": "internal_notification"}),
+    ("A background fan-out of 3 subagent(s) you dispatched earlier has finished.", {"display_kind": "async_delegation_complete"}),
+    ("A background subagent you dispatched earlier has finished. You may have moved on.", {"display_kind": "async_delegation_complete"}),
+)
+
+
+def test_honcho_sync_turn_skips_gateway_notifications_by_their_route():
+    """Gateway, delegation and compressor notices must not become durable messages (lina#20: the policy table
+    decides by the route the notice arrived on, not by its text)."""
+    for wrapper, signal in _ROUTED_NOTICES:
         provider = HonchoMemoryProvider()
         manager_calls = []
 
@@ -442,37 +452,10 @@ def test_honcho_sync_turn_skips_anchored_gateway_notifications():
         provider._session_key = "test-session"
         provider._session_initialized = True
 
-        provider.sync_turn(wrapper, "assistant reply")
+        provider.sync_turn(wrapper, "assistant reply", messages=_notice_transcript(wrapper, signal))
 
         assert provider._sync_thread is None, f"wrapper not suppressed: {wrapper[:60]!r}"
         assert manager_calls == [], f"wrapper not suppressed: {wrapper[:60]!r}"
-
-
-def test_honcho_sync_turn_skips_prose_gateway_notifications():
-    """Prose-form gateway notifications must not become durable messages."""
-    prose_wrappers = (
-        "A background fan-out of 3 subagent(s) you dispatched earlier has finished.",
-        "A background subagent you dispatched earlier has finished. You may have moved on.",
-    )
-
-    for wrapper in prose_wrappers:
-        provider = HonchoMemoryProvider()
-        manager_calls = []
-
-        class Manager:
-            def get_or_create(self, session_key):
-                manager_calls.append(session_key)
-                return SimpleNamespace()
-
-        provider._config = _configured_tools_config(init_on_session_start=True)
-        provider._manager = Manager()
-        provider._session_key = "test-session"
-        provider._session_initialized = True
-
-        provider.sync_turn(wrapper, "assistant reply")
-
-        assert provider._sync_thread is None, f"prose wrapper not suppressed: {wrapper[:60]!r}"
-        assert manager_calls == [], f"prose wrapper not suppressed: {wrapper[:60]!r}"
 
 
 def test_honcho_sync_turn_does_not_suppress_genuine_user_messages():

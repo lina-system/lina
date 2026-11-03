@@ -4,13 +4,19 @@ Three append-only stores are tailed, each by its own position, and the three pos
 
 - ``work``: the work record's ``event`` table (one row per record line and run hand-off), by event id.
 - ``worker``: ``lina worker``'s ``receipts.jsonl`` (the hub appends a receipt on every run state change, next to the
-  job file it rewrites), by byte offset; only the receipts that change a run's state are sent.
+  job file it rewrites), by byte offset; every receipt is sent except the few that change nothing on the board
+  (``WORKER_NOISE_KINDS``): a dropped change leaves a stale screen, an extra event costs one refetch.
 - ``kanban``: the board's ``task_events`` table, by row id, read-only (the plugin's ``/events`` source).
 
 Each socket polls with one connection per store on its own single-thread executor (the kanban plugin's tailer
 pattern), at most every ``BATCH_SECONDS``. No ``since``: the first message is the tail with no events. A ``since``
-that does not decode, or points past what a store holds or before what it kept, gets one ``resync``. Events name
+that does not decode, points past what a store holds, was taken from another store (each position travels with its
+store's identity, see the identities in ``Stream``) or has rows missing right after it, gets one ``resync``. Events name
 what changed (``source``, ``kind``, ``id``, ``at``) and carry no item bodies; the client refetches the snapshot.
+
+Each source starts on its own: a store that cannot be read when the cursor is taken (the Postgres work store down)
+keeps position 0 with the identity ``UNKNOWN`` while the others stream; once it reads, its position is taken at its
+tail and the socket sends one ``resync``, since what it wrote meanwhile is not known.
 """
 
 from __future__ import annotations
@@ -18,6 +24,7 @@ from __future__ import annotations
 import asyncio
 import base64
 import datetime
+import hashlib
 import json
 import logging
 import sqlite3
@@ -33,21 +40,67 @@ from hermes_cli.lina_board import _WORK_LOCK, _root
 
 BATCH_SECONDS = 0.3
 PAGE = 200
-CURSOR_PREFIX = "c1."
-WORKER_STATE_KINDS = frozenset({"submitted", "placed", "queued", "run_started", "start_failed_requeued", "follow_up",
-                                "exec_end", "delivery", "verdict"})
+CURSOR_PREFIX = "c2."  # c1 had positions only: an old cursor gets one resync
+UNKNOWN = "?"  # the identity of a source that could not be read when its position was taken
+_FAILS = (OSError, sqlite3.Error, RuntimeError)
+# Receipts that change nothing the board shows of a run (``worker/board.py``: state and reason from ``work_state``,
+# host, startedAt, endedAt, the now line, the verdict). Every other kind is streamed, kinds added later included.
+WORKER_NOISE_KINDS = {
+    "card_linked": "a kanban card run's link: board.cards leaves card runs out, the kanban stream covers the card",
+    "card_link_failed": "the same link failing: nothing on the board changes",
+    "card_noticed": "the end written on the kanban card: the kanban stream carries that comment",
+    "card_notice_failed": "the same card note failing: nothing on the board changes",
+    "award": "the bid winner, recorded just before start_on: the placed receipt that follows carries host and state",
+    "publish_failed_resumes": "the job stays placing, as placed already said; the resumed placement ends in run_started",
+    "fetch_failed": "the result fetch for the end notice failed: state and delivery come as exec_end and delivery",
+    "group_notified": "keyed by a group, not a run; each member's own exec_end was streamed",
+    "cancel_requested": "only the request (cancel_why, not on the board); the cancel itself comes as exec_end",
+    "steer": "the instruction reached the running run; the job is unchanged and the now line comes from the runner's "
+             "live view, not from this receipt",
+}
 log = logging.getLogger(__name__)
+
+
+def streamed(receipt: dict) -> bool:
+    """Whether one hub receipt goes to the app: every kind except the noise above, kinds unknown here included (a
+    dropped change is a stale screen). ``notified`` changes the board only for ``state="human"`` (the run waits for
+    a person); any other ``notified`` is an end notice whose change came as its ``exec_end``."""
+    kind = receipt.get("kind")
+    if kind == "notified":
+        return receipt.get("state") == "human"
+    return kind not in WORKER_NOISE_KINDS
+
+
+class _Pruned(Exception):
+    """Kanban rows after the position were deleted: the client must resync."""
+
+
+def _contiguous(since: int, last: int, count: int) -> bool:
+    """No ``task_events`` row after *since* up to *last* is gone, given *count* rows kept there. The ids are
+    AUTOINCREMENT and never reused, so every id was written once: fewer rows than ids means ``gc_events`` pruned
+    some (it removes a done task's old events while an older event of an active task stays, so the lowest id does
+    not move). The one rule for a reconnect (``check``, a range count) and a live page (``fetch``, the ids read)."""
+    return count == last - since
+
+
+def _try(name: str, fn, default):
+    try:
+        return fn()
+    except _FAILS as exc:
+        log.warning("lina events: %s source failed: %s", name, exc)
+        return default
 
 
 class Cursor(NamedTuple):
     work: int
     worker: int
     kanban: int
+    ids: tuple[str, str, str] = ("", "", "")  # the store identity each position was taken in ("" = empty store)
 
 
 def encode(cursor: Cursor) -> str:
-    raw = f"{cursor.work}.{cursor.worker}.{cursor.kanban}".encode()
-    return CURSOR_PREFIX + base64.urlsafe_b64encode(raw).decode().rstrip("=")
+    raw = ".".join([str(cursor.work), str(cursor.worker), str(cursor.kanban), *(i or "-" for i in cursor.ids)])
+    return CURSOR_PREFIX + base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
 def decode(text: str) -> Cursor | None:
@@ -56,12 +109,16 @@ def decode(text: str) -> Cursor | None:
     body = text[len(CURSOR_PREFIX):]
     try:
         parts = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode().split(".")
-        values = [int(p) for p in parts]
+        values = [int(p) for p in parts[:3]]
     except ValueError:
         return None
-    if len(values) != 3 or any(v < 0 for v in values):
+    if len(parts) != 6 or any(v < 0 for v in values):
         return None
-    return Cursor(*values)
+    return Cursor(*values, ids=tuple("" if i == "-" else i for i in parts[3:]))
+
+
+def _digest(*parts: Any) -> str:
+    return hashlib.sha256(repr(parts).encode()).hexdigest()[:16]
 
 
 def _epoch(value: Any) -> int | None:
@@ -115,30 +172,86 @@ class Stream:
     def _worker_size(self) -> int:
         return self.receipts.stat().st_size if self.receipts.is_file() else 0
 
-    def _kanban_bounds(self) -> tuple[int, int]:
-        """(max id, lowest id still kept apart from rows the board never prunes) of ``task_events``."""
+    def _kanban_top(self) -> int:
+        db = self._kanban()
+        return 0 if db is None else int(db.execute("SELECT COALESCE(max(id), 0) FROM task_events").fetchone()[0])
+
+    # ---------------------------------------------------------------- identities
+    # One identity per store, so a position is never read in another store that grew past it ("" = empty):
+    # - work: the first event row (id, at). The table is append-only (nothing deletes from ``event``), so the first
+    #   row stays while the store lives, and a new store starts with new rows. The store has no id of its own
+    #   (``setting`` holds fixed defaults only).
+    # - worker: the receipts file's inode and its first line (a recreated or rotated file differs).
+    # - kanban: the database file's inode and the first task inserted (id, created_at; by rowid, since created_at
+    #   ties within a second and task ids are random). Not the first ``task_events`` row, which pruning moves.
+    #   Deleting that task changes the identity too: one spare resync, never a miss.
+    def _work_id(self) -> str:
+        first = self._work().execute("SELECT id, at FROM event ORDER BY id LIMIT 1").fetchone()
+        return _digest(int(first[0]), str(first[1])) if first else ""
+
+    def _worker_id(self) -> str:
+        if not self.receipts.is_file():
+            return ""
+        with self.receipts.open("rb") as fh:
+            line = fh.readline()
+        return _digest(self.receipts.stat().st_ino, line) if line else ""
+
+    def _kanban_id(self) -> str:
         db = self._kanban()
         if db is None:
-            return 0, 0
-        top, low = db.execute("SELECT COALESCE(max(id), 0), COALESCE(min(CASE WHEN kind != 'decomposed' THEN id END), 0) "
-                              "FROM task_events").fetchone()
-        return int(top), int(low)
+            return ""
+        oldest = db.execute("SELECT id, created_at FROM tasks ORDER BY rowid LIMIT 1").fetchone()
+        from hermes_cli.kanban_db import kanban_db_path
+        return _digest(Path(kanban_db_path()).stat().st_ino, *oldest) if oldest else ""
+
+    def _sources(self) -> tuple:
+        """Per source: name, position now, identity, events after a position, and whether a position is kept."""
+        return (("work", self._work_bounds, self._work_id, self._work_events, self._work_kept),
+                ("worker", self._worker_size, self._worker_id, self._worker_events, self._worker_kept),
+                ("kanban", self._kanban_top, self._kanban_id, self._kanban_events, self._kanban_kept))
 
     def tail(self) -> Cursor:
-        return Cursor(self._work_bounds(), self._worker_size(), self._kanban_bounds()[0])
+        """Each source's tail, taken on its own: one that cannot be read gets position 0 and ``UNKNOWN``."""
+        taken = [_try(name, lambda at=at, ident=ident: (at(), ident()), (0, UNKNOWN))
+                 for name, at, ident, _, _ in self._sources()]
+        return Cursor(*(p for p, _ in taken), ids=tuple(i for _, i in taken))
 
-    def kept(self, since: Cursor) -> bool:
-        """The stores still hold everything after *since*: no position past a store's end (another or a reset
-        store), the worker offset on a line boundary, and the board has not pruned rows right after its position."""
-        if since.work > self._work_bounds() or since.worker > self._worker_size():
+    def check(self, since: Cursor) -> Cursor | None:
+        """*since* if the stores still hold everything after it (None: resync). A source that cannot be read now is
+        not judged: it becomes ``UNKNOWN`` and is taken again, with one resync, once it reads."""
+        ids = list(since.ids)
+        for i, (name, _, ident, _, kept) in enumerate(self._sources()):
+            if ids[i] == UNKNOWN:
+                continue
+            try:
+                if since[i] and ids[i] != ident():  # a position 0 replays the whole store, whichever it is
+                    return None
+                if not kept(since[i]):
+                    return None
+            except _FAILS as exc:
+                log.warning("lina events: %s source failed: %s", name, exc)
+                ids[i] = UNKNOWN
+        return since._replace(ids=tuple(ids))
+
+    def _work_kept(self, position: int) -> bool:
+        return position <= self._work_bounds()
+
+    def _worker_kept(self, position: int) -> bool:
+        """Not past the file's end, and on a line boundary."""
+        if position > self._worker_size():
             return False
-        if since.worker:
+        if position:
             with self.receipts.open("rb") as fh:
-                fh.seek(since.worker - 1)
-                if fh.read(1) != b"\n":
-                    return False
-        top, low = self._kanban_bounds()
-        return since.kanban <= top and not (low and since.kanban < top and since.kanban + 1 < low)
+                fh.seek(position - 1)
+                return fh.read(1) == b"\n"
+        return True
+
+    def _kanban_kept(self, position: int) -> bool:
+        top = self._kanban_top()
+        if position >= top:
+            return position == top
+        kept = self._kanban().execute("SELECT count(*) FROM task_events WHERE id > ? AND id <= ?", (position, top))
+        return _contiguous(position, top, int(kept.fetchone()[0]))
 
     # ---------------------------------------------------------------- reads
     def _work_events(self, after: int) -> tuple[int, list[dict]]:
@@ -160,7 +273,7 @@ class Stream:
                 rec = json.loads(line)
             except ValueError:
                 continue
-            if isinstance(rec, dict) and rec.get("kind") in WORKER_STATE_KINDS and rec.get("task"):
+            if isinstance(rec, dict) and rec.get("kind") and rec.get("task") and streamed(rec):
                 out.append({"source": "worker", "kind": rec["kind"], "id": rec["task"], "at": _epoch(rec.get("ts"))})
         return after + end, out
 
@@ -170,21 +283,37 @@ class Stream:
             return after, []
         rows = db.execute(f"SELECT id, kind, task_id, created_at FROM task_events WHERE id > ? ORDER BY id LIMIT {PAGE}",
                           (after,)).fetchall()
+        if rows and not _contiguous(after, int(rows[-1][0]), len(rows)):
+            raise _Pruned(after)
         return (int(rows[-1][0]) if rows else after,
                 [{"source": "kanban", "kind": kind, "id": task, "at": _epoch(at)} for _, kind, task, at in rows])
 
-    def fetch(self, since: Cursor) -> tuple[Cursor, list[dict]]:
-        """What each store holds after *since*. A store that fails to read keeps its position and is tried again."""
-        positions, events = [], []
-        for name, read, after in (("work", self._work_events, since.work), ("worker", self._worker_events, since.worker),
-                                  ("kanban", self._kanban_events, since.kanban)):
+    def fetch(self, since: Cursor) -> tuple[Cursor, list[dict], bool]:
+        """What each store holds after *since*, and whether the client must resync. A store that fails to read keeps
+        its position and is tried again; an ``UNKNOWN`` one that reads now is taken at its tail, and that is a
+        resync (the batch's events are dropped: the refetched snapshot has them). So is a kanban page with ids
+        missing after the position (``_contiguous``): the source is taken at its tail and nothing past the gap is
+        sent as if nothing was lost."""
+        positions, ids, events, resync = list(since[:3]), list(since.ids), [], False
+        for i, (name, at, ident, read, _) in enumerate(self._sources()):
             try:
-                after, found = read(after)
-                events += found
-            except (OSError, sqlite3.Error, RuntimeError) as exc:
+                if ids[i] == UNKNOWN:
+                    positions[i], ids[i] = at(), ident()
+                    resync = True
+                    continue
+                after, found = read(positions[i])
+            except _Pruned:
+                positions[i], ids[i] = _try(name, lambda: (at(), ident()), (positions[i], ids[i]))
+                resync = True
+                continue
+            except _FAILS as exc:
                 log.warning("lina events: %s source failed: %s", name, exc)
-            positions.append(after)
-        return Cursor(*positions), events
+                continue
+            events += found
+            moved, positions[i] = after != positions[i], after
+            if moved or not ids[i]:  # a store that just got its first rows has its identity now
+                ids[i] = _try(name, ident, ids[i])
+        return Cursor(*positions, ids=tuple(ids)), [] if resync else events, resync
 
     def close(self) -> None:
         for db in (self.work_db, self.kanban_db):
@@ -211,12 +340,14 @@ async def _first(ws: WebSocket, stream: Stream) -> Cursor:
         await ws.send_json({"cursor": encode(cursor), "events": []})
         return cursor
     since = decode(raw.strip())
-    if since is None or not await stream.run(stream.kept, since):
+    checked = None if since is None else await stream.run(stream.check, since)
+    if checked is None:
         cursor = await stream.run(stream.tail)
         await ws.send_json({"cursor": encode(cursor), "resync": True})
         return cursor
-    cursor, events = await stream.run(stream.fetch, since)
-    await ws.send_json({"cursor": encode(cursor), "events": events})
+    cursor, events, resync = await stream.run(stream.fetch, checked)
+    await ws.send_json({"cursor": encode(cursor), "resync": True} if resync else
+                       {"cursor": encode(cursor), "events": events})
     return cursor
 
 
@@ -243,8 +374,10 @@ async def serve(ws: WebSocket) -> None:
     try:
         cursor = await _first(ws, stream)
         while await _wait(ws, BATCH_SECONDS):
-            cursor, events = await stream.run(stream.fetch, cursor)
-            if events:
+            cursor, events, resync = await stream.run(stream.fetch, cursor)
+            if resync:
+                await ws.send_json({"cursor": encode(cursor), "resync": True})
+            elif events:
                 await ws.send_json({"cursor": encode(cursor), "events": events})
     except (WebSocketDisconnect, asyncio.CancelledError):
         return

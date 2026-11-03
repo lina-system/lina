@@ -15,7 +15,7 @@ import logging
 from typing import Any, List
 
 from agent.message_content import flatten_message_text
-from agent.prompt_builder import RUNTIME_ENVIRONMENT_END, RUNTIME_ENVIRONMENT_HEADING
+from agent.prompt_builder import NOTES_END, NOTES_HEADING, RUNTIME_ENVIRONMENT_END, RUNTIME_ENVIRONMENT_HEADING
 
 logger = logging.getLogger("run_agent")
 
@@ -31,7 +31,10 @@ _NOTE_SCAN_TAIL = 200
 def split_runtime_boundary(prompt: str) -> tuple:
     """``(identity, runtime_marker, runtime)`` of a persisted prompt.  Legacy prose may quote
     the runtime heading, but only the new renderer ENDS in the boundary; when the marker is
-    empty the whole prompt is identity."""
+    empty the whole prompt is identity.  The notes and person card that close a newer prompt
+    (renderer-delimited, with both headings escaped inside) are peeled off first."""
+    if prompt.endswith(NOTES_END):
+        prompt = prompt.rpartition(f"\n\n{NOTES_HEADING}\n\n")[0] or prompt
     identity, runtime_marker, runtime = prompt.rpartition(f"\n\n{RUNTIME_ENVIRONMENT_HEADING}\n\n")
     return (identity, runtime_marker, runtime) if prompt.endswith(RUNTIME_ENVIRONMENT_END) else (prompt, "", "")
 

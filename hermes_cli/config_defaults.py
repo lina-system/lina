@@ -985,7 +985,7 @@ DEFAULT_CONFIG = {
     "webapp": {"enabled": False, "host": "127.0.0.1", "port": 9120, "public_url": ""},  # gateway/webapp_listener.py
     "dashboard": {
         # Visual theme: "default" | "midnight" | "ember" | "mono" | "cyberpunk" | "rose"
-        "theme": "default",
+        "theme": "default", "app_dist": "",  # app_dist: lina-app build served at /app/; LINA_APP_DIST wins
         # Process-isolation rollout controls. Read via the raw config loader, so tui_gateway.server
         # also owns explicit defaults.
         "turn_isolation": False,
@@ -1307,8 +1307,8 @@ DEFAULT_CONFIG = {
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
         "external_messages": {"spool": ""},  # Host-level append-only collector spool; empty does nothing.
-        # One external provider; empty = built-in only.
-        "provider": "",
+        "provider": "",  # One external provider; empty = built-in only.
+        "auto_recall_append": False,  # Recall spliced into the user message, not a tool result (lina#21).
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.
     "delegation": {
