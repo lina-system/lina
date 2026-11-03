@@ -33,6 +33,8 @@ from pathlib import Path
 
 import pytest
 
+from scripts.vendored_subtrees import is_vendored
+
 REPO_ROOT = Path(__file__).resolve().parents[1]
 MODULE_MARKER = "<module>"
 _RESOLUTION_ALLOWLIST_PATH = REPO_ROOT / "tests/fixtures/resolution_allowlist.json"
@@ -221,9 +223,8 @@ def _source_files() -> list[Path]:
                 d for d in dirnames
                 if d not in _EXEMPT_DIRS and not _is_packaging_copy(d)
             ]
-        elif rel_dir == Path("services"):
-            # Vendored upstream subtree, held to its upstream's checks (docs/honcho.md).
-            dirnames[:] = [d for d in dirnames if d != "honcho"]
+        # Vendored upstream subtrees, held to their upstream's checks (scripts/vendored_subtrees.py).
+        dirnames[:] = [d for d in dirnames if not is_vendored(rel_dir / d)]
         for fname in filenames:
             if fname.endswith(".py"):
                 files.append(Path(dirpath) / fname)
