@@ -345,6 +345,12 @@ class MemoryManager:
                                       level=logging.WARNING)
         return "\n\n".join(b for b in blocks if b and b.strip())
 
+    def build_session_cards(self) -> str:
+        """Join every provider's non-empty ``session_card_block()``; asked only while the prompt is built."""
+        blocks = self._each_provider("session_card_block() failed", lambda p: p.session_card_block(),
+                                      level=logging.WARNING)
+        return "\n\n".join(b for b in blocks if b and b.strip())
+
     # A /skill or /bundle turn embeds the whole skill body in the model-facing message;
     # providers get just the user's instruction (None for a bare invocation).
     _strip_skill_scaffolding = staticmethod(extract_user_instruction_from_skill_message)

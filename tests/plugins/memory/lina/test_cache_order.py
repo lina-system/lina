@@ -26,6 +26,7 @@ TURNS = 50
 RECALL_TURN, SKILL_TURN, NEXT_DAY_TURN = 7, 12, 30
 NOTE, CARD, RECALL = "NOTE-7731 the garden faces south", "CARD-7731 Alice grows tomatoes", "RECALL-7731 tomatoes need sun"
 FILLER = "about soil and seeds " * 100
+CARD_BUILDS: list[int] = []
 _PART = re.compile(r"\[[\w ]+ Summary \(d(\d+), node \d+\)\]")
 
 
@@ -107,6 +108,14 @@ def home(tmp_path, monkeypatch, lina_env):
     from plugins.memory.lina import LinaMemoryProvider
     monkeypatch.setattr(LinaMemoryProvider, "prefetch",
                         lambda self, query, session_id="": f"- {RECALL}" if "recall" in query else "")
+    builds = CARD_BUILDS
+    builds.clear()
+
+    def person_card(self):
+        builds.append(len(builds) + 1)
+        return f"HONCHO-CARD build {len(builds)}"
+
+    monkeypatch.setattr(LinaMemoryProvider, "session_card_block", person_card)
     return home
 
 
@@ -188,6 +197,12 @@ def test_fifty_turns_each_request_starts_with_the_previous_one_except_across_a_c
         assert _wire(after)[:len(_wire(before))] == _wire(before), f"request {n + 1} rewrote request {n}"
     assert crossings >= 2
 
+    # The Honcho person card is fetched only when the prompt is built and sits in it until the next build.
+    cards = [re.search(r"HONCHO-CARD build \d+", r.body["messages"][0]["content"]).group(0) for r in requests]
+    assert len(set(cards)) == len(CARD_BUILDS) == len({r.compactions for r in requests})
+    assert all(a == b for a, b, x, y in zip(cards, cards[1:], requests, requests[1:]) if x.compactions == y.compactions)
+    assert not any("HONCHO-CARD" in _text(m) for r in requests for m in r.body["messages"][1:])
+
     # Found memory is the turn's last row, a tool result, and never part of a user row or the prompt.
     recall_messages = requests[RECALL_TURN].body["messages"]
     call, result = recall_messages[-2], recall_messages[-1]
@@ -205,11 +220,16 @@ def test_fifty_turns_each_request_starts_with_the_previous_one_except_across_a_c
 
     # System and persona first, the notes and person card close the prompt, the date is not in it.
     system = requests[-1].body["messages"][0]["content"]
-    assert system.index(RUNTIME_ENVIRONMENT_END) < system.index(NOTES_HEADING) < system.index(NOTE) < system.index(CARD)
+    assert (system.index(RUNTIME_ENVIRONMENT_END) < system.index(NOTES_HEADING) < system.index(NOTE)
+            < system.index(CARD) < system.index("HONCHO-CARD"))
     assert system.endswith(NOTES_END) and "Today's date" not in system and "Conversation started: Tuesday, November 03" in system
 
 
-def test_upper_summary_block_keeps_its_bytes_across_the_next_compaction(home, clock):
+def test_upper_summary_block_keeps_its_bytes_across_the_next_compaction(home, clock, monkeypatch):
+    from plugins.memory.lina import LinaMemoryProvider
+
+    # A card refetched at a compaction may differ; here it does not, so the cached prefix can reach the upper block.
+    monkeypatch.setattr(LinaMemoryProvider, "session_card_block", lambda self: "HONCHO-CARD unchanged")
     with recording_model() as server:
         server.url = f"http://127.0.0.1:{server.server_port}/v1"
         _configure(home, server.url)

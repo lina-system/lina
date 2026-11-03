@@ -37,7 +37,7 @@ def _honcho_provider_class():
 
 class LinaMemoryProvider(MemoryProvider):
     def __init__(self) -> None:
-        self._honcho = _honcho_provider_class()()
+        self._honcho = _honcho_provider_class()(card_in_prompt=True)
         self._honcho_on = False
         self._policy = load_policy()
         self._registry = IdentityRegistry()
@@ -178,6 +178,9 @@ class LinaMemoryProvider(MemoryProvider):
 
     def system_prompt_block(self) -> str:
         return self._honcho.system_prompt_block() if self._honcho_on else ""
+
+    def session_card_block(self) -> str:
+        return self._honcho.session_card_block() if self._honcho_on else ""
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         return self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""

@@ -121,7 +121,10 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             logger.debug("Honcho backup_paths failed", exc_info=True)
             return []
 
-    def __init__(self, query_rewriter: Optional[Callable[[str], str]] = None):
+    def __init__(self, query_rewriter: Optional[Callable[[str], str]] = None, *, card_in_prompt: bool = False):
+        # card_in_prompt: the base layer (representation + card) rides the system prompt via
+        # session_card_block(), so per-turn recall carries only dialectic results (lina#21).
+        self._card_in_prompt = card_in_prompt
         self._manager = None   # HonchoSessionManager
         self._config = None    # HonchoClientConfig
         self._session_key = ""
@@ -468,6 +471,30 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return ""
         return _PROMPT_HEADERS.get(self._recall_mode, _PROMPT_HEADERS["hybrid"])
 
+    def session_card_block(self) -> str:
+        """The base layer for the system prompt in card_in_prompt mode, fetched once per prompt build within
+        the turn-1 base wait that prefetch no longer spends on it. On timeout or error the prompt is built
+        without it (logged)."""
+        if not self._card_in_prompt or self._cron_skipped or self._recall_mode == "tools":
+            return ""
+        wait = self._first_turn_wait(self._FIRST_TURN_BASE_TIMEOUT)
+        deadline = time.monotonic() + wait
+        if not self._session_ready():
+            self._start_session_init_background()
+            if self._init_thread is not None:
+                self._init_thread.join(timeout=max(0.0, deadline - time.monotonic()))
+        holder: dict[str, dict] = {}
+        if self._session_ready():
+            def _fetch() -> None:
+                holder["ctx"] = self._manager.get_prefetch_context(self._session_key, None) or {}
+
+            self._spawn_write(_fetch, "honcho-session-card", "Honcho person card failed: %s").join(
+                timeout=max(0.0, deadline - time.monotonic()))
+        if "ctx" not in holder:
+            logger.info("Honcho person card not ready within %.1fs; system prompt built without it", wait)
+            return ""
+        return self._format_first_turn_context(holder["ctx"])
+
     @staticmethod
     def _resolve_injection_log_path(look: _HostLookup) -> Optional[str]:
         """Where to append the injection audit, or None to keep it off.
@@ -606,7 +633,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         # One-time notice, relayed by the model, that auth is dead and memory is paused.
         parts = [self._pop_auth_notice()]
         # First-turn mode suppresses only the base layer; dialectic is independent.
-        if not (self._injection_frequency == "first-turn" and self._turn_count > 1):
+        if not (self._card_in_prompt or self._injection_frequency == "first-turn" and self._turn_count > 1):
             parts.append(self._fetch_base_context_layer(query, first_turn_base_deadline))
         if not waited:
             self._first_turn_dialectic_wait(query)
@@ -667,7 +694,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 query = previous
         if not query or self._is_trivial_prompt(query):
             return False
-        if not (resumed and self._injection_frequency == "first-turn"):
+        if not (self._card_in_prompt or resumed and self._injection_frequency == "first-turn"):
             self._fetch_base_context_layer(query, base_deadline, fired_at=fired_at)
         if not resumed:
             self._first_turn_dialectic_wait(query)
@@ -745,7 +772,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         # First-turn-only base context never needs a later refresh.
         context_due = self._context_cadence <= 1 or (self._turn_count - self._last_context_turn) >= self._context_cadence
-        if self._injection_frequency != "first-turn" and context_due:
+        if self._injection_frequency != "first-turn" and context_due and not self._card_in_prompt:
             self._last_context_turn = self._turn_count
             try:
                 self._manager.prefetch_context(self._session_key, query)

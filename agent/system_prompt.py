@@ -553,6 +553,9 @@ def _memory_parts(agent: Any) -> list[str]:
                 _ext_mem_block = None
             if _ext_mem_block:
                 parts.append(_ext_mem_block)
+        # The person card is no tool advert, so the toolset gate does not withhold it.
+        if card := agent._memory_manager.build_session_cards():
+            parts.append(card)
     return parts
 
 

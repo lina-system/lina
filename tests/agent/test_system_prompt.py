@@ -708,6 +708,7 @@ class TestMemoryProviderSystemPromptGating:
         from unittest.mock import MagicMock
         mgr = MagicMock()
         mgr.build_system_prompt.return_value = prompt_block
+        mgr.build_session_cards.return_value = ""
         return mgr
 
     def _agent(self, *, enabled_toolsets, disabled_toolsets, prompt_block):

@@ -135,6 +135,11 @@ class MemoryProvider(ABC):
         """STATIC system-prompt text; "" to skip. Recalled context goes through prefetch(), not here."""
         return ""
 
+    def session_card_block(self) -> str:
+        """The person card for the notes-and-card block, fetched when the system prompt is built (session
+        start, compaction rebuild) and frozen in it until the next build; "" to skip (lina#21)."""
+        return ""
+
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         """Formatted recall context for the upcoming turn ("" if none). Must be fast — recall
         in the background and return cached results; ``session_id`` scopes concurrent sessions."""
