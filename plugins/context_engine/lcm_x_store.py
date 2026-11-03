@@ -145,11 +145,13 @@ def _sqlite_error(exc: Exception) -> sqlite3.Error:
     """The ``sqlite3`` exception LCM-X catches for a psycopg error: integrity (class 23) or operational."""
     import psycopg
     sqlstate = getattr(exc, "sqlstate", None) or ""
-    message = str(exc).strip()
+    message = (exc.diag.message_primary if isinstance(exc, psycopg.Error) else str(exc)).strip()
     if sqlstate in ("55P03", "40P01", "40001"):
         # Lock timeout, deadlock, serialization: what SQLite reports as a busy database.
         err: sqlite3.Error = sqlite3.OperationalError(f"database is locked ({message})")
         err.sqlite_errorcode, err.sqlite_errorname = sqlite3.SQLITE_BUSY, "SQLITE_BUSY"
+    elif sqlstate == "LX001":  # a trigger's RAISE(ABORT, '<message>'): SQLite raises the message as it is
+        err = sqlite3.IntegrityError(message)
     elif sqlstate.startswith("23"):
         err = sqlite3.IntegrityError(_integrity_message(exc, sqlstate, message))
     elif isinstance(exc, psycopg.errors.FeatureNotSupported):
@@ -693,6 +695,8 @@ def _named_order(slots: list[str]) -> Optional[list[str]]:
 def _translate_cached(sql: str, catalog_key: int) -> Template:
     catalog = Catalog.registry[catalog_key]
     stripped = sql.strip()
+    stripped = re.sub(r'^(\s*(?:UPDATE|DELETE\s+FROM)\s+)"messages"', r'\1messages', stripped,
+                      flags=re.IGNORECASE)
     if not stripped:
         return Template((), kind="skip")
     if _CONTROL.match(stripped):
@@ -724,6 +728,10 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
         masked = re.sub(r"\bBLOB\b", "bytea", masked, flags=re.IGNORECASE)
     masked = _expand_stars(masked, catalog)
     masked = _bare_joins(masked)
+    for each in re.finditer(r"\bjson_each\(\w+\.source_ids\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
+        alias = each.group(1)
+        masked = re.sub(rf"\b{alias}\.value(\s*(?:<=|>=|<|>)\s*\x01\d+\x01)",
+                        rf"CAST({alias}.value AS bigint)\1", masked)
     masked = _apply_rewrites(_recursive_limit(masked))
     # json_each.value is text on Postgres, but SQLite keeps JSON numbers numeric.
     for alias in re.findall(r"ctx\.json_each\([^()]*\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
@@ -1429,7 +1437,7 @@ class PgConnection:
                 self._pg.execute("SAVEPOINT lcm_x_statement")
             with self._progress_watch() as interrupted:
                 try:
-                    result = self._pg.execute(text, args or None)
+                    result = self._pg.execute(text if args else text.replace("%%", "%"), args or None)
                     rows = result.fetchall() if result.description else []
                 except psycopg.errors.QueryCanceled:
                     if interrupted:

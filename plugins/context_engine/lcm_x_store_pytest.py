@@ -89,15 +89,21 @@ def _lcm_x_on_store(monkeypatch, request):
     def connect(database, *args, **kwargs):
         # A test that opens its database file directly to look inside reads the store instead.
         path = str(database)
+        readonly = False
         if kwargs.get("uri") and path.startswith("file:"):
+            readonly = "mode=ro" in urlsplit(path).query
             path = unquote(urlsplit(path).path)
         backend = lcm_x_store.backend_for(path) if not args else None
         if backend is not None:
-            store = backend(timeout=kwargs.get("timeout", 5.0), isolation_level=kwargs.get("isolation_level", ""))
+            store = backend(timeout=kwargs.get("timeout", 5.0), isolation_level=kwargs.get("isolation_level", ""),
+                            readonly=readonly)
             factory = kwargs.get("factory")
             return _bridged(factory, store) if factory not in (None, sqlite3.Connection) else store
         return original_connect(database, *args, **kwargs)
     monkeypatch.setattr(sqlite3, "connect", connect)
+    diagnostics = sys.modules.get("hermes_lcm.diagnostics")
+    if diagnostics is not None and diagnostics.connect is original_connect:
+        monkeypatch.setattr(diagnostics, "connect", connect)
     monkeypatch.setattr(lcm_x_store, "backend_for", _carry_seeded_file(lcm_x_store, original_connect, lambda: connect))
     monkeypatch.setattr(lcm_x_store, "_vector_text", _widened_vector_text(lcm_x_store._vector_text))
     schema = _TestSchema(store)
@@ -282,6 +288,10 @@ class _TestSchema:
             connection.execute("INSERT OR IGNORE INTO lcm_migration_state (step_name, completed_at) "
                                "VALUES ('scope_v1', 0)")
         catalog = connection._catalog
+        if re.match(r'\s*ALTER\s+TABLE\s+"?messages"?\s+ADD\s+COLUMN\s+access_scope\b', sql,
+                    re.IGNORECASE):
+            connection.execute("INSERT OR IGNORE INTO lcm_migration_state(step_name, completed_at) "
+                               "VALUES('scope_v1', 0)")
         table = _CREATE_TABLE.match(sql)
         if table and not catalog.columns(table.group(1)) and table.group(1).lower() != "sqlite_sequence":
             self._create_table(table.group(1), table.group(2))
@@ -316,6 +326,11 @@ class _TestSchema:
         target = "ctx.lcm_messages" if table.lower() == "messages" else f"ctx.{table}"
         statements = []
         for statement in lcm_x_store.split_statements(body):
+            abort = re.fullmatch(r"\s*SELECT\s+RAISE\s*\(\s*ABORT\s*,\s*('(?:[^']|'')*')\s*\)\s*;?\s*",
+                                 statement, re.IGNORECASE)
+            if abort:
+                statements.append(f"RAISE EXCEPTION USING MESSAGE = {abort.group(1)}, ERRCODE = 'LX001';")
+                continue
             text, _args = lcm_x_store.render(lcm_x_store.translate(statement, catalog), ())
             statements.append(text.rstrip(";") + ";")
         returned = "NULL" if when.upper() == "AFTER" else ("OLD" if event.upper() == "DELETE" else "NEW")

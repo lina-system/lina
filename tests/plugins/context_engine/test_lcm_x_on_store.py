@@ -262,8 +262,13 @@ def test_level3_repair_on_the_store_skips_the_file_backup_and_says_so(routed, tm
     assert summary == "Model summary at d0."
 
 
+# The store's tables behind LCM-X's (0007/0008), which LCM-X does not have and does not see.
+_STORE_OWN_TABLES = ("lcm_messages", "lcm_id_sequences", "lcm_summary_vector_keys", "lcm_chunk_vectors_pending")
+
+
 def test_doctor_lists_the_tables_the_ctx_schema_has(routed, tmp_path, memory_store_sql):
-    """On the store /lcm doctor reports the tables Postgres has in schema ctx (as Postgres's catalog lists them),
+    """On the store /lcm doctor reports the tables Postgres has in schema ctx (as Postgres's catalog lists them, less the
+    store's own tables behind LCM-X's),
     no missing required table, and the database as present though no lcm.db file exists."""
     import json
     db = routed("doctor")
@@ -278,7 +283,7 @@ def test_doctor_lists_the_tables_the_ctx_schema_has(routed, tmp_path, memory_sto
                 if isinstance(check.get("detail"), dict) and "existing_tables" in check["detail"]]
     ctx_tables = [name for (name,) in memory_store_sql(
         "SELECT table_name::text FROM information_schema.tables WHERE table_schema = 'ctx' "
-        "AND table_name <> 'sqlite_master' ORDER BY 1")]
+        "AND table_name <> 'sqlite_master' AND table_name <> ALL(%s) ORDER BY 1", (list(_STORE_OWN_TABLES),))]
     assert schema["existing_tables"] == sorted(ctx_tables)
     assert set(schema["required_tables"]) <= set(ctx_tables)
     assert schema["missing_tables"] == []

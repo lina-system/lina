@@ -429,6 +429,7 @@ class MessageStore:
         ))
         if is_store_connection(self._conn):  # LINA: the schema is the store's migrations, its stem view complete
             run_versioned_migrations(self._conn)  # refuses a newer build's stamp; records this build's
+            self._ensure_time_contract_columns()  # its columns are there; rows without ingested_at still get it
             self._conn.commit()
             self._stem_usable = ensure_message_stem_fts(self._conn, build_message_stem_fts_spec())
             return

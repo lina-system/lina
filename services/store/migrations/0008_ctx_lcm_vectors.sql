@@ -83,10 +83,29 @@ CREATE UNIQUE INDEX IF NOT EXISTS chunks_source_messages_part
 -- chunk id, text = the span) and one vec.embeddings row of kind 'chunk'. LCM-X writes the vector before its
 -- lcm_chunk_meta row, so the chunk starts with the message's whole text and lcm_chunk_meta narrows it to the span.
 -- Two LCM-X messages with the same text share their memory.messages row but not their chunks.
+-- A chunk id LCM-X did not make itself (record_chunk_embedding takes any id) is placed by its lcm_chunk_meta row
+-- (store_id, chunk_index); a vector written before that row waits in lcm_chunk_vectors_pending and is published
+-- when the row arrives.
+CREATE OR REPLACE FUNCTION ctx.lcm_chunk_place(chunk_id text, OUT store_id bigint, OUT chunk_index int)
+    LANGUAGE sql STABLE AS $$
+    SELECT CASE WHEN chunk_id ~ '^[0-9]+:[0-9]+$' THEN split_part(chunk_id, ':', 1)::bigint
+                ELSE (SELECT m.store_id FROM ctx.lcm_chunk_meta AS m
+                       WHERE m.chunk_id = $1 AND m.store_id IS NOT NULL LIMIT 1) END,
+           CASE WHEN chunk_id ~ '^[0-9]+:[0-9]+$' THEN split_part(chunk_id, ':', 2)::int
+                ELSE (SELECT m.chunk_index::int FROM ctx.lcm_chunk_meta AS m
+                       WHERE m.chunk_id = $1 AND m.store_id IS NOT NULL LIMIT 1) END $$;
 CREATE OR REPLACE FUNCTION ctx.lcm_chunk_message(chunk_id text, OUT message_id bigint, OUT content text)
     LANGUAGE sql STABLE AS $$
     SELECT m.message_id, m.content FROM ctx.lcm_messages AS p JOIN memory.messages AS m ON m.uid = p.text_uid
-     WHERE p.store_id = split_part(chunk_id, ':', 1)::bigint $$;
+     WHERE p.store_id = (SELECT place.store_id FROM ctx.lcm_chunk_place(chunk_id) AS place) $$;
+CREATE TABLE IF NOT EXISTS ctx.lcm_chunk_vectors_pending (
+    agent_id text NOT NULL DEFAULT public.lina_current_agent(),
+    chunk_id text NOT NULL,
+    identity_hash text NOT NULL,
+    vec vector NOT NULL,
+    rowid bigint GENERATED ALWAYS AS IDENTITY,
+    PRIMARY KEY (agent_id, chunk_id, identity_hash)
+);
 
 CREATE OR REPLACE VIEW ctx.lcm_chunk_vectors WITH (security_invoker = true) AS
 SELECT c.chunk_id AS rowid,
@@ -97,10 +116,16 @@ SELECT c.chunk_id AS rowid,
 FROM vec.chunks AS c
 JOIN vec.embeddings AS e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
 JOIN memory.messages AS m ON m.message_id = c.message_ids[1]
-JOIN ctx.lcm_messages AS p ON p.store_id = split_part(c.source_ref, ':', 1)::bigint AND p.text_uid = m.uid
+JOIN ctx.lcm_messages AS p ON p.text_uid = m.uid
+    AND p.store_id = CASE WHEN c.source_ref ~ '^[0-9]+:[0-9]+$' THEN split_part(c.source_ref, ':', 1)::bigint
+                          ELSE (SELECT place.store_id FROM ctx.lcm_chunk_place(c.source_ref) AS place) END
 JOIN ctx.lcm_embedding_profile AS prof ON prof.identity_hash = c.lcm_identity_hash
     AND prof.model_name = e.model AND prof.dim <= e.dim
-WHERE c.source = 'lcm-x';
+WHERE c.source = 'lcm-x'
+UNION ALL
+SELECT -w.rowid, w.chunk_id, w.identity_hash, subvector(w.vec, 1, prof.dim::int)::vector, NULL::text
+FROM ctx.lcm_chunk_vectors_pending AS w
+JOIN ctx.lcm_embedding_profile AS prof ON prof.identity_hash = w.identity_hash;
 
 CREATE OR REPLACE FUNCTION ctx.lcm_chunk_vectors_write() RETURNS trigger
     LANGUAGE plpgsql AS $$
@@ -119,6 +144,7 @@ BEGIN
            AND c.source_ref = OLD.chunk_id
            AND c.lcm_identity_hash = OLD.identity_hash
            AND c.message_ids = ARRAY[msg.message_id] AND p.identity_hash = OLD.identity_hash AND e.model = p.model_name;
+        DELETE FROM ctx.lcm_chunk_vectors_pending AS w WHERE w.chunk_id = OLD.chunk_id AND w.identity_hash = OLD.identity_hash;
         RETURN OLD;
     END IF;
     SELECT p.model_name, p.dtype INTO model_name, profile_dtype FROM ctx.lcm_embedding_profile AS p WHERE p.identity_hash = NEW.identity_hash;
@@ -126,17 +152,24 @@ BEGIN
         PERFORM ctx.lcm_raise('vectors on the memory store are float32 (the one embedding model, lina#19); '
                               'this profile stores ' || profile_dtype);
     END IF;
-    SELECT * INTO msg FROM ctx.lcm_chunk_message(NEW.chunk_id);
-    IF model_name IS NULL OR msg.message_id IS NULL THEN
-        PERFORM ctx.lcm_raise('no embedding profile or message for chunk ' || NEW.chunk_id);
-    END IF;
     width := vector_dims(NEW.vec);
     IF width <> 1024 THEN
         PERFORM ctx.lcm_raise('chunk vectors on the memory store are 1024 wide (the one embedding model, lina#19); '
                               'this profile writes ' || width);
     END IF;
+    SELECT * INTO msg FROM ctx.lcm_chunk_message(NEW.chunk_id);
+    IF model_name IS NOT NULL AND msg.message_id IS NULL AND NEW.chunk_id !~ '^[0-9]+:[0-9]+$' THEN
+        INSERT INTO ctx.lcm_chunk_vectors_pending (chunk_id, identity_hash, vec)
+        VALUES (NEW.chunk_id, NEW.identity_hash, NEW.vec)
+        ON CONFLICT (agent_id, chunk_id, identity_hash) DO UPDATE SET vec = EXCLUDED.vec;
+        RETURN NEW;
+    END IF;
+    IF model_name IS NULL OR msg.message_id IS NULL THEN
+        PERFORM ctx.lcm_raise('no embedding profile or message for chunk ' || NEW.chunk_id);
+    END IF;
     INSERT INTO vec.chunks (source, agent_id, message_ids, chunk_index, source_ref, lcm_identity_hash, text)
-    VALUES ('lcm-x', public.lina_current_agent(), ARRAY[msg.message_id], split_part(NEW.chunk_id, ':', 2)::int,
+    VALUES ('lcm-x', public.lina_current_agent(), ARRAY[msg.message_id],
+            (SELECT place.chunk_index FROM ctx.lcm_chunk_place(NEW.chunk_id) AS place),
             NEW.chunk_id, NEW.identity_hash, coalesce(msg.content, ''))
     ON CONFLICT (source, message_ids, chunk_index, source_ref, lcm_identity_hash) DO UPDATE SET source = EXCLUDED.source
     RETURNING chunk_id INTO vec_chunk;
@@ -156,7 +189,13 @@ CREATE OR REPLACE FUNCTION ctx.lcm_chunk_meta_span() RETURNS trigger
     LANGUAGE plpgsql AS $$
 DECLARE
     msg record;
+    waiting record;
 BEGIN
+    FOR waiting IN DELETE FROM ctx.lcm_chunk_vectors_pending AS w WHERE w.chunk_id = NEW.chunk_id
+                   RETURNING w.chunk_id, w.identity_hash, w.vec LOOP
+        INSERT INTO ctx.lcm_chunk_vectors (chunk_id, identity_hash, vec)
+        VALUES (waiting.chunk_id, waiting.identity_hash, waiting.vec);
+    END LOOP;
     SELECT * INTO msg FROM ctx.lcm_chunk_message(NEW.chunk_id);
     IF msg.message_id IS NOT NULL AND NEW.char_end > NEW.char_start THEN
         UPDATE vec.chunks

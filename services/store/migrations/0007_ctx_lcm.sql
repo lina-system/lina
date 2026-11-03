@@ -1345,6 +1345,9 @@ FROM pg_class AS c
 LEFT JOIN pg_index AS i ON i.indexrelid = c.oid
 LEFT JOIN pg_class AS t ON t.oid = i.indrelid
 WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v', 'i', 'p') AND c.relname <> 'sqlite_master'
+  -- the store's own tables behind LCM-X's (message placement, id allocation, vector keys and pending chunk vectors)
+  -- are not LCM-X's
+  AND c.relname NOT IN ('lcm_messages', 'lcm_id_sequences', 'lcm_summary_vector_keys', 'lcm_chunk_vectors_pending')
 UNION ALL
 SELECT 'trigger', tg.tgname::text, c.relname::text, 0, NULL::text
 FROM pg_trigger AS tg
@@ -1353,10 +1356,14 @@ WHERE c.relnamespace = 'ctx'::regnamespace AND NOT tg.tgisinternal;
 
 -- LCM-X's SQLite triggers, with the same effect.
 
--- Rollups: every summary node change queues an invalidation of the days it covers.
+-- Rollups: every summary node change queues an invalidation of the days it covers, once the rollup feature has been
+-- enabled for the agent (temporal_rollups_v1): on SQLite LCM-X creates these triggers only then.
 CREATE OR REPLACE FUNCTION ctx.lcm_rollup_node_change() RETURNS trigger
     LANGUAGE plpgsql AS $$
 BEGIN
+    IF NOT EXISTS (SELECT 1 FROM ctx.lcm_migration_state WHERE step_name = 'temporal_rollups_v1') THEN
+        RETURN CASE WHEN TG_WHEN = 'BEFORE' THEN OLD END;
+    END IF;
     IF TG_OP IN ('DELETE', 'UPDATE') THEN
         INSERT INTO ctx.lcm_rollup_invalidations (node_id, scope, covered_start, covered_end, operation)
         VALUES (OLD.node_id, OLD.session_id,
