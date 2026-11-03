@@ -45,6 +45,17 @@ class Source(NamedTuple):
     id: str
     field: str
     text: str
+    board: str = ""  # a card's board (``board_key``); "" for runs. Card ids repeat across boards (an imported board)
+
+
+def board_key(slug: str | None) -> str:
+    """The board a work card's lines are kept under, on both sides (the writer and the work API): its board slug,
+    the default board when none. The writer labels each kanban database file with the first listed board that
+    resolves to it, and the default board is always listed first; so when ``HERMES_KANBAN_DB`` pins every board to
+    one file, that file's cards are kept under the default board, which is what a request without ``?board=``
+    resolves to and the pinned file it reads."""
+    from hermes_cli import kanban_db
+    return slug or kanban_db.DEFAULT_BOARD
 
 
 # ---------------------------------------------------------------- field checks
@@ -159,8 +170,12 @@ def ask(field: str, source: str) -> str:
 
 
 # ---------------------------------------------------------------- the cache
-_SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, id TEXT NOT NULL, field TEXT NOT NULL, "
-           "source_hash TEXT NOT NULL, text TEXT, error TEXT, at INTEGER NOT NULL, PRIMARY KEY (kind, id, field))",
+# Version 2 keys a line by its board as well. The cache is regenerable, so an older ``line`` table is dropped (the
+# next pass writes it again); the ``writer`` state is kept.
+SCHEMA_VERSION = 2
+_SCHEMA = ("CREATE TABLE IF NOT EXISTS line (kind TEXT NOT NULL, board TEXT NOT NULL, id TEXT NOT NULL, "
+           "field TEXT NOT NULL, source_hash TEXT NOT NULL, text TEXT, error TEXT, at INTEGER NOT NULL, "
+           "PRIMARY KEY (kind, board, id, field))",
            "CREATE TABLE IF NOT EXISTS writer (key TEXT PRIMARY KEY, value INTEGER)")
 
 
@@ -179,8 +194,12 @@ def _open(root: Path | None, write: bool) -> sqlite3.Connection | None:
         return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5) if path.is_file() else None
     path.parent.mkdir(parents=True, exist_ok=True)
     db = sqlite3.connect(path, timeout=10)
+    if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+        db.execute("DROP TABLE IF EXISTS line")
+        db.execute(f"PRAGMA user_version = {SCHEMA_VERSION}")
     for statement in _SCHEMA:
         db.execute(statement)
+    db.commit()
     return db
 
 
@@ -188,16 +207,20 @@ def _hash(source: Source) -> str:
     return hashlib.sha256(f"{source.field}\0{source.text}".encode()).hexdigest()
 
 
-def lookup(kind: str, ids: list[str], root: Path | None = None) -> dict[str, dict]:
-    """``{id: {title, now, result}}``, null where nothing passed its check (or nothing was written yet)."""
+def lookup(kind: str, ids: list[str], root: Path | None = None, board: str = "") -> dict[str, dict]:
+    """``{id: {title, now, result}}`` of one board's cards (``board_key``) or of runs (``board`` ""), null where
+    nothing passed its check, nothing was written yet, or the cache predates ``SCHEMA_VERSION``."""
     out = {i: dict(EMPTY) for i in ids}
     db = _open(root, write=False) if ids else None
     if db is None:
         return out
     try:
+        if db.execute("PRAGMA user_version").fetchone()[0] < SCHEMA_VERSION:
+            return out
         marks = ",".join("?" * len(ids))
-        for item, field, text in db.execute(f"SELECT id, field, text FROM line WHERE kind = ? AND id IN ({marks})",
-                                            [kind, *ids]):
+        for item, field, text in db.execute(
+                f"SELECT id, field, text FROM line WHERE kind = ? AND board = ? AND id IN ({marks})",
+                [kind, board, *ids]):
             if field in EMPTY:
                 out[item][field] = text
     except sqlite3.OperationalError:
@@ -244,11 +267,12 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
         with db:
             meta = _meta(db)
             db.execute("INSERT OR IGNORE INTO writer (key, value) VALUES ('first_run_at', ?)", (now,))
-            cached = {(k, i, f): h for k, i, f, h in db.execute("SELECT kind, id, field, source_hash FROM line")}
+            cached = {key[:4]: key[4] for key in db.execute("SELECT kind, board, id, field, source_hash FROM line")}
             for s in sources:
                 if not s.text.strip():
-                    db.execute("DELETE FROM line WHERE kind = ? AND id = ? AND field = ?", (s.kind, s.id, s.field))
-        due = [s for s in sources if s.text.strip() and cached.get((s.kind, s.id, s.field)) != _hash(s)]
+                    db.execute("DELETE FROM line WHERE kind = ? AND board = ? AND id = ? AND field = ?",
+                               (s.kind, s.board, s.id, s.field))
+        due = [s for s in sources if s.text.strip() and cached.get((s.kind, s.board, s.id, s.field)) != _hash(s)]
         calls, failed, deadline = [], 0, _clock() + PASS_S
         for s in due[:MAX_CALLS]:
             if _clock() >= deadline:
@@ -264,10 +288,11 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
             if reason:
                 log.info("board line %s %s %s refused: %s", s.kind, s.id, s.field, reason)
             with db:
-                db.execute("INSERT INTO line (kind, id, field, source_hash, text, error, at) VALUES (?, ?, ?, ?, ?, ?, ?) "
-                           "ON CONFLICT (kind, id, field) DO UPDATE SET source_hash = excluded.source_hash, "
-                           "text = excluded.text, error = excluded.error, at = excluded.at",
-                           (s.kind, s.id, s.field, _hash(s), None if reason else answer, reason, now))
+                db.execute("INSERT INTO line (kind, board, id, field, source_hash, text, error, at) "
+                           "VALUES (?, ?, ?, ?, ?, ?, ?, ?) ON CONFLICT (kind, board, id, field) DO UPDATE SET "
+                           "source_hash = excluded.source_hash, text = excluded.text, error = excluded.error, "
+                           "at = excluded.at",
+                           (s.kind, s.board, s.id, s.field, _hash(s), None if reason else answer, reason, now))
         pending = len(due) - len(calls) + failed
         with db:
             if calls and not failed:
@@ -337,25 +362,27 @@ def _boards(kanban_db) -> list[str]:
 
 
 def card_sources() -> list[Source]:
-    """Goal-mode kanban cards of every live board (the client API serves any board's cards, ``?board=``). A board
-    that cannot be read is logged and skipped; the others are still written. The cache key stays (kind, id, field):
-    card ids are ``t_`` + 4 random bytes, so two boards sharing one is a 1-in-2^32 chance per pair, and the work
-    API looks a card's lines up by its id alone."""
+    """Goal-mode kanban cards of every live board (the client API serves any board's cards, ``?board=``), each
+    under its board (``board_key``). The board list is iterated the dispatcher's way, inside
+    ``pin_first_board_resolution``: with ``HERMES_KANBAN_DB`` set every slug resolves to that one file, read once
+    under the first slug listed (the default board). A board that cannot be read is logged and skipped."""
     from hermes_cli import kanban_db
-    out, seen = [], set()
-    for slug in _boards(kanban_db):
-        path = Path(kanban_db.kanban_db_path(board=slug))
-        if not path.is_file() or path.resolve() in seen:  # HERMES_KANBAN_DB pins every board to one file
-            continue
-        seen.add(path.resolve())
+    with kanban_db.pin_first_board_resolution():
+        files: dict[Path, str] = {}
+        for slug in _boards(kanban_db):
+            path = Path(kanban_db.kanban_db_path(board=slug))
+            if path.is_file():
+                files.setdefault(path.resolve(), board_key(slug))
+    out = []
+    for path, board in files.items():
         try:
-            out += _board_cards(kanban_db, path)
+            out += _board_cards(kanban_db, path, board)
         except (sqlite3.Error, OSError, ValueError):
-            log.warning("board lines: kanban board %s could not be read; skipped this pass", slug, exc_info=True)
+            log.warning("board lines: kanban board %s could not be read; skipped this pass", board, exc_info=True)
     return out
 
 
-def _board_cards(kanban_db, path: Path) -> list[Source]:
+def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
     """One board's goal-mode cards over a read-only connection (a pass never initializes or migrates a board):
     title from the card title plus the issue it names, now from its latest comment, result from its result (or its
     latest run's summary) once it is done."""
@@ -372,9 +399,10 @@ def _board_cards(kanban_db, path: Path) -> list[Source]:
             if task.status == "done":
                 runs = [r for r in kanban_db.list_runs(conn, task_id) if r.summary]
                 result = task.result or (runs[-1].summary if runs else "")
-            out += [Source("card", task_id, "title", task.title + (f" {issue.group(0)}" if issue else "")),
-                    Source("card", task_id, "now", comments[-1].body if comments and task.status != "done" else ""),
-                    Source("card", task_id, "result", result or "")]
+            out += [Source("card", task_id, "title", task.title + (f" {issue.group(0)}" if issue else ""), board),
+                    Source("card", task_id, "now", comments[-1].body if comments and task.status != "done" else "",
+                           board),
+                    Source("card", task_id, "result", result or "", board)]
         return out
     finally:
         conn.close()

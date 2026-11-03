@@ -281,6 +281,72 @@ def test_cards_of_every_live_board_get_lines_and_a_broken_board_is_skipped(work,
     assert any("a-broken" in r.getMessage() for r in caplog.records if r.levelname == "WARNING")
 
 
+def _titles_by_source(monkeypatch) -> list[str]:
+    """A fake model whose title says which card it came from, so two boards' lines can be told apart."""
+    from agent import auxiliary_client
+    calls: list[str] = []
+
+    def answer(task=None, *, messages, **_kwargs):
+        from hermes_cli.lina_board_plain import _PROMPTS
+        field = next(name for name, prompt in _PROMPTS.items() if prompt in messages[0]["content"])
+        calls.append(messages[1]["content"])
+        text = ("공유기 펌웨어 점검" if "Router" in messages[1]["content"] else GOOD["title"]) if field == "title" \
+            else GOOD[field]
+        return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
+    monkeypatch.setattr(auxiliary_client, "call_llm", answer)
+    return calls
+
+
+def test_a_card_id_shared_by_two_boards_keeps_each_board_s_own_line(work, client, monkeypatch):
+    import shutil
+
+    from hermes_cli import kanban_db as kb
+    from hermes_cli.lina_board_plain import lookup, write_board
+    calls = _titles_by_source(monkeypatch)
+    card = _card(work)
+    kb.create_board("beta")
+    copy = kb.kanban_db_path(board="beta")  # an imported board keeps its source's task ids
+    for extra in ("-wal", "-shm"):
+        copy.with_name(copy.name + extra).unlink(missing_ok=True)
+    shutil.copyfile(kb.kanban_db_path(), copy)
+    with sqlite3.connect(copy) as db:
+        db.execute("UPDATE tasks SET title = 'Router firmware check', body = '' WHERE id = ?", (card,))
+
+    write_board(work.root, NOW)
+    first = len(calls)
+    assert write_board(work.root, NOW + 60)["called"] == 0 and len(calls) == first  # unchanged sources: no call
+
+    assert lookup("card", [card], work.root, board="default")[card]["title"] == GOOD["title"]
+    assert lookup("card", [card], work.root, board="beta")[card]["title"] == "공유기 펌웨어 점검"
+    served = {board: client.get(f"/api/plugins/kanban/work/cards/{card}", params=params).json()["plain"]["title"]
+              for board, params in (("default", {}), ("beta", {"board": "beta"}))}
+    assert served == {"default": GOOD["title"], "beta": "공유기 펌웨어 점검"}
+
+
+def test_a_pinned_kanban_file_is_read_once_and_its_lines_are_served_by_the_default_request(work, client, monkeypatch):
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kbc
+    from hermes_cli.lina_board_plain import write_board
+    calls = _titles_by_source(monkeypatch)
+    kb.create_board("beta")
+    conn = kbc.connect(board="beta")  # beta's own file, which no machine flow reads while the pin is set
+    try:
+        kb.create_task(conn, title="Router firmware check", goal_mode=True, assignee="beta")
+    finally:
+        conn.close()
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(work.tmp / "pinned" / "kanban.db"))
+    conn = kbc.connect()
+    try:
+        card = kb.create_task(conn, title="Weekly photo backup check", goal_mode=True, assignee="alpha")
+    finally:
+        conn.close()
+
+    assert write_board(work.root, NOW)["called"] == 1  # default and beta both resolve to the pinned file: read once
+    assert not any("Router" in c for c in calls)
+    served = client.get(f"/api/plugins/kanban/work/cards/{card}").json()["plain"]
+    assert served["title"] == GOOD["title"]
+
+
 def test_a_hub_tick_returns_promptly_while_the_model_blocks(work, fakes, monkeypatch):
     from agent import auxiliary_client
     from hermes_cli.worker import settings
