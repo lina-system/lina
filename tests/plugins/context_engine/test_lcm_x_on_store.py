@@ -234,6 +234,34 @@ def test_a_match_query_fts5_refuses_raises_as_fts5_does(query):
     assert outcome(lambda: lcm_x_store_fts.fts5_check(query)) == expected
 
 
+def test_level3_repair_on_the_store_skips_the_file_backup_and_says_so(routed, tmp_path, monkeypatch):
+    """The store has no database file to back up: /lcm doctor repair level3 apply repairs each group in its own
+    transaction and reports the skipped backup in one line, instead of failing on the missing file."""
+    escalation, dag_module, tokens = _lcm("escalation"), _lcm("dag"), _lcm("tokens")
+    config = _lcm("config").LCMConfig(database_path=str(routed("repair")), embeddings_enabled=False)
+    engine = _lcm("engine").LCMEngine(config=config, hermes_home=str(tmp_path / "home"))
+    monkeypatch.setattr(_lcm("level3_repair"), "summarize_with_escalation",
+                        lambda *, text, depth, **_: (f"Model summary at d{depth}.", 1))
+    try:
+        engine.on_session_start("s1", conversation_id="s1")
+        rows = [engine._store.append("s1", {"role": "user", "content": f"row {i}"}, token_estimate=4) for i in range(2)]
+        fragment = escalation._deterministic_truncate("\n".join(f"[user]: step {i} checked host {i}." for i in range(400)),
+                                                       512)
+        node = engine._dag.add_node(dag_module.SummaryNode(
+            session_id="s1", depth=0, summary=fragment, token_count=tokens.count_tokens(fragment),
+            source_token_count=1000, source_ids=rows, source_type="messages", created_at=2.0))
+        result = _lcm("command").handle_lcm_command("doctor repair level3 apply", engine)
+        summary = engine._dag.connection.execute("SELECT summary FROM summary_nodes WHERE node_id = ?",
+                                                 (node,)).fetchone()[0]
+    finally:
+        engine.shutdown()
+    lines = result.splitlines()
+    assert "status: ok" in lines and "groups_repaired: 1" in lines
+    assert [line for line in lines if line.startswith("backup")] == [
+        "backup: skipped — " + _lcm("level3_repair").STORE_BACKUP_SKIPPED]
+    assert summary == "Model summary at d0."
+
+
 def test_doctor_lists_the_tables_the_ctx_schema_has(routed, tmp_path, memory_store_sql):
     """On the store /lcm doctor reports the tables Postgres has in schema ctx (as Postgres's catalog lists them),
     no missing required table, and the database as present though no lcm.db file exists."""

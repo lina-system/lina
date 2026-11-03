@@ -1012,7 +1012,9 @@ def _doctor_repair_level3_apply_text(engine) -> str:
     if result["reason"]:
         lines.append(f"reason: {result['reason']}")
     backup = result["backup"]
-    if backup and backup["ok"]:
+    if backup and backup.get("skipped"):  # LINA: the memory store (lina#16)
+        lines.append(f"backup: skipped — {backup['skipped']}")
+    elif backup and backup["ok"]:
         lines += [f"backup_path: {backup['backup_path']}", f"backup_size: {_fmt_size(int(backup['backup_size']))}"]
     for number, group in enumerate(result["groups"], 1):
         head = f"group {number} (session {group['session_id']}, top node {group['top']}): {group['outcome']}"
