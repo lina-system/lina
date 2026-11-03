@@ -508,17 +508,19 @@ class MessageStore:
                              older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
         """Delete this agent's text rows no transcript row points at any more (*still_held* names the uids its
         state.db still references) and that nobody wrote or re-used for *older_than_days* (at least
-        MIN_COLLECT_DAYS): a snapshot or backup taken within that window restores with its text. Explicitly
-        forgotten rows (``forgotten_at``) are left to the forget path. Returns the rows deleted."""
+        MIN_COLLECT_DAYS): a snapshot or backup taken within that window restores with its text. Only agent turns
+        (``source = 'agent'``, what ``put_text`` writes) are collected: state.db holds only the rows it wrote, and
+        other sources (external messages, ...) have no transcript placement and keep their own lifecycle.
+        Explicitly forgotten rows (``forgotten_at``) are left to the forget path. Returns the rows deleted."""
         if self._in_write():
             raise RuntimeError("collect_unreferenced runs outside a write transaction")
         seconds = max(float(older_than_days), MIN_COLLECT_DAYS) * 86400.0
         deleted, after = 0, 0
         while True:
             with self._cursor() as cur:
-                cur.execute("SELECT message_id, uid FROM memory.messages WHERE message_id > %s AND forgotten_at IS NULL"
-                            " AND observed_at < now() - make_interval(secs => %s) ORDER BY message_id LIMIT 1000",
-                            (after, seconds))
+                cur.execute("SELECT message_id, uid FROM memory.messages WHERE message_id > %s AND source = %s"
+                            " AND forgotten_at IS NULL AND observed_at < now() - make_interval(secs => %s)"
+                            " ORDER BY message_id LIMIT 1000", (after, SOURCE_AGENT, seconds))
                 page = cur.fetchall()
             if not page:
                 return deleted
@@ -529,8 +531,9 @@ class MessageStore:
                 # observed_at is checked again here: a writer that re-used a row meanwhile refreshed it (and holds
                 # its lock until it commits), so the row stays.
                 with self._cursor() as cur:
-                    cur.execute("DELETE FROM memory.messages WHERE uid = ANY(%s) AND forgotten_at IS NULL"
-                                " AND observed_at < now() - make_interval(secs => %s) RETURNING uid", (doomed, seconds))
+                    cur.execute("DELETE FROM memory.messages WHERE uid = ANY(%s) AND source = %s AND forgotten_at IS NULL"
+                                " AND observed_at < now() - make_interval(secs => %s) RETURNING uid",
+                                (doomed, SOURCE_AGENT, seconds))
                     gone = [row[0] for row in cur.fetchall()]
                 TEXT_CACHE.drop(self.agent_id, gone)
                 deleted += len(gone)

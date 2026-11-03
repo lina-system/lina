@@ -91,9 +91,11 @@ A row is never changed after it is written. Hermes writes one message several ti
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the
 original beside a shortened copy. Copies with the same text share one row; a copy whose text differs gets its
 own version row. Deleting a session deletes its `transcript_rows`, never the text: `lina store gc` (also run by the
-state.db auto-maintenance) deletes rows no transcript row of the profile points at once nobody wrote or re-used
-them for `sessions.message_text_grace_days` (30, at least 2), counting references by `text_uid`, not by session,
-and leaving `forgotten_at` rows to the forget path. `hermes backup` ZIPs and quick snapshots carry the rows their
+state.db auto-maintenance) deletes agent-turn rows (`source = 'agent'`) no transcript row of the profile points at
+once nobody wrote or re-used them for `sessions.message_text_grace_days` (30, at least 2), counting references by
+`text_uid`, not by session, and leaving `forgotten_at` rows to the forget path. Only agent turns are collected by
+transcript references: a state.db holds only the rows it wrote, so other sources (external messages, #18) keep their
+own lifecycle (the forget path, a later collection of their own). `hermes backup` ZIPs and quick snapshots carry the rows their
 `state.db` references as `memory-messages.jsonl` (uid, content, content_sha256, ...); restoring one puts missing
 rows back (checked against content_sha256) before the restored `state.db` is used.
 
