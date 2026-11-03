@@ -30,7 +30,23 @@ def key(kind, row) -> tuple:
     return (row["run_id"], row["todo_id"]) if kind == "run_todo" else (row["id"],)
 
 
-def select_graph(all_rows, profile, agent) -> tuple:
+def remap_owner(kind, original, mappings) -> dict:
+    row = dict(original)
+    if row.get("agent_id") in mappings:
+        row["agent_id"] = mappings[row["agent_id"]]
+    if kind == "event":
+        data = json.loads(row["data"])
+        if "ledger" in data:
+            record = json.loads(data["ledger"])
+            if record.get("by") in mappings:
+                record["by"] = mappings[record["by"]]
+                data["ledger"] = json.dumps(record, ensure_ascii=False)
+                row["data"] = json.dumps(data, ensure_ascii=False)
+    return row
+
+
+def select_graph(all_rows, profile, agent, mappings=None) -> tuple:
+    mappings = mappings if mappings is not None else {profile: agent}
     indexes = {kind: {row["id"]: row for row in all_rows[kind]} for kind in KINDS if kind != "run_todo"}
     chosen = {kind: {row["id"] for row in all_rows[kind] if row["agent_id"] == profile}
               for kind in ("area", "project", "goal", "todo", "run")}
@@ -66,21 +82,8 @@ def select_graph(all_rows, profile, agent) -> tuple:
                 pending.append(("event", event_id))
     selected = {}
     for kind in KINDS:
-        selected[kind] = [dict(row) for row in all_rows[kind]
+        selected[kind] = [remap_owner(kind, row, mappings) for row in all_rows[kind]
                           if (key(kind, row) if kind == "run_todo" else row["id"]) in chosen[kind]]
-        for row in selected[kind]:
-            owning_selected = (row["id"] in owned[kind] if kind in owned else
-                               any(row.get(parent + "_id") in ids for parent, ids in owned.items()))
-            if row.get("agent_id") == profile:
-                row["agent_id"] = agent
-            if kind == "event":
-                data = json.loads(row["data"])
-                if "ledger" in data:
-                    record = json.loads(data["ledger"])
-                    if owning_selected and record.get("by") == profile:
-                        record["by"] = agent
-                        data["ledger"] = json.dumps(record, ensure_ascii=False)
-                        row["data"] = json.dumps(data, ensure_ascii=False)
     ancestors = [{"id": i, "kind": kind, "profile": indexes[kind][i]["agent_id"]}
                  for kind in owned for i in sorted(chosen[kind] - owned[kind])]
     ancestors += [{"id": i, "kind": "event", "profile": indexes["event"][i]["agent_id"]}

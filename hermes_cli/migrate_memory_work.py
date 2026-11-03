@@ -8,6 +8,7 @@ from pathlib import Path
 from hermes_cli.migrate_memory_work_rows import KINDS, key, manifest, preflight, rows, select_graph
 from hermes_cli.work import env, ledger, store
 from hermes_cli.work.cmd_store import Source, import_selected_rows
+from hermes_cli import migrate_memory_work_receipts as receipts
 
 
 def _destination_db():
@@ -20,6 +21,16 @@ def _destination_db():
     return store_sqlite.connect(current.root / "work.db", current.owner, current.names, create=True)
 
 
+def register_profiles(destination_home: Path, mappings: dict[str, str]) -> None:
+    previous = env._CURRENT[:]
+    env.bind(env.load(destination_home))
+    try:
+        with closing(_destination_db()) as db, store.transaction(db):
+            receipts.save(db, receipts.load(db, mappings))
+    finally:
+        env._CURRENT[:] = previous
+
+
 def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: str) -> dict:
     """Import a selected graph atomically, refusing different-content ID collisions."""
     previous = env._CURRENT[:]
@@ -30,11 +41,11 @@ def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: s
                 raise ValueError("work migration requires a copied SQLite store")
             all_rows = rows(source.db)
             source_counts = source.counts()
-        selected, ancestors, owned = select_graph(all_rows, profile, agent)
         with closing(_destination_db()) as db:
             with store.transaction(db):
-                if db.dialect == "postgres":
-                    db.execute("LOCK TABLE " + ", ".join(KINDS) + " IN EXCLUSIVE MODE")
+                receipt = receipts.load(db, {profile: agent})
+                selected, ancestors, owned = select_graph(all_rows, profile, agent, receipt["profiles"])
+                promoted = receipts.promote(db, all_rows, receipt)
                 matched = preflight(db, selected)
                 expected = manifest(db, selected)
                 import_selected_rows(db, {kind: [row for row in selected[kind]
@@ -46,6 +57,8 @@ def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: s
                 observed = manifest(db, actual)
                 if expected != observed:
                     raise ValueError("work import verification mismatch")
+                receipts.record_ancestors(db, all_rows, selected, matched, receipt)
+                receipts.save(db, receipt)
         counts = {kind: len(selected[kind]) for kind in KINDS}
         matched_counts = {kind: len(matched[kind]) for kind in KINDS}
         inserted_counts = {kind: counts[kind] - matched_counts[kind] for kind in KINDS}
@@ -56,6 +69,7 @@ def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: s
                 "matched": sum(matched_counts.values()), "inserted": sum(inserted_counts.values()),
                 "selected_ids": sorted(set().union(*(owned[k] for k in ("area", "goal", "todo")))),
                 "required_ancestors": ancestors, "missing_ancestors": [],
+                "owner_mappings": receipt["profiles"], "promoted_ancestors": promoted,
                 "source_rows": sum(counts.values()), "selected_rows": sum(counts.values()),
                 "selected_event_rows": counts["event"],
                 "whole_source_rows": sum(len(records) for records in all_rows.values()),

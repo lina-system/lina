@@ -264,8 +264,13 @@ Round 2 still reports `lcm: waiting for #16` and excludes LCM messages and summa
 counts. The copied `lcm.db` is retained for Round 3. The copied work ledger imports the selected profile's
 records and relations, renaming its owner to the new agent. Required area/project/goal/run/to-do ancestors
 and referenced parent events retain their original owners and are listed separately. This includes a
-to-do's closing run and both endpoints of its run relations. Existing IDs with different content are refused before
-writing; counts and manifests compare only the selected subset, not unrelated destination rows.
+to-do's closing run and both endpoints of its run relations. The destination work store keeps one migration
+profile-to-agent map: an all-profile run registers every name before importing; a single run registers only
+its arbitrary `--as` name and refuses a conflicting remap. Mapped owners apply equally to selected rows
+and ancestors; unmapped owners remain unchanged. A later owner import promotes only previously receipted
+foreign ancestors whose source and stored content still match, in the same work transaction. Other existing
+rows are never promoted. Profiles commit separately; an interrupted batch resumes by matching completed
+profiles on an identical retry. Counts and manifests compare only the selected subset, not unrelated rows.
 
 The command prints JSON and writes the same result to `--work-dir/migration-report.json`. It includes copy
 receipts, per-source accounting and bidirectional manifests, actual duplicate queries, and reference checks.

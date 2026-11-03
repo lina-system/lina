@@ -82,6 +82,9 @@ def _profile(args) -> dict:
                       spool=spool, work_db=Path(args.work_db).expanduser() if args.work_db else None)
     if copied.honcho_dump is not None and not (copied.root / "external/honcho-config.json").is_file():
         raise ValueError("Honcho dump requires the selected source profile's honcho.json host configuration")
+    if copied.work_db is not None:
+        from hermes_cli.migrate_memory_work import register_profiles
+        register_profiles(home, {args.profile: args.agent})
     destination = _safe(home / "profiles" / args.agent)
     receipt_path = _safe(work / "destination.json")
     receipt = {"home": str(home), "agent": args.agent, "profile": args.profile,
@@ -152,6 +155,10 @@ def run(args) -> int:
                           for profile in profiles]
             for selected in selections:
                 _paths(selected)
+            if args.work_db:
+                from hermes_cli.migrate_memory_work import register_profiles
+                _, home, _ = _paths(selections[0])
+                register_profiles(home, {selected.profile: selected.agent for selected in selections})
             work = Path(args.work_dir).expanduser().absolute()
             reports = []
             for selected in selections:
