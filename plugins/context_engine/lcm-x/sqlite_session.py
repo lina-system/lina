@@ -38,9 +38,11 @@ def store_backend(database: object, *, opening: bool = False) -> Callable[..., s
     return backend_for(database, opening=opening)
 
 
-def connect_database(database: str | os.PathLike, **kwargs: object) -> sqlite3.Connection:
-    """LINA: ``sqlite3.connect(database, **kwargs)``, or the host's store connection when the host routes that
-    database (a path, or a ``file:`` URI with ``uri=True``) to its Postgres store."""
+def connect_database(opener: Callable[..., sqlite3.Connection], database: str | os.PathLike,
+                     **kwargs: object) -> sqlite3.Connection:
+    """LINA: ``opener(database, **kwargs)`` (the caller's ``sqlite3.connect``, so a test that replaces its module's
+    ``sqlite3`` still sees the call), or the host's store connection when the host routes that database (a path, or
+    a ``file:`` URI with ``uri=True``) to its Postgres store."""
     path = str(database)
     if kwargs.get("uri") and path.startswith("file:"):
         parts = urlsplit(path)
@@ -50,7 +52,7 @@ def connect_database(database: str | os.PathLike, **kwargs: object) -> sqlite3.C
     if backend is not None:
         return backend(**{k: v for k, v in kwargs.items() if k in ("timeout", "isolation_level", "readonly")})
     kwargs.pop("readonly", None)
-    return sqlite3.connect(database, **kwargs)
+    return opener(database, **kwargs)
 
 
 def is_store_connection(conn: object) -> bool:

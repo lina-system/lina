@@ -300,7 +300,8 @@ _REQUIRED_SCHEMA: dict[str, frozenset[str]] = {
 
 
 def _ensure_query_view_schema(conn: sqlite3.Connection) -> None:
-    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema; the corpus row is per agent
+        _seed_query_corpus_state(conn)
         return
     conn.executescript(
         """
@@ -460,6 +461,19 @@ def _ensure_query_view_schema(conn: sqlite3.Connection) -> None:
         END;
         """
     )
+    conn.execute(
+        """
+        INSERT OR IGNORE INTO lcm_query_corpus_state(
+            singleton, generation, max_store_id, row_count, changed_at
+        )
+        SELECT 1, 0, coalesce(max(store_id), 0), count(*), ? FROM messages
+        """,
+        (time.time(),),
+    )
+
+
+def _seed_query_corpus_state(conn: sqlite3.Connection) -> None:
+    """LINA: the corpus singleton row the schema ensure writes, for an agent on the store."""
     conn.execute(
         """
         INSERT OR IGNORE INTO lcm_query_corpus_state(

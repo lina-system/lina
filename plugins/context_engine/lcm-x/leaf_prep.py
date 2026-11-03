@@ -514,7 +514,7 @@ class _LeafPrep:
         ):  # D-7: the host's single aux slot
             return
         uri = Path(job.db_path).resolve().as_uri() + "?mode=ro"
-        conn = connect_database(uri, uri=True, timeout=5.0, check_same_thread=False)
+        conn = connect_database(sqlite3.connect, uri, uri=True, timeout=5.0, check_same_thread=False)
         try:
             self._prepare_on(job, conn)
         finally:

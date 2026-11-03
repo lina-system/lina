@@ -367,7 +367,7 @@ def _retrieval_candidate_session_ids(
     connection: sqlite3.Connection | None = None
     try:
         db_path = Path(engine._store.db_path).resolve()
-        connection = connect_database(
+        connection = connect_database(sqlite3.connect,
             f"{db_path.as_uri()}?mode=ro",
             uri=True,
             timeout=(
@@ -1623,14 +1623,14 @@ def _lcm_grep_full_text_with_deadline(
             require_remaining("database path resolution")
             uri = f"{db_path.as_uri()}?mode=ro"
             require_remaining("database URI construction")
-            message_conn = connect_database(
+            message_conn = connect_database(sqlite3.connect,
                 uri,
                 uri=True,
                 timeout=max(0.001, require_remaining("message connection")),
             )
             require_remaining("message connection")
             require_remaining("DAG connection")
-            dag_conn = connect_database(
+            dag_conn = connect_database(sqlite3.connect,
                 uri,
                 uri=True,
                 timeout=max(0.001, require_remaining("DAG connection")),
@@ -1723,7 +1723,7 @@ def _lcm_active_embedding_revision(
     engine: "LCMEngine", provider: Any, *, task: str
 ) -> str:
     db_path = Path(engine._store.db_path).resolve()
-    conn = connect_database(f"{db_path.as_uri()}?mode=ro", uri=True)
+    conn = connect_database(sqlite3.connect, f"{db_path.as_uri()}?mode=ro", uri=True)
     try:
         revision = _lcm_embedding_profile_revision(
             conn,
@@ -3062,7 +3062,7 @@ def _lcm_recall_event_time_rows(
     conn: sqlite3.Connection | None = None
     try:
         db_path = Path(engine._store.db_path).resolve()
-        conn = connect_database(
+        conn = connect_database(sqlite3.connect,
             f"{db_path.as_uri()}?mode=ro",
             uri=True,
             timeout=max(0.001, deadline - time.monotonic()),
@@ -3403,7 +3403,7 @@ def _lcm_recall_summary_source_hits(
         return 0
 
     try:
-        conn = connect_database(
+        conn = connect_database(sqlite3.connect,
             uri,
             uri=True,
             timeout=max(0.001, require_remaining("database connection")),
@@ -3483,7 +3483,7 @@ def _lcm_recall_catchup_reason(engine, provider, task: str) -> str | None:
     """One keyed advisory read per requested identity, never a corpus count."""
     try:
         db_path = Path(engine._store.db_path).resolve()
-        conn = connect_database(f"{db_path.as_uri()}?mode=ro", uri=True, timeout=0.05)
+        conn = connect_database(sqlite3.connect, f"{db_path.as_uri()}?mode=ro", uri=True, timeout=0.05)
         try:
             expected = getattr(provider, "identity_revision_suffix", "")
             held = conn.execute("SELECT provider FROM lcm_embedding_profile WHERE active=1 AND archived_at IS NULL "
@@ -3886,7 +3886,7 @@ def _lcm_recall_has_usable_vector_corpus(
     try:
         db_path = Path(engine._store.db_path).resolve()
         remaining_s = max(0.001, scan_deadline - time.monotonic())
-        conn = connect_database(
+        conn = connect_database(sqlite3.connect,
             f"{db_path.as_uri()}?mode=ro",
             uri=True,
             timeout=min(0.05, remaining_s),
@@ -4773,7 +4773,7 @@ def _embedding_provider_health_check(engine: "LCMEngine") -> dict[str, Any]:
             }
         model = str(probe.get("model") or "")
         db_path = Path(engine._store.db_path).resolve()
-        conn = connect_database(f"{db_path.as_uri()}?mode=ro", uri=True)
+        conn = connect_database(sqlite3.connect, f"{db_path.as_uri()}?mode=ro", uri=True)
         try:
             stale_tasks = []
             if _lcm_embedding_profile_revision(

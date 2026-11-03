@@ -1951,7 +1951,7 @@ class VectorStore:
 
         uri = f"{self.db_path.resolve().as_uri()}?mode=ro"
         try:
-            conn = connect_database(
+            conn = connect_database(sqlite3.connect,
                 uri,
                 uri=True,
                 timeout=max(0.001, remaining),

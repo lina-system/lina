@@ -1054,7 +1054,7 @@ def _classify_schema_stamp(db_path: Path) -> dict[str, Any]:
     so this uses a fresh read-only connection keyed on the path rather than the
     engine's own connection.
     """
-    conn = connect_database(f"file:{db_path}?mode=ro", uri=True)
+    conn = connect_database(sqlite3.connect, f"file:{db_path}?mode=ro", uri=True)
     try:
         return remediate_interim_schema_stamp(conn, apply=False)
     finally:
@@ -2454,7 +2454,7 @@ def _embedding_warmup_text(engine) -> str:
 def _embedding_read_connection(db_path: str | Path) -> sqlite3.Connection:
     """Open the existing database without allowing a dry run to create it."""
     uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
-    conn = connect_database(uri, uri=True, timeout=5.0)
+    conn = connect_database(sqlite3.connect, uri, uri=True, timeout=5.0)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -3598,7 +3598,7 @@ def _record_embedding_catchup(db_path, task: str, identity: str, remaining: int 
                               scan_state=None) -> None:
     """Best-effort advisory state after publication; never fail embedding work."""
     try:
-        conn = connect_database(db_path, timeout=5.0)
+        conn = connect_database(sqlite3.connect, db_path, timeout=5.0)
         try:
             with conn:
                 if scan_state is None:

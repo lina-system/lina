@@ -378,7 +378,7 @@ def hydrate_chunk_hits(
         db_path = Path(engine._store.db_path).resolve()
         uri = f"{db_path.as_uri()}?mode=ro"
         require_remaining("database connection")
-        conn = connect_database(
+        conn = connect_database(sqlite3.connect,
             uri,
             uri=True,
             timeout=max(0.001, require_remaining("database connection")),
@@ -480,7 +480,7 @@ def hydrate_semantic_nodes(
         require_remaining("database path resolution")
         uri = f"{db_path.as_uri()}?mode=ro"
         require_remaining("database URI construction")
-        conn = connect_database(
+        conn = connect_database(sqlite3.connect,
             uri,
             uri=True,
             timeout=max(0.001, require_remaining("database connection")),
@@ -624,7 +624,7 @@ def duplicate_identity_rows(
     conn = None
     try:
         uri = f"{Path(engine._store.db_path).resolve().as_uri()}?mode=ro"
-        conn = connect_database(uri, uri=True, timeout=max(0.001, deadline - time.monotonic()))
+        conn = connect_database(sqlite3.connect, uri, uri=True, timeout=max(0.001, deadline - time.monotonic()))
         conn.row_factory = sqlite3.Row
         conn.execute("PRAGMA query_only=ON")
         conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)
