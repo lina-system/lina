@@ -22,8 +22,6 @@ from hermes_cli.worker.hub import ENDED, Hub
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import MODES
 
-# lina#112's work states (plugins/kanban/dashboard/work_api.py WORK_STATES): the app knows these five only.
-WORK_STATES = ("planned", "in_progress", "waiting", "stopped", "done")
 RECENT_S = 2 * 86400
 NOW_LINE_CHARS = 120
 CPU_HOT_S, QUIET_S = 300, 300

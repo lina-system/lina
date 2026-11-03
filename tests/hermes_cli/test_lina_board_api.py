@@ -271,3 +271,19 @@ def test_every_route_is_behind_the_dashboard_auth_gate(fakes, client):
     anonymous = TestClient(web_server.app)
     assert {path: anonymous.get(path).status_code for path in ROUTES} == dict.fromkeys(ROUTES, 401)
     assert {path: client.get(path).status_code for path in ROUTES} == dict.fromkeys(ROUTES, 200)
+
+
+def test_run_states_are_the_work_api_s_five_and_both_schemas_agree():
+    """A worker run's state is one of lina#112's five (``work_api.WORK_STATES``, the one list), and the two client
+    schemas carry that same enum, so the run cards and the work cards cannot drift apart."""
+    from hermes_cli.worker.board import work_state
+    from plugins.kanban.dashboard.work_api import WORK_STATES
+
+    jobs = [{"state": s, "verdict": v} for s in ("new", "queued", "running", "done", "review", "failed", "stalled",
+                                                  "unknown", "done_empty", "cancelled")
+            for v in (None, "accepted", "rejected")]
+    seen = {work_state(j)[0] for j in jobs} | {work_state({"state": "running"}, {"dash": "human"})[0]}
+    assert seen == set(WORK_STATES)
+    for name in ("board-client.yaml", "work-client.yaml"):
+        spec = hermes_yaml.safe_load((REPO / "docs" / "api" / name).read_text(encoding="utf-8"))
+        assert tuple(spec["components"]["schemas"]["WorkState"]["enum"]) == WORK_STATES, name
