@@ -3,9 +3,11 @@
 Once a chat has a committed human turn, ``deliver_wake`` commits a Kanban wake to the session
 authority's FIFO (``admit_route_wake``) instead of the classic adapter path the sibling file covers.
 The receipt lets the notifier advance its cursor, so the wake is never re-sent: a drain must leave
-the committed row queued (or run it), and the restarted gateway's startup recovery must run it, never
-twice. Real GatewayRunner, DiscordAdapter and SessionAuthority over SQLite; the restart is a second
-runner and authority over the same state DB.
+the committed row queued, and the restarted gateway's startup recovery must run it, never twice. The
+test holds the route's FIFO claim while it commits the wake and sets the restart flag, so the
+scheduler cannot start the wake first and the assertion checks order instead of racing it. Real
+GatewayRunner, DiscordAdapter and SessionAuthority over SQLite; the restart is a second runner and
+authority over the same state DB.
 """
 
 import asyncio
@@ -59,16 +61,23 @@ async def authority_route(monkeypatch, instance_id, executed, hold=None):
     return runner, adapter, authority, adapter.build_source(chat_id="42", chat_type="dm", user_id="42")
 
 
+def owner_id(runner, source):
+    return runner.session_store.peek_session_id(runner.session_store._generate_session_key(source))
+
+
 def admissions(runner, authority, source):
     from hermes_state_runtime import list_session_admissions
 
-    owner = runner.session_store.peek_session_id(runner.session_store._generate_session_key(source))
-    rows = list_session_admissions(authority.db, session_id=owner, pending_only=False)
+    rows = list_session_admissions(authority.db, session_id=owner_id(runner, source), pending_only=False)
     return [(row["principal_id"].split(":")[0], row["status"], row.get("outcome")) for row in rows]
 
 
 def wake_runs(executed):
     return [owner for owner, text in executed if text == WAKE]
+
+
+def live_route(runner, authority, source):
+    return authority.sessions[owner_id(runner, source)]
 
 
 @pytest.mark.asyncio
@@ -88,8 +97,15 @@ async def test_authority_route_runs_a_wake_receipted_before_drain_once_after_res
             lambda: admissions(runner, authority, source) == [("messaging", "terminal", "completed")],
             what="the human turn to settle",
         )
-    await asyncio.wait_for(deliver_wake(adapter, text=WAKE, source=source), 10)  # receipt: no retry
-    runner._draining = True  # /restart begins before the wake's turn is claimed
+    # The FIFO claim holds the route's ``claim_gate``, so the drain this admission schedules cannot
+    # start the wake until the restart flag is set: order decides, not the runner's speed.
+    live = live_route(runner, authority, source)
+    await live.claim_gate.acquire()
+    try:
+        await asyncio.wait_for(deliver_wake(adapter, text=WAKE, source=source), 10)  # receipt: no retry
+        runner._draining = True  # /restart begins before the wake's turn is claimed
+    finally:
+        live.claim_gate.release()
     if hold is not None:
         hold.finish.set()
     await async_wait_until(
@@ -97,8 +113,8 @@ async def test_authority_route_runs_a_wake_receipted_before_drain_once_after_res
         what="the human turn to settle",
     )
     wake_row = admissions(runner, authority, source)[-1]
-    assert wake_row[0] == "automation"
-    assert wake_row[1] == "queued" or (wake_row[1:] == ("terminal", "completed") and wake_runs(executed) == ["owner"])
+    assert wake_row[:2] == ("automation", "queued")  # receipted, and never claimed under the drain
+    assert wake_runs(executed) == []
 
     successor, _adapter, successor_authority, _source = await authority_route(monkeypatch, "successor", executed)
     await recover_profile_native_sessions(successor, successor_authority)  # a real gateway's startup step
@@ -106,4 +122,4 @@ async def test_authority_route_runs_a_wake_receipted_before_drain_once_after_res
         lambda: admissions(successor, successor_authority, source)[-1] == ("automation", "terminal", "completed"),
         what="the wake to run",
     )
-    assert len(wake_runs(executed)) == 1  # ran once, on whichever gateway claimed it
+    assert wake_runs(executed) == ["successor"]  # the restarted gateway ran the receipted wake, once
