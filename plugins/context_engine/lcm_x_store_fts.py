@@ -4,6 +4,7 @@ turned into a Postgres tsquery expression. Used by ``lcm_x_store``'s translator.
 from __future__ import annotations
 
 import re
+import unicodedata
 import sqlite3
 from collections.abc import Collection
 from typing import Any
@@ -13,7 +14,7 @@ _CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-
 _QUERY_TOKEN = re.compile(r'"[^"]*"|\(|\)|[^\s()"]+')
 
 
-def _fts_terms(query: str) -> list[tuple[str, str]]:
+def fts_terms(query: str) -> list[tuple[str, str]]:
     """``(op, term)`` pairs: op ``and``/``or``/``not`` joining the term to what came before."""
     tokens = _QUERY_TOKEN.findall(query or "")
     out: list[tuple[str, str]] = []
@@ -250,20 +251,27 @@ def fts5_check(query: str, columns: Collection[str] = ("content",)) -> None:
         fail()
 
 
+def unicode61(text: str) -> str:
+    """ctx.lcm_unicode61 in Python: FTS5's unicode61 tokens (letters, digits and private-use characters, accents removed), space-separated."""
+    folded = "".join(c for c in unicodedata.normalize("NFD", text) if not "\u0300" <= c <= "\u036f")
+    return re.sub(r"[^\w\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]|_", " ", folded)
+
+
 def tsquery_sql(query: str, config: str = "simple", columns: Collection[str] = ("content",)) -> tuple[str, list[Any]]:
     """A Postgres tsquery expression (the text search *config*uration) for an FTS5 query, and its parameters; a
     query FTS5 refuses raises as FTS5 does (*columns*: the FTS table's columns, for its column filters)."""
     fts5_check(query, columns)
     sql, params = "", []
     cfg = f"'{config}'::regconfig"
-    for op, term in _fts_terms(query):
-        if term.startswith('"'):
-            piece, value = f"phraseto_tsquery({cfg}, %s)", term.strip('"')
-        elif term.endswith("*") and len(term) > 1:
-            lexeme = term[:-1].lower().replace("'", "''").replace("\\", "\\\\")
-            piece, value = f"to_tsquery({cfg}, %s)", f"'{lexeme}':*"
+    for op, term in fts_terms(query):
+        # FTS5 tokenizes a bareword or phrase as it tokenized the text: several tokens are a phrase.
+        if term.endswith("*") and len(term) > 1 and not term.startswith('"'):
+            words = unicode61(term[:-1]).lower().split()
+            lexemes = [w.replace("'", "''").replace("\\", "\\\\") for w in words]
+            value = " <-> ".join(f"'{w}'" for w in lexemes) + ":*" if lexemes else ""
+            piece = f"to_tsquery({cfg}, %s)"
         else:
-            piece, value = f"plainto_tsquery({cfg}, %s)", term
+            piece, value = f"phraseto_tsquery({cfg}, ctx.lcm_unicode61(%s))", term.strip('"')
         if not sql:
             sql = piece if op != "not" else f"!!{piece}"
         else:

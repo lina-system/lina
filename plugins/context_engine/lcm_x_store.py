@@ -31,7 +31,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-from plugins.context_engine.lcm_x_store_fts import tsquery_sql
+from plugins.context_engine.lcm_x_store_fts import fts_terms, tsquery_sql
 
 logger = logging.getLogger(__name__)
 
@@ -353,6 +353,21 @@ _FROM_ITEM = re.compile(r"\b(?:FROM|JOIN)\s+(\w+)(?:\s+(?:AS\s+)?(?!(?:WHERE|JOI
                         r"USING|NATURAL|UNION|HAVING|WINDOW|OFFSET|EXCEPT|INTERSECT|RETURNING|SET|VALUES)\b)(\w+))?", re.IGNORECASE)
 
 
+# LCM-X adds access_scope to its tables with its scope_v1 migration; the store's tables have it from the start. A star
+# lists it only once scope_v1 has run for the agent (0007's pragma_table_info does the same), so the positional reads
+# LCM-X does before that keep their columns. The marked part is kept or dropped per execute.
+_SCOPE_MARK = "\x03"
+_SCOPE_PART = re.compile("\x03[^\x03]*\x03")
+
+
+def _star_list(cols: Sequence[str]) -> str:
+    out = ""
+    for i, col in enumerate(cols):
+        sep = ", " if i else ""
+        out += f"{_SCOPE_MARK}{sep}{col}{_SCOPE_MARK}" if i and col.split(".")[-1] == "access_scope" else sep + col
+    return out
+
+
 def _expand_stars(masked: str, catalog: Catalog) -> str:
     """``alias.*`` and a lone ``SELECT *`` over a ctx table → LCM-X's own columns: the store's ``agent_id`` (and a
     view's extra columns) must not shift the positional reads LCM-X does."""
@@ -365,12 +380,12 @@ def _expand_stars(masked: str, catalog: Catalog) -> str:
 
     def qualified(m: re.Match) -> str:
         cols = catalog.columns(tables.get(m.group(1), ""))
-        return ", ".join(f"{m.group(1)}.{c}" for c in cols) if cols else m.group(0)
+        return _star_list([f"{m.group(1)}.{c}" for c in cols]) if cols else m.group(0)
     masked = re.sub(r"\b(\w+)\.\*", qualified, masked)
 
     def lone(m: re.Match) -> str:
         cols = catalog.columns(m.group(3))
-        return f"{m.group(1)}{', '.join(cols)}{m.group(2)}{m.group(3)}" if cols else m.group(0)
+        return f"{m.group(1)}{_star_list(cols)}{m.group(2)}{m.group(3)}" if cols else m.group(0)
     return re.sub(r"(\bSELECT\s+(?:DISTINCT\s+)?)\*(\s+FROM\s+)(\w+)(?!\s*\.)", lone, masked, flags=re.IGNORECASE)
 
 
@@ -640,6 +655,23 @@ def translate(sql: str, catalog: Catalog) -> Template:
     return _translate_cached(sql, catalog.key)
 
 
+def _bm25_sql(query: str, config: str, alias: str, table: str) -> tuple[str, list[Any]]:
+    """FTS5's rank (bm25, 0007's ctx.lcm_bm25) for *query*: the table's row and token totals and each phrase's row
+    count come from one scalar subquery, which Postgres evaluates once per statement."""
+    phrases, prefixes, counts, params = [], [], [], []
+    for _op, term in fts_terms(query):
+        prefix = term.endswith("*") and not term.startswith('"')
+        phrases.append(term[:-1] if prefix else term.strip('"'))
+        prefixes.append(prefix)
+        tsq, tsq_params = tsquery_sql(term, config, (_FTS_COLUMNS.get(table, "content"),))
+        counts.append(f"count(*) FILTER (WHERE s.tsv @@ ({tsq}))::float8")
+        params.extend(tsq_params)
+    cfg = f"'{config}'::regconfig"
+    stats = f"(SELECT ARRAY[count(*)::float8, sum(ctx.lcm_tsv_tokens(s.tsv))::float8{''.join(', ' + c for c in counts)}] FROM ctx.{table} AS s)"
+    sql = f"ctx.lcm_bm25({alias}.tsv, {cfg}, %s::text[], %s::boolean[], {stats})"
+    return sql, [phrases, prefixes, *params]
+
+
 def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
     kind, index, alias, table = slot
     # The stem view is FTS5's porter tokenizer: its queries parse with the same stemming configuration (0007).
@@ -648,7 +680,7 @@ def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
     if kind == "match":
         return f"({alias}.tsv @@ ({tsq}))", params
     if kind == "rank":
-        return f"(-ts_rank_cd({alias}.tsv, ({tsq})))", params
+        return _bm25_sql(str(args[index]), config, alias, table)
     column = _FTS_COLUMNS.get(alias, None) or "content"
     for name, col in _FTS_COLUMNS.items():
         if alias == name:
@@ -768,7 +800,7 @@ class Catalog:
             "WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v') AND a.attnum > 0 "
             "AND NOT a.attisdropped ORDER BY c.relname, a.attnum").fetchall()
         for table, column, _num, _identity in rows:
-            if column not in _HIDDEN_COLUMNS.get(table, ()) and column not in ("agent_id", "rowid", "vec_item_id"):
+            if column not in _HIDDEN_COLUMNS.get(table, ()) and column not in ("agent_id", "rowid"):
                 self._columns.setdefault(table, []).append(column)
         # The ids LCM-X lets SQLite allocate are filled per agent by the lcm_assign_id trigger (its argument names
         # the column).
@@ -1169,6 +1201,12 @@ class PgConnection:
         self._savepoints = []
         self._tx_from_savepoint = False
 
+    def _scope_v1(self) -> bool:
+        """Whether LCM-X's scope_v1 migration has run for this agent; once it has, it stays run."""
+        if not getattr(self, "_scoped", False):
+            self._scoped = self._raw("SELECT 1 FROM ctx.lcm_migration_state WHERE step_name = 'scope_v1'").fetchone() is not None
+        return self._scoped
+
     def _raw(self, sql: str, params: Optional[Sequence[Any]] = None):
         import psycopg
         try:
@@ -1231,6 +1269,8 @@ class PgConnection:
 
     def _run_sql(self, cur: PgCursor, template: Template, params: Any) -> None:
         text, args = render(template, params)
+        if _SCOPE_MARK in text:
+            text = text.replace(_SCOPE_MARK, "") if self._scope_v1() else _SCOPE_PART.sub("", text)
         if _VECTOR_INSERT.match(text):
             args = [_vector_text(a) for a in args]
         if _LIMIT_SLOT.search(text):

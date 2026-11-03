@@ -310,8 +310,6 @@ CREATE TABLE IF NOT EXISTS ctx.summary_nodes (
     expand_hint text DEFAULT '',
     access_scope text,
     rowid bigint GENERATED ALWAYS AS (node_id) STORED,
-    -- vec.embeddings keys summaries by item_id alone, across agents: this id is unique store-wide.
-    vec_item_id bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
     PRIMARY KEY (agent_id, node_id)
 );
 
@@ -1193,9 +1191,18 @@ FROM ctx.lcm_messages AS p
 JOIN memory.messages AS m ON m.uid = p.text_uid;
 
 -- The FTS5 tables LCM queries, as views over the Postgres indexes: memory.messages.tsv and its pg_trgm index
--- serve messages_fts; the expression indexes below serve nodes_fts and lcm_trajectory_states_fts.
+-- serve messages_fts; the expression indexes below serve nodes_fts and lcm_trajectory_states_fts. Each tokenizes
+-- with ctx.lcm_unicode61, as FTS5 does, so the indexes are expressions over it.
+-- FTS5's unicode61 tokenizer: a token is a run of letters, digits and private-use characters (accents removed);
+-- everything else separates it.
+-- pg_c_utf8 classifies by Unicode whatever the database's locale; to_tsvector('simple', ...) then lower-cases.
+CREATE OR REPLACE FUNCTION ctx.lcm_unicode61(body text) RETURNS text
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+    SELECT regexp_replace(regexp_replace(normalize(body, NFD) COLLATE "pg_c_utf8", '[\u0300-\u036f]', '', 'g'),
+                          '[^[:alnum:]\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]+', ' ', 'g')
+$$;
 CREATE OR REPLACE VIEW ctx.messages_fts WITH (security_invoker = true) AS
-SELECT p.store_id AS rowid, m.content, m.tsv
+SELECT p.store_id AS rowid, m.content, to_tsvector('simple', ctx.lcm_unicode61(m.content)) AS tsv
 FROM ctx.lcm_messages AS p
 JOIN memory.messages AS m ON m.uid = p.text_uid;
 -- messages_fts_stem is FTS5's porter tokenizer on SQLite: words lower-cased and stemmed, no stop words. Postgres's
@@ -1213,22 +1220,78 @@ BEGIN
     END IF;
 END $$;
 CREATE OR REPLACE VIEW ctx.messages_fts_stem WITH (security_invoker = true) AS
-SELECT p.store_id AS rowid, m.content, to_tsvector('ctx.lcm_porter'::regconfig, m.content) AS tsv
+SELECT p.store_id AS rowid, m.content, to_tsvector('ctx.lcm_porter'::regconfig, ctx.lcm_unicode61(m.content)) AS tsv
 FROM ctx.lcm_messages AS p
 JOIN memory.messages AS m ON m.uid = p.text_uid;
 CREATE INDEX IF NOT EXISTS messages_content_lcm_porter
-    ON memory.messages USING gin (to_tsvector('ctx.lcm_porter'::regconfig, content));
-CREATE OR REPLACE VIEW ctx.nodes_fts WITH (security_invoker = true) AS
-SELECT node_id AS rowid, summary, to_tsvector('simple', summary) AS tsv FROM ctx.summary_nodes;
-CREATE OR REPLACE VIEW ctx.lcm_trajectory_states_fts WITH (security_invoker = true) AS
-SELECT state_id AS rowid, search_text, to_tsvector('simple', search_text) AS tsv FROM ctx.lcm_trajectory_states;
+    ON memory.messages USING gin (to_tsvector('ctx.lcm_porter'::regconfig, ctx.lcm_unicode61(content)));
+-- FTS5's rank is bm25 (k1 = 1.2, b = 0.75) over the query's phrases: idf from how many rows hold each phrase (1e-6
+-- when that is half the rows or more, as FTS5 floors it), the phrase's instances in the row, and the row's length in
+-- tokens against the table's average. *stats* is [rows, tokens, rows holding phrase 1, ...] for the whole table.
+CREATE OR REPLACE FUNCTION ctx.lcm_tsv_tokens(tsv tsvector) RETURNS bigint
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+    SELECT coalesce(sum(coalesce(array_length(u.positions, 1), 1)), 0) FROM unnest(tsv) AS u
+$$;
+CREATE OR REPLACE FUNCTION ctx.lcm_phrase_words(cfg regconfig, phrase text) RETURNS text[]
+    LANGUAGE sql STABLE PARALLEL SAFE STRICT AS $$
+    SELECT coalesce(array_agg(u.lexeme ORDER BY p), '{}')
+    FROM unnest(to_tsvector(cfg, ctx.lcm_unicode61(phrase))) AS u, unnest(u.positions) AS p
+$$;
+CREATE OR REPLACE FUNCTION ctx.lcm_phrase_hits(tsv tsvector, words text[], prefix boolean) RETURNS bigint
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+    WITH pos AS (
+        SELECT u.lexeme, p::int AS p FROM unnest(tsv) AS u, unnest(u.positions) AS p
+    )
+    SELECT count(*) FROM pos AS first
+    WHERE cardinality(words) > 0
+      AND (first.lexeme = words[1] OR (prefix AND cardinality(words) = 1 AND starts_with(first.lexeme, words[1])))
+      AND NOT EXISTS (
+          SELECT 1 FROM generate_series(2, cardinality(words)) AS k
+          WHERE NOT EXISTS (
+              SELECT 1 FROM pos AS nxt
+              WHERE nxt.p = first.p + k - 1
+                AND (nxt.lexeme = words[k] OR (prefix AND k = cardinality(words) AND starts_with(nxt.lexeme, words[k])))))
+$$;
+CREATE OR REPLACE FUNCTION ctx.lcm_bm25(tsv tsvector, cfg regconfig, phrases text[], prefixes boolean[],
+                                        stats double precision[]) RETURNS double precision
+    LANGUAGE plpgsql STABLE PARALLEL SAFE AS $$
+DECLARE
+    total double precision := 0;
+    dl double precision := ctx.lcm_tsv_tokens(tsv);
+    avgdl double precision;
+    hits double precision;
+    held double precision;
+    idf double precision;
+BEGIN
+    IF tsv IS NULL OR coalesce(stats[1], 0) <= 0 THEN
+        RETURN 0;
+    END IF;
+    avgdl := greatest(stats[2] / stats[1], 1e-9);
+    FOR i IN 1 .. coalesce(cardinality(phrases), 0) LOOP
+        held := stats[2 + i];
+        idf := ln((stats[1] - held + 0.5) / (held + 0.5));
+        IF idf <= 0 THEN
+            idf := 1e-6;
+        END IF;
+        hits := ctx.lcm_phrase_hits(tsv, ctx.lcm_phrase_words(cfg, phrases[i]), prefixes[i]);
+        total := total + idf * (hits * 2.2) / (hits + 1.2 * (0.25 + 0.75 * dl / avgdl));
+    END LOOP;
+    RETURN -total;
+END $$;
 
-CREATE INDEX IF NOT EXISTS summary_nodes_tsv ON ctx.summary_nodes USING gin (to_tsvector('simple', summary));
+CREATE OR REPLACE VIEW ctx.nodes_fts WITH (security_invoker = true) AS
+SELECT node_id AS rowid, summary, to_tsvector('simple', ctx.lcm_unicode61(summary)) AS tsv FROM ctx.summary_nodes;
+CREATE OR REPLACE VIEW ctx.lcm_trajectory_states_fts WITH (security_invoker = true) AS
+SELECT state_id AS rowid, search_text, to_tsvector('simple', ctx.lcm_unicode61(search_text)) AS tsv FROM ctx.lcm_trajectory_states;
+
+CREATE INDEX IF NOT EXISTS summary_nodes_tsv ON ctx.summary_nodes USING gin (to_tsvector('simple', ctx.lcm_unicode61(summary)));
 CREATE INDEX IF NOT EXISTS summary_nodes_summary_trgm ON ctx.summary_nodes USING gin (summary gin_trgm_ops);
 CREATE INDEX IF NOT EXISTS lcm_trajectory_states_tsv
-    ON ctx.lcm_trajectory_states USING gin (to_tsvector('simple', search_text));
+    ON ctx.lcm_trajectory_states USING gin (to_tsvector('simple', ctx.lcm_unicode61(search_text)));
 CREATE INDEX IF NOT EXISTS lcm_trajectory_states_search_trgm
     ON ctx.lcm_trajectory_states USING gin (search_text gin_trgm_ops);
+CREATE INDEX IF NOT EXISTS messages_content_lcm_unicode61
+    ON memory.messages USING gin (to_tsvector('simple', ctx.lcm_unicode61(content)));
 CREATE INDEX IF NOT EXISTS lcm_messages_text_uid ON ctx.lcm_messages (text_uid);
 
 -- PRAGMA table_info(t) / pragma_table_info(t): LCM-X's columns of a ctx table or view (agent_id is the store's).

@@ -1,25 +1,27 @@
--- LCM-X's summary vectors in vec.embeddings (lina#16 on lina#19's table): kind 'summary', item_id = the summary
--- node's store-wide vec_item_id, model = the model of LCM-X's embedding profile. lcm_embedding_vectors keeps LCM-X's name and columns as a
+-- LCM-X's summary vectors in vec.embeddings (lina#16 on lina#19's table): kind 'summary', item_id = the
+-- store-wide item_id of LCM-X's (embedded_id, identity_hash) pair, model = the model of LCM-X's embedding profile. lcm_embedding_vectors keeps LCM-X's name and columns as a
 -- view; its rows are written and deleted through it. vec.embeddings holds 1024-wide vectors of the one embedding
 -- model (docs/store.md): a vector of another width is refused, never stored elsewhere.
+-- A summary vector is LCM-X's (embedded_id, identity_hash) row, as in its SQLite table: two profiles of one model
+-- keep a vector each, and a vector outlives its summary node until LCM-X purges it. lcm_summary_vector_keys gives
+-- each such pair the vec.embeddings item_id its vector is stored under.
+CREATE TABLE IF NOT EXISTS ctx.lcm_summary_vector_keys (
+    agent_id text NOT NULL DEFAULT public.lina_current_agent(),
+    embedded_id text NOT NULL,
+    identity_hash text NOT NULL,
+    item_id bigint GENERATED ALWAYS AS IDENTITY UNIQUE,
+    PRIMARY KEY (agent_id, embedded_id, identity_hash)
+);
 CREATE OR REPLACE VIEW ctx.lcm_embedding_vectors WITH (security_invoker = true) AS
-SELECT n.node_id AS rowid,
-       n.node_id::text AS embedded_id,
-       x.identity_hash,
-       x.vec,
+SELECT k.item_id AS rowid,
+       k.embedded_id,
+       k.identity_hash,
+       subvector(e.embedding, 1, p.dim::int)::vector AS vec,
        NULL::text AS access_scope
-FROM ctx.summary_nodes AS n
--- A lookup per node (OFFSET 0 keeps it one): right after a bulk write the planner has no statistics for these
--- tables, and joined flat it can cross every vector with every embedding_meta row before reaching the node.
-CROSS JOIN LATERAL (
-    SELECT p.identity_hash, subvector(e.embedding, 1, p.dim::int)::vector AS vec
-    FROM vec.embeddings AS e
-    JOIN ctx.lcm_embedding_profile AS p ON p.model_name = e.model AND p.dim <= e.dim
-    WHERE e.kind = 'summary' AND e.item_id = n.vec_item_id
-    OFFSET 0) AS x;
+FROM ctx.lcm_summary_vector_keys AS k
+JOIN ctx.lcm_embedding_profile AS p ON p.identity_hash = k.identity_hash
+JOIN vec.embeddings AS e ON e.kind = 'summary' AND e.item_id = k.item_id AND e.model = p.model_name;
 
--- LCM-X joins its vectors by embedded_id, the node id as text: an index on that expression keeps the join a lookup.
-CREATE INDEX IF NOT EXISTS summary_nodes_embedded_id ON ctx.summary_nodes (agent_id, (node_id::text));
 
 CREATE OR REPLACE FUNCTION ctx.lcm_embedding_vectors_write() RETURNS trigger
     LANGUAGE plpgsql AS $$
@@ -31,7 +33,8 @@ BEGIN
         DELETE FROM vec.embeddings AS e
          USING ctx.lcm_embedding_profile AS p
          WHERE e.kind = 'summary' AND p.identity_hash = OLD.identity_hash AND e.model = p.model_name
-           AND e.item_id = (SELECT n.vec_item_id FROM ctx.summary_nodes AS n WHERE n.node_id = OLD.embedded_id::bigint);
+           AND e.item_id = OLD.rowid;
+        DELETE FROM ctx.lcm_summary_vector_keys WHERE item_id = OLD.rowid;
         RETURN OLD;
     END IF;
     SELECT p.model_name, p.dtype INTO model_name, profile_dtype FROM ctx.lcm_embedding_profile AS p WHERE p.identity_hash = NEW.identity_hash;
@@ -46,8 +49,12 @@ BEGIN
         PERFORM ctx.lcm_raise('summary vectors on the memory store are 1024 wide (the one embedding model, lina#19); '
                               'this profile writes ' || vector_dims(NEW.vec));
     END IF;
+    INSERT INTO ctx.lcm_summary_vector_keys (embedded_id, identity_hash) VALUES (NEW.embedded_id, NEW.identity_hash)
+    ON CONFLICT (agent_id, embedded_id, identity_hash) DO NOTHING;
     INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding)
-    VALUES ('summary', (SELECT n.vec_item_id FROM ctx.summary_nodes AS n WHERE n.node_id = NEW.embedded_id::bigint),
+    VALUES ('summary', (SELECT k.item_id FROM ctx.lcm_summary_vector_keys AS k
+                         WHERE k.agent_id = public.lina_current_agent() AND k.embedded_id = NEW.embedded_id
+                           AND k.identity_hash = NEW.identity_hash),
             public.lina_current_agent(), model_name, 1024,
             NEW.vec)
     ON CONFLICT (kind, item_id, model) DO UPDATE SET embedding = EXCLUDED.embedding;
