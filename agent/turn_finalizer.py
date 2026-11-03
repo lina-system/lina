@@ -499,6 +499,7 @@ def _apply_output_hooks(
             user_message=original_user_message,
             assistant_response=final_response,
             conversation_history=list(messages),
+            turn_start=getattr(agent, "_persist_user_message_idx", None),
             model=agent.model,
             platform=platform,
             side_question_token=side_question_token,

@@ -96,6 +96,13 @@ def turn_author_env(author: dict[str, Any]) -> dict[str, str]:
     return {TURN_AUTHOR_ENV: json.dumps(author, separators=(",", ":"))}
 
 
+def human_turn_author() -> dict[str, Any]:
+    """The author a person's turn is synced to memory providers with (no ``turn_author`` reached the turn): no id or
+    name, not a bot. It is fixed when the turn finishes, so a provider whose write runs later never falls back to
+    per-turn state that by then names the next turn's author (lina#20)."""
+    return {"id": None, "name": None, "is_bot": False}
+
+
 def a2a_key(author: Optional[dict[str, Any]]) -> Optional[str]:
     """``a2a:<bot id>``, the shared name for a bot author's turns. None for a human or an id-less bot."""
     if not isinstance(author, dict) or not author.get("is_bot") or not author.get("id"):
