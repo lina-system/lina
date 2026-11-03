@@ -30,7 +30,7 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | File | What it is |
 | --- | --- |
 | `store.env` | Generated on first install (mode 0600): the three role passwords, the ports (Postgres `54320`, Honcho `8000`, both on 127.0.0.1) and the data volume's name |
-| `honcho.env` | Honcho settings such as LLM and embedding keys (`LLM_*`, `EMBEDDING_*`); read by the api, deriver and migration job |
+| `honcho.env` | Honcho settings such as LLM and embedding keys (`LLM_*`, `EMBEDDING_*`); read by the api, deriver and migration job. Install and upgrade add the embedding defaults it does not set yet (see Configuration) and leave the lines already there alone |
 | `backups/` | Backup generations |
 
 ## Roles and row-level security
@@ -39,13 +39,27 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | --- | --- | --- |
 | `lina` | `lina store` (over the container's local socket) | everything (cluster superuser) |
 | `lina_app` | agents | read and write the tables in `memory`, `ctx` and `vec`; only the rows of its agent |
-| `honcho` | the Honcho server | own schema `ltm` and migrate it |
+| `honcho` | the Honcho server | own schema `ltm` and migrate it; SELECT and INSERT on `memory.messages`, REFERENCES on its `message_id`, and USAGE on schema `memory`; read and write its own vectors (kinds `message` and `document`) in `vec.embeddings`, nothing else in `vec` |
 
 Every table in `memory`, `ctx`, `ltm` or `vec` that has an `agent_id` column gets row-level
 security when it is created (or gains the column): an event trigger enables and forces it and adds
 the policy `lina_agent_rows`. A session says which agent it acts for with
 `SET lina.agent_id = '<agent>'`; it then sees and writes only that agent's rows, and with no agent
 set it sees none. The superuser `lina` is not limited by the policy.
+
+The `honcho` login is a trusted cross-agent server, not an agent principal. Migration
+`0002_honcho_messages.sql` adds role-specific SELECT and INSERT policies on `memory.messages`:
+it can read across agents and insert rows with a non-null `agent_id`, including from its
+AUTOCOMMIT read sessions. It cannot UPDATE, DELETE or TRUNCATE shared text and has neither
+table ownership nor BYPASSRLS. The `lina_app` policy is unchanged. Keep Honcho's database
+credentials server-side; Honcho's API authorization still governs workspace access.
+
+For collection, `0002_honcho_messages.sql` grants `lina_app` only EXECUTE on
+`memory.honcho_holds_message(bigint)`, not SELECT on `ltm.message_meta`. The
+SECURITY DEFINER function has a fixed `pg_catalog` search path and a qualified metadata
+lookup; PUBLIC cannot execute it. A boolean is the smallest required access, and the function
+can return false before the `ltm` schema or table exists, since store migrations run before
+Honcho's migration job. It does not expose metadata columns or grant writes into `ltm`.
 
 ## Migrations
 
@@ -57,8 +71,8 @@ migration is a new file with the next number; a file that has run is never edite
 
 ## Messages (`memory.messages`)
 
-Every message is one row in `memory.messages`, the one copy every engine reads. `hermes_state_store.py` is the
-only code that runs SQL against it. Its connections log in as `lina_app` and set `lina.agent_id` to the
+Every message is one row in `memory.messages`, the one copy every engine reads. `hermes_state_store.py`
+and Honcho's `src/message_store.py` write it. Hermes connections log in as `lina_app` and set `lina.agent_id` to the
 profile, so row-level security keeps each profile to its rows. Agents find the store through
 `LINA_STORE_DSN` when it is set (a secret: it carries the password), else through `store/store.env`
 (`127.0.0.1`, `LINA_STORE_PORT`, user `lina_app`).
@@ -87,16 +101,57 @@ text (multimodal parts, NUL or lone surrogates; base64 where JSON cannot carry i
 `absorbed_message_uids`, `tool_call_uids`, `tool_call_uid`, and `payload_sha256` (the version digest).
 None of them is filtered or sorted on in Postgres, so none became a column.
 
+### Honcho messages
+
+Honcho stores its per-message fields in `ltm.message_meta`. Its `message_id` is both the
+primary key and a foreign key to `memory.messages(message_id) ON DELETE CASCADE`;
+Honcho's integer `Message.id` is that same value. Public nanoids remain unique, and queue,
+embedding and conclusion citation references resolve against the metadata row. Reads obtain
+content from the shared table; a metadata flush inserts or resolves the immutable shared row
+on the same connection and transaction. Honcho cannot rewrite that text.
+
+For Honcho-origin messages, `uid` is `honcho:<workspace>:<public_id>`, `source` defaults to
+`agent`, and `agent_id` defaults to the workspace name. Trusted internal ingestion may supply
+`uid`, `source` and `agent_id` in `internal_metadata`; ordinary API metadata does not grant
+access to another agent's identity. Existing UIDs must match both content digest and agent.
+The one-to-one metadata primary key means a cloned Honcho placement gets a new shared row
+and UID, rather than reusing the original placement's integer identity.
+
+Revision `l13_message_split` migrates existing Honcho text after the store migrations. It
+matches existing shared rows by UID or digest/session/time within the agent boundary,
+preserves public IDs, and remaps integer references. Its parent `l19_vec_embeddings` has
+already moved vectors to `vec.embeddings`; the split preserves their owner IDs. The upgrade's pre-split physical backup and
+pinned Honcho image remain the restoration path described below.
+
+Shared message IDs are identities, not chronological positions. Honcho history, token windows,
+queue batches and clone cutoffs use `seq_in_session`. ID-valued API and summary boundaries
+resolve to that message's session position before comparison. The split remaps both persisted
+short and long summary boundary IDs in the same transaction; context starts after the summarized
+message, and a late summary cannot overwrite a chronologically newer one.
+
+Deleting shared text cascades to its Honcho metadata and dependent references. Deleting
+Honcho metadata does not delete shared text. Direct `document_sources` edges for the deleted
+public message ID are detached; document-to-document reasoning edges are not reinterpreted.
+
 A row is never changed after it is written, except `conversation_id`, filled once while it is null (found by base
 uid through the partial index `messages_unfilled_base`, which holds only rows still waiting for it). Hermes writes one message several times: compaction keeps the
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the
 original beside a shortened copy. Copies with the same text share one row; a copy whose text differs gets its
 own version row. Deleting a session deletes its `transcript_rows`, never the text: `lina store gc` (also run by the
-state.db auto-maintenance) deletes rows no transcript row of the profile points at once nobody wrote or re-used
-them for `sessions.message_text_grace_days` (30, at least 2), counting references by `text_uid`, not by session,
-and leaving `forgotten_at` rows to the forget path. `hermes backup` ZIPs and quick snapshots carry the rows their
+state.db auto-maintenance) deletes agent-turn rows (`source = 'agent'`) no transcript row of the profile points at
+and no Honcho metadata row holds once nobody wrote or re-used them for `sessions.message_text_grace_days` (30, at least 2), counting references by
+`text_uid`, not by session, and leaving `forgotten_at` rows to the forget path. Only agent turns are collected by
+transcript references: a state.db holds only the rows it wrote, so other sources (external messages, #18) keep their
+own lifecycle (the forget path, a later collection of their own). `hermes backup` ZIPs and quick snapshots carry the rows their
 `state.db` references as `memory-messages.jsonl` (uid, content, content_sha256, ...); restoring one puts missing
 rows back (checked against content_sha256) before the restored `state.db` is used.
+
+Both state.db `transcript_rows` (by `text_uid`) and Honcho `ltm.message_meta` (by `message_id`)
+may hold a text row. The collection DELETE checks Honcho's hold again at deletion time,
+including Honcho-origin rows whose workspace equals a profile and agent rows reused by Honcho.
+Profile rename changes the agent and UID prefix in place, preserving `message_id` and Honcho's
+reference; profile deletion removes local placements, not shared text. Backup restore inserts
+missing text and refuses a conflicting UID payload rather than replacing an existing shared row.
 
 ### What stays in each profile's `state.db`
 
@@ -133,6 +188,102 @@ database copied from that template, and every test empty tables. Without any Pos
 skip with one reason; under `CI=true` they fail. The macOS CI job has no Docker: it installs Homebrew `postgresql@17` and `pgvector`
 and puts their `bin` on PATH, so the fixture's `initdb` path runs there (the store SQL uses nothing newer than
 Postgres 15, which the store image runs).
+
+## Embeddings (`vec`)
+
+Every source is embedded with one model at one width, so one query vector ranks agent turns, external messages
+and Honcho's memory together: `qwen3-embedding-8b` at **1024 dimensions**, the first 1024 values of the model's
+vector L2-normalised again (Matryoshka). pgvector indexes `vector` only up to 2,000 dimensions, so 1024 also keeps
+one HNSW index. `services/store/migrations/0003_vec_embeddings.sql` creates the tables:
+
+| Table | What it holds |
+| --- | --- |
+| `vec.embeddings` | one vector per item and model: `kind` (`message`, `chunk`, `summary`, `document`), `item_id`, `agent_id`, `model`, `dim`, `embedding vector(1024)`; primary key `(kind, item_id, model)`; HNSW cosine index |
+| `vec.chunks` | the embedded text of `memory.messages`: `chunk_id`, `source`, `agent_id`, `message_ids bigint[]`, `text` (one message per chunk today) |
+| `vec.reembed_progress` | where `lina store reembed` stopped, per source and model |
+
+`kind` says what `item_id` points at: `chunk` → `vec.chunks.chunk_id`, `message` → Honcho's
+`ltm.message_embeddings.id` (a chunk of a Honcho message), `document` → `ltm.documents.vec_id` (Honcho's
+conclusions; their own id is text), `summary` → context summaries (#16). Row-level security applies on
+`agent_id` as everywhere. Honcho's rows carry the Honcho workspace as `agent_id`; the `honcho` role never sets
+`lina.agent_id`, so the migration grants it `USAGE` on `vec`, `SELECT, INSERT, UPDATE, DELETE` on
+`vec.embeddings` and the policy `honcho_rows`, which lets it see and write kinds `message` and `document` only.
+
+Honcho has no vector columns of its own any more: its revision `l19_vec_embeddings` copies the old vectors only
+when `EMBEDDING_LEGACY_MODEL` in `honcho.env` names the model that wrote them and that is the configured model
+(`EMBEDDING_MODEL_CONFIG__MODEL`), and then only those as wide as `vec.embeddings`. Honcho's old columns keep no
+per-row model, so a vector's width does not say which model wrote it; without that statement nothing is copied.
+It logs how many it left (Honcho's message chunks go back
+to pending, so its reconciler embeds them again; conclusions wait for `lina store reembed --source memory`) and
+drops `documents.embedding` and `message_embeddings.embedding`. At start Honcho refuses to run when
+`EMBEDDING_VECTOR_DIMENSIONS` differs from the width of `vec.embeddings`.
+
+### Configuration
+
+LINA's side reads `embedding:` in `config.yaml`; the key is a secret in `.env` (default name
+`LINA_EMBEDDING_API_KEY`, another one through `api_key_env`):
+
+```yaml
+embedding:
+  base_url: <OpenAI-compatible endpoint ending in /v1>
+  model: qwen3-embedding-8b
+  dimensions: 1024
+  # api_key_env: LINA_EMBEDDING_API_KEY   batch_size: 64   timeout: 60   max_chars: 8000
+```
+
+`agent/embedding_client.py` is the one client (`POST {base_url}/embeddings`, `dimensions` sent, a full-width
+answer cut and renormalised). `truncate_stored` there cuts a vector stored at full width (4096 or 1536) by the
+same model to 1024 and refuses one from another model. Honcho is pointed at the same model and width in
+`store/honcho.env`. `lina store install` and `lina store upgrade` write the model and width there for you
+(`HONCHO_DEFAULTS` in `hermes_cli/store.py`), each key only when the file does not set it yet:
+
+```sh
+EMBEDDING_MODEL_CONFIG__TRANSPORT=openai
+EMBEDDING_MODEL_CONFIG__MODEL=qwen3-embedding-8b
+EMBEDDING_VECTOR_DIMENSIONS=1024
+EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE=always
+```
+
+What you add is the endpoint and its key:
+
+```sh
+EMBEDDING_MODEL_CONFIG__OVERRIDES__BASE_URL=<the same endpoint>
+EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
+EMBEDDING_CUSTOM_API_KEY=<the key>
+# Only for the upgrade that runs l19_vec_embeddings, and only when the vectors already in Honcho were written by
+# qwen3-embedding-8b at 1024 dimensions; otherwise leave it out and they are re-embedded.
+# EMBEDDING_LEGACY_MODEL=qwen3-embedding-8b
+```
+
+A key you set in `honcho.env` wins: edit the written line, and install or upgrade will not change it back.
+`EMBEDDING_MODEL_CONFIG__TRANSPORT`, `EMBEDDING_MODEL_CONFIG__MODEL` and
+`EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE` may be overridden (the model together with `embedding.model` in
+`config.yaml`); `EMBEDDING_VECTOR_DIMENSIONS` must stay the width of `vec.embeddings` (1024), or Honcho does
+not start.
+
+The model name must be the same string on both sides: it is part of every row's key, and searches only read
+rows of the configured model.
+
+### Re-embedding and the quality check
+
+```sh
+lina store reembed --source agent|messages|memory|all   # default all
+lina memory eval-search --questions <file.jsonl> [--honcho-url http://127.0.0.1:8000] [--json out.json]
+```
+
+`reembed` runs as the store owner, goes through `memory.messages` (`agent`: roles user and assistant;
+`messages`: external messages) and Honcho's conclusions in id order, a batch per transaction (`--batch-size`,
+default `embedding.batch_size`), and records the last id of each batch, so a stopped run continues where it
+stopped (`--from-start` starts over). It prints a line per batch and the counts per source. Renaming a profile moves its
+`vec.chunks` rows and their `chunk` vectors to the new agent with its messages, in the same transaction (and back
+when the rename fails); `hermes profile migrate-identity` moves any a rename left behind.
+
+`eval-search` scores the top-5 hit rate per source: today's search of each source (the store's full-text search
+for `agent` and `messages`, Honcho's conclusion search for `memory`) against one vector search over all of the
+agent's rows in `vec.embeddings`. A line of the questions file is
+`{"id", "source", "agent", "question", "expected": [refs], "honcho": {"workspace", "observer", "observed"}}`;
+a ref is a `memory.messages` uid or a Honcho conclusion id. A synthetic set (36 questions over a 48-item corpus)
+is in `tests/fixtures/memory_eval/`.
 
 ## Backup and restore
 

@@ -1,4 +1,4 @@
-"""lina#20: the identity registry (migration 0004) maps people, agents and conversations to stable ids.
+"""lina#20: the identity registry (migration 0006) maps people, agents and conversations to stable ids.
 
 A home that already has Honcho peer names and an LCM conversation keeps them: after lina-memory takes the memory
 slot its turns go to the same Honcho peer and session and the same LCM conversation, the registry records those
@@ -22,7 +22,7 @@ def _identities(sql) -> dict:
 
 
 def test_the_identity_migration_runs_again_without_change(memory_store_sql):
-    body = (MIGRATIONS_DIR / "0004_identity.sql").read_text(encoding="utf-8")
+    body = (MIGRATIONS_DIR / "0006_identity.sql").read_text(encoding="utf-8")
     before = memory_store_sql("SELECT table_name FROM information_schema.tables WHERE table_schema = 'memory' "
                               "ORDER BY table_name")
 

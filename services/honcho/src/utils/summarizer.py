@@ -9,7 +9,7 @@ from inspect import cleandoc as c
 from typing import Any, TypedDict
 
 from nanoid import generate as generate_nanoid
-from sqlalchemy import case, func, literal, update
+from sqlalchemy import BigInteger, case, func, literal, select, update
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -587,9 +587,11 @@ async def _create_and_save_summary(
         summaries: dict[str, Summary] = session.internal_metadata.get(SUMMARIES_KEY, {})
         latest_summary = summaries.get(summary_type.value)
         if latest_summary:
-            latest_summary_message_id = latest_summary["message_id"]
+            latest_summary_seq = await crud.get_message_seq_in_session(
+                db, workspace_name, session_name, latest_summary["message_id"]
+            )
             # Skip if latest summary already covers message.
-            if latest_summary_message_id >= message_id:
+            if latest_summary_seq >= message_seq_in_session:
                 return
 
         previous_summary_text = latest_summary["content"] if latest_summary else None
@@ -936,6 +938,29 @@ async def _save_summary(
 
     sanitized: Summary = {**summary, "content": strip_nul(summary["content"])}
 
+    # Resolve both identities to chronology in the UPDATE itself, so a result
+    # finishing late cannot overwrite a newer boundary saved by another worker.
+    stored_seq = (
+        select(models.Message.seq_in_session)
+        .where(models.Message.workspace_name == models.Session.workspace_name)
+        .where(models.Message.session_name == models.Session.name)
+        .where(
+            models.Message.id
+            == models.Session.internal_metadata[SUMMARIES_KEY][label_value][
+                "message_id"
+            ].astext.cast(BigInteger)
+        )
+        .correlate(models.Session)
+        .scalar_subquery()
+    )
+    incoming_seq = (
+        select(models.Message.seq_in_session)
+        .where(models.Message.workspace_name == workspace_name)
+        .where(models.Message.session_name == session_name)
+        .where(models.Message.id == summary["message_id"])
+        .scalar_subquery()
+    )
+
     # Merge this one entry into the summaries map on the server. Writing back a
     # map read earlier (possibly from cache) would drop or revert a summary saved
     # in between, such as the sibling at a combined short/long boundary (DEV-3160).
@@ -950,6 +975,7 @@ async def _save_summary(
         update(models.Session)
         .where(models.Session.workspace_name == workspace_name)
         .where(models.Session.name == session_name)
+        .where(func.coalesce(stored_seq, 0) <= func.coalesce(incoming_seq, 0))
         .values(
             internal_metadata=models.Session.internal_metadata.op(
                 "||", return_type=JSONB
@@ -998,6 +1024,7 @@ async def get_summarized_history(
             session_name,
             start_id=summary["message_id"],
             end_id=cutoff,
+            start_exclusive=bool(summary["message_id"]),
         )
     else:
         messages = await crud.get_messages_id_range(
@@ -1174,6 +1201,7 @@ async def get_session_context(
         start_id=messages_start_id,
         end_id=cutoff,
         token_limit=messages_tokens,
+        start_exclusive=bool(messages_start_id),
     )
 
     return summary, messages

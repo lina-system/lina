@@ -1,4 +1,4 @@
-"""The identity registry (``memory.identities`` / ``memory.identity_keys``, migration 0004): one stable id per
+"""The identity registry (``memory.identities`` / ``memory.identity_keys``, migration 0006): one stable id per
 person, agent and conversation, found through the source keys it came from (lina#20).
 
 An id is derived from the first source key it was registered under, so a key resolves to the same id on

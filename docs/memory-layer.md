@@ -60,7 +60,7 @@ the manager's `messages` and its init context show.
 
 ## The identity registry
 
-Migration `services/store/migrations/0004_identity.sql` adds `memory.identities` and `memory.identity_keys`:
+Migration `services/store/migrations/0006_identity.sql` adds `memory.identities` and `memory.identity_keys`:
 one stable id per person (`person:<hash>`), agent (`agent:<profile>`) and conversation (`conv:<hash>`), with
 the source keys each came from:
 
