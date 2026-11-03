@@ -211,3 +211,68 @@ def test_a_todo_may_name_its_work_card_as_its_run(work):
     code, _out, err = work.run("add", "할 일", "--by", "beta", "--goal", "G1", "--title", "기기 5 점검",
                                "--why", "작업이 멈추지 않게", "--done", "기기가 답한다", "--check", "false")
     assert code == 2 and "--link kanban:" in err
+
+
+@pytest.mark.parametrize("close, closed", [(("confirm", "--quote", "끝났다"), "done"),
+                                           (("drop", "--quote", "안 해도 된다"), "dropped")])
+def test_rerun_does_not_recreate_a_finished_todo(work, capsys, close, closed):
+    first = _plan(work, capsys)
+    created = first["cards"][1]["ledger_todos_created"][0]
+    work.ok(close[0], created, *close[1:])
+    count, beta = len(_record()), work.notices("beta")
+
+    again = _plan(work, capsys)
+
+    assert _record()[created]["state"] == closed
+    assert len(_record()) == count and again["notices"] == [] and work.notices("beta") == beta
+    assert [r["title"] for r in _record().values() if r["kind"] == "할 일"].count(NEW_OTHER["title"]) == 1
+
+
+def _fail_once(monkeypatch, module, name, should_fail):
+    real = getattr(module, name)
+
+    def flaky(*args, **kwargs):
+        if should_fail(*args, **kwargs):
+            monkeypatch.setattr(module, name, real)
+            print("work: store down", file=sys.stderr)
+            raise SystemExit(2)
+        return real(*args, **kwargs)
+
+    monkeypatch.setattr(module, name, flaky)
+
+
+def test_failure_on_the_second_card_still_tells_the_first_card_once(work, capsys, monkeypatch):
+    from hermes_cli.work import cards
+    plan = copy.deepcopy(PLAN)
+    plan["cards"] = [plan["cards"][1], _card("third", "alpha", [NEW_OWN])]
+    seen = []
+    _fail_once(monkeypatch, cards, "link_card",
+               lambda card, **kw: bool(kw.get("todos")) and (seen.append(card) or len(seen) == 2))
+
+    rc, _out, err = _run(work, capsys, plan)
+    assert rc != 0 and "to-dos of card 'third'" in err
+
+    _plan(work, capsys, plan)
+    _plan(work, capsys, plan)
+
+    lines = work.notices("beta").splitlines()
+    assert len(lines) == 1 and "T1" in lines[0]
+
+
+def test_add_then_link_failure_still_tells_once(work, capsys, monkeypatch):
+    from hermes_cli.work import cards
+    plan = copy.deepcopy(PLAN)
+    plan["cards"][1]["ledger_todos"] = [NEW_OTHER]
+    _fail_once(monkeypatch, cards, "link_card", lambda card, **kw: bool(kw.get("todos")) and _tasks()[card].assignee == "beta")
+
+    rc, _out, err = _run(work, capsys, plan)
+    assert rc != 0 and "to-dos of card 'other'" in err
+
+    desc = _plan(work, capsys, plan)
+    _plan(work, capsys, plan)
+
+    other = desc["cards"][1]
+    assert len(other["ledger_todos"]) == 1
+    assert [r["title"] for r in _record().values() if r["kind"] == "할 일"].count(NEW_OTHER["title"]) == 1
+    assert work.notices("beta").splitlines()[0].endswith(f"할 일 {other['ledger_todos'][0]}")
+    assert len(work.notices("beta").splitlines()) == 1

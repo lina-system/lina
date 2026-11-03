@@ -7,8 +7,10 @@ links the goal card to the goal, creates the new to-dos through ``work add 할 �
 ``--link kanban:<card>``: the card is the run that carries them), links each card to its to-dos
 (``work card link``), then sends every other agent one line naming its card and to-do ids (``notify.tell``).
 
-:func:`write` is idempotent: it finds the to-dos a card already carries through ``card_todos`` (a new to-do by its
-title), links only what is not linked, and tells only about cards that gained to-dos in this run.
+:func:`write` is idempotent: a card already carries every record to-do with its ``kanban:`` link, open or closed (a
+new to-do is matched by its title), and only what it does not carry is created or linked. A notice is owed until
+the card holds a ``lina-work`` comment ``[notice] @<agent> …`` written right after it was sent, so a run that
+stopped early is finished by the next one and a run after a finished one sends nothing.
 """
 
 from __future__ import annotations
@@ -147,14 +149,22 @@ def check(plan: Plan, *, runner: str) -> Record:
     return out
 
 
+def _carried(card_ref: str) -> list[str]:
+    """Every record to-do carrying the card's ``kanban:`` link, open or closed: what the card already has."""
+    from hermes_cli.work import ledger
+    from hermes_cli.work.cards import card_link
+    link = card_link(card_ref)
+    recs, order = ledger.read_all()
+    return [i for i in order if recs[i]["kind"] == "할 일" and link in (recs[i].get("links") or [])]
+
+
 def _card_todos(card: WorkCard, card_ref: str, goal: str) -> tuple[list[str], list[str]]:
     """Create the card's new to-dos it does not carry yet and link it to every named to-do; returns the ids
     created and the ids attached (created or linked) now."""
     from hermes_cli.work import ledger
     from hermes_cli.work.cards import card_link, link_card
     from hermes_cli.work.cmd_add import add
-    from hermes_cli.work.run import card_todos
-    have = card_todos(card_ref)
+    have = _carried(card_ref)
     recs, _ = ledger.read_all()
     titles = {_identity(recs[i].get("title", "")) for i in have}
     created = [add(_new_todo_args(card, goal, todo, card_link(card_ref)))["id"]
@@ -163,6 +173,32 @@ def _card_todos(card: WorkCard, card_ref: str, goal: str) -> tuple[list[str], li
     if attach:
         link_card(card_ref, todos=attach)
     return created, attach
+
+
+def _marker(agent: str) -> str:
+    return f"[notice] @{agent} "
+
+
+def _board(board: str):
+    from hermes_cli import kanban_db as kb
+    return None if board in ("", kb.DEFAULT_BOARD) else board
+
+
+def _told(board: str, card_id: str, agent: str) -> bool:
+    """The card carries the ``lina-work`` comment saying its assignee was told (written after the notice)."""
+    from hermes_cli import kanban_db as kb
+    from hermes_cli.kanban_db_connect import connect_closing
+    from hermes_cli.work.cards import AUTHOR
+    with connect_closing(board=_board(board)) as conn:
+        return any(c.author == AUTHOR and c.body.startswith(_marker(agent)) for c in kb.list_comments(conn, card_id))
+
+
+def _mark_told(board: str, card_id: str, agent: str, line: str) -> None:
+    from hermes_cli import kanban_db as kb
+    from hermes_cli.kanban_db_connect import connect_closing
+    from hermes_cli.work.cards import AUTHOR
+    with connect_closing(board=_board(board)) as conn:
+        kb.add_comment(conn, card_id, AUTHOR, _marker(agent) + line)
 
 
 def write(plan: Plan, ids: dict[str, str], *, board: str, runner: str) -> Record:
@@ -191,9 +227,15 @@ def write(plan: Plan, ids: dict[str, str], *, board: str, runner: str) -> Record
         with _step("state"):
             state.recompute()
         for card in plan.cards:
-            if out.attached[card.key] and _tells(card.assignee, runner):
+            # Owed until the card carries the marker: a run that failed before its notices, or between a to-do's
+            # add and its card link, is finished by the next run. Told first, marked after (at least once).
+            if not (out.todos[card.key] and _tells(card.assignee, runner)):
+                continue
+            with _step(f"notice to {card.assignee} ({ids[card.key]})"):
+                if _told(board, ids[card.key], card.assignee):
+                    continue
                 line = _notice_line(ids[card.key], card.title, out.todos[card.key])
-                with _step(f"notice to {card.assignee}"):
-                    tell(card.assignee, line)
-                out.notices.append(Notice(card.assignee, card.key, line))
+                tell(card.assignee, line)
+                _mark_told(board, ids[card.key], card.assignee, line)
+            out.notices.append(Notice(card.assignee, card.key, line))
     return out
