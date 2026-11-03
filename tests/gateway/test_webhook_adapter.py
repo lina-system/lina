@@ -922,7 +922,9 @@ class TestCrossPlatformDeliveryMirror:
     def _transcript(home, sid):
         from hermes_state import SessionDB
         db = SessionDB(db_path=home / "state.db")
-        rows = db._conn.execute("SELECT role, content FROM messages WHERE session_id=? ORDER BY id", (sid,)).fetchall()
+        rows = db._conn.execute(
+            "SELECT role, msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? ORDER BY id",
+            (sid,)).fetchall()
         db.close()
         return [(r[0], r[1]) for r in rows]
 

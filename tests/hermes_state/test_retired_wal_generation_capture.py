@@ -20,6 +20,7 @@ import pytest
 
 import hermes_state
 from hermes_state import DeletedWalGenerationError, SessionDB
+from hermes_state_store import MessageStore, agent_id_for, install_sqlite_functions
 from hermes_state_dbfile import (
     RETIRED_GENERATION_MANIFEST, RetiredGenerationCaptureError, capture_retired_wal_generation,
 )
@@ -74,7 +75,15 @@ def _recover(artifact: Path, name: str, workdir: Path) -> sqlite3.Connection:
 
 
 def _count(conn: sqlite3.Connection, content_like: str) -> int:
-    return conn.execute("SELECT COUNT(*) FROM messages WHERE content LIKE ?", (content_like,)).fetchone()[0]
+    db_path = Path(conn.execute("PRAGMA database_list").fetchone()[2])
+    store = MessageStore(agent_id_for(db_path))
+    install_sqlite_functions(conn, lambda: store)
+    try:
+        return conn.execute(
+            "SELECT COUNT(*) FROM transcript_rows WHERE msg_text(text_uid, 'content') LIKE ?",
+            (content_like,)).fetchone()[0]
+    finally:
+        store.close()
 
 
 # ── Capture at the first halt ───────────────────────────────────────────────────────────────────────
@@ -294,7 +303,7 @@ def _assert_retired_rows_recoverable_after_exit(tmp_path, *, rename):
     # checkpoint off, or the handle was retired unclosed where it could not be.
     live = sqlite3.connect(str(path))
     try:
-        assert integrity_ok_conn(live) and live.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == expected
+        assert integrity_ok_conn(live) and live.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0] == expected
     finally:
         live.close()
 

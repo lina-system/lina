@@ -14,7 +14,8 @@ from agent.message_metadata import (
     copy_identity_fields, message_uid_or_none)
 from hermes_state_common import _id_chunks, _placeholders
 from hermes_state_identity import _fill_missing_tool_call_uids, _restore_row_identity
-from hermes_state_messages import _MESSAGE_WRITE_COLUMNS, SessionMessagesMixin
+from hermes_state_messages import _MESSAGE_WRITE_COLUMNS, _TEXT_COLUMNS, SessionMessagesMixin
+from hermes_state_store import TEXT_FIELDS, content_digest, rewrite_rows
 
 
 # Durable payload columns a row-addressed rewrite may change: every INSERT column except row identity,
@@ -80,7 +81,8 @@ def stamp_inserted_row_snapshots(conn: sqlite3.Connection, session_id: str, mess
     by_id = {msg["_row_id"]: msg for msg in messages if isinstance(msg.get("_row_id"), int)}
     for chunk in _id_chunks(by_id):
         for row in conn.execute(
-            f"SELECT * FROM messages WHERE session_id = ? AND id IN ({_placeholders(chunk)})", (session_id, *chunk)
+            f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE session_id = ? AND id IN ({_placeholders(chunk)})",
+            (session_id, *chunk)
         ).fetchall():
             by_id[int(row["id"])][DB_ROW_SNAPSHOT] = transcript_row_snapshot(row)
 
@@ -109,7 +111,8 @@ def _active_logical_message_row(
     if message_uid is None:
         return None
     return conn.execute(
-        "SELECT * FROM messages WHERE session_id = ? AND active = 1 AND role = ? AND message_uid = ? "
+        f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = ? "
+        "AND message_uid = ? "
         "ORDER BY id DESC LIMIT 1",
         (session_id, role, message_uid),
     ).fetchone()
@@ -143,7 +146,8 @@ def _active_uid_dedupe(
     durable: dict[str, list[sqlite3.Row]] = {}
     for chunk in _id_chunks(candidate_uids):
         for row in conn.execute(
-            f"SELECT * FROM messages WHERE session_id = ? AND active = 1 AND message_uid IN ({_placeholders(chunk)})",
+            f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE session_id = ? AND active = 1 "
+            f"AND message_uid IN ({_placeholders(chunk)})",
             (session_id, *chunk),
         ).fetchall():
             durable.setdefault(row["message_uid"], []).append(row)
@@ -192,6 +196,7 @@ def resolve_and_repair_transcript_batch(
     decode_content_fn: Callable[[Any], Any],
     serialize_message_fn: Callable[[dict[str, Any], float], Mapping[str, Any]],
     decode_row_fn: Callable[[Mapping[str, Any]], dict[str, Any]],
+    store,
 ) -> list[dict[str, Any]]:
     """Resolve row-addressed rewrites without appending duplicates or replacing concurrent winners.
 
@@ -256,7 +261,7 @@ def resolve_and_repair_transcript_batch(
                     # "unknown", not NULL.
                     serialized = {**serialized, "token_count": target_row["token_count"]}
                 if any(target_row[column] != serialized[column] for column in _OWNED_COLUMNS):
-                    _rewrite_row(conn, session_id, target_row, serialized)
+                    _rewrite_row(conn, store, session_id, target_row, serialized)
                     wrote = True
                 missing = {c: target_row[c] for c in _LIVE_MISSING_METADATA if msg.get(c) is None}
                 if any(value is not None for value in missing.values()):
@@ -266,10 +271,10 @@ def resolve_and_repair_transcript_batch(
         elif role == "assistant" and is_content_blank(decode_content_fn(target_row["content"])):
             # Legacy dict (no digest) over a blank assistant row: the interrupted-stream repair. Fill the row
             # from live content with a content-only CAS and never adopt the blank row onto the live dict.
-            wrote = conn.execute(
-                "UPDATE messages SET content = ? WHERE id = ? AND session_id = ? AND content IS ?",
-                (encode_content_fn(msg.get("content")), target_id, session_id, target_row["content"]),
-            ).rowcount > 0
+            wrote = rewrite_rows(
+                conn, store, [target_id], {"content": encode_content_fn(msg.get("content"))},
+                where_sql=" AND session_id = ? AND content_digest IS ?",
+                where_params=(session_id, content_digest(target_row["content"]))) > 0
         else:
             # Legacy dict (no digest: a row-addressed resume, a clone, or a repair_alternation=False
             # projection) over a non-blank assistant row: another writer already filled it. Adopt its content
@@ -279,7 +284,7 @@ def resolve_and_repair_transcript_batch(
                 canonical = {"content": decode_content_fn(target_row["content"]), _CONTENT_ONLY: True}
 
         final_row = conn.execute(
-            "SELECT * FROM messages WHERE id = ? AND session_id = ?", (target_id, session_id)
+            f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE id = ? AND session_id = ?", (target_id, session_id)
         ).fetchone() if wrote else target_row
         msg["timestamp"] = final_row["timestamp"]
         # A row-addressed rewrite keeps the row's identity: the stored uid wins over whatever the live dict
@@ -297,6 +302,7 @@ def resolve_and_repair_transcript_batch(
 
 def _rewrite_row(
     conn: sqlite3.Connection,
+    store,
     session_id: str,
     target_row: Mapping[str, Any],
     serialized: Mapping[str, Any],
@@ -306,18 +312,15 @@ def _rewrite_row(
     old_peer_ids = [
         int(row["id"])
         for row in conn.execute(
-            "SELECT id FROM messages WHERE session_id = ? AND id != ? "
+            "SELECT id FROM transcript_rows WHERE session_id = ? AND id != ? "
             "AND (active = 1 OR compacted = 1) AND display_identity IS ?",
             (session_id, target_row["id"], old_identity),
         ).fetchall()
     ] if old_identity is not None else []
 
     # Owned columns only: same-process metadata writes (a reaction, a backfill) stay as committed.
-    assignments = ", ".join(f"{column} = ?" for column in _OWNED_COLUMNS)
-    conn.execute(
-        f"UPDATE messages SET {assignments} WHERE id = ? AND session_id = ?",
-        [*(serialized[column] for column in _OWNED_COLUMNS), int(target_row["id"]), session_id],
-    )
+    rewrite_rows(conn, store, [int(target_row["id"])], {column: serialized[column] for column in _OWNED_COLUMNS},
+                 where_sql=" AND session_id = ?", where_params=(session_id,))
     _restore_display_index(conn, session_id, target_row, serialized, old_identity, old_peer_ids)
 
 
@@ -334,7 +337,7 @@ def _restore_display_index(
         placeholders = _placeholders(old_peer_ids)
         old_order = min(old_peer_ids)
         conn.execute(
-            f"UPDATE messages SET display_identity = ?, display_order = ? "
+            f"UPDATE transcript_rows SET display_identity = ?, display_order = ? "
             f"WHERE session_id = ? AND id IN ({placeholders})",
             (old_identity, old_order, session_id, *old_peer_ids),
         )
@@ -344,13 +347,13 @@ def _restore_display_index(
     visible = bool(target_row["active"] or target_row["compacted"])
     if not visible:
         conn.execute(
-            "UPDATE messages SET display_identity = ?, display_order = ? WHERE id = ? AND session_id = ?",
+            "UPDATE transcript_rows SET display_identity = ?, display_order = ? WHERE id = ? AND session_id = ?",
             (new_identity, target_id, target_id, session_id),
         )
         return
 
     peers = conn.execute(
-        "SELECT id, display_order FROM messages WHERE session_id = ? AND id != ? "
+        "SELECT id, display_order FROM transcript_rows WHERE session_id = ? AND id != ? "
         "AND (active = 1 OR compacted = 1) AND display_identity IS ?",
         (session_id, target_id, new_identity),
     ).fetchall()
@@ -359,12 +362,12 @@ def _restore_display_index(
         + [int(peer["display_order"] if peer["display_order"] is not None else peer["id"]) for peer in peers]
     )
     conn.execute(
-        "UPDATE messages SET display_identity = ?, display_order = ? WHERE id = ? AND session_id = ?",
+        "UPDATE transcript_rows SET display_identity = ?, display_order = ? WHERE id = ? AND session_id = ?",
         (new_identity, new_order, target_id, session_id),
     )
     if peers:
         conn.executemany(
-            "UPDATE messages SET display_order = ? WHERE id = ? AND session_id = ?",
+            "UPDATE transcript_rows SET display_order = ? WHERE id = ? AND session_id = ?",
             [(new_order, int(peer["id"]), session_id) for peer in peers],
         )
 
@@ -372,7 +375,7 @@ def _restore_display_index(
 def _active_message_row(conn: sqlite3.Connection, session_id: str, row_id: int, role: str):
     """The same-role active clone for ``row_id``, or the addressed inactive row when no clone exists."""
     row = conn.execute(
-        "SELECT * FROM messages WHERE id = ? AND session_id = ?", (row_id, session_id)
+        f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE id = ? AND session_id = ?", (row_id, session_id)
     ).fetchone()
     if row is None or row["role"] != role:
         return None
@@ -383,9 +386,11 @@ def _active_message_row(conn: sqlite3.Connection, session_id: str, row_id: int, 
     # messages. Legacy rows without an indexed identity cannot be resolved safely, so retain the addressed row.
     if row["display_identity"] is None:
         return row
-    payload_predicates = " AND ".join(f"{column} IS ?" for column in _REPAIR_COLUMNS)
+    # A clone shares its original's text version, so one text_uid comparison covers every text column.
+    placement_columns = [column for column in _REPAIR_COLUMNS if column not in TEXT_FIELDS]
+    payload_predicates = " AND ".join(f"{column} IS ?" for column in (*placement_columns, "text_uid"))
     clones = conn.execute(
-        "SELECT * FROM messages WHERE session_id = ? AND active = 1 AND role = ? "
+        f"SELECT *, {_TEXT_COLUMNS} FROM transcript_rows WHERE session_id = ? AND active = 1 AND role = ? "
         "AND display_identity IS ? AND timestamp IS ? AND id != ? AND "
         f"{payload_predicates} ORDER BY id DESC LIMIT 2",
         (
@@ -394,7 +399,7 @@ def _active_message_row(conn: sqlite3.Connection, session_id: str, row_id: int, 
             row["display_identity"],
             row["timestamp"],
             row["id"],
-            *(row[column] for column in _REPAIR_COLUMNS),
+            *(row[column] for column in (*placement_columns, "text_uid")),
         ),
     ).fetchall()
     return clones[0] if len(clones) == 1 else row

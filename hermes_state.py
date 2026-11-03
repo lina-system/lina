@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """SQLite state store for Hermes Agent: session metadata, message history, model
-config, FTS5 search. WAL mode (concurrent readers + one writer); compression
+config; message text lives in the memory store (hermes_state_store). WAL mode (concurrent readers + one writer); compression
 splits sessions via parent_session_id chains; sessions are source-tagged
 ('cli', 'telegram', ...). Batch-runner / RL trajectories live elsewhere.
 """
@@ -20,6 +20,7 @@ import sys
 import threading
 import time
 import uuid
+import weakref
 from collections import deque
 from contextlib import contextmanager, suppress
 from pathlib import Path
@@ -51,7 +52,6 @@ from hermes_state_guard import (
 )
 from hermes_state_readpool import _READ_POOL_MAX, _proc_fd_targets, _read_budget_for
 from hermes_state_sessions import SessionSessionsMixin
-from hermes_state_fts import SessionFtsSetupMixin, load_fts5_cjk_extension
 from hermes_state_portability import SessionPortabilityMixin
 from hermes_state_telegram import SessionTelegramTopicsMixin
 from hermes_state_profile_repair import SessionProfileRepairMixin
@@ -67,6 +67,7 @@ from hermes_state_dbfile import (
     RetiredGenerationCaptureError, capture_retired_wal_generation, refuse_deleted_wal_generation,
 )
 from hermes_state_messages import SessionMessagesMixin
+from hermes_state_store import MessageStore, agent_id_for, install_sqlite_functions
 from hermes_state_prune_rewrite import SessionPruneRewriteMixin
 from hermes_state_api_content import SessionApiContentMixin
 from hermes_state_coverage import SessionCoverageMixin
@@ -450,6 +451,19 @@ def divert_session_transcript_jsonl(session_id: str, messages) -> Optional[Path]
 
 # Process-wide shared SessionDB registry: long-lived in-process callers share ONE writer
 # connection per resolved path via hermes_state_registry.acquire(); one-shots use SessionDB() + close().
+def _store_of(db: "SessionDB") -> Callable[[], MessageStore]:
+    """``db.message_store`` through a weak reference: a connection's SQL function must not keep its
+    SessionDB alive (an abandoned handle is closed by its finalizer)."""
+    ref = weakref.ref(db)
+
+    def store() -> MessageStore:
+        owner = ref()
+        if owner is None:
+            raise sqlite3.ProgrammingError("SessionDB was closed")
+        return owner.message_store
+    return store
+
+
 def _foreign_state_db_holders(db_path: Path) -> list[tuple[int, str]]:
     """Compatibility delegate to the state-holder authority."""
     return _state_holders.foreign_state_db_holders(db_path)
@@ -462,13 +476,13 @@ def _foreign_state_db_holders(db_path: Path) -> list[tuple[int, str]]:
 
 
 class SessionDB(
-    SessionSessionsMixin, SessionFtsSetupMixin, SessionSearchMixin, SessionSchemaMixin,
+    SessionSessionsMixin, SessionSearchMixin, SessionSchemaMixin,
     SessionPortabilityMixin, SessionTelegramTopicsMixin, SessionCompressionMixin,
     SessionGatewayMixin, SessionMaintenanceMixin, SessionUsageMixin, SessionTitlesMixin,
     SessionMessagesMixin, SessionPruneRewriteMixin, SessionApiContentMixin, SessionCoverageMixin, SessionRewindMixin, SessionProfileRepairMixin,
     SessionPromptRefreshMixin,
 ):
-    """SQLite-backed session storage with FTS5 search; many reader threads, one writer (WAL)."""
+    """SQLite-backed session storage (text in the memory store); many reader threads, one writer (WAL)."""
 
     # Only these state-owned producers join automatic stale-open reconciliation; messaging/UI
     # sources have their own lifecycle owners; unknown sources fail closed.
@@ -503,9 +517,6 @@ class SessionDB(
     _WRITE_RETRY_SLOW_MIN_S, _WRITE_RETRY_SLOW_MAX_S = 0.250, 1.000
     # PASSIVE WAL checkpoint every N successful writes.
     _CHECKPOINT_EVERY_N_WRITES = 50
-    # Bounded FTS ``'merge'`` (ms of lock each) instead of ``'optimize'`` (9-18s per index on a 10GB
-    # DB, longer than a writer's patience); up to _COMMANDS_PER_PASS per index, stopping on no-progress.
-    _FTS_MERGE_EVERY_N_WRITES, _FTS_MERGE_MAX_PAGES_PER_INDEX, _FTS_MERGE_COMMANDS_PER_PASS = 1000, 500, 4
     # Imports cap lower than exports: an import holds one BEGIN IMMEDIATE.
     _IMPORT_MAX_SESSIONS, _IMPORT_MAX_MESSAGES_PER_SESSION, _IMPORT_MAX_TOTAL_MESSAGES = 500, 10_000, 50_000
     _IMPORT_MAX_SESSION_BYTES, _IMPORT_MAX_TOTAL_BYTES = 5 * 1024 * 1024, 25 * 1024 * 1024
@@ -633,11 +644,6 @@ class SessionDB(
         self._connection_pinned = False  # one unmatched C reference taken at most once per handle
         self._wal_lock_guard: dict = {}  # hermes_state_lockguard.hold() record, see _open_writer
         self._db_corrupt, self._db_corrupt_reason = False, ""  # sticky quarantine (StateDbCorruptError)
-        self._fts_usermerge_floor_applied = False  # one-shot usermerge-floor write guard
-        self._fts_enabled = self._fts_stale = self._trigram_available = False
-        # _fts_cjk_loaded: tokenizer on the writer connection; _fts_cjk_available: messages_fts_cjk
-        # is queryable AND not marked stale.
-        self._fts_cjk_loaded = self._fts_cjk_available = self._fts_unavailable_warned = False
         self._conn = None
         # Async token accounting; distinct from self._lock so enqueue/flush never contends with writes.
         self._token_queue: deque = deque()
@@ -649,6 +655,7 @@ class SessionDB(
         # Set True when this instance is opened via hermes_state_registry.acquire(). Makes close() a no-op so the
         # registry (not individual callers) controls the connection lifecycle (#90837).
         self._shared_registry_owned = False
+        self._message_store: Optional[MessageStore] = None
         initialization_complete = False
         try:
             if read_only:
@@ -741,12 +748,8 @@ class SessionDB(
                 self._conn = conn = self._connect_read_only(timeout=_READ_BUSY_TIMEOUT_S)
                 try:
                     apply_database_pragmas(conn, db_label="state.db")
-                    cursor = conn.cursor()
-                    self._fts_enabled = self._fts_table_probe(cursor, "messages_fts") is True
-                    if self._fts_enabled:
-                        self._trigram_available = (
-                            self._fts_table_probe(cursor, "messages_fts_trigram") is True
-                        )
+                    # Reading the schema fails here, inside the cleanup below, when sqlite_master is malformed.
+                    conn.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'transcript_rows'")
                 except BaseException:
                     self._conn = None
                     self._close_connection_quietly(conn)
@@ -772,6 +775,7 @@ class SessionDB(
             check_same_thread=False, timeout=timeout, isolation_level=None,
         )
         conn.row_factory = sqlite3.Row
+        install_sqlite_functions(conn, _store_of(self))
         return conn
 
     def _handle_quarantine_if_invalid(self, already_locked: bool = False) -> None:
@@ -805,6 +809,7 @@ class SessionDB(
         )
         try:
             conn.row_factory = sqlite3.Row
+            install_sqlite_functions(conn, _store_of(self))
             mode = apply_wal_with_fallback(conn, db_label="state.db")
             # "wal" is also the *assumed* mode when the on-disk probe was blocked by a concurrent opener
             # (#86515): the lock-free mode=ro read pool needs a confirmed WAL header, so confirm it here.
@@ -816,7 +821,6 @@ class SessionDB(
             _secure_state_db_files(self.db_path)
             apply_database_pragmas(conn, db_label="state.db")
             conn.execute("PRAGMA foreign_keys=ON")
-            self._fts_cjk_loaded = load_fts5_cjk_extension(conn)
         except BaseException:
             self._close_connection_quietly(conn)
             raise
@@ -885,8 +889,6 @@ class SessionDB(
         try:
             conn = self._connect_read_only(timeout=_READ_BUSY_TIMEOUT_S)
             apply_database_pragmas(conn, db_label="state.db")
-            if self._fts_cjk_loaded:  # registers in the connection, not the file: ro is fine
-                load_fts5_cjk_extension(conn)
         except BaseException as exc:
             # A half-open connection (open ok, extension load failed) is a live tracked descriptor,
             # the leak shape this pool exists to fix; a stranded permit would shrink the read
@@ -1047,7 +1049,10 @@ class SessionDB(
                     self._conn.execute("BEGIN IMMEDIATE")
                     try:
                         fn_started = True
-                        result = fn(self._conn)
+                        # The text this write adds to memory.messages commits just before state.db's rows
+                        # that point at it; a rollback or retry here rolls it back too.
+                        with self.message_store.write():
+                            result = fn(self._conn)
                         self._conn.commit()
                     except BaseException:
                         try:
@@ -1055,12 +1060,10 @@ class SessionDB(
                         except Exception:
                             pass
                         raise
-                # Success — periodic best-effort checkpoint + FTS merge.
+                # Success — periodic best-effort checkpoint.
                 self._write_count += 1
                 if self._write_count % self._CHECKPOINT_EVERY_N_WRITES == 0:
                     self._try_wal_checkpoint()
-                if self._write_count % self._FTS_MERGE_EVERY_N_WRITES == 0:
-                    self._try_incremental_merge_fts()
                 return result
             except SessionCompressionInProgressError:
                 # Transient (see _COMPRESSION_BUSY_WAIT_S): a steer landing mid-compression must not abort.
@@ -1111,16 +1114,9 @@ class SessionDB(
                 if isinstance(exc, sqlite3.DatabaseError):
                     # An out-of-band replace surfaces as this same corruption class; in-file repair
                     # on a NEW generation amplifies the damage.
-                    if (
-                        "not a database" in err_msg or is_malformed_db_error(exc)
-                        or self._is_fts_write_corruption_error(exc)
-                    ):
+                    if "not a database" in err_msg or is_malformed_db_error(exc):
                         with self._lock:
                             self._raise_if_db_replaced()
-                    # Corrupt FTS shadow tables fail every write via the sync triggers while canonical
-                    # rows are intact: detach the derived indexes atomically and retry (never rebuild here).
-                    if self._enter_fts_fail_open(exc, deadline=deadline, patience_s=patience_s):
-                        continue
                     # What survives both checks is structural damage: quarantine.
                     if self._is_structural_corruption_error(exc):
                         self._halt_db_corrupt(exc)
@@ -1331,12 +1327,11 @@ class SessionDB(
 
     @classmethod
     def _is_structural_corruption_error(cls, exc: BaseException) -> bool:
-        """Bare SQLITE_CORRUPT/NOTADB with no FTS provenance: canonical B-tree/schema/freelist damage,
-        never repairable from the live write path."""
+        """Bare SQLITE_CORRUPT/NOTADB: canonical B-tree/schema/freelist damage, never repairable from the
+        live write path."""
         return (
             isinstance(exc, sqlite3.DatabaseError)
             and not isinstance(exc, StateDbCorruptError)
-            and not cls._is_fts_write_corruption_error(exc)
             and classify_persistence_error(exc) == "corrupt"
         )
 
@@ -1584,6 +1579,17 @@ class SessionDB(
                     # identity when retiring an unsafe handle.
                     self._db_sidecar_identity = {}
         self._read_budget.unregister(self)  # idempotent: a never-registered (failed-init) handle is a no-op
+        store, self._message_store = getattr(self, "_message_store", None), None
+        if store is not None:
+            store.close()
+
+    @property
+    def message_store(self) -> MessageStore:
+        """This profile's view of ``memory.messages``, where the transcript's text lives (lina#12)."""
+        store = self._message_store
+        if store is None:
+            store = self._message_store = MessageStore(agent_id_for(self.db_path))
+        return store
 
     def __del__(self) -> None:
         """Safety net: close() if the caller forgot. Attribute access stays
@@ -1634,11 +1640,9 @@ class SessionDB(
     # ``agent.transcript_repair._OWNED_COLUMNS`` column, because replay stamps
     # ``transcript_row_snapshot(row)`` from these rows (token_count is hashed there, not decoded).
     _CONVERSATION_ROW_COLUMNS = (
-        "id, role, content, tool_call_id, tool_calls, tool_name, effect_disposition, "
-        "finish_reason, reasoning, reasoning_content, reasoning_details, "
-        "codex_reasoning_items, codex_message_items, platform_message_id, observed, "
-        "_compressed_summary, timestamp, token_count, active, api_content, display_kind, display_metadata, message_uid, "
-        "absorbed_message_uids, tool_call_uids, tool_call_uid"
+        "id, role, tool_call_id, tool_name, effect_disposition, finish_reason, platform_message_id, observed, "
+        "_compressed_summary, timestamp, token_count, active, display_kind, display_metadata, message_uid, "
+        "absorbed_message_uids, tool_call_uids, tool_call_uid, text_uid"
     )
 
     # ── Meta key/value (scheduler bookkeeping) ──

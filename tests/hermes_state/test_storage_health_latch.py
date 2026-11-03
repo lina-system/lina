@@ -62,9 +62,6 @@ class TestLatch:
         path = tmp_path / "state.db"
         assert note_storage_error(path, sqlite3.OperationalError("database is locked")) is False
         assert note_storage_error(path, sqlite3.DatabaseError("malformed database schema (messages_fts)")) is False
-        fts = sqlite3.DatabaseError("database disk image is malformed")
-        fts.sqlite_errorcode = 267  # SQLITE_CORRUPT_VTAB: FTS-scoped, has its own fail-open path
-        assert note_storage_error(path, fts) is False
         assert storage_state(path) == "ok"
 
         assert note_storage_error(path, sqlite3.DatabaseError("database disk image is malformed")) is True
@@ -107,10 +104,10 @@ class TestPeerWritesAfterLatch:
 
         conn = sqlite3.connect(path)
         try:
-            contents = [row[0] for row in conn.execute("SELECT content FROM messages")]
+            contents = [row[0] for row in conn.execute("SELECT text_uid FROM transcript_rows")]
         finally:
             conn.close()
-        assert "after the latch" not in contents
+        assert len(contents) == 1
 
     def test_quarantine_on_one_handle_publishes_the_latch(self, tmp_path):
         path = tmp_path / "state.db"

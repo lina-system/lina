@@ -438,11 +438,12 @@ def test_adoption_keeps_every_row_checkpoint_sidecar(stores):
         default_db.append_message(STRANDED_ID, "assistant", f"answer {i}", codex_reasoning_items=[
             {"type": "compaction", "encrypted_content": f"checkpoint {i}"}])
     rows = default_db.get_messages(STRANDED_ID)
+    from hermes_state_store import rewrite_rows
     default_db._execute_write(lambda conn: (
-        conn.executemany("UPDATE messages SET codex_reasoning_items = ? WHERE id = ?", [
-            (f'[{{"type": "compaction", "encrypted_content": "checkpoint {i}"}}]', rows[2 * i - 1]["id"])
-            for i in range(1, 4)]),
-        conn.executemany("UPDATE messages SET active = 0, compacted = ? WHERE id = ?", [
+        [rewrite_rows(conn, default_db.message_store, [rows[2 * i - 1]["id"]],
+                      {"codex_reasoning_items": f'[{{"type": "compaction", "encrypted_content": "checkpoint {i}"}}]'})
+         for i in range(1, 4)],
+        conn.executemany("UPDATE transcript_rows SET active = 0, compacted = ? WHERE id = ?", [
             (1, rows[0]["id"]), (1, rows[1]["id"]), (0, rows[4]["id"]), (0, rows[5]["id"])])))
     donor_rows = _every_row(default_db, STRANDED_ID)
     assert [row[4] is not None for row in donor_rows] == [False, True] * 3

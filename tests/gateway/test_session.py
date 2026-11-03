@@ -1362,60 +1362,6 @@ class TestGatewaySessionDbRecovery:
         assert "child" not in store._dirty_transcripts
 
 
-    def test_fts_corruption_error_requires_fts_provenance(self):
-        """_is_fts_corruption_error must not treat a generic malformed-image
-        error as FTS-scoped (#97940): bare SQLITE_CORRUPT can mean canonical
-        B-tree damage. It must also not match unrelated error strings
-        containing 'fts' as a substring (e.g. 'shifts', 'gifts')."""
-        import sqlite3
-
-        # Generic structural corruption: no FTS provenance -> fail closed.
-        assert not SessionStore._is_fts_corruption_error(
-            RuntimeError("database disk image is malformed")
-        )
-        assert not SessionStore._is_fts_corruption_error(
-            sqlite3.DatabaseError("database disk image is malformed")
-        )
-        # FTS-scoped errors remain eligible for the one-shot rebuild.
-        assert SessionStore._is_fts_corruption_error(
-            RuntimeError("no such table: messages_fts")
-        )
-        assert SessionStore._is_fts_corruption_error(
-            sqlite3.DatabaseError(
-                'fts5: corrupt structure record for table "messages_fts"'
-            )
-        )
-        assert not SessionStore._is_fts_corruption_error(
-            RuntimeError("shifts were applied")
-        )
-        assert not SessionStore._is_fts_corruption_error(
-            RuntimeError("gifts received")
-        )
-
-    def test_rebuild_fts_once_retries_after_cooldown(self, monkeypatch):
-        """A deferred/failed rebuild must not disable recovery for the process lifetime
-        (#114266): blocked inside the cooldown, retried once it elapses. A call with no usable
-        DB attempts nothing and so must not start the cooldown."""
-        from types import SimpleNamespace
-        clock = {"now": 1000.0}
-        monkeypatch.setattr(time, "monotonic", lambda: clock["now"])
-        rebuild_calls = []
-        store = object.__new__(SessionStore)
-        store._fts_rebuild_last_attempt_at = None
-        store._db = None
-        assert store._rebuild_fts_once() is False
-        assert store._fts_rebuild_last_attempt_at is None  # no attempt, no cooldown
-
-        store._db = SimpleNamespace(rebuild_fts=lambda: rebuild_calls.append(clock["now"]) or 0)
-        assert store._rebuild_fts_once() is False  # deferred (0 indexes rebuilt)
-        clock["now"] += store._FTS_REBUILD_COOLDOWN_SECONDS - 1
-        assert store._rebuild_fts_once() is False
-        assert len(rebuild_calls) == 1  # still cooling down: no second attempt
-        clock["now"] += 2
-        store._db = SimpleNamespace(rebuild_fts=lambda: rebuild_calls.append(clock["now"]) or 1)
-        assert store._rebuild_fts_once() is True
-        assert len(rebuild_calls) == 2
-
     def test_transcript_append_failures_escalate_to_error(self, caplog):
         """Repeated append failures on one session escalate WARNING -> ERROR at the threshold so a
         multi-day write outage is not a wall of identical warnings (#114266)."""

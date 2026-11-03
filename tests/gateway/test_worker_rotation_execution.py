@@ -58,7 +58,7 @@ def test_full_agent_worker_rotation_continues_inference_without_canonical_opens(
                 assert db.execute('SELECT COUNT(*) FROM session_turn_leases').fetchone()[0] == 0
                 assignment = db.execute('SELECT session_id,status FROM worker_executions').fetchone()
                 assert assignment == (proof['after'], 'terminal')
-                assert db.execute('SELECT COUNT(*) FROM messages WHERE session_id=? AND active=1', (proof['after'],)).fetchone()[0] == len(proof['history'])
+                assert db.execute('SELECT COUNT(*) FROM transcript_rows WHERE session_id=? AND active=1', (proof['after'],)).fetchone()[0] == len(proof['history'])
             print(json.dumps(dict(before=proof['before'], after=proof['after'], opens=proof['opens'],
                 fds=proof['fds'], negatives=proof['negatives'], requests=len(peer.requests),
                 compressed_count=proof['compressed_count'], input_count=proof['input_count'],

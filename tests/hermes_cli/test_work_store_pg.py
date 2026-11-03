@@ -14,15 +14,17 @@ pg_db = work_pg_fixture.pg_db
 
 def test_migration_applies_once_when_repeated(pg_db: PgDb):
     # Given a database without the work migration.
-    expected = [v for v, _ in store_migrations.pending(pg_db.run_sql)]
-    # When the runner applies the migration twice and the SQL itself is rerun.
-    first = store_migrations.apply(pg_db.run_sql)
-    second = store_migrations.apply(pg_db.run_sql)
-    pg_db.run_sql((store_migrations.MIGRATIONS / "0001_work.sql").read_text(encoding="utf-8"))
-    # Then only one ledger entry exists and both paths are idempotent.
-    assert first == expected
+    work_sql = store_migrations.MIGRATIONS_DIR / "0004_work.sql"
+    assert work_sql in store_migrations.migration_files()
+    # When the runner applies the migrations twice and the SQL itself is rerun.
+    first = store_migrations.apply(pg_db.run_sql, out=lambda _line: None)
+    second = store_migrations.apply(pg_db.run_sql, out=lambda _line: None)
+    pg_db.run_sql(work_sql.read_text(encoding="utf-8"))
+    # Then the work migration is recorded once and a second run applies nothing.
     assert second == []
-    assert pg_db.execute("SELECT count(*) FROM memory.schema_migrations WHERE version = '0001'").fetchone() == (1,)
+    assert pg_db.execute("SELECT count(*) FROM memory.schema_migrations WHERE version = '0004'").fetchone() == (1,)
+    assert work_sql.name in first or pg_db.execute(
+        "SELECT name FROM memory.schema_migrations WHERE version = '0004'").fetchone() == (work_sql.name,)
 
 
 def test_agent_tables_are_forced_rls_when_helper_exists(pg_db: PgDb):

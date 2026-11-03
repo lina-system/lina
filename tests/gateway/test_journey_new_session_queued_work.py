@@ -21,6 +21,8 @@ import threading
 
 import pytest
 
+from hermes_state import SessionDB
+
 from tests.gateway.fixtures.local_recovery_probe import Model, child_env, daemon, rpc, websocket
 from tests.waiting import async_wait_until
 
@@ -58,8 +60,10 @@ def test_new_session_never_absorbs_or_drops_earlier_queued_work(tmp_path, restar
                 'SELECT request_id,target_session_id,status,outcome,seq FROM session_admissions')}
 
     def user_turns(session_id):
-        with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
-            return [r[0] for r in db.execute("SELECT content FROM messages WHERE session_id=? AND role='user' "
+        with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+            db = state_db._conn
+            db.row_factory = None
+            return [r[0] for r in db.execute("SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? AND role='user' "
                                               'ORDER BY id', (session_id,))]
 
     def requests():

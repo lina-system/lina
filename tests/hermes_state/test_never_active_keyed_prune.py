@@ -94,12 +94,10 @@ class TestSelector:
     def test_row_with_messages_is_protected_even_if_counter_says_zero(self, db):
         """``message_count`` is a denormalised counter — trust the messages."""
         _insert(db, "stale-counter", age_days=45)
-        db._conn.execute(
-            "INSERT INTO messages (session_id, role, content, timestamp) "
-            "VALUES (?, ?, ?, ?)",
-            ("stale-counter", "user", "hello", time.time() - 44 * DAY),
-        )
-        db._conn.commit()
+        from hermes_state_store import insert_rows
+        db._execute_write(lambda conn: insert_rows(conn, db.message_store, [{
+            "session_id": "stale-counter", "role": "user", "content": "hello",
+            "timestamp": time.time() - 44 * DAY}]))
         assert db.list_never_active_keyed_sessions(older_than_days=30) == []
 
 

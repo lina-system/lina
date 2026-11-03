@@ -15,14 +15,14 @@ def _branch_boundary(conn, target, through):
     appended later, even in this same commit window, have larger ids and stay out. The tool
     results that directly follow an assistant boundary answer its calls, so they belong to it."""
     if through is None:
-        return conn.execute('SELECT COALESCE(MAX(id), 0) FROM messages WHERE session_id=? AND active=1',
+        return conn.execute('SELECT COALESCE(MAX(id), 0) FROM transcript_rows WHERE session_id=? AND active=1',
                             (target,)).fetchone()[0]
-    row = conn.execute('SELECT role FROM messages WHERE id=? AND session_id=? AND active=1',
+    row = conn.execute('SELECT role FROM transcript_rows WHERE id=? AND session_id=? AND active=1',
                        (through, target)).fetchone()
     if row is None:
         raise RuntimeStoreError('invalid_params')
     if row['role'] == 'assistant':
-        following = conn.execute('SELECT id, role FROM messages WHERE session_id=? AND active=1 AND id>? '
+        following = conn.execute('SELECT id, role FROM transcript_rows WHERE session_id=? AND active=1 AND id>? '
                                  'ORDER BY id', (target, through))
         for later in following:
             if later['role'] != 'tool':
@@ -81,7 +81,7 @@ def branch_in_transaction(db, conn, session_id, payload, prepared=None):
     conn.execute('UPDATE sessions SET session_key=?,chat_id=?,origin_json=?,system_prompt_hash=? WHERE id=?',
                  (route, child, _json(source.to_dict()), parent['system_prompt_hash'], child))
     ids, tools = db._tail_rows_after_watermark(conn,
-        'SELECT id,tool_calls FROM messages WHERE session_id=? AND active=1 AND id<=? ORDER BY id',
+        'SELECT id,tool_call_count FROM transcript_rows WHERE session_id=? AND active=1 AND id<=? ORDER BY id',
         [target, _branch_boundary(conn, target, payload.get('through_message_id'))])
     db._clone_message_rows(conn, ids, session_id=child)
     conn.execute('UPDATE sessions SET message_count=?,tool_call_count=? WHERE id=?', (len(ids), tools, child))

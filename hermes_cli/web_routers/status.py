@@ -452,7 +452,7 @@ async def _component_health(gateway: dict[str, Any]) -> dict[str, Any]:
 
 
 async def _advisory_pressure(status: dict[str, Any], home: Path) -> None:
-    """Memory / disk pressure rollups + deferred FTS rebuild progress (coarse numbers/enums
+    """Memory / disk pressure rollups (coarse numbers/enums
     only; public payload). Deliberately NOT folded into components/overall: pressure is
     advisory, not a liveness verdict, and flipping ``overall`` on it would page NAS's
     availability sweep for a condition the valve is already handling. Read-only, never raise.
@@ -465,15 +465,6 @@ async def _advisory_pressure(status: dict[str, Any], home: Path) -> None:
         except Exception:
             status[key] = {"pressure": "unknown"}
 
-    try:
-        # SQLite open + read: off the loop like the rest of the probe.
-        _rebuild = await run_in_threadpool(_fts_rebuild_status)
-        if _rebuild is not None:
-            status["fts_rebuild"] = _rebuild
-    except Exception:
-        pass
-
-
 def _status_local_reads() -> dict[str, Any]:
     """The probe's synchronous local reads: the raw config.yaml stamp, the install method, the
     auth store and (first call only) git provenance. Run on a worker thread: on the event loop that
@@ -483,20 +474,6 @@ def _status_local_reads() -> dict[str, Any]:
             "latest_config_version": latest_ver,
             "can_update_hermes": not _dashboard_local_update_managed_externally(),
             "nous_session_valid": _nous_session_validity()}
-
-
-def _fts_rebuild_status() -> Optional[dict[str, Any]]:
-    """Deferred FTS rebuild progress of this home's state.db (read-only open), or None."""
-    from hermes_state import SessionDB as _SDB
-    from hermes_constants import get_hermes_home as _ghh
-    _db_path = _ghh() / "state.db"
-    if not _db_path.exists():
-        return None
-    _sdb = _SDB(db_path=_db_path, read_only=True)
-    try:
-        return _sdb.fts_rebuild_status()
-    finally:
-        _sdb.close()
 
 
 #: What the gateway's Webapp answers a caller who has not signed in: liveness, version and the

@@ -28,9 +28,9 @@ def corrupt_db(tmp_path):
     def _corrupt(conn):
         conn.execute("UPDATE sessions SET started_at='not-a-timestamp', last_activity_at='not-a-timestamp' "
                      "WHERE id='bad-text'")
-        conn.execute("UPDATE messages SET timestamp='not-a-timestamp' WHERE session_id='bad-text'")
+        conn.execute("UPDATE transcript_rows SET timestamp='not-a-timestamp' WHERE session_id='bad-text'")
         conn.execute("UPDATE sessions SET started_at=8.4e252 WHERE id='bad-huge'")
-        conn.execute("UPDATE messages SET timestamp=1e30 WHERE session_id='bad-huge'")
+        conn.execute("UPDATE transcript_rows SET timestamp=1e30 WHERE session_id='bad-huge'")
 
     db._execute_write(_corrupt)
     yield db
@@ -68,8 +68,8 @@ def test_last_active_skips_a_garbage_message_timestamp(tmp_path):
             db.append_message("recovered", "user", text)
         good = max(row["timestamp"] for row in db.get_messages("recovered"))
         db._execute_write(lambda conn: conn.execute(
-            "UPDATE messages SET timestamp = 5.4905047707024164e+246 WHERE session_id = 'recovered' "
-            "AND id = (SELECT MIN(id) FROM messages WHERE session_id = 'recovered')"))
+            "UPDATE transcript_rows SET timestamp = 5.4905047707024164e+246 WHERE session_id = 'recovered' "
+            "AND id = (SELECT MIN(id) FROM transcript_rows WHERE session_id = 'recovered')"))
         db._execute_write(lambda conn: conn.execute(
             "UPDATE sessions SET last_activity_at = 'not-a-timestamp' WHERE id = 'recovered'"))
         rows = {r["id"]: r for r in db.list_sessions_rich(limit=10)}
@@ -116,8 +116,9 @@ def test_bulk_delete_and_prune_stay_below_sqlite_variable_limit(tmp_path):
         def seed(conn):
             conn.executemany("INSERT INTO sessions (id, source, started_at, ended_at, message_count) "
                              "VALUES (?, 'cron', ?, ?, 1)", [(sid, old, old) for sid in ids])
-            conn.executemany("INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, 'user', 'x', ?)",
-                             [(sid, old) for sid in ids])
+            from hermes_state_store import insert_rows
+            insert_rows(conn, db.message_store, [
+                {"session_id": sid, "role": "user", "content": "x", "timestamp": old} for sid in ids])
 
         db._execute_write(seed)
         db._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)  # the legacy ceiling, deterministic
@@ -125,6 +126,6 @@ def test_bulk_delete_and_prune_stay_below_sqlite_variable_limit(tmp_path):
         db._execute_write(seed)
         db._conn.setlimit(sqlite3.SQLITE_LIMIT_VARIABLE_NUMBER, 999)
         assert db.delete_sessions(ids) == 1200
-        assert db._read_one("SELECT COUNT(*) FROM messages WHERE session_id NOT IN (SELECT id FROM sessions)")[0] == 0
+        assert db._read_one("SELECT COUNT(*) FROM transcript_rows WHERE session_id NOT IN (SELECT id FROM sessions)")[0] == 0
     finally:
         db.close()

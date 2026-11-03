@@ -29,6 +29,8 @@ from pathlib import Path
 
 import pytest
 
+from hermes_state import SessionDB
+
 from websockets.asyncio.client import connect
 
 from tests.gateway.fixtures.local_recovery_probe import child_env, control, daemon, rpc
@@ -115,15 +117,19 @@ class ScriptedModel(BaseHTTPRequestHandler):
 
 
 def _tool_results(home, sid):
-    with contextlib.closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
+    with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+        db = state_db._conn
+        db.row_factory = None
         return [row[0] for row in db.execute(
-            "SELECT content FROM messages WHERE session_id=? AND role='tool' ORDER BY id", (sid,))]
+            "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? AND role='tool' ORDER BY id", (sid,))]
 
 
 def _user_texts(home, sid):
-    with contextlib.closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
+    with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+        db = state_db._conn
+        db.row_factory = None
         return [str(row[0] or '') for row in db.execute(
-            "SELECT content FROM messages WHERE session_id=? AND role='user' ORDER BY id", (sid,))]
+            "SELECT msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? AND role='user' ORDER BY id", (sid,))]
 
 
 def _profile_home(target, marker, config):

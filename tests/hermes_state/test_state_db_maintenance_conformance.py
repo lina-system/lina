@@ -133,8 +133,6 @@ class _LiveWriter:
 _IN_PLACE_OPS = {
     "vacuum": {},
     "maybe_auto_prune_and_vacuum": {"retention_days": 0, "min_interval_hours": 0},
-    "rebuild_fts": {},
-    "optimize_fts": {},
 }
 
 
@@ -182,7 +180,7 @@ def test_in_place_op_refuses_or_degrades_under_live_writer(tmp_path, op_name):
     # Canonical rows untouched.
     conn = sqlite3.connect(str(db))
     try:
-        assert conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 40
+        assert conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0] == 40
     finally:
         conn.close()
 

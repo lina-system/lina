@@ -35,7 +35,6 @@ import pytest
 
 import hermes_state
 import hermes_state_repair
-import hermes_state_common
 from hermes_state import SessionDB
 from hermes_state_repair import repair_state_db_schema
 
@@ -54,52 +53,6 @@ def _make_unopenable(lock_path: Path) -> None:
         open(lock_path, "a+b").close()
 
 
-# ── FTS rebuild authority ───────────────────────────────────────────────────
-
-
-def test_fts_admission_fails_closed_when_lock_file_is_unopenable(tmp_path):
-    """The primitive must refuse admission, not fall back to no authority."""
-    db_path = tmp_path / "state.db"
-    _make_unopenable(db_path.with_name(db_path.name + ".fts_rebuild.lock"))
-
-    with hermes_state_common.fts_rebuild_admission(db_path) as admitted:
-        assert admitted is False
-
-
-def test_fts_admission_still_admits_a_pathless_db(tmp_path):
-    """Guardrail: an in-memory store has no cross-process surface at all.
-
-    The fix must not turn the legitimate no-op case into a permanent deferral.
-    """
-    with hermes_state_common.fts_rebuild_admission(None) as admitted:
-        assert admitted is True
-
-
-def test_rebuild_fts_defers_when_lock_file_is_unopenable(tmp_path):
-    """Behavior: the rebuild entry point reports no progress and rebuilds nothing."""
-    db = SessionDB(db_path=tmp_path / "state.db")
-    if not db._fts_enabled:
-        db.close()
-        pytest.skip("FTS5 unavailable in this build")
-    try:
-        db.create_session("s1", source="test")
-        db.append_message("s1", "user", "hello world")
-
-        # Sanity: with an openable lock the rebuild really runs, so a 0 below
-        # is the deferral and not an unrelated no-op.
-        assert db.rebuild_fts() >= 1
-
-        _make_unopenable(
-            db.db_path.with_name(db.db_path.name + ".fts_rebuild.lock")
-        )
-        assert db.rebuild_fts() == 0
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
-
-
 # ── Schema-surgery authority ────────────────────────────────────────────────
 
 
@@ -110,7 +63,7 @@ def _build_healthy_db(db_path: Path) -> None:
     db.close()
 
 
-def _corrupt_duplicate_fts(db_path: Path) -> None:
+def _corrupt_duplicate_schema(db_path: Path) -> None:
     """Inject a duplicate messages_fts row into sqlite_master.
 
     Reproduces 'malformed database schema (messages_fts) - table
@@ -121,7 +74,7 @@ def _corrupt_duplicate_fts(db_path: Path) -> None:
     conn.execute(
         "INSERT INTO sqlite_master (type, name, tbl_name, rootpage, sql) "
         "SELECT type, name, tbl_name, rootpage, sql FROM sqlite_master "
-        "WHERE name='messages_fts'"
+        "WHERE name='sessions'"
     )
     conn.commit()
     conn.close()
@@ -146,7 +99,7 @@ def test_repair_skips_surgery_when_lock_file_is_unopenable(tmp_path):
     """
     db_path = tmp_path / "state.db"
     _build_healthy_db(db_path)
-    _corrupt_duplicate_fts(db_path)
+    _corrupt_duplicate_schema(db_path)
     assert hermes_state_repair._db_opens_cleanly(db_path) is not None
     before = db_path.read_bytes()
 

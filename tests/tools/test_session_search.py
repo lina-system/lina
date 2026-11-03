@@ -881,7 +881,7 @@ class TestRewindExclusion:
         mid2 = db.append_message("s_mixed", role="user",
                                  content="rewound content gamma")
         db._conn.execute(
-            "UPDATE messages SET active = 0, compacted = 0 WHERE id = ?",
+            "UPDATE transcript_rows SET active = 0, compacted = 0 WHERE id = ?",
             (mid2,),
         )
         db._conn.commit()

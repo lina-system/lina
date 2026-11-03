@@ -986,13 +986,13 @@ def _print_size_change(db, before_mb, prefix=""):
 
 def _cmd_optimize(db, args):
     before_mb = _size_mb(db.db_path)
-    print("Optimizing session store (FTS merge + VACUUM)…")
+    print("Optimizing session store (VACUUM)…")
     try:
-        n = db.vacuum()  # merges FTS5 segments then VACUUMs; returns indexes merged
+        db.vacuum()
     except Exception as e:
         print(f"Error: optimization failed: {e}")
         return 1
-    print(f"Optimized {n} FTS index(es).")
+    print("Session store optimized.")
     _print_size_change(db, before_mb)
 
 
@@ -1007,114 +1007,6 @@ def _cmd_clean_markers(db, args):
         if report["backup_path"]:
             print(f"  backup: {report['backup_path']}")
         print(f"✓ Cleared {report['rows_affected']} row(s).")
-
-
-_BACKFILL_LABELS = {"backfill": "Rebuilding index", "backfill_cjk": "Building CJK index"}
-_COUNTED_PHASES = frozenset({*_BACKFILL_LABELS, "teardown"})
-
-
-def _optimize_progress_line(info) -> str:
-    phase, pct = info.get("phase"), f"{info.get('percent', 0):3d}%"
-    counts = f"({info.get('indexed', 0):,}/{info.get('total', 0):,}"
-    paced = " — paced: another process is using the database" if info.get("paced") else ""
-    if phase in _BACKFILL_LABELS:
-        return f"  {_BACKFILL_LABELS[phase]}: {pct} {counts} messages){paced}"
-    if phase == "teardown":
-        table = str(info.get("table", "")).removeprefix("fts_v22_trash_")
-        return (f"  Reclaiming old index: table {info.get('table_index', 0)}/{info.get('table_count', 0)} "
-                f"({table}) {pct} {counts} rows){paced}")
-    elapsed = int(info.get("elapsed", 0))
-    return (f"  Compacting database (VACUUM): {elapsed // 60}m {elapsed % 60:02d}s elapsed, "
-            f"{info.get('size_bytes', 0) / 2**20:,.1f} MB → ~{info.get('estimated_bytes', 0) / 2**20:,.1f} MB")
-
-
-class _OptimizeProgress:
-    """``optimize_fts_storage`` progress: one self-overwriting line per phase (and per old-index
-    table), space-padded over the previous text (``ESC[K`` leaks under prompt_toolkit)."""
-
-    def __init__(self):
-        self._key, self._last, self._line = None, None, ""
-
-    def __call__(self, info) -> None:
-        phase = info.get("phase")
-        key = (phase, info.get("table"))
-        if key != self._key:
-            # The phase or table moved on, so the previous one ran to completion.
-            self.close(completed=True)
-            self._key = key
-        if phase == "done" or (phase in _COUNTED_PHASES and not info.get("total") and not info.get("table")):
-            return
-        self._last = info
-        self._draw(_optimize_progress_line(info))
-
-    def _draw(self, line: str) -> None:
-        if line == self._line:  # a table's final chunk, its DROP and the switch all report 100%
-            return
-        print(f"\r{line}{' ' * max(0, len(self._line) - len(line))}", end="", flush=True)
-        self._line = line
-
-    def close(self, completed: bool = False) -> None:
-        last = self._last
-        if completed and last and last.get("phase") in _COUNTED_PHASES:
-            self._draw(_optimize_progress_line({**last, "percent": 100, "indexed": last.get("total", 0)}))
-        if self._line:
-            print(flush=True)
-        self._last, self._line = None, ""
-
-
-def _cmd_optimize_storage(db, args):
-    db_path = db.db_path
-    if not db.fts_optimize_available():
-        print("Search index is already on the compact layout — nothing to do.")
-        return
-    before_bytes = os.path.getsize(db_path) if db_path.exists() else 0
-    before_mb = before_bytes / (1024 * 1024)
-    # Disk preflight: the new index is built before the old is torn down, and VACUUM needs a full
-    # second copy — require headroom ≈ current file size.
-    do_vacuum = not getattr(args, "no_vacuum", False)
-    try:
-        free_bytes = shutil.disk_usage(db_path.parent).free
-    except Exception:
-        free_bytes = None
-    need_bytes = before_bytes if do_vacuum else int(before_bytes * 0.3)
-    print(f"Search-index optimization for {db_path}\n  Current database size: {before_mb:.1f} MB")
-    if free_bytes is not None:
-        print(f"  Free disk: {free_bytes / (1024*1024):.0f} MB "
-              f"(need ~{need_bytes / (1024*1024):.0f} MB to complete{' incl. VACUUM' if do_vacuum else ''})")
-        if free_bytes < need_bytes:
-            print("\n⚠ Not enough free disk to complete safely. Free up space, or run with --no-vacuum "
-                  "(rebuilds the index but doesn't reclaim space until a later VACUUM).")
-            return 1
-    if before_mb > 500:
-        print("  This may take a while on a large database. It runs in the foreground with progress below; "
-              "safe to Ctrl-C and re-run (it resumes).")
-    if not getattr(args, "yes", False) and (refused := _confirm_or_exit_code("Proceed? [y/N] ")) is not None:
-        return refused
-    # optimize_fts_storage re-scans for holders itself (--force past one, or a writer that opens the
-    # store mid-run) and paces while one is there; the progress line says so.
-    progress = _OptimizeProgress()
-    print("Optimizing search-index storage…")
-    try:
-        result = db.optimize_fts_storage(progress_cb=progress, vacuum=do_vacuum)
-    except KeyboardInterrupt:
-        progress.close()
-        print("Interrupted — no data was lost; re-run to resume.")
-        return 130
-    except Exception as e:
-        progress.close()
-        print(f"Error: optimization failed: {e}\nNo data was lost. Re-run to resume.")
-        return 1
-    progress.close()
-    if not result.get("ok"):
-        print(f"Could not optimize: {result.get('reason', 'unknown')}")
-        return 1
-    print("✓ Search index optimized.")
-    _print_size_change(db, before_mb, prefix="  ")
-    if result.get("vacuum_skipped") == "in_use":
-        print("  (VACUUM skipped: another process is using the database. Re-run `hermes sessions optimize` "
-              "with it closed to reclaim freed space.)")
-    elif result.get("vacuumed") is False:
-        print("  (VACUUM was skipped or failed — run `hermes sessions optimize` later to reclaim freed space.)")
 
 
 def _cmd_repair_routing(db, args):
@@ -1382,7 +1274,7 @@ _DB_HANDLERS = {
     "prune": partial(_cmd_prune_or_archive, action="prune"), "pin": partial(_cmd_pin, pinning=True),
     "archive": partial(_cmd_prune_or_archive, action="archive"), "unpin": partial(_cmd_pin, pinning=False),
     "retitle-skills": _cmd_retitle_skills, "browse": _cmd_browse, "optimize": _cmd_optimize,
-    "clean-markers": _cmd_clean_markers, "optimize-storage": _cmd_optimize_storage,
+    "clean-markers": _cmd_clean_markers,
     "repair-routing": _cmd_repair_routing, "repair-prompts": _cmd_repair_prompts, "stats": _cmd_stats,
     "refresh-prompts": _cmd_refresh_prompts,
 }
@@ -1398,9 +1290,9 @@ def _print_empty_store(action: str, args) -> None:
         print("No sessions found.")
 
 
-# VACUUM, the FTS-layout rebuild and bulk deletes rewrite the store; underneath a live gateway/Desktop/cron
+# VACUUM and bulk deletes rewrite the store; underneath a live gateway/Desktop/cron
 # writer that is the second-writer class behind the retired-WAL refusal (#110054). `--force` is the override.
-_HELD_STORE_ACTIONS = frozenset({"optimize", "optimize-storage", "prune"})
+_HELD_STORE_ACTIONS = frozenset({"optimize", "prune"})
 
 
 def cmd_sessions(args, sessions_parser=None):

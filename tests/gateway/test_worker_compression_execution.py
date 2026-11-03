@@ -56,7 +56,7 @@ def test_ordinary_daemon_worker_compresses_without_canonical_sqlite_opens(tmp_pa
             with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
                 assignment = db.execute('SELECT session_id,status FROM worker_executions').fetchone()
                 assert assignment == (proof['after'], 'terminal')
-                assert db.execute('SELECT COUNT(*) FROM messages WHERE session_id=? AND active=1', (proof['after'],)).fetchone()[0] == len(proof['history'])
+                assert db.execute('SELECT COUNT(*) FROM transcript_rows WHERE session_id=? AND active=1', (proof['after'],)).fetchone()[0] == len(proof['history'])
             print(json.dumps(dict(before=proof['before'], after=proof['after'], opens=proof['opens'],
                 fds=proof['fds'], negatives=proof['negatives'], requests=len(peer.requests),
                 compressed_count=proof['compressed_count'], input_count=proof['input_count'],
