@@ -136,6 +136,24 @@ def payload_digest(values: Sequence[Any]) -> str:
     return _sha256(json.dumps([None if v is None else _tagged(v) for v in values], separators=(",", ":")))
 
 
+def _row_payload_digest(row: dict[str, Any]) -> str:
+    """The payload digest of an exported row, recomputed from its content and native columns."""
+    return payload_digest(_values_from_row(row.get("content"), row.get("native") or {}))
+
+
+def check_text_row(row: Any) -> Optional[str]:
+    """Why an exported text row is damaged, or None: its content must match content_sha256 (the plain-content
+    column) and its whole payload its payload_sha256 (the row's identity)."""
+    if not isinstance(row, dict):
+        return "not a row"
+    if _sha256(row.get("content") or "") != row.get("content_sha256"):
+        return "its content does not match its content_sha256"
+    claimed = row.get("payload_sha256") or (row.get("native") or {}).get("payload_sha256")
+    if claimed != _row_payload_digest(row):
+        return "its payload does not match its payload_sha256"
+    return None
+
+
 def _native(values: Sequence[Any], meta: dict[str, Any], digest: str) -> dict[str, Any]:
     native: dict[str, Any] = {"payload_sha256": digest}
     content = values[0]
@@ -528,16 +546,17 @@ class MessageStore:
                 for record in cur.fetchall():
                     row = dict(zip(_EXPORT_COLUMNS, record))
                     row["ts"] = None if record[-1] is None else float(record[-1])
+                    row["payload_sha256"] = (row.get("native") or {}).get("payload_sha256")
                     yield row
 
     def import_texts(self, rows: Iterable[dict[str, Any]]) -> int:
         """Write exported text rows back under this agent, keeping rows already there (``ON CONFLICT DO
-        NOTHING``) in one transaction. A row whose content does not match its content_sha256 fails the import
-        before anything is written. Returns the rows inserted."""
+        NOTHING``) in one transaction. A damaged row (``check_text_row``) fails the import before anything is
+        written. Returns the rows inserted."""
         rows = list(rows)
         for row in rows:
-            if _sha256(row.get("content") or "") != row.get("content_sha256"):
-                raise ValueError(f"message text {row.get('uid')!r} does not match its content_sha256")
+            if (damage := check_text_row(row)) is not None:
+                raise ValueError(f"message text {row.get('uid')!r}: {damage}")
         inserted = 0
         names = [c for c in _EXPORT_COLUMNS if c != "uid"]
         sql = (f"INSERT INTO memory.messages (uid, agent_id, {', '.join(names)}, ts) VALUES (%s, %s, "
@@ -832,7 +851,7 @@ def _remap_state_db_uids(db_path: Path, agent: str) -> list[str]:
 
 
 def _sidecar_rows(sidecar: Optional[Path], agent: str) -> list[dict[str, Any]]:
-    """A backup's text rows, each checked against its content_sha256 and renamed to *agent*'s uid."""
+    """A backup's text rows, each checked (``check_text_row``) and renamed to *agent*'s uid."""
     if sidecar is None:
         return []
     try:
@@ -841,23 +860,48 @@ def _sidecar_rows(sidecar: Optional[Path], agent: str) -> list[dict[str, Any]]:
     except (OSError, ValueError) as exc:
         raise MessageTextRestoreError(f"cannot read the backup's message text {sidecar.name}: {exc}") from exc
     for row in rows:
-        if not isinstance(row, dict) or _sha256(row.get("content") or "") != row.get("content_sha256"):
+        if (damage := check_text_row(row)) is not None:
             raise MessageTextRestoreError(
-                f"message text {row.get('uid') if isinstance(row, dict) else row!r} in {sidecar.name} does not match "
-                "its content_sha256: the backup is damaged")
+                f"message text {row.get('uid') if isinstance(row, dict) else row!r} in {sidecar.name}: {damage}; "
+                "the backup is damaged")
         row["uid"] = _remapped_uid(row["uid"], agent)
     return rows
 
 
-def _stage_remapped(incoming_db: Path, agent: str, workdir: Path) -> Path:
-    """A copy of *incoming_db* in *workdir* whose text_uids name *agent*; the incoming file is never changed."""
+def _stage_with_uids(incoming_db: Path, uids: dict[str, str], workdir: Path) -> Path:
+    """A copy of *incoming_db* in *workdir* whose text_uids are mapped through *uids*; the incoming file is never
+    changed."""
     import sqlite3
     staged = Path(workdir) / "state.db"
     with closing(sqlite3.connect(f"{Path(incoming_db).resolve().as_uri()}?mode=ro", uri=True)) as src, \
             closing(sqlite3.connect(staged)) as dst:
         src.backup(dst)
-    _remap_state_db_uids(staged, agent)
+        with dst:
+            dst.executemany(f"UPDATE {PLACEMENT_TABLE} SET text_uid = ? WHERE text_uid = ?",
+                            [(new, old) for old, new in uids.items() if new != old])
     return staged
+
+
+def _stored_payloads(store: MessageStore, uids: Iterable[str]) -> dict[str, Optional[str]]:
+    """``uid -> payload_sha256`` of the rows among *uids* the store holds for *store*'s agent."""
+    wanted, found = sorted(set(uids)), {}
+    for start in range(0, len(wanted), 1000):
+        with store._cursor() as cur:
+            cur.execute("SELECT uid, native->>'payload_sha256' FROM memory.messages WHERE uid = ANY(%s)",
+                        (wanted[start:start + 1000],))
+            found.update(cur.fetchall())
+    return found
+
+
+def _refuse_other_payloads(rows: list[dict[str, Any]], found: dict[str, Optional[str]]) -> None:
+    """MessageTextRestoreError naming the first archived row whose uid the destination already holds with another
+    payload. Rows are the same text only when their whole payload digest is: equal content with other tool calls
+    or API content is a different message, and keeping either one silently would change a transcript."""
+    for row in rows:
+        if row["uid"] in found and found[row["uid"]] != _row_payload_digest(row):
+            raise MessageTextRestoreError(
+                f"message text {row['uid']} is already in the store with another payload than the backup's "
+                "(same uid, different text, tool calls or API content). Nothing was restored.")
 
 
 def stage_text_restore(incoming_db: Path, destination_db: Path, sidecar: Optional[Path], workdir: Path, *,
@@ -866,9 +910,10 @@ def stage_text_restore(incoming_db: Path, destination_db: Path, sidecar: Optiona
     caller replaces anything. Returns the file to publish: *incoming_db*, or a copy in *workdir* whose text_uids
     name the destination's agent (a backup restored under another profile).
 
-    1. Validate, changing nothing: *sidecar* (the backup's JSONL, or None) is read and every row checked against
-       its content_sha256; every text_uid *incoming_db* references must be in it or already readable by the
-       destination agent, with the same content_sha256 when it is both.
+    1. Validate, changing nothing: *sidecar* (the backup's JSONL, or None) is read and every row checked
+       (``check_text_row``); every text_uid *incoming_db* references must be in it or already readable by the
+       destination agent, and a uid the destination already holds must hold the same full payload (payload_sha256;
+       content_sha256 alone never decides it).
     2. Write the rows (ON CONFLICT DO NOTHING, so a re-run changes nothing) and refresh observed_at of every
        referenced row in one transaction, so the collection cannot take one before the caller publishes.
     Any failure raises MessageTextRestoreError with nothing written. After this returns, a failure of the caller's
@@ -877,27 +922,22 @@ def stage_text_restore(incoming_db: Path, destination_db: Path, sidecar: Optiona
     agent = agent_id_for(destination_db)
     rows = _sidecar_rows(sidecar, agent)
     raw = _state_db_text_uids(incoming_db)
-    referenced = sorted({_remapped_uid(uid, agent) for uid in raw})
-    if not referenced:  # no text to bring back: the restore needs no store
+    if not raw:  # no text to bring back: the restore needs no store
         return incoming_db
-    archived = {row["uid"]: row.get("content_sha256") for row in rows}
+    uid_map = {uid: _remapped_uid(uid, agent) for uid in raw}
     store = MessageStore(agent, dsn=dsn)
     try:
-        found: dict[str, Optional[str]] = {}
-        for start in range(0, len(referenced), 1000):
-            with store._cursor() as cur:
-                cur.execute("SELECT uid, content_sha256 FROM memory.messages WHERE uid = ANY(%s)",
-                            (referenced[start:start + 1000],))
-                found.update(cur.fetchall())
+        found = _stored_payloads(store, [*uid_map.values(), *(row["uid"] for row in rows)])
+        _refuse_other_payloads(rows, found)
+        referenced = sorted(set(uid_map.values()))
+        archived = {row["uid"] for row in rows}
         missing = [uid for uid in referenced if uid not in archived and uid not in found]
-        differs = [uid for uid, digest in archived.items() if uid in found and found[uid] != digest]
-        if missing or differs:
+        if missing:
             raise MessageTextRestoreError(
                 f"{destination_db}: {len(missing)} message text(s) its transcript references are in neither the "
-                f"backup nor the store for agent {agent!r}, and {len(differs)} differ from the backup "
-                f"(first: {(missing + differs)[0]}). Nothing was restored.")
-        staged = _stage_remapped(incoming_db, agent, workdir) if any(
-            _remapped_uid(uid, agent) != uid for uid in raw) else incoming_db
+                f"backup nor the store for agent {agent!r} (first: {missing[0]}). Nothing was restored.")
+        staged = _stage_with_uids(incoming_db, uid_map, workdir) if any(
+            new != uid for uid, new in uid_map.items()) else incoming_db
         with store.write():
             store.import_texts(rows)
             touched: set[str] = set()
