@@ -170,6 +170,15 @@ def _isolate_embedding_process_state(request):
         maintenance = sys.modules.get("hermes_lcm.embedding_maintenance")
         engine = sys.modules.get("hermes_lcm.engine")
         retrieval = sys.modules.get("hermes_lcm.retrieval_core")
+        engines = []
+        if engine is not None:
+            original_init = engine.LCMEngine.__init__
+
+            def initialize(instance, *args, **kwargs):
+                original_init(instance, *args, **kwargs)
+                engines.append(instance)
+
+            patch.setattr(engine.LCMEngine, "__init__", initialize)
         # These caches are keyed by database path. tmp_path_retention_policy=failed deletes a
         # passing test's tmp_path, so a later test can be handed the same path again.
         if engine is not None:
@@ -191,6 +200,10 @@ def _isolate_embedding_process_state(request):
         if thread is not None:
             thread.join(5)
             assert not thread.is_alive(), "model preparation outlived its test"
+        for instance in reversed(engines):
+            instance.shutdown()
+        if retrieval is not None:
+            retrieval._reset_vector_store_pool()
 
 
 @pytest.fixture(autouse=True)

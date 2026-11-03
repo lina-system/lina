@@ -153,9 +153,14 @@ _PROBE = textwrap.dedent(
                                if not any(r == "user" and raw_prompt in (c or "") for r, c in rows)]
     normalized = [(r, (c or "").rstrip()) for r, c in rows if (c or "").strip() != "continue"]
     state = sqlite3.connect(str(home / "state.db"))
-    session_count = state.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-    host_user_texts = {c for (c,) in state.execute("SELECT content FROM messages WHERE role = 'user'")}
+    session_ids = [sid for (sid,) in state.execute("SELECT id FROM sessions")]
+    session_count = len(session_ids)
     state.close()
+    host_user_texts = {
+        message["content"] for sid in session_ids
+        for message in agent._session_db.get_messages(sid, include_inactive=True)
+        if message["role"] == "user"
+    }
     host_user_texts |= {m.get("content") for m in history if m.get("role") == "user"}
     # Every stored user row's replay identity is a form the host holds (state.db or live history):
     # the host-rewrite override form, or the stored form Hermes' state.db keeps for a commit turn.
