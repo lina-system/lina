@@ -132,15 +132,27 @@ def latest_statuses(statuses: list[dict] | None) -> dict[str, dict]:
     return latest
 
 
-def required_checks(required: list[str], runs: list[dict], statuses: list[dict] | None = None) -> Verdict:
+def status_matches_app(status: dict, app_id: int | None, runs: list[dict]) -> bool:
+    """Match a status creator to an app identified by the same head's check-run API answers."""
+    if app_id in (None, -1):
+        return True
+    login = (status.get("creator") or {}).get("login")
+    return any(app.get("id") == app_id and app.get("slug")
+               and login == f"{app['slug']}[bot]"
+               for app in (run.get("app") or {} for run in runs))
+
+
+def required_checks(required: list[str | dict], runs: list[dict], statuses: list[dict] | None = None) -> Verdict:
     verdict = Verdict()
     if not required:
         verdict.add(FAIL, "no required checks are configured on the base branch")
         return verdict
-    latest = latest_runs(runs)
-    legacy = latest_statuses(statuses)
-    for name in required:
-        run = latest.get(name) or legacy.get(name)
+    for check in required:
+        name, app_id = (check["context"], check.get("app_id")) if isinstance(check, dict) else (check, None)
+        matching = [r for r in runs if r.get("name") == name
+                    and (app_id in (None, -1) or (r.get("app") or {}).get("id") == app_id)]
+        legacy = [s for s in statuses or [] if s.get("context") == name and status_matches_app(s, app_id, runs)]
+        run = latest_run(matching) or latest_statuses(legacy).get(name)
         if run is None:
             verdict.add(WAIT, f"required check {name}: not reported on the head yet")
             continue
