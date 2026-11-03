@@ -62,7 +62,14 @@ def read_board_metadata(board: Optional[str] = None) -> dict:
                 meta.update(raw)
     except (OSError, json.JSONDecodeError):
         pass
-    meta["db_path"] = str(_kb.kanban_db_path(slug))
+    # ``db_path`` is a derived DISPLAY field of a board-enumeration read (``list_boards``,
+    # ``get_current_board``): never caller intent, and this function must never raise. A worker
+    # fence refuses an explicit board elsewhere (kanban_db._board_path, #206); here the entry
+    # keeps reporting the pinned file the caller can actually open, as it always has.
+    try:
+        meta["db_path"] = str(_kb.kanban_db_path(slug))
+    except _kb.BoardPinnedError:
+        meta["db_path"] = str(_kb.kanban_db_path())
     return meta
 
 
@@ -76,6 +83,9 @@ def write_board_metadata(
     "" = clear (``project_id`` is not validated here)."""
     _kb._assert_not_delegated_child_mutation()
     slug = _kb._slug_or_default(board)
+    # Resolved BEFORE the write: a fenced worker asking for another board is refused here,
+    # so a refusal never leaves a board.json behind for a board it cannot open (#206).
+    db_path = str(_kb.kanban_db_path(slug))
     meta = read_board_metadata(slug)
     # db_path is derived on every read; never persist it into board.json.
     meta.pop("db_path", None)
@@ -96,7 +106,7 @@ def write_board_metadata(
     path.write_text(
         json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
     )
-    meta["db_path"] = str(_kb.kanban_db_path(slug))
+    meta["db_path"] = db_path
     return meta
 
 

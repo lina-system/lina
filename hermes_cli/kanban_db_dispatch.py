@@ -1991,7 +1991,8 @@ def dispatch_once(
         )
 
     try:
-        db_path = _kb.kanban_db_path(board=board)
+        with _kb.pin_first_board_resolution():
+            db_path = _kb.kanban_db_path(board=board)
     except Exception:
         # Must not lose the tick — fall through to an unguarded dispatch.
         result = _locked_tick()
@@ -2101,11 +2102,11 @@ def _dispatch_lane_task(
     if claimed is None:
         return False
     try:
-        resolved_branch_name = None
-        if claimed.workspace_kind == "worktree":
-            workspace, resolved_branch_name = _kbw._resolve_worktree_workspace(claimed, board=board)
-        else:
-            workspace = _kbw.resolve_workspace(claimed, board=board)
+        with _kb.pin_first_board_resolution():
+            if claimed.workspace_kind == "worktree":
+                workspace, resolved_branch_name = _kbw._resolve_worktree_workspace(claimed, board=board)
+            else:
+                workspace, resolved_branch_name = _kbw.resolve_workspace(claimed, board=board), None
     except Exception as exc:
         if _record_task_failure(
             conn, claimed.id, f"workspace: {exc}",
@@ -2818,12 +2819,11 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
         override = _worker_terminal_timeout_env(task.max_runtime_seconds, env.get(var))
         if override is not None:
             env[var] = override
-    # Pin the board DB + workspaces root so the worker's kanban paths still
-    # match after `hermes -p` rewrites HERMES_HOME (symlink / Docker layouts).
-    env["HERMES_KANBAN_DB"] = str(_kb.kanban_db_path(board=board))
-    env["HERMES_KANBAN_WORKSPACES_ROOT"] = str(_kb.workspaces_root(board=board))
-    # Board slug — defense-in-depth pin if a path is resolved without the
-    # DB / workspaces env vars.
+    # Pin the worker's board: DB + workspaces paths (they must survive a `hermes -p`
+    # HERMES_HOME rewrite) and the slug, for a path resolved without those env vars.
+    with _kb.pin_first_board_resolution():
+        env["HERMES_KANBAN_DB"] = str(_kb.kanban_db_path(board=board))
+        env["HERMES_KANBAN_WORKSPACES_ROOT"] = str(_kb.workspaces_root(board=board))
     env["HERMES_KANBAN_BOARD"] = _kb._normalize_board_slug(board) or _kb.get_current_board()
     # kanban_comment reads HERMES_PROFILE for its default author; `-p` alone
     # doesn't set the env var.
