@@ -53,19 +53,28 @@ def goal_of(link: str):
     return next((recs[i] for i in order if recs[i]["kind"] == "목표" and link in (recs[i].get("links") or [])), None)
 
 
-def cmd_card_link(a) -> None:
-    link = card_link(a.card)
-    if not (a.goal or a.todo):
+def link_card(card: str, *, goal: str | None = None, todos: list[str] | None = None, as_=None) -> list[str]:
+    """``work card link <card> [--goal G] [--todo T…]`` without the parser: the ``kanban:<card>`` links on the record
+    and one comment on the card per part. Returns the output lines."""
+    link = card_link(card)
+    if not (goal or todos):
         die(t("--goal <목표 id> 또는 --todo <할 일 id>… 를 준다"))
-    if a.goal:
-        g = _link_items([a.goal.upper()], link, "목표", a.as_)[0]
+    lines = []
+    if goal:
+        g = _link_items([goal.upper()], link, "목표", as_)[0]
         _comment(link, t("기록의 목표: {id} {name}", id=g["id"], name=item_name(g)))
-        print(t("{card}: 목표 {id}", card=link[7:], id=g["id"]))
-    if a.todo:
-        rs = _link_items([x.upper() for x in a.todo], link, "할 일", a.as_)
+        lines.append(t("{card}: 목표 {id}", card=link[7:], id=g["id"]))
+    if todos:
+        rs = _link_items([x.upper() for x in todos], link, "할 일", as_)
         covered = card_todos(link[7:])
         _comment(link, t("기록의 할 일: {ids}", ids=", ".join(covered)))
-        print(t("{card}: 할 일 {ids}", card=link[7:], ids=", ".join(r["id"] for r in rs)))
+        lines.append(t("{card}: 할 일 {ids}", card=link[7:], ids=", ".join(r["id"] for r in rs)))
+    return lines
+
+
+def cmd_card_link(a) -> None:
+    for line in link_card(a.card, goal=a.goal, todos=a.todo, as_=a.as_):
+        print(line)
 
 
 def cmd_card_show(a) -> None:

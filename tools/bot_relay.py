@@ -540,6 +540,18 @@ def _delivery_child_session_env_names() -> tuple[str, ...]:
     return tuple(_VAR_MAP)
 
 
+def _delivery_kanban_fence_env_names() -> tuple[str, ...]:
+    """Non-``HERMES_KANBAN_*`` names that still put a delivery child inside the sender's card lineage.
+
+    ``HERMES_DELEGATED_CHILD_CONTEXT`` is the delegate/descendant write fence; ``HERMES_SUPERVISED_CHILD``
+    marks a launcher-owned process whose lifecycle commands must not target the recipient's own gateway.
+    Both are the SENDER's context, not the recipient's. Only the two marker names are listed: the card's
+    own pins are a ``HERMES_KANBAN_`` prefix match, so a pin added later is stripped without editing this."""
+    from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER
+
+    return (DELEGATED_CHILD_ENV_MARKER, "HERMES_SUPERVISED_CHILD")
+
+
 def relaying_principal_author(principal: str) -> dict:
     """The author of a relayed DM whose sender fields cannot be trusted: a logged-in client named them.
 
@@ -558,12 +570,15 @@ def delivery_env(author: Optional[dict], profile_home: str | Path | None = None)
     HERMES_TURN_AUTHOR is dropped first so a delivery without an author never inherits the author of the turn
     that sent it. Dispatcher session identity (the canonical ``gateway.session_context`` session env names) is
     dropped too: a nested recipient that ``message_agent``s onward must not stamp that grandchild
-    notify with the grandparent's key, or the live recipient never resumes. The child runs the target
-    profile's Bot Chat turn, so it starts from THAT profile's env (``served_profile_child_env``: launch
-    profile ``.env`` / TERMINAL_* residue dropped, target secrets overlaid), never the multiplexer's raw
-    ``os.environ``; ``-p`` alone only pinned HERMES_HOME. ``profile_home`` is the target's home when the
-    caller knows it (relay RPC, roster); otherwise the active override, and under multiplex the launch
-    home."""
+    notify with the grandparent's key, or the live recipient never resumes. The sender's kanban card
+    variables go too — every ``HERMES_KANBAN_*`` pin plus the delegate/supervised markers: a work card
+    that ``message_agent``s starts an ordinary turn of the recipient, never a delegated child of that
+    card, so ``hermes kanban`` works for the recipient and its replies do not carry the card onward. The
+    child runs the target profile's Bot Chat turn, so it starts from THAT profile's env
+    (``served_profile_child_env``: launch profile ``.env`` / TERMINAL_* residue dropped, target secrets
+    overlaid), never the multiplexer's raw ``os.environ``; ``-p`` alone only pinned HERMES_HOME.
+    ``profile_home`` is the target's home when the caller knows it (relay RPC, roster); otherwise the
+    active override, and under multiplex the launch home."""
     from agent.secret_scope import current_secret_scope, is_multiplex_active
     from agent.turn_author import TURN_AUTHOR_ENV, turn_author_env
     from hermes_constants import get_hermes_home_override, get_routing_process_hermes_home
@@ -582,6 +597,10 @@ def delivery_env(author: Optional[dict], profile_home: str | Path | None = None)
     env.pop(TURN_AUTHOR_ENV, None)
     for name in _delivery_child_session_env_names():
         env.pop(name, None)
+    fence_names = _delivery_kanban_fence_env_names()
+    for name in list(env):
+        if name.startswith("HERMES_KANBAN_") or name in fence_names:
+            del env[name]
     if author:
         env.update(turn_author_env(author))
     return env

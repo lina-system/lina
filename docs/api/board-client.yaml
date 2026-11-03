@@ -1,0 +1,486 @@
+# Board endpoints the app reads beyond docs/api/work-client.yaml (lina#112): the owner's to-dos, decisions and due
+# groups from the work record, `lina worker` runs that are not kanban work cards, devices, quota and the inbox
+# notices. Served by hermes_cli/web_routers/lina_board.py behind the dashboard auth gate (session token).
+# tests/hermes_cli/test_lina_board_api.py validates served JSON against it, so a shape change here and in the code
+# land together. WorkState is the same enum as work-client.yaml.
+openapi: 3.0.3
+info:
+  title: LINA board API
+  version: 0.1.0
+  description: >
+    The parts of the board snapshot lina#112 does not serve. Every response carries an ETag of its data (the
+    snapshot time `at` left out); send it back as If-None-Match to get 304 while nothing changed. A source that
+    fails to read is listed in `errors` and the counts made from it are null, never 0. Times are Unix epoch seconds;
+    due dates are YYYY-MM-DD days on the owner's calendar (`work.timezone`).
+servers:
+  - url: /api/lina
+paths:
+  /board:
+    get:
+      operationId: getBoard
+      summary: One snapshot of the to-dos, decisions, due groups, worker run cards, devices, quota and notices.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The snapshot.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BoardSnapshot"
+        "304":
+          description: Unchanged since the ETag sent.
+  /work/due:
+    get:
+      operationId: getWorkDue
+      summary: Open goals and to-dos with a due date, grouped.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Due groups.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DueView"
+        "304":
+          description: Unchanged since the ETag sent.
+  /devices:
+    get:
+      operationId: getDevices
+      summary: The work devices (devices.workers) with readiness, load and, with a metrics reader, usage.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Devices.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DevicesView"
+        "304":
+          description: Unchanged since the ETag sent.
+  /quota:
+    get:
+      operationId: getQuota
+      summary: Quota per service from LINA's OCX, with the burn rate of each window.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Quota.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/QuotaView"
+        "304":
+          description: Unchanged since the ETag sent.
+components:
+  parameters:
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema:
+        type: string
+  headers:
+    ETag:
+      description: Tag of the data; send back as If-None-Match.
+      schema:
+        type: string
+  schemas:
+    WorkState:
+      type: string
+      description: >
+        Same enum as work-client.yaml. For a worker run: planned (new, queued); in_progress (running);
+        waiting (a finished run with no verdict yet, or a run that asked a person); stopped (failed, stalled,
+        no result, cancelled, rejected); done (accepted).
+      enum:
+        - planned
+        - in_progress
+        - waiting
+        - stopped
+        - done
+    SourceError:
+      type: object
+      required: [source, message]
+      properties:
+        source:
+          type: string
+          enum: [work, worker, devices, metrics, quota]
+        message:
+          type: string
+    Errors:
+      type: array
+      items:
+        $ref: "#/components/schemas/SourceError"
+    Count:
+      type: integer
+      minimum: 0
+      nullable: true
+      description: The length of the list it labels; null when its source failed to read.
+    Counts:
+      type: object
+      required: [inbox, running, stopped, due, done, agents]
+      properties:
+        inbox:
+          $ref: "#/components/schemas/Count"
+        running:
+          $ref: "#/components/schemas/Count"
+        stopped:
+          $ref: "#/components/schemas/Count"
+        due:
+          $ref: "#/components/schemas/Count"
+        done:
+          $ref: "#/components/schemas/Count"
+        agents:
+          type: object
+          nullable: true
+          description: Running cards per agent (configured agents with none read 0).
+          additionalProperties:
+            type: integer
+            minimum: 0
+    RunCard:
+      type: object
+      required: [id, title, state, reason, agent, kind, todo, host, startedAt, endedAt, now]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        state:
+          $ref: "#/components/schemas/WorkState"
+        reason:
+          type: string
+          nullable: true
+          description: >
+            planned: new, queued; waiting: review, decision; stopped: failed, unresponsive, result_missing,
+            cancelled, rejected.
+        agent:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          nullable: true
+          description: The run's mode (ulw, research, mass, mass-research).
+        todo:
+          type: string
+          nullable: true
+          description: The work record to-do the run takes on.
+        host:
+          type: string
+          nullable: true
+        startedAt:
+          type: number
+          nullable: true
+        endedAt:
+          type: number
+          nullable: true
+        now:
+          type: string
+          nullable: true
+          description: What the run does now, from the runner's live state (at most 120 characters).
+    ItemRow:
+      type: object
+      required: [id, kind, title, due, agent]
+      properties:
+        id:
+          type: string
+        kind:
+          type: string
+          enum: [goal, todo]
+        title:
+          type: string
+        due:
+          type: string
+          nullable: true
+        agent:
+          type: string
+          nullable: true
+    MineRow:
+      type: object
+      required: [id, title, waiting, due, agent]
+      properties:
+        id:
+          type: string
+        title:
+          type: string
+        waiting:
+          type: boolean
+          description: The to-do still waits on an open item, a hold or a wait sentence.
+        due:
+          type: string
+          nullable: true
+        agent:
+          type: string
+          nullable: true
+          description: The agent that asked for the to-do.
+    DecideRow:
+      type: object
+      required: [target, title, agent, kind, text, at, answered]
+      properties:
+        target:
+          type: string
+          description: The work record item the decision is aimed at.
+        title:
+          type: string
+        agent:
+          type: string
+          nullable: true
+        kind:
+          type: string
+          enum: [ask, act]
+          description: ask = the owner picks; act = the owner does something (a sprint's owner line).
+        text:
+          type: string
+        at:
+          type: integer
+        answered:
+          type: boolean
+          description: The owner answered and the agent has not replied yet.
+    Inbox:
+      type: object
+      required: [decide, review, mine]
+      properties:
+        decide:
+          type: array
+          items:
+            $ref: "#/components/schemas/DecideRow"
+        review:
+          type: array
+          description: Ids of run cards waiting on the owner.
+          items:
+            type: string
+        mine:
+          type: array
+          items:
+            $ref: "#/components/schemas/MineRow"
+    DueGroups:
+      type: object
+      required: [overdue, today, week, later]
+      properties:
+        overdue:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemRow"
+        today:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemRow"
+        week:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemRow"
+        later:
+          type: array
+          items:
+            $ref: "#/components/schemas/ItemRow"
+    Notice:
+      type: object
+      required: [key, target, at, kind, line]
+      properties:
+        key:
+          type: string
+          description: kind:target:time; a new key is a new notice.
+        target:
+          type: string
+        at:
+          type: number
+          nullable: true
+        kind:
+          type: string
+          enum: [ask, review, todo]
+        line:
+          type: string
+          description: One line in the work record's locale.
+    Machine:
+      type: object
+      required: [name, state, why, cpu, memory, disk, temp, load, cores, running, cap, freeGb, metricsAt]
+      properties:
+        name:
+          type: string
+        state:
+          type: string
+          enum: [ok, warn, down]
+        why:
+          type: string
+          nullable: true
+          enum: [unreachable, runner, service, disk, over, down, cpu, memory, temp, pending, quiet, null]
+        cpu:
+          type: number
+          nullable: true
+        memory:
+          type: number
+          nullable: true
+        disk:
+          type: number
+          nullable: true
+        temp:
+          type: number
+          nullable: true
+        load:
+          type: number
+          nullable: true
+        cores:
+          type: integer
+          nullable: true
+        running:
+          type: integer
+          nullable: true
+        cap:
+          type: integer
+        freeGb:
+          type: integer
+          nullable: true
+        metricsAt:
+          type: number
+          nullable: true
+    QuotaWindow:
+      type: object
+      required: [key, percent, resetAt, ratePerHour, warn]
+      properties:
+        key:
+          type: string
+          description: weekly, fiveHour, monthly, or custom:<OCX label>.
+        percent:
+          type: number
+        resetAt:
+          type: number
+          nullable: true
+        ratePerHour:
+          type: number
+          nullable: true
+          description: Percent per hour over the last three hours of this reset period; null under 30 minutes of records.
+        warn:
+          type: boolean
+          description: At this rate the window reaches 100% before it resets.
+    QuotaAccount:
+      type: object
+      required: [id, number, plan, paused, unavailable, windows, mainWindow, warn]
+      properties:
+        id:
+          type: string
+          description: A hash of the OCX account id.
+        number:
+          type: integer
+          description: The account's place in its service (1, 2, ...).
+        plan:
+          type: string
+        paused:
+          type: boolean
+        unavailable:
+          type: boolean
+        windows:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaWindow"
+        mainWindow:
+          type: string
+          nullable: true
+        warn:
+          type: boolean
+    QuotaService:
+      type: object
+      required: [service, percent, ratePerHour, accounts]
+      properties:
+        service:
+          type: string
+        percent:
+          type: number
+          nullable: true
+        ratePerHour:
+          type: number
+          nullable: true
+        accounts:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaAccount"
+    BoardSnapshot:
+      type: object
+      required: [version, at, errors, counts, cards, inbox, due, notices, machines, quota]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        errors:
+          $ref: "#/components/schemas/Errors"
+        counts:
+          $ref: "#/components/schemas/Counts"
+        cards:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunCard"
+        inbox:
+          $ref: "#/components/schemas/Inbox"
+        due:
+          $ref: "#/components/schemas/DueGroups"
+        notices:
+          type: array
+          items:
+            $ref: "#/components/schemas/Notice"
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/Machine"
+        quota:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaService"
+    DueView:
+      type: object
+      required: [version, at, errors, today, count, due]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        errors:
+          $ref: "#/components/schemas/Errors"
+        today:
+          type: string
+          nullable: true
+        count:
+          $ref: "#/components/schemas/Count"
+        due:
+          $ref: "#/components/schemas/DueGroups"
+    DevicesView:
+      type: object
+      required: [version, at, errors, machines]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        errors:
+          $ref: "#/components/schemas/Errors"
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/Machine"
+    QuotaView:
+      type: object
+      required: [version, at, errors, quota]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        errors:
+          $ref: "#/components/schemas/Errors"
+        quota:
+          type: array
+          items:
+            $ref: "#/components/schemas/QuotaService"

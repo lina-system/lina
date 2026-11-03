@@ -681,8 +681,8 @@ MESSAGES = {
         "A to-do needs --done \"<done condition>\"",
     "할 일에는 --goal <목표 id> 가 필요하다":
         "A to-do needs --goal <goal id>",
-    "할 일에는 --session <맡은 주제 세션 이름> 또는 --omo <맡은 작업 id, 예: OT-ABC1031071257 | next(곧 작업이 붙음)> 이 필요하다":
-        "A to-do needs --session <assigned topic session name> or --omo <assigned job id, e.g. OT-ABC1031071257 | next (a job will be attached soon)>",
+    "할 일에는 --session <맡은 주제 세션 이름>, --omo <맡은 작업 id, 예: OT-ABC1031071257 | next(곧 작업이 붙음)> 또는 --link kanban:<작업 카드 id> 가 필요하다":
+        "A to-do needs --session <assigned topic session name>, --omo <assigned job id, e.g. OT-ABC1031071257 | next (a job will be attached soon)> or --link kanban:<work card id>",
     "할 일은 끝, 검사 남음":
         "To-dos done, check pending",
     "할 일은 다 닫혔는데 검사가 안 통과":
@@ -724,4 +724,8 @@ MESSAGES = {
     "작업 기록 못 읽음: {e}": "Cannot read the worker jobs: {e}",
     "목표를 직접 넣은 에이전트 {n}: {names}": "Agents who wrote their own goal {n}: {names}",
     "시간 초과": "timed out",
+    "결정 필요: {text}": "Decision needed: {text}",
+    "검토 필요": "Review needed",
+    "내 할 일": "My to-do",
+    "[작업 카드] {card} {title} · 할 일 {ids}": "[Work card] {card} {title} · to-dos {ids}",
 }

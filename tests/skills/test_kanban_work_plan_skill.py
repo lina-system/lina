@@ -8,6 +8,7 @@ the skills catalog reads.
 from __future__ import annotations
 
 import argparse
+import json
 import re
 import shlex
 from pathlib import Path
@@ -55,7 +56,32 @@ def board(tmp_path, monkeypatch):
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     kb._INITIALIZED_PATHS.clear()
     kb.init_db()
+    _example_record(tmp_path, home, plan)
     return tmp_path
+
+
+def _example_record(tmp_path: Path, home: Path, plan: dict) -> None:
+    """A sqlite work record holding the example's ledger goal and the to-dos it names (lina#163 reads them)."""
+    from hermes_cli.work import env, main
+    goal = plan["goal"]["ledger_goal"]
+    (home / "config.yaml").write_text("work:\n  store: {backend: sqlite}\n", encoding="utf-8")
+    base = {"by": plan["goal"]["assignee"], "state": "open", "created": 1800000000, "progress_at": 1800000000,
+            "op": "add", "writer": plan["goal"]["assignee"], "links": [], "notes": []}
+    rows = [{**base, "id": "A1", "kind": "영역", "title": "Dev", "parent": ""},
+            {**base, "id": goal, "kind": "목표", "title": "Example goal", "parent": "A1", "check": "false",
+             "done": "Example goal is done", "basis": [{"text": "An example", "at": 1800000000, "src": "test"}]}]
+    for card in plan["cards"]:
+        for todo in card.get("ledger_todos") or []:
+            if isinstance(todo, str):
+                rows.append({**base, "id": todo, "kind": "할 일", "title": f"Example {todo}", "parent": goal,
+                             "by": card["assignee"], "session": f"{card['assignee']}:example"})
+    src = tmp_path / "ledger.jsonl"
+    src.write_text("".join(json.dumps(r, ensure_ascii=False) + "\n" for r in rows), encoding="utf-8")
+    env.reset()
+    try:
+        main(["import", "--from", str(src)])
+    finally:
+        env.reset()
 
 
 def test_example_plan_passes_dry_run(board, capsys):
@@ -64,6 +90,7 @@ def test_example_plan_passes_dry_run(board, capsys):
     rc, out, err = _kanban(capsys, "plan", str(path), "--dry-run")
     assert rc == 0, err
     assert "dry run, nothing written" in out
+    assert "record goal: " in out and "to-do: link " in out and "to-do: create " in out
     with kbc.connect_closing() as conn:
         assert kb.list_tasks(conn) == []
 

@@ -38,7 +38,7 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | Role | Used by | Can |
 | --- | --- | --- |
 | `lina` | `lina store` (over the container's local socket) | everything (cluster superuser) |
-| `lina_app` | agents | read and write the tables in `memory`, `ctx` and `vec`; only the rows of its agent |
+| `lina_app` | agents | read and write its agent's rows in `memory`, `ctx` and `vec`; also read shared `memory.messages` rows with `scope = 'agents'` |
 | `honcho` | the Honcho server | own schema `ltm` and migrate it; SELECT and INSERT on `memory.messages`, REFERENCES on its `message_id`, and USAGE on schema `memory`; read and write its own vectors (kinds `message` and `document`) in `vec.embeddings`, nothing else in `vec` |
 
 Every table in `memory`, `ctx`, `ltm` or `vec` that has an `agent_id` column gets row-level
@@ -61,6 +61,10 @@ lookup; PUBLIC cannot execute it. A boolean is the smallest required access, and
 can return false before the `ltm` schema or table exists, since store migrations run before
 Honcho's migration job. It does not expose metadata columns or grant writes into `ltm`.
 
+Migration 0005 adds a permissive **SELECT-only** policy on `memory.messages` for `scope = 'agents'`.
+These owner-level external rows have NULL `agent_id`: every agent can read them, including a session with
+no agent set, but the existing write policy still rejects inserting or changing NULL/another agent's rows.
+The extra SELECT policy does not grant INSERT, UPDATE or DELETE access.
 ## Migrations
 
 Honcho migrates `ltm` itself. Schemas `memory`, `ctx` and `vec` belong to LINA: each
@@ -84,7 +88,8 @@ profile, so row-level security keeps each profile to its rows. Agents find the s
 | `source` | `agent` for agent turns (`messages` for external messages, #18) |
 | `agent_id` | the profile; row-level security applies through it |
 | `session_id`, `seq_in_session` | the Hermes session that first wrote the row and its row id there |
-| `conversation_id` | null until identity (#20) fills it |
+| `conversation_id` | channel: `messages:<platform>:<room_id>` for external messages; agent identity is filled by #20 |
+| `author` | nullable author key: `<platform>:<author_id>` for external messages; NULL for agent rows (not a resolved person) |
 | `role`, `content`, `tool_name`, `tool_call_id`, `ts` | the message; `content` is plain text (the text parts of multimodal content, NUL removed) |
 | `tool_calls` | the tool calls as `jsonb` |
 | `observed_at` | when the row was written |
@@ -151,6 +156,47 @@ including Honcho-origin rows whose workspace equals a profile and agent rows reu
 Profile rename changes the agent and UID prefix in place, preserving `message_id` and Honcho's
 reference; profile deletion removes local placements, not shared text. Backup restore inserts
 missing text and refuses a conflicting UID payload rather than replacing an existing shared row.
+
+### External messages
+
+Configure `memory.external_messages.spool` in the LINA root's `config.yaml` to the collector's
+`spool/events.jsonl`. The default is empty: ingestion does nothing and the CLI says so. This is a host job,
+not a profile job; there is no source on/off switch here (#23).
+
+```sh
+lina memory external-messages ingest
+lina memory external-messages ingest --spool /path/to/synthetic/events.jsonl
+```
+
+The existing gateway cron ticker checks every five minutes, once outside its profile loop. A host lock and
+persisted size/mtime signature avoid duplicate work across gateway processes and unchanged spools. Collection
+completion is observed through appended complete lines, not a collector hook; the collector itself is unchanged.
+Neither this job nor its CLI reads the collector's derived SQLite database or writes in its directory.
+
+The job opens the spool read-only under a shared `flock`, verifies SHA256 of the consumed byte prefix, and
+parses only new newline-terminated events. An incomplete tail waits for the next invocation. A truncated or
+rewritten consumed prefix stops ingestion with an error; do not reset the cursor to hide a replaced spool.
+Prefix verification necessarily reads old bytes, but never re-parses old events. Each batch of 100 lines commits
+message versions, current heads and its byte-offset/hash cursor in one owner transaction. A failed batch rolls
+back together; earlier committed batches stay valid and a restart resumes after them. The transaction advisory
+lock serializes writers even when separate configured paths contain the same global collector uid.
+
+Rows use `source = 'messages'`, `uid = 'messages:<collector uid>'`, NULL `agent_id`, `scope = 'agents'`, and
+`role = 'user'`. `content` is force-redacted by LINA before storage and `content_sha256` hashes that stored text.
+Only the listed platform/account/room/native-id/author/reply/thread/edit/delete/ingest-path/attachment metadata
+and `event_id` survive in `native` (plus the version digest); metadata strings are redacted too. `raw`,
+observations and the collector's `sync_checkpoint` are not persisted. Common fields are author → `author`,
+channel → `conversation_id`, scope → `scope`, ref → `uid`, forget → `forgotten_at`.
+
+An existing message never changes. A different sanitized payload, edit/delete mark or metadata writes
+`messages:<collector uid>#<first 16 hex of SHA256>`; the first payload keeps the unsuffixed uid. The digest
+excludes `event_id`, so identical re-collection writes no message row. `memory.external_message_heads` is the
+mutable owner-only projection of which version is current: later spool order wins, except an `archive` head
+beats a later `live` observation. Distinct losing versions remain available by their own refs. An identical old
+version can become current again without reinserting or changing it. A delete mark is another version, not a
+physical delete or a forget operation. Cursor/head tables are not accessible to `lina_app`; a future reader
+that needs current-only semantics must use this ordering rule rather than assume the greatest message_id wins.
+Transcript garbage collection considers only `source = 'agent'`, never these owner-level rows.
 
 ### What stays in each profile's `state.db`
 

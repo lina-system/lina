@@ -87,7 +87,7 @@ class Store:
         if not self.jobs.is_dir():
             return []
         return sorted((json.loads(p.read_text(encoding="utf-8-sig")) for p in self.jobs.glob("*.json")),
-                      key=lambda job: job["created"])
+                      key=lambda job: (job["created"], job["id"]))  # glob order differs by OS
 
     def new_id(self, agent: str, prefix: str = "OT") -> str:
         """``OT-<AGENT3><MMDDhhmmss>`` (``OG-`` a group, ``OS-`` a schedule); ``-2``, ``-3`` … on a clash."""

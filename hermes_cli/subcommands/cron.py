@@ -77,7 +77,7 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
             "instead of a script. Same hash-suppression semantics as "
             "--monitor-script.")
     cron_create.add_argument("--workdir",
-        help="Absolute path for the job to run from. Injects AGENTS.md / CLAUDE.md / .cursorrules from that directory and uses it as the cwd for terminal/file/code_exec tools. Omit to preserve old behaviour (no project context files).",
+        help="Absolute path for the job to run from, or desk / desk:<sub path> (the Desk, wherever it lives). Injects AGENTS.md / CLAUDE.md / .cursorrules from that directory and uses it as the cwd for terminal/file/code_exec tools. Omit to preserve old behaviour (no project context files).",
     )
     cron_create.add_argument("--model",
         help="Pin this job to a specific inference model (user-owned; the "
@@ -156,7 +156,7 @@ def build_cron_parser(subparsers, *, cmd_cron: Callable) -> None:
     cron_edit.add_argument("--monitor-url", dest="monitor_url",
         help=("Set/replace the monitor source URL. Pass empty string to clear."))
     cron_edit.add_argument("--workdir",
-        help="Absolute path for the job to run from (injects AGENTS.md etc. and sets terminal cwd). Pass empty string to clear.",
+        help="Absolute path, or desk / desk:<sub path>, for the job to run from (injects AGENTS.md etc. and sets terminal cwd). Pass empty string to clear.",
     )
     cron_edit.add_argument("--model",
         help="Pin this job to a specific inference model (user-owned; the "

@@ -1488,12 +1488,11 @@ class _BoundedCronSessionDB:
 
 
 def _resolve_job_workdir(job: dict, job_id: str) -> Optional[str]:
-    """Configured job workdir, or None when unset / no longer a directory (logged)."""
-    workdir = (job.get("workdir") or "").strip() or None
+    """Configured job workdir (``desk:<sub>`` through the Desk setting), or None when unset / gone (logged)."""
+    from hermes_cli.desk import resolve_workdir
+    workdir = resolve_workdir(job.get("workdir") or "", strict=False) or None
     if workdir and not Path(workdir).is_dir():
-        logger.warning(
-            "Job '%s': configured workdir %r no longer exists — running without it",
-            job_id, workdir)
+        logger.warning("Job '%s': configured workdir %r no longer exists — running without it", job_id, workdir)
         return None
     return workdir
 

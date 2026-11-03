@@ -120,6 +120,7 @@ def start_gateway_job(command: list[str], *, env: dict[str, str], cwd: str | Pat
                 "EnvironmentVariables": dict(env),
                 "WorkingDirectory": str(cwd),
                 "RunAtLoad": True,
+                "MaterializeDatalessFiles": True,  # a synced Desk's placeholders open (gateway_launchd.py)
             }, handle)
         done = _launchctl("bootstrap", f"gui/{os.getuid()}", str(plist),  # windows-footgun: ok — macOS-only
                           timeout=_budget(deadline, 10))
