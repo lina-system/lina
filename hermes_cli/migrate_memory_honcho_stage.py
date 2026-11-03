@@ -50,13 +50,40 @@ def child_environment(work_dir: Path, schema: str) -> dict[str, str]:
     return env
 
 
-def upgrade(dsn: str, schema: str, revision: str, python: Path, work_dir: Path) -> None:
-    """Run the checked-in chain on an explicitly supplied connection, never stamp."""
+def upgrade(dsn: str, schema: str, revision: str, python: Path | None, work_dir: Path,
+            *, dimensions: int = 1024, installed_store: bool = True) -> None:
+    """Use the installed migration image unless an interpreter is explicit."""
+    # Docker CLI configuration belongs to the invoking home (credential helper,
+    # Compose plugin). Only explicit Python children need a disposable home.
+    env = child_environment(work_dir, schema) if python is not None else dict(os.environ)
+    env["EMBEDDING_VECTOR_DIMENSIONS"] = str(dimensions)
+    request = {"dsn": dsn, "revision": revision}
+    argv = [str(python), "-m", "hermes_cli.migrate_memory_honcho_stage"]
+    if python is None:
+        from hermes_cli.store import HONCHO_IMAGE, Store, store_dir
+        from hermes_platform.resolver import locate_command
+
+        docker = locate_command("docker").command
+        if not docker:
+            raise HonchoMigrationError("migration image runtime unavailable", 127)
+        options = ["--volume", f"{Path(__file__).resolve()}:/app/lina_migrate/runner.py:ro",
+                   "-e", f"DB_SCHEMA={schema}", "-e", f"EMBEDDING_VECTOR_DIMENSIONS={dimensions}",
+                   "-e", "EMBEDDING_LEGACY_MODEL=",
+                   "-e", "PYTHONPATH=/app", "--entrypoint", "/app/.venv/bin/python"]
+        if installed_store:
+            argv = Store(store_dir()).compose_argv("run", "--rm", "--no-deps", "-T", *options,
+                                                  "honcho-migrate", "/app/lina_migrate/runner.py")
+            request["dsn"] = make_conninfo(**{**conninfo_to_dict(dsn), "host": "db", "port": "5432"})
+        else:
+            # An explicitly supplied destination DSN denotes an external/test
+            # cluster, not the installed compose service.
+            argv = [*docker, "run", "--rm", "-i", "--network", "host", *options,
+                    HONCHO_IMAGE, "/app/lina_migrate/runner.py"]
+        request["honcho_root"] = "/app"
     try:
         completed = subprocess.run(
-            [str(python), "-m", "hermes_cli.migrate_memory_honcho_stage"],
-            input=json.dumps({"dsn": dsn, "revision": revision}), text=True, encoding="utf-8", errors="replace",
-            env=child_environment(work_dir, schema), cwd=work_dir,
+            argv, input=json.dumps(request), text=True, encoding="utf-8", errors="replace",
+            env=env, cwd=work_dir,
             capture_output=True, check=False, timeout=600,
         )
     except subprocess.TimeoutExpired:
@@ -82,7 +109,7 @@ def restored_database(copied_dump: Path, dsn: str, work_dir: Path,
                     completed = subprocess.run(
                         [*restore_command, "--no-owner", "--no-privileges", "--exit-on-error",
                          "--dbname", restore_dsn], stdin=archive, capture_output=True,
-                        env=child_environment(work_dir, "public"), cwd=work_dir,
+                        env=dict(os.environ) if container_local else child_environment(work_dir, "public"), cwd=work_dir,
                         check=False, timeout=600,
                     )
                 except subprocess.TimeoutExpired:
@@ -100,9 +127,10 @@ def _main() -> None:
     from alembic.config import Config
 
     request = json.load(sys.stdin)
+    honcho_root = Path(request.get("honcho_root", ROOT / "services/honcho"))
     engine = sa.create_engine("postgresql+psycopg://", creator=lambda: psycopg.connect(request["dsn"]))
-    config = Config(str(ROOT / "services/honcho/alembic.ini"))
-    config.set_main_option("script_location", str(ROOT / "services/honcho/migrations"))
+    config = Config(str(honcho_root / "alembic.ini"))
+    config.set_main_option("script_location", str(honcho_root / "migrations"))
     try:
         with engine.begin() as connection:
             config.attributes["connection"] = connection

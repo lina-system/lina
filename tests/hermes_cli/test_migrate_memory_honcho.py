@@ -1,14 +1,19 @@
 """Real archive restoration, Alembic migrations and populated-store merge."""
 
+import json
+
 import psycopg
 import pytest
 
 from hermes_cli.migrate_memory_honcho import migrate_honcho
 from hermes_cli.migrate_memory_honcho_graph import graph
-from hermes_cli.migrate_memory_honcho_stage import HonchoMigrationError, upgrade
+from hermes_cli.migrate_memory_honcho_stage import HonchoMigrationError
 from tests.hermes_cli._migrate_memory_honcho_fixture import (
-    create_dump, database, honcho_python, pg_command, seed_agent, seed_workspace,
+    create_dump, database, honcho_python, pg_command, seed_agent, seed_workspace, upgrade,
 )
+from tests.hermes_cli._migrate_memory_honcho_fixture import honcho_runtime
+
+__all__ = ["honcho_runtime"]
 
 
 @pytest.fixture
@@ -21,7 +26,11 @@ def migration(tmp_path, _memory_store):
             shared_id = seed_agent(conn)
         upgrade(target, "ltm", "l13_message_split", honcho_python(), tmp_path)
         dump = create_dump(admin, tmp_path / "source.dump", tmp_path)
+        selection = tmp_path / "honcho-config.json"
+        selection.write_text(json.dumps({"hosts": {"hermes_alpha": {
+            "workspace": "alpha", "aiPeer": "source-ai", "peerName": "user", "observationMode": "unified"}}}))
         yield dict(copied_dump=dump, profile="alpha", agent="alpha-copy", work_dir=tmp_path,
+                   selection_path=selection,
                    honcho_python=honcho_python(), destination_dsn=target,
                    restore_command=pg_command("pg_restore")), shared_id
 
@@ -42,9 +51,9 @@ def test_real_dump_merges_graph_reuses_agent_and_reruns_without_insert(migration
     assert report["embeddings"]["document"]["source_vectors"] == 2
     assert report["embeddings"]["message"]["source_vectors"] == 1
     assert rerun["inserted"] == rerun["inserted_text"] == 0
-    assert report["counts"]["active_queue_sessions"]["skipped"] == 1
-    assert report["skipped"][0]["kind"] == "runtime_lease"
-    assert all(r["source"] == r["matched"] + r["inserted"] + r["skipped"] for r in report["counts"].values())
+    assert report["counts"]["active_queue_sessions"]["excluded"]["runtime_lease"] == 1
+    assert report["skipped"] == []
+    assert all(r["source"] == r["matched"] + r["inserted"] for r in report["counts"].values())
     assert all("native_id" in row for row in report["source_manifest"])
     with psycopg.connect(options["destination_dsn"]) as conn:
         assert graph(conn, "ltm", "unrelated") == unrelated
@@ -63,7 +72,7 @@ def test_real_dump_merges_graph_reuses_agent_and_reruns_without_insert(migration
         assert conn.execute("SELECT count(*) FROM memory.identity_keys WHERE source='honcho_session'").fetchone()[0] == 1
         assert conn.execute("SELECT count(DISTINCT identity_id) FROM memory.identity_keys "
                             "WHERE source IN ('honcho_session','gateway_chat')").fetchone()[0] == 1
-        assert conn.execute("SELECT kind FROM memory.identity_keys WHERE source='honcho_peer'").fetchall() == [("person",)]
+        assert set(conn.execute("SELECT kind FROM memory.identity_keys WHERE source='honcho_peer'").fetchall()) == {("person",), ("agent",)}
         assert conn.execute("SELECT count(*) FROM ltm.workspaces WHERE name='not-selected'").fetchone()[0] == 0
 
 

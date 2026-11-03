@@ -13,7 +13,6 @@ from __future__ import annotations
 from collections.abc import Sequence
 import hashlib
 from pathlib import Path
-import sys
 import threading
 
 import psycopg
@@ -25,6 +24,7 @@ from hermes_cli.migrate_memory_honcho_graph import (
     GENERATED, TABLES, graph, insert, manifest, renamed, rows, source_links,
 )
 from hermes_cli.migrate_memory_honcho_stage import ROOT, restored_database, upgrade
+from hermes_cli.migrate_memory_honcho_scope import map_peer, scoped_graph, selection
 
 
 def _prepare(conn, schema: str, workspace: str, agent: str) -> tuple[str, dict]:
@@ -104,7 +104,7 @@ def _registry(conn, data: dict, ids: dict, workspace: str, agent: str) -> None:
     for peer in data["peers"]:
         bot = peer["metadata"].get("is_bot") or peer["name"] == agent
         keys = [("honcho_peer", f"{agent}:{peer['name']}")]
-        if bot:
+        if peer["name"] == agent:
             keys.insert(0, ("profile", agent))
         registry._resolve("agent" if bot else "person", keys)
     store = MessageStore(agent)
@@ -145,10 +145,6 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
     conn.execute("LOCK TABLE memory.messages IN SHARE ROW EXCLUSIVE MODE")
     existing = graph(conn, "ltm", agent)
     source_links(data)
-    leases = data["active_queue_sessions"]
-    data["active_queue_sessions"] = []
-    skipped = [{"table": "active_queue_sessions", "kind": "runtime_lease", "native_id": row["id"],
-                "reason": "runtime worker ownership cannot be transferred to another workspace"} for row in leases]
     rerun = bool(existing["workspaces"])
     ids = {}
     generated = {table: {} for table in GENERATED}
@@ -198,11 +194,9 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
     counts = {table: len(records) for table, records in data.items()}
     accounting = {table: {"source": count, "matched": count if rerun else 0,
                           "inserted": 0 if rerun else count, "skipped": 0} for table, count in counts.items()}
-    counts["active_queue_sessions"] = len(leases)
-    accounting["active_queue_sessions"].update(source=len(leases), skipped=len(leases))
     return {"ok": True, "source_manifest": source_manifest, "destination_manifest": destination_manifest,
             "source_counts": counts, "destination_counts": {k: len(v) for k, v in destination.items()},
-            "counts": accounting, "skipped": skipped,
+            "counts": accounting, "skipped": [],
             "inserted": sum(r["inserted"] for r in accounting.values()), "inserted_text": inserted_text,
             "matched": sum(r["matched"] for r in accounting.values()),
             "matched_text": len(data["message_meta"]) - inserted_text,
@@ -212,15 +206,17 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
 
 def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, *,
                    workspace: str | None = None, honcho_python: Path | None = None,
+                   selection_path: Path | None = None,
                    destination_dsn: str | None = None,
                    restore_command: Sequence[str] | None = None) -> dict:
     """Restore, upgrade and merge one workspace; exact reruns insert zero rows."""
     from hermes_platform.resolver import locate_command
     from hermes_state_store import resolve_owner_dsn
 
-    workspace = workspace or profile
+    selected = selection(profile, selection_path, workspace)
+    workspace = selected.workspace
+    installed_store = destination_dsn is None
     destination_dsn = destination_dsn or resolve_owner_dsn()
-    honcho_python = honcho_python or Path(sys.executable)
     restore_command = restore_command or locate_command("pg_restore").command
     container_local = False
     if not restore_command:
@@ -231,7 +227,9 @@ def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, 
     work_dir.mkdir(parents=True, exist_ok=True)
     with copied_dump.open("rb") as stream:
         digest = hashlib.file_digest(stream, "sha256").hexdigest()
-    receipt = {"sha256": digest, "workspace": workspace, "profile": profile, "agent": agent}
+    receipt = {"sha256": digest, "workspace": workspace, "profile": profile, "agent": agent,
+               "ai_peer": selected.ai_peer, "person_peer": selected.person_peer,
+               "observation_mode": selected.observation_mode}
     with restored_database(copied_dump, destination_dsn, work_dir, restore_command,
                            container_local=container_local) as staging:
         with psycopg.connect(staging) as source:
@@ -247,18 +245,26 @@ def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, 
             if original_revision == "l13_message_split":
                 raise ValueError("expected a pre-split Honcho dump, not l13_message_split")
         if original_revision != "l19_vec_embeddings":
-            upgrade(staging, schema, "c4d8e2f6a1b3", honcho_python, work_dir)
+            upgrade(staging, schema, "c4d8e2f6a1b3", honcho_python, work_dir, installed_store=installed_store)
         with psycopg.connect(staging) as source:
             _, decisions = _prepare(source, schema, workspace, agent)
-        upgrade(staging, schema, "l13_message_split", honcho_python, work_dir)
+        upgrade(staging, schema, "l13_message_split", honcho_python, work_dir, installed_store=installed_store)
         with psycopg.connect(staging) as source:
             data = graph(source, schema, workspace)
             if len(data["workspaces"]) != 1:
                 raise ValueError(f"source workspace not found: {workspace}")
+            data, excluded = scoped_graph(source, schema, data, selected)
+            data = map_peer(data, selected.ai_peer, agent)
             texts = {r["message_id"]: r for r in rows(source, "memory", "messages",
                 "message_id = ANY(%s)", ([r["message_id"] for r in data["message_meta"]],))}
         with psycopg.connect(destination_dsn) as destination:
             report = _merge(destination, data, texts, workspace, agent, profile, receipt)
+        for table, counts in report["counts"].items():
+            counts["excluded"] = {reason: sum(row["table"] == table and row["reason"] == reason
+                                              for row in excluded)
+                                  for reason in ("other_agent", "other_workspace", "runtime_lease")}
         report.update(source_revision=original_revision, destination_revision="l13_message_split",
-                      embeddings=decisions, source_workspace=workspace, destination_workspace=agent)
+                      embeddings=decisions, source_workspace=workspace, destination_workspace=agent,
+                      source_peer=selected.ai_peer, destination_peer=agent, person_peer=selected.person_peer,
+                      observation_mode=selected.observation_mode, excluded=excluded)
         return report

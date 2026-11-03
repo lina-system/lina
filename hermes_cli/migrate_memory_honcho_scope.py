@@ -1,0 +1,129 @@
+"""Resolve a copied host and retain only its recall-readable graph."""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+import json
+from pathlib import Path
+
+from hermes_cli.migrate_memory_honcho_graph import TABLES, rows
+
+
+@dataclass(frozen=True)
+class Selection:
+    workspace: str
+    ai_peer: str
+    person_peer: str | None
+    observation_mode: str
+
+
+def selection(profile: str, path: Path | None, workspace: str | None) -> Selection:
+    """Read only the copied host; a CLI workspace is an assertion, not a scope override."""
+    from plugins.memory.honcho.client import _host_block, profile_host_key
+
+    if path is None:
+        raise ValueError("copied Honcho host selection_path is required")
+    host = profile_host_key(profile)
+    block = _host_block(json.loads(path.read_text(encoding="utf-8-sig")), host)
+    selected = block.get("workspace")
+    if workspace and workspace != selected:
+        raise ValueError("Honcho workspace does not match the copied host")
+    mode = block.get("observationMode", "unified")
+    if mode not in {"unified", "directional"}:
+        raise ValueError("copied Honcho observationMode must be unified or directional")
+    ai = block.get("aiPeer")
+    person = block.get("peerName")
+    if not isinstance(selected, str) or not isinstance(ai, str) or (person is not None and not isinstance(person, str)):
+        raise ValueError("copied Honcho host identity fields must be strings")
+    return Selection(selected, ai, person, mode)
+
+
+def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[dict, list[dict]]:
+    """Keep AI-participating sessions and the live adapter's observer/target pairs."""
+    from plugins.memory.honcho.client import _OBSERVATION_PRESETS
+
+    ai = selected.ai_peer
+    if ai not in {r["name"] for r in data["peers"]}:
+        raise ValueError("selected Honcho AI peer not found in source workspace")
+    sessions = {r["session_name"] for r in data["session_peers"] if r["peer_name"] == ai}
+    participants = [r for r in data["session_peers"] if r["session_name"] in sessions]
+    peers = {r["peer_name"] for r in participants} | {ai}
+    if selected.person_peer:
+        peers.add(selected.person_peer)
+    # Both shipped presets read through the AI (ai_observe_others=True).
+    # Persisted session peer configuration wins, just as the live manager's
+    # get_peer_configuration response wins over the local preset.
+    pairs = {(ai, ai)}
+    default_observes = _OBSERVATION_PRESETS[selected.observation_mode]["ai_observe_others"]
+    for participant in participants:
+        if participant["peer_name"] != ai:
+            continue
+        observes = participant["configuration"].get("observe_others", default_observes)
+        if observes is None:
+            observes = default_observes
+        others = {p["peer_name"] for p in participants if p["session_name"] == participant["session_name"]}
+        pairs.update((ai if observes else peer, peer) for peer in others if peer != ai)
+    if not sessions and selected.person_peer:
+        pairs.add((ai, selected.person_peer))
+    result = {table: [] for table in TABLES}
+    result["workspaces"] = data["workspaces"]
+    result["sessions"] = [r for r in data["sessions"] if r["name"] in sessions]
+    result["session_peers"] = participants
+    result["collections"] = [r for r in data["collections"] if (r["observer"], r["observed"]) in pairs]
+    result["documents"] = [r for r in data["documents"] if (r["observer"], r["observed"]) in pairs]
+    result["message_meta"] = [r for r in data["message_meta"] if r["session_name"] in sessions]
+    mids = {r["message_id"] for r in result["message_meta"]}
+    publics = {r["public_id"] for r in result["message_meta"]}
+    docs = {r["id"] for r in result["documents"]}
+    peers.update(r["peer_name"] for r in result["message_meta"])
+    result["peers"] = [r for r in data["peers"] if r["name"] in peers]
+    result["document_sources"] = [r for r in data["document_sources"] if r["derived_id"] in docs]
+    result["conclusion_source_messages"] = [r for r in data["conclusion_source_messages"] if r["conclusion_id"] in docs]
+    for edge in result["conclusion_source_messages"]:
+        if edge["message_id"] not in publics:
+            raise ValueError("unresolved conclusion_source_messages reference outside selected scope")
+    result["message_embeddings"] = [r for r in data["message_embeddings"] if r["message_id"] in publics]
+    session_ids = {r["id"] for r in result["sessions"]}
+    result["queue"] = [r for r in data["queue"] if r["message_id"] in mids or r["session_id"] in session_ids]
+    excluded = []
+    for table in TABLES:
+        retained = {json.dumps(row, sort_keys=True, default=str) for row in result[table]}
+        for row in rows(conn, schema, table):
+            if json.dumps(row, sort_keys=True, default=str) in retained:
+                continue
+            owner = row.get("workspace_name", row.get("name") if table == "workspaces" else None)
+            if table == "active_queue_sessions":
+                owner = selected.workspace if row in data[table] else None
+            reason = "other_agent" if owner == selected.workspace else "other_workspace"
+            if table == "active_queue_sessions" and owner == selected.workspace:
+                reason = "runtime_lease"
+            excluded.append({"table": table, "native_id": row.get("public_id", row.get("id", row.get("name"))),
+                             "reason": reason})
+    return result, excluded
+
+
+def map_peer(data: dict, source: str, destination: str) -> dict:
+    """Rename only peer-bearing fields, never arbitrary user metadata or text."""
+    from copy import deepcopy
+
+    result = deepcopy(data)
+    if source != destination and destination in {r["name"] for r in data["peers"]}:
+        raise ValueError("destination AI peer collides with a source participant")
+    for table, records in result.items():
+        for row in records:
+            fields = ("name",) if table == "peers" else ("peer_name", "observer", "observed")
+            for field in fields:
+                if row.get(field) == source:
+                    row[field] = destination
+            if table == "queue":
+                for field in ("observer", "observed", "scope_peer", "peer_name"):
+                    if row["payload"].get(field) == source:
+                        row["payload"][field] = destination
+                observers = row["payload"].get("observers")
+                if isinstance(observers, list):
+                    row["payload"]["observers"] = [destination if p == source else p for p in observers]
+                parts = row["work_unit_key"].split(":")
+                # Workspace occupies slot 1 (slot 2 for dream); peer slots follow.
+                start = 3 if parts[0] == "dream" else 2
+                row["work_unit_key"] = ":".join(parts[:start] + [destination if p == source else p for p in parts[start:]])
+    return result
