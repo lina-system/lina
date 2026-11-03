@@ -21,13 +21,13 @@ from scripts.configure_embeddings import (
 
 @asynccontextmanager
 async def _restore_schema_to(db_engine: AsyncEngine, dim: int) -> AsyncGenerator[None]:
-    """ALTER both embedding columns back to ``dim`` on exit so this test
+    """ALTER the embedding column back to ``dim`` on exit so this test
     leaves the shared test DB in a consistent state for subsequent tests."""
     try:
         yield
     finally:
         async with db_engine.begin() as conn:
-            for table in ("documents", "message_embeddings"):
+            for table in ("embeddings",):
                 await conn.execute(
                     text(
                         f"ALTER TABLE {table} ALTER COLUMN embedding"
@@ -50,7 +50,7 @@ async def _current_dims(db_engine: AsyncEngine) -> dict[str, int]:
                   AND a.attname = 'embedding'
                 """
             ),
-            {"tables": ["documents", "message_embeddings"]},
+            {"tables": ["embeddings"]},
         )
         return {row.table_name: row.typmod for row in result}
 
@@ -63,7 +63,7 @@ async def _hnsw_indexes(db_engine: AsyncEngine) -> set[str]:
                 SELECT indexname
                 FROM pg_indexes
                 WHERE schemaname = 'public'
-                  AND tablename IN ('documents', 'message_embeddings')
+                  AND tablename IN ('embeddings')
                   AND indexdef ILIKE '%USING hnsw%'
                 """
             )
@@ -82,7 +82,7 @@ async def test_plan_no_alter_needed_when_dims_already_match(
 ) -> None:
     plan = await _build_pgvector_plan(db_engine, target_dim=1536, schema="public")
     assert plan.needs_alter is False
-    assert plan.current_dims == {"documents": 1536, "message_embeddings": 1536}
+    assert plan.current_dims == {"embeddings": 1536}
 
 
 @pytest.mark.asyncio
@@ -118,7 +118,7 @@ async def test_apply_alters_dims_and_recreates_hnsw_indexes(
         await _apply_pgvector_alter(db_engine, plan)
 
         after_dims = await _current_dims(db_engine)
-        assert after_dims == {"documents": target, "message_embeddings": target}
+        assert after_dims == {"embeddings": target}
 
         after_indexes = await _hnsw_indexes(db_engine)
         assert after_indexes == before_indexes, (
@@ -140,7 +140,7 @@ async def test_apply_refuses_when_embeddings_populated(
     """
 
     async def fake_count(_conn: object, _schema: str, table: str) -> int:
-        return 7 if table == "documents" else 0
+        return 7 if table == "embeddings" else 0
 
     monkeypatch.setattr(
         "scripts.configure_embeddings._count_non_null_embeddings",
@@ -156,10 +156,7 @@ async def test_apply_refuses_when_embeddings_populated(
 
         # The SystemExit aborts the transaction; nothing should have changed.
         dims_after_refuse = await _current_dims(db_engine)
-        assert dims_after_refuse == {
-            "documents": 1536,
-            "message_embeddings": 1536,
-        }
+        assert dims_after_refuse == {"embeddings": 1536}
 
 
 # ---------------------------------------------------------------------------
