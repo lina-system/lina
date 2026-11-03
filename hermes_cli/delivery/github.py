@@ -79,15 +79,28 @@ def merge_queue_on(rules: list[dict]) -> bool:
     return any(rule.get("type") == "merge_queue" for rule in rules)
 
 
+DEV_RUN_PAGES = 10  # 100 runs a page: other workflows (Honcho, LCM-X, CodeQL) push runs onto the same branch
+
+
 def dev_state(gh, repo: str, branch: str, workflow: str) -> tuple[bool, set[str]]:
     """``(green, red job names)`` of the newest finished push run of ``workflow`` on ``branch`` that has a verdict.
-    A run cancelled because a newer push took its place, or skipped, says nothing; no run at all is green."""
-    runs = (gh.json(f"repos/{repo}/actions/runs?branch={branch}&event=push&status=completed&per_page=20") or {})
-    runs = [r for r in runs.get("workflow_runs") or []
-            if r.get("name") == workflow and r.get("conclusion") not in ("cancelled", "skipped")]
-    if not runs:
+    A run cancelled because a newer push took its place, or skipped, says nothing; no run of ``workflow`` at all
+    (a new repository) is green. The runs list holds every workflow's runs, newest first, so the pages are read
+    until a deciding run of ``workflow`` shows up; one page once missed a red CI behind other workflows' runs."""
+    newest = None
+    for page in range(1, DEV_RUN_PAGES + 1):
+        found = (gh.json(f"repos/{repo}/actions/runs?branch={branch}&event=push&status=completed"
+                         f"&per_page=100&page={page}") or {}).get("workflow_runs") or []
+        deciding = [r for r in found if r.get("name") == workflow and r.get("conclusion") not in ("cancelled", "skipped")]
+        if deciding:
+            newest = max(deciding, key=lambda r: r.get("created_at") or "")
+            break
+        if len(found) < 100:
+            break
+    else:
+        raise GhError(f"no finished {workflow} push run on {branch} in the newest {DEV_RUN_PAGES * 100} runs")
+    if newest is None:
         return True, set()
-    newest = max(runs, key=lambda r: r.get("created_at") or "")
     if newest.get("conclusion") == "success":
         return True, set()
     from hermes_cli.merge_rules import RED

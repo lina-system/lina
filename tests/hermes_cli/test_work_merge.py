@@ -355,6 +355,27 @@ def test_the_codex_review_rules_come_from_the_package_not_the_source_tree(monkey
     assert verdict.lines and verdict.lines[0][0] == rules.PASS, verdict.lines
 
 
+def test_dev_state_finds_the_ci_run_past_the_first_page_of_other_workflows():
+    """The deciding dev run is the newest finished run of the configured workflow, wherever it sits: a first page
+    full of other workflows' runs (Honcho, LCM-X, CodeQL) once read as \"no run, so green\" over a red CI."""
+    from hermes_cli.delivery.github import dev_state
+    from tests.hermes_cli._work_fakes import FakeGh
+    others = [{"id": 100 + i, "name": "Honcho", "status": "completed", "conclusion": "success",
+               "created_at": f"2026-11-03T{10 + i // 60:02d}:{i % 60:02d}:00Z"} for i in range(130)]
+    red_ci = {"id": 5, "name": "CI", "status": "completed", "conclusion": "failure", "created_at": "2026-11-03T09:00:00Z"}
+
+    def runs(query):
+        page = int(dict(p.split("=", 1) for p in query.split("&")).get("page", "1"))
+        rows = others + [red_ci]
+        return {"workflow_runs": rows[(page - 1) * 100:page * 100], "total_count": len(rows)}
+
+    gh = FakeGh({f"repos/{REPO}/actions/runs": runs,
+                 f"repos/{REPO}/actions/runs/5/jobs": {"jobs": [{"name": "tests", "conclusion": "failure"}]}})
+    assert dev_state(gh, REPO, "dev", "CI") == (False, {"tests"})
+    nothing = FakeGh({f"repos/{REPO}/actions/runs": lambda q: {"workflow_runs": [], "total_count": 0}})
+    assert dev_state(nothing, REPO, "dev", "CI") == (True, set())
+
+
 def test_a_pull_request_into_another_branch_is_refused_before_any_merge_or_issue_edit():
     gh, lines = _github(snapshot(base="main"), queue=False), []
     gh.routes[f"repos/{REPO}/rules/branches/main"] = []

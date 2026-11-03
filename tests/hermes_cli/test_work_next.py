@@ -194,6 +194,25 @@ def test_an_unreadable_dev_ci_holds_no_start_and_is_shown():
     assert "nothing to open" not in lines
 
 
+def test_serial_with_keeps_the_owner_when_two_repositories_share_a_short_name():
+    """``Serial with: acme/app#1`` in ``other/app`` names acme/app#1, not other/app#1; a short name alone resolves
+    only when it is unique among the configured repositories."""
+    def repo(issues):
+        return {"issues": issues, "blocked_by": {}, "pulls": [], "branches": [], "dev_red": None, "dev_error": None,
+                "error": None}
+    snapshot = {"sprint": ("M0", 3), "runners": {"omo": "omo"}, "scopes": [],
+                "repos": {"acme/app": repo([_issue(1, "feat(ui): one")]),
+                          "other/app": repo([_issue(1, "feat(ui): other one"),
+                                             _issue(2, "feat(ui): two", "Serial with: acme/app#1")])},
+                "jobs": [{"id": "OT-1", "state": "running", "text": "acme/app#1"}]}
+    plan = picker.decide(snapshot)
+    by = {(d["repo"], d["issue"]): (d["kind"], d["reason"]) for d in plan["decisions"]}
+    assert by[("other/app", 2)] == ("scope", "same contract running: Serial with acme/app#1"), by
+    assert by[("other/app", 1)][0] == "open"
+    assert picker._serial("Serial with: app#1", "other/app", ["acme/app", "other/app"]) == [("other/app", 1)]
+    assert picker._serial("Serial with: lina#4", "o/app", ["o/app", "o/lina"]) == [("o/lina", 4)]
+
+
 def _submit_lock_free(base: Path) -> bool:
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub_store import Store

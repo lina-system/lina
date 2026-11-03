@@ -20,7 +20,7 @@ from hermes_cli.delivery.github import GhError, dev_state
 NEEDS_ROUTING = "needs-routing"
 _REF = re.compile(r"(?<![\w-])(?:([\w.-]+)/)?([\w.-]+)(?:#| issue #)(\d+)(?!\d)")
 _SERIAL = re.compile(r"^\s*Serial with:(.*)$", re.MULTILINE)
-_SERIAL_REF = re.compile(r"(?:(?:[\w.-]+/)?([\w.-]+))?#(\d+)(?!\d)")
+_SERIAL_REF = re.compile(r"(?:(?:([\w.-]+)/)?([\w.-]+))?#(\d+)(?!\d)")
 _SCOPE = re.compile(r"^\s*[a-z]+\(([^)]+)\)!?:")
 _BRANCH = re.compile(r"^[a-z]+/(\d+)-")
 _CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
@@ -186,11 +186,23 @@ def serial_relation(issues: dict, repos: list[str]) -> dict[tuple[str, int], set
 
 
 def _serial(body: str, home: str, repos: list[str]) -> list[tuple[str, int]]:
-    by_short = {_short(full): full for full in repos}
+    """``Serial with:`` references as ``(repo, n)``. ``owner/name#n`` is taken as written; a bare ``name#n``
+    resolves only when one configured repository has that short name, and ``#n`` is the issue's own repository."""
+    shorts: dict[str, list[str]] = {}
+    for full in repos:
+        shorts.setdefault(_short(full), []).append(full)
     refs = []
     for line in _SERIAL.findall(body):
-        for name, n in _SERIAL_REF.findall(line):
-            refs.append((by_short.get(name, home) if name else home, int(n)))
+        for owner, name, n in _SERIAL_REF.findall(line):
+            if owner:
+                full = f"{owner}/{name}"
+            elif not name or _short(home) == name:
+                full = home
+            else:
+                found = shorts.get(name, [])
+                full = found[0] if len(found) == 1 else None
+            if full:
+                refs.append((full, int(n)))
     return refs
 
 
