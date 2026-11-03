@@ -158,6 +158,28 @@ def resolve_desk_ref(ref: str, *, desk: Path | None = None) -> Path:
     return target
 
 
+def is_workdir_ref(raw: str) -> bool:
+    """``desk`` (the Desk itself) or ``desk:<sub path>``: a working folder named through the Desk setting."""
+    text = str(raw or "").strip()
+    return text == "desk" or text.startswith(REF_PREFIX)
+
+
+def resolve_workdir(raw: str, *, strict: bool = True) -> str:
+    """A job's working folder as a path: ``desk`` / ``desk:<sub path>`` through ``desk.path`` (read each time, so
+    moving the Desk moves the job, synced folder or not); anything else as given. When it names the Desk and there
+    is none, or it leaves the Desk: DeskError, or with ``strict=False`` a logged warning and ""."""
+    text = str(raw or "").strip()
+    if not is_workdir_ref(text):
+        return text
+    try:
+        return str(resolve_desk_ref(text.removeprefix("desk").removeprefix(":")))
+    except DeskError as exc:
+        if strict:
+            raise
+        logger.warning("working folder %r: %s", text, exc)
+        return ""
+
+
 def to_desk_ref(path: str | Path, *, desk: Path | None = None) -> str | None:
     """The ``desk:`` name of *path*, or None when it is not on the Desk."""
     desk = desk or get_desk_path()

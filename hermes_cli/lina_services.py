@@ -235,10 +235,13 @@ def install_gateway_step(*, services: bool, out=print) -> int:
 
 def service_definition(kind: str, label: str, argv: list[str], env: dict[str, str]) -> str:
     """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.ocx`` (#32) and
-    ``ai.lina.worker`` (#35)."""
+    ``ai.lina.worker`` (#35).
+
+    ``MaterializeDatalessFiles``: launchd jobs do not download cloud placeholders by default, so opening a not yet
+    downloaded file of a synced Desk would fail in the job and every child it starts (lina#37)."""
     if kind == "launchd":
         return plistlib.dumps({"Label": label, "ProgramArguments": list(argv), "EnvironmentVariables": dict(env),
-                               "RunAtLoad": True, "KeepAlive": True}).decode()
+                               "RunAtLoad": True, "KeepAlive": True, "MaterializeDatalessFiles": True}).decode()
     if kind == "systemd":
         lines = ["[Unit]", f"Description=LINA {label}", "", "[Service]"]
         lines += [f'Environment="{key}={value}"' for key, value in env.items()]

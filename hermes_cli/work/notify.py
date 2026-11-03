@@ -144,6 +144,11 @@ def _today():
     return datetime.datetime.fromtimestamp(now()).astimezone()
 
 
+def owner_today() -> datetime.date:
+    """Today on the owner's calendar (``work.timezone``, default the host's): the day due dates are read against."""
+    return _today().date()
+
+
 def due_alerts(items) -> list[tuple[dict, dict]]:
     """[(rec, computed)] for open goals and to-dos past their due date, and due today in the morning. A due date is a
     day on the owner's calendar (``work.timezone``, default the host's)."""

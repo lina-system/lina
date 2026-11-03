@@ -263,11 +263,26 @@ def test_prs_accepts_dev_red_approved_only_from_the_owner(board, gh, capsys, lab
         "nodes": [{"name": name} for name in labels]}
     timeline = [{"event": "labeled", "actor": {"login": actor}, "label": {"name": "dev-red-approved"},
                  "created_at": "2026-11-01T09:00:00Z"}]
-    gh.set([issue, [["issues/34/timeline"], 0, timeline], *_acceptance()])
+    gh.set([issue, [["--paginate", "--slurp", "issues/34/timeline"], 0, [timeline]], *_acceptance()])
     argv = ["prs", "--card", tid] + (["--owner-login", owner] if owner else [])
     assert _run(*argv) == expected
     assert why in capsys.readouterr().out
     assert any("issues/34/timeline" in c for c in gh.calls()) is bool(labels)
+
+
+def test_prs_reads_the_owner_s_label_past_the_first_timeline_page(board, gh, capsys):
+    """The newest ``labeled`` event decides; on a busy pull request it sits past the first 100 timeline events."""
+    tid = _card(TODOS)
+    issue = _issue()
+    issue[2]["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"][0]["labels"] = {
+        "nodes": [{"name": "dev-red-approved"}]}
+    page1 = [{"event": "labeled", "actor": {"login": "someone-else"}, "label": {"name": "dev-red-approved"},
+              "created_at": "2026-11-01T09:00:00Z"}] + [{"event": "commented"}] * 99
+    page2 = [{"event": "labeled", "actor": {"login": "repo-owner"}, "label": {"name": "dev-red-approved"},
+              "created_at": "2026-11-01T10:00:00Z"}]
+    gh.set([issue, [["--paginate", "--slurp", "issues/34/timeline"], 0, [page1, page2]], *_acceptance()])
+    assert _run("prs", "--card", tid, "--owner-login", "repo-owner") == gates.PASS
+    assert "checks green" in capsys.readouterr().out
 
 
 def test_prs_fails_without_issue_todos_and_defaults_card_to_env(board, gh, monkeypatch, capsys):

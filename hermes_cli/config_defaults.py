@@ -1306,8 +1306,8 @@ DEFAULT_CONFIG = {
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
-        # One external provider: bundled (honcho, retaindb, byterover) or catalog-installed
-        # (hindsight, supermemory, mem0, openviking, holographic). Empty = built-in only.
+        "external_messages": {"spool": ""},  # Host-level append-only collector spool; empty does nothing.
+        # One external provider; empty = built-in only.
         "provider": "",
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.

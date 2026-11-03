@@ -14,6 +14,9 @@ def _start_ocx() -> int:
 
 
 def _cmd_install(args) -> None:
+    if args.shims:
+        from hermes_cli.lina_shims import install
+        sys.exit(install())
     from hermes_cli.helper_install import cmd_install
     from hermes_cli.lina_ocx import install_step as ocx_install_step
     from hermes_cli.lina_services import install_gateway_step
@@ -37,7 +40,8 @@ def _cmd_install(args) -> None:
 
 def build_install_parser(subparsers) -> None:
     """Attach the ``install`` subcommand, and ``store``, ``services``, ``models``, ``omo`` ``worker`` (what install
-    sets up), ``work`` and the operations tools (``heart``, ``undo``, ``learned``), to ``subparsers``."""
+    sets up), ``devices``, ``work`` and the operations tools (``heart``, ``undo``, ``learned``), to ``subparsers``."""
+    from hermes_cli.subcommands.devices import build_devices_parser
     from hermes_cli.subcommands.heart import build_heart_parser
     from hermes_cli.subcommands.learned import build_learned_parser
     from hermes_cli.subcommands.undo import build_undo_parser
@@ -67,12 +71,16 @@ def build_install_parser(subparsers) -> None:
                              "(`lina omo install`)")
     parser.add_argument("--apply", action="store_true",
                         help="with --role worker: write the routing changes the check found (default: show them)")
+    parser.add_argument("--shims", action="store_true",
+                        help="only write the caller shims omo-task (-> lina worker) and work (-> lina work) into "
+                             "$LINA_HOME/bin; nothing else is installed (docs/switch-callers.md)")
     parser.set_defaults(func=_cmd_install)
     build_store_parser(subparsers)
     build_services_parser(subparsers)
     build_models_parser(subparsers)
     build_omo_parser(subparsers)
     build_worker_parser(subparsers)
+    build_devices_parser(subparsers)
     build_work_parser(subparsers)
     build_heart_parser(subparsers)
     build_undo_parser(subparsers)

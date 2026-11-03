@@ -110,8 +110,9 @@ def _run_monitor_source(job: dict) -> tuple[bool, str]:
     if monitor_script:
         # Same containment + interpreter rules as the existing `script` field.
         from cron.scheduler_script import _run_job_script
+        from hermes_cli.desk import resolve_workdir
 
-        return _run_job_script(monitor_script, workdir=_field(job, "workdir") or None,
+        return _run_job_script(monitor_script, workdir=resolve_workdir(_field(job, "workdir") or "", strict=False) or None,
                                interpreter=job.get("interpreter"))
     monitor_url = _field(job, "monitor_url")
     if monitor_url:

@@ -17,8 +17,10 @@ _BADGE = re.compile(r"!\[(P[0-3]) Badge\]")
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _BOX = re.compile(r"^- \[[ xX]\] (P[23]) (.*) — (\S+):(\d+) \(from #(\d+)\)\s*$")
 _SIZES = (("S", 3), ("M", 8))
-THREADS = """query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){
-pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{databaseId}}}}}}}"""
+THREADS = """query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){
+pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor}
+nodes{isResolved comments(first:1){nodes{databaseId}}}}}}}"""
+THREAD_PAGES = 20
 
 
 def title_of(body: str) -> str:
@@ -91,19 +93,42 @@ def added_body(body: str, pr: int, boxes: list[str]) -> str:
 
 
 def _resolved(gh, repo: str, pr: int) -> set[int]:
+    """First-comment ids of the resolved review threads, every page (a busy pull request has more than 100)."""
     owner, name = repo.split("/")
-    threads = gh.graphql(THREADS, owner=owner, name=name, number=pr)["data"]["repository"]["pullRequest"]
-    return {c["databaseId"] for node in threads["reviewThreads"]["nodes"] if node["isResolved"]
-            for c in node["comments"]["nodes"]}
+    resolved, after = set(), None
+    for _ in range(THREAD_PAGES):
+        variables = {"owner": owner, "name": name, "number": pr, **({"after": after} if after else {})}
+        threads = gh.graphql(THREADS, **variables)["data"]["repository"]["pullRequest"]["reviewThreads"]
+        resolved |= {c["databaseId"] for node in threads["nodes"] if node["isResolved"]
+                     for c in node["comments"]["nodes"]}
+        page = threads.get("pageInfo") or {}
+        if not page.get("hasNextPage"):
+            break
+        after = page.get("endCursor")
+    return resolved
+
+
+LOCK = "work-followups"
 
 
 def file(gh, repo: str, pr: int, head: str, base: Path | None = None) -> list[str]:
-    """Create or extend the follow-up issues for one merged pull request; one line per action."""
+    """Create or extend the follow-up issues for one merged pull request; one line per action.
+
+    Each write replaces a whole issue body, so two merges filing into the same issue at once would keep only the
+    later one's findings (or open two issues). Reading the open follow-up issues and writing them happen under the
+    worker hub's file lock (``Store.lock``, under the LINA root), the lock ``lina work next --submit`` uses."""
     current = settings.sprint(base)
     sprint = settings.sprint_label(current) if current else "unplanned"
     items = findings(gh.pages(f"repos/{repo}/pulls/{pr}/comments"), head, _resolved(gh, repo, pr))
     if not items:
         return [f"#{pr}: no P2/P3 finding to follow up"]
+    from hermes_cli.worker import settings as worker_settings
+    from hermes_cli.worker.hub_store import Store
+    with Store(worker_settings.root(base)).lock(LOCK):
+        return _file_locked(gh, repo, pr, items, current, sprint, base)
+
+
+def _file_locked(gh, repo: str, pr: int, items: list[dict], current, sprint: str, base: Path | None) -> list[str]:
     open_issues = [i for i in gh.pages(f"repos/{repo}/issues?state=open&labels={LABEL}") if not i.get("pull_request")]
     groups: dict[str, list[dict]] = {}
     for item in items:

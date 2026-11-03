@@ -20,14 +20,15 @@ from hermes_cli.delivery.github import GhError, dev_state
 NEEDS_ROUTING = "needs-routing"
 _REF = re.compile(r"(?<![\w-])(?:([\w.-]+)/)?([\w.-]+)(?:#| issue #)(\d+)(?!\d)")
 _SERIAL = re.compile(r"^\s*Serial with:(.*)$", re.MULTILINE)
-_SERIAL_REF = re.compile(r"(?:(?:[\w.-]+/)?([\w.-]+))?#(\d+)(?!\d)")
+_SERIAL_REF = re.compile(r"(?:(?:([\w.-]+)/)?([\w.-]+))?#(\d+)(?!\d)")
 _SCOPE = re.compile(r"^\s*[a-z]+\(([^)]+)\)!?:")
 _BRANCH = re.compile(r"^[a-z]+/(\d+)-")
 _CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
 
 
 def collect_repo(gh, full: str, base: str, workflow: str) -> dict:
-    repo = {"issues": [], "blocked_by": {}, "pulls": [], "branches": [], "dev_red": None, "error": None}
+    repo = {"issues": [], "blocked_by": {}, "pulls": [], "branches": [], "dev_red": None, "dev_error": None,
+            "error": None}
     try:
         raw = gh.pages(f"repos/{full}/issues?state=open")
         repo["issues"] = [{
@@ -39,7 +40,7 @@ def collect_repo(gh, full: str, base: str, workflow: str) -> dict:
             row.get("issue_dependencies_summary") is None
             or row["issue_dependencies_summary"].get("total_blocked_by", 1))]
         with ThreadPoolExecutor(8) as pool:
-            found = pool.map(lambda n: gh.json(f"repos/{full}/issues/{n}/dependencies/blocked_by"), need)
+            found = pool.map(lambda n: gh.pages(f"repos/{full}/issues/{n}/dependencies/blocked_by"), need)
             for n, deps in zip(need, found):
                 repo["blocked_by"][n] = [{
                     "repo": (d.get("repository_url") or full).rsplit("/repos/", 1)[-1], "n": d["number"],
@@ -47,10 +48,15 @@ def collect_repo(gh, full: str, base: str, workflow: str) -> dict:
         repo["pulls"] = [{"n": p["number"], "head": p["head"]["ref"], "body": p.get("body") or ""}
                          for p in gh.pages(f"repos/{full}/pulls?state=open")]
         repo["branches"] = [b["name"] for b in gh.pages(f"repos/{full}/branches")]
+    except (GhError, ValueError, KeyError, TypeError) as exc:
+        repo["error"] = str(exc) or type(exc).__name__
+        return repo
+    # dev's CI only says whether merges wait; a red dev never holds a start, so neither does a failed read of it.
+    try:
         green, red = dev_state(gh, full, base, workflow)
         repo["dev_red"] = None if green else sorted(red) or [workflow]
     except (GhError, ValueError, KeyError, TypeError) as exc:
-        repo["error"] = str(exc) or type(exc).__name__
+        repo["dev_error"] = str(exc) or type(exc).__name__
     return repo
 
 
@@ -82,8 +88,16 @@ def runner_of(labels: list[str], runners: dict[str, str]) -> str | None:
     return next((runner for label, runner in runners.items() if label in labels), None)
 
 
+def _unique_short(repos: list[str]) -> dict[str, str]:
+    """``{short name: repo}`` for short names only one configured repository has; a shared one resolves to none."""
+    shorts: dict[str, list[str]] = {}
+    for full in repos:
+        shorts.setdefault(_short(full), []).append(full)
+    return {name: found[0] for name, found in shorts.items() if len(found) == 1}
+
+
 def _refs(text: str, repos: list[str]) -> list[tuple[str, int]]:
-    by_short = {_short(full): full for full in repos}
+    by_short = _unique_short(repos)
     found = []
     for owner, name, n in _REF.findall(text or ""):
         full = f"{owner}/{name}" if owner else by_short.get(name)
@@ -180,11 +194,20 @@ def serial_relation(issues: dict, repos: list[str]) -> dict[tuple[str, int], set
 
 
 def _serial(body: str, home: str, repos: list[str]) -> list[tuple[str, int]]:
-    by_short = {_short(full): full for full in repos}
+    """``Serial with:`` references as ``(repo, n)``. ``owner/name#n`` is taken as written; a bare ``name#n``
+    resolves only when one configured repository has that short name, and ``#n`` is the issue's own repository."""
+    by_short = _unique_short(repos)
     refs = []
     for line in _SERIAL.findall(body):
-        for name, n in _SERIAL_REF.findall(line):
-            refs.append((by_short.get(name, home) if name else home, int(n)))
+        for owner, name, n in _SERIAL_REF.findall(line):
+            if owner:
+                full = f"{owner}/{name}"
+            elif not name or _short(home) == name:
+                full = home
+            else:
+                full = by_short.get(name)
+            if full:
+                refs.append((full, int(n)))
     return refs
 
 
@@ -241,7 +264,8 @@ def decide(snapshot: dict) -> dict:
             holding[key] = "opened now"
             decisions.append(dict(base, action="open", kind="open", reason="", shown=True))
     red = {full: repo["dev_red"] for full, repo in snapshot["repos"].items() if repo.get("dev_red")}
-    return {"sprint": sprint, "red": red, "decisions": decisions, "running": len(running)}
+    unread = {full: repo["dev_error"] for full, repo in snapshot["repos"].items() if repo.get("dev_error")}
+    return {"sprint": sprint, "red": red, "dev_unread": unread, "decisions": decisions, "running": len(running)}
 
 
 def line_of(decision: dict) -> str:
@@ -258,6 +282,8 @@ def line_of(decision: dict) -> str:
 def lines_of(plan: dict) -> list[str]:
     lines = [f"dev red in {full}: merges wait, starts do not ({', '.join(checks)})" for full, checks in
              plan["red"].items()]
+    lines += [f"cannot read dev CI in {full}: merges wait, starts do not ({why})" for full, why in
+              plan.get("dev_unread", {}).items()]
     if plan["sprint"] is None:
         lines.append("no current sprint: set it with `lina work sprint current <S>`")
     lines += [line_of(d) for d in plan["decisions"] if d["shown"]]

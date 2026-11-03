@@ -96,11 +96,26 @@ def merge_base_into(clone: Path, onto: str, base: Path | None) -> None:
         git("merge", "--abort", cwd=clone, check=False)
         raise LandError(f"conflict in {', '.join(p for p in left if p != 'CHANGELOG.md')}: resolve it by hand")
     path = clone / "CHANGELOG.md"
-    text = re.sub(r"<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n", lambda m: m[1] + m[2],
-                  path.read_text(encoding="utf-8-sig"), flags=re.DOTALL)
+    text = _keep_both(path.read_text(encoding="utf-8-sig"))
+    if text is None:
+        git("merge", "--abort", cwd=clone, check=False)
+        raise LandError("conflict in CHANGELOG.md that is not two plain sides: resolve it by hand")
     path.write_text(text, encoding="utf-8")
     git("add", "CHANGELOG.md", cwd=clone)
     git(*who, "commit", "-q", "--no-edit", cwd=clone)
+
+
+_CONFLICT = re.compile(r"<<<<<<< [^\n]*\n(.*?)=======\n(.*?)>>>>>>> [^\n]*\n", re.DOTALL)
+_MARKER = re.compile(r"^(?:<<<<<<<|=======|>>>>>>>|\|\|\|\|\|\|\|)(?: |$)", re.MULTILINE)
+
+
+def _keep_both(text: str) -> str | None:
+    """Both sides of each CHANGELOG conflict, ours first, or None when a hunk is not the plain two-way kind
+    (a diff3 base section, CRLF lines) or any marker is left: a guess there would push conflict text."""
+    if "\r\n" in text or "\n||||||| " in text:
+        return None
+    merged = _CONFLICT.sub(lambda m: m[1] + m[2], text)
+    return None if _MARKER.search(merged) else merged
 
 
 def check_result(clone: Path, onto: str, worker_head: str, base: Path | None) -> None:

@@ -169,6 +169,72 @@ def test_an_open_pull_request_without_a_running_job_holds_only_its_own_issue():
     assert _kinds(busy)[6] == ("scope", "same contract running: store #5")
 
 
+def test_an_unreadable_dev_ci_holds_no_start_and_is_shown():
+    """The dev CI read only says whether merges wait (a red dev never holds a start). When it fails after the
+    issues, dependencies, pull requests and branches were read, the picks still open and the failure is shown; a
+    shared repository error used to hold every issue as ``stopped`` and print \"nothing to open\"."""
+    from hermes_cli.delivery.github import GhError
+    from tests.hermes_cli._work_fakes import FakeGh
+
+    def actions(_query):
+        raise GhError("HTTP 502: Bad Gateway (actions/runs)")
+
+    gh = FakeGh({f"repos/{REPO}/issues": [{"number": 7, "title": "feat(ui): seven", "body": "Sprint: M0 S3\n",
+                                           "labels": [{"name": "omo"}],
+                                           "issue_dependencies_summary": {"total_blocked_by": 0}}],
+                 f"repos/{REPO}/pulls": [], f"repos/{REPO}/branches": [], f"repos/{REPO}/actions/runs": actions})
+    repo = picker.collect_repo(gh, REPO, "dev", "CI")
+    assert repo["error"] is None and [i["n"] for i in repo["issues"]] == [7]
+    assert repo["dev_red"] is None and "502" in (repo["dev_error"] or "")
+    snapshot = {"sprint": ("M0", 3), "repos": {REPO: repo}, "jobs": [], "runners": {"omo": "omo"}, "scopes": []}
+    plan = picker.decide(snapshot)
+    assert _kinds(plan)[7] == ("open", "")
+    lines = picker.lines_of(plan)
+    assert any(line.startswith(f"cannot read dev CI in {REPO}") and "merges wait" in line for line in lines), lines
+    assert "nothing to open" not in lines
+
+
+def test_serial_with_keeps_the_owner_when_two_repositories_share_a_short_name():
+    """``Serial with: acme/app#1`` in ``other/app`` names acme/app#1, not other/app#1; a short name alone resolves
+    only when it is unique among the configured repositories."""
+    def repo(issues):
+        return {"issues": issues, "blocked_by": {}, "pulls": [], "branches": [], "dev_red": None, "dev_error": None,
+                "error": None}
+    snapshot = {"sprint": ("M0", 3), "runners": {"omo": "omo"}, "scopes": [],
+                "repos": {"acme/app": repo([_issue(1, "feat(ui): one")]),
+                          "other/app": repo([_issue(1, "feat(ui): other one"),
+                                             _issue(2, "feat(ui): two", "Serial with: acme/app#1")])},
+                "jobs": [{"id": "OT-1", "state": "running", "text": "acme/app#1"}]}
+    plan = picker.decide(snapshot)
+    by = {(d["repo"], d["issue"]): (d["kind"], d["reason"]) for d in plan["decisions"]}
+    assert by[("other/app", 2)] == ("scope", "same contract running: Serial with acme/app#1"), by
+    assert by[("other/app", 1)][0] == "open"
+    assert picker._serial("Serial with: app#1", "other/app", ["acme/app", "other/app"]) == [("other/app", 1)]
+    assert picker._serial("Serial with: lina#4", "o/app", ["o/app", "o/lina"]) == [("o/lina", 4)]
+
+
+def test_a_job_naming_a_shared_short_name_holds_neither_repository():
+    """``lina#12`` in a job's text, with two configured repositories named ``lina``: the reference names neither
+    for sure, so it is not taken as the last one configured (that left the other one's #12 looking free)."""
+    assert picker._refs("working on lina#12", ["acme/lina", "lina-system/lina"]) == []
+    assert picker._refs("working on lina#12", ["lina-system/lina"]) == [("lina-system/lina", 12)]
+    assert picker._refs("acme/lina#12", ["acme/lina", "lina-system/lina"]) == [("acme/lina", 12)]
+
+
+def test_blocked_by_reads_every_page():
+    from tests.hermes_cli._work_fakes import FakeGh
+    gh = FakeGh({f"repos/{REPO}/issues": [{"number": 7, "title": "feat(ui): seven", "body": "Sprint: M0 S3\n",
+                                           "labels": [{"name": "omo"}],
+                                           "issue_dependencies_summary": {"total_blocked_by": 31}}],
+                 f"repos/{REPO}/pulls": [], f"repos/{REPO}/branches": [],
+                 f"repos/{REPO}/actions/runs": {"workflow_runs": []}})
+    blockers = [{"number": i, "state": "closed"} for i in range(1, 31)] + [{"number": 99, "state": "open"}]
+    real_pages = gh.pages
+    gh.pages = lambda path: blockers if path.endswith("/blocked_by") else real_pages(path)
+    repo = picker.collect_repo(gh, REPO, "dev", "CI")
+    assert {"repo": REPO, "n": 99, "state": "open"} in repo["blocked_by"][7]
+
+
 def _submit_lock_free(base: Path) -> bool:
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub_store import Store

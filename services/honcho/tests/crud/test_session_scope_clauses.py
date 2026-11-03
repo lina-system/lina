@@ -148,10 +148,12 @@ async def test_get_observation_context_scope_costs_no_per_session_parameters() -
     # Count the subquery's FROM rather than EXISTS: the adjacency check is also
     # an EXISTS, so counting those would pass with the CTE's scope missing.
     assert sql.count("FROM public.session_peers") == 2
-    # Both must correlate to the enclosing `messages` row. An uncorrelated
+    # Both must correlate to the enclosing metadata row. An uncorrelated
     # subquery compiles just as happily and would silently drop scoping
     # instead of enforcing it.
-    assert sql.count("session_peers.session_name = public.messages.session_name") == 2
+    assert (
+        sql.count("session_peers.session_name = public.message_meta.session_name") == 2
+    )
 
     # Everything bound is either a message id, the workspace, the peer, or the
     # ±1 adjacency window — nothing that scales with the peer's session count.
@@ -212,7 +214,7 @@ async def test_grep_messages_scopes_in_sql(capturing_tracked_db: _CapturingDB) -
     )
 
     assert len(capturing_tracked_db.statements) == 1
-    _assert_scoped_in_sql(capturing_tracked_db.statements[0], "messages")
+    _assert_scoped_in_sql(capturing_tracked_db.statements[0], "message_meta")
 
 
 @pytest.mark.asyncio
@@ -227,7 +229,7 @@ async def test_get_messages_by_date_range_scopes_in_sql() -> None:
     )
 
     assert len(db.statements) == 1
-    _assert_scoped_in_sql(db.statements[0], "messages")
+    _assert_scoped_in_sql(db.statements[0], "message_meta")
 
 
 @pytest.mark.asyncio
@@ -293,6 +295,6 @@ async def test_pinned_session_with_scope_peer_requires_active_membership() -> No
     )
 
     sql, params = _compile(db.statements[0])
-    assert "public.messages.session_name = " in sql
+    assert "public.message_meta.session_name = " in sql
     assert "session_peers.left_at IS NULL" in sql
     assert {"pinned-session", observer} <= set(params.values())

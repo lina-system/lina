@@ -144,3 +144,91 @@ def test_a_profile_without_message_text_renames_with_no_store(profile_env, monke
 
     assert new_dir.is_dir() and not old_dir.exists()
     assert migrate_profile_identity("harbor", "lighthouse") is True
+
+
+class _OneAxisClient:
+    model = "qwen3-embedding-8b"
+    dimensions = 1024
+
+    def embed(self, texts):
+        vectors = []
+        for i, _text in enumerate(texts):
+            vector = [0.0] * self.dimensions
+            vector[i] = 1.0
+            vectors.append(vector)
+        return vectors
+
+
+def _reembed(_memory_store):
+    import psycopg
+
+    from hermes_cli.store_reembed import reembed
+    reembed(lambda: psycopg.connect(_memory_store.superuser_dsn(), autocommit=True), _OneAxisClient(), ["agent"],
+            batch_size=10, out=lambda _line: None)
+
+
+def _vec_owners(memory_store_sql) -> tuple[set, set]:
+    chunks = {row[0] for row in memory_store_sql("SELECT agent_id FROM vec.chunks")}
+    vectors = {row[0] for row in memory_store_sql("SELECT agent_id FROM vec.embeddings WHERE kind = 'chunk'")}
+    return chunks, vectors
+
+
+def _nearest(_memory_store, agent: str) -> list[str]:
+    import psycopg
+
+    from hermes_cli.memory_eval_search import Question, new_vector
+    query = [0.0] * 1024
+    query[0] = 1.0
+    question = Question(id="q", source="agent", agent=agent, question="?", expected=("x",))
+    with psycopg.connect(_memory_store.superuser_dsn(), autocommit=True) as conn:
+        return new_vector(conn, query, _OneAxisClient.model, question)
+
+
+def test_a_renamed_profile_keeps_its_vectors_under_the_new_agent(profile_env, _memory_store, memory_store_sql):
+    _seed(create_profile("harbor", no_alias=True))
+    _reembed(_memory_store)
+    assert _vec_owners(memory_store_sql) == ({"harbor"}, {"harbor"})
+
+    _rename("harbor", "lighthouse")
+
+    assert _vec_owners(memory_store_sql) == ({"lighthouse"}, {"lighthouse"})
+    assert _nearest(_memory_store, "lighthouse")[0].startswith("agent:lighthouse:")
+    assert _nearest(_memory_store, "harbor") == []
+
+
+def test_a_failed_rename_gives_the_vectors_back_to_the_old_agent(profile_env, _memory_store, memory_store_sql):
+    from hermes_cli.profile_identity import text_moved_for_rename
+
+    profile_dir = create_profile("harbor", no_alias=True)
+    _seed(profile_dir)
+    _reembed(_memory_store)
+    with pytest.raises(OSError, match="directory move failed"):
+        with text_moved_for_rename(profile_dir, "harbor", "lighthouse"):
+            assert _vec_owners(memory_store_sql) == ({"lighthouse"}, {"lighthouse"})
+            raise OSError("directory move failed")
+
+    assert _vec_owners(memory_store_sql) == ({"harbor"}, {"harbor"})
+    assert set(_agents(memory_store_sql)) == {"harbor"}
+
+
+def test_migrate_identity_moves_vectors_a_rename_left_behind(profile_env, _memory_store, memory_store_sql):
+    _seed(create_profile("harbor", no_alias=True))
+    _reembed(_memory_store)
+    _rename("harbor", "lighthouse")
+    # As a rename before vectors followed left them: text on the new agent, vectors on the old one.
+    memory_store_sql("UPDATE vec.chunks SET agent_id = 'harbor'")
+    memory_store_sql("UPDATE vec.embeddings SET agent_id = 'harbor' WHERE kind = 'chunk'")
+
+    assert migrate_profile_identity("harbor", "lighthouse") is True
+
+    assert _vec_owners(memory_store_sql) == ({"lighthouse"}, {"lighthouse"})
+
+
+def test_a_store_without_vec_tables_still_renames(profile_env, memory_store_sql):
+    _seed(create_profile("harbor", no_alias=True))
+    memory_store_sql("ALTER SCHEMA vec RENAME TO vec_hidden")
+    try:
+        _rename("harbor", "lighthouse")
+    finally:
+        memory_store_sql("ALTER SCHEMA vec_hidden RENAME TO vec")
+    assert set(_agents(memory_store_sql)) == {"lighthouse"}

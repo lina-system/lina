@@ -1203,7 +1203,7 @@ Jobs run in a fresh session with no current-chat context, so prompts must be sel
             },
             "workdir": {
                 "type": "string",
-                "description": "Optional absolute existing path to run the job from: injects that directory's AGENTS.md/context files and anchors terminal/file tools there. On update, '' clears."
+                "description": "Optional absolute existing path to run the job from, or 'desk' / 'desk:<sub path>' for the Desk wherever it lives: injects that directory's AGENTS.md/context files and anchors terminal/file tools there. On update, '' clears."
             },
             "timezone": {
                 "type": "string",

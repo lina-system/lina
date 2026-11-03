@@ -1,0 +1,36 @@
+{"id": "a01", "source": "agent", "agent": "default", "question": "When does the staging backup job run now that it was moved away from log rotation?", "expected": ["agent:default:eval-a01"]}
+{"id": "a02", "source": "agent", "agent": "default", "question": "What caused the checkout test to fail intermittently?", "expected": ["agent:default:eval-a02"]}
+{"id": "a03", "source": "agent", "agent": "default", "question": "Which features should the 3.2 release notes highlight?", "expected": ["agent:default:eval-a03"]}
+{"id": "a04", "source": "agent", "agent": "default", "question": "Was the webhook signing secret changed on both ends?", "expected": ["agent:default:eval-a04"]}
+{"id": "a05", "source": "agent", "agent": "default", "question": "When are the conference slides due?", "expected": ["agent:default:eval-a05"]}
+{"id": "a06", "source": "agent", "agent": "default", "question": "How was the thumbnail cache memory leak fixed?", "expected": ["agent:default:eval-a06"]}
+{"id": "a07", "source": "agent", "agent": "default", "question": "Which documentation build change is planned before the redesign?", "expected": ["agent:default:eval-a07"]}
+{"id": "a08", "source": "agent", "agent": "default", "question": "Why did the nightly export job fail?", "expected": ["agent:default:eval-a08"]}
+{"id": "a09", "source": "agent", "agent": "default", "question": "How often is the design team sync scheduled?", "expected": ["agent:default:eval-a09"]}
+{"id": "a10", "source": "agent", "agent": "default", "question": "What rate limit applies to the public search endpoint?", "expected": ["agent:default:eval-a10"]}
+{"id": "a11", "source": "agent", "agent": "default", "question": "What should happen to the saved queries of the old analytics dashboard?", "expected": ["agent:default:eval-a11"]}
+{"id": "a12", "source": "agent", "agent": "default", "question": "Why did the mobile build stop working?", "expected": ["agent:default:eval-a12"]}
+{"id": "m01", "source": "messages", "agent": "default", "question": "When is the plumber coming to repair the sink?", "expected": ["messages:eval-m01"]}
+{"id": "m02", "source": "messages", "agent": "default", "question": "What kind of book did the book club choose?", "expected": ["messages:eval-m02"]}
+{"id": "m03", "source": "messages", "agent": "default", "question": "Where and by when must the parking permit be renewed?", "expected": ["messages:eval-m03"]}
+{"id": "m04", "source": "messages", "agent": "default", "question": "Where is the birthday dinner being held now?", "expected": ["messages:eval-m04"]}
+{"id": "m05", "source": "messages", "agent": "default", "question": "Where are gym classes held during the repairs?", "expected": ["messages:eval-m05"]}
+{"id": "m06", "source": "messages", "agent": "default", "question": "What do I need to bring to the visa appointment?", "expected": ["messages:eval-m06"]}
+{"id": "m07", "source": "messages", "agent": "default", "question": "When is the heating inspection in the apartment?", "expected": ["messages:eval-m07"]}
+{"id": "m08", "source": "messages", "agent": "default", "question": "How much is the team dinner budget per person?", "expected": ["messages:eval-m08"]}
+{"id": "m09", "source": "messages", "agent": "default", "question": "What is due by Friday for the museum trip?", "expected": ["messages:eval-m09"]}
+{"id": "m10", "source": "messages", "agent": "default", "question": "Where does the hiking group meet for the sunrise hike?", "expected": ["messages:eval-m10"]}
+{"id": "m11", "source": "messages", "agent": "default", "question": "When can I buy sourdough at the corner bakery?", "expected": ["messages:eval-m11"]}
+{"id": "m12", "source": "messages", "agent": "default", "question": "What work is booked for the car service?", "expected": ["messages:eval-m12"]}
+{"id": "d01", "source": "memory", "agent": "default", "question": "Does the owner want summaries in the morning or the evening?", "expected": ["eval-doc-000000000001"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d02", "source": "memory", "agent": "default", "question": "What food allergy does the owner have?", "expected": ["eval-doc-000000000002"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d03", "source": "memory", "agent": "default", "question": "What does the owner drink in the afternoon?", "expected": ["eval-doc-000000000003"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d04", "source": "memory", "agent": "default", "question": "Which instrument is the owner learning?", "expected": ["eval-doc-000000000004"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d05", "source": "memory", "agent": "default", "question": "What should code reviews focus on first for the owner?", "expected": ["eval-doc-000000000005"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d06", "source": "memory", "agent": "default", "question": "Where does the owner go running on Sundays?", "expected": ["eval-doc-000000000006"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d07", "source": "memory", "agent": "default", "question": "What grows in the owner's balcony garden?", "expected": ["eval-doc-000000000007"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d08", "source": "memory", "agent": "default", "question": "How does the owner like to travel on short trips?", "expected": ["eval-doc-000000000008"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d09", "source": "memory", "agent": "default", "question": "What genre does the owner read at bedtime?", "expected": ["eval-doc-000000000009"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d10", "source": "memory", "agent": "default", "question": "How does the owner handle phone notifications at work?", "expected": ["eval-doc-000000000010"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d11", "source": "memory", "agent": "default", "question": "What does the owner save money for?", "expected": ["eval-doc-000000000011"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}
+{"id": "d12", "source": "memory", "agent": "default", "question": "Where does the owner volunteer each month?", "expected": ["eval-doc-000000000012"], "honcho": {"workspace": "hermes", "observer": "default", "observed": "owner"}}

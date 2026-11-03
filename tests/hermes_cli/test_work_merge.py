@@ -4,12 +4,15 @@ the head is enqueued and the queue's verdict (merged / dropped) is reported; aft
 closed with its Done when ticked and Codex P2/P3 findings on the merged head go to a follow-up issue."""
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
 
 from hermes_cli import merge_rules as rules
 from hermes_cli.delivery import merge
 from tests.hermes_cli._work_fakes import FakeGh
 
+REPO_ROOT = Path(__file__).resolve().parents[2]
 REPO, HEAD, OLD = "acme/app", "h" * 40, "o" * 40
 CODEX = {"login": "chatgpt-codex-connector[bot]"}
 
@@ -59,6 +62,15 @@ CASES = [
     ("green then a later cancelled run", {"runs": [run("Lint"), run("tests", run_id=2),
                                                    run("tests", "cancelled", started="2026-11-02T11:00:00Z",
                                                        run_id=3)]}, rules.PASS, "required check tests: success"),
+    ("green then a queued rerun with no times yet", {"runs": [run("Lint"), run("tests", run_id=2),
+                                                         {"id": 3, "name": "tests", "status": "queued",
+                                                          "conclusion": None, "started_at": None,
+                                                          "completed_at": None, "head_sha": HEAD}]},
+     rules.WAIT, "required check tests: queued"),
+    ("a newer rerun green after an older failure", {"runs": [run("Lint"), run("tests", "failure", run_id=2),
+                                                            run("tests", started="2026-11-02T09:00:00Z",
+                                                                run_id=3)]},
+     rules.PASS, "required check tests: success"),
     ("only a cancelled run", {"runs": [run("Lint"), run("tests", "cancelled", run_id=2)]}, rules.FAIL,
      "required check tests: cancelled"),
     ("skipped required is green", {"runs": [run("Lint"), run("tests", "skipped", run_id=2)]}, rules.PASS,
@@ -295,6 +307,54 @@ def test_followups_skip_a_finding_already_listed(monkeypatch):
 
 
 
+def test_two_merges_filing_into_one_follow_up_issue_keep_both_findings(tmp_path, monkeypatch):
+    """Two ``lina work merge`` runs finishing in the same area and sprint: each reads the follow-up issue, then
+    writes its whole body. Without one lock around read and write the second write dropped the first one's
+    findings (or two issues were opened). The fake issue store answers reads from what was written."""
+    import threading
+
+    from hermes_cli.delivery import followups, settings
+    from hermes_cli.worker import settings as worker_settings
+    monkeypatch.setattr(settings, "sprint", lambda base=None: (None, 1))
+    monkeypatch.setattr(worker_settings, "root", lambda base=None: tmp_path / "lina")
+    store = {"issues": [{"number": 40, "title": "chore(hermes_cli): review follow-ups",
+                         "labels": [{"name": "follow-up"}], "body": "## Done when\n\n## Context\n\nSprint: S1\n"}]}
+    read_both = threading.Barrier(2, timeout=2)
+
+    def gh_for(pr, title):
+        snap = snapshot(number=pr, review_comments=[finding("P2", HEAD, line=pr, title=title)])
+        gh = _github(snap, queue=False)
+        gh.routes[f"repos/{REPO}/pulls/{pr}/comments"] = snap["review_comments"]
+
+        def issues(_query):
+            rows = [dict(i) for i in store["issues"]]
+            try:
+                read_both.wait()  # both runs read before either writes: the race, made certain
+            except threading.BrokenBarrierError:
+                pass  # serialized: the other run already finished, no partner arrives
+            return rows
+        gh.routes[f"repos/{REPO}/issues"] = issues
+
+        def write(method, path, payload=None):
+            gh.writes.append((method, path, payload))
+            if method == "PATCH":
+                store["issues"][0]["body"] = payload["body"]
+            return {"number": 41}
+        gh.write = write
+        return gh
+
+    results = {}
+    runs = [threading.Thread(target=lambda pr=pr, title=title: results.setdefault(
+        pr, followups.file(gh_for(pr, title), REPO, pr, HEAD))) for pr, title in ((7, "Guard A"), (8, "Guard B"))]
+    for thread in runs:
+        thread.start()
+    for thread in runs:
+        thread.join(10)
+    body = store["issues"][0]["body"]
+    assert "Guard A" in body and "Guard B" in body, body
+    assert all(line == ["chore(hermes_cli): review follow-ups: added 1 to #40"] for line in results.values()), results
+
+
 def test_an_owner_approved_head_merges_over_a_red_dev_and_the_timeline_is_read(monkeypatch):
     from hermes_cli.delivery import settings
     monkeypatch.setattr(settings, "owner_login", lambda base=None: OWNER)
@@ -323,6 +383,83 @@ def test_the_merge_verdict_on_codex_is_the_required_status_verdict():
         verdict = rules.codex_review(HEAD, snap["reviews"], snap["review_comments"], snap["issue_comments"])
         assert verdict.lines == [({"success": rules.PASS, "failure": rules.FAIL, "pending": rules.WAIT}[status.state],
                                   status.description)]
+
+
+def test_the_codex_review_rules_come_from_the_package_not_the_source_tree(monkeypatch):
+    """An installed ``lina`` has no ``scripts/``: the verdict must come from ``hermes_cli.codex_review_gate``, and a
+    reviewed head with no P0/P1 passes there (before the fix it waited forever without the source tree)."""
+    from hermes_cli import codex_review_gate
+    assert rules.review_gate() is codex_review_gate
+    assert "scripts" not in Path(codex_review_gate.__file__).resolve().relative_to(REPO_ROOT).parts
+    reviewed = snapshot()
+    verdict = rules.codex_review(HEAD, reviewed["reviews"], reviewed["review_comments"], reviewed["issue_comments"])
+    assert verdict.lines and verdict.lines[0][0] == rules.PASS, verdict.lines
+
+
+def test_dev_state_finds_the_ci_run_past_the_first_page_of_other_workflows():
+    """The deciding dev run is the newest finished run of the configured workflow, wherever it sits: a first page
+    full of other workflows' runs (Honcho, LCM-X, CodeQL) once read as \"no run, so green\" over a red CI."""
+    from hermes_cli.delivery.github import dev_state
+    from tests.hermes_cli._work_fakes import FakeGh
+    others = [{"id": 100 + i, "name": "Honcho", "status": "completed", "conclusion": "success",
+               "created_at": f"2026-11-03T{10 + i // 60:02d}:{i % 60:02d}:00Z"} for i in range(130)]
+    red_ci = {"id": 5, "name": "CI", "status": "completed", "conclusion": "failure", "created_at": "2026-11-03T09:00:00Z"}
+
+    def runs(query):
+        page = int(dict(p.split("=", 1) for p in query.split("&")).get("page", "1"))
+        rows = others + [red_ci]
+        return {"workflow_runs": rows[(page - 1) * 100:page * 100], "total_count": len(rows)}
+
+    gh = FakeGh({f"repos/{REPO}/actions/runs": runs,
+                 f"repos/{REPO}/actions/runs/5/jobs": {"jobs": [{"name": "tests", "conclusion": "failure"}]}})
+    assert dev_state(gh, REPO, "dev", "CI") == (False, {"tests"})
+    nothing = FakeGh({f"repos/{REPO}/actions/runs": lambda q: {"workflow_runs": [], "total_count": 0}})
+    assert dev_state(nothing, REPO, "dev", "CI") == (True, set())
+
+
+def test_dev_state_counts_a_red_run_being_rerun_as_red_not_an_older_green():
+    """Re-running a failed dev run puts it back to ``in_progress`` (``run_attempt`` 2): a read of completed runs
+    only skipped it and let the older green run decide. A first attempt still going is not waited on."""
+    from hermes_cli.delivery.github import dev_state
+    from tests.hermes_cli._work_fakes import FakeGh
+    green = {"id": 4, "name": "CI", "status": "completed", "conclusion": "success", "run_attempt": 1,
+             "created_at": "2026-11-03T08:00:00Z"}
+    rerun = {"id": 5, "name": "CI", "status": "in_progress", "conclusion": None, "run_attempt": 2,
+             "created_at": "2026-11-03T09:00:00Z"}
+    fresh = {"id": 6, "name": "CI", "status": "in_progress", "conclusion": None, "run_attempt": 1,
+             "created_at": "2026-11-03T10:00:00Z"}
+
+    def gh_with(rows):
+        return FakeGh({f"repos/{REPO}/actions/runs": lambda q: {"workflow_runs": [
+            r for r in rows if "status=completed" not in q or r["status"] == "completed"]}})
+    ok, red = dev_state(gh_with([rerun, green]), REPO, "dev", "CI")
+    assert not ok and red, red
+    assert dev_state(gh_with([fresh, green]), REPO, "dev", "CI") == (True, set())
+
+
+def test_merge_reads_every_page_of_the_head_statuses():
+    """A gate run posts three statuses each time it runs, so a busy head has more than 100: a context past the
+    first page (a required external one) must still be seen."""
+    from hermes_cli.delivery import merge
+    statuses = [{"id": 1000 - i, "context": "Codex review", "state": "success"} for i in range(120)] + [
+        {"id": 1, "context": "external CI", "state": "success"}]
+    gh, _lines = _github(snapshot(required=["Lint", "external CI"]), queue=False), []
+    gh.pages = lambda path: statuses if "/statuses" in path else list(gh.json(path) or [])
+    snap = merge.collect_pr(gh, REPO, 7)
+    assert any(s["context"] == "external CI" for s in snap["statuses"])
+    assert rules.required_checks(["external CI"], [], snap["statuses"]).code == rules.PASS
+
+
+def test_followups_read_every_page_of_review_threads():
+    """A finding resolved in a thread past the first 100 is resolved: it is not filed again."""
+    from hermes_cli.delivery import followups
+    from tests.hermes_cli._work_fakes import FakeGh
+    pages = {None: {"pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                    "nodes": [{"isResolved": False, "comments": {"nodes": [{"databaseId": i}]}} for i in range(100)]},
+             "c1": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [{"isResolved": True, "comments": {"nodes": [{"databaseId": 501}]}}]}}
+    gh = FakeGh(graphql=lambda q, v: {"data": {"repository": {"pullRequest": {"reviewThreads": pages[v.get("after")]}}}})
+    assert 501 in followups._resolved(gh, REPO, 7)
 
 
 def test_a_pull_request_into_another_branch_is_refused_before_any_merge_or_issue_edit():

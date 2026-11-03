@@ -18,11 +18,8 @@ Standard library only: ``kanban_gates.py`` loads this file by path when it runs 
 """
 from __future__ import annotations
 
-import importlib.util
 import re
-import sys
 from dataclasses import dataclass, field
-from pathlib import Path
 
 PASS, FAIL, WAIT = 0, 1, 75
 LABEL = {PASS: "PASS", FAIL: "FAIL", WAIT: "WAIT"}
@@ -92,14 +89,17 @@ def tick_done_when(body: str | None) -> str:
 
 
 def _rank(run: dict) -> tuple:
+    """Creation order is the check run's id: GitHub hands ids out as runs are created, so a rerun that is still
+    queued (no start or end time yet) is newer than any run before it. Times are no order: a queued run has none,
+    and a rerun can start before an older run ends."""
     conclusion = run.get("conclusion")
-    return (conclusion != "cancelled", conclusion != "skipped",
-            run.get("started_at") or run.get("completed_at") or "", run.get("id") or 0)
+    unfinished = run.get("status") not in (None, "completed")
+    return (unfinished or conclusion != "cancelled", unfinished or conclusion != "skipped", int(run.get("id") or 0))
 
 
 def latest_run(runs: list[dict]) -> dict | None:
-    """The run that decides one check: the latest one that was not cancelled (nor skipped while a real result
-    exists); a cancelled run decides only when nothing else ran."""
+    """The run that decides one check: the newest one (by creation) that was not cancelled (nor skipped while a
+    real result exists); a cancelled run decides only when nothing else ran, and a run still going always counts."""
     return max(runs, key=_rank, default=None)
 
 
@@ -164,35 +164,20 @@ def required_checks(required: list[str | tuple[str, int | None]], runs: list[dic
 
 
 
-_GATE = Path(__file__).resolve().parents[1] / "scripts" / "ci" / "codex_review_gate.py"
 _STATUS_CODE = {"success": PASS, "failure": FAIL, "pending": WAIT}
 
 
 def review_gate():
-    """``scripts/ci/codex_review_gate.py``, the script that sets the required ``Codex review`` status: its
-    recognition of a Codex review is the only copy (the gate's workflow checks out that one file, so the rules
-    live there). None when this install carries no ``scripts/`` (a packaged wheel)."""
-    if "codex_review_gate" in sys.modules:
-        return sys.modules["codex_review_gate"]
-    if not _GATE.is_file():
-        return None
-    spec = importlib.util.spec_from_file_location("codex_review_gate", _GATE)
-    if spec is None or spec.loader is None:
-        return None
-    module = importlib.util.module_from_spec(spec)
-    sys.modules["codex_review_gate"] = module
-    spec.loader.exec_module(module)
-    return module
+    """``hermes_cli.codex_review_gate``, which also sets the required ``Codex review`` status: its recognition of
+    a Codex review is the only copy, and it ships in the package, so an installed ``lina`` judges the same way."""
+    from hermes_cli import codex_review_gate
+    return codex_review_gate
 
 
 def codex_review(head: str, reviews: list[dict], review_comments: list[dict], issue_comments: list[dict]) -> Verdict:
     """The required ``Codex review`` status's own verdict on ``head`` (``review_status`` of the gate script)."""
     verdict = Verdict()
-    gate = review_gate()
-    if gate is None:
-        verdict.add(WAIT, f"cannot judge the Codex review here: {_GATE.name} is not in this install")
-        return verdict
-    status = gate.review_status(head, reviews, review_comments, issue_comments)
+    status = review_gate().review_status(head, reviews, review_comments, issue_comments)
     verdict.add(_STATUS_CODE.get(status.state, FAIL), status.description)
     return verdict
 
@@ -225,8 +210,7 @@ def dev_green(labels: set[str], head_runs: list[dict], dev_ok: bool, dev_failed:
     head_fail = {name for name, run in latest.items() if run.get("conclusion") in RED}
     passed = {name for name, run in latest.items() if run.get("conclusion") == "success"}
     gate = review_gate()
-    own = {gate.REVIEW_CONTEXT, gate.LINKED_CONTEXT, gate.DEV_CONTEXT} if gate else {"Codex review", "Linked issue",
-                                                                                    "dev green"}
+    own = {gate.REVIEW_CONTEXT, gate.LINKED_CONTEXT, gate.DEV_CONTEXT}
     for context, status in latest_statuses(head_statuses).items():
         if context in own:  # the gate's own statuses: judged by codex_review / linked_issue / this guard
             continue
