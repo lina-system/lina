@@ -630,5 +630,5 @@ def _provider_cli_command(active_provider: str) -> list[dict]:
             "plugin": active_provider,
         }]
     except Exception as e:
-        logger.debug("Failed to scan CLI for memory plugin '%s': %s", active_provider, e)
+        logger.debug("Failed to scan CLI for memory plugin '%s': %s", active_provider, e, exc_info=True)
         return []
