@@ -1,0 +1,188 @@
+"""The board's data served by LINA (lina#39): what today's board snapshot holds beyond lina#112's goals, work cards,
+worker runs on cards and inbox.
+
+Sources: the work record (``lina work``: the owner's to-dos, decisions, due groups), ``lina worker`` (runs that are
+not kanban work cards, and the devices of ``devices.workers``), LINA's own OCX (quota). Each read is separate, so a
+source that fails shows up in ``errors`` and the counts made from it are ``None``, never 0. Every count is the length
+of a list in the same snapshot. Notice lines are in the work record's locale (``work.locale``).
+"""
+
+from __future__ import annotations
+
+import logging
+import threading
+import time
+from pathlib import Path
+from typing import Any, Callable
+
+API_VERSION = 1
+DONE_WINDOW_S = 86400
+_WORK_LOCK = threading.Lock()
+logger = logging.getLogger(__name__)
+
+
+def _root() -> Path:
+    from hermes_cli.lina_ocx import lina_root
+    return lina_root()
+
+
+def _item_row(item: dict, recs: dict) -> dict:
+    from hermes_cli.work.board import agent_of
+    from hermes_cli.work.evaluate import item_name
+    return {"id": item["id"], "kind": "goal" if item.get("kind") == "목표" else "todo", "title": item_name(item),
+            "due": item.get("due") or None, "agent": agent_of(item, recs) or None}
+
+
+def work_read(root: Path) -> dict:
+    """The work record's part: decisions, the owner's to-dos and the due groups, in one bound read of the record
+    (the work package keeps its config and store connection per process, so reads take turns)."""
+    from hermes_cli.work import env, ledger
+    from hermes_cli.work.board import due_groups, inbox
+    from hermes_cli.work.notify import owner_today
+    with _WORK_LOCK:
+        env.bind(env.load(root))
+        try:
+            recs, order = ledger.read_all()
+            today = owner_today()
+            asks, todos = inbox(recs, order, today)
+            groups = due_groups(recs, order, today)
+            return {
+                "agents": dict(env.current().agents), "today": today.isoformat(),
+                "decide": [{"target": row["item"]["id"], "title": _item_row(row["item"], recs)["title"],
+                            "agent": row["agent"] or None, "kind": row["kind"], "text": row["text"], "at": row["at"],
+                            "answered": row["answered"]} for row in asks],
+                "mine": [dict(_item_row(item, recs), waiting=waiting, createdAt=int(item.get("created") or 0))
+                         for item, waiting in todos],
+                "due": {name: [_item_row(item, recs) for item in rows] for name, rows in groups.items()},
+            }
+        finally:
+            ledger.close()
+            env.reset()
+
+
+def worker_read(root: Path, now: float) -> list[dict]:
+    from hermes_cli.worker import settings
+    from hermes_cli.worker.board import cards
+    return cards(settings.root(root), now)
+
+
+def devices_read(root: Path, now: float, errors: list[dict]) -> list[dict]:
+    """The devices with readiness and load; a metrics reader that fails adds an error and leaves its fields empty."""
+    from hermes_cli.worker import settings
+    from hermes_cli.worker.board import beszel_path, beszel_read, machines
+    metrics = None
+    path = beszel_path(root)
+    if path is not None:
+        metrics = _source("metrics", errors, lambda: beszel_read(path, now))
+    return machines(settings.root(root), metrics, now)
+
+
+def quota_read(root: Path, now: float) -> list[dict]:
+    from hermes_cli.lina_board_quota import read
+    return read(root, now)
+
+
+def _source(name: str, errors: list[dict], read: Callable[[], Any]):
+    """One source's read; a failure becomes ``{source, message}`` in *errors* and the read gives None. Each source is
+    a separate store, device or process (sqlite, psql, ssh, OCX) with its own error types, and one that fails must not
+    take the others down, so any error is caught here and reported."""
+    from hermes_cli.config_backend import ConfigBackendUnavailable
+    try:
+        return read()
+    except (Exception, ConfigBackendUnavailable) as exc:
+        logger.warning("board source %s failed", name, exc_info=True)
+        errors.append({"source": name, "message": f"{type(exc).__name__}: {exc}"[:300]})
+        return None
+
+
+def notices(work: dict | None, review: list[dict]) -> list[dict]:
+    """What came into the inbox, one line per item, newest first. The key carries the moment the item came in, so an
+    item that leaves and comes back counts again (the board's bell rules)."""
+    from hermes_cli.work.locale import t
+    names = (work or {}).get("agents") or {}
+
+    def line(*parts) -> str:
+        return " · ".join(str(p) for p in parts if p)
+    out = []
+    for row in (work or {}).get("decide") or []:
+        out.append({"key": f"ask:{row['target']}:{int(row['at'] or 0)}", "target": row["target"], "at": row["at"],
+                    "kind": "ask", "line": line(names.get(row["agent"]), row["title"], t("결정 필요: {text}", text=row["text"]))})
+    for card in review:
+        at = card.get("endedAt") or card.get("startedAt")
+        out.append({"key": f"review:{card['id']}:{int(at or 0)}", "target": card["id"], "at": at, "kind": "review",
+                    "line": line(names.get(card["agent"], card["agent"]), card["title"], t("검토 필요"))})
+    for row in (work or {}).get("mine") or []:
+        out.append({"key": f"todo:{row['id']}:{row['createdAt']}", "target": row["id"], "at": row["createdAt"],
+                    "kind": "todo", "line": line(names.get(row["agent"]), row["title"], t("내 할 일"))})
+    return sorted(out, key=lambda note: -(note["at"] or 0))
+
+
+def _bound_locale(root: Path):
+    """Notice lines need the record's locale bound even when the record itself could not be read."""
+    from hermes_cli.work import env
+    env.bind(env.load(root))
+    return env
+
+
+def _counts(work: dict | None, cards: list[dict] | None, review: list[dict], now: float) -> dict:
+    def n(rows, ok=True):
+        return len(rows) if ok and rows is not None else None
+    running = [c for c in cards or [] if c["state"] == "in_progress"]
+    done = [c for c in cards or [] if c["state"] == "done" and now - (c.get("endedAt") or 0) <= DONE_WINDOW_S]
+    agents = dict.fromkeys((work or {}).get("agents") or {}, 0)
+    for card in running:
+        agents[card["agent"]] = agents.get(card["agent"], 0) + 1
+    ok = cards is not None
+    return {"inbox": n((work or {}).get("decide", []) + review + (work or {}).get("mine", []), work is not None and ok),
+            "running": n(running, ok), "stopped": n([c for c in cards or [] if c["state"] == "stopped"], ok),
+            "due": sum(len(v) for v in work["due"].values()) if work is not None else None,
+            "done": n(done, ok), "agents": agents if ok else None}
+
+
+def due(now: float | None = None) -> dict:
+    """``GET /api/lina/work/due``: the due groups alone."""
+    now, root, errors = time.time() if now is None else now, _root(), []
+    work = _source("work", errors, lambda: work_read(root))
+    groups = work["due"] if work else {name: [] for name in ("overdue", "today", "week", "later")}
+    return {"version": API_VERSION, "at": now, "errors": errors, "today": (work or {}).get("today"),
+            "count": sum(len(v) for v in groups.values()) if work else None, "due": groups}
+
+
+def devices(now: float | None = None) -> dict:
+    now, root, errors = time.time() if now is None else now, _root(), []
+    rows = _source("devices", errors, lambda: devices_read(root, now, errors))
+    return {"version": API_VERSION, "at": now, "errors": errors, "machines": rows or []}
+
+
+def quota(now: float | None = None) -> dict:
+    now, root, errors = time.time() if now is None else now, _root(), []
+    rows = _source("quota", errors, lambda: quota_read(root, now))
+    return {"version": API_VERSION, "at": now, "errors": errors, "quota": rows or []}
+
+
+def board(now: float | None = None) -> dict:
+    """``GET /api/lina/board``: one snapshot of everything above."""
+    now, root, errors = time.time() if now is None else now, _root(), []
+    work = _source("work", errors, lambda: work_read(root))
+    cards = _source("worker", errors, lambda: worker_read(root, now))
+    machines = _source("devices", errors, lambda: devices_read(root, now, errors))
+    services = _source("quota", errors, lambda: quota_read(root, now))
+    review = [c for c in cards or [] if c["state"] == "waiting"]
+    with _WORK_LOCK:
+        lines = _source("work", errors, lambda: _notices_in_locale(root, work, review))
+    return {
+        "version": API_VERSION, "at": now, "errors": errors, "counts": _counts(work, cards, review, now),
+        "cards": cards or [],
+        "inbox": {"decide": (work or {}).get("decide", []), "review": [c["id"] for c in review],
+                  "mine": [{k: row[k] for k in ("id", "title", "waiting", "due", "agent")} for row in (work or {}).get("mine", [])]},
+        "due": work["due"] if work else {name: [] for name in ("overdue", "today", "week", "later")},
+        "notices": lines or [], "machines": machines or [], "quota": services or [],
+    }
+
+
+def _notices_in_locale(root: Path, work: dict | None, review: list[dict]) -> list[dict]:
+    env = _bound_locale(root)
+    try:
+        return notices(work, review)
+    finally:
+        env.reset()
