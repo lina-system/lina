@@ -612,7 +612,7 @@ def render(template: Template, args: Any) -> tuple[str, list[Any]]:
 _VECTOR_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(?:lcm_embedding_vectors|lcm_chunk_vectors)\b", re.IGNORECASE)
 
 
-_STORE_FUNCTIONS = frozenset({"lcm_summary_has_text"})
+_STORE_FUNCTIONS = frozenset({"lcm_summary_has_text", "_lcm_entity_name"})
 
 _LIMIT_SLOT = re.compile(r"\bLIMIT\s+%s", re.IGNORECASE)
 
