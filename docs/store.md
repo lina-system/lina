@@ -242,6 +242,9 @@ profile's `honcho.json` supplies its host (`hermes` for default, `hermes_<profil
 workspace, AI peer, person peer and observation mode. A shared workspace is not imported wholesale. The
 migration selects the profile's recall-visible observer/target collections and sessions containing its AI
 peer, maps that AI peer to the new agent, and reports excluded other-agent and other-workspace rows.
+References from selected rows also retain their necessary session, peer, collection, document or message
+ancestors, listed as `dependencies`. This follows references outward; it does not import the ancestor's
+unrelated session participants, messages or private recall siblings.
 Source transport URLs and keys are not published into the new home; its Honcho config points to the
 destination store's local Honcho port.
 
@@ -253,8 +256,9 @@ left for `lina store reembed`; migration never calls an embedding endpoint.
 
 Round 2 still reports `lcm: waiting for #16` and excludes LCM messages and summary nodes from imported
 counts. The copied `lcm.db` is retained for Round 3. The copied work ledger imports the selected profile's
-records and relations, renaming its owner to the new agent. Required area/project/goal ancestors retain
-their original owners and are listed separately. Existing IDs with different content are refused before
+records and relations, renaming its owner to the new agent. Required area/project/goal/run/to-do ancestors
+and referenced parent events retain their original owners and are listed separately. This includes a
+to-do's closing run and both endpoints of its run relations. Existing IDs with different content are refused before
 writing; counts and manifests compare only the selected subset, not unrelated destination rows.
 
 The command prints JSON and writes the same result to `--work-dir/migration-report.json`. It includes copy
@@ -266,10 +270,17 @@ Raw native identities can legitimately have several immutable versions; the repo
 from duplicate version identities. `ok` means the included migration checks passed; `complete` remains false
 while LCM is deferred. An accounting mismatch exits nonzero.
 
-Repeating the same command verifies and reuses the same snapshots without rereading changing originals;
-it inserts nothing and fails if destination rows were lost or changed. Use a new work directory to capture
-new source data. External ingestion keeps its cursor in the destination store under the original spool path,
-so subsequent live ingestion continues from the copied prefix. A later changed prefix is rejected.
+Repeating the same command verifies and reuses the same snapshots rather than capturing new source data;
+it inserts nothing and fails if copied destination messages were lost or changed. Use a new work directory
+to capture new source data. External ingestion keeps its cursor in the destination store under the original
+spool path, so subsequent live ingestion continues from the copied prefix. If that cursor has advanced,
+migration verifies the copy against the original spool's committed prefix and checks every copied message
+version without moving the cursor or changing live heads. Later versions are not part of the copied subset.
+A changed prefix is rejected; an unavailable original spool cannot prove an advanced cursor's byte prefix.
+Honcho reruns verify the imported durable subset rather than demanding that the whole live workspace
+remain frozen. Queue consumption and retries are accounted for from the original dump receipt, with
+current queue counts reported separately; reruns never recreate consumed jobs. New live rows are outside
+the copied subset, while missing imported identities or changed durable content still fail verification.
 
 After checking one profile, `--all-source-profiles --as copied` processes profiles sequentially as
 `copied-default`, `copied-alpha`, and so on, retaining each profile's report under the work directory.

@@ -2,17 +2,26 @@
 
 import json
 import os
+import sqlite3
 import subprocess
 import sys
+from contextlib import closing
+
+import pytest
 
 from hermes_cli.config import atomic_config_write
 from tests.hermes_cli.migrate_memory_fixtures import legacy_home
 from tests.hermes_cli.test_migrate_memory_work import build_copied_work_fixture
 
 
-def test_real_migration_imports_selected_todos_and_ancestors(tmp_path, _memory_store):
+@pytest.mark.parametrize("foreign_closing_run", [False, True])
+def test_real_migration_imports_selected_todos_and_ancestors(tmp_path, _memory_store, foreign_closing_run):
     source = legacy_home(tmp_path / "source")
     ledger = build_copied_work_fixture(tmp_path / "work.db")
+    if foreign_closing_run:
+        with closing(sqlite3.connect(ledger)) as db:
+            db.execute("UPDATE todo SET close_run_id='run-beta' WHERE id='T1'")
+            db.commit()
     home = tmp_path / "lina"
     home.mkdir()
     atomic_config_write(home / "config.yaml", {
@@ -30,6 +39,10 @@ def test_real_migration_imports_selected_todos_and_ancestors(tmp_path, _memory_s
     report = json.loads(completed.stdout)
     assert report["work"]["ok"] and report["work"]["status"] == "imported"
     assert report["work"]["source_rows"] == report["work"]["matched"] + report["work"]["inserted"]
+    if foreign_closing_run:
+        assert {"id": "run-beta", "kind": "run", "profile": "beta"} in report["work"]["required_ancestors"]
+        with closing(sqlite3.connect(home / "work/work.db")) as db:
+            assert db.execute("SELECT agent_id FROM run WHERE id='run-beta'").fetchone() == ("beta",)
     readback = subprocess.run([sys.executable, "-c", "from hermes_cli.main import main; main()",
                                "work", "json", "--all"], env=env, capture_output=True, text=True,
                               timeout=60, check=False)
