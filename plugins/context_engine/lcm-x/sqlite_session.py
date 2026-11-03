@@ -46,7 +46,7 @@ def open_connection(policy: ConnectionPolicy) -> sqlite3.Connection:
     backend = store_backend(policy.database)
     if backend is not None:
         # LINA: the SQLite pragmas of before_row_factory do not apply to the store.
-        conn = backend()
+        conn = backend(**dict(policy.connect_kwargs))
         if policy.on_open is not None:
             policy.on_open(conn)
         if policy.row_factory is not None:

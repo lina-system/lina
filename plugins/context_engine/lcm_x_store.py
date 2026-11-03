@@ -72,7 +72,10 @@ def backend_for(database: Any) -> Optional[Callable[[], PgConnection]]:
         agent = _route_every(_route_key(database))
     if agent is None:
         return None
-    return lambda: PgConnection(str(database), agent)
+    def connect(**connect_kwargs: Any) -> PgConnection:
+        return PgConnection(str(database), agent, timeout=connect_kwargs.get("timeout", 5.0),
+                            isolation_level=connect_kwargs.get("isolation_level", ""))
+    return connect
 
 
 # ── errors ──
@@ -82,8 +85,11 @@ def _sqlite_error(exc: Exception) -> sqlite3.Error:
     import psycopg
     sqlstate = getattr(exc, "sqlstate", None) or ""
     message = str(exc).strip()
-    if sqlstate.startswith("23"):
-        err: sqlite3.Error = sqlite3.IntegrityError(message)
+    if sqlstate in ("55P03", "40P01", "40001"):
+        # Lock timeout, deadlock, serialization: what SQLite reports as a busy database.
+        err: sqlite3.Error = sqlite3.OperationalError(f"database is locked ({message})")
+    elif sqlstate.startswith("23"):
+        err = sqlite3.IntegrityError(message)
     elif isinstance(exc, psycopg.errors.FeatureNotSupported):
         err = sqlite3.NotSupportedError(message)
     elif isinstance(exc, (psycopg.ProgrammingError, psycopg.DataError)) and not sqlstate.startswith("57"):
@@ -759,7 +765,8 @@ class PgConnection:
 
     is_lina_store = True
 
-    def __init__(self, database: str, agent_id: str, *, dsn: Optional[str] = None) -> None:
+    def __init__(self, database: str, agent_id: str, *, dsn: Optional[str] = None, timeout: float = 5.0,
+                 isolation_level: Optional[str] = "") -> None:
         import psycopg
         from hermes_state_store import StoreUnavailableError, resolve_dsn
         self.database = database
@@ -768,15 +775,18 @@ class PgConnection:
             self._pg = psycopg.connect(dsn or resolve_dsn(), autocommit=True)
         except psycopg.OperationalError as exc:
             raise StoreUnavailableError(f"cannot reach the memory store: {exc}".strip()) from exc
-        self._pg.execute("SELECT set_config('lina.agent_id', %s, false), set_config('search_path', 'ctx, public', false)",
-                         (agent_id,))
+        # lock_timeout stands in for SQLite's busy timeout: a writer waiting on another connection gives up with
+        # "database is locked" instead of waiting forever.
+        self._pg.execute("SELECT set_config('lina.agent_id', %s, false), set_config('search_path', 'ctx, public', false), "
+                         "set_config('lock_timeout', %s, false)",
+                         (agent_id, f"{max(int(float(timeout) * 1000), 1)}ms"))
         self._catalog = Catalog.shared(self._pg)
         self._vector_oid = self._pg.execute("SELECT to_regtype('vector')::oid").fetchone()[0]
         self._lock = threading.RLock()
         self._in_tx = False
         self._savepoints: list[str] = []
         self._tx_from_savepoint = False
-        self.isolation_level: Optional[str] = ""
+        self.isolation_level: Optional[str] = isolation_level
         self.row_factory = None
         self.text_factory = str
         self.total_changes = 0
