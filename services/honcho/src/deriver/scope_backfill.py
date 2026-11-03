@@ -44,6 +44,7 @@ from src.embedding_client import embedding_client
 from src.schemas import DreamType
 from src.utils.queue_payload import ScopeBackfillPayload, ScopeRemovalPayload
 from src.utils.scopes import is_scope_peer_name
+from src.vec_embeddings import join_vectors
 from src.vector_store import VectorRecord, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -300,7 +301,10 @@ async def _hydrate_chunk_embeddings(
     source_ids = [spec.source_id for spec in plans]
     async with tracked_db("scope_backfill.hydrate_embeddings") as db:
         result = await db.execute(
-            select(models.Document.id, models.Document.embedding).where(
+            join_vectors(
+                select(models.Document.id, models.VecEmbedding.embedding),
+                "document",
+            ).where(
                 models.Document.workspace_name == workspace_name,
                 models.Document.id.in_(source_ids),
             )

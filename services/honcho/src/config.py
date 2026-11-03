@@ -834,6 +834,10 @@ class EmbeddingSettings(HonchoSettings):
         default_factory=_MODEL_CONFIG_DEFAULT
     )
     VECTOR_DIMENSIONS: Annotated[int, Field(default=1536, gt=0)] = 1536
+    # LINA (lina#19): the model that wrote the vectors already in the database.
+    # Migration l19_vec_embeddings copies them into vec.embeddings only when this
+    # names MODEL_CONFIG.model; the old columns keep no per-row model.
+    LEGACY_MODEL: str | None = None
     MAX_INPUT_TOKENS: Annotated[int, Field(default=8192, gt=0)] = 8192
     MAX_TOKENS_PER_REQUEST: Annotated[int, Field(default=300_000, gt=0)] = 300_000
     # Caps concurrent message-embedding fan-out on the API request path (the

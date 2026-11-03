@@ -962,7 +962,7 @@ _EXTRA_KNOWN_ROOT_KEYS = {
     "stt_echo_transcripts", "reset_triggers", "always_log_local", "filter_silence_narration",
     "multiplex_profiles", "profile_routes", "platforms", "require_mention",
     "unauthorized_dm_behavior", "signal", "allow_all_users",
-    "timeouts", "desk", "devices", "worker",  # deadline.py; desk.py; tools/lina_helper + worker; worker/
+    "timeouts", "desk", "devices", "worker", "embedding",  # deadline, desk, lina_helper, worker/, embedding_client
 }
 _KNOWN_ROOT_KEYS = frozenset(DEFAULT_CONFIG.keys()) | _EXTRA_KNOWN_ROOT_KEYS
 
