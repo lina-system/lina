@@ -785,6 +785,10 @@ _HIDDEN_COLUMNS = {"messages": ("text_uid", "content_sha256"), "messages_fts": (
                    "messages_fts_stem": ("tsv",), "nodes_fts": ("tsv",), "lcm_trajectory_states_fts": ("tsv",)}
 
 
+class _Interrupted(Exception):
+    """A statement the progress handler interrupted."""
+
+
 class Catalog:
     registry: dict[int, Catalog] = {}
     _lock = threading.Lock()
@@ -1172,6 +1176,35 @@ class PgConnection:
     def set_progress_handler(self, handler, n) -> None:
         self._progress = (handler, n)
 
+    @contextmanager
+    def _progress_watch(self):
+        """SQLite calls the progress handler while a statement runs and interrupts the statement when it returns
+        true. Here it is called as the statement starts and then from a watcher every 10 ms until the statement ends;
+        a true return cancels the query, and the statement raises "interrupted" as SQLite's does."""
+        handler = (getattr(self, "_progress", None) or (None, 0))[0]
+        interrupted: list[bool] = []
+        if handler is None:
+            yield interrupted
+            return
+        if handler():
+            interrupted.append(True)
+            raise _Interrupted()
+        done = threading.Event()
+
+        def watch() -> None:
+            while not done.wait(0.01):
+                if handler():
+                    interrupted.append(True)
+                    self._pg.cancel_safe()
+                    return
+        watcher = threading.Thread(target=watch, name="lcm-x-progress", daemon=True)
+        watcher.start()
+        try:
+            yield interrupted
+        finally:
+            done.set()
+            watcher.join()
+
     def set_trace_callback(self, callback) -> None:
         """Statements are reported as LCM-X wrote them (its SQLite SQL), as SQLite reports what it runs."""
         self._trace = callback
@@ -1288,16 +1321,24 @@ class PgConnection:
         try:
             if guarded:
                 self._pg.execute("SAVEPOINT lcm_x_statement")
-            result = self._pg.execute(text, args or None)
-            rows = result.fetchall() if result.description else []
+            with self._progress_watch() as interrupted:
+                try:
+                    result = self._pg.execute(text, args or None)
+                    rows = result.fetchall() if result.description else []
+                except psycopg.errors.QueryCanceled:
+                    if interrupted:
+                        raise _Interrupted() from None
+                    raise
             if guarded:
                 self._pg.execute("RELEASE SAVEPOINT lcm_x_statement")
-        except psycopg.Error as exc:
+        except (psycopg.Error, _Interrupted) as exc:
             if guarded and not self._pg.closed:
                 try:
                     self._pg.execute("ROLLBACK TO SAVEPOINT lcm_x_statement")
                 except psycopg.Error:
                     logger.debug("rollback to the statement savepoint failed", exc_info=True)
+            if isinstance(exc, _Interrupted):
+                raise sqlite3.OperationalError("interrupted") from None
             raise _sqlite_error(exc) from exc
         lastrowid = None
         self._returned = [int(r[0]) for r in rows if r and isinstance(r[0], int)] if returning else []
