@@ -3188,6 +3188,8 @@ def check_external_content_fts_integrity(
     behind on the shared connection.
     """
 
+    if is_store_connection(conn):  # LINA: the store's full text is a generated tsvector column, no FTS5 index
+        return {"status": "pass", "detail": "ok"}
     try:
         if _fts_needs_rebuild_structural(conn, spec):
             return {"status": "fail", "detail": "structural repair needed"}

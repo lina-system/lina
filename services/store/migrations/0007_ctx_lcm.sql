@@ -1183,7 +1183,9 @@ CREATE OR REPLACE FUNCTION ctx.pragma_table_info(relation text)
 
 -- sqlite_master for LCM's existence checks ("is this table there"): the ctx tables, views, indexes and triggers.
 CREATE OR REPLACE VIEW ctx.sqlite_master AS
-SELECT CASE c.relkind WHEN 'i' THEN 'index' WHEN 'v' THEN 'view' ELSE 'table' END AS type,
+-- Every ctx view stands in for a table LCM-X makes on SQLite (messages, the FTS5 tables, the vector tables), so
+-- it reads as a table; LCM-X itself creates no views.
+SELECT CASE c.relkind WHEN 'i' THEN 'index' ELSE 'table' END AS type,
        c.relname::text AS name,
        coalesce(t.relname, c.relname)::text AS tbl_name,
        0 AS rootpage,
@@ -1191,7 +1193,7 @@ SELECT CASE c.relkind WHEN 'i' THEN 'index' WHEN 'v' THEN 'view' ELSE 'table' EN
 FROM pg_class AS c
 LEFT JOIN pg_index AS i ON i.indexrelid = c.oid
 LEFT JOIN pg_class AS t ON t.oid = i.indrelid
-WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v', 'i', 'p')
+WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v', 'i', 'p') AND c.relname <> 'sqlite_master'
 UNION ALL
 SELECT 'trigger', tg.tgname::text, c.relname::text, 0, NULL::text
 FROM pg_trigger AS tg
