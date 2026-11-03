@@ -1578,10 +1578,10 @@ def test_lcm_doctor_clean_prefers_ignore_over_stateless_when_both_match(tmp_path
     assert "class=ignored-pattern" in result
 
 
-def test_lcm_doctor_clean_returns_error_on_schema_problem(engine):
-    engine._store._conn = _FakeConn()
-
-    result = handle_lcm_command("doctor clean", engine)
+def test_lcm_doctor_clean_returns_error_on_schema_problem(engine, monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(engine._store, "_conn", _FakeConn())
+        result = handle_lcm_command("doctor clean", engine)
 
     assert "LCM doctor clean" in result
     assert "status: error" in result
@@ -1896,11 +1896,11 @@ class _FakeConn:
         raise sqlite3.OperationalError("malformed schema")
 
 
-def test_lcm_doctor_reports_issues_instead_of_raising_on_schema_errors(engine):
-    engine._store._conn = _FakeConn()
-    engine._dag._conn = _FakeConn()
-
-    result = handle_lcm_command("doctor", engine)
+def test_lcm_doctor_reports_issues_instead_of_raising_on_schema_errors(engine, monkeypatch):
+    with monkeypatch.context() as patch:
+        patch.setattr(engine._store, "_conn", _FakeConn())
+        patch.setattr(engine._dag, "_conn", _FakeConn())
+        result = handle_lcm_command("doctor", engine)
 
     assert "LCM doctor" in result
     assert "status: issues-found" in result

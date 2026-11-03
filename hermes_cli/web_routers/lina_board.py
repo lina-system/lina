@@ -13,7 +13,7 @@ import hashlib
 import json
 from typing import Callable, Optional
 
-from fastapi import APIRouter, Header, HTTPException, Response
+from fastapi import APIRouter, Header, HTTPException, Request, Response
 from starlette.concurrency import run_in_threadpool
 
 router = APIRouter()
@@ -56,6 +56,59 @@ async def lina_work_item(item_id: str, if_none_match: Optional[str] = Header(def
         raise HTTPException(status_code=404, detail=f"no goal or to-do {item_id}") from exc
     except RecordUnreadable as exc:
         raise HTTPException(status_code=503, detail=str(exc)) from exc
+
+
+async def _act(request: Request, write: Callable[[object], dict]) -> dict:
+    """An owner's write (lina#149): rate-limited per client before the body is read; a refusal is a 4xx with one
+    line and writes nothing."""
+    from hermes_cli.lina_board_write import Refused, allow_write
+    if not allow_write(request.client.host if request.client else ""):
+        raise HTTPException(status_code=429, detail="too many writes: 30 a minute per client")
+    raw = await request.body()
+    try:
+        body = json.loads(raw) if raw.strip() else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="the body is not JSON") from exc
+    try:
+        return await run_in_threadpool(write, body)
+    except Refused as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+
+
+@router.post("/api/lina/work/items/{item_id}/done")
+async def lina_work_item_done(item_id: str, request: Request):
+    from hermes_cli.lina_board_write import mark_done
+    return await _act(request, lambda body: mark_done(item_id, body))
+
+
+@router.post("/api/lina/work/items/{item_id}/undo")
+async def lina_work_item_undo(item_id: str, request: Request):
+    from hermes_cli.lina_board_write import undo_done
+    return await _act(request, lambda body: undo_done(item_id, body))
+
+
+@router.post("/api/lina/work/items/{item_id}/comments")
+async def lina_work_item_comment(item_id: str, request: Request):
+    from hermes_cli.lina_board_write import comment
+    return await _act(request, lambda body: comment(item_id, body))
+
+
+@router.post("/api/lina/work/items/{item_id}/retry")
+async def lina_work_item_retry(item_id: str, request: Request):
+    from hermes_cli.lina_board_write import retry
+    return await _act(request, lambda body: retry(item_id, body))
+
+
+@router.post("/api/lina/work/add")
+async def lina_work_add(request: Request):
+    from hermes_cli.lina_board_write import quick_add
+    return await _act(request, quick_add)
+
+
+@router.post("/api/lina/notices/read")
+async def lina_notices_read(request: Request):
+    from hermes_cli.lina_board_write import mark_read
+    return await _act(request, mark_read)
 
 
 @router.get("/api/lina/devices")

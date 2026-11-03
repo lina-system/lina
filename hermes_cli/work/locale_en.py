@@ -349,6 +349,8 @@ MESSAGES = {
         "Leave out: {rules}, English code terms. Rename internal names like this: 작업판→dashboard, LCM→memory compression, omo→job.",
     "다름":
         "Different",
+    "다시 해 달라: 앞서 한 것을 이어서 하고 결과를 남겨 줘":
+        "Please retry: pick up where the last attempt stopped and leave the result",
     "다시 엶":
         "Reopened",
     "다시 엶: {why}":

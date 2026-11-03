@@ -356,3 +356,20 @@ def skip_if_store_unavailable(item, report) -> None:
     report.outcome = "skipped"
     report.longrepr = (str(item.path), item.location[1] or 0,
                        f"Skipped: memory store tests need Postgres: {PROCESS_STORE.unavailable}")
+
+
+if __name__ == "__main__":
+    import sys
+
+    # Standalone suites (LCM-X) do not run through run_tests_parallel.py. Give their
+    # command the same cluster and keep its lifetime scoped to that command.
+    if len(sys.argv) < 2:
+        raise SystemExit("usage: memory_store.py COMMAND [ARG ...]")
+    cluster = start_cluster()
+    try:
+        completed = subprocess.run(
+            sys.argv[1:], env={**os.environ, CLUSTER_ENV: cluster.dsn}, check=False,
+        )
+    finally:
+        cluster.stop()
+    raise SystemExit(completed.returncode)
