@@ -21,6 +21,7 @@ import re
 import sqlite3
 import threading
 from collections.abc import Callable, Iterable, Sequence
+from array import array
 from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import lru_cache
@@ -471,6 +472,25 @@ def render(template: Template, args: Any) -> tuple[str, list[Any]]:
     return "".join(sql), params
 
 
+_VECTOR_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+lcm_embedding_vectors\b", re.IGNORECASE)
+
+
+def _vector_text(value: Any) -> Any:
+    """LCM-X's float32 vector BLOB as pgvector's text form (``vec.embeddings.embedding``)."""
+    if not isinstance(value, (bytes, bytearray, memoryview)) or len(value) % 4:
+        return value
+    floats = array("f")
+    floats.frombytes(bytes(value))
+    return "[" + ",".join(repr(f) for f in floats) + "]"
+
+
+def _vector_blob(text: Any) -> Any:
+    """pgvector's text form back to the float32 BLOB LCM-X decodes."""
+    if not isinstance(text, str):
+        return text
+    return array("f", (float(x) for x in text.strip("[]").split(",") if x)).tobytes()
+
+
 def _adapt(value: Any) -> Any:
     if isinstance(value, bool):
         return int(value)
@@ -751,6 +771,7 @@ class PgConnection:
         self._pg.execute("SELECT set_config('lina.agent_id', %s, false), set_config('search_path', 'ctx, public', false)",
                          (agent_id,))
         self._catalog = Catalog.shared(self._pg)
+        self._vector_oid = self._pg.execute("SELECT to_regtype('vector')::oid").fetchone()[0]
         self._lock = threading.RLock()
         self._in_tx = False
         self._savepoints: list[str] = []
@@ -867,6 +888,8 @@ class PgConnection:
 
     def _run_sql(self, cur: PgCursor, template: Template, params: Any) -> None:
         text, args = render(template, params)
+        if _VECTOR_INSERT.match(text):
+            args = [_vector_text(a) for a in args]
         writes = bool(re.match(r"\s*(INSERT|UPDATE|DELETE|REPLACE|WITH\b.*\b(INSERT|UPDATE|DELETE)\b)", text, re.IGNORECASE | re.DOTALL))
         if writes and self.isolation_level is not None:
             self._begin()
@@ -891,6 +914,9 @@ class PgConnection:
             raise _sqlite_error(exc) from exc
         lastrowid = None
         description = result.description
+        vector_columns = [i for i, d in enumerate(description or ()) if d.type_code == self._vector_oid]
+        if vector_columns:
+            rows = [tuple(_vector_blob(v) if i in vector_columns else v for i, v in enumerate(row)) for row in rows]
         if returning and rows:
             lastrowid = int(rows[-1][0])
             description, rows = None, []

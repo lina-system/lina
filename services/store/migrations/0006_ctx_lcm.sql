@@ -457,13 +457,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_meta (
     PRIMARY KEY (agent_id, embedded_id, embedded_kind, identity_hash)
 );
 
-CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_vectors (
-    agent_id text NOT NULL DEFAULT public.lina_current_agent(),
-    embedded_id text,
-    identity_hash text,
-    vec bytea NOT NULL,
-    PRIMARY KEY (agent_id, embedded_id, identity_hash)
-);
+-- lcm_embedding_vectors is a view over vec.embeddings (0007).
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_binary (
     agent_id text NOT NULL DEFAULT public.lina_current_agent(),

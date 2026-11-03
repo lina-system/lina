@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import importlib
 import importlib.util
+import sqlite3
 import sys
 import time
 from pathlib import Path
@@ -87,6 +88,37 @@ def test_a_hermes_turn_is_not_stored_twice(routed, memory_store_sql):
         assert store.get(other)["content"] == "알겠습니다"
         assert len(memory_store_sql("SELECT uid FROM memory.messages WHERE agent_id = 'p1'")) == 2
     finally:
+        store.close()
+        dag.close()
+
+
+def test_summary_vectors_live_in_vec_embeddings(routed, memory_store_sql):
+    from array import array
+    db = routed("vec")
+    store, dag = _stores(db)
+    conn = lcm_x_store.backend_for(db)()
+    try:
+        node_id = dag.add_node(_lcm("dag").SummaryNode(session_id="s1", summary="회의 요약", created_at=time.time()))
+        conn.execute("INSERT INTO lcm_embedding_profile(identity_hash, provider, model_name, dim) VALUES (?, ?, ?, ?)",
+                     ("h1", "openai", "qwen3-embedding-8b", 1024))
+        blob = array("f", [0.5] * 1024).tobytes()
+        conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
+                     (str(node_id), "h1", blob))
+        conn.commit()
+        assert memory_store_sql("SELECT kind, item_id, agent_id, model FROM vec.embeddings") == [
+            ("summary", node_id, "vec", "qwen3-embedding-8b")]
+        assert conn.execute("SELECT vec FROM lcm_embedding_vectors WHERE embedded_id = ?",
+                            (str(node_id),)).fetchone()[0] == blob
+        with pytest.raises(sqlite3.IntegrityError, match="1024 wide"):
+            conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
+                         (str(node_id + 1), "h1", array("f", [0.5] * 8).tobytes()))
+        conn.rollback()
+        conn.execute("DELETE FROM lcm_embedding_vectors WHERE embedded_id = ? AND identity_hash = ?",
+                     (str(node_id), "h1"))
+        conn.commit()
+        assert memory_store_sql("SELECT count(*) FROM vec.embeddings") == [(0,)]
+    finally:
+        conn.close()
         store.close()
         dag.close()
 

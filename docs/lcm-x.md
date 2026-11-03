@@ -62,11 +62,14 @@ schema is `services/store/migrations/0006_ctx_lcm.sql`: LCM-X's tables under the
   and `pg_trgm` indexes; `MATCH` becomes a tsquery built from the FTS5 query, `bm25`/`rank` `ts_rank_cd`.
   Korean, Chinese and Japanese queries take LCM-X's LIKE path, which runs as `ILIKE` on the trigram index, so
   `회의` finds `회의록을`.
+- Summary vectors are rows of `vec.embeddings` (`kind = 'summary'`, `item_id` = the node id, the model of LCM-X's
+  embedding profile; `0007_ctx_lcm_vectors.sql`): `lcm_embedding_vectors` is a view over them, and a vector that is
+  not 1024 wide (the one embedding model, [store.md](store.md)) is refused.
 - The schema creators and verifiers of `db_bootstrap.py` return at once on a store connection.
 
-What is not done yet, and the order: `.github/workflows/lcm-x.yml` does not run the suite on the store; the summary
-and chunk vectors still use LCM-X's `lcm_embedding_vectors`/`lcm_chunk_*` tables in `ctx` (they move to
-`vec.embeddings`); the direct `sqlite3.connect` side readers (`tools.py`, `retrieval_core.py`, ...) still open
+What is not done yet, and the order: `.github/workflows/lcm-x.yml` does not run the suite on the store; the chunk
+vectors still use LCM-X's `lcm_chunk_*` tables in `ctx` (they move to `vec.chunks` and `vec.embeddings`
+`kind = 'chunk'`); the direct `sqlite3.connect` side readers (`tools.py`, `retrieval_core.py`, ...) still open
 the file; nothing routes a real home yet (the `lcm.store_backend` setting). An `lcm.db` is never read or changed
 by any of this; moving its data in is #24. The suite on the store:
 
