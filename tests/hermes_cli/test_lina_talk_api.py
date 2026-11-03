@@ -124,6 +124,11 @@ def work(tmp_path, monkeypatch):
 def gateway(work, monkeypatch):
     gw = FakeGateway()
     homes = {name: work.root / "profiles" / name for name in ("alpha", "beta")}
+    for name, home in homes.items():  # each agent's own Telegram home channel: the owner's DM with it
+        home.mkdir(parents=True)
+        (home / "config.yaml").write_text(
+            "platforms:\n  telegram:\n    home_channel: {platform: telegram, chat_id: '42', name: Owner}\n",
+            encoding="utf-8")
     monkeypatch.setattr(lina_talk, "profile_home", lambda agent: homes[agent])
     monkeypatch.setattr(lina_talk, "gateway", lambda agent: (f"http://127.0.0.1:8642/p/{agent}", FakeGateway.KEY))
     monkeypatch.setattr(lina_talk, "http_client", lambda: httpx.AsyncClient(transport=httpx.MockTransport(gw.handle)))
@@ -155,16 +160,19 @@ def _talk(client, item: str, message):
     return client.post(f"/api/lina/work/items/{item}/talk", json={"message": message})
 
 
-def _telegram_turn(home: Path, message: str) -> str:
-    from gateway.config import Platform
+def _telegram_turn(home: Path, message: str, chat_id: str = "42") -> str:
+    """The model-facing message of the agent's next Telegram DM turn in *chat_id*; the stored row is checked to be
+    the typed text whatever the model reads."""
+    from gateway.config import GatewayConfig, Platform
     from gateway.run_turn_runner import TurnRunner
     from gateway.session import SessionSource
-    source = SessionSource(platform=Platform.TELEGRAM, user_id="42", chat_id="42", chat_type="dm")
-    runner = SimpleNamespace(_resolve_profile_home_for_source=lambda src: home,
+    source = SessionSource(platform=Platform.TELEGRAM, user_id=chat_id, chat_id=chat_id, chat_type="dm")
+    runner = SimpleNamespace(_resolve_profile_home_for_source=lambda src: home, config=GatewayConfig(),
                              session_store=SimpleNamespace(_entries={}))
     ctx = SimpleNamespace(source=source, message=message, persist_user_message=None, persist_user_timestamp=None,
-                          inbound_message_id=None, history=[], session_key="agent:main:telegram:dm:42")
-    TurnRunner(runner, ctx)._prepare_turn_message([])
+                          inbound_message_id=None, history=[], session_key=f"agent:main:telegram:dm:{chat_id}")
+    persist, _ts = TurnRunner(runner, ctx)._prepare_turn_message([])
+    assert persist in (None, message)
     return ctx.message
 
 
@@ -199,6 +207,7 @@ def test_the_same_agent_keeps_one_app_conversation(work, gateway, client):
 
 def test_the_agents_next_telegram_turn_has_what_was_said(work, gateway, client):
     _talk(client, "T1", "색은 파랑으로 해")
+    assert _telegram_turn(gateway.homes["alpha"], "누구세요", chat_id="7") == "누구세요"  # not the owner's chat
     seen = _telegram_turn(gateway.homes["alpha"], "아까 말한 거 했어?")
     assert seen.endswith("\n\n아까 말한 거 했어?")
     assert '"기기 1 점검"' in seen and "Owner: 색은 파랑으로 해" in seen
@@ -218,7 +227,7 @@ def test_bad_input_answers_4xx_and_runs_nothing(work, gateway, client, item, mes
     resp = _talk(client, item, message)
     assert resp.status_code == status
     assert _valid("Error", resp.json())["error"]["code"] == code
-    assert gateway.calls == [] and not gateway.homes["alpha"].exists()
+    assert gateway.calls == [] and not (gateway.homes["alpha"] / "app_talk").exists()
 
 
 def test_a_busy_agent_answers_the_gateways_own_busy_response(work, gateway, client):

@@ -903,8 +903,6 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             persist_override = clean_text
             ctx.message = api_text
         self._prepend_pending_note("_pending_model_notes")
-        from gateway.app_talk_carry import carry_into_dm_turn
-        ctx.message = carry_into_dm_turn(self._runner, ctx.source, ctx.message)  # lina#167: what the app said
         # Auto-continue: history ending with a tool result means the previous turn was cut off
         # (restart, crash, SIGTERM). Session-level resume_pending (drain-timeout shutdown) uses
         # stronger reason-aware wording that subsumes this case. Both gate on the age of
@@ -937,6 +935,12 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
                 "below FIRST. Do NOT re-execute old tool calls from the history.]\n\n"
                 + ctx.message
             )
+        from gateway.app_talk_carry import carry_into_dm_turn
+        carried = carry_into_dm_turn(self._runner, ctx.source, ctx.message)  # lina#167: what the app said
+        if carried is not ctx.message:
+            # Model-facing only: the stored row and the memory sync keep what the person typed.
+            persist_override = ctx.message if persist_override is None else persist_override
+            ctx.message = carried
         self._prepend_pending_note("_pending_skills_reload_notes")
         if api_text is not None:
             persist_override = clean_text  # recovery wording is API-only too, never the stored row

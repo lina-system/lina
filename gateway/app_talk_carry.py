@@ -63,11 +63,37 @@ def carry_text(notes: list[dict]) -> str:
     return "\n\n".join(lines)
 
 
+def _waiting(home: Path) -> bool:
+    folder = home / CARRY_DIR
+    return folder.is_dir() and any(folder.glob("*.json"))
+
+
+def owner_chat(runner, source, home: Path):
+    """The owner's own chat on *source*'s platform: the home channel of the profile the turn runs as (the launch
+    profile's live config, a secondary's own ``config.yaml``); None when none is set."""
+    from hermes_constants import get_routing_process_hermes_home
+    config = runner.config
+    if Path(home).resolve() != Path(get_routing_process_hermes_home()).resolve():
+        from gateway.config import load_gateway_config
+        from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+        token = set_hermes_home_override(str(home))
+        try:
+            config = load_gateway_config()
+        finally:
+            reset_hermes_home_override(token)
+    channel = config.get_home_channel(source.platform)
+    return str(channel.chat_id) if channel is not None and channel.chat_id else None
+
+
 def carry_into_dm_turn(runner, source, message):
-    """*message* with the waiting app notes ahead of it on a messaging DM turn; *message* unchanged elsewhere.
-    The notes are read from the home of the profile the turn runs as (``_resolve_profile_home_for_source``)."""
+    """*message* with the waiting app notes ahead of it when the turn is the owner's DM on a messaging platform (its
+    chat is the profile's home channel there); *message* unchanged elsewhere, the notes left waiting. The notes are
+    model-facing only: the caller keeps *message* as the persisted row."""
     platform = getattr(getattr(source, "platform", None), "value", None)
     if not isinstance(message, str) or getattr(source, "chat_type", None) != "dm" or platform in _NOT_MESSAGING:
         return message
-    notes = take_carry(runner._resolve_profile_home_for_source(source))
+    home = runner._resolve_profile_home_for_source(source)
+    if not _waiting(home) or owner_chat(runner, source, home) != str(source.chat_id):
+        return message
+    notes = take_carry(home)
     return carry_text(notes) + "\n\n" + message if notes else message
