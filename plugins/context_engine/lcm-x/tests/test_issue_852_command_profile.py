@@ -89,8 +89,9 @@ def _handler(plugin, monkeypatch, prototype, context, resolved=None):
 
 
 def _without_pass_time(text):
-    # LINA: a background incremental embedding pass can stamp the next second between the two status reads.
-    return re.sub(r"(?m)^(embedding_incremental_last_pass: )\S+", r"\1<time>", text)
+    # LINA: a background incremental embedding pass can run between the two status reads and stamp this line
+    # (a new second, or a first pass that turns "(never)" into "<time> <status>"), so the whole value is ignored.
+    return re.sub(r"(?m)^(embedding_incremental_last_pass: ).*$", r"\1<time>", text)
 
 
 @pytest.mark.parametrize("raw_args", ["embed backfill --apply", "embed warmup"])
