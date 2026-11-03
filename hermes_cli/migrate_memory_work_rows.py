@@ -6,6 +6,18 @@ import hashlib
 import json
 
 KINDS = ("area", "project", "goal", "todo", "run", "run_todo", "wait", "decision", "link", "event")
+REFERENCES = {
+    "area": (), "project": (("area_id", "area"),),
+    "goal": (("area_id", "area"), ("project_id", "project")),
+    "todo": (("goal_id", "goal"), ("close_run_id", "run")),
+    "run": (("goal_id", "goal"),),
+    "run_todo": (("run_id", "run"), ("todo_id", "todo")),
+    "wait": (("goal_id", "goal"), ("todo_id", "todo"), ("run_id", "run")),
+    "decision": (("goal_id", "goal"), ("todo_id", "todo"), ("run_id", "run")),
+    "link": (("goal_id", "goal"), ("todo_id", "todo"), ("run_id", "run")),
+    "event": (("area_id", "area"), ("goal_id", "goal"), ("todo_id", "todo"),
+              ("run_id", "run"), ("parent_id", "event")),
+}
 
 
 def rows(db) -> dict:
@@ -23,31 +35,43 @@ def select_graph(all_rows, profile, agent) -> tuple:
     chosen = {kind: {row["id"] for row in all_rows[kind] if row["agent_id"] == profile}
               for kind in ("area", "project", "goal", "todo", "run")}
     owned = {kind: ids.copy() for kind, ids in chosen.items()}
+    for kind in ("run_todo", "wait", "decision", "link"):
+        chosen[kind] = {key(kind, row) if kind == "run_todo" else row["id"] for row in all_rows[kind]
+                        if row.get("agent_id") == profile or
+                        any(row.get(parent + "_id") in ids for parent, ids in owned.items())}
+    chosen["event"] = {row["id"] for row in all_rows["event"] if row["agent_id"] == profile}
+    event_seeds = chosen["event"].copy()
+    event_parents = set()
+    history = {}
+    for row in all_rows["event"]:
+        for column, parent in REFERENCES["event"][:-1]:
+            if row[column] is not None:
+                history.setdefault((parent, row[column]), []).append(row["id"])
+    indexes["run_todo"] = {key("run_todo", row): row for row in all_rows["run_todo"]}
     pending = [(kind, i) for kind, ids in chosen.items() for i in ids]
     while pending:
         kind, i = pending.pop()
-        for parent in ("area", "project", "goal"):
-            parent_id = indexes[kind][i].get(parent + "_id")
-            if parent_id and parent_id not in chosen[parent]:
+        for column, parent in REFERENCES[kind]:
+            parent_id = indexes[kind][i].get(column)
+            if parent == "event" and parent_id is not None:
+                event_parents.add(parent_id)
+            if parent_id is not None and parent_id not in chosen[parent]:
                 if parent_id not in indexes[parent]:
                     raise ValueError(f"missing work ancestor: {parent}/{parent_id}")
                 chosen[parent].add(parent_id)
                 pending.append((parent, parent_id))
+        for event_id in history.get((kind, i), ()):
+            if event_id not in chosen["event"]:
+                chosen["event"].add(event_id)
+                pending.append(("event", event_id))
     selected = {}
     for kind in KINDS:
-        if kind in chosen:
-            selected[kind] = [dict(row) for row in all_rows[kind] if row["id"] in chosen[kind]]
-        elif kind == "run_todo":
-            selected[kind] = [dict(row) for row in all_rows[kind]
-                              if row["run_id"] in chosen["run"] and row["todo_id"] in chosen["todo"]]
-        else:
-            parents = chosen if kind == "event" else owned
-            selected[kind] = [dict(row) for row in all_rows[kind]
-                              if any(row.get(parent + "_id") in ids for parent, ids in parents.items())]
+        selected[kind] = [dict(row) for row in all_rows[kind]
+                          if (key(kind, row) if kind == "run_todo" else row["id"]) in chosen[kind]]
         for row in selected[kind]:
             owning_selected = (row["id"] in owned[kind] if kind in owned else
                                any(row.get(parent + "_id") in ids for parent, ids in owned.items()))
-            if owning_selected and row.get("agent_id") == profile:
+            if row.get("agent_id") == profile:
                 row["agent_id"] = agent
             if kind == "event":
                 data = json.loads(row["data"])
@@ -58,7 +82,9 @@ def select_graph(all_rows, profile, agent) -> tuple:
                         data["ledger"] = json.dumps(record, ensure_ascii=False)
                         row["data"] = json.dumps(data, ensure_ascii=False)
     ancestors = [{"id": i, "kind": kind, "profile": indexes[kind][i]["agent_id"]}
-                 for kind in ("area", "project", "goal") for i in sorted(chosen[kind] - owned[kind])]
+                 for kind in owned for i in sorted(chosen[kind] - owned[kind])]
+    ancestors += [{"id": i, "kind": "event", "profile": indexes["event"][i]["agent_id"]}
+                  for i in sorted(event_parents - event_seeds)]
     return selected, ancestors, owned
 
 

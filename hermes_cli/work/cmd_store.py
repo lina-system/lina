@@ -173,7 +173,11 @@ def import_selected_rows(db, selected: dict) -> None:
     for row in selected["event"]:
         data = json.loads(row["data"])
         text = data.get("ledger", "{}")
-        _import_line(db, row["id"], text, json.loads(text), stored_event=row)
+        # Event IDs are not a topological order and valid threads can cycle.
+        _import_line(db, row["id"], text, json.loads(text), stored_event=dict(row, parent_id=None))
+    for row in selected["event"]:
+        if row["parent_id"] is not None:
+            db.execute("UPDATE event SET parent_id = ? WHERE id = ?", (row["parent_id"], row["id"]))
     if db.dialect == "postgres":
         for kind in ("event", "wait", "decision", "link"):
             if selected[kind]:

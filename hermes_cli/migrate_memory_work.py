@@ -61,7 +61,8 @@ def migrate_work(copied_db: Path, destination_home: Path, profile: str, agent: s
                 "whole_source_rows": sum(len(records) for records in all_rows.values()),
                 "excluded_rows": sum(len(all_rows[kind]) - counts[kind] for kind in KINDS),
                 "excluded_event_rows": len(all_rows["event"]) - counts["event"], "invalid_rows": 0,
-                "excluded_run_ids": [row["id"] for row in all_rows["run"] if row["id"] not in owned["run"]],
+                "excluded_run_ids": [row["id"] for row in all_rows["run"]
+                                     if row["id"] not in {r["id"] for r in selected["run"]}],
                 "excluded_items": [{"id": row["id"], "kind": kind, "reason": "other_profile"}
                                    for kind in ("area", "project", "goal", "todo") for row in all_rows[kind]
                                    if row["id"] not in {r["id"] for r in selected[kind]}],

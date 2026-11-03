@@ -76,17 +76,18 @@ def test_selected_graph_preserves_ancestors_relations_and_repeat(destination, tm
         "area", "project", "goal", "todo", "run", "run_todo", "wait", "decision", "event", "link"}
     for kind, count in first["selected_counts"].items():
         assert count == first["inserted_counts"][kind] + first["matched_counts"][kind]
-    assert {row["id"] for row in first["required_ancestors"]} == {"A1", "P1", "G1"}
+    assert {row["id"] for row in first["required_ancestors"]} == {"A1", "P1", "G1", "run-beta"}
     with closing(ledger.open_db()) as db:
         assert db.execute("SELECT id, agent_id FROM todo").fetchall() == [("T1", "new-alpha")]
         assert db.execute("SELECT id, agent_id FROM goal ORDER BY id").fetchall() == [
             ("G1", "beta"), ("G2", "new-alpha")]
         assert db.execute("SELECT agent_id FROM project").fetchone() == ("beta",)
-        assert db.execute("SELECT id FROM run").fetchall() == [("run-alpha",)]
+        assert db.execute("SELECT id, agent_id FROM run ORDER BY id").fetchall() == [
+            ("run-alpha", "new-alpha"), ("run-beta", "beta")]
         assert db.execute("SELECT id FROM wait WHERE goal_id = 'G1'").fetchall() == []
         assert db.execute("SELECT id FROM link WHERE goal_id = 'G1'").fetchall() == []
-        assert db.execute("SELECT run_id, todo_id, added_by FROM run_todo").fetchall() == [
-            ("run-alpha", "T1", "alpha")]
+        assert db.execute("SELECT run_id, todo_id, added_by FROM run_todo ORDER BY run_id").fetchall() == [
+            ("run-alpha", "T1", "alpha"), ("run-beta", "T1", "alpha")]
         assert db.execute("SELECT agent_id, actor_id FROM event WHERE run_id IS NOT NULL").fetchall() == [
             ("new-alpha", "beta")]
         assert store.latest(db, "T1")["writer"] == "beta"
