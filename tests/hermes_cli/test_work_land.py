@@ -186,3 +186,14 @@ def test_the_bundle_verb_refuses_a_task_without_a_work_repository(tmp_path):
     (tmp_path / "lina").mkdir()
     code, out = device.dispatch(tmp_path / "lina" / "worker", ["bundle", "OT-NONE"])
     assert code == 1 and b"no git work folder" in out
+
+
+def test_changelog_conflicts_are_kept_both_only_when_they_are_two_plain_sides():
+    """A CHANGELOG conflict is resolved by keeping both sides only in the plain two-way form; a diff3 base
+    section or CRLF lines once went through as conflict text in the pushed result."""
+    from hermes_cli.delivery.land import _keep_both
+    two = "a\n<<<<<<< HEAD\nours\n=======\ntheirs\n>>>>>>> dev\nb\n"
+    assert _keep_both(two) == "a\nours\ntheirs\nb\n"
+    assert _keep_both("a\n<<<<<<< HEAD\nours\n||||||| base\nold\n=======\ntheirs\n>>>>>>> dev\nb\n") is None
+    assert _keep_both(two.replace("\n", "\r\n")) is None
+    assert _keep_both("a\n<<<<<<< HEAD\nunclosed\n") is None

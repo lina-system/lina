@@ -40,7 +40,7 @@ def collect_repo(gh, full: str, base: str, workflow: str) -> dict:
             row.get("issue_dependencies_summary") is None
             or row["issue_dependencies_summary"].get("total_blocked_by", 1))]
         with ThreadPoolExecutor(8) as pool:
-            found = pool.map(lambda n: gh.json(f"repos/{full}/issues/{n}/dependencies/blocked_by"), need)
+            found = pool.map(lambda n: gh.pages(f"repos/{full}/issues/{n}/dependencies/blocked_by"), need)
             for n, deps in zip(need, found):
                 repo["blocked_by"][n] = [{
                     "repo": (d.get("repository_url") or full).rsplit("/repos/", 1)[-1], "n": d["number"],
@@ -88,8 +88,16 @@ def runner_of(labels: list[str], runners: dict[str, str]) -> str | None:
     return next((runner for label, runner in runners.items() if label in labels), None)
 
 
+def _unique_short(repos: list[str]) -> dict[str, str]:
+    """``{short name: repo}`` for short names only one configured repository has; a shared one resolves to none."""
+    shorts: dict[str, list[str]] = {}
+    for full in repos:
+        shorts.setdefault(_short(full), []).append(full)
+    return {name: found[0] for name, found in shorts.items() if len(found) == 1}
+
+
 def _refs(text: str, repos: list[str]) -> list[tuple[str, int]]:
-    by_short = {_short(full): full for full in repos}
+    by_short = _unique_short(repos)
     found = []
     for owner, name, n in _REF.findall(text or ""):
         full = f"{owner}/{name}" if owner else by_short.get(name)
@@ -188,9 +196,7 @@ def serial_relation(issues: dict, repos: list[str]) -> dict[tuple[str, int], set
 def _serial(body: str, home: str, repos: list[str]) -> list[tuple[str, int]]:
     """``Serial with:`` references as ``(repo, n)``. ``owner/name#n`` is taken as written; a bare ``name#n``
     resolves only when one configured repository has that short name, and ``#n`` is the issue's own repository."""
-    shorts: dict[str, list[str]] = {}
-    for full in repos:
-        shorts.setdefault(_short(full), []).append(full)
+    by_short = _unique_short(repos)
     refs = []
     for line in _SERIAL.findall(body):
         for owner, name, n in _SERIAL_REF.findall(line):
@@ -199,8 +205,7 @@ def _serial(body: str, home: str, repos: list[str]) -> list[tuple[str, int]]:
             elif not name or _short(home) == name:
                 full = home
             else:
-                found = shorts.get(name, [])
-                full = found[0] if len(found) == 1 else None
+                full = by_short.get(name)
             if full:
                 refs.append((full, int(n)))
     return refs

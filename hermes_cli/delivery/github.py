@@ -83,17 +83,23 @@ DEV_RUN_PAGES = 10  # 100 runs a page: other workflows (Honcho, LCM-X, CodeQL) p
 
 
 def dev_state(gh, repo: str, branch: str, workflow: str) -> tuple[bool, set[str]]:
-    """``(green, red job names)`` of the newest finished push run of ``workflow`` on ``branch`` that has a verdict.
+    """``(green, red job names)`` of ``branch`` from the newest finished push run of ``workflow`` with a verdict.
     A run cancelled because a newer push took its place, or skipped, says nothing; no run of ``workflow`` at all
-    (a new repository) is green. The runs list holds every workflow's runs, newest first, so the pages are read
-    until a deciding run of ``workflow`` shows up; one page once missed a red CI behind other workflows' runs."""
+    (a new repository) is green. A run still going on a newer push is not waited on (the merge queue tests dev
+    with the pull request), as in the gate's ``pick_dev_run``.
+    The runs list holds every workflow's runs, newest first, so the pages are read until a deciding run of
+    ``workflow`` shows up; one page once missed a red CI behind other workflows' runs. Runs are read in every
+    status: a failed run whose jobs are re-run is ``in_progress`` again (``run_attempt`` > 1) and still has no
+    green, so it decides as red instead of letting an older green run decide."""
     newest = None
     for page in range(1, DEV_RUN_PAGES + 1):
-        found = (gh.json(f"repos/{repo}/actions/runs?branch={branch}&event=push&status=completed"
+        found = (gh.json(f"repos/{repo}/actions/runs?branch={branch}&event=push"
                          f"&per_page=100&page={page}") or {}).get("workflow_runs") or []
-        deciding = [r for r in found if r.get("name") == workflow and r.get("conclusion") not in ("cancelled", "skipped")]
+        deciding = [r for r in found if r.get("name") == workflow and (
+            r.get("conclusion") not in (None, "cancelled", "skipped")
+            or (r.get("status") != "completed" and int(r.get("run_attempt") or 1) > 1))]
         if deciding:
-            newest = max(deciding, key=lambda r: r.get("created_at") or "")
+            newest = max(deciding, key=lambda r: (r.get("created_at") or "", int(r.get("id") or 0)))
             break
         if len(found) < 100:
             break
@@ -101,6 +107,8 @@ def dev_state(gh, repo: str, branch: str, workflow: str) -> tuple[bool, set[str]
         raise GhError(f"no finished {workflow} push run on {branch} in the newest {DEV_RUN_PAGES * 100} runs")
     if newest is None:
         return True, set()
+    if newest.get("status") != "completed":
+        return False, {f"{workflow} re-run of a red run, still going"}
     if newest.get("conclusion") == "success":
         return True, set()
     from hermes_cli.merge_rules import RED

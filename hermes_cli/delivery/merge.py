@@ -37,7 +37,7 @@ def collect_pr(gh, repo: str, number: int, base: Path | None = None) -> dict:
                 "base": pr["base"]["ref"], "delivery_branch": delivery, "node_id": pr.get("node_id"), "body": pr.get("body") or "",
                 "labels": [label["name"] for label in pr.get("labels") or []], "required": required_contexts(found),
                 "queue": merge_queue_on(found), "runs": check_runs(gh, repo, head),
-                "statuses": gh.json(f"repos/{repo}/commits/{head}/statuses?per_page=100") or [],
+                "statuses": gh.pages(f"repos/{repo}/commits/{head}/statuses"),
                 "reviews": gh.pages(f"repos/{repo}/pulls/{number}/reviews"),
                 "review_comments": gh.pages(f"repos/{repo}/pulls/{number}/comments"),
                 "issue_comments": gh.pages(f"repos/{repo}/issues/{number}/comments"),

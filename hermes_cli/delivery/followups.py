@@ -17,8 +17,10 @@ _BADGE = re.compile(r"!\[(P[0-3]) Badge\]")
 _IMAGE = re.compile(r"!\[[^\]]*\]\([^)]*\)")
 _BOX = re.compile(r"^- \[[ xX]\] (P[23]) (.*) — (\S+):(\d+) \(from #(\d+)\)\s*$")
 _SIZES = (("S", 3), ("M", 8))
-THREADS = """query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){
-pullRequest(number:$number){reviewThreads(first:100){nodes{isResolved comments(first:1){nodes{databaseId}}}}}}}"""
+THREADS = """query($owner:String!,$name:String!,$number:Int!,$after:String){repository(owner:$owner,name:$name){
+pullRequest(number:$number){reviewThreads(first:100,after:$after){pageInfo{hasNextPage endCursor}
+nodes{isResolved comments(first:1){nodes{databaseId}}}}}}}"""
+THREAD_PAGES = 20
 
 
 def title_of(body: str) -> str:
@@ -91,10 +93,19 @@ def added_body(body: str, pr: int, boxes: list[str]) -> str:
 
 
 def _resolved(gh, repo: str, pr: int) -> set[int]:
+    """First-comment ids of the resolved review threads, every page (a busy pull request has more than 100)."""
     owner, name = repo.split("/")
-    threads = gh.graphql(THREADS, owner=owner, name=name, number=pr)["data"]["repository"]["pullRequest"]
-    return {c["databaseId"] for node in threads["reviewThreads"]["nodes"] if node["isResolved"]
-            for c in node["comments"]["nodes"]}
+    resolved, after = set(), None
+    for _ in range(THREAD_PAGES):
+        variables = {"owner": owner, "name": name, "number": pr, **({"after": after} if after else {})}
+        threads = gh.graphql(THREADS, **variables)["data"]["repository"]["pullRequest"]["reviewThreads"]
+        resolved |= {c["databaseId"] for node in threads["nodes"] if node["isResolved"]
+                     for c in node["comments"]["nodes"]}
+        page = threads.get("pageInfo") or {}
+        if not page.get("hasNextPage"):
+            break
+        after = page.get("endCursor")
+    return resolved
 
 
 LOCK = "work-followups"

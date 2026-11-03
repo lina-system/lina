@@ -376,6 +376,51 @@ def test_dev_state_finds_the_ci_run_past_the_first_page_of_other_workflows():
     assert dev_state(nothing, REPO, "dev", "CI") == (True, set())
 
 
+def test_dev_state_counts_a_red_run_being_rerun_as_red_not_an_older_green():
+    """Re-running a failed dev run puts it back to ``in_progress`` (``run_attempt`` 2): a read of completed runs
+    only skipped it and let the older green run decide. A first attempt still going is not waited on."""
+    from hermes_cli.delivery.github import dev_state
+    from tests.hermes_cli._work_fakes import FakeGh
+    green = {"id": 4, "name": "CI", "status": "completed", "conclusion": "success", "run_attempt": 1,
+             "created_at": "2026-11-03T08:00:00Z"}
+    rerun = {"id": 5, "name": "CI", "status": "in_progress", "conclusion": None, "run_attempt": 2,
+             "created_at": "2026-11-03T09:00:00Z"}
+    fresh = {"id": 6, "name": "CI", "status": "in_progress", "conclusion": None, "run_attempt": 1,
+             "created_at": "2026-11-03T10:00:00Z"}
+
+    def gh_with(rows):
+        return FakeGh({f"repos/{REPO}/actions/runs": lambda q: {"workflow_runs": [
+            r for r in rows if "status=completed" not in q or r["status"] == "completed"]}})
+    ok, red = dev_state(gh_with([rerun, green]), REPO, "dev", "CI")
+    assert not ok and red, red
+    assert dev_state(gh_with([fresh, green]), REPO, "dev", "CI") == (True, set())
+
+
+def test_merge_reads_every_page_of_the_head_statuses():
+    """A gate run posts three statuses each time it runs, so a busy head has more than 100: a context past the
+    first page (a required external one) must still be seen."""
+    from hermes_cli.delivery import merge
+    statuses = [{"id": 1000 - i, "context": "Codex review", "state": "success"} for i in range(120)] + [
+        {"id": 1, "context": "external CI", "state": "success"}]
+    gh, _lines = _github(snapshot(required=["Lint", "external CI"]), queue=False), []
+    gh.pages = lambda path: statuses if "/statuses" in path else list(gh.json(path) or [])
+    snap = merge.collect_pr(gh, REPO, 7)
+    assert any(s["context"] == "external CI" for s in snap["statuses"])
+    assert rules.required_checks(["external CI"], [], snap["statuses"]).code == rules.PASS
+
+
+def test_followups_read_every_page_of_review_threads():
+    """A finding resolved in a thread past the first 100 is resolved: it is not filed again."""
+    from hermes_cli.delivery import followups
+    from tests.hermes_cli._work_fakes import FakeGh
+    pages = {None: {"pageInfo": {"hasNextPage": True, "endCursor": "c1"},
+                    "nodes": [{"isResolved": False, "comments": {"nodes": [{"databaseId": i}]}} for i in range(100)]},
+             "c1": {"pageInfo": {"hasNextPage": False, "endCursor": None},
+                    "nodes": [{"isResolved": True, "comments": {"nodes": [{"databaseId": 501}]}}]}}
+    gh = FakeGh(graphql=lambda q, v: {"data": {"repository": {"pullRequest": {"reviewThreads": pages[v.get("after")]}}}})
+    assert 501 in followups._resolved(gh, REPO, 7)
+
+
 def test_a_pull_request_into_another_branch_is_refused_before_any_merge_or_issue_edit():
     gh, lines = _github(snapshot(base="main"), queue=False), []
     gh.routes[f"repos/{REPO}/rules/branches/main"] = []

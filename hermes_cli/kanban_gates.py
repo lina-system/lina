@@ -211,7 +211,9 @@ def _owner_approval(pr: dict, owner_login: str | None) -> tuple[int, str] | None
     if rules.DEV_RED_APPROVED not in labels:
         return None
     pr_repo = (pr.get("repository") or {}).get("nameWithOwner") or ""
-    events = gh_json("api", f"repos/{pr_repo}/issues/{pr['number']}/timeline?per_page=100")
+    # Every page, flattened (--paginate --slurp): the newest labeled event may sit past the first 100.
+    pages = gh_json("api", "--paginate", "--slurp", f"repos/{pr_repo}/issues/{pr['number']}/timeline?per_page=100")
+    events = [event for page in pages for event in page] if isinstance(pages, list) else []
     approved, why = rules.owner_approved(labels, events if isinstance(events, list) else [], owner_login)
     return (PASS if approved else FAIL), f"#{pr['number']} {why}"
 

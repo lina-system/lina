@@ -213,6 +213,28 @@ def test_serial_with_keeps_the_owner_when_two_repositories_share_a_short_name():
     assert picker._serial("Serial with: lina#4", "o/app", ["o/app", "o/lina"]) == [("o/lina", 4)]
 
 
+def test_a_job_naming_a_shared_short_name_holds_neither_repository():
+    """``lina#12`` in a job's text, with two configured repositories named ``lina``: the reference names neither
+    for sure, so it is not taken as the last one configured (that left the other one's #12 looking free)."""
+    assert picker._refs("working on lina#12", ["acme/lina", "lina-system/lina"]) == []
+    assert picker._refs("working on lina#12", ["lina-system/lina"]) == [("lina-system/lina", 12)]
+    assert picker._refs("acme/lina#12", ["acme/lina", "lina-system/lina"]) == [("acme/lina", 12)]
+
+
+def test_blocked_by_reads_every_page():
+    from tests.hermes_cli._work_fakes import FakeGh
+    gh = FakeGh({f"repos/{REPO}/issues": [{"number": 7, "title": "feat(ui): seven", "body": "Sprint: M0 S3\n",
+                                           "labels": [{"name": "omo"}],
+                                           "issue_dependencies_summary": {"total_blocked_by": 31}}],
+                 f"repos/{REPO}/pulls": [], f"repos/{REPO}/branches": [],
+                 f"repos/{REPO}/actions/runs": {"workflow_runs": []}})
+    blockers = [{"number": i, "state": "closed"} for i in range(1, 31)] + [{"number": 99, "state": "open"}]
+    real_pages = gh.pages
+    gh.pages = lambda path: blockers if path.endswith("/blocked_by") else real_pages(path)
+    repo = picker.collect_repo(gh, REPO, "dev", "CI")
+    assert {"repo": REPO, "n": 99, "state": "open"} in repo["blocked_by"][7]
+
+
 def _submit_lock_free(base: Path) -> bool:
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub_store import Store
