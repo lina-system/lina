@@ -104,14 +104,13 @@ def serve(worker_root: Path | None = None, *, once: bool = False) -> int:
     try:
         while True:
             serve_once(worker_root)
-            if settings.devices(device.base_of(worker_root)):
-                if writer is None and not once:  # the board lines (lina#151) on their own thread, off this loop
-                    from hermes_cli.lina_board_plain import start_writer
-                    writer = start_writer(worker_root, stop)
-                if time.monotonic() - last_tick >= HUB_TICK_S:
-                    from hermes_cli.worker import hub
-                    hub.tick(worker_root)
-                    last_tick = time.monotonic()
+            if writer is None and not once:  # the board lines (lina#151) on their own thread, off this loop; the
+                from hermes_cli.lina_board_plain import start_writer  # gateway starts one too, the plain lock
+                writer = start_writer(worker_root, stop)  # keeps one writing per host
+            if settings.devices(device.base_of(worker_root)) and time.monotonic() - last_tick >= HUB_TICK_S:
+                from hermes_cli.worker import hub
+                hub.tick(worker_root)
+                last_tick = time.monotonic()
             if once:
                 return 0
             time.sleep(2.0)

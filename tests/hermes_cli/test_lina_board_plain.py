@@ -239,6 +239,48 @@ def test_the_writer_goes_stopped_when_calls_fail_and_ok_after_a_success(work, fa
         "state": "stopped", "lastSuccessAt": NOW + 600, "stoppedSince": NOW + 600 + plain.STOP_AFTER_S}
 
 
+def test_the_worker_service_starts_the_writer_without_worker_devices(tmp_path, monkeypatch, model):
+    from hermes_cli.worker import serve, settings
+    env = WorkEnv(tmp_path / "plain", monkeypatch)  # no devices: config, so serve() runs no hub tick
+    card = _card(env)
+
+    class Stopped(BaseException):
+        pass
+
+    def stop_after_one_pass(_seconds):
+        raise Stopped
+    monkeypatch.setattr(serve.time, "sleep", stop_after_one_pass)
+    with pytest.raises(Stopped):
+        serve.serve(settings.root(env.root))
+    for thread in [t for t in threading.enumerate() if t.name == "lina-board-lines"]:
+        thread.join(30)  # serve() set its stop event on the way out: the pass ends the thread
+    assert _rows(env)[("card", card, "title")] == (GOOD["title"], None)
+
+
+def test_cards_of_every_live_board_get_lines_and_a_broken_board_is_skipped(work, model, caplog):
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kbc
+    from hermes_cli.lina_board_plain import write_board
+    first = _card(work)
+    kb.create_board("a-broken")  # listed before beta: a board that fails to read must not stop the next one
+    broken = kb.kanban_db_path(board="a-broken")
+    for extra in ("-wal", "-shm"):
+        broken.with_name(broken.name + extra).unlink(missing_ok=True)
+    broken.write_bytes(b"not a kanban database" * 64)
+    kb.create_board("beta")
+    conn = kbc.connect(board="beta")
+    try:
+        second = kb.create_task(conn, title="Router firmware check", goal_mode=True, assignee="beta")
+    finally:
+        conn.close()
+
+    write_board(work.root, NOW)
+
+    rows = _rows(work)
+    assert rows[("card", first, "title")] == rows[("card", second, "title")] == (GOOD["title"], None)
+    assert any("a-broken" in r.getMessage() for r in caplog.records if r.levelname == "WARNING")
+
+
 def test_a_hub_tick_returns_promptly_while_the_model_blocks(work, fakes, monkeypatch):
     from agent import auxiliary_client
     from hermes_cli.worker import settings

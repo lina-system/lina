@@ -327,14 +327,41 @@ def run_sources(root: Path, now: float, lives: dict[str, dict] | None = None) ->
 _ISSUE_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")
 
 
+def _boards(kanban_db) -> list[str]:
+    """The live board slugs, as the gateway's kanban watchers enumerate them (default board when listing fails)."""
+    try:
+        return [b.get("slug") or kanban_db.DEFAULT_BOARD for b in kanban_db.list_boards(include_archived=False)]
+    except (OSError, ValueError, sqlite3.Error):
+        log.warning("board lines: listing kanban boards failed; reading the default board only", exc_info=True)
+        return [kanban_db.DEFAULT_BOARD]
+
+
 def card_sources() -> list[Source]:
-    """Goal-mode kanban cards: title from the card title plus the issue it names, now from its latest comment,
-    result from its result (or its latest run's summary) once it is done."""
+    """Goal-mode kanban cards of every live board (the client API serves any board's cards, ``?board=``). A board
+    that cannot be read is logged and skipped; the others are still written. The cache key stays (kind, id, field):
+    card ids are ``t_`` + 4 random bytes, so two boards sharing one is a 1-in-2^32 chance per pair, and the work
+    API looks a card's lines up by its id alone."""
     from hermes_cli import kanban_db
-    from hermes_cli import kanban_db_connect as kbc
-    if not Path(kanban_db.kanban_db_path()).is_file():
-        return []
-    conn = kbc.connect()
+    out, seen = [], set()
+    for slug in _boards(kanban_db):
+        path = Path(kanban_db.kanban_db_path(board=slug))
+        if not path.is_file() or path.resolve() in seen:  # HERMES_KANBAN_DB pins every board to one file
+            continue
+        seen.add(path.resolve())
+        try:
+            out += _board_cards(kanban_db, path)
+        except (sqlite3.Error, OSError, ValueError):
+            log.warning("board lines: kanban board %s could not be read; skipped this pass", slug, exc_info=True)
+    return out
+
+
+def _board_cards(kanban_db, path: Path) -> list[Source]:
+    """One board's goal-mode cards over a read-only connection (a pass never initializes or migrates a board):
+    title from the card title plus the issue it names, now from its latest comment, result from its result (or its
+    latest run's summary) once it is done."""
+    conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
+    conn.row_factory = sqlite3.Row
+    conn.text_factory = kanban_db._lossy_text
     try:
         out = []
         for (task_id,) in conn.execute("SELECT id FROM tasks WHERE goal_mode = 1 AND status != 'archived'").fetchall():
@@ -370,14 +397,20 @@ def _pass(worker_root: Path) -> None:
             log.exception("board lines writer failed")
 
 
-def start_writer(worker_root: Path, stop: threading.Event) -> threading.Thread:
-    """The writer's own daemon thread: a pass now, then one every EVERY_S until ``stop`` is set. It runs in a copy
-    of the caller's context (profile scope), like the cron worktree prune and the curator's model pass."""
+def writer_thread(worker_root: Path, stop: threading.Event) -> threading.Thread:
+    """The writer's own daemon thread, not started: a pass now, then one every EVERY_S until ``stop`` is set. It
+    runs in a copy of the caller's context (profile scope), like the cron worktree prune and the curator's model
+    pass. Every process that starts one (the gateway, the worker service) shares the ``plain`` lock, so on one host
+    a second writer's passes are no-ops, never a second model caller."""
     def loop() -> None:
         while True:
             _pass(worker_root)
             if stop.wait(EVERY_S):
                 return
-    thread = threading.Thread(target=copy_context().run, args=(loop,), name="lina-board-lines", daemon=True)
+    return threading.Thread(target=copy_context().run, args=(loop,), name="lina-board-lines", daemon=True)
+
+
+def start_writer(worker_root: Path, stop: threading.Event) -> threading.Thread:
+    thread = writer_thread(worker_root, stop)
     thread.start()
     return thread

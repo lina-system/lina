@@ -460,7 +460,22 @@ def _start_gateway_start_cron_and_housekeeping(runner):
                 "cron_provider": cron_provider, "runner": runner, "cron_thread": cron_thread},
         daemon=True, name="gateway-housekeeping")
     process_ownership.start_writer(housekeeping_thread)
+    _start_board_lines_writer(cron_stop)
     return cron_stop, cron_provider, cron_thread, housekeeping_thread
+
+
+def _start_board_lines_writer(stop: threading.Event) -> threading.Thread:
+    """The LINA board's checked card lines (lina#151) on their own daemon thread, off the event loop: every
+    install runs a gateway, kanban work cards need no worker device, and the thread stops with ``cron_stop``.
+    The root is the host's LINA root, so a multiplexed gateway starts one writer for all its profiles; the
+    worker service may start another, and the shared ``plain`` lock turns the second one's passes into no-ops."""
+    from gateway.runtime_ownership import process_ownership
+    from hermes_cli.lina_board_plain import writer_thread
+    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.worker import settings
+    thread = writer_thread(settings.root(lina_root()), stop)
+    process_ownership.start_writer(thread)
+    return thread
 
 
 async def _start_gateway_shutdown_tail(
