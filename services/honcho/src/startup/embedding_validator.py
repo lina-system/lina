@@ -29,13 +29,14 @@ from tenacity import (
 
 from src.config import AppSettings, settings
 from src.exceptions import HonchoException
-from src.models import Collection, Workspace
+from src.models import Collection, VecEmbedding, Workspace
 from src.vector_store import VectorStore
 
 logger = logging.getLogger(__name__)
 
-# Embedding tables that must exist with matching dim.
-_EMBEDDING_TABLES: tuple[str, ...] = ("documents", "message_embeddings")
+# Embedding tables that must exist with matching dim. LINA keeps every vector
+# in one table, vec.embeddings (models.VecEmbedding).
+_EMBEDDING_TABLES: tuple[str, ...] = (VecEmbedding.__tablename__,)
 
 # Retry budget for transient introspection failures. Total wall time is
 # bounded so a sick DB does not hang readiness; fail-closed after exhaustion.
@@ -71,7 +72,7 @@ async def validate_embedding_schema(
     """
     s = app_settings if app_settings is not None else settings
     target_dim = s.EMBEDDING.VECTOR_DIMENSIONS
-    schema = s.DB.SCHEMA
+    schema = VecEmbedding.__table__.schema or s.DB.SCHEMA
 
     dims = await _introspect_pgvector_dims_with_retry(engine, schema)
     _assert_pgvector_dims_match(dims, schema=schema, target_dim=target_dim)

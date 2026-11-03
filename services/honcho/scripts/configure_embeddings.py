@@ -43,12 +43,13 @@ from sqlalchemy.ext.asyncio import AsyncConnection, AsyncEngine  # noqa: E402
 
 from src.config import settings  # noqa: E402
 from src.db import engine  # noqa: E402
-from src.models import Collection, Workspace  # noqa: E402
+from src.models import Collection, VecEmbedding, Workspace  # noqa: E402
 from src.vector_store import VectorStore  # noqa: E402
 
 logger = logging.getLogger(__name__)
 
-_EMBEDDING_TABLES: tuple[str, ...] = ("documents", "message_embeddings")
+# LINA keeps every vector in one table, vec.embeddings (models.VecEmbedding).
+_EMBEDDING_TABLES: tuple[str, ...] = (VecEmbedding.__tablename__,)
 
 # Defense-in-depth for the dynamic SQL paths in this script. The values we
 # interpolate (schema from settings, index names from pg_indexes, table
@@ -420,8 +421,8 @@ async def _async_main(args: argparse.Namespace) -> int:
 
 async def _run_pipeline(args: argparse.Namespace) -> int:
     target_dim = settings.EMBEDDING.VECTOR_DIMENSIONS
-    schema = settings.DB.SCHEMA
-    _validate_identifier(schema, kind="DB.SCHEMA")
+    schema = VecEmbedding.__table__.schema or settings.DB.SCHEMA
+    _validate_identifier(schema, kind="vector schema")
 
     if args.report:
         return await _emit_report(engine, target_dim, is_report_mode=True)
@@ -429,8 +430,7 @@ async def _run_pipeline(args: argparse.Namespace) -> int:
     plan = await _build_pgvector_plan(engine, target_dim, schema)
     if not plan.needs_alter:
         print(
-            f"pgvector: {schema}.documents.embedding and"
-            + f" {schema}.message_embeddings.embedding already at dim {target_dim},"
+            f"pgvector: {schema}.embeddings.embedding already at dim {target_dim},"
             + " skipping ALTER"
         )
         return await _emit_report(engine, target_dim, is_report_mode=False)
@@ -441,13 +441,12 @@ async def _run_pipeline(args: argparse.Namespace) -> int:
     print(f"target dim: {target_dim}")
     print(f"current:    {current_summary}")
     print("planned operations (single transaction):")
-    print(f"  - LOCK TABLE {schema}.documents IN ACCESS EXCLUSIVE MODE")
-    print(f"  - LOCK TABLE {schema}.message_embeddings IN ACCESS EXCLUSIVE MODE")
+    print(f"  - LOCK TABLE {schema}.embeddings IN ACCESS EXCLUSIVE MODE")
     print("  - refuse if any non-null embeddings exist")
     print("  - DROP existing HNSW indices on the embedding columns")
     print(
         f"  - ALTER COLUMN embedding TYPE vector({target_dim}) USING NULL"
-        + " on both tables"
+        + " on the table"
     )
     print("  - CREATE HNSW indices from snapshotted definitions")
 
