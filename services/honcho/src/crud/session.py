@@ -15,7 +15,6 @@ from sqlalchemy import (
     delete,
     exists,
     func,
-    insert,
     select,
     update,
 )
@@ -921,8 +920,7 @@ async def clone_session(
             for message in messages_to_clone
         ]
 
-        insert_stmt = insert(models.Message).returning(models.Message)
-        await db.execute(insert_stmt, new_messages)
+        db.add_all(models.Message(**message) for message in new_messages)
 
     # Clone peers from original session to new session (including their configurations)
     stmt = select(models.SessionPeer).where(

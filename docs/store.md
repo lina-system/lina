@@ -39,13 +39,20 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | --- | --- | --- |
 | `lina` | `lina store` (over the container's local socket) | everything (cluster superuser) |
 | `lina_app` | agents | read and write the tables in `memory`, `ctx` and `vec`; only the rows of its agent |
-| `honcho` | the Honcho server | own schema `ltm` and migrate it |
+| `honcho` | the Honcho server | own schema `ltm` and migrate it; SELECT and INSERT on `memory.messages`, REFERENCES on its `message_id`, and USAGE on schema `memory` |
 
 Every table in `memory`, `ctx`, `ltm` or `vec` that has an `agent_id` column gets row-level
 security when it is created (or gains the column): an event trigger enables and forces it and adds
 the policy `lina_agent_rows`. A session says which agent it acts for with
 `SET lina.agent_id = '<agent>'`; it then sees and writes only that agent's rows, and with no agent
 set it sees none. The superuser `lina` is not limited by the policy.
+
+The `honcho` login is a trusted cross-agent server, not an agent principal. Migration
+`0002_honcho_messages.sql` adds role-specific SELECT and INSERT policies on `memory.messages`:
+it can read across agents and insert rows with a non-null `agent_id`, including from its
+AUTOCOMMIT read sessions. It cannot UPDATE, DELETE or TRUNCATE shared text and has neither
+table ownership nor BYPASSRLS. The `lina_app` policy is unchanged. Keep Honcho's database
+credentials server-side; Honcho's API authorization still governs workspace access.
 
 ## Migrations
 
@@ -57,8 +64,8 @@ migration is a new file with the next number; a file that has run is never edite
 
 ## Messages (`memory.messages`)
 
-Every message is one row in `memory.messages`, the one copy every engine reads. `hermes_state_store.py` is the
-only code that runs SQL against it. Its connections log in as `lina_app` and set `lina.agent_id` to the
+Every message is one row in `memory.messages`, the one copy every engine reads. `hermes_state_store.py`
+and Honcho's `src/message_store.py` write it. Hermes connections log in as `lina_app` and set `lina.agent_id` to the
 profile, so row-level security keeps each profile to its rows. Agents find the store through
 `LINA_STORE_DSN` when it is set (a secret: it carries the password), else through `store/store.env`
 (`127.0.0.1`, `LINA_STORE_PORT`, user `lina_app`).
@@ -86,6 +93,32 @@ text (multimodal parts, NUL or lone surrogates; base64 where JSON cannot carry i
 `platform_message_id`, `finish_reason`, `token_count`, `effect_disposition`, `observed`, `_compressed_summary`,
 `absorbed_message_uids`, `tool_call_uids`, `tool_call_uid`, and `payload_sha256` (the version digest).
 None of them is filtered or sorted on in Postgres, so none became a column.
+
+### Honcho messages
+
+Honcho stores its per-message fields in `ltm.message_meta`. Its `message_id` is both the
+primary key and a foreign key to `memory.messages(message_id) ON DELETE CASCADE`;
+Honcho's integer `Message.id` is that same value. Public nanoids remain unique, and queue,
+embedding and conclusion citation references resolve against the metadata row. Reads obtain
+content from the shared table; a metadata flush inserts or resolves the immutable shared row
+on the same connection and transaction. Honcho cannot rewrite that text.
+
+For Honcho-origin messages, `uid` is `honcho:<workspace>:<public_id>`, `source` defaults to
+`agent`, and `agent_id` defaults to the workspace name. Trusted internal ingestion may supply
+`uid`, `source` and `agent_id` in `internal_metadata`; ordinary API metadata does not grant
+access to another agent's identity. Existing UIDs must match both content digest and agent.
+The one-to-one metadata primary key means a cloned Honcho placement gets a new shared row
+and UID, rather than reusing the original placement's integer identity.
+
+Revision `l13_message_split` migrates existing Honcho text after the store migrations. It
+matches existing shared rows by UID or digest/session/time within the agent boundary,
+preserves public IDs, and remaps integer references. Embedding storage is unchanged here;
+issue #19 moves embedding tables to `vec`. The upgrade's pre-split physical backup and
+pinned Honcho image remain the restoration path described below.
+
+Deleting shared text cascades to its Honcho metadata and dependent references. Deleting
+Honcho metadata does not delete shared text. Direct `document_sources` edges for the deleted
+public message ID are detached; document-to-document reasoning edges are not reinterpreted.
 
 A row is never changed after it is written. Hermes writes one message several times: compaction keeps the
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the

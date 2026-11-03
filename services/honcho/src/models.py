@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 from nanoid import generate as generate_nanoid
 from pgvector.sqlalchemy import Vector
 from sqlalchemy import (
+    DDL,
     BigInteger,
     Boolean,
     CheckConstraint,
@@ -19,13 +20,22 @@ from sqlalchemy import (
     Integer,
     Table,
     UniqueConstraint,
+    event,
+    select,
     text,
 )
 from sqlalchemy.dialects.postgresql import JSONB, TEXT
-from sqlalchemy.orm import Mapped, MappedColumn, mapped_column, relationship
+from sqlalchemy.orm import (
+    Mapped,
+    MappedColumn,
+    column_property,
+    mapped_column,
+    relationship,
+)
 from sqlalchemy.sql import func
 
 from src.config import settings
+from src.message_store import memory_messages, persist_message_text, reject_text_update
 from src.utils.types import DocumentLevel, TaskType, VectorSyncState
 
 from .db import Base
@@ -228,12 +238,16 @@ class Session(Base):
 
 @final
 class Message(Base):
-    __tablename__: str = "messages"
+    __tablename__: str = "message_meta"
     deleted_at: Mapped[datetime.datetime | None] = mapped_column(
         DateTime(timezone=True), nullable=True
     )
     id: Mapped[int] = mapped_column(
-        BigInteger, Identity(), primary_key=True, autoincrement=True
+        "message_id",
+        BigInteger,
+        ForeignKey("memory.messages.message_id", ondelete="CASCADE"),
+        primary_key=True,
+        autoincrement=False,
     )
     public_id: Mapped[str] = mapped_column(
         TEXT,
@@ -243,7 +257,13 @@ class Message(Base):
     # NOTE: Messages in Honcho 2.0 could historically be stored outside of a session.
     # We have since assigned all of these messages to a default session.
     session_name: Mapped[str] = mapped_column(TEXT, nullable=False)
-    content: Mapped[str] = mapped_column(TEXT)
+    content: Mapped[str] = column_property(
+        select(memory_messages.c.content)
+        .where(memory_messages.c.message_id == id)
+        .correlate_except(memory_messages)
+        .scalar_subquery(),
+        expire_on_flush=False,
+    )
     h_metadata: Mapped[dict[str, Any]] = mapped_column(
         "metadata", JSONB, default=dict, server_default=text("'{}'::jsonb")
     )
@@ -265,7 +285,6 @@ class Message(Base):
     __table_args__ = (
         CheckConstraint("length(public_id) = 21", name="public_id_length"),
         CheckConstraint("public_id ~ '^[A-Za-z0-9_-]+$'", name="public_id_format"),
-        CheckConstraint("length(content) <= 65535", name="content_length"),
         # Composite foreign key constraint for sessions
         ForeignKeyConstraint(
             ["session_name", "workspace_name"],
@@ -279,35 +298,39 @@ class Message(Base):
         Index(
             "ix_messages_session_lookup",
             "session_name",
-            "id",
-            postgresql_include=["id", "created_at"],
+            "message_id",
+            postgresql_include=["message_id", "created_at"],
         ),
         UniqueConstraint(
             "workspace_name",
             "session_name",
             "seq_in_session",
         ),
-        # Full text search index on content column
-        Index(
-            "ix_messages_content_gin",
-            text("to_tsvector('english', content)"),
-            postgresql_using="gin",
-        ),
-        # Trigram index so content ILIKE '%q%' in message search can use an index.
-        # Declared unconditionally, but migration 3e7a1c9d5b20 skips it when
-        # pg_trgm is missing, so autogenerate against such a database will keep
-        # proposing it; drop that op from the generated revision.
-        Index(
-            "ix_messages_content_trgm",
-            "content",
-            postgresql_using="gin",
-            postgresql_ops={"content": "gin_trgm_ops"},
-        ),
     )
 
     @override
     def __repr__(self) -> str:
         return f"Message(id={self.id}, session_name={self.session_name}, peer_name={self.peer_name}, content={self.content})"
+
+
+event.listen(Message, "before_insert", persist_message_text)
+event.listen(Message, "before_update", reject_text_update)
+event.listen(
+    Message.__table__,
+    "after_create",
+    DDL("""
+        CREATE OR REPLACE FUNCTION %(schema)s.detach_message_sources()
+        RETURNS trigger LANGUAGE plpgsql SECURITY DEFINER
+        SET search_path = pg_catalog AS $$ BEGIN
+            DELETE FROM %(schema)s.document_sources
+            WHERE source_id = OLD.public_id
+              AND workspace_name = OLD.workspace_name;
+            RETURN OLD;
+        END $$;
+        CREATE TRIGGER detach_message_sources BEFORE DELETE ON %(fullname)s
+        FOR EACH ROW EXECUTE FUNCTION %(schema)s.detach_message_sources();
+    """),
+)
 
 
 @final
@@ -320,7 +343,9 @@ class MessageEmbedding(Base):
     content: Mapped[str] = mapped_column(TEXT)
     embedding: MappedColumn[Any] = mapped_column(Vector(_VECTOR_DIM), nullable=True)
     message_id: Mapped[str] = mapped_column(
-        ForeignKey("messages.public_id", ondelete="CASCADE"), nullable=False, index=True
+        ForeignKey("message_meta.public_id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
     )
     workspace_name: Mapped[str] = mapped_column(
         ForeignKey("workspaces.name"), nullable=False, index=True
@@ -639,7 +664,7 @@ class ConclusionSourceMessage(Base):
         ForeignKey("documents.id", ondelete="CASCADE"), primary_key=True
     )
     message_id: Mapped[str] = mapped_column(
-        ForeignKey("messages.public_id", ondelete="CASCADE"), primary_key=True
+        ForeignKey("message_meta.public_id", ondelete="CASCADE"), primary_key=True
     )
     position: Mapped[int] = mapped_column(
         Integer, nullable=False, server_default=text("0")
@@ -681,7 +706,9 @@ class QueueItem(Base):
         ForeignKey("workspaces.name"), nullable=True, index=True
     )
     message_id: Mapped[int | None] = mapped_column(
-        BigInteger, ForeignKey("messages.id"), nullable=True
+        BigInteger,
+        ForeignKey("message_meta.message_id", ondelete="CASCADE"),
+        nullable=True,
     )
 
     __table_args__ = (

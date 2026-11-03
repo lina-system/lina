@@ -23,3 +23,4 @@ copyright and license headers of upstream files are never changed.
 | --- | --- | --- |
 | `README.md` | Modification notice at the top (AGPL-3.0 section 5(a)) | 2026-11-02 |
 | `scripts/release_manifest.py` | Read `<ref>:./<path>` (relative to the project directory, `ls-tree --full-tree`) instead of `<ref>:<path>` (relative to the repository root), so `test_heads_match_alembic` passes when Honcho is a subdirectory | 2026-11-02 |
+| `src/message_store.py`, `src/models.py`, `src/crud/session.py`, `migrations/versions/l13_message_split.py`, `tests/` | Split immutable text into shared `memory.messages` and metadata into `ltm.message_meta`; retain public IDs, remap integer references, write atomically, detach deleted message source edges, and cover migration, API, rollback and cascade behavior (lina#13) | 2026-11-03 |
