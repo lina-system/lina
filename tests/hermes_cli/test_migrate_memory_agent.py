@@ -93,8 +93,11 @@ def test_rerun_matches_all_placements_without_adding_text(tmp_path, memory_store
 
 
 @pytest.mark.parametrize("damage", ["placement", "text", "extra", "extra_missing_text", "api"])
-def test_verification_detects_missing_extra_and_changed_destination(tmp_path, memory_store_sql, damage):
+@pytest.mark.parametrize("report_limit", [4096, 2])
+def test_verification_detects_missing_extra_and_changed_destination(
+        tmp_path, memory_store_sql, damage, report_limit, monkeypatch):
     # Given a completed migration damaged after its cache has been filled.
+    monkeypatch.setattr("hermes_cli.migrate_memory_agent_stream.SMALL_REPORT_ROWS", report_limit)
     source, destination = _snapshot(tmp_path)
     migrate_agent(source, destination, "migrated")
     with closing(sqlite3.connect(destination)) as conn:
@@ -203,3 +206,40 @@ def test_legacy_lcm_conversation_alias_resolves_without_migrating_nodes(tmp_path
                            "('lcm_conversation','migrated:legacy-conversation'), "
                            "('hermes_session','migrated:root'))")
     assert len(ids) == 3 and len(set(ids)) == 1
+
+
+def test_migration_bounds_live_writer_and_verification_batches(tmp_path, memory_store_sql, monkeypatch):
+    # Given more unique payloads than fit in a migration batch, including later UID variants.
+    source, destination = _snapshot(tmp_path)
+    with closing(sqlite3.connect(source)) as conn:
+        conn.executemany("INSERT INTO messages (id, session_id, role, timestamp, message_uid, content) "
+                         "VALUES (?, 'branch', 'user', 1, ?, ?)",
+                         ((i, f"scale-{i}", f"payload-{i}" * 100) for i in range(5, 605)))
+        conn.execute("UPDATE messages SET _compressed_summary=0, active=1, compacted=0 WHERE id>=5")
+        conn.commit()
+    original_put = MessageStore.put_text
+    original_export = MessageStore.export_texts
+    staged_sizes, export_sizes = [], []
+
+    def bounded_put(self, **kwargs):
+        result = original_put(self, **kwargs)
+        staged_sizes.append(len(self._staged))
+        assert len(self._staged) <= 256, "migration retained more than one writer batch"
+        return result
+
+    def bounded_export(self, uids):
+        batch = list(uids)
+        export_sizes.append(len(batch))
+        assert len(batch) <= 512, "migration exported an unbounded UID collection"
+        yield from original_export(self, batch)
+
+    monkeypatch.setattr(MessageStore, "put_text", bounded_put)
+    monkeypatch.setattr(MessageStore, "export_texts", bounded_export)
+    # When the real writer imports and verifies all placements, then verifies a rerun.
+    report = migrate_agent(source, destination, "migrated")
+    repeated = migrate_agent(source, destination, "migrated")
+    # Then transactions and exports remain bounded without losing payloads or duplicating rows.
+    assert report.ok and report.inserted == 604
+    assert repeated.ok and repeated.matched == 604
+    assert max(staged_sizes) <= 256 and max(export_sizes) <= 512
+    assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(603,)]
