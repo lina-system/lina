@@ -457,6 +457,20 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_meta (
     PRIMARY KEY (agent_id, embedded_id, embedded_kind, identity_hash)
 );
 
+CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_backfill_inflight (
+    agent_id text NOT NULL DEFAULT public.lina_current_agent(),
+    embedded_id text,
+    identity_hash text,
+    lease_id text,
+    generation bigint,
+    claimed_at double precision,
+    state text NOT NULL DEFAULT 'claimed' CHECK(state IN ('claimed', 'dispatched', 'uncertain')),
+    request_id text,
+    updated_at double precision,
+    last_error text,
+    PRIMARY KEY (agent_id, embedded_id, identity_hash)
+);
+
 -- lcm_embedding_vectors is a view over vec.embeddings (0008).
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_embedding_binary (
@@ -529,13 +543,7 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_chunk_meta (
     PRIMARY KEY (agent_id, chunk_id, identity_hash)
 );
 
-CREATE TABLE IF NOT EXISTS ctx.lcm_chunk_vectors (
-    agent_id text NOT NULL DEFAULT public.lina_current_agent(),
-    chunk_id text,
-    identity_hash text,
-    vec bytea NOT NULL,
-    PRIMARY KEY (agent_id, chunk_id, identity_hash)
-);
+-- lcm_chunk_vectors is a view over vec.chunks and vec.embeddings (0008).
 
 CREATE TABLE IF NOT EXISTS ctx.lcm_chunk_binary (
     agent_id text NOT NULL DEFAULT public.lina_current_agent(),

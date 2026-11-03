@@ -484,7 +484,7 @@ def render(template: Template, args: Any) -> tuple[str, list[Any]]:
     return "".join(sql), params
 
 
-_VECTOR_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+lcm_embedding_vectors\b", re.IGNORECASE)
+_VECTOR_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(?:lcm_embedding_vectors|lcm_chunk_vectors)\b", re.IGNORECASE)
 
 
 def _vector_text(value: Any) -> Any:
@@ -778,7 +778,8 @@ class PgConnection:
         self.database = database
         self.agent_id = agent_id
         try:
-            self._pg = psycopg.connect(dsn or resolve_dsn(), autocommit=True)
+            # Client-side binding, as SQLite binds: a parameter needs no type of its own (`? IS NULL OR x = ?`).
+            self._pg = psycopg.connect(dsn or resolve_dsn(), autocommit=True, cursor_factory=psycopg.ClientCursor)
         except psycopg.OperationalError as exc:
             raise StoreUnavailableError(f"cannot reach the memory store: {exc}".strip()) from exc
         # lock_timeout stands in for SQLite's busy timeout: a writer waiting on another connection gives up with
@@ -866,6 +867,13 @@ class PgConnection:
 
     def set_trace_callback(self, callback) -> None:
         self._trace = callback
+
+    def setlimit(self, category: int, limit: int) -> int:
+        """SQLite's per-connection limits have no store counterpart; the old value is reported as unlimited."""
+        return 2**31 - 1
+
+    def getlimit(self, category: int) -> int:
+        return 2**31 - 1
 
     def interrupt(self) -> None:
         self._pg.cancel_safe()
@@ -1030,28 +1038,54 @@ class PgConnection:
         cur._set_result(None, [], len(stored), stored[-1] if stored else None)
 
     def _message_content_update(self, cur: PgCursor, template: Template, params: Any) -> None:
-        m = re.match(r"\s*UPDATE\s+messages\s+SET\s+(.*?)\s+WHERE\s+store_id\s*=\s*\?\s*;?\s*$",
-                     template.parts[0], re.IGNORECASE | re.DOTALL)
+        m = re.match(r"\s*UPDATE\s+messages\s+SET\s+(.*?)\s+WHERE\s+(.*?);?\s*$", template.parts[0],
+                     re.IGNORECASE | re.DOTALL)
         if not m:
-            raise sqlite3.NotSupportedError("a message's text changes only by store_id on the memory store")
-        sets = [s.split("=")[0].strip() for s in m.group(1).split(",")]
-        values = dict(zip(sets, params[:-1]))
-        store_id = params[-1]
-        current = self.execute("SELECT session_id, role, tool_call_id, tool_calls, tool_name FROM messages "
-                               "WHERE store_id = ?", (store_id,)).fetchone()
-        if current is None:
-            cur._set_result(None, [], 0, None)
-            return
-        uid, digest = self._text.resolve(message_uid=None, session_id=current[0], role=current[1],
-                                         content=values.pop("content"), tool_call_id=current[2],
-                                         tool_calls=current[3], tool_name=current[4])
-        values["text_uid"], values["content_sha256"] = uid, digest
-        names = list(values)
-        if self.isolation_level is not None:
-            self._begin()
-        self._statement(cur, f"UPDATE ctx.lcm_messages SET {', '.join(f'{n} = %s' for n in names)} "
-                             "WHERE store_id = %s", [_adapt(values[n]) for n in names] + [store_id], None)
+            raise sqlite3.NotSupportedError("an UPDATE of a message's text needs a WHERE clause on the memory store")
+        assignments = _split_top_level(m.group(1))
+        set_params = sum(_mask(a)[2].__len__() for a in assignments)
+        params = list(params or ())
+        targets = [row[0] for row in self.execute(f"SELECT store_id FROM messages WHERE {m.group(2)}",
+                                                  params[set_params:]).fetchall()]
+        changed = 0
+        for store_id in targets:
+            current = self.execute("SELECT session_id, role, tool_call_id, tool_calls, tool_name, content FROM messages "
+                                   "WHERE store_id = ?", (store_id,)).fetchone()
+            values, pos = {}, 0
+            for assignment in assignments:
+                name, expr = (x.strip() for x in assignment.split("=", 1))
+                count = len(_mask(expr)[2])
+                values[name] = (self.execute(f"SELECT {expr}", params[pos:pos + count]).fetchone()[0]
+                                if expr != "?" else params[pos])
+                pos += count
+            content = values.pop("content")
+            uid, digest = self._text.resolve(message_uid=None, session_id=current[0], role=current[1], content=content,
+                                             tool_call_id=current[2], tool_calls=current[3], tool_name=current[4])
+            values["text_uid"], values["content_sha256"] = uid, digest
+            names = list(values)
+            if self.isolation_level is not None:
+                self._begin()
+            self._statement(cur, f"UPDATE ctx.lcm_messages SET {', '.join(f'{n} = %s' for n in names)} "
+                                 "WHERE store_id = %s", [_adapt(values[n]) for n in names] + [store_id], None)
+            changed += 1
+        cur._set_result(None, [], changed, None)
 
+
+def _split_top_level(text: str) -> list[str]:
+    """*text* split at the commas outside parentheses and string literals."""
+    masked, literals, slots = _mask(text)
+    parts, depth, start = [], 0, 0
+    for i, ch in enumerate(masked):
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if ch == "," and depth == 0:
+            parts.append(masked[start:i])
+            start = i + 1
+    parts.append(masked[start:])
+
+    def restore(piece: str) -> str:
+        piece = re.sub(r"\x00(\d+)\x00", lambda m: literals[int(m.group(1))].replace("%%", "%"), piece)
+        return re.sub(r"\x01(\d+)\x01", lambda m: slots[int(m.group(1))], piece).strip()
+    return [restore(p) for p in parts]
 
 _KINDS: dict[str, Callable[..., None]] = {
     "skip": PgConnection._skip,

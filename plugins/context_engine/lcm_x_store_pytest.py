@@ -12,7 +12,9 @@ from __future__ import annotations
 import hashlib
 import importlib.util
 import os
+import sqlite3
 import sys
+from urllib.parse import unquote, urlsplit
 from pathlib import Path
 
 import pytest
@@ -44,6 +46,18 @@ def _lcm_x_on_store(monkeypatch):
     monkeypatch.setenv("LINA_STORE_DSN", dsn)
     monkeypatch.setattr(hermes_state_store, "resolve_dsn", lambda: dsn)
     lcm_x_store.route_every_database(_agent_for)
+    original_connect = sqlite3.connect
+
+    def connect(database, *args, **kwargs):
+        # A test that opens its database file directly to look inside reads the store instead.
+        path = str(database)
+        if kwargs.get("uri") and path.startswith("file:"):
+            path = unquote(urlsplit(path).path)
+        backend = lcm_x_store.backend_for(path) if not args else None
+        if backend is not None:
+            return backend(timeout=kwargs.get("timeout", 5.0), isolation_level=kwargs.get("isolation_level", ""))
+        return original_connect(database, *args, **kwargs)
+    monkeypatch.setattr(sqlite3, "connect", connect)
     yield
     lcm_x_store.route_every_database(None)
     hermes_state_store.TEXT_CACHE.clear()

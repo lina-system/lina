@@ -131,6 +131,36 @@ def test_summary_vectors_live_in_vec_embeddings(routed, memory_store_sql):
         dag.close()
 
 
+def test_chunk_vectors_live_in_vec_chunks_and_embeddings(routed, memory_store_sql):
+    from array import array
+    db = routed("chunks")
+    store, dag = _stores(db)
+    conn = lcm_x_store.backend_for(db)()
+    try:
+        [store_id] = store.append_batch("s1", [{"role": "user", "content": "첫 문장. 두 번째 문장."}])
+        conn.execute("INSERT INTO lcm_embedding_profile(identity_hash, provider, model_name, dim) VALUES (?, ?, ?, ?)",
+                     ("h1", "openai", "qwen3-embedding-8b", 1024))
+        blob = array("f", [0.5] * 1024).tobytes()
+        conn.execute("INSERT INTO lcm_chunk_vectors(chunk_id, identity_hash, vec) VALUES(?, ?, ?)",
+                     (f"{store_id}:1", "h1", blob))
+        conn.execute("INSERT INTO lcm_chunk_meta(chunk_id, identity_hash, store_id, chunk_index, char_start, char_end, "
+                     "token_estimate, embedded_at, archived) VALUES (?, ?, ?, ?, ?, ?, ?, ?, 0)",
+                     (f"{store_id}:1", "h1", store_id, 1, 6, 14, 3, "now"))
+        conn.commit()
+        [(message_id,)] = memory_store_sql("SELECT message_id FROM memory.messages WHERE agent_id = 'chunks'")
+        assert memory_store_sql("SELECT source, message_ids, text FROM vec.chunks") == [
+            ("lcm-x:1", [message_id], "두 번째 문장.")]
+        assert memory_store_sql("SELECT kind, model FROM vec.embeddings") == [("chunk", "qwen3-embedding-8b")]
+        assert conn.execute("SELECT chunk_id, vec FROM lcm_chunk_vectors").fetchall() == [(f"{store_id}:1", blob)]
+        conn.execute("DELETE FROM lcm_chunk_vectors WHERE chunk_id = ? AND identity_hash = ?", (f"{store_id}:1", "h1"))
+        conn.commit()
+        assert memory_store_sql("SELECT count(*) FROM vec.embeddings") == [(0,)]
+    finally:
+        conn.close()
+        store.close()
+        dag.close()
+
+
 def test_each_profile_sees_only_its_own_rows(routed):
     first, second = routed("alpha"), routed("beta")
     store_a, dag_a = _stores(first)

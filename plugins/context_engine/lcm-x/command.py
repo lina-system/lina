@@ -19,7 +19,7 @@ from typing import Any
 import uuid
 
 from . import config as config_choices
-from .sqlite_session import connect_database
+from .sqlite_session import connect_database, is_store_connection
 from .ingest_policy import embedding_prefix_suffix, split_prefix_revision
 from .config import effective_embedding_model, embedding_provider_id, lcm_env_get
 from .command_auth import CommandInvocation, Decision, authorize
@@ -177,6 +177,8 @@ def _embedding_backfill_batch_size(max_batch_items: int | None = None) -> int:
 
 
 def _ensure_inflight_table(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     expected_columns = (
         ("embedded_id", "TEXT", 0, None, 1),
         ("identity_hash", "TEXT", 0, None, 2),
