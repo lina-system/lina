@@ -1190,6 +1190,13 @@ SELECT p.store_id,
 FROM ctx.lcm_messages AS p
 JOIN memory.messages AS m ON m.uid = p.text_uid;
 
+-- PRAGMA data_version on the store: one count per writing commit of the agent (lcm_x_store.py discounts the
+-- connection's own commits, as SQLite's value changes only for other connections' writes).
+CREATE TABLE IF NOT EXISTS ctx.lcm_data_version (
+    agent_id text NOT NULL DEFAULT public.lina_current_agent() PRIMARY KEY,
+    version bigint NOT NULL DEFAULT 0
+);
+
 -- The FTS5 tables LCM queries, as views over the Postgres indexes: memory.messages.tsv and its pg_trgm index
 -- serve messages_fts; the expression indexes below serve nodes_fts and lcm_trajectory_states_fts. Each tokenizes
 -- with ctx.lcm_unicode61, as FTS5 does, so the indexes are expressions over it.
@@ -1347,7 +1354,7 @@ LEFT JOIN pg_class AS t ON t.oid = i.indrelid
 WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v', 'i', 'p') AND c.relname <> 'sqlite_master'
   -- the store's own tables behind LCM-X's (message placement, id allocation, vector keys and pending chunk vectors)
   -- are not LCM-X's
-  AND c.relname NOT IN ('lcm_messages', 'lcm_id_sequences', 'lcm_summary_vector_keys', 'lcm_chunk_vectors_pending')
+  AND c.relname NOT IN ('lcm_messages', 'lcm_id_sequences', 'lcm_summary_vector_keys', 'lcm_chunk_vectors_pending', 'lcm_data_version')
 UNION ALL
 SELECT 'trigger', tg.tgname::text, c.relname::text, 0, NULL::text
 FROM pg_trigger AS tg
@@ -1414,6 +1421,13 @@ CREATE OR REPLACE TRIGGER lcm_chunk_gapfill_update
 -- A message's text changes only by pointing at another text row (role never changes on Postgres).
 CREATE OR REPLACE FUNCTION ctx.lcm_message_text_change() RETURNS trigger
     LANGUAGE plpgsql AS $$
+DECLARE
+    old_role text;
+    new_role text;
+    old_raw text;
+    new_raw text;
+    old_content text;
+    new_content text;
 BEGIN
     IF TG_OP = 'DELETE' OR OLD.text_uid IS DISTINCT FROM NEW.text_uid THEN
         UPDATE ctx.lcm_assertion_sources
@@ -1421,8 +1435,19 @@ BEGIN
                invalidation_reason = CASE TG_OP WHEN 'DELETE' THEN 'source_deleted' ELSE 'source_updated' END
          WHERE source_store_id = OLD.store_id AND invalidated_at IS NULL;
     END IF;
+    -- LCM-X's SQLite trigger drops the gap-fill proofs only for a text change that can change what is chunked: a
+    -- user or assistant row, a row entering or leaving the tool role, or a tool row's text becoming or ceasing to be
+    -- blank (SQLite's trim of whitespace).
     IF TG_OP = 'UPDATE' AND OLD.text_uid IS DISTINCT FROM NEW.text_uid THEN
-        DELETE FROM ctx.metadata WHERE key LIKE 'chunk_gapfill_scan:%' OR key LIKE 'chunk_policy_revision_through:%';
+        SELECT role, lower(trim(role)), content INTO old_raw, old_role, old_content FROM memory.messages WHERE uid = OLD.text_uid;
+        SELECT role, lower(trim(role)), content INTO new_raw, new_role, new_content FROM memory.messages WHERE uid = NEW.text_uid;
+        IF old_role IN ('user', 'assistant') OR new_role IN ('user', 'assistant')
+           OR (old_raw IS DISTINCT FROM new_raw AND (old_role = 'tool' OR new_role = 'tool'))
+           OR (old_role = 'tool' AND new_role = 'tool'
+               AND (btrim(coalesce(old_content, ''), chr(9)||chr(10)||chr(11)||chr(12)||chr(13)||' ') = '')
+                   <> (btrim(coalesce(new_content, ''), chr(9)||chr(10)||chr(11)||chr(12)||chr(13)||' ') = '')) THEN
+            DELETE FROM ctx.metadata WHERE key LIKE 'chunk_gapfill_scan:%' OR key LIKE 'chunk_policy_revision_through:%';
+        END IF;
     END IF;
     RETURN NULL;
 END $$;

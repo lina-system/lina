@@ -1243,6 +1243,8 @@ class PgConnection:
             if self._in_tx:
                 if traced and self._trace is not None:
                     self._trace(word)  # as Python's sqlite3 reports the COMMIT/ROLLBACK its commit()/rollback() issue
+                if word == "COMMIT":
+                    self._bump_data_version()
                 self._raw(word)
                 self._end_tx()
                 if word == "COMMIT":
@@ -1342,6 +1344,10 @@ class PgConnection:
     def _end_tx(self) -> None:
         self._in_tx = False
         self._writer = False
+        if getattr(self, "_session_locked", False):
+            self._session_locked = False
+            if not self._pg.closed:
+                self._raw(self._WRITE_LOCK_KEY.format("pg_advisory_unlock"), ["lcm-x write:" + self.agent_id])
         self._savepoints = []
         self._tx_from_savepoint = False
         if not self._pg.closed:
@@ -1366,10 +1372,12 @@ class PgConnection:
         others wait out their busy timeout (lock_timeout here) and then fail with "database is locked". Outside a
         transaction (isolation_level None) the statement is its own transaction, as SQLite runs it."""
         if self._in_tx or self.isolation_level is not None:
+            self._lock_before_begin()
             self._begin()
             self._write_lock()
             yield
             return
+        self._lock_before_begin()
         self._begin(traced=False)
         try:
             self._write_lock()
@@ -1379,9 +1387,28 @@ class PgConnection:
                 self._raw("ROLLBACK")
             self._end_tx()
             raise
+        self._bump_data_version()
         self._raw("COMMIT")
         self._end_tx()
         self._analyze_bulk_writes()
+
+    _WRITE_LOCK_KEY = "SELECT {}(hashtextextended(%s, 0))"
+
+    def _lock_before_begin(self) -> None:
+        """A transaction that starts by writing takes the write lock before its snapshot, as SQLite's BEGIN IMMEDIATE
+        reads the database as it is once it holds the lock: a REPEATABLE READ snapshot taken while waiting for the
+        lock would be stale and fail its writes. The session-level lock is released when the transaction ends."""
+        if not self._in_tx and not self._writer:
+            self._raw(self._WRITE_LOCK_KEY.format("pg_advisory_lock"), ["lcm-x write:" + self.agent_id])
+            self._writer = self._session_locked = True
+
+    def _bump_data_version(self) -> None:
+        """PRAGMA data_version changes when another connection commits a write: each writing commit counts one for the
+        agent (ctx.lcm_data_version) and the connection discounts its own."""
+        if self._writer:
+            self._raw("INSERT INTO ctx.lcm_data_version AS d (version) VALUES (1) "
+                      "ON CONFLICT (agent_id) DO UPDATE SET version = d.version + 1")
+            self._own_commits = getattr(self, "_own_commits", 0) + 1
 
     def _write_lock(self) -> None:
         if not self._writer:
@@ -1394,7 +1421,9 @@ class PgConnection:
             if traced and self._trace is not None:
                 # Python's sqlite3 opens an implicit transaction with "BEGIN <isolation_level>".
                 self._trace(f"BEGIN {self.isolation_level or ''}")
-            self._raw("BEGIN")
+            # SQLite reads one snapshot for a whole transaction (WAL); READ COMMITTED would see commits between
+            # statements. A writer whose snapshot is stale gets a serialization failure: SQLite's SQLITE_BUSY_SNAPSHOT.
+            self._raw("BEGIN ISOLATION LEVEL REPEATABLE READ")
             self._in_tx = True
 
     def _run(self, cur: PgCursor, sql: str, params: Any) -> None:
@@ -1476,6 +1505,8 @@ class PgConnection:
         stmt = _apply_rewrites(template.parts[0]).strip().rstrip(";")
         word = stmt.split()[0].upper()
         if word == "BEGIN":
+            if re.match(r"\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\b", template.parts[0], re.IGNORECASE):
+                self._lock_before_begin()
             self._begin(traced=False)
             if re.match(r"\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\b", template.parts[0], re.IGNORECASE):
                 self._write_lock()
@@ -1547,8 +1578,8 @@ class PgConnection:
             cur._set_result([("seq",), ("name",), ("file",)], [(0, "main", self.database)], -1, None)
             return
         if name == "data_version":
-            self._statement(cur, "SELECT ('x' || substr(md5(pg_current_wal_lsn()::text), 1, 8))::bit(32)::int "
-                                 "AS data_version", [], None)
+            (version,) = self._raw("SELECT coalesce(max(version), 0) FROM ctx.lcm_data_version").fetchone()
+            cur._set_result([("data_version",)], [(1 + int(version) - getattr(self, "_own_commits", 0),)], -1, None)
             return
         rows = _PRAGMA_READS.get(name, ())
         width = len(rows[0]) if rows else 1

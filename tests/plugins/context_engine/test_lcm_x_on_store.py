@@ -263,7 +263,8 @@ def test_level3_repair_on_the_store_skips_the_file_backup_and_says_so(routed, tm
 
 
 # The store's tables behind LCM-X's (0007/0008), which LCM-X does not have and does not see.
-_STORE_OWN_TABLES = ("lcm_messages", "lcm_id_sequences", "lcm_summary_vector_keys", "lcm_chunk_vectors_pending")
+_STORE_OWN_TABLES = ("lcm_messages", "lcm_id_sequences", "lcm_summary_vector_keys", "lcm_chunk_vectors_pending",
+                     "lcm_data_version")
 
 
 def test_doctor_lists_the_tables_the_ctx_schema_has(routed, tmp_path, memory_store_sql):
@@ -352,3 +353,62 @@ def test_search_snippets_and_order_match_sqlite_fts5(routed, tmp_path, query):
     on_store, on_sqlite = results
     assert on_sqlite
     assert on_store == on_sqlite
+
+
+def test_data_version_changes_for_another_connections_commit_only(routed):
+    """PRAGMA data_version as SQLite keeps it: another connection's commit changes it, the connection's own does not."""
+    db = routed("data-version")
+    _stores(db)[0].close()  # the schema stamp
+    first, second = (lcm_x_store.backend_for(db)() for _ in range(2))
+    try:
+        def version(conn):
+            return conn.execute("PRAGMA data_version").fetchone()[0]
+        before = version(first)
+        first.execute("INSERT INTO metadata(key, value) VALUES ('own', '1')")
+        first.commit()
+        assert version(first) == before
+        seen = version(second)
+        second.execute("INSERT INTO metadata(key, value) VALUES ('other', '1')")
+        second.commit()
+        assert version(second) == seen
+        assert version(first) != before
+    finally:
+        first.close()
+        second.close()
+
+
+def test_a_writer_that_waited_for_the_lock_writes_on_the_fresh_rows(routed, memory_store_sql):
+    """As SQLite's BEGIN IMMEDIATE reads the rows as they are once it holds the write lock, a writer that waited for
+    another's commit updates the committed row (REPEATABLE READ with a snapshot taken before the wait would fail
+    it with a serialization error)."""
+    import threading
+    db = routed("waiting-writer")
+    _stores(db)[0].close()
+    first, second = (lcm_x_store.backend_for(db)() for _ in range(2))
+    first.execute("INSERT INTO metadata(key, value) VALUES ('counter', '0')")
+    first.commit()
+    errors, done = [], threading.Event()
+    try:
+        first.execute("UPDATE metadata SET value = '1' WHERE key = 'counter'")
+
+        def other() -> None:
+            try:
+                second.execute("UPDATE metadata SET value = CAST(CAST(value AS INTEGER) + 1 AS TEXT) WHERE key = 'counter'")
+                second.commit()
+            except Exception as exc:  # reported below, on the test's thread
+                errors.append(exc)
+            finally:
+                done.set()
+        worker = threading.Thread(target=other)
+        worker.start()
+        deadline = time.monotonic() + 10
+        while not memory_store_sql("SELECT 1 FROM pg_locks WHERE locktype = 'advisory' AND NOT granted"):
+            assert time.monotonic() < deadline, "the second writer never waited for the write lock"
+        first.commit()
+        assert done.wait(10)
+        worker.join()
+        assert errors == []
+        assert first.execute("SELECT value FROM metadata WHERE key = 'counter'").fetchone()[0] == "2"
+    finally:
+        first.close()
+        second.close()

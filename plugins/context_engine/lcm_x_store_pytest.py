@@ -266,6 +266,23 @@ _CREATE_TRIGGER = re.compile(
 _DROP_TABLE = re.compile(r"\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s*;?\s*$", re.IGNORECASE)
 
 
+def _register_columns(catalog, name: str, body: str) -> None:
+    """Tell the translator a test table's columns and primary key (it reads ctx's catalog once), so ``SELECT *`` and
+    ``INSERT OR REPLACE`` on the table translate as on a ctx table."""
+    from plugins.context_engine import lcm_x_store
+    columns, key = [], []
+    for item in lcm_x_store._split_top_level(body):
+        words = item.split()
+        table_key = re.match(r"\s*PRIMARY\s+KEY\s*\((.*)\)", item, re.IGNORECASE)
+        if table_key:
+            key = [c.strip().strip('"') for c in table_key.group(1).split(",")]
+        elif words and words[0].upper() not in ("UNIQUE", "CHECK", "FOREIGN", "CONSTRAINT"):
+            columns.append(words[0].strip('"'))
+            if re.search(r"\bPRIMARY\s+KEY\b", item, re.IGNORECASE):
+                key = [words[0].strip('"')]
+    catalog._columns[name], catalog._pk[name] = columns, key
+
+
 class _TestSchema:
     """A test's own tables and triggers (a trace table and a trigger that fills it, say): LCM-X's schema is the
     store's migrations, but what a test adds for itself is created in the test database's ``public`` schema (its
@@ -295,6 +312,7 @@ class _TestSchema:
         table = _CREATE_TABLE.match(sql)
         if table and not catalog.columns(table.group(1)) and table.group(1).lower() != "sqlite_sequence":
             self._create_table(table.group(1), table.group(2))
+            _register_columns(catalog, table.group(1), table.group(2))
         trigger = _CREATE_TRIGGER.match(sql)
         # A test's trigger on a table is emulated on the store's table; one that maintains an FTS5 table is FTS5's own
         # machinery (the store's FTS tables are views over the rows) and is left out.
@@ -326,7 +344,7 @@ class _TestSchema:
         target = "ctx.lcm_messages" if table.lower() == "messages" else f"ctx.{table}"
         statements = []
         for statement in lcm_x_store.split_statements(body):
-            abort = re.fullmatch(r"\s*SELECT\s+RAISE\s*\(\s*ABORT\s*,\s*('(?:[^']|'')*')\s*\)\s*;?\s*",
+            abort = re.fullmatch(r"\s*SELECT\s+RAISE\s*\(\s*(?:ABORT|FAIL)\s*,\s*('(?:[^']|'')*')\s*\)\s*;?\s*",
                                  statement, re.IGNORECASE)
             if abort:
                 statements.append(f"RAISE EXCEPTION USING MESSAGE = {abort.group(1)}, ERRCODE = 'LX001';")
