@@ -50,3 +50,4 @@ intake pull request. The last rows are LINA's own changes, with no fork commit.
 | `tests/conftest.py` | Give real-host probes an isolated database from LINA's shared Postgres test cluster and carry its app DSN into their subprocess environments (lina#173) | LINA |
 | `tests/test_real_turn_loop_acp_override.py` | Read the same complete persisted user-text set through `SessionDB.get_messages(include_inactive=True)`: the host's `state.db` no longer has a `messages` table since the memory store (#134) | LINA |
 | `tests/conftest.py` | Shut down test-created engines and release pooled vector stores after background maintenance drains; otherwise SQLite handles survive deletion of each test's database and exhaust the workflow's descriptor limit (lina#173) | LINA |
+| `tests/test_lcm_command.py` | Restore fault-injected SQLite connections before engine teardown so the real connections are closed; schema-error assertions are unchanged (lina#173) | LINA |
