@@ -153,8 +153,11 @@ conclusions; their own id is text), `summary` → context summaries (#16). Row-l
 `lina.agent_id`, so the migration grants it `USAGE` on `vec`, `SELECT, INSERT, UPDATE, DELETE` on
 `vec.embeddings` and the policy `honcho_rows`, which lets it see and write kinds `message` and `document` only.
 
-Honcho has no vector columns of its own any more: its revision `l19_vec_embeddings` copies the vectors that
-are already as wide as `vec.embeddings`, logs how many of another width it left (Honcho's message chunks go back
+Honcho has no vector columns of its own any more: its revision `l19_vec_embeddings` copies the old vectors only
+when `EMBEDDING_LEGACY_MODEL` in `honcho.env` names the model that wrote them and that is the configured model
+(`EMBEDDING_MODEL_CONFIG__MODEL`), and then only those as wide as `vec.embeddings`. Honcho's old columns keep no
+per-row model, so a vector's width does not say which model wrote it; without that statement nothing is copied.
+It logs how many it left (Honcho's message chunks go back
 to pending, so its reconciler embeds them again; conclusions wait for `lina store reembed --source memory`) and
 drops `documents.embedding` and `message_embeddings.embedding`. At start Honcho refuses to run when
 `EMBEDDING_VECTOR_DIMENSIONS` differs from the width of `vec.embeddings`.
@@ -185,6 +188,9 @@ EMBEDDING_MODEL_CONFIG__OVERRIDES__API_KEY_ENV=EMBEDDING_CUSTOM_API_KEY
 EMBEDDING_CUSTOM_API_KEY=<the key>
 EMBEDDING_VECTOR_DIMENSIONS=1024
 EMBEDDING_MODEL_CONFIG__DIMENSIONS_MODE=always
+# Only for the upgrade that runs l19_vec_embeddings, and only when the vectors already in Honcho were written by
+# qwen3-embedding-8b at 1024 dimensions; otherwise leave it out and they are re-embedded.
+# EMBEDDING_LEGACY_MODEL=qwen3-embedding-8b
 ```
 
 The model name must be the same string on both sides: it is part of every row's key, and searches only read

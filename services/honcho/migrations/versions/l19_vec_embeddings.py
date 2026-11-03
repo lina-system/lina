@@ -8,10 +8,12 @@ it here, at ``EMBEDDING_VECTOR_DIMENSIONS``.
 
 * ``documents`` gains ``vec_id``, the integer key of its vector row
   (``documents.id`` is text).
-* Existing vectors whose width equals the table's are copied (kind ``document``
-  keyed by ``vec_id``, kind ``message`` keyed by ``message_embeddings.id``,
-  model = the configured ``EMBEDDING_MODEL_CONFIG`` model, agent_id = workspace).
-  Other widths cannot be stored; they are counted in the log and left for
+* Existing vectors are copied (kind ``document`` keyed by ``vec_id``, kind
+  ``message`` keyed by ``message_embeddings.id``, model = the configured
+  ``EMBEDDING_MODEL_CONFIG`` model, agent_id = workspace) only when
+  ``EMBEDDING_LEGACY_MODEL`` names that same model and the vector is as wide as
+  the table: the old columns keep no per-row model, so width alone does not
+  prove the vector space. Everything else is counted in the log and left for
   re-embedding: message chunks go back to ``sync_state='pending'`` for the
   reconciler, conclusions are re-embedded by ``lina store reembed --source memory``.
 * Triggers delete a row's vectors with the row.
@@ -105,45 +107,53 @@ def _cleanup_trigger_statements() -> list[str]:
     return statements
 
 
-def _copy_vectors(connection: sa.Connection, dim: int, model: str) -> None:
+def _copy_vectors(
+    connection: sa.Connection, dim: int, model: str, trusted: bool
+) -> None:
+    """Copy each legacy vector as wide as the table when *trusted*; leave the rest for re-embedding."""
     for table, kind, key, _index in _OWNERS:
-        copied = connection.execute(
-            sa.text(
-                f"""
-                INSERT INTO "{VEC_SCHEMA}".embeddings
-                    (kind, item_id, agent_id, model, dim, embedding)
-                SELECT :kind, {key}, workspace_name, :model, :dim,
-                       embedding::text::vector({dim})
-                FROM "{schema}".{table}
-                WHERE embedding IS NOT NULL AND vector_dims(embedding) = :dim
-                ON CONFLICT (kind, item_id, model) DO NOTHING
-                """
-            ),
-            {"kind": kind, "model": model, "dim": dim},
-        ).rowcount
-        other = connection.execute(
-            sa.text(
-                f"""SELECT count(*) FROM "{schema}".{table}
-                    WHERE embedding IS NOT NULL AND vector_dims(embedding) <> :dim"""
-            ),
+        copied = 0
+        if trusted:
+            copied = connection.execute(
+                sa.text(
+                    f"""
+                    INSERT INTO "{VEC_SCHEMA}".embeddings
+                        (kind, item_id, agent_id, model, dim, embedding)
+                    SELECT :kind, {key}, workspace_name, :model, :dim,
+                           embedding::text::vector({dim})
+                    FROM "{schema}".{table}
+                    WHERE embedding IS NOT NULL AND vector_dims(embedding) = :dim
+                    ON CONFLICT (kind, item_id, model) DO NOTHING
+                    """
+                ),
+                {"kind": kind, "model": model, "dim": dim},
+            ).rowcount
+        left_where = "embedding IS NOT NULL" + (
+            " AND vector_dims(embedding) <> :dim" if trusted else ""
+        )
+        left = connection.execute(
+            sa.text(f'SELECT count(*) FROM "{schema}".{table} WHERE {left_where}'),
             {"dim": dim},
         ).scalar_one()
         logger.info(
-            "vec.embeddings: copied %d %s vectors at %d dims; %d of another width"
-            + " left for re-embedding",
+            "vec.embeddings: copied %d %s vectors as %s at %d dims; %d left for"
+            + " re-embedding (%s)",
             copied,
             kind,
+            model,
             dim,
-            other,
+            left,
+            "other widths"
+            if trusted
+            else "EMBEDDING_LEGACY_MODEL unset or not the configured model",
         )
-        if other and table == "message_embeddings":
+        if left and table == "message_embeddings":
             connection.execute(
                 sa.text(
                     f"""UPDATE "{schema}".message_embeddings
                         SET sync_state = 'pending', sync_attempts = 0,
                             last_sync_at = NULL
-                        WHERE embedding IS NOT NULL
-                          AND vector_dims(embedding) <> :dim"""
+                        WHERE {left_where}"""
                 ),
                 {"dim": dim},
             )
@@ -168,7 +178,9 @@ def upgrade() -> None:
         )
 
     if column_exists("documents", "embedding", inspector):
-        _copy_vectors(connection, dim, settings.EMBEDDING.MODEL_CONFIG.model)
+        model = settings.EMBEDDING.MODEL_CONFIG.model
+        legacy = settings.EMBEDDING.LEGACY_MODEL
+        _copy_vectors(connection, dim, model, trusted=legacy == model)
 
     for statement in _cleanup_trigger_statements():
         op.execute(statement)

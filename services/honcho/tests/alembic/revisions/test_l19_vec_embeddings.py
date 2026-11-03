@@ -1,8 +1,9 @@
 """Hooks for revision l19_vec_embeddings (vectors move to vec.embeddings).
 
-The store the way LINA has it: vec.embeddings already exists at 1024 dims. The
-documents column is narrowed to 1024 first, so its vector is copied; the message
-chunk keeps 1536 dims, so it is left for re-embedding and goes back to pending.
+The store the way LINA has it: vec.embeddings already exists at 1024 dims. Without
+EMBEDDING_LEGACY_MODEL no legacy vector is copied (test_l19_legacy_model.py covers
+the copy); the message chunk goes back to pending, and deleting a document deletes
+its vector row.
 """
 
 from __future__ import annotations
@@ -122,14 +123,19 @@ def verify_vec_embeddings(verifier: MigrationVerifier) -> None:
     verifier.assert_column_exists("message_embeddings", "embedding", exists=False)
     verifier.assert_column_exists("documents", "vec_id")
 
-    rows = conn.execute(
-        text("SELECT kind, item_id, agent_id, dim FROM vec.embeddings")
-    ).all()
+    # No EMBEDDING_LEGACY_MODEL: nothing says which model wrote the old vectors.
+    assert conn.execute(text("SELECT count(*) FROM vec.embeddings")).scalar_one() == 0
     vec_id = conn.execute(
         text(f'SELECT vec_id FROM "{schema}".documents WHERE id = :id'),
         {"id": DOC_ID},
     ).scalar_one()
-    assert [tuple(r) for r in rows] == [("document", vec_id, WORKSPACE_NAME, VEC_DIM)]
+    conn.execute(
+        text(
+            "INSERT INTO vec.embeddings VALUES"
+            + " ('document', :i, :w, 'm', :d, CAST(:e AS vector))"
+        ),
+        {"i": vec_id, "w": WORKSPACE_NAME, "d": VEC_DIM, "e": _vector(VEC_DIM, 1.0)},
+    )
 
     state = conn.execute(
         text(
