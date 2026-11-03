@@ -75,10 +75,8 @@ def _add_event_touches(touches, events, comments) -> None:
         actor = unblock_actor(event, comments) if event["kind"] == "unblocked" else data.get("by")
         if kind and (actor or event["kind"] == "unblocked") and actor not in TOOL_NAMES:
             line = short_text(data.get("reason"))
-            match = next((i for i, touch in enumerate(touches)
-                          if i not in paired and touch["kind"] in ("comment", "answer")
-                          and touch["by"] == actor and touch["at"] == event["created_at"]
-                          and touch["line"] == line), None) if kind == "unblock" and line else None
+            match = (_unblock_match(touches, paired, event, actor, line, comments)
+                     if kind == "unblock" else None)
             if match is not None:
                 touches[match]["kind"] = "answer" if actor in DEFAULT_OWNERS else "unblock"
                 paired.add(match)
@@ -88,13 +86,41 @@ def _add_event_touches(touches, events, comments) -> None:
                             "kind": kind, "line": line})
 
 
+def _unblock_match(touches, paired, event, actor, line, comments):
+    """Index of the comment touch this ``unblocked`` event already accounts for.
+
+    The CLI records one act twice -- a ``UNBLOCK: <reason>`` comment and the event
+    carrying ``<reason>`` -- and a legacy event with no reason names its actor in
+    that same comment. Pair only those shapes: a different second, author or text
+    is a second act and keeps its own touch.
+    """
+    lines = set()
+    if line:
+        lines.update((line, short_text(f"UNBLOCK: {line}")))
+    else:
+        legacy = unblock_comment(event, comments)
+        if legacy is None:
+            return None
+        lines.add(short_text(legacy["body"]))
+    return next((i for i, touch in enumerate(touches)
+                 if i not in paired and touch["kind"] in ("comment", "answer")
+                 and touch["by"] == actor and touch["at"] == event["created_at"]
+                 and touch["line"] in lines), None)
+
+
+def unblock_comment(event, comments):
+    """The one same-second ``UNBLOCK:`` comment a reason-less unblock records its actor in."""
+    matches = [c for c in comments if c["created_at"] == event["created_at"]
+               and c["task_id"] == event["task_id"] and c["body"].startswith("UNBLOCK:")]
+    return matches[0] if len(matches) == 1 else None
+
+
 def unblock_actor(event, comments):
     actor = payload(event).get("by")
     if actor is not None:
         return actor
-    matches = [c for c in comments if c["created_at"] == event["created_at"]
-               and c["task_id"] == event["task_id"] and c["body"].startswith("UNBLOCK:")]
-    return matches[0]["author"] if len(matches) == 1 else None
+    comment = unblock_comment(event, comments)
+    return comment["author"] if comment is not None else None
 
 
 def replan_records(comments, events, runs) -> list[dict]:
