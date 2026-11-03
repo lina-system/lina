@@ -29,6 +29,12 @@ HUMAN_NOTICE_AFTER_S = 120
 ANSWER_CLOSE_WAIT_S = 150
 
 
+def _start_time(pid: int) -> int | None:
+    """The process's start fingerprint (the repo's canonical one); ``None`` when it is gone or unreadable."""
+    from gateway.status import get_process_start_time
+    return get_process_start_time(pid)
+
+
 class HubError(RuntimeError):
     pass
 
@@ -235,7 +241,7 @@ class Hub:
     def _submit_one(self, brief: Path, opts: dict, group: str | None) -> dict:
         job = self.make_job(brief, opts, group)
         if opts.get("wait") is not None and not group:
-            job.update(self.store.update(job["id"], waiter=os.getpid()) or {})
+            job.update(self.store.update(job["id"], waiter=os.getpid(), waiter_start=_start_time(os.getpid())) or {})
         self._link_card(job)
         try:
             host = self.place(job)
@@ -254,18 +260,20 @@ class Hub:
 
     def _wait(self, task_id: str, timeout: float) -> int:
         deadline = time.time() + timeout
-        while time.time() < deadline:
-            time.sleep(min(15.0, max(0.5, timeout / 20)))
-            job = self.need(task_id)
-            if job.get("host"):
-                remote = self.meta(job)
-                if remote.get("state") in ENDED:
-                    out_dir, _ = self.fetch(job)
-                    self.out(f"{task_id} {notice.STATE_WORDS.get(remote['state'])} · result {out_dir}")
-                    return 0
-        self.out(f"{task_id} has not ended yet (--wait ran out). The end notice will come.")
-        self.store.update(task_id, waiter=None)
-        return 0
+        try:
+            while time.time() < deadline:
+                time.sleep(min(15.0, max(0.5, timeout / 20)))
+                job = self.need(task_id)
+                if job.get("host"):
+                    remote = self.meta(job)
+                    if remote.get("state") in ENDED:
+                        out_dir, _ = self.fetch(job)
+                        self.out(f"{task_id} {notice.STATE_WORDS.get(remote['state'])} · result {out_dir}")
+                        return 0
+            self.out(f"{task_id} has not ended yet (--wait ran out). The end notice will come.")
+            return 0
+        finally:  # every way out (ended, ran out, an error, Ctrl-C): the notice path must not count on this waiter
+            self.store.update(task_id, waiter=None, waiter_start=None)
 
 
     def schedule(self, opts: dict) -> int:
@@ -550,14 +558,13 @@ class Hub:
             return self._notify_locked(job, kind, run)
 
     def _waiter_alive(self, job: dict) -> bool:
+        """The ``submit --wait`` process is still the one that registered: ``(pid, start time)``, never a bare
+        PID (a reused PID would swallow the end notice with nobody left to show it)."""
         pid = int(job.get("waiter") or 0)
-        if not pid:
+        start = job.get("waiter_start")
+        if not pid or start is None:
             return False
-        try:
-            os.kill(pid, 0)  # windows-footgun: ok — POSIX hub only
-        except OSError:
-            return False
-        return True
+        return _start_time(pid) == start
 
     def _notice_body(self, job: dict, kind: str, run: str) -> tuple[str, Path]:
         out_dir, check = self.store.out_dir(job), {}
