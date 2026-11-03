@@ -467,6 +467,7 @@ _SUPPORTED_LCM_CONFIG_YAML_KEYS = {
     "expansion_reasoning_effort",
     "embedding_query_prefix", "embedding_document_prefix",
     "threshold_full_sweep_max_passes",
+    "store_backend",  # LINA: read by sqlite_session.configured_store_backend (lina#16)
 }
 
 
@@ -925,7 +926,6 @@ ENV_FIELD_SPECS: tuple[_EnvFieldSpec, ...] = (
     _EnvFieldSpec("summary_timeout_ms", "LCM_SUMMARY_TIMEOUT_MS", int),
     _EnvFieldSpec("expansion_timeout_ms", "LCM_EXPANSION_TIMEOUT_MS", int),
     _EnvFieldSpec("database_path", "LCM_DATABASE_PATH", str),
-    _EnvFieldSpec("store_backend", "LCM_STORE_BACKEND", str),  # LINA (lina#16)
     _EnvFieldSpec("embeddings_enabled", "LCM_EMBEDDINGS_ENABLED", bool),
     _EnvFieldSpec("rerank_enabled", "LCM_RERANK_ENABLED", bool),
     _EnvFieldSpec("rerank_model", "LCM_RERANK_MODEL", str),
@@ -1238,7 +1238,6 @@ class LCMConfig:
 
     # -- Storage ---
     database_path: str = ""       # empty = HERMES_HOME/lcm.db; LCM_DATABASE_PATH may override
-    store_backend: str = "sqlite"  # LINA: sqlite | auto | postgres (the host's store; lina#16)
 
     # -- Embeddings (automatic local default; non-local providers require opt-in) ---
     embeddings_enabled: bool | None = None  # None distinguishes omitted consent.

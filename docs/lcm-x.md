@@ -72,9 +72,13 @@ schema is `services/store/migrations/0007_ctx_lcm.sql`: LCM-X's tables under the
 - The schema creators and verifiers of `db_bootstrap.py` (and `command.py`'s backfill table) return at once on a
   store connection. The side readers that open `lcm.db` directly go through `sqlite_session.connect_database`.
 
-What is not done yet: `.github/workflows/lcm-x.yml` does not run the suite on the store, and LCM-X's suite does
-not pass there yet; nothing routes a real home yet (the `lcm.store_backend` setting). An `lcm.db` is never read or changed
-by any of this; moving its data in is #24. The suite on the store:
+`lcm.store_backend` in `config.yaml` (`sqlite` by default; `auto` or `postgres`) puts a home with no `lcm.db` on the
+store when the engine binds its storage; a home with an `lcm.db` keeps it, with a warning. An `lcm.db` is never read or
+changed by any of this; moving its data in is #24.
+
+What is not done yet: LCM-X's suite does not pass on the store yet, so `.github/workflows/lcm-x.yml` does not run it
+there. The Postgres run deselects the tests listed in `.github/lcm-x-postgres-sqlite-only.txt` (they test SQLite itself,
+one reason per line; the SQLite job keeps running them). The suite on the store:
 
 ```sh
 cd plugins/context_engine/lcm-x

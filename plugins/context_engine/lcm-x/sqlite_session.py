@@ -55,6 +55,14 @@ def connect_database(opener: Callable[..., sqlite3.Connection], database: str | 
     return opener(database, **kwargs)
 
 
+def configured_store_backend() -> str:
+    """LINA: ``lcm.store_backend`` from the profile's config.yaml (``sqlite`` when unset; lina#16)."""
+    from .config import _load_hermes_config_yaml
+    section = _load_hermes_config_yaml().get("lcm")
+    value = section.get("store_backend") if isinstance(section, dict) else None
+    return str(value).strip().lower() if value else "sqlite"
+
+
 def route_to_host_store(database: object, backend: str) -> bool:
     """LINA: route *database* to the host's store when ``lcm.store_backend`` is ``auto`` or ``postgres`` and the home
     has no ``lcm.db`` yet (a home with one stays on SQLite until lina#24 moves it). Returns whether it was routed."""
