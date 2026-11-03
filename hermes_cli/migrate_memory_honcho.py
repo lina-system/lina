@@ -1,11 +1,8 @@
-"""Import a copied Honcho archive, never a live Honcho server or cluster backup.
+"""Import a copied pg_dump custom/tar archive, never a live Honcho server.
 
-CLI callers expose ``--honcho-dump``, ``--honcho-workspace`` and optionally
-``--honcho-python``. The archive must be a pg_dump custom/tar archive. Supply a
-Postgres owner DSN with CREATE DATABASE privilege and a pg_restore command (which
-may be ``docker exec -i <fixture-container> pg_restore``). The supplied interpreter
-needs the checked-in Honcho dependencies. No endpoint is used: all vectors are
-deliberately deferred, irrespective of dimensions or ambient model settings.
+Requires an owner DSN with CREATE DATABASE privilege and pg_restore. An explicit
+interpreter needs Honcho dependencies; otherwise the installed image is used.
+All vectors are deferred, irrespective of dimensions or ambient model settings.
 """
 
 from __future__ import annotations
@@ -21,7 +18,7 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 
 from hermes_cli.migrate_memory_honcho_graph import (
-    GENERATED, TABLES, graph, insert, manifest, renamed, rows, source_links,
+    GENERATED, TABLES, durable_graph, graph, imported_graph, insert, manifest, renamed, rows, source_links,
 )
 from hermes_cli.migrate_memory_honcho_stage import ROOT, restored_database, upgrade
 from hermes_cli.migrate_memory_honcho_scope import map_peer, scoped_graph, selection
@@ -156,7 +153,7 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
         generated = {table: {int(old): new for old, new in mapping.items()}
                      for table, mapping in stored["generated_ids"].items()}
         by_public = {r["public_id"]: r["message_id"] for r in existing["message_meta"]}
-        if set(by_public) != {r["public_id"] for r in data["message_meta"]}:
+        if not {r["public_id"] for r in data["message_meta"]} <= set(by_public):
             raise ValueError("destination message placements differ from the imported dump")
         ids = {r["message_id"]: by_public[r["public_id"]] for r in data["message_meta"]}
     else:
@@ -179,28 +176,33 @@ def _merge(conn, data: dict, texts: dict, workspace: str, agent: str,
         conn.execute("UPDATE ltm.workspaces SET internal_metadata=jsonb_set(internal_metadata,"
                      "'{lina_dump_import}',%s) WHERE name=%s", (Jsonb(receipt), agent))
     destination = graph(conn, "ltm", agent)
-    for table, key in GENERATED.items():
-        if {row[key] for row in destination[table]} != set(generated[table].values()):
-            raise ValueError(f"destination generated identities differ: {table}")
     destination_texts = {r["message_id"]: r for r in rows(conn, "memory", "messages",
         "message_id = ANY(%s)", (list(ids.values()),))}
     expected = renamed(data, workspace, agent, ids)
     expected_texts = {ids[k]: {**v, "agent_id": agent} for k, v in texts.items()}
+    verified = destination
+    if rerun:
+        expected = durable_graph(expected)
+        expected, verified = imported_graph(expected, durable_graph(destination), generated)
     source_manifest = manifest(expected, expected_texts, agent)
-    destination_manifest = manifest(destination, destination_texts, agent,
+    destination_manifest = manifest(verified, destination_texts, agent,
         {table: {new: old for old, new in mapping.items()} for table, mapping in generated.items()})
     if source_manifest != destination_manifest:
         raise ValueError("destination workspace graph differs from the copied dump")
-    counts = {table: len(records) for table, records in data.items()}
-    accounting = {table: {"source": count, "matched": count if rerun else 0,
-                          "inserted": 0 if rerun else count, "skipped": 0} for table, count in counts.items()}
+    counts = {table: {"source": len(records), "matched": len(records) if rerun else 0,
+                      "inserted": 0 if rerun else len(records), "skipped": 0}
+              for table, records in data.items()}
     return {"ok": True, "source_manifest": source_manifest, "destination_manifest": destination_manifest,
-            "source_counts": counts, "destination_counts": {k: len(v) for k, v in destination.items()},
-            "counts": accounting, "skipped": [],
-            "inserted": sum(r["inserted"] for r in accounting.values()), "inserted_text": inserted_text,
-            "matched": sum(r["matched"] for r in accounting.values()),
+            "source_counts": {k: len(v) for k, v in data.items()}, "destination_counts": {k: len(v) for k, v in destination.items()},
+            "counts": counts, "skipped": [],
+            "inserted": sum(r["inserted"] for r in counts.values()), "inserted_text": inserted_text,
+            "matched": sum(r["matched"] for r in counts.values()),
             "matched_text": len(data["message_meta"]) - inserted_text,
-            "document_sources": source_links(destination), "message_id_map": ids,
+            "manifest_scope": "imported_durable_projection" if rerun else "initial_transfer",
+            "runtime_queue": {"basis": "dump_receipt" if rerun else "initial_transfer",
+                              "already_imported": len(data["queue"]) if rerun else 0,
+                              "current_rows": len(destination["queue"]), "rewritten": 0},
+            "document_sources": source_links(verified), "message_id_map": ids,
             "generated_id_maps": generated}
 
 
@@ -253,7 +255,7 @@ def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, 
             data = graph(source, schema, workspace)
             if len(data["workspaces"]) != 1:
                 raise ValueError(f"source workspace not found: {workspace}")
-            data, excluded = scoped_graph(source, schema, data, selected)
+            data, excluded, dependencies = scoped_graph(source, schema, data, selected)
             data = map_peer(data, selected.ai_peer, agent)
             texts = {r["message_id"]: r for r in rows(source, "memory", "messages",
                 "message_id = ANY(%s)", ([r["message_id"] for r in data["message_meta"]],))}
@@ -266,5 +268,5 @@ def migrate_honcho(copied_dump: Path, profile: str, agent: str, work_dir: Path, 
         report.update(source_revision=original_revision, destination_revision="l13_message_split",
                       embeddings=decisions, source_workspace=workspace, destination_workspace=agent,
                       source_peer=selected.ai_peer, destination_peer=agent, person_peer=selected.person_peer,
-                      observation_mode=selected.observation_mode, excluded=excluded)
+                      observation_mode=selected.observation_mode, excluded=excluded, dependencies=dependencies)
         return report

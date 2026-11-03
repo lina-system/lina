@@ -68,7 +68,7 @@ def test_server_observation_override_selects_self_view_not_ai_view(_memory_store
                          (psycopg.types.json.Jsonb({"observe_others": False}),))
         upgrade(target, "public", "l13_message_split", None, tmp_path)
         with psycopg.connect(target) as conn:
-            data, excluded = scoped_graph(conn, "public", graph(conn, "public", "alpha"),
+            data, excluded, _ = scoped_graph(conn, "public", graph(conn, "public", "alpha"),
                                           Selection("alpha", "source-ai", "user", "directional"))
         assert {(row["observer"], row["observed"]) for row in data["collections"]} == {
             ("source-ai", "source-ai"), ("user", "user"), ("other-ai", "other-ai")}

@@ -136,3 +136,72 @@ def source_links(data: dict[str, list[dict]]) -> dict:
                      for r in data["document_sources"])
     return {"count": len(data["document_sources"]), "references": dict(counts),
             "edges": sorted(data["document_sources"], key=lambda r: (r["derived_id"], r["source_id"]))}
+
+
+def durable_graph(data: dict[str, list[dict]]) -> dict[str, list[dict]]:
+    """Project durable fields; runtime jobs and worker-owned progress are not memory."""
+    result = deepcopy(data)
+    result["queue"] = []
+    result["active_queue_sessions"] = []
+    for table, records in result.items():
+        for row in records:
+            if table in {"documents", "message_embeddings"}:
+                for field in ("sync_state", "sync_attempts", "last_sync_at"):
+                    row.pop(field, None)
+            if table == "sessions":
+                summaries = row["internal_metadata"].get("summaries", {})
+                for label in ("honcho_chat_summary_short", "honcho_chat_summary_long"):
+                    summaries.pop(label, None)
+                if not summaries:
+                    row["internal_metadata"].pop("summaries", None)
+            if table == "workspaces":
+                row["internal_metadata"].pop("lina_dump_import", None)
+    return result
+
+
+def _metadata_projection(expected: dict, actual: dict) -> dict:
+    """Keep imported keys, requiring their values, while allowing additive live keys."""
+    projected = {}
+    for key, value in expected.items():
+        if key not in actual:
+            raise ValueError("destination metadata differs from the copied dump")
+        current = actual[key]
+        if isinstance(value, dict) and isinstance(current, dict):
+            projected[key] = _metadata_projection(value, current)
+        else:
+            projected[key] = current
+    return projected
+
+
+def imported_graph(expected: dict, destination: dict, generated: dict) -> tuple[dict, dict]:
+    """Select only receipted durable identities, preserving actual copied field values."""
+    baseline = deepcopy(expected)
+    result = {table: [] for table in TABLES}
+    keys = {"session_peers": ("workspace_name", "session_name", "peer_name"),
+            "document_sources": ("derived_id", "source_id"),
+            "conclusion_source_messages": ("conclusion_id", "message_id"),
+            "message_meta": ("public_id",)}
+    for table, records in baseline.items():
+        identity = keys.get(table, ("id",))
+        available = {tuple(row[key] for key in identity): row for row in destination[table]}
+        for row in records:
+            wanted = dict(row)
+            if table in GENERATED:
+                key = GENERATED[table]
+                wanted[key] = generated[table][row[key]]
+            current = available.get(tuple(wanted[key] for key in identity))
+            if current is None or (table in GENERATED and current[GENERATED[table]] != wanted[GENERATED[table]]):
+                raise ValueError(f"destination imported identities differ: {table}")
+            projected = dict(current)
+            if table == "documents":
+                if current["times_derived"] < row["times_derived"]:
+                    raise ValueError("destination reinforcement differs from the copied dump")
+                # Reinforcement is monotonic runtime progress, checked above rather
+                # than represented as equal in the durable-content manifests.
+                row.pop("times_derived")
+                projected.pop("times_derived")
+            for field in ("metadata", "internal_metadata"):
+                if field in row:
+                    projected[field] = _metadata_projection(row[field], current[field])
+            result[table].append(projected)
+    return baseline, result

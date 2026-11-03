@@ -38,7 +38,7 @@ def selection(profile: str, path: Path | None, workspace: str | None) -> Selecti
     return Selection(selected, ai, person, mode)
 
 
-def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[dict, list[dict]]:
+def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[dict, list[dict], list[dict]]:
     """Keep AI-participating sessions and the live adapter's observer/target pairs."""
     from plugins.memory.honcho.client import _OBSERVATION_PRESETS
 
@@ -79,12 +79,10 @@ def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[di
     result["peers"] = [r for r in data["peers"] if r["name"] in peers]
     result["document_sources"] = [r for r in data["document_sources"] if r["derived_id"] in docs]
     result["conclusion_source_messages"] = [r for r in data["conclusion_source_messages"] if r["conclusion_id"] in docs]
-    for edge in result["conclusion_source_messages"]:
-        if edge["message_id"] not in publics:
-            raise ValueError("unresolved conclusion_source_messages reference outside selected scope")
     result["message_embeddings"] = [r for r in data["message_embeddings"] if r["message_id"] in publics]
     session_ids = {r["id"] for r in result["sessions"]}
     result["queue"] = [r for r in data["queue"] if r["message_id"] in mids or r["session_id"] in session_ids]
+    dependencies = _close_dependencies(data, result)
     excluded = []
     for table in TABLES:
         retained = {json.dumps(row, sort_keys=True, default=str) for row in result[table]}
@@ -99,7 +97,65 @@ def scoped_graph(conn, schema: str, data: dict, selected: Selection) -> tuple[di
                 reason = "runtime_lease"
             excluded.append({"table": table, "native_id": row.get("public_id", row.get("id", row.get("name"))),
                              "reason": reason})
-    return result, excluded
+    return result, excluded, dependencies
+
+
+def _close_dependencies(data: dict, result: dict) -> list[dict]:
+    """Follow references outward, never expand a dependency's private sibling rows."""
+    references = {
+        "documents": (("sessions", ("name",), ("session_name",)),
+                      ("collections", ("observer", "observed"), ("observer", "observed"))),
+        "collections": (("peers", ("name",), ("observer",)), ("peers", ("name",), ("observed",))),
+        "message_meta": (("sessions", ("name",), ("session_name",)), ("peers", ("name",), ("peer_name",))),
+        "message_embeddings": (("message_meta", ("public_id",), ("message_id",)),
+                               ("sessions", ("name",), ("session_name",)),
+                               ("peers", ("name",), ("peer_name",))),
+        "queue": (("sessions", ("id",), ("session_id",)),
+                  ("message_meta", ("message_id",), ("message_id",))),
+        "conclusion_source_messages": (("message_meta", ("public_id",), ("message_id",)),),
+    }
+    dependencies = []
+    while True:
+        required = []
+        for table, constraints in references.items():
+            for row in result[table]:
+                for parent, keys, fields in constraints:
+                    values = tuple(row[field] for field in fields)
+                    if None not in values:
+                        required.append((parent, keys, values))
+        for row in result["sessions"]:
+            for label in ("honcho_chat_summary_short", "honcho_chat_summary_long"):
+                boundary = row["internal_metadata"].get("summaries", {}).get(label, {})
+                if "message_id" in boundary:
+                    required.append(("message_meta", ("message_id",), (boundary["message_id"],)))
+        for row in result["queue"]:
+            if isinstance(row["payload"].get("message_id"), int):
+                required.append(("message_meta", ("message_id",), (row["payload"]["message_id"],)))
+        for row in result["document_sources"]:
+            parent = "documents" if any(r["id"] == row["source_id"] for r in data["documents"]) else "message_meta"
+            key = "id" if parent == "documents" else "public_id"
+            required.append((parent, (key,), (row["source_id"],)))
+        changed = False
+        for parent, keys, values in required:
+            match = next((row for row in data[parent] if tuple(row[key] for key in keys) == values), None)
+            if match is None:
+                raise ValueError(f"unresolved document_sources or dependency reference: {parent} {values}")
+            if match not in result[parent]:
+                result[parent].append(match)
+                dependencies.append({"table": parent,
+                                     "native_id": match.get("public_id", match.get("id", match.get("name"))),
+                                     "reason": "referenced_ancestor"})
+                changed = True
+        documents = {row["id"] for row in result["documents"]}
+        for table, key in (("document_sources", "derived_id"), ("conclusion_source_messages", "conclusion_id")):
+            for row in data[table]:
+                if row[key] in documents and row not in result[table]:
+                    result[table].append(row)
+                    dependencies.append({"table": table, "native_id": [row[key], row.get("source_id", row.get("message_id"))],
+                                         "reason": "referenced_ancestor"})
+                    changed = True
+        if not changed:
+            return dependencies
 
 
 def map_peer(data: dict, source: str, destination: str) -> dict:
