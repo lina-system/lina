@@ -7,7 +7,8 @@ general plugin system: ``context.engine`` in config.yaml names the active engine
 from __future__ import annotations
 
 import logging
-import sys
+import threading
+import weakref
 from contextlib import contextmanager
 from pathlib import Path
 from typing import TYPE_CHECKING, List, Optional, Tuple
@@ -152,19 +153,44 @@ def re_register_config_hooks() -> None:
         _load_engine_from_dir(engine_dir)
 
 
-# lina-memory's LCM handover (plugins/memory/lina/lcm.py), read only once lina-memory is loaded in this process.
-_MEMORY_LAYER_HANDOVER = "plugins.memory.lina.lcm"
+# Turn handover: a memory provider that hands its own agent's finished turns to the context engine registers that
+# session here, and the engine's ``post_llm_call`` ingest then leaves those turns to it (one ingest per turn either
+# way). Keyed by session id; a weak method, so a dropped agent holds no claim. lina-memory is the one user today
+# (plugins/memory/lina/lcm.py, lina#20); an agent with no claim keeps the engine's own ingest.
+_TURN_HANDOVERS: dict[str, weakref.WeakMethod] = {}
+_TURN_HANDOVERS_LOCK = threading.Lock()
+
+
+def claim_turn_handover(session_id: str, take_turn) -> None:
+    """``take_turn(history, *, session_id=...)`` receives this session's finished turns instead of the engine hook."""
+    if session_id:
+        with _TURN_HANDOVERS_LOCK:
+            _TURN_HANDOVERS[session_id] = weakref.WeakMethod(take_turn)
+
+
+def release_turn_handover(session_id: str, take_turn) -> None:
+    """Drop the claim if *take_turn* still holds it (a later agent of the same session may have claimed it)."""
+    with _TURN_HANDOVERS_LOCK:
+        claim = _TURN_HANDOVERS.get(session_id)
+        if claim is not None and claim() in (None, take_turn):
+            del _TURN_HANDOVERS[session_id]
+
+
+def turn_handover_for(session_id: str):
+    """The callable that takes this session's finished turn, or None when the engine's own hook ingests it."""
+    with _TURN_HANDOVERS_LOCK:
+        claim = _TURN_HANDOVERS.get(session_id) if session_id else None
+    return claim() if claim is not None else None
 
 
 def _handed_over_by_memory_layer(callback):
-    """The engine's ``post_llm_call`` ingest, unless the turn's agent carries lina-memory (lina#20): lina-memory
-    then hands that session's turn to the engine itself, so the turn is one ingest either way. Decided per turn
-    from the session, never per home: an agent without lina-memory (``skip_memory`` children, background review,
-    the curator) keeps the engine's own ingest."""
+    """The engine's ``post_llm_call`` ingest, unless a memory provider claimed the turn's session
+    (``claim_turn_handover``): that provider then hands the turn to the engine itself, so the turn is one ingest
+    either way. Decided per turn from the session, never per home: an agent without such a provider
+    (``skip_memory`` children, background review, the curator) keeps the engine's own ingest."""
     def post_llm_call(**kwargs):
-        handover = getattr(sys.modules.get(_MEMORY_LAYER_HANDOVER), "handover_for", None)
         session_id = str(kwargs.get("session_id") or "")
-        take_turn = handover(session_id) if handover is not None else None
+        take_turn = turn_handover_for(session_id)
         if take_turn is None:
             return callback(**kwargs)
         take_turn(kwargs.get("conversation_history") or [], session_id=session_id)

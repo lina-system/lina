@@ -888,17 +888,20 @@ def _setup_wizard(args) -> None:
     print(f"\n  Config written to {write_path}")
 
     # The slot gets the provider this setup runs for: honcho, or the provider that drives it (lina-memory hands its
-    # own name through post_setup), never one read back from config.yaml.
+    # own name through post_setup), never one read back from config.yaml. Both names are literals here, so nothing
+    # read from arguments or config reaches the output.
     slot = "lina-memory" if getattr(args, "memory_provider", "") == "lina-memory" else "honcho"
     try:  # auto-enable the memory provider in config.yaml
         from hermes_cli.config import load_config, save_config
         hermes_config = load_config()
         hermes_config.setdefault("memory", {})["provider"] = slot
         save_config(hermes_config)
-        print(f"  Memory provider set to '{slot}' in config.yaml")
+        print("  Memory provider set to 'lina-memory' in config.yaml" if slot == "lina-memory"
+              else "  Memory provider set to 'honcho' in config.yaml")
     except Exception as e:
         logger.debug("Honcho _setup_wizard failed", exc_info=True)
-        print(f"  Could not auto-enable in config.yaml: {e}\n  Run: hermes config set memory.provider {slot}")
+        print(f"  Could not auto-enable in config.yaml: {e}\n  Run: hermes config set memory.provider "
+              + ("lina-memory" if slot == "lina-memory" else "honcho"))
 
     print("  Testing connection... ", end="", flush=True)
     try:

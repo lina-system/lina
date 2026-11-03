@@ -73,8 +73,9 @@ class LinaMemoryProvider(MemoryProvider):
     # ── the one receive path ──
 
     def _take_lcm_turn(self, history, *, session_id: str) -> None:
-        """LCM-X's ``post_llm_call`` hook hands this session's finished turn here (``lcm.handover_for``), on the
-        turn thread, with the unredacted transcript; lina-memory routes it and hands it to the session's engine.
+        """LCM-X's ``post_llm_call`` hook hands this session's finished turn here (the context-engine loader's
+        ``turn_handover_for``), on the turn thread, with the unredacted transcript; lina-memory routes it and hands it
+        to the session's engine.
         A failure is logged with its traceback and never reaches the turn or the Honcho delivery."""
         try:
             rule = self._policy.rule(self._policy.route_for(signals_for_turn(
