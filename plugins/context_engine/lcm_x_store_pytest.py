@@ -148,17 +148,23 @@ def _carry_seeded_file(lcm_x_store, original_connect, own_connect):
                 target.close()
         return factory
 
+    bridging = threading.local()
+
     def opened(database, *, opening=False):
         factory = carried(database, opening=opening)
-        if not opening or factory is None:
+        if factory is None or getattr(bridging, "active", False):
             return factory
 
         def connect(**kwargs):
-            # A test that replaced sqlite3.connect (a factory= subclass, say) sees an LCM-X store's open too, as on
-            # SQLite, where the store opens through sqlite3.connect.
+            # A test that replaced sqlite3.connect (a factory= subclass, a trace hook) sees an LCM-X store's open and
+            # its side readers' connects too, as on SQLite, where both go through sqlite3.connect.
             if sqlite3.connect is not own_connect():
                 kwargs.pop("readonly", None)
-                return sqlite3.connect(str(database), **kwargs)
+                bridging.active = True
+                try:
+                    return sqlite3.connect(str(database), **kwargs)
+                finally:
+                    bridging.active = False
             return factory(**kwargs)
         return connect
     return opened

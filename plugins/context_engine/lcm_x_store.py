@@ -167,7 +167,7 @@ _MESSAGE_INSERT = re.compile(r"^\s*INSERT\s+(?:OR\s+(\w+)\s+)?INTO\s+messages\s*
 @dataclass(frozen=True)
 class Template:
     """A translated statement: SQL parts with parameter slots filled per execute."""
-    parts: tuple  # str, or ("param", index) / ("match", index, alias) / ("rank", index, alias) / ("snippet", index, alias)
+    parts: tuple  # str, or ("param", index) / ("match" | "rank" | "snippet", index, alias, text search config)
     kind: str = "sql"  # sql | skip | control | pragma | message_insert | message_content_update
     returning: Optional[str] = None
     detail: tuple = ()
@@ -448,19 +448,25 @@ def _fts_parts(masked: str) -> list:
     if not matches:
         return [masked]
     first_slot = int(matches[0][0].group(2))
+    # The stem view is FTS5's porter tokenizer: its queries parse with the same stemming configuration (0007).
+    stemmed = {alias for table, alias in aliases.items()
+               if table == "messages_fts_stem" and re.search(r"\bmessages_fts_stem\b", masked, re.IGNORECASE)}
+
+    def slot(kind: str, index: int, alias: str) -> tuple:
+        return (kind, index, alias, "ctx.lcm_porter" if alias in stemmed else "simple")
     marks = []
     for m, alias in matches:
-        marks.append((m.start(), m.end(), ("match", int(m.group(2)), alias)))
+        marks.append((m.start(), m.end(), slot("match", int(m.group(2)), alias)))
     for m in re.finditer(r"\bbm25\s*\(\s*(\w+)\s*\)", masked, re.IGNORECASE):
-        marks.append((m.start(), m.end(), ("rank", first_slot, aliases.get(m.group(1), m.group(1)))))
+        marks.append((m.start(), m.end(), slot("rank", first_slot, aliases.get(m.group(1), m.group(1)))))
     for m in re.finditer(r"\bsnippet\s*\(\s*(\w+)\s*,[^()]*\)", masked, re.IGNORECASE):
-        marks.append((m.start(), m.end(), ("snippet", first_slot, aliases.get(m.group(1), m.group(1)))))
+        marks.append((m.start(), m.end(), slot("snippet", first_slot, aliases.get(m.group(1), m.group(1)))))
     default_alias = matches[0][1]
     # `bm25(x) AS rank` names a column: the bare `rank` after it (ORDER BY rank) reads that column.
     named_rank = re.search(r"\bAS\s+rank\b", masked, re.IGNORECASE)
     for m in ([] if named_rank else re.finditer(r"(?<![\w.])rank\b(?!\s*\()", masked, re.IGNORECASE)):
         if not any(s <= m.start() < e for s, e, _ in marks):
-            marks.append((m.start(), m.end(), ("rank", first_slot, default_alias)))
+            marks.append((m.start(), m.end(), slot("rank", first_slot, default_alias)))
     marks.sort()
     parts: list = []
     pos = 0
@@ -470,6 +476,50 @@ def _fts_parts(masked: str) -> list:
         pos = end
     parts.append(masked[pos:])
     return parts
+
+
+def _sql_literal(value: Any) -> str:
+    """*value* as SQLite's sqlite3_expanded_sql writes a bound parameter."""
+    if value is None:
+        return "NULL"
+    if isinstance(value, bool):
+        return str(int(value))
+    if isinstance(value, int):
+        return str(value)
+    if isinstance(value, float):
+        text = format(value, ".15g")
+        return text if any(c in text for c in ".eni") else text + ".0"
+    if isinstance(value, (bytes, bytearray, memoryview)):
+        return "x'" + bytes(value).hex() + "'"
+    return "'" + str(value).replace("'", "''") + "'"
+
+
+def expanded_sql(sql: str, params: Any) -> str:
+    """*sql* with its bound values written in, as Python's sqlite3 hands a statement to its trace callback."""
+    if not params:
+        return sql
+    slots: list[str] = []
+
+    def collect(m: re.Match) -> str:
+        tok = m.group(0)
+        if tok[0] in "?:@$" and (len(tok) == 1 or tok[1] != ":"):
+            slots.append(tok)
+        return tok
+    _TOKEN.sub(collect, sql)
+    indices = _slot_indices(slots)
+    names = iter(range(len(slots)))
+
+    def fill(m: re.Match) -> str:
+        tok = m.group(0)
+        if not (tok[0] in "?:@$" and (len(tok) == 1 or tok[1] != ":")):
+            return tok
+        position = next(names)
+        try:
+            value = params[tok[1:]] if isinstance(params, dict) else params[indices[position]]
+        except (KeyError, IndexError, TypeError):
+            return tok
+        return _sql_literal(value)
+    return _TOKEN.sub(fill, sql)
 
 
 def _slot_indices(slots: list[str]) -> list[int]:
@@ -552,7 +602,7 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     indices = _slot_indices(slots)
     for piece in _fts_parts(masked):
         parts.extend(_unmask(piece, literals, indices) if isinstance(piece, str)
-                     else [(piece[0], indices[piece[1]], piece[2])])
+                     else [(piece[0], indices[piece[1]], *piece[2:])])
     names = _named_order(slots)
     return Template(tuple(parts), returning=returning, detail=tuple(names) if names else ())
 
@@ -585,17 +635,18 @@ def _fts_terms(query: str) -> list[tuple[str, str]]:
     return out
 
 
-def tsquery_sql(query: str) -> tuple[str, list[Any]]:
-    """A Postgres tsquery expression (``simple`` configuration) for an FTS5 query, and its parameters."""
+def tsquery_sql(query: str, config: str = "simple") -> tuple[str, list[Any]]:
+    """A Postgres tsquery expression (the text search *config*uration) for an FTS5 query, and its parameters."""
     sql, params = "", []
+    cfg = f"'{config}'::regconfig"
     for op, term in _fts_terms(query):
         if term.startswith('"'):
-            piece, value = "phraseto_tsquery('simple', %s)", term.strip('"')
+            piece, value = f"phraseto_tsquery({cfg}, %s)", term.strip('"')
         elif term.endswith("*") and len(term) > 1:
             lexeme = term[:-1].lower().replace("'", "''").replace("\\", "\\\\")
-            piece, value = "to_tsquery('simple', %s)", f"'{lexeme}':*"
+            piece, value = f"to_tsquery({cfg}, %s)", f"'{lexeme}':*"
         else:
-            piece, value = "plainto_tsquery('simple', %s)", term
+            piece, value = f"plainto_tsquery({cfg}, %s)", term
         if not sql:
             sql = piece if op != "not" else f"!!{piece}"
         else:
@@ -605,8 +656,8 @@ def tsquery_sql(query: str) -> tuple[str, list[Any]]:
 
 
 def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
-    kind, index, alias = slot
-    tsq, params = tsquery_sql(str(args[index]))
+    kind, index, alias, config = slot
+    tsq, params = tsquery_sql(str(args[index]), config)
     if kind == "match":
         return f"({alias}.tsv @@ ({tsq}))", params
     if kind == "rank":
@@ -615,7 +666,7 @@ def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
     for name, col in _FTS_COLUMNS.items():
         if alias == name:
             column = col
-    return (f"ts_headline('simple', {alias}.{column}, ({tsq}), "
+    return (f"ts_headline('{config}'::regconfig, {alias}.{column}, ({tsq}), "
             "'StartSel=>>>, StopSel=<<<, MaxWords=40, MinWords=10, FragmentDelimiter=...')"), params
 
 
@@ -1167,7 +1218,7 @@ class PgConnection:
             raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
         template = translate(sql, self._catalog)
         if self._trace is not None:
-            self._trace(sql)
+            self._trace(expanded_sql(sql, params))
         with self._lock:
             if self._closed:  # closed by another thread while this one waited for the lock
                 raise sqlite3.ProgrammingError("Cannot operate on a closed database.")

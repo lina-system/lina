@@ -3302,8 +3302,11 @@ def ensure_message_stem_fts(conn: sqlite3.Connection, spec: ExternalContentFtsSp
 
     Returns False when a busy writer deferred the work to the next open: the caller must not
     read the stem index on this handle, whose state may claim ``ready`` over missing triggers."""
-    if is_store_connection(conn):  # LINA: the store's migrations own the schema
-        return False
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema; its stem view is always complete
+        if _stem_metadata(conn, "fts_stem_state") != "ready":
+            with conn:
+                _mark_stem_ready(conn)
+        return True
     if conn.execute("PRAGMA query_only").fetchone()[0]:
         return True
     state = _stem_metadata(conn, "fts_stem_state")

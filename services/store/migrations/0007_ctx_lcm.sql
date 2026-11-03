@@ -1184,8 +1184,26 @@ CREATE OR REPLACE VIEW ctx.messages_fts WITH (security_invoker = true) AS
 SELECT p.store_id AS rowid, m.content, m.tsv
 FROM ctx.lcm_messages AS p
 JOIN memory.messages AS m ON m.uid = p.text_uid;
+-- messages_fts_stem is FTS5's porter tokenizer on SQLite: words lower-cased and stemmed, no stop words. Postgres's
+-- snowball English stemmer without its stop word list, over the simple parser.
+DO $$
+BEGIN
+    IF NOT EXISTS (SELECT 1 FROM pg_ts_dict WHERE dictname = 'lcm_english_stem'
+                   AND dictnamespace = 'ctx'::regnamespace) THEN
+        CREATE TEXT SEARCH DICTIONARY ctx.lcm_english_stem (TEMPLATE = snowball, LANGUAGE = english);
+    END IF;
+    IF NOT EXISTS (SELECT 1 FROM pg_ts_config WHERE cfgname = 'lcm_porter' AND cfgnamespace = 'ctx'::regnamespace) THEN
+        CREATE TEXT SEARCH CONFIGURATION ctx.lcm_porter (COPY = pg_catalog.simple);
+        ALTER TEXT SEARCH CONFIGURATION ctx.lcm_porter
+            ALTER MAPPING FOR asciiword, asciihword, hword_asciipart, word, hword, hword_part WITH ctx.lcm_english_stem;
+    END IF;
+END $$;
 CREATE OR REPLACE VIEW ctx.messages_fts_stem WITH (security_invoker = true) AS
-SELECT rowid, content, tsv FROM ctx.messages_fts;
+SELECT p.store_id AS rowid, m.content, to_tsvector('ctx.lcm_porter'::regconfig, m.content) AS tsv
+FROM ctx.lcm_messages AS p
+JOIN memory.messages AS m ON m.uid = p.text_uid;
+CREATE INDEX IF NOT EXISTS messages_content_lcm_porter
+    ON memory.messages USING gin (to_tsvector('ctx.lcm_porter'::regconfig, content));
 CREATE OR REPLACE VIEW ctx.nodes_fts WITH (security_invoker = true) AS
 SELECT node_id AS rowid, summary, to_tsvector('simple', summary) AS tsv FROM ctx.summary_nodes;
 CREATE OR REPLACE VIEW ctx.lcm_trajectory_states_fts WITH (security_invoker = true) AS

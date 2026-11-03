@@ -427,10 +427,10 @@ class MessageStore:
             on_open=lambda conn: setattr(self, "_conn", conn),
             on_setup_error=None,
         ))
-        if is_store_connection(self._conn):  # LINA: the schema is the store's migrations; no stem index
-            self._stem_usable = False
+        if is_store_connection(self._conn):  # LINA: the schema is the store's migrations, its stem view complete
             run_versioned_migrations(self._conn)  # refuses a newer build's stamp; records this build's
             self._conn.commit()
+            self._stem_usable = ensure_message_stem_fts(self._conn, build_message_stem_fts_spec())
             return
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS messages (

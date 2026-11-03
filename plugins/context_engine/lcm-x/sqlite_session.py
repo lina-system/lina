@@ -50,8 +50,11 @@ def connect_database(opener: Callable[..., sqlite3.Connection], database: str | 
         path = unquote(parts.path)
         kwargs = {**kwargs, "readonly": "mode=ro" in parts.query}
     backend = store_backend(path)
-    if backend is not None:
+    if backend is not None and opener is sqlite3.connect:
         return backend(**{k: v for k, v in kwargs.items() if k in ("timeout", "isolation_level", "readonly")})
+    if backend is not None:  # the caller's module sqlite3 was replaced (a test): its connect opens, as on SQLite
+        kwargs.pop("readonly", None)
+        return opener(database, **kwargs)
     kwargs.pop("readonly", None)
     return opener(database, **kwargs)
 
