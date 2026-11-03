@@ -6,6 +6,7 @@ from datetime import datetime, timezone
 from . import tools as _tools
 from .assertion_store import CURRENT_EXTRACTION_VERSION
 from .search_query import _ASCII_CASE_FOLD, requires_like_fallback, sanitize_fts5_query
+from .sqlite_session import is_store_connection
 
 # ADR D6: event/conversation and unknown future namespaces are not bridged.
 _NAMESPACES = ('person', 'user', 'assistant', 'organization', 'project', 'place',
@@ -47,7 +48,9 @@ def _mention(row):
 
 def _assertions(store, names, limit):
     conn = store.connection
-    conn.create_function('_lcm_entity_name', 1, _name, deterministic=True)
+    on_store = is_store_connection(conn)  # LINA: the store runs no Python SQL function (lina#16)
+    if not on_store:
+        conn.create_function('_lcm_entity_name', 1, _name, deterministic=True)
     # Use the same active-source/version join as AssertionStore.query_assertions.
     base = '''SELECT a.*, m.content AS current_content,
               substr(a.subject_key,1,instr(a.subject_key,':')-1) AS namespace
@@ -62,14 +65,22 @@ def _assertions(store, names, limit):
             FROM active GROUP BY namespace, subject_key ORDER BY namespace, subject_key LIMIT ?''',
             (CURRENT_EXTRACTION_VERSION, limit)).fetchall()
         return {'entities': [dict(row) for row in rows]}
-    marks = ','.join('?' for _ in names)
     namespaces = ','.join('?' for _ in _NAMESPACES)
+    match, match_args = "_lcm_entity_name(substr(subject_key,instr(subject_key,':')+1))", list(names)
+    if on_store:  # LINA: the same names, normalised here by _name before the query
+        wanted = set(names)
+        match_args = [key for (key,) in conn.execute(
+            f'''WITH active AS ({base}) SELECT DISTINCT subject_key FROM active WHERE namespace IN ({namespaces})''',
+            [CURRENT_EXTRACTION_VERSION, *_NAMESPACES]).fetchall()
+            if _name(key.split(':', 1)[1] if ':' in key else key) in wanted]
+        match = 'subject_key'
+    marks = ','.join('?' for _ in match_args) or 'NULL'
     rows = conn.execute(f'''WITH active AS ({base}), matching AS (
         SELECT * FROM active WHERE namespace IN ({namespaces}) AND
-        _lcm_entity_name(substr(subject_key,instr(subject_key,':')+1)) IN ({marks}))
+        {match} IN ({marks}))
         SELECT *, (SELECT count(DISTINCT namespace) FROM matching) AS namespace_count
         FROM matching ORDER BY observed_at DESC, assertion_id LIMIT 201''',
-        [CURRENT_EXTRACTION_VERSION, *_NAMESPACES, *names]).fetchall()
+        [CURRENT_EXTRACTION_VERSION, *_NAMESPACES, *match_args]).fetchall()
     facts = []
     for row in rows[:200]:
         store._validate_source_provenance(

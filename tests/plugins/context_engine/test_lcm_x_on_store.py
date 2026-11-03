@@ -182,3 +182,22 @@ def test_each_profile_sees_only_its_own_rows(routed):
     finally:
         for closable in (store_a, dag_a, store_b, dag_b):
             closable.close()
+
+
+def test_entity_names_fold_case_as_python_does(routed, tmp_path):
+    """``Straße`` folds to ``strasse`` (str.casefold), which SQL's lower() does not do: the store matches entity
+    names by LCM-X's own normalisation, applied before the query."""
+    db = routed("entities")
+    config = _lcm("config").LCMConfig(database_path=str(db), embeddings_enabled=False, assertions_enabled=True)
+    config.entities_enabled = True
+    engine = _lcm("engine").LCMEngine(config=config, hermes_home=str(tmp_path / "home"))
+    try:
+        engine.on_session_start("s1", conversation_id="c1")
+        sid = engine._store.append("s1", {"role": "user", "content": "Straße opened the depot."})
+        snapshot = engine._assertions.snapshot_source(sid)
+        engine._assertions.publish_source(snapshot, [_lcm("assertion_store").AssertionCandidate(
+            0, len(snapshot.content), "person:Straße", "note", value_text=snapshot.content)])
+        facts = _lcm("memory_tools")._assertions(engine._assertions, ["strasse"], 10)["facts"]
+        assert [fact["subject_key"] for fact in facts] == ["person:Straße"]
+    finally:
+        engine.shutdown()

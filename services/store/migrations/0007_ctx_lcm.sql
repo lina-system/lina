@@ -70,12 +70,6 @@ CREATE OR REPLACE FUNCTION ctx.lcm_summary_has_text(value text) RETURNS integer
     SELECT CASE WHEN value IS NULL THEN 0
                 WHEN value ~ '^[\s\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u001c-\u001f]*$' THEN 0
                 ELSE 1 END $$;
--- memory_tools registers _lcm_entity_name (NFKC, casefold, collapsed whitespace, no edge punctuation) in Python;
--- here lower() stands in for casefold and [[:punct:]] for Unicode category P.
-CREATE OR REPLACE FUNCTION ctx._lcm_entity_name(value text) RETURNS text
-    LANGUAGE sql IMMUTABLE AS $$
-    SELECT regexp_replace(btrim(regexp_replace(lower(normalize(value, NFKC)), '\s+', ' ', 'g')),
-                          '^[[:punct:][:space:]]+|[[:punct:][:space:]]+$', '', 'g') $$;
 CREATE OR REPLACE FUNCTION ctx.instr(haystack text, needle text) RETURNS integer
     LANGUAGE sql IMMUTABLE AS $$ SELECT strpos(haystack, needle) $$;
 CREATE OR REPLACE FUNCTION ctx.substr(value text, start bigint, len bigint) RETURNS text
