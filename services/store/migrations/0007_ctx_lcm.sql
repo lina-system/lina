@@ -1190,6 +1190,13 @@ SELECT p.store_id,
 FROM ctx.lcm_messages AS p
 JOIN memory.messages AS m ON m.uid = p.text_uid;
 
+-- json_each's value compared with an integer column (lcm_x_store._integer_json_each): the integer it spells, as SQLite
+-- compares a JSON number with an INTEGER column; NULL for text that is no integer.
+CREATE OR REPLACE FUNCTION ctx.lcm_json_int(value text) RETURNS bigint
+    LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
+    SELECT CASE WHEN value ~ '^\s*-?[0-9]{1,18}\s*$' THEN value::bigint
+                WHEN value ~ '^\s*-?[0-9]{1,18}\.0*\s*$' THEN trunc(value::numeric)::bigint END $$;
+
 -- PRAGMA data_version on the store: one count per writing commit of the agent (lcm_x_store.py discounts the
 -- connection's own commits, as SQLite's value changes only for other connections' writes).
 CREATE TABLE IF NOT EXISTS ctx.lcm_data_version (

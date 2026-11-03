@@ -146,9 +146,14 @@ def _sqlite_error(exc: Exception) -> sqlite3.Error:
     import psycopg
     sqlstate = getattr(exc, "sqlstate", None) or ""
     message = (exc.diag.message_primary if isinstance(exc, psycopg.Error) else str(exc)).strip()
-    if sqlstate in ("55P03", "40P01", "40001"):
-        # Lock timeout, deadlock, serialization: what SQLite reports as a busy database.
+    if sqlstate == "40001":
+        # A write on a snapshot another connection's commit made stale: SQLite's SQLITE_BUSY_SNAPSHOT, which LCM-X
+        # retries on a fresh transaction (waiting cannot fix it).
         err: sqlite3.Error = sqlite3.OperationalError(f"database is locked ({message})")
+        err.sqlite_errorcode, err.sqlite_errorname = sqlite3.SQLITE_BUSY_SNAPSHOT, "SQLITE_BUSY_SNAPSHOT"
+    elif sqlstate in ("55P03", "40P01"):
+        # Lock timeout, deadlock: what SQLite reports as a busy database.
+        err = sqlite3.OperationalError(f"database is locked ({message})")
         err.sqlite_errorcode, err.sqlite_errorname = sqlite3.SQLITE_BUSY, "SQLITE_BUSY"
     elif sqlstate == "LX001":  # a trigger's RAISE(ABORT, '<message>'): SQLite raises the message as it is
         err = sqlite3.IntegrityError(message)
@@ -282,6 +287,22 @@ def _recursive_limit(masked: str) -> str:
     walk = re.sub(rf"\b{name}\b", inner, body[:limit.start()])
     head = f"WITH RECURSIVE {inner}{m.group(2) or ''} AS ({walk}), {name} AS (SELECT * FROM {inner} LIMIT {limit.group(1)})"
     return masked[:m.start()] + head + masked[i:]
+
+
+_JSON_EACH_IN = re.compile(r"\b((?:\w+\.)?(\w+))(\s+(?:NOT\s+)?IN\s*\(\s*SELECT\s+)value(\s+FROM\s+ctx\.json_each\()",
+                           re.IGNORECASE)
+
+
+def _integer_json_each(masked: str, catalog: Catalog) -> str:
+    """``store_id IN (SELECT value FROM json_each(?))``: SQLite compares the JSON numbers with the integer column as
+    numbers. json_each's value is text here, so an integer column compares with its integer value
+    (ctx.lcm_json_int, NULL for anything that is not an integer); the text comparison could not use an index and
+    crossed every row with every element."""
+    def cast(m: re.Match) -> str:
+        if m.group(2).lower() not in catalog.integer_columns:
+            return m.group(0)
+        return f"{m.group(1)}{m.group(3)}ctx.lcm_json_int(value){m.group(4)}"
+    return _JSON_EACH_IN.sub(cast, masked)
 
 
 def _apply_rewrites(masked: str) -> str:
@@ -733,6 +754,7 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
         masked = re.sub(rf"\b{alias}\.value(\s*(?:<=|>=|<|>)\s*\x01\d+\x01)",
                         rf"CAST({alias}.value AS bigint)\1", masked)
     masked = _apply_rewrites(_recursive_limit(masked))
+    masked = _integer_json_each(masked, catalog)
     # json_each.value is text on Postgres, but SQLite keeps JSON numbers numeric.
     for alias in re.findall(r"ctx\.json_each\([^()]*\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
         masked = re.sub(rf"\b{alias}\.value(?=\s*(?:<=|>=|<|>)\s*\x01)",
@@ -910,12 +932,15 @@ class Catalog:
         self._unique: dict[str, list[tuple[str, ...]]] = {}
         self._identity: dict[str, str] = {}
         rows = conn.execute(
-            "SELECT c.relname, a.attname, a.attnum, a.attidentity FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
+            "SELECT c.relname, a.attname, a.attnum, a.atttypid IN (20, 21, 23) FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
             "WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v') AND a.attnum > 0 "
             "AND NOT a.attisdropped ORDER BY c.relname, a.attnum").fetchall()
-        for table, column, _num, _identity in rows:
+        self.integer_columns: set[str] = set()
+        for table, column, _num, integer in rows:
             if column not in _HIDDEN_COLUMNS.get(table, ()) and column not in ("agent_id", "rowid"):
                 self._columns.setdefault(table, []).append(column)
+            if integer:
+                self.integer_columns.add(column)
         # The ids LCM-X lets SQLite allocate are filled per agent by the lcm_assign_id trigger (its argument names
         # the column).
         for table, args in conn.execute(
@@ -1372,8 +1397,7 @@ class PgConnection:
         others wait out their busy timeout (lock_timeout here) and then fail with "database is locked". Outside a
         transaction (isolation_level None) the statement is its own transaction, as SQLite runs it."""
         if self._in_tx or self.isolation_level is not None:
-            self._lock_before_begin()
-            self._begin()
+            self._begin(traced=not self._lock_before_begin(traced=True))
             self._write_lock()
             yield
             return
@@ -1394,13 +1418,18 @@ class PgConnection:
 
     _WRITE_LOCK_KEY = "SELECT {}(hashtextextended(%s, 0))"
 
-    def _lock_before_begin(self) -> None:
+    def _lock_before_begin(self, *, traced: bool = False) -> bool:
         """A transaction that starts by writing takes the write lock before its snapshot, as SQLite's BEGIN IMMEDIATE
         reads the database as it is once it holds the lock: a REPEATABLE READ snapshot taken while waiting for the
         lock would be stale and fail its writes. The session-level lock is released when the transaction ends."""
         if not self._in_tx and not self._writer:
+            if traced and self._trace is not None:
+                # Python's sqlite3 reports "BEGIN <isolation_level>" before it waits for the lock; _begin then does not.
+                self._trace(f"BEGIN {self.isolation_level or ''}")
             self._raw(self._WRITE_LOCK_KEY.format("pg_advisory_lock"), ["lcm-x write:" + self.agent_id])
             self._writer = self._session_locked = True
+            return True
+        return False
 
     def _bump_data_version(self) -> None:
         """PRAGMA data_version changes when another connection commits a write: each writing commit counts one for the
@@ -1462,18 +1491,22 @@ class PgConnection:
         import psycopg
         guarded = self._in_tx
         try:
-            if guarded:
-                self._pg.execute("SAVEPOINT lcm_x_statement")
             with self._progress_watch() as interrupted:
                 try:
-                    result = self._pg.execute(text if args else text.replace("%%", "%"), args or None)
+                    if guarded:
+                        # SQLite undoes a failed statement and keeps its transaction: a savepoint around it, sent with
+                        # the statement and its release as one query (the client binds the parameters).
+                        body = (text if args else text.replace("%%", "%")).rstrip().rstrip(";")
+                        result = self._pg.execute(
+                            f"SAVEPOINT lcm_x_statement; {body}; RELEASE SAVEPOINT lcm_x_statement", args or None)
+                        result.nextset()
+                    else:
+                        result = self._pg.execute(text if args else text.replace("%%", "%"), args or None)
                     rows = result.fetchall() if result.description else []
                 except psycopg.errors.QueryCanceled:
                     if interrupted:
                         raise _Interrupted() from None
                     raise
-            if guarded:
-                self._pg.execute("RELEASE SAVEPOINT lcm_x_statement")
         except (psycopg.Error, _Interrupted) as exc:
             if guarded and not self._pg.closed:
                 try:

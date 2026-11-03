@@ -77,6 +77,8 @@ DROP INDEX IF EXISTS vec.chunks_source_messages;
 DROP INDEX IF EXISTS vec.chunks_source_messages_part;
 CREATE UNIQUE INDEX IF NOT EXISTS chunks_source_messages_part
     ON vec.chunks (source, message_ids, chunk_index, source_ref, lcm_identity_hash) NULLS NOT DISTINCT;
+-- LCM-X finds its chunk rows by its chunk id.
+CREATE INDEX IF NOT EXISTS chunks_lcm_source_ref ON vec.chunks (source_ref) WHERE source = 'lcm-x';
 
 -- LCM-X's chunk vectors: a chunk is a span of one message (chunk_id `<store_id>:<chunk_index>`). It is one vec.chunks
 -- row (source 'lcm-x', message_ids = the memory.messages id of the message's text, chunk_index, source_ref = the

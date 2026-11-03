@@ -290,6 +290,7 @@ class _TestSchema:
 
     def __init__(self, store) -> None:
         self._store, self._tables, self._triggers = store, [], []
+        self._registered = []
         self._run("GRANT CREATE ON SCHEMA public TO lina_app; GRANT TRIGGER ON ALL TABLES IN SCHEMA ctx TO lina_app")
 
     def _run(self, sql: str) -> None:
@@ -313,6 +314,7 @@ class _TestSchema:
         if table and not catalog.columns(table.group(1)) and table.group(1).lower() != "sqlite_sequence":
             self._create_table(table.group(1), table.group(2))
             _register_columns(catalog, table.group(1), table.group(2))
+            self._registered.append((catalog, table.group(1)))
         trigger = _CREATE_TRIGGER.match(sql)
         # A test's trigger on a table is emulated on the store's table; one that maintains an FTS5 table is FTS5's own
         # machinery (the store's FTS tables are views over the rows) and is left out.
@@ -363,7 +365,10 @@ class _TestSchema:
             self._run(f'DROP TRIGGER IF EXISTS "{name}" ON {target}; DROP FUNCTION IF EXISTS {function}()')
         for name in reversed(self._tables):
             self._run(f'DROP TABLE IF EXISTS public."{name}" CASCADE')
-        self._tables, self._triggers = [], []
+        for catalog, name in self._registered:  # a later test creates its own table of that name
+            catalog._columns.pop(name, None)
+            catalog._pk.pop(name, None)
+        self._tables, self._triggers, self._registered = [], [], []
 
 
 def _widened_vector_text(vector_text):
