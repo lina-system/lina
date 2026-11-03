@@ -1280,16 +1280,17 @@ BEGIN
 END $$;
 
 -- FTS5's snippet() on the store: this hands the row's lexemes in token order (the configuration's, so the stem
--- table's are stemmed) and each query phrase's lexemes to the translator, which cuts and highlights the snippet as
+-- table's are stemmed) and each query phrase's lexemes (and snippet()'s marks and token count) to the translator, which cuts and highlights the snippet as
 -- FTS5 does (lcm_x_store_fts.fts5_snippet). The value is E'\x04' || json || E'\x04' || body.
-CREATE OR REPLACE FUNCTION ctx.lcm_snippet_source(body text, cfg regconfig, phrases text[], prefixes boolean[])
+CREATE OR REPLACE FUNCTION ctx.lcm_snippet_source(body text, cfg regconfig, phrases text[], prefixes boolean[],
+                                                    marks json)
     RETURNS text LANGUAGE sql STABLE PARALLEL SAFE AS $$
     SELECT E'\x04' || json_build_object(
                'lex', (SELECT coalesce(json_agg(u.lexeme ORDER BY p), '[]'::json)
                        FROM unnest(to_tsvector(cfg, ctx.lcm_unicode61(coalesce(body, '')))) AS u, unnest(u.positions) AS p),
                'phr', (SELECT coalesce(json_agg(ctx.lcm_phrase_words(cfg, ph) ORDER BY i), '[]'::json)
                        FROM unnest(phrases) WITH ORDINALITY AS t(ph, i)),
-               'pre', to_json(prefixes))::text || E'\x04' || coalesce(body, '')
+               'pre', to_json(prefixes), 'marks', marks)::text || E'\x04' || coalesce(body, '')
 $$;
 
 CREATE OR REPLACE VIEW ctx.nodes_fts WITH (security_invoker = true) AS

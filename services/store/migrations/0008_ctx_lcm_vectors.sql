@@ -72,9 +72,11 @@ CREATE OR REPLACE TRIGGER lcm_embedding_vectors_delete INSTEAD OF DELETE ON ctx.
 -- for #19's rows, which are keyed as before.
 ALTER TABLE vec.chunks ADD COLUMN IF NOT EXISTS chunk_index int;
 ALTER TABLE vec.chunks ADD COLUMN IF NOT EXISTS source_ref text;
+ALTER TABLE vec.chunks ADD COLUMN IF NOT EXISTS lcm_identity_hash text;
 DROP INDEX IF EXISTS vec.chunks_source_messages;
+DROP INDEX IF EXISTS vec.chunks_source_messages_part;
 CREATE UNIQUE INDEX IF NOT EXISTS chunks_source_messages_part
-    ON vec.chunks (source, message_ids, chunk_index, source_ref) NULLS NOT DISTINCT;
+    ON vec.chunks (source, message_ids, chunk_index, source_ref, lcm_identity_hash) NULLS NOT DISTINCT;
 
 -- LCM-X's chunk vectors: a chunk is a span of one message (chunk_id `<store_id>:<chunk_index>`). It is one vec.chunks
 -- row (source 'lcm-x', message_ids = the memory.messages id of the message's text, chunk_index, source_ref = the
@@ -96,7 +98,8 @@ FROM vec.chunks AS c
 JOIN vec.embeddings AS e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
 JOIN memory.messages AS m ON m.message_id = c.message_ids[1]
 JOIN ctx.lcm_messages AS p ON p.store_id = split_part(c.source_ref, ':', 1)::bigint AND p.text_uid = m.uid
-JOIN ctx.lcm_embedding_profile AS prof ON prof.model_name = e.model AND prof.dim <= e.dim
+JOIN ctx.lcm_embedding_profile AS prof ON prof.identity_hash = c.lcm_identity_hash
+    AND prof.model_name = e.model AND prof.dim <= e.dim
 WHERE c.source = 'lcm-x';
 
 CREATE OR REPLACE FUNCTION ctx.lcm_chunk_vectors_write() RETURNS trigger
@@ -114,6 +117,7 @@ BEGIN
          USING vec.chunks AS c, ctx.lcm_embedding_profile AS p
          WHERE e.kind = 'chunk' AND e.item_id = c.chunk_id AND c.source = 'lcm-x'
            AND c.source_ref = OLD.chunk_id
+           AND c.lcm_identity_hash = OLD.identity_hash
            AND c.message_ids = ARRAY[msg.message_id] AND p.identity_hash = OLD.identity_hash AND e.model = p.model_name;
         RETURN OLD;
     END IF;
@@ -131,10 +135,10 @@ BEGIN
         PERFORM ctx.lcm_raise('chunk vectors on the memory store are 1024 wide (the one embedding model, lina#19); '
                               'this profile writes ' || width);
     END IF;
-    INSERT INTO vec.chunks (source, agent_id, message_ids, chunk_index, source_ref, text)
+    INSERT INTO vec.chunks (source, agent_id, message_ids, chunk_index, source_ref, lcm_identity_hash, text)
     VALUES ('lcm-x', public.lina_current_agent(), ARRAY[msg.message_id], split_part(NEW.chunk_id, ':', 2)::int,
-            NEW.chunk_id, coalesce(msg.content, ''))
-    ON CONFLICT (source, message_ids, chunk_index, source_ref) DO UPDATE SET source = EXCLUDED.source
+            NEW.chunk_id, NEW.identity_hash, coalesce(msg.content, ''))
+    ON CONFLICT (source, message_ids, chunk_index, source_ref, lcm_identity_hash) DO UPDATE SET source = EXCLUDED.source
     RETURNING chunk_id INTO vec_chunk;
     INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding)
     VALUES ('chunk', vec_chunk, public.lina_current_agent(), model_name, 1024,

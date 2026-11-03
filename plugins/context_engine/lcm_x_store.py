@@ -483,28 +483,43 @@ def _fts_aliases(masked: str) -> dict[str, str]:
     return aliases
 
 
-def _fts_parts(masked: str) -> list:
+def _snippet_args(text: str, literals: list[str]) -> tuple[str, str, str, int]:
+    """snippet(x, column, open, close, ellipsis, tokens)'s open, close, ellipsis and token count (FTS5 caps it at
+    64); string arguments are masked literals."""
+    def value(arg: str) -> str:
+        m = re.fullmatch(r"\s*\x00(\d+)\x00\s*", arg)
+        return literals[int(m.group(1))][1:-1].replace("''", "'").replace("%%", "%") if m else arg.strip()
+    args = [value(a) for a in text.split(",")]
+    return args[1], args[2], args[3], max(1, min(int(args[4]), 64))
+
+
+def _fts_parts(masked: str, literals: list[str]) -> list:
     """Split *masked* into text and FTS slots: ``x MATCH ?``, bare ``rank``, ``bm25(x)``, ``snippet(x, ...)``."""
     if not re.search(r"\bMATCH\b", masked, re.IGNORECASE):
         return [masked]
     aliases = _fts_aliases(masked)
     known = set(aliases) | set(aliases.values())
-    matches = [(m, aliases.get(m.group(1), m.group(1))) for m in re.finditer(r"\b(\w+)(?:\.\w+)?\s+MATCH\s+\x01(\d+)\x01", masked, re.IGNORECASE)
+    matches = [(m, aliases.get(m.group(1), m.group(1))) for m in re.finditer(r"\b(\w+)(?:\.\w+)?\s+MATCH\s+([\x00\x01])(\d+)\2", masked, re.IGNORECASE)
                if m.group(1) in known]
     if not matches:
         return [masked]
-    first_slot = int(matches[0][0].group(2))
+    def query_slot(m: re.Match) -> int | str:
+        index = int(m.group(3))
+        return int(index) if m.group(2) == "\x01" else literals[index][1:-1].replace("''", "'").replace("%%", "%")
+
+    first_slot = query_slot(matches[0][0])
     tables = {alias: table for table, alias in aliases.items() if re.search(rf"\b{table}\b", masked, re.IGNORECASE)}
 
-    def slot(kind: str, index: int, alias: str) -> tuple:
+    def slot(kind: str, index: int | str, alias: str) -> tuple:
         return (kind, index, alias, tables.get(alias, alias))
     marks = []
     for m, alias in matches:
-        marks.append((m.start(), m.end(), slot("match", int(m.group(2)), alias)))
+        marks.append((m.start(), m.end(), slot("match", query_slot(m), alias)))
     for m in re.finditer(r"\bbm25\s*\(\s*(\w+)\s*\)", masked, re.IGNORECASE):
         marks.append((m.start(), m.end(), slot("rank", first_slot, aliases.get(m.group(1), m.group(1)))))
-    for m in re.finditer(r"\bsnippet\s*\(\s*(\w+)\s*,[^()]*\)", masked, re.IGNORECASE):
-        marks.append((m.start(), m.end(), slot("snippet", first_slot, aliases.get(m.group(1), m.group(1)))))
+    for m in re.finditer(r"\bsnippet\s*\(\s*(\w+)\s*,([^()]*)\)", masked, re.IGNORECASE):
+        marks.append((m.start(), m.end(), slot("snippet", first_slot, aliases.get(m.group(1), m.group(1)))
+                      + (_snippet_args(m.group(2), literals),)))
     default_alias = matches[0][1]
     # `bm25(x) AS rank` names a column: the bare `rank` after it (ORDER BY rank) reads that column.
     named_rank = re.search(r"\bAS\s+rank\b", masked, re.IGNORECASE)
@@ -635,6 +650,10 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     masked = _expand_stars(masked, catalog)
     masked = _bare_joins(masked)
     masked = _apply_rewrites(_recursive_limit(masked))
+    # json_each.value is text on Postgres, but SQLite keeps JSON numbers numeric.
+    for alias in re.findall(r"ctx\.json_each\([^()]*\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
+        masked = re.sub(rf"\b{alias}\.value(?=\s*(?:<=|>=|<|>)\s*\x01)",
+                        f"CAST({alias}.value AS numeric)", masked)
     masked = masked.rstrip().rstrip(";")
     returning = None
     m = re.match(r"\s*INSERT\s+INTO\s+(\w+)", masked, re.IGNORECASE)
@@ -644,9 +663,9 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
             masked += f" RETURNING {returning}"
     parts: list = []
     indices = _slot_indices(slots)
-    for piece in _fts_parts(masked):
+    for piece in _fts_parts(masked, literals):
         parts.extend(_unmask(piece, literals, indices) if isinstance(piece, str)
-                     else [(piece[0], indices[piece[1]], *piece[2:])])
+                     else [(piece[0], indices[piece[1]] if isinstance(piece[1], int) else piece[1], *piece[2:])])
     names = _named_order(slots)
     return Template(tuple(parts), returning=returning, detail=tuple(names) if names else ())
 
@@ -681,17 +700,20 @@ def _bm25_sql(query: str, config: str, alias: str, table: str) -> tuple[str, lis
 
 
 def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
-    kind, index, alias, table = slot
+    kind, index, alias, table = slot[:4]
+    query = index if isinstance(index, str) else str(args[index])
     # The stem view is FTS5's porter tokenizer: its queries parse with the same stemming configuration (0007).
     config = "ctx.lcm_porter" if table == "messages_fts_stem" else "simple"
-    tsq, params = tsquery_sql(str(args[index]), config, (_FTS_COLUMNS.get(table, "content"),))
+    tsq, params = tsquery_sql(query, config, (_FTS_COLUMNS.get(table, "content"),))
     if kind == "match":
         return f"({alias}.tsv @@ ({tsq}))", params
     if kind == "rank":
-        return _bm25_sql(str(args[index]), config, alias, table)
+        return _bm25_sql(query, config, alias, table)
     column = _FTS_COLUMNS.get(table, "content")
-    phrases, prefixes = _query_phrases(str(args[index]))
-    return f"ctx.lcm_snippet_source({alias}.{column}, '{config}'::regconfig, %s::text[], %s::boolean[])", [phrases, prefixes]
+    phrases, prefixes = _query_phrases(query)
+    marks = json.dumps(slot[4])
+    return (f"ctx.lcm_snippet_source({alias}.{column}, '{config}'::regconfig, %s::text[], %s::boolean[], %s)",
+            [phrases, prefixes, marks])
 
 
 def render(template: Template, args: Any) -> tuple[str, list[Any]]:
@@ -1498,7 +1520,8 @@ class PgConnection:
             for assignment in assignments:
                 name, expr = (x.strip() for x in assignment.split("=", 1))
                 count = len(_mask(expr)[2])
-                values[name] = (self.execute(f"SELECT {expr}", params[pos:pos + count]).fetchone()[0]
+                values[name] = (self.execute(f"SELECT {expr} FROM messages WHERE store_id = ?",
+                                             params[pos:pos + count] + [store_id]).fetchone()[0]
                                 if expr != "?" else params[pos])
                 pos += count
             text = dict(zip(("session_id", "role", "tool_call_id", "tool_calls", "tool_name", "content"), current))

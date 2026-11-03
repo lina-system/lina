@@ -307,6 +307,8 @@ def fts5_snippet(source: str, open_mark: str = ">>>", close_mark: str = "<<<", e
 
     _, meta, text = source.split(SNIPPET_MARK, 2)
     info = json.loads(meta)
+    if info.get("marks"):
+        open_mark, close_mark, ellipsis, n_token = info["marks"]
     spans = _unicode61_tokens(text)
     lexemes = info["lex"] if len(info["lex"]) == len(spans) else [
         "".join(c for c in unicodedata.normalize("NFD", text[s:e]) if not "\u0300" <= c <= "\u036f").lower()

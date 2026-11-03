@@ -277,6 +277,9 @@ class _TestSchema:
     def handle(self, connection, cur, template, params) -> None:
         from plugins.context_engine import lcm_x_store
         sql = template.parts[0]
+        if re.match(r"\s*ALTER\s+TABLE\s+messages\s+ADD\s+COLUMN\s+access_scope\b", sql, re.IGNORECASE):
+            connection.execute("INSERT OR IGNORE INTO lcm_migration_state (step_name, completed_at) "
+                               "VALUES ('scope_v1', 0)")
         catalog = connection._catalog
         table = _CREATE_TABLE.match(sql)
         if table and not catalog.columns(table.group(1)) and table.group(1).lower() != "sqlite_sequence":
