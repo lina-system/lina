@@ -1,0 +1,208 @@
+# LCM-X tests that test SQLite itself: deselected on the Postgres run of LCM-X's suite
+# (plugins/context_engine/lcm_x_store_pytest.py) and run on the SQLite job as before. One node id or test file per
+# line, then "#" and the reason. Tests that fail on Postgres for any other reason are not listed here (lina#16).
+
+tests/behaviour/test_assembly_trace.py  # golden trace of the SQL statements SQLite ran, compared string for string
+tests/behaviour/test_backfill_trace.py  # golden trace of the SQL statements SQLite ran, compared string for string
+tests/behaviour/test_compress_trace.py  # golden trace of the SQL statements SQLite ran, compared string for string
+tests/behaviour/test_ingest_trace.py  # golden trace of the SQL statements SQLite ran, compared string for string
+tests/behaviour/test_reconcile_trace.py  # golden trace of the SQL statements SQLite ran, compared string for string
+tests/behaviour/test_child_isolation_lifecycle.py::test_ended_child_nested_compress_inherits_binding[end_callback]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_child_isolation_lifecycle.py::test_ended_child_nested_compress_inherits_binding[native]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_child_isolation_lifecycle.py::test_ended_child_nested_compress_inherits_binding[reset_callback]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebind_log_comparison[hermes_lcm.engine-30-Temporal rollup write blocked by SQLite lock contention-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebind_log_comparison[hermes_lcm.rollup_store-30-Temporal rollup write blocked by SQLite lock contention-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebind_log_comparison[hermes_lcm.rollup_store-30-Unexpected rollup behavior-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebind_log_comparison[hermes_lcm.rollup_store-40-Temporal rollup write blocked by SQLite lock contention-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebound_b_matches_fresh_b[conversation]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebound_b_matches_fresh_b[profile]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebound_b_matches_fresh_b[reset]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/behaviour/test_rebind_equivalence.py::test_rebound_b_matches_fresh_b[session]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_current_sources_only_scope_override_and_read_cost  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_explicit_owner_overrides_never_coalesce_and_foreign_owner_refused  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[conversation-other-False-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[conversation-other-False-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[event-person-False-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[event-person-False-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[future-topic-False-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[future-topic-False-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[person-org-False-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[person-org-False-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[person-other-True-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[person-other-True-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[person-topic-True-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_bridge.py::test_r1b_1_override_namespace_and_resolved_kind[person-topic-True-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops.py::test_scope_mutations_and_event_reduction_are_isolated  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[dropped-person:sister]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[dropped-user:self]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[none-person:sister]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[none-user:self]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[reported-person:sister]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[reported-user:self]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[unverified-person:sister]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_forced_g1_cycle[unverified-user:self]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_r5q_relation_alias_safety_and_rebuild_liveness[ambiguity-removed]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_r5q_relation_alias_safety_and_rebuild_liveness[last-support-retired]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_r5q_scoped_override_does_not_admit_an_ambiguous_slot  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_ops_stateful.py::test_scoped_override_after_empty_rebuild_cites_only_named_source_and_owner  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_entity_r1b_regressions.py::test_zz_r1b_kind_refusals_are_non_mutating  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_host_uid_rollback_reader.py::test_persisted_shadow_uids_are_inert_to_rollback_reader[v0.25.0-rc1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_host_uid_rollback_reader.py::test_persisted_shadow_uids_are_inert_to_rollback_reader[v0.27.0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_host_uid_rollback_reader.py::test_persisted_shadow_uids_are_inert_to_rollback_reader[v0.28.0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_host_uid_rollback_reader.py::test_persisted_shadow_uids_are_inert_to_rollback_reader[v0.28.1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1201_summary_model_only.py::test_t5_metadata_does_not_change_identity_or_reconciliation  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_carry_foreign_conversation_is_unverified  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_composite_identity_forms[False-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_composite_identity_forms[False-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_composite_identity_forms[True-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_dynamic_leaf_admission_is_unassessed  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_e1_only_hidden_copies_are_a_noop  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_e1_prefix[absent]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_e1_prefix[empty]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_empty_lineage_leaf  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_filtered_view_completeness_uses_original_snapshot[double]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_filtered_view_completeness_uses_original_snapshot[production-compiler]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_missing_regex_leaves_view_unknown[active-filter]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_missing_regex_leaves_view_unknown[stored-filter]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_node_lineage_uses_created_at_order[[1,2]-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_node_lineage_uses_created_at_order[[2,1]-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotated_store_matches_inplace[False-6]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotated_store_matches_inplace[False-7]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotated_store_matches_inplace[True-6]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotated_store_matches_inplace[True-7]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotation_ancestry_refusals[contradictory]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotation_ancestry_refusals[cycle]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotation_ancestry_refusals[foreign]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotation_ancestry_refusals[malformed]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotation_ancestry_refusals[missing]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r1.py::test_rotation_ancestry_refusals[outside]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_attribution_budget_floor  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_copy_subtraction_requires_complete_scan[10-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_copy_subtraction_requires_complete_scan[10-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_copy_subtraction_requires_complete_scan[2100-False]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_copy_subtraction_requires_complete_scan[2100-True]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_empty_rotation_hop_matches_inplace  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_backlog[order0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_backlog[order1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_backlog[order2]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_backlog[order3]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_backlog[order4]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_backlog[order5]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[8500-1000-order0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[8500-1000-order1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[8500-3-order0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[8500-3-order1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[9000-1000-order0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[9000-1000-order1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[9000-3-order0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r2.py::test_shown_retained_nonforced[9000-3-order1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_blank_owned_rotation_predecessor[ \t ]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_blank_owned_rotation_predecessor[None]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_blank_owned_rotation_predecessor[]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_blank_owned_rotation_predecessor[mixed]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_context_cap_admission_matches_production[400-0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_context_cap_admission_matches_production[400-3000]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_context_cap_admission_matches_production[500-0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_mapped_composite_replay_matches_production  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_unmapped_composite_requires_scoped_same_stamp_donor[alias]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_unmapped_composite_requires_scoped_same_stamp_donor[ancestor_unknown]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_unmapped_composite_requires_scoped_same_stamp_donor[different_stamp]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_fix_r3.py::test_unmapped_composite_requires_scoped_same_stamp_donor[foreign]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item01_unwitnessed_composite_refuses_before_attribution  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item02_dependent_reply_stays_in_selection  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item03_foreign_only_fresh_tail_is_unassessed  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item04_malformed_lineage_order_is_refused[messages-[1,1]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item04_malformed_lineage_order_is_refused[messages-[2,1]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item04_malformed_lineage_order_is_refused[messages-[]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item04_malformed_lineage_order_is_refused[nodes-[1,1]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item04_malformed_lineage_order_is_refused[nodes-[2,1]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item04_malformed_lineage_order_is_refused[nodes-[]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item05_persisted_dependent_reply_is_unassessed  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item06_below_threshold_admission_is_unassessed  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item07_legacy_source_spelling_does_not_split_copies[ \t ]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item07_legacy_source_spelling_does_not_split_copies[None]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item07_legacy_source_spelling_does_not_split_copies[]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item08_special_identity_refuses_before_findings[_lcm]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item08_special_identity_refuses_before_findings[message_uid]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item08_special_identity_refuses_before_findings[store_id]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item09_parent_carry_lineage_is_not_invalid_dag  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item10_mapped_stored_ignore_filter  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item11_bound_twin_leaves_view_unassessed  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item12_complete_v5_core_shape[lcm_lifecycle_state-debt_kind]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item12_complete_v5_core_shape[lcm_lifecycle_state-updated_at]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item12_complete_v5_core_shape[lcm_migration_state-completed_at]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item12_complete_v5_core_shape[summary_nodes-created_at]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item12_complete_v5_core_shape[summary_nodes-expand_hint]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item13_documented_header_check_reads_twenty_bytes  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1742_inspector.py::test_item14_missing_metadata_is_schema_mismatch  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1762_followups.py::test_api_carry_end_has_sqlite_integer_bounds[9223372036854775807-unverified_ancestry]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1762_followups.py::test_api_carry_end_has_sqlite_integer_bounds[9223372036854775808-invalid_input]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1762_followups.py::test_contradictory_pressure_yield_capture_is_config_incomplete[False-1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1762_followups.py::test_contradictory_pressure_yield_capture_is_config_incomplete[True-0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1762_followups.py::test_foreign_lifecycle_predecessor_documentation_matches_production  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1762_followups.py::test_public_compress_arms_yield_after_hold_and_min_observations  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_issue_1762_followups.py::test_unpersisted_ignored_message_matches_production  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_lcm_memory.py::test_list_and_database_are_read_only  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_cli_guards_unexpected_exceptions_and_serialization[inspect]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_cli_guards_unexpected_exceptions_and_serialization[serialize]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_contiguity_branch_uses_real_attribution_and_never_invents_blocker  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_copy_groups_use_normalized_conversation_ownership[ \t ]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_copy_groups_use_normalized_conversation_ownership[ conv ]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_copy_groups_use_normalized_conversation_ownership[None]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_copy_groups_use_normalized_conversation_ownership[\tconv\t]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_copy_groups_use_normalized_conversation_ownership[]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_documented_backup_conversion_is_accepted  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_empty_raw_view_with_hidden_backlog_is_not_a_noop  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_entire_view_in_fresh_tail_matches_product_noop[0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_entire_view_in_fresh_tail_matches_product_noop[1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_entire_view_in_fresh_tail_matches_product_noop[4]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_equal_real_user_turns_are_never_confirmed_by_text_or_timestamp  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_first_oversized_source_is_not_a_budget_wedge  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_first_tool_content_is_pruned_placeholder_not_pollution  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_healthy_matching_view_and_input_unchanged  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_ignored_view_candidate_is_filtered_before_leaf_selection  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_known_old_writer_pollution_is_suspected_without_occurrence_proof  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_evidence_file_keeps_database_findings[--effective-config]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_evidence_file_keeps_database_findings[--view-snapshot]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_summary_sources_raise_invalid_dag["private lineage"]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_summary_sources_raise_invalid_dag[[0]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_summary_sources_raise_invalid_dag[[true]]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_summary_sources_raise_invalid_dag[null]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_summary_sources_raise_invalid_dag[{]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_summary_sources_raise_invalid_dag[{}]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_view_evidence_keeps_database_findings[bad_messages]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_view_evidence_keeps_database_findings[config_extra]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_view_evidence_keeps_database_findings[config_type]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_malformed_view_evidence_keeps_database_findings[missing_messages]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_missing_or_mismatched_evidence_is_unknown[capture]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_missing_or_mismatched_evidence_is_unknown[config]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_missing_or_mismatched_evidence_is_unknown[counter]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_missing_or_mismatched_evidence_is_unknown[digest]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_missing_or_mismatched_evidence_is_unknown[scope]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_missing_or_mismatched_evidence_is_unknown[settings]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_missing_or_mismatched_evidence_is_unknown[snapshot]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_no_source_branch  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_noninteger_frontier_refused_without_echo[2.5]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_noninteger_frontier_refused_without_echo[private frontier marker0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_noninteger_frontier_refused_without_echo[private frontier marker1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_over_budget_prefix_through_named_blocker_and_tail_are_independent  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_pre_s0_sender_columns_are_not_required_by_inspector  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_reachability_checks_below_and_above_frontier_and_dag  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_reused_session_dag_uses_conversation_lineage[foreign]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_reused_session_dag_uses_conversation_lineage[missing]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_reused_session_dag_uses_conversation_lineage[mixed]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_reused_session_mapping_keeps_foreign_replay_candidates  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_salvage_pair_accepts_missing_tool_name[names0]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_salvage_pair_accepts_missing_tool_name[names1]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_same_uid_version_and_exact_identity_can_confirm_copies  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_schema_wal_header_and_dag_refusals_preserve_input[cycle]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_schema_wal_header_and_dag_refusals_preserve_input[foreign_source]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_schema_wal_header_and_dag_refusals_preserve_input[schema]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_schema_wal_header_and_dag_refusals_preserve_input[wal_header]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_sidecars_refused_before_open[-journal]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_sidecars_refused_before_open[-shm]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_sidecars_refused_before_open[-wal]  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_v5_optional_time_columns_leave_view_unknown  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_store_wedge_inspect.py::test_witnessed_composite_view_leaves_attribution_unknown  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_trajectory_semantic_retrieval.py::test_semantic_index_is_same_db_idempotent_and_backup_safe  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
+tests/test_trajectory_store.py::test_synthetic_secrets_are_redacted_before_sqlite_fts_and_output  # SQLite file backup (Connection.backup, iterdump or VACUUM INTO); the store is backed up by lina store backup
