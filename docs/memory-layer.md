@@ -80,3 +80,17 @@ them today and are never renamed. A later key joins the identity an earlier key 
 different identities are never merged. External messages (#18) keep their conversation ids
 (`messages:<platform>:<room id>`) and own the `messages_room` and `messenger_author` source kinds; their authors
 are not resolved to people. The tables have no `agent_id` column, so row-level security does not apply to them.
+
+## Measuring the cache
+
+`lina memory cache-report --usage <usage.jsonl> [--from ISO --to ISO] [--conversation <id> ...] [--baseline <pct> ...]
+[--fingerprints <file>] [--format md|tsv]` computes the lina#17 baseline's numbers from OCX usage rows only:
+the token-weighted hit rate `sum(cacheReadInputTokens) / sum(inputTokens)` (OCX's input total includes reads and
+writes), the per-request mean and median, unreported rows apart (never a miss or a zero), cache writes by tier, and
+the cache retreat `max(0, previous_input_total - current_cache_read)` along each conversation. A gap to a baseline
+within two standard errors of the rate (linearized ratio estimator over the metered requests) is reported as within
+noise. Conversations are numbered; no id, endpoint or account from the input reaches the output (lina#25).
+
+`memory.prefix_fingerprints: true` (off by default) appends one row per model request to
+`<home>/state/prefix-fingerprints.jsonl`: keyed hashes and byte lengths of the request's leading blocks (tools, then
+each message), never text; `--fingerprints` measures from it the exact common prefix of consecutive requests.

@@ -1307,8 +1307,8 @@ DEFAULT_CONFIG = {
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
         "external_messages": {"spool": ""},  # Host-level append-only collector spool; empty does nothing.
-        # One external provider; empty = built-in only.
-        "provider": "",
+        "provider": "",  # One external provider; empty = built-in only.
+        "prefix_fingerprints": False,  # Per-request prefix hashes, no text, in <home>/state (lina#25).
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.
     "delegation": {
