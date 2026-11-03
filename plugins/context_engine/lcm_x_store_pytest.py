@@ -315,9 +315,14 @@ def _widened_vector_text(vector_text):
     """The suite's fake embedders write a few floats; the store holds the one 1024-wide model (lina#19). On this
     run a narrower fake is widened with zeros, which keeps its cosine distances, and the views read it back cut
     to the profile's width. Production refuses every vector that is not 1024 wide."""
+    zeros = {}
+
     def widened(value):
         if isinstance(value, (bytes, bytearray, memoryview)) and not len(value) % 4 and 0 < len(value) < 4096:
-            value = bytes(value) + bytes(4096 - len(value))
+            pad = (4096 - len(value)) // 4
+            if pad not in zeros:
+                zeros[pad] = ",0" * pad
+            return vector_text(value)[:-1] + zeros[pad] + "]"
         return vector_text(value)
     return widened
 

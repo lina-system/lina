@@ -5,13 +5,21 @@
 CREATE OR REPLACE VIEW ctx.lcm_embedding_vectors WITH (security_invoker = true) AS
 SELECT n.node_id AS rowid,
        n.node_id::text AS embedded_id,
-       p.identity_hash,
-       subvector(e.embedding, 1, p.dim::int)::vector AS vec,
+       x.identity_hash,
+       x.vec,
        NULL::text AS access_scope
-FROM vec.embeddings AS e
-JOIN ctx.summary_nodes AS n ON n.vec_item_id = e.item_id
-JOIN ctx.lcm_embedding_profile AS p ON p.model_name = e.model AND p.dim <= e.dim
-WHERE e.kind = 'summary';
+FROM ctx.summary_nodes AS n
+-- A lookup per node (OFFSET 0 keeps it one): right after a bulk write the planner has no statistics for these
+-- tables, and joined flat it can cross every vector with every embedding_meta row before reaching the node.
+CROSS JOIN LATERAL (
+    SELECT p.identity_hash, subvector(e.embedding, 1, p.dim::int)::vector AS vec
+    FROM vec.embeddings AS e
+    JOIN ctx.lcm_embedding_profile AS p ON p.model_name = e.model AND p.dim <= e.dim
+    WHERE e.kind = 'summary' AND e.item_id = n.vec_item_id
+    OFFSET 0) AS x;
+
+-- LCM-X joins its vectors by embedded_id, the node id as text: an index on that expression keeps the join a lookup.
+CREATE INDEX IF NOT EXISTS summary_nodes_embedded_id ON ctx.summary_nodes (agent_id, (node_id::text));
 
 CREATE OR REPLACE FUNCTION ctx.lcm_embedding_vectors_write() RETURNS trigger
     LANGUAGE plpgsql AS $$
@@ -160,3 +168,6 @@ CREATE OR REPLACE TRIGGER lcm_embedding_vectors_update INSTEAD OF UPDATE ON ctx.
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_vector_view_update();
 CREATE OR REPLACE TRIGGER lcm_chunk_vectors_update INSTEAD OF UPDATE ON ctx.lcm_chunk_vectors
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_vector_view_update();
+
+-- As for ctx (0007): lina_app refreshes the statistics of the vector tables after a bulk write.
+GRANT MAINTAIN ON vec.embeddings, vec.chunks TO lina_app;

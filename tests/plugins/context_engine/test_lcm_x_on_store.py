@@ -201,3 +201,39 @@ def test_entity_names_fold_case_as_python_does(routed, tmp_path):
         assert [fact["subject_key"] for fact in facts] == ["person:Straße"]
     finally:
         engine.shutdown()
+
+
+def test_one_store_connection_serves_many_threads_and_closes_cleanly(routed):
+    """LCM-X shares one connection between threads (check_same_thread=False) and may close it while another thread
+    is mid-statement, as SQLite's connection mutex allows: statements wait their turn and a closed connection
+    refuses the next one, never two commands on the wire at once."""
+    import threading
+
+    store = _lcm("store").MessageStore(routed("threads"))
+    conn = store.connection
+    errors: list[BaseException] = []
+    started, busy = threading.Barrier(9), threading.Event()
+
+    def work(worker: int) -> None:
+        started.wait()
+        try:
+            for step in range(400):
+                conn.execute("INSERT OR REPLACE INTO metadata(key, value) VALUES(?, ?)", (f"w{worker}", str(step)))
+                conn.commit()
+                conn.execute("SELECT count(*) FROM messages").fetchone()
+                if step == 20:
+                    busy.set()
+        except sqlite3.ProgrammingError:
+            pass  # the connection was closed under this thread: what SQLite raises too
+        except BaseException as exc:  # noqa: BLE001 - every other error is the failure under test
+            errors.append(exc)
+
+    threads = [threading.Thread(target=work, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    started.wait()
+    assert busy.wait(timeout=60)
+    conn.close()
+    for thread in threads:
+        thread.join(timeout=60)
+    assert errors == []

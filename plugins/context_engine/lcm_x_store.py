@@ -645,6 +645,33 @@ _VECTOR_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(?:lcm_embedding_vectors|lcm_c
 
 _STORE_FUNCTIONS = frozenset({"lcm_summary_has_text"})
 
+# A transaction that inserted this many rows into a table refreshes its planner statistics at commit: LCM-X loads
+# and then reads at once, and planned on the empty table's statistics a join can cross every row with every row.
+_ANALYZE_AFTER_ROWS = 1000
+_ANALYZE_TARGETS = {"messages": ("ctx.lcm_messages",), "lcm_embedding_vectors": ("vec.embeddings",),
+                    "lcm_chunk_vectors": ("vec.chunks", "vec.embeddings")}
+_INSERT_TARGET = re.compile(r"\s*INSERT\s+INTO\s+(?:ctx\.)?(\w+)\b", re.IGNORECASE)
+_written_rows: dict[str, int] = {}
+_written_lock = threading.Lock()
+
+
+def _note_inserted(text: str, count: int) -> None:
+    m = _INSERT_TARGET.match(text)
+    if not m or count <= 0 or m.group(1).lower() in ("pg_temp", "temp"):
+        return
+    with _written_lock:
+        for table in _ANALYZE_TARGETS.get(m.group(1), (f"ctx.{m.group(1)}",)):
+            _written_rows[table] = _written_rows.get(table, 0) + count
+
+
+def _tables_to_analyze() -> list[str]:
+    with _written_lock:
+        due = [table for table, rows in _written_rows.items() if rows >= _ANALYZE_AFTER_ROWS]
+        for table in due:
+            del _written_rows[table]
+    return due
+
+
 _LIMIT_SLOT = re.compile(r"\bLIMIT\s+%s", re.IGNORECASE)
 
 
@@ -1006,6 +1033,14 @@ class PgConnection:
     def rollback(self) -> None:
         self._finish("ROLLBACK", traced=True)
 
+    def _analyze_bulk_writes(self) -> None:
+        import psycopg
+        for table in _tables_to_analyze():
+            try:
+                self._pg.execute(f"ANALYZE {table}")
+            except psycopg.Error as exc:
+                logger.warning("LCM-X on the store: ANALYZE %s after a bulk write failed: %s", table, exc)
+
     def _finish(self, word: str, *, traced: bool) -> None:
         with self._lock:
             if self._in_tx:
@@ -1013,17 +1048,26 @@ class PgConnection:
                     self._trace(word)  # as Python's sqlite3 reports the COMMIT/ROLLBACK its commit()/rollback() issue
                 self._raw(word)
                 self._end_tx()
+                if word == "COMMIT":
+                    self._analyze_bulk_writes()
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            if self._in_tx:
-                self._raw("ROLLBACK")
-        finally:
-            self._pg.close()
-            self._text.close()
+        # Under the statement lock: another thread's statement on this connection (a background scan, say) finishes
+        # first, as SQLite's connection mutex has it, instead of the ROLLBACK colliding with it on the wire.
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            try:
+                # A statement cut off mid-protocol (a timeout raised inside the driver) leaves the server still on
+                # it; closing the connection ends that transaction without a ROLLBACK on the wire.
+                from psycopg.pq import TransactionStatus
+                if self._in_tx and self._pg.info.transaction_status != TransactionStatus.ACTIVE:
+                    self._raw("ROLLBACK")
+            finally:
+                self._end_tx()
+                self._pg.close()
+                self._text.close()
 
     def __enter__(self) -> PgConnection:
         return self
@@ -1103,6 +1147,7 @@ class PgConnection:
             raise
         self._raw("COMMIT")
         self._end_tx()
+        self._analyze_bulk_writes()
 
     def _write_lock(self) -> None:
         if not self._writer:
@@ -1124,6 +1169,8 @@ class PgConnection:
         if self._trace is not None:
             self._trace(sql)
         with self._lock:
+            if self._closed:  # closed by another thread while this one waited for the lock
+                raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
             handler = _KINDS.get(template.kind)
             if handler is not None:
                 handler(self, cur, template, params)
@@ -1172,6 +1219,7 @@ class PgConnection:
         count = result.rowcount
         if count and count > 0 and text.lstrip()[:6].upper() in ("INSERT", "UPDATE", "DELETE"):
             self.total_changes += count
+            _note_inserted(text, count)
         cur._set_result([(d.name,) for d in description] if description else None, rows, count, lastrowid)
 
     def _control(self, cur: PgCursor, template: Template, params: Any) -> None:

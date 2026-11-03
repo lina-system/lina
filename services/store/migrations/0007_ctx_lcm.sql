@@ -1017,16 +1017,32 @@ CREATE OR REPLACE FUNCTION ctx.lcm_assign_id() RETURNS trigger
 DECLARE
     col text := TG_ARGV[0];
     given bigint := (to_jsonb(NEW) ->> TG_ARGV[0])::bigint;
-    next_id bigint;
+    top bigint;
+    retired bigint;
 BEGIN
-    INSERT INTO ctx.lcm_id_sequences AS s (table_name, last_id) VALUES (TG_TABLE_NAME, coalesce(given, 1))
-    ON CONFLICT (agent_id, table_name) DO UPDATE
-        SET last_id = CASE WHEN given IS NULL THEN s.last_id + 1 ELSE greatest(s.last_id, given) END
-    RETURNING last_id INTO next_id;
+    -- SQLite's AUTOINCREMENT: the next id is one past the largest this agent's table ever held. The largest it holds
+    -- is read from the (agent_id, id) key; the largest it deleted is kept in lcm_id_sequences. Nothing is written per
+    -- insert (a counter row updated per insert slows a long transaction quadratically). One writer per agent at a
+    -- time holds the store's write lock (lcm_x_store), so two inserts never read the same largest id.
     IF given IS NULL THEN
-        NEW := jsonb_populate_record(NEW, jsonb_build_object(col, next_id));
+        EXECUTE format('SELECT max(%I) FROM %I.%I WHERE agent_id = $1', col, TG_TABLE_SCHEMA, TG_TABLE_NAME)
+            INTO top USING NEW.agent_id;
+        SELECT s.last_id INTO retired FROM ctx.lcm_id_sequences AS s
+         WHERE s.agent_id = NEW.agent_id AND s.table_name = TG_TABLE_NAME;
+        NEW := jsonb_populate_record(NEW, jsonb_build_object(col, greatest(coalesce(top, 0), coalesce(retired, 0)) + 1));
     END IF;
     RETURN NEW;
+END $$;
+
+-- The largest id a statement deleted, so it is never handed out again (SQLite's sqlite_sequence).
+CREATE OR REPLACE FUNCTION ctx.lcm_retire_ids() RETURNS trigger
+    LANGUAGE plpgsql AS $$
+BEGIN
+    EXECUTE format('INSERT INTO ctx.lcm_id_sequences AS s (agent_id, table_name, last_id) '
+                   'SELECT agent_id, %L, max(%I) FROM gone GROUP BY agent_id '
+                   'ON CONFLICT (agent_id, table_name) DO UPDATE SET last_id = greatest(s.last_id, EXCLUDED.last_id)',
+                   TG_TABLE_NAME, TG_ARGV[0]);
+    RETURN NULL;
 END $$;
 
 CREATE OR REPLACE TRIGGER lcm_assign_id BEFORE INSERT ON ctx.lcm_messages
@@ -1055,6 +1071,30 @@ CREATE OR REPLACE TRIGGER lcm_assign_id BEFORE INSERT ON ctx.lcm_trajectory_asse
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_assign_id('asset_id');
 CREATE OR REPLACE TRIGGER lcm_assign_id BEFORE INSERT ON ctx.lcm_trajectory_transitions
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_assign_id('transition_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_messages
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('store_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.summary_nodes
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('node_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_rollups
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('rollup_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_rollup_invalidations
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('event_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_entity_aliases
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('alias_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_entity_keys
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('key_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_memory_events
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('event_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_teams_audit
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('event_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_trajectory_sources
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('source_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_trajectory_states
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('state_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_trajectory_assets
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('asset_id');
+CREATE OR REPLACE TRIGGER lcm_retire_ids AFTER DELETE ON ctx.lcm_trajectory_transitions
+    REFERENCING OLD TABLE AS gone FOR EACH STATEMENT EXECUTE FUNCTION ctx.lcm_retire_ids('transition_id');
 
 -- LCM-X's indexes, each led by agent_id.
 CREATE INDEX IF NOT EXISTS idx_msg_session ON ctx.lcm_messages (agent_id, session_id, store_id);
@@ -1414,3 +1454,6 @@ CREATE OR REPLACE TRIGGER lcm_memory_events_no_delete BEFORE DELETE ON ctx.lcm_m
 
 -- LCM-X names an id outright at times (SQLite then allocates past it); moving the sequence takes UPDATE.
 GRANT UPDATE ON ALL SEQUENCES IN SCHEMA ctx TO lina_app;
+-- LCM-X writes thousands of rows in one transaction and reads them right after; lina_app refreshes the planner's
+-- statistics then (lcm_x_store), instead of waiting for autovacuum.
+GRANT MAINTAIN ON ALL TABLES IN SCHEMA ctx TO lina_app;
