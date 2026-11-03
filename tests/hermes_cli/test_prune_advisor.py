@@ -56,7 +56,7 @@ def test_prompt_says_pruning_will_not_help_when_nothing_is_old_enough(home, monk
     old = time.time() - 200 * 86400
     with sqlite3.connect(home / "state.db") as conn:
         conn.execute("UPDATE sessions SET started_at=?, ended_at=?, last_activity_at=?", (old, old, old))
-        conn.execute("UPDATE messages SET timestamp=?", (old,))
+        conn.execute("UPDATE transcript_rows SET timestamp=?", (old,))
     advice = prune_advisor.advise(home)
     assert advice.prunable_sessions == 1
     assert "will not help" not in "\n".join(prune_advisor.advice_lines(advice))
@@ -139,7 +139,7 @@ def test_local_notice_is_neither_re_asked_after_an_answer_nor_spent_on_nobody(ho
 
 
 def test_estimate_weights_by_stored_bytes_not_message_count(tmp_path, monkeypatch):
-    """Old sessions hold many small messages, recent ones few large ones: a message-count share
+    """Old sessions hold small placement rows, recent ones large display metadata: a message-count share
     overstates what pruning frees (and flips "will not fix this disk"). The estimate must track
     the bytes a real prune + VACUUM gives back."""
     import sqlite3
@@ -156,13 +156,14 @@ def test_estimate_weights_by_stored_bytes_not_message_count(tmp_path, monkeypatc
     for i in range(4):  # recent: 4 x 5 large messages
         db.create_session(f"new{i}", source="cli")
         for _ in range(5):
-            db.append_message(f"new{i}", role="assistant", content="x" * 40_000)
+            db.append_message(f"new{i}", role="assistant", content="x" * 40_000,
+                              display_metadata={"detail": "x" * 40_000})
         db.end_session(f"new{i}", "user_exit")
     db.close()
     with sqlite3.connect(h / "state.db") as conn:
         conn.execute("UPDATE sessions SET started_at=?, ended_at=?, last_activity_at=? WHERE id LIKE 'old%'",
                      (old, old, old))
-        conn.execute("UPDATE messages SET timestamp=? WHERE session_id LIKE 'old%'", (old,))
+        conn.execute("UPDATE transcript_rows SET timestamp=? WHERE session_id LIKE 'old%'", (old,))
     _disk(monkeypatch, free_gb=1)
     advice = prune_advisor.advise(h)
     assert advice.prunable_sessions == 40
@@ -206,7 +207,7 @@ def test_full_scan_total_is_measured_once_and_reused(home, monkeypatch):
     old = time.time() - 200 * 86400
     with sqlite3.connect(home / "state.db") as conn:
         conn.execute("UPDATE sessions SET started_at=?, ended_at=?, last_activity_at=?", (old, old, old))
-        conn.execute("UPDATE messages SET timestamp=?", (old,))
+        conn.execute("UPDATE transcript_rows SET timestamp=?", (old,))
     first = prune_advisor.advise(home)
     measured = prune_advisor._read_estimate(home)
     assert measured["total_bytes"] > 0

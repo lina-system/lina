@@ -1,4 +1,4 @@
-import os, sys, json, asyncio, threading, tempfile, sqlite3, socket, subprocess, tracemalloc, errno
+import os, sys, json, asyncio, threading, tempfile, socket, subprocess, tracemalloc, errno
 from pathlib import Path
 from http.server import ThreadingHTTPServer, BaseHTTPRequestHandler
 from types import SimpleNamespace
@@ -7,7 +7,7 @@ ROOT = Path(sys.argv[1]).resolve()
 RECEIPT = Path(sys.argv[2]).resolve()
 HOME = Path(tempfile.mkdtemp(prefix="hermes-104653-state-"))
 # Discard inherited credentials/config, preserve only interpreter essentials.
-keep = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "TZ")}
+keep = {k: v for k, v in os.environ.items() if k in ("PATH", "LANG", "LC_ALL", "TZ", "LINA_STORE_DSN")}
 os.environ.clear()
 os.environ.update(keep)
 os.environ.update(
@@ -226,12 +226,11 @@ sid = entry.session_id
 
 
 def rows():
-    with sqlite3.connect(HOME / "state.db") as conn:
-        conn.row_factory = sqlite3.Row
+    with SessionDB(db_path=HOME / "state.db", read_only=True) as db:
         return [
             dict(row)
-            for row in conn.execute(
-                "SELECT id,role,content,platform_message_id,timestamp,display_metadata,active,compacted FROM messages "
+            for row in db._read_all(
+                "SELECT id,role,msg_text(text_uid, 'content') AS content,platform_message_id,timestamp,display_metadata,active,compacted FROM transcript_rows "
                 "WHERE session_id=? ORDER BY id",
                 (sid,),
             )
@@ -282,13 +281,12 @@ async def main():
             timestamp=timestamp,
         )
         if fault == "archive-memory":
-            # Large archived payloads must stay in SQLite, not become a Python baseline.
-            with sqlite3.connect(HOME / "state.db") as conn:
-                conn.executemany(
-                    "INSERT INTO messages (session_id, role, content, timestamp, active, compacted) "
-                    "VALUES (?, 'user', ?, 1, 0, 1)",
-                    ((sid, "x" * 4096) for _ in range(5000)),
-                )
+            # Large archived payloads must stay in the store, not become a Python baseline.
+            from hermes_state_store import insert_rows
+            with SessionDB(db_path=HOME / "state.db") as db:
+                db._execute_write(lambda conn: insert_rows(conn, db.message_store, [
+                    {"session_id": sid, "role": "user", "content": "x" * 4096,
+                     "timestamp": 1, "active": 0, "compacted": 1} for _ in range(5000)]))
             tracemalloc.start()
         before_raw = len(raw_reads)
         before_requests = len(requests)
@@ -309,7 +307,7 @@ async def main():
             if r["role"] == "user" and r["active"]
         ]
         hit = faults[before_faults:]
-        if fault == "history-read":
+        if fault == "history-read":  # health: allow HX011 -- unchanged per-fault expectations; lina#12 only moved its reads
             reached = (
                 hit == ["history-read"]
                 and len(requests) == before_requests

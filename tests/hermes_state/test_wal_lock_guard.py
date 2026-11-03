@@ -26,7 +26,7 @@ def _foreign_open_close(db_path: Path) -> None:
     """Another process opens state.db, reads, closes: SQLite's last-connection WAL reset runs there."""
     subprocess.run([sys.executable, "-c",
                     f"import sqlite3; c = sqlite3.connect({str(db_path)!r}); "
-                    "c.execute('select count(*) from messages').fetchone(); c.close()"], check=True)
+                    "c.execute('select count(*) from transcript_rows').fetchone(); c.close()"], check=True)
 
 
 def test_holder_survives_stray_close_then_sibling_closes(tmp_path, monkeypatch):
@@ -47,4 +47,4 @@ def test_holder_survives_stray_close_then_sibling_closes(tmp_path, monkeypatch):
         db.append_message("s", role="user", content="after")  # would raise DeletedWalGenerationError
     finally:
         db.close()
-    assert sqlite3.connect(db.db_path).execute("SELECT COUNT(*) FROM messages").fetchone()[0] == 3
+    assert sqlite3.connect(db.db_path).execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0] == 3

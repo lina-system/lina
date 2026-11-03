@@ -32,7 +32,7 @@ def _seed_session(db, session_id, *, source, last_active, started_at=None):
             (last_active if started_at is None else started_at, session_id),
         )
         db._conn.execute(
-            "UPDATE messages SET timestamp = ? WHERE session_id = ?",
+            "UPDATE transcript_rows SET timestamp = ? WHERE session_id = ?",
             (last_active, session_id),
         )
         db._conn.commit()

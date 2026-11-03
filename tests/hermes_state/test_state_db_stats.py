@@ -49,19 +49,6 @@ def test_collect_stats_sane_values(populated_db):
     assert stats["messages"] >= 3
     assert stats["sessions"] >= 2
 
-    fts = stats["fts_tables"]
-    assert set(fts) == {"messages_fts", "messages_fts_trigram", "messages_fts_cjk"}
-    for name, present in fts.items():
-        assert isinstance(present, bool), name
-    # Layout marker is absent (None) on legacy DBs, an int once stamped.
-    assert stats["fts_storage_version"] is None or isinstance(
-        stats["fts_storage_version"], int
-    )
-
-    # No rebuild pending on a fresh DB.
-    assert stats["fts_rebuild_pending"] in (False, None)
-
-
 def test_collect_stats_is_read_only(populated_db):
     before_bytes = populated_db.read_bytes()
     before_mtime = populated_db.stat().st_mtime_ns
@@ -77,57 +64,12 @@ def test_collect_stats_is_read_only(populated_db):
     db.close()
 
 
-def test_collect_and_render_stale_fts_holder_deferral(populated_db):
-    conn = sqlite3.connect(str(populated_db))
-    conn.execute(
-        "INSERT INTO state_meta (key, value) VALUES (?, ?)",
-        (
-            "fts_rebuild_deferral",
-            json.dumps({"attempts": 4, "holder_pids": [4242], "first_seen": 1.0}),
-        ),
-    )
-    conn.commit()
-    conn.close()
-
-    stats = collect_state_db_stats(populated_db)
-    assert stats["fts_rebuild_deferral"]["attempts"] == 4
-    assert stats["fts_rebuild_deferral"]["holder_pids"] == [4242]
-
-    from hermes_cli.doctor_state import _render_state_db_stats
-
-    rendered = _render_state_db_stats(stats)
-    warnings = [
-        " ".join((text, detail))
-        for kind, text, detail in rendered
-        if kind == "warn"
-    ]
-    assert any("4242" in warning and "optimize-storage" in warning for warning in warnings)
-
-
 def test_collect_stats_missing_file_never_raises(tmp_path):
     stats = collect_state_db_stats(tmp_path / "nope" / "state.db")
     assert isinstance(stats, dict)
     assert stats["page_count"] is None
     assert stats["messages"] is None
     assert stats["logical_size_bytes"] is None
-
-
-def test_collect_stats_rebuild_pending_flag(populated_db):
-    # Simulate the v23 deferred-rebuild bookkeeping directly in state_meta.
-    conn = sqlite3.connect(str(populated_db))
-    conn.execute(
-        "INSERT OR REPLACE INTO state_meta(key, value) VALUES ('fts_rebuild_high_water', '100')"
-    )
-    conn.execute(
-        "INSERT OR REPLACE INTO state_meta(key, value) VALUES ('fts_rebuild_progress', '40')"
-    )
-    conn.commit()
-    conn.close()
-
-    stats = collect_state_db_stats(populated_db)
-    assert stats["fts_rebuild_pending"] is True
-    assert stats["fts_rebuild_high_water"] == 100
-    assert stats["fts_rebuild_progress"] == 40
 
 
 # ── count_db_holders ────────────────────────────────────────────────────
@@ -213,34 +155,6 @@ def test_render_warns_on_large_db():
         " ".join(rest) for k, t, *rest in lines if k == "warn"
     ]
     assert warns
-
-
-def test_render_large_db_with_pending_rebuild_suggests_optimize():
-    from hermes_cli.doctor_state import STATE_DB_SIZE_WARN_BYTES, _render_state_db_stats
-
-    big = STATE_DB_SIZE_WARN_BYTES + 1
-    lines = _render_state_db_stats(
-        _base_stats(logical_size_bytes=big, fts_rebuild_pending=True),
-        holders=None,
-    )
-    blob = " ".join(" ".join(str(p) for p in line) for line in lines)
-    assert "optimize-storage" in blob
-
-
-def test_render_large_db_legacy_trigram_suggests_optimize():
-    from hermes_cli.doctor_state import STATE_DB_SIZE_WARN_BYTES, _render_state_db_stats
-
-    big = STATE_DB_SIZE_WARN_BYTES + 1
-    lines = _render_state_db_stats(
-        _base_stats(logical_size_bytes=big, fts_storage_version=None, fts_storage_upgrade_needed=True),
-        holders=None,
-    )
-    blob = " ".join(" ".join(str(p) for p in line) for line in lines)
-    assert "optimize-storage" in blob
-
-
-
-
 
 
 def test_render_handles_all_none_stats():

@@ -32,7 +32,7 @@ def _older_release_delete(path, sid):
         conn.execute('BEGIN IMMEDIATE')
         try:
             conn.execute('UPDATE sessions SET parent_session_id = NULL WHERE parent_session_id = ?', (sid,))
-            conn.execute('DELETE FROM messages WHERE session_id = ?', (sid,))
+            conn.execute('DELETE FROM transcript_rows WHERE session_id = ?', (sid,))
             conn.execute('DELETE FROM sessions WHERE id = ?', (sid,))
             conn.execute('COMMIT')
         except BaseException:

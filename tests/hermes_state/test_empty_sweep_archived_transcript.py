@@ -26,7 +26,7 @@ which is the whole point of the archive-instead-of-delete guarantee that
 A gateway reload is what makes such a row *eligible*: every detached session
 gets ``ended_at`` stamped (``end_reason='ws_orphan_reap'``), which satisfies
 the sweep's ``ended_at IS NOT NULL`` gate. The next "Delete empty" click then
-hard-deleted the session row AND ``DELETE FROM messages`` — silently, with no
+hard-deleted the session row AND ``DELETE FROM transcript_rows`` — silently, with no
 log line to trace it by.
 
 These tests pin the counter drift as real, and pin the sweep's refusal to act
@@ -62,7 +62,7 @@ def _row_counts(db, session_id):
             "SELECT message_count FROM sessions WHERE id = ?", (session_id,)
         ).fetchone()["message_count"]
         rows = db._conn.execute(
-            "SELECT COUNT(*) AS n FROM messages WHERE session_id = ?", (session_id,)
+            "SELECT COUNT(*) AS n FROM transcript_rows WHERE session_id = ?", (session_id,)
         ).fetchone()["n"]
     return counter, rows
 

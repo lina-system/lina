@@ -16,6 +16,7 @@ reorders existing hits, and respects explicit boolean operators.
 import pytest
 
 from hermes_state import SessionDB
+from hermes_state_search import _any_term, parse_search_query
 
 
 @pytest.fixture
@@ -55,7 +56,11 @@ def db(tmp_path):
 def test_or_relaxed_query_rewrite(query, expected):
     """Implicit-AND terms and explicit AND become an any-term OR query; a quoted phrase is one
     unit; a single unit or explicit OR/NOT (exact semantics already expressed) does not relax."""
-    assert SessionDB._or_relaxed_query(query) == expected
+    groups = _any_term(parse_search_query(query))
+    if expected is None:
+        assert groups is None
+    else:
+        assert groups == parse_search_query(expected)
 
 
 def test_paraphrased_query_recovers_via_or_retry(db):
@@ -84,6 +89,6 @@ def test_relaxation_does_not_fire_for_exact_semantics_or_absent_terms(db, monkey
     assert db.search_messages("zebra xylophone quantum") == []
 
     calls = []
-    monkeypatch.setattr(SessionDB, "_or_relaxed_query", staticmethod(lambda q: calls.append(q)))
+    monkeypatch.setattr("hermes_state_search._any_term", lambda q: calls.append(q))
     assert db.search_messages("站会 周五") == []
     assert calls == []

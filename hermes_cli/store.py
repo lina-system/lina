@@ -163,6 +163,9 @@ class Store:
         self.compose("up", "-d", "--wait", "--quiet-pull", "db", what="starting the database")
 
     def migrate(self) -> None:
+        """LINA's migrations (memory, ctx, vec), then Honcho's job (ltm)."""
+        from hermes_cli.store_migrations import apply
+        apply(lambda sql: self.psql(sql, what="the store migrations"), out=self.out)
         self.compose("--profile", "job", "run", "--rm", "honcho-migrate", what="the Honcho migration job")
 
     def start_writers(self) -> None:

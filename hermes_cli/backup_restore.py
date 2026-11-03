@@ -157,12 +157,18 @@ def _restore_auth_json(src: Path, dst: Path) -> bool:
         return False
 
 
-def _safe_restore_db(src: Path, dst: Path) -> bool:
+_SIDECAR_BESIDE_SOURCE = object()
+
+
+def _safe_restore_db(src: Path, dst: Path, *, sidecar: Any = _SIDECAR_BESIDE_SOURCE) -> bool:
     """Restore only while holding the destination authority's maintenance reservation.
 
     Returns ``False``, without touching *dst*, when *src* fails the SQLite
     integrity check, when the runtime owns the profile, or when a canonical
-    ``state.db`` epoch floor cannot be proven.
+    ``state.db`` epoch floor cannot be proven. A profile ``state.db`` brings its
+    message text back first (*sidecar*: the backup's text, by default the one
+    beside *src*); MessageTextRestoreError, raised with *dst* untouched, when that
+    text cannot be restored.
     """
     from gateway.runtime_ownership import OwnershipConflict, exclusive_maintenance
     from hermes_cli.backup import verify_sqlite_integrity
@@ -176,8 +182,14 @@ def _safe_restore_db(src: Path, dst: Path) -> bool:
         return False
     try:
         with exclusive_maintenance([dst.absolute().parent, dst.resolve().parent]):
-            with _restore_epoch_source(src, dst) as prepared:
-                return _restore_db_pages(prepared, dst)
+            with _restore_epoch_source(src, dst) as prepared, \
+                    tempfile.TemporaryDirectory(prefix="hermes-restore-text-") as work:
+                from hermes_cli.backup_message_text import sidecar_beside, stage_with_texts
+                text = sidecar_beside(src) if sidecar is _SIDECAR_BESIDE_SOURCE else sidecar
+                ready = stage_with_texts(prepared, dst, text, Path(work))
+                # The text is in the store now. A failure from here on leaves only extra immutable rows there,
+                # which the collection reclaims after its grace period.
+                return _restore_db_pages(ready, dst)
     except (OwnershipConflict, OSError, sqlite3.Error) as exc:
         logger.error("%s", exc)
         return False
@@ -442,8 +454,9 @@ def _extract_member_atomically(
     member: str,
     target: Path,
     new_file_mode: Optional[int] = None,
+    source: Optional[Path] = None,
 ) -> None:
-    """Restore one zip member onto *target* with no truncation window.
+    """Restore one zip member (or *source*, a file staged from it) onto *target* with no truncation window.
 
     ``open(target, "wb")`` truncates the user's existing file to zero *before*
     any replacement bytes exist.  A Ctrl-C, an ENOSPC, a corrupt member, or a
@@ -519,7 +532,7 @@ def _extract_member_atomically(
                     os.chmod(tmp_name, mode)
             # Stream instead of ``src.read()``: a multi-gigabyte state.db member
             # must not be held in memory in one piece.
-            with zf.open(member) as src:
+            with (source.open("rb") if source is not None else zf.open(member)) as src:
                 shutil.copyfileobj(src, dst)
             dst.flush()
             os.fsync(dst.fileno())
@@ -555,7 +568,7 @@ def _count_session_rows(path: Path) -> Optional[tuple[int, int]]:
         return None
     try:
         sessions = conn.execute("SELECT COUNT(*) FROM sessions").fetchone()[0]
-        messages = conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        messages = conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
         return int(sessions), int(messages)
     except (sqlite3.Error, TypeError, ValueError):
         return None
@@ -615,7 +628,13 @@ def _import_db_member_exclusive(
                 f"{', '.join(str(pid) for pid in sorted(holders))}; publishing a new file would "
                 "leave them writing an invisible database. Stop those processes and re-run the import."
             )
-        _extract_member_atomically(zf, member, target, new_file_mode)
+        from hermes_cli.backup_message_text import stage_with_texts, zip_sidecar
+        with tempfile.TemporaryDirectory(prefix="hermes-import-text-") as work:
+            incoming = Path(work) / "incoming.db"
+            with zf.open(member) as src, incoming.open("wb") as staged:
+                shutil.copyfileobj(src, staged)
+            ready = stage_with_texts(incoming, target, zip_sidecar(zf, member, Path(work)), Path(work))
+            _extract_member_atomically(zf, member, target, new_file_mode, source=ready)
         return
 
     # The database keeps its own mode/ownership: the bytes come from the
@@ -634,6 +653,8 @@ def _import_db_member_exclusive(
                 shutil.copyfileobj(src, dst)
             dst.flush()
             os.fsync(dst.fileno())
+        # preflight_zip_texts already wrote this database's text, so the restore below finds every row it
+        # references in the store (and re-points a copy at them when the import changes the agent).
         if not _safe_restore_db(Path(tmp_name), target):
             from hermes_cli.backup import verify_sqlite_integrity
 

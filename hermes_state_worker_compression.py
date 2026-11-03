@@ -190,8 +190,9 @@ def worker_history(db, conn, sid, payload):
     ids = view._resume_lineage_ids(target) if payload['include_ancestors'] else [target]
     active = db._active_clause(payload['include_inactive'], payload['include_compacted'])
     display = payload['include_compacted'] and not payload['include_inactive']
-    rows = conn.execute(f'SELECT {"session_id, compacted, display_order, " if display else ""}{db._CONVERSATION_ROW_COLUMNS} FROM messages '
-                        f'WHERE session_id IN ({",".join("?" for _ in ids)}){active} ORDER BY id', ids).fetchall()
+    rows = db._with_text(conn.execute(
+        f'SELECT {"session_id, compacted, display_order, " if display else ""}{db._CONVERSATION_ROW_COLUMNS} '
+        f'FROM transcript_rows WHERE session_id IN ({",".join("?" for _ in ids)}){active} ORDER BY id', ids).fetchall())
     if display:  # the owner's display reads' rule: a message whose newest copy was removed stays hidden
         from hermes_state_messages import SessionMessagesMixin
         rows = SessionMessagesMixin._with_removed_identities(view, rows, ids)
@@ -225,7 +226,7 @@ def publish_on_connection(db, conn, *, parent_session_id: str, child_session_id:
 
 def worker_watermark(db, conn, sid, payload):
     _fields(payload, ())
-    return {'value': conn.execute('SELECT COALESCE(MAX(id),0) FROM messages WHERE session_id=? AND active=1',
+    return {'value': conn.execute('SELECT COALESCE(MAX(id),0) FROM transcript_rows WHERE session_id=? AND active=1',
                                   (sid,)).fetchone()[0]}
 
 
@@ -236,7 +237,7 @@ def _handoff_messages(conn, sid, messages):
     for msg in messages:
         if not isinstance(msg, dict) or set(msg) - HANDOFF_MESSAGE_FIELDS or msg.get('role') not in ('user', 'assistant', 'system', 'tool'):
             raise RuntimeStoreError('invalid_params')
-        if '_row_id' in msg and not conn.execute('SELECT 1 FROM messages WHERE session_id=? AND id=?',
+        if '_row_id' in msg and not conn.execute('SELECT 1 FROM transcript_rows WHERE session_id=? AND id=?',
                                                  (sid, msg['_row_id'])).fetchone():
             raise RuntimeStoreError('permission_denied')
 

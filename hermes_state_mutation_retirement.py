@@ -259,6 +259,7 @@ def retire_prunable(conn, session_ids):
 
 
 def delete_in_transaction(db, conn, session_id, payload):
+    from hermes_state_store import delete_rows
     from hermes_state_mutation_guards import require_idle, delete_targets
     targets = delete_targets(conn, session_id)
     require_idle(db, conn, targets)
@@ -266,7 +267,7 @@ def delete_in_transaction(db, conn, session_id, payload):
     for sid in targets:
         db._bump_conversation_generation(conn, sid, 'session_reset')
         conn.execute('UPDATE sessions SET parent_session_id=NULL, runtime_revision=runtime_revision+1 WHERE parent_session_id=?', (sid,))
-        conn.execute('DELETE FROM messages WHERE session_id=?', (sid,))
+        delete_rows(conn, db.message_store, 'session_id=?', (sid,))
     conn.executemany('DELETE FROM sessions WHERE id=?', [(sid,) for sid in targets])
     db._delete_unreferenced_system_prompts(conn)
     return set(), {'deleted_ids': targets}

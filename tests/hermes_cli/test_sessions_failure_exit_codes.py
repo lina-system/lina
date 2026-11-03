@@ -30,24 +30,12 @@ def _old_ended_session(db_path):
     raw = sqlite3.connect(str(db_path))
     with raw:
         raw.execute("UPDATE sessions SET started_at = ?, ended_at = ?", (old, old))
-        raw.execute("UPDATE messages SET timestamp = ?", (old,))
+        raw.execute("UPDATE transcript_rows SET timestamp = ?", (old,))
     raw.close()
 
 
 def _garbage_store(db_path):
     db_path.write_bytes(b"not a sqlite database" * 200)
-
-
-def _legacy_inline_fts_store(db_path):
-    from hermes_state_common import LEGACY_FTS_SQL, LEGACY_FTS_TRIGRAM_SQL, SCHEMA_SQL
-
-    raw = sqlite3.connect(str(db_path))
-    with raw:
-        raw.executescript(SCHEMA_SQL + LEGACY_FTS_SQL + LEGACY_FTS_TRIGRAM_SQL)
-        raw.execute("INSERT INTO sessions (id, source, started_at) VALUES ('s-old', 'cli', ?)", (time.time(),))
-        raw.execute("INSERT INTO messages (session_id, timestamp, role, content) VALUES ('s-old', ?, 'user', 'hi')",
-                    (time.time(),))
-    raw.close()
 
 
 def _vacuum_fails(monkeypatch):
@@ -90,11 +78,10 @@ def test_failed_or_refused_subcommand_exits_1_where_the_valid_form_exits_0(
 
 
 @pytest.mark.parametrize("build, argv", [
-    (_legacy_inline_fts_store, ["optimize-storage"]),
     (_old_ended_session, ["delete", "s-old"]),
     (_old_ended_session, ["archive", "--source", "cli"]),
     (_old_ended_session, ["prune", "--older-than", "30"]),
-], ids=["optimize-storage", "delete", "archive", "prune"])
+], ids=["delete", "archive", "prune"])
 def test_confirmation_nobody_can_answer_exits_1_and_changes_nothing(monkeypatch, tmp_path, capsys, build, argv):
     """No TTY (cron, a wrapper): EOF at the prompt is not a decline. An explicit "n" still exits 0."""
     db_path = _store(monkeypatch, tmp_path, build)

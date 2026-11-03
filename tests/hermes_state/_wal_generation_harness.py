@@ -63,7 +63,8 @@ def lose_sidecars(db_path: Path, *, rename: bool) -> None:
 
 def write_second_generation(db_path: Path, n_rows: int) -> int:
     """From a process that does NOT already hold this db open, mint a fresh WAL generation through the path
-    (as any non-hermes opener would), write ``n_rows`` messages and checkpoint them into the main file.
+    (as any non-hermes opener would), write ``n_rows`` transcript rows and checkpoint them into the main file.
+    The rows carry their bulk in ``display_metadata``: message text lives in the memory store, not state.db.
     Returns the message count on the path afterwards. MUST run in a different process from the writer that
     holds the deleted generation — two live handles on one db in one process collide on the -shm."""
     conn = sqlite3.connect(str(db_path), timeout=5.0, isolation_level=None)
@@ -73,12 +74,12 @@ def write_second_generation(db_path: Path, n_rows: int) -> int:
         conn.execute("BEGIN IMMEDIATE")
         for i in range(n_rows):
             conn.execute(
-                "INSERT INTO messages (session_id, role, content, timestamp) VALUES (?, ?, ?, ?)",
+                "INSERT INTO transcript_rows (session_id, role, display_metadata, timestamp) VALUES (?, ?, ?, ?)",
                 (sessions[i % len(sessions)], "assistant", "gen2 " + "y" * 2000 + f" #{i}", 1.0 + i),
             )
         conn.execute("COMMIT")
         conn.execute("PRAGMA wal_checkpoint(TRUNCATE)")
-        return conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
     finally:
         conn.close()
 
@@ -101,7 +102,7 @@ def integrity_ok_path(db_path: Path) -> bool:
 def message_count(db_path: Path) -> int:
     conn = sqlite3.connect(str(db_path), timeout=5.0)
     try:
-        return conn.execute("SELECT COUNT(*) FROM messages").fetchone()[0]
+        return conn.execute("SELECT COUNT(*) FROM transcript_rows").fetchone()[0]
     finally:
         conn.close()
 

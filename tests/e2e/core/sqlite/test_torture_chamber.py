@@ -51,7 +51,7 @@ from tests.e2e.core.sqlite._helpers import (
     counts,
     episode_seed,
     exactly_once_problems,
-    fts_problems,
+    search_problems,
     integrity_rows,
     journal_mode_problems,
     sample,
@@ -59,6 +59,7 @@ from tests.e2e.core.sqlite._helpers import (
 )
 
 pytestmark = [
+    pytest.mark.memory_store_per_module,
     pytest.mark.skipif(not sys.platform.startswith("linux"), reason="/proc fd scan and POSIX lock semantics"),
 ]
 
@@ -224,22 +225,6 @@ def ep_chmod_flip(ch, ep, rng):
     return [gw, tui]
 
 
-def ep_fts_rebuild_concurrent(ch, ep, rng):
-    gw, tui = _writers(ch, ep)
-    ch.wait_acks(gw, 20)
-    ch.spawn("fts", f"{ep}-fts-a")
-    ch.spawn("fts", f"{ep}-fts-b")
-    ch.spawn("fts", f"{ep}-fts-killed")
-    ch.wait_event(f"{ep}-fts-killed", "ready")
-    time.sleep(rng.uniform(0.0, 0.05))  # fault-injection jitter, not synchronization
-    ch.kill9(f"{ep}-fts-killed")  # maintenance killed mid-rebuild
-    _reap_all(ch, [f"{ep}-fts-a", f"{ep}-fts-b"])
-    rebuilt = [e for n in ("a", "b") for e in ch.events(f"{ep}-fts-{n}") if e.get("event") == "stats"]
-    assert len(rebuilt) == 2, rebuilt
-    ch.wait_acks(gw, len(ch.journal(gw)[1]) + 20)
-    _stop_all(ch, [gw, tui])
-    return [gw, tui]
-
 
 def _repair(ch: Chamber, name: str) -> dict:
     ch.spawn("repair", name)
@@ -263,34 +248,13 @@ def ep_repair_live_then_offline(ch, ep, rng):
     return [gw, tui]
 
 
-def ep_fts_corruption_fail_open(ch, ep, rng):
-    """A corrupt FTS index must not cost a canonical write; repair + the next open restore search."""
-    _stop_reader(ch)
-    conn = sqlite3.connect(str(ch.db), timeout=30.0)
-    try:
-        conn.execute("UPDATE messages_fts_data SET block = X'DEADBEEFDEADBEEFDEADBEEFDEADBEEF'")
-        conn.commit()
-    finally:
-        conn.close()
-    gw, tui = _writers(ch, ep)
-    ch.wait_acks(gw, rng.randint(20, 50))
-    ch.wait_acks(tui, 20)
-    _repair(ch, f"{ep}-repair-live")  # a repair racing live writers must not overwrite their acked rows
-    _stop_all(ch, [gw, tui])
-    _repair(ch, f"{ep}-repair-offline")
-    ch.spawn("opener", f"{ep}-reopen")  # the next SessionDB open finishes the stale-FTS recovery
-    _reap_all(ch, [f"{ep}-reopen"])
-    _ensure_reader(ch)
-    return [gw, tui]
-
 
 def ep_kill9_everything(ch, ep, rng):
     """Update fleet-restart / OOM-killer shape: every process on the file dies at once, mid-write."""
     gw, tui = _writers(ch, ep, stray_every=5)
     ch.spawn("churn", f"{ep}-churn", iterations=400)
-    ch.spawn("fts", f"{ep}-fts")
     ch.wait_acks(gw, rng.randint(30, 90))
-    for name in (gw, tui, f"{ep}-churn", f"{ep}-fts", ch.reader_name):
+    for name in (gw, tui, f"{ep}-churn", ch.reader_name):
         if ch.procs[name].poll() is None:
             ch.kill9(name)
     gw2 = f"{ep}-gw2"
@@ -307,9 +271,7 @@ EPISODES = {
     "sigterm_graceful_close": ep_sigterm_graceful_close,
     "lock_cancellation": ep_lock_cancellation,
     "chmod_flip": ep_chmod_flip,
-    "fts_rebuild_concurrent": ep_fts_rebuild_concurrent,
     "repair_live_then_offline": ep_repair_live_then_offline,
-    "fts_corruption_fail_open": ep_fts_corruption_fail_open,
     "kill9_everything": ep_kill9_everything,
 }
 
@@ -373,7 +335,7 @@ def test_torture_episode(chamber, episode):
     episode_acks = acked_tokens(chamber, runs)
     if not episode_acks:
         problems.append("episode acknowledged no appends")
-    problems += fts_problems(chamber.db, sample(rng, episode_acks, 12))
+    problems += search_problems(chamber.db, sample(rng, episode_acks, 12))
     problems += _reader_fd_problems(chamber)
     problems += _churn_fd_problems(chamber, episode)
     busy = busy_summary(chamber, episode)

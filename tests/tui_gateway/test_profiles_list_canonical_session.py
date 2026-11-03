@@ -207,7 +207,7 @@ def _fold_all_rows(db, sid):
     """Fold every row of one session the way an orphaned compaction mark does."""
     with db._lock:
         db._conn.execute(
-            "UPDATE messages SET active = 0, _compressed_summary = 1 WHERE session_id = ?", (sid,))
+            "UPDATE transcript_rows SET active = 0, _compressed_summary = 1 WHERE session_id = ?", (sid,))
 
 
 def test_canonical_session_live_count_zero_when_all_rows_folded(home):
@@ -230,7 +230,7 @@ def test_canonical_session_live_count_skips_model_only_rows_like_the_reader(home
     db = _db(home)
     _add_session(db, "modelonly", title="Bot Chat", ts=1000, text="for the model", hidden=True)
     with db._lock:
-        db._conn.execute("UPDATE messages SET display_metadata = ? WHERE session_id = ?",
+        db._conn.execute("UPDATE transcript_rows SET display_metadata = ? WHERE session_id = ?",
                          (json.dumps({MODEL_ONLY_DISPLAY_METADATA_KEY: True}), "modelonly"))
     painted = db.get_messages_as_conversation("modelonly", include_compacted=True)
     db.close()

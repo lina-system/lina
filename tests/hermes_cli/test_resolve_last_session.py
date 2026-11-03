@@ -28,7 +28,7 @@ def test_search_sessions_exposes_last_active_column(tmp_path, monkeypatch):
         db.append_message("s_active_later", role="user", content="hi")
         with db._lock:
             db._conn.execute(
-                "UPDATE messages SET timestamp=? WHERE session_id=?",
+                "UPDATE transcript_rows SET timestamp=? WHERE session_id=?",
                 (3000.0, "s_active_later"),
             )
             db._conn.commit()

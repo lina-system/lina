@@ -93,7 +93,10 @@ def test_real_agent_worker_persists_context_usage_and_releases_lease(tmp_path, p
             with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
                 assert db.execute('SELECT COUNT(*) FROM session_turn_leases').fetchone()[0] == 0
                 assert db.execute('SELECT input_tokens,output_tokens FROM sessions WHERE id=?', (sid,)).fetchone() == (10, 5)
-                rows = db.execute('SELECT role,content FROM messages WHERE session_id=? ORDER BY id', (sid,)).fetchall()
+                from hermes_state import SessionDB
+                with SessionDB(home / 'state.db', read_only=True) as reader:
+                    rows = [tuple(row) for row in reader._read_all(
+                        "SELECT role,msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=? ORDER BY id", (sid,))]
                 assert any(role == 'user' and 'WORKER_INFERENCE' in content for role, content in rows)
                 assert any(role == 'assistant' and 'RECOVERY_ACK_WORKER_INFERENCE' in content for role, content in rows)
             assert len(peer.requests) == 1, peer.requests

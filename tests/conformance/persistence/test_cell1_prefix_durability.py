@@ -13,7 +13,6 @@ property assertions are identical, only the exposure window is shorter.
 from __future__ import annotations
 
 import json
-import sqlite3
 from pathlib import Path
 
 import pytest
@@ -65,13 +64,11 @@ def _acknowledged(journal: Path) -> list[dict]:
 
 def _recover(db_path: Path) -> list[tuple]:
     """One independent recovery pass in a fresh connection/process context."""
-    conn = sqlite3.connect(str(db_path))
-    try:
-        return conn.execute(
-            "SELECT id, content FROM messages WHERE session_id='cell1' ORDER BY id"
-        ).fetchall()
-    finally:
-        conn.close()
+    from hermes_state import SessionDB
+    with SessionDB(db_path) as db:
+        return [tuple(row) for row in db._conn.execute(
+            "SELECT id, msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id='cell1' ORDER BY id"
+        ).fetchall()]
 
 
 @pytest.mark.parametrize("requested_mode", [None, "DELETE", "WAL"])

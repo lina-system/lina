@@ -28,8 +28,9 @@ def _active_rows(store, sid):
     return [
         dict(row)
         for row in store._conn.execute(
-            "SELECT id, role, content, timestamp, token_count, message_uid, tool_calls "
-            "FROM messages WHERE session_id = ? AND active = 1 ORDER BY id",
+            "SELECT id, role, msg_text(text_uid, 'content') AS content, timestamp, token_count, message_uid, "
+            "msg_text(text_uid, 'tool_calls') AS tool_calls "
+            "FROM transcript_rows WHERE session_id = ? AND active = 1 ORDER BY id",
             (sid,),
         ).fetchall()
     ]

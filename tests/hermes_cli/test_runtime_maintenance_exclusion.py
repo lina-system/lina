@@ -201,8 +201,9 @@ def test_recovery_output_exemption_excludes_canonical_activation(tmp_path):
         report = recover_session_database(source, target_home / 'recovered.db')
         assert report['verified'] and report['source_unchanged'], report
         assert report['runtime_state']['excluded_tables']['session_admissions']['rows'] == 1
-        with sqlite3.connect(target_home / 'recovered.db') as db:
-            assert db.execute('SELECT content FROM messages').fetchall() == [('retained content',)]
+        with SessionDB(target_home / 'recovered.db', read_only=True) as recovered:
+            db = recovered._conn
+            assert [tuple(r) for r in db.execute("SELECT msg_text(text_uid, 'content') FROM transcript_rows")] == [('retained content',)]
             assert db.execute('SELECT COUNT(*) FROM session_admissions').fetchone()[0] == 0
             assert db.execute('SELECT COUNT(*) FROM runtime_epoch').fetchone()[0] == 0
         assert hashlib.sha256(source.read_bytes()).hexdigest() == before

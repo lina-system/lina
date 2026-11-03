@@ -27,7 +27,7 @@ def _composite_carrier(ask="REAL ASK"):
 
 def _message_rows(db, session_id):
     rows = db._conn.execute(
-        "SELECT id, content, active FROM messages "
+        "SELECT id, msg_text(text_uid, 'content') AS content, active FROM transcript_rows "
         "WHERE session_id = ? ORDER BY id",
         (session_id,),
     ).fetchall()
@@ -134,7 +134,7 @@ def test_retry_fails_closed_when_transcript_changes_after_snapshot(
 
     assert cli.conversation_history is history
     rows = db._conn.execute(
-        "SELECT content, active FROM messages "
+        "SELECT msg_text(text_uid, 'content') AS content, active FROM transcript_rows "
         "WHERE session_id = ? ORDER BY id",
         (cli.session_id,),
     ).fetchall()

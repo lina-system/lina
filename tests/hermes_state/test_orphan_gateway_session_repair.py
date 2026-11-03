@@ -90,7 +90,7 @@ def _mk_session(
             # Message timestamps feed the recency expression; pin them to the
             # session window so tests control contiguity deterministically.
             db._conn.execute(
-                "UPDATE messages SET timestamp = ? WHERE session_id = ?",
+                "UPDATE transcript_rows SET timestamp = ? WHERE session_id = ?",
                 (last_activity_at or started_at, session_id),
             )
         db._conn.execute(
@@ -160,7 +160,7 @@ class TestDetection:
                 (long_ago, stale),
             )
             db._conn.execute(
-                "UPDATE messages SET timestamp = ? WHERE session_id = ?",
+                "UPDATE transcript_rows SET timestamp = ? WHERE session_id = ?",
                 (long_ago, stale),
             )
             db._conn.commit()
@@ -217,7 +217,7 @@ class TestDetection:
         stale, orphan = _incident(db)
         with db._lock:
             db._conn.execute(
-                "DELETE FROM messages WHERE session_id = ?", (orphan,)
+                "DELETE FROM transcript_rows WHERE session_id = ?", (orphan,)
             )
             db._conn.execute("DELETE FROM sessions WHERE id = ?", (orphan,))
             db._conn.commit()

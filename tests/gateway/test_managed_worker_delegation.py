@@ -13,6 +13,8 @@ import threading
 
 import pytest
 
+from hermes_state import SessionDB
+
 from tests.gateway.fixtures.local_recovery_probe import daemon, rpc, websocket
 from tests.waiting import async_wait_until
 
@@ -81,7 +83,9 @@ def _setup(tmp_path):
 
 
 def _rows(home, sql, *args):
-    with closing(sqlite3.connect(f'file:{home / "state.db"}?mode=ro', uri=True)) as db:
+    with SessionDB(db_path=home / "state.db", read_only=True) as state_db:
+        db = state_db._conn
+        db.row_factory = None
         return db.execute(sql, args).fetchall()
 
 
@@ -120,7 +124,7 @@ def test_managed_worker_delegates_through_an_owner_reserved_child(tmp_path):
                      "JOIN sessions s ON s.id=w.session_id WHERE w.kind='child'")
     assert children == [('terminal', 'subagent', sid, 'agent_close', 3)], children
     child_sid = _rows(home, "SELECT session_id FROM worker_executions WHERE kind='child'")[0][0]
-    assert ('assistant', 'CHILD_RESULT_42') in _rows(home, 'SELECT role, content FROM messages WHERE session_id=?', child_sid)
+    assert ('assistant', 'CHILD_RESULT_42') in _rows(home, "SELECT role, msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=?", child_sid)
 
 
 @pytest.mark.platforms("linux")
@@ -178,7 +182,7 @@ def test_relay_driven_worker_builds_and_runs_its_child_off_the_relay_loop(tmp_pa
         peer.shutdown()
         peer.server_close()
     assert (home / 'relay-events' / 'events.jsonl').exists(), 'Relay never drove this turn'
-    tool = [c for r, c in _rows(home, 'SELECT role, content FROM messages WHERE session_id=?', sid) if r == 'tool']
+    tool = [c for r, c in _rows(home, "SELECT role, msg_text(text_uid, 'content') AS content FROM transcript_rows WHERE session_id=?", sid) if r == 'tool']
     assert tool and 'CHILD_RESULT_42' in tool[-1], tool
     assert _rows(home, "SELECT w.status, s.end_reason FROM worker_executions w JOIN sessions s ON s.id=w.session_id "
                        "WHERE w.kind='child'") == [('terminal', 'agent_close')]

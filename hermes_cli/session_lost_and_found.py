@@ -48,7 +48,7 @@ SESSION_MODEL_USAGE_NFIELD = 18
 # carry the discrimination between layouts.
 _LAYOUT_SENTINELS: dict[str, tuple[str, ...]] = {
     "sessions": ("id", "source", "started_at"),
-    "messages": ("session_id", "role", "timestamp"),
+    "transcript_rows": ("session_id", "role", "timestamp"),
     "session_model_usage": ("session_id", "model"),
 }
 
@@ -326,7 +326,7 @@ def classify_lost_and_found_row(nfield: int, cells: tuple[Any, ...]) -> Optional
         is_message = (
             isinstance(cells[1], str) and cells[1] and isinstance(cells[2], str) and cells[2] in MESSAGE_ROLES
         )
-        return "messages" if is_message else None
+        return "transcript_rows" if is_message else None
     if not _is_session_id(cells[0] if cells else None):
         return None
     second = cells[1] if len(cells) > 1 else None
@@ -431,7 +431,7 @@ def _is_nonempty_str(value: Any) -> bool:
 
 
 # Sentinel columns: the cells that differ hardest between candidate layouts, so a wrong layout is
-# rejected instead of silently shifting every field. messages.id is a rowid alias, never a sentinel.
+# rejected instead of silently shifting every field. transcript_rows.id is a rowid alias, never a sentinel.
 _SENTINEL_RULES: dict[str, Callable[[Any], bool]] = {
     "id": _is_session_id,
     "source": _looks_like_source,
@@ -483,7 +483,7 @@ _TEXT_SHAPE_RULES: dict[str, dict[str, Callable[[str], bool]]] = {
         "cwd": _is_path, "git_repo_root": _is_path,
         "billing_base_url": _is_url,
     },
-    "messages": {
+    "transcript_rows": {
         **dict.fromkeys(("effect_disposition", "finish_reason", "display_kind"), _is_token),
         **dict.fromkeys(("tool_calls", "reasoning_details", "codex_reasoning_items", "codex_message_items",
                          "api_content", "display_metadata"), _blank_or(_is_json_start)),
@@ -588,7 +588,15 @@ def infer_physical_layouts(evidence: LayoutEvidence, dest_types: dict[str, str])
     """
 
     kind = evidence.kind
-    if kind not in SCHEMA_HISTORY or not evidence.widths:
+    if not evidence.widths:
+        return {}
+    if kind == "transcript_rows":
+        layout = tuple(dest_types)
+        return {len(layout): list(layout)} if len(layout) in evidence.widths and all(
+            _cell_fits(kind, name, value, dest_types)
+            for index, name in enumerate(layout) for value in evidence.by_position[index]
+        ) else {}
+    if kind not in SCHEMA_HISTORY:
         return {}
     by_position = evidence.by_position
     verdicts: dict[tuple[str, Any], bool] = {}
@@ -721,7 +729,7 @@ def _copy_direct_tables(lf_conn: sqlite3.Connection, dest: sqlite3.Connection) -
 def map_lost_and_found_rows(lf_conn: sqlite3.Connection, dest: sqlite3.Connection) -> dict[str, Any]:
     """Best-effort mapping of a .recover output DB into a fresh SessionDB."""
     report: dict[str, Any] = {
-        "direct_table_rows": {}, "mapped": {"sessions": 0, "messages": 0, "session_model_usage": 0},
+        "direct_table_rows": {}, "mapped": {"sessions": 0, "transcript_rows": 0, "session_model_usage": 0},
         "legacy_minimal_sessions": 0, "mapped_by_layout": 0, "unrecognized_layout_rows": 0,
         "unrecognized_layout_widths": {}, "inferred_layouts": {},
         "unmapped_rows": 0, "insert_conflicts": 0, "lost_and_found_tables": [],
@@ -733,7 +741,7 @@ def map_lost_and_found_rows(lf_conn: sqlite3.Connection, dest: sqlite3.Connectio
         # rows with a NULL session id / role / source were already rejected by classify_lost_and_found_row.
         targets: dict[str, tuple[list[str], dict[int, Any]]] = {}
         for kind_name, protected in (
-            ("sessions", ("id", "source")), ("messages", ("session_id", "role")),
+            ("sessions", ("id", "source")), ("transcript_rows", ("session_id", "role")),
             ("session_model_usage", ("session_id", "model")),
         ):
             columns = _table_columns(dest, kind_name)
@@ -794,10 +802,10 @@ def map_lost_and_found_rows(lf_conn: sqlite3.Connection, dest: sqlite3.Connectio
                     widths.append(len(cells))
             try:
                 if layout is not None:
-                    # messages.id is a rowid alias: NULL in the record, carried by the lost_and_found row id.
+                    # transcript_rows.id is a rowid alias: NULL in the record, carried by the lost_and_found row id.
                     inserted = _insert_named_row(
                         dest, kind, layout, cells, columns, defaults,
-                        {"id": lf_rowid} if kind == "messages" else None,
+                        {"id": lf_rowid} if kind == "transcript_rows" else None,
                     )
                     report["mapped_by_layout"] += int(inserted)
                 elif legacy_minimal:
@@ -815,7 +823,7 @@ def map_lost_and_found_rows(lf_conn: sqlite3.Connection, dest: sqlite3.Connectio
                     report["legacy_minimal_sessions"] += int(inserted)
                 else:
                     values = list(cells[:len(columns)])
-                    if kind == "messages":
+                    if kind == "transcript_rows":
                         values[0] = lf_rowid
                     elif kind == "sessions":
                         columns, defaults = _sessions_prefix_columns(columns, defaults, cells)
@@ -837,7 +845,7 @@ def stub_missing_parent_sessions(dest: sqlite3.Connection) -> dict[str, Any]:
     with _immediate_transaction(dest):
         orphan_ids: dict[str, dict[str, Any]] = {}
         for session_id, first_ts, count in dest.execute(
-            "SELECT m.session_id, MIN(m.timestamp), COUNT(*) FROM messages AS m WHERE m.session_id IS NOT NULL AND "
+            "SELECT m.session_id, MIN(m.timestamp), COUNT(*) FROM transcript_rows AS m WHERE m.session_id IS NOT NULL AND "
             "NOT EXISTS (SELECT 1 FROM sessions WHERE sessions.id = m.session_id) GROUP BY m.session_id"
         ):
             orphan_ids[str(session_id)] = {
@@ -874,15 +882,3 @@ def stub_missing_parent_sessions(dest: sqlite3.Connection) -> dict[str, Any]:
     return result
 
 
-def rebuild_fts_indexes(dest: sqlite3.Connection) -> dict[str, str]:
-    """Rebuild derived FTS indexes from the salvaged canonical rows."""
-    results: dict[str, str] = {}
-    for table in ("messages_fts", "messages_fts_trigram", "messages_fts_cjk"):
-        if not _table_columns(dest, table):
-            continue
-        try:
-            dest.execute(f'INSERT INTO "{table}" ("{table}") VALUES (\'rebuild\')')
-            results[table] = "rebuilt"
-        except sqlite3.DatabaseError as exc:
-            results[table] = f"rebuild failed: {exc}"
-    return results
