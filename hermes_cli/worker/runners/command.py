@@ -168,7 +168,9 @@ class CommandRunner:
             return "running"
         if code != 0:
             return "failed"
-        if question:
+        # Seen before the handle so an answer's next step is never paired with "no question"; seen again after the
+        # exit so a question the CLI wrote just before exiting is not missed (lina#199).
+        if question or self._question(handle.task).exists():
             return "stalled" if quiet >= self._stall_s() else "waiting_human"
         return "done"
 

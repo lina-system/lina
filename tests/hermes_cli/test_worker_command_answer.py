@@ -73,3 +73,21 @@ def test_state_does_not_fail_when_exit_is_published_during_observation(tmp_path:
         assert runner.state(handle) == "running"
         monkeypatch.setattr(runner, "_exit_code", original_exit_code)
         assert runner.state(handle) == "done"
+
+
+def test_state_sees_a_question_written_just_before_a_successful_exit(tmp_path: Path, monkeypatch):
+    """The CLI writes question.md and exits 0 between state's first look at the question and its exit read."""
+    task = Task("late-question", tmp_path)
+    task.work.mkdir()
+    runner = CommandRunner("cli", {"argv": ["/bin/sh"]})
+    handle = Handle(task, 1, {"runner": "cli", "step": 1, "since": time.time()})
+    handle.save()
+    original_exit_code = runner._exit_code
+
+    def ask_then_exit(handle):
+        (task.work / "question.md").write_text("Which colour?\n", encoding="utf-8")
+        task.path("exit.1.1").write_text("0\n", encoding="utf-8")
+        return original_exit_code(handle)
+
+    monkeypatch.setattr(runner, "_exit_code", ask_then_exit)
+    assert runner.state(handle) == "waiting_human"
