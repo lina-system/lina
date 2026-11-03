@@ -118,3 +118,23 @@ def prefetch_sync(provider, query: str) -> str:
         # Record caller abandonment explicitly before a late HTTP call can resume.
         cancelled.set()
         provider._recall_sync_lock.release()
+
+
+def recall_query_sync(provider, query: str) -> str:
+    """One explicit recall. Never reads or writes ``_last_dialectic_turn`` / ``_last_context_turn``."""
+    query = (query or "").strip()
+    if not query or provider._is_trivial_prompt(query):
+        return ""
+    if not provider._session_ready():
+        return ""
+    level = provider._resolve_pass_level(0, query=query)
+    prompt = f"Current user request:\n{query}\n\nRecall evidence relevant to the user's current request."
+    try:
+        result = provider._manager.dialectic_query(
+            provider._session_key, prompt, reasoning_level=level, peer="user",
+            apply_injection_cap=False, raise_errors=True,
+        )
+    except Exception:  # health: allow BLE001 -- an explicit recall failing must not cost the turn
+        logger.debug("Honcho explicit recall failed", exc_info=True)
+        return ""
+    return provider._truncate_to_budget((result or "").strip())
