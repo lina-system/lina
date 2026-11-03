@@ -122,16 +122,23 @@ def classify(run: dict) -> str:
     return "failure" if conclusion in RED else "infra"
 
 
+def latest_statuses(statuses: list[dict] | None) -> dict[str, dict]:
+    """``{context: newest commit status}`` (the highest id per context), as GitHub shows a head's statuses."""
+    latest: dict[str, dict] = {}
+    for status in statuses or []:
+        context = status.get("context")
+        if context not in latest or status.get("id", 0) > latest[context].get("id", 0):
+            latest[context] = status
+    return latest
+
+
 def required_checks(required: list[str], runs: list[dict], statuses: list[dict] | None = None) -> Verdict:
     verdict = Verdict()
     if not required:
         verdict.add(FAIL, "no required checks are configured on the base branch")
         return verdict
     latest = latest_runs(runs)
-    legacy = {}
-    for status in statuses or []:
-        if status.get("context") not in legacy or status.get("id", 0) > legacy[status["context"]].get("id", 0):
-            legacy[status.get("context")] = status
+    legacy = latest_statuses(statuses)
     for name in required:
         run = latest.get(name) or legacy.get(name)
         if run is None:
@@ -196,13 +203,24 @@ def owner_approved(labels: set[str], label_events: list[dict], owner_login: str 
 
 
 def dev_green(labels: set[str], head_runs: list[dict], dev_ok: bool, dev_failed: set[str],
-              approval: tuple[bool, str] = (False, "")) -> Verdict:
+              approval: tuple[bool, str] = (False, ""), head_statuses: list[dict] | None = None) -> Verdict:
     """The dev-green guard. ``dev_ok``/``dev_failed``: the newest finished ``dev`` push CI run with a verdict
-    and the names of its red jobs."""
+    and the names of its red jobs. ``head_statuses``: the head's commit statuses (other integrations); the newest
+    per context counts like a check run, so a red one blocks too."""
     verdict = Verdict()
     latest = latest_runs([r for r in head_runs if r.get("status") == "completed"])
     head_fail = {name for name, run in latest.items() if run.get("conclusion") in RED}
     passed = {name for name, run in latest.items() if run.get("conclusion") == "success"}
+    gate = review_gate()
+    own = {gate.REVIEW_CONTEXT, gate.LINKED_CONTEXT, gate.DEV_CONTEXT} if gate else {"Codex review", "Linked issue",
+                                                                                    "dev green"}
+    for context, status in latest_statuses(head_statuses).items():
+        if context in own:  # the gate's own statuses: judged by codex_review / linked_issue / this guard
+            continue
+        if status.get("state") in ("failure", "error"):
+            head_fail.add(context)
+        elif status.get("state") == "success":
+            passed.add(context)
     if not dev_ok and approval[0] and DEV_RED_FIX not in labels:
         new = head_fail - dev_failed
         verdict.add(FAIL if new else PASS, f"dev is red but {approval[1]}; the head adds red checks: "
@@ -285,7 +303,8 @@ def may_merge(pr: dict) -> Verdict:
                  codex_review(pr["head"], pr.get("reviews") or [], pr.get("review_comments") or [],
                               pr.get("issue_comments") or []),
                  dev_green(labels, pr.get("runs") or [], bool(pr.get("dev_ok", True)), set(pr.get("dev_failed") or ()),
-                           owner_approved(labels, pr.get("label_events") or [], pr.get("owner_login"))),
+                           owner_approved(labels, pr.get("label_events") or [], pr.get("owner_login")),
+                           pr.get("statuses")),
                  linked_issue(pr["repo"], pr.get("body"), labels, pr.get("head_ref") or "", pr.get("issues") or {})):
         verdict.lines.extend(part.lines)
     return verdict
