@@ -58,7 +58,7 @@ def _body(body, allowed: dict[str, type], required: tuple[str, ...] = ()) -> dic
     if extra:
         raise Refused(400, f"not accepted here: {', '.join(extra)}")
     for key, kind in allowed.items():
-        if key in required and key not in body:
+        if key in required and body.get(key) is None:
             raise Refused(400, f"{key} is required")
         if key in body and body[key] is not None and not isinstance(body[key], kind):
             raise Refused(400, f"{key} must be {kind.__name__}")
@@ -78,10 +78,17 @@ def _args(fn: Callable, **values) -> argparse.Namespace:
 
 
 def _execute(a: argparse.Namespace, refused: int) -> str:
-    """One ``lina work`` command as the CLI runs it -> its stdout; a refusal raises Refused with its message."""
+    """One ``lina work`` command as the CLI runs it -> its own stdout; a refusal raises Refused with its message.
+
+    The hand-offs a crash left are resumed first, as ``execute`` would, but with their output kept apart: a resumed
+    run prints its id, which must not be read as the new memo or comment id."""
     from hermes_cli.work import execute
+    from hermes_cli.work import run as runs
     out, err = io.StringIO(), io.StringIO()
     try:
+        with redirect_stdout(io.StringIO()), redirect_stderr(err):
+            runs.resume()
+        a.no_resume = True
         with redirect_stdout(out), redirect_stderr(err):
             execute(a)
     except SystemExit as exc:

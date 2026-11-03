@@ -107,6 +107,11 @@ def test_start_question_answer_settle_result_follow_up(lane):
     serve.serve_once(lane.root)
     assert lane.ended(task_id, 2) == "done"
     assert (lane.task_dir(task_id) / "prompt.2").read_text().startswith("ulw ")
+    # The job's ``notified`` marker is saved before the notice goes out and its ``notified`` receipt is written
+    # (Hub._notify_locked), so ``ended`` can return while the device's thread is still delivering run 2's
+    # notice: wait for that receipt instead of reading the receipts once.
+    fakes.until(lambda: [r["kind"] for r in lane.hub.store.receipts_of(task_id)].count("notified") == 2,
+                what=f"{task_id} run 2 notice sent")
     kinds = [r["kind"] for r in lane.hub.store.receipts_of(task_id)]
     assert kinds.count("notified") == 2 and "follow_up" in kinds and "answer" in kinds
 

@@ -1,0 +1,1074 @@
+{
+  "head": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+  "runs": [
+    {
+      "id": 125586265711,
+      "name": "Python tests (Linux)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T22:14:39Z",
+      "completed_at": "2026-11-02T22:14:42Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125586265711"
+    },
+    {
+      "id": 125575389494,
+      "name": "CodeQL",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 57789,
+        "slug": "github-advanced-security"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:52:43Z",
+      "completed_at": "2026-11-02T21:52:45Z",
+      "html_url": "https://github.com/lina-system/lina/runs/125575389494"
+    },
+    {
+      "id": 125574682215,
+      "name": "LINA Helper sign and notarise (not wired)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-02T21:51:18Z",
+      "completed_at": "2026-11-02T21:51:18Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574682215"
+    },
+    {
+      "id": 125574681619,
+      "name": "LINA Helper (macOS)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-02T21:51:18Z",
+      "completed_at": "2026-11-02T21:51:18Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574681619"
+    },
+    {
+      "id": 125574681512,
+      "name": "uv.lock check",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-02T21:51:18Z",
+      "completed_at": "2026-11-02T21:51:18Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574681512"
+    },
+    {
+      "id": 125574681002,
+      "name": "Catalog tests",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "skipped",
+      "started_at": "2026-11-02T21:51:18Z",
+      "completed_at": "2026-11-02T21:51:18Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574681002"
+    },
+    {
+      "id": 125574679596,
+      "name": "Python tests (Linux 1/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:54:09Z",
+      "completed_at": "2026-11-02T22:09:44Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679596"
+    },
+    {
+      "id": 125574679534,
+      "name": "Python tests (Linux 2/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:58:08Z",
+      "completed_at": "2026-11-02T22:14:17Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679534"
+    },
+    {
+      "id": 125574679452,
+      "name": "Python tests (Linux 7/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:55:49Z",
+      "completed_at": "2026-11-02T22:13:48Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679452"
+    },
+    {
+      "id": 125574679424,
+      "name": "Python tests (Linux 8/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:53:20Z",
+      "completed_at": "2026-11-02T22:06:30Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679424"
+    },
+    {
+      "id": 125574679416,
+      "name": "Python tests (Linux 3/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:58:04Z",
+      "completed_at": "2026-11-02T22:14:27Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679416"
+    },
+    {
+      "id": 125574679356,
+      "name": "Python tests (Linux 4/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:56:16Z",
+      "completed_at": "2026-11-02T22:12:48Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679356"
+    },
+    {
+      "id": 125574679346,
+      "name": "Python tests (Linux 6/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:57:53Z",
+      "completed_at": "2026-11-02T22:13:52Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679346"
+    },
+    {
+      "id": 125574679340,
+      "name": "Python tests (Linux 5/8)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:53:11Z",
+      "completed_at": "2026-11-02T22:07:22Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679340"
+    },
+    {
+      "id": 125574679266,
+      "name": "Diff checks",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:56:10Z",
+      "completed_at": "2026-11-02T21:56:21Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679266"
+    },
+    {
+      "id": 125574679043,
+      "name": "Python tests (macOS)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T22:27:19Z",
+      "completed_at": "2026-11-02T22:36:37Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574679043"
+    },
+    {
+      "id": 125574428763,
+      "name": "Set merge gate statuses",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:55:09Z",
+      "completed_at": "2026-11-02T21:55:24Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038080/job/125574428763"
+    },
+    {
+      "id": 125574425032,
+      "name": "Prune check",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:52:01Z",
+      "completed_at": "2026-11-02T21:52:13Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574425032"
+    },
+    {
+      "id": 125574424976,
+      "name": "Lint",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:51:36Z",
+      "completed_at": "2026-11-02T21:51:57Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574424976"
+    },
+    {
+      "id": 125574424593,
+      "name": "Detect affected areas",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:51:04Z",
+      "completed_at": "2026-11-02T21:51:18Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532038051/job/125574424593"
+    },
+    {
+      "id": 125574418700,
+      "name": "Analyze (python)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:54:48Z",
+      "completed_at": "2026-11-02T21:59:24Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532034109/job/125574418700"
+    },
+    {
+      "id": 125574418586,
+      "name": "Analyze (javascript-typescript)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:53:47Z",
+      "completed_at": "2026-11-02T21:54:48Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532034109/job/125574418586"
+    },
+    {
+      "id": 125574418583,
+      "name": "Analyze (swift)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T22:19:16Z",
+      "completed_at": "2026-11-02T22:28:18Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532034109/job/125574418583"
+    },
+    {
+      "id": 125574418527,
+      "name": "Analyze (actions)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:52:05Z",
+      "completed_at": "2026-11-02T21:52:55Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532034109/job/125574418527"
+    },
+    {
+      "id": 125574418302,
+      "name": "Analyze (c-cpp)",
+      "head_sha": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+      "app": {
+        "id": 15368,
+        "slug": "github-actions"
+      },
+      "status": "completed",
+      "conclusion": "success",
+      "started_at": "2026-11-02T21:54:35Z",
+      "completed_at": "2026-11-02T21:55:34Z",
+      "html_url": "https://github.com/lina-system/lina/actions/runs/41532034109/job/125574418302"
+    }
+  ],
+  "statuses": [
+    {
+      "id": 57891660723,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542525800"
+    },
+    {
+      "id": 57891659374,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542525800"
+    },
+    {
+      "id": 57891658134,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542525800"
+    },
+    {
+      "id": 57891574093,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542347442"
+    },
+    {
+      "id": 57891573006,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542347442"
+    },
+    {
+      "id": 57891571934,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542347442"
+    },
+    {
+      "id": 57891490288,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542307911"
+    },
+    {
+      "id": 57891489051,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542307911"
+    },
+    {
+      "id": 57891487770,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41542307911"
+    },
+    {
+      "id": 57891331151,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541978915"
+    },
+    {
+      "id": 57891329783,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541978915"
+    },
+    {
+      "id": 57891328458,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541978915"
+    },
+    {
+      "id": 57891230538,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541822449"
+    },
+    {
+      "id": 57891229325,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541822449"
+    },
+    {
+      "id": 57891228049,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541822449"
+    },
+    {
+      "id": 57891103705,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541596298"
+    },
+    {
+      "id": 57891102168,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541596298"
+    },
+    {
+      "id": 57891100958,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41541596298"
+    },
+    {
+      "id": 57890715858,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41540861387"
+    },
+    {
+      "id": 57890714565,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41540861387"
+    },
+    {
+      "id": 57890713264,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41540861387"
+    },
+    {
+      "id": 57890616382,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41540664541"
+    },
+    {
+      "id": 57890615098,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41540664541"
+    },
+    {
+      "id": 57890613766,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41540664541"
+    },
+    {
+      "id": 57889620762,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41538731199"
+    },
+    {
+      "id": 57889619501,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41538731199"
+    },
+    {
+      "id": 57889618090,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41538731199"
+    },
+    {
+      "id": 57889520311,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41538648383"
+    },
+    {
+      "id": 57889518688,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41538648383"
+    },
+    {
+      "id": 57889517210,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41538648383"
+    },
+    {
+      "id": 57888594909,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41537024235"
+    },
+    {
+      "id": 57888593667,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41537024235"
+    },
+    {
+      "id": 57888592480,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41537024235"
+    },
+    {
+      "id": 57888502750,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536752350"
+    },
+    {
+      "id": 57888501628,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536752350"
+    },
+    {
+      "id": 57888500474,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536752350"
+    },
+    {
+      "id": 57888401280,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536540822"
+    },
+    {
+      "id": 57888400153,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536540822"
+    },
+    {
+      "id": 57888398772,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536540822"
+    },
+    {
+      "id": 57888292922,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536474373"
+    },
+    {
+      "id": 57888291429,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536474373"
+    },
+    {
+      "id": 57888289830,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41536474373"
+    },
+    {
+      "id": 57887839670,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41535650494"
+    },
+    {
+      "id": 57887838155,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41535650494"
+    },
+    {
+      "id": 57887836762,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41535650494"
+    },
+    {
+      "id": 57887726377,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41533218034"
+    },
+    {
+      "id": 57887725124,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41533218034"
+    },
+    {
+      "id": 57887723661,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41533218034"
+    },
+    {
+      "id": 57886442597,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532708353"
+    },
+    {
+      "id": 57886440700,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532708353"
+    },
+    {
+      "id": 57886439368,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532708353"
+    },
+    {
+      "id": 57886379886,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532516287"
+    },
+    {
+      "id": 57886378436,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532516287"
+    },
+    {
+      "id": 57886376905,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532516287"
+    },
+    {
+      "id": 57886182550,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532279512"
+    },
+    {
+      "id": 57886181271,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532279512"
+    },
+    {
+      "id": 57886179858,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532279512"
+    },
+    {
+      "id": 57886153629,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532038080"
+    },
+    {
+      "id": 57886152084,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532038080"
+    },
+    {
+      "id": 57886150591,
+      "context": "Codex review",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41532038080"
+    },
+    {
+      "id": 57885811254,
+      "context": "dev green",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41531151979"
+    },
+    {
+      "id": 57885809665,
+      "context": "Linked issue",
+      "state": "success",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41531151979"
+    },
+    {
+      "id": 57885808270,
+      "context": "Codex review",
+      "state": "pending",
+      "creator": {
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      },
+      "target_url": "https://github.com/lina-system/lina/actions/runs/41531151979"
+    }
+  ],
+  "rules": [
+    [
+      {
+        "type": "merge_queue",
+        "parameters": {
+          "merge_method": "MERGE",
+          "max_entries_to_build": 4,
+          "min_entries_to_merge": 1,
+          "max_entries_to_merge": 4,
+          "min_entries_to_merge_wait_minutes": 1,
+          "grouping_strategy": "ALLGREEN",
+          "check_response_timeout_minutes": 90
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "lina-system/lina",
+        "ruleset_id": 26382229
+      },
+      {
+        "type": "deletion",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "lina-system/lina",
+        "ruleset_id": 26321799
+      },
+      {
+        "type": "non_fast_forward",
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "lina-system/lina",
+        "ruleset_id": 26321799
+      },
+      {
+        "type": "required_status_checks",
+        "parameters": {
+          "strict_required_status_checks_policy": false,
+          "do_not_enforce_on_create": false,
+          "required_status_checks": [
+            {
+              "context": "Lint",
+              "integration_id": 15368
+            },
+            {
+              "context": "Python tests (Linux)",
+              "integration_id": 15368
+            },
+            {
+              "context": "Python tests (macOS)",
+              "integration_id": 15368
+            },
+            {
+              "context": "LINA Helper (macOS)",
+              "integration_id": 15368
+            },
+            {
+              "context": "Codex review",
+              "integration_id": 15368
+            },
+            {
+              "context": "Linked issue",
+              "integration_id": 15368
+            },
+            {
+              "context": "dev green",
+              "integration_id": 15368
+            }
+          ]
+        },
+        "ruleset_source_type": "Repository",
+        "ruleset_source": "lina-system/lina",
+        "ruleset_id": 26321800
+      }
+    ]
+  ],
+  "issue": {
+    "body": "## Summary\n\nSix Codex P2 findings from the reviews of #114, #115 and #117 are still open in the work-card gates. They are fixed together in one pull request, because they all touch the card goal loop, the gate runner and the gate commands.\n\n## Done when\n\n- [ ] `hermes_cli/goals.py` `run_kanban_goal_loop`: when a gate fails after the judge already sent a finalize nudge, the nudge state is cleared, so the next `done` verdict gets a fresh finalize prompt instead of blocking the card as \"never finalized\". A scripted gate pass → fail → pass run with turns left reaches the second finalize prompt. (#114, [review](https://github.com/lina-system/lina/pull/114#discussion_r4445359113))\n- [ ] `hermes_cli/kanban_goal_gates.py` `run_card_gate`: on a Docker backend with `docker_mount_cwd_to_workspace`, the gate environment mounts the card workspace and runs the command in the mounted path, following the terminal tool's mount policy (`tools/terminal_tool.py` `_resolve_task_host_cwd`, `_resolve_config_cwd`). A gate such as `test -f marker` sees a file the worker wrote in the card workspace. (#114, [review](https://github.com/lina-system/lina/pull/114#discussion_r4445637204), line 47)\n- [ ] `hermes_cli/kanban_goal_gates.py` `run_card_gate`: gate output is bounded while the command runs (`bounded_capture=True`, as the foreground terminal path does), not only cut to 3,000 characters afterwards. A gate that prints far more than the cap keeps a bounded tail in memory and still reports pass or fail. If the docstring of `BaseEnvironment.execute` names the foreground terminal tool as the only caller allowed to bound output, it also names card gates. (#114, [review](https://github.com/lina-system/lina/pull/114#discussion_r4445637211), line 51)\n- [ ] `hermes_cli/kanban_gates.py` `_synthesized_review` / `own_names` / `_approvals`: a card approved out of `review` with `complete --summary …` or `--result …` counts as an approval by the reviewer. The reviewer is not added to the implementer identities. The check reads the stored transition history (events and runs) instead of relying only on the optional `metadata.source_status`, and `hermes_cli/kanban_db.py` is not changed. (#115, [review](https://github.com/lina-system/lina/pull/115#discussion_r4445215690), line 146)\n- [ ] `hermes_cli/kanban_gates.py` `gate_artifact`: the `--check` command runs in its own process group (session), and on timeout the whole group is killed before the gate returns, using the existing helpers in `hermes_cli/_subprocess_compat.py`. A check that starts a child which writes a file after the timeout leaves no file. (#115, [review](https://github.com/lina-system/lina/pull/115#discussion_r4445215705), line 320)\n- [ ] `plugins/kanban/dashboard/work_api.py`: the waiting-on-gate state, and the `in_progress` filter, read only the latest gate event of the card's current run (`task.current_run_id`). An exit-75 gate event left by an earlier run does not make a successor's live run show as `waiting/gate`. (#117, [review](https://github.com/lina-system/lina/pull/117#discussion_r4445436554), line 184)\n- [ ] `hermes_cli/kanban_plan.py`: the goal card's key is reserved before work-card keys are accepted, so a work card cannot take the goal's idempotency key (#118, [review](https://github.com/lina-system/lina/pull/118), line 380).\n- [ ] `hermes_cli/kanban_plan.py`: re-running a plan compares against every existing card of the plan when detecting changed membership, not only the ones found by the first lookup (#118, review, line 341).\n- [ ] `hermes_cli/kanban_goal_gates.py`: a gate run from a handoff with an explicit task id (an orchestrator or chat session, not the card's own worker) gets `HERMES_KANBAN_TASK` and the board of the connection in its environment, so `hermes kanban gate …` resolves the right card and board (#118, review, `kanban_goal_gates.py`).\n- [ ] `hermes_cli/kanban_gates.py` `gate_review`: an approval recorded before a `changes_requested` event in the same second no longer counts. Order is taken from the event log (`task_events.id`), not the second-resolution `created_at`: a review run by its `completed` event, a comment by the `commented` event it maps to without ambiguity. When a same-second approval comment cannot be placed unambiguously (the stored rows do not say which comment a `commented` event belongs to), it does not count: the gate fails closed and the reviewer approves again (#117 review, \"Invalidate approvals preceding same-second change requests\", `kanban_gates.py` lines 343–345).\n- [ ] Each finding above has a test that fails on the code before the fix and passes after it; the PR body says which test covers which finding.\n- [ ] `scripts/run_tests.sh` on the changed test files passes, and `python scripts/check --base origin/dev` is clean.\n- [ ] Nothing outside the files above and their tests changes.\n\n## Context\n\n- The two `kanban_outcomes.py` review findings from #119 are fixed inside #119 itself.\n\nSprint: M0 S3\nSize: M\nRunner: omo — gate and loop behaviour\nFollow-up to #114 #115 #117\n\n- Depends on: #108, #109, #112. The code these findings point at lands with #114, #115 and #117; work starts on `dev` after they merge.\n- Part of the work-session cycle (#107).\n- The two run-fencing P2s on `hermes_cli/kanban_goal_gates.py` (#114, #117) and the two security P1s are already fixed in #114 and are not part of this issue.\n\n\n\n\n",
+    "closedAt": "2026-11-02T23:06:30Z",
+    "state": "CLOSED"
+  },
+  "pr": {
+    "baseRefName": "dev",
+    "headRefOid": "7fc6abee1be7135ed81d39e3f829584e71e27a6b",
+    "mergeCommit": {
+      "oid": "d09012c780764ce3c9011407af742558cfa959b7"
+    },
+    "mergedAt": "2026-11-02T23:06:28Z",
+    "number": 139,
+    "state": "MERGED",
+    "url": "https://github.com/lina-system/lina/pull/139"
+  }
+}

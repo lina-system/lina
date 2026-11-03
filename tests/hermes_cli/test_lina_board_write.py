@@ -151,6 +151,13 @@ def test_quick_add_hands_one_line_to_the_chosen_agent(work, client):
     ("/api/lina/work/add", {"agent": "beta", "text": "x", "due": "next week"}, 400),
     ("/api/lina/work/add", {"agent": "nobody", "text": "x"}, 400),
     ("/api/lina/work/add", {"agent": "beta"}, 400),
+    ("/api/lina/work/items/T1/comments", {"text": None}, 400),
+    ("/api/lina/work/items/T1/comments", {"text": 5}, 400),
+    ("/api/lina/work/items/T1/comments", {"text": ["x"]}, 400),
+    ("/api/lina/work/add", {"agent": "beta", "text": None}, 400),
+    ("/api/lina/work/add", {"agent": None, "text": "x"}, 400),
+    ("/api/lina/work/add", {"agent": "beta", "text": 7}, 400),
+    ("/api/lina/work/add", {"agent": "beta", "text": ["x"]}, 400),
 ])
 def test_bad_input_is_refused_with_one_line_and_writes_nothing(work, client, path, body, status):
     before = _lines(work)
@@ -158,6 +165,44 @@ def test_bad_input_is_refused_with_one_line_and_writes_nothing(work, client, pat
     assert response.status_code == status
     assert isinstance(response.json()["detail"], str)
     assert _lines(work) == before and work.notices("alpha") == work.notices("beta") == ""
+
+
+def _pending_hand_off(work: WorkEnv, monkeypatch, todo: str) -> str:
+    """A ``work run submit`` that crashed before the worker call, so the next command resumes it first."""
+    from hermes_cli.work import ledger
+    from hermes_cli.work import run as runs
+    brief = work.root / f"brief-{todo}.md"
+    brief.write_text("Check both machines and write out/report.txt\n", encoding="utf-8")
+    real = runs._call_worker
+    monkeypatch.setattr(runs, "_call_worker", lambda *_a, **_k: (_ for _ in ()).throw(RuntimeError("died")))
+    with pytest.raises(RuntimeError):
+        work.run("run", "submit", todo, "--brief", str(brief))
+    monkeypatch.setattr(runs, "_call_worker", real)
+    db = ledger.open_db()
+    try:
+        return db.execute("SELECT run_id FROM outbox WHERE done_at IS NULL").fetchone()[0]
+    finally:
+        db.close()
+
+
+def test_a_hand_off_resumed_first_does_not_stand_in_for_the_new_memo_or_comment(work, client, monkeypatch):
+    from hermes_cli.work import ledger
+
+    def resumed(run_id: str) -> bool:
+        db = ledger.open_db()
+        try:
+            return db.execute("SELECT done_at FROM outbox WHERE run_id = ?", (run_id,)).fetchone()[0] is not None
+        finally:
+            db.close()
+
+    run_id = _pending_hand_off(work, monkeypatch, "T1")
+    added = _act(client, "/api/lina/work/add", {"agent": "beta", "text": "백업 확인해 줘"})
+    assert resumed(run_id) and added["id"] != run_id
+    assert _record(work, added["id"])["kind"] == "메모"
+
+    run_id = _pending_hand_off(work, monkeypatch, "T2")
+    said = _act(client, "/api/lina/work/items/T1/comments", {"text": "1번 기기부터 봐 줘"})
+    assert resumed(run_id) and (said["id"], said["cid"]) == ("T1", "c1")
 
 
 def test_writes_are_behind_the_auth_gate_and_limited_per_client(work, client):
