@@ -37,6 +37,22 @@ _WRAP = 'rc_file=$1; shift; "$@"; echo $? > "$rc_file"'
 FINAL_MAX = 20000
 
 
+def _group_alive(pgid: int | None) -> bool:
+    """Any process left in the run's process group (the wrapper shell leads it; ``start_new_session``): the CLI under
+    it can outlive the shell, e.g. when it ignores SIGTERM, so the shell's exit proves nothing about the run."""
+    if not pgid:
+        return False
+    if _alive(pgid):  # reaps the leader once it exited, so a zombie leader is not counted
+        return True
+    try:
+        os.killpg(pgid, 0)  # windows-footgun: ok — POSIX work devices only
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 def _alive(pid: int | None) -> bool:
     if not pid:
         return False
@@ -171,7 +187,7 @@ class CommandRunner:
 
     def stop(self, handle: Handle) -> None:
         pid = handle.data.get("pid")
-        if not _alive(pid):
+        if not _group_alive(pid):
             return
         for sig in (signal.SIGTERM, signal.SIGKILL):  # windows-footgun: ok — POSIX work devices only
             try:
@@ -179,7 +195,7 @@ class CommandRunner:
             except (ProcessLookupError, PermissionError):
                 return
             deadline = time.monotonic() + 5
-            while time.monotonic() < deadline and _alive(pid):
+            while time.monotonic() < deadline and _group_alive(pid):
                 time.sleep(0.05)
-            if not _alive(pid):
+            if not _group_alive(pid):
                 return
