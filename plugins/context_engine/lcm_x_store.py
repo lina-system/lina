@@ -353,12 +353,29 @@ def _fts_parts(masked: str) -> list:
     return parts
 
 
-def _unmask(text: str, literals: list[str]) -> list:
+def _slot_indices(slots: list[str]) -> list[int]:
+    """The argument each placeholder reads: ``?`` the next one, ``?N`` the Nth (SQLite's numbering), a name its
+    position."""
+    out, following = [], 0
+    for tok in slots:
+        if tok[0] == "?" and tok[1:].isdigit():
+            out.append(int(tok[1:]) - 1)
+            following = max(following, int(tok[1:]))
+        elif tok == "?":
+            out.append(following)
+            following += 1
+        else:
+            out.append(len(out))
+    return out
+
+
+def _unmask(text: str, literals: list[str], indices: Optional[list[int]] = None) -> list:
     """Restore literals and turn placeholder markers into ``("param", i)`` slots."""
     out: list = []
     for piece in re.split(r"(\x01\d+\x01)", re.sub(r"\x00(\d+)\x00", lambda m: literals[int(m.group(1))], text)):
         if piece.startswith("\x01"):
-            out.append(("param", int(piece.strip("\x01"))))
+            slot = int(piece.strip("\x01"))
+            out.append(("param", indices[slot] if indices is not None else slot))
         elif piece:
             out.append(piece)
     return out
@@ -415,8 +432,10 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
             if cols and returning in [c.strip().strip('"') for c in cols.group(1).split(",")]:
                 bump = (m.group(1), returning)
     parts: list = []
+    indices = _slot_indices(slots)
     for piece in _fts_parts(masked):
-        parts.extend(_unmask(piece, literals) if isinstance(piece, str) else [piece])
+        parts.extend(_unmask(piece, literals, indices) if isinstance(piece, str)
+                     else [(piece[0], indices[piece[1]], piece[2])])
     names = _named_order(slots)
     return Template(tuple(parts), returning=returning, detail=tuple(names) if names else (), bump=bump)
 
