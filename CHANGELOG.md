@@ -13,6 +13,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - The shared Desk: `hermes desk init` (run by the installer) creates `~/Desk` with Inbox, Projects, Areas, Resources and Archive, or adopts an existing folder; every agent starts there, and the app reads it from `GET /api/desk` (see [docs/desk.md](docs/desk.md)).
 - The memory store: `lina store install` (also run by `lina install`) runs one Postgres with pgvector in Docker, with schemas `memory`, `ctx`, `ltm` and `vec` and row-level security on `agent_id`, and the Honcho api and deriver built from `services/honcho`; `lina store backup` / `restore` back up and restore the whole cluster, and `lina store upgrade` upgrades Honcho by backup, rehearsal migration, one migration job and smoke test (see [docs/store.md](docs/store.md)).
 - The Honcho server v3.5.0 (`plastic-labs/honcho` 0cd37ddbd8) in `services/honcho/`, a squashed subtree tracked by the `honcho-upstream` branch and `services/honcho-intake.md`; CI checks, tests and builds it (see [docs/honcho.md](docs/honcho.md)).
+- LCM-X is the core context engine, one copy for every agent: v0.29.1-rc2 (`electricsheephq/lcm-x` 0eb6e8736a) with the `hermes` fork's patches in `plugins/context_engine/lcm-x/`, a squashed subtree tracked by the `lcm-x-upstream` branch; new homes get `context.engine: lcm-x`, its hooks now register, and a `hermes-lcm-x` plugin copy no longer loads beside it (see [docs/lcm-x.md](docs/lcm-x.md)).
 
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
 

@@ -116,6 +116,20 @@ def read_plugin_description(plugin_dir: Path) -> str:
         return ""
 
 
+def read_plugin_field(plugin_dir: Path, field: str, default: str = "") -> str:
+    """Return the string *field* of ``plugin.yaml``, or *default* when the file, the field or a string value is missing."""
+    from hermes_yaml import YAMLError
+    from utils import fast_safe_load
+
+    try:
+        with open(plugin_dir / "plugin.yaml", encoding="utf-8-sig") as f:
+            meta = fast_safe_load(f)
+    except (OSError, UnicodeDecodeError, YAMLError):
+        return default
+    value = meta.get(field) if isinstance(meta, dict) else None
+    return value if isinstance(value, str) and value else default
+
+
 def _new_module(name: str, file: Path, search_locations: Optional[list[str]] = None) -> Optional[Any]:
     """spec -> module -> sys.modules[name] (NOT executed); None if no spec."""
     spec = importlib.util.spec_from_file_location(
