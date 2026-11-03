@@ -61,15 +61,21 @@ def put_tree(transport: Transport, task_id: str, rel: str, sources: list[Path]) 
         raise TransportError(f"copy into {rel}: {reply.err.strip()[-300:] or reply.json().get('reason')}")
 
 
+PACKED = ("report.md", "final.md", "manifest.json", "git.txt", "stderr.txt", "out")  # every name `pack` can send
+
+
 def fetch(transport: Transport, task_id: str, dest: Path) -> list[str]:
     """The run's results (``report.md``, ``final.md``, ``manifest.json``, ``git.txt``, ``out/``) into *dest*."""
     reply = transport.call(["pack", task_id], timeout=600)
     if reply.code != 0:
         raise TransportError(f"fetch {task_id}: {reply.err.strip()[-300:]}")
     dest.mkdir(parents=True, exist_ok=True)
-    out = dest / "out"
-    if out.is_dir():
-        shutil.rmtree(out)
+    for name in PACKED:  # a deliverable the new run no longer has must not survive from an earlier fetch
+        stale = dest / name
+        if stale.is_dir() and not stale.is_symlink():
+            shutil.rmtree(stale)
+        else:
+            stale.unlink(missing_ok=True)
     with tarfile.open(fileobj=io.BytesIO(reply.out), mode="r") as archive:
         archive.extractall(dest, filter="data")
         return archive.getnames()
