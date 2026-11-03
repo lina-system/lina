@@ -266,6 +266,54 @@ def test_followups_skip_a_finding_already_listed(monkeypatch):
 
 
 
+def test_two_merges_filing_into_one_follow_up_issue_keep_both_findings(tmp_path, monkeypatch):
+    """Two ``lina work merge`` runs finishing in the same area and sprint: each reads the follow-up issue, then
+    writes its whole body. Without one lock around read and write the second write dropped the first one's
+    findings (or two issues were opened). The fake issue store answers reads from what was written."""
+    import threading
+
+    from hermes_cli.delivery import followups, settings
+    from hermes_cli.worker import settings as worker_settings
+    monkeypatch.setattr(settings, "sprint", lambda base=None: (None, 1))
+    monkeypatch.setattr(worker_settings, "root", lambda base=None: tmp_path / "lina")
+    store = {"issues": [{"number": 40, "title": "chore(hermes_cli): review follow-ups",
+                         "labels": [{"name": "follow-up"}], "body": "## Done when\n\n## Context\n\nSprint: S1\n"}]}
+    read_both = threading.Barrier(2, timeout=2)
+
+    def gh_for(pr, title):
+        snap = snapshot(number=pr, review_comments=[finding("P2", HEAD, line=pr, title=title)])
+        gh = _github(snap, queue=False)
+        gh.routes[f"repos/{REPO}/pulls/{pr}/comments"] = snap["review_comments"]
+
+        def issues(_query):
+            rows = [dict(i) for i in store["issues"]]
+            try:
+                read_both.wait()  # both runs read before either writes: the race, made certain
+            except threading.BrokenBarrierError:
+                pass  # serialized: the other run already finished, no partner arrives
+            return rows
+        gh.routes[f"repos/{REPO}/issues"] = issues
+
+        def write(method, path, payload=None):
+            gh.writes.append((method, path, payload))
+            if method == "PATCH":
+                store["issues"][0]["body"] = payload["body"]
+            return {"number": 41}
+        gh.write = write
+        return gh
+
+    results = {}
+    runs = [threading.Thread(target=lambda pr=pr, title=title: results.setdefault(
+        pr, followups.file(gh_for(pr, title), REPO, pr, HEAD))) for pr, title in ((7, "Guard A"), (8, "Guard B"))]
+    for thread in runs:
+        thread.start()
+    for thread in runs:
+        thread.join(10)
+    body = store["issues"][0]["body"]
+    assert "Guard A" in body and "Guard B" in body, body
+    assert all(line == ["chore(hermes_cli): review follow-ups: added 1 to #40"] for line in results.values()), results
+
+
 def test_an_owner_approved_head_merges_over_a_red_dev_and_the_timeline_is_read(monkeypatch):
     from hermes_cli.delivery import settings
     monkeypatch.setattr(settings, "owner_login", lambda base=None: OWNER)

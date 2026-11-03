@@ -97,13 +97,27 @@ def _resolved(gh, repo: str, pr: int) -> set[int]:
             for c in node["comments"]["nodes"]}
 
 
+LOCK = "work-followups"
+
+
 def file(gh, repo: str, pr: int, head: str, base: Path | None = None) -> list[str]:
-    """Create or extend the follow-up issues for one merged pull request; one line per action."""
+    """Create or extend the follow-up issues for one merged pull request; one line per action.
+
+    Each write replaces a whole issue body, so two merges filing into the same issue at once would keep only the
+    later one's findings (or open two issues). Reading the open follow-up issues and writing them happen under the
+    worker hub's file lock (``Store.lock``, under the LINA root), the lock ``lina work next --submit`` uses."""
     current = settings.sprint(base)
     sprint = settings.sprint_label(current) if current else "unplanned"
     items = findings(gh.pages(f"repos/{repo}/pulls/{pr}/comments"), head, _resolved(gh, repo, pr))
     if not items:
         return [f"#{pr}: no P2/P3 finding to follow up"]
+    from hermes_cli.worker import settings as worker_settings
+    from hermes_cli.worker.hub_store import Store
+    with Store(worker_settings.root(base)).lock(LOCK):
+        return _file_locked(gh, repo, pr, items, current, sprint, base)
+
+
+def _file_locked(gh, repo: str, pr: int, items: list[dict], current, sprint: str, base: Path | None) -> list[str]:
     open_issues = [i for i in gh.pages(f"repos/{repo}/issues?state=open&labels={LABEL}") if not i.get("pull_request")]
     groups: dict[str, list[dict]] = {}
     for item in items:
