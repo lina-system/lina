@@ -902,6 +902,13 @@ class PgCursor:
 
 # ── PRAGMA ──
 
+_WRITABLE_KINDS = frozenset(("sql", "message_insert", "message_content_update", "ddl"))
+_CREATE_TEMP = re.compile(r"\s*CREATE\s+(?:TEMP|TEMPORARY)\s+(TABLE|VIEW|TRIGGER|INDEX)\s+(?:IF\s+NOT\s+EXISTS\s+)?"
+                          r"[\"`]?(\w+)", re.IGNORECASE)
+_WRITE_TARGET = re.compile(
+    r"\s*(?:WITH\b.*?\)\s*)?(INSERT|REPLACE|UPDATE|DELETE|DROP|CREATE|ALTER|REINDEX)\b"
+    r"(?:\s+OR\s+\w+)?(?:\s+INTO|\s+FROM|\s+(?:TABLE|INDEX|VIEW|TRIGGER)(?:\s+IF\s+(?:NOT\s+)?EXISTS)?)?"
+    r"\s*[\"`]?((?:temp\.|pg_temp\.)?\w+)?", re.IGNORECASE | re.DOTALL)
 _PRAGMA_READS: dict[str, tuple] = {
     "foreign_keys": ((1,),), "journal_mode": (("wal",),), "busy_timeout": ((5000,),), "synchronous": ((1,),),
     "query_only": ((0,),), "user_version": ((0,),), "page_size": ((4096,),), "page_count": ((0,),),
@@ -996,8 +1003,13 @@ class PgConnection:
         # lock_timeout stands in for SQLite's busy timeout: a writer waiting on another connection gives up with
         # "database is locked" instead of waiting forever.
         self._pg.execute("SELECT set_config('lina.agent_id', %s, false), set_config('search_path', 'ctx, public', false), "
-                         "set_config('lock_timeout', %s, false), set_config('default_transaction_read_only', %s, false)",
-                         (agent_id, f"{max(int(float(timeout) * 1000), 1)}ms", "on" if readonly else "off"))
+                         "set_config('lock_timeout', %s, false)",
+                         (agent_id, f"{max(int(float(timeout) * 1000), 1)}ms"))
+        # SQLite's read-only opens, enforced here: mode=ro refuses writes but to the connection's temp tables;
+        # PRAGMA query_only refuses every write (_refuse_write).
+        self._readonly = readonly
+        self._query_only = False
+        self._temp_tables: set[str] = set()
         self._catalog = Catalog.shared(self._pg)
         self._vector_oid = self._pg.execute("SELECT to_regtype('vector')::oid").fetchone()[0]
         self._lock = threading.RLock()
@@ -1180,6 +1192,8 @@ class PgConnection:
         with self._lock:
             if self._closed:  # closed by another thread while this one waited for the lock
                 raise sqlite3.ProgrammingError("Cannot operate on a closed database.")
+            if template.kind in _WRITABLE_KINDS and (self._readonly or self._query_only):
+                self._refuse_write(sql)
             handler = _KINDS.get(template.kind)
             if handler is not None:
                 handler(self, cur, template, params)
@@ -1260,9 +1274,36 @@ class PgConnection:
             self._raw(stmt)
         cur._set_result(None, [], -1, None)
 
+    def _refuse_write(self, sql: str) -> None:
+        """SQLite's SQLITE_READONLY for a write on a read-only connection (temp tables stay writable under mode=ro)."""
+        masked = _mask(sql)[0]
+        create_temp = _CREATE_TEMP.match(masked)
+        if create_temp and not self._query_only:
+            if create_temp.group(1).upper() == "TABLE":
+                self._temp_tables.add(create_temp.group(2).lower())
+            return
+        target = _WRITE_TARGET.match(masked)
+        if target is None:
+            return
+        name = (target.group(2) or "").lower()
+        if not self._query_only and (name.startswith(("temp.", "pg_temp.")) or name in self._temp_tables):
+            if target.group(1).upper() == "DROP":
+                self._temp_tables.discard(name.split(".")[-1])
+            return
+        err = sqlite3.OperationalError("attempt to write a readonly database")
+        err.sqlite_errorcode, err.sqlite_errorname = sqlite3.SQLITE_READONLY, "SQLITE_READONLY"
+        raise err
+
     def _pragma(self, cur: PgCursor, template: Template, params: Any) -> None:
         m = _PRAGMA.match(template.parts[0])
         name, arg, value = m.group(1).lower(), m.group(2), m.group(3)
+        if name == "query_only":
+            if value is not None:
+                self._query_only = value.strip().strip("'\"").lower() in ("1", "on", "true", "yes")
+                cur._set_result(None, [], -1, None)
+            else:
+                cur._set_result([("query_only",)], [(int(self._query_only),)], -1, None)
+            return
         if value is not None:
             if name == "busy_timeout":  # SQLite's busy timeout is the store's lock_timeout (0 = do not wait)
                 self._raw("SELECT set_config('lock_timeout', %s, false)", [f"{max(int(value.strip()), 1)}ms"])
