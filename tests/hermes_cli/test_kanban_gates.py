@@ -136,7 +136,7 @@ def test_pinned_status_creator_matches_in_both_readers(gh, creator, state, expec
     from hermes_cli import merge_rules
 
     records = _acceptance()
-    required = [{"context": "tests", "app_id": 8675309}]
+    required = [("tests", 8675309)]
     records[0][2]["data"]["repository"]["pullRequest"]["baseRef"] = None
     records[1][2] = [[{"type": "required_status_checks", "parameters": {
         "required_status_checks": [{"context": "tests", "integration_id": 8675309}]}}]]

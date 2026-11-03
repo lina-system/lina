@@ -142,13 +142,14 @@ def status_matches_app(status: dict, app_id: int | None, runs: list[dict]) -> bo
                for app in (run.get("app") or {} for run in runs))
 
 
-def required_checks(required: list[str | dict], runs: list[dict], statuses: list[dict] | None = None) -> Verdict:
+def required_checks(required: list[str | tuple[str, int | None]], runs: list[dict],
+                    statuses: list[dict] | None = None) -> Verdict:
     verdict = Verdict()
     if not required:
         verdict.add(FAIL, "no required checks are configured on the base branch")
         return verdict
     for check in required:
-        name, app_id = (check["context"], check.get("app_id")) if isinstance(check, dict) else (check, None)
+        name, app_id = (check, None) if isinstance(check, str) else check
         matching = [r for r in runs if r.get("name") == name
                     and (app_id in (None, -1) or (r.get("app") or {}).get("id") == app_id)]
         legacy = [s for s in statuses or [] if s.get("context") == name and status_matches_app(s, app_id, runs)]
