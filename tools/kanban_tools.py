@@ -983,8 +983,14 @@ def _handle_comment(args: dict, **kw) -> str:
     # comment from an authoritative-looking name like ``hermes-system`` and poison the future-worker context
     # with what reads as a system directive. See #19713.
     author = _persisted_identity()
+    from agent.delegation_context import owned_kanban_task
+
+    own = owned_kanban_task()
+    run_id = _worker_run_id(own) if own else None
+    source = {"card": own, "run": run_id} if own and own != tid else None
     with _board(args.get("board")) as (kb, conn):
-        cid = kb.add_comment(conn, tid, author=author, body=str(body))
+        cid = kb.add_comment(conn, tid, author=author, body=str(body), source=source,
+                             run_id=run_id if own == tid else None)
         return _ok(task_id=tid, comment_id=cid)
 
 
@@ -1283,7 +1289,8 @@ def _handle_unblock(args: dict, **kw) -> str:
     tid = str(tid)
     _enforce_worker_task_ownership(tid)
     with _board(args.get("board")) as (kb, conn):
-        _check(kb.unblock_task(conn, tid), f"could not unblock {tid} (not blocked or unknown)")
+        _check(kb.unblock_task(conn, tid, by=_persisted_identity()),
+               f"could not unblock {tid} (not blocked or unknown)")
         return _ok(task_id=tid, **_fields(kb.get_task(conn, tid), ("status",)))
 
 
@@ -1299,7 +1306,7 @@ def _handle_link(args: dict, **kw) -> str:
     with _board(args.get("board")) as (kb, conn):
         gated = kb.link_tasks(
             conn, parent_id=parent_id, child_id=child_id,
-            expected_child_run_id=_worker_run_id(str(child_id)))
+            expected_child_run_id=_worker_run_id(str(child_id)), by=_persisted_identity())
         return _ok(parent_id=parent_id, child_id=child_id, gated=gated,
                    **({"gated_by": parent_id} if gated else {}))
 

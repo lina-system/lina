@@ -143,7 +143,7 @@ def test_blocked_card_gets_one_row_and_a_later_done_replaces_it(kanban_home):
     assert {k: blocked[k] for k in ("kind", "status", "planned_todos", "closed_todos",
                                     "gate_failures", "dev_red_runs", "turns_used")} == {
         "kind": "general", "status": "blocked", "planned_todos": 2, "closed_todos": 1,
-        "gate_failures": 0, "dev_red_runs": None, "turns_used": None,
+        "gate_failures": 0, "dev_red_runs": None, "turns_used": 1,
     }
     assert 3600 <= blocked["elapsed_seconds"] <= 3605
     assert [r["status"] for r in rows] == ["done"]
@@ -304,3 +304,192 @@ def test_gh_missing_leaves_the_state_unknown(kanban_home, monkeypatch):
 
     monkeypatch.setattr(ko.subprocess, "run", no_gh)
     assert ko.gh_issue_closed("acme/repo", 7) is None
+
+
+def test_learning_turns_use_events_and_started_runs(kanban_home):
+    with kbc.connect_closing() as conn:
+        tid, run_id, now = _claimed_card(conn, "turns", "Size: M\nKind: research")
+        with kb.write_txn(conn):
+            for turn in (2, 3):
+                kb._append_event(conn, tid, "goal_turn", {"turn": turn}, run_id=run_id)
+        kb.complete_task(conn, tid, result="done", expected_run_id=run_id)
+        row = ko.compute_outcome(conn, tid, now=now)
+    assert row["turns_used"] == 3
+    assert row["turn_budget"] > 0
+    assert (row["kind"], row["planned_size"]) == ("research", "M")
+
+
+def test_learning_sources_override_run_windows_and_exclude_tools(kanban_home):
+    with kbc.connect_closing() as conn:
+        tid, run_id, now = _claimed_card(conn, "feat: hands", "")
+        for author, text, source, own_run in (
+            ("lina", "outside session", {"surface": "cli", "session": "chat"}, None),
+            ("lina", "own worker", None, run_id),
+            ("lina", "another card", {"card": "t_other", "run": 900}, None),
+            ("owner", "approved", {"surface": "app"}, None),
+            ("lina-worker", "notification", {"surface": "cli"}, None),
+        ):
+            kb.add_comment(conn, tid, author, text, source=source, run_id=own_run)
+        kb.complete_task(conn, tid, result="done", expected_run_id=run_id)
+        row = ko.compute_outcome(conn, tid, now=now)
+    assert (row["main_session_touches"], row["owner_answers"]) == (2, 1)
+    assert [t["line"] for t in row["touches"]] == ["outside session", "another card", "approved"]
+
+
+def test_learning_review_keeps_implementer_and_separates_reviewer(kanban_home):
+    with kbc.connect_closing() as conn:
+        tid, run_id, now = _claimed_card(conn, "docs: review", "")
+        assert kb.request_review(conn, tid, reviewer="rumi", expected_run_id=run_id)
+        assert kb.claim_review_task(conn, tid)
+        review_run = kb._current_run_id(conn, tid)
+        kb.add_comment(conn, tid, "rumi", "review evidence")
+        kb.complete_task(conn, tid, result="accepted", expected_run_id=review_run)
+        row = ko.compute_outcome(conn, tid, now=now)
+    assert row["assignee"] == "lina"
+    assert row["touches"] == []
+    assert [(r["reviewer"], r["verdict"]) for r in row["reviews"]] == [("rumi", "completed")]
+
+
+def test_learning_stops_pair_next_resume_and_union_duration(kanban_home):
+    with kbc.connect_closing() as conn:
+        tid, run_id, now = _claimed_card(conn, "stop", "")
+        with kb.write_txn(conn):
+            for kind, at, payload in (
+                ("timed_out", now - 300, {"reason": "timeout\nprivate detail"}),
+                ("gave_up", now - 290, {"reason": "breaker"}),
+                ("unblocked", now - 200, {"by": "rumi"}),
+                ("goal_gate", now - 180, {"exit_code": 75}),
+                ("goal_gate", now - 120, {"exit_code": 75}),
+            ):
+                kb._append_event(conn, tid, kind, payload, run_id=run_id)
+                conn.execute("UPDATE task_events SET created_at=? WHERE id=last_insert_rowid()", (at,))
+        kb.block_task(conn, tid, reason="waiting", expected_run_id=run_id)
+        row = ko.compute_outcome(conn, tid, now=now + 50)
+    assert [(s["seconds"], s["resumed_by"]) for s in row["stops"][:2]] == [(100, "rumi"), (90, "rumi")]
+    assert row["stops"][0]["reason"] == "timeout"
+    assert row["stops"][-1]["until"] is None
+    assert row["stopped_seconds"] == 150
+    assert (row["waiting_gate_checks"], row["waiting_gate_seconds"]) == (2, 60)
+    assert row["lead_seconds"] >= 7200
+
+
+def test_learning_replans_and_worker_events_are_deduplicated(kanban_home):
+    with kbc.connect_closing() as conn:
+        tid, run_id, now = _claimed_card(conn, "feat: plan", "## To-dos\n- [ ] docs")
+        kb.add_comment(conn, tid, "lina", "added-by: work-session\n- [ ] extra")
+        kb.add_comment(conn, tid, "lina", "escalate: docs -> omo - scope grew")
+        kb.add_comment(conn, tid, "lina-worker", "lina worker run job-123 on docs")
+        with kb.write_txn(conn):
+            for kind, payload in (
+                ("edited", {"fields": ["body"], "by": "rumi", "reason": "scope\nignored"}),
+                ("decomposed", {"by": "lina", "reason": "split"}),
+                ("linked", {"parent": "t_other", "child": tid, "by": "rumi", "reason": "dependency"}),
+                ("worker_run", {"run_id": "job-123", "runner": "lina-worker"}),
+                ("worker_run", {"run_id": "job-456", "runner": "omo"}),
+            ):
+                kb._append_event(conn, tid, kind, payload)
+        kb.complete_task(conn, tid, result="ok", expected_run_id=run_id)
+        row = ko.compute_outcome(conn, tid, now=now)
+    assert {r["kind"] for r in row["replans"]} == {"edit", "added", "escalation", "decomposed", "link"}
+    assert next(r["reason"] for r in row["replans"] if r["kind"] == "edit") == "scope"
+    assert row["worker_run_count"] == 2
+
+
+def test_learning_size_refresh_reads_closed_issue_and_pr(kanban_home, monkeypatch):
+    calls = []
+
+    def fake_run(command, **kwargs):
+        calls.append((command, kwargs["env"]))
+        from types import SimpleNamespace
+        if "pr" in command:
+            data = {"additions": 160, "deletions": 10, "changedFiles": 2}
+        elif "closedByPullRequestsReferences,labels,body" in command:
+            data = {"body": "Size: S", "labels": [], "closedByPullRequestsReferences": [
+                {"url": "https://github.com/acme/repo/pull/8"}]}
+        else:
+            return SimpleNamespace(returncode=0, stdout="CLOSED\n")
+        return SimpleNamespace(returncode=0, stdout=json.dumps(data))
+
+    monkeypatch.setattr(ko.subprocess, "run", fake_run)
+    with kbc.connect_closing() as conn:
+        _card_with_comments(conn, "feat: size", "Size: S\n## To-dos\n- acme/repo#7", [])
+        ko.refresh_closed(conn)
+        row = ko.list_outcomes(conn)[0]
+    assert row["actual_size"] == "M"
+    assert row["size_missed"] == [{"todo": "acme/repo#7", "planned_size": "S", "actual_size": "M",
+                                   "files": 2, "lines": 170}]
+    assert all(env["GH_CONFIG_DIR"].endswith("/profiles/lina/gh") for _, env in calls)
+
+
+def test_learning_goal_rebuild_includes_late_links_without_writes(kanban_home):
+    with kbc.connect_closing() as conn:
+        first, run_id, now = _claimed_card(conn, "feat: first", "Size: S")
+        conn.execute("UPDATE task_events SET created_at=? WHERE task_id=? AND kind='claimed'", (now - 3600, first))
+        conn.commit()
+        goal = kb.create_task(conn, title="Cycle", parents=[first])
+        later = kb.create_task(conn, title="feat: later", assignee="lina", goal_mode=True)
+        kb.link_tasks(conn, later, goal)
+        kb.complete_task(conn, first, result="done", expected_run_id=run_id)
+        kb.complete_task(conn, later, result="done")
+    rebuilt = json.loads(kc.run_slash("outcomes --rebuild --json"))
+    again = json.loads(kc.run_slash("outcomes --rebuild --json"))
+    assert len(rebuilt["rows"]) == len(again["rows"]) == 2
+    with kbc.connect_closing() as conn:
+        before = conn.total_changes
+        data = ko.goal_outcome(conn, goal, now=now + 1)
+        assert conn.total_changes == before
+    assert data["title"] == "Cycle"
+    assert {r["task_id"] for r in data["rows"]} == {first, later}
+    assert later in {c["task_id"] for c in data["added_later"]}
+
+
+@pytest.mark.parametrize("files,lines,size", [(2, 150, "S"), (3, 150, "M"), (2, 151, "M"),
+                                              (8, 800, "M"), (9, 800, "L"), (8, 801, "L")])
+def test_learning_size_thresholds(files, lines, size):
+    assert ko.actual_size(files, lines) == size
+
+
+def test_learning_missing_pr_measurement_stays_unknown(kanban_home, monkeypatch):
+    from types import SimpleNamespace
+
+    def fake_run(command, **kwargs):
+        if "pr" in command:
+            return SimpleNamespace(returncode=1, stdout="")
+        return SimpleNamespace(returncode=0, stdout=json.dumps({
+            "body": "", "labels": [{"name": "size/M"}],
+            "closedByPullRequestsReferences": [{"url": "https://github.com/acme/repo/pull/4"}]}))
+
+    monkeypatch.setattr(ko.subprocess, "run", fake_run)
+    result = ko.issue_size({"repo": "acme/repo", "number": 3}, None)
+    assert result["planned_size"] == "M"
+    assert (result["actual_size"], result["files"], result["lines"]) == (None, None, None)
+
+
+def test_learning_rebuild_migrates_old_rows_and_cleans_stored_text(kanban_home):
+    with kbc.connect_closing() as conn:
+        tid, run_id, _now = _claimed_card(conn, "feat: clean", "")
+        kb.add_comment(conn, tid, "owner", "token=sk-" + "a" * 50 + " " + "x" * 250 + "\nsecond line")
+        kb.complete_task(conn, tid, result="ok", expected_run_id=run_id)
+        conn.execute("DROP TABLE work_card_outcomes")
+        conn.execute(ko.WORK_CARD_OUTCOMES_DDL)
+        conn.commit()
+        ko.ensure_table(conn)
+        ko.write_outcome(conn, tid)
+        row = ko.list_outcomes(conn)[0]
+    assert row["task_id"] == tid
+    assert row["owner_answers"] == 1
+    line = row["touches"][0]["line"]
+    assert len(line) <= 200 and "a" * 50 not in line and "\n" not in line
+
+
+def test_learning_goal_merges_live_cards_and_goal_hands(kanban_home):
+    with kbc.connect_closing() as conn:
+        first, _run_id, now = _claimed_card(conn, "feat: live", "Size: L")
+        goal = kb.create_task(conn, title="active cycle", parents=[first])
+        kb.add_comment(conn, first, "lina", "session guidance", source={"surface": "cli"})
+        kb.add_comment(conn, goal, "owner", "cycle answer", source={"surface": "app"})
+        data = ko.goal_outcome(conn, goal, now=now + 1)
+    assert data["rows"][0]["status"] == "running"
+    assert [(t["task_id"], t["line"]) for t in data["touches"]] == [(goal, "cycle answer"), (first, "session guidance")]
+    assert (data["owner_answers"], data["main_session_touches"]) == (1, 1)
+    assert data["sizes"] == [{"task_id": first, "planned_size": "L", "actual_size": None}]
