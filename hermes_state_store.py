@@ -762,6 +762,12 @@ def rows_with_text(store: MessageStore, rows: Iterable[Any]) -> list[dict[str, A
     return rows
 
 
+def state_db_has_text(db_path: Path) -> bool:
+    """Whether *db_path*'s transcript points at any message text: only then does moving or restoring it need
+    the store."""
+    return bool(Path(db_path).exists() and _state_db_text_uids(db_path))
+
+
 def _state_db_text_uids(db_path: Path) -> list[str]:
     """The text uids *db_path*'s transcript references; none for a state.db without text_uid placements, or for a
     damaged image (the restore's own integrity check refuses that one)."""
@@ -872,7 +878,7 @@ def stage_text_restore(incoming_db: Path, destination_db: Path, sidecar: Optiona
     rows = _sidecar_rows(sidecar, agent)
     raw = _state_db_text_uids(incoming_db)
     referenced = sorted({_remapped_uid(uid, agent) for uid in raw})
-    if not referenced and not rows:
+    if not referenced:  # no text to bring back: the restore needs no store
         return incoming_db
     archived = {row["uid"]: row.get("content_sha256") for row in rows}
     store = MessageStore(agent, dsn=dsn)

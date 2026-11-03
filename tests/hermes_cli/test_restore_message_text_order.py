@@ -185,3 +185,26 @@ def test_rename_onto_text_another_copy_holds_is_refused_before_anything_moves(ho
 
     assert old_dir.is_dir() and not (old_dir.parent / "lighthouse").exists()
     assert memory_store_sql("SELECT uid, agent_id FROM memory.messages ORDER BY uid") == before
+
+
+def test_quick_snapshot_of_a_state_db_without_message_text_restores_with_no_store(home, monkeypatch, memory_store_sql):
+    import hermes_state_store
+
+    db = SessionDB(db_path=home / "state.db")
+    try:
+        db.create_session("empty", "cli")
+    finally:
+        db.close()
+    snapshot_id = backup.create_quick_snapshot(hermes_home=home)
+    with closing(sqlite3.connect(home / "state.db")) as conn:
+        conn.execute("DELETE FROM sessions")
+        conn.commit()
+
+    def no_store():
+        raise StoreUnavailableError("the memory store is not set up")
+
+    monkeypatch.setattr(hermes_state_store, "resolve_dsn", no_store)
+    assert backup.restore_quick_snapshot(snapshot_id, hermes_home=home)
+
+    with closing(sqlite3.connect(home / "state.db")) as conn:
+        assert conn.execute("SELECT id FROM sessions").fetchall() == [("empty",)]

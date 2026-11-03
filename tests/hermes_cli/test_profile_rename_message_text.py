@@ -122,3 +122,25 @@ def test_rename_is_refused_while_the_store_is_unreachable(profile_env, monkeypat
     assert old_dir.is_dir()
     assert not (old_dir.parent / "lighthouse").exists()
     assert set(_agents(memory_store_sql)) == {"harbor"}
+
+
+def test_a_profile_without_message_text_renames_with_no_store(profile_env, monkeypatch):
+    import hermes_state_store
+
+    old_dir = create_profile("harbor", no_alias=True)
+    db = SessionDB(old_dir / "state.db")
+    try:
+        db.create_session("empty", "cli")
+    finally:
+        db.close()
+
+    def no_store():
+        raise hermes_state_store.StoreUnavailableError("the memory store is not set up")
+
+    monkeypatch.setattr(hermes_state_store, "resolve_owner_dsn", no_store)
+    monkeypatch.setattr(hermes_state_store, "resolve_dsn", no_store)
+
+    new_dir = _rename("harbor", "lighthouse")
+
+    assert new_dir.is_dir() and not old_dir.exists()
+    assert migrate_profile_identity("harbor", "lighthouse") is True

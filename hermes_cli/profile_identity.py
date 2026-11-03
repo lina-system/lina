@@ -186,8 +186,8 @@ def require_message_store_for_rename(profile_dir: Path, old_canon: str, new_cano
     """Refuse, before anything changes, a rename the memory store could not follow: the agent id is the profile's
     directory name, so renaming moves its message text to the new agent (StoreUnavailableError when the store
     owner cannot connect, MessageTextRestoreError when the new uids are taken by other text)."""
-    if (profile_dir / "state.db").exists():
-        from hermes_state_store import check_agent_move
+    from hermes_state_store import check_agent_move, state_db_has_text
+    if state_db_has_text(profile_dir / "state.db"):
         check_agent_move(old_canon, new_canon)
 
 
@@ -196,8 +196,8 @@ def text_moved_for_rename(profile_dir: Path, old_canon: str, new_canon: str):
     """Move the profile's message text to the new agent before the directory moves; move it back when the
     directory move fails, so a failed rename leaves the store as it was. The state.db follows after the move
     (``_move_message_text``)."""
-    from hermes_state_store import move_agent_rows, return_agent_rows
-    moved = move_agent_rows(old_canon, new_canon) if (profile_dir / "state.db").exists() else []
+    from hermes_state_store import move_agent_rows, return_agent_rows, state_db_has_text
+    moved = move_agent_rows(old_canon, new_canon) if state_db_has_text(profile_dir / "state.db") else []
     try:
         yield
     except BaseException:
@@ -211,9 +211,12 @@ def _move_message_text(old_canon: str, new_canon: str) -> bool:
     import sqlite3
 
     from hermes_cli.profiles import get_profile_dir
-    from hermes_state_store import StoreUnavailableError, move_agent_texts
+    from hermes_state_store import StoreUnavailableError, move_agent_texts, state_db_has_text
+    db_path = get_profile_dir(new_canon) / "state.db"
+    if not state_db_has_text(db_path):
+        return True  # nothing to move: a profile without message text renames without the store
     try:
-        move_agent_texts(get_profile_dir(new_canon) / "state.db", old_canon, new_canon)
+        move_agent_texts(db_path, old_canon, new_canon)
     except (StoreUnavailableError, sqlite3.Error, OSError) as exc:
         print(f"⚠ Profile was renamed, but its message text was not moved ({exc}). Its history reads empty until "
               f"you run:\n    hermes profile migrate-identity {old_canon} {new_canon}", file=sys.stderr)
