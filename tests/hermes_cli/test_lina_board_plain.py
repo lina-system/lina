@@ -8,8 +8,8 @@ again, and the board's ``writer`` state follows the calls. Responses validate ag
 
 from __future__ import annotations
 
-import json
 import sqlite3
+import threading
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -239,10 +239,57 @@ def test_the_writer_goes_stopped_when_calls_fail_and_ok_after_a_success(work, fa
         "state": "stopped", "lastSuccessAt": NOW + 600, "stoppedSince": NOW + 600 + plain.STOP_AFTER_S}
 
 
-def test_the_worker_hub_tick_runs_the_writer_in_the_background(work, fakes, model):
+def test_a_hub_tick_returns_promptly_while_the_model_blocks(work, fakes, monkeypatch):
+    from agent import auxiliary_client
     from hermes_cli.worker import settings
     from hermes_cli.worker.hub import Hub
     _runs(work, fakes)
-    Hub(settings.root(work.root), out=lambda *_: None).tick()
-    assert ("run", "OT-ALP0001", "title") in _rows(work) and model.calls
-    assert json.loads(json.dumps(_rows(work)[("run", "OT-ALP0001", "title")])) == [GOOD["title"], None]
+    entered, release, ticked = threading.Event(), threading.Event(), threading.Event()
+
+    def blocking(*_args, **_kwargs):
+        entered.set()
+        release.wait(30)
+        raise ConnectionError("released")
+    monkeypatch.setattr(auxiliary_client, "call_llm", blocking)
+    hub = Hub(settings.root(work.root), out=lambda *_: None)
+    thread = threading.Thread(target=lambda: (hub.tick(), ticked.set()), daemon=True)
+    try:
+        thread.start()
+        assert ticked.wait(10), "the hub tick waited on the model"
+        assert not entered.is_set()
+    finally:
+        release.set()
+        thread.join(30)
+
+
+def test_the_service_s_writer_thread_writes_the_lines_and_stops_with_the_service(work, fakes, model):
+    from hermes_cli import lina_board_plain as plain
+    from hermes_cli.worker import settings
+    _runs(work, fakes)
+    stop = threading.Event()
+    stop.set()  # the service is already stopping: the thread makes its one pass and ends
+    thread = plain.start_writer(settings.root(work.root), stop)
+    thread.join(30)
+    assert not thread.is_alive()
+    assert _rows(work)[("run", "OT-ALP0001", "title")] == (GOOD["title"], None)
+    assert plain.writer_state(work.root, NOW)["state"] == "ok"
+
+
+def test_a_pass_stops_at_its_wall_time_bound_and_leaves_the_rest_pending(work, fakes, model, monkeypatch):
+    from hermes_cli import lina_board_plain as plain
+    _runs(work, fakes)
+    clock = [0.0]
+    monkeypatch.setattr(plain, "_clock", lambda: clock[0])
+    answer = model.__call__
+
+    def slow(*args, **kwargs):
+        clock[0] += 40  # each call takes 40 s of the pass's 90
+        return answer(*args, **kwargs)
+    from agent import auxiliary_client
+    monkeypatch.setattr(auxiliary_client, "call_llm", slow)
+
+    assert plain.write_board(work.root, NOW) == {"called": 3, "failed": 0, "pending": 1}
+    assert len(_rows(work)) == 3
+    assert plain.writer_state(work.root, NOW + 1)["state"] == "ok"
+    assert plain.write_board(work.root, NOW + 60) == {"called": 1, "failed": 0, "pending": 0}
+    assert len(_rows(work)) == 4

@@ -1,8 +1,8 @@
 """Checked model-written card lines (lina#151): a short title, a "doing now" line and a result line for every
 ``lina worker`` run and every goal-mode kanban card, served as ``plain`` on run cards and work cards.
 
-The writer runs in the background, at the end of the worker hub's tick (``Hub.tick``, the step that already watches
-running runs and handles their end), never in a request. For each (kind, id, field) it hashes the field's source text
+The writer runs on its own daemon thread, started once by the hub's worker service (``start_writer``), never in the
+service loop or the hub tick and never in a request: a slow model call holds back nothing but the next pass. For each (kind, id, field) it hashes the field's source text
 and calls the model only when that hash changed, through Hermes' auxiliary client (``call_llm``, task
 ``board_lines``: LINA's model path). Every answer passes its field check before it is stored; a failed check is
 recorded with its reason and the field stays null, and the source text is never served in its place. Reads
@@ -15,7 +15,9 @@ import hashlib
 import logging
 import re
 import sqlite3
+import threading
 import time
+from contextvars import copy_context
 from pathlib import Path
 from typing import Callable, NamedTuple
 
@@ -25,6 +27,9 @@ LIMITS = {"title": 25, "now": 60, "result": 80}
 EMPTY = dict.fromkeys(FIELDS)
 STOP_AFTER_S = 30 * 60
 MAX_CALLS = 20
+PASS_S = 90.0  # wall time one pass may spend calling the model; what is left stays pending for the next
+EVERY_S = 60.0
+_clock = time.monotonic
 SOURCE_CHARS = 2000
 ALLOWED_LATIN = frozenset({"LINA", "Honcho", "GitHub", "macOS", "iPhone", "Telegram", "Codex"})
 ACTION_NOUNS = ("정리", "점검", "추가", "수정", "확인", "개선", "작성", "이전", "배포", "설정", "검토", "정비", "구축",
@@ -230,7 +235,7 @@ def writer_state(root: Path | None = None, now: float | None = None) -> dict:
 
 # ---------------------------------------------------------------- the writer
 def write(sources: list[Source], root: Path | None = None, now: float | None = None) -> dict:
-    """Write what changed: one call per field whose source hash moved (at most MAX_CALLS a run), the check's verdict
+    """Write what changed: one call per field whose source hash moved (at most MAX_CALLS and PASS_S a run), the check's verdict
     stored either way; a field whose source is gone is cleared. A call that fails stores nothing and is tried again
     next run. -> {called, failed, pending}."""
     now = int(time.time() if now is None else now)
@@ -244,8 +249,11 @@ def write(sources: list[Source], root: Path | None = None, now: float | None = N
                 if not s.text.strip():
                     db.execute("DELETE FROM line WHERE kind = ? AND id = ? AND field = ?", (s.kind, s.id, s.field))
         due = [s for s in sources if s.text.strip() and cached.get((s.kind, s.id, s.field)) != _hash(s)]
-        calls, failed = due[:MAX_CALLS], 0
-        for s in calls:
+        calls, failed, deadline = [], 0, _clock() + PASS_S
+        for s in due[:MAX_CALLS]:
+            if _clock() >= deadline:
+                break
+            calls.append(s)
             try:
                 answer = ask(s.field, s.text.strip())
             except Exception:  # any provider error; the field is tried again on the next run
@@ -349,3 +357,27 @@ def write_board(root: Path | None = None, now: float | None = None, lives: dict[
     """The background step: every run's and work card's sources, then ``write``."""
     root, now = _root(root), time.time() if now is None else now
     return write(run_sources(root, now, lives) + card_sources(), root, now)
+
+
+def _pass(worker_root: Path) -> None:
+    from hermes_cli.worker.hub_store import Store
+    with Store(worker_root).lock("plain", wait=False) as held:  # one writer at a time across processes
+        if not held:
+            return
+        try:
+            write_board()
+        except Exception:  # a broken pass must not end the thread; the next one tries again
+            log.exception("board lines writer failed")
+
+
+def start_writer(worker_root: Path, stop: threading.Event) -> threading.Thread:
+    """The writer's own daemon thread: a pass now, then one every EVERY_S until ``stop`` is set. It runs in a copy
+    of the caller's context (profile scope), like the cron worktree prune and the curator's model pass."""
+    def loop() -> None:
+        while True:
+            _pass(worker_root)
+            if stop.wait(EVERY_S):
+                return
+    thread = threading.Thread(target=copy_context().run, args=(loop,), name="lina-board-lines", daemon=True)
+    thread.start()
+    return thread
