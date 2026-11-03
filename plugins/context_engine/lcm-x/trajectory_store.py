@@ -22,7 +22,7 @@ import time
 from typing import Any, Callable, Iterable, Protocol, Sequence
 from urllib.parse import quote, unquote
 
-from .sqlite_session import ConnectionPolicy, open_connection
+from .sqlite_session import ConnectionPolicy, is_store_connection, open_connection
 from .db_bootstrap import (
     configure_connection,
     get_fts_shadow_table_names,
@@ -107,6 +107,8 @@ _TRAJECTORY_OPTIONAL_SCHEMAS: tuple[dict[str, frozenset[str]], ...] = (
 
 def _verify_trajectory_schema(conn: sqlite3.Connection) -> list[str]:
     """Return any non-current trajectory shape without mutating source data."""
+    if is_store_connection(conn):  # LINA: the store's migrations own the trajectory schema
+        return []
     findings: list[str] = []
     tables = {
         str(row[0])
