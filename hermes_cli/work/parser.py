@@ -5,7 +5,7 @@ from __future__ import annotations
 
 import argparse
 
-from hermes_cli.work.locale import REPLY_ALIASES, REPLY_RESULTS
+from hermes_cli.work.locale import REPLY_ALIASES, REPLY_RESULTS, VIAS
 
 
 def _fn(module: str, name: str):
@@ -89,7 +89,7 @@ def _add(sp) -> None:
     p.add_argument("--stall", type=float)
     p.add_argument("--note")
     p.add_argument("--why", help="required on a new to-do: what gets better for the owner when it is done")
-    p.add_argument("--via", choices=("board",), help="board: a memo the owner handed out from the dashboard")
+    p.add_argument("--via", choices=VIAS, help="board/app: a memo the owner handed out from the dashboard or the app")
     p.set_defaults(fn=_fn("cmd_add", "cmd_add"))
 
 
@@ -145,6 +145,7 @@ def _comments(sp) -> None:
     p.add_argument("text")
     p.add_argument("--by", help="writer (default: the owner)")
     p.add_argument("--answer", action="store_true", help="an answer to the item's open decision")
+    p.add_argument("--via", choices=VIAS)
     p.set_defaults(fn=_fn("cmd_comments", "cmd_comment"))
     p = sp.add_parser("reply", help="the item agent's reply to a comment")
     p.add_argument("id")
@@ -155,11 +156,12 @@ def _comments(sp) -> None:
     p.set_defaults(fn=_fn("cmd_comments", "cmd_reply"))
     p = sp.add_parser("owner-done", help="the owner marks it done")
     p.add_argument("id")
-    p.add_argument("--via", choices=("board",))
+    p.add_argument("--via", choices=VIAS)
     p.add_argument("--with-open", action="store_true", help="also mark the goal's open to-dos done")
     p.set_defaults(fn=_fn("cmd_comments", "cmd_owner_done"))
     p = sp.add_parser("owner-undo", help="undo the owner's done mark within 10 minutes")
     p.add_argument("id")
+    p.add_argument("--via", choices=VIAS)
     p.set_defaults(fn=_fn("cmd_comments", "cmd_owner_undo"))
 
 
