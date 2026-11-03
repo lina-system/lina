@@ -24,6 +24,7 @@ import threading
 import time
 from collections.abc import Callable, Iterable, Sequence
 from array import array
+from contextlib import contextmanager
 from dataclasses import dataclass, field
 from decimal import Decimal
 from functools import lru_cache
@@ -129,6 +130,7 @@ def _sqlite_error(exc: Exception) -> sqlite3.Error:
     if sqlstate in ("55P03", "40P01", "40001"):
         # Lock timeout, deadlock, serialization: what SQLite reports as a busy database.
         err: sqlite3.Error = sqlite3.OperationalError(f"database is locked ({message})")
+        err.sqlite_errorcode, err.sqlite_errorname = sqlite3.SQLITE_BUSY, "SQLITE_BUSY"
     elif sqlstate.startswith("23"):
         err = sqlite3.IntegrityError(message)
     elif isinstance(exc, psycopg.errors.FeatureNotSupported):
@@ -282,6 +284,18 @@ def _insert_or(masked: str, catalog: Catalog) -> str:
         tail = ""
     body, returning = _split_returning(body)
     return head + body.rstrip().rstrip(";") + tail + returning
+
+
+def _insert_columns(masked: str, catalog: Catalog) -> str:
+    """``INSERT INTO t VALUES (...)`` / ``INSERT INTO t SELECT ...`` fill LCM-X's columns in order; on the store a table
+    leads with ``agent_id`` (and may end with ``rowid``), which a positional row must not fill."""
+    m = re.match(r"(\s*INSERT\s+INTO\s+((?:temp\.)?\w+))\s*(?=VALUES\b|SELECT\b|WITH\b)", masked, re.IGNORECASE)
+    if not m or m.group(2).lower().startswith("temp."):
+        return masked
+    cols = catalog.columns(m.group(2))
+    if not cols:
+        return masked
+    return f"{m.group(1)} ({', '.join(cols)}) {masked[m.end():]}"
 
 
 def _split_returning(body: str) -> tuple[str, str]:
@@ -516,6 +530,7 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     stripped = re.sub(r"\bstrftime\s*\(\s*'%s'\s*,\s*'now'\s*\)", "ctx.unixepoch()", stripped, flags=re.IGNORECASE)
     masked, literals, slots = _mask(stripped)
     masked = _insert_or(masked, catalog)
+    masked = _insert_columns(masked, catalog)
     masked = _conflict_targets(masked, catalog)
     masked = _qualify_upsert(masked, catalog)
     masked = _messages_target(masked)
@@ -953,6 +968,7 @@ class PgConnection:
         self._in_tx = False
         self._savepoints: list[str] = []
         self._tx_from_savepoint = False
+        self._writer = False
         self.isolation_level: Optional[str] = isolation_level
         self.row_factory = None
         self.text_factory = str
@@ -985,15 +1001,17 @@ class PgConnection:
         return cur
 
     def commit(self) -> None:
-        with self._lock:
-            if self._in_tx:
-                self._raw("COMMIT")
-                self._end_tx()
+        self._finish("COMMIT", traced=True)
 
     def rollback(self) -> None:
+        self._finish("ROLLBACK", traced=True)
+
+    def _finish(self, word: str, *, traced: bool) -> None:
         with self._lock:
             if self._in_tx:
-                self._raw("ROLLBACK")
+                if traced and self._trace is not None:
+                    self._trace(word)  # as Python's sqlite3 reports the COMMIT/ROLLBACK its commit()/rollback() issue
+                self._raw(word)
                 self._end_tx()
 
     def close(self) -> None:
@@ -1053,6 +1071,7 @@ class PgConnection:
     # internals
     def _end_tx(self) -> None:
         self._in_tx = False
+        self._writer = False
         self._savepoints = []
         self._tx_from_savepoint = False
 
@@ -1063,10 +1082,38 @@ class PgConnection:
         except psycopg.Error as exc:
             raise _sqlite_error(exc) from exc
 
+    @contextmanager
+    def _writing(self):
+        """A write holds the database's write lock, as on SQLite: one connection writes an lcm.db at a time, the
+        others wait out their busy timeout (lock_timeout here) and then fail with "database is locked". Outside a
+        transaction (isolation_level None) the statement is its own transaction, as SQLite runs it."""
+        if self._in_tx or self.isolation_level is not None:
+            self._begin()
+            self._write_lock()
+            yield
+            return
+        self._begin(traced=False)
+        try:
+            self._write_lock()
+            yield
+        except BaseException:
+            if not self._pg.closed:
+                self._raw("ROLLBACK")
+            self._end_tx()
+            raise
+        self._raw("COMMIT")
+        self._end_tx()
+
+    def _write_lock(self) -> None:
+        if not self._writer:
+            self._raw("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ["lcm-x write:" + self.agent_id])
+            self._writer = True
+
     def _begin(self, *, traced: bool = True) -> None:
         if not self._in_tx:
             if traced and self._trace is not None:
-                self._trace("BEGIN ")
+                # Python's sqlite3 opens an implicit transaction with "BEGIN <isolation_level>".
+                self._trace(f"BEGIN {self.isolation_level or ''}")
             self._raw("BEGIN")
             self._in_tx = True
 
@@ -1090,9 +1137,11 @@ class PgConnection:
         if _LIMIT_SLOT.search(text):
             args = _unbounded_limits(text, args)
         writes = bool(re.match(r"\s*(INSERT|UPDATE|DELETE|REPLACE|WITH\b.*\b(INSERT|UPDATE|DELETE)\b)", text, re.IGNORECASE | re.DOTALL))
-        if writes and self.isolation_level is not None:
-            self._begin()
-        self._statement(cur, text, args, template.returning)
+        if not writes:
+            self._statement(cur, text, args, template.returning)
+            return
+        with self._writing():
+            self._statement(cur, text, args, template.returning)
 
     def _statement(self, cur: PgCursor, text: str, args: list[Any], returning: Optional[str]) -> None:
         import psycopg
@@ -1130,10 +1179,12 @@ class PgConnection:
         word = stmt.split()[0].upper()
         if word == "BEGIN":
             self._begin(traced=False)
+            if re.match(r"\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\b", template.parts[0], re.IGNORECASE):
+                self._write_lock()
         elif word in ("COMMIT", "END"):
-            self.commit()
+            self._finish("COMMIT", traced=False)  # the statement itself was traced
         elif word == "ROLLBACK" and not re.search(r"\bTO\b", stmt, re.IGNORECASE):
-            self.rollback()
+            self._finish("ROLLBACK", traced=False)
         elif word == "SAVEPOINT":
             if not self._in_tx:
                 self._begin()
@@ -1147,7 +1198,7 @@ class PgConnection:
                 # SQLite releases the most recent savepoint of that name (they nest under one name).
                 del self._savepoints[len(self._savepoints) - 1 - self._savepoints[::-1].index(name):]
             if self._tx_from_savepoint and not self._savepoints:
-                self.commit()
+                self._finish("COMMIT", traced=False)
         else:
             self._raw(stmt)
         cur._set_result(None, [], -1, None)
@@ -1156,7 +1207,13 @@ class PgConnection:
         m = _PRAGMA.match(template.parts[0])
         name, arg, value = m.group(1).lower(), m.group(2), m.group(3)
         if value is not None:
+            if name == "busy_timeout":  # SQLite's busy timeout is the store's lock_timeout (0 = do not wait)
+                self._raw("SELECT set_config('lock_timeout', %s, false)", [f"{max(int(value.strip()), 1)}ms"])
             cur._set_result(None, [], -1, None)
+            return
+        if name == "busy_timeout":
+            self._statement(cur, "SELECT (extract(epoch FROM current_setting('lock_timeout')::interval) * 1000)::bigint "
+                                 "AS busy_timeout", [], None)
             return
         if name in ("table_info", "table_xinfo"):
             self._statement(cur, "SELECT * FROM ctx.pragma_table_info(%s)", [arg], None)
@@ -1197,11 +1254,10 @@ class PgConnection:
             if mode == "REPLACE":
                 update = " ON CONFLICT (store_id) DO UPDATE SET " + ", ".join(
                     f"{c} = EXCLUDED.{c}" for c in columns if c != "store_id")
-            if self.isolation_level is not None:
-                self._begin()
-            self._statement(cur, f"INSERT INTO ctx.lcm_messages ({', '.join(columns)}) VALUES "
-                                 f"({', '.join(['%s'] * len(columns))}){update} RETURNING store_id",
-                            [_adapt(row[c]) for c in columns], "store_id")
+            with self._writing():
+                self._statement(cur, f"INSERT INTO ctx.lcm_messages ({', '.join(columns)}) VALUES "
+                                     f"({', '.join(['%s'] * len(columns))}){update} RETURNING store_id",
+                                [_adapt(row[c]) for c in columns], "store_id")
             stored.extend(self._returned)
         self._message_uid = None
         cur._set_result(None, [], len(stored), stored[-1] if stored else None)
@@ -1234,10 +1290,9 @@ class PgConnection:
                                              tool_calls=text["tool_calls"], tool_name=text["tool_name"])
             values["text_uid"], values["content_sha256"] = uid, digest
             names = list(values)
-            if self.isolation_level is not None:
-                self._begin()
-            self._statement(cur, f"UPDATE ctx.lcm_messages SET {', '.join(f'{n} = %s' for n in names)} "
-                                 "WHERE store_id = %s", [_adapt(values[n]) for n in names] + [store_id], None)
+            with self._writing():
+                self._statement(cur, f"UPDATE ctx.lcm_messages SET {', '.join(f'{n} = %s' for n in names)} "
+                                     "WHERE store_id = %s", [_adapt(values[n]) for n in names] + [store_id], None)
             changed += 1
         cur._set_result(None, [], changed, None)
 

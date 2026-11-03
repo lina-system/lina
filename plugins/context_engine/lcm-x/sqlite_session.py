@@ -92,24 +92,10 @@ def is_store_connection(conn: object) -> bool:
 def open_connection(policy: ConnectionPolicy) -> sqlite3.Connection:
     """Run exactly the supplied recipe, preserving caller-owned error cleanup."""
     backend = store_backend(policy.database, opening=True)
-    if backend is not None:
-        # LINA: the SQLite pragmas of before_row_factory do not apply to the store; its schema-version refusal does
-        # (ctx.metadata keeps the schema_version a newer build stamps).
-        from .db_bootstrap import refuse_schema_version_too_new
-        conn = backend(**dict(policy.connect_kwargs))
-        if policy.on_open is not None:
-            policy.on_open(conn)
-        if refuse_schema_version_too_new in policy.before_row_factory:
-            try:
-                refuse_schema_version_too_new(conn)
-            except Exception as exc:
-                if policy.on_setup_error is not None:
-                    policy.on_setup_error(exc)
-                raise
-        if policy.row_factory is not None:
-            conn.row_factory = policy.row_factory
-        return conn
-    conn = sqlite3.connect(policy.database, **dict(policy.connect_kwargs))
+    # LINA: a database the host routes to its store opens there and runs the same recipe; on the store SQLite's
+    # pragmas are no-ops except busy_timeout (its lock_timeout), and the schema-version refusal reads ctx.metadata.
+    conn = backend(**dict(policy.connect_kwargs)) if backend is not None else \
+        sqlite3.connect(policy.database, **dict(policy.connect_kwargs))
     # Some stores publish the handle (and create their lock) before setup.
     # Those operations were outside their setup exception handler as well.
     if policy.on_open is not None:

@@ -15,6 +15,7 @@ import json
 import os
 import sqlite3
 import sys
+import threading
 from urllib.parse import unquote, urlsplit
 from pathlib import Path
 
@@ -81,10 +82,12 @@ def _lcm_x_on_store(monkeypatch):
             path = unquote(urlsplit(path).path)
         backend = lcm_x_store.backend_for(path) if not args else None
         if backend is not None:
-            return backend(timeout=kwargs.get("timeout", 5.0), isolation_level=kwargs.get("isolation_level", ""))
+            store = backend(timeout=kwargs.get("timeout", 5.0), isolation_level=kwargs.get("isolation_level", ""))
+            factory = kwargs.get("factory")
+            return _bridged(factory, store) if factory not in (None, sqlite3.Connection) else store
         return original_connect(database, *args, **kwargs)
     monkeypatch.setattr(sqlite3, "connect", connect)
-    monkeypatch.setattr(lcm_x_store, "backend_for", _carry_seeded_file(lcm_x_store, original_connect))
+    monkeypatch.setattr(lcm_x_store, "backend_for", _carry_seeded_file(lcm_x_store, original_connect, lambda: connect))
     monkeypatch.setattr(lcm_x_store, "_vector_text", _widened_vector_text(lcm_x_store._vector_text))
     yield
     lcm_x_store.route_every_database(None)
@@ -93,7 +96,7 @@ def _lcm_x_on_store(monkeypatch):
     store.reset()
 
 
-def _carry_seeded_file(lcm_x_store, original_connect):
+def _carry_seeded_file(lcm_x_store, original_connect, own_connect):
     """A test that seeds a new database file itself (its own minimal ``messages`` or ``metadata`` table) before an
     LCM-X store opens the path: when the store opens it, the seeded rows are carried into the store, as if the test
     had written them there. Other connects to the path follow the store from then on."""
@@ -129,10 +132,100 @@ def _carry_seeded_file(lcm_x_store, original_connect):
             finally:
                 target.close()
         return factory
-    return carried
+
+    def opened(database, *, opening=False):
+        factory = carried(database, opening=opening)
+        if not opening or factory is None:
+            return factory
+
+        def connect(**kwargs):
+            # A test that replaced sqlite3.connect (a factory= subclass, say) sees an LCM-X store's open too, as on
+            # SQLite, where the store opens through sqlite3.connect.
+            if sqlite3.connect is not own_connect():
+                kwargs.pop("readonly", None)
+                return sqlite3.connect(str(database), **kwargs)
+            return factory(**kwargs)
+        return connect
+    return opened
 
 
 _SEEDED_TABLES = ("metadata", "messages")
+
+
+class _StoreConnection(sqlite3.Connection):
+    """The base a test's ``sqlite3.Connection`` subclass (``factory=``) sits on when its database is on the store: the
+    subclass's own methods run, and what they hand to ``super()`` goes to the store connection."""
+
+    _opening = threading.local()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(":memory:")
+        object.__setattr__(self, "_store", type(self)._opening.store)
+
+    def execute(self, sql, parameters=(), /):
+        return self._store.execute(sql, parameters)
+
+    def executemany(self, sql, parameters, /):
+        return self._store.executemany(sql, parameters)
+
+    def executescript(self, script, /):
+        return self._store.executescript(script)
+
+    def cursor(self, factory=None):
+        return self._store.cursor()
+
+    def commit(self):
+        self._store.commit()
+
+    def rollback(self):
+        self._store.rollback()
+
+    def close(self):
+        self._store.close()
+        super().close()
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, exc_type, exc, tb):
+        return self._store.__exit__(exc_type, exc, tb)
+
+    def set_trace_callback(self, callback):
+        self._store.set_trace_callback(callback)
+
+    def create_function(self, name, *args, **kwargs):
+        self._store.create_function(name, *args, **kwargs)
+
+    def interrupt(self):
+        self._store.interrupt()
+
+    def backup(self, *args, **kwargs):
+        self._store.backup(*args, **kwargs)
+
+    in_transaction = property(lambda self: self._store.in_transaction)
+    total_changes = property(lambda self: self._store.total_changes)
+    isolation_level = property(lambda self: self._store.isolation_level,
+                               lambda self, value: setattr(self._store, "isolation_level", value))
+    row_factory = property(lambda self: self._store.row_factory,
+                           lambda self, value: setattr(self._store, "row_factory", value))
+    text_factory = property(lambda self: self._store.text_factory,
+                            lambda self, value: setattr(self._store, "text_factory", value))
+
+    def __getattr__(self, name):
+        return getattr(object.__getattribute__(self, "_store"), name)
+
+
+_BRIDGES: dict[type, type] = {}
+
+
+def _bridged(factory: type, store):
+    if factory not in _BRIDGES:
+        _BRIDGES[factory] = type(f"Store{factory.__name__}", (factory, _StoreConnection), {})
+    _StoreConnection._opening.store = store
+    try:
+        return _BRIDGES[factory]()
+    finally:
+        _StoreConnection._opening.store = None
 
 
 def _widened_vector_text(vector_text):
