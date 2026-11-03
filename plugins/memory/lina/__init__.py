@@ -240,7 +240,10 @@ class LinaMemoryProvider(MemoryProvider):
         return self._honcho.session_card_block() if self._honcho_on else ""
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
-        return self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
+        honcho = self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
+        found = self._memory_search().search(query, sources=["messages"])
+        messages = "\n".join(f"[{hit['ref']}] {hit['excerpt']}" for hit in found["results"])
+        return "\n\n".join(part for part in (honcho, messages) if part)
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         if self._honcho_on:

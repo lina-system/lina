@@ -186,6 +186,11 @@ class MemorySearch:
                 skipped.extend({"source": name, "reason": _reason(exc)} for name in names)
 
         store_sources = [s for s in _STORE_SOURCES if s in wanted]
+        if "messages" in store_sources:
+            from hermes_cli.external_messages import enabled
+            if not enabled():
+                store_sources.remove("messages")
+                skipped.append({"source": "messages", "reason": "External messages are off."})
         if store_sources:
             leg(store_sources, lambda: self._store_lists(query, terms, store_sources, limit))
             if not any(s["source"] in store_sources for s in skipped):
@@ -249,6 +254,10 @@ class MemorySearch:
         row = self._readers.store().open_memory(uid)
         if row is None:
             raise RefError(f"no message for ref {ref!r} (unknown, or not readable by this agent)")
+        if row.source == "messages":
+            from hermes_cli.external_messages import enabled
+            if not enabled():
+                raise SourceOff("External messages are off.")
         opened = {"source": row.source, "time": utc_iso(row.at), "author": row.author, "role": row.role,
                   "conversation_id": row.conversation_id, "session_id": row.session_id}
         if row.forgotten:
