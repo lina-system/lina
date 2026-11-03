@@ -12,14 +12,14 @@ class RuleTests(LearnedSandbox):
         rule = self.hermes / relative
         rule.parent.mkdir(parents=True)
         # Exercises the unchanged generic 48-character mask, without a key prefix.
-        secret = "SyntheticCredentialOnly" * 3
-        rule.write_text("Before " + secret + "\n")
+        long_token = "SyntheticCredentialOnly" * 3  # 69 characters: hits the generic 48-character mask
+        rule.write_text("Before " + long_token + "\n")
         self.list_config("rules.txt", [str(rule)])
         self.collect("2026-01-01T23:40:00")
-        self.message("Update the guide using " + secret)
-        self.call("write_file", {"path": str(rule), "content": "After " + secret + "\n"},
-                  {"success": True, "content": "After " + secret + "\n"})
-        rule.write_text("After " + secret + "\n")
+        self.message("Update the guide using " + long_token)
+        self.call("write_file", {"path": str(rule), "content": "After " + long_token + "\n"},
+                  {"success": True, "content": "After " + long_token + "\n"})
+        rule.write_text("After " + long_token + "\n")
         self.collect()
         item, = self.items(kind="rule")
         self.assertEqual(item["target"], str(rule))
@@ -41,7 +41,7 @@ class RuleTests(LearnedSandbox):
         self.assertIn("deleted", deleted["flags"])
         for output in self.state.rglob("*"):
             if output.is_file():
-                self.assertNotIn(secret, output.read_text())
+                self.assertNotIn(long_token, output.read_text())
 
     def test_allowlist_shared_skills_attribution_and_unknown(self):
         soul = self.profiles["amber"] / "SOUL.md"
