@@ -1,7 +1,7 @@
 -- LCM-X's summary vectors in vec.embeddings (lina#16 on lina#19's table): kind 'summary', item_id = the summary
 -- node's store-wide vec_item_id, model = the model of LCM-X's embedding profile. lcm_embedding_vectors keeps LCM-X's name and columns as a
 -- view; its rows are written and deleted through it. vec.embeddings holds 1024-wide vectors of the one embedding
--- model (docs/store.md): a narrower profile is zero-padded to 1024, a wider one refused, never stored elsewhere.
+-- model (docs/store.md): a vector of another width is refused, never stored elsewhere.
 CREATE OR REPLACE VIEW ctx.lcm_embedding_vectors WITH (security_invoker = true) AS
 SELECT n.node_id AS rowid,
        n.node_id::text AS embedded_id,
@@ -29,16 +29,14 @@ BEGIN
     IF model_name IS NULL THEN
         PERFORM ctx.lcm_raise('no embedding profile ' || NEW.identity_hash);
     END IF;
-    IF vector_dims(NEW.vec) > 1024 THEN
-        PERFORM ctx.lcm_raise('summary vectors on the memory store are at most 1024 wide (the one embedding model); '
+    IF vector_dims(NEW.vec) <> 1024 THEN
+        PERFORM ctx.lcm_raise('summary vectors on the memory store are 1024 wide (the one embedding model, lina#19); '
                               'this profile writes ' || vector_dims(NEW.vec));
     END IF;
-    -- A narrower vector is stored zero-padded (cosine and dot products are unchanged) and read back at its width.
     INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding)
     VALUES ('summary', (SELECT n.vec_item_id FROM ctx.summary_nodes AS n WHERE n.node_id = NEW.embedded_id::bigint),
             public.lina_current_agent(), model_name, 1024,
-            CASE WHEN vector_dims(NEW.vec) = 1024 THEN NEW.vec
-                 ELSE (NEW.vec::real[] || array_fill(0::real, ARRAY[1024 - vector_dims(NEW.vec)]))::vector END)
+            NEW.vec)
     ON CONFLICT (kind, item_id, model) DO UPDATE SET embedding = EXCLUDED.embedding;
     RETURN NEW;
 END $$;
@@ -47,8 +45,15 @@ CREATE OR REPLACE TRIGGER lcm_embedding_vectors_insert INSTEAD OF INSERT ON ctx.
 CREATE OR REPLACE TRIGGER lcm_embedding_vectors_delete INSTEAD OF DELETE ON ctx.lcm_embedding_vectors
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_embedding_vectors_write();
 
+-- vec.chunks holds the text chunks of memory.messages for every source (lina#19). A chunk that is a part of one
+-- message, as LCM-X's are, says which part: chunk_index (NULL for a chunk that is whole messages, as #19's are).
+ALTER TABLE vec.chunks ADD COLUMN IF NOT EXISTS chunk_index int;
+DROP INDEX IF EXISTS vec.chunks_source_messages;
+CREATE UNIQUE INDEX IF NOT EXISTS chunks_source_messages_part
+    ON vec.chunks (source, message_ids, chunk_index) NULLS NOT DISTINCT;
+
 -- LCM-X's chunk vectors: a chunk is a span of one message (chunk_id `<store_id>:<chunk_index>`). It is one vec.chunks
--- row (source 'lcm-x:<chunk_index>', message_ids = the memory.messages id of the message's text, text = the span)
+-- row (source 'lcm-x', message_ids = the memory.messages id of the message's text, chunk_index, text = the span)
 -- and one vec.embeddings row of kind 'chunk'. LCM-X writes the vector before its lcm_chunk_meta row, so the
 -- chunk starts with the message's whole text and lcm_chunk_meta narrows it to the span. Two LCM-X messages with
 -- the same text share their memory.messages row, and so their chunks and vectors.
@@ -59,7 +64,7 @@ CREATE OR REPLACE FUNCTION ctx.lcm_chunk_message(chunk_id text, OUT message_id b
 
 CREATE OR REPLACE VIEW ctx.lcm_chunk_vectors WITH (security_invoker = true) AS
 SELECT c.chunk_id AS rowid,
-       p.store_id || ':' || split_part(c.source, ':', 2) AS chunk_id,
+       p.store_id || ':' || c.chunk_index AS chunk_id,
        prof.identity_hash,
        subvector(e.embedding, 1, prof.dim::int)::vector AS vec,
        NULL::text AS access_scope
@@ -68,7 +73,7 @@ JOIN vec.embeddings AS e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
 JOIN memory.messages AS m ON m.message_id = c.message_ids[1]
 JOIN ctx.lcm_messages AS p ON p.text_uid = m.uid
 JOIN ctx.lcm_embedding_profile AS prof ON prof.model_name = e.model AND prof.dim <= e.dim
-WHERE c.source LIKE 'lcm-x:%';
+WHERE c.source = 'lcm-x';
 
 CREATE OR REPLACE FUNCTION ctx.lcm_chunk_vectors_write() RETURNS trigger
     LANGUAGE plpgsql AS $$
@@ -82,7 +87,8 @@ BEGIN
         SELECT * INTO msg FROM ctx.lcm_chunk_message(OLD.chunk_id);
         DELETE FROM vec.embeddings AS e
          USING vec.chunks AS c, ctx.lcm_embedding_profile AS p
-         WHERE e.kind = 'chunk' AND e.item_id = c.chunk_id AND c.source = 'lcm-x:' || split_part(OLD.chunk_id, ':', 2)
+         WHERE e.kind = 'chunk' AND e.item_id = c.chunk_id AND c.source = 'lcm-x'
+           AND c.chunk_index = split_part(OLD.chunk_id, ':', 2)::int
            AND c.message_ids = ARRAY[msg.message_id] AND p.identity_hash = OLD.identity_hash AND e.model = p.model_name;
         RETURN OLD;
     END IF;
@@ -92,19 +98,18 @@ BEGIN
         PERFORM ctx.lcm_raise('no embedding profile or message for chunk ' || NEW.chunk_id);
     END IF;
     width := vector_dims(NEW.vec);
-    IF width > 1024 THEN
-        PERFORM ctx.lcm_raise('chunk vectors on the memory store are at most 1024 wide (the one embedding model); '
+    IF width <> 1024 THEN
+        PERFORM ctx.lcm_raise('chunk vectors on the memory store are 1024 wide (the one embedding model, lina#19); '
                               'this profile writes ' || width);
     END IF;
-    INSERT INTO vec.chunks (source, agent_id, message_ids, text)
-    VALUES ('lcm-x:' || split_part(NEW.chunk_id, ':', 2), public.lina_current_agent(), ARRAY[msg.message_id],
+    INSERT INTO vec.chunks (source, agent_id, message_ids, chunk_index, text)
+    VALUES ('lcm-x', public.lina_current_agent(), ARRAY[msg.message_id], split_part(NEW.chunk_id, ':', 2)::int,
             coalesce(msg.content, ''))
-    ON CONFLICT (source, message_ids) DO UPDATE SET source = EXCLUDED.source
+    ON CONFLICT (source, message_ids, chunk_index) DO UPDATE SET source = EXCLUDED.source
     RETURNING chunk_id INTO vec_chunk;
     INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding)
     VALUES ('chunk', vec_chunk, public.lina_current_agent(), model_name, 1024,
-            CASE WHEN width = 1024 THEN NEW.vec
-                 ELSE (NEW.vec::real[] || array_fill(0::real, ARRAY[1024 - width]))::vector END)
+            NEW.vec)
     ON CONFLICT (kind, item_id, model) DO UPDATE SET embedding = EXCLUDED.embedding;
     RETURN NEW;
 END $$;
@@ -123,7 +128,7 @@ BEGIN
     IF msg.message_id IS NOT NULL AND NEW.char_end > NEW.char_start THEN
         UPDATE vec.chunks
            SET text = substr(coalesce(msg.content, ''), (NEW.char_start + 1)::int, (NEW.char_end - NEW.char_start)::int)
-         WHERE source = 'lcm-x:' || NEW.chunk_index AND message_ids = ARRAY[msg.message_id];
+         WHERE source = 'lcm-x' AND chunk_index = NEW.chunk_index AND message_ids = ARRAY[msg.message_id];
     END IF;
     RETURN NULL;
 END $$;

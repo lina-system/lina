@@ -109,18 +109,11 @@ def test_summary_vectors_live_in_vec_embeddings(routed, memory_store_sql):
             ("summary", node_id, "vec", "qwen3-embedding-8b")]
         assert conn.execute("SELECT vec FROM lcm_embedding_vectors WHERE embedded_id = ?",
                             (str(node_id),)).fetchone()[0] == blob
-        with pytest.raises(sqlite3.IntegrityError, match="at most 1024 wide"):
-            conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
-                         (str(node_id + 1), "h1", array("f", [0.5] * 1536).tobytes()))
-        conn.rollback()
-        conn.execute("INSERT INTO lcm_embedding_profile(identity_hash, provider, model_name, dim) VALUES (?, ?, ?, ?)",
-                     ("h8", "local", "tiny-8", 8))
-        narrow = array("f", [0.25] * 8).tobytes()
-        conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
-                     (str(node_id), "h8", narrow))
-        conn.commit()
-        assert conn.execute("SELECT vec FROM lcm_embedding_vectors WHERE identity_hash = ?", ("h8",)).fetchone()[0] == narrow
-        conn.execute("DELETE FROM lcm_embedding_vectors WHERE identity_hash = ?", ("h8",))
+        for width in (8, 1536):
+            with pytest.raises(sqlite3.IntegrityError, match="1024 wide"):
+                conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
+                             (str(node_id), "h1", array("f", [0.5] * width).tobytes()))
+            conn.rollback()
         conn.execute("DELETE FROM lcm_embedding_vectors WHERE embedded_id = ? AND identity_hash = ?",
                      (str(node_id), "h1"))
         conn.commit()
@@ -148,8 +141,8 @@ def test_chunk_vectors_live_in_vec_chunks_and_embeddings(routed, memory_store_sq
                      (f"{store_id}:1", "h1", store_id, 1, 6, 14, 3, "now"))
         conn.commit()
         [(message_id,)] = memory_store_sql("SELECT message_id FROM memory.messages WHERE agent_id = 'chunks'")
-        assert memory_store_sql("SELECT source, message_ids, text FROM vec.chunks") == [
-            ("lcm-x:1", [message_id], "두 번째 문장.")]
+        assert memory_store_sql("SELECT source, message_ids, chunk_index, text FROM vec.chunks") == [
+            ("lcm-x", [message_id], 1, "두 번째 문장.")]
         assert memory_store_sql("SELECT kind, model FROM vec.embeddings") == [("chunk", "qwen3-embedding-8b")]
         assert conn.execute("SELECT chunk_id, vec FROM lcm_chunk_vectors").fetchall() == [(f"{store_id}:1", blob)]
         conn.execute("DELETE FROM lcm_chunk_vectors WHERE chunk_id = ? AND identity_hash = ?", (f"{store_id}:1", "h1"))

@@ -64,10 +64,11 @@ schema is `services/store/migrations/0007_ctx_lcm.sql`: LCM-X's tables under the
   `회의` finds `회의록을`.
 - Vectors live in `vec` (`0008_ctx_lcm_vectors.sql`), as views under LCM-X's names. A summary vector is a
   `vec.embeddings` row of kind `summary` (`item_id` = the node id, `model` = the model of LCM-X's embedding
-  profile). A chunk (`<store_id>:<chunk_index>`, a span of one message) is a `vec.chunks` row (source
-  `lcm-x:<chunk_index>`, `message_ids` = the `memory.messages` id, `text` = the span) and a `vec.embeddings` row of
-  kind `chunk`. `vec.embeddings` is 1024 wide (the one embedding model, [store.md](store.md)): a narrower vector is
-  stored zero-padded (cosine and dot products are unchanged) and read back at its width, a wider one is refused.
+  profile). A chunk (`<store_id>:<chunk_index>`, a span of one message) is a `vec.chunks` row (source `lcm-x`,
+  `message_ids` = the `memory.messages` id, `chunk_index`, `text` = the span) and a `vec.embeddings` row of kind
+  `chunk`; `vec.chunks` is keyed by `(source, message_ids, chunk_index)`, NULLs not distinct, so whole-message chunks
+  (`chunk_index` NULL, `lina store reembed`) are unchanged. `vec.embeddings` is 1024 wide (the one embedding model,
+  [store.md](store.md)): a vector of another width is refused.
 - The schema creators and verifiers of `db_bootstrap.py` (and `command.py`'s backfill table) return at once on a
   store connection. The side readers that open `lcm.db` directly go through `sqlite_session.connect_database`.
 
