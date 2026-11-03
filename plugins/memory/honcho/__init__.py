@@ -12,7 +12,6 @@ import hashlib
 import json
 import logging
 import os
-import re
 import threading
 import time
 from typing import Any, Callable, Dict, List, Optional
@@ -35,27 +34,26 @@ from tools.registry import tool_error
 logger = logging.getLogger(__name__)
 
 
-# Gateway-internal notifications arrive through the same user-role channel as genuine
-# user messages; they are execution metadata and must never become durable memory.
-# Deliberately anchored: a human discussing one of these strings mid-message is valid input.
-_INTERNAL_GATEWAY_TURN_RE = re.compile(
-    r"^\s*(?:"
-    r"\[ASYNC (?:DELEGATION )?(?:BATCH )?COMPLETE[^\]]*\]|"
-    r"\[CONTEXT COMPACTION[^\]]*\]|"
-    r"\[CONTEXT SUMMARY\]:?|"
-    r"\[PRIOR CONTEXT[^\]]*\]|"
-    r"\[Your active task list was preserved across context compression\]|"
-    r"\[IMPORTANT: Background process \d+ matched watch pattern[^\n]*|"
-    r"A background fan-out of \d+ subagent\(s\) you dispatched earlier has finished\.|"
-    r"A background subagent you dispatched earlier has finished\."
-    r")",
-    re.IGNORECASE,
-)
+def _turn_rule(messages, *, agent_context: str, platform: str, turn_author) -> Any:
+    """The policy row for a turn handed straight to this provider (``memory.provider: honcho``): gateway, cron and
+    delegation notices arrive on the user role like a person's message, and only their route tells them apart
+    (lina-memory's policy table, plugins/memory/lina/policy.yaml)."""
+    from plugins.memory import import_provider_module
+
+    policy = import_provider_module("lina-memory", "policy")
+    table = policy.load_policy()
+    return table.rule(table.route_for(policy.signals_for_turn(
+        messages, agent_context=agent_context, platform=platform, turn_author=turn_author)))
 
 
-def _is_internal_gateway_turn(text: str) -> bool:
-    """Return True for machine-generated gateway/delegation notifications."""
-    return bool(_INTERNAL_GATEWAY_TURN_RE.match(text or ""))
+def _record_metadata(turn_record: Any) -> tuple[dict[str, Any], dict[str, Any]]:
+    """``add_message`` keywords carrying a lina-memory turn record's ids onto the user and the reply message."""
+    if turn_record is None:
+        return {}, {}
+    shared = {"lina_agent": turn_record.agent_id, "lina_conversation": turn_record.conversation_id,
+              "lina_person": turn_record.person_id, "lina_route": turn_record.route}
+    return ({"metadata": {**shared, "lina_uid": turn_record.user_uid}},
+            {"metadata": {**shared, "lina_uid": turn_record.reply_uid, "lina_route": "agent_reply"}})
 
 
 def _cfg_usable(cfg) -> bool:
@@ -188,6 +186,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._init_peer_platform: str = "cli"
         self._init_peer_notice_emitted = False
         self._cron_skipped = False  # cron and flush contexts disable the plugin entirely
+        self._route_context: dict[str, str] = {"agent_context": "", "platform": ""}
 
     @property
     def name(self) -> str:
@@ -233,6 +232,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         self._recall_generation = object()
         try:
             agent_context, platform = kwargs.get("agent_context", ""), kwargs.get("platform", "cli")
+            self._route_context = {"agent_context": str(agent_context or ""), "platform": str(platform or "")}
             if agent_context in {"cron", "flush"} or platform == "cron":
                 logger.debug("Honcho skipped: cron/flush context (agent_context=%s, platform=%s)",
                              agent_context, platform)
@@ -861,16 +861,24 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
     def sync_turn(
         self, user_content: str, assistant_content: str, *, session_id: str = "",
-        turn_author: Optional[dict[str, Any]] = None,
+        turn_author: Optional[dict[str, Any]] = None, messages: Optional[list[dict[str, Any]]] = None,
+        turn_record: Any = None,
     ) -> None:
         """Record the conversation turn in Honcho (non-blocking), chunking messages that
         exceed the Honcho API limit. Honors saveMessages: false. ``turn_author`` names who wrote
         the user side. The ``on_turn_start`` stash is the fallback for callers that never pass it.
-        A bot author's turn is written into that bot's own a2a session, never the human's."""
+        A bot author's turn is written into that bot's own a2a session, never the human's.
+
+        ``turn_record`` is lina-memory's record of the turn (plugins/memory/lina): it has already applied the
+        policy table, and its person, agent, conversation and message ids ride on each message's metadata.
+        Without one, the policy table is applied here to the route ``messages`` and the init context show."""
         if not self._writes_enabled():
             return
-        if _is_internal_gateway_turn(user_content):
-            logger.debug("Honcho sync skipped machine-generated gateway turn")
+        author = turn_author if isinstance(turn_author, dict) else self._turn_author
+        allowed = turn_record.honcho if turn_record is not None else _turn_rule(
+            messages, turn_author=author, **self._route_context).honcho
+        if not allowed:
+            logger.debug("Honcho sync skipped a turn its route keeps out of Honcho")
             return
         if not self._ready_or_kick_init():
             return
@@ -883,7 +891,6 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         if not clean_user_content and not clean_assistant_content:
             return
 
-        author = turn_author if isinstance(turn_author, dict) else self._turn_author
         session_kwargs: dict[str, str] = {}
         if author.get("is_bot"):
             # A bot's turn never lands in the human's session: its own a2a session or nothing.
@@ -908,18 +915,39 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             # Resolved before the thread starts so a following turn cannot retag a queued write.
             author_peer_id = self._manager.resolve_author_peer_id(session_key, author.get("id"), author.get("name"))
 
+        user_meta, reply_meta = _record_metadata(turn_record)
+
         def _sync():
             session = self._manager.get_or_create(session_key, **session_kwargs)
             for chunk in self._chunk_message(clean_user_content, msg_limit) if clean_user_content else ():
-                session.add_message("user", chunk, author_peer_id=author_peer_id)
+                session.add_message("user", chunk, author_peer_id=author_peer_id, **user_meta)
             for chunk in self._chunk_message(clean_assistant_content, msg_limit) if clean_assistant_content else ():
-                session.add_message("assistant", chunk)
+                session.add_message("assistant", chunk, **reply_meta)
             # save() (not _flush_session) so writeFrequency batching is honored.
             self._manager.save(session)
 
         if self._sync_thread and self._sync_thread.is_alive():
             self._sync_thread.join(timeout=5.0)
         self._sync_thread = self._spawn_write(_sync, "honcho-sync", "Honcho sync_turn failed: %s")
+
+    def source_keys(self, turn_author: Optional[dict[str, Any]] = None) -> dict[str, str]:
+        """The Honcho names of this turn's person, agent and conversation, as Honcho derives them today (peerName,
+        aliases and runtime identities; aiPeer; the resolved session key), each prefixed with the workspace. Empty
+        before Honcho is configured. Reading them never creates or renames a peer."""
+        cfg = self._config
+        if cfg is None or not self._session_key:
+            return {}
+        workspace = str(getattr(cfg, "workspace_id", "") or "")
+        keys = {"agent": f"{workspace}:{assistant_peer_id_for(cfg)}", "conversation": f"{workspace}:{self._session_key}"}
+        author = turn_author if isinstance(turn_author, dict) else {}
+        if self._manager is not None and not author.get("is_bot"):
+            try:
+                peer = (self._manager.resolve_author_peer_id(self._session_key, author.get("id"), author.get("name"))
+                        or self._manager._resolve_user_peer_id(self._session_key))
+                keys["person"] = f"{workspace}:{peer}"
+            except Exception:  # health: allow BLE001 -- a session with no nameable peer has no person key
+                logger.debug("Honcho person key unavailable", exc_info=True)
+        return keys
 
     def _a2a_session_key(self, author: dict[str, Any]) -> str:
         """Honcho session for one sender bot's turns into this agent, named from core's ``a2a_key``.

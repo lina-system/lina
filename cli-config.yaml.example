@@ -1032,6 +1032,11 @@ prompt_caching:
 # Disabled by default in batch_runner.
 #
 memory:
+  # The memory layer (plugins/memory/lina, docs/memory-layer.md): receives every finished turn once,
+  # applies its policy table and hands the turn to LCM-X and, when Honcho is set up, to Honcho.
+  # With it here, LCM-X's own per-turn ingest hook stays off. Absent, homes keep the built-in store only.
+  provider: lina-memory
+
   # Agent's personal notes: environment facts, conventions, things learned
   memory_enabled: true
   

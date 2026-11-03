@@ -1,0 +1,56 @@
+# lina-memory's policy table (lina#20): for each route a finished turn can arrive on, whether
+# lina-memory hands it to LCM (lcm.db) and to Honcho, and as whose words.
+#
+# A turn's route comes from where it arrived, never from its text: the agent's context (cron,
+# delegated subagent, memory flush), the display kind the gateway, TUI or CLI stamped on the turn's
+# user row (self-injected notices), the compressor's own rows, and the turn author's bot flag.
+# Only person_channel turns are ever stored in Honcho as the person's words.
+
+# The first row whose fields all match names the route of the turn's user side. Fields:
+# agent_context, platform (MemoryProvider.initialize kwargs), display_kind (the turn's user row),
+# compressor_row (the user row was written by the context compressor), author_is_bot (turn_author).
+match:
+  - {agent_context: cron, route: cron_notice}
+  - {platform: cron, route: cron_notice}
+  - {agent_context: flush, route: background_notice}
+  - {agent_context: subagent, route: worker_event}
+  - {platform: import, route: imported}
+  - {compressor_row: true, route: compression}
+  - {display_kind: async_delegation_complete, route: worker_event}
+  - {display_kind: process_complete, route: background_notice}
+  - {display_kind: internal_notification, route: gateway_notice}
+  - {display_kind: hidden, route: gateway_notice}
+  - {author_is_bot: true, route: bot_relay}
+  - {route: person_channel}
+
+# lcm: the turn goes to LCM. honcho: the turn goes to Honcho. words_of: whose words its text is.
+# A route kept out of Honcho keeps the whole turn (its reply too) out of Honcho.
+routes:
+  person_channel: {lcm: true, honcho: true, words_of: person}
+  bot_relay: {lcm: true, honcho: true, words_of: author}
+  worker_event: {lcm: true, honcho: false, words_of: worker}
+  cron_notice: {lcm: true, honcho: false, words_of: system}
+  background_notice: {lcm: true, honcho: false, words_of: system}
+  gateway_notice: {lcm: true, honcho: false, words_of: system}
+  compression: {lcm: true, honcho: false, words_of: system}
+  imported: {lcm: false, honcho: false, words_of: source}
+  agent_reply: {lcm: true, honcho: true, words_of: agent}
+  tool_round: {lcm: true, honcho: false, words_of: tool}
+
+# The rest of a turn, by message role, once its user side's route lets it into an engine.
+roles:
+  assistant: agent_reply
+  tool: tool_round
+
+# What Honcho's _INTERNAL_GATEWAY_TURN_RE matched by text before lina#20, and the route each of those
+# notices arrives on now (the producer named in `from` stamps the signal).
+replaces:
+  - {text: "[ASYNC DELEGATION COMPLETE", from: tools/process_registry_notifications.py, display_kind: async_delegation_complete, route: worker_event}
+  - {text: "[ASYNC DELEGATION BATCH COMPLETE", from: tools/process_registry_notifications.py, display_kind: async_delegation_complete, route: worker_event}
+  - {text: "A background subagent you dispatched earlier has finished.", from: tools/process_registry_notifications.py, display_kind: async_delegation_complete, route: worker_event}
+  - {text: "A background fan-out of 3 subagent(s) you dispatched earlier has finished.", from: tools/process_registry_notifications.py, display_kind: async_delegation_complete, route: worker_event}
+  - {text: "[IMPORTANT: Background process 12 matched watch pattern", from: tools/process_registry_notifications.py, display_kind: internal_notification, route: gateway_notice}
+  - {text: "[CONTEXT COMPACTION — REFERENCE ONLY]", from: agent/context_compressor.py, compressor_row: true, route: compression}
+  - {text: "[CONTEXT SUMMARY]:", from: agent/context_compressor.py, compressor_row: true, route: compression}
+  - {text: "[PRIOR CONTEXT — for reference only; not a new message]", from: agent/context_compressor.py, compressor_row: true, route: compression}
+  - {text: "[Your active task list was preserved across context compression]", from: agent/context_compressor.py, compressor_row: true, route: compression}

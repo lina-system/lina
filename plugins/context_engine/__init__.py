@@ -151,6 +151,14 @@ def re_register_config_hooks() -> None:
         _load_engine_from_dir(engine_dir)
 
 
+def _memory_layer_receives_turns() -> bool:
+    """True while the active home's memory slot holds lina-memory (lina#20): its ``sync_turn`` is then the one
+    path a finished turn takes into the engine, so the engine's own per-turn ingest hook would store it twice."""
+    from hermes_cli.config import cfg_get, load_config
+
+    return cfg_get(load_config(), "memory", "provider") == "lina-memory"
+
+
 class _ProbeCollector:
     """Plugin context for an availability probe: keeps the engine, drops every other ``register_*`` call."""
 
@@ -199,6 +207,10 @@ class _EngineCollector:
         self.engine = engine
 
     def register_hook(self, hook_name, callback, *, hold_stream=False):
+        if hook_name == "post_llm_call" and _memory_layer_receives_turns():
+            logger.debug("Context engine '%s': post_llm_call not registered, lina-memory hands it each turn",
+                         self._engine_name)
+            return None
         context = self._plugin_context()
         with context._manager._discovery_lock:
             return context._manager._register_fallback_hook(

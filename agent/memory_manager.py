@@ -453,6 +453,12 @@ class MemoryManager:
         Everything forwarded is provider egress: turn strings AND the ``messages`` transcript slice
         (tool outputs included) go through ``_redact_for_provider`` so secrets are never archived
         verbatim in a provider's store (#115104).
+
+        The one exception is a ``sync_turn`` that names a ``local_messages`` parameter itself (never through
+        ``**kwargs``): a provider that keeps the transcript on this machine, as a context engine's own
+        ``post_llm_call`` ingest did (lina-memory, lina#20). It gets the unredacted transcript too, and it is
+        called here on the turn thread, where that hook ran, so its local write is ordered with the turn and
+        never overlaps the next one; its remote work is its own to start on a background thread.
         """
         providers = list(self._providers)
         clean_user_content = self._strip_skill_scaffolding(user_content) if providers else None
@@ -461,18 +467,26 @@ class MemoryManager:
         clean_user_content, assistant_content, redacted_messages = _redact_for_provider(
             clean_user_content, assistant_content, messages)
         optional_kwargs = {"messages": redacted_messages, "turn_author": turn_author}
+        local = [p for p in providers if "local_messages" in (_signature_params(p.sync_turn) or {})]
 
         def _sync(provider: MemoryProvider) -> None:
             kwargs: dict[str, Any] = {"session_id": session_id}
             for keyword, value in optional_kwargs.items():
                 if value is not None and self._provider_sync_accepts(provider, keyword):
                     kwargs[keyword] = value
+            if provider in local:
+                kwargs["local_messages"] = None if messages is None else list(messages)
+                provider.sync_turn(clean_user_content, assistant_content, **kwargs)
+                return
             self._call_unless_stalled(
                 provider, lambda: provider.sync_turn(clean_user_content, assistant_content, **kwargs))
 
-        self._submit_background(
-            lambda: self._each_provider("sync_turn failed", _sync, level=logging.WARNING, providers=providers)
-        )
+        if local:
+            self._each_provider("sync_turn failed", _sync, level=logging.WARNING, providers=local)
+        remote = [p for p in providers if p not in local]
+        if remote:
+            self._submit_background(
+                lambda: self._each_provider("sync_turn failed", _sync, level=logging.WARNING, providers=remote))
 
     def _submit_background(self, fn, *, kind: str = "write") -> None:
         """Queue ``fn`` on the serialized worker (created lazily; None once shutting down) and track its

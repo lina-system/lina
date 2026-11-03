@@ -154,7 +154,9 @@ class MemoryProvider(ABC):
         turn_author: Optional[dict[str, Any]] = None,
     ) -> None:
         """Persist a completed turn (non-blocking). ``messages`` is the OpenAI-style list so far.
-        ``turn_author`` (``{"id", "name", "is_bot"}``) is who wrote the user side; the manager sends it only to signatures that accept it."""
+        ``turn_author`` (``{"id", "name", "is_bot"}``) is who wrote the user side; the manager sends it only to signatures that accept it.
+        A provider that stores the transcript only on this machine may name a ``local_messages`` parameter: it then
+        gets the unredacted list as well (``MemoryManager.sync_all``)."""
 
     @abstractmethod
     def get_tool_schemas(self) -> list[dict[str, Any]]:

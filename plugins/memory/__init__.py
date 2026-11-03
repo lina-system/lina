@@ -32,6 +32,10 @@ ENTRY_POINTS_GROUP = "hermes_agent.memory_providers"
 # Per Hermes home (plugin managers are per home too): pruning under one multiplexed profile must
 # only retract that profile's provider skills, never a sibling profile's.
 _REGISTERED_MEMORY_PROVIDER_SKILLS: dict[str, dict[str, Path]] = {}
+# Bundled providers whose directory is not named like the provider: ``memory.provider: lina-memory`` is
+# ``plugins/memory/lina/`` (lina#20).
+_BUNDLED_DIRS = {"lina-memory": "lina"}
+_BUNDLED_NAMES = {directory: name for name, directory in _BUNDLED_DIRS.items()}
 # Native extensions whose first import must not race another thread (#58083 warm-up).
 _NATIVE_WARM_IMPORTS: tuple[str, ...] = ("numpy",)
 
@@ -102,9 +106,9 @@ def _is_bundled(provider_dir: Path) -> bool:
 
 
 def _module_name(provider_dir: Path, name: str) -> str:
-    """``plugins.memory.<name>`` for bundled providers, else under the synthetic user namespace."""
+    """``plugins.memory.<directory>`` for bundled providers, else under the synthetic user namespace."""
     if _is_bundled(provider_dir):
-        return f"plugins.memory.{name}"
+        return f"plugins.memory.{provider_dir.name}"
     # Separate package trees, including relative imports, across homes/sources.
     digest = hashlib.sha256(str(provider_dir.resolve()).encode()).hexdigest()[:16]
     return f"{_USER_NAMESPACE}.{name}__source_{digest}"
@@ -117,7 +121,7 @@ def _external_source_dirs() -> list[Path]:
 
 def _iter_provider_dirs() -> list[tuple[str, Path]]:
     """``(name, path)`` for bundled, then user-installed, then project-local; first-seen wins."""
-    dirs = [(child.name, child) for child in _loader.iter_plugin_dirs(_MEMORY_PLUGINS_DIR)]
+    dirs = [(_BUNDLED_NAMES.get(child.name, child.name), child) for child in _loader.iter_plugin_dirs(_MEMORY_PLUGINS_DIR)]
     seen = {name for name, _ in dirs}
     for source_dir in _external_source_dirs():
         for child in sorted(source_dir.iterdir()):
@@ -149,7 +153,7 @@ def find_provider_dir(name: str) -> Optional[Path]:
     package dir. The entry-point case matters because ``config_schema.py`` and
     ``cli.py`` are read from disk, not imported; without a directory a pip-installed
     provider silently loses its dashboard panel and ``hermes <provider>`` commands."""
-    bundled = _MEMORY_PLUGINS_DIR / name
+    bundled = _MEMORY_PLUGINS_DIR / _BUNDLED_DIRS.get(name, name)
     if bundled.is_dir() and (bundled / "__init__.py").exists():
         return bundled
     for source_dir in _external_source_dirs():
