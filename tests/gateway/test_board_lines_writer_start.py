@@ -48,3 +48,38 @@ def test_an_install_without_worker_devices_gets_card_lines_from_the_gateway_star
         assert db.execute("SELECT text FROM line WHERE kind = 'card' AND id = ? AND field = 'title'",
                           (card,)).fetchone() == (TITLE,)
     assert writer_state(env.root, NOW)["state"] == "ok"
+
+
+def test_a_writer_that_cannot_start_leaves_the_gateway_starting(tmp_path, monkeypatch):
+    """The board lines are a side feature: a raising start is logged and the cron and housekeeping start returns."""
+    import asyncio
+
+    from cron import scheduler_provider, scheduler_thread
+    from gateway import run_bootstrap
+
+    class _Thread:
+        def __init__(self, *_args, **_kwargs):
+            pass
+
+        def start(self):
+            pass
+
+    def _boom(_stop):
+        raise RuntimeError("no LINA root")
+
+    monkeypatch.setattr(run_bootstrap, "_start_board_lines_writer", _boom)
+    monkeypatch.setattr(scheduler_thread, "SupervisedTickerThread", _Thread)
+    monkeypatch.setattr(scheduler_provider, "scheduler_for_profile_mode",
+                        lambda _p, multiplex_profiles=False: scheduler_provider.InProcessCronScheduler())
+    import gateway.run as gw_run
+    from gateway.runtime_ownership import process_ownership
+    monkeypatch.setattr(process_ownership, "start_writer", lambda _thread: None)  # nothing really starts
+    monkeypatch.setattr(gw_run, "_cron_tick_profile_homes", lambda _cfg: [("default", tmp_path)])
+    runner = SimpleNamespace(config={}, adapters={}, _profile_adapters=None, _primary_profile_name="default",
+                             _draining=False, _external_drain_active=False)
+
+    async def _go():
+        return run_bootstrap._start_gateway_start_cron_and_housekeeping(runner)
+
+    stop, _provider, _cron, _housekeeping = asyncio.run(_go())
+    assert isinstance(stop, threading.Event)

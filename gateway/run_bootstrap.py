@@ -460,7 +460,10 @@ def _start_gateway_start_cron_and_housekeeping(runner):
                 "cron_provider": cron_provider, "runner": runner, "cron_thread": cron_thread},
         daemon=True, name="gateway-housekeeping")
     process_ownership.start_writer(housekeeping_thread)
-    _start_board_lines_writer(cron_stop)
+    try:  # the board lines are a side feature: a start failure is logged, never a gateway that cannot start
+        _start_board_lines_writer(cron_stop)
+    except Exception:
+        logger.warning("Board lines writer did not start; card lines stay as they are", exc_info=True)
     return cron_stop, cron_provider, cron_thread, housekeeping_thread
 
 
