@@ -30,10 +30,9 @@ def _run_in_fresh_interpreter(env_overrides: dict[str, str]) -> dict[str, int]:
     }
     snippet = (
         "import json\n"
-        "from src.models import Document, MessageEmbedding\n"
+        "from src.models import VecEmbedding\n"
         "print(json.dumps({\n"
-        "    'message_embedding_dim': MessageEmbedding.__table__.c.embedding.type.dim,\n"
-        "    'document_dim': Document.__table__.c.embedding.type.dim,\n"
+        "    'vec_embedding_dim': VecEmbedding.__table__.c.embedding.type.dim,\n"
         "}))\n"
     )
     result = subprocess.run(
@@ -50,9 +49,9 @@ def _run_in_fresh_interpreter(env_overrides: dict[str, str]) -> dict[str, int]:
 
 def test_models_uses_default_1536_when_no_env_override() -> None:
     dims = _run_in_fresh_interpreter({})
-    assert dims == {"message_embedding_dim": 1536, "document_dim": 1536}
+    assert dims == {"vec_embedding_dim": 1536}
 
 
 def test_models_honors_explicit_embedding_vector_dimensions() -> None:
     dims = _run_in_fresh_interpreter({"EMBEDDING_VECTOR_DIMENSIONS": "768"})
-    assert dims == {"message_embedding_dim": 768, "document_dim": 768}
+    assert dims == {"vec_embedding_dim": 768}

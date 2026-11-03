@@ -26,6 +26,7 @@ from src.exceptions import (
     VectorStoreError,
 )
 from src.utils.filter import apply_filter
+from src.vec_embeddings import cosine_distance, join_vectors
 from src.vector_store import (
     VectorRecord,
     VectorStore,
@@ -475,23 +476,18 @@ async def _query_documents_pgvector(
 ) -> list[models.Document]:
     """pgvector similarity search — pure DB operation."""
     stmt = (
-        select(models.Document)
+        join_vectors(select(models.Document), "document")
         .where(models.Document.workspace_name == workspace_name)
         .where(models.Document.observer == observer)
         .where(models.Document.observed == observed)
-        .where(models.Document.embedding.isnot(None))
         .where(models.Document.deleted_at.is_(None))
     )
 
     if max_distance is not None:
-        stmt = stmt.where(
-            models.Document.embedding.cosine_distance(embedding) <= max_distance
-        )
+        stmt = stmt.where(cosine_distance(embedding) <= max_distance)
 
     stmt = apply_filter(stmt, models.Document, filters)
-    stmt = stmt.order_by(models.Document.embedding.cosine_distance(embedding)).limit(
-        top_k
-    )
+    stmt = stmt.order_by(cosine_distance(embedding)).limit(top_k)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())
@@ -1671,13 +1667,12 @@ async def _pgvector_dup_candidates(
         filters = _semantic_dup_filters(doc)
         if filters is None or not doc.embedding:
             continue
-        distance = models.Document.embedding.cosine_distance(doc.embedding)
+        distance = cosine_distance(doc.embedding)
         leg = (
-            select(models.Document.id)
+            join_vectors(select(models.Document.id), "document")
             .where(models.Document.workspace_name == workspace_name)
             .where(models.Document.observer == observer)
             .where(models.Document.observed == observed)
-            .where(models.Document.embedding.isnot(None))
             .where(models.Document.deleted_at.is_(None))
             .where(distance <= _SEMANTIC_DUP_MAX_DISTANCE)
         )
