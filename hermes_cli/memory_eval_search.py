@@ -11,7 +11,8 @@ Honcho conclusion id (``ltm.documents.id``) for ``memory``. A question counts as
 in the first five results.
 
 * old: what each source searches with today. ``agent`` and ``messages``: the store's full-text search
-  (``MessageStore.search_groups``, newest first, as ``session_search`` asks it), as the question's agent.
+  (``MessageStore.search_groups``, newest first, as ``session_search`` asks it), as the question's agent, limited
+  to the question's source before the top five are taken.
   ``memory``: Honcho's conclusion search (``POST /v3/workspaces/<ws>/conclusions/query``) at ``--honcho-url``;
   without it the old ``memory`` column is not run.
 * new: one query vector from the configured model against every row of ``vec.embeddings`` the question's
@@ -131,19 +132,14 @@ def _words(question: str) -> list[list[Any]]:
     return [[SearchTerm(word, substring=not word.isascii())] for word in words]
 
 
-def old_fulltext(conn, dsn_for_agent: Callable[[str], str], question: Question, k: int = TOP_K) -> list[str]:
+def old_fulltext(dsn_for_agent: Callable[[str], str], question: Question, k: int = TOP_K) -> list[str]:
     from hermes_state_store import MessageStore
     store = MessageStore(question.agent, dsn=dsn_for_agent(question.agent))
     try:
-        uids = [uid for _message_id, uid in store.search_groups(_words(question.question), limit=k * 20)]
+        rows = store.search_groups(_words(question.question), limit=k, source=question.source)
     finally:
         store.close()
-    if not uids:
-        return []
-    rows = conn.execute("SELECT uid FROM memory.messages WHERE uid = ANY(%s) AND source = %s",
-                        (uids, question.source)).fetchall()
-    of_source = {row[0] for row in rows}
-    return [uid for uid in uids if uid in of_source][:k]
+    return [uid for _message_id, uid in rows]
 
 
 def old_honcho(honcho_url: str, question: Question, k: int = TOP_K, *, api_key: Optional[str] = None) -> list[str]:
@@ -191,7 +187,7 @@ def evaluate(questions: Sequence[Question], *, conn, client, dsn_for_agent: Call
         if question.source == "memory":
             old[question.id] = old_honcho(honcho_url, question, api_key=honcho_key) if honcho_url else None
         else:
-            old[question.id] = old_fulltext(conn, dsn_for_agent, question)
+            old[question.id] = old_fulltext(dsn_for_agent, question)
     return old, new
 
 

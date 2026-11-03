@@ -14,6 +14,7 @@ from hermes_cli.memory_eval_search import (
     Question,
     load_questions,
     new_vector,
+    old_fulltext,
     report_lines,
     score,
 )
@@ -124,3 +125,17 @@ def test_deleted_forgotten_and_ownerless_items_never_take_a_top_five_place(_memo
     finally:
         memory_store_sql("DROP TABLE ltm.documents")
     assert ranked == ["agent:default:right"]
+
+
+def test_the_baseline_finds_its_source_behind_many_newer_matches_of_another_source(_memory_store, memory_store_sql):
+    def message(uid, source, content):
+        memory_store_sql(
+            "INSERT INTO memory.messages (uid, source, agent_id, role, content, content_sha256) VALUES "
+            "(%s, %s, 'default', 'user', %s, %s)", (uid, source, content, hashlib.sha256(content.encode()).hexdigest()))
+
+    message("messages:kakao:1", "messages", "the zeppelin manifest is in the hangar")
+    for i in range(150):
+        message(f"agent:default:z{i}", "agent", f"zeppelin note number {i}")
+    question = Question(id="q", source="messages", agent="default", question="where is the zeppelin manifest",
+                        expected=("messages:kakao:1",))
+    assert old_fulltext(lambda _agent: _memory_store.app_dsn(), question) == ["messages:kakao:1"]
