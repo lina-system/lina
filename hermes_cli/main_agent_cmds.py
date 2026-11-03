@@ -61,17 +61,32 @@ def _cmd_memory_eval_search(args):
     sys.exit(run(args))
 
 
-def cmd_memory(args):
-    from hermes_cli.external_messages_cmd import external_messages_command
-    from hermes_cli.memory_setup import memory_command
+def _cmd_memory_cache_report(args):
+    from hermes_cli.cache_measure import run
+    sys.exit(run(args))
 
-    handlers = {
-        "off": _cmd_memory_off,
-        "reset": _cmd_memory_reset,
-        "eval-search": _cmd_memory_eval_search,
-        "external-messages": external_messages_command,
-    }
-    handlers.get(getattr(args, "memory_command", None), memory_command)(args)
+
+def _cmd_memory_external_messages(args):
+    from hermes_cli.external_messages_cmd import external_messages_command
+    external_messages_command(args)
+
+
+def _cmd_memory_setup(args):
+    from hermes_cli.memory_setup import memory_command
+    memory_command(args)
+
+
+_MEMORY_SUBCOMMANDS = {
+    "off": _cmd_memory_off,
+    "reset": _cmd_memory_reset,
+    "eval-search": _cmd_memory_eval_search,
+    "cache-report": _cmd_memory_cache_report,
+    "external-messages": _cmd_memory_external_messages,
+}
+
+
+def cmd_memory(args):
+    _MEMORY_SUBCOMMANDS.get(getattr(args, "memory_command", None), _cmd_memory_setup)(args)
 
 
 

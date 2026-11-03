@@ -1308,7 +1308,7 @@ DEFAULT_CONFIG = {
         "nudge_interval": 10,
         "external_messages": {"enabled": True, "spool": ""},  # Host-level collector source and spool.
         "provider": "",  # One external provider; empty = built-in only.
-        "auto_recall_append": False,  # Recall spliced into the user message, not a tool result (lina#21).
+        "auto_recall_append": False, "prefix_fingerprints": False,  # Recall in the user message (#21); prefix hashes, no text (#25).
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.
     "delegation": {
