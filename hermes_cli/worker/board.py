@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
-from hermes_cli.worker import bidding, runners, settings
+from hermes_cli.worker import bidding, record, runners, settings
 from hermes_cli.worker.hub import ENDED, Hub
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import MODES
@@ -101,6 +101,7 @@ def cards(worker_root: Path, now: float) -> list[dict]:
     store = Store(worker_root)
     ends = _ends(store)
     jobs = [job for job in store.all() if not job.get("card") and _recent(job, ends.get(job["id"]), now)]
+    receipts = record.receipts_by_task(store)
     lives = _lives(Hub(worker_root, out=lambda *_: None), jobs)
     from hermes_cli.lina_board_plain import lookup
     plain = lookup("run", [job["id"] for job in jobs])
@@ -110,7 +111,7 @@ def cards(worker_root: Path, now: float) -> list[dict]:
         state, reason = work_state(job, live)
         out.append({"id": job["id"], "title": _title(job), "state": state, "reason": reason, "agent": job.get("bot"),
                     "kind": job.get("mode"), "todo": job.get("todo"), "host": job.get("host"),
-                    "startedAt": job.get("started"), "endedAt": ends.get(job["id"]) if job.get("state") in ENDED else None,
+                    "startedAt": job.get("started"), "endedAt": record.ended_at(job, receipts.get(job["id"], [])),
                     "now": _now_line(live) if state in ("in_progress", "waiting") and live else None,
                     "plain": plain[job["id"]]})
     return out

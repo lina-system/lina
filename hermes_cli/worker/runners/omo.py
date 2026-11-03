@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
-from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view, stop_session
+from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view, parse_time, stop_session
 from tools.environments.local import build_subprocess_env
 
 HELPERS = Path(__file__).resolve().parent
@@ -161,17 +161,21 @@ class OmoRunner:
             return {}
         key, why = classify(view, {}, time.time(), float(self.limits.get("background_max_s", 3 * 3600.0)))
         tail = self.session(["read", handle.data["ref"], "--tail", "40"], 60) or {}
-        tools, last = [], ""
+        tools, last, steps = [], "", []
         for entry in tail.get("entries") or []:
-            message = entry.get("message") or {}
+            message, at = entry.get("message") or {}, parse_time(entry.get("timestamp"))
             for part in message.get("content") or []:
                 if isinstance(part, dict) and part.get("type") == "toolCall":
                     tools.append(part.get("name"))
+                    steps.append({"at": at, "kind": "tool"})  # the run record (lina#201) shows a count, never a name
                 if isinstance(part, dict) and part.get("type") == "text" and message.get("role") == "assistant":
-                    last = (part.get("text") or "").strip() or last
+                    text = (part.get("text") or "").strip()
+                    last = text or last
+                    if text:
+                        steps.append({"at": at, "kind": "said", "text": text[:300]})
         return {"dash": key, "why": why, "lifecycle": view.get("state"), "streaming": view.get("isStreaming"),
                 "pending": view.get("pendingMessageCount"), "questions": view.get("pendingQuestions"),
-                "tools": tools[-6:], "last": last[:300]}
+                "tools": tools[-6:], "last": last[:300], "tail": steps}
 
     def result(self, handle: Handle) -> dict[str, Path]:
         reply = self.session(["read", handle.data["ref"], "--messages"], 120) or {}
