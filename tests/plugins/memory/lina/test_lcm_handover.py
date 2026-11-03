@@ -73,9 +73,12 @@ def test_an_interrupted_turn_of_a_lina_memory_agent_is_ingested_once(home, lina_
         drain(agent)
 
     assert stopped.get("interrupted") is True
-    assert calls == ["stopped-1"]  # the stopped turn and the next one: one ingest, no second copy
-    # The host merges the stopped turn's open user row into the next one; LCM-X stores that text once.
-    users = [content for _s, _c, role, content in lcm_rows(home) if role == "user"]
+    # LCM-X stores a stopped turn itself (engine.on_turn_complete) or keeps its open user row for the next completed
+    # turn, depending on where the stop lands: one ingest per turn at most, and every row stored once either way.
+    assert set(calls) == {"stopped-1"} and len(calls) <= 2
+    rows = [(role, content) for _s, _c, role, content in lcm_rows(home) if content]  # tool-call rows carry no text
+    assert len(rows) == len(set(rows))
+    users = [content for role, content in rows if role == "user"]
     assert sum("#s2" in content for content in users) == 1
     assert sum("#s3" in content for content in users) == 1
 
