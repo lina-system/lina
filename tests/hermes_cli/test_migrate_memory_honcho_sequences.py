@@ -73,17 +73,34 @@ def test_reembedding_reaches_imported_rows_and_receipt_ids_survive_replay(sequen
     assert repeated["inserted"] == repeated["inserted_text"] == 0
     assert repeated["message_id_map"] == first["message_id_map"]
     assert repeated["generated_id_maps"] == first["generated_id_maps"]
+    # Once Honcho releases its placements, the ordinary upward collector can visit them.
+    with psycopg.connect(options["destination_dsn"]) as conn:
+        uids = {row[0] for row in conn.execute("SELECT uid FROM memory.messages")}
+        conn.execute("DELETE FROM ltm.message_meta")
+        conn.execute("UPDATE memory.messages SET observed_at=to_timestamp(1600000000)")
+    visited = set()
+
+    def held(page):
+        visited.update(page)
+        return set(page)
+
+    with closing(MessageStore("sequence-copy", dsn=options["destination_dsn"])) as store:
+        assert store.collect_unreferenced(held) == 0
+    assert visited == uids
 
 
 def test_source_time_orders_allocations_and_search_in_fresh_store(sequence_archive):
     # Given: a fresh destination and historical rows inserted out of time order.
     options = sequence_archive
     # When: migrating out-of-order historical source rows.
-    migrate_honcho(**options)
+    report = migrate_honcho(**options)
     # Then: allocated IDs ascend with source time; live search retains actual recency.
     with psycopg.connect(options["destination_dsn"]) as conn:
         times = [row[0] for row in conn.execute("SELECT ts FROM memory.messages ORDER BY message_id")]
         assert times == sorted(times)
+        ordered_publics = [row[0] for row in conn.execute("SELECT public_id FROM ltm.message_meta ORDER BY message_id")]
+        assert ordered_publics == [report["identity_maps"]["message_meta"][source] for source in
+                                   ("a2" * 10 + "2", "a3" * 10 + "3", "bm" * 10 + "m", "a1" * 10 + "1")]
         newest = conn.execute("SELECT uid FROM memory.messages WHERE content LIKE '%alpha%' "
                               "ORDER BY ts DESC,message_id DESC LIMIT 1").fetchone()[0]
     with closing(MessageStore("sequence-copy", dsn=options["destination_dsn"])) as store:
