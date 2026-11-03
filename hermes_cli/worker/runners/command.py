@@ -19,6 +19,9 @@ the CLI runs is refused: a CLI has no channel into a running turn.
 
 Every launch goes through ``/bin/sh`` writing the exit code to ``exit.<run>.<step>``, so any process (``send``,
 ``cancel``, a restarted service) reads the same state from the task folder.
+An answer saves the next step's handle before removing the question. State observes the question before loading
+that handle, so an absent question cannot be combined with the previous step. It checks the wrapper's liveness
+before reading that step's exit code: the wrapper publishes its exit code before exiting, not the other way round.
 """
 
 from __future__ import annotations
@@ -150,20 +153,24 @@ class CommandRunner:
         return newest
 
     def state(self, handle: Handle) -> str:
+        question = self._question(handle.task).exists()
         handle.data.update(Handle.load(handle.task, handle.run).data)  # an answer may have started the next step
         if handle.task.path("cancelled").exists():
             self.stop(handle)
             return "cancelled"
+        alive = _alive(handle.data.get("pid"))
         code = self._exit_code(handle)
         quiet = time.time() - self._quiet_since(handle)
-        if code is None and _alive(handle.data.get("pid")):
+        if code is None and alive:
             if quiet >= self._stall_s():
                 self.stop(handle)
                 return "stalled"
             return "running"
         if code != 0:
             return "failed"
-        if self._question(handle.task).exists():
+        # Seen before the handle so an answer's next step is never paired with "no question"; seen again after the
+        # exit so a question the CLI wrote just before exiting is not missed (lina#199).
+        if question or self._question(handle.task).exists():
             return "stalled" if quiet >= self._stall_s() else "waiting_human"
         return "done"
 
