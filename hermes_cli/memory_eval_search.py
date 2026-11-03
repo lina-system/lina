@@ -15,7 +15,9 @@ in the first five results.
   ``memory``: Honcho's conclusion search (``POST /v3/workspaces/<ws>/conclusions/query``) at ``--honcho-url``;
   without it the old ``memory`` column is not run.
 * new: one query vector from the configured model against every row of ``vec.embeddings`` the question's
-  agent and Honcho workspace own, all kinds ranked together by cosine distance.
+  agent and Honcho workspace own, all kinds ranked together by cosine distance. Like the searches it is compared
+  with, it skips forgotten messages, soft-deleted conclusions and vectors whose item is gone, before the top five
+  are taken.
 """
 
 from __future__ import annotations
@@ -162,7 +164,9 @@ _NEW_SQL = """
     LEFT JOIN vec.chunks c ON e.kind = 'chunk' AND c.chunk_id = e.item_id
     LEFT JOIN memory.messages m ON m.message_id = c.message_ids[1]
     LEFT JOIN ltm.documents d ON e.kind = 'document' AND d.vec_id = e.item_id
-    WHERE e.model = %s AND e.agent_id = ANY(%s) AND e.kind IN ('chunk', 'document')
+    WHERE e.model = %s AND e.agent_id = ANY(%s)
+      AND ((e.kind = 'chunk' AND m.message_id IS NOT NULL AND m.forgotten_at IS NULL)
+           OR (e.kind = 'document' AND d.id IS NOT NULL AND d.deleted_at IS NULL))
     ORDER BY e.embedding <=> %s::vector
     LIMIT %s"""
 
@@ -173,7 +177,7 @@ def new_vector(conn, query_vector: Sequence[float], model: str, question: Questi
     sql = _NEW_SQL
     if conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
         sql = _NEW_SQL.replace("LEFT JOIN ltm.documents d ON e.kind = 'document' AND d.vec_id = e.item_id",
-                               "LEFT JOIN (SELECT NULL::text AS id, NULL::bigint AS vec_id) d ON false")
+                               "LEFT JOIN (SELECT NULL::text AS id, NULL::bigint AS vec_id, NULL::timestamptz AS deleted_at) d ON false")
     return [row[0] for row in conn.execute(sql, (model, owners, literal, k)).fetchall() if row[0]]
 
 
