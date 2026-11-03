@@ -83,13 +83,13 @@ def rounds(job: dict, receipts: list[dict]) -> list[dict]:
     if 1 not in starts and isinstance(job.get("started"), (int, float)):  # run 1's own start receipt fell out
         starts[1] = float(job["started"])
     ordered = sorted(starts.items(), key=lambda pair: pair[1])
-    if not ordered:
-        return []
-    out = [{"run": None, "start": None, "until": ordered[0][1], "end": None, "end_state": None}]
+    # The round whose start fell out of the kept history comes first. With no start on record at all it is the only
+    # round and spans all time; the reader serves it only when something of its own (an end, a result) falls in it.
+    out = [{"run": None, "start": None, "until": ordered[0][1] if ordered else None, "end": None, "end_state": None}]
     for index, (run, start) in enumerate(ordered):
         until = ordered[index + 1][1] if index + 1 < len(ordered) else None
         out.append({"run": run, "start": start, "until": until, "end": None, "end_state": None})
-    by_run, first_run = {one["run"]: one for one in out[1:]}, ordered[0][0]
+    by_run, first_run = {one["run"]: one for one in out[1:]}, (ordered[0][0] if ordered else None)
     for row in receipts:
         if row.get("kind") != "exec_end":
             continue
@@ -97,7 +97,7 @@ def rounds(job: dict, receipts: list[dict]) -> list[dict]:
         if run is None:  # an older receipt or the hub's "unreachable" end: a run with one round has only that one
             own = out[1] if len(ordered) == 1 else _span_at(out, float(row["ts"]))
         else:
-            own = by_run.get(run) or (out[0] if run < first_run else None)
+            own = by_run.get(run) or (out[0] if first_run is None or run < first_run else None)
         if own is not None and (own["end"] is None or row["ts"] >= own["end"]):
             own["end"], own["end_state"] = float(row["ts"]), row.get("state")
     return out

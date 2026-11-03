@@ -159,6 +159,19 @@ def test_a_round_whose_start_fell_out_of_history_is_served_only_with_content(fak
     assert [(r["run"], r["startUnknown"]) for r in bare] == [(2, False)]
 
 
+
+def test_a_run_with_no_start_on_record_keeps_its_ended_round(fakes, client):
+    """No start receipt and no ``started`` on the job, but run 1's end and its result are kept: the round is served
+    with ``startUnknown``, its end and its result, not dropped."""
+    fakes.job("OT-ALP0010", state="done", started=None)
+    _receipt(fakes, "OT-ALP0010", "exec_end", E1, state="failed", run="1")
+    _kept(fakes, "OT-ALP0010", "report.md", "# report\n\n- 기기 하나에 닿지 못했다\n", E1 - 30)
+
+    rounds = _record(client, "OT-ALP0010")["rounds"]
+
+    assert [(r["run"], r["startUnknown"], r["startedAt"], r["endedAt"], r["stopped"]) for r in rounds] == [
+        (None, True, None, E1, True)]
+
 def test_the_run_card_ends_where_its_record_s_newest_round_ends(fakes, client):
     _two_rounds(fakes, "OT-ALP0007")
     _receipt(fakes, "OT-ALP0007", "exec_end", E2, state="done", run="2")
