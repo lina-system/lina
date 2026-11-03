@@ -65,6 +65,7 @@ class Observer:
         self.healthy = False
         self.events, self.waiters = [], {}
         self.complete = asyncio.Event()
+        self.first_event = asyncio.get_running_loop().create_future()
         self.task = asyncio.create_task(self.read())
         self.rid = 0
 
@@ -75,6 +76,8 @@ class Observer:
                 self.waiters.pop(frame['id']).set_result(frame)
             elif frame.get('params', {}).get('session_id') == self.sid:
                 self.events.append(frame['params'])
+                if not self.first_event.done():
+                    self.first_event.set_result(frame['params'])
                 text = frame['params'].get('payload', {}).get('text') or ''
                 if self.healthy and frame['params']['type'] == 'message.delta' and text.startswith('CHUNK_'):
                     self.peer.acks.put(text[:11])
@@ -170,6 +173,17 @@ async def probe(peer, target):
             a.ws.transport.get_extra_info('socket').setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
             a.ws.transport.pause_reading()
             slow_transport = next(t for t in authority.events.values() if t._ws.client.port == slow_port)
+            stream = authority.sessions[ref.session_id].event_stream
+            loop = asyncio.get_running_loop()
+            excluded = loop.create_future()
+            on_overflow = stream.on_overflow
+
+            def observe_exclusion(transport):
+                on_overflow(transport)
+                if transport is slow_transport:
+                    loop.call_soon_threadsafe(excluded.set_result, None)
+
+            stream.on_overflow = observe_exclusion
 
             async def witness_blockage():
                 nonlocal blocked_bytes, kernel_queued
@@ -212,7 +226,16 @@ async def probe(peer, target):
             assert a.events == b.events, 'observers saw competing event ordering/stamps'
         events = b.events
         if peer.blocked:
-            await async_wait_until(lambda: a.events, timeout=5, what='the resumed slow observer to read a frame')
+            # Exclusion can precede every frame and the close handshake; neither is then promised.
+            done, _ = await asyncio.wait((a.first_event, a.task, excluded), timeout=5,
+                                         return_when=asyncio.FIRST_COMPLETED)
+            assert done, 'resumed slow observer neither received an event, closed nor was excluded'
+            if a.task in done:
+                with contextlib.suppress(websockets.exceptions.ConnectionClosed):
+                    await a.task
+            if not a.events:
+                assert excluded in done, 'empty prefix without mailbox exclusion'
+                assert not fanout.contains(slow_transport), 'excluded slow observer still subscribed'
             assert a.events == events[:len(a.events)], 'slow observer prefix has competing stamps'
             with fanout._lock:
                 assert len(fanout._peers) <= 2
@@ -259,6 +282,7 @@ async def probe(peer, target):
             'os_buffer_blocked_bytes': blocked_bytes, 'kernel_send_queued_bytes': kernel_queued,
             'producer_and_healthy_completed_before_release': peer.blocked,
             'slow_prefix_events_verified': verified_prefix_count,
+            'slow_observer_excluded_without_events': peer.blocked and verified_prefix_count == 0,
             'event_types': sorted({e['type'] for e in events}), 'event_count': len(events)}))
     finally:
         for observer in observers:
