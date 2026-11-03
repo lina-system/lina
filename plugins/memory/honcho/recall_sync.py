@@ -41,7 +41,8 @@ def prefetch_sync(provider, query: str) -> str:
             return ""
 
         context_due = (
-            not (provider._injection_frequency == "first-turn" and turn > 1)
+            not provider._card_in_prompt
+            and not (provider._injection_frequency == "first-turn" and turn > 1)
             and turn - provider._last_context_turn >= provider._context_cadence
         )
         dialectic_due = turn - provider._last_dialectic_turn >= provider._effective_cadence()
