@@ -177,7 +177,9 @@ jobs:
     # still runs them. The same known failures are deselected. Not a required check.
     name: LCM-X tests (Postgres)
     runs-on: ubuntu-24.04
-    timeout-minutes: 60
+    # Longer than the SQLite job: the suite took 45 minutes on 6 workers locally, and the seeded cold replay
+    # (18,000 messages, one text write each) alone runs 4-13 minutes on the store against 21 seconds on SQLite.
+    timeout-minutes: 120
     steps:
       - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
         with:
