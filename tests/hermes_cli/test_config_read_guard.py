@@ -28,6 +28,8 @@ import os
 import re
 from pathlib import Path
 
+from scripts.vendored_subtrees import is_vendored
+
 REPO_ROOT = Path(__file__).resolve().parent.parent.parent
 
 # Files where a yaml.safe_load near a config.yaml reference is legal.
@@ -89,7 +91,7 @@ def _iter_source_files():
                 continue
             path = Path(dirpath) / name
             rel = path.relative_to(REPO_ROOT)
-            if any(part in EXCLUDED_DIR_PARTS for part in rel.parts):
+            if any(part in EXCLUDED_DIR_PARTS for part in rel.parts) or is_vendored(rel):
                 continue
             yield rel, path
 

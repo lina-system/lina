@@ -130,6 +130,31 @@ def test_state_follows_each_column_and_counts_only_live_runs(client, conn, tmp_p
     assert client.get(f"{WORK}/cards", params={"state": "running"}).status_code == 400
 
 
+def test_successor_run_does_not_inherit_waiting_gate_state(client, conn, tmp_path):
+    ws = tmp_path / "ws"
+    ws.mkdir()
+    tid = _card(conn, "successor", workspace_path=str(ws), goal_gates=["exit 75"])
+    _goal(conn, [tid])
+    first = kb.claim_task(conn, tid)
+    assert first is not None
+    assert run_card_gates(conn, first).waiting
+    waiting = _card_json(client, tid)
+    assert (waiting["state"], waiting["reason"]) == ("waiting", "gate")
+    assert kb.reclaim_task(conn, tid)
+
+    successor = kb.claim_task(conn, tid)
+    assert successor is not None
+    assert successor.current_run_id != first.current_run_id
+
+    detail = _card_json(client, tid)
+    response = client.get(f"{WORK}/cards", params={"state": "in_progress"})
+    assert response.status_code == 200, response.text
+    running = _valid("WorkCardList", response.json())
+    assert (detail["state"], detail["reason"]) == ("in_progress", None)
+    assert [c["id"] for c in running["cards"]] == [tid]
+    assert client.get(f"{WORK}/cards", params={"state": "waiting"}).json()["cards"] == []
+
+
 def test_todo_progress_counts_ticks_and_passing_prs_gate(client, conn, tmp_path):
     ws = tmp_path / "ws"
     ws.mkdir()

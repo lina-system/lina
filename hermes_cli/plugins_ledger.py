@@ -184,12 +184,17 @@ class PluginLedgerMixin:
     # ``register()`` twice against the same manager. General discovery owns the hook group; the
     # memory loader's hooks are a fallback group keyed by (name, resolved source path) that is
     # dropped once the same source loads through discovery. Groups, not callbacks, are replaced:
-    # one register() may deliberately create several closures for one hook.
+    # one register() may deliberately create several closures for one hook. Context engines
+    # register once per agent build and use the same groups, so a rebuild replaces its group.
 
     def _drop_fallback_hooks(self, hook_source: Optional[tuple]) -> None:
         if hook_source is not None:
             for handle in self._memory_hook_registrations.pop(hook_source, []):
                 handle.dispose()
+
+    def _add_fallback_registration(self, hook_source: tuple, handle: PluginRegistration) -> None:
+        """Put a non-hook registration (skill, prompt section) in *hook_source*'s fallback group."""
+        self._memory_hook_registrations.setdefault(hook_source, []).append(handle)
 
     def _register_fallback_hook(self, context: Any, hook_source: Optional[tuple], hook_name: str,
                                 callback: Callable, *, hold_stream: bool = False) -> PluginRegistration:

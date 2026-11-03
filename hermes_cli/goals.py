@@ -1729,6 +1729,7 @@ def run_kanban_goal_loop(
         if gate:
             _log(f"kanban goal loop: turn {turns_used}/{max_turns} gate failed; judge skipped")
             prompt, reason = gate["prompt"], gate["reason"]
+            nudged_to_finalize = False
         else:
             from agent.portal_tags import get_affinity_scope, reset_affinity_scope, set_affinity_scope
             affinity_token = None if get_affinity_scope() else set_affinity_scope(f"kanban:{task_id}")
