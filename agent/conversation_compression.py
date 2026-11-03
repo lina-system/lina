@@ -43,6 +43,7 @@ from agent.session_activity import ActivityProvenance, normalize_activity_proven
 from agent.usage_anchor import set_usage_anchor
 from hermes_state_ids import new_session_id as mint_session_id
 from hermes_state_pidns import holder_namespace_token
+from hermes_state_store import StoreUnavailableError
 from agent.conversation_compression_watermark import held_archive_watermark
 
 logger = logging.getLogger(__name__)
@@ -3740,8 +3741,6 @@ def _commit_compaction(
                 made_progress = False
                 _restore_prune_rearm_tokens(agent.context_compressor, attempt.snapshot)
             split_status = "aborted" if old_session_id is None and not in_place else "failed_not_indexed"
-            # If rotation rolled back to the parent, agent.session_id is the indexed parent
-            # and old_session_id was cleared: recovery, not an un-indexed orphan.
             if old_session_id is None and not in_place:
                 logger.warning(
                     "Compression rotation aborted and rolled back to the parent session (%s): %s",
@@ -3749,13 +3748,14 @@ def _commit_compaction(
                 )
             else:
                 logger.warning("Session DB compression split failed — new session will NOT be indexed: %s", e)
-            # Arm the failure cooldown so the next turn can't rerun the doomed compression;
-            # try/except so a stub compressor can't mask the original error in this handler.
             with _swallow('could not record split-failure cooldown', exc_info=True):
-                # See #97948.
                 agent.context_compressor._record_compression_failure_cooldown(
                     _SPLIT_FAILURE_COOLDOWN_SECONDS, f"session_split_failed: {e}"
                 )
+            if isinstance(e, StoreUnavailableError):
+                # A missing text store is not a completed compression boundary.
+                # Rollback/cooldown above remain intact; callers must see the failure.
+                raise
     return _CommitOutcome(
         compressed=compressed, commit_started_at=commit_started_at, old_session_id=old_session_id,
         split_status=split_status, session_commit_succeeded=session_commit_succeeded,
