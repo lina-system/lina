@@ -1,14 +1,15 @@
 """A loopback OpenAI-compatible model that reports usage the way Anthropic's prompt cache does (lina#25).
 
-A request's cached prefix is the longest byte prefix it shares with any request of the last hour (a read refreshes
-that request's hour), counted in whole 1024-token blocks at 4 bytes a token. Every whole block past the read is
-written. Each request also becomes one OCX usage row (``inputTokens`` with reads and writes included), so the rows
+A request's cached prefix is the longest byte prefix it shares with any request of the last hour, in whole
+1024-token blocks at 4 bytes a token: the cache holds each block-aligned prefix with its last use, a read refreshes
+the blocks it read, and every whole block past the read is written. Each request also becomes one OCX usage row (``inputTokens`` with reads and writes included), so the rows
 go to ``lina memory cache-report`` as they would from OCX. The model writes everything to the 1h tier: its cache
 lives an hour.
 """
 
 from __future__ import annotations
 
+import hashlib
 import json
 import threading
 from contextlib import contextmanager
@@ -29,39 +30,31 @@ def wire(body: dict) -> bytes:
     return "".join(parts).encode()
 
 
-def _common(a: bytes, b: bytes) -> int:
-    a, b = memoryview(a), memoryview(b)
-    lo, hi = 0, min(len(a), len(b))
-    while lo < hi:
-        mid = (lo + hi + 1) // 2
-        if a[:mid] == b[:mid]:
-            lo = mid
-        else:
-            hi = mid - 1
-    return lo
+def _prefix_keys(data: bytes) -> list[bytes]:
+    step = BLOCK_TOKENS * BYTES_PER_TOKEN
+    digest, keys = hashlib.sha256(), []
+    for end in range(step, len(data) + 1, step):
+        digest.update(data[end - step:end])
+        keys.append(digest.copy().digest())
+    return keys
 
 
 @dataclass
 class PromptCache:
-    entries: list[list] = field(default_factory=list)
+    blocks: dict[bytes, datetime] = field(default_factory=dict)
 
     def account(self, data: bytes, now: datetime) -> tuple[int, int, int]:
         """(input total, cache read, cache write) in tokens for one request at ``now``."""
-        self.entries = [e for e in self.entries if now - e[1] <= TTL]
-        best, common = None, 0
-        for entry in self.entries:
-            if len(entry[0]) <= common:
-                continue
-            length = _common(entry[0], data)
-            if length > common:
-                best, common = entry, length
-        if best is not None:
-            best[1] = now
-        total = -(-len(data) // BYTES_PER_TOKEN)
-        read = common // BYTES_PER_TOKEN // BLOCK_TOKENS * BLOCK_TOKENS
-        write = max(0, total // BLOCK_TOKENS * BLOCK_TOKENS - read)
-        self.entries.append([data, now])
-        return total, read, write
+        keys = _prefix_keys(data)
+        read = 0
+        for key in keys:
+            used = self.blocks.get(key)
+            if used is None or now - used > TTL:
+                break
+            read += 1
+        for key in keys:
+            self.blocks[key] = now
+        return -(-len(data) // BYTES_PER_TOKEN), read * BLOCK_TOKENS, (len(keys) - read) * BLOCK_TOKENS
 
 
 class CacheModel(BaseHTTPRequestHandler):

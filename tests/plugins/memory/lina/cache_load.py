@@ -1,9 +1,10 @@
 """lina#25: a 200-turn synthetic load through the real ``AIAgent`` against a model that caches like Anthropic.
 
-``context.engine: lcm-x`` and ``memory.provider: lina-memory``, recalls every ten turns, a skill added, the date
-turning at midnight and two compactions. Every request becomes an OCX usage row (``cache_server.py``) and, with
-``memory.prefix_fingerprints`` on, a prefix fingerprint; ``lina memory cache-report`` reads both. The report of each
-run is written beside its rows (``--basetemp`` keeps them) for lina#25's synthetic numbers.
+``context.engine: lcm-x`` (its default compaction settings) and ``memory.provider: lina-memory``, recalls every ten
+turns, a skill added, the date turning at midnight and two compactions. Every request becomes an OCX usage row
+(``cache_server.py``) and, with ``memory.prefix_fingerprints`` on, a prefix fingerprint; ``lina memory cache-report``
+reads both. Each run writes its rows and report beside it (``--basetemp`` keeps them). One test file per
+``memory.auto_recall_append`` setting, so each stays well within the runner's per-file limit.
 """
 
 from __future__ import annotations
@@ -11,11 +12,10 @@ from __future__ import annotations
 import json
 import re
 import shutil
+from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 from types import SimpleNamespace
 from unittest.mock import patch
-
-import pytest
 
 from hermes_cli import cache_measure
 from tests.plugins.memory.lina.cache_server import cache_model
@@ -27,6 +27,14 @@ START, STEP = datetime(2026, 11, 3, 22, 0, tzinfo=UTC), timedelta(minutes=1)
 RECALL = "RECALL-25 " + "the tomatoes on the south bed need sun and water every morning. " * 19
 FILLER = "about soil and seeds " * 200
 BASELINES = (98.10784, 98.29365, 98.26721)
+
+
+@dataclass(frozen=True)
+class Load:
+    rows: list
+    fingerprints: list
+    compactions: list
+    last_timestamp: str
 
 
 class Clock:
@@ -45,16 +53,12 @@ def _fake_summary_model(**kwargs):
     return SimpleNamespace(choices=[SimpleNamespace(message=SimpleNamespace(content=text))])
 
 
-@pytest.fixture
-def home(tmp_path, monkeypatch, lina_env):
+def _home(tmp_path, monkeypatch):
     home = write_home(tmp_path / ".hermes")
     (home / "memories").mkdir()
     (home / "memories" / "MEMORY.md").write_text("NOTE-25 the garden faces south", encoding="utf-8")
     (home / "memories" / "USER.md").write_text("CARD-25 Alice grows tomatoes", encoding="utf-8")
     monkeypatch.setenv("HERMES_HOME", str(home))
-    for key, value in (("LCM_LEAF_CHUNK_TOKENS", "3000"), ("LCM_CONDENSATION_FANIN", "2"),
-                       ("LCM_FRESH_TAIL_COUNT", "8"), ("LCM_THRESHOLD_FULL_SWEEP_ENABLED", "false")):
-        monkeypatch.setenv(key, value)
     from plugins.memory.lina import LinaMemoryProvider
     monkeypatch.setattr(LinaMemoryProvider, "prefetch",
                         lambda self, query, session_id="": f"- {RECALL}" if "recall" in query else "")
@@ -65,7 +69,7 @@ def home(tmp_path, monkeypatch, lina_env):
 def _configure(home, url: str, memory: str) -> None:
     config = (home / "config.yaml").read_text(encoding="utf-8").replace("memory:\n", "memory:\n" + memory)
     config += (f"model:\n  provider: custom\n  default: m\n  base_url: {url}\n  context_length: 256000\n"
-               "lcm:\n  context_threshold: 0.6\nauxiliary:\n  title_generation:\n    enabled: false\n")
+               "lcm:\n  context_threshold: 0.4\nauxiliary:\n  title_generation:\n    enabled: false\n")
     (home / "config.yaml").write_text(config, encoding="utf-8")
 
 
@@ -91,8 +95,8 @@ def _drive(home, server, clock) -> None:
             clock.now += STEP
 
 
-@pytest.mark.parametrize("append", [False, True], ids=["recall-tool-result", "recall-appended"])
-def test_synthetic_load_feeds_the_cache_report(home, monkeypatch, tmp_path, append):
+def run_load(tmp_path, monkeypatch, *, append: bool) -> Load:
+    home = _home(tmp_path, monkeypatch)
     clock = Clock()
     monkeypatch.setattr("hermes_time.now", clock)
     with cache_model(clock, "conv-load") as server:
@@ -109,8 +113,4 @@ def test_synthetic_load_feeds_the_cache_report(home, monkeypatch, tmp_path, appe
     text = cache_measure.report(rows, baselines=BASELINES, fingerprints=fingerprints)
     (tmp_path / "report.md").write_text(text, encoding="utf-8")
     print(f"\n[{'appended' if append else 'tool-result'}] compactions={compactions[-1]}\n{text}")
-
-    assert len(rows) == len(fingerprints) == TURNS
-    assert sorted(set(compactions)) == [0, 1, 2]
-    assert usage[-1]["timestamp"].startswith("2026-11-04")
-    assert cache_measure.rates(rows).metered == TURNS
+    return Load(rows, fingerprints, compactions, usage[-1]["timestamp"])
