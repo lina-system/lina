@@ -1070,3 +1070,67 @@ def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT
     """``collect_unreferenced`` for a SessionDB's agent, counting references in its state.db."""
     return db.message_store.collect_unreferenced(
         lambda uids: db._read_retrying_ioerr(lambda conn: held_text_uids(conn, uids)), older_than_days=older_than_days)
+
+
+@dataclass(frozen=True)
+class ExternalMessage:
+    """Sanitized collector payload; event identity is provenance, not version identity."""
+    uid: str
+    content: str
+    author: str
+    conversation_id: str
+    timestamp: str
+    native: str
+    digest: str
+    ingest_path: str
+
+
+@dataclass(frozen=True)
+class ExternalBatch:
+    messages: tuple[ExternalMessage, ...]
+    lines: int
+    offset: int
+    prefix_sha256: str
+
+
+def _put_external_message(conn, message: ExternalMessage) -> int:
+    """Preserve every distinct version and advance only the winning current-head projection."""
+    base = conn.execute("SELECT native->>'payload_sha256' FROM memory.messages WHERE uid = %s",
+                        (message.uid,)).fetchone()
+    uid = message.uid if base is None or base[0] == message.digest else f"{message.uid}#{message.digest[:16]}"
+    written = conn.execute(
+        "INSERT INTO memory.messages (uid, source, agent_id, scope, role, content, author, conversation_id,"
+        " ts, native, content_sha256) VALUES (%s, 'messages', NULL, 'agents', 'user', %s, %s, %s,"
+        " %s::timestamptz, %s::jsonb, %s) ON CONFLICT (uid) DO NOTHING RETURNING uid",
+        (uid, message.content, message.author, message.conversation_id, message.timestamp, message.native,
+         _sha256(message.content))).fetchone()
+    conn.execute(
+        "INSERT INTO memory.external_message_heads (uid, current_uid, ingest_path) VALUES (%s, %s, %s)"
+        " ON CONFLICT (uid) DO UPDATE SET current_uid = EXCLUDED.current_uid, ingest_path = EXCLUDED.ingest_path"
+        " WHERE NOT (external_message_heads.ingest_path = 'archive' AND EXCLUDED.ingest_path = 'live')"
+        " AND (external_message_heads.current_uid, external_message_heads.ingest_path)"
+        " IS DISTINCT FROM (EXCLUDED.current_uid, EXCLUDED.ingest_path)",
+        (message.uid, uid, message.ingest_path))
+    return int(written is not None)
+
+
+def ingest_external_batch(spool: str, read_batch: Callable[[int, str], ExternalBatch]) -> tuple[ExternalBatch, int]:
+    """Atomically consume complete lines, their immutable versions and the owner-only cursor.
+
+    A transaction lock serializes all spools: collector uids are global, so distinct paths must not race
+    for the unversioned uid or its current head. The reader verifies the prefix while this lock is held.
+    """
+    with _owner_connection() as conn:
+        conn.execute("SELECT pg_advisory_xact_lock(4210018)")
+        cursor = conn.execute(
+            "SELECT byte_offset, prefix_sha256 FROM memory.external_message_cursors WHERE spool = %s",
+            (spool,)).fetchone()
+        offset, digest = cursor if cursor else (0, hashlib.sha256(b'').hexdigest())
+        batch = read_batch(offset, digest)
+        inserted = sum(_put_external_message(conn, message) for message in batch.messages)
+        if batch.offset != offset:
+            conn.execute(
+                "INSERT INTO memory.external_message_cursors (spool, byte_offset, prefix_sha256) VALUES (%s, %s, %s)"
+                " ON CONFLICT (spool) DO UPDATE SET byte_offset = EXCLUDED.byte_offset,"
+                " prefix_sha256 = EXCLUDED.prefix_sha256", (spool, batch.offset, batch.prefix_sha256))
+        return batch, inserted

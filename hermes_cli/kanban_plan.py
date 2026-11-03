@@ -25,6 +25,9 @@ from hermes_cli import kanban_db_connect as kbc
 _KEY_RE = re.compile(r"^[a-z0-9][a-z0-9._-]{0,79}$")
 _ISSUE_RE = re.compile(r"^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+#[0-9]+$")
 _CHECK_RE = re.compile(r"^\[ \] \S")
+_LEDGER_GOAL_RE = re.compile(r"^G[0-9]+$")
+_LEDGER_TODO_RE = re.compile(r"^T[0-9]+$")
+_NEW_TODO_KEYS = ("title", "why", "done", "check")
 
 _PLAN_KEYS = {"key", "goal", "cards", "triage", "decompose"}
 _GOAL_KEYS = {"title", "assignee", "body", "ledger_goal", "goal_mode", "gates", "max_turns",
@@ -38,12 +41,21 @@ _SECTIONS = (
     ("stop_when", "Stop when", True),
     ("worker", "Worker", True),
 )
-_CARD_KEYS = {"key", "title", "assignee", "todos", "gates", "max_turns", "max_runtime",
-              "workspace", "after", "triage", "decompose"} | {s[0] for s in _SECTIONS}
+_CARD_KEYS = {"key", "title", "assignee", "todos", "ledger_todos", "gates", "max_turns",
+              "max_runtime", "workspace", "after", "triage", "decompose"} | {s[0] for s in _SECTIONS}
 
 
 class PlanError(ValueError):
     """The plan is refused as a whole; nothing was written."""
+
+
+@dataclass
+class NewTodo:
+    """A record to-do the plan creates under its ledger goal (``work add 할 일``'s required fields)."""
+    title: str
+    why: str
+    done: str
+    check: str
 
 
 @dataclass
@@ -58,6 +70,7 @@ class WorkCard:
     max_runtime: int
     workspace: tuple[Optional[str], Optional[str]] = (None, None)
     after: list[str] = field(default_factory=list)
+    ledger_todos: list[str | NewTodo] = field(default_factory=list)  # "T<n>" ids and new to-dos
 
 
 @dataclass
@@ -70,6 +83,7 @@ class GoalCard:
     max_turns: Optional[int]
     max_runtime: Optional[int]
     workspace: tuple[Optional[str], Optional[str]] = (None, None)
+    ledger_goal: Optional[str] = None
 
 
 @dataclass
@@ -210,6 +224,19 @@ def _todos(value: Any, where: str) -> list[str]:
     return todos
 
 
+def _ledger_todo(item: Any, where: str) -> str | NewTodo:
+    if isinstance(item, dict):
+        unknown = sorted(str(k) for k in item if k not in _NEW_TODO_KEYS)
+        if unknown:
+            raise PlanError(f"{where}: ledger_todos: unknown field(s) {', '.join(unknown)}")
+        return NewTodo(*(_text(item.get(k), where, f"ledger_todos {k}") for k in _NEW_TODO_KEYS))
+    todo_id = (_text(item, where, "ledger_todos entry") or "").upper()
+    if not _LEDGER_TODO_RE.match(todo_id):
+        raise PlanError(f"{where}: ledger_todos entry {item!r} must be a to-do id `T<n>` or a mapping "
+                        "{title, why, done, check}")
+    return todo_id
+
+
 def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
     where = f"card #{index}"
     if isinstance(raw, dict) and isinstance(raw.get("key"), str):
@@ -234,6 +261,8 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
         max_runtime=_duration(raw.get("max_runtime"), where, required=True),
         workspace=_workspace(raw.get("workspace"), where),
         after=[_text(a, where, "after") for a in _list(raw.get("after"), where, "after")],
+        ledger_todos=[_ledger_todo(item, where)
+                      for item in _list(raw.get("ledger_todos"), where, "ledger_todos")],
     )
 
 
@@ -246,6 +275,9 @@ def _parse_goal(raw: Any, plan_key: str, is_profile) -> GoalCard:
         raise PlanError("goal: gates only run on a goal-mode card; set goal_mode: true")
     body = _text(raw.get("body"), where, "body", required=False) or ""
     ledger = _text(raw.get("ledger_goal"), where, "ledger_goal", required=False)
+    ledger = ledger.upper() if ledger else None
+    if ledger and not _LEDGER_GOAL_RE.match(ledger):
+        raise PlanError(f"goal: ledger_goal {ledger!r} must be a goal id `G<n>`")
     trailer = [f"Plan: {plan_key}"] + ([f"Ledger goal: {ledger}"] if ledger else [])
     return GoalCard(
         title=_text(raw.get("title"), where, "title"),
@@ -256,6 +288,7 @@ def _parse_goal(raw: Any, plan_key: str, is_profile) -> GoalCard:
         max_turns=_positive_int(raw.get("max_turns"), where, "max_turns", required=False),
         max_runtime=_duration(raw.get("max_runtime"), where, required=False),
         workspace=_workspace(raw.get("workspace"), where),
+        ledger_goal=ledger,
     )
 
 
@@ -272,6 +305,13 @@ def _check_unique(cards: list[WorkCard]) -> None:
                 raise PlanError(f"card {card.key!r}: to-do {todo!r} is already in card "
                                 f"{owner[ident]!r}; a to-do belongs to one card")
             owner[ident] = card.key
+        for todo in card.ledger_todos:
+            if not isinstance(todo, str):
+                continue
+            if todo in owner:
+                raise PlanError(f"card {card.key!r}: ledger to-do {todo} is already in card "
+                                f"{owner[todo]!r}; a to-do belongs to one card")
+            owner[todo] = card.key
 
 
 def _ordered(cards: list[WorkCard]) -> list[WorkCard]:
@@ -315,6 +355,10 @@ def parse_plan(data: Any, *, is_profile: Optional[Callable[[str], bool]] = None)
         raise PlanError("plan: cards needs at least one work card")
     cards = [_parse_card(raw, i, is_profile) for i, raw in enumerate(raw_cards, start=1)]
     _check_unique(cards)
+    if not goal.ledger_goal and any(c.ledger_todos for c in cards):
+        with_todos = next(c.key for c in cards if c.ledger_todos)
+        raise PlanError(f"card {with_todos!r}: ledger_todos needs the goal's ledger_goal (the record goal "
+                        "the to-dos belong to)")
     return Plan(key=key, goal=goal, cards=_ordered(cards))
 
 
@@ -393,24 +437,56 @@ def apply_plan(conn, plan: Plan, *, created_by: str) -> tuple[dict[str, str], bo
 
 
 
-def _describe(plan: Plan, ids: Optional[dict[str, str]], statuses: dict[str, str]) -> dict:
+def _describe(plan: Plan, ids: Optional[dict[str, str]], statuses: dict[str, str],
+              record=None) -> dict:
+    """*record* is the work-record step's :class:`hermes_cli.kanban_plan_ledger.Record` (or its dry-run
+    preview), None when the plan names no ledger goal."""
     def ref(key: str) -> Optional[str]:
         return ids.get(key) if ids else None
 
+    def ledger(card: WorkCard) -> dict:
+        if record is None:
+            return {"ledger_todos": []}
+        out = {"ledger_todos": record.todos.get(card.key, [])}
+        if ids is None:
+            out["ledger_todos_new"] = record.new.get(card.key, [])
+        else:
+            out["ledger_todos_created"] = record.created.get(card.key, [])
+            out["ledger_todos_linked"] = [i for i in record.attached.get(card.key, [])
+                                           if i not in out["ledger_todos_created"]]
+        return out
+
     goal = plan.goal
-    return {
+    desc = {
         "key": plan.key,
         "goal": {"id": ref("goal"), "idempotency_key": plan.idempotency_key(), "title": goal.title,
                  "assignee": goal.assignee, "goal_mode": goal.goal_mode, "gates": goal.gates,
-                 "status": statuses.get("goal")},
+                 "ledger_goal": goal.ledger_goal, "status": statuses.get("goal")},
         "cards": [{"key": c.key, "id": ref(c.key), "idempotency_key": plan.idempotency_key(c),
                    "title": c.title, "assignee": c.assignee, "gates": c.gates,
                    "max_turns": c.max_turns, "max_runtime_seconds": c.max_runtime,
-                   "after": c.after, "todos": c.todos, "status": statuses.get(c.key)}
+                   "after": c.after, "todos": c.todos, **ledger(c), "status": statuses.get(c.key)}
                   for c in plan.cards],
         "links": [{"parent": p, "child": ch, "parent_id": ref(p), "child_id": ref(ch)}
                   for p, ch in plan.links()],
     }
+    desc["notices"] = ([{"agent": n.agent, "card": n.card, "line": n.line} for n in record.notices]
+                       if record is not None else [])
+    return desc
+
+
+def _print_ledger(card: dict, dry_run: bool) -> None:
+    if dry_run:
+        for todo_id in card["ledger_todos"]:
+            print(f"        to-do: link {todo_id}")
+        for title in card.get("ledger_todos_new", []):
+            print(f"        to-do: create {title!r}")
+        return
+    if card["ledger_todos"]:
+        created, linked = set(card["ledger_todos_created"]), set(card["ledger_todos_linked"])
+        print("        to-dos: " + ", ".join(
+            f"{i} (new)" if i in created else f"{i} (linked)" if i in linked else i
+            for i in card["ledger_todos"]))
 
 
 def _print_text(desc: dict, header: str) -> None:
@@ -421,6 +497,8 @@ def _print_text(desc: dict, header: str) -> None:
     print(header)
     status = f"  [{goal['status']}]" if goal["status"] else ""
     print(f"goal  {label('goal', goal['id'])}{status}  @{goal['assignee'] or '-'}  {goal['title']}")
+    if goal["ledger_goal"]:
+        print(f"        record goal: {goal['ledger_goal']}")
     for gate in goal["gates"]:
         print(f"        gate: {gate if isinstance(gate, str) else gate.get('command')}")
     for card in desc["cards"]:
@@ -429,30 +507,50 @@ def _print_text(desc: dict, header: str) -> None:
               f"  (max_turns={card['max_turns']}, max_runtime={card['max_runtime_seconds']}s)")
         for gate in card["gates"]:
             print(f"        gate: {gate if isinstance(gate, str) else gate.get('command')}")
+        _print_ledger(card, desc["dry_run"])
     for link in desc["links"]:
         print(f"link  {label(link['parent'], link['parent_id'])} -> {label(link['child'], link['child_id'])}")
+    for notice in desc["notices"]:
+        if desc["dry_run"]:
+            print(f"notice  @{notice['agent']}  card {notice['card']}: its card id and to-do ids")
+        else:
+            print(f"notice  @{notice['agent']}  {notice['line']}")
+
+
+def _laid_out(ids: dict[str, str]) -> str:
+    return ", ".join(f"{key}={task_id}" for key, task_id in ids.items())
 
 
 def cli_command(args: argparse.Namespace) -> int:
+    from hermes_cli import kanban_plan_ledger as record_side
     from hermes_cli.kanban import _profile_author
     from hermes_cli.kanban_output import _err, _print_json
 
+    runner = _profile_author()
     try:
         plan = parse_plan(load_plan_file(args.plan_file), is_profile=profile_check())
+        preview = record_side.check(plan, runner=runner) if plan.goal.ledger_goal else None
     except PlanError as exc:
         return _err(f"kanban plan: refused, nothing written: {exc}")
     if args.dry_run:
-        desc = _describe(plan, None, {}) | {"dry_run": True, "created": False}
+        desc = _describe(plan, None, {}, preview) | {"dry_run": True, "created": False}
         header = (f"Plan {plan.key}: dry run, nothing written — 1 goal card, "
                   f"{len(plan.cards)} work card(s), {len(plan.links())} link(s)")
     else:
         with kbc.connect_closing() as conn:
             try:
-                ids, created = apply_plan(conn, plan, created_by=_profile_author())
+                ids, created = apply_plan(conn, plan, created_by=runner)
             except PlanError as exc:
                 return _err(f"kanban plan: refused, nothing written: {exc}")
             statuses = {k: kb.get_task(conn, tid).status for k, tid in ids.items()}
-        desc = _describe(plan, ids, statuses) | {"dry_run": False, "created": created}
+        record = None
+        if plan.goal.ledger_goal:
+            try:
+                record = record_side.write(plan, ids, board=kb.get_current_board(), runner=runner)
+            except record_side.RecordStepError as exc:
+                return _err(f"kanban plan: the board is written ({_laid_out(ids)}), but the work record step "
+                            f"failed at {exc}; run the same plan again to finish the record step")
+        desc = _describe(plan, ids, statuses, record) | {"dry_run": False, "created": created}
         header = (f"Plan {plan.key}: created goal {ids['goal']} and {len(plan.cards)} work card(s)"
                   if created else f"Plan {plan.key}: already laid out; existing cards unchanged")
     if args.json:

@@ -3,7 +3,9 @@ or a memo; the owner may hold to-dos of their own."""
 
 from __future__ import annotations
 
+import argparse
 import re
+from contextlib import nullcontext
 
 from hermes_cli.work import ledger
 from hermes_cli.work.common import Lock, die, now
@@ -108,9 +110,9 @@ def _agent_todo(a, recs: dict):
         die(t("할 일의 --from은 주인 할 일에만 쓴다(요청한 에이전트)"))
     if not (a.done and a.check):
         die(t("할 일에는 --done \"<끝 조건>\" 과 --check \"<검사>\" 가 필요하다"))
-    if not (a.session or a.omo):
-        die(t("할 일에는 --session <맡은 주제 세션 이름> 또는 --omo <맡은 작업 id, 예: OT-ABC1031071257 | next(곧 작업이 "
-              "붙음)> 이 필요하다"))
+    if not (a.session or a.omo or any(str(link).strip().startswith("kanban:") for link in a.link or [])):
+        die(t("할 일에는 --session <맡은 주제 세션 이름>, --omo <맡은 작업 id, 예: OT-ABC1031071257 | next(곧 작업이 "
+              "붙음)> 또는 --link kanban:<작업 카드 id> 가 필요하다"))
     g = get(recs, a.goal) if a.goal else None
     if not g or g["kind"] != "목표":
         die(t("할 일에는 --goal <목표 id> 가 필요하다"))
@@ -144,22 +146,35 @@ def _record(a, kind: str, recs: dict, by: str, basis: list, parent: str, links: 
     return rec
 
 
-def cmd_add(a) -> None:
+def todo_args(*, by: str, goal: str, title: str, why: str, done: str, check: str, link: str) -> argparse.Namespace:
+    """The arguments of ``work add 할 일 --by <by> --goal <goal> --title … --why … --done … --check … --link <link>``."""
+    return argparse.Namespace(
+        kind="할 일", by=by, goal=goal, title=title, why=why, done=done, check=check, link=[link], area=None,
+        project=None, from_=None, due=None, basis=None, parent=None, session=None, omo=None, promise=False, said=None,
+        every=None, stall=None, note=None, via=None)
+
+
+def add(a, *, write: bool = True) -> dict | None:
+    """``work add`` without the output: refuses as the command does, then (``write``) appends the item and returns it.
+    ``write=False`` runs every check against the record read-only and writes nothing."""
     kind = KIND_IN.get((a.kind or "").strip())
     by = owner_or_agent(a.by)
     board = _check_args(a, kind, by)
     due = due_of(a.due, kind, board)
     links, omo_next = _links(a, by)
-    with Lock():
+    with Lock() if write else nullcontext():
         recs, _ = ledger.read_all()
         if kind == "영역":
-            return _area(a, recs, by)
+            _area(a, recs, by)
+            return None
         basis = [new_basis(q.strip(), a.said, by) for q in (a.basis or []) if q.strip()]
         parent, memo = _parent(a, kind, recs, by, basis)
         if a.why and kind != "할 일":
             die(t("--why는 할 일에만 쓴다"))
         guard_text("진행 메모", a.note)
         rec = _record(a, kind, recs, by, basis, parent, links, due)
+        if not write:
+            return rec
         if kind == "할 일" and omo_next and not any(link.startswith("omo:") for link in links):
             rec["omo_next_at"] = now()  # waits for `work link <id> omo:OT-…` (lina work run submit links it)
         if a.note:
@@ -173,5 +188,12 @@ def cmd_add(a) -> None:
     if board:
         tell(by, t("[대시보드] 주인이 맡김 {id}: {title}", id=rec["id"], title=rec["title"])
              + (t(" (마감일 {due})", due=due) if due else ""))
+    return rec
+
+
+def cmd_add(a) -> None:
+    rec = add(a)
+    if rec is None:
+        return
     print(rec["id"])
     due_hint(rec, (a.title, a.why, a.note))
