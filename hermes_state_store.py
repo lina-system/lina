@@ -507,7 +507,7 @@ class MessageStore:
     def collect_unreferenced(self, still_held: Callable[[list[str]], set[str]], *,
                              older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
         """Delete this agent's text rows no transcript row points at any more (*still_held* names the uids its
-        state.db still references) and that nobody wrote or re-used for *older_than_days* (at least
+        state.db still references), that Honcho does not hold, and that nobody wrote or re-used for *older_than_days* (at least
         MIN_COLLECT_DAYS): a snapshot or backup taken within that window restores with its text. Explicitly
         forgotten rows (``forgotten_at``) are left to the forget path. Returns the rows deleted."""
         if self._in_write():
@@ -530,6 +530,7 @@ class MessageStore:
                 # its lock until it commits), so the row stays.
                 with self._cursor() as cur:
                     cur.execute("DELETE FROM memory.messages WHERE uid = ANY(%s) AND forgotten_at IS NULL"
+                                " AND NOT memory.honcho_holds_message(message_id)"
                                 " AND observed_at < now() - make_interval(secs => %s) RETURNING uid", (doomed, seconds))
                     gone = [row[0] for row in cur.fetchall()]
                 TEXT_CACHE.drop(self.agent_id, gone)

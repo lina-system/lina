@@ -54,6 +54,13 @@ AUTOCOMMIT read sessions. It cannot UPDATE, DELETE or TRUNCATE shared text and h
 table ownership nor BYPASSRLS. The `lina_app` policy is unchanged. Keep Honcho's database
 credentials server-side; Honcho's API authorization still governs workspace access.
 
+For collection, `0002_honcho_messages.sql` grants `lina_app` only EXECUTE on
+`memory.honcho_holds_message(bigint)`, not SELECT on `ltm.message_meta`. The
+SECURITY DEFINER function has a fixed `pg_catalog` search path and a qualified metadata
+lookup; PUBLIC cannot execute it. A boolean is the smallest required access, and the function
+can return false before the `ltm` schema or table exists, since store migrations run before
+Honcho's migration job. It does not expose metadata columns or grant writes into `ltm`.
+
 ## Migrations
 
 Honcho migrates `ltm` itself. Schemas `memory`, `ctx` and `vec` belong to LINA: each
@@ -124,11 +131,18 @@ A row is never changed after it is written. Hermes writes one message several ti
 archived copy and inserts a live one, a compression child carries the tail of its parent, a prune keeps the
 original beside a shortened copy. Copies with the same text share one row; a copy whose text differs gets its
 own version row. Deleting a session deletes its `transcript_rows`, never the text: `lina store gc` (also run by the
-state.db auto-maintenance) deletes rows no transcript row of the profile points at once nobody wrote or re-used
+state.db auto-maintenance) deletes rows no transcript row of the profile points at and no Honcho metadata row holds once nobody wrote or re-used
 them for `sessions.message_text_grace_days` (30, at least 2), counting references by `text_uid`, not by session,
 and leaving `forgotten_at` rows to the forget path. `hermes backup` ZIPs and quick snapshots carry the rows their
 `state.db` references as `memory-messages.jsonl` (uid, content, content_sha256, ...); restoring one puts missing
 rows back (checked against content_sha256) before the restored `state.db` is used.
+
+Both state.db `transcript_rows` (by `text_uid`) and Honcho `ltm.message_meta` (by `message_id`)
+may hold a text row. The collection DELETE checks Honcho's hold again at deletion time,
+including Honcho-origin rows whose workspace equals a profile and agent rows reused by Honcho.
+Profile rename changes the agent and UID prefix in place, preserving `message_id` and Honcho's
+reference; profile deletion removes local placements, not shared text. Backup restore inserts
+missing text and refuses a conflicting UID payload rather than replacing an existing shared row.
 
 ### What stays in each profile's `state.db`
 
