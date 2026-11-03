@@ -114,6 +114,14 @@ def test_summary_vectors_live_in_vec_embeddings(routed, memory_store_sql):
                 conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
                              (str(node_id), "h1", array("f", [0.5] * width).tobytes()))
             conn.rollback()
+        # The store's vector column is fixed by its migrations: a vector of another type is refused too.
+        conn.execute("INSERT INTO lcm_embedding_profile(identity_hash, provider, model_name, dim, dtype) "
+                     "VALUES (?, ?, ?, ?, ?)", ("h8", "openai", "qwen3-embedding-8b", 1024, "int8"))
+        conn.commit()
+        with pytest.raises(sqlite3.IntegrityError, match="float32"):
+            conn.execute("INSERT INTO lcm_embedding_vectors(embedded_id, identity_hash, vec) VALUES(?, ?, ?)",
+                         (str(node_id), "h8", bytes(1024)))
+        conn.rollback()
         conn.execute("DELETE FROM lcm_embedding_vectors WHERE embedded_id = ? AND identity_hash = ?",
                      (str(node_id), "h1"))
         conn.commit()
