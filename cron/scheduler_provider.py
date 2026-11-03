@@ -438,6 +438,7 @@ class InProcessCronScheduler(CronScheduler):
         from cron.jobs import clear_ticker_error, record_ticker_error, record_ticker_heartbeat
         from cron.scheduler_ownership import register_ticked_homes
         from hermes_constants import get_process_hermes_home
+        from cron.external_messages import maybe_ingest
 
         logger.info("In-process cron scheduler started (interval=%ds)", interval)
 
@@ -480,6 +481,7 @@ class InProcessCronScheduler(CronScheduler):
         consecutive_failures = 0
         next_tick = time.monotonic()
         while not stop_event.is_set():
+            maybe_ingest()
             ok = False
             try:
                 if can_dispatch is not None and not can_dispatch():
@@ -541,6 +543,7 @@ class InProcessCronScheduler(CronScheduler):
         )
         from cron.jobs import clear_ticker_error, record_ticker_error, record_ticker_heartbeat
         from cron.scheduler_ownership import register_ticked_homes
+        from cron.external_messages import maybe_ingest
 
         initial_homes = _existing_profile_homes(profile_homes)
         register_ticked_homes([_profile_entry(entry)[1] for entry in initial_homes])
@@ -585,6 +588,7 @@ class InProcessCronScheduler(CronScheduler):
         consecutive_failures = 0
         next_tick = time.monotonic()
         while not stop_event.is_set():
+            maybe_ingest()
             ok = False
             _tick_error = None
             _profile_errors: dict[str, str] = {}
