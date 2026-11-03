@@ -1656,19 +1656,21 @@ def _activate_job_record(job: dict[str, Any]) -> None:
 
 
 def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
-    """Workdir -> absolute path, or None when empty. ``~`` expands; relative paths are rejected
-    (cron runs detached from any cwd); must be an existing dir now but is deliberately NOT
-    re-checked at run time (scheduler falls back with a warning). ValueError when invalid."""
-    if workdir is None:
-        return None
-    raw = str(workdir).strip()
+    """Workdir -> absolute path, or None when empty. ``~`` expands; relative paths are rejected (cron runs detached
+    from any cwd); ``desk`` / ``desk:<sub>`` stays as written and resolves through the Desk setting on every run.
+    Must be an existing dir now, not re-checked at run time (scheduler warns). ValueError when invalid."""
+    from hermes_cli.desk import is_workdir_ref, resolve_workdir
+    raw = "" if workdir is None else str(workdir).strip()
     if not raw:
         return None
+    if is_workdir_ref(raw):  # DeskError is a ValueError
+        if not Path(resolve_workdir(raw)).is_dir():
+            raise ValueError(f"Cron workdir is not a folder on the Desk: {raw}")
+        return raw
     expanded = Path(raw).expanduser()
     if not expanded.is_absolute():
-        raise ValueError(
-            f"Cron workdir must be an absolute path (got {raw!r}). "
-            f"Cron jobs run detached from any shell cwd, so relative paths are ambiguous.")
+        raise ValueError(f"Cron workdir must be an absolute path (got {raw!r}). Cron jobs run detached from any "
+                         f"shell cwd, so relative paths are ambiguous.")
     resolved = expanded.resolve()
     if not resolved.exists():
         raise ValueError(f"Cron workdir does not exist: {resolved}")
@@ -1677,9 +1679,7 @@ def _normalize_workdir(workdir: Optional[str]) -> Optional[str]:
     return str(resolved)
 
 
-def _normalize_job_optional_text(
-    value: Any, *, strip_trailing_slash: bool = False
-) -> Optional[str]:
+def _normalize_job_optional_text(value: Any, *, strip_trailing_slash: bool = False) -> Optional[str]:
     if not isinstance(value, str):
         return None
     return (value.strip().rstrip("/") if strip_trailing_slash else value.strip()) or None

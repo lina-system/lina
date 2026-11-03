@@ -760,6 +760,82 @@ def test_delivery_env_carries_only_the_given_author(monkeypatch):
     assert env["HERMES_SESSION_STALL_TIMEOUT"] == "97"
 
 
+def test_delivery_env_drops_the_kanban_card_variables(monkeypatch):
+    """A work card that ``message_agent``s must not hand its card lineage to the recipient: every
+    ``HERMES_KANBAN_*`` pin and both child markers stay out of the delivery child, unrelated vars stay."""
+    from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER
+
+    card_env = {
+        "HERMES_KANBAN_WORKSPACE": "/work/card-1",
+        "HERMES_KANBAN_BOARD": "work",
+        "HERMES_KANBAN_DB": "/work/kanban.db",
+        "HERMES_KANBAN_WORKSPACES_ROOT": "/work",
+        "HERMES_KANBAN_TASK": "card-1",
+        "HERMES_KANBAN_RUN_ID": "run-1",
+        # A pin added after this fix is a prefix match, not a name-list edit.
+        "HERMES_KANBAN_FUTURE_PIN": "1",
+        DELEGATED_CHILD_ENV_MARKER: "/work",
+        "HERMES_SUPERVISED_CHILD": "1",
+    }
+    monkeypatch.setenv("HERMES_RELAY_TEST_MARKER", "kept")
+    for name, value in card_env.items():
+        monkeypatch.setenv(name, value)
+
+    env = bot_relay.delivery_env(None)
+
+    assert env["HERMES_RELAY_TEST_MARKER"] == "kept"
+    assert [name for name in env if name.startswith("HERMES_KANBAN_")] == []
+    assert DELEGATED_CHILD_ENV_MARKER not in env
+    assert "HERMES_SUPERVISED_CHILD" not in env
+
+
+def test_message_agent_delivery_from_a_fenced_card_runs_an_unfenced_recipient_turn(tmp_path, monkeypatch):
+    """A delivery sent from a kanban work card must start an ordinary turn of the recipient, not a
+    delegated child of the card: ``kanban_path_is_fenced`` is True in the sender and False for the child."""
+    import sys
+
+    from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER, kanban_path_is_fenced
+    from tools import bot_mode_dm
+
+    repo_root = str(Path(__file__).resolve().parents[2])
+    board = tmp_path / "kanban"
+    board.mkdir()
+    db = board / "kanban.db"
+    monkeypatch.setenv("PYTHONPATH", repo_root)  # the child imports the real fence predicate
+    monkeypatch.setenv(DELEGATED_CHILD_ENV_MARKER, str(board))
+    for name, value in {
+        "HERMES_KANBAN_DB": str(db),
+        "HERMES_KANBAN_BOARD": "work",
+        "HERMES_KANBAN_TASK": "card-1",
+        "HERMES_KANBAN_WORKSPACES_ROOT": str(board / "workspaces"),
+        "HERMES_SUPERVISED_CHILD": "1",
+    }.items():
+        monkeypatch.setenv(name, value)
+    assert kanban_path_is_fenced(db), "the sending card's own board must be fenced"
+
+    dm_file = tmp_path / "message.txt"
+    dm_file.write_text("hello", encoding="utf-8")
+    observed = tmp_path / "observed.json"
+    child = tmp_path / "recipient.py"
+    child.write_text(
+        "import json, os, pathlib, sys\n"
+        "from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER, kanban_path_is_fenced\n"
+        "pathlib.Path(sys.argv[2]).write_text(json.dumps({\n"
+        "    'fenced': kanban_path_is_fenced(sys.argv[1]),\n"
+        "    'kanban_env': sorted(k for k in os.environ if k.startswith('HERMES_KANBAN_')),\n"
+        "    'marker': os.environ.get(DELEGATED_CHILD_ENV_MARKER),\n"
+        "}), encoding='utf-8')\n",
+        encoding="utf-8",
+    )
+
+    returncode = bot_mode_dm._run_delivery(
+        [sys.executable, str(child), str(db), str(observed)], str(dm_file), stdin_file=True)
+
+    assert returncode == 0
+    report = json.loads(observed.read_text(encoding="utf-8"))
+    assert report == {"fenced": False, "kanban_env": [], "marker": None}
+
+
 def test_delivery_env_under_multiplex_names_the_pinned_launch_home(tmp_path, monkeypatch):
     """A relayed DM into the launch profile spawns with the launch home and its secrets, even after a
     host mirrors another home into HERMES_HOME; a bound scope or home override still wins."""
