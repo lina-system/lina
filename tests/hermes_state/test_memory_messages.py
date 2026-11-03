@@ -216,3 +216,23 @@ def test_text_shared_by_a_branch_is_collected_once_no_session_uses_it_and_its_gr
         assert memory_store_sql("SELECT count(*) FROM memory.messages") == [(0,)]
     finally:
         db.close()
+
+
+def test_only_agent_turn_text_is_collected_by_transcript_references(tmp_path, memory_store_sql):
+    """lina#19 review: external messages (and anything else not written by a transcript) have no transcript_rows
+    placement, so the transcript is not their holder and collection leaves them to their own lifecycle."""
+    from hermes_state_store import collect_session_db_text
+
+    db = SessionDB(tmp_path / "state.db")
+    try:
+        agent = db.message_store.agent_id
+        for uid, source in ((f"agent:{agent}:orphan-turn", "agent"), ("messages:kakao:42", "messages")):
+            memory_store_sql(
+                "INSERT INTO memory.messages (uid, source, agent_id, role, content, content_sha256, observed_at)"
+                " VALUES (%s, %s, %s, 'user', 'nobody points at me', 'x', now() - interval '40 days')",
+                (uid, source, agent))
+
+        assert collect_session_db_text(db, older_than_days=30) == 1
+        assert memory_store_sql("SELECT uid FROM memory.messages") == [("messages:kakao:42",)]
+    finally:
+        db.close()

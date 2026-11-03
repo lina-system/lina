@@ -21,6 +21,7 @@ from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.filter import apply_filter
 from src.utils.formatting import ILIKE_ESCAPE_CHAR, escape_ilike_pattern
 from src.utils.types import embedding_call_purpose
+from src.vec_embeddings import cosine_distance, join_vectors
 from src.vector_store import get_external_vector_store
 
 T = TypeVar("T")
@@ -158,17 +159,15 @@ async def _semantic_search_pgvector(
     Returns:
         list of messages ordered by semantic similarity
     """
-    distance_expr = models.MessageEmbedding.embedding.cosine_distance(embedding_query)
+    distance_expr = cosine_distance(embedding_query)
 
-    stmt = (
-        select(models.Message)
-        .join(
+    stmt = join_vectors(
+        select(models.Message).join(
             models.MessageEmbedding,
             models.Message.public_id == models.MessageEmbedding.message_id,
-        )
-        .where(models.MessageEmbedding.embedding.isnot(None))
-        .where(models.MessageEmbedding.workspace_name == workspace_name)
-    )
+        ),
+        "message",
+    ).where(models.MessageEmbedding.workspace_name == workspace_name)
 
     if filters:
         internal_filters = filters.copy()
