@@ -440,13 +440,15 @@ class HonchoSessionManager(SessionAuthMixin, SessionPeersMixin, SessionContextMi
                         self._session_observation[session.honcho_session_id] = observation
             honcho_messages = []
             for m in new_messages:
+                # lina-memory's turn ids (plugins/memory/lina) ride on the message metadata when it sent the turn.
+                extra = {"metadata": m["metadata"]} if m.get("metadata") else {}
                 if m["role"] != "user":
-                    honcho_messages.append(assistant_peer.message(m["content"]))
+                    honcho_messages.append(assistant_peer.message(m["content"], **extra))
                     continue
                 author_peer_id = m.get("author_peer_id")
                 peer = (self._author_peer_for_session(honcho_session, session.honcho_session_id, author_peer_id)
                         if author_peer_id else user_peer)
-                honcho_messages.append(peer.message(m["content"]))
+                honcho_messages.append(peer.message(m["content"], **extra))
             honcho_session.add_messages(honcho_messages)
             return len(honcho_messages)
 

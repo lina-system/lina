@@ -405,8 +405,8 @@ class TestMemoryManager:
         assert legacy_provider.synced_turns == [("user", "assistant")]
 
     def test_sync_all_forwards_author_only_to_providers_that_accept_it(self):
-        """The author reaches the new-signature provider (None on a human turn). Legacy and messages-only
-        providers get the call without the keywords they cannot take."""
+        """The author reaches the new-signature provider (the human marker on a person's turn). Legacy and
+        messages-only providers get the call without the keywords they cannot take."""
         legacy = FakeMemoryProvider("legacy")
         messages_only = MessagesMemoryProvider("messages")
         author_aware = AuthorMemoryProvider("author")
@@ -422,7 +422,8 @@ class TestMemoryManager:
 
         assert legacy.synced_turns == [("user", "assistant")] * 2
         assert messages_only.synced_turns == [("user", "assistant", "s1", None), ("user", "assistant", "", None)]
-        assert author_aware.synced_turns == [("user", "assistant", author), ("user", "assistant", None)]
+        assert author_aware.synced_turns == [("user", "assistant", author),
+                                             ("user", "assistant", {"id": None, "name": None, "is_bot": False})]
 
 
     # -- Tool routing -------------------------------------------------------

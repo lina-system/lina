@@ -30,7 +30,11 @@ context: the engine instance is per agent, and its hooks (`post_llm_call` ingest
 `subagent_start`, `subagent_stop`), its `hermes-lcm-x:hermes-lcm` skill and its `lcm-x` system prompt
 section register on the home's plugin manager as one group that each new agent replaces, so a home holds
 one set however many agents it builds. LCM-X routes each hook call to the engine of that session through
-its own `engine_registry`. A forced plugin discovery (an install or enable in a running gateway) unloads every
+its own `engine_registry`. The `post_llm_call` ingest hook stays registered for every agent; for a session whose
+agent carries `lina-memory` (the default provider for new homes), the loader has the hook hand the turn to
+`lina-memory`, which routes it and hands it to the engine itself ([memory-layer.md](memory-layer.md)). Agents
+without it (`skip_memory` children, background review, the curator) keep the engine's own ingest; the subtree is
+unchanged. A forced plugin discovery (an install or enable in a running gateway) unloads every
 registration; the loader then reruns the engine's `register(ctx)` for the engines this process loaded in that
 home, so cached agents keep their hooks. The pre-rename name `context.engine: lcm` selects the bundled engine
 too; LCM-X answers to it and warns that the config should say `lcm-x` (the config is not rewritten).
