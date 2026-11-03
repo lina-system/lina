@@ -97,6 +97,28 @@ def test_crash_after_the_worker_recorded_a_placement_resumes_it_without_bidding_
     assert _rows(work, "SELECT count(*) FROM outbox WHERE done_at IS NULL") == [(0,)]
 
 
+def test_a_recovered_job_whose_publish_failed_keeps_its_recorded_placement(work, monkeypatch):
+    """Recovery of a ``new`` job: when ``place`` records the device and then fails to publish (a lost ssh reply),
+    the job stays ``placing`` for the tick to resume on that device; it is never re-queued for a second bid."""
+    from hermes_cli.worker.hub import Hub
+    from hermes_cli.worker.transport import TransportError
+    real = Hub.place
+    monkeypatch.setattr(Hub, "place", _crash)
+    with pytest.raises(RuntimeError):
+        work.run("run", "submit", "T1", "--brief", str(work.brief))
+    (run_id,) = list(_jobs(work))
+    assert _jobs(work)[run_id]["state"] == "new"
+
+    def recorded_then_lost(self, job):
+        job.update(self.store.update(job["id"], host="here", runs=1, state="placing") or {})
+        raise TransportError("the ssh reply was lost")
+    monkeypatch.setattr(Hub, "place", recorded_then_lost)
+    work.ok("list")
+    assert (_jobs(work)[run_id]["state"], _jobs(work)[run_id]["host"]) == ("placing", "here")
+    assert _rows(work, "SELECT count(*) FROM outbox WHERE done_at IS NULL") == [(0,)]
+    monkeypatch.setattr(Hub, "place", real)
+
+
 def test_a_failed_record_write_hands_nothing_to_the_worker(work, monkeypatch):
     from hermes_cli.work import store
 
