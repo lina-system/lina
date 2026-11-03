@@ -137,6 +137,44 @@ class TestAgentConfigSignature:
         )
         assert sig_a == sig_b
 
+def lookup_cached_agent(cache: dict, sig, session_key: str = "sk"):
+    """The gateway's real cache decision (``GatewaySessionAgentMixin._lookup_cached_agent``) for one session."""
+    import threading
+    from types import SimpleNamespace
+
+    from gateway.session_execution import GatewaySessionAgentMixin
+
+    owner = SimpleNamespace(
+        _ctx=SimpleNamespace(session_key=session_key, session_id=None, _interrupt_depth=0),
+        _runner=SimpleNamespace(_init_cached_agent_for_turn=lambda agent, depth: None),
+        _CachedAgentLookup=GatewaySessionAgentMixin._CachedAgentLookup,
+        _pop_cached_agent_for_eviction=lambda: cache.pop(session_key, None))
+    return GatewaySessionAgentMixin._lookup_cached_agent(owner, sig, threading.Lock(), cache, 90, None, False, None)
+
+
+def gateway_signature(user_config: dict):
+    from gateway.run import GatewayRunner
+
+    runtime = {"api_key": "k", "base_url": "u", "provider": "p"}
+    return GatewayRunner._agent_config_signature(
+        "m", runtime, [], "", cache_keys=GatewayRunner._extract_cache_busting_config(user_config))
+
+
+class TestContextEngineChangeRebuildsTheCachedAgent:
+    """``context.engine`` is baked into the agent at construction (``_select_context_engine``), like
+    ``memory.provider``: a changed selection must miss the cache, never keep an agent on the old engine (lina#15)."""
+
+    def test_switching_the_engine_misses_the_cached_agent(self):
+        from types import SimpleNamespace
+
+        cached = SimpleNamespace()
+        cache = {"sk": (cached, gateway_signature({"context": {"engine": "lcm-x"}}), None, None)}
+        assert lookup_cached_agent(cache, gateway_signature({"context": {"engine": "lcm-x"}})).agent is cached
+
+        rebuilt = lookup_cached_agent(cache, gateway_signature({"context": {"engine": "compressor"}}))
+        assert rebuilt.agent is None and not rebuilt.reused  # the caller builds a new agent and replaces the entry
+
+
 class TestExtractCacheBustingConfig:
     """Verify _extract_cache_busting_config pulls the documented subset of
     config values that must invalidate the cached agent on change."""

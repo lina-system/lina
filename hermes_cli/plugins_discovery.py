@@ -257,6 +257,18 @@ class ManifestGate:
 
 IN_BOTH_LISTS = "listed in both plugins.enabled and plugins.disabled — disabled wins"
 
+# Plugins LINA now ships in core: a user-dir copy never loads next to the bundled one.
+_BUNDLED_IN_CORE = {
+    "hermes-lcm-x": "plugins/context_engine/lcm-x",
+    "hermes-lcm": "plugins/context_engine/lcm-x",  # the pre-rename plugin name
+}
+
+
+def _bundled_in_core(manifest: PluginManifest, names: set[str]) -> Optional[str]:
+    """The bundled path of a plugin LINA ships in core, matched by key, manifest name or directory."""
+    candidates = names | ({Path(manifest.path).name} if manifest.path else set())
+    return next((_BUNDLED_IN_CORE[n] for n in sorted(candidates) if n in _BUNDLED_IN_CORE), None)
+
 
 def plugins_in_both_lists() -> list[str]:
     """Keys of the plugins the loader skips because both lists name them, by the loader's own
@@ -322,6 +334,12 @@ def gate_manifest(
             f"not enabled in config (run `hermes plugins enable {lookup_key}` to activate)", logging.DEBUG,
             "Skipping '%s' (not in plugins.enabled)",
         )
+    if manifest.source != "bundled" and (bundled := _bundled_in_core(manifest, names)):
+        # Two copies of LCM-X would both ingest every turn into the same lcm.db.
+        return _placeholder(
+            f"bundled in LINA as {bundled}", logging.WARNING,
+            "Not loading plugin '%s': LINA bundles it as %s (context.engine: lcm-x); remove this copy with "
+            "`hermes plugins remove %s`", bundled, manifest.name)
     if manifest.source != "bundled":
         # The catalog kill list is enforced at install; a plugin recalled AFTER it was installed must not keep
         # loading. Offline check (in-tree list + cached live copy), honours an explicit install-time bypass.

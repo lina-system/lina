@@ -131,6 +131,8 @@ plugins/model-providers/zai
 # can be chosen later: plugins/platforms/bluebubbles, plugins/platforms/photon and the catalog
 # entry below.
 !plugin-catalog/hermes-rustpush-imessage.yaml
+# The kill list: plugins LINA bundles in core (hermes-lcm-x) are refused from the live catalog.
+!plugin-catalog/removed.yaml
 
 # Bundled skills no agent used (#67). Mail, meeting and inbox skills come back from upstream
 # with M6; requesting-code-review is folded into skills/software-development/code-review.
