@@ -135,7 +135,7 @@ class _SpoolReader:
         return ExternalBatch(tuple(messages), lines, offset, self.digest.hexdigest())
 
 
-def ingest(spool: Path | None = None) -> IngestResult:
+def ingest(spool: Path | None = None, *, cursor_key: str | None = None) -> IngestResult:
     """Consume complete lines under the collector's shared lock; never write beside the spool."""
     path = spool if spool is not None else configured_spool()
     if path is None:
@@ -148,7 +148,7 @@ def ingest(spool: Path | None = None) -> IngestResult:
         fcntl.flock(stream.fileno(), fcntl.LOCK_SH)
         reader = _SpoolReader(stream)
         while True:
-            batch, added = ingest_external_batch(str(path), reader.read_batch)
+            batch, added = ingest_external_batch(cursor_key or str(path), reader.read_batch)
             lines += batch.lines
             inserted += added
             offset = batch.offset
