@@ -105,3 +105,12 @@ def test_a_late_end_of_an_earlier_run_does_not_end_the_current_run(lane):
     assert (job["state"], job["runs"]) == ("running", 2)
     assert "done:1" in job["notified"]
     assert not list(hub.store.notices.glob(f"{task_id}-*"))
+
+
+@pytest.mark.parametrize("kind, run", [("cancelled", "0"), ("unknown", "x")])
+def test_task_level_notices_still_end_the_task(lane, kind, run):
+    """A cancel before any run started and an unreachable device are about the task, not a run: they always apply."""
+    task_id = _submit(lane)
+    hub = lane["hub"]
+    assert hub.notify(task_id, kind, run) != "earlier run"
+    assert hub.store.load(task_id)["state"] == kind
