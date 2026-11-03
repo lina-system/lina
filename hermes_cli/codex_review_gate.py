@@ -63,6 +63,7 @@ DEV_APPROVED_LABEL = "dev-red-approved"
 RED = frozenset({"failure", "cancelled", "timed_out", "action_required", "startup_failure"})
 GATE_JOB = "Set merge gate statuses"
 DESCRIPTION_LIMIT = 140  # GitHub rejects longer commit status descriptions
+GH_TIMEOUT_S = 120  # one gh api call; the workflow job itself is capped at 10 minutes
 
 _BADGE = re.compile(r"!\[P([0-3]) Badge\]")
 _TITLE = re.compile(r"!\[P[0-3] Badge\][^\n]*?(?:</sub>)+\s*(.+?)\s*\*\*")
@@ -241,7 +242,8 @@ def queue_pull_request(head_ref: str) -> int:
 
 
 def _gh(*args: str) -> str:
-    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True).stdout
+    return subprocess.run(["gh", *args], check=True, capture_output=True, text=True, encoding="utf-8",
+                          timeout=GH_TIMEOUT_S).stdout
 
 
 def gh_json(path: str) -> Any:
