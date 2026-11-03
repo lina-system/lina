@@ -349,7 +349,7 @@ def _messages_target(masked: str) -> str:
 def _fts_aliases(masked: str) -> dict[str, str]:
     """FTS view name → the alias it has in this statement (or its own name)."""
     aliases = {}
-    stop = r"(?!(?:WHERE|JOIN|ON|CROSS|LEFT|INNER|ORDER|GROUP|LIMIT|USING|AND|OR|SET|NATURAL)\b)"
+    stop = r"(?!(?:WHERE|JOIN|ON|CROSS|LEFT|INNER|ORDER|GROUP|LIMIT|USING|AND|OR|SET|NATURAL|MATCH)\b)"
     for name in _FTS_COLUMNS:
         m = re.search(rf"\b{name}\s+(?:AS\s+)?{stop}([A-Za-z_]\w*)", masked, re.IGNORECASE)
         aliases[name] = m.group(1) if m else name
