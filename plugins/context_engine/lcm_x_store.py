@@ -1056,7 +1056,8 @@ class PgConnection:
             name = stmt.split()[-1].lower()
             self._raw(stmt)
             if name in self._savepoints:
-                del self._savepoints[self._savepoints.index(name):]
+                # SQLite releases the most recent savepoint of that name (they nest under one name).
+                del self._savepoints[len(self._savepoints) - 1 - self._savepoints[::-1].index(name):]
             if self._tx_from_savepoint and not self._savepoints:
                 self.commit()
         else:

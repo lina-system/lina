@@ -189,6 +189,24 @@ BEGIN
         END IF;
     END LOOP;
 END $$;
+-- Ordering a TEXT column against a number: SQLite gives the number the column's text affinity and compares text.
+DO $$
+DECLARE
+    t text;
+    op record;
+BEGIN
+    FOREACH t IN ARRAY ARRAY['bigint', 'integer', 'double precision'] LOOP
+        FOR op IN SELECT * FROM (VALUES ('<', 'lt'), ('<=', 'le'), ('>', 'gt'), ('>=', 'ge')) AS v(sym, name) LOOP
+            EXECUTE format('CREATE OR REPLACE FUNCTION ctx.text_%1$s_num(a text, b %2$s) RETURNS boolean LANGUAGE sql '
+                           'IMMUTABLE AS $f$ SELECT a %3$s b::text $f$', op.name, t, op.sym);
+            IF NOT EXISTS (SELECT 1 FROM pg_operator WHERE oprname = op.sym AND oprnamespace = 'ctx'::regnamespace
+                           AND oprleft = 'text'::regtype AND oprright = t::regtype) THEN
+                EXECUTE format('CREATE OPERATOR ctx.%1$s (LEFTARG = text, RIGHTARG = %2$s, FUNCTION = ctx.text_%3$s_num)',
+                               op.sym, t, op.name);
+            END IF;
+        END LOOP;
+    END LOOP;
+END $$;
 CREATE OR REPLACE FUNCTION ctx.lcm_raise(message text) RETURNS void
     LANGUAGE plpgsql AS $$
 BEGIN
