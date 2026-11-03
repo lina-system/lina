@@ -35,7 +35,7 @@ def _check_args(a, kind: str, by: str) -> bool:
         die(t("종류는 영역|목표|할일|메모 (이슈는 work link로 붙인다)"))
     if by == owner() and kind != "할 일":
         die(t("주인은 할 일만 맡는다(work add 할 일 --by {owner} --from <요청한 에이전트>)", owner=owner()))
-    board = a.via == "board"
+    board = bool(a.via)
     if board and (kind != "메모" or by == owner()):
         die(t("--via board는 에이전트에게 맡기는 메모에만 쓴다"))
     if a.check:
@@ -180,7 +180,7 @@ def add(a, *, write: bool = True) -> dict | None:
         if a.note:
             rec["notes"].append({"ts": now(), "by": rec.get("from", by), "text": a.note})
         if board:
-            rec["from"] = owner()
+            rec["from"], rec["via"] = owner(), a.via
         ledger.append(rec, "add", by)
         if memo:
             ledger.append(memo, "done", by, state="done", done_at=now(), done_by=t("목표 {id}로 올림", id=rec["id"]),

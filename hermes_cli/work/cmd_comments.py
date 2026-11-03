@@ -43,6 +43,8 @@ def cmd_comment(a) -> None:
         n = 1 + max([int(c["cid"][1:]) for c in r["comments"] if re.fullmatch(r"c\d+", c.get("cid", ""))] or [0])
         cid = f"c{n}"
         row = {"cid": cid, "by": by, "at": now(), "text": text, "status": "open", "replies": []}
+        if a.via:
+            row["via"] = a.via
         if a.answer:
             if not r.get("decide"):
                 die(t("{id}에 주인이 정할 것이 없다", id=r["id"]))
@@ -127,7 +129,7 @@ def cmd_owner_done(a) -> None:
             die(t("{id}에 열린 할 일이 남아 있어 완료로 표시하지 않았다: {kids} — 함께 닫으려면 --with-open", id=r["id"],
                   kids=", ".join(f"{x['id']} {item_name(x)}" for x in kids)))
         at = now()
-        where = t("대시보드에서 ") if a.via == "board" else ""
+        where = t("대시보드에서 ") if a.via else ""
         ev = t("{where}주인이 완료로 표시함 ({when})", where=where, when=time.strftime("%m-%d %H:%M", time.localtime(at)))
         done_by = t("확인({who})", who=name(owner()))
         # The open to-dos close first on the same evidence; the goal's mark names them so one undo reopens all.
@@ -162,12 +164,13 @@ def owner_prev(r: dict, mark: dict) -> dict:
     return prev
 
 
-def _undo_marks(recs: dict, r: dict, mark: dict):
+def _undo_marks(recs: dict, r: dict, mark: dict, via: str):
     # To-dos closed with the goal reopen with it, each only while its last record is still that same mark.
     kids = [recs[kid] for kid in mark.get("with") or [] if kid in recs and recs[kid].get("op") == "owner_done"
             and (recs[kid].get("owner_done") or {}).get("at") == mark["at"]]
     for row, prev in [(x, owner_prev(x, x["owner_done"])) for x in kids] + [(r, owner_prev(r, mark))]:
-        ledger.append(dict(prev, rev=row.get("rev", 0)), "owner_undo", owner())
+        ledger.append(dict(prev, rev=row.get("rev", 0)), "owner_undo", owner(),
+                      owner_undo={"at": now(), "via": via})
     # Waits this mark released come back, each only while its last record is still that release.
     undone = {x["id"] for x in kids + [r]}
     back = [w for w in recs.values() if w.get("op") == "wait_release" and w.get("state") == "open"
@@ -188,7 +191,7 @@ def cmd_owner_undo(a) -> None:
             die(t("{id}의 마지막 기록이 주인의 완료 표시가 아니다", id=r["id"]))
         if now() - int(mark["at"]) > OWNER_UNDO_LIMIT:
             die(t("완료 표시 뒤 10분이 지나 되돌리지 않았다 ({ago} 전). 다시 열려면 work reopen", ago=ago(mark["at"])))
-        kids, back = _undo_marks(recs, r, mark)
+        kids, back = _undo_marks(recs, r, mark, a.via or "")
     also = t(" (함께 닫은 할 일 {n}개도)", n=len(kids)) if kids else ""
     if r.get("by") == owner():
         for w in back:
