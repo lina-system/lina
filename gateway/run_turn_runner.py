@@ -903,6 +903,8 @@ class TurnRunner(GatewayTurnProgressMixin, GatewaySessionAgentMixin):
             persist_override = clean_text
             ctx.message = api_text
         self._prepend_pending_note("_pending_model_notes")
+        from gateway.app_talk_carry import carry_into_dm_turn
+        ctx.message = carry_into_dm_turn(self._runner, ctx.source, ctx.message)  # lina#167: what the app said
         # Auto-continue: history ending with a tool result means the previous turn was cut off
         # (restart, crash, SIGTERM). Session-level resume_pending (drain-timeout shutdown) uses
         # stronger reason-aware wording that subsumes this case. Both gate on the age of
