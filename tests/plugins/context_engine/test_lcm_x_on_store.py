@@ -13,7 +13,7 @@ from pathlib import Path
 import pytest
 
 import hermes_state_store
-from plugins.context_engine import lcm_x_store
+from plugins.context_engine import lcm_x_store, lcm_x_store_fts
 
 PLUGIN = Path(__file__).resolve().parents[3] / "plugins" / "context_engine" / "lcm-x"
 PACKAGE = "lina_lcm_x_on_store"
@@ -203,6 +203,29 @@ def test_entity_names_fold_case_as_python_does(routed, tmp_path):
         engine.shutdown()
 
 
+@pytest.mark.parametrize("query", [
+    "alpha OR", "alpha OR beta", "NOT alpha", "alpha NOT beta", '"alpha beta', "(alpha", "part-42", "api:v2",
+    "alpha (beta OR gamma)", "alpha AND (beta OR gamma)", "content:alpha", "NEAR(a b, 3)", "NEAR(a, b)",
+    "*abc", "a+", "a,b", "회의 계획", "", "x* ( a:b AND", 'content: ( x-y {x}: OR',
+])
+def test_a_match_query_fts5_refuses_raises_as_fts5_does(query):
+    """LCM-X retries or falls back to LIKE on FTS5's MATCH errors: the store raises the same kind of error for the
+    same query (a syntax error, an unterminated string, an unknown column, a special query), or none."""
+    def outcome(check):
+        try:
+            check()
+        except sqlite3.OperationalError as exc:
+            return str(exc).split(" near ")[0]
+        return None
+    sqlite_fts = sqlite3.connect(":memory:")
+    sqlite_fts.execute("CREATE VIRTUAL TABLE f USING fts5(content)")
+    try:
+        expected = outcome(lambda: sqlite_fts.execute("SELECT * FROM f WHERE f MATCH ?", (query,)).fetchall())
+    finally:
+        sqlite_fts.close()
+    assert outcome(lambda: lcm_x_store_fts.fts5_check(query)) == expected
+
+
 def test_doctor_lists_the_tables_the_ctx_schema_has(routed, tmp_path, memory_store_sql):
     """On the store /lcm doctor reports the tables Postgres has in schema ctx (as Postgres's catalog lists them),
     no missing required table, and the database as present though no lcm.db file exists."""
@@ -250,7 +273,7 @@ def test_one_store_connection_serves_many_threads_and_closes_cleanly(routed):
                     busy.set()
         except sqlite3.ProgrammingError:
             pass  # the connection was closed under this thread: what SQLite raises too
-        except BaseException as exc:  # noqa: BLE001 - every other error is the failure under test
+        except BaseException as exc:  # every other error is the failure under test
             errors.append(exc)
 
     threads = [threading.Thread(target=work, args=(i,)) for i in range(8)]

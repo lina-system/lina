@@ -31,6 +31,8 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
+from plugins.context_engine.lcm_x_store_fts import tsquery_sql
+
 logger = logging.getLogger(__name__)
 
 _ROUTES: dict[str, str] = {}
@@ -167,7 +169,7 @@ _MESSAGE_INSERT = re.compile(r"^\s*INSERT\s+(?:OR\s+(\w+)\s+)?INTO\s+messages\s*
 @dataclass(frozen=True)
 class Template:
     """A translated statement: SQL parts with parameter slots filled per execute."""
-    parts: tuple  # str, or ("param", index) / ("match" | "rank" | "snippet", index, alias, text search config)
+    parts: tuple  # str, or ("param", index) / ("match" | "rank" | "snippet", index, alias, FTS table)
     kind: str = "sql"  # sql | skip | control | pragma | message_insert | message_content_update
     returning: Optional[str] = None
     detail: tuple = ()
@@ -448,12 +450,10 @@ def _fts_parts(masked: str) -> list:
     if not matches:
         return [masked]
     first_slot = int(matches[0][0].group(2))
-    # The stem view is FTS5's porter tokenizer: its queries parse with the same stemming configuration (0007).
-    stemmed = {alias for table, alias in aliases.items()
-               if table == "messages_fts_stem" and re.search(r"\bmessages_fts_stem\b", masked, re.IGNORECASE)}
+    tables = {alias: table for table, alias in aliases.items() if re.search(rf"\b{table}\b", masked, re.IGNORECASE)}
 
     def slot(kind: str, index: int, alias: str) -> tuple:
-        return (kind, index, alias, "ctx.lcm_porter" if alias in stemmed else "simple")
+        return (kind, index, alias, tables.get(alias, alias))
     marks = []
     for m, alias in matches:
         marks.append((m.start(), m.end(), slot("match", int(m.group(2)), alias)))
@@ -611,53 +611,11 @@ def translate(sql: str, catalog: Catalog) -> Template:
     return _translate_cached(sql, catalog.key)
 
 
-# ── full text: an FTS5 query value → a tsquery expression ──
-
-_CJK = re.compile(r"[\u3040-\u30ff\u3400-\u4dbf\u4e00-\u9fff\uac00-\ud7af\uff00-\uffef]")
-_QUERY_TOKEN = re.compile(r'"[^"]*"|\(|\)|[^\s()"]+')
-
-
-def _fts_terms(query: str) -> list[tuple[str, str]]:
-    """``(op, term)`` pairs: op ``and``/``or``/``not`` joining the term to what came before."""
-    tokens = _QUERY_TOKEN.findall(query or "")
-    out: list[tuple[str, str]] = []
-    op = "and"
-    for tok in tokens:
-        if tok in ("AND", "(", ")"):
-            continue
-        if tok in ("OR", "NOT"):
-            op = tok.lower()
-            continue
-        if tok.startswith("NEAR"):
-            continue
-        out.append((op, tok))
-        op = "and"
-    return out
-
-
-def tsquery_sql(query: str, config: str = "simple") -> tuple[str, list[Any]]:
-    """A Postgres tsquery expression (the text search *config*uration) for an FTS5 query, and its parameters."""
-    sql, params = "", []
-    cfg = f"'{config}'::regconfig"
-    for op, term in _fts_terms(query):
-        if term.startswith('"'):
-            piece, value = f"phraseto_tsquery({cfg}, %s)", term.strip('"')
-        elif term.endswith("*") and len(term) > 1:
-            lexeme = term[:-1].lower().replace("'", "''").replace("\\", "\\\\")
-            piece, value = f"to_tsquery({cfg}, %s)", f"'{lexeme}':*"
-        else:
-            piece, value = f"plainto_tsquery({cfg}, %s)", term
-        if not sql:
-            sql = piece if op != "not" else f"!!{piece}"
-        else:
-            sql = f"({sql}) {'||' if op == 'or' else '&&'} {'!!' if op == 'not' else ''}{piece}"
-        params.append(value)
-    return (sql or "plainto_tsquery('simple', '')"), params
-
-
 def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
-    kind, index, alias, config = slot
-    tsq, params = tsquery_sql(str(args[index]), config)
+    kind, index, alias, table = slot
+    # The stem view is FTS5's porter tokenizer: its queries parse with the same stemming configuration (0007).
+    config = "ctx.lcm_porter" if table == "messages_fts_stem" else "simple"
+    tsq, params = tsquery_sql(str(args[index]), config, (_FTS_COLUMNS.get(table, "content"),))
     if kind == "match":
         return f"({alias}.tsv @@ ({tsq}))", params
     if kind == "rank":
