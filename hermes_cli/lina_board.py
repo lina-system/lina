@@ -185,7 +185,13 @@ def board(now: float | None = None) -> dict:
                   "mine": [{k: row[k] for k in ("id", "title", "waiting", "due", "agent")} for row in (work or {}).get("mine", [])]},
         "due": work["due"] if work else {name: [] for name in ("overdue", "today", "week", "later")},
         "notices": lines or [], "machines": machines or [], "quota": services or [],
+        "writer": _writer(now),
     }
+
+
+def _writer(now: float) -> dict:
+    from hermes_cli.lina_board_plain import writer_state
+    return writer_state(now=now)
 
 
 def _notices_in_locale(root: Path, work: dict | None, review: list[dict]) -> list[dict]:

@@ -385,9 +385,29 @@ components:
           additionalProperties:
             type: integer
             minimum: 0
+    PlainLines:
+      type: object
+      additionalProperties: false
+      description: >
+        Checked model-written lines (lina#151). A field that failed its check, or was never written, is null; the
+        raw source text is never served in its place.
+      required: [title, now, result]
+      properties:
+        title:
+          type: string
+          nullable: true
+          maxLength: 25
+        now:
+          type: string
+          nullable: true
+          maxLength: 60
+        result:
+          type: string
+          nullable: true
+          maxLength: 80
     RunCard:
       type: object
-      required: [id, title, state, reason, agent, kind, todo, host, startedAt, endedAt, now]
+      required: [id, title, state, reason, agent, kind, todo, host, startedAt, endedAt, now, plain]
       properties:
         id:
           type: string
@@ -425,6 +445,8 @@ components:
           type: string
           nullable: true
           description: What the run does now, from the runner's live state (at most 120 characters).
+        plain:
+          $ref: "#/components/schemas/PlainLines"
     ItemRow:
       type: object
       required: [id, kind, title, due, agent]
@@ -645,7 +667,7 @@ components:
             $ref: "#/components/schemas/QuotaAccount"
     BoardSnapshot:
       type: object
-      required: [version, at, errors, counts, cards, inbox, due, notices, machines, quota]
+      required: [version, at, errors, counts, cards, inbox, due, notices, machines, quota, writer]
       properties:
         version:
           type: integer
@@ -675,6 +697,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaService"
+        writer:
+          type: object
+          additionalProperties: false
+          description: >
+            The writer of the checked lines (lina#151). never = it has not run yet; stopped = its calls failed, or
+            work was left to write and nothing succeeded for 30 minutes (the app says the summaries stopped).
+          required: [state, lastSuccessAt, stoppedSince]
+          properties:
+            state:
+              type: string
+              enum: [ok, stopped, never]
+            lastSuccessAt:
+              type: integer
+              nullable: true
+            stoppedSince:
+              type: integer
+              nullable: true
     DueView:
       type: object
       required: [version, at, errors, today, count, due]
