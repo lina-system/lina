@@ -254,7 +254,7 @@ _TYPES = {"INTEGER": "bigint", "INT": "bigint", "REAL": "double precision", "BLO
 _CREATE_TABLE = re.compile(r"\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s*\((.*)\)\s*;?\s*$",
                            re.IGNORECASE | re.DOTALL)
 _CREATE_TRIGGER = re.compile(
-    r"\s*CREATE\s+TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s+(BEFORE|AFTER)\s+"
+    r"\s*CREATE\s+(?:TEMP(?:ORARY)?\s+)?TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s+(BEFORE|AFTER)\s+"
     r"(INSERT|DELETE|UPDATE(?:\s+OF\s+[\w\s,]+?)?)\s+ON\s+[\"`]?(\w+)[\"`]?\s+(?:FOR\s+EACH\s+ROW\s+)?"
     r"(?:WHEN\s+(.*?)\s+)?BEGIN\s+(.*?)\s*END\s*;?\s*$", re.IGNORECASE | re.DOTALL)
 _DROP_TABLE = re.compile(r"\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s*;?\s*$", re.IGNORECASE)
@@ -267,6 +267,7 @@ class _TestSchema:
 
     def __init__(self, store) -> None:
         self._store, self._tables, self._triggers = store, [], []
+        self._run("GRANT CREATE ON SCHEMA public TO lina_app; GRANT TRIGGER ON ALL TABLES IN SCHEMA ctx TO lina_app")
 
     def _run(self, sql: str) -> None:
         import psycopg
@@ -285,8 +286,10 @@ class _TestSchema:
         if table and not catalog.columns(table.group(1)) and table.group(1).lower() != "sqlite_sequence":
             self._create_table(table.group(1), table.group(2))
         trigger = _CREATE_TRIGGER.match(sql)
-        if trigger and any(re.search(rf"\b{name}\b", trigger.group(6), re.IGNORECASE) for name in self._tables):
-            self._create_trigger(trigger, catalog)
+        # A test's trigger on a table is emulated on the store's table; one that maintains an FTS5 table is FTS5's own
+        # machinery (the store's FTS tables are views over the rows) and is left out.
+        if trigger and not re.search(r"\w+_fts\w*\b", trigger.group(6), re.IGNORECASE):
+            self._create_trigger(trigger, catalog, connection)
         dropped = _DROP_TABLE.match(sql)
         if dropped and dropped.group(1) in self._tables:
             self._run(f'DROP TABLE IF EXISTS public."{dropped.group(1)}" CASCADE')
@@ -307,7 +310,7 @@ class _TestSchema:
                   f'rowid bigint GENERATED ALWAYS AS IDENTITY); GRANT ALL ON public."{name}" TO lina_app')
         self._tables.append(name)
 
-    def _create_trigger(self, trigger, catalog) -> None:
+    def _create_trigger(self, trigger, catalog, connection) -> None:
         from plugins.context_engine import lcm_x_store
         name, when, event, table, condition, body = trigger.groups()
         target = "ctx.lcm_messages" if table.lower() == "messages" else f"ctx.{table}"
@@ -317,9 +320,9 @@ class _TestSchema:
             statements.append(text.rstrip(";") + ";")
         returned = "NULL" if when.upper() == "AFTER" else ("OLD" if event.upper() == "DELETE" else "NEW")
         function = f'public."lcm_test_{name}"'
-        self._run(f"CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $lcm$ BEGIN "
-                  f"IF {condition or 'TRUE'} THEN {' '.join(statements)} END IF; RETURN {returned}; END $lcm$; "
-                  f'CREATE TRIGGER "{name}" {when} {event} ON {target} FOR EACH ROW EXECUTE FUNCTION {function}()')
+        connection._pg.execute(f"CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $lcm$ BEGIN "
+                               f"IF {condition or 'TRUE'} THEN {' '.join(statements)} END IF; RETURN {returned}; END $lcm$; "
+                               f'CREATE TRIGGER "{name}" {when} {event} ON {target} FOR EACH ROW EXECUTE FUNCTION {function}()')
         self._triggers.append((name, target, function))
 
     def drop(self) -> None:

@@ -268,7 +268,32 @@ def _recursive_limit(masked: str) -> str:
 def _apply_rewrites(masked: str) -> str:
     for pattern, repl in _REWRITES:
         masked = pattern.sub(repl, masked)
-    return _mixed_json_arrays(masked)
+    return _json_sets(_mixed_json_arrays(masked))
+
+
+def _json_sets(masked: str) -> str:
+    """Preserve JSON-valued arguments and SQLite's repeated json_set path/value pairs."""
+    out, pos = [], 0
+    for m in re.finditer(r"\bctx\.json_set\(", masked):
+        if m.start() < pos:
+            continue
+        depth, end = 1, m.end()
+        while end < len(masked) and depth:
+            depth += {"(": 1, ")": -1}.get(masked[end], 0)
+            end += 1
+        if depth:
+            continue
+        args = _split_masked_commas(_json_sets(masked[m.end():end - 1]))
+        value = args[0]
+        for path, item in zip(args[1::2], args[2::2]):
+            json_value = re.fullmatch(r"\s*ctx\.json\((.*)\)\s*", item, re.DOTALL)
+            item = f"({json_value.group(1)})::jsonb" if json_value else f"to_jsonb({item})"
+            value = (f"jsonb_set(({value})::jsonb, string_to_array(ltrim(ltrim({path}, '$'), '.'), '.'), "
+                     f"{item}, true)")
+        out.append(masked[pos:m.start()] + f"({value})::text")
+        pos = end
+    out.append(masked[pos:])
+    return "".join(out)
 
 
 def _mixed_json_arrays(masked: str) -> str:
@@ -469,8 +494,8 @@ def _messages_target(masked: str) -> str:
         return (f"{head.group(1)}ctx.lcm_messages AS lcm_target{head.group(2)}WHERE lcm_target.agent_id = "
                 f"public.lina_current_agent() AND lcm_target.store_id IN (SELECT messages.store_id FROM messages "
                 f"WHERE{head.group(3)}){head.group(4) or ''}")
-    masked = re.sub(r"^(\s*UPDATE\s+)messages\b", r"\1ctx.lcm_messages", masked, flags=re.IGNORECASE)
-    return re.sub(r"^(\s*DELETE\s+FROM\s+)messages\b", r"\1ctx.lcm_messages", masked, flags=re.IGNORECASE)
+    masked = re.sub(r"^(\s*UPDATE\s+)messages\b", r"\1ctx.lcm_messages AS messages", masked, flags=re.IGNORECASE)
+    return re.sub(r"^(\s*DELETE\s+FROM\s+)messages\b", r"\1ctx.lcm_messages AS messages", masked, flags=re.IGNORECASE)
 
 
 def _fts_aliases(masked: str) -> dict[str, str]:
@@ -493,6 +518,35 @@ def _snippet_args(text: str, literals: list[str]) -> tuple[str, str, str, int]:
     return args[1], args[2], args[3], max(1, min(int(args[4]), 64))
 
 
+def _fts_tie_order(masked: str, alias: str, start: int) -> str:
+    """An FTS5 MATCH scan yields rows in rowid order and SQLite's sorter keeps that order among equal sort keys; the
+    store sorts ties arbitrarily. The first ORDER BY after the MATCH, at its depth, gets ``alias.rowid`` last."""
+    depth, i, n = 0, start, len(masked)
+    while i < n:
+        c = masked[i]
+        if c == "(":
+            depth += 1
+        elif c == ")":
+            if depth == 0:
+                return masked
+            depth -= 1
+        elif depth == 0 and masked.startswith("ORDER", i) and re.match(r"ORDER\s+BY\b", masked[i:], re.IGNORECASE):
+            j, d = i, 0
+            while j < n:
+                if masked[j] == "(":
+                    d += 1
+                elif masked[j] == ")":
+                    if d == 0:
+                        break
+                    d -= 1
+                elif d == 0 and re.match(r"\s(LIMIT|OFFSET)\b", masked[j:], re.IGNORECASE):
+                    break
+                j += 1
+            return masked[:j].rstrip() + f", {alias}.rowid" + masked[j:]
+        i += 1
+    return masked
+
+
 def _fts_parts(masked: str, literals: list[str]) -> list:
     """Split *masked* into text and FTS slots: ``x MATCH ?``, bare ``rank``, ``bm25(x)``, ``snippet(x, ...)``."""
     if not re.search(r"\bMATCH\b", masked, re.IGNORECASE):
@@ -507,6 +561,10 @@ def _fts_parts(masked: str, literals: list[str]) -> list:
         index = int(m.group(3))
         return int(index) if m.group(2) == "\x01" else literals[index][1:-1].replace("''", "'").replace("%%", "%")
 
+    for m, alias in reversed(matches):
+        masked = _fts_tie_order(masked, alias, m.end())
+    matches = [(m, aliases.get(m.group(1), m.group(1))) for m in re.finditer(
+        r"\b(\w+)(?:\.\w+)?\s+MATCH\s+([\x00\x01])(\d+)\2", masked, re.IGNORECASE) if m.group(1) in known]
     first_slot = query_slot(matches[0][0])
     tables = {alias: table for table, alias in aliases.items() if re.search(rf"\b{table}\b", masked, re.IGNORECASE)}
 
@@ -1118,6 +1176,7 @@ class PgConnection:
         self._trace: Optional[Callable[[str], None]] = None
         self._text = _TextLink(agent_id)
         self._closed = False
+        self._busy_timeout = max(int(float(timeout) * 1000), 1)
 
     # sqlite3.Connection surface
     @property
@@ -1260,6 +1319,8 @@ class PgConnection:
         self._writer = False
         self._savepoints = []
         self._tx_from_savepoint = False
+        if not self._pg.closed:
+            self._raw("SELECT set_config('lock_timeout', %s, false)", [f"{max(self._busy_timeout, 1)}ms"])
 
     def _scope_v1(self) -> bool:
         """Whether LCM-X's scope_v1 migration has run for this agent; once it has, it stays run."""
@@ -1299,7 +1360,8 @@ class PgConnection:
 
     def _write_lock(self) -> None:
         if not self._writer:
-            self._raw("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", ["lcm-x write:" + self.agent_id])
+            self._statement(self.cursor(), "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                            ["lcm-x write:" + self.agent_id], None)
             self._writer = True
 
     def _begin(self, *, traced: bool = True) -> None:
@@ -1447,11 +1509,11 @@ class PgConnection:
         if value is not None:
             if name == "busy_timeout":  # SQLite's busy timeout is the store's lock_timeout (0 = do not wait)
                 self._raw("SELECT set_config('lock_timeout', %s, false)", [f"{max(int(value.strip()), 1)}ms"])
+                self._busy_timeout = int(value.strip())
             cur._set_result(None, [], -1, None)
             return
         if name == "busy_timeout":
-            self._statement(cur, "SELECT (extract(epoch FROM current_setting('lock_timeout')::interval) * 1000)::bigint "
-                                 "AS busy_timeout", [], None)
+            cur._set_result([("busy_timeout",)], [(self._busy_timeout,)], -1, None)
             return
         if name in ("table_info", "table_xinfo"):
             self._statement(cur, "SELECT * FROM ctx.pragma_table_info(%s)", [arg], None)
