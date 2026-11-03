@@ -13,6 +13,7 @@ import hashlib
 import importlib.util
 import json
 import os
+import re
 import sqlite3
 import sys
 import threading
@@ -89,7 +90,11 @@ def _lcm_x_on_store(monkeypatch):
     monkeypatch.setattr(sqlite3, "connect", connect)
     monkeypatch.setattr(lcm_x_store, "backend_for", _carry_seeded_file(lcm_x_store, original_connect, lambda: connect))
     monkeypatch.setattr(lcm_x_store, "_vector_text", _widened_vector_text(lcm_x_store._vector_text))
+    schema = _TestSchema(store)
+    monkeypatch.setattr(lcm_x_store.PgConnection, "_ddl",
+                        lambda connection, cur, template, params: schema.handle(connection, cur, template, params))
     yield
+    schema.drop()
     lcm_x_store.route_every_database(None)
     hermes_state_store.TEXT_CACHE.clear()
     _drop_leftover_connections(store)
@@ -226,6 +231,84 @@ def _bridged(factory: type, store):
         return _BRIDGES[factory]()
     finally:
         _StoreConnection._opening.store = None
+
+
+_TYPES = {"INTEGER": "bigint", "INT": "bigint", "REAL": "double precision", "BLOB": "bytea", "TEXT": "text",
+          "NUMERIC": "numeric"}
+_CREATE_TABLE = re.compile(r"\s*CREATE\s+TABLE\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s*\((.*)\)\s*;?\s*$",
+                           re.IGNORECASE | re.DOTALL)
+_CREATE_TRIGGER = re.compile(
+    r"\s*CREATE\s+TRIGGER\s+(?:IF\s+NOT\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s+(BEFORE|AFTER)\s+"
+    r"(INSERT|DELETE|UPDATE(?:\s+OF\s+[\w\s,]+?)?)\s+ON\s+[\"`]?(\w+)[\"`]?\s+(?:FOR\s+EACH\s+ROW\s+)?"
+    r"(?:WHEN\s+(.*?)\s+)?BEGIN\s+(.*?)\s*END\s*;?\s*$", re.IGNORECASE | re.DOTALL)
+_DROP_TABLE = re.compile(r"\s*DROP\s+TABLE\s+(?:IF\s+EXISTS\s+)?[\"`]?(\w+)[\"`]?\s*;?\s*$", re.IGNORECASE)
+
+
+class _TestSchema:
+    """A test's own tables and triggers (a trace table and a trigger that fills it, say): LCM-X's schema is the
+    store's migrations, but what a test adds for itself is created in the test database's ``public`` schema (its
+    SQLite triggers as PL/pgSQL) and dropped when the test ends."""
+
+    def __init__(self, store) -> None:
+        self._store, self._tables, self._triggers = store, [], []
+
+    def _run(self, sql: str) -> None:
+        import psycopg
+        with psycopg.connect(self._store.superuser_dsn(), autocommit=True) as conn:
+            conn.execute("SET lock_timeout = '10s'")
+            conn.execute(sql)
+
+    def handle(self, connection, cur, template, params) -> None:
+        from plugins.context_engine import lcm_x_store
+        sql = template.parts[0]
+        catalog = connection._catalog
+        table = _CREATE_TABLE.match(sql)
+        if table and not catalog.columns(table.group(1)) and table.group(1).lower() != "sqlite_sequence":
+            self._create_table(table.group(1), table.group(2))
+        trigger = _CREATE_TRIGGER.match(sql)
+        if trigger and any(re.search(rf"\b{name}\b", trigger.group(6), re.IGNORECASE) for name in self._tables):
+            self._create_trigger(trigger, catalog)
+        dropped = _DROP_TABLE.match(sql)
+        if dropped and dropped.group(1) in self._tables:
+            self._run(f'DROP TABLE IF EXISTS public."{dropped.group(1)}" CASCADE')
+            self._tables.remove(dropped.group(1))
+        cur._set_result(None, [], -1, None)
+
+    def _create_table(self, name: str, body: str) -> None:
+        from plugins.context_engine import lcm_x_store
+        columns = []
+        for column in lcm_x_store._split_top_level(body):
+            words = column.split()
+            if len(words) == 1 or words[1].upper() in ("PRIMARY", "REFERENCES", "NOT", "UNIQUE", "DEFAULT", "CHECK"):
+                words.insert(1, "text")
+            else:
+                words[1] = _TYPES.get(words[1].upper(), words[1])
+            columns.append(" ".join(words))
+        self._run(f'CREATE TABLE IF NOT EXISTS public."{name}" ({", ".join(columns)}, '
+                  f'rowid bigint GENERATED ALWAYS AS IDENTITY); GRANT ALL ON public."{name}" TO lina_app')
+        self._tables.append(name)
+
+    def _create_trigger(self, trigger, catalog) -> None:
+        from plugins.context_engine import lcm_x_store
+        name, when, event, table, condition, body = trigger.groups()
+        target = "ctx.lcm_messages" if table.lower() == "messages" else f"ctx.{table}"
+        statements = []
+        for statement in lcm_x_store.split_statements(body):
+            text, _args = lcm_x_store.render(lcm_x_store.translate(statement, catalog), ())
+            statements.append(text.rstrip(";") + ";")
+        returned = "NULL" if when.upper() == "AFTER" else ("OLD" if event.upper() == "DELETE" else "NEW")
+        function = f'public."lcm_test_{name}"'
+        self._run(f"CREATE OR REPLACE FUNCTION {function}() RETURNS trigger LANGUAGE plpgsql AS $lcm$ BEGIN "
+                  f"IF {condition or 'TRUE'} THEN {' '.join(statements)} END IF; RETURN {returned}; END $lcm$; "
+                  f'CREATE TRIGGER "{name}" {when} {event} ON {target} FOR EACH ROW EXECUTE FUNCTION {function}()')
+        self._triggers.append((name, target, function))
+
+    def drop(self) -> None:
+        for name, target, function in reversed(self._triggers):
+            self._run(f'DROP TRIGGER IF EXISTS "{name}" ON {target}; DROP FUNCTION IF EXISTS {function}()')
+        for name in reversed(self._tables):
+            self._run(f'DROP TABLE IF EXISTS public."{name}" CASCADE')
+        self._tables, self._triggers = [], []
 
 
 def _widened_vector_text(vector_text):

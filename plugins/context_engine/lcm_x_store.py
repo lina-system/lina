@@ -518,7 +518,7 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     if _FTS_MAINTENANCE.match(stripped):
         return Template((), kind="skip")
     if _DDL.match(stripped) and not _TEMP_DDL.match(stripped):
-        return Template((), kind="skip")
+        return Template((stripped,), kind="ddl")
     insert = _MESSAGE_INSERT.match(stripped)
     if insert:
         cols = tuple(c.strip().strip('"') for c in insert.group(2).split(",")) if insert.group(2) else ()
@@ -1229,6 +1229,10 @@ class PgConnection:
     def _skip(self, cur: PgCursor, template: Template, params: Any) -> None:
         cur._set_result(None, [], -1, None)
 
+    def _ddl(self, cur: PgCursor, template: Template, params: Any) -> None:
+        """LCM-X's DDL: its schema on the store is the store's migrations, so the statement is not run."""
+        cur._set_result(None, [], -1, None)
+
     def _message_insert(self, cur: PgCursor, template: Template, params: Any) -> None:
         mode, cols, source = template.detail
         query = f"SELECT * FROM ({source}) AS lcm_values" if source.lstrip()[:6].upper() == "VALUES" else source
@@ -1315,6 +1319,7 @@ def _split_top_level(text: str) -> list[str]:
 
 _KINDS: dict[str, Callable[..., None]] = {
     "skip": PgConnection._skip,
+    "ddl": lambda conn, cur, template, params: conn._ddl(cur, template, params),
     "control": PgConnection._control,
     "pragma": PgConnection._pragma,
     "message_insert": PgConnection._message_insert,
