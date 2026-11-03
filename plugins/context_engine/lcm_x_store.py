@@ -3,7 +3,7 @@
 LCM-X is a vendored subtree that speaks SQLite. Its stores open their connection through
 ``sqlite_session.open_connection``; when the database path is routed here (``route``), that call returns a
 ``PgConnection`` instead, and LCM-X's own SQL runs on Postgres through ``translate``. The schema is
-``services/store/migrations/0006_ctx_lcm.sql``: LCM-X's tables under their own names, each with ``agent_id``
+``services/store/migrations/0007_ctx_lcm.sql``: LCM-X's tables under their own names, each with ``agent_id``
 (row-level security), so most statements reach Postgres unchanged.
 
 Message text is never LCM's: ``messages`` is a view over the placement table ``ctx.lcm_messages`` and

@@ -374,10 +374,12 @@ async def db_engine(worker_id: str):
 
     # Update all table schemas to public
     for table in Base.metadata.tables.values():
-        table.schema = "public"
+        if table.schema != "memory":
+            table.schema = "public"
 
     # Drop all tables first to ensure clean state
     async with engine.begin() as conn:
+        await conn.execute(text("CREATE SCHEMA IF NOT EXISTS memory"))
         await conn.run_sync(Base.metadata.drop_all)
         # Then create all tables with current models
         await conn.run_sync(Base.metadata.create_all)
@@ -390,7 +392,8 @@ async def db_engine(worker_id: str):
         # Restore original schema
         Base.metadata.schema = original_schema
         for table in Base.metadata.tables.values():
-            table.schema = original_schema
+            if table.schema != "memory":
+                table.schema = original_schema
 
         _drop_database(test_db_url)
 

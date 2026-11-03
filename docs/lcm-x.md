@@ -51,7 +51,7 @@ LCM-X can keep its data in LINA's Postgres store (lina#16) instead of `lcm.db`: 
 table in schema `ctx`, message text in `memory.messages`. `plugins/context_engine/lcm_x_store.py` routes an `lcm.db`
 path to the store (`route(path)`); `sqlite_session.open_connection` then returns a `PgConnection`, which logs in as
 `lina_app` with `lina.agent_id` set to the home's profile and runs LCM-X's own SQLite SQL through a translator. The
-schema is `services/store/migrations/0006_ctx_lcm.sql`: LCM-X's tables under their own names, each with
+schema is `services/store/migrations/0007_ctx_lcm.sql`: LCM-X's tables under their own names, each with
 `agent_id` (row-level security) and keys led by it, the SQLite functions LCM-X calls, and the triggers as PL/pgSQL.
 
 - `messages` is a view: the placement row `ctx.lcm_messages` (LCM-only columns, `text_uid`, `content_sha256`)
@@ -63,7 +63,7 @@ schema is `services/store/migrations/0006_ctx_lcm.sql`: LCM-X's tables under the
   Korean, Chinese and Japanese queries take LCM-X's LIKE path, which runs as `ILIKE` on the trigram index, so
   `회의` finds `회의록을`.
 - Summary vectors are rows of `vec.embeddings` (`kind = 'summary'`, `item_id` = the node id, the model of LCM-X's
-  embedding profile; `0007_ctx_lcm_vectors.sql`): `lcm_embedding_vectors` is a view over them, and a vector that is
+  embedding profile; `0008_ctx_lcm_vectors.sql`): `lcm_embedding_vectors` is a view over them, and a vector that is
   not 1024 wide (the one embedding model, [store.md](store.md)) is refused.
 - The schema creators and verifiers of `db_bootstrap.py` return at once on a store connection.
 

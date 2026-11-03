@@ -892,9 +892,9 @@ class QueueManager:
             # 5. Returns empty if focused sender is beyond token limit
             # 6. Otherwise returns messages up to token limit + first focused sender message
 
-            # Find the minimum message_id with an unprocessed queue item across the session
-            min_unprocessed_message_id_subq = (
-                select(func.min(models.Message.id))
+            # Shared IDs are identities, not session chronology.
+            min_unprocessed_seq_subq = (
+                select(func.min(models.Message.seq_in_session))
                 .select_from(models.QueueItem)
                 .join(
                     models.Message,
@@ -907,28 +907,30 @@ class QueueManager:
                 .scalar_subquery()
             )
 
-            # Find the immediately preceding message ID (the one right before min_unprocessed)
-            immediately_preceding_id_subq = (
-                select(func.max(models.Message.id))
+            # Find the immediately preceding session position.
+            immediately_preceding_seq_subq = (
+                select(func.max(models.Message.seq_in_session))
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
-                .where(models.Message.id < min_unprocessed_message_id_subq)
+                .where(models.Message.seq_in_session < min_unprocessed_seq_subq)
                 .scalar_subquery()
             )
 
             # Only include the preceding message if it's from a different peer than observed
             # This provides conversational context (e.g., the question that prompted the response)
-            preceding_message_id_subq = (
-                select(models.Message.id)
-                .where(models.Message.id == immediately_preceding_id_subq)
+            preceding_message_seq_subq = (
+                select(models.Message.seq_in_session)
+                .where(models.Message.session_name == parsed_key.session_name)
+                .where(models.Message.workspace_name == parsed_key.workspace_name)
+                .where(models.Message.seq_in_session == immediately_preceding_seq_subq)
                 .where(models.Message.peer_name != parsed_key.observed)
                 .scalar_subquery()
             )
 
             # Determine the effective start: preceding message if it qualifies, else min_unprocessed
             # We use COALESCE to fall back to min_unprocessed if no preceding message qualifies
-            effective_start_id = func.coalesce(
-                preceding_message_id_subq, min_unprocessed_message_id_subq
+            effective_start_seq = func.coalesce(
+                preceding_message_seq_subq, min_unprocessed_seq_subq
             )
 
             # Build CTE in two nested selects so we can layer a second window
@@ -943,21 +945,23 @@ class QueueManager:
             inner_cte = (
                 select(
                     models.Message.id.label("message_id"),
+                    models.Message.seq_in_session.label("seq_in_session"),
                     models.Message.token_count.label("token_count"),
                     models.Message.peer_name.label("peer_name"),
                     func.sum(models.Message.token_count)
-                    .over(order_by=models.Message.id)
+                    .over(order_by=models.Message.seq_in_session)
                     .label("cumulative_token_count"),
                 )
                 .where(models.Message.session_name == parsed_key.session_name)
                 .where(models.Message.workspace_name == parsed_key.workspace_name)
-                .where(models.Message.id >= effective_start_id)
+                .where(models.Message.seq_in_session >= effective_start_seq)
                 .subquery()
             )
 
             cte = (
                 select(
                     inner_cte.c.message_id,
+                    inner_cte.c.seq_in_session,
                     inner_cte.c.token_count,
                     inner_cte.c.peer_name,
                     inner_cte.c.cumulative_token_count,
@@ -965,14 +969,14 @@ class QueueManager:
                     .over()
                     .label("cap_exceeded"),
                 )
-                .order_by(inner_cte.c.message_id)
+                .order_by(inner_cte.c.seq_in_session)
                 .cte()
             )
 
             allowed_condition = (
                 (cte.c.cumulative_token_count <= batch_max_tokens)
                 | (
-                    cte.c.message_id == min_unprocessed_message_id_subq
+                    cte.c.seq_in_session == min_unprocessed_seq_subq
                 )  # always include the first unprocessed message
             )
 
@@ -993,7 +997,7 @@ class QueueManager:
                     ),
                 )
                 .where(allowed_condition)
-                .order_by(models.Message.id, models.QueueItem.id)
+                .order_by(models.Message.seq_in_session, models.QueueItem.id)
             )
 
             result = await db.execute(query)
@@ -1032,9 +1036,10 @@ class QueueManager:
             # items. Using messages_context[-1].id as a "did config
             # filter shrink the batch" signal produced false negatives
             # for that case.
+            sequence_by_id = {m.id: m.seq_in_session for m in messages_context}
             last_queued_id_before: int | None = (
                 max(
-                    qi.message_id
+                    sequence_by_id[qi.message_id]
                     for qi in items_to_process
                     if qi.message_id is not None
                 )
@@ -1046,18 +1051,20 @@ class QueueManager:
                 items_to_process
             )
             if items_to_process:
-                max_queue_item_message_id = max(
-                    qi.message_id
+                max_queue_item_seq = max(
+                    sequence_by_id[qi.message_id]
                     for qi in items_to_process
                     if qi.message_id is not None
                 )
                 messages_context = [
-                    m for m in messages_context if m.id <= max_queue_item_message_id
+                    m
+                    for m in messages_context
+                    if m.seq_in_session <= max_queue_item_seq
                 ]
 
             last_queued_id_after: int | None = (
                 max(
-                    qi.message_id
+                    sequence_by_id[qi.message_id]
                     for qi in items_to_process
                     if qi.message_id is not None
                 )
