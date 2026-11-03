@@ -448,7 +448,8 @@ class MemoryManager:
 
         Never inline: a provider's ``sync_turn`` may block for minutes, which kept ``run_conversation``
         open after the user saw the response. The single worker also serializes writes (turn N before N+1).
-        ``turn_author`` reaches only providers whose ``sync_turn`` accepts it.
+        ``turn_author`` reaches only providers whose ``sync_turn`` accepts it; a person's turn (None) is sent as
+        ``human_turn_author()``, fixed here, because the worker may run after the next turn has started (lina#20).
 
         Everything forwarded is provider egress: turn strings AND the ``messages`` transcript slice
         (tool outputs included) go through ``_redact_for_provider`` so secrets are never archived
@@ -466,7 +467,9 @@ class MemoryManager:
             return
         clean_user_content, assistant_content, redacted_messages = _redact_for_provider(
             clean_user_content, assistant_content, messages)
-        optional_kwargs = {"messages": redacted_messages, "turn_author": turn_author}
+        from agent.turn_author import human_turn_author
+        optional_kwargs = {"messages": redacted_messages,
+                           "turn_author": dict(turn_author) if turn_author is not None else human_turn_author()}
         local = [p for p in providers if "local_messages" in (_signature_params(p.sync_turn) or {})]
 
         def _sync(provider: MemoryProvider) -> None:
