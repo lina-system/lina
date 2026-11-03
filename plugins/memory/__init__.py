@@ -629,7 +629,7 @@ def _provider_cli_command(active_provider: str) -> list[dict]:
             "handler_fn": getattr(cli_mod, f"{active_provider}_command", None),
             "plugin": active_provider,
         }]
-    except Exception:
+    except Exception:  # health: allow BLE001 -- a provider whose CLI fails to import must not cost hermes its CLI
         # Fixed text only: a provider's import error can carry config values, so neither the exception nor a
         # traceback is logged here (CodeQL: clear-text logging). `hermes memory status` shows the provider state.
         logger.debug("Failed to scan the CLI of a memory plugin")
