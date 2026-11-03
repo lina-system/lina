@@ -201,11 +201,12 @@ def test_fifty_turns_each_request_starts_with_the_previous_one_except_across_a_c
     assert len(systems) == 1
     assert "seed-calendar" in _text(requests[SKILL_TURN].body["messages"][-1])
     assert "Today's date: Wednesday, November 04, 2026" in _text(requests[NEXT_DAY_TURN].body["messages"][-1])
+    assert not any("Today's date" in _text(r.body["messages"][-1]) for r in requests[:NEXT_DAY_TURN])
 
     # System and persona first, the notes and person card close the prompt, the date is not in it.
     system = requests[-1].body["messages"][0]["content"]
     assert system.index(RUNTIME_ENVIRONMENT_END) < system.index(NOTES_HEADING) < system.index(NOTE) < system.index(CARD)
-    assert system.endswith(NOTES_END) and "Today's date" not in system
+    assert system.endswith(NOTES_END) and "Today's date" not in system and "Conversation started: Tuesday, November 03" in system
 
 
 def test_upper_summary_block_keeps_its_bytes_across_the_next_compaction(home, clock):

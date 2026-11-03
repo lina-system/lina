@@ -1,11 +1,11 @@
-"""The date reaches the model as a turn note, never in the cached system prompt (lina#21).
+"""Today's date reaches the model as a turn note, never in the cached system prompt (lina#21).
 
-The prompt is byte-stable for the life of a conversation, and a line that changes with the day does not
-belong in it: a conversation that crosses midnight would otherwise either keep telling the model a stale
-day or rebuild the prompt and re-prefill everything behind it. ``system_prompt.date_line`` renders the
-line; this module stages it on the per-turn user-message note channel (the one the skills-index delta and
-the surface-switch note use, behind the cached prefix) whenever it differs from the line the model was
-last given, so a same-day conversation carries it once.
+The prompt is byte-stable for the life of a conversation and names only its start date. A line that changes
+with the day does not belong in it: a conversation that crosses midnight would otherwise either keep the
+model on a stale day or rebuild the prompt and re-prefill everything behind it. ``system_prompt.date_line``
+renders today's date once it differs from the start date; this module stages it on the per-turn
+user-message note channel (the one the skills-index delta and the surface-switch note use, behind the
+cached prefix) whenever it differs from the line the model was last given, so each new day is told once.
 
 What was last given is read back from the transcript (a fresh agent per turn, the gateway shape, has no
 memory of its own) or kept on a long-lived agent, as ``skills_index_delta`` does.

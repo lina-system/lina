@@ -523,6 +523,7 @@ def test_coding_prompt_orders_shared_context_before_workspace(monkeypatch):
         "WORKSPACE",
         "Operator instructions (from config):\nOPERATOR",
         expected_profile,
+        "Conversation started: Friday, January 02, 2026",
     ))
 
     with (
@@ -686,10 +687,11 @@ class TestSkillsInVolatileBand:
 
     def test_full_order_is_stable_context_then_skills(self):
         # build_system_prompt joins stable + context + volatile, so the skills
-        # index renders after the context files and before the profile line.
+        # index renders after the context files and before the per-turn
+        # memory/timestamp tail.
         full = _build(build_system_prompt)
         assert full.index(_CONTEXT) < full.index(_SKILLS)
-        assert full.index(_SKILLS) < full.index("Active Hermes profile:")
+        assert full.index(_SKILLS) < full.index("Conversation started:")
 
 
 class TestMemoryProviderSystemPromptGating:
@@ -874,24 +876,44 @@ class TestSessionStartLike:
             time.tzset()
 
 
-def test_conversation_start_uses_session_start_not_build_time():
+def test_conversation_start_uses_session_start_not_build_time(monkeypatch):
     """Regression: a session that started on Jan 1 must still read
-    'Conversation started: Thursday, January 01' when its date note is
-    rendered on Jan 2 (the rebuild-drift bug)."""
-    from agent.system_prompt import date_line
+    'Conversation started: Thursday, January 01' even when the prompt is
+    rebuilt on Jan 2 (the rebuild-drift bug)."""
+    from agent import system_prompt
 
-    agent = _make_agent(session_id="20260101_120000_abc123", _bot_chat_timeless_prompt=False)
-    with patch("hermes_time.now", return_value=datetime(2026, 1, 2, 9, 0)):
-        line = date_line(agent)
+    agent = _make_agent(
+        valid_tool_names=["read_file"],
+        _parallel_tool_call_guidance=False,
+        session_id="20260101_120000_abc123",
+    )
+    monkeypatch.setattr(system_prompt, "DEFAULT_AGENT_IDENTITY", "IDENTITY")
+    monkeypatch.setattr(system_prompt, "HERMES_AGENT_HELP_GUIDANCE", "HELP")
+    monkeypatch.setattr(system_prompt, "HERMES_AGENT_HELP_GUIDANCE_NO_SKILLS", "HELP")
+    monkeypatch.setattr(system_prompt, "STEER_CHANNEL_NOTE", "STEER")
+    monkeypatch.setattr(system_prompt, "get_hermes_home", lambda: Path("/hermes"))
 
-    assert "Conversation started: Thursday, January 01, 2026" in line
-    assert "Today's date: Friday, January 02, 2026" in line
+    with (
+        patch("agent.prompt_builder.load_soul_md", return_value=""),
+        patch("agent.prompt_builder.build_environment_hints", return_value=""),
+        patch("agent.prompt_builder.build_context_files_prompt", return_value="CONTEXT_FILES"),
+        patch(
+            "agent.coding_context.coding_system_prompt_parts",
+            return_value=([], [], []),
+        ),
+        patch("agent.file_safety._resolve_active_profile_name", return_value="default"),
+        # The system prompt is rebuilt a day LATER than the session start.
+        patch("hermes_time.now", return_value=datetime(2026, 1, 2, 9, 0)),
+    ):
+        prompt = build_system_prompt(agent, system_message="SYSTEM_MESSAGE")
 
+    assert "Conversation started: Thursday, January 01, 2026" in prompt
+    assert "Conversation started: Friday" not in prompt
 
-class TestDateLine:
-    """lina#21: the date changes with the day, so it rides a turn note (``agent/date_note.py``)
-    and the cached prompt carries none; a forever-chat (Bot Mode, messenger channels) is told
-    the current day whenever it changes, not only at a rebuild."""
+class TestConversationStartedTwoLine:
+    """Long-lived sessions (Bot Mode, messenger channels) must not be led to believe they still live on the
+    session's birth day. The prompt keeps only the byte-stable start date; today's date, once it differs,
+    rides a turn note (``agent/date_note.py``) so the cached prompt never changes with the day (lina#21)."""
 
     def _agent(self, session_id):
         return _make_agent(
@@ -899,35 +921,42 @@ class TestDateLine:
             _bot_chat_timeless_prompt=False,
         )
 
-    def test_prompt_carries_no_date(self):
+    def _volatile(self, agent):
         import agent.system_prompt as sp
-        vol = sp.build_system_prompt_parts(self._agent("20200110_090000_old"))["volatile"]
-        assert "Conversation started:" not in vol
-        assert "Today's date" not in vol
+        parts = sp.build_system_prompt_parts(agent)
+        return parts["volatile"]
 
-    def test_old_session_names_its_start_and_today(self):
-        from agent.system_prompt import date_line
-        with patch("hermes_time.now", return_value=datetime(2026, 1, 2, 9, 0)):
-            line = date_line(self._agent("20200110_090000_old"))
-        assert "Conversation started: Friday, January 10, 2020" in line
-        assert "Today's date: Friday, January 02, 2026" in line
-
-    def test_surrogate_zone_name_does_not_abort_the_line(self):
-        # Windows cp1252 zone name decoded under a UTF-8 LC_CTYPE; strftime("%Z") raised (#102910).
-        from datetime import timedelta, timezone
-        from agent.system_prompt import date_line
-        current = datetime(2026, 7, 14, 13, 5, tzinfo=timezone(timedelta(hours=2), "Paris, Madrid (heure d'\udce9t\udce9)"))
-        with patch("hermes_time.now", return_value=current):
-            line = date_line(self._agent("20260714_090000_fresh"))
-
-        json.dumps(line, ensure_ascii=False).encode("utf-8")
-        assert "Conversation started: Tuesday, July 14, 2026" in line
-        assert "Paris, Madrid (heure d'" in line and "UTC+02:00" in line
-
-    def test_timeless_bot_chat_gets_today_only(self):
+    def test_old_session_gets_today_as_a_note_not_in_the_prompt(self):
         from agent.system_prompt import date_line
         agent = self._agent("20200110_090000_old")
+        vol = self._volatile(agent)
+        assert "Conversation started: Friday, January 10, 2020" in vol
+        assert "Today's date" not in vol
+        assert date_line(agent).startswith("Today's date: ")
+
+    def test_same_day_session_keeps_single_line(self):
+        from hermes_time import now as hermes_now
+        from agent.system_prompt import date_line
+        sid = hermes_now().strftime("%Y%m%d_%H%M%S_fresh")
+        vol = self._volatile(self._agent(sid))
+        assert "Conversation started:" in vol
+        assert "Today's date" not in vol
+        assert date_line(self._agent(sid)) == ""
+
+    def test_surrogate_zone_name_does_not_abort_prompt(self):
+        # Windows cp1252 zone name decoded under a UTF-8 LC_CTYPE; strftime("%Z") raised (#102910).
+        from datetime import timedelta, timezone
+        current = datetime(2026, 7, 14, 13, 5, tzinfo=timezone(timedelta(hours=2), "Paris, Madrid (heure d'\udce9t\udce9)"))
+        with patch("hermes_time.now", return_value=current):
+            vol = self._volatile(self._agent("20260714_090000_fresh"))
+
+        json.dumps(vol, ensure_ascii=False).encode("utf-8")
+        assert "Conversation started: Tuesday, July 14, 2026" in vol
+        assert "Paris, Madrid (heure d'" in vol and "UTC+02:00" in vol
+
+    def test_timeless_bot_chat_unaffected(self):
+        agent = self._agent("20200110_090000_old")
         agent._bot_chat_timeless_prompt = True
-        line = date_line(agent)
-        assert "Conversation started:" not in line
-        assert line.startswith("Today's date: ")
+        vol = self._volatile(agent)
+        assert "Conversation started:" not in vol
+        assert "Today's date" not in vol

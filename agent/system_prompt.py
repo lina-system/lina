@@ -4,10 +4,10 @@ Built once per session and reused across turns (only context compression
 triggers a rebuild) so the upstream prefix cache stays warm.  Three tiers are
 joined with ``\\n\\n``: ``stable`` (identity, guidance, env hints, coding brief,
 platform hints), ``context`` (workspace snapshot, caller ``system_message``,
-context files) and ``volatile`` (skills index, plugin sections, profile and
-identity lines, runtime environment, then the notes and person card: memory,
-USER.md, external memory provider).  The date changes with the day, so it rides
-a turn note (``agent/date_note.py``).  See ``references/system-prompt-invariant.md``.
+context files) and ``volatile`` (skills index, plugin sections, profile line,
+session start date and identity lines, runtime environment, then the notes and
+person card: memory, USER.md, external memory provider).  Today's date changes
+with the day, so it rides a turn note (``agent/date_note.py``).  See ``references/system-prompt-invariant.md``.
 """
 
 from __future__ import annotations
@@ -150,7 +150,7 @@ def _restore_plugin_prompt_sections(prompt: str) -> tuple:
     if end < 0:
         return ()
     after_end = end + len(PLUGIN_SECTIONS_END)
-    if not prompt[after_end:].startswith("\n\nActive Hermes profile:"):
+    if not prompt[after_end:].startswith("\n\nConversation started:"):
         return ()
     framed = prompt[start:after_end]
     restored = []
@@ -494,25 +494,38 @@ def _zone_bits(now: Any, tz: Any) -> list[str]:
     return bits
 
 
-def date_line(agent: Any) -> str:
-    """The conversation's start date and today's date, zone + offset so tools needn't guess EST vs EDT.
-    It changes with the day, so it rides the per-turn note channel (``agent/date_note.py``), never the
-    cached prompt (lina#21). Bot Mode's eternal chat gets today's date only: its birth date misleads."""
+def _timestamp_line(agent: Any) -> str:
+    """The session's start date (from its id or lineage root, so byte-stable for the session and across
+    compaction rebuilds), zone + offset so tools needn't guess EST vs EDT, then the identity trailer.
+    Today's date changes with the day, so it never sits here: ``date_line`` + ``agent/date_note.py``
+    deliver it as a turn note once it differs from the start date (lina#21)."""
     from hermes_time import get_timezone as _hermes_tz, now as _hermes_now, safe_strftime
     now = _hermes_now()
     _bits = _zone_bits(now, _hermes_tz())
     _zone_suffix = f" ({', '.join(_bits)})" if _bits else ""
-    today = f"Today's date: {safe_strftime(now, '%A, %B %d, %Y')}{_zone_suffix}"
+    _start = _session_start_like(agent, now)
+    timestamp_line = f"Conversation started: {safe_strftime(_start, '%A, %B %d, %Y')}{_zone_suffix}"
     if getattr(agent, "_bot_chat_timeless_prompt", False):
-        return today
-    return f"Conversation started: {safe_strftime(_session_start_like(agent, now), '%A, %B %d, %Y')}. {today}"
-
-
-def _identity_trailer(agent: Any) -> str:
-    """``Label: value`` lines that close the identity portion (``surface_switch.identity_line_value``)."""
+        # Bot Mode's eternal chat: a birth date pinned in a months-long session is misinformation.
+        timestamp_line = f"Timezone: {', '.join(_bits)}" if _bits else ""
     trailer = (("Session ID", agent.session_id if agent.pass_session_id else None), ("Model", agent.model),
                ("Provider", agent.provider), ("Platform", agent.platform))
-    return "\n".join(f"{label}: {value}" for label, value in trailer if value)
+    return timestamp_line + "".join(f"\n{label}: {value}" for label, value in trailer if value)
+
+
+def date_line(agent: Any) -> str:
+    """Today's date for the turn-note channel, or "" while it is still the day the prompt names (the
+    conversation's start). Long-lived sessions (Bot Mode forever-chats, messenger channels people never
+    close) span many days; this keeps the model on the current one without touching the cached prompt."""
+    from hermes_time import get_timezone as _hermes_tz, now as _hermes_now, safe_strftime
+    now = _hermes_now()
+    timeless = getattr(agent, "_bot_chat_timeless_prompt", False)
+    if not timeless and now.strftime("%Y%m%d") == _session_start_like(agent, now).strftime("%Y%m%d"):
+        return ""
+    _bits = _zone_bits(now, _hermes_tz())
+    _zone_suffix = f" ({', '.join(_bits)})" if _bits else ""
+    return (f"Today's date: {safe_strftime(now, '%A, %B %d, %Y')}{_zone_suffix} "
+            "— trust this over the start date for what day it is now; query tools for exact time.")
 
 
 def _memory_parts(agent: Any) -> list[str]:
@@ -735,8 +748,8 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     """Assemble the system prompt as three ordered cache tiers: ``stable`` (identity,
     guidance and the coding brief), ``context`` (caller ``system_message``, project
     context files, workspace snapshot and remaining workspace guidance) and
-    ``volatile`` (skills index, plugin sections, profile and identity lines, runtime
-    environment hints, then the notes and person card: memory, user profile, external memory block).  Worktree-dependent blocks follow project context so a
+    ``volatile`` (skills index, plugin sections, profile line, start date and identity lines,
+    runtime environment hints, then the notes and person card: memory, user profile, external memory block).  Worktree-dependent blocks follow project context so a
     shared context file can remain in the longest common prefix across worktrees.
     Never re-rendered mid-session."""
     # Model context window scales the context-file caps; stable per conversation.
@@ -788,7 +801,7 @@ def build_system_prompt_parts(agent: Any, system_message: Optional[str] = None) 
     # The profile line names this home's path, so it rides in the volatile tier: the stable
     # prefix then stays byte-identical across every profile (and home) on the host.
     volatile_parts.append(_active_profile_line(agent))
-    volatile_parts.append(_identity_trailer(agent))
+    volatile_parts.append(_timestamp_line(agent))
     # Keep the renderer-owned runtime anchor after all user/plugin prose so quoted
     # host examples cannot shadow it during persisted-prompt validation.
     if environment_hints:
