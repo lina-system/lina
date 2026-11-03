@@ -22,7 +22,7 @@ from hermes_cli.kanban_parser import build_parser
 PLAN = {
     "key": "lina-m0-work-sessions",
     "goal": {"title": "Run a goal through work sessions", "assignee": "sion",
-             "body": "Owner goal for M0 S3.", "ledger_goal": "G63"},
+             "body": "Owner goal for M0 S3."},
     "cards": [
         {"key": "gates", "title": "Card goal gates", "assignee": "sion",
          "todos": ["lina-system/lina#108", "[ ] write the gate doc"],
