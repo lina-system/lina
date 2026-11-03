@@ -20,6 +20,7 @@ import logging
 import re
 import sqlite3
 import threading
+import time
 from collections.abc import Callable, Iterable, Sequence
 from array import array
 from dataclasses import dataclass, field
@@ -174,6 +175,11 @@ def _mask(sql: str) -> tuple[str, list[str], list[str]]:
     return _TOKEN.sub(repl, sql), literals, slots
 
 
+def _between_bound(m: re.Match) -> bool:
+    """The AND of `x BETWEEN low AND high` joins two bounds, not two conditions."""
+    return m.group(1).upper() == "AND" and re.search(r"\bBETWEEN\s+[^\s()]+\s*$", m.string[:m.start()], re.IGNORECASE) is not None
+
+
 _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\bCAST\s*\(((?:[^()]|\([^()]*\))*?)\s+AS\s+INTEGER\s*\)", re.IGNORECASE), r"CAST(\1 AS bigint)"),
     (re.compile(r"\bCAST\s*\(((?:[^()]|\([^()]*\))*?)\s+AS\s+REAL\s*\)", re.IGNORECASE), r"CAST(\1 AS double precision)"),
@@ -197,13 +203,14 @@ _REWRITES: tuple[tuple[re.Pattern, str], ...] = (
     (re.compile(r"\bCROSS\s+JOIN(\s+[\w.]+(?:\s+(?:AS\s+)?(?!ON\b)\w+)?\s+ON\b)", re.IGNORECASE), r"JOIN\1"),
     # SQLite's 0/1 in a boolean position (`NOT 0`, `(0 AND x)`, `WHERE 1`) and a parameter there (`AND ?`).
     (re.compile(r"\b(NOT|AND|OR|WHERE|ON)\s+([01])\b(?!\s*(?:[-=<>!+*/%|,.]|IS\b|IN\b|BETWEEN\b|LIKE\b))",
-                re.IGNORECASE), lambda m: f"{m.group(1)} {'TRUE' if m.group(2) == '1' else 'FALSE'}"),
+                re.IGNORECASE),
+     lambda m: m.group(0) if _between_bound(m) else f"{m.group(1)} {'TRUE' if m.group(2) == '1' else 'FALSE'}"),
     (re.compile(r"\b(AND|OR|WHERE|NOT|ON)\s*\(\s*([01])\s*\)", re.IGNORECASE),
      lambda m: f"{m.group(1)} ({'TRUE' if m.group(2) == '1' else 'FALSE'})"),
     (re.compile(r"\(\s*([01])\s+(AND|OR)\b", re.IGNORECASE),
      lambda m: f"({'TRUE' if m.group(1) == '1' else 'FALSE'} {m.group(2)}"),
     (re.compile(r"\b(AND|OR|NOT)\s+(\x01\d+\x01)(?=\s*(?:\)|AND\b|OR\b|$))", re.IGNORECASE),
-     lambda m: f"{m.group(1)} ({m.group(2)} <> 0)"),
+     lambda m: m.group(0) if _between_bound(m) else f"{m.group(1)} ({m.group(2)} <> 0)"),
     (re.compile(r"\bhex\s*\(", re.IGNORECASE), "ctx.hex("),
     (re.compile(r"\bchar\s*\(", re.IGNORECASE), "ctx.char("),
 )
@@ -1126,6 +1133,10 @@ class PgConnection:
         stored: list[int] = []
         for values in probe._rows:
             row = dict(zip(names, values))
+            # A row that names only some columns (a test's minimal messages table) gets what the store's own
+            # write fills: no session, written now. A column named with NULL is still refused.
+            row.setdefault("session_id", "")
+            row.setdefault("timestamp", time.time())
             uid, digest = self._text.resolve(
                 message_uid=self._message_uid, session_id=row.get("session_id"), role=row.pop("role", None),
                 content=row.pop("content", None), tool_call_id=row.pop("tool_call_id", None),
