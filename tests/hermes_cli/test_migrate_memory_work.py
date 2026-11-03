@@ -83,3 +83,23 @@ def test_existing_importer_remapping_agent_overwrites_global_item(work_env):
         assert db.execute("SELECT id, agent_id, title FROM todo").fetchall() == [
             ("T1", "new-alpha", "copied")]
         assert db.execute("SELECT count(*) FROM event").fetchone()[0] == 2
+
+
+def test_online_work_copy_remains_reusable_after_readonly_inventory(work_env):
+    import sqlite3
+
+    from hermes_cli.migrate_memory_copy import snapshot
+
+    home = work_env / "source"
+    home.mkdir()
+    with closing(sqlite3.connect(home / "state.db")) as conn:
+        conn.execute("CREATE TABLE fixture(id INTEGER)")
+    ledger = build_copied_work_fixture(work_env / "ledger.db")
+    copied = snapshot(home, "default", work_env / "copy", work_db=ledger)
+
+    migrate_work(copied.work_db, work_env / "destination", "alpha", "new-alpha")
+
+    repeated = snapshot(home, "default", work_env / "copy", work_db=ledger)
+    assert repeated.receipt == copied.receipt
+    assert not copied.work_db.with_name("work.db-wal").exists()
+    assert not copied.work_db.with_name("work.db-shm").exists()

@@ -34,3 +34,14 @@ def test_missing_destination_version_is_not_hidden_by_cursor(tmp_path, memory_st
 
     assert not report.ok
     assert len(report.as_dict()["missing"]) == 1
+
+
+def test_repeated_source_occurrences_are_counted_as_matched(tmp_path, memory_store_sql):
+    copy = tmp_path / "copy.jsonl"
+    copy.write_bytes(event(message()) + event(message(), number=2))
+
+    report = migrate_external(copy, tmp_path / "live.jsonl")
+
+    assert report.ok
+    assert len(report.source) == 2
+    assert (report.matched, report.inserted) == (1, 1)

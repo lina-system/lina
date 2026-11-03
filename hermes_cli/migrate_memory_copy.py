@@ -188,7 +188,7 @@ def snapshot(
         return tuple(CopyReceipt(path, root / relative,
                                  "sqlite-backup" if database else
                                  "sanitized-config" if relative.name == "config.yaml" else "file",
-                                 provenance[index][3], _digest(base / relative),
+                                 "" if database else _digest(path), _digest(base / relative),
                                  (base / relative).stat().st_size,
                                  "online-backup" if database else "unchanged-file")
                      for index, (path, relative, database) in enumerate(inputs))
@@ -207,6 +207,9 @@ def snapshot(
                 with closing(sqlite3.connect(path.as_uri() + "?mode=ro", uri=True)) as source:
                     with closing(sqlite3.connect(destination)) as target:
                         source.backup(target)
+                        # A sealed copy has no concurrent writer. Persist DELETE mode
+                        # so even mode=ro consumers cannot create WAL/SHM sidecars.
+                        target.execute("PRAGMA journal_mode=DELETE")
             else:
                 data = _config_bytes(profile_dir) if relative == Path("profile/config.yaml") else path.read_bytes()
                 destination.write_bytes(data)

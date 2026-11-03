@@ -218,6 +218,49 @@ A state.db write that adds text writes it to Postgres first, in a transaction th
 SQLite's; a rollback or retry of the SQLite write rolls it back too. A crash between the two commits
 leaves a text row nothing points at, never a placement row without text.
 
+### Copying legacy memory into a new agent
+
+```sh
+lina migrate memory --from /path/to/old-home --source-profile alpha --as alpha-copy \
+  --home /path/to/new-lina --work-dir /path/to/migration-copy \
+  --honcho-dump /path/to/honcho.dump --honcho-workspace alpha \
+  --honcho-python /path/to/honcho-environment/bin/python \
+  --spool /path/to/spool --work-db /path/to/work.db
+```
+
+`--source-profile` selects the old profile; global `--profile` still selects the profile running LINA.
+The destination is `--home/profiles/<new name>`, with an independent agent identity. The store must
+already be installed and reachable. The command uses SQLite's online backup API, never opens an original
+database for writing, and reads only retained snapshots after the copy step. It copies skills, persona
+and memory files; credentials are excluded and config is limited to non-secret memory settings.
+Each database snapshot is consistent on its own, not a common snapshot instant across databases.
+
+The copied Honcho input is a pre-split logical `pg_dump` archive, not a physical store backup. It is restored
+into a disposable database, upgraded with Honcho's actual Alembic chain, and the selected workspace is
+merged under the new agent name. The API and deriver are never started. Existing unrelated destination
+workspaces remain intact. Legacy vectors are explicitly left for `lina store reembed`; migration never
+calls an embedding endpoint.
+
+Round 1 reports `lcm: waiting for #16` and excludes LCM messages and summary nodes from imported counts.
+The copied `lcm.db` is retained for Round 2. The old work ledger is copied and inventoried by profile, but
+its existing importer has global item/run IDs and cannot create an independent renamed agent's record
+without collisions. The report names this gap and does not count those rows as migrated.
+
+The command prints JSON and writes the same result to `--work-dir/migration-report.json`. It includes copy
+receipts, per-source accounting and bidirectional manifests, actual duplicate queries, and reference checks.
+Agent manifests hash the full immutable text payload, including tool/API fields, not just visible content.
+Raw native identities can legitimately have several immutable versions; the report discloses them separately
+from duplicate version identities. `ok` means the included Round 1 checks passed; `complete` remains false
+while LCM is deferred. An accounting mismatch exits nonzero.
+
+Repeating the same command verifies and reuses the same snapshots without rereading changing originals;
+it inserts nothing and fails if destination rows were lost or changed. Use a new work directory to capture
+new source data. External ingestion keeps its cursor in the destination store under the original spool path,
+so subsequent live ingestion continues from the copied prefix. A later changed prefix is rejected.
+
+After checking one profile, `--all-source-profiles --as copied` processes profiles sequentially as
+`copied-default`, `copied-alpha`, and so on, retaining each profile's report under the work directory.
+
 ### Search
 
 `session_search` and `SessionDB.search_messages` ask Postgres for the matching rows, then keep the visible
