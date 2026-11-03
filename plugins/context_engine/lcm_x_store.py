@@ -31,7 +31,7 @@ from functools import lru_cache
 from pathlib import Path
 from typing import Any, Optional
 
-from plugins.context_engine.lcm_x_store_fts import fts_terms, tsquery_sql
+from plugins.context_engine.lcm_x_store_fts import SNIPPET_MARK, fts5_snippet, fts_terms, tsquery_sql
 
 logger = logging.getLogger(__name__)
 
@@ -655,14 +655,22 @@ def translate(sql: str, catalog: Catalog) -> Template:
     return _translate_cached(sql, catalog.key)
 
 
-def _bm25_sql(query: str, config: str, alias: str, table: str) -> tuple[str, list[Any]]:
-    """FTS5's rank (bm25, 0007's ctx.lcm_bm25) for *query*: the table's row and token totals and each phrase's row
-    count come from one scalar subquery, which Postgres evaluates once per statement."""
-    phrases, prefixes, counts, params = [], [], [], []
+def _query_phrases(query: str) -> tuple[list[str], list[bool]]:
+    """The FTS5 query's phrases, in order, and whether each ends in a prefix token."""
+    phrases, prefixes = [], []
     for _op, term in fts_terms(query):
         prefix = term.endswith("*") and not term.startswith('"')
         phrases.append(term[:-1] if prefix else term.strip('"'))
         prefixes.append(prefix)
+    return phrases, prefixes
+
+
+def _bm25_sql(query: str, config: str, alias: str, table: str) -> tuple[str, list[Any]]:
+    """FTS5's rank (bm25, 0007's ctx.lcm_bm25) for *query*: the table's row and token totals and each phrase's row
+    count come from one scalar subquery, which Postgres evaluates once per statement."""
+    phrases, prefixes = _query_phrases(query)
+    counts, params = [], []
+    for _op, term in fts_terms(query):
         tsq, tsq_params = tsquery_sql(term, config, (_FTS_COLUMNS.get(table, "content"),))
         counts.append(f"count(*) FILTER (WHERE s.tsv @@ ({tsq}))::float8")
         params.extend(tsq_params)
@@ -681,12 +689,9 @@ def _fts_slot(slot: tuple, args: Sequence[Any]) -> tuple[str, list[Any]]:
         return f"({alias}.tsv @@ ({tsq}))", params
     if kind == "rank":
         return _bm25_sql(str(args[index]), config, alias, table)
-    column = _FTS_COLUMNS.get(alias, None) or "content"
-    for name, col in _FTS_COLUMNS.items():
-        if alias == name:
-            column = col
-    return (f"ts_headline('{config}'::regconfig, {alias}.{column}, ({tsq}), "
-            "'StartSel=>>>, StopSel=<<<, MaxWords=40, MinWords=10, FragmentDelimiter=...')"), params
+    column = _FTS_COLUMNS.get(table, "content")
+    phrases, prefixes = _query_phrases(str(args[index]))
+    return f"ctx.lcm_snippet_source({alias}.{column}, '{config}'::regconfig, %s::text[], %s::boolean[])", [phrases, prefixes]
 
 
 def render(template: Template, args: Any) -> tuple[str, list[Any]]:
@@ -1346,6 +1351,9 @@ class PgConnection:
         vector_columns = [i for i, d in enumerate(description or ()) if d.type_code == self._vector_oid]
         if vector_columns:
             rows = [tuple(_vector_blob(v) if i in vector_columns else v for i, v in enumerate(row)) for row in rows]
+        if "lcm_snippet_source" in text:
+            rows = [tuple(fts5_snippet(v) if isinstance(v, str) and v.startswith(SNIPPET_MARK) else v for v in row)
+                    for row in rows]
         if returning and rows:
             lastrowid = int(rows[-1][0])
             description, rows = None, []

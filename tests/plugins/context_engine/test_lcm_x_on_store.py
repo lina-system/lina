@@ -321,3 +321,29 @@ def test_one_store_connection_serves_many_threads_and_closes_cleanly(routed):
     for thread in threads:
         thread.join(timeout=60)
     assert errors == []
+
+
+_SNIPPET_ROWS = [
+    "New\ue000York " + "filler " * 60 + "New York office. " + "tail " * 60,
+    "Keep vendoring out of hermes-agent: see payload.json, naïve café notes.",
+    "query audit notes: vendoring vendoring vendoring vendoring vendoring",
+    "First sentence about nothing. Second: the database migration plan is here " + "and more words " * 20,
+]
+
+
+@pytest.mark.parametrize("query", ['"New York"', "vendoring", "payload", "naive", '"database migration plan"', "hermes"])
+def test_search_snippets_and_order_match_sqlite_fts5(routed, tmp_path, query):
+    """FTS5's unicode61 tokens, bm25 order and snippet() on the store, against the same rows in a SQLite lcm.db."""
+    results = []
+    for db in (routed("snip"), tmp_path / "sqlite" / "lcm.db"):
+        db.parent.mkdir(parents=True, exist_ok=True)
+        store = _lcm("store").MessageStore(db)
+        try:
+            ids = store.append_batch("s1", [{"role": "user", "content": text} for text in _SNIPPET_ROWS])
+            rows = store.search(query, session_id="s1", limit=10, sort="relevance")
+            results.append([(ids.index(row["store_id"]), row["snippet"]) for row in rows])
+        finally:
+            store.close()
+    on_store, on_sqlite = results
+    assert on_sqlite
+    assert on_store == on_sqlite

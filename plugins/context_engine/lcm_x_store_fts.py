@@ -278,3 +278,134 @@ def tsquery_sql(query: str, config: str = "simple", columns: Collection[str] = (
             sql = f"({sql}) {'||' if op == 'or' else '&&'} {'!!' if op == 'not' else ''}{piece}"
         params.append(value)
     return (sql or "plainto_tsquery('simple', '')"), params
+
+
+SNIPPET_MARK = "\x04"
+
+
+def _unicode61_tokens(text: str) -> list[tuple[int, int]]:
+    """(start, end) of each unicode61 token of *text*: letters, digits, marks and private-use characters."""
+    spans, start = [], None
+    for i, c in enumerate(text):
+        inside = unicodedata.category(c)[0] in "LNM" or unicodedata.category(c) == "Co"
+        if inside and start is None:
+            start = i
+        elif not inside and start is not None:
+            spans.append((start, i))
+            start = None
+    if start is not None:
+        spans.append((start, len(text)))
+    return spans
+
+
+def fts5_snippet(source: str, open_mark: str = ">>>", close_mark: str = "<<<", ellipsis: str = "...",
+                 n_token: int = 40) -> str:
+    """FTS5's snippet() (fts5_aux.c) over 0007's ctx.lcm_snippet_source value: the best window of *n_token*
+    tokens (1000 per phrase first seen, 1 per repeat, +100/+120 for a window that starts a sentence), with each
+    coalesced phrase instance between the marks."""
+    import json
+
+    _, meta, text = source.split(SNIPPET_MARK, 2)
+    info = json.loads(meta)
+    spans = _unicode61_tokens(text)
+    lexemes = info["lex"] if len(info["lex"]) == len(spans) else [
+        "".join(c for c in unicodedata.normalize("NFD", text[s:e]) if not "\u0300" <= c <= "\u036f").lower()
+        for s, e in spans]
+    insts = []  # (offset, phrase, size), FTS5's xInst order
+    for ip, (words, prefix) in enumerate(zip(info["phr"], info["pre"] or [])):
+        size = len(words)
+        for i in range(len(lexemes) - size + 1 if size else 0):
+            if all(lexemes[i + k] == w or (prefix and k == size - 1 and lexemes[i + k].startswith(w))
+                   for k, w in enumerate(words)):
+                insts.append((i, ip, size))
+    insts.sort()
+    n_doc = len(spans)
+
+    def score(pos: int) -> tuple[int, int]:
+        seen, total, first, last = set(), 0, -1, 0
+        for off, ip, size in insts:
+            if pos <= off < pos + n_token:
+                total += 1 if ip in seen else 1000
+                seen.add(ip)
+                if first < 0:
+                    first = off
+                last = off + size
+        adj = first - (n_token - (last - first)) // 2
+        adj = n_doc - n_token if adj + n_token > n_doc else adj
+        return total, max(adj, 0)
+
+    firsts = []
+    if n_doc > n_token:
+        for i, (s, _e) in enumerate(spans):
+            if i == 0:
+                firsts.append(0)
+                continue
+            j = s - 1
+            while j >= 0 and text[j] in " \t\n\r":
+                j -= 1
+            if j != s - 1 and j >= 0 and text[j] in ".:":
+                firsts.append(i)
+    best_score, best_start = 0, 0
+    for off, _ip, _size in insts:
+        sc, adj = score(off)
+        if sc > best_score:
+            best_score, best_start = sc, adj
+        if firsts:
+            jj = 0
+            while jj < len(firsts) - 1 and firsts[jj + 1] <= off:
+                jj += 1
+            if firsts[jj] < off:
+                sc = score(firsts[jj])[0] + (120 if firsts[jj] == 0 else 100)
+                if sc > best_score:
+                    best_score, best_start = sc, firsts[jj]
+
+    def coalesced(k: int) -> tuple[int, int, int]:
+        start = end = -1
+        while k < len(insts):
+            off, _ip, size = insts[k]
+            if start < 0:
+                start, end = off, off + size - 1
+            elif off <= end:
+                end = max(end, off + size - 1)
+            else:
+                break
+            k += 1
+        return start, end, k
+
+    range_start, range_end = best_start, best_start + n_token - 1
+    out = [ellipsis] if best_start > 0 else []
+    it_start, it_end, k = coalesced(0)
+    while 0 <= it_start < best_start:
+        it_start, it_end, k = coalesced(k)
+    cur, is_open = 0, False
+    for pos, (s, e) in enumerate(spans):
+        if pos < range_start or pos > range_end:
+            continue
+        if range_start and pos == range_start:
+            cur = s
+        if is_open and (pos <= it_start or it_start < 0) and s > cur:
+            out.append(close_mark)
+            is_open = False
+        if pos == it_start and not is_open:
+            out += [text[cur:s], open_mark]
+            cur, is_open = s, True
+        if pos == it_end:
+            if not is_open:
+                out.append(open_mark)
+                is_open = True
+            out.append(text[cur:e])
+            cur = e
+            it_start, it_end, k = coalesced(k)
+        if pos == range_end:
+            if is_open:
+                if it_start >= 0 and pos >= it_start:
+                    out.append(text[cur:e])
+                    cur = e
+                out.append(close_mark)
+                is_open = False
+            out.append(text[cur:e])
+            cur = e
+    if is_open:
+        out.append(close_mark)
+    out.append(text[cur:] if range_end >= n_doc - 1 else ellipsis)
+    return "".join(out)
