@@ -508,17 +508,19 @@ class MessageStore:
                              older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
         """Delete this agent's text rows no transcript row points at any more (*still_held* names the uids its
         state.db still references) and that nobody wrote or re-used for *older_than_days* (at least
-        MIN_COLLECT_DAYS): a snapshot or backup taken within that window restores with its text. Explicitly
-        forgotten rows (``forgotten_at``) are left to the forget path. Returns the rows deleted."""
+        MIN_COLLECT_DAYS): a snapshot or backup taken within that window restores with its text. Only agent turns
+        (``source = 'agent'``, what ``put_text`` writes) are collected: state.db holds only the rows it wrote, and
+        other sources (external messages, ...) have no transcript placement and keep their own lifecycle.
+        Explicitly forgotten rows (``forgotten_at``) are left to the forget path. Returns the rows deleted."""
         if self._in_write():
             raise RuntimeError("collect_unreferenced runs outside a write transaction")
         seconds = max(float(older_than_days), MIN_COLLECT_DAYS) * 86400.0
         deleted, after = 0, 0
         while True:
             with self._cursor() as cur:
-                cur.execute("SELECT message_id, uid FROM memory.messages WHERE message_id > %s AND forgotten_at IS NULL"
-                            " AND observed_at < now() - make_interval(secs => %s) ORDER BY message_id LIMIT 1000",
-                            (after, seconds))
+                cur.execute("SELECT message_id, uid FROM memory.messages WHERE message_id > %s AND source = %s"
+                            " AND forgotten_at IS NULL AND observed_at < now() - make_interval(secs => %s)"
+                            " ORDER BY message_id LIMIT 1000", (after, SOURCE_AGENT, seconds))
                 page = cur.fetchall()
             if not page:
                 return deleted
@@ -529,8 +531,9 @@ class MessageStore:
                 # observed_at is checked again here: a writer that re-used a row meanwhile refreshed it (and holds
                 # its lock until it commits), so the row stays.
                 with self._cursor() as cur:
-                    cur.execute("DELETE FROM memory.messages WHERE uid = ANY(%s) AND forgotten_at IS NULL"
-                                " AND observed_at < now() - make_interval(secs => %s) RETURNING uid", (doomed, seconds))
+                    cur.execute("DELETE FROM memory.messages WHERE uid = ANY(%s) AND source = %s AND forgotten_at IS NULL"
+                                " AND observed_at < now() - make_interval(secs => %s) RETURNING uid",
+                                (doomed, SOURCE_AGENT, seconds))
                     gone = [row[0] for row in cur.fetchall()]
                 TEXT_CACHE.drop(self.agent_id, gone)
                 deleted += len(gone)
@@ -584,13 +587,14 @@ class MessageStore:
     # ── search ──
 
     def search_groups(self, groups: Sequence[Sequence[SearchTerm]], *, limit: int = 5000,
-                      before_id: Optional[int] = None) -> list[tuple[int, str]]:
+                      before_id: Optional[int] = None, source: Optional[str] = None) -> list[tuple[int, str]]:
         """``(message_id, uid)`` of the newest *limit* rows matching any group, below *before_id* when given (the
         next page starts below the last id of this one). A group matches when all its terms do (``NOT``
         terms must not match). A word term matches a word of the text (the ``simple`` tsvector; a prefix
         term any word starting with it); a substring term matches anywhere (``pg_trgm``), so a one- or
         two-character Korean, Chinese or Japanese term matches inside a longer word. Tool names and
-        tool-call arguments match as substrings either way."""
+        tool-call arguments match as substrings either way. *source* keeps only rows of that source, before the
+        limit."""
         group_sql, params = [], []
         for group in groups:
             parts = []
@@ -603,9 +607,11 @@ class MessageStore:
         if not group_sql:
             return []
         below = "" if before_id is None else "message_id < %s AND "
-        sql = (f"SELECT message_id, uid FROM memory.messages WHERE {below}forgotten_at IS NULL AND "
+        of_source = "" if source is None else "source = %s AND "
+        sql = (f"SELECT message_id, uid FROM memory.messages WHERE {below}{of_source}forgotten_at IS NULL AND "
                f"({' OR '.join(group_sql)}) ORDER BY message_id DESC LIMIT %s")
-        args = ([] if before_id is None else [int(before_id)]) + params + [int(limit)]
+        args = (([] if before_id is None else [int(before_id)]) + ([] if source is None else [source]) + params
+                + [int(limit)])
         with self._cursor() as cur:
             cur.execute(sql, args)
             return [(int(row[0]), row[1]) for row in cur.fetchall()]
@@ -983,11 +989,26 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
             f"holds (first: {clash[1]}); nothing was moved")
 
 
+def _follow_text_owner(cur, from_agent: str, to_agent: str) -> None:
+    """Give *to_agent* the vec.chunks rows (and their kind ``chunk`` vectors) of *from_agent* whose message now
+    belongs to *to_agent*: embedded text follows its memory.messages row. A store from before migration 0003 has
+    no vec tables and nothing to move."""
+    cur.execute("SELECT to_regclass('vec.chunks') IS NOT NULL")
+    if not cur.fetchone()[0]:
+        return
+    cur.execute("UPDATE vec.chunks c SET agent_id = %s FROM memory.messages m"
+                " WHERE m.message_id = c.message_ids[1] AND c.agent_id = %s AND m.agent_id = %s",
+                (to_agent, from_agent, to_agent))
+    cur.execute("UPDATE vec.embeddings e SET agent_id = %s FROM vec.chunks c"
+                " WHERE e.kind = 'chunk' AND e.item_id = c.chunk_id AND e.agent_id = %s AND c.agent_id = %s",
+                (to_agent, from_agent, to_agent))
+
+
 def move_agent_rows(old_agent: str, new_agent: str) -> list[str]:
     """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
     lina_app inside one agent): agent_id and the uid prefix ``agent:<old>:`` -> ``agent:<new>:``. A row whose new
     uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
-    Returns the new uids, so ``return_agent_rows`` can undo exactly this move."""
+    The embedded text and vectors of the moved rows (vec.chunks, kind ``chunk``) move with them. Returns the new uids, so ``return_agent_rows`` can undo exactly this move."""
     import psycopg
     old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
@@ -999,7 +1020,9 @@ def move_agent_rows(old_agent: str, new_agent: str) -> list[str]:
                 " WHERE n.uid = %s || substr(o.uid, %s) AND n.native->>'payload_sha256' = o.native->>'payload_sha256')"
                 " RETURNING o.uid",
                 (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
-            return [row[0] for row in cur.fetchall()]
+            moved = [row[0] for row in cur.fetchall()]
+            _follow_text_owner(cur, old_agent, new_agent)
+            return moved
     except psycopg.Error as exc:
         raise StoreUnavailableError(
             f"could not move message text from agent {old_agent!r} to {new_agent!r}: {exc}".strip()) from exc
@@ -1012,9 +1035,10 @@ def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> No
     old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
     try:
-        with conn.transaction():
-            conn.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
-                         (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
+        with conn.transaction(), conn.cursor() as cur:
+            cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
+                        (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
+            _follow_text_owner(cur, new_agent, old_agent)
     finally:
         conn.close()
 

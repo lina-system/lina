@@ -31,4 +31,10 @@ def build_memory_parser(subparsers, *, cmd_memory: Callable) -> None:
     _reset_parser.add_argument(
         "--target", choices=["all", "memory", "user"], default="all",
         help="Which store to reset: 'all' (default), 'memory', or 'user'")
+    _eval_parser = memory_sub.add_parser(
+        "eval-search", help="Top-5 hit rate per source: today's search against the one-model vector search")
+    _eval_parser.add_argument("--questions", required=True, help="JSON Lines file of questions (docs/store.md)")
+    _eval_parser.add_argument("--honcho-url", default=None,
+                              help="Honcho api for the old memory search (default: not run)")
+    _eval_parser.add_argument("--json", default=None, help="also write the scores and every ranking here")
     memory_parser.set_defaults(func=cmd_memory)

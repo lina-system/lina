@@ -99,6 +99,8 @@ def reset_schema_between_tests(
 
     def _reset_schema() -> None:
         with alembic_engine.begin() as conn:
+            # l19_vec_embeddings creates schema vec beside Honcho's own (LINA).
+            conn.execute(text('DROP SCHEMA IF EXISTS "vec" CASCADE'))
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
             conn.execute(text(f'CREATE SCHEMA "{schema}"'))
 

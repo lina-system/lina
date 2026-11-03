@@ -21,7 +21,6 @@ skips.
 import asyncio
 import logging
 from dataclasses import dataclass
-from typing import Any
 
 from fastapi import BackgroundTasks
 from sqlalchemy import and_, func, select, update
@@ -40,6 +39,7 @@ from src.reconciler.sync_vectors import (
 from src.telemetry import prometheus_metrics
 from src.telemetry.events import EmbeddingCallPurpose
 from src.utils.types import embedding_call_purpose
+from src.vec_embeddings import put_vectors
 from src.vector_store import VectorRecord, VectorStore, get_external_vector_store
 
 logger = logging.getLogger(__name__)
@@ -280,22 +280,27 @@ async def _persist_pgvector(
     """pgvector-only mode: write the vector and mark synced per row. The
     ``sync_state='pending'`` guard keeps us idempotent if the reconciler synced
     a row in the gap."""
-    for c in claimed:
-        await db.execute(
-            update(models.MessageEmbedding)
-            .where(
-                and_(
-                    models.MessageEmbedding.id == c.id,
-                    models.MessageEmbedding.sync_state == "pending",
-                )
-            )
-            .values(
-                sync_state="synced",
-                last_sync_at=func.now(),
-                sync_attempts=0,
-                embedding=vector_by_id[c.id],
+    result = await db.execute(
+        update(models.MessageEmbedding)
+        .where(
+            and_(
+                models.MessageEmbedding.id.in_([c.id for c in claimed]),
+                models.MessageEmbedding.sync_state == "pending",
             )
         )
+        .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
+        .returning(models.MessageEmbedding.id)
+    )
+    marked = set(result.scalars().all())
+    await put_vectors(
+        db,
+        "message",
+        (
+            (c.id, c.workspace_name, vector_by_id[c.id])
+            for c in claimed
+            if c.id in marked
+        ),
+    )
 
 
 async def _upsert_external(
@@ -369,21 +374,25 @@ async def _mark_synced(
 ) -> None:
     """Mark upserted chunks synced (DB-only). The ``sync_state='pending'``
     guard keeps us idempotent if the reconciler synced a row in the gap."""
-    for c in chunks:
-        values: dict[str, Any] = {
-            "sync_state": "synced",
-            "last_sync_at": func.now(),
-            "sync_attempts": 0,
-        }
-        if store_in_postgres:
-            values["embedding"] = vector_by_id[c.id]
-        await db.execute(
-            update(models.MessageEmbedding)
-            .where(
-                and_(
-                    models.MessageEmbedding.id == c.id,
-                    models.MessageEmbedding.sync_state == "pending",
-                )
+    result = await db.execute(
+        update(models.MessageEmbedding)
+        .where(
+            and_(
+                models.MessageEmbedding.id.in_([c.id for c in chunks]),
+                models.MessageEmbedding.sync_state == "pending",
             )
-            .values(**values)
+        )
+        .values(sync_state="synced", last_sync_at=func.now(), sync_attempts=0)
+        .returning(models.MessageEmbedding.id)
+    )
+    marked = set(result.scalars().all())
+    if store_in_postgres:
+        await put_vectors(
+            db,
+            "message",
+            (
+                (c.id, c.workspace_name, vector_by_id[c.id])
+                for c in chunks
+                if c.id in marked
+            ),
         )

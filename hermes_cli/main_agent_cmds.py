@@ -62,6 +62,9 @@ def cmd_memory(args):
         _cmd_memory_off()
     elif sub == "reset":
         _cmd_memory_reset(args)
+    elif sub == "eval-search":
+        from hermes_cli.memory_eval_search import run
+        sys.exit(run(args))
     else:
         from hermes_cli.memory_setup import memory_command
         memory_command(args)
