@@ -160,30 +160,14 @@ def mount_spa(application: FastAPI):
     def web_dist() -> Path:
         return getattr(application.state, "web_dist", None) or WEB_DIST
 
-    def _serve_index(request: Request, prefix: str = ""):
-        """index.html with the session token + base-path injected.
+    def _bootstrap_script(prefix: str) -> str:
+        """The ``<script>`` every served page reads its credential and base path from (dashboard and web app).
 
         When the OAuth auth gate is active (``app.state.auth_required``), the legacy
         ``_SESSION_TOKEN`` is NOT injected — the SPA reads identity from ``/api/auth/me`` over
         cookie auth; ``__HERMES_AUTH_REQUIRED__`` tells it which scheme to use for /api/pty
         and /api/ws (ticket vs token).
         """
-        try:
-            html = (web_dist() / "index.html").read_text(encoding="utf-8-sig")
-        except OSError:
-            # Partial build / wiped dist / permissions: same JSON 404 as a fully-missing dist. The
-            # Webapp's bundle is built by `hermes webapp`, not by the dashboard's web project.
-            webapp = getattr(application.state, "ui_surface", "dashboard") == "webapp"
-            missing = ("The Webapp is not built. Run: hermes webapp" if webapp
-                       else "Frontend not built. Run: cd web && npm run build")
-            return JSONResponse({"error": missing}, status_code=404)
-        if getattr(application.state, "ui_surface", "dashboard") == "webapp":
-            # A bundle `hermes update` could not rebuild was built for the code before the update:
-            # refuse it until `hermes webapp` rebuilds it.
-            from gateway.webapp_listener import bundle_stale_reason
-            stale = bundle_stale_reason(web_dist())
-            if stale:
-                return JSONResponse({"error": stale}, status_code=503, headers=_NO_STORE)
         chat_js = "true" if _DASHBOARD_EMBEDDED_CHAT_ENABLED else "false"
         gated = bool(getattr(application.state, "auth_required", False))
         # Only a host that records its surface (the gateway's Webapp) names it to the page.
@@ -207,7 +191,7 @@ def mount_spa(application: FastAPI):
         # none, so a tab on any other profile names that profile on every request.
         from hermes_cli.web_server_profiles import serving_profile_name as _serving_profile_name
         serving_profile_js = json.dumps(_serving_profile_name()).replace("</", "<\\/")
-        bootstrap_script = (
+        return (
             f"<script>{token_js}"
             f"window.__HERMES_DASHBOARD_EMBEDDED_CHAT__={chat_js};"
             f'window.__HERMES_BASE_PATH__="{prefix}";'
@@ -217,6 +201,25 @@ def mount_spa(application: FastAPI):
             f"window.__HERMES_DASHBOARD_PROFILE__={serving_profile_js};"
             f"</script>"
         )
+
+    def _serve_index(request: Request, prefix: str = ""):
+        """index.html with the bootstrap script (session token + base path) injected."""
+        try:
+            html = (web_dist() / "index.html").read_text(encoding="utf-8-sig")
+        except OSError:
+            # Partial build / wiped dist / permissions: same JSON 404 as a fully-missing dist. The
+            # Webapp's bundle is built by `hermes webapp`, not by the dashboard's web project.
+            webapp = getattr(application.state, "ui_surface", "dashboard") == "webapp"
+            missing = ("The Webapp is not built. Run: hermes webapp" if webapp
+                       else "Frontend not built. Run: cd web && npm run build")
+            return JSONResponse({"error": missing}, status_code=404)
+        if getattr(application.state, "ui_surface", "dashboard") == "webapp":
+            # A bundle `hermes update` could not rebuild was built for the code before the update:
+            # refuse it until `hermes webapp` rebuilds it.
+            from gateway.webapp_listener import bundle_stale_reason
+            stale = bundle_stale_reason(web_dist())
+            if stale:
+                return JSONResponse({"error": stale}, status_code=503, headers=_NO_STORE)
         if prefix:
             # Rewrite absolute asset URLs baked into the Vite build to go through the proxy.
             for attr in ('href="/assets/', 'src="/assets/', 'href="/favicon.ico"', 'href="/fonts/',
@@ -225,7 +228,7 @@ def mount_spa(application: FastAPI):
         theme_bootstrap = _render_active_theme_bootstrap_css()
         if theme_bootstrap:
             html = html.replace("</head>", f"{theme_bootstrap}</head>", 1)
-        html = html.replace("</head>", f"{bootstrap_script}</head>", 1)
+        html = html.replace("</head>", f"{_bootstrap_script(prefix)}</head>", 1)
         from hermes_cli.webapp_page_policy import page_headers
         return HTMLResponse(html, headers=page_headers(request, html, _NO_STORE))
 
@@ -269,6 +272,7 @@ def mount_spa(application: FastAPI):
     from hermes_cli.webapp_previews import mount_preview_assets
     mount_preview_assets(application)
     application.mount("/assets", serve_assets, name="assets")
+    _mount_web_app(application, _bootstrap_script, _ImmutableAssetFiles)
 
     @application.get("/{full_path:path}")
     async def serve_spa(full_path: str, request: Request):
@@ -298,6 +302,66 @@ def mount_spa(application: FastAPI):
                 return FileResponse(font)
             return JSONResponse({"error": "not found"}, status_code=404)
         return _serve_index(request, prefix)
+
+
+_APP_NOT_SERVED = ("No web app build is configured: set dashboard.app_dist (or LINA_APP_DIST) "
+                   "to the lina-app build folder.")
+
+
+def _web_app_dist() -> Optional[Path]:
+    """The lina-app build folder (``LINA_APP_DIST`` over ``dashboard.app_dist``), or ``None`` when unset or absent."""
+    from hermes_cli.config import load_config
+    raw = os.environ.get("LINA_APP_DIST") or cfg_get(load_config(), "dashboard", "app_dist", default="")
+    if not raw or not isinstance(raw, str):
+        return None
+    dist = Path(raw).expanduser()
+    return dist if dist.is_dir() else None
+
+
+def _mount_web_app(application: FastAPI, bootstrap_script, asset_files_cls) -> None:
+    """``/app/``: the lina-app build on the client API's origin, handed the dashboard page's own bootstrap so it
+    calls ``/api/lina/*`` with the same credential (lina#168). Mounted before the SPA catch-all; the folder is
+    read per request, so a new build or a config change needs no restart."""
+    from hermes_cli.webapp_page_policy import page_headers
+
+    def not_served() -> JSONResponse:
+        return JSONResponse({"error": _APP_NOT_SERVED}, status_code=404)
+
+    asset_files: dict[Path, StaticFiles] = {}
+
+    async def serve_app_assets(scope, receive, send):
+        dist = _web_app_dist()
+        if dist is None:
+            await not_served()(scope, receive, send)
+            return
+        directory = dist / "assets"
+        if directory not in asset_files:
+            asset_files[directory] = asset_files_cls(directory=directory, check_dir=False)
+        await asset_files[directory](scope, receive, send)
+
+    application.mount("/app/assets", serve_app_assets, name="app_assets")
+
+    @application.get("/app")
+    @application.get("/app/{full_path:path}")
+    async def serve_app(request: Request, full_path: str = ""):
+        dist = _web_app_dist()
+        if dist is None:
+            return not_served()
+        file_path = dist / full_path
+        index = dist / "index.html"
+        if (full_path and file_path.is_file() and file_path.resolve().is_relative_to(dist.resolve())
+                and not (index.is_file() and file_path.samefile(index))):
+            return FileResponse(file_path)
+        try:
+            html = index.read_text(encoding="utf-8-sig")
+        except OSError:
+            return not_served()
+        prefix = _normalise_prefix(request.headers.get("x-forwarded-prefix"))
+        if prefix:
+            for attr in ('href="/app/', 'src="/app/'):
+                html = html.replace(attr, attr.replace('"/', f'"{prefix}/', 1))
+        html = html.replace("</head>", f"{bootstrap_script(prefix)}</head>", 1)
+        return HTMLResponse(html, headers=page_headers(request, html, _NO_STORE))
 
 
 # ---------------------------------------------------------------------------
