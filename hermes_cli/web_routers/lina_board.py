@@ -2,7 +2,8 @@
 API (schema: ``docs/api/board-client.yaml``).
 
 ``GET /api/lina/board`` is one snapshot; ``/api/lina/work/due``, ``/api/lina/devices`` and ``/api/lina/quota`` are its
-parts for polling them on their own (the device probe and the OCX read are the slow ones). Like ``lina_models.py``
+parts for polling them on their own (the device probe and the OCX read are the slow ones). ``/api/lina/work/items``
+and ``/api/lina/work/items/{id}`` (lina#166) serve the goals and to-dos with their comments, runs and links. Like ``lina_models.py``
 every response carries an ``ETag`` and a matching ``If-None-Match`` answers 304; the tag leaves out the snapshot time
 ``at``, so it changes only when the data does. Mounted through ``lina_models.router``, so the dashboard's auth gate
 applies the same way.
@@ -12,7 +13,7 @@ import hashlib
 import json
 from typing import Callable, Optional
 
-from fastapi import APIRouter, Header, Response
+from fastapi import APIRouter, Header, HTTPException, Response
 from starlette.concurrency import run_in_threadpool
 
 router = APIRouter()
@@ -38,6 +39,23 @@ async def lina_board(if_none_match: Optional[str] = Header(default=None)):
 async def lina_work_due(if_none_match: Optional[str] = Header(default=None)):
     from hermes_cli.lina_board import due
     return await _serve(due, if_none_match)
+
+
+@router.get("/api/lina/work/items")
+async def lina_work_items(agent: Optional[str] = None, if_none_match: Optional[str] = Header(default=None)):
+    from hermes_cli.lina_board_items import items
+    return await _serve(lambda: items(agent), if_none_match)
+
+
+@router.get("/api/lina/work/items/{item_id}")
+async def lina_work_item(item_id: str, if_none_match: Optional[str] = Header(default=None)):
+    from hermes_cli.lina_board_items import ItemNotFound, RecordUnreadable, item
+    try:
+        return await _serve(lambda: item(item_id), if_none_match)
+    except ItemNotFound as exc:
+        raise HTTPException(status_code=404, detail=f"no goal or to-do {item_id}") from exc
+    except RecordUnreadable as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
 
 
 @router.get("/api/lina/devices")

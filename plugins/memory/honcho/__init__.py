@@ -34,7 +34,7 @@ from tools.registry import tool_error
 logger = logging.getLogger(__name__)
 
 
-def _turn_rule(messages, *, agent_context: str, platform: str, turn_author) -> Any:
+def _turn_rule(messages, *, agent_context: str, platform: str, turn_author, turn_start=None) -> Any:
     """The policy row for a turn handed straight to this provider (``memory.provider: honcho``): gateway, cron and
     delegation notices arrive on the user role like a person's message, and only their route tells them apart
     (lina-memory's policy table, plugins/memory/lina/policy.yaml)."""
@@ -43,7 +43,7 @@ def _turn_rule(messages, *, agent_context: str, platform: str, turn_author) -> A
     policy = import_provider_module("lina-memory", "policy")
     table = policy.load_policy()
     return table.rule(table.route_for(policy.signals_for_turn(
-        messages, agent_context=agent_context, platform=platform, turn_author=turn_author)))
+        messages, agent_context=agent_context, platform=platform, turn_author=turn_author, turn_start=turn_start)))
 
 
 def _record_metadata(turn_record: Any) -> tuple[dict[str, Any], dict[str, Any]]:
@@ -222,11 +222,12 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             {"key": "baseUrl", "description": "Honcho base URL (for self-hosted)"},
         ]
 
-    def post_setup(self, hermes_home: str, config: dict) -> None:
-        """Run the full Honcho setup wizard after provider selection."""
+    def post_setup(self, hermes_home: str, config: dict, *, memory_provider: str = "honcho") -> None:
+        """Run the full Honcho setup wizard after provider selection. ``memory_provider`` is the provider the user
+        chose, which the wizard puts in the memory slot (lina-memory when it drives Honcho)."""
         import types
         from .cli import cmd_setup
-        cmd_setup(types.SimpleNamespace())
+        cmd_setup(types.SimpleNamespace(memory_provider=memory_provider))
 
     # ----- Session lifecycle -----
 
@@ -889,7 +890,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
     def sync_turn(
         self, user_content: str, assistant_content: str, *, session_id: str = "",
         turn_author: Optional[dict[str, Any]] = None, messages: Optional[list[dict[str, Any]]] = None,
-        turn_record: Any = None, session_key: str = "",
+        turn_record: Any = None, session_key: str = "", turn_start: Optional[int] = None,
     ) -> None:
         """Record the conversation turn in Honcho (non-blocking), chunking messages that
         exceed the Honcho API limit. Honors saveMessages: false. ``turn_author`` names who wrote
@@ -898,7 +899,9 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         ``turn_record`` is lina-memory's record of the turn (plugins/memory/lina): it has already applied the
         policy table, and its person, agent, conversation and message ids ride on each message's metadata.
-        Without one, the policy table is applied here to the route ``messages`` and the init context show.
+        Without one, the policy table is applied here to the route ``messages`` and the init context show, read at
+        ``turn_start`` (the turn's first row, as the runtime fixed it) so a later ``/steer`` or stop-gate note never
+        decides it.
         lina-memory calls this from its worker, possibly after the next turn started, so it passes the author
         and ``session_key`` (``self.session_key`` when the turn finished) instead of letting them be read here."""
         if not self._writes_enabled():
@@ -906,7 +909,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         author = turn_author if isinstance(turn_author, dict) else self._turn_author
         base_key = session_key or self._session_key
         allowed = turn_record.honcho if turn_record is not None else _turn_rule(
-            messages, turn_author=author, **self._route_context).honcho
+            messages, turn_author=author, turn_start=turn_start, **self._route_context).honcho
         if not allowed:
             logger.debug("Honcho sync skipped a turn its route keeps out of Honcho")
             return

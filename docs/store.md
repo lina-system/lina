@@ -88,7 +88,7 @@ profile, so row-level security keeps each profile to its rows. Agents find the s
 | `source` | `agent` for agent turns (`messages` for external messages, #18) |
 | `agent_id` | the profile; row-level security applies through it |
 | `session_id`, `seq_in_session` | the Hermes session that first wrote the row and its row id there |
-| `conversation_id` | the conversation: for agent turns, its id in the identity registry (#20, [memory-layer.md](memory-layer.md)), null until `lina-memory` resolves the turn; for external messages, the channel `messages:<platform>:<room_id>` |
+| `conversation_id` | the conversation: from the identity registry for agent turns (#20, [memory-layer.md](memory-layer.md)), null until `lina-memory` resolves the turn; `messages:<platform>:<room_id>` for external messages |
 | `author` | nullable author key: `<platform>:<author_id>` for external messages; NULL for agent rows (not a resolved person) |
 | `role`, `content`, `tool_name`, `tool_call_id`, `ts` | the message; `content` is plain text (the text parts of multimodal content, NUL removed) |
 | `tool_calls` | the tool calls as `jsonb` |

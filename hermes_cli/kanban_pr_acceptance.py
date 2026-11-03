@@ -164,8 +164,8 @@ def collect_acceptance(contract: str, published_pr: str | None,
                     by_app.setdefault(r["app"]["id"], []).append(r)
             # Each app's check is judged by its latest non-cancelled run: the merge rule (lina#63).
             matching = [_merge_rules().latest_run(group) for group in by_app.values()]
-            # A legacy status can satisfy an unpinned context, but never a check pinned to an app.
-            legacy = [s for s in statuses if s["context"] == context] if app_id in (None, -1) else []
+            legacy = [s for s in statuses if s["context"] == context
+                      and _merge_rules().status_matches_app(s, app_id, runs)]
             selected = matching + ([max(legacy, key=lambda s: s["id"])] if legacy else [])
             if not selected:
                 outcomes.append("missing")

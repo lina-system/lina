@@ -8,31 +8,35 @@ the way they get `context.engine: lcm-x`; a home without the key keeps the built
 
 ## One receive path
 
-`MemoryManager.sync_all` calls `lina-memory`'s `sync_turn` once per finished turn. Because its `sync_turn` names a
-`local_messages` parameter, the manager calls it on the turn thread, where LCM-X's own hook ran, and hands it the
-unredacted transcript as well as the redacted one. That call is the only ingest:
+Each finished turn of an agent that carries `lina-memory` is received once and routed by the policy table:
 
-1. It works out the route the turn arrived on (below) and looks it up in the policy table.
-2. It builds one turn record: person, agent and conversation ids from the identity registry, the
+1. LCM-X's own `post_llm_call` hook stays registered for every agent. `lina-memory` claims the session of its agent
+   (`plugins/memory/lina/lcm.py`, `claim_session`), and the context-engine loader
+   (`plugins/context_engine/__init__.py`) has the hook hand a claimed session's turn to `lina-memory` instead of
+   ingesting it itself. `lina-memory` works out the route (below) and, when the policy table lets the route into
+   LCM, hands the turn to the engine bound to the session, found through LCM-X's `engine_registry`: `ingest`
+   (cursor-based, so rows it already holds are skipped), then `note_turn_complete`. This runs on the turn thread,
+   where the hook runs, with the unredacted transcript LCM-X keeps on this machine, so the ingest never overlaps
+   the next turn's own use of the engine (compaction, `lcm_*` tool calls). An LCM failure is logged with its
+   traceback and does not stop the Honcho delivery below.
+   An agent without `lina-memory` (a `skip_memory` delegate child, a background review, the curator) claims no
+   session, and LCM-X's hook ingests its turns as before. A stopped turn is LCM-X's own: `on_turn_complete`
+   stores it, or keeps an open user row for the next completed turn. Either way a turn is one ingest.
+2. `MemoryManager.sync_all` then calls `lina-memory`'s `sync_turn`. Because it names a `local_messages`
+   parameter, the manager calls it on the turn thread with the unredacted transcript as well as the redacted one.
+   It builds one turn record: person, agent and conversation ids from the identity registry, the
    `memory.messages` uids of the turn's rows, the route and whose words the text is, the platform, the session,
    and the first and last timestamps.
-3. It hands the turn to LCM-X, there on the turn thread: the engine bound to the session, found through LCM-X's
-   `engine_registry`, ingests the transcript through this turn (`ingest`, cursor-based, so rows it already holds
-   are skipped), then `note_turn_complete`. LCM-X gets the transcript unredacted, as its own hook did: it keeps
-   it on this machine. Running here keeps the ingest from overlapping the next turn's own use of the engine
-   (compaction, `lcm_*` tool calls), which do not take the engine's lease.
-4. On `lina-memory`'s own worker, one turn after another, it hands the same record to the Honcho adapter's
-   `sync_turn`, when the route allows Honcho (steps 2, 4 and 5 run there). The adapter writes
+3. On `lina-memory`'s own worker, one turn after another, it hands the same record to the Honcho adapter's
+   `sync_turn`, when the route allows Honcho (the record, this step and the next run there). The adapter writes
    the turn as before (peers, sessions, a bot author's own a2a session) and puts the record's ids on each
    message's metadata (`lina_person`, `lina_agent`, `lina_conversation`, `lina_uid`, `lina_route`).
    Who wrote the turn and its Honcho session are fixed on the turn thread when the turn finishes and handed to
    the worker: by the time the worker runs, the next turn may have started, and Honcho's own per-turn state
    (`on_turn_start`) names that turn's author.
-5. It fills `memory.messages.conversation_id` for the turn's rows (`MessageStore.set_conversation`).
+4. It fills `memory.messages.conversation_id` for the turn's rows (`MessageStore.set_conversation`).
 
-LCM-X's own `post_llm_call` ingest hook is not registered while the home's memory slot holds `lina-memory`: the
-context-engine loader (`plugins/context_engine/__init__.py`) leaves that one hook out. The subtree is unchanged.
-Recall, tools and the session lifecycle (`prefetch`, `honcho_*` tools, `on_session_end`, ...) go to the Honcho
+The LCM-X subtree is unchanged. Recall, tools and the session lifecycle (`prefetch`, `honcho_*` tools, `on_session_end`, ...) go to the Honcho
 adapter when Honcho is configured. `lina-memory`'s `plugin.yaml` names the adapter (`drives: [honcho]`), so
 `hermes honcho ...` stays available while `lina-memory` holds the slot, and setting Honcho up (`hermes honcho
 setup`, `hermes memory setup`) keeps `lina-memory` there.

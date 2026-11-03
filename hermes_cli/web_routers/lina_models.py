@@ -13,10 +13,11 @@ from typing import Optional
 from fastapi import APIRouter, Header, HTTPException, Response
 from starlette.concurrency import run_in_threadpool
 
-from hermes_cli.web_routers import lina_board
+from hermes_cli.web_routers import lina_board, lina_talk
 
 router = APIRouter()
 router.include_router(lina_board.router)  # lina#39: mounted here so web_server.py stays at its cap
+router.include_router(lina_talk.router)  # lina#167: the same way
 
 
 async def _serve(view: str, if_none_match: Optional[str]) -> Response:
