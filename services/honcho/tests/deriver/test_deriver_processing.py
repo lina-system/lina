@@ -31,6 +31,7 @@ class TestDeriverProcessing:
         def _message(row_id: int, public_id: str, peer: str) -> Mock:
             return Mock(
                 id=row_id,
+                seq_in_session=row_id // 10,
                 public_id=public_id,
                 session_name="session-1",
                 workspace_name="workspace-1",
