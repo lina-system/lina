@@ -862,7 +862,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
     def sync_turn(
         self, user_content: str, assistant_content: str, *, session_id: str = "",
         turn_author: Optional[dict[str, Any]] = None, messages: Optional[list[dict[str, Any]]] = None,
-        turn_record: Any = None,
+        turn_record: Any = None, session_key: str = "",
     ) -> None:
         """Record the conversation turn in Honcho (non-blocking), chunking messages that
         exceed the Honcho API limit. Honors saveMessages: false. ``turn_author`` names who wrote
@@ -871,10 +871,13 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
 
         ``turn_record`` is lina-memory's record of the turn (plugins/memory/lina): it has already applied the
         policy table, and its person, agent, conversation and message ids ride on each message's metadata.
-        Without one, the policy table is applied here to the route ``messages`` and the init context show."""
+        Without one, the policy table is applied here to the route ``messages`` and the init context show.
+        lina-memory calls this from its worker, possibly after the next turn started, so it passes the author
+        and ``session_key`` (``self.session_key`` when the turn finished) instead of letting them be read here."""
         if not self._writes_enabled():
             return
         author = turn_author if isinstance(turn_author, dict) else self._turn_author
+        base_key = session_key or self._session_key
         allowed = turn_record.honcho if turn_record is not None else _turn_rule(
             messages, turn_author=author, **self._route_context).honcho
         if not allowed:
@@ -902,23 +905,23 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
                 logger.debug("Honcho sync skipped a bot-authored turn that named no author id")
                 return
             bot_peer_id = self._manager.resolve_author_peer_id(
-                self._session_key, author_id, author.get("name"), is_bot=True)
+                base_key, author_id, author.get("name"), is_bot=True)
             if not bot_peer_id or bot_peer_id == self._manager.assistant_peer_id():
                 logger.debug("Honcho sync skipped a bot-authored turn: author %s has no peer of its own", author_id)
                 return
-            session_key = self._a2a_session_key({**author, "id": author_id})
+            target_key = self._a2a_session_key({**author, "id": author_id}, base_key)
             # The bot is the a2a session's own user peer, so its messages need no per-message author.
             session_kwargs["user_peer_id"] = bot_peer_id
             author_peer_id = None
         else:
-            session_key = self._session_key
+            target_key = base_key
             # Resolved before the thread starts so a following turn cannot retag a queued write.
-            author_peer_id = self._manager.resolve_author_peer_id(session_key, author.get("id"), author.get("name"))
+            author_peer_id = self._manager.resolve_author_peer_id(target_key, author.get("id"), author.get("name"))
 
         user_meta, reply_meta = _record_metadata(turn_record)
 
         def _sync():
-            session = self._manager.get_or_create(session_key, **session_kwargs)
+            session = self._manager.get_or_create(target_key, **session_kwargs)
             for chunk in self._chunk_message(clean_user_content, msg_limit) if clean_user_content else ():
                 session.add_message("user", chunk, author_peer_id=author_peer_id, **user_meta)
             for chunk in self._chunk_message(clean_assistant_content, msg_limit) if clean_assistant_content else ():
@@ -930,26 +933,33 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             self._sync_thread.join(timeout=5.0)
         self._sync_thread = self._spawn_write(_sync, "honcho-sync", "Honcho sync_turn failed: %s")
 
-    def source_keys(self, turn_author: Optional[dict[str, Any]] = None) -> dict[str, str]:
+    @property
+    def session_key(self) -> str:
+        """The Honcho session this provider writes the current turn to ("" before Honcho is configured)."""
+        return self._session_key
+
+    def source_keys(self, turn_author: Optional[dict[str, Any]] = None, *, session_key: str = "") -> dict[str, str]:
         """The Honcho names of this turn's person, agent and conversation, as Honcho derives them today (peerName,
         aliases and runtime identities; aiPeer; the resolved session key), each prefixed with the workspace. Empty
-        before Honcho is configured. Reading them never creates or renames a peer."""
+        before Honcho is configured. Reading them never creates or renames a peer. ``session_key`` is the session
+        the turn was in when it finished (default: the current one)."""
         cfg = self._config
-        if cfg is None or not self._session_key:
+        key = session_key or self._session_key
+        if cfg is None or not key:
             return {}
         workspace = str(getattr(cfg, "workspace_id", "") or "")
-        keys = {"agent": f"{workspace}:{assistant_peer_id_for(cfg)}", "conversation": f"{workspace}:{self._session_key}"}
+        keys = {"agent": f"{workspace}:{assistant_peer_id_for(cfg)}", "conversation": f"{workspace}:{key}"}
         author = turn_author if isinstance(turn_author, dict) else {}
         if self._manager is not None and not author.get("is_bot"):
             try:
-                peer = (self._manager.resolve_author_peer_id(self._session_key, author.get("id"), author.get("name"))
-                        or self._manager._resolve_user_peer_id(self._session_key))
+                peer = (self._manager.resolve_author_peer_id(key, author.get("id"), author.get("name"))
+                        or self._manager._resolve_user_peer_id(key))
                 keys["person"] = f"{workspace}:{peer}"
             except Exception:  # health: allow BLE001 -- a session with no nameable peer has no person key
                 logger.debug("Honcho person key unavailable", exc_info=True)
         return keys
 
-    def _a2a_session_key(self, author: dict[str, Any]) -> str:
+    def _a2a_session_key(self, author: dict[str, Any], base_key: str = "") -> str:
         """Honcho session for one sender bot's turns into this agent, named from core's ``a2a_key``.
 
         This agent's ``aiPeer`` is in the key because two profiles can share a workspace and a session
@@ -957,7 +967,7 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         prefix, _, ident = (a2a_key(author) or "").partition(":")
         digest = hashlib.sha256(ident.encode("utf-8")).hexdigest()[:8]
         recipient = assistant_peer_id_for(self._config)
-        key = f"{self._session_key}:{prefix}:{recipient}:{sanitize_peer_id(ident)}-{digest}"
+        key = f"{base_key or self._session_key}:{prefix}:{recipient}:{sanitize_peer_id(ident)}-{digest}"
         return HonchoClientConfig._enforce_session_id_limit(key, key)
 
     def _bot_turn_write_refusal(self) -> Optional[str]:

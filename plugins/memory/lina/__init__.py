@@ -69,21 +69,26 @@ class LinaMemoryProvider(MemoryProvider):
         """Called on the turn thread (``local_messages`` makes the manager do that): LCM gets the unredacted
         transcript here, where its own hook ran, so its ingest never overlaps the next turn's use of the engine.
         The record (identity lookups in the store), the Honcho write (the egress-redacted ``messages`` and turn
-        text) and the conversation fill run on this provider's own worker, one turn after another."""
+        text) and the conversation fill run on this provider's own worker, one turn after another.
+
+        Who wrote the turn and the Honcho session it belongs to are fixed here: by the time the worker runs, the
+        next turn may have started and Honcho's own per-turn state names that turn's author."""
         history = local_messages if local_messages is not None else list(messages or ())
+        author = dict(turn_author) if isinstance(turn_author, dict) else {}
+        honcho_session = self._honcho.session_key if self._honcho_on else ""
         rule = self._policy.rule(self._policy.route_for(signals_for_turn(
             history, agent_context=self._init.get("agent_context", ""), platform=self._init.get("platform", ""),
-            turn_author=turn_author)))
+            turn_author=author or None)))
         lcm_conversation = lcm.conversation_id(session_id)
         if rule.lcm:
             lcm.hand_turn(history, session_id=session_id)
 
         def deliver() -> None:
-            record = self._record(rule, history, session_id=session_id, turn_author=turn_author,
-                                  lcm_conversation=lcm_conversation)
+            record = self._record(rule, history, session_id=session_id, author=author,
+                                  honcho_session=honcho_session, lcm_conversation=lcm_conversation)
             if record.honcho and self._honcho_on:
-                self._honcho.sync_turn(user_content, assistant_content, session_id=session_id,
-                                       turn_author=turn_author, messages=messages, turn_record=record)
+                self._honcho.sync_turn(user_content, assistant_content, session_id=session_id, turn_author=author,
+                                       messages=messages, turn_record=record, session_key=honcho_session)
             self._fill_conversation(record)
 
         self._submit(deliver)
@@ -103,10 +108,9 @@ class LinaMemoryProvider(MemoryProvider):
             except Exception as exc:  # health: allow BLE001 -- a stuck delivery must not hold session end
                 logger.warning("lina-memory: turns still queued at session end: %s", exc)
 
-    def _record(self, rule, history, *, session_id: str, turn_author: Optional[dict[str, Any]],
+    def _record(self, rule, history, *, session_id: str, author: dict[str, Any], honcho_session: str,
                 lcm_conversation: Optional[str]) -> TurnRecord:
-        author = turn_author if isinstance(turn_author, dict) else {}
-        honcho_keys = self._honcho.source_keys(author) if self._honcho_on else {}
+        honcho_keys = self._honcho.source_keys(author, session_key=honcho_session) if self._honcho_on else {}
         agent = self._agent_name()
         person_id = None if author.get("is_bot") else self._registry.resolve(
             "person", self._person_keys(author, honcho_keys))

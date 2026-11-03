@@ -25,12 +25,17 @@ unredacted transcript as well as the redacted one. That call is the only ingest:
    `sync_turn`, when the route allows Honcho (steps 2, 4 and 5 run there). The adapter writes
    the turn as before (peers, sessions, a bot author's own a2a session) and puts the record's ids on each
    message's metadata (`lina_person`, `lina_agent`, `lina_conversation`, `lina_uid`, `lina_route`).
+   Who wrote the turn and its Honcho session are fixed on the turn thread when the turn finishes and handed to
+   the worker: by the time the worker runs, the next turn may have started, and Honcho's own per-turn state
+   (`on_turn_start`) names that turn's author.
 5. It fills `memory.messages.conversation_id` for the turn's rows (`MessageStore.set_conversation`).
 
 LCM-X's own `post_llm_call` ingest hook is not registered while the home's memory slot holds `lina-memory`: the
 context-engine loader (`plugins/context_engine/__init__.py`) leaves that one hook out. The subtree is unchanged.
 Recall, tools and the session lifecycle (`prefetch`, `honcho_*` tools, `on_session_end`, ...) go to the Honcho
-adapter when Honcho is configured.
+adapter when Honcho is configured. `lina-memory`'s `plugin.yaml` names the adapter (`drives: [honcho]`), so
+`hermes honcho ...` stays available while `lina-memory` holds the slot, and setting Honcho up (`hermes honcho
+setup`, `hermes memory setup`) keeps `lina-memory` there.
 
 ## The policy table
 
