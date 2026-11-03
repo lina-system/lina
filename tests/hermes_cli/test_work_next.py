@@ -169,6 +169,31 @@ def test_an_open_pull_request_without_a_running_job_holds_only_its_own_issue():
     assert _kinds(busy)[6] == ("scope", "same contract running: store #5")
 
 
+def test_an_unreadable_dev_ci_holds_no_start_and_is_shown():
+    """The dev CI read only says whether merges wait (a red dev never holds a start). When it fails after the
+    issues, dependencies, pull requests and branches were read, the picks still open and the failure is shown; a
+    shared repository error used to hold every issue as ``stopped`` and print \"nothing to open\"."""
+    from hermes_cli.delivery.github import GhError
+    from tests.hermes_cli._work_fakes import FakeGh
+
+    def actions(_query):
+        raise GhError("HTTP 502: Bad Gateway (actions/runs)")
+
+    gh = FakeGh({f"repos/{REPO}/issues": [{"number": 7, "title": "feat(ui): seven", "body": "Sprint: M0 S3\n",
+                                           "labels": [{"name": "omo"}],
+                                           "issue_dependencies_summary": {"total_blocked_by": 0}}],
+                 f"repos/{REPO}/pulls": [], f"repos/{REPO}/branches": [], f"repos/{REPO}/actions/runs": actions})
+    repo = picker.collect_repo(gh, REPO, "dev", "CI")
+    assert repo["error"] is None and [i["n"] for i in repo["issues"]] == [7]
+    assert repo["dev_red"] is None and "502" in (repo["dev_error"] or "")
+    snapshot = {"sprint": ("M0", 3), "repos": {REPO: repo}, "jobs": [], "runners": {"omo": "omo"}, "scopes": []}
+    plan = picker.decide(snapshot)
+    assert _kinds(plan)[7] == ("open", "")
+    lines = picker.lines_of(plan)
+    assert any(line.startswith(f"cannot read dev CI in {REPO}") and "merges wait" in line for line in lines), lines
+    assert "nothing to open" not in lines
+
+
 def _submit_lock_free(base: Path) -> bool:
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub_store import Store

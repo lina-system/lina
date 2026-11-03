@@ -27,7 +27,8 @@ _CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", 
 
 
 def collect_repo(gh, full: str, base: str, workflow: str) -> dict:
-    repo = {"issues": [], "blocked_by": {}, "pulls": [], "branches": [], "dev_red": None, "error": None}
+    repo = {"issues": [], "blocked_by": {}, "pulls": [], "branches": [], "dev_red": None, "dev_error": None,
+            "error": None}
     try:
         raw = gh.pages(f"repos/{full}/issues?state=open")
         repo["issues"] = [{
@@ -47,10 +48,15 @@ def collect_repo(gh, full: str, base: str, workflow: str) -> dict:
         repo["pulls"] = [{"n": p["number"], "head": p["head"]["ref"], "body": p.get("body") or ""}
                          for p in gh.pages(f"repos/{full}/pulls?state=open")]
         repo["branches"] = [b["name"] for b in gh.pages(f"repos/{full}/branches")]
+    except (GhError, ValueError, KeyError, TypeError) as exc:
+        repo["error"] = str(exc) or type(exc).__name__
+        return repo
+    # dev's CI only says whether merges wait; a red dev never holds a start, so neither does a failed read of it.
+    try:
         green, red = dev_state(gh, full, base, workflow)
         repo["dev_red"] = None if green else sorted(red) or [workflow]
     except (GhError, ValueError, KeyError, TypeError) as exc:
-        repo["error"] = str(exc) or type(exc).__name__
+        repo["dev_error"] = str(exc) or type(exc).__name__
     return repo
 
 
@@ -241,7 +247,8 @@ def decide(snapshot: dict) -> dict:
             holding[key] = "opened now"
             decisions.append(dict(base, action="open", kind="open", reason="", shown=True))
     red = {full: repo["dev_red"] for full, repo in snapshot["repos"].items() if repo.get("dev_red")}
-    return {"sprint": sprint, "red": red, "decisions": decisions, "running": len(running)}
+    unread = {full: repo["dev_error"] for full, repo in snapshot["repos"].items() if repo.get("dev_error")}
+    return {"sprint": sprint, "red": red, "dev_unread": unread, "decisions": decisions, "running": len(running)}
 
 
 def line_of(decision: dict) -> str:
@@ -258,6 +265,8 @@ def line_of(decision: dict) -> str:
 def lines_of(plan: dict) -> list[str]:
     lines = [f"dev red in {full}: merges wait, starts do not ({', '.join(checks)})" for full, checks in
              plan["red"].items()]
+    lines += [f"cannot read dev CI in {full}: merges wait, starts do not ({why})" for full, why in
+              plan.get("dev_unread", {}).items()]
     if plan["sprint"] is None:
         lines.append("no current sprint: set it with `lina work sprint current <S>`")
     lines += [line_of(d) for d in plan["decisions"] if d["shown"]]
