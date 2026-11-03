@@ -1215,6 +1215,10 @@ CREATE OR REPLACE FUNCTION ctx.pragma_table_info(relation text)
      WHERE c.relnamespace = 'ctx'::regnamespace AND c.relname = relation AND a.attname NOT IN ('agent_id', 'rowid')
        -- the store's own columns of the messages view (where its text lives), which LCM-X's table does not have
        AND NOT (relation = 'messages' AND a.attname IN ('text_uid', 'content_sha256'))
+       -- access_scope is on every ctx table, but on SQLite LCM-X adds it with its scope_v1 migration: until this agent
+       -- has run that step, the column is not listed (LCM-X then runs the step, which on the store only records it).
+       AND NOT (a.attname = 'access_scope'
+                AND NOT EXISTS (SELECT 1 FROM ctx.lcm_migration_state AS s WHERE s.step_name = 'scope_v1'))
        AND NOT (relation IN ('messages_fts', 'messages_fts_stem', 'nodes_fts', 'lcm_trajectory_states_fts')
                 AND a.attname = 'tsv')
      ORDER BY a.attnum $$;
