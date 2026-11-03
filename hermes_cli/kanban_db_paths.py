@@ -71,19 +71,38 @@ def board_exists(board: Optional[str] = None) -> bool:
 
 
 def own_board_path(slug: str, default_parts: tuple[str, ...], leaf: str) -> Path:
-    """Where *slug*'s file lives when no env pin applies (the unfenced path)."""
+    """Where *slug*'s file lives when no env pin applies (the unfenced path).
+
+    The non-default arm builds the file path from a **resolved, containment-checked**
+    board directory: the slug is regex-validated upstream, but a path derived from
+    caller data is checked here too, so it cannot address anything outside
+    ``boards_root()`` (``../`` in a slug, a symlinked board dir). The default arm is
+    built from constants only and needs no check."""
     if slug == _kb.DEFAULT_BOARD:
         return kanban_home().joinpath(*default_parts)
-    return board_dir(slug) / leaf
+    root = boards_root().resolve()
+    candidate = (root / slug).resolve()
+    if candidate.parent != root:
+        raise ValueError("invalid board slug")
+    return candidate / leaf
 
 
 def _same_file(left: Path, right: Path) -> bool:
-    """Same physical file: resolve symlinks / ``..`` so a worker pinned to the
-    dispatcher's symlinked path still recognizes its own board."""
+    """Same physical file. Both sides arrive resolved — the board path through
+    :func:`own_board_path`'s check, the pin through :func:`_physical` — so this
+    only compares, and never re-resolves a path built from caller data."""
+    return left == right
+
+
+def _physical(path: Path) -> Path:
+    """A path as it exists on disk. Only for paths that are NOT caller-built board
+    data: the dispatcher's env pin (resolving it is what lets a worker pinned to a
+    symlinked root still recognize its own board) and the constants-only default
+    board path."""
     try:
-        return left.resolve() == right.resolve()
+        return path.resolve()
     except (OSError, RuntimeError):
-        return left.absolute() == right.absolute()
+        return path.absolute()
 
 
 def _board_name_for_pinned_path(pinned: Path) -> str:
@@ -92,14 +111,10 @@ def _board_name_for_pinned_path(pinned: Path) -> str:
     The pin is a file path (``HERMES_KANBAN_DB`` & friends), not a slug, so the
     name is recovered from the layout; anything unrecognized falls back to the
     path itself rather than guessing a board."""
+    resolved = _physical(pinned)
     try:
-        resolved = pinned.resolve()
-        root = kanban_home().resolve()
-    except (OSError, RuntimeError):
-        return str(pinned)
-    try:
-        parts = resolved.relative_to(root).parts
-    except ValueError:
+        parts = resolved.relative_to(kanban_home().resolve()).parts
+    except (ValueError, OSError, RuntimeError):
         return str(pinned)
     if len(parts) >= 3 and parts[0] == "kanban" and parts[1] == "boards":
         return parts[2]
@@ -114,7 +129,12 @@ def refuse_cross_board_pin(
     """Raise when the fence would answer ``board=slug`` with a different file
     than *slug*'s own. Same file (e.g. ``board="default"`` from a default-board
     worker) passes."""
-    if _same_file(own_board_path(slug, default_parts, leaf), pinned):
+    own = own_board_path(slug, default_parts, leaf)
+    if slug == _kb.DEFAULT_BOARD:
+        # Constants-only path (no slug in it), so resolving it here is safe and keeps
+        # a symlinked HERMES_KANBAN_HOME comparable to the pin.
+        own = _physical(own)
+    if _same_file(own, _physical(pinned)):
         return
     pinned_name = _board_name_for_pinned_path(pinned)
     pinned_label = f"{pinned_name} ({pinned})" if pinned_name != str(pinned) else pinned_name

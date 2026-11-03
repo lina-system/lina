@@ -200,3 +200,30 @@ def test_worker_boards_create_is_refused_and_leaves_no_metadata(worker, capsys):
     stderr = capsys.readouterr().err
     assert "'elsewhere'" in stderr and "'default'" in stderr, stderr
     assert not (kb.boards_root() / "elsewhere").exists()
+
+
+def test_a_valid_slug_can_only_address_boards_root(boards):
+    """A slug that passes the regex resolves to ``boards_root()/<slug>/<leaf>`` —
+    the containment-checked directory, never a path built from raw caller text."""
+    path = kb.kanban_db_path(board="private")
+
+    root = kb.boards_root().resolve()
+    assert path.parent.parent == root, path
+    assert path.parent.name == "private", path
+    assert path == boards.private_db
+
+
+def test_a_slug_that_escapes_boards_root_is_rejected_before_a_path_is_built(boards):
+    """``../`` in a slug never becomes a path: the containment check refuses it, and
+    the public resolver refuses it even earlier (slug validation)."""
+    from hermes_cli import kanban_db_paths as kbp
+
+    with pytest.raises(ValueError, match="invalid board slug"):
+        kbp.own_board_path("../escape", ("kanban.db",), "kanban.db")
+    with pytest.raises(ValueError, match="invalid board slug"):
+        kbp.own_board_path("private/../../escape", ("kanban.db",), "kanban.db")
+    with pytest.raises(ValueError):
+        kb.kanban_db_path(board="../escape")
+
+    assert not (kb.kanban_home() / "kanban" / "escape").exists()
+    assert not (kb.kanban_home() / "escape").exists()
