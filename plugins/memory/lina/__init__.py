@@ -166,6 +166,8 @@ class LinaMemoryProvider(MemoryProvider):
             ("gateway_chat", f"{agent}:{chat}" if chat else ""),
             ("lcm_conversation", f"{agent}:{lcm_conversation}" if lcm_conversation else ""),
             ("honcho_session", honcho_keys.get("conversation", "")),
+            # The human session, when a bot turn's conversation key is its a2a session instead.
+            ("honcho_session", honcho_keys.get("base_conversation", "")),
         ]
         if not any(key for _, key in keys):
             keys.append(("hermes_session", f"{agent}:{session_id}"))
@@ -241,6 +243,10 @@ class LinaMemoryProvider(MemoryProvider):
 
     def prefetch(self, query: str, *, session_id: str = "") -> str:
         return self._honcho.prefetch(query, session_id=session_id) if self._honcho_on else ""
+
+    def recall_query(self, query: str, *, session_id: str = "") -> str:
+        """Explicit ``memory_recall``. Honcho's prefetch is cadence-gated; this is not."""
+        return self._honcho.recall_query(query, session_id=session_id) if self._honcho_on else ""
 
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         if self._honcho_on:

@@ -17,6 +17,8 @@ logger = logging.getLogger(__name__)
 
 SourceKey = tuple[str, str]
 _PREFIX = {"person": "person", "conversation": "conv"}
+# Transaction-scoped, shared by every connection. An instance lock cannot see another process.
+_IDENTITY_LOCK_NS = 190006
 
 
 def derived_id(kind: str, source: str, key: str) -> str:
@@ -57,6 +59,8 @@ class IdentityRegistry:
     def _resolve(self, kind: str, keys: list[SourceKey]) -> str:
         conn = self._connection()
         with conn.transaction(), conn.cursor() as cur:
+            # Two first resolutions that share a key but not a first key must not each insert an id.
+            cur.execute("SELECT pg_advisory_xact_lock(%s, hashtext(%s))", (_IDENTITY_LOCK_NS, kind))
             cur.execute("SELECT identity_id FROM memory.identity_keys WHERE kind = %s AND (source, key) IN "
                         f"({', '.join(['(%s, %s)'] * len(keys))}) ORDER BY first_seen, identity_id LIMIT 1",
                         (kind, *[part for pair in keys for part in pair]))

@@ -145,6 +145,11 @@ class MemoryProvider(ABC):
         in the background and return cached results; ``session_id`` scopes concurrent sessions."""
         return ""
 
+    def recall_query(self, query: str, *, session_id: str = "") -> str:
+        """Explicit ``memory_recall``. Providers that cadence-gate :meth:`prefetch` override this
+        so a query in the same turn still reaches the backend and the cadence counters stay put."""
+        return self.prefetch(query, session_id=session_id)
+
     def queue_prefetch(self, query: str, *, session_id: str = "") -> None:
         """Queue a background recall after each turn; prefetch() consumes it next turn."""
 
