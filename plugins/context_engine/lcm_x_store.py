@@ -139,7 +139,6 @@ class Template:
     kind: str = "sql"  # sql | skip | control | pragma | message_insert | message_content_update
     returning: Optional[str] = None
     detail: tuple = ()
-    bump: Optional[tuple] = None  # (table, identity column) of an INSERT that names the identity value
 
 
 def _mask(sql: str) -> tuple[str, list[str], list[str]]:
@@ -304,6 +303,43 @@ def _bare_joins(masked: str) -> str:
     return "".join(out)
 
 
+def _split_masked_commas(masked: str) -> list[str]:
+    """Already masked text split at its top-level commas."""
+    parts, depth, start = [], 0, 0
+    for i, ch in enumerate(masked):
+        depth += {"(": 1, ")": -1}.get(ch, 0)
+        if ch == "," and depth == 0:
+            parts.append(masked[start:i].strip())
+            start = i + 1
+    parts.append(masked[start:].strip())
+    return parts
+
+
+def _qualify_upsert(masked: str, catalog: Catalog) -> str:
+    """In ``ON CONFLICT ... DO UPDATE``, a bare column of the target table is ambiguous in Postgres (``excluded`` is in
+    scope too); SQLite reads it as the existing row. Qualify it with the table name."""
+    m = re.match(r"\s*INSERT\s+INTO\s+(\w+)", masked, re.IGNORECASE)
+    upsert = re.search(r"\bDO\s+UPDATE\s+SET\b", masked, re.IGNORECASE)
+    if not m or not upsert:
+        return masked
+    table = m.group(1)
+    columns = set(catalog.columns(table))
+    if not columns:
+        return masked
+    head, tail = masked[:upsert.end()], masked[upsert.end():]
+    tail, returning = _split_returning(tail)
+
+    def qualify(text: str) -> str:
+        return re.sub(r"(?<![\w.\x00\x01])([A-Za-z_]\w*)\b(?!\s*\()",
+                      lambda c: f"{table}.{c.group(1)}" if c.group(1) in columns else c.group(1), text)
+    pieces = re.split(r"(\bWHERE\b)", tail, maxsplit=1, flags=re.IGNORECASE)
+    assignments = _split_masked_commas(pieces[0]) if pieces[0].strip() else []
+    out = ", ".join(f"{a.split('=', 1)[0].strip()} = {qualify(a.split('=', 1)[1])}" if "=" in a else a
+                    for a in assignments)
+    where = "".join(pieces[1:2]) + (qualify(pieces[2]) if len(pieces) > 2 else "")
+    return f"{head} {out} {where}".rstrip() + returning
+
+
 def _messages_target(masked: str) -> str:
     """Writes to LCM's ``messages`` go to the placement table; reads keep the view."""
     masked = re.sub(r"^(\s*UPDATE\s+)messages\b", r"\1ctx.lcm_messages", masked, flags=re.IGNORECASE)
@@ -412,6 +448,7 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     masked, literals, slots = _mask(stripped)
     masked = _insert_or(masked, catalog)
     masked = _conflict_targets(masked, catalog)
+    masked = _qualify_upsert(masked, catalog)
     masked = _messages_target(masked)
     if _TEMP_DDL.match(masked):
         masked = re.sub(r"\bINTEGER\b", "bigint", masked, flags=re.IGNORECASE)
@@ -423,21 +460,17 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
     masked = masked.rstrip().rstrip(";")
     returning = None
     m = re.match(r"\s*INSERT\s+INTO\s+(\w+)", masked, re.IGNORECASE)
-    bump = None
     if m and not re.search(r"\bRETURNING\b", masked, re.IGNORECASE):
         returning = catalog.identity(m.group(1))
         if returning:
             masked += f" RETURNING {returning}"
-            cols = re.match(r"\s*INSERT\s+INTO\s+\w+\s*\(([^)]*)\)", masked, re.IGNORECASE)
-            if cols and returning in [c.strip().strip('"') for c in cols.group(1).split(",")]:
-                bump = (m.group(1), returning)
     parts: list = []
     indices = _slot_indices(slots)
     for piece in _fts_parts(masked):
         parts.extend(_unmask(piece, literals, indices) if isinstance(piece, str)
                      else [(piece[0], indices[piece[1]], piece[2])])
     names = _named_order(slots)
-    return Template(tuple(parts), returning=returning, detail=tuple(names) if names else (), bump=bump)
+    return Template(tuple(parts), returning=returning, detail=tuple(names) if names else ())
 
 
 def translate(sql: str, catalog: Catalog) -> Template:
@@ -570,11 +603,15 @@ class Catalog:
             "SELECT c.relname, a.attname, a.attnum, a.attidentity FROM pg_attribute a JOIN pg_class c ON c.oid = a.attrelid "
             "WHERE c.relnamespace = 'ctx'::regnamespace AND c.relkind IN ('r', 'v') AND a.attnum > 0 "
             "AND NOT a.attisdropped ORDER BY c.relname, a.attnum").fetchall()
-        for table, column, _num, identity in rows:
-            if column not in _HIDDEN_COLUMNS.get(table, ()) and column not in ("agent_id", "rowid"):
+        for table, column, _num, _identity in rows:
+            if column not in _HIDDEN_COLUMNS.get(table, ()) and column not in ("agent_id", "rowid", "vec_item_id"):
                 self._columns.setdefault(table, []).append(column)
-            if identity:
-                self._identity[table] = column
+        # The ids LCM-X lets SQLite allocate are filled per agent by the lcm_assign_id trigger (its argument names
+        # the column).
+        for table, args in conn.execute(
+                "SELECT c.relname, encode(t.tgargs, 'escape') FROM pg_trigger t JOIN pg_class c ON c.oid = t.tgrelid "
+                "WHERE c.relnamespace = 'ctx'::regnamespace AND t.tgname = 'lcm_assign_id'").fetchall():
+            self._identity[table] = args.split("\\000")[0]
         for table, indisprimary, cols in conn.execute(
                 "SELECT c.relname, i.indisprimary, array_agg(a.attname ORDER BY k.ord) "
                 "FROM pg_index i JOIN pg_class c ON c.oid = i.indrelid "
@@ -968,14 +1005,6 @@ class PgConnection:
         if writes and self.isolation_level is not None:
             self._begin()
         self._statement(cur, text, args, template.returning)
-        if template.bump is not None and self._returned:
-            self._bump_identity(*template.bump)
-
-    def _bump_identity(self, table: str, column: str) -> None:
-        """An INSERT that named its identity value: move the sequence past it, as SQLite's rowid allocation is."""
-        self._raw("SELECT setval(pg_get_serial_sequence(%s, %s), greatest(%s, (SELECT last_value FROM "
-                  f"{self._raw('SELECT pg_get_serial_sequence(%s, %s)', (f'ctx.{table}', column)).fetchone()[0]})))",
-                  (f"ctx.{table}", column, max(self._returned)))
 
     def _statement(self, cur: PgCursor, text: str, args: list[Any], returning: Optional[str]) -> None:
         import psycopg
@@ -1081,8 +1110,6 @@ class PgConnection:
                                  f"({', '.join(['%s'] * len(columns))}){update} RETURNING store_id",
                             [_adapt(row[c]) for c in columns], "store_id")
             stored.extend(self._returned)
-            if "store_id" in row and self._returned:
-                self._bump_identity("lcm_messages", "store_id")
         self._message_uid = None
         cur._set_result(None, [], len(stored), stored[-1] if stored else None)
 
