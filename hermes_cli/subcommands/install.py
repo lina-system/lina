@@ -36,12 +36,13 @@ def _cmd_install(args) -> None:
 
 
 def build_install_parser(subparsers) -> None:
-    """Attach the ``install`` subcommand, and ``store``, ``services``, ``models`` and ``omo`` (what install sets up),
-    to ``subparsers``."""
+    """Attach the ``install`` subcommand, and ``store``, ``services``, ``models``, ``omo`` and ``worker`` (what install
+    sets up), to ``subparsers``."""
     from hermes_cli.subcommands.models import build_models_parser
     from hermes_cli.subcommands.omo import build_omo_parser
     from hermes_cli.subcommands.services import build_services_parser
     from hermes_cli.subcommands.store import build_store_parser
+    from hermes_cli.subcommands.worker import build_worker_parser
 
     parser = subparsers.add_parser(
         "install", help="Install or update LINA's device parts, its memory store and its pinned OCX",
@@ -67,3 +68,4 @@ def build_install_parser(subparsers) -> None:
     build_services_parser(subparsers)
     build_models_parser(subparsers)
     build_omo_parser(subparsers)
+    build_worker_parser(subparsers)

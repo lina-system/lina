@@ -1,0 +1,48 @@
+# `lina worker` settings in the LINA root's config.yaml (lina#35). Copy what you need; nothing here is required
+# except the device list, without which no device is bid on.
+
+devices:
+  workers:                                   # the work devices the hub bids over (`lina worker hosts`)
+    build-a: {host: build-a, cap: 2, fast: true}      # host: an ssh alias the hub reaches the device by
+    build-b: {host: build-b, cap: 2}
+    docs-box: {host: docs-box, cap: 1, no_repo: true} # takes no repo work
+    here: {host: local, cap: 1, last: true}           # this machine, only when the others are full
+    lab: {host: lab, cap: 1, auto: false}             # only when named with --host
+
+worker:
+  hub: {host: hub, lina: lina}               # how a device reaches the hub to report an end (ssh alias, lina there)
+  notice:
+    command: [notify-agent, "{agent}"]       # the end notice for the agent's chat, body on stdin
+  default_runner: omo
+  models:
+    aliases:                                 # names for --model; ids are whatever the runner's provider serves
+      planner: {provider: opencodex, id: planning-model-id, thinking: medium}
+      builder: {provider: opencodex, id: implementation-model-id, thinking: high}
+    defaults:                                # by mode: planning-heavy work and long implementation
+      research: planner
+      mass-research: planner
+      ulw: builder
+      mass: builder
+  runners:
+    omo: {type: omo}                         # built in: LINA's pinned omo (lina#34)
+    claude:
+      type: command
+      argv: [claude, -p, --permission-mode, acceptEdits]
+      follow_up_argv: [claude, -p, --continue, --permission-mode, acceptEdits]
+      model_args: [--model, "{id}"]
+    codex:
+      type: command
+      argv: [codex, exec, --full-auto, "-"]
+    opencode:
+      type: command
+      argv: [opencode, run]
+    # The single-issue runners of lina#35's context, registered the same way. The argv below is an example: take
+    # each CLI's own non-interactive flags from the hermes-ops quick-issue prototype. Which issue goes to which runner
+    # is lina#63's routing table, not set here.
+    dsh: {type: command, argv: [dsh, run, "-"]}
+    grok: {type: command, argv: [grok, --prompt-file, "{prompt_file}"]}
+    cursor-agent: {type: command, argv: [cursor-agent, -p, --force]}
+    agy: {type: command, argv: [agy, run, "-"]}
+  # Limits (defaults shown): poll_s 15, stall_grace_s 600, answered_grace_s 60, background_max_s 10800,
+  # hard_timeout_s 43200, unknown_after_s 600, min_free_gb 5, input_max_mb 300, memory_max 12G,
+  # repo_url "https://github.com/{repo}.git", git_identity {name, email}, private_paths [].
