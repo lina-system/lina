@@ -581,9 +581,10 @@ class Hub:
         marker = f"{kind}:{run}"
         if marker in job.get("notified", []):
             return "already"
-        if str(run) != str(job.get("runs") or 1):
+        if str(run).isdigit() and int(run) >= 1 and int(run) != int(job.get("runs") or 1):
             # A late end of an earlier run (its notice retried after a follow-up started the next one): record it,
-            # never let it end the run that is going now.
+            # never let it end the run that is going now. Task-level notices are not run reports and always apply:
+            # a cancel before any run starts ("0") and an unreachable device ("x").
             job.setdefault("notified", []).append(marker)
             self.store.save(job)
             self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True)
