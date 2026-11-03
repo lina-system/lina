@@ -327,7 +327,7 @@ def _json_sets(masked: str) -> str:
         value = args[0]
         for path, item in zip(args[1::2], args[2::2]):
             json_value = re.fullmatch(r"\s*ctx\.json\((.*)\)\s*", item, re.DOTALL)
-            item = f"({json_value.group(1)})::jsonb" if json_value else f"to_jsonb({item})"
+            item = f"({json_value.group(1)})::jsonb" if json_value else f"ctx.lcm_jsonb({item})"
             value = (f"jsonb_set(({value})::jsonb, string_to_array(ltrim(ltrim({path}, '$'), '.'), '.'), "
                      f"{item}, true)")
         out.append(masked[pos:m.start()] + f"({value})::text")
@@ -1268,11 +1268,11 @@ class PgConnection:
             if self._in_tx:
                 if traced and self._trace is not None:
                     self._trace(word)  # as Python's sqlite3 reports the COMMIT/ROLLBACK its commit()/rollback() issue
-                if word == "COMMIT":
-                    self._bump_data_version()
+                wrote = self._writer
                 self._raw(word)
                 self._end_tx()
                 if word == "COMMIT":
+                    self._bump_data_version(wrote)
                     self._analyze_bulk_writes()
 
     def close(self) -> None:
@@ -1411,9 +1411,9 @@ class PgConnection:
                 self._raw("ROLLBACK")
             self._end_tx()
             raise
-        self._bump_data_version()
         self._raw("COMMIT")
         self._end_tx()
+        self._bump_data_version(True)
         self._analyze_bulk_writes()
 
     _WRITE_LOCK_KEY = "SELECT {}(hashtextextended(%s, 0))"
@@ -1431,10 +1431,12 @@ class PgConnection:
             return True
         return False
 
-    def _bump_data_version(self) -> None:
+    def _bump_data_version(self, wrote: bool) -> None:
         """PRAGMA data_version changes when another connection commits a write: each writing commit counts one for the
-        agent (ctx.lcm_data_version) and the connection discounts its own."""
-        if self._writer:
+        agent (ctx.lcm_data_version) and the connection discounts its own. The count is taken right after the commit, as
+        its own statement: inside the transaction, the one row every writer updates would fail any transaction whose
+        snapshot is older than another writer's commit."""
+        if wrote and not self._pg.closed:
             self._raw("INSERT INTO ctx.lcm_data_version AS d (version) VALUES (1) "
                       "ON CONFLICT (agent_id) DO UPDATE SET version = d.version + 1")
             self._own_commits = getattr(self, "_own_commits", 0) + 1
@@ -1445,14 +1447,17 @@ class PgConnection:
                             ["lcm-x write:" + self.agent_id], None)
             self._writer = True
 
-    def _begin(self, *, traced: bool = True) -> None:
+    def _begin(self, *, traced: bool = True, snapshot: bool = False) -> None:
         if not self._in_tx:
             if traced and self._trace is not None:
                 # Python's sqlite3 opens an implicit transaction with "BEGIN <isolation_level>".
                 self._trace(f"BEGIN {self.isolation_level or ''}")
-            # SQLite reads one snapshot for a whole transaction (WAL); READ COMMITTED would see commits between
-            # statements. A writer whose snapshot is stale gets a serialization failure: SQLite's SQLITE_BUSY_SNAPSHOT.
-            self._raw("BEGIN ISOLATION LEVEL REPEATABLE READ")
+            # A transaction LCM-X opens itself with a deferred BEGIN reads one snapshot, as SQLite's read transaction
+            # does in WAL mode (READ COMMITTED would see commits between its reads); a write on it after another
+            # commit fails as SQLITE_BUSY_SNAPSHOT. A transaction that starts by writing holds the write lock, so no
+            # other LCM-X writer commits during it; it stays READ COMMITTED, which also sees the message text rows
+            # the store writes on its own connection (_TextLink).
+            self._raw("BEGIN ISOLATION LEVEL REPEATABLE READ" if snapshot else "BEGIN")
             self._in_tx = True
 
     def _run(self, cur: PgCursor, sql: str, params: Any) -> None:
@@ -1538,9 +1543,10 @@ class PgConnection:
         stmt = _apply_rewrites(template.parts[0]).strip().rstrip(";")
         word = stmt.split()[0].upper()
         if word == "BEGIN":
-            if re.match(r"\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\b", template.parts[0], re.IGNORECASE):
+            immediate = re.match(r"\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\b", template.parts[0], re.IGNORECASE)
+            if immediate:
                 self._lock_before_begin()
-            self._begin(traced=False)
+            self._begin(traced=False, snapshot=not immediate)
             if re.match(r"\s*BEGIN\s+(IMMEDIATE|EXCLUSIVE)\b", template.parts[0], re.IGNORECASE):
                 self._write_lock()
         elif word in ("COMMIT", "END"):

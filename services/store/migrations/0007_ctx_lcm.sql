@@ -1197,6 +1197,15 @@ CREATE OR REPLACE FUNCTION ctx.lcm_json_int(value text) RETURNS bigint
     SELECT CASE WHEN value ~ '^\s*-?[0-9]{1,18}\s*$' THEN value::bigint
                 WHEN value ~ '^\s*-?[0-9]{1,18}\.0*\s*$' THEN trunc(value::numeric)::bigint END $$;
 
+-- A json_set value as SQLite stores it: a string, a number or a boolean as such (a bound string arrives untyped, which
+-- to_jsonb cannot take; the text overload is the one Postgres picks for it).
+CREATE OR REPLACE FUNCTION ctx.lcm_jsonb(value text) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$ SELECT to_jsonb(value) $$;
+CREATE OR REPLACE FUNCTION ctx.lcm_jsonb(value bigint) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$ SELECT to_jsonb(value) $$;
+CREATE OR REPLACE FUNCTION ctx.lcm_jsonb(value numeric) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$ SELECT to_jsonb(value) $$;
+CREATE OR REPLACE FUNCTION ctx.lcm_jsonb(value double precision) RETURNS jsonb
+    LANGUAGE sql IMMUTABLE AS $$ SELECT to_jsonb(value) $$;
+CREATE OR REPLACE FUNCTION ctx.lcm_jsonb(value boolean) RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$ SELECT to_jsonb(value) $$;
+
 -- PRAGMA data_version on the store: one count per writing commit of the agent (lcm_x_store.py discounts the
 -- connection's own commits, as SQLite's value changes only for other connections' writes).
 CREATE TABLE IF NOT EXISTS ctx.lcm_data_version (
@@ -1300,8 +1309,11 @@ CREATE OR REPLACE FUNCTION ctx.lcm_snippet_source(body text, cfg regconfig, phra
                                                     marks json)
     RETURNS text LANGUAGE sql STABLE PARALLEL SAFE AS $$
     SELECT E'\x04' || json_build_object(
-               'lex', (SELECT coalesce(json_agg(u.lexeme ORDER BY p), '[]'::json)
-                       FROM unnest(to_tsvector(cfg, ctx.lcm_unicode61(coalesce(body, '')))) AS u, unnest(u.positions) AS p),
+               -- each token's lexeme in token order (a tsvector keeps at most 256 positions of one lexeme)
+               'lex', (SELECT coalesce(json_agg(coalesce((SELECT string_agg(u.lexeme, ' ') FROM unnest(to_tsvector(cfg, w.t)) AS u),
+                                                         lower(w.t)) ORDER BY w.n), '[]'::json)
+                       FROM regexp_split_to_table(btrim(ctx.lcm_unicode61(coalesce(body, ''))), '\s+') WITH ORDINALITY AS w(t, n)
+                       WHERE w.t <> ''),
                'phr', (SELECT coalesce(json_agg(ctx.lcm_phrase_words(cfg, ph) ORDER BY i), '[]'::json)
                        FROM unnest(phrases) WITH ORDINALITY AS t(ph, i)),
                'pre', to_json(prefixes), 'marks', marks)::text || E'\x04' || coalesce(body, '')
