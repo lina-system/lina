@@ -63,6 +63,13 @@ CREATE OR REPLACE AGGREGATE ctx.json_group_array(anyelement) (
     SFUNC = ctx.json_group_array_step, STYPE = jsonb, FINALFUNC = ctx.json_group_array_final);
 CREATE OR REPLACE FUNCTION ctx.ifnull(a anycompatible, b anycompatible) RETURNS anycompatible
     LANGUAGE sql IMMUTABLE AS $$ SELECT coalesce(a, b) $$;
+-- LCM-X registers lcm_summary_has_text(summary) as a Python function (str.strip()'s Unicode whitespace); the store
+-- runs no Python, so the same test is SQL here and the connection's create_function skips it.
+CREATE OR REPLACE FUNCTION ctx.lcm_summary_has_text(value text) RETURNS integer
+    LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE WHEN value IS NULL THEN 0
+                WHEN value ~ '^[\s\u0085\u00a0\u1680\u2000-\u200a\u2028\u2029\u202f\u205f\u3000\u001c-\u001f]*$' THEN 0
+                ELSE 1 END $$;
 CREATE OR REPLACE FUNCTION ctx.instr(haystack text, needle text) RETURNS integer
     LANGUAGE sql IMMUTABLE AS $$ SELECT strpos(haystack, needle) $$;
 CREATE OR REPLACE FUNCTION ctx.substr(value text, start bigint, len bigint) RETURNS text

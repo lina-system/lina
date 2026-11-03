@@ -612,6 +612,8 @@ def render(template: Template, args: Any) -> tuple[str, list[Any]]:
 _VECTOR_INSERT = re.compile(r"^\s*INSERT\s+INTO\s+(?:lcm_embedding_vectors|lcm_chunk_vectors)\b", re.IGNORECASE)
 
 
+_STORE_FUNCTIONS = frozenset({"lcm_summary_has_text"})
+
 _LIMIT_SLOT = re.compile(r"\bLIMIT\s+%s", re.IGNORECASE)
 
 
@@ -1000,6 +1002,8 @@ class PgConnection:
         return False
 
     def create_function(self, name: str, *args, **kwargs) -> None:
+        if name in _STORE_FUNCTIONS:
+            return  # the store's migration defines it in SQL (ctx.<name>)
         raise sqlite3.NotSupportedError(f"{name}: SQL functions in Python do not run on the memory store")
 
     def backup(self, *args, **kwargs) -> None:
