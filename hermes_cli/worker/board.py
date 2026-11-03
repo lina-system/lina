@@ -102,6 +102,8 @@ def cards(worker_root: Path, now: float) -> list[dict]:
     ends = _ends(store)
     jobs = [job for job in store.all() if not job.get("card") and _recent(job, ends.get(job["id"]), now)]
     lives = _lives(Hub(worker_root, out=lambda *_: None), jobs)
+    from hermes_cli.lina_board_plain import lookup
+    plain = lookup("run", [job["id"] for job in jobs])
     out = []
     for job in reversed(jobs):
         live = lives.get(job["id"])
@@ -109,7 +111,8 @@ def cards(worker_root: Path, now: float) -> list[dict]:
         out.append({"id": job["id"], "title": _title(job), "state": state, "reason": reason, "agent": job.get("bot"),
                     "kind": job.get("mode"), "todo": job.get("todo"), "host": job.get("host"),
                     "startedAt": job.get("started"), "endedAt": ends.get(job["id"]) if job.get("state") in ENDED else None,
-                    "now": _now_line(live) if state in ("in_progress", "waiting") and live else None})
+                    "now": _now_line(live) if state in ("in_progress", "waiting") and live else None,
+                    "plain": plain[job["id"]]})
     return out
 
 

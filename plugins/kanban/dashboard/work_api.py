@@ -286,6 +286,7 @@ def _elapsed_seconds(task: kanban_db.Task, now: int) -> int:
 
 
 def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
+    from hermes_cli.lina_board_plain import lookup  # checked model-written lines (lina#151), a cache read only
     state, reason = work_state(facts, now)
     todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
     return {
@@ -293,6 +294,7 @@ def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
         "state": state, "reason": reason, "elapsedSeconds": _elapsed_seconds(facts.task, now),
         "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
         "now": now_line(facts),
+        "plain": lookup("card", [facts.task.id])[facts.task.id],
     }
 
 

@@ -11,6 +11,7 @@ report.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import time
@@ -664,6 +665,19 @@ class Hub:
                     self._try_resume(job)
                 elif job.get("state") == "running" and job.get("host") and time.time() - job["created"] < 7 * 86400:
                     self._watch(job)
+        self._write_plain()
+
+    def _write_plain(self) -> None:
+        """The board's checked model-written lines (lina#151), after the tick's own work and under their own lock so
+        a slow model call never holds placements back; a failure is logged and the next tick tries again."""
+        from hermes_cli.lina_board_plain import write_board
+        with self.store.lock("plain", wait=False) as held:
+            if not held:
+                return
+            try:
+                write_board()
+            except Exception:  # never let the board lines stop the hub's tick
+                logging.getLogger(__name__).exception("board lines writer failed")
 
     def _try_place(self, job: dict) -> bool:
         try:
