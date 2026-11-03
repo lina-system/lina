@@ -102,7 +102,16 @@ def reset_schema_between_tests(
             # l19_vec_embeddings creates schema vec beside Honcho's own (LINA).
             conn.execute(text('DROP SCHEMA IF EXISTS "vec" CASCADE'))
             conn.execute(text(f'DROP SCHEMA IF EXISTS "{schema}" CASCADE'))
+            conn.execute(text('DROP SCHEMA IF EXISTS "memory" CASCADE'))
             conn.execute(text(f'CREATE SCHEMA "{schema}"'))
+            conn.execute(text('CREATE SCHEMA "memory"'))
+            conn.execute(text("CREATE EXTENSION IF NOT EXISTS pg_trgm"))
+            conn.exec_driver_sql(
+                (
+                    ALEMBIC_CONFIG_PATH.parent.parent
+                    / "store/migrations/0001_memory_messages.sql"
+                ).read_text()
+            )
 
     _reset_schema()
     yield

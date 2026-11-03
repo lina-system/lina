@@ -286,7 +286,7 @@ def _apply_token_limit(
         select(
             models.Message.id,
             func.sum(models.Message.token_count)
-            .over(order_by=models.Message.id.desc())
+            .over(order_by=models.Message.seq_in_session.desc())
             .label("running_token_sum"),
         )
         .where(*base_conditions)
@@ -555,15 +555,19 @@ async def get_messages(
     if message_count_limit is not None:
         stmt = select(models.Message).where(*base_conditions)
         stmt = apply_filter(stmt, models.Message, filters)
-        # For message count limit, we want the most recent N messages
-        # So we order by id desc to get most recent, then apply limit
-        stmt = stmt.order_by(models.Message.id.desc()).limit(message_count_limit)
+        # Select the newest session positions, then present them in requested order.
+        recent_ids = (
+            stmt.with_only_columns(models.Message.id)
+            .order_by(models.Message.seq_in_session.desc())
+            .limit(message_count_limit)
+        )
+        stmt = select(models.Message).where(models.Message.id.in_(recent_ids))
 
         # Apply final ordering based on reverse parameter
         if reverse:
-            stmt = stmt.order_by(models.Message.id.desc())
+            stmt = stmt.order_by(models.Message.seq_in_session.desc())
         else:
-            stmt = stmt.order_by(models.Message.id.asc())
+            stmt = stmt.order_by(models.Message.seq_in_session.asc())
     elif token_limit is not None:
         # Apply token limit logic using helper function
         stmt = _apply_token_limit(base_conditions, token_limit)
@@ -571,17 +575,17 @@ async def get_messages(
 
         # Apply final ordering based on reverse parameter
         if reverse:
-            stmt = stmt.order_by(models.Message.id.desc())
+            stmt = stmt.order_by(models.Message.seq_in_session.desc())
         else:
-            stmt = stmt.order_by(models.Message.id.asc())
+            stmt = stmt.order_by(models.Message.seq_in_session.asc())
     else:
         # Default case - no limits applied
         stmt = select(models.Message).where(*base_conditions)
         stmt = apply_filter(stmt, models.Message, filters)
         if reverse:
-            stmt = stmt.order_by(models.Message.id.desc())
+            stmt = stmt.order_by(models.Message.seq_in_session.desc())
         else:
-            stmt = stmt.order_by(models.Message.id.asc())
+            stmt = stmt.order_by(models.Message.seq_in_session.asc())
 
     return stmt
 
@@ -593,13 +597,15 @@ async def get_messages_id_range(
     start_id: int = 0,
     end_id: int | None = None,
     token_limit: int | None = None,
+    *,
+    start_exclusive: bool = False,
 ) -> list[models.Message]:
     """
-    Get messages from a session by primary key ID range.
+    Get messages between ID boundaries resolved to positions within the session.
     If end_id is not provided, all messages after and including start_id will be returned.
     If start_id is not provided, start will be beginning of session.
 
-    Note: list is *inclusive* of the end_id message and start_id message.
+    The start is inclusive unless start_exclusive is set; the end is exclusive.
 
     Args:
         db: Database session
@@ -611,26 +617,38 @@ async def get_messages_id_range(
     Returns:
         List of messages
     """
-    if start_id < 0 or (end_id is not None and (start_id >= end_id or end_id <= 0)):
+    if start_id < 0 or (end_id is not None and end_id <= 0):
         return []
 
     base_conditions = [
         models.Message.workspace_name == workspace_name,
         models.Message.session_name == session_name,
     ]
-    if end_id:
-        base_conditions.append(
-            and_(models.Message.id >= start_id, models.Message.id < end_id)
+    if start_id:
+        start_seq = await get_message_seq_in_session(
+            db, workspace_name, session_name, start_id
         )
-    else:
-        base_conditions.append(models.Message.id >= start_id)
+        if not start_seq:
+            return []
+        base_conditions.append(
+            models.Message.seq_in_session > start_seq
+            if start_exclusive
+            else models.Message.seq_in_session >= start_seq
+        )
+    if end_id is not None:
+        end_seq = await get_message_seq_in_session(
+            db, workspace_name, session_name, end_id
+        )
+        if not end_seq:
+            return []
+        base_conditions.append(models.Message.seq_in_session < end_seq)
 
     if token_limit:
         # Apply token limit logic using helper function
         stmt = _apply_token_limit(base_conditions, token_limit)
-        stmt = stmt.order_by(models.Message.id)
     else:
         stmt = select(models.Message).where(*base_conditions)
+    stmt = stmt.order_by(models.Message.seq_in_session)
 
     result = await db.execute(stmt)
     return list(result.scalars().all())

@@ -11,7 +11,6 @@ from sqlalchemy import (
     Select,
     and_,
     case,
-    cast,
     delete,
     exists,
     func,
@@ -23,7 +22,7 @@ from sqlalchemy.engine import CursorResult
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.ext.asyncio import AsyncSession
 from sqlalchemy.orm import make_transient_to_detached
-from sqlalchemy.types import BigInteger, Boolean
+from sqlalchemy.types import Boolean
 
 from src import models, schemas
 from src.cache.client import (
@@ -898,8 +897,10 @@ async def clone_session(
         models.Message.session_name == original_session_name,
     )
     if cutoff_message_id is not None and cutoff_message is not None:
-        stmt = stmt.where(models.Message.id <= cast(cutoff_message.id, BigInteger))
-    stmt = stmt.order_by(models.Message.id)
+        stmt = stmt.where(
+            models.Message.seq_in_session <= cutoff_message.seq_in_session
+        )
+    stmt = stmt.order_by(models.Message.seq_in_session)
 
     # Fetch messages to clone
     messages_to_clone_scalars = await db.scalars(stmt)

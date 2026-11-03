@@ -80,7 +80,7 @@ def test_message_split_from_prehead(
     config = _config(conn)
     schema = conn.dialect.identifier_preparer.quote(settings.DB.SCHEMA)
     with conn.begin():
-        command.upgrade(config, "c4d8e2f6a1b3")
+        command.upgrade(config, "l19_vec_embeddings")
     with conn.begin():
         role = conn.exec_driver_sql("SELECT current_user").scalar_one()
         conn.exec_driver_sql("RESET ROLE")
@@ -171,7 +171,7 @@ def test_message_split_from_prehead(
                 conn.exec_driver_sql(
                     f"SELECT version_num FROM {schema}.alembic_version"
                 ).scalar_one()
-                == "c4d8e2f6a1b3"
+                == "l19_vec_embeddings"
             )
             assert not sa.inspect(conn).has_table(
                 "message_meta", schema=settings.DB.SCHEMA
