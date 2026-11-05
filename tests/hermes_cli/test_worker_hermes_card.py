@@ -1,0 +1,332 @@
+"""``lina worker`` runs handed out from a Hermes kanban card (lina#227).
+
+With ``worker.card_link: {kind: hermes, command: [...]}`` every write to the card goes through that command
+(``kanban comment | attach | schedule | unblock``); LINA code never opens a kanban database. The commands here are
+a fake that records its argv, except where the real kanban CLI runs against a scratch Hermes home."""
+
+import json
+import sqlite3
+import sys
+import textwrap
+import time
+from pathlib import Path
+
+import pytest
+
+from hermes_cli import kanban_db as kb
+from hermes_cli import kanban_db_connect as kbc
+from hermes_cli.worker import serve, settings
+from hermes_cli.worker.board import cards
+from hermes_cli.worker.hub import Hub, HubError
+from tests.hermes_cli import _worker_fakes as fakes
+
+AGENT = "agent-a"
+CARD, BOARD = "t_card1", "ops"
+
+FAKE_KANBAN = """import json, os, sys
+with open(os.environ["FAKE_KANBAN_LOG"], "a") as fh:
+    fh.write(json.dumps({"argv": sys.argv[1:], "env": sorted(k for k in os.environ if k.startswith("HERMES_"))}) + "\\n")
+"""
+FAKE_CHAT = """import os, sys
+open(os.environ["FAKE_CHAT_LOG"], "a").write(sys.stdin.read())
+"""
+
+
+def _config(base: Path, command: list[str], runner: list[str] | None = None, devices: str = "", extra: str = "") -> None:
+    base.mkdir(parents=True, exist_ok=True)
+    runners = f"    fakecli: {json.dumps({'type': 'command', 'argv': runner})}\n" if runner else "    {}\n"
+    (base / "config.yaml").write_text(
+        "devices:\n  workers:\n" + textwrap.indent(devices or "{}", "    ") + "\n"
+        "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n"
+        f"  card_link: {json.dumps({'kind': 'hermes', 'command': command})}\n" + extra + "  runners:\n" + runners,
+        encoding="utf-8")
+
+
+@pytest.fixture
+def fake_kanban(tmp_path, monkeypatch):
+    script = tmp_path / "fake_kanban.py"
+    script.write_text(FAKE_KANBAN, encoding="utf-8")
+    log = tmp_path / "kanban.jsonl"
+    monkeypatch.setenv("FAKE_KANBAN_LOG", str(log))
+
+    def calls() -> list[dict]:
+        return [json.loads(line) for line in log.read_text(encoding="utf-8").splitlines()] if log.is_file() else []
+    return [sys.executable, str(script)], calls
+
+
+def _verbs(calls: list[dict]) -> list[str]:
+    return [call["argv"][call["argv"].index(BOARD) + 1] for call in calls]
+
+
+def _no_kanban_db(monkeypatch) -> list[str]:
+    """Record (and refuse) any kanban database this process opens."""
+    opened: list[str] = []
+    real = sqlite3.connect
+
+    def guarded(database, *args, **kwargs):
+        if "kanban" in str(database):
+            opened.append(str(database))
+            raise AssertionError(f"LINA opened a kanban database: {database}")
+        return real(database, *args, **kwargs)
+
+    def refused(*args, **kwargs):
+        opened.append("kanban_db_connect.connect")
+        raise AssertionError("LINA opened a kanban database through kanban_db_connect")
+    monkeypatch.setattr(sqlite3, "connect", guarded)
+    monkeypatch.setattr(kbc, "connect", refused)
+    return opened
+
+
+def _card_session(monkeypatch, card: str = CARD, board: str = BOARD) -> None:
+    monkeypatch.setenv("HERMES_KANBAN_TASK", card)
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", board)
+
+
+def _one_run_on_a_device(tmp_path, monkeypatch, command) -> tuple[Path, str]:
+    base, fake = tmp_path / "lina", tmp_path / "fake"
+    argv = fakes.install_fake_cli(fake)
+    monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
+    chat = tmp_path / "chat.py"
+    chat.write_text(FAKE_CHAT, encoding="utf-8")
+    monkeypatch.setenv("FAKE_CHAT_LOG", str(tmp_path / "chat.log"))
+    _config(base, command, argv, devices="here: {host: local, cap: 2}",
+            extra=f"  notice: {json.dumps({'command': [sys.executable, str(chat)]})}\n")
+    _card_session(monkeypatch)
+    root = base / "worker"
+    launcher = fakes.ThreadLauncher().install(monkeypatch)
+    serve.serve_once(root)
+    lines: list[str] = []
+    Hub(root, out=lines.append).submit({"briefs": [fakes.brief(tmp_path, "SCENARIO:done")], "mode": "ulw",
+                                        "bot": AGENT, "runner": "fakecli", "wait": None})
+    task_id = lines[0].split()[0]
+    serve.serve_once(root)
+    hub = Hub(root, out=lines.append)
+    fakes.until(lambda: "done:1" in hub.store.load(task_id)["notified"], what="the run ended")
+    launcher.join()
+    return root, task_id
+
+
+def test_a_hermes_card_gets_start_end_and_report_through_the_command_and_no_kanban_db_is_opened(
+        tmp_path, monkeypatch, fake_kanban):
+    command, calls = fake_kanban
+    opened = _no_kanban_db(monkeypatch)
+    _, task_id = _one_run_on_a_device(tmp_path, monkeypatch, command)
+
+    assert opened == []
+    made = calls()
+    assert _verbs(made) == ["comment", "comment", "attach"]
+    start, end, attach = (call["argv"] for call in made)
+    assert start[:5] == ["kanban", "--board", BOARD, "comment", CARD] and task_id in start[-1]
+    assert end[:5] == ["kanban", "--board", BOARD, "comment", CARD]
+    assert end[end.index("--author") + 1] == "lina-worker"
+    assert f"lina worker accept {task_id}" in end[-1]
+    assert attach[:5] == ["kanban", "--board", BOARD, "attach", CARD]
+    assert Path(attach[5]).name == "report.md" and "## 다음에 알아야 할 것" in Path(attach[5]).read_text("utf-8")
+    # unblock refuses inside a card session's environment, and LINA's home must not leak into Hermes's CLI
+    assert not [name for call in made for name in call["env"]
+                if name.startswith("HERMES_KANBAN_") or name in ("HERMES_HOME", "HERMES_PROFILE")]
+
+
+def test_a_run_on_a_hermes_card_sends_no_chat_notice(tmp_path, monkeypatch, fake_kanban):
+    command, _ = fake_kanban
+    root, task_id = _one_run_on_a_device(tmp_path, monkeypatch, command)
+    assert not (tmp_path / "chat.log").exists()
+    notified = [r for r in Hub(root, out=lambda *_: None).store.receipts_of(task_id) if r["kind"] == "notified"]
+    assert len(notified) == 1 and "card" in notified[0]["how"]
+
+
+@pytest.fixture
+def queued(tmp_path, fake_kanban):
+    """A hub with no devices: runs stay queued, and their ends are reported by hand."""
+    command, calls = fake_kanban
+    base = tmp_path / "lina"
+    _config(base, command)
+    hub = Hub(base / "worker", out=lambda *_: None)
+
+    def submit(name: str = "brief.md") -> str:
+        lines: list[str] = []
+        Hub(hub.worker_root, out=lines.append).submit({
+            "briefs": [fakes.brief(tmp_path, "do it", name)], "mode": "ulw", "bot": AGENT, "topic": "t",
+            "wait": None, "card": {"task": CARD, "board": BOARD}})
+        return lines[0].split()[0]
+    return hub, submit, calls
+
+
+def test_wait_parks_the_card_and_the_first_end_wakes_it_once(queued):
+    hub, submit, calls = queued
+    first, second = submit("a.md"), submit("b.md")
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    assert _verbs(calls()) == ["comment", "comment", "schedule"]
+
+    hub.notify(first, "done", "1")
+    hub.notify(first, "done", "1")  # the same end reported again (device and tick) adds nothing
+    assert _verbs(calls())[3:] == ["comment", "unblock"]
+    assert calls()[-1]["argv"][-1] == CARD
+
+    hub.notify(second, "done", "1")  # the card runs again: the comment only
+    assert _verbs(calls())[5:] == ["comment"]
+
+
+def test_the_end_of_a_run_on_a_running_card_is_a_comment_only(queued):
+    hub, submit, calls = queued
+    run = submit()
+    hub.notify(run, "failed", "1")
+    assert _verbs(calls()) == ["comment", "comment"]
+
+
+def test_wait_with_no_open_run_on_the_card_does_not_park_it(queued):
+    hub, submit, calls = queued
+    run = submit()
+    hub.notify(run, "done", "1")
+    with pytest.raises(HubError, match="no open run"):
+        hub.wait({"task": CARD, "board": BOARD})
+    assert "schedule" not in _verbs(calls())
+
+
+def test_hermes_card_runs_show_in_the_board_run_list_with_card_and_board(queued):
+    hub, submit, _ = queued
+    run = submit()
+    lina_card = dict(hub.store.load(run), id="OT-AGE0000000001", card={"task": "t_lina", "board": None})
+    hub.store.save(lina_card)  # a run on LINA's own board: #112 serves it as a work card
+    shown = {row["id"]: row for row in cards(hub.worker_root, time.time())}
+    assert set(shown) == {run}
+    assert (shown[run]["card"], shown[run]["board"]) == (CARD, BOARD)
+
+
+@pytest.fixture
+def private(tmp_path, fake_kanban):
+    command, _ = fake_kanban
+    base, owned = tmp_path / "lina", tmp_path / "owner"
+    owned.mkdir()
+    (owned / "notes.md").write_text("the owner's own notes\n", encoding="utf-8")
+    _config(base, command, devices="here: {host: local, cap: 1}\nfar: {host: build-a, cap: 1}",
+            extra=f"  private_paths: {json.dumps([str(owned)])}\n")
+    lines: list[str] = []
+
+    def submit(**opts) -> dict:
+        Hub(base / "worker", out=lines.append).submit({
+            "briefs": [fakes.brief(tmp_path, "read the notes")], "mode": "ulw", "bot": AGENT, "topic": "t",
+            "wait": None, "inputs": [str(owned / "notes.md")], **opts})
+        return Hub(base / "worker").store.load(next(line for line in lines if line.startswith("OT-")).split()[0])
+    return submit, owned / "notes.md"
+
+
+def test_private_files_are_refused_on_any_node_but_the_hub(private):
+    submit, _ = private
+    with pytest.raises(HubError, match="hub node"):
+        submit(host="far")
+
+
+def test_work_on_private_files_runs_on_the_hub_node_and_reads_them_in_place(private):
+    submit, notes = private
+    job = submit()
+    assert (job["fixed_host"], job["host"]) == ("here", "here")
+    assert job["inputs"] == [] and job["private_inputs"] == [str(notes)]
+    assert str(notes) in job["prompt"]
+
+
+def _cli(argv: list[str]) -> int:
+    import argparse
+    from hermes_cli.subcommands.worker import _cmd_worker, build_worker_parser
+    parser = argparse.ArgumentParser()
+    build_worker_parser(parser.add_subparsers(dest="command"))
+    args = parser.parse_args(["worker", *argv])
+    with pytest.raises(SystemExit) as ended:
+        _cmd_worker(args)
+    return ended.value.code
+
+
+@pytest.fixture
+def card_shell(tmp_path, monkeypatch, fake_kanban):
+    """A Hermes card session's environment: HERMES_HOME is Hermes's, HERMES_KANBAN_* name its own card."""
+    command, calls = fake_kanban
+    lina, hermes = tmp_path / "lina", tmp_path / "hermes"
+    hermes.mkdir()
+    _config(lina, command)
+    monkeypatch.setenv("LINA_HOME", str(lina))
+    monkeypatch.setenv("HERMES_HOME", str(hermes))
+    monkeypatch.setenv("HERMES_KANBAN_HOME", str(hermes))
+    _card_session(monkeypatch, "t_env", "envboard")
+    return lina, hermes, calls
+
+
+def test_submit_card_and_board_name_the_card_and_lina_home_alone_holds_the_state(tmp_path, card_shell):
+    lina, hermes, calls = card_shell
+    brief = fakes.brief(tmp_path, "do it")
+    assert _cli(["submit", "--brief", brief, "--topic", "t", "--card", CARD, "--board", BOARD]) == 0
+    jobs = list((lina / "worker" / "hub" / "jobs").glob("OT-*.json"))
+    assert len(jobs) == 1 and json.loads(jobs[0].read_text("utf-8"))["card"] == {
+        "task": CARD, "board": BOARD, "kind": "hermes"}
+    assert calls()[0]["argv"][:5] == ["kanban", "--board", BOARD, "comment", CARD]
+    assert not (hermes / "worker").exists()
+
+
+def test_the_card_session_environment_names_the_card(tmp_path, card_shell):
+    _, _, calls = card_shell
+    assert _cli(["submit", "--brief", fakes.brief(tmp_path, "do it"), "--topic", "t"]) == 0
+    assert calls()[0]["argv"][:5] == ["kanban", "--board", "envboard", "comment", "t_env"]
+    assert _cli(["wait"]) == 0
+    assert calls()[-1]["argv"][:5] == ["kanban", "--board", "envboard", "schedule", "t_env"]
+
+
+def test_the_state_root_comes_from_lina_home_never_from_a_hermes_card_session(tmp_path, monkeypatch):
+    import hermes_constants
+    account = tmp_path / "account"
+    monkeypatch.setattr(hermes_constants, "_account_home", lambda: account)
+    monkeypatch.setattr(Path, "home", lambda: account)
+    monkeypatch.setenv("HERMES_HOME", str(account / ".hermes" / "profiles" / AGENT))
+    monkeypatch.setenv("HERMES_KANBAN_HOME", str(account / ".hermes"))
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(account / ".hermes" / "kanban.db"))
+    monkeypatch.setenv("LINA_HOME", str(tmp_path / "lina"))
+    assert settings.root() == tmp_path / "lina" / "worker"
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "elsewhere"))
+    assert settings.root() == tmp_path / "lina" / "worker"
+    monkeypatch.delenv("LINA_HOME")
+    monkeypatch.setenv("HERMES_HOME", str(account / ".hermes" / "profiles" / AGENT))
+    assert settings.root() == account / ".lina" / "worker"
+
+
+def test_the_run_end_comment_reaches_the_running_card_session_mid_run(tmp_path, monkeypatch):
+    """The 11-06 case from the worker's side: the hub runs with the agent's profile in its environment, so a
+    comment left to the CLI's default author would carry the agent's own name and the card session would skip
+    it as its own. The run's end is written as ``lina-worker`` and arrives in the running turn."""
+    from tools import kanban_tools
+    hermes = tmp_path / "hermes"
+    hermes.mkdir()
+    repo = Path(__file__).resolve().parents[2]
+    command = ["env", f"HERMES_HOME={hermes}", f"PYTHONPATH={repo}", sys.executable, "-m", "hermes_cli.main"]
+    monkeypatch.setenv("HERMES_HOME", str(hermes))
+    monkeypatch.delenv("HERMES_KANBAN_BOARD", raising=False)
+    kb._INITIALIZED_PATHS.clear()
+    with kbc.connect_closing() as conn:  # the test plays the Hermes side: the card and its session
+        card = kb.create_task(conn, title="a card that hands out runs", assignee=AGENT)
+    base = tmp_path / "lina"
+    _config(base, command)
+    monkeypatch.setenv("HERMES_PROFILE", AGENT)
+    monkeypatch.setenv("HERMES_KANBAN_TASK", card)
+
+    class Session:
+        notes: list[str] = []
+
+        def steer(self, note: str) -> bool:
+            self.notes.append(note)
+            return True
+
+    session = Session()
+    monkeypatch.setattr(kanban_tools, "_comment_watermark", {})
+    monkeypatch.setattr(kanban_tools, "_comment_poll_last_attempt", 0.0)
+    assert not kanban_tools.inject_new_comments_from_env(session)  # the first poll only marks what it has seen
+
+    lines: list[str] = []
+    with monkeypatch.context() as hub_side:
+        opened = _no_kanban_db(hub_side)
+        hub = Hub(base / "worker", out=lines.append)
+        hub.submit({"briefs": [fakes.brief(tmp_path, "do it")], "mode": "ulw", "bot": AGENT, "topic": "t",
+                    "wait": None, "card": {"task": card, "board": None}})
+        run = lines[0].split()[0]
+        hub.notify(run, "done", "1")
+    assert opened == []
+
+    monkeypatch.setattr(kanban_tools, "_comment_poll_last_attempt", 0.0)
+    assert kanban_tools.inject_new_comments_from_env(session)
+    assert "- lina-worker: " in session.notes[-1] and f"lina worker accept {run}" in session.notes[-1]

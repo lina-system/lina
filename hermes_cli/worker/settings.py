@@ -9,6 +9,7 @@ devices:
 worker:
   hub: {host: hub, lina: lina}     # how a device reaches the hub to report an end (ssh alias, lina command there)
   notice: {command: [my-notify, "{agent}"]}   # the end notice: body on stdin; unset = written to hub/notices only
+  card_link: {kind: hermes, command: [hermes]}  # runs from Hermes cards end on the card (kanban_link.py)
   models: {...}                    # see models.py
   runners: {...}                   # see runners/__init__.py
 ```
@@ -35,9 +36,21 @@ def child_pythonpath() -> str:
     return os.pathsep.join([own, *[p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p and p != own]])
 
 
+def lina_home() -> Path:
+    """LINA's root for the worker's state: ``LINA_HOME`` when set, whatever ``HERMES_HOME`` says. Without it, a
+    ``HERMES_HOME`` of Hermes Agent's (a Hermes card session's) is ignored for the platform default; any other is
+    how a LINA process hands its root to its children (services, devices over ssh, shims). ``HERMES_KANBAN_*`` is
+    never read."""
+    import os
+    from hermes_constants import get_default_hermes_root, is_hermes_agent_path, platform_default_home_for
+    hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if os.environ.get("LINA_HOME", "").strip() or not hermes_home or is_hermes_agent_path(hermes_home):
+        return platform_default_home_for(os.environ, Path.home())
+    return get_default_hermes_root()
+
+
 def root(base: Path | None = None) -> Path:
-    from hermes_cli.lina_ocx import lina_root
-    return (base or lina_root()) / "worker"
+    return (base or lina_home()) / "worker"
 
 
 def tasks_dir(worker_root: Path) -> Path:
@@ -54,8 +67,7 @@ def hub_dir(worker_root: Path) -> Path:
 
 def _config(base: Path | None = None) -> dict:
     from hermes_cli.config_backend import config_exists, read_config_doc_readonly
-    from hermes_cli.lina_ocx import lina_root
-    path = (base or lina_root()) / "config.yaml"
+    path = (base or lina_home()) / "config.yaml"
     doc = read_config_doc_readonly(path) if config_exists(path) else None
     return doc if isinstance(doc, dict) else {}
 
