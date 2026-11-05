@@ -318,6 +318,12 @@ def import_board(
                 "explicitly with --as <slug>"
             )
         target = _available_slug(requested)
+        # Both refusals run BEFORE the first move: a fenced caller (delegated child, or
+        # a worker pinned to another board) must be answered while the board root is
+        # still empty — otherwise the import leaves a kanban.db with no board.json and
+        # list_boards() reports a board nobody created (#206).
+        kb._assert_not_delegated_child_mutation()
+        kb.kanban_db_path(target)
 
         staged_meta = _read_board_metadata(extracted / "board.json")
 

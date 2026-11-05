@@ -160,6 +160,10 @@ def remove_board(slug: str, *, archive: bool = True) -> dict:
     normed = _kb._require_slug(slug)
     if normed == _kb.DEFAULT_BOARD:
         raise ValueError("the 'default' board cannot be removed")
+    # Resolve the board BEFORE touching anything: a fenced caller asking for another
+    # board has to be refused while the board is still where it was, not after the
+    # move (an archived board would answer "refused" with no tombstone, #206).
+    _kb.kanban_db_path(normed)
     d = _kb.board_dir(normed)
     if not d.exists():
         raise ValueError(f"board {normed!r} does not exist")

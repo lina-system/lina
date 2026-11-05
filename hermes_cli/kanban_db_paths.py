@@ -18,6 +18,7 @@ Split out of ``hermes_cli.kanban_db``; origin-resident helpers are reached late-
 from __future__ import annotations
 
 import os
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -70,39 +71,65 @@ def board_exists(board: Optional[str] = None) -> bool:
     return _kb._dir_holds_board(board_dir(slug))
 
 
+# One board directory name: no separator, no dot segment, nothing a path
+# expression could leave the boards root with.
+_BOARD_SLUG_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
+
+
+def _contained_dir(root: Path, slug: str) -> Path:
+    """``<root>/<slug>`` as a path that provably stays directly inside *root*.
+
+    The slug comes from a caller (``board=``, ``--board``), so it is filtered by a
+    fixed full-match pattern first, then the built string must sit one level below
+    the root before anything touches it — and the real path is checked the same way
+    again, because a board directory could be a symlink pointing out of the root.
+    Both checks stay in this function, on the value they guard."""
+    if _BOARD_SLUG_PATTERN.fullmatch(slug) is None:
+        raise ValueError("invalid board slug")
+    root_text = str(root)
+    prefix = os.path.join(root_text, "")
+    joined = os.path.normpath(os.path.join(root_text, slug))
+    if not joined.startswith(prefix) or os.sep in joined[len(prefix):]:
+        raise ValueError("invalid board slug")
+    real = os.path.realpath(joined)
+    if not real.startswith(prefix) or os.sep in real[len(prefix):]:
+        raise ValueError("invalid board slug")
+    return Path(real)
+
+
 def own_board_path(slug: str, default_parts: tuple[str, ...], leaf: str) -> Path:
     """Where *slug*'s file lives when no env pin applies (the unfenced path).
 
-    The non-default arm builds the file path from a **resolved, containment-checked**
-    board directory: the slug is regex-validated upstream, but a path derived from
-    caller data is checked here too, so it cannot address anything outside
-    ``boards_root()`` (``../`` in a slug, a symlinked board dir). The default arm is
-    built from constants only and needs no check."""
+    The non-default arm goes through :func:`_contained_dir`, so a slug cannot
+    address anything outside ``boards_root()`` (``../`` in it, or a board directory
+    symlinked elsewhere). The default arm is built from constants only."""
     if slug == _kb.DEFAULT_BOARD:
         return kanban_home().joinpath(*default_parts)
-    root = boards_root().resolve()
-    candidate = (root / slug).resolve()
-    if candidate.parent != root:
-        raise ValueError("invalid board slug")
-    return candidate / leaf
+    return _contained_dir(boards_root().resolve(), slug) / leaf
 
 
 def _same_file(left: Path, right: Path) -> bool:
-    """Same physical file. Both sides arrive resolved — the board path through
-    :func:`own_board_path`'s check, the pin through :func:`_physical` — so this
-    only compares, and never re-resolves a path built from caller data."""
+    """Same physical file. Both sides arrive resolved or checked — the board path
+    through :func:`own_board_path`, the pin through :func:`_physical` — so this only
+    compares."""
     return left == right
 
 
 def _physical(path: Path) -> Path:
-    """A path as it exists on disk. Only for paths that are NOT caller-built board
-    data: the dispatcher's env pin (resolving it is what lets a worker pinned to a
-    symlinked root still recognize its own board) and the constants-only default
-    board path."""
-    try:
-        return path.resolve()
-    except (OSError, RuntimeError):
-        return path.absolute()
+    """Physical form of a path we own: the dispatcher's board pin, or the
+    constants-only default board path.
+
+    A pin is ours, never board data, but it still arrives as an environment string,
+    so it is normalized and range-checked here before anything follows it: only a
+    path inside the kanban home (or inside its real form, for a symlinked root) is
+    followed, and only after the prefix check. Everything else is compared
+    lexically — it cannot be one of our board paths, and is never followed."""
+    text = os.path.normpath(os.path.abspath(str(path)))
+    home = os.path.join(str(kanban_home()), "")
+    home_real = os.path.join(os.path.realpath(str(kanban_home())), "")
+    if not text.startswith(home) and not text.startswith(home_real):
+        return Path(text)
+    return Path(os.path.realpath(text))
 
 
 def _board_name_for_pinned_path(pinned: Path) -> str:
@@ -111,9 +138,8 @@ def _board_name_for_pinned_path(pinned: Path) -> str:
     The pin is a file path (``HERMES_KANBAN_DB`` & friends), not a slug, so the
     name is recovered from the layout; anything unrecognized falls back to the
     path itself rather than guessing a board."""
-    resolved = _physical(pinned)
     try:
-        parts = resolved.relative_to(kanban_home().resolve()).parts
+        parts = _physical(pinned).relative_to(kanban_home().resolve()).parts
     except (ValueError, OSError, RuntimeError):
         return str(pinned)
     if len(parts) >= 3 and parts[0] == "kanban" and parts[1] == "boards":
@@ -131,8 +157,8 @@ def refuse_cross_board_pin(
     worker) passes."""
     own = own_board_path(slug, default_parts, leaf)
     if slug == _kb.DEFAULT_BOARD:
-        # Constants-only path (no slug in it), so resolving it here is safe and keeps
-        # a symlinked HERMES_KANBAN_HOME comparable to the pin.
+        # Constants-only path (no slug in it), resolved so a symlinked
+        # HERMES_KANBAN_HOME stays comparable to the pin.
         own = _physical(own)
     if _same_file(own, _physical(pinned)):
         return

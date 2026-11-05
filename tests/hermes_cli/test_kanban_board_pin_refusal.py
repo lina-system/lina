@@ -227,3 +227,58 @@ def test_a_slug_that_escapes_boards_root_is_rejected_before_a_path_is_built(boar
 
     assert not (kb.kanban_home() / "kanban" / "escape").exists()
     assert not (kb.kanban_home() / "escape").exists()
+
+
+def test_worker_rm_of_another_board_is_refused_before_the_archive(worker, capsys):
+    """``hermes kanban boards rm <other>`` from a worker: the refusal must come
+    BEFORE the archive, so the board keeps its folder and ``board.json`` and
+    ``_archived/`` stays empty (Codex P2 on #213)."""
+    from hermes_cli import kanban as kc
+
+    board_dir = kb.boards_root() / "private"
+    before = sorted(p.name for p in board_dir.iterdir())
+
+    parser = argparse.ArgumentParser(prog="hermes", add_help=False)
+    sub = parser.add_subparsers(dest="command")
+    kc.build_parser(sub)
+    args = parser.parse_args(["kanban", "boards", "rm", "private"])
+
+    rc = kc.kanban_command(args)
+
+    assert rc != 0
+    stderr = capsys.readouterr().err
+    assert "'private'" in stderr and "'default'" in stderr, stderr
+    assert board_dir.is_dir(), "the refusal moved the board it refused to touch"
+    assert sorted(p.name for p in board_dir.iterdir()) == before
+    assert json.loads((board_dir / "board.json").read_text(encoding="utf-8"))["slug"] == "private"
+    archived = kb.boards_root() / "_archived"
+    assert not archived.exists() or list(archived.iterdir()) == []
+
+
+def test_worker_hard_delete_of_another_board_is_refused(worker):
+    """The ``--delete`` arm moves/removes the folder without writing metadata, so it
+    needs the same up-front refusal — nothing is removed at all."""
+    with pytest.raises(kb.BoardPinnedError) as excinfo:
+        kb.remove_board("private", archive=False)
+
+    assert "'private'" in str(excinfo.value) and "'default'" in str(excinfo.value)
+    assert (kb.boards_root() / "private" / "kanban.db").is_file()
+    assert (kb.boards_root() / "private" / "board.json").is_file()
+
+
+def test_worker_import_is_refused_before_anything_lands(boards, tmp_path, monkeypatch):
+    """``kanban boards import`` from a worker resolves the new board first: an
+    archive's DB must not be moved into a board folder the caller cannot open."""
+    from hermes_cli import kanban_transfer as kt
+
+    archive = tmp_path / "private.tar.gz"
+    kt.export_board("private", str(archive))
+
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(boards.default_db))
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "default")
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_pinned_worker")
+
+    with pytest.raises(kb.BoardPinnedError):
+        kt.import_board(str(archive), "imported")
+
+    assert not (kb.boards_root() / "imported").exists()
