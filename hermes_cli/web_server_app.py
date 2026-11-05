@@ -161,9 +161,14 @@ async def standalone_lifespan(app: "FastAPI"):
 
     start_background_bootstrap()
 
+    from hermes_cli.lina_push_watch import start as start_push  # lina#244: off without a VAPID key
+
+    stop_push = start_push()
+
     try:
         yield
     finally:
+        stop_push()
         try:
             tui_gateway.server.clear_tui_message_injector()
         except Exception:
@@ -202,6 +207,7 @@ async def http_lifespan(app: FastAPI):
     """The gateway already owns schema, rooms, scheduler and model services."""
     from contextlib import AsyncExitStack
 
+    from hermes_cli.lina_push_watch import start as start_push
     from hermes_cli.web_server import _dashboard_selftest_loop
     from hermes_cli.web_server_chat import PTY_REGISTRY
     from hermes_cli.web_server_surface import policy
@@ -215,6 +221,7 @@ async def http_lifespan(app: FastAPI):
         asyncio.create_task(run_reaper(PTY_REGISTRY), name="gateway-api-pty-reaper"),
         asyncio.create_task(_dashboard_selftest_loop(), name="gateway-api-selftest"),
     ]
+    stop_push = start_push()
     try:
         async with AsyncExitStack() as surface:
             if policy(app.state).host_terminal:
@@ -222,6 +229,7 @@ async def http_lifespan(app: FastAPI):
                 await surface.enter_async_context(host_terminal_lifespan(app))
             yield
     finally:
+        stop_push()
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)
