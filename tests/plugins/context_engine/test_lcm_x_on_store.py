@@ -412,3 +412,80 @@ def test_a_writer_that_waited_for_the_lock_writes_on_the_fresh_rows(routed, memo
     finally:
         first.close()
         second.close()
+
+
+def test_a_rollup_is_claimed_built_published_read_and_purged_on_the_store(routed, memory_store_sql):
+    """Temporal rollups on the store with real summary nodes: on the store ``summary_nodes`` always exists, so
+    publishing a build validates its source nodes (LCM-X's own rollup tests run on a file without that table, which
+    skips the check; they are SQLite-only). A build naming a missing node is refused; purging a source re-stales."""
+    db = routed("rollups")
+    store, dag = _stores(db)
+    ids = store.append_batch("s1", [{"role": "user", "content": "release notes for the day"}])
+    nodes = sorted(dag.add_node(_lcm("dag").SummaryNode(session_id="s1", summary=f"leaf {n}", source_ids=ids,
+                                                        token_count=3, created_at=time.time())) for n in range(2))
+    rollups = _lcm("rollup_store").RollupStore(db)
+    scope = "conversation:c1"
+    try:
+        token = rollups.upsert_building("day", "2026-07-15", scope)
+        assert rollups.get_rollup("day", "2026-07-15", scope)["status"] == "building"
+        assert rollups.mark_ready(token, "Daily summary", 12, [nodes[1], nodes[0], nodes[1]], "fp-1") is True
+        ready = rollups.get_rollup("day", "2026-07-15", scope)
+        assert (ready["status"], ready["summary"], ready["token_count"], ready["source_fingerprint"],
+                ready["source_node_ids"]) == ("ready", "Daily summary", 12, "fp-1", nodes)
+        window = rollups.ready_rollups_for_window("day", "2026-07-01", "2026-07-31", scope)
+        assert [row["rollup_id"] for row in window] == [token.rollup_id]
+        assert memory_store_sql("SELECT node_id FROM ctx.lcm_rollup_sources WHERE agent_id = 'rollups' "
+                                "ORDER BY node_id") == [(n,) for n in nodes]
+
+        unknown = rollups.upsert_building("day", "2026-07-16", scope)
+        assert rollups.mark_ready(unknown, "never published", 1, [nodes[-1] + 1000], "fp-2") is False
+        refused = rollups.get_rollup("day", "2026-07-16", scope)
+        assert (refused["status"], refused["error"], refused["summary"]) == (
+            "stale", "source changed during build", None)
+
+        assert rollups.purge_rollups_for_sources([nodes[0]]) == 1
+        purged = rollups.get_rollup("day", "2026-07-15", scope)
+        assert (purged["status"], purged["summary"], purged["source_node_ids"]) == ("stale", None, [])
+        assert purged["generation"] == ready["generation"] + 1
+        assert rollups.ready_rollups_for_window("day", "2026-07-01", "2026-07-31", scope) == []
+    finally:
+        rollups.close()
+        store.close()
+        dag.close()
+
+
+def test_a_fresh_home_on_the_store_starts_and_stores_its_first_turn(tmp_path, monkeypatch, memory_store_sql):
+    """``lcm.store_backend: postgres`` puts a fresh home on the store, and nothing there reads it as a newer
+    schema: the stores stamp ctx.metadata with this build's schema_version, so the refusal and the interim-stamp
+    classifier (``classify_version_mismatch``, reached only for a stamp above ``SCHEMA_VERSION``) never run, and
+    ``/lcm doctor repair schema-stamp`` has nothing to do. The engine starts and stores the first turn."""
+    home = tmp_path / "home"
+    home.mkdir()
+    (home / "config.yaml").write_text("lcm:\n  store_backend: postgres\n")
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    db = home / "lcm.db"
+    bootstrap = _lcm("db_bootstrap")
+    engine = _lcm("engine").LCMEngine(config=_lcm("config").LCMConfig(embeddings_enabled=False),
+                                      hermes_home=str(home))
+    try:
+        identity = lcm_x_store.store_identity(db)
+        assert identity is not None, "the fresh home was not put on the store"
+        engine.on_session_start("first", conversation_id="c1")
+        engine.ingest([{"role": "user", "content": "첫 턴: 오늘 일정 알려줘"},
+                       {"role": "assistant", "content": "오늘은 3시에 회의가 있습니다"}])
+        assert memory_store_sql(
+            "SELECT m.content FROM ctx.lcm_messages AS p JOIN memory.messages AS m ON m.uid = p.text_uid "
+            "WHERE p.agent_id = %s ORDER BY p.store_id", (identity["agent_id"],)) == [
+            ("첫 턴: 오늘 일정 알려줘",), ("오늘은 3시에 회의가 있습니다",)]
+        assert not db.exists()
+
+        conn = lcm_x_store.backend_for(db)()
+        try:
+            assert bootstrap.read_existing_schema_version(conn) == bootstrap.SCHEMA_VERSION
+            bootstrap.refuse_schema_version_too_new(conn)
+            assert bootstrap.remediate_interim_schema_stamp(conn, apply=False)["status"] == "noop"
+        finally:
+            conn.close()
+    finally:
+        engine.shutdown()
+        lcm_x_store.unroute(db)
