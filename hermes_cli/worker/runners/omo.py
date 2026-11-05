@@ -23,6 +23,7 @@ from pathlib import Path
 
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
 from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view, parse_time, stop_session
+from hermes_cli.worker.runners.omo_processes import stop_task_processes
 from tools.environments.local import build_subprocess_env
 
 HELPERS = Path(__file__).resolve().parent
@@ -190,4 +191,12 @@ class OmoRunner:
 
     def stop(self, handle: Handle) -> None:
         if handle.data.get("ref"):
-            stop_session(self.session, handle.data["ref"], STOP_WAIT_S)
+            if not stop_session(self.session, handle.data["ref"], STOP_WAIT_S):
+                raise RunnerError("omo session did not stop")
+            # Capture and reap descendants before unload can kill their terminal leader.
+            handle.task.event(handle.run, "cancel_reap", **stop_task_processes(handle.task))
+            self.session(["unload", handle.data["ref"], "--force"], STOP_WAIT_S)
+        receipt = stop_task_processes(handle.task)
+        handle.task.event(handle.run, "cancel_reap", **receipt)
+        if receipt.get("left") or receipt.get("manifest_error") or receipt.get("errors"):
+            raise RunnerError("omo task cleanup incomplete; see cancel_reap receipt")

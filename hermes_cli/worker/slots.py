@@ -18,6 +18,15 @@ from hermes_cli.worker import settings
 RESERVED = "reserved"
 RESERVE_TTL_S = 600.0  # a reservation the hub never followed with a request (it crashed) frees its slot
 CAP_FILE = "cap"
+POOL_FILE = "slot_pool"
+
+
+def task_pool(task_dir: Path) -> str:
+    """Unmarked tasks predate named reservations and belong to the bid pool."""
+    try:
+        return (task_dir / POOL_FILE).read_text(encoding="utf-8-sig").strip()
+    except FileNotFoundError:
+        return "bid"
 
 
 def requested(task_dir: Path) -> int:
@@ -43,18 +52,20 @@ def _task_dirs(worker_root: Path) -> list[Path]:
     return sorted(settings.tasks_dir(worker_root).glob("O*-*"))
 
 
-def held(worker_root: Path, exclude: str | None = None) -> int:
-    return sum(holds_slot(d) for d in _task_dirs(worker_root) if d.name != exclude)
+def held(worker_root: Path, exclude: str | None = None, *, pool: str | None = None) -> int:
+    return sum(holds_slot(d) for d in _task_dirs(worker_root)
+               if d.name != exclude and (pool is None or task_pool(d) == pool))
 
 
-def running_others(worker_root: Path, task_id: str) -> int:
-    return sum(launched(d) for d in _task_dirs(worker_root) if d.name != task_id)
+def running_others(worker_root: Path, task_id: str, *, pool: str | None = None) -> int:
+    return sum(launched(d) for d in _task_dirs(worker_root)
+               if d.name != task_id and (pool is None or task_pool(d) == pool))
 
 
-def cap(worker_root: Path) -> int | None:
+def cap(worker_root: Path, *, pool: str = "bid") -> int | None:
     """The cap the hub last reserved with; None before any reservation (no hub limit known yet)."""
     try:
-        return int((worker_root / CAP_FILE).read_text(encoding="utf-8-sig").strip())
+        return int((worker_root / (CAP_FILE if pool == "bid" else "cap.named")).read_text(encoding="utf-8-sig").strip())
     except (OSError, ValueError):
         return None
 
@@ -70,14 +81,15 @@ def _locked(worker_root: Path):
             fcntl.flock(handle, fcntl.LOCK_UN)  # windows-footgun: ok — POSIX work devices only
 
 
-def reserve(worker_root: Path, task_id: str, device_cap: int) -> dict:
+def reserve(worker_root: Path, task_id: str, device_cap: int, *, pool: str = "bid") -> dict:
     """Take a slot for *task_id* when fewer than *device_cap* tasks hold one; ``full`` otherwise."""
     with _locked(worker_root):
-        (worker_root / CAP_FILE).write_text(f"{device_cap}\n", encoding="utf-8")
-        taken = held(worker_root, exclude=task_id)
+        (worker_root / (CAP_FILE if pool == "bid" else "cap.named")).write_text(f"{device_cap}\n", encoding="utf-8")
+        taken = held(worker_root, exclude=task_id, pool=pool)
         if taken >= device_cap:
             return {"action": "full", "held": taken, "cap": device_cap}
         task_dir = settings.tasks_dir(worker_root) / task_id
         task_dir.mkdir(parents=True, exist_ok=True)
+        (task_dir / POOL_FILE).write_text(pool + "\n", encoding="utf-8")
         (task_dir / RESERVED).write_text(f"{time.time():.3f}\n", encoding="utf-8")
         return {"action": "reserved", "held": taken + 1, "cap": device_cap}
