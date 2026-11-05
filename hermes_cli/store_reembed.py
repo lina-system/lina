@@ -110,7 +110,7 @@ def _write_batch(conn, source: str, model: str, items: list[_Item], vectors: lis
             if kind == "chunk":
                 item_id = conn.execute(
                     "INSERT INTO vec.chunks (source, agent_id, message_ids, text) VALUES (%s, %s, %s, %s) "
-                    "ON CONFLICT (source, message_ids, chunk_index, source_ref) DO UPDATE SET text = EXCLUDED.text, agent_id = EXCLUDED.agent_id "
+                    "ON CONFLICT (source, message_ids, chunk_index, source_ref, lcm_identity_hash) DO UPDATE SET text = EXCLUDED.text, agent_id = EXCLUDED.agent_id "
                     "RETURNING chunk_id", (source, item.agent_id, [item.item_id], item.text)).fetchone()[0]
             conn.execute(
                 "INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding) "
