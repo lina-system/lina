@@ -9,7 +9,9 @@ A file reads at most 64 KB. Only regular files are read: a directory or a FIFO n
 never opened (a FIFO would block). A file older than its ``stale_after`` is ``stale`` (that wins over
 ``ok``/``failing``); a malformed file is one ``error`` row naming it with the file's mtime, never a failed response.
 ``json.loads`` takes ``NaN``/``Infinity`` and ``json.dumps`` writes them back as bare tokens a browser cannot parse,
-so a time that is not a finite number, or a negative ``stale_after``, is malformed too.
+so a time that is not a finite number, or a negative ``stale_after``, is malformed too. So is text that is not valid
+UTF-8 (a lone surrogate is valid JSON but ``json.dumps(ensure_ascii=False)`` cannot encode it), and a file name of
+non-UTF-8 bytes is served with U+FFFD for those bytes.
 """
 
 from __future__ import annotations
@@ -33,6 +35,11 @@ def _field(data: dict, key: str, kind: type):
         good, what = isinstance(value, bool), "a boolean"
     elif kind is str:
         good, what = isinstance(value, str), "a string"
+        if good:
+            try:
+                value.encode("utf-8")
+            except UnicodeEncodeError as exc:
+                raise _Malformed(f"{key} is not valid text") from exc
     else:
         if isinstance(value, bool) or not isinstance(value, (int, float)):
             raise _Malformed(f"{key} is not a number")
@@ -68,13 +75,27 @@ def _check(path: Path) -> tuple[str, bool, str, float, float]:
         raise _Malformed("stale_after is negative")
     return name, ok, line, at, stale_after
 
+def _text(value: str) -> str:
+    """A file name as served text. On Linux a name of non-UTF-8 bytes comes back from glob with surrogate escapes, and
+    no UTF-8 body can carry those, so they become U+FFFD instead of failing the whole response."""
+    try:
+        value.encode("utf-8")
+    except UnicodeEncodeError:
+        try:
+            raw = value.encode("utf-8", "surrogateescape")
+        except UnicodeEncodeError:  # a name Windows fsdecode kept as a lone high surrogate
+            raw = value.encode("utf-8", "surrogatepass")
+        return raw.decode("utf-8", "replace")
+    return value
+
 def _error_row(path: Path, reason: str) -> dict:
+    name = _text(path.name)
     try:
         at = path.stat().st_mtime
     except OSError:
         at = time.time()
-    return {"name": path.stem, "ok": False, "line": f"{path.name}: {reason}", "at": at, "staleAfter": None,
-            "stale": False, "state": "error", "file": path.name}
+    return {"name": _text(path.stem), "ok": False, "line": f"{name}: {reason}", "at": at, "staleAfter": None,
+            "stale": False, "state": "error", "file": name}
 
 def _row(path: Path, now: float) -> dict:
     try:
@@ -83,7 +104,7 @@ def _row(path: Path, now: float) -> dict:
         return _error_row(path, str(exc))
     stale = now - at > stale_after
     return {"name": name, "ok": ok, "line": line, "at": at, "staleAfter": stale_after, "stale": stale,
-            "state": "stale" if stale else "ok" if ok else "failing", "file": path.name}
+            "state": "stale" if stale else "ok" if ok else "failing", "file": _text(path.name)}
 
 def checks(now: float | None = None) -> dict:
     """``{version: 1, at, checks}`` for every regular ``status/*.json`` file, newest ``at`` first."""

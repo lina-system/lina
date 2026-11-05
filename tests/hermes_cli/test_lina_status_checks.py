@@ -9,6 +9,7 @@ helper pattern of ``test_lina_board_api.py``.
 from __future__ import annotations
 
 import json
+import os
 import time
 from pathlib import Path
 
@@ -168,6 +169,40 @@ def test_a_directory_named_like_a_status_file_is_not_listed(root, client):
     _file(root, "tools.json", at=time.time() - 30)
 
     assert [row["file"] for row in _checks(client)["checks"]] == ["tools.json"]
+
+SURROGATE = "\\ud800"  # a lone surrogate as a JSON escape: valid JSON, no UTF-8 body can carry it
+
+@pytest.mark.parametrize("field", ["name", "line"])
+def test_text_that_cannot_be_utf8_is_an_error_row_in_a_parseable_body(root, client, field):
+    """A lone surrogate is valid JSON, but json.dumps(ensure_ascii=False) cannot encode it: one such file must not
+    fail the whole response, so it is an error row and every other check is still served."""
+    texts = {"name": '"t"', "line": '"x"'}
+    texts[field] = f'"{SURROGATE}"'
+    (root / "status" / "tools.json").write_text(
+        f'{{"name":{texts["name"]},"ok":true,"line":{texts["line"]},"at":1800000000,"stale_after":60}}',
+        encoding="utf-8")
+    _file(root, "backup.json", at=time.time() - 30)
+
+    response = client.get("/api/lina/status/checks")
+
+    assert response.status_code == 200
+    body = _valid(_strict(response.text))
+    row = next(row for row in body["checks"] if row["file"] == "tools.json")
+    assert (row["state"], row["ok"], row["stale"]) == ("error", False, False)
+    assert row["line"] == f"tools.json: {field} is not valid text"
+    assert next(row for row in body["checks"] if row["file"] == "backup.json")["state"] == "ok"
+
+def test_a_file_name_that_is_not_utf8_is_served_with_replacement_characters():
+    """On Linux a file name of raw bytes comes back from glob with surrogate escapes; the row must still encode."""
+    from hermes_cli import lina_status_checks
+    path = Path(os.fsdecode(b"bad\xff.json"))
+
+    row = lina_status_checks._row(path, time.time())
+
+    assert (row["file"], row["name"]) == ("bad\ufffd.json", "bad\ufffd")
+    assert row["line"] == "bad\ufffd.json: unreadable"
+    body = json.dumps(row, ensure_ascii=False)
+    assert body.encode("utf-8") and "\udcff" not in body
 
 def test_a_missing_folder_serves_an_empty_list(root, client):
     (root / "status").rmdir()

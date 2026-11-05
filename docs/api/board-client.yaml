@@ -1357,7 +1357,8 @@ components:
         line:
           type: string
           description: >
-            One line for the owner; for an error row, the file name, a colon and a short reason.
+            One line for the owner; for an error row, the file name, a colon and a short reason. Text that is not
+            valid UTF-8 (a lone surrogate) is malformed, so no served text fails to encode.
         at:
           type: number
           description: >
@@ -1376,10 +1377,11 @@ components:
           enum: [ok, failing, stale, error]
           description: >
             stale when `now - at > staleAfter` (wins over ok/failing); failing when `ok` is false; error for a
-            malformed file.
+            malformed file (bad JSON, a bad field, a non-finite or negative time, text that is not valid UTF-8).
         file:
           type: string
-          description: The status file's name under `<LINA root>/status/`.
+          description: >
+            The status file's name under `<LINA root>/status/`; bytes that are not UTF-8 are served as U+FFFD.
     StatusChecks:
       type: object
       additionalProperties: false
