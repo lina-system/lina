@@ -1,6 +1,7 @@
 # Board endpoints the app reads beyond docs/api/work-client.yaml (lina#112): the owner's to-dos, decisions and due
 # groups from the work record, `lina worker` runs that are not kanban work cards, devices, quota and the inbox
-# notices; each agent's goals and to-dos (lina#166); the owner's writes and read marks (lina#149); the
+# notices; each agent's goals and to-dos (lina#166); one worker run's record, round by round (lina#201); the owner's
+# writes and read marks (lina#149); the
 # change stream's messages (lina#150, a WebSocket: see ChangeMessage). Served by hermes_cli/web_routers/lina_board.py
 # behind the dashboard auth gate (session token).
 # tests/hermes_cli/test_lina_board_api.py validates served JSON against it, so a shape change here and in the code
@@ -140,6 +141,38 @@ paths:
           description: No such goal or to-do (an unknown id, an area, a memo or a dropped item).
         "503":
           description: The work record failed to read.
+  /work/runs/{id}/record:
+    get:
+      operationId: getWorkRunRecord
+      summary: One lina worker run's own record, round by round, newest round first (lina#201).
+      description: >
+        The run's session record lives on the build device that ran it and the hub cannot read it, so the record is
+        made of what the hub keeps: its receipts (each round's start and own end, the owner's verdict notes and
+        cancel reasons), the last fetched final message and report (an earlier round's are replaced by the next
+        fetch), and for the round going now the runner's live view (its recent sentences and tool steps; only its
+        last line from a device that does not send them). The sentences of a round that ended before the last
+        fetch are not on the hub and are not served.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The run's record.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunRecord"
+        "304":
+          description: Unchanged since the ETag sent.
+        "404":
+          description: No such worker run (an unknown or malformed id).
   /work/items/{id}/done:
     post:
       operationId: markWorkItemDone
@@ -447,6 +480,91 @@ components:
           description: What the run does now, from the runner's live state (at most 120 characters).
         plain:
           $ref: "#/components/schemas/PlainLines"
+    RecordRow:
+      type: object
+      additionalProperties: false
+      required: [at, kind, text, count]
+      properties:
+        at:
+          type: number
+          description: When it was said or done; a folded row's first step.
+        kind:
+          type: string
+          enum: [said, tools, comment]
+          description: >
+            said: the run's own sentence; tools: the tool steps between two sentences folded into one row;
+            comment: the owner's words (a verdict note, a cancel reason).
+        text:
+          type: string
+          nullable: true
+          description: Null on a tools row, which never carries tool names, paths, commands or ids.
+        count:
+          type: integer
+          minimum: 1
+          description: A tools row's steps; a said row's times the same sentence was said in a row; 1 on a comment.
+    RecordRound:
+      type: object
+      additionalProperties: false
+      required: [run, startedAt, endedAt, endKnown, startUnknown, result, verdict, stopped, rows]
+      description: >
+        One run of the task, from its own start to its own end. A row belongs to the round going at its time; a
+        row after a round's end and before the next round's start belongs to none.
+      properties:
+        run:
+          type: integer
+          nullable: true
+          description: The round's run number; null on the round whose start fell out of the kept history.
+        startedAt:
+          type: number
+          nullable: true
+        endedAt:
+          type: number
+          nullable: true
+          description: From the round's own end receipt only; null while it goes or when its end is not on record.
+        endKnown:
+          type: boolean
+        startUnknown:
+          type: boolean
+          description: The round's start fell out of the kept history; such a round is served only with content.
+        result:
+          type: string
+          nullable: true
+          description: The report's first line, on the round going when it was written; never on a round going now.
+        verdict:
+          type: string
+          nullable: true
+          enum: [accepted, rejected, null]
+          description: The owner's verdict, on the latest round that began before it.
+        stopped:
+          type: boolean
+          description: The round's own end says it stopped (stalled, failed, cancelled, no result, unreachable).
+        rows:
+          type: array
+          description: Oldest first.
+          items:
+            $ref: "#/components/schemas/RecordRow"
+    RunRecord:
+      type: object
+      additionalProperties: false
+      required: [id, at, rounds, comments, errors]
+      properties:
+        id:
+          type: string
+        at:
+          type: number
+          description: Snapshot time (left out of the ETag).
+        rounds:
+          type: array
+          description: Newest round first.
+          items:
+            $ref: "#/components/schemas/RecordRound"
+        comments:
+          type: array
+          description: Comments made while no round was going, newest first; each stands on its own.
+          items:
+            $ref: "#/components/schemas/RecordRow"
+        errors:
+          $ref: "#/components/schemas/Errors"
     ItemRow:
       type: object
       required: [id, kind, title, due, agent]

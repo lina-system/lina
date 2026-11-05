@@ -40,6 +40,27 @@ from gateway.stream_consumer_think import StreamThinkFilterMixin
 
 logger = logging.getLogger("gateway.stream_consumer")
 
+STREAM_FLUSH_TIMEOUT = 5.0
+STREAM_FINAL_SEND_GRACE = 35.0  # Covers Telegram's 30s per-request send deadline.
+
+
+async def await_stream_flush(stream_task: asyncio.Task, consumer: GatewayStreamConsumer) -> None:
+    """Flush without cancelling an accepted final send before its transport ack."""
+    try:
+        done, _ = await asyncio.wait({stream_task}, timeout=STREAM_FLUSH_TIMEOUT)
+        if not done and consumer.final_send_in_flight:
+            grace = getattr(type(consumer.adapter), "STREAM_FINAL_SEND_GRACE", STREAM_FINAL_SEND_GRACE)
+            done, _ = await asyncio.wait({stream_task}, timeout=grace)
+        if not done:
+            stream_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stream_task
+    except asyncio.CancelledError:
+        stream_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await stream_task
+
+
 # Queue sentinels (see _drain_queue()).  Bare: _DONE, _NEW_SEGMENT (finalize, start a
 # fresh message), _REOPEN_SEED (EAGER native re-seed after a clarify answer — WeCom
 # typing is driven by the seed frame; lazy re-seed measured 48s of dead air).  Tuples:
@@ -140,6 +161,7 @@ class GatewayStreamConsumer(StreamTransportMixin, StreamFallbackMixin, StreamThi
         # ``_run_agent_mark_streamed_delivery`` must not fire for it (#105341). Default True: every
         # other construction site (incl. the proxy path) creates consumers only when streaming is on.
         self.stream_deltas_enabled = True
+        self.final_send_in_flight = False
         # Only platforms needing an explicit finalize call (DingTalk AI Cards) force a
         # redundant final edit; ``is True`` keeps MagicMock adapters out.
         self._adapter_requires_finalize = getattr(adapter, "REQUIRES_EDIT_FINALIZE", False) is True
@@ -585,34 +607,39 @@ class GatewayStreamConsumer(StreamTransportMixin, StreamFallbackMixin, StreamThi
                     # would read as a bare marker the cleaner keeps. The transcript keeps it.
                     self._accumulated = _strip_trailing_silence_marker(self._accumulated)
 
-                if self._should_edit(tick) and (
-                    self._accumulated or (self._use_native_streaming and self._tool_progress_active)
-                ):
-                    # Seal first: it clears the message id, so a remainder still over the limit
-                    # is split again below. A plain first send would let the adapter split it and
-                    # adopt only the LAST chunk as the preview; the next seal then overwrites that
-                    # chunk with the head of the whole remainder (duplicated + lost text, #25349).
-                    await self._seal_overflow_heads()
-                    # Overflow split.  Native streaming bypasses this: the adapter
-                    # truncates against the stream protocol's own limit.
-                    if not self._use_native_streaming and self._first_send_overflows():
-                        if await self._split_first_send(tick):
-                            return
-                        if self._first_send_overflows():
-                            # A head send failed: keep the full text for the fallback final, and
-                            # skip the boundary reset below that would clear it. Still yield: the
-                            # buffer stays over the debounce threshold, so `continue` alone re-enters
-                            # the split on every pass and spins the loop without ever sleeping.
-                            self._signal_flush(tick.flush_event)
-                            await asyncio.sleep(0.05)
-                            continue
-                    # The split tail goes out now, so a commentary or tool boundary drained in
-                    # this tick still lands after it instead of being dropped.
-                    await self._push_update(tick)
+                self.final_send_in_flight = tick.got_done
+                try:
+                    if self._should_edit(tick) and (
+                        self._accumulated or (self._use_native_streaming and self._tool_progress_active)
+                    ):
+                        # Seal first: it clears the message id, so a remainder still over the limit
+                        # is split again below. A plain first send would let the adapter split it and
+                        # adopt only the LAST chunk as the preview; the next seal then overwrites that
+                        # chunk with the head of the whole remainder (duplicated + lost text, #25349).
+                        await self._seal_overflow_heads()
+                        # Overflow split.  Native streaming bypasses this: the adapter
+                        # truncates against the stream protocol's own limit.
+                        if not self._use_native_streaming and self._first_send_overflows():
+                            if await self._split_first_send(tick):
+                                return
+                            if self._first_send_overflows():
+                                # A head send failed: keep the full text for the fallback final, and
+                                # skip the boundary reset below that would clear it. Still yield: the
+                                # buffer stays over the debounce threshold, so `continue` alone re-enters
+                                # the split on every pass and spins the loop without ever sleeping.
+                                self._signal_flush(tick.flush_event)
+                                self.final_send_in_flight = False
+                                await asyncio.sleep(0.05)
+                                continue
+                        # The split tail goes out now, so a commentary or tool boundary drained in
+                        # this tick still lands after it instead of being dropped.
+                        await self._push_update(tick)
 
-                if tick.got_done:
-                    await self._finalize_turn(tick)
-                    return
+                    if tick.got_done:
+                        await self._finalize_turn(tick)
+                        return
+                finally:
+                    self.final_send_in_flight = False
 
                 if tick.commentary_text is not None:
                     await self._deliver_commentary(tick.commentary_text)

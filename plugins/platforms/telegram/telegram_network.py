@@ -56,8 +56,8 @@ _DOH_PROVIDERS: list[dict] = [
         "url": "https://cloudflare-dns.com/dns-query", "params": {"name": _TELEGRAM_API_HOST, "type": "A"},
         "headers": {"Accept": "application/dns-json"}},
 ]
-# Last-resort IPv4 Bot API endpoints (149.154.160.0/20). Used when DoH is blocked AND as
-# first-try connect targets so a blackholed IPv6 AAAA for the hostname can't pin initialize().
+# IPv4 Bot API endpoints (149.154.160.0/20). Kept behind the DoH answers as extra connect targets so a
+# blackholed IPv6 AAAA for the hostname can't pin initialize(), and used alone when DoH is blocked.
 SEED_FALLBACK_IPS: list[str] = ["149.154.166.110", "149.154.167.220"]
 _UNSET = object()
 
@@ -259,13 +259,18 @@ async def _query_doh_provider(client: httpx.AsyncClient, provider: dict) -> list
 
 
 async def discover_fallback_ips() -> list[str]:
-    """Resolve api.telegram.org via Google + Cloudflare DoH; unique A records, in order. IPs matching the
-    system resolver are deliberately KEPT (often the most reliable path). Falls back to
-    ``SEED_FALLBACK_IPS`` only when DoH yields nothing usable.
+    """Resolve api.telegram.org via Google + Cloudflare DoH; unique A records, in order, followed by every
+    ``SEED_FALLBACK_IPS`` address not already present. IPs matching the system resolver are deliberately
+    KEPT (often the most reliable path). Only when DoH yields nothing usable is the result the seed list
+    alone.
 
     IPs that match the local system resolver are kept rather than excluded: in many networks the system-DNS
     IP is the most reliable path to api.telegram.org and a transient primary-path failure should be retried
     against the same address via the IP-rewrite path before the seed list is consulted (#14520).
+
+    The seeds always trail the DoH answers because DoH can collapse to the one address the hostname already
+    resolves to: without them the transport has a single real path, and a reset on it fails both the
+    IP-rewrite and the hostname walk, leaving the other Bot API address never tried.
     """
     async with httpx.AsyncClient(timeout=httpx.Timeout(_DOH_TIMEOUT), verify=platform_ssl_context()) as client:
         system_dns_task = asyncio.ensure_future(asyncio.to_thread(_resolve_system_dns))
@@ -285,8 +290,11 @@ async def discover_fallback_ips() -> list[str]:
     doh_ips = [ip for r in results if isinstance(r, list) for ip in r]
     validated = _normalize_fallback_ips(list(dict.fromkeys(doh_ips)))  # dedupe, keep order
     if validated:
-        logger.debug("Discovered Telegram fallback IPs via DoH: %s", ", ".join(validated))
-        return validated
+        seeds = [ip for ip in SEED_FALLBACK_IPS if ip not in validated]
+        logger.debug(
+            "Discovered Telegram fallback IPs via DoH: %s; appending seed fallback IPs: %s",
+            ", ".join(validated), ", ".join(seeds) or "none")
+        return validated + seeds
     logger.info(
         "DoH discovery yielded no usable IPs (system DNS: %s); using seed fallback IPs %s",
         ", ".join(system_ips) or "unknown", ", ".join(SEED_FALLBACK_IPS))
