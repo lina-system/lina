@@ -205,8 +205,11 @@ jobs:
         # tiktoken is a LINA dependency, but LCM-X's suite is calibrated on its character estimate (upstream's
         # ci.yml installs no tiktoken) and with it the counts would depend on a network fetch of the BPE file.
         # tests/plugins/context_engine covers the engine in LINA's own environment.
+        # pytest-timeout: a test that hangs on the store (a trigger returning NULL, an implicit BEGIN left open, a
+        # connection never closed: each met while porting) fails with its own stack instead of the job's limit.
         run: |
-          uv pip install --python "$HERMES_PYTHON" pytest-xdist==3.8.0 hypothesis==6.141.1 numpy==2.5.4 ruff==0.15.13
+          uv pip install --python "$HERMES_PYTHON" pytest-xdist==3.8.0 hypothesis==6.141.1 numpy==2.5.4 ruff==0.15.13 \
+            pytest-timeout==2.4.0
           uv pip uninstall --python "$HERMES_PYTHON" tiktoken
 
       - name: Run LCM-X's suite
@@ -232,11 +235,11 @@ jobs:
             (cd "$GITHUB_WORKSPACE" && "$HERMES_PYTHON" tests/_fixtures/memory_store.py \
               bash -c 'cd "$1"; shift; exec "$@"' -- "$GITHUB_WORKSPACE/plugins/context_engine/lcm-x" "$@")
           }
-          run_with_store "$HERMES_PYTHON" -m pytest tests/ -q -m "not latency" -n 4 -p no:cacheprovider \
+          run_with_store "$HERMES_PYTHON" -m pytest tests/ -q -m "not latency" -n 4 -p no:cacheprovider --timeout 900 \
             -p plugins.context_engine.lcm_x_store_pytest --ignore=tests/test_embedding_privacy.py "${deselect[@]}"
           # Runs alone, as upstream does: one of its tests asserts a wall-clock budget.
           run_with_store "$HERMES_PYTHON" -m pytest tests/test_embedding_privacy.py -q -m "not latency" -p no:cacheprovider \
-            -p plugins.context_engine.lcm_x_store_pytest "${deselect[@]}"
+            --timeout 900 -p plugins.context_engine.lcm_x_store_pytest "${deselect[@]}"
 
       - name: Check the checkout is clean
         uses: ./.github/actions/check-clean-worktree
