@@ -8,6 +8,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ## [Unreleased]
 
+### Fixed
+
+- A kanban goal-mode card whose judge says WAIT is parked (`scheduled`) on the event it waits for, recorded on the card, and the dispatcher wakes it once when that card is done, that review has its result, that PR's required checks finish or that time passes (`kanban schedule|block --wait-for` record the same by hand); a spent turn budget or runtime limit hands off and returns the card to ready without counting toward `max_retries`.
+
 ### Added
 
 - The shared Desk: `hermes desk init` (run by the installer) creates `~/Desk` with Inbox, Projects, Areas, Resources and Archive, or adopts an existing folder; every agent starts there, and the app reads it from `GET /api/desk` (see [docs/desk.md](docs/desk.md)).

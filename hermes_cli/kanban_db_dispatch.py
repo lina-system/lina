@@ -27,6 +27,7 @@ from typing import Optional
 from typing import TYPE_CHECKING
 
 from hermes_cli.kanban_db_dispatch_report import describe_suppression
+from hermes_cli.kanban_db_wait import DISPATCHER_ACTOR, wake_waiting_tasks
 from hermes_cli.quiet_single_query import KANBAN_WORKER_EXIT_TRAILER
 
 if TYPE_CHECKING:
@@ -103,6 +104,8 @@ class DispatchResult:
 
     reclaimed: int = 0
     promoted: int = 0
+    woken: list[str] = field(default_factory=list)
+    """Parked cards whose recorded wait event happened, woken by ``unblock_task``."""
     reconciled_orphans: list[str] = field(default_factory=list)
     """``running`` cards requeued by :func:`reconcile_orphaned_running` (broken
     claim bookkeeping, dead/gone worker)."""
@@ -615,10 +618,11 @@ def heartbeat_worker(
 def enforce_max_runtime(conn: sqlite3.Connection, *, signal_fn=None) -> list[str]:
     """Terminate workers whose per-task ``max_runtime_seconds`` has elapsed.
 
-    SIGTERM, short grace, then SIGKILL. Emits ``timed_out`` and restores the
-    task's source phase so the next tick re-spawns the same kind of worker —
-    unless the circuit breaker already gave up, leaving it blocked. Host-local
-    only (same reasoning as ``detect_crashed_workers``). ``signal_fn`` is a test hook.
+    SIGTERM, short grace, then SIGKILL. Emits ``timed_out``, restores the
+    task's source phase so the next tick re-spawns the same kind of worker, and
+    writes a handoff comment. A runtime end is a planned stop, not a failure, so
+    ``consecutive_failures`` is left alone (lina#161). Host-local only (same
+    reasoning as ``detect_crashed_workers``). ``signal_fn`` is a test hook.
     """
     timed_out: list[str] = []
     now = int(time.time())
@@ -699,19 +703,11 @@ def enforce_max_runtime(conn: sqlite3.Connection, *, signal_fn=None) -> list[str
                 )
                 _kb._append_event(conn, tid, "timed_out", payload, run_id=run_id)
                 timed_out.append(tid)
-        # Outside the write_txn above because ``_record_task_failure`` opens its
-        # own. If the breaker trips this flips the task to ``blocked`` and emits
-        # ``gave_up`` on top of the ``timed_out`` already emitted.
         if cur.rowcount == 1:
-            if _record_task_failure(
-                conn, tid,
-                error=error,
-                outcome="timed_out",
-                release_claim=False,
-                end_run=False,
-                event_payload_extra={"pid": pid, "sigkill": killed, "retry_status": retry_status},
-            ):
-                _kb.record_terminal_outcome(conn, tid)
+            _kb.add_comment(conn, tid, DISPATCHER_ACTOR, (
+                f"Handoff: the run reached its runtime limit ({error}) and was stopped as planned. "
+                f"The card is back in {retry_status}; the next run continues from this card's "
+                "comments and prior attempts."), run_id=run_id)
     return timed_out
 
 
@@ -2205,6 +2201,7 @@ def _run_reclaim_phase(
     result.auto_blocked.extend(getattr(detect_crashed_workers, "_last_auto_blocked", []))
     result.rate_limited.extend(getattr(detect_crashed_workers, "_last_rate_limited", []))
     result.timed_out = enforce_max_runtime(conn)
+    result.woken = wake_waiting_tasks(conn)
     result.promoted = _kb.recompute_ready(conn, failure_limit=failure_limit)
 
 

@@ -183,6 +183,18 @@ JUDGE_DELEGATIONS_BLOCK_TEMPLATE = (
     "their results are delivered to it automatically when they finish.\n\n"
 )
 
+# Judge prompt block for a kanban card worker: the card events a WAIT can park on (lina#161).
+JUDGE_KANBAN_WAIT_BLOCK = (
+    "This agent works a kanban card. WAIT is also right when the response shows the agent "
+    "can only go on after one of these events; name it so the card is parked without turns "
+    "and woken when it happens:\n"
+    '- another card finishing: "wait_on_card": "<task id>"\n'
+    '- a review card it asked for having a result: "wait_on_review": "<task id>"\n'
+    '- the required checks of a pull request finishing: "wait_on_pr": "<PR URL>"\n'
+    '- a point in time: "wait_until": "<ISO-8601 time>" (or "wait_for_seconds")\n'
+    'Example: {"verdict": "wait", "wait_on_card": "t_1234abcd", "reason": "<one sentence>"}\n\n'
+)
+
 # Judge prompt block listing running background processes (WAIT vs CONTINUE, which pid).
 JUDGE_BACKGROUND_BLOCK_TEMPLATE = (
     "Background processes the agent currently has running (it may be waiting "
@@ -801,7 +813,17 @@ def _extract_json_object(raw: str) -> Optional[dict[str, Any]]:
     return data if isinstance(data, dict) else None
 
 
-def _parse_judge_response(raw: str) -> tuple[str, str, bool, Optional[dict[str, Any]]]:
+def _kanban_wait_target(data: dict[str, Any]) -> Optional[dict[str, Any]]:
+    """A card-event WAIT target (``{"card"|"review"|"pr"|"until": value}``) from a kanban judge reply."""
+    for key, target in (("wait_on_card", "card"), ("wait_on_review", "review"),
+                        ("wait_on_pr", "pr"), ("wait_until", "until")):
+        value = data.get(key)
+        if isinstance(value, (str, int)) and str(value).strip():
+            return {target: str(value).strip()}
+    return None
+
+
+def _parse_judge_response(raw: str, *, kanban: bool = False) -> tuple[str, str, bool, Optional[dict[str, Any]]]:
     """Parse the judge's reply, fail-open. Returns ``(verdict, reason, parse_failed, wait_directive)``.
 
     ``parse_failed`` flags non-JSON output so callers can auto-pause after N in a row.
@@ -838,6 +860,9 @@ def _parse_judge_response(raw: str) -> tuple[str, str, bool, Optional[dict[str, 
                 return iv
         return None
 
+    card_target = _kanban_wait_target(data) if kanban else None
+    if card_target is not None:
+        return "wait", reason, False, card_target
     # Prefer session (releases on the process's own trigger), then pid (exit only), then seconds.
     sess = data.get("wait_on_session") or data.get("session_id") or data.get("wait_session")
     if isinstance(sess, str) and sess.strip():
@@ -906,8 +931,10 @@ def judge_goal(
     background_processes: Optional[list[dict[str, Any]]] = None,
     contract: Optional[GoalContract] = None,
     active_delegations: int = 0,
+    kanban: bool = False,
 ) -> tuple[str, str, bool, Optional[dict[str, Any]], bool]:
-    """Ask the auxiliary model whether the goal is satisfied.
+    """Ask the auxiliary model whether the goal is satisfied. ``kanban`` adds the card-event WAIT
+    targets (``JUDGE_KANBAN_WAIT_BLOCK``) for a kanban worker's loop.
 
     Returns ``(verdict, reason, parse_failed, wait_directive, transport_failed)``; verdict is done /
     blocked / continue / wait / skipped. ``parse_failed`` means unusable output; transport errors
@@ -934,7 +961,8 @@ def judge_goal(
         goal=_truncate(goal, 2000),
         response=_truncate(last_response, _JUDGE_RESPONSE_SNIPPET_CHARS),
         background_block=_render_background_block(background_processes)
-        + (JUDGE_DELEGATIONS_BLOCK_TEMPLATE.format(count=active_delegations) if active_delegations > 0 else ""),
+        + (JUDGE_DELEGATIONS_BLOCK_TEMPLATE.format(count=active_delegations) if active_delegations > 0 else "")
+        + (JUDGE_KANBAN_WAIT_BLOCK if kanban else ""),
         current_time=safe_strftime(datetime.now(tz=UTC).astimezone(), "%Y-%m-%d %H:%M:%S %Z"),
     )
     if contract is not None and not contract.is_empty():
@@ -959,7 +987,7 @@ def judge_goal(
         logger.info("goal judge: API call failed (%s) — falling through to continue", exc)
         return "continue", f"judge error: {type(exc).__name__}", False, None, True
 
-    verdict, reason, parse_failed, wait_directive = _parse_judge_response(raw)
+    verdict, reason, parse_failed, wait_directive = _parse_judge_response(raw, kanban=kanban)
     logger.info("goal judge: verdict=%s reason=%s%s", verdict, _truncate(reason, 120),
                 f" wait={wait_directive}" if wait_directive else "")
     return verdict, reason, parse_failed, wait_directive, False
@@ -1655,6 +1683,51 @@ def _record_kanban_turn(record_turn, task_id: str, turn: int) -> None:
         logger.warning("kanban goal loop: turn record failed for %s turn %s", task_id, turn, exc_info=True)
 
 
+def _kanban_park_seam(park_fn, gate_check) -> tuple[Optional[Callable[..., bool]], dict[str, Any]]:
+    """``(park, judge_kwargs)``: the run's park step (explicit, else the one ``loop_gate_check``
+    carries) and the judge kwargs that offer card-event WAIT targets only when parking exists."""
+    park = park_fn if park_fn is not None else getattr(gate_check, "park", None)
+    return park, ({"kanban": True} if park is not None else {})
+
+
+def _kanban_park_on_wait(verdict: str, park, wait_directive, reason: str, task_id: str,
+                         log) -> tuple[str, Optional[tuple[str, str]]]:
+    """``(verdict, ended)``: a WAIT verdict parks the card on the awaited event (no turn spent)
+    and ends the run; with no park step WAIT keeps the legacy CONTINUE meaning."""
+    if verdict != "wait":
+        return verdict, None
+    if park is None:
+        return "continue", None
+    from hermes_cli.kanban_db_wait import describe_wait, wait_for_from_directive
+
+    wait_for = wait_for_from_directive(wait_directive, now=int(time.time()), default_seconds=GATE_WAIT_MAX_S)
+    if not park(f"Goal-mode judge WAIT: {_truncate(reason, 300)}", wait_for, None):
+        log(f"kanban goal loop: task {task_id} could not be parked (run no longer owns it); stopping")
+        return verdict, ("stopped", "park refused")
+    log(f"kanban goal loop: task {task_id} parked until {describe_wait(wait_for)}")
+    return verdict, ("parked", describe_wait(wait_for))
+
+
+def _kanban_budget_end(park, block, task_id: str, turns_used: int, max_turns: int, reason: str, log) -> tuple[str, str]:
+    """Turn budget spent: a planned stop. With a park step the run hands off (comment) and the card
+    goes back to ready on the next dispatcher tick without a failure; otherwise the legacy block."""
+    if park is not None:
+        handoff = (f"Handoff: the goal-mode run used its turn budget ({turns_used}/{max_turns}) and stopped "
+                   f"as planned. Last judge verdict: {_truncate(reason, 300)}. The next run continues from here.")
+        if park("turn budget used; resumes on the next dispatcher tick",
+                {"kind": "until", "at": int(time.time())}, handoff):
+            log(f"kanban goal loop: task {task_id} used {turns_used}/{max_turns} turns; handed off")
+            return "handoff_budget", "turn budget used, handed off"
+        return "stopped", "park refused"
+    log(f"kanban goal loop: task {task_id} exhausted {turns_used}/{max_turns} turns; blocking")
+    block(
+        f"Goal-mode worker exhausted its turn budget "
+        f"({turns_used}/{max_turns}) without completing the task. "
+        f"Last judge verdict: {_truncate(reason, 300)}"
+    )
+    return "blocked_budget", "turn budget exhausted"
+
+
 def run_kanban_goal_loop(
     *,
     task_id: str,
@@ -1668,6 +1741,7 @@ def run_kanban_goal_loop(
     gate_check=None,
     wait_fn=time.sleep,
     record_turn: Callable[[int], None] | None = None,
+    park_fn: Callable[..., bool] | None = None,
 ) -> dict[str, Any]:
     """Drive a kanban worker through a Ralph-style goal loop.
 
@@ -1677,7 +1751,10 @@ def run_kanban_goal_loop(
     against ``goal_text`` (the card's title + body) and feed a continuation or finalize nudge. A
     failing gate's prompt replaces the judge for that boundary; a waiting gate (exit 75) costs no
     turn: ``wait_fn`` backs off (30 s doubling to 10 min) and the boundary is re-checked. A WAIT
-    verdict is treated as CONTINUE (workers finish via kanban tools, not by parking).
+    verdict parks the card on the event it waits for and ends the run (``park_fn(reason, wait_for,
+    handoff)``, by default the step ``loop_gate_check`` carries; the dispatcher wakes it, see
+    ``kanban_db_wait``); a spent turn budget hands off the same way instead of blocking. Without a
+    park step WAIT is treated as CONTINUE and the budget end blocks the card.
     ``record_turn`` persists each continuation's 1-based ordinal before execution; the
     first turn is implicit. Persistence failure must not prevent model execution.
     """
@@ -1706,6 +1783,7 @@ def run_kanban_goal_loop(
     turns_used = 1   # the first turn already consumed one unit of budget
     nudged_to_finalize = False
     wait_delay = GATE_WAIT_INITIAL_S
+    park, judge_kwargs = _kanban_park_seam(park_fn, gate_check)
 
     while True:
         try:
@@ -1748,15 +1826,16 @@ def run_kanban_goal_loop(
             from agent.portal_tags import get_affinity_scope, reset_affinity_scope, set_affinity_scope
             affinity_token = None if get_affinity_scope() else set_affinity_scope(f"kanban:{task_id}")
             try:
-                verdict, reason, _parse_failed, _wait, _transport_failed = judge_goal(goal_text, last_response)
+                verdict, reason, _parse_failed, _wait, _transport_failed = judge_goal(goal_text, last_response, **judge_kwargs)
             finally:
                 if affinity_token is not None:
                     reset_affinity_scope(affinity_token)
             if _transport_failed:
                 _log(f"kanban goal loop: judge transport failed on turn {turns_used}; stopping")
                 return _result("stopped", "judge transport failure")
-            if verdict == "wait":
-                verdict = "continue"
+            verdict, parked = _kanban_park_on_wait(verdict, park, _wait, reason, task_id, _log)
+            if parked:
+                return _result(*parked)
             _log(f"kanban goal loop: turn {turns_used}/{max_turns} verdict={verdict} reason={_truncate(reason, 120)}")
 
             if verdict == "blocked":
@@ -1783,13 +1862,7 @@ def run_kanban_goal_loop(
 
         # Budget check BEFORE spending another turn.
         if turns_used >= max_turns:
-            _log(f"kanban goal loop: task {task_id} exhausted {turns_used}/{max_turns} turns; blocking")
-            _block(
-                f"Goal-mode worker exhausted its turn budget "
-                f"({turns_used}/{max_turns}) without completing the task. "
-                f"Last judge verdict: {_truncate(reason, 300)}"
-            )
-            return _result("blocked_budget", "turn budget exhausted")
+            return _result(*_kanban_budget_end(park, _block, task_id, turns_used, max_turns, reason, _log))
 
         _record_kanban_turn(record_turn, task_id, turns_used + 1)
         try:

@@ -1011,6 +1011,21 @@ def _commented(conn, reason: Optional[str], author, prefix: str, op):
     return run
 
 
+def _wait_for_arg(conn, args: argparse.Namespace) -> tuple[Optional[dict], Optional[str]]:
+    """``(wait_for, error)`` for ``--wait-for``; a card or review wait must name an existing card."""
+    spec = getattr(args, "wait_for", None)
+    if not spec:
+        return None, None
+    from hermes_cli.kanban_db_wait import parse_wait_for
+    try:
+        wait_for = parse_wait_for(spec)
+    except ValueError as exc:
+        return None, str(exc)
+    if wait_for.get("task_id") and kb.get_task(conn, wait_for["task_id"]) is None:
+        return None, f"unknown task {wait_for['task_id']} in --wait-for"
+    return wait_for, None
+
+
 def _cmd_block(args: argparse.Namespace) -> int:
     reason = _joined_words(args.reason)
     kind = getattr(args, "kind", None)
@@ -1018,6 +1033,10 @@ def _cmd_block(args: argparse.Namespace) -> int:
     ids = _bulk_ids(args)
     suffix = f": {reason}" if reason else ""
     with kbc.connect_closing() as conn:
+        wait_for, error = _wait_for_arg(conn, args)
+        if error or (wait_for and kind not in (None, "needs_input")):
+            return _err(error or "--wait-for applies to needs_input blocks only")
+        kind = "needs_input" if wait_for else kind
         def ok_msg(tid):
             # Report where it landed: dependency blocks -> todo, tripped unblock-loop breaker -> triage.
             landed = kb.get_task(conn, tid)
@@ -1034,7 +1053,7 @@ def _cmd_block(args: argparse.Namespace) -> int:
             return f"Blocked {tid}{suffix}"
 
         op = _commented(conn, reason, author, "BLOCKED", lambda tid: kb.block_task(
-            conn, tid, reason=reason, kind=kind, expected_run_id=_worker_run_id_for(tid)))
+            conn, tid, reason=reason, kind=kind, expected_run_id=_worker_run_id_for(tid), wait_for=wait_for))
         return _bulk_apply(ids, op, ok_msg, lambda tid: f"cannot block {tid}")
 
 
@@ -1044,8 +1063,11 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     ids = _bulk_ids(args)
     suffix = f": {reason}" if reason else ""
     with kbc.connect_closing() as conn:
+        wait_for, error = _wait_for_arg(conn, args)
+        if error:
+            return _err(error)
         op = _commented(conn, reason, author, "SCHEDULED", lambda tid: kb.schedule_task(
-            conn, tid, reason=reason, expected_run_id=_worker_run_id_for(tid)))
+            conn, tid, reason=reason, expected_run_id=_worker_run_id_for(tid), wait_for=wait_for))
         return _bulk_apply(ids, op, lambda tid: f"Scheduled {tid}{suffix}", lambda tid: f"cannot schedule {tid}")
 
 

@@ -3000,7 +3000,7 @@ def edit_task(
 
 def block_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
-    kind: Optional[str] = None, expected_run_id: Optional[int] = None,
+    kind: Optional[str] = None, expected_run_id: Optional[int] = None, wait_for: Optional[dict] = None,
 ) -> bool:
     """``running``/``ready`` -> ``blocked`` (or ``todo`` / ``triage``, see
     :func:`_route_block`). ``kind='dependency'`` with no incomplete parent is
@@ -3061,8 +3061,9 @@ def block_task(
             prev_recurrences=int(_row_get(cur_row, "block_recurrences") or 0),
         )
         if rekind_reason:
-            payload["requested_kind"] = requested_kind
-            payload["rekind_reason"] = rekind_reason
+            payload.update(requested_kind=requested_kind, rekind_reason=rekind_reason)
+        if wait_for and kind == "needs_input":   # the event that wakes it (kanban_db_wait)
+            payload["wait_for"] = wait_for
         sql = f"""
                 UPDATE tasks
                    SET status        = '{new_status}',
@@ -3739,10 +3740,10 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> bool:
 
 def schedule_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
-    expected_run_id: Optional[int] = None,
+    expected_run_id: Optional[int] = None, wait_for: Optional[dict] = None,
 ) -> bool:
-    """Park in ``scheduled`` (waiting on time, not a human; not dispatchable)
-    until ``unblock_task`` re-gates it."""
+    """Park in ``scheduled`` (waiting on time or an event, not a human; not dispatchable)
+    until ``unblock_task`` re-gates it; a ``wait_for`` event (kanban_db_wait) wakes it by itself."""
     with write_txn(conn):
         params: list[Any] = [task_id]
         sql = """
@@ -3762,7 +3763,7 @@ def schedule_task(
         run_id = _end_or_synthesize_run(
             conn, task_id, outcome="scheduled", status="scheduled", summary=reason, synthesize=bool(reason),
         )
-        _append_event(conn, task_id, "scheduled", {"reason": reason}, run_id=run_id)
+        _append_event(conn, task_id, "scheduled", {"reason": reason, **({"wait_for": wait_for} if wait_for else {})}, run_id=run_id)
         return True
 
 

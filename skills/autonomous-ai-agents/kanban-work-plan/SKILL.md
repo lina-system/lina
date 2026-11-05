@@ -121,6 +121,16 @@ the owner questions.
 (`--owner <reviewer>` for an agent reviewer), and gate the reviewer's own card on what the reviewer
 writes (`gate artifact`).
 
+Waiting costs no turns. A goal-mode card whose judge says WAIT is parked in `scheduled`, with the
+event it waits for recorded on its `scheduled` event (`wait_for`): another card done, a review
+card's result, a PR's required checks finished, or a time. Each dispatcher tick checks that event
+and unblocks the card once when it happens. A worker records the same by hand with
+`hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|until:<time>`, or
+`hermes kanban block <id> --wait-for ...` (a `needs_input` block that returns to ready by
+itself); a `needs_input` block without `--wait-for` waits for a person. A spent `max_turns` or
+`max_runtime` is a planned stop: the run leaves a handoff comment and the card goes back to ready
+without counting toward `max_retries`.
+
 ## Procedure
 
 1. Read the goal and list every to-do: GitHub issues as `owner/repo#n`, other items as `[ ] text`.
