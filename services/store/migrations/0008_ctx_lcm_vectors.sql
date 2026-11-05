@@ -229,7 +229,5 @@ CREATE OR REPLACE TRIGGER lcm_embedding_vectors_update INSTEAD OF UPDATE ON ctx.
 CREATE OR REPLACE TRIGGER lcm_chunk_vectors_update INSTEAD OF UPDATE ON ctx.lcm_chunk_vectors
     FOR EACH ROW EXECUTE FUNCTION ctx.lcm_vector_view_update();
 
--- As for ctx (0007): lina_app refreshes the statistics of the vector tables after a bulk write.
-GRANT MAINTAIN ON vec.embeddings, vec.chunks TO lina_app;
--- and on the ctx tables this file adds (0007 granted those that existed then).
-GRANT MAINTAIN ON ALL TABLES IN SCHEMA ctx TO lina_app;
+-- lina_app refreshes the statistics of the vector tables and of this file's ctx tables after a bulk write through
+-- 0007's ctx.lcm_analyze, which takes any table of ctx or vec.

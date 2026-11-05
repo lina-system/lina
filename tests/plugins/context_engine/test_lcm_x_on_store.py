@@ -489,3 +489,32 @@ def test_a_fresh_home_on_the_store_starts_and_stores_its_first_turn(tmp_path, mo
     finally:
         engine.shutdown()
         lcm_x_store.unroute(db)
+
+
+def test_lina_app_analyzes_ctx_and_vec_tables_and_nothing_else(routed, memory_store_sql):
+    """lina_app owns no store table, so after a bulk write it refreshes the planner's statistics through
+    ctx.lcm_analyze (SECURITY DEFINER, Postgres 15 has no MAINTAIN privilege), which takes tables of schemas ctx
+    and vec and refuses any other relation."""
+    import psycopg
+    db = routed("analyze")
+    store = _stores(db)[0]
+    try:
+        store.append_batch("s1", [{"role": "user", "content": f"row {n}"} for n in range(1000)])
+    finally:
+        store.close()
+
+    def analyzed(*tables):
+        return memory_store_sql("SELECT schemaname || '.' || relname FROM pg_stat_user_tables "
+                                "WHERE last_analyze IS NOT NULL AND schemaname || '.' || relname = ANY(%s) "
+                                "ORDER BY 1", (list(tables),))
+    assert analyzed("ctx.lcm_messages") == [("ctx.lcm_messages",)]  # lcm_x_store's ANALYZE after that commit
+    conn = lcm_x_store.backend_for(db)()
+    try:
+        conn._pg.execute("SELECT ctx.lcm_analyze('vec.chunks'::regclass)")
+        assert analyzed("vec.chunks") == [("vec.chunks",)]
+        for other in ("memory.messages", "pg_catalog.pg_class", "ctx.messages_fts"):
+            with pytest.raises(psycopg.errors.InsufficientPrivilege, match="schemas ctx and vec only"):
+                conn._pg.execute("SELECT ctx.lcm_analyze(%s::regclass)", (other,))
+        assert analyzed("memory.messages") == []
+    finally:
+        conn.close()

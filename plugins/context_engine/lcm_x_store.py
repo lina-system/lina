@@ -1263,7 +1263,8 @@ class PgConnection:
         import psycopg
         for table in _tables_to_analyze():
             try:
-                self._pg.execute(f"ANALYZE {table}")
+                # lina_app owns no store table; 0007's ctx.lcm_analyze analyzes ctx and vec tables for it.
+                self._pg.execute("SELECT ctx.lcm_analyze(%s::regclass)", (table,))
             except psycopg.Error as exc:
                 logger.warning("LCM-X on the store: ANALYZE %s after a bulk write failed: %s", table, exc)
 

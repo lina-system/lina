@@ -1218,11 +1218,132 @@ CREATE TABLE IF NOT EXISTS ctx.lcm_data_version (
 -- with ctx.lcm_unicode61, as FTS5 does, so the indexes are expressions over it.
 -- FTS5's unicode61 tokenizer: a token is a run of letters, digits and private-use characters (accents removed);
 -- everything else separates it.
--- pg_c_utf8 classifies by Unicode whatever the database's locale; to_tsvector('simple', ...) then lower-cases.
+-- The letters and digits are code point ranges, so the tokens are the same whatever the database's locale and
+-- Postgres version (Postgres 15 has no locale-free Unicode classification): the characters [[:alnum:]] matches
+-- under Postgres 17's pg_c_utf8 collation, plus the private-use areas. to_tsvector('simple', ...) then lower-cases.
 CREATE OR REPLACE FUNCTION ctx.lcm_unicode61(body text) RETURNS text
     LANGUAGE sql IMMUTABLE PARALLEL SAFE STRICT AS $$
-    SELECT regexp_replace(regexp_replace(normalize(body, NFD) COLLATE "pg_c_utf8", '[\u0300-\u036f]', '', 'g'),
-                          '[^[:alnum:]\ue000-\uf8ff\U000f0000-\U000ffffd\U00100000-\U0010fffd]+', ' ', 'g')
+    SELECT regexp_replace(regexp_replace(normalize(body, NFD), '[\u0300-\u036f]', '', 'g'),
+        '[^'
+        '\u0030-\u0039\u0041-\u005a\u0061-\u007a\u00aa\u00b5\u00ba\u00c0-\u00d6\u00d8-\u00f6\u00f8-\u02c1'
+        '\u02c6-\u02d1\u02e0-\u02e4\u02ec\u02ee\u0345\u0370-\u0374\u0376-\u0377\u037a-\u037d\u037f\u0386'
+        '\u0388-\u038a\u038c\u038e-\u03a1\u03a3-\u03f5\u03f7-\u0481\u048a-\u052f\u0531-\u0556\u0559\u0560-\u0588'
+        '\u05b0-\u05bd\u05bf\u05c1-\u05c2\u05c4-\u05c5\u05c7\u05d0-\u05ea\u05ef-\u05f2\u0610-\u061a\u0620-\u0657'
+        '\u0659-\u065f\u066e-\u06d3\u06d5-\u06dc\u06e1-\u06e8\u06ed-\u06ef\u06fa-\u06fc\u06ff\u0710-\u073f'
+        '\u074d-\u07b1\u07ca-\u07ea\u07f4-\u07f5\u07fa\u0800-\u0817\u081a-\u082c\u0840-\u0858\u0860-\u086a'
+        '\u0870-\u0887\u0889-\u088e\u08a0-\u08c9\u08d4-\u08df\u08e3-\u08e9\u08f0-\u093b\u093d-\u094c\u094e-\u0950'
+        '\u0955-\u0963\u0971-\u0983\u0985-\u098c\u098f-\u0990\u0993-\u09a8\u09aa-\u09b0\u09b2\u09b6-\u09b9'
+        '\u09bd-\u09c4\u09c7-\u09c8\u09cb-\u09cc\u09ce\u09d7\u09dc-\u09dd\u09df-\u09e3\u09f0-\u09f1\u09fc'
+        '\u0a01-\u0a03\u0a05-\u0a0a\u0a0f-\u0a10\u0a13-\u0a28\u0a2a-\u0a30\u0a32-\u0a33\u0a35-\u0a36\u0a38-\u0a39'
+        '\u0a3e-\u0a42\u0a47-\u0a48\u0a4b-\u0a4c\u0a51\u0a59-\u0a5c\u0a5e\u0a70-\u0a75\u0a81-\u0a83\u0a85-\u0a8d'
+        '\u0a8f-\u0a91\u0a93-\u0aa8\u0aaa-\u0ab0\u0ab2-\u0ab3\u0ab5-\u0ab9\u0abd-\u0ac5\u0ac7-\u0ac9\u0acb-\u0acc'
+        '\u0ad0\u0ae0-\u0ae3\u0af9-\u0afc\u0b01-\u0b03\u0b05-\u0b0c\u0b0f-\u0b10\u0b13-\u0b28\u0b2a-\u0b30'
+        '\u0b32-\u0b33\u0b35-\u0b39\u0b3d-\u0b44\u0b47-\u0b48\u0b4b-\u0b4c\u0b56-\u0b57\u0b5c-\u0b5d\u0b5f-\u0b63'
+        '\u0b71\u0b82-\u0b83\u0b85-\u0b8a\u0b8e-\u0b90\u0b92-\u0b95\u0b99-\u0b9a\u0b9c\u0b9e-\u0b9f\u0ba3-\u0ba4'
+        '\u0ba8-\u0baa\u0bae-\u0bb9\u0bbe-\u0bc2\u0bc6-\u0bc8\u0bca-\u0bcc\u0bd0\u0bd7\u0c00-\u0c0c\u0c0e-\u0c10'
+        '\u0c12-\u0c28\u0c2a-\u0c39\u0c3d-\u0c44\u0c46-\u0c48\u0c4a-\u0c4c\u0c55-\u0c56\u0c58-\u0c5a\u0c5d'
+        '\u0c60-\u0c63\u0c80-\u0c83\u0c85-\u0c8c\u0c8e-\u0c90\u0c92-\u0ca8\u0caa-\u0cb3\u0cb5-\u0cb9\u0cbd-\u0cc4'
+        '\u0cc6-\u0cc8\u0cca-\u0ccc\u0cd5-\u0cd6\u0cdd-\u0cde\u0ce0-\u0ce3\u0cf1-\u0cf3\u0d00-\u0d0c\u0d0e-\u0d10'
+        '\u0d12-\u0d3a\u0d3d-\u0d44\u0d46-\u0d48\u0d4a-\u0d4c\u0d4e\u0d54-\u0d57\u0d5f-\u0d63\u0d7a-\u0d7f'
+        '\u0d81-\u0d83\u0d85-\u0d96\u0d9a-\u0db1\u0db3-\u0dbb\u0dbd\u0dc0-\u0dc6\u0dcf-\u0dd4\u0dd6\u0dd8-\u0ddf'
+        '\u0df2-\u0df3\u0e01-\u0e3a\u0e40-\u0e46\u0e4d\u0e81-\u0e82\u0e84\u0e86-\u0e8a\u0e8c-\u0ea3\u0ea5'
+        '\u0ea7-\u0eb9\u0ebb-\u0ebd\u0ec0-\u0ec4\u0ec6\u0ecd\u0edc-\u0edf\u0f00\u0f40-\u0f47\u0f49-\u0f6c'
+        '\u0f71-\u0f83\u0f88-\u0f97\u0f99-\u0fbc\u1000-\u1036\u1038\u103b-\u103f\u1050-\u108f\u109a-\u109d'
+        '\u10a0-\u10c5\u10c7\u10cd\u10d0-\u10fa\u10fc-\u1248\u124a-\u124d\u1250-\u1256\u1258\u125a-\u125d'
+        '\u1260-\u1288\u128a-\u128d\u1290-\u12b0\u12b2-\u12b5\u12b8-\u12be\u12c0\u12c2-\u12c5\u12c8-\u12d6'
+        '\u12d8-\u1310\u1312-\u1315\u1318-\u135a\u1380-\u138f\u13a0-\u13f5\u13f8-\u13fd\u1401-\u166c\u166f-\u167f'
+        '\u1681-\u169a\u16a0-\u16ea\u16ee-\u16f8\u1700-\u1713\u171f-\u1733\u1740-\u1753\u1760-\u176c\u176e-\u1770'
+        '\u1772-\u1773\u1780-\u17b3\u17b6-\u17c8\u17d7\u17dc\u1820-\u1878\u1880-\u18aa\u18b0-\u18f5\u1900-\u191e'
+        '\u1920-\u192b\u1930-\u1938\u1950-\u196d\u1970-\u1974\u1980-\u19ab\u19b0-\u19c9\u1a00-\u1a1b\u1a20-\u1a5e'
+        '\u1a61-\u1a74\u1aa7\u1abf-\u1ac0\u1acc-\u1ace\u1b00-\u1b33\u1b35-\u1b43\u1b45-\u1b4c\u1b80-\u1ba9'
+        '\u1bac-\u1baf\u1bba-\u1be5\u1be7-\u1bf1\u1c00-\u1c36\u1c4d-\u1c4f\u1c5a-\u1c7d\u1c80-\u1c88\u1c90-\u1cba'
+        '\u1cbd-\u1cbf\u1ce9-\u1cec\u1cee-\u1cf3\u1cf5-\u1cf6\u1cfa\u1d00-\u1dbf\u1de7-\u1df4\u1e00-\u1f15'
+        '\u1f18-\u1f1d\u1f20-\u1f45\u1f48-\u1f4d\u1f50-\u1f57\u1f59\u1f5b\u1f5d\u1f5f-\u1f7d\u1f80-\u1fb4'
+        '\u1fb6-\u1fbc\u1fbe\u1fc2-\u1fc4\u1fc6-\u1fcc\u1fd0-\u1fd3\u1fd6-\u1fdb\u1fe0-\u1fec\u1ff2-\u1ff4'
+        '\u1ff6-\u1ffc\u2071\u207f\u2090-\u209c\u2102\u2107\u210a-\u2113\u2115\u2119-\u211d\u2124\u2126\u2128'
+        '\u212a-\u212d\u212f-\u2139\u213c-\u213f\u2145-\u2149\u214e\u2160-\u2188\u24b6-\u24e9\u2c00-\u2ce4'
+        '\u2ceb-\u2cee\u2cf2-\u2cf3\u2d00-\u2d25\u2d27\u2d2d\u2d30-\u2d67\u2d6f\u2d80-\u2d96\u2da0-\u2da6'
+        '\u2da8-\u2dae\u2db0-\u2db6\u2db8-\u2dbe\u2dc0-\u2dc6\u2dc8-\u2dce\u2dd0-\u2dd6\u2dd8-\u2dde\u2de0-\u2dff'
+        '\u2e2f\u3005-\u3007\u3021-\u3029\u3031-\u3035\u3038-\u303c\u3041-\u3096\u309d-\u309f\u30a1-\u30fa'
+        '\u30fc-\u30ff\u3105-\u312f\u3131-\u318e\u31a0-\u31bf\u31f0-\u31ff\u3400-\u4dbf\u4e00-\ua48c\ua4d0-\ua4fd'
+        '\ua500-\ua60c\ua610-\ua61f\ua62a-\ua62b\ua640-\ua66e\ua674-\ua67b\ua67f-\ua6ef\ua717-\ua71f\ua722-\ua788'
+        '\ua78b-\ua7ca\ua7d0-\ua7d1\ua7d3\ua7d5-\ua7d9\ua7f2-\ua805\ua807-\ua827\ua840-\ua873\ua880-\ua8c3\ua8c5'
+        '\ua8f2-\ua8f7\ua8fb\ua8fd-\ua8ff\ua90a-\ua92a\ua930-\ua952\ua960-\ua97c\ua980-\ua9b2\ua9b4-\ua9bf\ua9cf'
+        '\ua9e0-\ua9ef\ua9fa-\ua9fe\uaa00-\uaa36\uaa40-\uaa4d\uaa60-\uaa76\uaa7a-\uaabe\uaac0\uaac2\uaadb-\uaadd'
+        '\uaae0-\uaaef\uaaf2-\uaaf5\uab01-\uab06\uab09-\uab0e\uab11-\uab16\uab20-\uab26\uab28-\uab2e\uab30-\uab5a'
+        '\uab5c-\uab69\uab70-\uabea\uac00-\ud7a3\ud7b0-\ud7c6\ud7cb-\ud7fb\ue000-\ufa6d\ufa70-\ufad9\ufb00-\ufb06'
+        '\ufb13-\ufb17\ufb1d-\ufb28\ufb2a-\ufb36\ufb38-\ufb3c\ufb3e\ufb40-\ufb41\ufb43-\ufb44\ufb46-\ufbb1'
+        '\ufbd3-\ufd3d\ufd50-\ufd8f\ufd92-\ufdc7\ufdf0-\ufdfb\ufe70-\ufe74\ufe76-\ufefc\uff21-\uff3a\uff41-\uff5a'
+        '\uff66-\uffbe\uffc2-\uffc7\uffca-\uffcf\uffd2-\uffd7\uffda-\uffdc\U00010000-\U0001000b'
+        '\U0001000d-\U00010026\U00010028-\U0001003a\U0001003c-\U0001003d\U0001003f-\U0001004d'
+        '\U00010050-\U0001005d\U00010080-\U000100fa\U00010140-\U00010174\U00010280-\U0001029c'
+        '\U000102a0-\U000102d0\U00010300-\U0001031f\U0001032d-\U0001034a\U00010350-\U0001037a'
+        '\U00010380-\U0001039d\U000103a0-\U000103c3\U000103c8-\U000103cf\U000103d1-\U000103d5'
+        '\U00010400-\U0001049d\U000104b0-\U000104d3\U000104d8-\U000104fb\U00010500-\U00010527'
+        '\U00010530-\U00010563\U00010570-\U0001057a\U0001057c-\U0001058a\U0001058c-\U00010592'
+        '\U00010594-\U00010595\U00010597-\U000105a1\U000105a3-\U000105b1\U000105b3-\U000105b9'
+        '\U000105bb-\U000105bc\U00010600-\U00010736\U00010740-\U00010755\U00010760-\U00010767'
+        '\U00010780-\U00010785\U00010787-\U000107b0\U000107b2-\U000107ba\U00010800-\U00010805\U00010808'
+        '\U0001080a-\U00010835\U00010837-\U00010838\U0001083c\U0001083f-\U00010855\U00010860-\U00010876'
+        '\U00010880-\U0001089e\U000108e0-\U000108f2\U000108f4-\U000108f5\U00010900-\U00010915'
+        '\U00010920-\U00010939\U00010980-\U000109b7\U000109be-\U000109bf\U00010a00-\U00010a03'
+        '\U00010a05-\U00010a06\U00010a0c-\U00010a13\U00010a15-\U00010a17\U00010a19-\U00010a35'
+        '\U00010a60-\U00010a7c\U00010a80-\U00010a9c\U00010ac0-\U00010ac7\U00010ac9-\U00010ae4'
+        '\U00010b00-\U00010b35\U00010b40-\U00010b55\U00010b60-\U00010b72\U00010b80-\U00010b91'
+        '\U00010c00-\U00010c48\U00010c80-\U00010cb2\U00010cc0-\U00010cf2\U00010d00-\U00010d27'
+        '\U00010e80-\U00010ea9\U00010eab-\U00010eac\U00010eb0-\U00010eb1\U00010f00-\U00010f1c\U00010f27'
+        '\U00010f30-\U00010f45\U00010f70-\U00010f81\U00010fb0-\U00010fc4\U00010fe0-\U00010ff6'
+        '\U00011000-\U00011045\U00011071-\U00011075\U00011080-\U000110b8\U000110c2\U000110d0-\U000110e8'
+        '\U00011100-\U00011132\U00011144-\U00011147\U00011150-\U00011172\U00011176\U00011180-\U000111bf'
+        '\U000111c1-\U000111c4\U000111ce-\U000111cf\U000111da\U000111dc\U00011200-\U00011211\U00011213-\U00011234'
+        '\U00011237\U0001123e-\U00011241\U00011280-\U00011286\U00011288\U0001128a-\U0001128d\U0001128f-\U0001129d'
+        '\U0001129f-\U000112a8\U000112b0-\U000112e8\U00011300-\U00011303\U00011305-\U0001130c'
+        '\U0001130f-\U00011310\U00011313-\U00011328\U0001132a-\U00011330\U00011332-\U00011333'
+        '\U00011335-\U00011339\U0001133d-\U00011344\U00011347-\U00011348\U0001134b-\U0001134c\U00011350\U00011357'
+        '\U0001135d-\U00011363\U00011400-\U00011441\U00011443-\U00011445\U00011447-\U0001144a'
+        '\U0001145f-\U00011461\U00011480-\U000114c1\U000114c4-\U000114c5\U000114c7\U00011580-\U000115b5'
+        '\U000115b8-\U000115be\U000115d8-\U000115dd\U00011600-\U0001163e\U00011640\U00011644\U00011680-\U000116b5'
+        '\U000116b8\U00011700-\U0001171a\U0001171d-\U0001172a\U00011740-\U00011746\U00011800-\U00011838'
+        '\U000118a0-\U000118df\U000118ff-\U00011906\U00011909\U0001190c-\U00011913\U00011915-\U00011916'
+        '\U00011918-\U00011935\U00011937-\U00011938\U0001193b-\U0001193c\U0001193f-\U00011942'
+        '\U000119a0-\U000119a7\U000119aa-\U000119d7\U000119da-\U000119df\U000119e1\U000119e3-\U000119e4'
+        '\U00011a00-\U00011a32\U00011a35-\U00011a3e\U00011a50-\U00011a97\U00011a9d\U00011ab0-\U00011af8'
+        '\U00011c00-\U00011c08\U00011c0a-\U00011c36\U00011c38-\U00011c3e\U00011c40\U00011c72-\U00011c8f'
+        '\U00011c92-\U00011ca7\U00011ca9-\U00011cb6\U00011d00-\U00011d06\U00011d08-\U00011d09'
+        '\U00011d0b-\U00011d36\U00011d3a\U00011d3c-\U00011d3d\U00011d3f-\U00011d41\U00011d43\U00011d46-\U00011d47'
+        '\U00011d60-\U00011d65\U00011d67-\U00011d68\U00011d6a-\U00011d8e\U00011d90-\U00011d91'
+        '\U00011d93-\U00011d96\U00011d98\U00011ee0-\U00011ef6\U00011f00-\U00011f10\U00011f12-\U00011f3a'
+        '\U00011f3e-\U00011f40\U00011fb0\U00012000-\U00012399\U00012400-\U0001246e\U00012480-\U00012543'
+        '\U00012f90-\U00012ff0\U00013000-\U0001342f\U00013441-\U00013446\U00014400-\U00014646'
+        '\U00016800-\U00016a38\U00016a40-\U00016a5e\U00016a70-\U00016abe\U00016ad0-\U00016aed'
+        '\U00016b00-\U00016b2f\U00016b40-\U00016b43\U00016b63-\U00016b77\U00016b7d-\U00016b8f'
+        '\U00016e40-\U00016e7f\U00016f00-\U00016f4a\U00016f4f-\U00016f87\U00016f8f-\U00016f9f'
+        '\U00016fe0-\U00016fe1\U00016fe3\U00016ff0-\U00016ff1\U00017000-\U000187f7\U00018800-\U00018cd5'
+        '\U00018d00-\U00018d08\U0001aff0-\U0001aff3\U0001aff5-\U0001affb\U0001affd-\U0001affe'
+        '\U0001b000-\U0001b122\U0001b132\U0001b150-\U0001b152\U0001b155\U0001b164-\U0001b167\U0001b170-\U0001b2fb'
+        '\U0001bc00-\U0001bc6a\U0001bc70-\U0001bc7c\U0001bc80-\U0001bc88\U0001bc90-\U0001bc99\U0001bc9e'
+        '\U0001d400-\U0001d454\U0001d456-\U0001d49c\U0001d49e-\U0001d49f\U0001d4a2\U0001d4a5-\U0001d4a6'
+        '\U0001d4a9-\U0001d4ac\U0001d4ae-\U0001d4b9\U0001d4bb\U0001d4bd-\U0001d4c3\U0001d4c5-\U0001d505'
+        '\U0001d507-\U0001d50a\U0001d50d-\U0001d514\U0001d516-\U0001d51c\U0001d51e-\U0001d539'
+        '\U0001d53b-\U0001d53e\U0001d540-\U0001d544\U0001d546\U0001d54a-\U0001d550\U0001d552-\U0001d6a5'
+        '\U0001d6a8-\U0001d6c0\U0001d6c2-\U0001d6da\U0001d6dc-\U0001d6fa\U0001d6fc-\U0001d714'
+        '\U0001d716-\U0001d734\U0001d736-\U0001d74e\U0001d750-\U0001d76e\U0001d770-\U0001d788'
+        '\U0001d78a-\U0001d7a8\U0001d7aa-\U0001d7c2\U0001d7c4-\U0001d7cb\U0001df00-\U0001df1e'
+        '\U0001df25-\U0001df2a\U0001e000-\U0001e006\U0001e008-\U0001e018\U0001e01b-\U0001e021'
+        '\U0001e023-\U0001e024\U0001e026-\U0001e02a\U0001e030-\U0001e06d\U0001e08f\U0001e100-\U0001e12c'
+        '\U0001e137-\U0001e13d\U0001e14e\U0001e290-\U0001e2ad\U0001e2c0-\U0001e2eb\U0001e4d0-\U0001e4eb'
+        '\U0001e7e0-\U0001e7e6\U0001e7e8-\U0001e7eb\U0001e7ed-\U0001e7ee\U0001e7f0-\U0001e7fe'
+        '\U0001e800-\U0001e8c4\U0001e900-\U0001e943\U0001e947\U0001e94b\U0001ee00-\U0001ee03\U0001ee05-\U0001ee1f'
+        '\U0001ee21-\U0001ee22\U0001ee24\U0001ee27\U0001ee29-\U0001ee32\U0001ee34-\U0001ee37\U0001ee39\U0001ee3b'
+        '\U0001ee42\U0001ee47\U0001ee49\U0001ee4b\U0001ee4d-\U0001ee4f\U0001ee51-\U0001ee52\U0001ee54\U0001ee57'
+        '\U0001ee59\U0001ee5b\U0001ee5d\U0001ee5f\U0001ee61-\U0001ee62\U0001ee64\U0001ee67-\U0001ee6a'
+        '\U0001ee6c-\U0001ee72\U0001ee74-\U0001ee77\U0001ee79-\U0001ee7c\U0001ee7e\U0001ee80-\U0001ee89'
+        '\U0001ee8b-\U0001ee9b\U0001eea1-\U0001eea3\U0001eea5-\U0001eea9\U0001eeab-\U0001eebb'
+        '\U0001f130-\U0001f149\U0001f150-\U0001f169\U0001f170-\U0001f189\U00020000-\U0002a6df'
+        '\U0002a700-\U0002b739\U0002b740-\U0002b81d\U0002b820-\U0002cea1\U0002ceb0-\U0002ebe0'
+        '\U0002ebf0-\U0002ee5d\U0002f800-\U0002fa1d\U00030000-\U0003134a\U00031350-\U000323af'
+        '\U000f0000-\U000ffffd\U00100000-\U0010fffd'
+        ']+', ' ', 'g')
 $$;
 CREATE OR REPLACE VIEW ctx.messages_fts WITH (security_invoker = true) AS
 SELECT p.store_id AS rowid, m.content, to_tsvector('simple', ctx.lcm_unicode61(m.content)) AS tsv
@@ -1622,5 +1743,23 @@ CREATE OR REPLACE TRIGGER lcm_memory_events_no_delete BEFORE DELETE ON ctx.lcm_m
 -- LCM-X names an id outright at times (SQLite then allocates past it); moving the sequence takes UPDATE.
 GRANT UPDATE ON ALL SEQUENCES IN SCHEMA ctx TO lina_app;
 -- LCM-X writes thousands of rows in one transaction and reads them right after; lina_app refreshes the planner's
--- statistics then (lcm_x_store), instead of waiting for autovacuum.
-GRANT MAINTAIN ON ALL TABLES IN SCHEMA ctx TO lina_app;
+-- statistics then (lcm_x_store), instead of waiting for autovacuum. Only a table's owner may ANALYZE it before
+-- Postgres 17's MAINTAIN privilege, so lina_app asks this function, which runs as the migrations' owner and analyzes
+-- a table of schema ctx or vec and nothing else.
+CREATE OR REPLACE FUNCTION ctx.lcm_analyze(target regclass) RETURNS void
+    LANGUAGE plpgsql SECURITY DEFINER SET search_path = pg_catalog, pg_temp AS $$
+DECLARE
+    schema_name name;
+    table_name name;
+BEGIN
+    SELECT n.nspname, c.relname INTO schema_name, table_name
+      FROM pg_catalog.pg_class AS c JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace
+     WHERE c.oid = target AND c.relkind IN ('r', 'p', 'm');
+    IF schema_name IS NULL OR schema_name NOT IN ('ctx', 'vec') THEN
+        RAISE EXCEPTION 'ctx.lcm_analyze analyzes tables of schemas ctx and vec only, not %', target
+            USING ERRCODE = 'insufficient_privilege';
+    END IF;
+    EXECUTE format('ANALYZE %I.%I', schema_name, table_name);
+END $$;
+REVOKE ALL ON FUNCTION ctx.lcm_analyze(regclass) FROM PUBLIC;
+GRANT EXECUTE ON FUNCTION ctx.lcm_analyze(regclass) TO lina_app;
