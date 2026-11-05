@@ -76,14 +76,19 @@ def board_exists(board: Optional[str] = None) -> bool:
 _BOARD_SLUG_PATTERN = re.compile(r"[a-z0-9][a-z0-9_-]{0,63}")
 
 
-def _contained_dir(root: Path, slug: str) -> Path:
-    """``<root>/<slug>`` as a path that provably stays directly inside *root*.
+def _contained_path(root: Path, slug: str, leaf: Optional[str] = None) -> Path:
+    """``<root>/<slug>`` (or ``<root>/<slug>/<leaf>``) that provably stays inside *root*.
 
     The slug comes from a caller (``board=``, ``--board``), so it is filtered by a
     fixed full-match pattern first, then the built string must sit one level below
-    the root before anything touches it — and the real path is checked the same way
-    again, because a board directory could be a symlink pointing out of the root.
-    Both checks stay in this function, on the value they guard."""
+    the root before anything touches it — and the real directory is checked the same
+    way again, because a board directory could be a symlink pointing out of the root.
+    All checks stay in this function, on the value it follows.
+
+    *leaf* asks for the board FILE's identity instead of the directory: it is joined
+    onto the directory string the checks above approved, so a board whose
+    ``kanban.db`` is itself a symlink resolves to what it points at (the fence
+    compares files, not spellings) without any caller-built text being followed."""
     if _BOARD_SLUG_PATTERN.fullmatch(slug) is None:
         raise ValueError("invalid board slug")
     root_text = str(root)
@@ -94,24 +99,26 @@ def _contained_dir(root: Path, slug: str) -> Path:
     real = os.path.realpath(joined)
     if not real.startswith(prefix) or os.sep in real[len(prefix):]:
         raise ValueError("invalid board slug")
-    return Path(real)
+    if leaf is None:
+        return Path(real)
+    return Path(os.path.realpath(os.path.join(real, leaf)))
 
 
 def own_board_path(slug: str, default_parts: tuple[str, ...], leaf: str) -> Path:
     """Where *slug*'s file lives when no env pin applies (the unfenced path).
 
-    The non-default arm goes through :func:`_contained_dir`, so a slug cannot
+    The non-default arm goes through :func:`_contained_path`, so a slug cannot
     address anything outside ``boards_root()`` (``../`` in it, or a board directory
     symlinked elsewhere). The default arm is built from constants only."""
     if slug == _kb.DEFAULT_BOARD:
         return kanban_home().joinpath(*default_parts)
-    return _contained_dir(boards_root().resolve(), slug) / leaf
+    return _contained_path(boards_root().resolve(), slug) / leaf
 
 
 def _same_file(left: Path, right: Path) -> bool:
-    """Same physical file. Both sides arrive resolved or checked — the board path
-    through :func:`own_board_path`, the pin through :func:`_physical` — so this only
-    compares."""
+    """Same physical FILE. Both sides arrive as identities — the board's through
+    :func:`_contained_path` (leaf included), the pin through :func:`_physical` — so a
+    board whose ``kanban.db`` is a symlink to the pinned file compares equal."""
     return left == right
 
 
@@ -153,13 +160,16 @@ def refuse_cross_board_pin(
     slug: str, pinned: Path, default_parts: tuple[str, ...], leaf: str,
 ) -> None:
     """Raise when the fence would answer ``board=slug`` with a different file
-    than *slug*'s own. Same file (e.g. ``board="default"`` from a default-board
-    worker) passes."""
-    own = own_board_path(slug, default_parts, leaf)
+    than *slug*'s own. Same file passes — ``board="default"`` from a default-board
+    worker, or a named board whose ``kanban.db`` links to the pinned file."""
     if slug == _kb.DEFAULT_BOARD:
         # Constants-only path (no slug in it), resolved so a symlinked
         # HERMES_KANBAN_HOME stays comparable to the pin.
-        own = _physical(own)
+        own = _physical(own_board_path(slug, default_parts, leaf))
+    else:
+        # Resolve the leaf too: naming a board must compare the DB it would open,
+        # not the spelling of the directory that holds it (Codex P2 on #213).
+        own = _contained_path(boards_root().resolve(), slug, leaf)
     if _same_file(own, _physical(pinned)):
         return
     pinned_name = _board_name_for_pinned_path(pinned)

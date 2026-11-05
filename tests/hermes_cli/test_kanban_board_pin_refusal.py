@@ -282,3 +282,23 @@ def test_worker_import_is_refused_before_anything_lands(boards, tmp_path, monkey
         kt.import_board(str(archive), "imported")
 
     assert not (kb.boards_root() / "imported").exists()
+
+
+def test_a_board_whose_db_is_a_symlink_to_the_pin_is_its_own_board(boards, monkeypatch):
+    """A board's ``kanban.db`` is allowed to be a symlink: naming that board from a
+    worker pinned to the file it points at is naming the worker's own board, so it
+    passes — while a board holding a different file is still refused (Codex P2)."""
+    kb.create_board("other")
+    shared = kb.kanban_home() / "shared" / "kanban.db"
+    shared.parent.mkdir()
+    shared.write_bytes(b"")
+    (kb.boards_root() / "private" / "kanban.db").unlink()
+    (kb.boards_root() / "private" / "kanban.db").symlink_to(shared)
+
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(shared))
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "default")
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_pinned_worker")
+
+    assert kb.kanban_db_path(board="private") == shared
+    with pytest.raises(kb.BoardPinnedError):
+        kb.kanban_db_path(board="other")
