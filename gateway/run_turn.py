@@ -958,10 +958,7 @@ class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, Gateway
             if _stream_consumer:
                 _stream_consumer.finish()
             if stream_task:
-                try:
-                    await asyncio.wait_for(stream_task, timeout=5.0)
-                except (TimeoutError, asyncio.CancelledError):
-                    stream_task.cancel()
+                await self._await_stream_task(stream_task, _stream_consumer)
 
         _elapsed = time.time() - _start
         if not _run_still_current():
@@ -1321,14 +1318,10 @@ class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, Gateway
             await asyncio.sleep(0.05)
 
     @staticmethod
-    async def _await_stream_task(stream_task) -> None:
-        """Give the stream consumer task 5s to flush, then cancel it."""
-        try:
-            await asyncio.wait_for(stream_task, timeout=5.0)
-        except (TimeoutError, asyncio.CancelledError):
-            stream_task.cancel()
-            with suppress(asyncio.CancelledError):
-                await stream_task
+    async def _await_stream_task(stream_task, consumer) -> None:
+        """Flush the consumer, allowing an in-flight final transport to acknowledge."""
+        from gateway.stream_consumer import await_stream_flush
+        await await_stream_flush(stream_task, consumer)
 
     async def _run_agent_track_agent(self, turn_ctx: TurnContext) -> None:
         """Track this agent as running for the session (interrupt support) once it is created — only
@@ -1760,7 +1753,7 @@ class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, Gateway
         _sc = turn_ctx.stream_consumer_holder[0]
         if _sc and stream_task:
             try:
-                await self._await_stream_task(stream_task)
+                await self._await_stream_task(stream_task, _sc)
             except Exception as e:
                 logger.debug("Stream consumer wait before queued message failed: %s", e)
         # Delivery uses the finalized task result (empty/failure normalization), not raw ``result``.
@@ -2019,7 +2012,7 @@ class GatewayTurnMixin(GatewayTurnPrepareMixin, GatewayTurnHygieneMixin, Gateway
                 with suppress(asyncio.CancelledError):
                     await stream_task
             else:
-                await self._await_stream_task(stream_task)
+                await self._await_stream_task(stream_task, stream_consumer_holder[0])
 
         # Abort + bounded wait for streaming TTS: covers paths where normal finalisation was skipped.
         _stts_finally = turn_ctx.streaming_tts_consumer_holder[0]
