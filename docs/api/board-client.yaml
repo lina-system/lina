@@ -1360,11 +1360,14 @@ components:
             One line for the owner; for an error row, the file name, a colon and a short reason.
         at:
           type: number
-          description: Unix epoch seconds the check last wrote (a malformed file's mtime).
+          description: >
+            Unix epoch seconds the check last wrote (a malformed file's mtime). A file whose `at` is not a finite
+            number is malformed, so no served `at` is ever NaN or Infinity.
         staleAfter:
           type: number
+          minimum: 0
           nullable: true
-          description: Seconds after `at` the check is stale; null for an error row.
+          description: Seconds after `at` the check is stale; null for an error row. A negative value is malformed.
         stale:
           type: boolean
           description: True when `now - at > staleAfter`.

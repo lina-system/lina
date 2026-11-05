@@ -66,6 +66,14 @@ def _checks(client) -> dict:
     assert response.status_code == 200
     return _valid(response.json())
 
+def _strict(text: str) -> dict:
+    """Parse a body the way a browser's JSON.parse does: a bare ``NaN``/``Infinity`` token is a syntax error."""
+    return json.loads(text, parse_constant=lambda token: (_ for _ in ()).throw(ValueError(token)))
+
+def _raw(at, stale_after) -> str:
+    """The status file's text with *at* and *stale_after* as literal tokens, for the values JSON has no number for."""
+    return f'{{"name":"t","ok":true,"line":"x","at":{at},"stale_after":{stale_after}}}'
+
 def test_ok_failing_and_stale_rows_carry_their_state(root, client):
     now = time.time()
     _file(root, "tools.json", check="tools", line="3 machines in step", at=now - 30)
@@ -129,6 +137,37 @@ def test_a_missing_or_wrong_typed_field_is_an_error_row(root, client, field, val
 
     assert (row["state"], row["ok"], row["staleAfter"]) == ("error", False, None)
     assert row["line"] == f"tools.json: {line}"
+
+HUGE = "1" * 400  # an integer literal too large for a float
+
+@pytest.mark.parametrize("at, stale_after, line", [
+    ("NaN", "60", "at is not a finite number"),
+    ("Infinity", "60", "at is not a finite number"),
+    (HUGE, "60", "at is not a finite number"),
+    ("1800000000", "NaN", "stale_after is not a finite number"),
+    ("1800000000", "-1", "stale_after is negative"),
+])
+def test_a_non_finite_or_negative_check_time_is_an_error_row_in_a_parseable_body(root, client, at, stale_after, line):
+    """json.loads accepts NaN/Infinity and json.dumps writes them back as bare tokens a browser cannot parse, so one
+    such file must not reach the response: it is an error row and every other check is still served."""
+    (root / "status" / "tools.json").write_text(_raw(at, stale_after), encoding="utf-8")
+    _file(root, "backup.json", at=time.time() - 30)
+
+    response = client.get("/api/lina/status/checks")
+
+    assert response.status_code == 200
+    body = _valid(_strict(response.text))
+    assert len(body["checks"]) == 2
+    row = next(row for row in body["checks"] if row["file"] == "tools.json")
+    assert (row["state"], row["ok"], row["stale"], row["staleAfter"]) == ("error", False, False, None)
+    assert row["line"] == f"tools.json: {line}"
+    assert next(row for row in body["checks"] if row["file"] == "backup.json")["state"] == "ok"
+
+def test_a_directory_named_like_a_status_file_is_not_listed(root, client):
+    (root / "status" / "dir.json").mkdir()
+    _file(root, "tools.json", at=time.time() - 30)
+
+    assert [row["file"] for row in _checks(client)["checks"]] == ["tools.json"]
 
 def test_a_missing_folder_serves_an_empty_list(root, client):
     (root / "status").rmdir()
