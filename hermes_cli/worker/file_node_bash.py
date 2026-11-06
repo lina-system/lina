@@ -74,6 +74,17 @@ if [ "$rc" = 0 ]; then
     o "$T/wait.$N.json" host session wait "$(ref)" --until idle --timeout 60000 --json
     sleep "$POLL"
   done
+  if [ "$outcome" = timeout ]; then
+    # At the hard limit the session is stopped before the end marks, so it cannot change files behind them.
+    o "$T/abort.$N.json" host session abort "$(ref)" --json
+    o "$T/stop.$N.json" host session wait "$(ref)" --until idle --timeout 30000 --json
+    o "$T/state.$N.json" host session state "$(ref)" --json
+    if grep -Eq '"isStreaming"[[:space:]]*:[[:space:]]*true|"state"[[:space:]]*:[[:space:]]*"running"' "$T/state.$N.json"; then
+      outcome=timeout_not_stopped
+    else
+      outcome=timeout_stopped
+    fi
+  fi
 fi
 [ -s "$T/session.json" ] && o "$T/messages.$N.json" host session read "$(ref)" --messages --json
 echo "$outcome" > "$T/outcome.$N"
@@ -120,8 +131,18 @@ r=$(ref); [ -n "$r" ] && "$OMO" host session abort "$r" --json < /dev/null > "$T
 echo cancelled=1
 """
 
+# abort <task dir> <omo>: stop the session's turn once more (a run whose session did not stop at the hard limit).
+ABORT = r"""T="$HOME/$1"; OMO=${2/#\~/$HOME}
+export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
+""" + _REF + r"""r=$(ref); [ -n "$r" ] || exit 0
+"$OMO" host session abort "$r" --json < /dev/null > "$T/abort.again.json" 2>&1; rc=$?
+tail -n 1 "$T/abort.again.json"; exit "$rc"
+"""
+
 # deny_scan <task dir> <run> <limit s> <n roots> <roots…> <n names> <names…> <volumes…>: files changed since the run
 # started under the denied folders (absolute roots, and folders named like a pattern up to 3 levels into a volume).
+# Each line is "<owner uid><TAB><path>"; the hub counts only the run's own uid (``file_node_deny.owned``). Both
+# finds' exit codes land in deny_rc.<n>: a find stopped by an unreadable folder has not seen everything.
 # The look runs in its own session and is killed at the limit: there is no timeout(1) on the node.
 DENY_SCAN = r"""T="$HOME/$1"; N=$2; LIMIT=$3; shift 3
 nr=$1; shift; roots=("${@:1:$nr}"); shift "$nr"
@@ -130,24 +151,32 @@ nn=$1; shift; names=("${@:1:$nn}"); shift "$nn"
 cat > "$T/deny_scan.sh" <<'EOF'
 T=$1; N=$2; nr=$3; shift 3
 roots=("${@:1:$nr}"); shift "$nr"; nn=$1; shift; names=("${@:1:$nn}"); shift "$nn"
-found=()
+found=(); d=0; s=0
 for r in "${roots[@]}"; do [ -e "$r" ] && found+=("$r"); done
 if [ "$nn" -gt 0 ] && [ "$#" -gt 0 ]; then
   expr=(); for p in "${names[@]}"; do [ "${#expr[@]}" -gt 0 ] && expr+=(-o); expr+=(-name "$p"); done
-  while IFS= read -r d; do found+=("$d"); done < <(find "$@" -maxdepth 3 -type d \( "${expr[@]}" \) -prune -print 2>/dev/null)
+  find "$@" -maxdepth 3 -type d \( "${expr[@]}" \) -prune -print > "$T/deny_dirs.$N.txt" 2>/dev/null; d=$?
+  while IFS= read -r dir; do found+=("$dir"); done < "$T/deny_dirs.$N.txt"
 fi
-[ "${#found[@]}" -gt 0 ] || exit 0
-find "${found[@]}" -path "$T" -prune -o -newer "$T/started.$N" \( -type f -o -type l \) -print 2>/dev/null
+if [ "${#found[@]}" -gt 0 ]; then
+  find "${found[@]}" -path "$T" -prune -o -newer "$T/started.$N" \( -type f -o -type l \) -printf '%U\t%p\n' 2>/dev/null; s=$?
+fi
+echo "$d $s" > "$T/deny_rc.$N"
 EOF
+rm -f "$T/deny_rc.$N"
 setsid bash "$T/deny_scan.sh" "$T" "$N" "$nr" "${roots[@]}" "$nn" "${names[@]}" "$@" > "$T/deny.$N.txt" 2>/dev/null < /dev/null &
 pid=$!; i=0; ticks=$((LIMIT * 10))
 while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$ticks" ]; do sleep 0.1; i=$((i + 1)); done
 if kill -0 "$pid" 2>/dev/null; then
   kill -- "-$pid" 2>/dev/null; kill "$pid" 2>/dev/null; echo complete=0; echo "why=not finished in ${LIMIT}s"
 else
-  echo complete=1
+  read -r d s < "$T/deny_rc.$N" 2>/dev/null || { d=none; s=none; }
+  if [ "$d" = 0 ] && [ "$s" = 0 ]; then echo complete=1
+  elif [ "$d" = none ]; then echo complete=0; echo 'why=the look left no exit code'
+  else echo complete=0; echo "why=find exited $([ "$d" = 0 ] && echo "$s" || echo "$d")"; fi
 fi
+printf 'uid=%s\n' "$EUID"
 printf 'count=%s\n' "$(wc -l < "$T/deny.$N.txt")"
 echo files:
-head -n 200 "$T/deny.$N.txt"
+head -n 50000 "$T/deny.$N.txt"
 """

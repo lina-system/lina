@@ -66,6 +66,32 @@ def _final_text(messages: dict | None) -> str:
     return text
 
 
+def node_rules(dev: settings.Device) -> str:
+    """The rules a file-node run gets instead of the work-folder ones: it works on the node's files in place."""
+    from hermes_cli.worker.report import RULES
+    report = [line for line in RULES.splitlines() if line.startswith(("- Write report.md", "- The last section",
+                                                                      "- Never write secrets"))]
+    denied = "".join(f"  - {entry}\n" for entry in dev.deny) or "  - (none configured)\n"
+    return ("Rules for this task (from lina worker, on a file node):\n"
+            "- This run works on the node's own files. Move and change files only inside the paths the brief names; "
+            "leave everything else on the volume as it is.\n"
+            "- Never read or write these denied folders (absolute paths and folder-name patterns):\n" + denied +
+            "- Do not delete anything: move what would go to a place inside the named paths and list every move (from "
+            "-> to) in report.md. Permanent deletion is the owner's.\n"
+            + "\n".join(report[:2]) + "\n"
+            "- Put lists and logs under out/ in the current directory. Files under input/ are read-only copies.\n"
+            "- Any other outside effect (messages, publishing, pushing, spending money, credentials) is reported in "
+            "report.md only, never done.\n" + "\n".join(report[2:]) + "\n")
+
+
+def node_prompt(prompt: str, dev: settings.Device) -> str:
+    """*prompt* (``report.first_prompt``) with the work-folder rules replaced by ``node_rules``."""
+    from hermes_cli.worker.report import RULES
+    if RULES in prompt:
+        return prompt.replace(RULES, node_rules(dev), 1)
+    return prompt.rstrip("\n") + "\n\n" + node_rules(dev)
+
+
 def _live(line: str) -> dict:
     from hermes_cli.worker.runners.omo_settle import lifecycle_view
     try:
@@ -168,6 +194,8 @@ class FileNodeTransport:
     def _put(self, args, data, timeout) -> Reply:
         from hermes_cli.worker import device
         task_id, rel = args[0], args[1]
+        if rel == "prompt.1":
+            data = node_prompt(data.decode("utf-8", "replace"), self.device).encode("utf-8")
         reply = device._put(self.mirror, task_id, rel, data)
         if reply.get("action") == "error" or not rel.startswith("request."):
             return _answer(reply)
@@ -264,6 +292,8 @@ class FileNodeTransport:
             write_json(task.path("manifest.json"), manifest)
             task.path("state").write_text(final + "\n", encoding="utf-8")
             task.event(run, "ended", state=final, runner_state=runner_state)
+            if _read(task, f"outcome.{run}") == "timeout_not_stopped":
+                self._abort_again(task, run)
             task.path(f"rc.{run}").write_text(rc + "\n", encoding="utf-8")
             return final
 
@@ -293,8 +323,10 @@ class FileNodeTransport:
             return "failed", f"the runner on {self.device.name} ended without its end marks"
         if outcome == "start_failed":
             return "failed", "omo did not open or prompt the session"
-        if outcome == "timeout":
-            return "stalled", "the run reached hard_timeout_s"
+        if outcome == "timeout_stopped":
+            return "stalled", "the run reached hard_timeout_s; its session was aborted and stopped"
+        if outcome == "timeout_not_stopped":
+            return "stalled", "the run reached hard_timeout_s; its session did not stop on abort (aborted again)"
         view = lifecycle_view(read_json(task.path(f"state.{run}.json")))
         if outcome != "sealed" or view is None:
             return "failed", f"the runner ended with outcome {outcome or 'none'}"
@@ -314,6 +346,11 @@ class FileNodeTransport:
             if name:
                 hashes[f"input/{name.removeprefix('./')}"] = digest
         return hashes
+
+    def _abort_again(self, task: Task, run: int) -> None:
+        """One more abort before the slot is freed, for a session the runner could not see stop."""
+        reply = self.rsh(bash.ABORT, self._remote(task.id), self.device.omo, timeout=120)
+        task.event(run, "abort_again", rc=reply.code, out=reply.out.decode("utf-8", "replace")[-200:])
 
     def _deny_check(self, task: Task, run: int) -> dict:
         limit = self.device.scan_s

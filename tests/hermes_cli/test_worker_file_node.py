@@ -27,7 +27,7 @@ NODE_TOOLS = ("bash", "tar", "sha256sum", "setsid", "nohup", "cat", "sed", "cut"
 AGENT = "agent-a"
 
 
-def _node(tmp_path: Path, monkeypatch, scan_s: int = 20) -> dict:
+def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first: str = "done") -> dict:
     nas, base, hub_bin = tmp_path / "nas", tmp_path / "lina", tmp_path / "hub-bin"
     home, node_bin, volume = nas / "home", nas / "bin", nas / "volume"
     for path in (home / ".bun" / "bin", node_bin, hub_bin, volume / "backup", volume / "share" / "#recycle"):
@@ -41,7 +41,7 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20) -> dict:
     (nas / "healthz").write_text("200")
     fakes.install_fake_omo(nas / "omo", "")
     shutil.move(str(nas / "omo" / "omo"), str(home / ".bun" / "bin" / "omo"))
-    (nas / "omo" / "scenario.json").write_text(json.dumps({"first": "done"}))
+    (nas / "omo" / "scenario.json").write_text(json.dumps({"first": first}))
     (hub_bin / "ssh").write_text(textwrap.dedent(f"""\
         #!{sys.executable}
         import os, sys
@@ -66,7 +66,7 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20) -> dict:
           poll_s: 0.05
           min_free_gb: 0
           access: {{{AGENT}: full}}
-        """), encoding="utf-8")
+        """) + extra, encoding="utf-8")
     return {"nas": nas, "home": home, "volume": volume, "root": base / "worker", "tmp": tmp_path}
 
 
@@ -194,6 +194,99 @@ def test_a_person_device_never_takes_work_even_when_named(tmp_path, monkeypatch)
         lines: list[str] = []
         Hub(node["root"], out=lines.append).submit({"briefs": [fakes.brief(tmp_path, "x")], "mode": "ulw", "bot": AGENT,
                                                     "topic": "t", "wait": None, "host": "phone"})
+
+
+def test_a_file_node_run_gets_the_node_rules_with_its_deny_list(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    task_id = _submit(node)
+    prompt = (_ended(node, task_id)["remote"] / "prompt.1").read_text()
+    assert "Work only inside the current directory" not in prompt
+    assert "Move and change files only inside the paths the brief names" in prompt
+    assert f"  - {node['volume']}/backup\n  - #recycle\n" in prompt
+    assert "Do not delete anything" in prompt and "## 다음에 알아야 할 것" in prompt
+
+
+def _abort_watch(node: dict, stubborn: bool) -> Path:
+    """Wrap the node's omo so every abort is logged, and (stubborn) refused while the session keeps running."""
+    omo = node["home"] / ".bun" / "bin" / "omo"
+    omo.rename(omo.with_name("omo.fake"))
+    log = node["nas"] / "aborts.log"
+    refuse = 'echo \'{"action":"error","reason":"refused"}\'; exit 1' if stubborn else ":"
+    omo.write_text(f'#!/usr/bin/env bash\nif [ "$3" = abort ]; then echo abort >> "{log}"; {refuse}; fi\n'
+                   f'exec "{omo.with_name("omo.fake")}" "$@"\n')
+    omo.chmod(0o755)
+    return log
+
+
+def test_the_hard_limit_aborts_the_session_and_sees_it_stop(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, extra="  hard_timeout_s: 1\n", first="running")
+    aborts = _abort_watch(node, stubborn=False)
+    task_id = _submit(node)
+    remote = _ended(node, task_id)["remote"]
+    assert aborts.read_text().count("abort") == 1
+    assert (remote / "outcome.1").read_text().strip() == "timeout_stopped"
+    assert json.loads((node["nas"] / "omo" / "state.json").read_text())["phase"] == "cancelled"
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "stalled"
+
+
+def test_a_session_that_does_not_stop_at_the_hard_limit_is_aborted_again_before_the_slot_frees(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, extra="  hard_timeout_s: 1\n", first="running")
+    aborts = _abort_watch(node, stubborn=True)
+    task_id = _submit(node)
+    remote = _ended(node, task_id)["remote"]
+    assert (remote / "outcome.1").read_text().strip() == "timeout_not_stopped"
+    hub = Hub(node["root"])
+    hub.tick()
+    job = hub.store.load(task_id)
+    assert job["state"] == "stalled" and aborts.read_text().count("abort") == 2
+    assert hub.transport(job).call(["probe", "", "omo"]).json()["running"] == 0
+
+
+def test_an_unreadable_denied_folder_ends_the_run_as_review_not_seen_whole(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    locked = node["volume"] / "backup" / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        task_id = _submit(node)
+        _ended(node, task_id)
+        hub = Hub(node["root"])
+        hub.tick()
+        assert hub.store.load(task_id)["state"] == "review"
+        text = _notice(node, task_id)
+        assert "the denied-folder check did not finish" in text and "find exited 1" in text
+    finally:
+        locked.chmod(0o755)
+
+
+def test_only_changes_owned_by_the_runs_user_count_against_the_run():
+    from hermes_cli.worker import file_node_deny as deny
+    other_only = "complete=1\nuid=1026\ncount=3\nfiles:\n0\t/v/backup/a\n1024\t/v/@synologydrive/b\n0\t/v/s/@eaDir/c\n"
+    check = deny.parse_scan(other_only, 0, 300)
+    assert (check["count"], check["others"], deny.needs_review(check)) == (0, 3, False)
+    assert "Changed by other users: 3, not counted" in deny.with_check("", check)
+    mixed = other_only.replace("count=3", "count=4") + "1026\t/v/backup/moved.txt\n"
+    check = deny.parse_scan(mixed, 0, 300)
+    assert (check["files"], check["others"], deny.needs_review(check)) == (["/v/backup/moved.txt"], 3, True)
+
+
+def _devices_row(node: dict) -> dict:
+    from hermes_cli import lina_devices
+    lines: list[str] = []
+    lina_devices.list_devices(node["root"].parent, as_json=True, out=lines.append)
+    return next(row for row in json.loads(lines[-1]) if row["name"] == "nas")
+
+
+def test_lina_devices_shows_a_file_node_from_its_hello_without_asking_lina_on_it(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    row = _devices_row(node)
+    assert (row["ready"], row["why"], row["omo"]) == (True, None, "?")  # the fake omo prints no version line
+    assert "lina omo status" not in (node["nas"] / "ssh.log").read_text()
+    (node["nas"] / "healthz").write_text("000")
+    row = _devices_row(node)
+    assert row["ready"] is False and row["why"].startswith("model path through the hub does not answer")
 
 
 def test_device_roles_and_file_node_keys_are_read_from_config():

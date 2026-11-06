@@ -2,9 +2,10 @@
 
 An entry starting with ``/`` is a folder by its absolute path; any other entry is a folder-name pattern (``#recycle``,
 ``@*``). A brief or an input that names a path under one is refused before the run is handed out. After a run the
-node lists files changed under them since the run started (``file_node_bash.DENY_SCAN``); one such file, or a look
-that did not finish in time, ends the run as ``review``. This is a check, not a sandbox: the run can reach the whole
-volume, and a backup or indexing service writing into those folders shows up too.
+node lists files changed under them since the run started (``file_node_bash.DENY_SCAN``); one such file owned by
+the run's user, or a look that did not finish (time limit, a find error), ends the run as ``review``. Changes owned
+by other users (backup, sync, indexing services) are counted but not held against the run. This is a check, not a
+sandbox: the run can reach the whole volume, and an in-place edit of another user's file is not seen.
 """
 
 from __future__ import annotations
@@ -78,16 +79,41 @@ def scan_args(dev: Device) -> list[str]:
     return [str(len(roots)), *roots, str(len(names)), *names, *dev.volumes]
 
 
+LISTED_MAX = 50000  # lines the node sends back; a longer list is not seen whole
+
+
+def owned(lines: list[str], uid: str) -> tuple[list[str], int]:
+    """Split ``<uid>\\t<path>`` lines into the paths owned by *uid* (the run's user) and the count of the others.
+
+    Backup, sync and indexing services write under denied folders all the time as their own users; only files the
+    run's user owns are the run's. A file of another user that the run edited in place keeps that owner and is not
+    counted: the gap of this check."""
+    mine, others = [], 0
+    for line in lines:
+        owner, tab, path = line.partition("\t")
+        if not tab:
+            continue
+        if owner == uid:
+            mine.append(path)
+        else:
+            others += 1
+    return mine, others
+
+
 def parse_scan(out: str, code: int, limit: int) -> dict:
-    """The node's scan answer as ``{"complete", "count", "files", "why"?}``; an unreadable answer is incomplete."""
+    """The node's scan answer as ``{"complete", "count", "files", "others", "why"?}``: ``count``/``files`` are the
+    run user's changed files, ``others`` the changes owned by other users; an unreadable answer is incomplete."""
     head, _, listing = out.partition("files:\n")
     fields = dict(line.split("=", 1) for line in head.splitlines() if "=" in line)
-    files = [line for line in listing.splitlines() if line.strip()]
-    check = {"complete": code == 0 and fields.get("complete") == "1", "files": files,
-             "count": int(fields["count"]) if fields.get("count", "").strip().isdigit() else len(files),
-             "limit_s": limit}
+    lines = [line for line in listing.splitlines() if line.strip()]
+    mine, others = owned(lines, fields.get("uid", ""))
+    total = int(fields["count"]) if fields.get("count", "").strip().isdigit() else len(lines)
+    check = {"complete": code == 0 and fields.get("complete") == "1" and "uid" in fields, "files": mine[:200],
+             "count": len(mine), "others": others, "uid": fields.get("uid"), "limit_s": limit}
+    if total > len(lines):
+        check["complete"], check["why"] = False, f"{total} changed files, only the first {len(lines)} were read"
     if not check["complete"]:
-        check["why"] = fields.get("why") or f"the look did not answer (exit {code})"
+        check.setdefault("why", fields.get("why") or f"the look did not answer (exit {code})")
     return check
 
 
@@ -107,13 +133,15 @@ def with_check(text: str, check: dict | None) -> str:
         text = _REVIEW_HEAD.sub(f"needs review — {reason}\n", text, count=1)
     lines = ["- Denied-folder check (a check, not a sandbox: the run could reach the whole volume): "]
     if check.get("count"):
-        lines[0] += f"{check['count']} file(s) changed under a denied folder during the run:"
+        lines[0] += f"{check['count']} file(s) owned by the run's user changed under a denied folder during the run:"
         lines += [f"  - {path}" for path in check.get("files", [])[:50]]
         if check["count"] > min(50, len(check.get("files", []))):
             lines.append(f"  - … {check['count'] - min(50, len(check.get('files', [])))} more")
-        lines.append("  A backup or indexing service writing there shows up here too: check before you accept.")
     else:
-        lines[0] += "no changed file found."
+        lines[0] += "no file owned by the run's user changed."
+    lines.append(f"- Changed by other users: {check.get('others') or 0}, not counted (backup, sync and indexing "
+                 "services write there as their own users). A file of another user that the run edited in place keeps "
+                 "that owner and is not counted either.")
     if not check.get("complete"):
         lines.append(f"- Not every denied folder was seen: {check.get('why')}.")
     return text + "\n".join(lines) + "\n"
