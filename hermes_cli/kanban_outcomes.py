@@ -64,6 +64,11 @@ _WORKER_ID_PATTERNS = (
     ("quick-issue", re.compile(r"\bquick-issue(?:\s+job)?[\s:#]+([A-Za-z0-9][\w.-]*\d[\w.-]*)", re.IGNORECASE)),
     ("lina-worker", re.compile(r"\blina[ -]worker(?:\s+run)?[\s:#]+([A-Za-z0-9][\w.-]*\d[\w.-]*)", re.IGNORECASE)),
 )
+# quick-issue's real end comment names the issue, not a job id: ``[quick-issue] owner/repo#n →
+# PR #m (...)``, and a follow-up round prefixes it with ``이어서``. Each end comment is one run on
+# that issue's to-do.
+_QUICK_ISSUE_END = re.compile(r"^\[quick-issue\]\s*(?:이어서\s+)?([\w.-]+/[\w.-]+)#(\d+)",
+                              re.MULTILINE | re.IGNORECASE)
 _ISSUE_TODO = re.compile(r"^\s*-\s+([\w.-]+/[\w.-]+)#(\d+)\b")
 _CHECK_TODO = re.compile(r"^\s*-\s+\[([ xX])\]\s+(.+?)\s*$")
 _TODO_HEADING = re.compile(r"^##\s+To-dos\s*$", re.IGNORECASE)
@@ -122,6 +127,12 @@ def worker_ids(text: str) -> list[tuple[str, str]]:
     for runner, pattern in _WORKER_ID_PATTERNS:
         found.extend((runner, m.group(1)) for m in pattern.finditer(text))
     return found
+
+
+def quick_issue_runs(text: str) -> list[str]:
+    """One quick-issue run per end comment, keyed by the issue it answered; a follow-up round is a
+    second run on the same to-do, so its id repeats."""
+    return [f"{m.group(1)}#{m.group(2)}" for m in _QUICK_ISSUE_END.finditer(text or "")]
 
 
 def _todo_for_comment(body: str, todos: list[dict]) -> str:
@@ -201,7 +212,13 @@ def _body_was_edited(events: list[sqlite3.Row]) -> bool:
 def _worker_runs(comments: list[sqlite3.Row], todos: list[dict], events=()) -> dict[str, list[dict]]:
     runs: dict[str, list[dict]] = {}
     seen: set[str] = set()
+    refs = {t["ref"] for t in todos if "number" in t}
     for c in comments:
+        for run_id in quick_issue_runs(c["body"]):
+            # Keyed by the issue the end comment names, never by a PR number it also carries: an
+            # issue that is no to-do of this card belongs to the card as a whole.
+            todo = run_id if run_id in refs else CARD_SCOPE
+            runs.setdefault(todo, []).append({"runner": "quick-issue", "id": run_id})
         for runner, run_id in worker_ids(c["body"]):
             if run_id in seen:
                 continue
