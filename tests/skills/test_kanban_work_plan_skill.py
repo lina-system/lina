@@ -98,7 +98,7 @@ def test_example_plan_passes_dry_run(board, capsys):
 def _gate_commands() -> tuple[list[list[str]], set[str]]:
     plan = hermes_yaml.safe_load(_example_plan())
     commands = [shlex.split(g) for card in plan["cards"] for g in card["gates"]]
-    named = set(re.findall(r"(?:`|hermes kanban )gate ([a-z]+)\b", SKILL))
+    named = set(re.findall(r"(?:`|hermes kanban )gate ([a-z]+(?:-[a-z]+)*)", SKILL))
     return commands, named
 
 
@@ -121,7 +121,7 @@ def test_example_metadata_survives_plan_body_rendering():
 def test_every_named_gate_exists(capsys):
     rc, out, _err = _kanban(capsys, "gate", "--help")
     assert rc == 0
-    listed = set(re.search(r"\b([a-z]+(?:\|[a-z]+)+)\b", out).group(1).split("|"))
+    listed = set(re.search(r"\b([a-z-]+(?:\|[a-z-]+)+)\b", out).group(1).split("|"))
     commands, named = _gate_commands()
     assert named and named <= listed, f"unknown gates: {sorted(named - listed)}"
     for argv in commands:
