@@ -6,19 +6,23 @@ refused and writes nothing.
 The hub keeps one record per key, ``hub/keys/<sha256(key)>.json`` (``{key, op, args_sha256, task, run, action,
 at}``), written under the key's lock before any device is called and filled in with the result after it. A hub that
 stopped in between left the task ID there: the replay returns that task (the tick finishes its placement) and never
-bids it out again. A send records the device verb it chose (``device_verb``, ``device_args``, ``device_key``) before
-calling it, and a retry sends that verb again rather than routing anew. A device whose hello lists ``request_keys``
-keeps the reply of ``follow_up``, ``answer`` and ``send`` under the key alone (``keys.json`` in the task folder), so
-any write verb sent again with a key it has seen changes nothing there.
+bids it out again. A send records the device verb it chose (``device_verb``, ``device_args``, ``device_phase``,
+``device_key``) before calling it, and a retry sends that verb again rather than routing anew. Caller keys match
+``CALLER_KEY``; a device call carries ``<caller key>#<phase>`` instead, so the two never meet. A device whose hello
+lists ``request_keys`` keeps the reply of ``follow_up``, ``answer`` and ``send`` under the key alone (``keys.json`` in
+the task folder), so any write verb sent again with a key it has seen changes nothing there.
 """
 
 from __future__ import annotations
 
 import hashlib
 import json
+import re
 import time
 import uuid
 from pathlib import Path
+
+CALLER_KEY = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
 
 # What defines a submit; --wait, --dry-notify and --note only change what the caller sees.
 SUBMIT_FIELDS = ("mode", "repo", "todo", "topic", "host", "runner", "model", "labels", "size", "card", "bot", "at",
@@ -27,6 +31,20 @@ SUBMIT_FIELDS = ("mode", "repo", "todo", "topic", "host", "runner", "model", "la
 
 def new_key() -> str:
     return "rk-" + uuid.uuid4().hex
+
+
+def checked(key: str) -> str:
+    """A caller key; one outside :data:`CALLER_KEY` is refused before anything is written."""
+    from hermes_cli.worker.hub import HubError
+    if not re.fullmatch(CALLER_KEY, key):
+        raise HubError(f"request key must match {CALLER_KEY}: {key}")
+    return key
+
+
+def device_key(key: str, phase: str) -> str:
+    """The key a device call of request *key* carries: ``req`` for its first call, ``next`` for the run an answer
+    falls back to. Caller keys never hold ``#``, so a caller key never equals a device key."""
+    return f"{key}#{phase}"
 
 
 def args_sha256(fields: dict) -> str:
@@ -71,7 +89,7 @@ def _new_record(hub, key: str, op: str, digest: str, task: str, **extra) -> dict
 def submit(hub, opts: dict, briefs: list[Path]) -> int:
     """``Hub.submit`` with ``opts["request_key"]``. The task IDs are taken and recorded before anything is made, so
     a replay of a request the hub stopped in the middle of finds them."""
-    key, digest = opts["request_key"], submit_args(opts, briefs)
+    key, digest = checked(opts["request_key"]), submit_args(opts, briefs)
     scheduled = bool(opts.get("at") or opts.get("every"))
     with _lock(hub, key):
         record = _first(hub, key, "submit", digest)
@@ -126,6 +144,7 @@ def send(hub, task_id: str, message: str, card: dict | None, access: str | None,
     """``Hub.send`` with a request key. A record whose device call has no result (the hub or the device link
     stopped during it) sends that same device verb again with the same key (``Hub.resend``): a device that keeps keys
     answers with its first reply."""
+    checked(key)
     digest = args_sha256({"task": task_id, "message": message, "access": access, "card": card})
     with _lock(hub, key):
         record = _first(hub, key, "send", digest)
@@ -142,10 +161,10 @@ def send(hub, task_id: str, message: str, card: dict | None, access: str | None,
             return hub._send_locked(task_id, message, card, access=access, request_key=key)
 
 
-def calling(store, key: str, verb: str, args: dict, device_key: str) -> None:
-    """Record the device verb a send chose, its arguments and the key it carries, before the call."""
+def calling(store, key: str, verb: str, args: dict, phase: str) -> None:
+    """Record the device verb a send chose, its arguments and the phase of the key it carries, before the call."""
     record = store.load_key(key)
-    record.update(device_verb=verb, device_args=args, device_key=device_key)
+    record.update(device_verb=verb, device_args=args, device_phase=phase, device_key=device_key(key, phase))
     store.save_key(record)
 
 

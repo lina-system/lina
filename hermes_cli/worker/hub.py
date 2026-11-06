@@ -640,7 +640,7 @@ class Hub:
         """A keyed send whose device reply was lost: the verb it chose, with the same arguments and key, never a new
         route (the task's state may have moved on, and another verb would apply the words a second time)."""
         job, verb, args, key = self.need(task_id), record["device_verb"], record["device_args"], record["key"]
-        reply = self._device_write(job, self.transport(job), verb, args, key, record.get("device_key"))
+        reply = self._device_write(job, self.transport(job), verb, args, key, record["device_phase"])
         if verb == "answer":
             return self._answered(job, reply, self.meta(job), args["message"], key)
         if verb == "send":
@@ -664,9 +664,9 @@ class Hub:
             return 0
         if not self._closed(job, int(run)):
             raise HubError(f"{task_id} run {run} did not close on its question; send again in a moment")
-        # The device keeps the answer's reply under the request key: the next run is its own device request.
+        # The device keeps the answer's reply under its key: the next run is its own device request.
         return self._next_run(job, "Answer to the earlier question: " + message, request_key=request_key,
-                              device_key=f"{request_key}#next" if request_key else None)
+                              phase="next")
 
     def _steered(self, job: dict, reply: dict, message: str, request_key: str | None) -> int:
         task_id = job["id"]
@@ -703,11 +703,11 @@ class Hub:
         return True
 
     def _next_run(self, job: dict, message: str, *, access: str | None = None, request_key: str | None = None,
-                  device_key: str | None = None) -> int:
+                  phase: str = "req") -> int:
         """Ask the device for the next run; it serializes this against a run still waiting, starting or running."""
         payload = {"prompt": follow_up_prompt(job.get("mode") or "ulw", message), "message": message,
                    "access": job.get("access", "workspace-write") if access is None else access}
-        reply = self._device_write(job, self.transport(job), "follow_up", payload, request_key, device_key)
+        reply = self._device_write(job, self.transport(job), "follow_up", payload, request_key, phase)
         return self._followed(job, reply, payload, access, request_key)
 
     def _followed(self, job: dict, reply: dict, payload: dict, access: str | None, request_key: str | None) -> int:
@@ -736,13 +736,13 @@ class Hub:
         return 0
 
     def _device_write(self, job: dict, transport, verb: str, args: dict, request_key: str | None,
-                      device_key: str | None = None) -> dict:
-        """A device verb that changes the task (``answer``, ``send``, ``follow_up``), carrying the device key (the
-        request key unless named). With a request key the verb and its arguments go on the key's record first, so a
-        retry sends that same verb again. A failed call with no reply is an error, never read as the device's word."""
-        key = (device_key or request_key) if request_key else None
+                      phase: str = "req") -> dict:
+        """A device verb that changes the task (``answer``, ``send``, ``follow_up``), carrying the device key of
+        *phase*. With a request key the verb and its arguments go on the key's record first, so a retry sends that
+        same verb again. A failed call with no reply is an error, never read as the device's word."""
+        key = request_keys.device_key(request_key, phase) if request_key else None
         if request_key:
-            request_keys.calling(self.store, request_key, verb, args, key)
+            request_keys.calling(self.store, request_key, verb, args, phase)
         if verb == "follow_up":
             argv, data = ["follow_up", job["id"]], json.dumps({**args, **({"request_key": key} if key else {})})
         else:

@@ -12,6 +12,7 @@ import pytest
 
 from hermes_cli.worker import device, hub as hub_mod, kanban_link, protocol, serve
 from hermes_cli.worker.hub import Hub, HubError
+from hermes_cli.worker.request_keys import new_key
 from hermes_cli.worker.transport import Reply
 from tests.hermes_cli import _worker_fakes as fakes
 from tests.hermes_cli.test_worker_hermes_card import _cli
@@ -140,7 +141,7 @@ def test_a_replayed_follow_up_never_moves_the_task_back_to_its_run(lane):
 
         def dropped(verb, stdin=b"", timeout=120):
             reply = call(verb, stdin, timeout)
-            if verb[0] == "follow_up" and json.loads(stdin).get("request_key") == "rk-k1" and not lost:
+            if verb[0] == "follow_up" and json.loads(stdin)["request_key"].split("#")[0] == "rk-k1" and not lost:
                 lost.append(reply.json())
                 return Reply(255, b"", "connection reset by peer")
             return reply
@@ -219,6 +220,59 @@ def test_an_answer_whose_reply_was_lost_is_not_applied_again_by_another_verb(lan
     assert {p.name: p.read_bytes() for p in task_dir.iterdir()
             if p.name.startswith(("prompt.", "request.", "steer."))} == files
     assert lane.hub.store.load(task_id)["request_keys"]["rk-answer"]["action"] == "answer"
+
+
+def test_a_caller_key_never_meets_the_key_of_a_next_run_after_an_answer(lane, capsys):
+    """An answer with key k left its question open and the run closed: the hub asked for the next run under a device
+    key of its own. A caller key that looks like it is refused and the device is as it was."""
+    task_id = _submitted(lane)
+    serve.serve_once(lane.root)
+    task_dir = lane.root / "tasks" / task_id
+    (task_dir / "live.1.json").write_text(json.dumps({"state": "waiting_human"}), encoding="utf-8")
+    closed: list[str] = []
+    lane.mp.setattr(device, "alive", lambda task, run: not closed)
+    lane.mp.setattr(hub_mod, "ANSWER_CLOSE_WAIT_S", 0)
+
+    def answer(worker_root, tid, text):
+        closed.append(text)
+        (task_dir / "live.1.json").write_text(json.dumps({"state": "running"}), encoding="utf-8")
+        (task_dir / "rc.1").write_text("0\n")
+        return {"action": "answer", "steps": 0, "still_pending": 1, "run": 1}
+
+    lane.mp.setattr(device, "answer", answer)
+    assert lane.hub.send(task_id, "blue", request_key="k") == 0
+    assert (closed, lane.hub.store.load(task_id)["runs"]) == (["blue"], 2)
+    state = {p.name: p.read_bytes() for p in task_dir.iterdir() if p.is_file()}
+    capsys.readouterr()
+    assert _cli(["send", task_id, "green", "--key", "k#next"]) == 2
+    assert capsys.readouterr().err == (
+        "lina worker: request key must match ^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$: k#next\n")
+    assert {p.name: p.read_bytes() for p in task_dir.iterdir() if p.is_file()} == state
+    assert lane.hub.store.load_key("k#next") is None
+
+
+@pytest.mark.parametrize("key", ["a b", "a/b", "k#req", "-lead", "x" * 129, "k\n"])
+def test_a_key_outside_the_caller_pattern_is_refused_before_anything_is_written(lane, key):
+    with pytest.raises(HubError, match=r"^request key must match .+: "):
+        lane.hub.submit(_opts(lane, key=key))
+    assert lane.hub.store.all() == []
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    receipts = lane.hub.store.receipts_of(task_id)
+    with pytest.raises(HubError, match=r"^request key must match .+: "):
+        lane.hub.send(task_id, "more", request_key=key)
+    assert lane.hub.store.receipts_of(task_id) == receipts
+    assert [p.name for p in lane.hub.store.keys.glob("*.json")] == [f"{lane.hub.store.key_name('rk-one')}.json"]
+    assert _requests(lane, task_id) == ["request.1"]
+
+
+def test_the_keys_the_repo_makes_fit_the_caller_pattern(lane):
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    assert lane.hub.send(task_id, "more", request_key="lina-work:12") == 0
+    assert lane.hub.store.load(task_id)["request_keys"]["lina-work:12"]["run"] == 2
+    assert lane.hub.submit(_opts(lane, key="lina-schedule:OS-SIO0000000000:1700000000")) == 0
+    assert lane.hub.submit(_opts(lane, key=new_key())) == 0
 
 
 def test_the_same_key_with_other_arguments_is_refused(lane):
