@@ -64,7 +64,9 @@ Rules that follow from the table:
 | `body` | the text and attachments | as posted |
 | `delivery` | `stored`, `delivered_mid_run`, `queued_next_turn`, `woke_session`, `read`; plus `undeliverable` with a reason | the core, one transition at a time, each with time, target and run |
 
-`read` means the owning session's model saw it (the message is in the session's transcript); the app's "read" mark for
+`read` means the owning session's model saw it: a model call whose request contained the message has completed, which
+the transcript shows as an assistant entry after the message's row. A message row in the transcript with no assistant
+entry after it is only inserted, not read (the steer row is written before the next model call). The app's "read" mark for
 the owner is a separate thing and stays where it is (`hermes_cli/lina_board_write.py:6-8`).
 
 What it reuses (no second store of message text):
@@ -176,10 +178,11 @@ or an agent's message without `reply_to`) on a finished place is stored and star
   the next one; the sender never holds a turn open waiting for the target. That ends the agent-to-agent busy loop
   (section 9, row 4; section 7).
 - **Host restart in the middle.** A message is acknowledged to the client only after it is stored. On start, the core
-  reconciles every message not in `read`: one found in its target's transcript becomes `read`; one in `stored` or
-  `queued_next_turn` is delivered again by its place's rule; one marked `delivered_mid_run` whose turn died with the host
-  is found or not found in the persisted transcript (the steer row is persisted after the tool batch,
-  `agent/agent_runtime_helpers.py:3718-3723`) and re-queued when not found. Today a planned restart keeps queued
+  reconciles every message not in `read`. One with an assistant entry after its row in the target's transcript
+  becomes `read`. One whose row is in the transcript with nothing after it (the host died between inserting the steer
+  row and the model call, `agent/agent_runtime_helpers.py:3718-3723`) is not inserted again: the core resumes that
+  session with a turn that continues from the existing row, so the model reads it once. One not in the transcript at all,
+  in `stored`, `queued_next_turn` or `delivered_mid_run`, is delivered again by its place's rule. Today a planned restart keeps queued
   messages only in `queue` or `steer` mode and drops them in `interrupt`, the gateway's default
   (`gateway/run_busy.py:107-110`, `gateway/run.py:3339`).
 
