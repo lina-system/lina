@@ -935,7 +935,10 @@ class Hub:
             self._human_notice_locked(job, run, now)
 
     def _human_notice_locked(self, job: dict, run: str, now: float) -> None:
-        human = self.transport(job).call(["human", job["id"]], timeout=90).json()
+        try:  # a permission dialog is answered by the runner, never a person; an unknown answer still notifies
+            human = self.transport(job).call(["human", job["id"]], timeout=90).json()
+        except (TransportError, HubError, OSError):
+            human = {}
         if human.get("permission"):
             job.pop("human_since", None)
             return
