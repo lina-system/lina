@@ -4,7 +4,8 @@ Each write runs the ``lina work`` command the CLI runs (``owner-done``, ``owner-
 --answer``, ``add 메모 --via``) through ``work.execute``, the CLI's own path (resume hand-offs, run, recompute, close),
 with ``via="app"``: the rules, the record line and the notice to the owning agent are the command's own. A command
 that refuses (``die``) writes nothing; its one line becomes the 4xx detail. Read marks on the board's notices are kept
-per owner in ``$LINA_HOME/board/read.json`` (``{owner id: {notice key: marked at}}``), so every device reads the same.
+per owner in ``$LINA_HOME/board/read.json`` (``{owner id: {notice key: marked at}}``), so every device reads the same;
+the keys of the replies Web Push sends (lina#244, ``lina_push_watch.reply_keys``) are accepted and kept the same way.
 """
 
 from __future__ import annotations
@@ -230,8 +231,10 @@ def mark_read(body, now: float | None = None) -> dict:
         raise Refused(400, "send exactly one of keys or all: true")
     if keys is not None and (not keys or not all(isinstance(k, str) for k in keys)):
         raise Refused(400, "keys is a non-empty list of notice keys")
+    from hermes_cli.lina_push_watch import reply_keys
     now, root = time.time() if now is None else now, _root()
-    current = {n["key"] for n in current_notices(root, now)}
+    notices = {n["key"] for n in current_notices(root, now)}
+    current = notices | reply_keys(root)  # lina#244: a pushed reply is marked read by its key too
     unknown = sorted(set(keys or ()) - current)
     if unknown:
         raise Refused(400, f"not a current notice: {unknown[0]}")
@@ -240,9 +243,9 @@ def mark_read(body, now: float | None = None) -> dict:
         marks = load_json(_marks_path(root), {})
         marks = marks if isinstance(marks, dict) else {}
         mine = {k: at for k, at in (marks.get(owner) or {}).items() if k in current}
-        for key in current if every else keys:
+        for key in notices if every else keys:
             mine.setdefault(key, int(now))
         marks[owner] = mine
         save_json(_marks_path(root), marks)
-    return {"ok": True, "unread": len(current - set(mine))}
+    return {"ok": True, "unread": len(notices - set(mine))}
 
