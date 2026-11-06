@@ -136,8 +136,27 @@ def git_summary(task: Task) -> str:
                               errors="replace", timeout=60, check=False).stdout
 
     stat_lines = git("diff", "--stat", f"{start}..HEAD").splitlines()[-20:]
-    return (f"branch: {git('branch', '--show-current').strip()}\nworktree: {work}\n\n"
-            f"{git('log', '--oneline', f'{start}..HEAD')}\n" + "\n".join(stat_lines) + "\n")
+    summary = (f"branch: {git('branch', '--show-current').strip()}\nworktree: {work}\n\n"
+               f"{git('log', '--oneline', f'{start}..HEAD')}\n" + "\n".join(stat_lines) + "\n")
+    extras = []
+    task_dir, main_work = task.dir.resolve(), work.resolve()
+    # NUL-delimited porcelain preserves spaces and Git's otherwise quoted paths.
+    for record in git("worktree", "list", "--porcelain", "-z").split("\0\0"):
+        fields = dict(field.split(" ", 1) for field in record.split("\0") if " " in field)
+        if "worktree" not in fields or "HEAD" not in fields:
+            continue
+        path = Path(fields["worktree"]).resolve()
+        if path == main_work or not path.is_relative_to(task_dir):
+            continue
+        head = fields["HEAD"]
+        branch = fields.get("branch", "(detached)").removeprefix("refs/heads/")
+        commits = git("log", "--oneline", "--no-merges", "-5", f"{start}..{head}")
+        short_head = git("rev-parse", "--short", head).strip()
+        extras.append(f"- {path.relative_to(task_dir).as_posix()} {branch} {short_head}\n"
+                      + "".join(f"    {line}\n" for line in commits.splitlines()))
+    if extras:
+        summary += "\nother worktrees in this task:\n" + "".join(extras)
+    return summary
 
 
 def verify(out_dir: Path) -> dict:

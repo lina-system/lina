@@ -1511,28 +1511,28 @@ def task_graph_context(conn: sqlite3.Connection, task_id: str) -> dict:
 
 
 # --- Comments & events ---
-
 def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str, *,
-    source: Optional[dict] = None, run_id: Optional[int] = None,
-) -> int:
+                source: Optional[dict] = None, run_id: Optional[int] = None) -> int:
     if not body or not body.strip():
         raise ValueError("comment body is required")
     if not author or not author.strip():
         raise ValueError("comment author is required")
     now = int(time.time())
-    # ``allow_nested=True``: graph builders (kanban_swarm blackboard seeding)
-    # compose comment writes under one outer commit.
+    # Graph builders (kanban_swarm blackboard seeding) compose writes under one commit.
     with write_txn(conn, allow_nested=True):
         _require_task(conn, task_id)
-        cur = conn.execute(
-            "INSERT INTO task_comments (task_id, author, body, created_at) "
-            "VALUES (?, ?, ?, ?)", (task_id, author.strip(), body.strip(), now),
-        )
+        cur = conn.execute("INSERT INTO task_comments (task_id, author, body, created_at) VALUES (?, ?, ?, ?)",
+                           (task_id, author.strip(), body.strip(), now))
         comment_id = int(cur.lastrowid or 0)
-        _append_event(conn, task_id, "commented", {
-            "author": author, "len": len(body), "source": source, "comment_id": comment_id,
-        }, run_id=run_id)
+        _append_event(conn, task_id, "commented", {"author": author, "len": len(body),
+                      "source": source, "comment_id": comment_id}, run_id=run_id)
         return comment_id
+
+
+def comment_ids_written_by_run(conn: sqlite3.Connection, task_id: str, run_id: int) -> set[int]:
+    """Comments this run wrote on this card, rather than all notes by its profile."""
+    return {cid for event in list_events(conn, task_id) if event.kind == "commented" and event.run_id == run_id
+            and isinstance(cid := (event.payload or {}).get("comment_id"), int)}
 
 
 def _actor_payload(by: Optional[str], reason: Optional[str]) -> dict:

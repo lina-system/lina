@@ -26,12 +26,12 @@ from hermes_cli.process_identity import process_birth
 from hermes_cli.worker import runners, settings, slots
 from hermes_platform.resolver import locate_command
 from tools.environments.local import build_subprocess_env
-from hermes_cli.worker.runners.base import LIVE, Handle, ModelProfile, RunnerError, Task
+from hermes_cli.worker.runners.base import LIVE, Handle, ModelProfile, RunnerError, Task, iter_artifact_files
 from hermes_cli.worker.task import (end_state, git_summary, lock_inputs, read_json, safe_id, stamp, write_json,
                                     write_manifest)
-from hermes_cli.worker.transport import notify_hub
+from hermes_cli.worker.transport import PACKED, notify_hub
 
-LIMIT_KEYS = ("poll_s", "stall_grace_s", "answered_grace_s", "background_max_s", "hard_timeout_s")
+LIMIT_KEYS = ("poll_s", "stall_grace_s", "answered_grace_s", "background_max_s", "hard_timeout_s", "human_max_s")
 HEARTBEAT = "serve.heartbeat"
 
 
@@ -225,6 +225,7 @@ def stop_runner(runner, handle: Handle | None) -> None:
 
 
 def finish_run(worker_root: Path, task: Task, run: int, runner_state: str, runner=None, handle=None) -> str:
+    task.path(f"pid.{run}").unlink(missing_ok=True)
     files = runner.result(handle) if runner is not None and handle is not None else None
     summary = git_summary(task)
     if summary:
@@ -310,7 +311,10 @@ def probe(worker_root: Path, repo: str = "", runner_name: str = "") -> dict:
     running = slots.held(worker_root)
     repo_ok = not repo.startswith(("/", "~")) or (Path(repo).expanduser() / ".git").exists()
     load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
+    memory_max = settings.setting("memory_max", worker=worker) if _systemd_available() else None
     return {"runner": name, "ready": ready, **({"runner_at": why} if ready else {"why": why}), "serve": serve, "running": running,
+            "memory_max": memory_max,
+            "bid_running": slots.held(worker_root, pool="bid"), "named_running": slots.held(worker_root, pool="named"),
             "cores": os.cpu_count() or 1, "load": round(load, 2), "free_gb": _free_gb(worker_root), "repo": repo_ok}
 
 
@@ -402,11 +406,12 @@ def pack(worker_root: Path, task_id: str) -> bytes:
     task = task_of(worker_root, task_id)
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
-        for source, name in ((task.work / "report.md", "report.md"), (task.path("final.md"), "final.md"),
-                             (task.path("manifest.json"), "manifest.json"), (task.path("git.txt"), "git.txt"),
-                             (task.path(f"stderr.{last_run(task)}.txt"), "stderr.txt"), (task.work / "out", "out")):
-            if source.exists():
-                archive.add(str(source), arcname=name)
+        for name, relative in PACKED.items():
+            source = task.path(relative.format(run=last_run(task)))
+            if source.exists() and not source.is_symlink():
+                archive.add(str(source), arcname=name, recursive=False)
+        for source in iter_artifact_files(task.work / "out"):
+            archive.add(str(source), arcname=source.relative_to(task.work).as_posix(), recursive=False)
     return buffer.getvalue()
 
 
@@ -441,7 +446,8 @@ def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[in
             "untar": lambda: _ok(_untar(worker_root, args[0], args[1], stdin)),
             "meta": lambda: _ok(meta(worker_root, args[0], live=args[1:] == ["live"])),
             "probe": lambda: _ok(probe(worker_root, *args[:2])),
-            "reserve": lambda: _ok(slots.reserve(worker_root, safe_id(args[0]), int(args[1]))),
+            "reserve": lambda: _ok(slots.reserve(worker_root, safe_id(args[0]), int(args[1]),
+                                                 pool=args[2] if len(args) > 2 else "bid")),
             "send": lambda: _ok(steer(worker_root, args[0], text)),
             "follow_up": lambda: _ok(follow_up(worker_root, args[0], json.loads(text))),
             "human": lambda: _ok(human(worker_root, args[0])),
@@ -461,6 +467,10 @@ def run_argv(task: Task, run: int) -> list[str]:
     return [sys.executable, "-m", "hermes_cli.main", "worker", "_run", task.id, str(run)]
 
 
+def _systemd_available() -> bool:
+    return sys.platform.startswith("linux") and locate_command("systemd-run").found
+
+
 def launch(worker_root: Path, task: Task, run: int) -> None:
     """Start run *run* as its own process: a transient systemd user unit with the memory cap where there is
     systemd, else a new session (``setsid``). Either way a restart of the service leaves it running."""
@@ -469,7 +479,7 @@ def launch(worker_root: Path, task: Task, run: int) -> None:
     # and the credentials the runner's agent needs, and finds hermes_cli through PYTHONPATH.
     child_env = build_subprocess_env(scrub_secrets=False, inherit_profile_home=False,
                                      extra={"PYTHONPATH": settings.child_pythonpath()})
-    if sys.platform.startswith("linux") and locate_command("systemd-run").found:
+    if _systemd_available():
         unit = f"lina-worker-{task.id}-{run}"
         env = [f"--setenv={key}={child_env[key]}" for key in ("HERMES_HOME", "PATH", "HOME", "LANG", "PYTHONPATH")
                if child_env.get(key)]
@@ -489,3 +499,5 @@ def launch(worker_root: Path, task: Task, run: int) -> None:
     except psutil.Error:
         birth = None  # it already ended: alive() reads it as gone
     write_json(task.path(f"pid.{run}"), {"pid": proc.pid, "birth": birth})
+    if task.path(f"rc.{run}").exists():
+        task.path(f"pid.{run}").unlink(missing_ok=True)

@@ -5,7 +5,7 @@ devices:
   workers:                     # the work devices the hub bids over (`lina worker hosts`)
     build-a: {host: build-a, cap: 2, fast: true}      # ssh alias the hub reaches it by
     build-b: {host: build-b, cap: 1, no_repo: true}   # docs and light work only
-    here:    {host: local, cap: 1, last: true}        # this machine; only when the others are full
+    here:    {host: local, cap: 1, named_cap: 2, last: 2}  # tier 2 fallback; separate --host capacity
 worker:
   hub: {host: hub, lina: lina}     # how a device reaches the hub to report an end (ssh alias, lina command there)
   notice: {command: [my-notify, "{agent}"]}   # the end notice: body on stdin; unset = written to hub/notices only
@@ -24,7 +24,7 @@ from pathlib import Path
 LOCAL = "local"
 DEFAULTS = {"cap": 1, "min_free_gb": 5, "unknown_after_s": 600, "input_max_mb": 300, "memory_max": "12G",
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
-            "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
+            "human_max_s": 3 * 3600.0, "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
 
 
 def child_pythonpath() -> str:
@@ -79,9 +79,14 @@ class Device:
     cap: int = 1
     fast: bool = False
     no_repo: bool = False
-    last: bool = False
+    last: int = 0
     auto: bool = True
     lina: str = "lina"  # the lina command on that device
+    named_cap: int | None = None  # independent --host capacity; defaults to cap
+
+    @property
+    def manual_cap(self) -> int:
+        return self.cap if self.named_cap is None else self.named_cap
 
     @property
     def local(self) -> bool:
@@ -93,8 +98,9 @@ def _device(name: str, item: dict) -> Device | None:
     if not isinstance(host, str) or not host or item.get("off") is True:
         return None
     return Device(name, host, max(1, int(item.get("cap") or DEFAULTS["cap"])), item.get("fast") is True,
-                  item.get("no_repo") is True, item.get("last") is True, item.get("auto") is not False,
-                  str(item.get("lina") or "lina"))
+                  item.get("no_repo") is True, max(0, int(item.get("last") or 0)), item.get("auto") is not False,
+                  str(item.get("lina") or "lina"),
+                  max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None)
 
 
 def devices(base: Path | None = None, raw: dict | None = None) -> list[Device]:

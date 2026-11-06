@@ -19,6 +19,11 @@ WORKER = {"models": {"aliases": {"planner": {"provider": "proxy", "id": "vendor/
 NODE = shutil.which("node")
 
 
+@pytest.fixture(autouse=True)
+def isolated_process_table(monkeypatch):
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_processes._process_table", dict)
+
+
 def test_the_mode_picks_the_default_and_model_overrides_it():
     assert models.for_run("research", None, WORKER).as_dict() == {
         "provider": "proxy", "id": "vendor/plan-model", "thinking": "medium", "alias": "planner",
