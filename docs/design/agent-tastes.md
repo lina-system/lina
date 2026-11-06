@@ -52,8 +52,11 @@ line), plans.
 
 ### Routes
 
-Strength is recomputed at each daily review as `clamp(Σ sign × weight × decay(age), 0, cap of the strongest route
-present)`.
+Each daily review recomputes one signed score per record, `score = Σ sign × weight × decay(age)`, where `sign` is
+`+` for evidence toward liking the target and `−` for evidence toward disliking it. The score sets `valence`
+(`like` above zero, `dislike` below zero, `indifferent` at zero once evidence exists) and its magnitude sets strength:
+`strength = min(|score|, cap of the strongest route present)`. A record whose score crosses zero changes valence and
+logs that change as an event. So bad outcomes build a dislike's strength the same way good outcomes build a like's.
 
 | Route | One evidence item | Weight | Minimum evidence to reach `active` | Cap from this route alone |
 | --- | --- | --- | --- | --- |
