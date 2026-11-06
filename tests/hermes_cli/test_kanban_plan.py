@@ -203,6 +203,28 @@ def test_refusal_names_the_card_and_writes_nothing(board, capsys, plan, names):
     assert _tasks() == {} and _links() == set()
 
 
+@pytest.mark.parametrize("kind, gates, refused", [
+    ("screen", ["hermes kanban gate prs"], True),
+    ("Screen", ["hermes kanban gate prs", "hermes kanban gate ask"], True),
+    ("screen", ["hermes kanban gate artifact ui-qa.md --check true"], True),
+    ("screen", ["hermes kanban gate prs", "hermes kanban gate ui-qa"], False),
+    ("screen", [{"command": "hermes kanban gate ui-qa --author qa"}], False),
+    ("screen", ["python3 kanban_gates.py --db board.db ui-qa"], False),
+    ("implementation", ["hermes kanban gate prs"], False),
+])
+def test_screen_card_needs_the_ui_qa_gate(board, capsys, kind, gates, refused):
+    """A card marked ``kind: screen`` changes what a person sees, so it lists ``gate ui-qa`` (lina#276)."""
+    plan = _refused(cards__1__kind=kind, cards__1__gates=gates)
+    rc, _out, err = _run(capsys, _write(board, plan))
+    if refused:
+        assert rc != 0 and "refused, nothing written" in err
+        assert "card 'plan-cmd': kind screen changes a screen, so its gates need `hermes kanban gate ui-qa`" in err
+        assert _tasks() == {} and _links() == set()
+    else:
+        assert rc == 0, err
+        assert len(_tasks()) == 4
+
+
 def test_delegate_child_cannot_lay_out_a_plan(board, capsys):
     from agent.delegation_context import delegated_child_context
 

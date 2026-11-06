@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -196,6 +197,23 @@ def _gates(value: Any, where: str, *, required: bool) -> list[Any]:
     return gates
 
 
+def _runs_ui_qa(gate: Any) -> bool:
+    """True when the gate command runs ``kanban gate ui-qa`` (or ``kanban_gates.py ui-qa``)."""
+    command = gate if isinstance(gate, str) else gate.get("command", "")
+    try:
+        words = shlex.split(command)
+    except ValueError:
+        return False
+    starts = [i for i, w in enumerate(words) if w == "gate" or w.endswith("kanban_gates.py")]
+    return bool(starts) and "ui-qa" in words[starts[0] + 1:]
+
+
+def _check_screen_gate(kind: Optional[str], gates: list[Any], where: str) -> None:
+    """A card with ``kind: screen`` changes what a person sees: it ends only after QA (lina#276)."""
+    if (kind or "").lower() == "screen" and not any(_runs_ui_qa(g) for g in gates):
+        raise PlanError(f"{where}: kind screen changes a screen, so its gates need `hermes kanban gate ui-qa`")
+
+
 def _assignee(value: Any, where: str, is_profile: Optional[Callable[[str], bool]], *,
               required: bool) -> Optional[str]:
     name = _text(value, where, "assignee", required=required)
@@ -255,13 +273,16 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
     size = raw.get("size")
     if size is not None and size not in ("S", "M", "L"):
         raise PlanError(f"{where}: size must be S, M or L")
+    kind = _text(raw.get("kind"), where, "kind", required=False)
+    gates = _gates(raw.get("gates"), where, required=True)
+    _check_screen_gate(kind, gates, where)
     return WorkCard(
         key=key,
         title=_text(raw.get("title"), where, "title"),
         assignee=_assignee(raw.get("assignee"), where, is_profile, required=True),
         todos=_todos(raw.get("todos"), where),
         sections=sections,
-        gates=_gates(raw.get("gates"), where, required=True),
+        gates=gates,
         max_turns=_positive_int(raw.get("max_turns"), where, "max_turns", required=True),
         max_runtime=_duration(raw.get("max_runtime"), where, required=True),
         workspace=_workspace(raw.get("workspace"), where),
@@ -269,7 +290,7 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
         ledger_todos=[_ledger_todo(item, where)
                       for item in _list(raw.get("ledger_todos"), where, "ledger_todos")],
         size=size,
-        kind=_text(raw.get("kind"), where, "kind", required=False),
+        kind=kind,
     )
 
 
