@@ -78,10 +78,10 @@ def drive(tmp_path, monkeypatch):
     (gh / "rules.json").write_text("[]")
     spec = {"type": "command", "argv": argv, "access_args": {mode: [] for mode in hub_mod.ACCESS}}
 
-    def configure(extra: str = "") -> None:
+    def configure(extra: str = "", there: str = "{host: local, cap: 4}") -> None:
         base.mkdir(exist_ok=True)
         (base / "config.yaml").write_text(
-            "devices:\n  workers:\n    here: {host: local, cap: 4}\n    there: {host: local, cap: 4}\n"
+            f"devices:\n  workers:\n    here: {{host: local, cap: 4}}\n    there: {there}\n"
             "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n"
             "  unknown_after_s: 0\n"
             f"  card_link: {json.dumps({'kind': 'hermes', 'command': [sys.executable, str(script)]})}\n"
@@ -159,7 +159,7 @@ def test_a_run_without_its_deliverable_gets_one_follow_up_and_a_restarted_hub_re
     _tick(drive)
     assert _requests(drive, task) == ["request.1", "request.2"]
     assert "without its deliverable" in (drive.root / "tasks" / task / "prompt.2").read_text()
-    assert list(_ledger(drive)["actions"]) == ["t-goal:t-work1:1:1:deliverable"]
+    assert list(_ledger(drive)["actions"]) == ["t-goal:t-work1:acme-app-1:1:1:deliverable"]
     _tick(drive)
     _tick(drive)  # every _tick is a new Hub on the same root
     assert _requests(drive, task) == ["request.1", "request.2"]
@@ -190,7 +190,7 @@ def test_a_follow_up_whose_reply_was_lost_is_sent_again_under_its_action_id_and_
     _tick(drive)
     assert _requests(drive, task) == ["request.1", "request.2"]
     replayed = [r for r in _hub(drive).store.receipts_of(task) if r["kind"] == "request_replayed"]
-    assert [r["key"] for r in replayed] == ["t-goal:t-work1:1:1:deliverable"]
+    assert [r["key"] for r in replayed] == ["t-goal:t-work1:acme-app-1:1:1:deliverable"]
     assert _hub(drive).store.load(task)["runs"] == 2
 
 
@@ -257,6 +257,46 @@ def test_after_three_follow_ups_in_one_attempt_the_next_blocks_the_card_with_an_
     _tick(drive)
     assert len(_writes(drive, "block")) == 1 and _requests(drive, task)[-1] == "request.4"
     _never_done(drive)
+
+
+def test_two_to_dos_on_one_card_each_get_their_own_follow_up(drive):
+    first, second = _submit(drive), _submit(drive, todo="acme/app#2")
+    _end(drive, first, "done")
+    _end(drive, second, "done")
+    _tick(drive)
+    assert _requests(drive, first) == ["request.1", "request.2"]
+    assert _requests(drive, second) == ["request.1", "request.2"]
+    assert set(_ledger(drive)["actions"]) == {"t-goal:t-work1:acme-app-1:1:1:deliverable",
+                                              "t-goal:t-work1:acme-app-2:1:1:deliverable"}
+
+
+def test_an_action_id_too_long_for_a_request_key_writes_its_to_do_as_a_hash():
+    import hashlib
+    import re
+
+    from hermes_cli.worker.request_keys import CALLER_KEY
+    todo = "[ ] " + "a very long checklist to-do " * 8
+    aid = goal_drive.action_id("t_goal", "t_work1", todo, 1, 2, "deliverable")
+    assert re.fullmatch(CALLER_KEY, aid) and len(aid) <= 128
+    assert aid == f"t-goal:t-work1:{hashlib.sha256(todo.encode()).hexdigest()[:12]}:1:2:deliverable"
+    assert aid != goal_drive.action_id("t_goal", "t_work1", todo + "!", 1, 2, "deliverable")
+
+
+def _set_status(drive, task: str, status: str) -> None:
+    path = drive.cards / f"{task}.json"
+    path.write_text(json.dumps({**json.loads(path.read_text()), "status": status}))
+
+
+def test_a_card_closed_after_its_last_run_end_is_not_driven(drive):
+    _red_check(drive)
+    task = _submit(drive, repo="acme/app")
+    _end(drive, task, "done", report=True)  # the kept view says scheduled
+    _set_status(drive, WORK, "done")
+    shown = len(_writes(drive, "show", WORK))
+    _tick(drive)
+    assert _requests(drive, task) == ["request.1"]
+    assert _ledger(drive)["notes"][WORK] == "skipped: card done"
+    assert len(_writes(drive, "show", WORK)) - shown == 1
 
 
 def _review(drive, task_id: str, key: str) -> None:
@@ -345,7 +385,20 @@ def test_a_lost_node_waits_while_the_outage_is_open_and_moves_once_after_the_run
     moved = jobs[1]
     assert (moved["host"], moved["todo"], moved["card"]["task"]) == ("there", "acme/app#1", WORK)
     assert _ledger(drive)["attempts"][moved["id"]] == 2
-    assert moved["request_key"] == "t-goal:t-work1:1:1:resubmit"
+    assert moved["request_key"] == "t-goal:t-work1:acme-app-1:1:1:resubmit"
+
+
+def test_a_lost_node_run_is_not_moved_to_a_node_that_takes_no_automatic_work(drive):
+    drive.configure(there="{host: local, cap: 4, auto: false}")
+    task = _submit(drive)
+    _outage(drive, True)
+    _tick(drive)
+    _outage(drive, False)
+    (drive.root / "tasks" / task / "rc.1").write_text("1\n")
+    (drive.root / "tasks" / task / "state").write_text("failed\n")
+    _tick(drive)
+    assert [job["id"] for job in _hub(drive).store.all()] == [task]
+    assert "there: only when named with --host" in _ledger(drive)["notes"][task]
 
 
 def test_a_lost_node_whose_run_went_on_is_not_moved(drive):
@@ -357,7 +410,7 @@ def test_a_lost_node_whose_run_went_on_is_not_moved(drive):
     _tick(drive)
     _tick(drive)
     assert [job["id"] for job in _hub(drive).store.all()] == [task]
-    assert "t-goal:t-work1:1:1:node-continued" in _ledger(drive)["actions"]
+    assert "t-goal:t-work1:acme-app-1:1:1:node-continued" in _ledger(drive)["actions"]
 
 
 def test_a_lost_node_is_not_moved_while_another_run_of_the_same_to_do_is_live(drive):
@@ -455,7 +508,8 @@ def test_goal_limits_goal_drive_and_usage_limit_are_validated_work_settings():
 
 
 def test_action_ids_are_request_keys_and_a_reset_time_is_read_from_the_end_text():
-    assert goal_drive.action_id("t_goal", "t_work1", 2, 3, "red-check") == "t-goal:t-work1:2:3:red-check"
+    assert goal_drive.action_id("t_goal", "t_work1", "acme/app#1", 2, 3, "red-check") == \
+        "t-goal:t-work1:acme-app-1:2:3:red-check"
     assert goal_drive.reset_at("limit resets at 2030-01-01T00:00:00Z", 0) == 1893456000
     assert goal_drive.reset_at("try again in 2 hours", 100) == 100 + 7200
     assert goal_drive.reset_at("rate limit", 100) == 100 + goal_drive.USAGE_WAIT_S

@@ -101,9 +101,17 @@ def _part(value) -> str:
     return re.sub(r"[^A-Za-z0-9.-]", "-", str(value))
 
 
-def action_id(goal: str, card: str, attempt: int, run: int, rule: str) -> str:
-    """``<goal card>:<work card>:<attempt>:<run>:<rule>``, a caller request key (``request_keys.CALLER_KEY``)."""
-    return request_keys.checked(":".join(_part(p) for p in (goal, card, attempt, run, rule)))
+ID_MAX = 128  # request_keys.CALLER_KEY: one leading character and up to 127 more
+
+
+def action_id(goal: str, card: str, todo: str, attempt: int, run: int, rule: str) -> str:
+    """``<goal card>:<work card>:<to-do>:<attempt>:<run>:<rule>``, a caller request key (``request_keys.CALLER_KEY``).
+    A to-do that would make the id longer than ``ID_MAX`` is written as the first 12 hex digits of its sha256."""
+    import hashlib
+    parts = [_part(p) for p in (goal, card, todo, attempt, run, rule)]
+    if len(":".join(parts)) > ID_MAX:
+        parts[2] = hashlib.sha256(str(todo).encode("utf-8")).hexdigest()[:12]
+    return request_keys.checked(":".join(parts))
 
 
 def reset_at(text: str, now: float) -> float:
@@ -237,11 +245,12 @@ class Drive:
         self.path = hub.store.root / "goals" / f"{_part(goal)}.json"
         self.ledger = self._load()
         self.goal_card = {"task": goal, "board": entry["board"], **({"kind": entry["kind"]} if entry["kind"] else {})}
+        self.statuses: dict[str, str | None] = {}  # this tick's board status of each card acted on
 
     def _load(self) -> dict:
         import json
         ledger = json.loads(self.path.read_text(encoding="utf-8-sig")) if self.path.is_file() else {}
-        for name in ("attempts", "followups", "runs", "actions", "usage", "blocked", "moved", "github"):
+        for name in ("attempts", "followups", "runs", "actions", "usage", "blocked", "moved", "github", "notes"):
             ledger.setdefault(name, {})
         ledger.setdefault("goal", self.goal)
         return ledger
@@ -257,6 +266,7 @@ class Drive:
         if self.ledger.get("stopped") or self.ledger.get("closed"):
             return
         goal_view = self.board.show(self.goal_card)
+        self.statuses[self.goal] = goal_view.get("status")
         if goal_view.get("status") in CLOSED_CARDS:
             self.ledger["closed"] = goal_view.get("status")
             self.save()
@@ -268,7 +278,7 @@ class Drive:
             return
         errors = _errors()
         for card_id, card in self.entry["cards"].items():
-            if card_id in self.ledger["blocked"] or (card["view"] or {}).get("status") in CLOSED_CARDS:
+            if card_id in self.ledger["blocked"]:
                 continue
             for job in self._latest(card["jobs"]):
                 try:
@@ -328,15 +338,32 @@ class Drive:
         """Block the goal card on limit *name* and stop the drive for this goal."""
         reason = (f"{self.goal_title} · 갈림길 · the goal drive stopped at its {name} limit "
                   f"({self.limits[name]}): {value}; raise worker.goal_limits.{name} or end the goal?")
-        aid = action_id(self.goal, self.goal, 0, 0, f"limit-{name}")
+        aid = action_id(self.goal, self.goal, "goal", 0, 0, f"limit-{name}")
         self.act(aid, lambda _aid: self.block(self.goal_card, reason))
         self.ledger["stopped"] = {"limit": name, "value": value, "reason": reason, "at": self.now}
         self.save()
         self.hub.store.log(f"goal drive: goal {self.goal} stopped: {name} {value}")
 
+    def status(self, card: dict) -> str | None:
+        """The card's status on the board now, read once per tick: the kept view is a snapshot of a run's end."""
+        if card["task"] not in self.statuses:
+            self.statuses[card["task"]] = self.board.show(card).get("status")
+        return self.statuses[card["task"]]
+
+    def may_act(self, card: dict) -> bool:
+        """Whether the drive may act on the work card: not when it is done, archived or blocked by someone else (the
+        ledger notes ``skipped: card <status>``)."""
+        status = self.status(card["card"])
+        if status in CLOSED_CARDS or status == "blocked":
+            if self.ledger["notes"].get(card["card"]["task"]) != f"skipped: card {status}":
+                self.ledger["notes"][card["card"]["task"]] = f"skipped: card {status}"
+                self.save()
+            return False
+        return True
+
     def block(self, card: dict, reason: str) -> str:
         """Block *card* for a person; a card already blocked (a block made just before a restart) is left as it is."""
-        if self.board.show(card).get("status") == "blocked":
+        if self.status(card) == "blocked":
             return "already blocked"
         self.board.block(card, reason)
         return reason
@@ -357,7 +384,7 @@ class Drive:
         attempt, run = self.ledger["attempts"][job["id"]], int(job.get("runs") or 1)
 
         def ids(rule: str) -> str:
-            return action_id(self.goal, job["card"]["task"], attempt, run, rule)
+            return action_id(self.goal, job["card"]["task"], job.get("todo") or job["id"], attempt, run, rule)
         count, by = self.rounds(job)
         if count > FOLLOW_UPS:  # a round the drive did not send went past the limit: it cannot be stopped, only met
             self._block_card(card, job, ids, count, by)
@@ -376,7 +403,7 @@ class Drive:
     def follow_up(self, card: dict, job: dict, ids, rule: str, message: str) -> None:
         """One follow-up on the run; a follow-up due after ``FOLLOW_UPS`` of this attempt blocks the card instead."""
         from hermes_cli.worker.hub import ENDED
-        if ids(rule) in self.ledger["actions"]:
+        if ids(rule) in self.ledger["actions"] or not self.may_act(card):
             return
         sent, by = self.rounds(job)
         if sent >= FOLLOW_UPS:
@@ -411,6 +438,8 @@ class Drive:
         return "the goal drive" if key and key.startswith(f"{_part(self.goal)}:") else "the card session"
 
     def _block_card(self, card: dict, job: dict, ids, count: int, by: str, rule: str | None = None) -> None:
+        if ids("block") not in self.ledger["actions"] and not self.may_act(card):
+            return
         title = (card["view"] or {}).get("title") or job["card"]["task"]
         reason = (f"{title} · 갈림길 · {count} follow-ups on run {job['id']} did not settle it (the last from {by}"
                   + (f", now: {rule}" if rule else "") + "); continue, rescope or stop?")
@@ -421,8 +450,11 @@ class Drive:
     def park(self, card: dict, aid: str, wait_for: str, reason: str) -> None:
         """Park the card on *wait_for* once (``kanban schedule --wait-for``); a card in a turn or blocked is left. A
         park the board refuses is recorded and not tried again: the card's own session still parks itself."""
+        if aid in self.ledger["actions"] or not self.may_act(card):
+            return
+
         def schedule(_aid: str) -> str:
-            status = (card["view"] or {}).get("status")
+            status = self.status(card["card"])
             if status not in PARKABLE:
                 return f"not parked: card is {status}"
             try:
@@ -515,7 +547,7 @@ class Drive:
         run = int(job.get("runs") or 1)
         wait = self.ledger["usage"].get(job["id"])
         if wait and int(wait["run"]) == run:
-            if self.now >= float(wait["until"]):
+            if self.now >= float(wait["until"]) and self.may_act(card):
                 self.act(ids("usage-resume"), lambda aid: self.hub.send(
                     job["id"], "The usage limit has reset. Carry on with the task where you stopped.", job["card"],
                     request_key=aid) or "continued after the usage limit")
@@ -569,6 +601,8 @@ class Drive:
         from hermes_cli.worker.hub import ENDED
         if ids(rule) in self.ledger["actions"]:
             return True
+        if not self.may_act(card):
+            return True
         live = [other["id"] for other in self.hub.store.all()
                 if other.get("card") and other["id"] != job["id"] and self._todo(other) == self._todo(job)
                 and other.get("state") not in ENDED + ("unknown",)]
@@ -582,9 +616,13 @@ class Drive:
         if attempt > self.limits["attempts"]:
             self.stop("attempts", f"to-do {self._todo(job)} would start attempt {attempt}")
             return True
-        node = self._other_node(job)
+        node, why = self._other_node(job)
         if node is None:
-            self.hub.store.log(f"goal drive: {job['id']} not moved: no other node can take it now")
+            note = f"not moved: no other node can take it now ({why})"
+            if self.ledger["notes"].get(job["id"]) != note:
+                self.ledger["notes"][job["id"]] = note
+                self.save()
+            self.hub.store.log(f"goal drive: {job['id']} {note}")
             return False
 
         def submit(aid: str) -> str:
@@ -595,12 +633,32 @@ class Drive:
             return f"{rule}: {job['id']} → {new} on {node}"
         return self.act(ids(rule), submit)
 
-    def _other_node(self, job: dict) -> str | None:
+    def _other_node(self, job: dict) -> tuple[str | None, str]:
+        """Another node by automatic placement (an ``auto: false`` device takes no moved run), or the device the
+        original run was explicitly placed on (``--host``); with the reasons the others were passed."""
         others = [dev for dev in self.hub.devices() if dev.name != job.get("host")]
-        dev, _ = bidding.bid(others, self.hub.worker_root, repo=job.get("repo"), runner=job["runner"], manual=True,
-                             access=job.get("access"),
-                             min_free_gb=int(settings.setting("min_free_gb", worker=self.hub.worker)))
-        return dev.name if dev else None
+        free_gb = int(settings.setting("min_free_gb", worker=self.hub.worker))
+        dev, table = bidding.bid(others, self.hub.worker_root, repo=job.get("repo"), runner=job["runner"],
+                                 access=job.get("access"), min_free_gb=free_gb)
+        rows = {row["host"]: row.get("why") for row in table}
+        named = next((other for other in others if other.name == self._named_host(job) and not other.auto), None)
+        if dev is None and named is not None:
+            dev, table = bidding.bid([named], self.hub.worker_root, repo=job.get("repo"), runner=job["runner"],
+                                     manual=True, access=job.get("access"), min_free_gb=free_gb)
+            rows.update({row["host"]: row.get("why") for row in table})
+        for other in others:
+            rows.setdefault(other.name, "only when named with --host")
+        why = "; ".join(f"{host}: {reason}" for host, reason in rows.items() if reason) or "no other node"
+        return (dev.name if dev else None), why
+
+    def _named_host(self, job: dict) -> str | None:
+        """The ``--host`` the original run of this to-do was handed out with (the drive's own moves name a host too,
+        but that is not the owner's choice)."""
+        made_from = {new: old for old, new in self.ledger["moved"].items()}
+        root = job
+        while root["id"] in made_from and (earlier := self.hub.store.load(made_from[root["id"]])):
+            root = earlier
+        return root.get("fixed_host")
 
     def _brief_opts(self, job: dict, node: str, aid: str) -> dict:
         return {"briefs": [job["brief"]], "mode": job["mode"], "topic": job.get("topic"), "todo": job.get("todo"),

@@ -17,7 +17,13 @@ environment as the run's start and end comments. A card on LINA's own board (`ca
 LINA's board API.
 
 The drive only drives the newest run of each to-do of a work card. It leaves a goal whose goal card is done or
-archived, and a work card that is done or archived.
+archived.
+
+Which goal a work card belongs to, and its title, come from the card as the hub read it at its last run end (the
+`show` the end already makes). That copy is not the card's status: before the drive acts on a work card (a follow-up,
+a resubmit or move, a block or a park) it reads the card's status from the board, once per card per tick (on LINA's
+board through its API). A card that is `done` or `archived`, or `blocked` by someone else, is not acted on; the
+ledger's `notes` say `skipped: card <status>`.
 
 ## Done stays ours
 
@@ -36,10 +42,10 @@ Each rule acts at most once per action id.
 | `deliverable` | The run ended `done`, `done_empty` or `review` with no pull request for its branch (a run with a repository), no `report.md` and no file in `out/` | One follow-up asking for it. |
 | `block` | A follow-up is due and the attempt has had 3 rounds already, or the attempt already has more than 3 | Blocks the work card with kind `needs_input` and one inbox line, `<card title> · 갈림길 · <one line>` naming who sent the last round, and stops driving that card. |
 | `node-park` | The run's node is lost and its device is still unreachable | Parks the work card with `schedule --wait-for until:<time>` (`worker.unknown_after_s` ahead). |
-| `resubmit` | The run's node was lost, and once the device answers again the run ended there or never started | Submits the same brief on another allowed node (the bid winner among the other devices), from the pushed branch: `origin/<branch>` when GitHub has the branch, else the repository's default. Not while another run of the same to-do is live. A new attempt. |
+| `resubmit` | The run's node was lost, and once the device answers again the run ended there or never started | Submits the same brief on another allowed node, from the pushed branch. The node is chosen by automatic placement among the other devices, so an `auto: false` device takes no moved run, except the device the original run was handed out to with `--host`. When no node can take it, the ledger's `notes` say why for each device, and the drive tries again on the next tick. The branch: `origin/<branch>` when GitHub has the branch, else the repository's default. Not while another run of the same to-do is live. A new attempt. |
 | `node-continued` | Same, but the device says the run went on | Nothing is moved; the ledger records it. |
 | `usage-park`, `usage-resume` | The run ended `failed`, `stalled` or `done_empty` and its end text or stderr matches its runner's usage-limit pattern | Parks the work card until the reset time (an ISO time after `reset`, or `reset in <n> <unit>`; else 1 h), then sends one message that continues the same task. Not a new attempt and not a follow-up. |
-| `usage-move` | Same, with `worker.goal_limits.usage_move: true` and another node free | Submits the same brief on that node instead of waiting. Same attempt. |
+| `usage-move` | Same, with `worker.goal_limits.usage_move: true` and another node free | Submits the same brief on that node instead of waiting, chosen as for `resubmit`. Same attempt. |
 
 ### Follow-up rounds
 
@@ -64,8 +70,11 @@ The usage-limit pattern is a runner's `usage_limit` in the work settings; withou
 
 ## Action ids and the ledger
 
-Every action has the id `<goal card>:<work card>:<attempt>:<run>:<rule>`, with characters outside letters, digits,
-`.` and `-` written as `-` (`t_goal` becomes `t-goal`). It matches `request_keys.CALLER_KEY`, and every follow-up and
+Every action has the id `<goal card>:<work card>:<to-do>:<attempt>:<run>:<rule>`, with characters outside letters,
+digits, `.` and `-` written as `-` (`t_goal` becomes `t-goal`, `acme/app#1` becomes `acme-app-1`). `<to-do>` is the
+run's to-do (`--todo`), or its hub task ID when it has none, so two to-dos of one card never share an id. An id that
+would be longer than 128 characters writes `<to-do>` as the first 12 hex digits of its sha256. A goal limit's block
+uses `goal` as its to-do and `0` as attempt and run. The id matches `request_keys.CALLER_KEY`, and every follow-up and
 submit carries it as its request key, so a hub restarted in the middle of a pass repeats nothing: the device writes
 are replayed, not run again.
 
@@ -79,6 +88,7 @@ The ledger is `$LINA_HOME/worker/hub/goals/<goal card>.json`, written under the 
 | `started_at` | The goal's start: its first task's hand-out time. |
 | `actions` | Action id → time and result. |
 | `usage`, `moved`, `blocked`, `red_heads`, `github` | Usage waits, moved tasks, cards the drive blocked, followed-up heads, cached GitHub reads. |
+| `notes` | Why the drive left a card (`skipped: card <status>`) or a run (`not moved: …`). |
 | `stopped` | Set when a limit stopped the drive for this goal. |
 
 A `block` the drive made just before the hub stopped is not made again: the drive reads the card first and leaves a
