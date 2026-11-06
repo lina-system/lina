@@ -19,6 +19,7 @@ def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
               manual: bool = False) -> str | None:
     """Why *dev* cannot take the task now, or None when it can."""
     checks = (
+        (bool(probe.get("protocol_error")), probe.get("reason")),
         (not manual and not dev.auto, "only when named with --host"),
         (bool(repo) and dev.no_repo, "takes no repo work"),
         ("error" in probe, f"unreachable: {probe.get('error')}"),
@@ -65,6 +66,8 @@ def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, 
     def ask(dev: Device) -> dict:
         reply = for_device(dev, worker_root).call(["probe", repo or "", runner], timeout=60)
         if reply.code != 0:
+            if reply.json().get("protocol_error"):
+                return reply.json()
             return {"error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
         return reply.json() or {"error": "no answer"}
 
