@@ -1991,7 +1991,7 @@ def dispatch_once(
         )
 
     try:
-        with _kb.pin_first_board_resolution():
+        with _kb.own_board_resolution():
             db_path = _kb.kanban_db_path(board=board)
     except Exception:
         # Must not lose the tick — fall through to an unguarded dispatch.
@@ -2102,7 +2102,7 @@ def _dispatch_lane_task(
     if claimed is None:
         return False
     try:
-        with _kb.pin_first_board_resolution():
+        with _kb.own_board_resolution():
             if claimed.workspace_kind == "worktree":
                 workspace, resolved_branch_name = _kbw._resolve_worktree_workspace(claimed, board=board)
             else:
@@ -2821,7 +2821,7 @@ def _default_spawn(task: Task, workspace: str, *, board: Optional[str] = None) -
             env[var] = override
     # Pin the worker's board: DB + workspaces paths (they must survive a `hermes -p`
     # HERMES_HOME rewrite) and the slug, for a path resolved without those env vars.
-    with _kb.pin_first_board_resolution():
+    with _kb.own_board_resolution():
         env["HERMES_KANBAN_DB"] = str(_kb.kanban_db_path(board=board))
         env["HERMES_KANBAN_WORKSPACES_ROOT"] = str(_kb.workspaces_root(board=board))
     env["HERMES_KANBAN_BOARD"] = _kb._normalize_board_slug(board) or _kb.get_current_board()

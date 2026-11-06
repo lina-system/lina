@@ -357,10 +357,9 @@ def pin_first_board_resolution():
     tool's ``board=``) is a USER property and must never run inside this
     context; with no pin set this context changes nothing.
 
-    Machine flows that resolve their OWN board (the dispatcher's tick lock,
-    worker spawn env and workspace root) wrap in it too: a dispatcher launched
-    from an agent shell carries the descendant fence, and its board must keep
-    resolving to the pin rather than being refused as another board (#206).
+    Machine flows that resolve their OWN board go through
+    :func:`own_board_resolution` instead: a fenced dispatcher keeps the pin,
+    an unfenced one honours the board it was asked for (#206).
     """
     token = _PIN_FIRST_BOARD_RESOLUTION.set(True)
     try:
@@ -3991,6 +3990,7 @@ from hermes_cli.kanban_db_paths import (
     current_board_path,
     kanban_home,
     own_board_path,
+    own_board_resolution,
     refuse_cross_board_pin,
     task_attachments_dir,
     worker_logs_dir,

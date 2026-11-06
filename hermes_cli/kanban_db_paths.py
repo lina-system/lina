@@ -17,9 +17,11 @@ Split out of ``hermes_cli.kanban_db``; origin-resident helpers are reached late-
 
 from __future__ import annotations
 
+import contextlib
 import os
 import re
 from pathlib import Path
+from typing import Iterator
 from typing import Optional
 
 
@@ -102,6 +104,23 @@ def _contained_path(root: Path, slug: str, leaf: Optional[str] = None) -> Path:
     if leaf is None:
         return Path(real)
     return Path(os.path.realpath(os.path.join(real, leaf)))
+
+
+@contextlib.contextmanager
+def own_board_resolution() -> Iterator[None]:
+    """Resolve a board path for the caller's OWN board, fence-aware.
+
+    A fenced caller — a dispatched worker or a delegated child — must keep resolving
+    through the dispatcher's env pins: that is what stops it reaching another board.
+    An unfenced caller's explicit ``board=`` is user intent and outranks an env pin, so
+    a dispatcher asked for ``--board private`` must pin its workers to private's files
+    rather than to whatever ``HERMES_KANBAN_DB`` happens to hold (#206).
+    """
+    if _kb._explicit_board_intent_pinned():
+        with _kb.pin_first_board_resolution():
+            yield
+    else:
+        yield
 
 
 def own_board_path(slug: str, default_parts: tuple[str, ...], leaf: str) -> Path:
