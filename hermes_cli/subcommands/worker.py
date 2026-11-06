@@ -133,6 +133,7 @@ def build_worker_parser(subparsers) -> None:
                     "notice goes to the agent's chat and, from a work card, onto the card. Never poll: wait for it.")
     sub = parser.add_subparsers(dest="worker_action")
     _submit_parser(sub)
+    __import__("hermes_cli.subcommands.worker_settings", fromlist=["add_parser"]).add_parser(sub)  # lina#256
     for name, text in (("status", "Run, delivery and verdict state; live: what the agent does now"),
                        ("result", "Fetch report.md, final.md, out/, git.txt and check them against the manifest"),
                        ("receipts", "The append-only record of a task"), ("unschedule", "Switch a schedule off")):
