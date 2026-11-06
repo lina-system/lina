@@ -22,6 +22,7 @@ from hermes_cli.web_routers import lina_board, lina_talk
 router = APIRouter()
 router.include_router(lina_board.router)  # lina#39: mounted here so web_server.py stays at its cap
 router.include_router(lina_talk.router)  # lina#167: the same way
+router.include_router(__import__("hermes_cli.web_routers.lina_work_settings", fromlist=["router"]).router)  # lina#256
 
 
 async def _serve(view: str, if_none_match: Optional[str]) -> Response:

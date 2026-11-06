@@ -1,12 +1,14 @@
 """One change stream for the app (lina#150): ``GET /api/lina/events`` upgraded to a WebSocket.
 
-Three append-only stores are tailed, each by its own position, and the three positions travel as one opaque cursor:
+Four append-only stores are tailed, each by its own position, and the four positions travel as one opaque cursor:
 
 - ``work``: the work record's ``event`` table (one row per record line and run hand-off), by event id.
 - ``worker``: ``lina worker``'s ``receipts.jsonl`` (the hub appends a receipt on every run state change, next to the
   job file it rewrites), by byte offset; every receipt is sent except the few that change nothing on the board
   (``WORKER_NOISE_KINDS``): a dropped change leaves a stale screen, an extra event costs one refetch.
 - ``kanban``: the board's ``task_events`` table, by row id, read-only (the plugin's ``/events`` source).
+- ``settings``: the work settings' ``work-settings/audit.jsonl`` (lina#256, one line per revision), by line count;
+  ``kind`` is ``revised``, ``rolled_back`` or ``outside`` and ``id`` the revision (``r42``).
 
 Each socket polls with one connection per store on its own single-thread executor (the kanban plugin's tailer
 pattern), at most every ``BATCH_SECONDS``. No ``since``: the first message is the tail with no events. A ``since``
@@ -40,7 +42,7 @@ from hermes_cli.lina_board import _WORK_LOCK, _root
 
 BATCH_SECONDS = 0.3
 PAGE = 200
-CURSOR_PREFIX = "c2."  # c1 had positions only: an old cursor gets one resync
+CURSOR_PREFIX = "c3."  # c1 had positions only, c2 no settings source: an old cursor gets one resync
 UNKNOWN = "?"  # the identity of a source that could not be read when its position was taken
 _FAILS = (OSError, sqlite3.Error, RuntimeError)
 # Receipts that change nothing the board shows of a run (``worker/board.py``: state and reason from ``work_state``,
@@ -95,11 +97,15 @@ class Cursor(NamedTuple):
     work: int
     worker: int
     kanban: int
-    ids: tuple[str, str, str] = ("", "", "")  # the store identity each position was taken in ("" = empty store)
+    settings: int = 0
+    ids: tuple[str, ...] = ("", "", "", "")  # the store identity each position was taken in ("" = empty store)
+
+
+SOURCES = 4
 
 
 def encode(cursor: Cursor) -> str:
-    raw = ".".join([str(cursor.work), str(cursor.worker), str(cursor.kanban), *(i or "-" for i in cursor.ids)])
+    raw = ".".join([*(str(p) for p in cursor[:SOURCES]), *(i or "-" for i in cursor.ids)])
     return CURSOR_PREFIX + base64.urlsafe_b64encode(raw.encode()).decode().rstrip("=")
 
 
@@ -109,12 +115,12 @@ def decode(text: str) -> Cursor | None:
     body = text[len(CURSOR_PREFIX):]
     try:
         parts = base64.urlsafe_b64decode(body + "=" * (-len(body) % 4)).decode().split(".")
-        values = [int(p) for p in parts[:3]]
+        values = [int(p) for p in parts[:SOURCES]]
     except ValueError:
         return None
-    if len(parts) != 6 or any(v < 0 for v in values):
+    if len(parts) != 2 * SOURCES or any(v < 0 for v in values):
         return None
-    return Cursor(*values, ids=tuple("" if i == "-" else i for i in parts[3:]))
+    return Cursor(*values, ids=tuple("" if i == "-" else i for i in parts[SOURCES:]))
 
 
 def _digest(*parts: Any) -> str:
@@ -133,13 +139,15 @@ def _epoch(value: Any) -> int | None:
 
 
 class Stream:
-    """The three stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
+    """The four stores of one socket. Every method runs on the socket's own thread (connections are thread-bound)."""
 
     def __init__(self, root: Path):
         from hermes_cli.worker import settings
         from hermes_cli.worker.hub_store import Store
         self.root = root
         self.receipts = Store(settings.root(root)).receipts
+        from hermes_cli.lina_work_settings_store import Store as SettingsStore
+        self.audit = SettingsStore(root).audit
         self.work_db: Any = None
         self.kanban_db: sqlite3.Connection | None = None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lina-events")
@@ -208,7 +216,39 @@ class Stream:
         """Per source: name, position now, identity, events after a position, and whether a position is kept."""
         return (("work", self._work_bounds, self._work_id, self._work_events, self._work_kept),
                 ("worker", self._worker_size, self._worker_id, self._worker_events, self._worker_kept),
-                ("kanban", self._kanban_top, self._kanban_id, self._kanban_events, self._kanban_kept))
+                ("kanban", self._kanban_top, self._kanban_id, self._kanban_events, self._kanban_kept),
+                ("settings", self._settings_count, self._settings_id, self._settings_events, self._settings_kept))
+
+    # ---------------------------------------------------------------- settings (lina#256)
+    def _settings_lines(self) -> list[bytes]:
+        if not self.audit.is_file():
+            return []
+        data = self.audit.read_bytes()
+        return data[:data.rfind(b"\n") + 1].splitlines()  # a line still being written waits for the next poll
+
+    def _settings_count(self) -> int:
+        return len(self._settings_lines())
+
+    def _settings_id(self) -> str:
+        lines = self._settings_lines()
+        return _digest(self.audit.stat().st_ino, lines[0]) if lines else ""
+
+    def _settings_kept(self, position: int) -> bool:
+        return position <= self._settings_count()
+
+    def _settings_events(self, after: int) -> tuple[int, list[dict]]:
+        from hermes_cli.lina_work_settings_store import EVENT_KIND
+        lines = self._settings_lines()
+        out = []
+        for line in lines[after:]:
+            try:
+                rec = json.loads(line)
+            except ValueError:
+                continue
+            if isinstance(rec, dict) and rec.get("rev"):
+                kind = EVENT_KIND.get((rec.get("by") or {}).get("kind"), "revised")
+                out.append({"source": "settings", "kind": kind, "id": rec["rev"], "at": _epoch(rec.get("at"))})
+        return max(after, len(lines)), out
 
     def tail(self) -> Cursor:
         """Each source's tail, taken on its own: one that cannot be read gets position 0 and ``UNKNOWN``."""
@@ -294,7 +334,7 @@ class Stream:
         resync (the batch's events are dropped: the refetched snapshot has them). So is a kanban page with ids
         missing after the position (``_contiguous``): the source is taken at its tail and nothing past the gap is
         sent as if nothing was lost."""
-        positions, ids, events, resync = list(since[:3]), list(since.ids), [], False
+        positions, ids, events, resync = list(since[:SOURCES]), list(since.ids), [], False
         for i, (name, at, ident, read, _) in enumerate(self._sources()):
             try:
                 if ids[i] == UNKNOWN:
