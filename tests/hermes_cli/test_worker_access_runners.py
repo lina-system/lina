@@ -220,3 +220,30 @@ def test_omo_failed_downgrade_does_not_mutate_handle(task, omo, monkeypatch):
     with pytest.raises(RunnerError):
         runner.follow_up(handle, "more", access="read-only")
     assert handle.data["access"] == Handle.load(task).data["access"] == "workspace-write"
+
+
+@pytest.mark.parametrize("answer", [None, {"action": "error", "reason": "socket closed"}, {"ok": False}])
+def test_omo_state_keeps_an_unreadable_state_answer_for_settle(task, monkeypatch, answer):
+    # Given an omo run whose state query fails transiently.
+    from hermes_cli.worker.runners import omo as omo_mod
+    runner = OmoRunner.__new__(OmoRunner)
+    runner.name, runner.limits = "omo", {}
+    monkeypatch.setattr(runner, "session", lambda args, timeout: answer, raising=False)
+    monkeypatch.setattr(runner, "_permissions", lambda *a: pytest.fail("no dialog read on an unreadable state"),
+                        raising=False)
+    seen = []
+
+    class Recorder:
+        def __init__(self, task, run, ref, call, limits):
+            self.call = call
+
+        def step(self):
+            seen.append(self.call(["state", "ref"], 60))
+            return "running"
+
+    monkeypatch.setattr(omo_mod, "Settle", Recorder)
+    handle = Handle(task, 1, {"ref": "ref", "access": "workspace-write"})
+    # When one settle step runs.
+    assert runner.state(handle) == "running"
+    # Then Settle sees the same unreadable answer (its retry and error count apply), not an empty state snapshot.
+    assert seen == [answer]
