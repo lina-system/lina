@@ -32,6 +32,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from hermes_cli.kanban_workflow import DEFAULT_STATUSES as VALID_STATUSES
+from hermes_cli.kanban_db_wait import needs_input_wait, park_payload, scheduled_resume_status
 from toolsets import get_toolset_names
 from utils import unlink_files_older_than
 
@@ -2952,7 +2953,7 @@ def edit_task(
 
 def block_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
-    kind: Optional[str] = None, expected_run_id: Optional[int] = None,
+    kind: Optional[str] = None, expected_run_id: Optional[int] = None, wait_for: Optional[dict] = None,
 ) -> bool:
     """``running``/``ready`` -> ``blocked`` (or ``todo`` / ``triage``, see
     :func:`_route_block`). ``kind='dependency'`` with no incomplete parent is
@@ -2995,7 +2996,7 @@ def block_task(
             if classified != 1:
                 return False
             _append_event(conn, task_id, "blocked", {
-                "kind": kind, "reason": reason, "classified_in_place": True,
+                "kind": kind, "reason": reason, "classified_in_place": True, **needs_input_wait(kind, wait_for),
             })
             return True
         source_status = _retry_status_for_run(conn, task_id) if cur_row["status"] == "running" else "ready"
@@ -3013,8 +3014,8 @@ def block_task(
             prev_recurrences=int(_row_get(cur_row, "block_recurrences") or 0),
         )
         if rekind_reason:
-            payload["requested_kind"] = requested_kind
-            payload["rekind_reason"] = rekind_reason
+            payload.update(requested_kind=requested_kind, rekind_reason=rekind_reason)
+        payload.update(needs_input_wait(kind, wait_for))   # the event that wakes it (kanban_db_wait)
         sql = f"""
                 UPDATE tasks
                    SET status        = '{new_status}',
@@ -3384,16 +3385,16 @@ def _landing_status_after_parents(conn: sqlite3.Connection, task_id: str) -> str
 
 
 def unblock_task(conn: sqlite3.Connection, task_id: str, *,
-    by: Optional[str] = None, reason: Optional[str] = None,
+    by: Optional[str] = None, reason: Optional[str] = None, keep_failures: bool = False,
 ) -> bool:
     """``blocked``/``scheduled`` -> its resumable phase (parent re-gated; ``review``
     when that is where it left off), closing any leaked run first."""
     now = int(time.time())
-    with write_txn(conn):
+    with write_txn(conn, allow_nested=True):   # nested: the dispatcher wake revalidates first
         resume_status = (
             _resume_status_from_events(conn, task_id)
             if _task_status(conn, task_id) == "blocked"
-            else "ready"
+            else scheduled_resume_status(conn, task_id)
         )
         _reclaim_dangling_run(
             conn, task_id, statuses=("blocked", "scheduled"), now=now,
@@ -3408,13 +3409,13 @@ def unblock_task(conn: sqlite3.Connection, task_id: str, *,
         )
         # ``block_kind``/``block_recurrences`` deliberately survive the unblock:
         # resetting them is the amnesia that let cron-unblock <-> re-block loop
-        # unbounded; only complete_task clears them. ``consecutive_failures``
-        # (the dispatcher's spawn/crash counter) IS reset — a deliberate unblock
-        # is a fresh start for the retry budget.
+        # unbounded; only complete_task clears them. ``consecutive_failures`` (the spawn/crash
+        # counter) IS reset by a deliberate unblock, a fresh start for the retry budget; an
+        # automatic wake (``keep_failures``, kanban_db_wait) keeps it: waiting is no recovery.
         cur = conn.execute(
-            "UPDATE tasks SET status = ?, current_run_id = NULL, "
-            "consecutive_failures = 0, last_failure_error = NULL "
-            "WHERE id = ? AND status IN ('blocked', 'scheduled')", (new_status, task_id),
+            "UPDATE tasks SET status = ?, current_run_id = NULL"
+            + ("" if keep_failures else ", consecutive_failures = 0, last_failure_error = NULL")
+            + " WHERE id = ? AND status IN ('blocked', 'scheduled')", (new_status, task_id),
         )
         if cur.rowcount != 1:
             return False
@@ -3691,11 +3692,11 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> bool:
 
 def schedule_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
-    expected_run_id: Optional[int] = None,
+    expected_run_id: Optional[int] = None, wait_for: Optional[dict] = None,
 ) -> bool:
-    """Park in ``scheduled`` (waiting on time, not a human; not dispatchable)
-    until ``unblock_task`` re-gates it."""
+    """Park in ``scheduled`` (a time or event wait, not dispatchable) until ``unblock_task``; see kanban_db_wait."""
     with write_txn(conn):
+        payload = park_payload(conn, task_id, reason, wait_for)
         params: list[Any] = [task_id]
         sql = """
             UPDATE tasks
@@ -3714,7 +3715,7 @@ def schedule_task(
         run_id = _end_or_synthesize_run(
             conn, task_id, outcome="scheduled", status="scheduled", summary=reason, synthesize=bool(reason),
         )
-        _append_event(conn, task_id, "scheduled", {"reason": reason}, run_id=run_id)
+        _append_event(conn, task_id, "scheduled", payload, run_id=run_id)
         return True
 
 

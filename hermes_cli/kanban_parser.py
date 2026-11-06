@@ -83,6 +83,9 @@ _TASK_IDS = _arg("task_ids", nargs="+")
 _SLUG = _arg("slug")
 _TENANT = _arg("--tenant", help="Tenant namespace")
 _PRIORITY = _arg("--priority", type=int, default=0, help="Priority tiebreaker")
+_WAIT_FOR_HELP = ("Event that wakes the task by itself on a dispatcher tick: card:<id> (that card "
+                  "is done), review:<id> (that review card has its result), pr:<url|owner/repo#n> "
+                  "(the PR's required checks finished) or until:<epoch|ISO-8601>.")
 _RECLAIM_REASON = _reason("Human-readable reason (recorded on the reclaimed event)")
 _NOTIFY_TARGET = (
     _arg("--platform", required=True),
@@ -327,11 +330,15 @@ _SPECS = [
                   "blocked for a human; 'transient' marks a maybe-flaky failure. "
                   "Repeated same-kind re-blocks after unblock route the task to "
                   "triage to break unblock loops. Omit for a generic block."),
+        _arg("--wait-for", metavar="EVENT", help=_WAIT_FOR_HELP + " Implies --kind needs_input; "
+             "without it a needs_input block waits for a person."),
     ], help="Mark one or more tasks blocked"),
     _cmd("schedule", [
         _TASK_ID,
         _arg("reason", nargs="*", help="Reason/timing note (also appended as a comment)"),
         _bulk_ids("schedule"),
+        _arg("--wait-for", metavar="EVENT", help=_WAIT_FOR_HELP + " Without it the task waits "
+             "for an explicit unblock."),
     ], help="Park one or more tasks in Scheduled (waiting on time, not human input)"),
     _cmd("unblock", [
         _reason("Optional reason/note — recorded as a comment before unblocking. Quote multi-word reasons."),

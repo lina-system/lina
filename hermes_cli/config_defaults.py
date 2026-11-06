@@ -1883,9 +1883,13 @@ DEFAULT_CONFIG = {
         "review_dispatch": True,
         # Seconds between dispatcher ticks. Lower = snappier pickup; higher = less SQL pressure.
         "dispatch_interval_seconds": 60,
-        # Auto-block after this many consecutive non-success attempts (spawn_failed, timed_out,
-        # crashed) for the same task/profile. Reassignment resets the streak.
+        # Auto-block after this many consecutive non-success attempts (spawn_failed, crashed) for
+        # the same task/profile. Reassignment resets the streak.
         "failure_limit": 2,
+        # A run that ends at its turn budget, runtime limit or iteration budget is a planned stop:
+        # re-queued with a handoff, never counted above. After this many planned stops in a row
+        # without the card finishing, the card is blocked (needs_input) for a person.
+        "planned_stop_limit": 5,
         # Worker stdout/stderr log rotation at spawn time (2 MiB + one backup). Raise to keep more
         # early failure evidence from long-running workers.
         "worker_log_rotate_bytes": 2 * 1024 * 1024,

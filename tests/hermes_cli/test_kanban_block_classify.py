@@ -20,29 +20,22 @@ def kanban_home(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return home
 
 
-def _time_out_once(conn, tid: str) -> None:
+def _crash_once(conn, tid: str) -> None:
+    # A runtime end no longer counts toward the breaker (lina#161); a crashed run does.
     kb.claim_task(conn, tid)
-    kbd._set_worker_pid(conn, tid, os.getpid())
-    started = int(time.time()) - 30
-    with kb.write_txn(conn):
-        conn.execute("UPDATE tasks SET started_at = ? WHERE id = ?", (started, tid))
-        conn.execute(
-            "UPDATE task_runs SET started_at = ? "
-            "WHERE id = (SELECT current_run_id FROM tasks WHERE id = ?)",
-            (started, tid),
-        )
-    assert tid in kbd.enforce_max_runtime(conn, signal_fn=lambda pid, sig: None)
+    kbd._record_task_failure(conn, tid, "worker crashed", outcome="crashed",
+                             release_claim=True, end_run=True)
 
 
 def test_typed_block_classifies_untyped_breaker_block(kanban_home, monkeypatch):
-    """Two timeouts trip the breaker untyped; the supervisor's typed block then
+    """Two crashes trip the breaker untyped; the supervisor's typed block then
     attaches the kind without a status flap, a synthetic run, or lost evidence."""
     monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
     with kbc.connect() as conn:
-        tid = kb.create_task(conn, title="ceiling", assignee="worker", max_runtime_seconds=1)
-        _time_out_once(conn, tid)
+        tid = kb.create_task(conn, title="ceiling", assignee="worker")
+        _crash_once(conn, tid)
         assert kb.get_task(conn, tid).status == "ready"
-        _time_out_once(conn, tid)
+        _crash_once(conn, tid)
         parked = kb.get_task(conn, tid)
         assert (parked.status, parked.block_kind, parked.block_recurrences) == ("blocked", None, 0)
 
@@ -54,16 +47,16 @@ def test_typed_block_classifies_untyped_breaker_block(kanban_home, monkeypatch):
         assert after.last_failure_error == parked.last_failure_error
         assert after.current_run_id is None
         kinds = [e.kind for e in kb.list_events(conn, tid)]
-        assert (kinds.count("blocked"), kinds.count("gave_up"), kinds.count("timed_out")) == (1, 1, 2)
+        assert (kinds.count("blocked"), kinds.count("gave_up"), kinds.count("crashed")) == (1, 1, 1)
         assert len(kb.list_runs(conn, tid)) == 2
 
 
 def test_typed_block_still_refuses_typed_or_live_blocked_cards(kanban_home, monkeypatch):
     monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
     with kbc.connect() as conn:
-        parked = kb.create_task(conn, title="parked", assignee="worker", max_runtime_seconds=1)
-        _time_out_once(conn, parked)
-        _time_out_once(conn, parked)
+        parked = kb.create_task(conn, title="parked", assignee="worker")
+        _crash_once(conn, parked)
+        _crash_once(conn, parked)
         assert kb.get_task(conn, parked).status == "blocked"
         stale_run_id = conn.execute(
             "SELECT MAX(id) FROM task_runs WHERE task_id = ?", (parked,)).fetchone()[0]
