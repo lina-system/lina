@@ -483,6 +483,7 @@ def launch(worker_root: Path, task: Task, run: int) -> None:
         unit = f"lina-worker-{task.id}-{run}"
         env = [f"--setenv={key}={child_env[key]}" for key in ("HERMES_HOME", "PATH", "HOME", "LANG", "PYTHONPATH")
                if child_env.get(key)]
+        env.append(f"--setenv=LINA_HOME={settings.lina_home().resolve()}")
         cap = settings.setting("memory_max", base_of(worker_root))
         done = subprocess.run(["systemd-run", "--user", "--quiet", "--collect", "--unit", unit, "-p",
                                f"MemoryMax={cap}", *env, "--", *argv], capture_output=True, timeout=60, check=False)
