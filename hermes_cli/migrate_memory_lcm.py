@@ -58,6 +58,7 @@ def _transfer(conn, source, table, receipt, ledger, text, replay):
     mapping = receipt["ids"].setdefault(table, {})
     matched_text = inserted_text = count = 0
     for batch in batches(source_rows(source, table)):
+        conversation_uids = {}
         for native, row in batch:
             if row.get("conversation_id"):
                 row["conversation_id"] = receipt["conversations"][row["conversation_id"]]
@@ -71,11 +72,14 @@ def _transfer(conn, source, table, receipt, ledger, text, replay):
                     inserted_text += int(not matched)
                 mapping[str(native)] = _insert(conn, table, row)
                 if table == "messages":
-                    with text.write():
-                        text.set_conversation([text.base_uid(uid)], row.get("conversation_id") or
-                                              receipt["conversations"][row["session_id"]])
+                    conversation = row.get("conversation_id") or receipt["conversations"][row["session_id"]]
+                    conversation_uids.setdefault(conversation, []).append(text.base_uid(uid))
             elif str(native) not in mapping:
                 raise ValueError(f"LCM receipt misses source row: {table}/{native}")
+        if conversation_uids:
+            with text.write():
+                for conversation, uids in conversation_uids.items():
+                    text.set_conversation(uids, conversation)
         _compare(conn, table, batch, mapping, ledger)
         count += len(batch)
     return count, matched_text, inserted_text
