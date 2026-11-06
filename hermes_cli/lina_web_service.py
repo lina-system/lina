@@ -9,8 +9,12 @@ It is LINA's own server, beside a Hermes Agent dashboard the same account may ru
   ``--isolated``, so it never attaches to, or refuses behind, Hermes Agent's backend, and never publishes itself
   as the backend Hermes Agent's ``dashboard`` attaches to.
 * Stop and restart unload this label only; ``dashboard --stop``'s process scan is never used.
-* The job never builds the UI: ``--skip-build`` with ``HERMES_WEB_DIST`` pinned to the install's build (no recovery
-  build), and start refuses without that build.
+* The job serves the lina-app build, never a dashboard UI: the install has no ``web/`` project (the prune set left
+  dev in 6f461b4bbf), so ``hermes_cli/web_dist`` never exists, the dashboard's build step has nothing to build, and
+  ``/`` answers 404 per request. ``--skip-build`` is not passed and ``HERMES_WEB_DIST`` is not set: either makes the
+  dashboard exit on that missing folder. Start refuses without the app build (``LINA_APP_DIST`` over
+  ``dashboard.app_dist``, read as the dashboard reads it), and a ``LINA_APP_DIST`` of the starting shell is handed to
+  the job so the server serves the build start checked.
 """
 
 from __future__ import annotations
@@ -40,9 +44,24 @@ def definition_path(kind: str) -> Path:
     return user_systemd_unit_dir() / f"{SYSTEMD_UNIT}.service"
 
 
-def web_dist() -> Path:
-    """The install's built dashboard UI, never a ``HERMES_WEB_DIST`` the starting shell has."""
-    return Path(__file__).resolve().parent / "web_dist"
+def _config(root: Path) -> dict:
+    """The LINA root's config through the config loader (defaults, managed overlay, ``${VAR}`` expansion), bound to
+    the root whatever profile this process runs as."""
+    from hermes_cli.config import load_config_readonly
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    token = set_hermes_home_override(root)
+    try:
+        return load_config_readonly()
+    finally:
+        reset_hermes_home_override(token)
+
+
+def app_dist(root: Path) -> Path | None:
+    """The lina-app build the server serves at ``/app/``, read the way the dashboard reads it
+    (``web_server_dashboard._web_app_dist``): ``LINA_APP_DIST`` over ``dashboard.app_dist``; ``None`` when unset."""
+    from hermes_cli.config import cfg_get
+    raw = os.environ.get("LINA_APP_DIST") or cfg_get(_config(root), "dashboard", "app_dist", default="")
+    return Path(raw).expanduser() if raw and isinstance(raw, str) else None
 
 
 def lock_dir(root: Path) -> Path:
@@ -56,13 +75,8 @@ class EndpointError(ValueError):
 def endpoint(root: Path) -> tuple[str, int]:
     """``dashboard.host`` and ``dashboard.port`` of the LINA root through the config loader (defaults, managed
     overlay, ``${VAR}`` expansion), bound to the root whatever profile this process runs as."""
-    from hermes_cli.config import cfg_get, load_config_readonly
-    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
-    token = set_hermes_home_override(root)
-    try:
-        config = load_config_readonly()
-    finally:
-        reset_hermes_home_override(token)
+    from hermes_cli.config import cfg_get
+    config = _config(root)
     host, port = cfg_get(config, "dashboard", "host"), cfg_get(config, "dashboard", "port")
     text = str(port).strip()
     if isinstance(port, bool) or not text.isdigit() or not 0 < int(text) < 65536:
@@ -77,10 +91,11 @@ def definition(kind: str, root: Path) -> str:
     host, port = endpoint(root)
     # `-p default`: the root itself, never the profile a person last picked with `lina profile use` (active_profile).
     argv = [sys.executable, "-m", "hermes_cli.main", "-p", "default", "dashboard", "--host", host, "--port", str(port),
-            "--no-open", "--skip-build", "--isolated"]
+            "--no-open", "--isolated"]
     env = {"HERMES_HOME": str(root), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
-           "PYTHONPATH": settings.child_pythonpath(), "HERMES_WEB_DIST": str(web_dist()),
-           "HERMES_GATEWAY_LOCK_DIR": str(lock_dir(root))}
+           "PYTHONPATH": settings.child_pythonpath(), "HERMES_GATEWAY_LOCK_DIR": str(lock_dir(root))}
+    if os.environ.get("LINA_APP_DIST"):
+        env["LINA_APP_DIST"] = os.environ["LINA_APP_DIST"]
     return service_definition(kind, label, argv, env, logs=service_logs(root, "web"))
 
 
@@ -135,9 +150,10 @@ def start(root: Path | None = None, out=print) -> int:
     if kind is None:
         out(f"web: no launchd or systemd on {sys.platform}")
         return 1
-    dist = web_dist()
-    if not (dist / "index.html").is_file():
-        out(f"web: no built web UI at {dist}; build it first (npm run build -w web), the service never builds it")
+    dist = app_dist(root)
+    if dist is None or not (dist / "index.html").is_file():
+        out("web: no lina-app build (index.html) in LINA_APP_DIST or dashboard.app_dist; set dashboard.app_dist in "
+            "config.yaml to the app's build folder (dist/), the service never builds it")
         return 1
     try:
         host, port = endpoint(root)
