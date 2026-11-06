@@ -98,6 +98,19 @@ cards:
     max_turns: 10
     max_runtime: 2h
     # no `after: [gates]`: the gates card waits for this approval, so a link would deadlock
+  - key: board-screen
+    title: "Show gate results on the board screen"
+    assignee: sion
+    todos: ["lina-system/lina-app#40"]
+    outcome: "The board screen shows each card's gate results."
+    verification: "QA on a disposable instance against the screen feature map finds no defects."
+    stop_when: "The PR is merged and the QA result for its head has zero defects."
+    worker: "omo — screen change"
+    gates:
+      - "hermes kanban gate prs"
+      - "hermes kanban gate ui-qa"           # a card that changes a screen always lists ui-qa
+    max_turns: 40
+    max_runtime: 12h
 ```
 
 What gets created: a goal card, then one goal-mode work card per entry with its gates, turn budget
@@ -115,7 +128,17 @@ card.
 Gates: code cards use `gate prs` (every To-dos issue closed by a merged PR with green checks) and
 `gate dev owner/repo` (the branch is green after the merge); non-code cards use
 `gate artifact <path> --check "<cmd>"` and `gate review`; add `gate ask` when the card may ask
-the owner questions.
+the owner questions. A card that changes a screen people see also lists `gate ui-qa`.
+
+`gate ui-qa` reads the QA record on the card. Leave the aside-qa answer (`answer.md`) as it is, with
+one marker line on top, as a card comment (`hermes kanban comment <card> "<text>"`). The marker
+is `ui-qa-result v1 head=<sha> instance=disposable` (`<sha>` the head of the card's PR, at least 7
+hex characters). The answer's sections are `## (A) Defects`, `## (B) Verified`, `## (C) Suggestions`
+and `## (D) Map drift`; each list item under Defects is a defect (`- None.` is not), and so is each
+`- FAIL: ...` line under Verified. A run in progress is a comment `ui-qa-run v1 head=<sha> state=running`. The gate passes on
+the newest result for the PR head with all four sections and zero defects, fails with the defect
+list, fails on a result taken anywhere but a disposable instance or only for an older head (run QA
+again), and waits (exit 75) while the newest marker for the head is a running run.
 
 `gate review` never counts the card assignee's own approval: put it on the card being reviewed
 (`--owner <reviewer>` for an agent reviewer), and gate the reviewer's own card on what the reviewer

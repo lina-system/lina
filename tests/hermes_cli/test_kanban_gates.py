@@ -592,6 +592,145 @@ def test_ask_passes_without_questions_and_ignores_others_questions(board):
 
 
 
+UI_HEAD, OLD_HEAD = "c" * 40, "d" * 40
+UI_TODOS = "Screen work.\n\n## To-dos\n\n- acme/app#12\n"
+
+
+def _ui_issue(head=UI_HEAD):
+    prs = [{"number": 35, "url": "https://github.com/acme/app/pull/35", "state": "OPEN", "merged": False,
+            "headRefOid": head, "repository": {"nameWithOwner": "acme/app"}},
+           {"number": 30, "url": "https://github.com/acme/app/pull/30", "state": "CLOSED", "merged": False,
+            "headRefOid": OLD_HEAD, "repository": {"nameWithOwner": "acme/app"}}]
+    issue = {"state": "OPEN", "stateReason": None, "body": "", "closedByPullRequestsReferences": {"nodes": prs}}
+    return [["closedByPullRequestsReferences", "number=12"], 0, {"data": {"repository": {"issue": issue}}}]
+
+
+def _qa(head=UI_HEAD, instance="disposable", defects="- None.", drop=None,
+        names=("(A) Defects", "(B) Verified", "(C) Suggestions", "(D) Map drift"),
+        verified="- PASS: board loads\n- PASS: card opens"):
+    texts = (defects, verified, "- wider column", "- None.")
+    body = "".join(f"\n## {name}\n\n{text}\n" for name, text in zip(names, texts) if name != drop)
+    return f"ui-qa-result v1 head={head} instance={instance}\n{body}"
+
+
+def _running(head=UI_HEAD):
+    return f"ui-qa-run v1 head={head} state=running"
+
+
+@pytest.mark.parametrize("comments,expected,why", [
+    ([_qa()], gates.PASS, "0 defects, 2 verified"),
+    ([_qa(names=("Defects", "Confirmed", " Suggestions ", "Map differences"))], gates.PASS, "0 defects, 2 verified"),
+    ([_qa(defects="- save button does nothing\n- title cut off")], gates.FAIL, "lists 2 defect(s)"),
+    ([_qa(defects="- title cut off"), _qa(head=UI_HEAD[:7])], gates.PASS, "0 defects"),
+    ([_qa(), _qa(defects="- title cut off")], gates.FAIL, "lists 1 defect(s)"),
+    ([_qa(), _running()], gates.WAIT, "in progress"),
+    ([_running(), _qa()], gates.PASS, "0 defects"),
+    ([_running(OLD_HEAD)], gates.FAIL, "no QA result for this head"),
+    ([_qa(head=OLD_HEAD)], gates.FAIL, "is for head dddddddddd; run QA again"),
+    ([_qa(instance="live")], gates.FAIL, "instance=live, not a disposable instance"),
+    ([_qa(drop="(D) Map drift")], gates.FAIL, "lacks section(s): Map drift"),
+    ([_qa(drop="(B) Verified", defects="- title cut off")], gates.FAIL,
+     "lacks section(s): Verified; lists 1 defect(s)"),
+    (["QA looked fine to me"], gates.FAIL, "no QA result for this head"),
+])
+def test_ui_qa_reads_the_newest_record_for_the_pr_head(board, gh, capsys, comments, expected, why):
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        for body in comments:
+            kb.add_comment(conn, tid, "qa", body)
+    gh.set([_ui_issue()])
+    assert _run("ui-qa", "--card", tid) == expected
+    out = capsys.readouterr().out
+    assert f"acme/app#35 head {UI_HEAD[:10]}: " in out and why in out, out
+    assert "#30" not in out, "a closed, unmerged PR is not the card's PR"
+
+
+def test_ui_qa_fail_prints_each_defect_and_runs_as_a_plain_file(board, gh, tmp_path):
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "qa", _qa(defects="- save button does nothing\n- title cut off"))
+    gh.set([_ui_issue()])
+    env = {**os.environ, "HERMES_KANBAN_TASK": tid, "PYTHONPATH": ""}
+    result = subprocess.run([sys.executable, "-I", str(GATES_FILE), "ui-qa"], cwd=tmp_path, env=env, check=False,
+                            capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == gates.FAIL, result.stdout + result.stderr
+    assert "defect: save button does nothing" in result.stdout and "defect: title cut off" in result.stdout
+
+
+def test_ui_qa_fails_without_a_pull_request(board, gh, capsys):
+    tid = _card(UI_TODOS)
+    record = _ui_issue()
+    record[2]["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"].pop(0)
+    gh.set([record])
+    assert _run("ui-qa", "--card", tid) == gates.FAIL
+    assert "no open or merged pull request" in capsys.readouterr().out
+
+
+ASIDE_QA_ANSWER = (Path(__file__).parent / "fixtures/kanban_gates/aside_qa_answer.md").read_text(encoding="utf-8")
+FAILED_CHECK = "- FAIL: status-usage, `7일` — the total still reads the `오늘` figure."
+
+
+@pytest.mark.parametrize("answer,expected,why,listed", [
+    (ASIDE_QA_ANSWER, gates.PASS, "0 defects, 18 verified", []),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n- The 7일 button does nothing.", 1),
+     gates.FAIL, "lists 1 defect(s)", ["The 7일 button does nothing."]),
+    (ASIDE_QA_ANSWER.replace("## (C) Suggestions", FAILED_CHECK + "\n## (C) Suggestions", 1),
+     gates.FAIL, "lists 1 defect(s)", [FAILED_CHECK[2:]]),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n  Save button does nothing.", 1),
+     gates.FAIL, "lists 1 defect(s)", ["Save button does nothing."]),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n- None.\n| Save | broken |", 1),
+     gates.FAIL, "lists 1 defect(s)", ["| Save | broken |"]),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n- None.\n<p>Save broken</p>", 1),
+     gates.FAIL, "lists 1 defect(s)", ["<p>Save broken</p>"]),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.",
+                             "## (A) Defects\n- Save button does nothing.\n  It stays grey after the click.", 1),
+     gates.FAIL, "lists 1 defect(s)", ["Save button does nothing."]),
+], ids=["as-is", "defect", "failed-check", "indented-prose", "table-row", "html", "continuation"])
+def test_ui_qa_reads_an_aside_qa_answer_as_it_is(board, gh, capsys, answer, expected, why, listed):
+    """The real aside-qa answer, with the marker line on top, is the card comment (lina#162)."""
+    assert answer != ASIDE_QA_ANSWER or expected == gates.PASS
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "qa", f"ui-qa-result v1 head={UI_HEAD} instance=disposable\n{answer}")
+    gh.set([_ui_issue()])
+    assert _run("ui-qa", "--card", tid) == expected
+    out = capsys.readouterr().out
+    assert why in out, out
+    assert [line[len("  defect: "):] for line in out.splitlines() if line.startswith("  defect: ")] == listed
+
+
+SAVE = "Save button does nothing."
+
+
+@pytest.mark.parametrize("defects,verified,listed", [
+    (f"### Board screen\n- {SAVE}", None, [SAVE]),
+    (None, f"### Board screen\n- PASS: board loads\n- FAIL: {SAVE}", [f"FAIL: {SAVE}"]),
+    (None, f"- PASS: board loads\n```\n# console log\n```\n- FAIL: {SAVE}", [f"FAIL: {SAVE}"]),
+    (f"- {SAVE}\n  ```\n  - not an item\n  ```", None, [SAVE]),
+    (SAVE, None, [SAVE]),
+    (f"> {SAVE}", None, [f"> {SAVE}"]),
+    (None, f"- PASS: board loads\n- **FAIL**: {SAVE}", [f"**FAIL**: {SAVE}"]),
+    (None, f"- PASS: board loads\n- Fail: {SAVE}", [f"Fail: {SAVE}"]),
+    (None, f"- PASS: board loads\nFAIL: {SAVE}", [f"FAIL: {SAVE}"]),
+    (None, f"- PASS: board loads\n> FAIL: {SAVE}\n| FAIL | save |", [f"> FAIL: {SAVE}", "| FAIL | save |"]),
+    (f"- None.\n  {SAVE}", None, [SAVE]),
+    ("* one\n+ two\n1. three\n2) four\n   - five", None, ["one", "two", "three", "four", "five"]),
+    (f"- {SAVE}\n  when offline\n\n- Title cut off.", None, [SAVE, "Title cut off."]),
+    ("### Board screen\n- None.\n\nNone.", None, []),
+], ids=["subheading-defect", "subheading-failed-check", "fenced-heading", "fenced-item", "prose", "quote",
+        "bold-fail", "lowercase-fail", "unlisted-fail", "quoted-table-fail", "indented-after-none", "bullets", "continuation", "subheading-none"])
+def test_ui_qa_counts_defects_in_every_markdown_shape(board, gh, capsys, defects, verified, listed):
+    """No markdown shape hides a defect: sub-headings, code fences, prose and other bullets (#272 review)."""
+    kw = {k: v for k, v in {"defects": defects, "verified": verified}.items() if v is not None}
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "qa", _qa(**kw))
+    gh.set([_ui_issue()])
+    assert _run("ui-qa", "--card", tid) == (gates.FAIL if listed else gates.PASS)
+    out = capsys.readouterr().out
+    assert [line[len("  defect: "):] for line in out.splitlines() if line.startswith("  defect: ")] == listed, out
+
+
 def test_board_is_opened_read_only(board):
     tid = _card()
     conn = gates.open_board(str(board))
