@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 from agent.redact import redact_sensitive_text
 from hermes_cli.goals import judge_goal
+from hermes_cli.kanban_db_verdicts import return_to_wait
 from tools.registry import no_cache_check_fn, registry, tool_error
 from hermes_cli.config import cfg_get, load_config
 from tools.kanban_tools_schemas import (
@@ -831,6 +832,11 @@ def _handle_complete(args: dict, **kw) -> str:
             # never-finished parent is the actionable one. Name the blockers so
             # the worker/operator completes the parents instead of re-running.
             blockers = kb.unsatisfied_parents(conn, tid)
+            # A card woken only to judge a run (lina#295) goes back to waiting on its parents here.
+            if blockers and return_to_wait(conn, tid, expected_run_id=_worker_run_id(tid)):
+                return _ok(task_id=tid, returned_to=kb.get_task(conn, tid).status,
+                           note="the runs that woke this card are judged; it waits on its parents again. "
+                                "End this turn.")
             if blockers:
                 detail = ", ".join(f"{pid} ({status})" for pid, status in blockers)
                 raise _Reject(
