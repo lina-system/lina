@@ -169,9 +169,18 @@ def _latest_scheduled(conn: sqlite3.Connection, task_id: str) -> tuple[Optional[
     return int(row["id"]), _payload(row["payload"]), int(row["created_at"] or 0)
 
 
-def _names_run(park: dict, run_id: str) -> bool:
+def _named_runs(park: dict) -> list[str]:
+    """The runs a schedule waits on, read the way the run-end wakers read it (``kanban_link``): run IDs in
+    its ``reason``, its ``goal_park.workers`` and its ``wait_for``."""
     from hermes_cli.worker.kanban_link import RUN_ID
-    return run_id in RUN_ID.findall(" ".join([str(park.get("reason") or ""), json.dumps(park.get("wait_for") or {})]))
+    goal_park = park.get("goal_park") if isinstance(park.get("goal_park"), dict) else {}
+    text = " ".join([str(park.get("reason") or ""), *map(str, goal_park.get("workers") or []),
+                     json.dumps(park.get("wait_for") or {})])
+    return list(dict.fromkeys(RUN_ID.findall(text)))
+
+
+def _names_run(park: dict, run_id: str) -> bool:
+    return run_id in _named_runs(park)
 
 
 def verdict_wake_open(conn: sqlite3.Connection, task_id: str) -> Optional[dict]:
@@ -183,16 +192,20 @@ def verdict_wake_open(conn: sqlite3.Connection, task_id: str) -> Optional[dict]:
         "ORDER BY id DESC", (task_id, *kinds),
     ).fetchall()
     runs: list[str] = []
+    met: list[str] = []
     back: Optional[dict] = None
     for row in rows:
         if row["kind"] != "run_verdict_wake":
             break
         payload = _payload(row["payload"])
         runs.insert(0, str(payload.get("run_id") or ""))
+        if payload.get("met"):
+            met.insert(0, str(payload.get("run_id") or ""))
         back = payload.get("back") if isinstance(payload.get("back"), dict) else back
     if not runs:
         return None
-    return {"runs": list(dict.fromkeys(r for r in runs if r)), "back": back}
+    return {"runs": list(dict.fromkeys(r for r in runs if r)), "met": list(dict.fromkeys(r for r in met if r)),
+            "back": back}
 
 
 def _wake_comment(task_id: str, run_id: str, state: str, back: dict, parents: list[tuple[str, str]]) -> str:
@@ -211,7 +224,9 @@ def wake_for_run(conn: sqlite3.Connection, task_id: str, run_id: str, state: str
     a ``run_verdict_wake`` event that records where it goes back after the verdict. A schedule that
     names this run is met by its end: an ordinary wake (``unblock_task``), back to ``todo`` only when
     a parent is still open. A card already woken for a verdict adds the run to that wake. Any other
-    status is left alone (a running worker reads the comment). True when the card was woken."""
+    status is left alone (a running worker reads the comment). A run the saved schedule waits on that
+    ends during the wake is marked ``met`` (:func:`return_to_wait` then does not wait on it again).
+    True when the card was woken."""
     kb = _kb()
     with kb.write_txn(conn):
         row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
@@ -219,8 +234,10 @@ def wake_for_run(conn: sqlite3.Connection, task_id: str, run_id: str, state: str
         parents = kb.unsatisfied_parents(conn, task_id)
         open_wake = verdict_wake_open(conn, task_id)
         if status in ("ready", "running") and open_wake:
+            back = open_wake["back"] or {}
+            met = back.get("status") == "scheduled" and state != "human" and _names_run(back.get("park") or {}, run_id)
             kb._append_event(conn, task_id, "run_verdict_wake",
-                             {"run_id": run_id, "state": state, "back": open_wake["back"]})
+                             {"run_id": run_id, "state": state, "back": open_wake["back"], **({"met": True} if met else {})})
             return False
         if status == "todo" and parents:
             back: dict = {"status": "todo"}
@@ -241,8 +258,34 @@ def wake_for_run(conn: sqlite3.Connection, task_id: str, run_id: str, state: str
         return True
 
 
+def _return_target(conn: sqlite3.Connection, task_id: str, wake: dict) -> tuple[str, Optional[dict], Optional[str]]:
+    """``(status, schedule to restore, one-line comment)`` for a judged verdict wake. A schedule whose runs
+    ended during the wake is not restored as it was: with every named run ended its wait is met and the
+    card goes on (``ready``, or ``todo`` behind an open parent, as a run-end wake would land it); with
+    some still going it is restored naming only those."""
+    back = wake["back"]
+    if back["status"] != "scheduled":
+        return back["status"], None, None
+    park = back.get("park") or {}
+    named = _named_runs(park)
+    met = [run for run in named if run in wake["met"]]
+    if not met:
+        return "scheduled", park, None
+    left = [run for run in named if run not in met]
+    if left:
+        reduced = {**park, "reason": f"waiting on lina worker {' '.join(left)}"}
+        if isinstance(park.get("goal_park"), dict):
+            reduced["goal_park"] = {**park["goal_park"], "workers": left}
+        return "scheduled", reduced, (f"[kanban · automatic] run(s) {', '.join(met)} ended during the verdict "
+                                      f"wake: back to the schedule, now waiting on {', '.join(left)} only.")
+    target = "todo" if _kb().unsatisfied_parents(conn, task_id) else "ready"
+    return target, None, (f"[kanban · automatic] wait met: run(s) {', '.join(met)} that the schedule waited on "
+                          f"ended during the verdict wake; the card goes to {target} instead of back to it.")
+
+
 def return_to_wait(conn: sqlite3.Connection, task_id: str, *, expected_run_id: Optional[int] = None) -> bool:
-    """Put a card woken for a verdict back where it waited, once the runs that woke it are judged.
+    """Put a card woken for a verdict back where it waited, once the runs that woke it are judged
+    (where that is: :func:`_return_target`).
 
     From ``ready``, or from ``running`` when ``expected_run_id`` is the current run (the woken
     worker's own ``kanban_complete``; the run ends ``returned_to_wait``). Raises
@@ -264,14 +307,17 @@ def return_to_wait(conn: sqlite3.Connection, task_id: str, *, expected_run_id: O
                 return False
             kb._end_run(conn, task_id, outcome="returned_to_wait",
                         summary=f"judged {', '.join(wake['runs'])}; back to waiting")
-        back = wake["back"]
+        target, park, note = _return_target(conn, task_id, wake)
         conn.execute(
             "UPDATE tasks SET status = ?, current_run_id = NULL, claim_lock = NULL, claim_expires = NULL, "
-            "worker_pid = NULL WHERE id = ? AND status = ?", (back["status"], task_id, row["status"]),
+            "worker_pid = NULL WHERE id = ? AND status = ?", (target, task_id, row["status"]),
         )
-        kb._append_event(conn, task_id, "verdict_wake_returned", {"status": back["status"], "runs": wake["runs"]})
-        if back["status"] == "scheduled":
-            kb._append_event(conn, task_id, "scheduled", back.get("park") or {})
+        kb._append_event(conn, task_id, "verdict_wake_returned",
+                         {"status": target, "runs": wake["runs"], **({"wait_met": wake["met"]} if wake["met"] else {})})
+        if target == "scheduled":
+            kb._append_event(conn, task_id, "scheduled", park or {})
+        if note:
+            kb.add_comment(conn, task_id, ACTOR, note)
         return True
 
 
