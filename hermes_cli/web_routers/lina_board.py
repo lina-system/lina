@@ -4,10 +4,11 @@ API (schema: ``docs/api/board-client.yaml``).
 ``GET /api/lina/board`` is one snapshot; ``/api/lina/work/due``, ``/api/lina/devices`` and ``/api/lina/quota`` are its
 parts for polling them on their own (the device probe and the OCX read are the slow ones). ``/api/lina/work/items``
 and ``/api/lina/work/items/{id}`` (lina#166) serve the goals and to-dos with their comments, runs and links;
-``/api/lina/work/runs/{id}/record`` (lina#201) one worker run's record, round by round. Like ``lina_models.py``
-every response carries an ``ETag`` and a matching ``If-None-Match`` answers 304; the tag leaves out the snapshot time
-``at``, so it changes only when the data does. Mounted through ``lina_models.router``, so the dashboard's auth gate
-applies the same way.
+``/api/lina/work/runs/{id}/record`` (lina#201) one worker run's record, round by round; ``/api/lina/status/checks``
+(lina#233) the hub's own health checks from ``<LINA root>/status/*.json`` (``lina_status.py``). Like
+``lina_models.py`` every response carries an ``ETag`` and a matching ``If-None-Match`` answers 304; the tag leaves out
+the snapshot time ``at``, so it changes only when the data does. Mounted through ``lina_models.router``, so the
+dashboard's auth gate applies the same way.
 """
 
 import hashlib
@@ -17,7 +18,10 @@ from typing import Callable, Optional
 from fastapi import APIRouter, Header, HTTPException, Request, Response, WebSocket
 from starlette.concurrency import run_in_threadpool
 
+from hermes_cli.web_routers import lina_status
+
 router = APIRouter()
+router.include_router(lina_status.router)  # lina#233: the hub's own status checks
 
 
 async def _serve(read: Callable[[], dict], if_none_match: Optional[str]) -> Response:
