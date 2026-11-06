@@ -8,6 +8,9 @@ devices:
     docs-box: {host: docs-box, cap: 1, no_repo: true} # takes no repo work
     here: {host: local, cap: 1, last: true}           # this machine, only when the others are full
     lab: {host: lab, cap: 1, auto: false}             # only when named with --host
+    files: {host: files, kind: file, role: files,     # a file node over ssh, no LINA on it (docs/file-node.md)
+            omo: "~/.bun/bin/omo", deny: [/volume1/backup, "#recycle", "#snapshot", "@*"], volumes: [/volume1]}
+    phone: {host: phone, role: person}                # role person: never takes work
 
 worker:
   hub: {host: hub, lina: lina}               # how a device reaches the hub to report an end (ssh alias, lina there)

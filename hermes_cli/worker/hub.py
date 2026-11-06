@@ -324,6 +324,7 @@ class Hub:
         opts["inputs"] = self._inputs(opts.get("inputs") or [], opts["private_inputs"])
         if opts["private_inputs"]:
             opts["host"] = self._hub_node(opts.get("host"))
+        self._named_device_gate(opts, briefs)
         group = self.store.new_id(opts["bot"], "OG") if len(briefs) > 1 else None
         jobs = [self._submit_one(brief, opts, group) for brief in briefs]
         for job in jobs if opts.get("todo") else []:
@@ -339,6 +340,20 @@ class Hub:
         if opts.get("wait") is not None and len(jobs) == 1:
             return self._wait(jobs[0]["id"], float(opts["wait"]))
         return 0
+
+    def _named_device_gate(self, opts: dict, briefs: list[Path]) -> None:
+        """Refuse at submit what the ``--host`` device would never take: its role (``person``; a repo on ``files``),
+        and for a file node a denied folder in a brief or input, or a model path that does not answer."""
+        dev = next((d for d in self.devices() if d.name == opts.get("host")), None)
+        if dev is None:
+            return
+        if why := bidding.role_refusal(dev, opts.get("repo")):
+            raise HubError(f"--host {dev.name}: {why}")
+        if dev.kind == settings.FILE_KIND:
+            from hermes_cli.worker.file_node import submit_refusal
+            texts = [brief.read_text(encoding="utf-8-sig", errors="replace") for brief in briefs]
+            if why := submit_refusal(dev, self.worker_root, texts, opts["inputs"]):
+                raise HubError(why)
 
     def _submit_identity(self, opts: dict) -> None:
         link = self._link()
@@ -757,6 +772,9 @@ class Hub:
         text = notice.body(job, kind, run, out_dir, check, notes=manifest.get("next_notes"),
                            quiet_s=float((manifest.get("wait") or {}).get("quiet_s") or 0), err_tail=err_tail,
                            unknown_after_s=int(settings.setting("unknown_after_s", worker=self.worker)))
+        if kind != "unknown" and str(manifest.get("run")) == str(run):
+            from hermes_cli.worker.file_node_deny import with_check
+            text = with_check(text, manifest.get("deny_check"))
         if job.get("extra"):
             text = f"[note left at hand-out] {job['extra']}\n\n" + text
         return text, out_dir

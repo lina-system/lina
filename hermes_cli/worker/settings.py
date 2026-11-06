@@ -6,6 +6,9 @@ devices:
     build-a: {host: build-a, cap: 2, fast: true}      # ssh alias the hub reaches it by
     build-b: {host: build-b, cap: 1, no_repo: true}   # docs and light work only
     here:    {host: local, cap: 1, named_cap: 2, last: 2}  # tier 2 fallback; separate --host capacity
+    files:   {host: files, kind: file, role: files, omo: "~/.bun/bin/omo",   # a file node (docs/file-node.md)
+              deny: [/volume1/backup, "#recycle", "#snapshot", "@*"], volumes: [/volume1]}
+    phone:   {host: phone, role: person}                # a person's device: never takes work
 worker:
   hub: {host: hub, lina: lina}     # how a device reaches the hub to report an end (ssh alias, lina command there)
   notice: {command: [my-notify, "{agent}"]}   # the end notice: body on stdin; unset = written to hub/notices only
@@ -17,6 +20,10 @@ worker:
 ```
 
 Every value has a working default except the device list: without ``devices.workers`` nothing is bid on.
+
+``role`` is ``work`` (bid on; the default), ``files`` (only by ``--host``, never with a repository) or ``person``
+(never takes work). ``kind: file`` drives the device over ssh without LINA on it (``file_node.py``); its role
+defaults to ``files``.
 """
 
 from __future__ import annotations
@@ -25,6 +32,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 LOCAL = "local"
+ROLES = ("work", "files", "person")
+FILE_KIND = "file"
 DEFAULTS = {"cap": 1, "min_free_gb": 5, "unknown_after_s": 600, "input_max_mb": 300, "memory_max": "12G",
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
             "human_max_s": 3 * 3600.0, "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
@@ -130,6 +139,14 @@ class Device:
     auto: bool = True
     lina: str = "lina"  # the lina command on that device
     named_cap: int | None = None  # independent --host capacity; defaults to cap
+    role: str = "work"  # work | files | person (ROLES); anything else takes no work
+    kind: str = "lina"  # "file": a file node driven over ssh (file_node.py)
+    omo: str = "omo"  # a file node's omo command
+    deny: tuple[str, ...] = ()  # a file node's denied folders: absolute paths and folder-name patterns
+    volumes: tuple[str, ...] = ()  # where a file node's folder-name patterns are looked for (3 levels deep)
+    root: str = "lina-file-node"  # a file node's task folders, under its HOME
+    model_check: str = "http://127.0.0.1:10100/healthz"  # a file node's model path, asked on the node
+    scan_s: int = 300  # how long the denied-folder check may look after a run
 
     @property
     def manual_cap(self) -> int:
@@ -144,10 +161,22 @@ def _device(name: str, item: dict) -> Device | None:
     host = item.get("host")
     if not isinstance(host, str) or not host or item.get("off") is True:
         return None
+    kind = str(item.get("kind") or "lina")
+    file_node = {}
+    if kind == FILE_KIND:
+        file_node = {"omo": str(item.get("omo") or "omo"), "deny": _strings(item.get("deny")),
+                     "volumes": _strings(item.get("volumes")), "root": str(item.get("root") or "lina-file-node"),
+                     "model_check": str(item.get("model_check") or Device.model_check),
+                     "scan_s": max(1, int(item.get("scan_s") or Device.scan_s))}
     return Device(name, host, max(1, int(item.get("cap") or DEFAULTS["cap"])), item.get("fast") is True,
                   item.get("no_repo") is True, max(0, int(item.get("last") or 0)), item.get("auto") is not False,
                   str(item.get("lina") or "lina"),
-                  max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None)
+                  max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None,
+                  str(item.get("role") or ("files" if kind == FILE_KIND else "work")), kind, **file_node)
+
+
+def _strings(value) -> tuple[str, ...]:
+    return tuple(str(each) for each in value if str(each).strip()) if isinstance(value, list) else ()
 
 
 def devices(base: Path | None = None, raw: dict | None = None) -> list[Device]:
