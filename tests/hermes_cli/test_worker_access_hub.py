@@ -85,7 +85,8 @@ def test_publish_and_resume_carry_recorded_access(lane, monkeypatch):
     hub, brief, opts, _ = lane
     job = hub.make_job(brief, {**opts, "access": "read-only"}, None)
     published = {}
-    transport = SimpleNamespace(call=lambda *args, **kw: Reply(0, b'{}', ""))
+    transport = SimpleNamespace(call=lambda *args, **kw: Reply(0, b'{}', ""),
+                                descriptor={"capabilities": {"access_modes": ["read-only", "workspace-write", "full"]}})
     monkeypatch.setattr(hub_mod, "for_device", lambda *args: transport)
     monkeypatch.setattr(hub_mod, "put", lambda tr, tid, name, data: published.update({name: data}))
     # When placement resumes after a hub restart.
@@ -235,3 +236,29 @@ def test_routed_runner_is_the_one_checked_for_access(tmp_path):
     assert job["runner"] == "inspect"
     assert job["settings"]["runner_source"] == "routing:inspection"
     assert job["access"] == job["grant"]["access"] == "read-only"
+
+
+@pytest.mark.parametrize("modes", [[], ["workspace-write"]])
+def test_publish_refuses_a_node_that_does_not_advertise_the_run_access(lane, monkeypatch, modes):
+    # Given a read-only run and a node whose hello predates access modes (or lacks this one).
+    hub, brief, opts, _ = lane
+    job = hub.make_job(brief, {**opts, "access": "read-only"}, None)
+    published = {}
+    transport = SimpleNamespace(call=lambda *args, **kw: Reply(0, b'{}', ""),
+                                descriptor={"protocol": {"min": 1, "max": 1}, "capabilities": {"access_modes": modes}})
+    monkeypatch.setattr(hub_mod, "for_device", lambda *args: transport)
+    monkeypatch.setattr(hub_mod, "put", lambda tr, tid, name, data: published.update({name: data}))
+    # When the hub publishes it there (a fixed host or a resumed placement both end here).
+    with pytest.raises(hub_mod.HubError, match="does not enforce access read-only"):
+        Hub(hub.worker_root)._publish(hub.need(job["id"]), settings.Device("old", "local"))
+    # Then nothing reached the node: it would have run with its old, wider permissions.
+    assert published == {}
+
+
+def test_bidding_passes_over_a_node_without_the_run_access():
+    from hermes_cli.worker import bidding
+    old = {"protocol": {"min": 1, "max": 1}, "capabilities": {"access_modes": []}}
+    new = {"protocol": {"min": 1, "max": 1}, "capabilities": {"access_modes": ["read-only", "workspace-write", "full"]}}
+    assert bidding.missing_access(old, "read-only") == "does not enforce access read-only (update the node)"
+    assert bidding.missing_access(new, "read-only") is None
+    assert bidding.missing_access(old, None) is None

@@ -194,7 +194,15 @@ class OmoRunner:
 
     def state(self, handle: Handle) -> str:
         snapshot = self.session(["state", handle.data["ref"]], 60)
-        state = (snapshot or {}).get("state") or {}
+        if not snapshot or snapshot.get("action") != "state":
+            # An unreadable or error answer goes to Settle as it came (once), so its retry and error count apply.
+            first = [snapshot]
+
+            def as_read(args, timeout):
+                return first.pop() if args[0] == "state" and first else self.session(args, timeout)
+
+            return Settle(handle.task, handle.run, handle.data["ref"], as_read, self.limits).step()
+        state = snapshot.get("state") or {}
         reply = self._permissions(handle, "settle") if state.get("pendingDialogs") else {
             "pending": False, "decisions": [], "state": state}
         for decision in reply["decisions"]:
