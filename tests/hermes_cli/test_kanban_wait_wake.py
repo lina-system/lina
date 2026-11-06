@@ -435,6 +435,24 @@ def test_a_card_woken_by_its_pr_wait_respawns_past_the_active_pr_guard(board, mo
     assert kbd.check_respawn_guard(board, tid) == "active_pr"
 
 
+def test_a_started_worker_still_spends_the_wake_after_the_reaper_clears_its_pid(board, monkeypatch):
+    monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
+    tid = _woken_on_pr(board)
+    spawned: list[str] = []
+    _tick_with_worker(board, spawned)
+    assert spawned == [tid]
+    kbd._record_task_failure(board, tid, "worker crashed", outcome="crashed", release_claim=True, end_run=True)
+    with kb.write_txn(board):   # the reap grace has passed since the crash
+        board.execute("UPDATE task_runs SET ended_at = ended_at - ? WHERE task_id = ?",
+                      (kbd.TERMINAL_WORKER_REAP_GRACE_SECONDS + 1, tid))
+
+    kbd.reap_terminal_workers(board)
+
+    assert [r["worker_pid"] for r in board.execute("SELECT worker_pid FROM task_runs WHERE task_id = ?", (tid,))] \
+        == [None, None]
+    assert kbd.check_respawn_guard(board, tid) == "active_pr"
+
+
 def test_a_host_refused_spawn_after_a_wake_keeps_the_wake_for_the_next_tick(board, monkeypatch):
     from tools.process_registry import RestartSafeScopeUnavailable
 

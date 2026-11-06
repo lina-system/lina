@@ -100,16 +100,22 @@ def _not_an_attempt(conn: sqlite3.Connection, task_id: str, run: sqlite3.Row) ->
 def worker_started_since(conn: sqlite3.Connection, task_id: str, event_id: int) -> bool:
     """Whether a run claimed after ``event_id`` was a real attempt whose worker started.
 
-    A worker started when its pid was recorded on the run (``task_runs.worker_pid``). A claim
-    the host refused, a spawn or workspace failure, or a reclaim before the worker came up
-    leaves no pid, so it is no attempt. Neither is a park or a planned stop
-    (``_not_an_attempt``). A run still open with a pid counts: its worker is at work.
+    A worker started when the run has a launch event: ``spawned`` (the dispatcher launched it,
+    ``_set_worker_pid``), ``worker_registered`` (the worker filled in its own pid,
+    ``adopt_worker_pid``) or ``worker_bound`` (a gateway-owned worker bound the run). Those
+    events are never rewritten and are pruned only for done/archived cards, whereas
+    ``task_runs.worker_pid`` is cleared by the terminal-worker reaper once the process is gone.
+    A claim the host refused, a spawn or workspace failure, or a reclaim before the worker came
+    up has no launch event, so it is no attempt. Neither is a park or a planned stop
+    (``_not_an_attempt``).
     """
     rows = conn.execute(
-        "SELECT r.id, r.outcome, r.worker_pid FROM task_events e JOIN task_runs r ON r.id = e.run_id "
-        "WHERE e.task_id = ? AND e.kind = 'claimed' AND e.id > ?", (task_id, event_id),
+        "SELECT r.id, r.outcome FROM task_events e JOIN task_runs r ON r.id = e.run_id "
+        "WHERE e.task_id = ? AND e.kind = 'claimed' AND e.id > ? AND EXISTS (SELECT 1 FROM task_events s "
+        "WHERE s.task_id = e.task_id AND s.run_id = r.id AND s.kind IN "
+        "('spawned', 'worker_registered', 'worker_bound'))", (task_id, event_id),
     ).fetchall()
-    return any(r["worker_pid"] is not None and not _not_an_attempt(conn, task_id, r) for r in rows)
+    return any(not _not_an_attempt(conn, task_id, r) for r in rows)
 
 
 def consecutive_planned_stops(conn: sqlite3.Connection, task_id: str) -> int:
