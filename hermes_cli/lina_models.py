@@ -10,12 +10,23 @@ With ``ocx.external: {cli, data_dir}`` the reads run that CLI (the caller's envi
 ``data_dir`` is given) and nothing is ever written to that OCX: an argv outside ``read_only`` raises before anything
 is spawned, the write verbs of ``lina models`` / ``lina services`` refuse (``lina_ocx.refuse_external``), and a read
 fails while ``ocx status --json`` says the proxy is not running. Each argv's output is kept for 60 s, so the app's
-polling and the per-machine usage fan-out do not multiply OCX calls (a call takes about 0.3 s, ``status`` 2.7 s).
+polling does not multiply OCX calls (a call takes about 0.3 s, ``status`` 2.7 s). The gate uses the last
+``status --json``, refreshed in the background at most every 60 s (only the first read waits for one), so a stopped
+proxy is noticed on the first read after the next refresh; a refresh that fails is raised by the next read, and the
+read after that waits for a new ``status --json``.
+
+Usage per machine is not read per request: OCX keeps only four filtered usage aggregates, so a filtered read is
+mostly a cold scan of its whole usage log (about 10 s on a large one). A ``/usage`` read starts, in a background
+thread and at most every 15 minutes (``MACHINE_EVERY``), one ``usage --range 30d --api-key-id <id> --json`` per
+access key named ``link:<machine>``, one after another (lina#273). Each range's machine rows are summed from those
+answers' ``days[]`` over the dates of that range's unfiltered answer; a read serves the last finished fan-out and
+never waits for one, and a failed fan-out keeps the previous rows.
 """
 
 from __future__ import annotations
 
 import json
+import logging
 import os
 import re
 import subprocess
@@ -48,6 +59,36 @@ _CACHE: dict[tuple, tuple[float, str]] = {}
 _LOCKS: dict[tuple, threading.Lock] = {}
 _GUARD = threading.Lock()
 _clock = time.monotonic
+MACHINE_EVERY = 900
+_log = logging.getLogger(__name__)
+
+
+class _Machines:
+    """One LINA root's per-machine usage: the days of the last finished fan-out, and the fan-out last started."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.started: float | None = None
+        self.thread: threading.Thread | None = None
+        self.days: list[tuple[str, list[tuple[str, dict]]]] = []  # (machine, [(date, day totals)])
+
+
+_MACHINES: dict[Path, _Machines] = {}
+
+
+class _Stale:
+    """One argv's last answer, served while a background read refreshes it."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.value: Any = None
+        self.have = False
+        self.at = 0.0
+        self.error: lina_ocx.OcxError | None = None
+        self.thread: threading.Thread | None = None
+
+
+_STALE: dict[tuple, _Stale] = {}
 
 
 def read_only(args: tuple[str, ...]) -> bool:
@@ -94,6 +135,40 @@ def _external(ext: dict[str, str], args: tuple[str, ...]) -> Any:
     return json.loads(hit[1])
 
 
+def _refresh(ext: dict[str, str], args: tuple[str, ...], entry: _Stale) -> None:
+    try:
+        value = _external(ext, args)
+    except lina_ocx.OcxError as exc:
+        with entry.lock:
+            entry.error = exc
+        return
+    with entry.lock:
+        entry.value, entry.have, entry.at = value, True, _clock()
+
+
+def _stale(ext: dict[str, str], args: tuple[str, ...]) -> Any:
+    """``args``' last answer; once it is ``CACHE_S`` old, one background read refreshes it. The first read waits. A
+    failed refresh is raised by the next read, which drops the last answer so the read after it waits again."""
+    from agent.memory_provider import spawn_context_thread
+
+    key = (ext["cli"], ext.get("data_dir"), args)
+    with _GUARD:
+        entry = _STALE.setdefault(key, _Stale())
+    with entry.lock:
+        if entry.error is not None:
+            error, entry.error, entry.have, entry.value = entry.error, None, False, None
+            raise error
+        if entry.have:
+            if _clock() - entry.at >= CACHE_S and (entry.thread is None or not entry.thread.is_alive()):
+                entry.thread = spawn_context_thread(_refresh, args=(ext, args, entry), name="lina-ocx-refresh")
+                entry.thread.start()
+            return entry.value
+    value = _external(ext, args)
+    with entry.lock:
+        entry.value, entry.have, entry.at = value, True, _clock()
+    return value
+
+
 def _own(root: Path, args: tuple[str, ...]) -> Any:
     version = lina_ocx.current_version(root)
     if version is None:
@@ -110,7 +185,7 @@ def _read(root: Path, ext: dict[str, str] | None, args: tuple[str, ...]) -> Any:
     if not read_only(args):
         raise lina_ocx.OcxError(f"`ocx {' '.join(args)}` is not a read; ocx.external is read-only")
     if args != STATUS:
-        status = _external(ext, STATUS)
+        status = _stale(ext, STATUS)
         if not (isinstance(status, dict) and (status.get("proxy") or {}).get("running") is True):
             raise lina_ocx.OcxError(f"the OCX of ocx.external ({ext['cli']}) is not running: "
                                     "`ocx status --json` says proxy.running is not true")
@@ -150,21 +225,79 @@ def _rows(data: dict, name: str) -> list[dict]:
     return [row for row in data.get(name) or [] if isinstance(row, dict)]
 
 
+def _day(bucket: dict) -> dict:
+    models = _rows(bucket, "models")
+    return {"requests": _number(bucket.get("requests")) or 0, "total": _number(bucket.get("totalTokens")) or 0,
+            **{name: sum(_number(model.get(field)) or 0 for model in models)
+               for name, field in (("input", "inputTokens"), ("output", "outputTokens"),
+                                   ("cacheRead", "cacheReadInputTokens"))},
+            "costUsd": _number(bucket.get("estimatedCostUsd"))}
+
+
+def _fan_out(root: Path, state: _Machines) -> None:
+    """One 30-day read per ``link:<machine>`` key, one after another; the rows replace the last ones only whole."""
+    try:
+        keys = run(("access", "key", "list", "--json"), root)
+        days = []
+        for key in _rows(keys if isinstance(keys, dict) else {}, "keys"):
+            name = str(key.get("name") or "")
+            if name.startswith("link:") and name[5:]:
+                share = run(("usage", "--range", "30d", "--api-key-id", str(key.get("id")), "--json"), root)
+                buckets = _rows(share if isinstance(share, dict) else {}, "days")
+                days.append((name[5:], [(str(bucket.get("date")), _day(bucket)) for bucket in buckets]))
+    except lina_ocx.OcxError as exc:
+        _log.warning("lina models: the per-machine usage read failed (%s); the previous rows stay",
+                     type(exc).__name__)
+        return
+    with state.lock:
+        state.days = days
+
+
+def _machine_days(root: Path) -> list[tuple[str, list[tuple[str, dict]]]]:
+    """The last finished fan-out's days; starts the next fan-out when none runs and the last began 15 min ago."""
+    from agent.memory_provider import spawn_context_thread
+
+    with _GUARD:
+        state = _MACHINES.setdefault(root, _Machines())
+    with state.lock:
+        idle = state.thread is None or not state.thread.is_alive()
+        if idle and (state.started is None or _clock() - state.started >= MACHINE_EVERY):
+            state.started = _clock()
+            state.thread = spawn_context_thread(_fan_out, args=(root, state), name="lina-machine-usage")
+            state.thread.start()
+        return state.days
+
+
+def _join(root: Path | None = None, timeout: float | None = None) -> None:
+    """Wait for the fan-out in flight at ``root``, then for every background refresh (tests)."""
+    state = _MACHINES.get(root or lina_ocx.lina_root())
+    if state is not None and state.thread is not None:
+        state.thread.join(timeout)
+    with _GUARD:
+        refreshes = [entry.thread for entry in _STALE.values() if entry.thread is not None]
+    for thread in refreshes:
+        thread.join(timeout)
+
+
+def _machine_row(machine: str, days: list[tuple[str, dict]], dates: set[str]) -> dict:
+    picked = [day for date, day in days if date in dates]
+    costs = [day["costUsd"] for day in picked if day["costUsd"] is not None]
+    return {"machine": machine, "requests": sum(day["requests"] for day in picked),
+            "tokens": {name: sum(day[name] for day in picked) for name in ("total", "input", "output", "cacheRead")},
+            "costUsd": sum(costs) if costs else None}
+
+
 def usage(range_: str, root: Path | None = None) -> dict:
     """``GET /api/lina/usage``: one range's usage by model, provider, account (OCX's ``accountLogLabel``) and machine
-    (one ``usage --api-key-id`` per access key named ``link:<machine>``). There is no split by agent: every agent on
-    the hub sends with the same OCX key, so OCX records no agent (lina#232)."""
+    (the last background fan-out's 30-day ``days[]`` per access key named ``link:<machine>``, summed over this range's
+    dates; ``[]`` until the first fan-out finishes). There is no split by agent: every agent on the hub sends with the
+    same OCX key, so OCX records no agent (lina#232)."""
     if range_ not in RANGES:
         raise ValueError(f"range must be one of {', '.join(RANGES)}")
     root = root or lina_ocx.lina_root()
     data = run(("usage", "--range", range_, "--json"), root)
-    keys = run(("access", "key", "list", "--json"), root)
-    machines = []
-    for key in _rows(keys if isinstance(keys, dict) else {}, "keys"):
-        name = str(key.get("name") or "")
-        if name.startswith("link:") and name[5:]:
-            share = run(("usage", "--range", range_, "--api-key-id", str(key.get("id")), "--json"), root)
-            machines.append({"machine": name[5:], **_totals(share.get("summary") or {})})
+    dates = {str(bucket.get("date")) for bucket in _rows(data, "days")}
+    machines = [_machine_row(machine, days, dates) for machine, days in _machine_days(root)]
     return {"range": range_, "generatedAt": _seconds(data.get("generatedAt")), **_totals(data.get("summary") or {}),
             "byModel": [{"model": row.get("model"), "provider": row.get("provider"), **_totals(row)}
                         for row in _rows(data, "models")],

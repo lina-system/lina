@@ -935,7 +935,11 @@ components:
             $ref: "#/components/schemas/UsageRow"
         byMachine:
           type: array
-          description: One row per OCX access key named `link:<machine>`.
+          description: >-
+            One row per OCX access key named `link:<machine>`, summed over this range's days from one 30-day
+            `usage --api-key-id` read per machine key. Those reads run in the background, started by a usage read at
+            most every 15 minutes; a read serves the last finished ones and never waits, so the list is empty until
+            the first one finishes and a day they have no record for counts 0 until the next.
           items:
             $ref: "#/components/schemas/UsageRow"
     LinkState:
