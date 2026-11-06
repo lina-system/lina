@@ -26,6 +26,7 @@ from __future__ import annotations
 import hashlib
 import json
 import logging
+import os
 import threading
 import time
 from pathlib import Path
@@ -239,11 +240,11 @@ def start(root: Path | None = None) -> Callable[[], None]:
     folder = lina_push.push_dir(root)
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
-    holder = open(folder / "sender.lock", "a", encoding="utf-8")
+    holder = os.open(folder / "sender.lock", os.O_RDWR | os.O_CREAT, 0o600)
     try:
         fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
     except BlockingIOError:
-        holder.close()
+        os.close(holder)
         log.info("push: another process sends for %s", root)
         return lambda: None
     from agent.memory_provider import spawn_context_thread
@@ -254,5 +255,5 @@ def start(root: Path | None = None) -> Callable[[], None]:
     def halt() -> None:
         stop.set()
         thread.join(timeout=5)
-        holder.close()
+        os.close(holder)
     return halt

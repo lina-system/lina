@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import json
 import logging
+import stat
 import threading
 
 import pytest
@@ -265,6 +266,8 @@ def test_the_sender_starts_once_per_root_with_the_key_and_stops(work, key, monke
     try:
         assert swept.wait(30)
         assert (work.root / "push" / "state.json").is_file()
+        assert {p.name: stat.S_IMODE(p.stat().st_mode) for p in (work.root / "push").iterdir()} == {
+            "state.json": 0o600, "sender.lock": 0o600}
         lina_push_watch.start(work.root)()  # a second web server on the same root does not send too
         assert len([t for t in threading.enumerate() if t.name == "lina-push"]) == 1
     finally:
