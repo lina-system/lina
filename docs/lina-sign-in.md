@@ -41,9 +41,15 @@ and a one-line `reason`. When a person is needed it also has `need` and
      node". Enter picks the
      first entry of its menu, Google OAuth. Its address returns to a page on the
      provider's site that shows a code to paste. There is no local return.
-3. For a loopback return, the hub opens `ssh -L <port>:127.0.0.1:<port> <node>`.
-   The browser's return then reaches the CLI's own listener on the node, and the
-   code and token never pass through LINA. For agy, the browser command prints
+3. For a loopback return, the hub opens `ssh -L <port>:127.0.0.1:<port> <node>`,
+   so `127.0.0.1:<port>` on the hub reaches the CLI's own listener on the node.
+   A browser often does not follow a page's redirect to 127.0.0.1 on its own (a
+   site may need the browser's local-network permission for that). So the browser
+   command may hand the return address back instead: the hub checks that it is
+   `http://127.0.0.1:<port>/...` on the tunnel's port and sends it one GET
+   through the tunnel, without a proxy, and drops the answer. The address stays
+   in the hub's memory, and the token is made by the CLI and never passes
+   through LINA. For agy, the browser command prints
    the code from the return page. The hub keeps it in memory and types it into
    the CLI over the ssh channel; it is never written to a file.
 4. The hub runs the browser command (below). Then it waits until the runner's
@@ -82,13 +88,16 @@ is redirected), DISPLAY and SSH_AUTH_SOCK pass. It also gets these variables:
 |---|---|
 | `LINA_SIGN_IN_RUNNER` | the runner (`grok`, `agy`) |
 | `LINA_SIGN_IN_ACCOUNT` | `worker.sign_in.accounts.<runner>`, or empty |
-| `LINA_SIGN_IN_RETURN` | `loopback` (follow the return; print nothing) or `code` (print the code the return page shows on stdout) |
+| `LINA_SIGN_IN_RETURN` | `address` (a return to `127.0.0.1:<port>`: print the return address on stdout, or follow it and print nothing) or `code` (print the code the return page shows on stdout) |
 
 The command opens the address in the hub's signed-in browser profile and clicks
 through the account choice and consent:
 
-- exit 0: consent is given. For `loopback`, the browser has followed the return
-  to 127.0.0.1. For `code`, the code is on stdout.
+- exit 0: consent is given. For `address`, the first line on stdout is the
+  return address the provider sent the browser to (`http://127.0.0.1:<port>/...`),
+  stopped before the browser loads it. If stdout is empty, the browser has
+  followed the return itself and the hub sends nothing. The hub refuses any other
+  host or port. For `code`, the code is on stdout.
 - exit 3 with one stderr line `needs_person: two_step`, `needs_person: new_device`
   or `needs_person: account_choice`: a person is needed. Use `account_choice`
   when the account in `LINA_SIGN_IN_ACCOUNT` is empty or not listed.

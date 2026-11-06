@@ -5,9 +5,10 @@
 1. ssh runs ``NODE_SCRIPT`` on the node. It starts the runner's CLI through LINA's shim with ``BROWSER`` set to a
    helper that writes the sign-in address into a 0600 file in a 0700 temporary folder; the script hands the address
    back over the same ssh channel, so it lives in the hub's memory only. The CLI's own output goes to /dev/null.
-2. When the address returns to ``http://127.0.0.1:<port>/``, the hub opens ``ssh -L <port>:127.0.0.1:<port>`` so its
-   browser's return lands on the CLI's own listener on the node; the code and token never pass through LINA. A
-   runner whose return is a page with a code to paste (agy) gets that code from the browser command's stdout, kept in
+2. When the address returns to ``http://127.0.0.1:<port>/``, the hub opens ``ssh -L <port>:127.0.0.1:<port>`` so the
+   return lands on the CLI's own listener on the node. The browser command either hands that return address back on
+   its stdout (the hub then sends it one GET through the tunnel, kept in memory only) or follows it itself. A runner
+   whose return is a page with a code to paste (agy) gets that code from the browser command's stdout, kept in
    memory and typed into the CLI over the ssh channel.
 3. ``worker.sign_in.browser.command`` gets the address on stdin (never in argv) and the account from
    ``worker.sign_in.accounts.<runner>`` in ``LINA_SIGN_IN_ACCOUNT``. It exits 0 when consent is given, or
@@ -23,6 +24,7 @@ written into a result, the inbox or a card.
 from __future__ import annotations
 
 import fcntl  # windows-footgun: ok — the hub that signs nodes in runs on POSIX only
+import http.client
 import logging
 import queue
 import shlex
@@ -41,6 +43,7 @@ BROWSER_TIMEOUT_S = 600.0
 FINISH_TIMEOUT_S = 120.0
 TUNNEL_TIMEOUT_S = 30.0
 CLOSE_TIMEOUT_S = 30.0
+RETURN_TIMEOUT_S = 30.0
 STOP_GRACE_S = 10.0
 MENU_DELAY_S = 3.0
 LOOPBACK = ("127.0.0.1", "localhost")
@@ -329,10 +332,34 @@ def _browser(conf: dict, runner: str, address: str, mode: str) -> tuple[str, str
         return "failed", "the browser command stopped for a person without naming two_step|new_device|account_choice"
     if done.returncode != 0:
         return "failed", f"the browser command ended with exit {done.returncode}"
-    code = next((line.strip() for line in done.stdout.splitlines() if line.strip()), "")
-    if mode == "code" and not code:
+    first = next((line.strip() for line in done.stdout.splitlines() if line.strip()), "")
+    if mode == "code" and not first:
         return "failed", "the browser command gave no code for a runner that returns to a page"
-    return "ok", code if mode == "code" else ""
+    return "ok", first
+
+
+def deliver_return(address: str, port: int) -> str | None:
+    """Hand the browser's return *address* to the runner's listener: one GET to this hub's end of the tunnel on
+    *port* (straight to the listener for a local device). Only ``http://127.0.0.1:<port>/`` (or ``localhost``) on the
+    sign-in's own port is accepted. No proxy is consulted and the answer is read and dropped. None once delivered,
+    else why not."""
+    back = urllib.parse.urlsplit(address)
+    try:
+        same = back.scheme == "http" and back.hostname in LOOPBACK and back.port == port
+    except ValueError:
+        same = False
+    if not same:
+        return "the browser command handed back a return that is not this sign-in's loopback return"
+    target = urllib.parse.urlunsplit(("", "", back.path or "/", back.query, ""))
+    connection = http.client.HTTPConnection("127.0.0.1", port, timeout=RETURN_TIMEOUT_S)
+    try:
+        connection.request("GET", target)
+        connection.getresponse().read()
+    except (OSError, http.client.HTTPException):
+        return "the browser's return could not be handed to the runner through the tunnel"
+    finally:
+        connection.close()
+    return None
 
 
 def _finish(session: NodeSession) -> tuple[str, str]:
@@ -360,9 +387,14 @@ def _steps(session: NodeSession, host: str | None, conf: dict, runner: str) -> t
             tunnel = Tunnel(host, port)
             if not tunnel.ready:
                 return "failed", "the return tunnel to the node could not be set up (is that port busy on the hub?)"
-        outcome, detail = _browser(conf, runner, address, "loopback" if port is not None else "code")
+        outcome, detail = _browser(conf, runner, address, "address" if port is not None else "code")
         if outcome != "ok":
             return outcome, detail
+        if port is not None:
+            undelivered = deliver_return(detail, port) if detail else None
+            if undelivered:
+                return "failed", undelivered
+            return _finish(session)
         if detail:
             session.send(f"code {detail}")
         return _finish(session)

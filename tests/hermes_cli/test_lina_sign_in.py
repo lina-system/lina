@@ -1,7 +1,7 @@
 """``lina devices sign-in <node> <runner>`` (lina#230) end to end on this machine: a fake ``ssh`` runs the node side
 under its own HOME and TMPDIR, a fake runner CLI listens on a real 127.0.0.1 port and hands its sign-in address to
-``$BROWSER``, and a fake browser command follows the address back to that listener (or prints a paste code, or stops
-for a person). The inbox is a scratch sqlite work record read the way the board reads it.
+``$BROWSER``, and a fake browser command hands the return address back on its stdout (or follows it to that listener
+itself, or prints a paste code, or stops for a person). The inbox is a scratch sqlite work record read the way the board reads it.
 """
 
 from __future__ import annotations
@@ -116,7 +116,13 @@ if mode == "code":
     print({code!r})
     sys.exit(0)
 back = urllib.parse.parse_qs(urllib.parse.urlsplit(address).query)["redirect_uri"][0]
-urllib.request.urlopen(back + "?" + urllib.parse.urlencode({{"code": {code!r}, "state": {state!r}}}), timeout=30).read()
+if mode == "elsewhere":
+    back = back.replace("127.0.0.1", "203.0.113.9")
+return_address = back + "?" + urllib.parse.urlencode({{"code": {code!r}, "state": {state!r}}})
+if mode == "follow":
+    urllib.request.urlopen(return_address, timeout=30).read()
+else:
+    print(return_address)
 """
 
 
@@ -245,13 +251,34 @@ def test_grok_signs_in_on_the_node_through_the_hub_browser_and_a_return_tunnel(t
     assert len(tunnels) == 1 and tunnels[0][tunnels[0].index("-L") + 1].count(":127.0.0.1:") == 1, \
         "the browser's return goes to the node's listener through one ssh -L"
     seen = json.loads(hub.seen.read_text(encoding="utf-8"))
-    assert seen == {"argv": ["ok"], "account": "person@example.test", "return": "loopback", "got_address": True,
+    assert seen == {"argv": ["ok"], "account": "person@example.test", "return": "address", "got_address": True,
                     "secret": False}, \
         "the address reaches the browser command on stdin only, with the runner's account and no hub secret in its env"
     assert not hub.cache.exists(), "the node's runner report cache is gone, so hello probes again"
     assert hub.hellos == 2
     assert hub.leftovers() == [], "the node's 0600 folder with the address is removed"
     assert not _alive(int((hub.node_home / "cli.pid").read_text())), "the CLI on the node has ended"
+
+
+def test_a_browser_that_follows_the_return_itself_still_signs_in(tmp_path, monkeypatch):
+    hub = Hub(tmp_path, monkeypatch, mode="follow")
+
+    result, _ = hub.sign_in("grok")
+
+    assert result["state"] == "signed_in", result
+    assert (hub.node_home / ".grok" / "auth.json").exists()
+    assert hub.leftovers() == []
+
+
+def test_a_return_address_off_the_loopback_port_is_refused_and_never_requested(tmp_path, monkeypatch):
+    hub = Hub(tmp_path, monkeypatch, mode="elsewhere")
+
+    result, _ = hub.sign_in("grok")
+
+    assert result["state"] == "failed" and "not this sign-in's loopback return" in result["reason"]
+    assert not (hub.node_home / ".grok" / "auth.json").exists()
+    assert hub.leftovers() == []
+    assert not _alive(int((hub.node_home / "cli.pid").read_text())), "the node's CLI is stopped"
 
 
 def test_the_cli_command_signs_in_and_exits_zero(tmp_path, monkeypatch, capsys):
@@ -285,7 +312,7 @@ def test_a_two_step_check_stops_the_flow_with_one_inbox_question_naming_node_and
     assert hub.leftovers() == []
 
 
-@pytest.mark.parametrize("mode", ["ok", "new_device"])
+@pytest.mark.parametrize("mode", ["ok", "follow", "elsewhere", "new_device"])
 def test_no_sign_in_address_code_or_token_is_printed_logged_or_left_in_a_file(tmp_path, monkeypatch, capsys, caplog,
                                                                               mode):
     hub = Hub(tmp_path, monkeypatch, mode=mode)
@@ -294,7 +321,7 @@ def test_no_sign_in_address_code_or_token_is_printed_logged_or_left_in_a_file(tm
     text: list[str] = []
     lina_devices.sign_in(hub.root, node=NODE, runner="grok", out=text.append)
 
-    assert result["state"] == ("signed_in" if mode == "ok" else "needs_person")
+    assert result["state"] == {"ok": "signed_in", "follow": "signed_in", "elsewhere": "failed"}.get(mode, "needs_person")
     shown = "\n".join([printed, *text, json.dumps(hub.inbox()), *capsys.readouterr(), caplog.text]).encode()
     left = hub.every_written_byte(tmp_path)
     for secret in (b"http", CODE.encode(), STATE.encode(), b"example.test/authorize", b"callback"):
