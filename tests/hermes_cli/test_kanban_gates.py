@@ -606,8 +606,9 @@ def _ui_issue(head=UI_HEAD):
 
 
 def _qa(head=UI_HEAD, instance="disposable", defects="- None.", drop=None,
-        names=("(A) Defects", "(B) Verified", "(C) Suggestions", "(D) Map drift")):
-    texts = (defects, "- PASS: board loads\n- PASS: card opens", "- wider column", "- None.")
+        names=("(A) Defects", "(B) Verified", "(C) Suggestions", "(D) Map drift"),
+        verified="- PASS: board loads\n- PASS: card opens"):
+    texts = (defects, verified, "- wider column", "- None.")
     body = "".join(f"\n## {name}\n\n{text}\n" for name, text in zip(names, texts) if name != drop)
     return f"ui-qa-result v1 head={head} instance={instance}\n{body}"
 
@@ -687,6 +688,36 @@ def test_ui_qa_reads_an_aside_qa_answer_as_it_is(board, gh, capsys, answer, expe
     out = capsys.readouterr().out
     assert why in out, out
     assert [line[len("  defect: "):] for line in out.splitlines() if line.startswith("  defect: ")] == listed
+
+
+SAVE = "Save button does nothing."
+
+
+@pytest.mark.parametrize("defects,verified,listed", [
+    (f"### Board screen\n- {SAVE}", None, [SAVE]),
+    (None, f"### Board screen\n- PASS: board loads\n- FAIL: {SAVE}", [f"FAIL: {SAVE}"]),
+    (None, f"- PASS: board loads\n```\n# console log\n```\n- FAIL: {SAVE}", [f"FAIL: {SAVE}"]),
+    (f"- {SAVE}\n  ```\n  - not an item\n  ```", None, [SAVE]),
+    (SAVE, None, [SAVE]),
+    (f"> {SAVE}", None, [f"> {SAVE}"]),
+    (None, f"- PASS: board loads\n- **FAIL**: {SAVE}", [f"**FAIL**: {SAVE}"]),
+    (None, f"- PASS: board loads\n- Fail: {SAVE}", [f"Fail: {SAVE}"]),
+    (None, f"- PASS: board loads\nFAIL: {SAVE}", [f"FAIL: {SAVE}"]),
+    ("* one\n+ two\n1. three\n2) four\n   - five", None, ["one", "two", "three", "four", "five"]),
+    (f"- {SAVE}\n  when offline\n\n- Title cut off.", None, [SAVE, "Title cut off."]),
+    ("### Board screen\n- None.\n\nNone.", None, []),
+], ids=["subheading-defect", "subheading-failed-check", "fenced-heading", "fenced-item", "prose", "quote",
+        "bold-fail", "lowercase-fail", "unlisted-fail", "bullets", "continuation", "subheading-none"])
+def test_ui_qa_counts_defects_in_every_markdown_shape(board, gh, capsys, defects, verified, listed):
+    """No markdown shape hides a defect: sub-headings, code fences, prose and other bullets (#272 review)."""
+    kw = {k: v for k, v in {"defects": defects, "verified": verified}.items() if v is not None}
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "qa", _qa(**kw))
+    gh.set([_ui_issue()])
+    assert _run("ui-qa", "--card", tid) == (gates.FAIL if listed else gates.PASS)
+    out = capsys.readouterr().out
+    assert [line[len("  defect: "):] for line in out.splitlines() if line.startswith("  defect: ")] == listed, out
 
 
 def test_board_is_opened_read_only(board):
