@@ -37,7 +37,9 @@ def planned_stop_limit() -> int:
     except (TypeError, ValueError):
         limit = 0
     if limit < 1:
-        kb._log.warning("kanban: invalid kanban.planned_stop_limit=%r; using %d", raw, DEFAULT_PLANNED_STOP_LIMIT)
+        # The value itself is not logged: a config value read here is untrusted text.
+        kb._log.warning("kanban: invalid kanban.planned_stop_limit (%s); using %d", type(raw).__name__,
+                        DEFAULT_PLANNED_STOP_LIMIT)
         return DEFAULT_PLANNED_STOP_LIMIT
     return limit
 
