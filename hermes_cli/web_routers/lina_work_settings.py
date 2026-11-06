@@ -8,6 +8,7 @@
 the ``writable`` flag. Mounted through ``lina_models.router`` like ``lina_board``.
 """
 
+import ipaddress
 import json
 import time
 from typing import Callable, Optional
@@ -39,8 +40,23 @@ async def _current():
         raise HTTPException(status_code=503, detail=_invalid(exc.errors)["detail"]) from exc
 
 
+LOOPBACK = ("127.0.0.1", "::1")
+
+
 def _peer(request: Request) -> str:
-    return request.client.host if request.client else ""
+    """The address the gate asks tailscale about. Behind the hub's own ``tailscale serve`` the direct peer is
+    loopback and the device is the last ``X-Forwarded-For`` entry (tailscale serve sets it and drops what the client
+    sent); a loopback caller is already on the hub, where the CLI writes anyway (lina#283). Any other direct peer's
+    header is ignored, and a malformed entry leaves the direct peer."""
+    host = request.client.host if request.client else ""
+    forwarded = request.headers.get("x-forwarded-for")
+    if host not in LOOPBACK or not forwarded:
+        return host
+    last = forwarded.split(",")[-1].strip()
+    try:
+        return str(ipaddress.ip_address(last))
+    except ValueError:
+        return host
 
 
 def _revision(rev) -> dict:

@@ -15,6 +15,11 @@ settings from here.
   account with quota data is at 0 headroom); ``no_account`` (no usable account); ``unknown`` (no quota data, or OCX
   could not be read).
 
+Every good read also writes the last good list, cut to what the check uses, to
+``<work settings root>/work-settings/models-last-good.json`` with its read time (written whole: a temp file in the same
+folder, then a rename). A submit runs in a new process, so ``last_good`` falls back to that file (lina#283); no
+account name, email, id or label is kept in it.
+
 Per runner, per mode default and for the fallback the view says whether its model is usable now (``ok`` or
 ``unknown``), with one Korean warning line when it is not. When OCX cannot be read, the last good read (kept in
 memory up to ten minutes) is served with ``errors: [{source: ocx, message}]``.
@@ -22,7 +27,10 @@ memory up to ten minutes) is served with ``errors: [{source: ocx, message}]``.
 
 from __future__ import annotations
 
+import json
 import logging
+import os
+import tempfile
 import threading
 import time
 from pathlib import Path
@@ -37,6 +45,10 @@ USABLE = ("ok", "unknown")
 EXTRA_WINDOWS = (("short", "shortPercent", "shortResetAt"),)
 WARN = {"off": "{who} 모델이 꺼져 있습니다", "out_of_quota": "{who} 모델의 쿼터가 다 찼습니다",
         "no_account": "{who} 모델을 쓸 계정이 없습니다"}
+SNAPSHOT = "models-last-good.json"
+ROW_KEYS = ("provider", "id", "reasoningEfforts", "defaultReasoningEffort", "disabled", "initialSelectionPending")
+ACCOUNT_KEYS = ("provider", "paused", "needsReauth")
+CUSTOM_KEYS = ("percent", "resetAt", "modelId")
 _LAST: dict[str, tuple[float, list, list]] = {}
 _LOCK = threading.Lock()
 log = logging.getLogger(__name__)
@@ -74,15 +86,68 @@ def read(now: float) -> tuple[list, list, list[dict]]:
     accounts = [a for a in listed if isinstance(a, dict)] if isinstance(listed, list) else []
     with _LOCK:
         _LAST[key] = (now, rows, accounts)
+    _write_snapshot(now, rows, accounts)
     return rows, accounts, []
 
 
+def snapshot_path() -> Path:
+    return ws.base() / "work-settings" / SNAPSHOT
+
+
+def _account(account: dict) -> dict:
+    out = {k: account[k] for k in ACCOUNT_KEYS if k in account}
+    quota = account.get("quota")
+    if isinstance(quota, dict):
+        kept = {k: quota[k] for _, value, reset in (*WINDOWS, *EXTRA_WINDOWS) for k in (value, reset) if k in quota}
+        custom = quota.get("customWindows")
+        if isinstance(custom, list):
+            kept["customWindows"] = [{k: row[k] for k in CUSTOM_KEYS if k in row} for row in custom
+                                     if isinstance(row, dict)]
+        out["quota"] = kept
+    return out
+
+
+def _write_snapshot(now: float, rows: list[dict], accounts: list[dict]) -> None:
+    """The last good list for other processes. A failed write is logged; the view still serves this read."""
+    data = {"at": now, "rows": [{k: r[k] for k in ROW_KEYS if k in r} for r in rows],
+            "accounts": [_account(a) for a in accounts]}
+    path = snapshot_path()
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        fd, tmp = tempfile.mkstemp(prefix=f".{SNAPSHOT}.", dir=path.parent)
+        try:
+            with os.fdopen(fd, "w", encoding="utf-8") as fh:
+                json.dump(data, fh)
+            os.replace(tmp, path)
+        except BaseException:
+            Path(tmp).unlink(missing_ok=True)
+            raise
+    except (OSError, TypeError, ValueError) as exc:
+        log.warning("work settings: the models snapshot could not be written: %s", exc)
+
+
+def _read_snapshot(now: float) -> tuple[list, list] | None:
+    """The snapshot file's lists when its ``at`` is at most ten minutes old; anything else is None."""
+    try:
+        data = json.loads(snapshot_path().read_text(encoding="utf-8"))
+    except (OSError, ValueError):
+        return None
+    at = _number(data.get("at")) if isinstance(data, dict) else None
+    rows, accounts = (data.get("rows"), data.get("accounts")) if at is not None else (None, None)
+    if not isinstance(rows, list) or not isinstance(accounts, list) or not 0 <= now - at <= LAST_GOOD_S:
+        return None
+    return [r for r in rows if isinstance(r, dict)], [a for a in accounts if isinstance(a, dict)]
+
+
 def last_good(now: float) -> tuple[list, list] | None:
-    """``(live rows, accounts)`` of the last good read when it is at most ten minutes old, else None. Never calls
-    OCX: the run path decides from this at submit (lina#257), so a hanging OCX never holds a submit."""
+    """``(live rows, accounts)`` of the last good read when it is at most ten minutes old: this process's own, else
+    the snapshot file another process wrote, else None. Never calls OCX: the run path decides from this at submit
+    (lina#257), so a hanging OCX never holds a submit."""
     with _LOCK:
         hit = _LAST.get("ocx")
-    return (hit[1], hit[2]) if hit and now - hit[0] <= LAST_GOOD_S else None
+    if hit and now - hit[0] <= LAST_GOOD_S:
+        return hit[1], hit[2]
+    return _read_snapshot(now)
 
 
 def _windows(account: dict, model_id: str) -> list[tuple[float, float | None]]:
