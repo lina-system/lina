@@ -15,6 +15,9 @@ STOP_KINDS = frozenset({"blocked", "dependency_wait", "block_loop_detected", "ti
                         "gave_up", "crashed", "reclaimed", "spawn_failed", "scheduled"})
 RESUME_KINDS = frozenset({"claimed", "unblocked", "promoted", "completed"})
 MAIN_SESSION_SUFFIX = "-main"
+# A main session writes its resume note and the reason-less unblock in two calls, one second apart
+# on the real board; the note still belongs to that hand when it lands this soon before the event.
+UNBLOCK_NOTE_WINDOW_SECONDS = 5
 
 
 def short_text(value) -> str:
@@ -116,10 +119,12 @@ def _unblock_match(touches, paired, event, actor, line, comments, own):
 
     The CLI records one act twice -- a ``UNBLOCK: <reason>`` comment and the event
     carrying ``<reason>`` -- and a legacy event with no reason names its actor in
-    that same comment or in the main session's own note. Pair only those shapes: a
-    different second, author or text is a second act and keeps its own touch.
+    that same comment or in the main session's own note within the window. Pair only
+    those shapes: a different second, author or text is a second act and keeps its
+    own touch.
     """
     lines = set()
+    at = event["created_at"]
     if line:
         lines.update((line, short_text(f"UNBLOCK: {line}")))
     else:
@@ -127,24 +132,29 @@ def _unblock_match(touches, paired, event, actor, line, comments, own):
         if legacy is None:
             return None
         lines.add(short_text(legacy["body"]))
+        at = legacy["created_at"]
     return next((i for i, touch in enumerate(touches)
                  if i not in paired and touch["kind"] in ("comment", "answer")
-                 and _same_author(touch["by"], actor, own) and touch["at"] == event["created_at"]
+                 and _same_author(touch["by"], actor, own) and touch["at"] == at
                  and touch["line"] in lines), None)
 
 
 def unblock_comment(event, comments, own=()):
-    """The one same-second comment a reason-less unblock records its actor in.
+    """The one same-second ``UNBLOCK:`` comment, else the one main-session note, a reason-less
+    unblock records its actor in.
 
     The CLI writes ``UNBLOCK: <reason>``; a main session signs its resume note
-    ``<profile>-main`` instead, and that note is the same hand as the unblock beside it.
+    ``<profile>-main`` instead, and that note is the same hand as the unblock it writes
+    within ``UNBLOCK_NOTE_WINDOW_SECONDS`` after it. Two notes in that window pair nothing.
     """
-    same_second = [c for c in comments if c["created_at"] == event["created_at"]
-                   and c["task_id"] == event["task_id"]]
-    legacy = [c for c in same_second if c["body"].startswith("UNBLOCK:")]
+    on_card = [c for c in comments if c["task_id"] == event["task_id"]
+               and event["created_at"] - UNBLOCK_NOTE_WINDOW_SECONDS <= c["created_at"]
+               <= event["created_at"]]
+    legacy = [c for c in on_card if c["body"].startswith("UNBLOCK:")
+              and c["created_at"] == event["created_at"]]
     if legacy:
         return legacy[0] if len(legacy) == 1 else None
-    notes = [c for c in same_second if main_session(c["author"], own)]
+    notes = [c for c in on_card if main_session(c["author"], own)]
     return notes[0] if len(notes) == 1 else None
 
 

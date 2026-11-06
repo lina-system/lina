@@ -147,6 +147,7 @@ def test_main_session_resume_note_and_reason_less_unblock_are_one_hand(board, by
     kb.schedule_task(conn, tid)
     clock[0] += 65 * 3600
     kb.add_comment(conn, tid, "lina-main", "resumed after the fleet pause", source={"surface": "cli"})
+    clock[0] += 1  # the CLI writes the note and the unblock in two calls
     kb.unblock_task(conn, tid, by=by)
     row = ko.compute_outcome(conn, tid, include_active=True)
     assert [(t["by"], t["kind"], t["line"]) for t in row["touches"]] == [
@@ -154,6 +155,25 @@ def test_main_session_resume_note_and_reason_less_unblock_are_one_hand(board, by
         ("lina-main", "unblock", "resumed after the fleet pause")]
     assert row["main_session_touches"] == 2
     assert row["stops"][0]["resumed_by"] == resumed_by
+
+
+def test_two_main_session_notes_in_the_window_pair_nothing(board):
+    conn, clock = board
+    tid = kb.create_task(conn, title="work", assignee="lina", goal_mode=True)
+    kb.claim_task(conn, tid)
+    clock[0] += 10
+    kb.schedule_task(conn, tid)
+    clock[0] += 65 * 3600
+    kb.add_comment(conn, tid, "lina", "paused for the fleet-wide pause", source={"surface": "cli"})
+    clock[0] += 2
+    kb.add_comment(conn, tid, "lina-main", "still paused, resuming tomorrow", source={"surface": "cli"})
+    kb.unblock_task(conn, tid)
+    row = ko.compute_outcome(conn, tid, include_active=True)
+    assert [(t["by"], t["kind"], t["line"]) for t in row["touches"]] == [
+        ("lina", "comment", "paused for the fleet-wide pause"),
+        ("lina-main", "comment", "still paused, resuming tomorrow"),
+        (None, "unblock", "")]
+    assert row["stops"][0]["resumed_by"] is None
 
 
 @pytest.mark.parametrize("resume", [True, False], ids=["running", "terminal-new-event"])
