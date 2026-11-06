@@ -6,21 +6,27 @@ switch of a machine is a config change plus one command; going back is taking on
 
 | Old call | Runs | Notes |
 | --- | --- | --- |
-| `omo-task <verb> ...` | `lina worker <verb> ...` | `submit --brief --mode --repo --input --todo --host --model --topic --bot --at --every --wait`, `status`, `list`, `send`, `cancel`, `result`, `accept --note`, `reject --why`, `receipts`, `hosts`, `schedules`, `unschedule` |
+| `omo-task <verb> ...` | `lina worker <verb> ...` | `submit --brief --mode --repo --input --todo --host --model --topic --bot --at --every --wait --card --card-board`, `submit --session` (accepted, ignored), `status`, `attach` (prints the status), `card` (shows the card; adding or dropping one is refused), `list`, `send --card --card-board`, `cancel`, `result`, `accept --note`, `reject --why`, `receipts`, `hosts`, `schedules`, `unschedule` |
 | `omo-task fork <ID>` | nothing (exit 2) | `lina worker` has no fork: submit a new brief, or `send` for the next run in the same session |
 | `work <verb> ...` | `lina work <verb> ...` | every verb and option; task IDs imported with `lina work import` keep their IDs |
 
 A shim prints nothing of its own on success and exits with the wrapped command's code, so callers
 that parse the output see the same text.
 
+An installed shim always runs with `LINA_HOME` set to the root it was installed for. A caller's
+`HERMES_HOME` (Hermes Agent's profile home, as in an agent's terminal) never moves it; it names the
+owner of a run when `--bot`, `HERMES_PROFILE` and `HERMES_PROFILE_NAME` do not. From a card session
+the card is found without `--card` (docs/worker-card-session.md).
+
 ## Who answers an ID
 
 `lina worker` keeps a record of every task it started (`worker/hub/jobs/<ID>.json` under the LINA
-home). For a verb that names a task (`status`, `send`, `cancel`, `result`, `accept`, `reject`,
-`receipts`, `unschedule`, `fork`), the `omo-task` shim sends an ID that `lina worker` started to
-`lina worker`, and any other ID to the old tool named in `worker.legacy_omo_task`. One call goes to
-one tool, never both. Without `worker.legacy_omo_task` every ID goes to `lina worker`. `list` shows
-the tasks `lina worker` started; the old tool's own `list` still shows the old ones.
+home). For a verb that names a task (`status`, `attach`, `card`, `send`, `cancel`, `result`,
+`accept`, `reject`, `receipts`, `unschedule`, `fork`), the `omo-task` shim sends an ID that
+`lina worker` started to `lina worker`, and any other ID to the old tool named in
+`worker.legacy_omo_task`. One call goes to one tool, never both. Without `worker.legacy_omo_task`
+every ID goes to `lina worker`. `list` prints the tasks `lina worker` started and then, when
+`worker.legacy_omo_task` is set, the old tool's `list` output (same options).
 
 ## Checklist
 
