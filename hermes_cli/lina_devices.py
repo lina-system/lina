@@ -30,8 +30,9 @@ class DevicesError(RuntimeError):
 
 
 def _base(base: Path | None) -> Path:
-    from hermes_cli.lina_ocx import lina_root
-    return base or lina_root()
+    """The worker's LINA root (lina#227): the device list read, bid over and written here is the one the worker reads."""
+    from hermes_cli.lina_work_settings import base as settings_base
+    return base or settings_base()
 
 
 def probe(dev: settings.Device, worker_root: Path, runner: str) -> dict:
@@ -110,7 +111,6 @@ def list_devices(base: Path | None = None, *, as_json: bool = False, out=print) 
 
 def add(name: str, host: str, *, base: Path | None = None, cap: int = 1, fast: bool = False, no_repo: bool = False,
         last: bool = False, manual: bool = False, lina: str | None = None, out=print) -> int:
-    from hermes_cli.config_backend import write_config_key
     if not _NAME.match(name):
         raise DevicesError(f"device name {name!r}: letters, digits, - and _ only")
     entry = {"host": host, "cap": max(1, cap)}
@@ -119,16 +119,25 @@ def add(name: str, host: str, *, base: Path | None = None, cap: int = 1, fast: b
         entry["auto"] = False
     if lina:
         entry["lina"] = lina
-    write_config_key(_base(base) / "config.yaml", f"devices.workers.{name}", entry)
+    _write(_base(base), name, entry)
     out(f"{name}: {host}, cap {entry['cap']} in devices.workers (`lina devices check {name}`)")
     return 0
 
 
+def _write(base: Path, name: str, entry: dict | None) -> None:
+    """One device entry through the work settings layer (lina#256), so the change is a revision in its history."""
+    from hermes_cli.lina_work_settings import SettingsError, set_path
+    from hermes_cli.lina_work_settings_store import Store, cli_by
+    try:
+        Store(base).apply(lambda doc: set_path(doc, f"devices.workers.{name}", entry), cli_by())
+    except SettingsError as exc:
+        raise DevicesError(f"refused by the work settings: {exc}") from exc
+
+
 def remove(name: str, *, base: Path | None = None, out=print) -> int:
-    from hermes_cli.config_backend import write_config_key
     base = _base(base)
     device(name, base)
-    write_config_key(base / "config.yaml", f"devices.workers.{name}", None)
+    _write(base, name, None)
     out(f"{name}: removed from devices.workers")
     return 0
 

@@ -1443,10 +1443,10 @@ components:
       properties:
         source:
           type: string
-          enum: [work, worker, kanban]
+          enum: [work, worker, kanban, settings]
           description: >
             work = the work record's event table; worker = a `lina worker` run state change (hub receipts);
-            kanban = a kanban task event.
+            kanban = a kanban task event; settings = a work settings revision (`docs/api/settings-client.yaml`).
         kind:
           type: string
           description: The store's own event kind (work event kind, worker receipt kind, kanban task event kind).

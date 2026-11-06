@@ -1,0 +1,650 @@
+# The work settings over the client API (lina#256): devices and caps, runners and their models, model aliases,
+# defaults per mode and fallback, routing rules; their revisions, one-step rollback, the OCX model list and the route
+# resolver. Served by hermes_cli/web_routers/lina_work_settings.py behind the dashboard auth gate (session token);
+# writes also pass the owner-device gate (hermes_cli/lina_work_settings_gate.py). The change stream's settings events
+# (SettingsChangeEvent) come on /api/lina/events (docs/api/board-client.yaml, ChangeMessage).
+# tests/hermes_cli/test_lina_work_settings_api.py validates served JSON against it, so a shape change here and in the
+# code land together.
+openapi: 3.0.3
+info:
+  title: LINA work settings API
+  version: 0.1.0
+  description: >
+    The work settings are keys of the LINA root's config.yaml (devices.workers, worker.default_runner,
+    worker.runners, worker.models, worker.routing). Every change is a new revision with one audit line; the ETag
+    of GET is the revision's, and PATCH and rollback need it back as If-Match. Times are Unix epoch seconds.
+servers:
+  - url: /api/lina
+paths:
+  /work/settings:
+    get:
+      operationId: getWorkSettings
+      summary: The settings now, their revision and whether this caller may write.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The settings.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SettingsView"
+        "304":
+          description: Unchanged since the ETag sent.
+    patch:
+      operationId: patchWorkSettings
+      summary: Change the settings with a JSON Merge Patch (RFC 7396); null removes a key.
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      requestBody:
+        required: true
+        content:
+          application/merge-patch+json:
+            schema:
+              type: object
+          application/json:
+            schema:
+              type: object
+      responses:
+        "200":
+          $ref: "#/components/responses/Written"
+        "400":
+          $ref: "#/components/responses/Refused"
+        "403":
+          $ref: "#/components/responses/Refused"
+        "412":
+          $ref: "#/components/responses/Stale"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/Refused"
+        "429":
+          $ref: "#/components/responses/Refused"
+  /work/settings/history:
+    get:
+      operationId: getWorkSettingsHistory
+      summary: The audit lines, newest first.
+      parameters:
+        - name: limit
+          in: query
+          schema:
+            type: integer
+            default: 20
+            minimum: 1
+            maximum: 500
+      responses:
+        "200":
+          description: The history.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HistoryView"
+  /work/settings/history/{rev}:
+    get:
+      operationId: getWorkSettingsRevision
+      summary: One revision's settings.
+      parameters:
+        - name: rev
+          in: path
+          required: true
+          schema:
+            type: string
+            example: r42
+      responses:
+        "200":
+          description: The revision.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RevisionView"
+        "404":
+          $ref: "#/components/responses/Refused"
+  /work/settings/rollback:
+    post:
+      operationId: rollbackWorkSettings
+      summary: Write the revision before the newest as a new revision (a second rollback undoes the first).
+      parameters:
+        - $ref: "#/components/parameters/IfMatch"
+      responses:
+        "200":
+          $ref: "#/components/responses/Written"
+        "403":
+          $ref: "#/components/responses/Refused"
+        "412":
+          $ref: "#/components/responses/Stale"
+        "422":
+          $ref: "#/components/responses/Invalid"
+        "428":
+          $ref: "#/components/responses/Refused"
+        "429":
+          $ref: "#/components/responses/Refused"
+  /work/settings/models:
+    get:
+      operationId: getWorkSettingsModels
+      summary: OCX's enabled models with state, quota left and reset, and whether each runner's model is usable now.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The model list.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelsView"
+        "304":
+          description: Unchanged since the ETag sent.
+  /work/settings/route:
+    post:
+      operationId: routeWorkSettings
+      summary: Which runner the routing rules pick for an issue (a read; POST only for the body).
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RouteRequest"
+      responses:
+        "200":
+          description: The runner.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RouteView"
+        "400":
+          $ref: "#/components/responses/Refused"
+components:
+  parameters:
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema:
+        type: string
+    IfMatch:
+      name: If-Match
+      in: header
+      required: true
+      description: The ETag of the settings read last; missing = 428, not the newest = 412.
+      schema:
+        type: string
+  headers:
+    ETag:
+      description: '"r<n>-<hash>": the revision and a hash of its settings.'
+      schema:
+        type: string
+  responses:
+    Written:
+      description: The new revision.
+      headers:
+        ETag:
+          $ref: "#/components/headers/ETag"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/WriteResult"
+    Refused:
+      description: Refused; nothing written.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Detail"
+    Stale:
+      description: The settings changed since the ETag sent; the header carries the newest ETag.
+      headers:
+        ETag:
+          $ref: "#/components/headers/ETag"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Detail"
+    Invalid:
+      description: The settings would not be valid; nothing written.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/ValidationError"
+  schemas:
+    Detail:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string
+    PathError:
+      type: object
+      additionalProperties: false
+      required: [path, message]
+      properties:
+        path:
+          type: string
+          example: devices.workers.laptop.cap
+        message:
+          type: string
+    ValidationError:
+      type: object
+      additionalProperties: false
+      required: [detail, errors]
+      properties:
+        detail:
+          type: string
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/PathError"
+    SourceError:
+      type: object
+      additionalProperties: false
+      required: [source, message]
+      properties:
+        source:
+          type: string
+          example: ocx
+        message:
+          type: string
+    By:
+      type: object
+      additionalProperties: false
+      required: [kind, principal, device]
+      properties:
+        kind:
+          type: string
+          enum: [cli, app, outside, rollback]
+        principal:
+          type: string
+          description: The OS user (cli), the tailnet login (app); empty for outside.
+        device:
+          type: string
+          description: local (cli), the owner's device name (app); empty for outside.
+    Change:
+      type: object
+      additionalProperties: false
+      required: [path, from, to]
+      properties:
+        path:
+          type: string
+          example: worker.runners.codex.model
+        from:
+          nullable: true
+        to:
+          nullable: true
+    Revision:
+      type: object
+      additionalProperties: false
+      required: [id, at, by, base]
+      properties:
+        id:
+          type: string
+          example: r42
+          description: r0 is the empty start, before any revision.
+        at:
+          type: number
+          nullable: true
+        by:
+          allOf:
+            - $ref: "#/components/schemas/By"
+          nullable: true
+        base:
+          type: string
+          nullable: true
+    AuditLine:
+      type: object
+      additionalProperties: false
+      required: [rev, at, by, base, changes]
+      properties:
+        rev:
+          type: string
+        at:
+          type: number
+        by:
+          $ref: "#/components/schemas/By"
+        base:
+          type: string
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Change"
+        rollback_of:
+          type: string
+    Settings:
+      type: object
+      additionalProperties: false
+      description: >
+        The work-settings keys of config.yaml, as the worker reads them. A runner's env and credential-like keys are
+        never part of it. Validation rules: docs/lina-work-settings.md.
+      properties:
+        devices:
+          type: object
+          additionalProperties: false
+          properties:
+            workers:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/Device"
+        worker:
+          type: object
+          additionalProperties: false
+          properties:
+            default_runner:
+              type: string
+            runners:
+              type: object
+              additionalProperties:
+                $ref: "#/components/schemas/Runner"
+            models:
+              type: object
+              additionalProperties: false
+              properties:
+                aliases:
+                  type: object
+                  additionalProperties:
+                    type: object
+                    properties:
+                      provider:
+                        type: string
+                      id:
+                        type: string
+                      thinking:
+                        type: string
+                defaults:
+                  type: object
+                  additionalProperties:
+                    type: string
+                fallback:
+                  type: string
+            routing:
+              type: array
+              items:
+                $ref: "#/components/schemas/Rule"
+    Device:
+      type: object
+      properties:
+        host:
+          type: string
+        role:
+          type: string
+          enum: [work, files, person]
+        cap:
+          type: integer
+          minimum: 1
+        named_cap:
+          type: integer
+          minimum: 1
+        last:
+          oneOf:
+            - type: boolean
+            - type: integer
+        fast:
+          type: boolean
+        no_repo:
+          type: boolean
+        off:
+          type: boolean
+        auto:
+          type: boolean
+        lina:
+          type: string
+    Runner:
+      type: object
+      properties:
+        type:
+          type: string
+        argv:
+          type: array
+          items:
+            type: string
+        follow_up_argv:
+          type: array
+          items:
+            type: string
+        model_args:
+          type: array
+          items:
+            type: string
+        "on":
+          type: boolean
+        model:
+          type: string
+          example: opencodex/impl-model:high
+        fallback_model:
+          type: string
+        access:
+          type: string
+          enum: [read-only, workspace-write, full]
+    Rule:
+      type: object
+      required: [name, runner]
+      properties:
+        name:
+          type: string
+        when:
+          type: object
+          properties:
+            runner_label:
+              type: string
+            labels_any:
+              type: array
+              items:
+                type: string
+            size:
+              type: array
+              items:
+                type: string
+                enum: [S, M, L]
+        runner:
+          type: string
+    SettingsView:
+      type: object
+      additionalProperties: false
+      required: [version, at, revision, settings, writable, warnings, errors]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        revision:
+          $ref: "#/components/schemas/Revision"
+        settings:
+          $ref: "#/components/schemas/Settings"
+        writable:
+          type: boolean
+          description: False unless this caller is the owner on one of the configured owner devices.
+        warnings:
+          type: array
+          description: What validation would refuse in the settings now (an outside edit may have left them so).
+          items:
+            $ref: "#/components/schemas/PathError"
+        errors:
+          type: array
+          items:
+            $ref: "#/components/schemas/SourceError"
+    WriteResult:
+      type: object
+      additionalProperties: false
+      required: [ok, revision, changes]
+      properties:
+        ok:
+          type: boolean
+        revision:
+          $ref: "#/components/schemas/Revision"
+        changes:
+          type: array
+          items:
+            $ref: "#/components/schemas/Change"
+    HistoryView:
+      type: object
+      additionalProperties: false
+      required: [version, at, revisions]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        revisions:
+          type: array
+          items:
+            $ref: "#/components/schemas/AuditLine"
+    RevisionView:
+      type: object
+      additionalProperties: false
+      required: [version, at, revision, settings]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        revision:
+          $ref: "#/components/schemas/Revision"
+        settings:
+          $ref: "#/components/schemas/Settings"
+    ModelState:
+      type: string
+      enum: [ok, "off", out_of_quota, no_account, unknown]
+    Model:
+      type: object
+      additionalProperties: false
+      required: [provider, id, namespaced, name, efforts, defaultEffort, state, left, resetAt, accounts]
+      properties:
+        provider:
+          type: string
+        id:
+          type: string
+        namespaced:
+          type: string
+          nullable: true
+        name:
+          type: string
+          nullable: true
+        efforts:
+          type: array
+          items:
+            type: string
+        defaultEffort:
+          type: string
+          nullable: true
+        state:
+          $ref: "#/components/schemas/ModelState"
+        left:
+          type: number
+          nullable: true
+          description: 100 - the used percent of the best usable account's binding window.
+        resetAt:
+          type: number
+          nullable: true
+        accounts:
+          type: integer
+          description: Usable accounts of the provider (not paused, not waiting to sign in again).
+    ModelCheck:
+      type: object
+      required: [model, state, usable, fallback, warning]
+      properties:
+        model:
+          type: string
+          nullable: true
+        state:
+          allOf:
+            - $ref: "#/components/schemas/ModelState"
+          nullable: true
+        usable:
+          type: boolean
+        fallback:
+          type: string
+          nullable: true
+        warning:
+          type: string
+          nullable: true
+          description: One Korean line when the model is not usable now.
+    ModelsView:
+      type: object
+      additionalProperties: false
+      required: [version, at, models, runners, modes, fallback, warnings, errors]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        models:
+          type: array
+          items:
+            $ref: "#/components/schemas/Model"
+        runners:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/ModelCheck"
+              - type: object
+                required: [name]
+                properties:
+                  name:
+                    type: string
+        modes:
+          type: array
+          items:
+            allOf:
+              - $ref: "#/components/schemas/ModelCheck"
+              - type: object
+                required: [mode]
+                properties:
+                  mode:
+                    type: string
+        fallback:
+          $ref: "#/components/schemas/ModelCheck"
+        warnings:
+          type: array
+          items:
+            type: string
+        errors:
+          type: array
+          description: "{source: ocx} when OCX could not be read: the models are the last good list (up to 10 min)."
+          items:
+            $ref: "#/components/schemas/SourceError"
+    RouteRequest:
+      type: object
+      properties:
+        labels:
+          type: array
+          items:
+            type: string
+        size:
+          type: string
+          nullable: true
+          enum: [S, M, L]
+    RouteView:
+      type: object
+      additionalProperties: false
+      required: [version, at, runner, rule, matched]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        runner:
+          type: string
+        rule:
+          type: string
+          nullable: true
+        matched:
+          type: boolean
+    SettingsChangeEvent:
+      type: object
+      additionalProperties: false
+      description: A settings event on /api/lina/events; refetch GET /work/settings.
+      required: [source, kind, id, at]
+      properties:
+        source:
+          type: string
+          enum: [settings]
+        kind:
+          type: string
+          enum: [revised, rolled_back, outside]
+        id:
+          type: string
+          description: The revision, e.g. r42.
+        at:
+          type: integer
+          nullable: true
