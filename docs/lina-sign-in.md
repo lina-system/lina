@@ -44,10 +44,14 @@ and a one-line `reason`. When a person is needed it also has `need` and
    the CLI over the ssh channel; it is never written to a file.
 4. The hub runs the browser command (below). Then it waits until the runner's
    credential file exists on the node, or until the CLI ends.
-5. The node script stops the CLI, removes its folder and the node's runner report
-   cache (`<LINA root>/worker/runners.report.json`), and confirms with
-   `cleaned`. The hub closes the tunnel, reads `hello` again, and returns
-   `signed_in` only when the node now reports the runner signed in.
+5. The hub closes the tunnel and asks the node session to stop, then ends the
+   session if it has not ended within 10 s. It then runs a separate short stop
+   call on the node. That call stops every process the session recorded and all
+   their descendants (a CLI under `script` included), and removes the folder and
+   the node's runner report cache (`<LINA root>/worker/runners.report.json`).
+   Its `cleaned` is the confirmation; without it the result is `failed`. The hub
+   then reads `hello` again and returns `signed_in` only when the node now
+   reports the runner signed in.
 
 Only one sign-in of the same runner on the same node runs at a time. The lock
 file is `<LINA root>/worker/hub/sign-in/<node>.<runner>.lock`.

@@ -9,6 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import shlex
 import sys
 import textwrap
 from pathlib import Path
@@ -26,7 +27,7 @@ NODE = "node-a"
 
 FAKE_SSH = """\
 #!{python}
-import json, os, sys
+import json, os, shlex, signal, sys
 args = sys.argv[1:]
 with open(os.environ["FAKE_SSH_LOG"], "a", encoding="utf-8") as log:
     log.write(json.dumps(args) + "\\n")
@@ -34,6 +35,18 @@ i = 0
 while args[i].startswith("-"):
     i += 2 if args[i] in ("-o", "-L") else 1
 env = dict(os.environ, HOME=os.environ["FAKE_NODE_HOME"], TMPDIR=os.environ["FAKE_NODE_TMP"])
+session = "-L" not in args and shlex.split(args[i + 1])[3] == "lina-sign-in"
+if session and os.environ.get("FAKE_SSH_DEAF"):
+    # The node never sees `stop` nor the end of its input: lines pass, the channel stays open after this ssh dies.
+    r, w = os.pipe()
+    os.set_inheritable(w, True)
+    if os.fork() == 0:
+        os.dup2(r, 0)
+        os.execvpe("sh", ["sh", "-c", args[i + 1]], env)
+    for line in sys.stdin:
+        if line.strip() != "stop":
+            os.write(w, line.encode())
+    signal.pause()
 os.execvpe("sh", ["sh", "-c", args[i + 1]], env)
 """
 
@@ -282,6 +295,20 @@ def test_agy_takes_the_code_its_return_page_shows_from_the_browser_command(tmp_p
     assert not [call for call in hub.ssh_calls() if "-L" in call], "a return to a page needs no tunnel"
     assert CODE not in printed and hub.leftovers() == []
     assert not _alive(int((hub.node_home / "cli.pid").read_text())), "agy's terminal session is stopped"
+
+
+def test_a_node_session_that_never_sees_stop_is_still_stopped_and_cleaned(tmp_path, monkeypatch):
+    hub = Hub(tmp_path, monkeypatch, mode="code")
+    monkeypatch.setenv("FAKE_SSH_DEAF", "1")
+    monkeypatch.setattr(lina_sign_in, "STOP_GRACE_S", 2.0, raising=False)
+
+    result, _ = hub.sign_in("agy")
+
+    assert result["state"] == "signed_in", result
+    assert hub.leftovers() == [], "the separate stop call removed the node's folder"
+    assert not _alive(int((hub.node_home / "cli.pid").read_text())), "agy under its terminal wrapper is stopped"
+    stops = [call for call in hub.ssh_calls() if "lina-sign-in-stop" in shlex.split(call[-1])[3:4]]
+    assert len(stops) == 1
 
 
 @pytest.mark.parametrize(("runner", "state", "reason"), [

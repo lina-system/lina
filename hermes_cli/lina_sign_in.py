@@ -41,6 +41,7 @@ BROWSER_TIMEOUT_S = 600.0
 FINISH_TIMEOUT_S = 120.0
 TUNNEL_TIMEOUT_S = 30.0
 CLOSE_TIMEOUT_S = 30.0
+STOP_GRACE_S = 10.0
 MENU_DELAY_S = 3.0
 LOOPBACK = ("127.0.0.1", "localhost")
 logger = logging.getLogger(__name__)
@@ -63,29 +64,44 @@ METHODS = {
 }
 REPORTED_ONLY = {"ocx": "reported only: signs in through OCX", "cursor": "reported only: signs in with a key"}
 
+# $1 the sign-in folder, $2 report cache to remove, $3 a pid to spare (the caller). Stops every process recorded in
+# the folder's `pids` and all their descendants (found before any is signalled, so a CLI that a terminal wrapper put
+# in its own session is found too), removes the folder and the cache, and says `cleaned` once the folder is gone.
+# The hub runs it as its own short call after the session, so the confirmation never depends on the session's shell.
+STOP_SCRIPT = r"""
+set -u
+d=$1; cache=$2; spare=${3:-}
+case ${d##*/} in lina-sign-in.*) ;; *) exit 64 ;; esac
+tree() {
+  [ "$1" = "$$" ] && return 0
+  for c in $(pgrep -P "$1" 2>/dev/null); do tree "$c"; done
+  [ "$1" = "$spare" ] || echo "$1"
+}
+all=''
+for p in $(cat "$d/pids" 2>/dev/null); do all="$all $(tree "$p" | tr '\n' ' ')"; done
+for p in $all; do kill "$p" 2>/dev/null; done
+n=0
+for p in $all; do
+  while kill -0 "$p" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
+done
+for p in $all; do kill -0 "$p" 2>/dev/null && kill -9 "$p" 2>/dev/null; done
+rm -rf "$d"
+[ -n "$cache" ] && rm -f "$cache"
+[ -e "$d" ] || echo cleaned
+"""
+
 # $1 command (shell words), $2 credential under $HOME, $3 1 = run under a terminal, $4 report cache to remove,
-# $5 seconds before Enter on the first menu ("" = none). Lines out: `url <address>`, `signed`, `exit <n>`, `no-url`,
-# `cleaned`. Lines in: `code <code>`, `stop`.
+# $5 seconds before Enter on the first menu ("" = none), $6 STOP_SCRIPT. Lines out: `dir <folder>`, `url <address>`,
+# `signed`, `exit <n>`, `no-url`, `cleaned`. Lines in: `code <code>`, `stop`.
 NODE_SCRIPT = r"""
 set -u
-cmd=$1; cred=$2; pty=$3; cache=$4; menu=$5
+cmd=$1; cred=$2; pty=$3; cache=$4; menu=$5; stop=$6
 umask 077
+trap '' PIPE
 d=$(mktemp -d "${TMPDIR:-/tmp}/lina-sign-in.XXXXXX") || exit 70
-finish() {
-  gone=''
-  for p in $(cat "$d/pids" 2>/dev/null); do
-    gone="$gone $p $(pgrep -P "$p" 2>/dev/null | tr '\n' ' ')"
-    pkill -TERM -P "$p" 2>/dev/null; kill "$p" 2>/dev/null
-  done
-  n=0
-  for p in $gone; do
-    while kill -0 "$p" 2>/dev/null && [ "$n" -lt 50 ]; do sleep 0.1; n=$((n + 1)); done
-  done
-  rm -rf "$d"
-  [ -n "$cache" ] && rm -f "$cache"
-  [ -e "$d" ] || echo cleaned
-}
-trap finish EXIT
+echo $$ > "$d/pids"
+echo "dir $d"
+trap 'sh -c "$stop" lina-sign-in-stop "$d" "$cache" $$' EXIT
 trap 'exit 1' INT TERM HUP
 cat > "$d/open" <<'EOF'
 #!/bin/sh
@@ -102,6 +118,7 @@ else
   set -- sh -c "$cmd"
 fi
 ( BROWSER="$d/open" "$@" < "$d/in" > /dev/null 2>&1 & echo $! >> "$d/pids"; wait $!; echo "exit $?" ) &
+echo $! >> "$d/pids"
 exec 3> "$d/in"
 ( while [ ! -e "$HOME/$cred" ]; do sleep 1; done; echo signed ) &
 echo $! >> "$d/pids"
@@ -111,6 +128,7 @@ while [ ! -f "$d/url" ]; do
   [ "$waited" -ge 30 ] && { echo no-url; exit 1; }
   sleep 1; waited=$((waited + 1))
 done
+for p in $(cat "$d/pids"); do [ "$p" = $$ ] || pgrep -P "$p" >> "$d/pids" 2>/dev/null; done
 printf 'url %s\n' "$(cat "$d/url")"
 rm -f "$d/url"
 while IFS= read -r line; do
@@ -167,15 +185,21 @@ def _ssh(host: str, *options: str) -> list[str]:
 class NodeSession:
     """``NODE_SCRIPT`` on one node (``sh`` here for a ``host: local`` device), steered over its stdin."""
 
-    def __init__(self, host: str | None, args: list[str]):
-        if host is None:
-            argv = ["sh", "-c", NODE_SCRIPT, "lina-sign-in", *args]
-        else:
-            argv = [*_ssh(host), shlex.join(["sh", "-c", NODE_SCRIPT, "lina-sign-in", *args])]
-        self.proc = subprocess.Popen(argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
+    def __init__(self, host: str | None, args: list[str], cache: str):
+        self.host, self.cache, self.folder = host, cache, ""
+        self.proc = subprocess.Popen(self._argv(NODE_SCRIPT, "lina-sign-in", *args, STOP_SCRIPT),
+                                     stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,
                                      text=True, encoding="utf-8", errors="replace")
         self.out = _Lines(self.proc)
-        self.cleaned = False
+
+    def _argv(self, script: str, *args: str) -> list[str]:
+        words = ["sh", "-c", script, *args]
+        return words if self.host is None else [*_ssh(self.host), shlex.join(words)]
+
+    def opened(self) -> bool:
+        """Wait for the node's sign-in folder; False when the node did not answer."""
+        word, self.folder = self.out.expect(("dir",), URL_WAIT_S)
+        return word == "dir"
 
     def send(self, line: str) -> None:
         try:
@@ -185,20 +209,27 @@ class NodeSession:
             pass  # the node side has ended; close() reports whether it cleaned up
 
     def close(self) -> bool:
-        """Stop the CLI and remove the node's folder; True once the node said it cleaned up."""
+        """Ask the session to stop, end it if it does not within ``STOP_GRACE_S``, then stop what is left on the node
+        with ``STOP_SCRIPT`` as its own call; True once that call says the folder is gone."""
         self.send("stop")
         try:
             self.proc.stdin.close()
         except OSError:
             pass
-        word, _ = self.out.expect(("cleaned",), CLOSE_TIMEOUT_S)
-        self.cleaned = word == "cleaned"
         try:
-            self.proc.wait(timeout=CLOSE_TIMEOUT_S)
+            self.proc.wait(timeout=STOP_GRACE_S)
         except subprocess.TimeoutExpired:
             self.proc.kill()
             self.proc.wait()
-        return self.cleaned
+        if not self.folder:
+            return False
+        try:
+            done = subprocess.run(self._argv(STOP_SCRIPT, "lina-sign-in-stop", self.folder, self.cache, ""),
+                                  stdin=subprocess.DEVNULL, capture_output=True, text=True, encoding="utf-8",
+                                  errors="replace", timeout=CLOSE_TIMEOUT_S, check=False)
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        return "cleaned" in done.stdout.split()
 
 
 class Tunnel:
@@ -277,6 +308,8 @@ def _finish(session: NodeSession) -> tuple[str, str]:
 def _steps(session: NodeSession, host: str | None, conf: dict, runner: str) -> tuple[str, str]:
     tunnel = None
     try:
+        if not session.opened():
+            return "failed", "the node did not answer"
         word, address = session.out.expect(("url", "no-url", "exit"), URL_WAIT_S + MENU_DELAY_S + 30)
         if word != "url":
             return "failed", "the runner gave no sign-in address" if word else "the node did not answer"
@@ -299,7 +332,7 @@ def _steps(session: NodeSession, host: str | None, conf: dict, runner: str) -> t
 def _flow(host: str | None, args: list[str], conf: dict, runner: str) -> tuple[str, str]:
     """One sign-in on the node: ("ok", ""), ("needs_person", need) or ("failed", why). The tunnel and the node
     session are always closed; a node that does not confirm its cleanup turns the outcome into a failure."""
-    session = NodeSession(host, args)
+    session = NodeSession(host, args, cache=args[3])
     try:
         outcome, detail = _steps(session, host, conf, runner)
     finally:
