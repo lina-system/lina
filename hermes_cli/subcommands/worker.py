@@ -22,10 +22,11 @@ def _submit(args) -> int:
 
 
 def _card(args) -> dict | None:
+    import os
     from hermes_cli.worker.hub import HubError
     if args.board and not args.card:
         raise HubError("--board names the board of --card <id>")
-    return {"task": args.card, "board": args.board or None} if args.card else None
+    return {"task": args.card, "board": args.board or os.environ.get("HERMES_KANBAN_BOARD") or None} if args.card else None
 
 
 def _device(args) -> int:
@@ -61,7 +62,7 @@ def _tick(args) -> int:
 
 _ACTIONS = {
     "submit": _submit,
-    "send": lambda a: _hub().send(a.id, a.message),
+    "send": lambda a: _hub().send(a.id, a.message, _card(a)),
     "wait": lambda a: _hub().wait(_card(a), a.id),
     "status": lambda a: _hub().status(a.id, a.json),
     "result": lambda a: _hub().result(a.id),
@@ -144,8 +145,9 @@ def build_worker_parser(subparsers) -> None:
                                        "next run in the same session")
     send.add_argument("id")
     send.add_argument("message")
-    wait = sub.add_parser("wait", help="Park the Hermes card these runs came from (kanban schedule) and end the "
-                                       "turn: the first run end wakes it")
+    _card_args(send)
+    wait = sub.add_parser("wait", help="Record the runs to wait on and print the Hermes kanban_schedule tool "
+                                       "instruction; call that tool and end the turn")
     wait.add_argument("id", nargs="*", help="the runs to wait on (default: every open run of the card)")
     _card_args(wait)
     cancel = sub.add_parser("cancel", help="Stop the task (the task folder stays); one notice follows")

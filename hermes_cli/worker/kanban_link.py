@@ -6,15 +6,16 @@ The card is named by ``submit --card <id> --board <slug>`` or by the card sessio
 * unset or ``{kind: lina}``: LINA's own board, through the kanban DB API (``worker_run`` and ``worker_run_ended``
   events, the end notice as a comment).
 * ``{kind: hermes, command: [hermes]}``: a Hermes Agent card, written only through that command's
-  ``kanban [--board <b>] comment | attach | schedule | unblock``. No LINA code opens a kanban database in this mode.
-  The run's start and end are comments, ``report.md`` is attached, and a card parked by ``lina worker wait``
-  (``schedule``) is woken (``unblock``) once by the end of a run it waits on. The end is three steps
+  ``kanban [--board <b>] comment | attach | show | unblock``. No LINA code opens a kanban database in this mode.
+  The hub writes start/end comments and attaches ``report.md``. ``lina worker wait`` records the runs; the card's
+  model schedules itself, then the hub wakes it (``unblock``) once on a run's end. The end is three steps
   (``END_STEPS``); the hub keeps the ones that went through and retries the rest.
 """
 
 from __future__ import annotations
 
 import contextlib
+import json
 import os
 import shlex
 import subprocess
@@ -72,16 +73,17 @@ def _hub_env() -> dict[str, str]:
             if key not in _HUB_SIDE_DROP and not key.startswith("HERMES_KANBAN_")}
 
 
-def _kanban(command: list[str], card: dict, verb: str, *args: str, env: dict[str, str] | None = None) -> None:
+def _kanban(command: list[str], card: dict, verb: str, *args: str) -> str:
     argv = [*command, "kanban", *(["--board", card["board"]] if card.get("board") else []), verb, card["task"], *args]
     try:
         done = subprocess.run(argv, text=True, encoding="utf-8", errors="replace", capture_output=True,
-                              env=_hub_env() if env is None else env, timeout=COMMAND_TIMEOUT_S, check=False)
+                              env=_hub_env(), timeout=COMMAND_TIMEOUT_S, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise CardLinkError(f"{shlex.join(argv[:len(command) + 5])}: {exc}") from exc
     if done.returncode != 0:
         raise CardLinkError(f"{shlex.join(argv[:len(command) + 5])} exited {done.returncode}: "
                             f"{(done.stderr or done.stdout).strip()[-300:]}")
+    return done.stdout
 
 
 def _comment(command: list[str], card: dict, body: str) -> None:
@@ -100,7 +102,7 @@ def _start_line(job: dict) -> str:
     what = " · ".join(str(part) for part in (job.get("runner"), job.get("mode"), (job.get("model") or {}).get("id"),
                                              job.get("repo"), job.get("branch")) if part)
     return (f"[lina worker · automatic] run {job['id']} handed out ({what}). Its end comes as a comment here; "
-            f"`lina worker wait` parks this card until then.")
+            "use `lina worker wait --card <id> --board <slug>` and follow its kanban_schedule instruction.")
 
 
 def record_run(card: dict, job: dict, link: dict) -> None:
@@ -145,8 +147,8 @@ def _parked_path(store, card: dict) -> Path:
     return store.root / "cards" / f"{card_key(card)}.parked"
 
 
-def park(store, card: dict, link: dict, open_runs: list[str]) -> None:
-    """Park the card (``kanban schedule``) from its own session, so its end of turn costs nothing until a run ends.
+def park(store, card: dict, open_runs: list[str]) -> None:
+    """Record the runs before the card's model schedules itself with ``kanban_schedule``.
 
     Runs under the card's lock, which every end takes before it wakes the card: an end that lands while the card is
     being parked still finds it parked and wakes it."""
@@ -154,12 +156,6 @@ def park(store, card: dict, link: dict, open_runs: list[str]) -> None:
         mark = _parked_path(store, card)
         mark.parent.mkdir(parents=True, exist_ok=True)
         mark.write_text(" ".join(open_runs) + f"\n{time.time():.3f}\n", encoding="utf-8")
-        try:
-            _kanban(link["command"], card, "schedule", f"waiting on lina worker {' '.join(open_runs)}",
-                    env=dict(os.environ))  # health: allow PS-P05 -- the card session's own env: Hermes ends its run
-        except CardLinkError:
-            mark.unlink(missing_ok=True)
-            raise
 
 
 def wake(store, card: dict, link: dict, run_id: str) -> bool:
@@ -173,7 +169,14 @@ def wake(store, card: dict, link: dict, run_id: str) -> bool:
             return False
         if run_id not in waited:
             return False
-        _kanban(link["command"], card, "unblock")
+        try:
+            status = json.loads(_kanban(link["command"], card, "show", "--json"))["task"]["status"]
+        except (ValueError, KeyError, TypeError) as exc:
+            raise CardLinkError("kanban show did not return task.status") from exc
+        if status in ("running", "ready"):
+            raise CardLinkError(f"card {card['task']} is {status}; waiting for kanban_schedule")
+        if status == "scheduled":
+            _kanban(link["command"], card, "unblock")
         with contextlib.suppress(FileNotFoundError):
             mark.unlink()
-        return True
+        return status == "scheduled"
