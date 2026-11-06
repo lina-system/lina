@@ -212,3 +212,26 @@ def test_live_downgrade_notice_keeps_original_run_mode(sending):
     assert saved["run_access"]["1"] == "workspace-write"
     text = notice.body(saved, "cancelled", "1", hub.worker_root, {})
     assert "workspace-write" in text.splitlines()[0]
+
+
+def test_routed_runner_is_the_one_checked_for_access(tmp_path):
+    base = tmp_path / "lina"
+    base.mkdir()
+    (base / "config.yaml").write_text("""worker:
+  default_runner: omo
+  runners:
+    inspect: {type: command, argv: ['true'], access: read-only}
+  routing:
+    - {name: inspection, when: {labels_any: [inspect], size: [S]}, runner: inspect}
+""", encoding="utf-8")
+    hub = Hub(base / "worker")
+    brief = tmp_path / "brief.md"
+    brief.write_text("Inspect only", encoding="utf-8")
+    opts = {"bot": "tester", "topic": "inspection", "mode": "ulw", "inputs": [],
+            "labels": ["inspect"], "size": "S"}
+    with pytest.raises(HubError, match="cannot honour"):
+        hub.make_job(brief, opts, None)
+    job = hub.make_job(brief, {**opts, "access": "read-only"}, None)
+    assert job["runner"] == "inspect"
+    assert job["settings"]["runner_source"] == "routing:inspection"
+    assert job["access"] == job["grant"]["access"] == "read-only"
