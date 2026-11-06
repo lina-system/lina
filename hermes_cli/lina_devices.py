@@ -40,6 +40,8 @@ def probe(dev: settings.Device, worker_root: Path, runner: str) -> dict:
     reply = for_device(dev, worker_root).call(["probe", "", runner], timeout=60)
     if reply.code == 0:
         return {"ssh": True, **(reply.json() or {"error": "no answer"})}
+    if reply.json().get("protocol_error"):
+        return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, **reply.json()}
     return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, "error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
 
 
@@ -68,7 +70,7 @@ def readiness(dev: settings.Device, worker_root: Path) -> dict:
     found = probe(dev, worker_root, runner)
     row = {"name": dev.name, "host": dev.host, "cap": dev.cap, "runner": runner, "ssh": found["ssh"],
            "free_gb": found.get("free_gb"), "running": found.get("running"), "serve": found.get("serve")}
-    omo = omo_status(dev) if found["ssh"] and runner == "omo" else {}
+    omo = omo_status(dev) if found["ssh"] and not found.get("protocol_error") and runner == "omo" else {}
     row["omo"] = None if runner != "omo" else bool(omo.get("pinned") and omo.get("current") == omo.get("pinned"))
     why = bidding.readiness(dev, found, repo=None, min_free_gb=int(settings.setting("min_free_gb", worker=worker)))
     if why == "only when named with --host":
