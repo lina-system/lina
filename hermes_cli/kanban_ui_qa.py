@@ -27,7 +27,8 @@ SECTIONS = ("Defects", "Verified", "Suggestions", "Map drift")
 _SECTION_NAMES = {"defects": "Defects", "verified": "Verified", "confirmed": "Verified",
                   "suggestions": "Suggestions", "map drift": "Map drift", "map differences": "Map drift"}
 _LETTER = re.compile(r"^\([A-Da-d]\)\s*")
-_FAILED_CHECK = re.compile(r"^[*_`~\s]*fail(?:ed)?\b", re.IGNORECASE)
+_FAILED_CHECK = re.compile(r"^(?:[\s>|*_`~+-]|[0-9]+[.)])*fail(?:ed)?\b", re.IGNORECASE)
+_CODE = "\0code block"
 _FENCE = re.compile(r"^\s*(`{3,}|~{3,})(.*)$")
 _PASSED_CHECK = re.compile(r"^PASS\s*:")
 _MARKER = re.compile(r"^(ui-qa-result|ui-qa-run)\s+v1((?:\s+[a-z_]+=\S+)*)\s*$")
@@ -68,7 +69,7 @@ def parse_marker(comment_id: int, body: Optional[str]) -> Optional[Marker]:
 def sections(body: str) -> dict[str, list[str]]:
     """Each known section's lines. Only a ``#`` or ``##`` heading ends a section: a ``###`` or
     deeper heading groups lines inside it and stands as a blank line. A fenced code block is kept
-    as its opening line only, so a ``#`` or ``- `` line inside it is neither a heading nor an item."""
+    as one placeholder line, so a ``#`` or ``- `` line inside it is neither a heading nor an item."""
     found: dict[str, list[str]] = {}
     current: Optional[list[str]] = None
     fence = ""
@@ -87,7 +88,7 @@ def sections(body: str) -> dict[str, list[str]]:
             continue
         if current is not None:
             indent = raw[:len(raw) - len(raw.lstrip())]
-            current.append(indent + "(code block)" if opener else "" if heading else raw)
+            current.append(indent + _CODE if opener else "" if heading else raw)
     return found
 
 
@@ -95,25 +96,37 @@ def _items(lines: Iterable[str]) -> list[str]:
     return [m[1] for m in (_ITEM.match(line) for line in lines) if m and not _NONE.match(m[1])]
 
 
+def _indent(line: str) -> int:
+    return len(line) - len(line.lstrip())
+
+
 def _defect_entries(lines: list[str]) -> list[str]:
-    """List items, and any text that starts a paragraph of its own (not an item's continuation):
-    a defect written as prose, a quote or a table still counts. ``None.`` does not."""
-    found, paragraph_start = [], True
+    """Every line is a defect except the ones known not to be: a blank line, a None marker, a code
+    block's placeholder, and a continuation of the list item just above it (indented past its
+    bullet, with no blank line between). Prose at any indent, quotes, table rows and HTML count."""
+    found: list[str] = []
+    item_indent: Optional[int] = None  # the bullet indent of the item the next line may continue
     for line in lines:
         if not line.strip():
-            paragraph_start = True
+            item_indent = None
+            continue
+        if line.strip() == _CODE:
             continue
         item = _ITEM.match(line)
         text = item[1] if item else line.strip()
-        if (item or paragraph_start and not line[:1].isspace()) and not _NONE.match(text):
+        if _NONE.match(text):
+            item_indent = None
+        elif not item and item_indent is not None and _indent(line) > item_indent:
+            continue
+        else:
             found.append(text)
-        paragraph_start = False
+            item_indent = _indent(line) if item else None
     return found
 
 
 def defects(found: dict[str, list[str]]) -> list[str]:
-    texts = [m[1] if (m := _ITEM.match(line)) else line.strip() for line in found.get("Verified", [])]
-    failed = [text for text in texts if _FAILED_CHECK.match(text)]
+    lines = [line for line in found.get("Verified", []) if line.strip() != _CODE]
+    failed = [m[1] if (m := _ITEM.match(line)) else line.strip() for line in lines if _FAILED_CHECK.match(line)]
     return _defect_entries(found.get("Defects", [])) + failed
 
 

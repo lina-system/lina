@@ -676,7 +676,16 @@ FAILED_CHECK = "- FAIL: status-usage, `7일` — the total still reads the `오�
      gates.FAIL, "lists 1 defect(s)", ["The 7일 button does nothing."]),
     (ASIDE_QA_ANSWER.replace("## (C) Suggestions", FAILED_CHECK + "\n## (C) Suggestions", 1),
      gates.FAIL, "lists 1 defect(s)", [FAILED_CHECK[2:]]),
-], ids=["as-is", "defect", "failed-check"])
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n  Save button does nothing.", 1),
+     gates.FAIL, "lists 1 defect(s)", ["Save button does nothing."]),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n- None.\n| Save | broken |", 1),
+     gates.FAIL, "lists 1 defect(s)", ["| Save | broken |"]),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n- None.\n<p>Save broken</p>", 1),
+     gates.FAIL, "lists 1 defect(s)", ["<p>Save broken</p>"]),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.",
+                             "## (A) Defects\n- Save button does nothing.\n  It stays grey after the click.", 1),
+     gates.FAIL, "lists 1 defect(s)", ["Save button does nothing."]),
+], ids=["as-is", "defect", "failed-check", "indented-prose", "table-row", "html", "continuation"])
 def test_ui_qa_reads_an_aside_qa_answer_as_it_is(board, gh, capsys, answer, expected, why, listed):
     """The real aside-qa answer, with the marker line on top, is the card comment (lina#162)."""
     assert answer != ASIDE_QA_ANSWER or expected == gates.PASS
@@ -703,11 +712,13 @@ SAVE = "Save button does nothing."
     (None, f"- PASS: board loads\n- **FAIL**: {SAVE}", [f"**FAIL**: {SAVE}"]),
     (None, f"- PASS: board loads\n- Fail: {SAVE}", [f"Fail: {SAVE}"]),
     (None, f"- PASS: board loads\nFAIL: {SAVE}", [f"FAIL: {SAVE}"]),
+    (None, f"- PASS: board loads\n> FAIL: {SAVE}\n| FAIL | save |", [f"> FAIL: {SAVE}", "| FAIL | save |"]),
+    (f"- None.\n  {SAVE}", None, [SAVE]),
     ("* one\n+ two\n1. three\n2) four\n   - five", None, ["one", "two", "three", "four", "five"]),
     (f"- {SAVE}\n  when offline\n\n- Title cut off.", None, [SAVE, "Title cut off."]),
     ("### Board screen\n- None.\n\nNone.", None, []),
 ], ids=["subheading-defect", "subheading-failed-check", "fenced-heading", "fenced-item", "prose", "quote",
-        "bold-fail", "lowercase-fail", "unlisted-fail", "bullets", "continuation", "subheading-none"])
+        "bold-fail", "lowercase-fail", "unlisted-fail", "quoted-table-fail", "indented-after-none", "bullets", "continuation", "subheading-none"])
 def test_ui_qa_counts_defects_in_every_markdown_shape(board, gh, capsys, defects, verified, listed):
     """No markdown shape hides a defect: sub-headings, code fences, prose and other bullets (#272 review)."""
     kw = {k: v for k, v in {"defects": defects, "verified": verified}.items() if v is not None}
