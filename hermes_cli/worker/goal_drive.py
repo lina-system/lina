@@ -166,24 +166,55 @@ class Board:
             raise kanban_link.CardLinkError(f"no card {card['task']}")
         return {"title": task.title, "status": task.status, "body": task.body}
 
-    def block(self, card: dict, reason: str) -> None:
-        if kanban_link.on_hermes(card):
-            kanban_link._kanban(self._command(), card, "block", "--kind", "needs_input", "--", reason)
-            return
-        from hermes_cli import kanban_db as kb
-        from hermes_cli.kanban_db_connect import connect_closing
-        with connect_closing(board=card.get("board")) as conn:
-            kb.block_task(conn, card["task"], reason=reason, kind="needs_input")
+    # The board blocks only a running or ready card and schedules only a todo, ready, running or blocked one: a card
+    # in the other states goes through the board's own step to ready first (unblock, or promote for todo).
+    _TO_READY = {"block": {"scheduled": "unblock", "todo": "promote"}, "schedule": {"scheduled": "unblock"}}
 
-    def schedule(self, card: dict, wait_for: str, reason: str) -> None:
+    def block(self, card: dict, reason: str, status: str | None) -> str | None:
+        """Block *card* (``needs_input``); None when the board took it, else why it refused."""
+        return self._write(card, "block", status, reason=reason)
+
+    def schedule(self, card: dict, wait_for: str, reason: str, status: str | None) -> str | None:
+        """Park *card* on *wait_for*; None when the board took it, else why it refused."""
+        return self._write(card, "schedule", status, reason=reason, wait_for=wait_for)
+
+    def _write(self, card: dict, verb: str, status: str | None, **args) -> str | None:
+        step = self._TO_READY[verb].get(status or "")
         if kanban_link.on_hermes(card):
-            kanban_link._kanban(self._command(), card, "schedule", "--wait-for", wait_for, "--", reason)
-            return
+            return self._hermes(card, verb, step, **args)
+        return self._lina(card, verb, step, **args)
+
+    def _hermes(self, card: dict, verb: str, step: str | None, *, reason: str, wait_for: str | None = None) -> str | None:
+        command = self._command()
+        tail = ["--kind", "needs_input"] if verb == "block" else ["--wait-for", str(wait_for)]
+        try:
+            if step:
+                kanban_link._kanban(command, card, step, *(["goal drive: to be parked or blocked"]
+                                                           if step == "promote" else []))
+            kanban_link._kanban(command, card, verb, *tail, "--", reason)
+        except kanban_link.CardLinkError as exc:  # a refused write exits non-zero
+            return str(exc)[:300]
+        return None
+
+    def _lina(self, card: dict, verb: str, step: str | None, *, reason: str, wait_for: str | None = None) -> str | None:
+        """Each step is its own board transaction: ``block_task`` and ``schedule_task`` open one that cannot nest."""
         from hermes_cli import kanban_db as kb
         from hermes_cli.kanban_db_connect import connect_closing
         from hermes_cli.kanban_db_wait import parse_wait_for
         with connect_closing(board=card.get("board")) as conn:
-            kb.schedule_task(conn, card["task"], reason=reason, wait_for=parse_wait_for(wait_for))
+            if step == "unblock" and not kb.unblock_task(conn, card["task"], by=kanban_link.AUTHOR,
+                                                         reason="goal drive: to be parked or blocked"):
+                return "unblock refused"
+            if step == "promote":
+                promoted, why = kb.promote_task(conn, card["task"], actor=kanban_link.AUTHOR,
+                                                reason="goal drive: to be blocked")
+                if not promoted:
+                    return f"promote refused: {why}"
+            if verb == "block":
+                done = kb.block_task(conn, card["task"], reason=reason, kind="needs_input")
+            else:
+                done = kb.schedule_task(conn, card["task"], reason=reason, wait_for=parse_wait_for(str(wait_for)))
+            return None if done else f"{verb} refused (card is {kb.get_task(conn, card['task']).status})"
 
 
 def _settled(job: dict) -> bool:
@@ -246,6 +277,8 @@ class Drive:
         self.ledger = self._load()
         self.goal_card = {"task": goal, "board": entry["board"], **({"kind": entry["kind"]} if entry["kind"] else {})}
         self.statuses: dict[str, str | None] = {}  # this tick's board status of each card acted on
+        self.tried: set[tuple[str, str]] = set()  # board writes tried this tick: a refused one waits for the next
+        self.halted = False  # a limit was reached this tick, whether or not the board took the goal card's block
 
     def _load(self) -> dict:
         import json
@@ -285,9 +318,9 @@ class Drive:
                     self._job(card, job)
                 except errors as exc:
                     self.hub.store.log(f"goal drive: {job['id']} on card {card_id}: {str(exc)[:300]}")
-                if self.ledger.get("stopped") or card_id in self.ledger["blocked"]:
+                if self.halted or card_id in self.ledger["blocked"]:
                     break
-            if self.ledger.get("stopped"):
+            if self.halted:
                 return
 
     def _count(self) -> None:
@@ -339,7 +372,9 @@ class Drive:
         reason = (f"{self.goal_title} · 갈림길 · the goal drive stopped at its {name} limit "
                   f"({self.limits[name]}): {value}; raise worker.goal_limits.{name} or end the goal?")
         aid = action_id(self.goal, self.goal, "goal", 0, 0, f"limit-{name}")
-        self.act(aid, lambda _aid: self.block(self.goal_card, reason))
+        self.halted = True
+        if not self.act(aid, lambda _aid: self.block(self.goal_card, reason)):
+            return  # the board refused: the goal is not stopped yet, the block is tried again on the next tick
         self.ledger["stopped"] = {"limit": name, "value": value, "reason": reason, "at": self.now}
         self.save()
         self.hub.store.log(f"goal drive: goal {self.goal} stopped: {name} {value}")
@@ -361,19 +396,39 @@ class Drive:
             return False
         return True
 
-    def block(self, card: dict, reason: str) -> str:
-        """Block *card* for a person; a card already blocked (a block made just before a restart) is left as it is."""
+    def block(self, card: dict, reason: str) -> str | None:
+        """Block *card* for a person; a card already blocked (a block made just before a restart) is left as it is.
+        None when the board refused."""
         if self.status(card) == "blocked":
             return "already blocked"
-        self.board.block(card, reason)
-        return reason
+        return reason if self.write(card, "block", reason) else None
+
+    def write(self, card: dict, verb: str, reason: str, wait_for: str | None = None) -> bool:
+        """One board write, at most once per card and verb per tick. A refusal is noted (``card_write_refused``) and
+        tried again on the next tick."""
+        if (verb, card["task"]) in self.tried:
+            return False
+        self.tried.add((verb, card["task"]))
+        status = self.status(card)
+        refused = self.board.block(card, reason, status) if verb == "block" else \
+            self.board.schedule(card, str(wait_for), reason, status)
+        if refused:
+            self.ledger["notes"][card["task"]] = f"card_write_refused: {verb} on a {status} card: {refused}"
+            self.save()
+            self.hub.store.log(f"goal drive: card {card['task']}: {self.ledger['notes'][card['task']]}")
+            return False
+        self.statuses[card["task"]] = "blocked" if verb == "block" else "scheduled"
+        return True
 
     def act(self, aid: str, do) -> bool:
         """Run *do(aid)* once for action *aid*; its result is kept in the ledger. True when it ran or ran before. A
-        failure is raised, so the action runs again on the next tick (a device write with the same key)."""
+        *do* that returns None did not happen (the board refused): nothing is kept and it runs again on the next tick.
+        A failure is raised, so the action runs again on the next tick (a device write with the same key)."""
         if aid in self.ledger["actions"]:
             return True
         result = do(aid)
+        if result is None:
+            return False
         self.ledger["actions"][aid] = {"at": self.now, "result": str(result)[:300]}
         self.save()
         self.hub.store.log(f"goal drive: {aid}: {str(result)[:200]}")
@@ -409,15 +464,39 @@ class Drive:
         if sent >= FOLLOW_UPS:
             self._block_card(card, job, ids, sent, by, rule)
             return
-        if job.get("state") in ENDED and sum(self.ledger["runs"].values()) + 1 > self.limits["runs"]:
-            self.stop("runs", f"a follow-up would start run {sum(self.ledger['runs'].values()) + 1}")
+        starts = job.get("state") in ENDED  # into an ended run the follow-up starts the next one
+        if starts and not self.reserve(ids(rule)):
             return
 
         def send(aid: str) -> str:
-            self.hub.send(job["id"], message, job["card"], request_key=aid)
+            self.started(aid, job["id"] if starts else None,
+                         lambda: self.hub.send(job["id"], message, job["card"], request_key=aid))
             self.ledger["followups"][job["id"]] = int(self.ledger["followups"].get(job["id"], 0)) + 1
             return f"follow-up round {sent + 1}/{FOLLOW_UPS} ({rule}) on {job['id']}"
         self.act(ids(rule), send)
+
+    def reserve(self, aid: str) -> bool:
+        """Hold one run of the goal's run budget for action *aid* before it is sent (``ledger["runs"][aid]``), so two
+        sends in one tick cannot both pass the limit; False (and the goal stopped) when the budget is spent."""
+        held = sum(count for key, count in self.ledger["runs"].items() if key != aid)
+        if held + 1 > self.limits["runs"]:
+            self.stop("runs", f"the next run would be run {held + 1}")
+            return False
+        self.ledger["runs"][aid] = 1
+        self.save()
+        return True
+
+    def started(self, aid: str, task: str | None, send) -> None:
+        """Run *send*; its reserved run becomes *task*'s, or is released when the send fails (or started none)."""
+        try:
+            send()
+        except BaseException:
+            self.ledger["runs"].pop(aid, None)
+            self.save()
+            raise
+        if self.ledger["runs"].pop(aid, None) and task:
+            self.ledger["runs"][task] = self.ledger["runs"].get(task, 0) + 1
+        self.save()
 
     def rounds(self, job: dict) -> tuple[int, str]:
         """The follow-up rounds of the task (one attempt), whoever sent them, and who sent the last one. A round is a
@@ -443,25 +522,21 @@ class Drive:
         title = (card["view"] or {}).get("title") or job["card"]["task"]
         reason = (f"{title} · 갈림길 · {count} follow-ups on run {job['id']} did not settle it (the last from {by}"
                   + (f", now: {rule}" if rule else "") + "); continue, rescope or stop?")
-        self.act(ids("block"), lambda _aid: self.block(job["card"], reason))
-        self.ledger["blocked"][job["card"]["task"]] = ids("block")
-        self.save()
+        if self.act(ids("block"), lambda _aid: self.block(job["card"], reason)):
+            self.ledger["blocked"][job["card"]["task"]] = ids("block")
+            self.save()
 
     def park(self, card: dict, aid: str, wait_for: str, reason: str) -> None:
         """Park the card on *wait_for* once (``kanban schedule --wait-for``); a card in a turn or blocked is left. A
-        park the board refuses is recorded and not tried again: the card's own session still parks itself."""
+        park the board refuses is noted and tried again on the next tick."""
         if aid in self.ledger["actions"] or not self.may_act(card):
             return
 
-        def schedule(_aid: str) -> str:
+        def schedule(_aid: str) -> str | None:
             status = self.status(card["card"])
             if status not in PARKABLE:
                 return f"not parked: card is {status}"
-            try:
-                self.board.schedule(card["card"], wait_for, reason)
-            except (OSError, kanban_link.CardLinkError) as exc:
-                return f"not parked on {wait_for}: {str(exc)[:200]}"
-            return f"parked on {wait_for}"
+            return f"parked on {wait_for}" if self.write(card["card"], "schedule", reason, wait_for) else None
         self.act(aid, schedule)
 
     # ---------------------------------------------------------------- rules
@@ -547,10 +622,11 @@ class Drive:
         run = int(job.get("runs") or 1)
         wait = self.ledger["usage"].get(job["id"])
         if wait and int(wait["run"]) == run:
-            if self.now >= float(wait["until"]) and self.may_act(card):
-                self.act(ids("usage-resume"), lambda aid: self.hub.send(
+            if self.now >= float(wait["until"]) and ids("usage-resume") not in self.ledger["actions"] \
+                    and self.may_act(card) and self.reserve(ids("usage-resume")):
+                self.act(ids("usage-resume"), lambda aid: self.started(aid, job["id"], lambda: self.hub.send(
                     job["id"], "The usage limit has reset. Carry on with the task where you stopped.", job["card"],
-                    request_key=aid) or "continued after the usage limit")
+                    request_key=aid)) or "continued after the usage limit")
             return True
         if job.get("state") not in USAGE_STATES or not re.search(self._usage_pattern(job), self._end_text(job)):
             return False
@@ -625,9 +701,14 @@ class Drive:
             self.hub.store.log(f"goal drive: {job['id']} {note}")
             return False
 
+        if not self.reserve(ids(rule)):
+            return True
+
         def submit(aid: str) -> str:
-            self.hub.submit(self._brief_opts(job, node, aid))
+            self.started(aid, None, lambda: self.hub.submit(self._brief_opts(job, node, aid)))
             new = self.hub.store.load_key(aid)["task"]
+            self.ledger["runs"][new] = max(1, self.ledger["runs"].get(new, 0))
+            self.save()
             self.ledger["attempts"][new] = attempt
             self.ledger["moved"][job["id"]] = new
             return f"{rule}: {job['id']} → {new} on {node}"

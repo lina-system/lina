@@ -16,6 +16,15 @@ writes only with `hermes kanban block` and `hermes kanban schedule`, through `wo
 environment as the run's start and end comments. A card on LINA's own board (`card_link: {kind: lina}`) goes through
 LINA's board API.
 
+The board blocks only a `running` or `ready` card and schedules only a `todo`, `ready`, `running` or `blocked` one. A
+card in another state first takes the board's own step to `ready`: `unblock` for a `scheduled` card, `promote` for a
+`todo` card (both only when the board allows them). On LINA's board each step is its own board transaction, because
+`block_task` and `schedule_task` open one that cannot nest. Every write is checked: a Hermes command that exits
+non-zero, or a LINA call that returns false, is a refusal. A refusal is noted (`card_write_refused: <verb> on a
+<status> card: <why>`) and tried again on the next tick, at most once per card and verb per tick, and the drive
+records nothing that depended on it. A `todo` card whose parents are still open cannot be promoted, so a goal card
+waiting on open work cards stays unblocked; the drive keeps it stopped for this tick and tries again on each tick.
+
 The drive only drives the newest run of each to-do of a work card. It leaves a goal whose goal card is done or
 archived.
 
@@ -84,16 +93,21 @@ The ledger is `$LINA_HOME/worker/hub/goals/<goal card>.json`, written under the 
 |---|---|
 | `attempts` | Attempt number per hub task. A new task of a to-do is the next attempt, except one the drive moved for a usage limit. |
 | `followups` | Follow-ups the drive itself sent per task. The limit does not read it: it counts every round from the hub. |
-| `runs` | Runs per task. |
+| `runs` | Runs per task, and one run held per action id while its send is under way. |
 | `started_at` | The goal's start: its first task's hand-out time. |
 | `actions` | Action id → time and result. |
 | `usage`, `moved`, `blocked`, `red_heads`, `github` | Usage waits, moved tasks, cards the drive blocked, followed-up heads, cached GitHub reads. |
-| `notes` | Why the drive left a card (`skipped: card <status>`) or a run (`not moved: …`). |
+| `notes` | Why the drive left a card (`skipped: card <status>`), a write the board refused (`card_write_refused: …`), or a run (`not moved: …`). |
 | `stopped` | Set when a limit stopped the drive for this goal. |
 
 A `block` the drive made just before the hub stopped is not made again: the drive reads the card first and leaves a
-blocked card as it is. A `schedule` the board refuses is recorded with its error and not tried again (the card's own
-session still parks itself on its runs).
+blocked card as it is. `stopped` and `blocked` are written only after the board took the block; a park only after it
+took the `schedule`.
+
+The run budget is held, not counted after the fact: before each follow-up that starts a run, each resubmit or move,
+and each continue after a usage limit, the drive reserves one run in `runs` under its action id (under the goal lock)
+and checks the limit against everything held. A send that fails gives its reservation back; one that went through
+turns it into its task's run. Two sends in one tick can therefore never pass `runs` together.
 
 ## Limits
 
@@ -103,13 +117,15 @@ Per goal, in the work settings under `worker.goal_limits`:
 |---|---|---|
 | `workers` | 3 | more live runs than this at once |
 | `attempts` | 3 | a to-do has more attempts than this, or a move would start one more |
-| `runs` | 40 | more runs than this, or a follow-up would start one more |
+| `runs` | 40 | more runs than this, or the next run (a follow-up, a move or a continue) would pass it |
 | `wall_h` | 24 | this many hours since the goal's start |
 | `usage_move` | `false` | (not a limit) move a usage-limited run to another node instead of waiting |
 
 Reaching a limit blocks the goal card (`needs_input`) with the limit and the numbers, for example
-`Ship it · 갈림길 · the goal drive stopped at its runs limit (40): a follow-up would start run 41; raise
-worker.goal_limits.runs or end the goal?`, and stops the drive for that goal. It never stops silently.
+`Ship it · 갈림길 · the goal drive stopped at its runs limit (40): the next run would be run 41; raise
+worker.goal_limits.runs or end the goal?`, and stops the drive for that goal once the board took the block. It never
+stops silently: while the board refuses the block, the drive takes no other action that tick and tries the block again
+on the next one.
 
 ```sh
 lina worker settings set worker.goal_limits.runs 60

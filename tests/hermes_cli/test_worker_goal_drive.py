@@ -31,10 +31,18 @@ with open(os.path.join(cards, "calls.jsonl"), "a") as fh:
     fh.write(json.dumps([verb, task, *rest]) + "\\n")
 path = os.path.join(cards, task + ".json")
 card = json.load(open(path)) if os.path.exists(path) else {"title": task, "status": "running", "body": ""}
+# The transitions of the real board: block from running/ready, schedule from todo/ready/running/blocked, unblock
+# from blocked/scheduled, promote from todo/blocked; any other is refused with exit 1.
+moves = {"block": (("running", "ready"), "blocked"), "schedule": (("todo", "ready", "running", "blocked"), "scheduled"),
+         "unblock": (("blocked", "scheduled"), "ready"), "promote": (("todo", "blocked"), "ready")}
 if verb == "show":
     print(json.dumps({"task": card, "events": []}))
-elif verb in ("block", "schedule"):
-    card["status"] = "blocked" if verb == "block" else "scheduled"
+elif verb in moves and os.path.exists(path):
+    sources, target = moves[verb]
+    if card["status"] not in sources:
+        print(f"cannot {verb} {task}", file=sys.stderr)
+        sys.exit(1)
+    card["status"] = target
     json.dump(card, open(path, "w"))
 """
 
@@ -78,13 +86,14 @@ def drive(tmp_path, monkeypatch):
     (gh / "rules.json").write_text("[]")
     spec = {"type": "command", "argv": argv, "access_args": {mode: [] for mode in hub_mod.ACCESS}}
 
-    def configure(extra: str = "", there: str = "{host: local, cap: 4}") -> None:
+    def configure(extra: str = "", there: str = "{host: local, cap: 4}", hermes: bool = True) -> None:
         base.mkdir(exist_ok=True)
+        link = {"kind": "hermes", "command": [sys.executable, str(script)]} if hermes else {"kind": "lina"}
         (base / "config.yaml").write_text(
             f"devices:\n  workers:\n    here: {{host: local, cap: 4}}\n    there: {there}\n"
             "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n"
             "  unknown_after_s: 0\n"
-            f"  card_link: {json.dumps({'kind': 'hermes', 'command': [sys.executable, str(script)]})}\n"
+            f"  card_link: {json.dumps(link)}\n"
             f"  runners:\n    fakecli: {json.dumps(spec)}\n" + extra)
     configure()
     launched: list[tuple[str, int]] = []
@@ -461,7 +470,7 @@ def _two_runs_of_one_todo(drive) -> None:
     ("workers", lambda d: (_submit(d), _submit(d, todo="acme/app#2"), _end(d, _submit(d, todo="acme/app#3", host="there"), "done")),
      "2 live runs"),
     ("attempts", _two_runs_of_one_todo, "2 attempts on one to-do"),
-    ("runs", lambda d: _end(d, _submit(d), "done"), "would start run 2"),
+    ("runs", lambda d: _end(d, _submit(d), "done"), "the next run would be run 2"),
     ("wall_h", lambda d: _end(d, _hub(d).store.update(_submit(d), created=time.time() - 7200)["id"], "failed"),
      "h"),
 ])
@@ -477,6 +486,97 @@ def test_each_limit_blocks_the_goal_card_with_its_reason_and_stops_the_drive(dri
     _tick(drive)
     assert [call[0] for call in _kanban(drive)[before:]] == ["show"] * (len(_kanban(drive)) - before)
     _never_done(drive)
+
+
+def test_two_follow_ups_in_one_tick_never_pass_the_runs_limit(drive):
+    drive.configure("  goal_limits: {runs: 3}\n")
+    first, second = _submit(drive), _submit(drive, todo="acme/app#2")
+    _end(drive, first, "done")
+    _end(drive, second, "done")  # 2 runs of 3
+    _tick(drive)
+    sent = [task for task in (first, second) if _requests(drive, task) == ["request.1", "request.2"]]
+    assert len(sent) == 1
+    (block,) = _writes(drive, "block", GOAL)
+    assert "stopped at its runs limit (3): the next run would be run 4" in block[-1]
+    assert sum(_ledger(drive)["runs"].values()) == 3
+
+
+def test_a_goal_card_the_board_refuses_to_block_is_not_stopped_and_is_tried_again_next_tick(drive):
+    drive.configure("  goal_limits: {runs: 1}\n")
+    _set_status(drive, GOAL, "review")  # block takes running or ready only, and review has no step to ready
+    _end(drive, _submit(drive), "done")
+    _tick(drive)
+    ledger = _ledger(drive)
+    assert "stopped" not in ledger and ledger["notes"][GOAL].startswith("card_write_refused: block on a review card")
+    assert len(_writes(drive, "block", GOAL)) == 1
+    _tick(drive)
+    assert len(_writes(drive, "block", GOAL)) == 2 and "stopped" not in _ledger(drive)
+    _set_status(drive, GOAL, "ready")
+    _tick(drive)
+    assert _ledger(drive)["stopped"]["limit"] == "runs"
+    assert not any(_requests(drive, job["id"])[1:] for job in _hub(drive).store.all())
+
+
+@pytest.fixture
+def lina_board(drive, tmp_path, monkeypatch):
+    """The drive on LINA's own board (``card_link: {kind: lina}``): a scratch kanban database."""
+    from pathlib import Path
+
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kbc
+    home = tmp_path / "hermes_home"
+    home.mkdir()
+    monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+    for var in ("HERMES_KANBAN_DB", "HERMES_KANBAN_WORKSPACES_ROOT", "HERMES_KANBAN_HOME", "HERMES_KANBAN_BOARD"):
+        monkeypatch.delenv(var, raising=False)
+    kb._INITIALIZED_PATHS.clear()
+    drive.configure("  goal_limits: {runs: 1}\n", hermes=False)
+
+    def cards(goal_status: str) -> tuple[str, str]:
+        with kbc.connect_closing() as conn:
+            goal = kb.create_task(conn, title="Ship the thing")
+            work = kb.create_task(conn, title="Build it", body=f"## Goal\n\n{goal} — Ship the thing\n")
+            if goal_status == "scheduled":
+                assert kb.schedule_task(conn, goal, reason="the goal session waits on its cards")
+            else:
+                kb.link_tasks(conn, work, goal)  # the plan's layout: the goal waits in todo on its work card
+            assert kb.get_task(conn, goal).status == goal_status
+        return goal, work
+    return SimpleNamespace(cards=cards, kb=kb, kbc=kbc)
+
+
+def _lina_run(drive, work: str) -> str:
+    task = _submit(drive, card={"task": work, "board": None})
+    _end(drive, task, "done")  # no deliverable: a follow-up would start run 2 of a budget of 1
+    return task
+
+
+def test_a_scheduled_goal_card_on_a_lina_board_is_blocked_when_a_limit_is_reached(drive, lina_board):
+    goal, work = lina_board.cards("scheduled")
+    task = _lina_run(drive, work)
+    _tick(drive)
+    with lina_board.kbc.connect_closing() as conn:
+        assert lina_board.kb.get_task(conn, goal).status == "blocked"
+        (blocked,) = [e for e in lina_board.kb.list_events(conn, goal) if e.kind == "blocked"]
+    assert blocked.payload["kind"] == "needs_input" and "runs limit (1)" in blocked.payload["reason"]
+    assert _ledger_of(drive, goal)["stopped"]["limit"] == "runs"
+    assert _requests(drive, task) == ["request.1"]
+
+
+def test_a_goal_card_in_todo_on_a_lina_board_is_not_stopped_while_the_board_refuses_its_block(drive, lina_board):
+    goal, work = lina_board.cards("todo")
+    task = _lina_run(drive, work)
+    _tick(drive)
+    ledger = _ledger_of(drive, goal)
+    assert "stopped" not in ledger
+    assert ledger["notes"][goal].startswith("card_write_refused: block on a todo card: promote refused")
+    _tick(drive)
+    assert "stopped" not in _ledger_of(drive, goal) and _requests(drive, task) == ["request.1"]
+
+
+def _ledger_of(drive, goal: str) -> dict:
+    return json.loads((drive.root / "hub" / "goals" / f"{goal.replace('_', '-')}.json").read_text())
 
 
 def test_a_failed_run_is_not_read_as_done_and_the_drive_never_completes_a_card(drive):
