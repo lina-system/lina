@@ -481,6 +481,33 @@ def node_report(worker_root: Path, *, run: Callable[..., subprocess.CompletedPro
     return rows
 
 
+REPORT_CACHE = "runners.report.json"
+REPORT_MAX_AGE_S = 60.0
+
+
+def cached_node_report(worker_root: Path, *, max_age: float = REPORT_MAX_AGE_S) -> list[dict]:
+    """``node_report`` for ``hello``: every hub contact asks hello first, so the probes (each CLI's ``--version`` and
+    sign-in check) run at most once per *max_age* on this node; a fresh read replaces the file atomically."""
+    import time
+    path = worker_root / REPORT_CACHE
+    try:
+        data = json.loads(path.read_text(encoding="utf-8-sig"))
+        if isinstance(data, dict) and time.time() - float(data.get("at", 0)) < max_age and \
+                isinstance(data.get("rows"), list):
+            return data["rows"]
+    except (OSError, ValueError, TypeError):
+        pass
+    rows = node_report(worker_root)
+    try:
+        worker_root.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{os.getpid()}")
+        tmp.write_text(json.dumps({"at": time.time(), "rows": rows}, ensure_ascii=False), encoding="utf-8")
+        os.replace(tmp, path)
+    except OSError:
+        pass
+    return rows
+
+
 def _ocx_act(action: str) -> dict:
     """``lina services restart ocx`` as it is (its refusals included), with its printed lines as the reason."""
     from hermes_cli import lina_services

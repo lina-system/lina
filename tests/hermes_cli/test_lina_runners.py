@@ -335,3 +335,15 @@ def test_the_shipped_pins_carry_a_version_and_integrity_for_every_runner():
             assert runner.artifacts and all(art["url"].startswith("https://") and (art.get("sha256") or art.get("sha512"))
                                             for art in runner.artifacts.values())
         assert runner.sign_in in lina_runners.SIGN_IN
+
+
+def test_hello_reads_the_runner_report_at_most_once_a_minute(world, monkeypatch):
+    # Every hub contact asks hello first: the runner probes must not run on each of them.
+    calls = []
+    monkeypatch.setattr(lina_runners, "node_report", lambda root: calls.append(root) or [{"name": "codex"}])
+    worker_root = world["root"] / "worker"
+    assert lina_runners.cached_node_report(worker_root) == [{"name": "codex"}]
+    assert lina_runners.cached_node_report(worker_root) == [{"name": "codex"}]
+    assert len(calls) == 1
+    assert lina_runners.cached_node_report(worker_root, max_age=0) == [{"name": "codex"}]
+    assert len(calls) == 2

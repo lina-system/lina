@@ -95,7 +95,7 @@ def hello(worker_root: Path) -> dict:
     return {"protocol": {"min": PROTOCOL_MIN, "max": PROTOCOL_MAX},
             "instance_id": instance_id, "serve": active,
             "version": LINA_VERSION,
-            "capabilities": {"runners": lina_runners.node_report(worker_root),
+            "capabilities": {"runners": lina_runners.cached_node_report(worker_root),
                              "access_modes": list(ACCESS), "verbs": list(verbs())}}
 
 
