@@ -438,32 +438,16 @@ def _ok(value: dict) -> tuple[int, bytes]:
     return code, (json.dumps(value, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-STDIN_VERBS = ("put", "untar", "send", "answer", "cancel", "follow_up")  # the verbs the hub sends a payload with
-
-
 def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[int, bytes]:
     """One ``_device`` verb: ``(exit code, stdout bytes)``."""
+    from hermes_cli.worker.protocol import verbs
+
     name, args = verb[0], verb[1:]
-    text = stdin.decode("utf-8", "replace")
     try:
-        table = {
-            "put": lambda: _ok(_put(worker_root, args[0], args[1], stdin)),
-            "untar": lambda: _ok(_untar(worker_root, args[0], args[1], stdin)),
-            "meta": lambda: _ok(meta(worker_root, args[0], live=args[1:] == ["live"])),
-            "probe": lambda: _ok(probe(worker_root, *args[:2])),
-            "reserve": lambda: _ok(slots.reserve(worker_root, safe_id(args[0]), int(args[1]),
-                                                 pool=args[2] if len(args) > 2 else "bid")),
-            "send": lambda: _ok(steer(worker_root, args[0], text)),
-            "follow_up": lambda: _ok(follow_up(worker_root, args[0], json.loads(text))),
-            "human": lambda: _ok(human(worker_root, args[0])),
-            "answer": lambda: _ok(answer(worker_root, args[0], text)),
-            "cancel": lambda: _ok(cancel(worker_root, args[0], text)),
-            "pack": lambda: (0, pack(worker_root, args[0])),
-            "bundle": lambda: bundle(worker_root, *args[:2]),
-        }
+        table = verbs()
         if name not in table:
             return _ok({"action": "error", "reason": f"unknown verb {name}"})
-        return table[name]()
+        return table[name].handler(worker_root, args, stdin)
     except (IndexError, ValueError, OSError) as exc:
         return _ok({"action": "error", "reason": f"{name}: {exc}"[:300]})
 
