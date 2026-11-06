@@ -22,6 +22,8 @@ import time
 import uuid
 from pathlib import Path
 
+from hermes_cli.lina_work_settings import ACCESS
+
 CALLER_KEY = r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$"
 
 # What defines a submit; --wait, --dry-notify and --note only change what the caller sees.
@@ -179,24 +181,42 @@ def sent(store, task_id: str, key: str | None, action: str, run) -> None:
         job.setdefault("request_keys", {})[key] = {"action": action, "run": run, "at": record["at"]}
 
 
+def lower_access(job: dict, access: str | None) -> None:
+    """The task's access and grant lowered to *access*; never raised."""
+    if access in ACCESS and ACCESS.index(access) < ACCESS.index(job.get("access", "workspace-write")):
+        job.update(access=access, grant={**job["grant"], "access": access})
+
+
+def take_run(job: dict, run, access: str | None) -> bool:
+    """What a ``requested`` run sets on the hub's *job*, whether its reply arrived (``Hub._followed``), came back
+    replayed (:func:`reconcile`) or its end came first (``Hub._adopt``): the task's run from now on with state,
+    delivery and verdict starting over, the run's access (unknown: None) and the task's access lowered to it. Only
+    forward: a run the job already holds or one before it changes nothing (False)."""
+    if int(run) <= int(job.get("runs") or 1):
+        return False
+    job.update(runs=int(run), state="running", delivery="pending", verdict=None)
+    if access in ACCESS:
+        job.setdefault("run_access", {})[str(run)] = access
+    lower_access(job, access)
+    return True
+
+
 def reconcile(hub, task_id: str, key: str, reply: dict, *, access: str | None = None,
               run_access: str | None = None) -> int:
     """A reply the device kept for *key* (``replayed``): what it says happened before, so it is filled in and never
     applied as new. The task moves only to a run newer than the one it holds (another request may have started a
     later run since), and a replay never raises the task's access. A run the task holds that has ended (its end
     adopted the run) is left as it is."""
-    from hermes_cli.worker.hub import ACCESS, ENDED
+    from hermes_cli.worker.hub import ENDED
     action, run = reply["action"], reply.get("run")
     with hub.store.edit(task_id) as job:
         held = int(job.get("runs") or 1)
-        if action == "requested" and int(run) > held:
-            job.update(runs=run, state="running", delivery="pending", verdict=None)
         going = int(run or held) > held or (int(run or held) == held and job.get("state") not in ENDED)
-        recorded = job.get("access", "workspace-write")
-        if going and access in ACCESS and ACCESS.index(access) < ACCESS.index(recorded):
-            job.update(access=access, grant={**job["grant"], "access": access})
-        if going and run_access and action in ("queued", "requested"):
-            job.setdefault("run_access", {}).setdefault(str(run), run_access)
+        taken = action == "requested" and take_run(job, run, run_access)
+        if going and not taken:
+            lower_access(job, access)
+            if run_access and action in ("queued", "requested"):
+                job.setdefault("run_access", {}).setdefault(str(run), run_access)
     sent(hub.store, task_id, key, action, run)
     _replayed(hub, hub.store.load_key(key), task_id, f"{task_id} replay of request key {key}: {action} run {run}")
     return 0

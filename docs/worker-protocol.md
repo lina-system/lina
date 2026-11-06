@@ -81,8 +81,10 @@ hub fills in the key's record, writes `request_replayed` and prints the replay
 line, moves the task's run, state, delivery and verdict only to a run newer
 than the one it holds, and never raises its access. An end reported for a run
 newer than the hub's (its follow-up reply was lost, keyed or not) adopts that
-run (receipt `run_adopted`, its access from the device's `meta`) and is
-delivered as usual; only an end of an older run is recorded silently. A later
+run (receipt `run_adopted`): the hub sets what that reply would have set, the
+run, a fresh state, delivery and verdict, the run's access from the device's
+`meta` and the task's access lowered to it (never raised), and delivers the
+end as usual; only an end of an older run is recorded silently. A later
 replay of the request that started an adopted run that has ended changes
 nothing but the key's record.
 `hello` lists `request_keys` in `capabilities`.

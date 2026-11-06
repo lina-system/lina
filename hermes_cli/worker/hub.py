@@ -720,12 +720,12 @@ class Hub:
         if reply.get("replayed"):
             return request_keys.reconcile(self, job["id"], request_key, reply, access=access,
                                           run_access=payload["access"])
-        if access is not None:
-            self.store.update(job["id"], access=access, grant={**job["grant"], "access": access})
-        if action in ("queued", "requested"):
-            self.store.update(job["id"], run_access={**job.get("run_access", {}), str(run): payload["access"]})
-        if action == "requested":
-            self.store.update(job["id"], runs=run, state="running", delivery="pending", verdict=None)
+        with self.store.edit(job["id"]) as stored:
+            request_keys.lower_access(stored, access)
+            if action == "queued":
+                stored.setdefault("run_access", {})[str(run)] = payload["access"]
+            if action == "requested":
+                request_keys.take_run(stored, run, payload["access"])
         if action in ("answer", "steered", "started"):
             self.store.receipt(job["id"], "answer" if action == "answer" else "steer", run=run, response=reply)
         else:
@@ -814,10 +814,8 @@ class Hub:
         """An end reported for a run newer than the job's: the hub missed the reply of the follow-up that started it
         (an ssh drop, keyed or not), so the run is the task's now and its end is delivered as usual."""
         held, remote = int(job.get("runs") or 1), self.meta(job)
-        job.update(runs=run, delivery="pending", verdict=None)
         # The device job holds the access its latest run was requested with.
-        if str(remote.get("run")) == str(run) and remote.get("access") in ACCESS:
-            job.setdefault("run_access", {})[str(run)] = remote["access"]
+        request_keys.take_run(job, run, remote.get("access") if str(remote.get("run")) == str(run) else None)
         self.store.save(job)
         self.store.receipt(job["id"], "run_adopted", run=run, **{"from": held})
 

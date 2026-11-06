@@ -252,6 +252,46 @@ def test_the_end_of_a_run_older_than_the_task_holds_stays_silent(lane):
     assert lane.hub.store.load(task_id)["state"] == "done"
 
 
+def _access(lane, task_id: str) -> tuple:
+    job = lane.hub.store.load(task_id)
+    return job["access"], job["grant"]["access"], job.get("run_access", {})
+
+
+def test_an_adopted_run_takes_the_access_its_lost_reply_would_have_set(lane):
+    """A send lowered access to read-only and its reply was lost; run 2's end adopted the run. The next plain send
+    carries read-only, as the device now holds."""
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    _first_follow_up_reply_lost(lane)
+    with pytest.raises(HubError, match="follow_up got no reply"):
+        lane.hub.send(task_id, "less", access="read-only")
+    serve.serve_once(lane.root)
+    (lane.root / "tasks" / task_id / "rc.2").write_text("0\n")
+    assert lane.hub.notify(task_id, "done", "2") != "earlier run"
+    assert _access(lane, task_id) == ("read-only", "read-only", {"1": "workspace-write", "2": "read-only"})
+    job = lane.hub.store.load(task_id)
+    assert (job["runs"], job["state"], job["verdict"]) == (2, "done", None)
+    assert lane.hub.send(task_id, "again") == 0
+    assert _access(lane, task_id) == ("read-only", "read-only",
+                                      {"1": "workspace-write", "2": "read-only", "3": "read-only"})
+    device_job = json.loads((lane.root / "tasks" / task_id / "job.json").read_text(encoding="utf-8"))
+    assert (lane.hub.store.load(task_id)["runs"], device_job["access"]) == (3, "read-only")
+
+
+def test_adopting_a_run_never_raises_the_access_the_hub_holds(lane):
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    payload = json.dumps({"prompt": "more", "message": "more", "access": "workspace-write"}).encode("utf-8")
+    assert json.loads(device.dispatch(lane.root, ["follow_up", task_id], payload)[1])["action"] == "requested"
+    serve.serve_once(lane.root)
+    (lane.root / "tasks" / task_id / "rc.2").write_text("0\n")
+    with lane.hub.store.edit(task_id) as job:
+        job.update(access="read-only", grant={**job["grant"], "access": "read-only"})
+    assert lane.hub.notify(task_id, "done", "2") != "earlier run"
+    job = lane.hub.store.load(task_id)
+    assert (job["runs"], job["access"], job["grant"]["access"]) == (2, "read-only", "read-only")
+
+
 def test_an_answer_whose_reply_was_lost_is_not_applied_again_by_another_verb(lane):
     """The device took the answer, the reply was lost and the question closed: the retry must not steer or start a
     run with the same words; it returns the first answer."""
