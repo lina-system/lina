@@ -15,6 +15,47 @@ from tests.test_issue_1014_incremental_embedding import FakeProvider
 
 REAL_PREPARE = maintenance.start_local_model_prepare
 
+# A wall-clock bound is not a pass/fail signal: on a runner slower than the bound, a test whose work
+# is still coming fails. Wait on the engine's own progress instead; this cap only ends a hang, and
+# reaching it fails with what is still outstanding.
+WAIT_CAP_S = 300.0
+POLL_S = 0.1
+
+
+def _wait_for(what, pending):
+    """Poll ``pending`` until it reports nothing outstanding.
+
+    ``pending()`` returns a description of what the engine still owes, or ``""`` once its own work
+    has reached the expected state. The cap never decides the check: reaching it fails with that
+    description, so a hang names what never finished.
+    """
+    deadline = time.monotonic() + WAIT_CAP_S
+    while (outstanding := pending()):
+        if time.monotonic() >= deadline:
+            pytest.fail(f"{what} did not finish within {WAIT_CAP_S:.0f}s: {outstanding}")
+        time.sleep(POLL_S)
+
+
+def _difference(kind, expected, actual):
+    """``""`` when ``actual`` is exactly ``expected``, else the ids that differ on either side."""
+    if actual == expected:
+        return ""
+    absent, extra = sorted(expected - actual), sorted(actual - expected)
+    return f"{kind} ids: {len(absent)} missing (e.g. {absent[:3]}), {len(extra)} unexpected (e.g. {extra[:3]})"
+
+
+def _pending_coverage(conn, summaries, chunks):
+    """What the embedding meta tables still lack, or ``""`` once they hold exactly these ids."""
+    embedded = {str(row[0]) for row in conn.execute("SELECT embedded_id FROM lcm_embedding_meta")}
+    chunked = {str(row[0]) for row in conn.execute("SELECT chunk_id FROM lcm_chunk_meta")}
+    return ", ".join(part for part in (_difference("summary", summaries, embedded),
+                                       _difference("chunk", chunks, chunked)) if part)
+
+
+def _pending_passes(engine):
+    """Whether this engine's embedding passes are still queued or active, or ``""`` once none is."""
+    return "" if engine.drain_embedding_maintenance(0) else "an embedding pass is still scheduled"
+
 
 @pytest.fixture
 def local_store(tmp_path, monkeypatch):
@@ -51,15 +92,10 @@ def test_one_bind_autonomously_drains_all_expected_ids(local_store):
         for row in conn.execute("SELECT store_id, role, content FROM messages"):
             expected_chunks.update(c.chunk_id for c in command.chunk_message(*row, policy="conversational"))
     engine.on_session_start("bound-once", context_length=200000)
-    # Wait for autonomous work across short drains; elapsed time is only a hang guard.
-    deadline = time.monotonic() + 150
-    for _ in range(50):
-        if engine.drain_embedding_maintenance(3):
-            break
-        assert time.monotonic() < deadline, "autonomous embedding drain hung"
-    else:
-        pytest.fail("autonomous embedding drain did not complete in 50 steps")
+    # Wait on the bind's own embedding work reaching the expected set; the cap only ends a hang.
     with sqlite3.connect(engine._store.db_path) as conn:
+        _wait_for("the autonomous embedding pass",
+                  lambda: _pending_coverage(conn, expected_summaries, expected_chunks))
         actual_summaries = {str(r[0]) for r in conn.execute("SELECT embedded_id FROM lcm_embedding_meta")}
         actual_chunks = {str(r[0]) for r in conn.execute("SELECT chunk_id FROM lcm_chunk_meta")}
     assert actual_summaries == expected_summaries
@@ -77,8 +113,20 @@ def test_complete_stops_with_visible_reason(local_store):
 
     # No eligible rows: an entire summary/chunk cycle must terminate visibly.
     scheduler.schedule = record
+    # Read the baseline before the bind: the pass can finish before this test's next statement runs.
+    before, _failures = maintenance.incremental_embedding_state(engine._store.db_path)
     engine.on_session_start("empty", context_length=200000)
-    assert engine.drain_embedding_maintenance(5)
+
+    def pending():
+        last, _ = maintenance.incremental_embedding_state(engine._store.db_path)
+        if last == before:
+            return "no incremental embedding pass finished after the bind"
+        if not last[1].endswith(" complete"):
+            return f"the last pass ended {last[1]!r}, not ' complete'"
+        return _pending_passes(engine)
+
+    # The pass's own recorded outcome is the completion event; the cap only ends a hang.
+    _wait_for("the empty embedding cycle", pending)
     last, _ = maintenance.incremental_embedding_state(engine._store.db_path)
     assert last[1].endswith(" complete")
     count = len(admitted)
@@ -138,13 +186,14 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
     assert observed[0]["overrun_s"] == 0.25
     assert observed[0]["remaining"] is True
     assert observed[0]["scan_frontier_advance"] is False
-    started = time.monotonic()
     if interrupt == "retire":
         engine._retire_embedding_maintenance(wait=True)
     else:
         maintenance._STOP_EMBEDDING_MAINTENANCE.set()
-        assert engine.drain_embedding_maintenance(0.9)
-    assert time.monotonic() - started < 1.0
+    # The paced continuation was never admitted: the interrupt ends the duty wait instead of riding
+    # out the idle delay and running another pass. The scheduler's own state is the signal.
+    _wait_for("the duty wait to end", lambda: _pending_passes(engine))
+    assert len(observed) == 1
     assert engine.drain_embedding_maintenance(0)
     assert not scheduler._queued_keys
 
@@ -178,13 +227,16 @@ def test_restart_resumes_persisted_coverage(local_store, monkeypatch):
         monkeypatch.setattr(command, "resolve_provider", lambda c, **_k: FakeProvider(c.embedding_provider, c.embedding_model))
         successor = LCMEngine(config=engine._config, hermes_home=str(engine._hermes_home))
         successor.on_session_start("after-restart", context_length=200000)
-        assert successor.drain_embedding_maintenance(10)
+        # Wait on the successor's own embedding work reaching the expected set, not on a drain bound:
+        # a slow runner must not decide this. The cap only ends a hang and names what is missing.
         with sqlite3.connect(engine._store.db_path) as conn:
-            summaries = {r[0] for r in conn.execute("SELECT embedded_id FROM lcm_embedding_meta")}
             expected_summaries = {str(r[0]) for r in conn.execute("SELECT node_id FROM summary_nodes WHERE depth=0")}
-            chunks = {r[0] for r in conn.execute("SELECT chunk_id FROM lcm_chunk_meta")}
             expected_chunks = {c.chunk_id for row in conn.execute("SELECT store_id, role, content FROM messages")
                                for c in command.chunk_message(*row, policy="conversational")}
+            _wait_for("the successor's embedding pass",
+                      lambda: _pending_coverage(conn, expected_summaries, expected_chunks))
+            summaries = {r[0] for r in conn.execute("SELECT embedded_id FROM lcm_embedding_meta")}
+            chunks = {r[0] for r in conn.execute("SELECT chunk_id FROM lcm_chunk_meta")}
         assert summaries == expected_summaries and before <= summaries
         assert chunks == expected_chunks
     finally:
@@ -293,12 +345,18 @@ def test_failing_row_is_not_rewritten_on_each_bind(local_store, monkeypatch):
     engine._dag.add_node(SummaryNode(session_id="seed", depth=0, summary="permanent row failure",
                                     created_at=1.0, latest_at=1.0))
     engine.on_session_start("first", context_length=200000)
-    assert engine.drain_embedding_maintenance(3)
+    # The first pass must finish (and record the row as inflight) before the second bind: wait on it.
+    _wait_for("the first bind's embedding pass", lambda: _pending_passes(engine))
     assert len(calls) == 1
     with sqlite3.connect(engine._store.db_path) as conn:
         before = conn.execute("SELECT embedded_id, updated_at FROM lcm_embedding_backfill_inflight").fetchall()
+    first_pass, _ = maintenance.incremental_embedding_state(engine._store.db_path)
     engine.on_session_start("second", context_length=200000)
-    engine.drain_embedding_maintenance(0.5)
+    # The second bind's own recorded pass is the event: it re-scans the corpus, finds the row inflight
+    # and leaves it alone. (Idle is the wrong signal here: the engine keeps a row backoff queued.)
+    _wait_for("the second bind's embedding pass",
+              lambda: "" if maintenance.incremental_embedding_state(engine._store.db_path)[0] != first_pass
+              else "no embedding pass finished after the second bind")
     engine._retire_embedding_maintenance(wait=True)
     with sqlite3.connect(engine._store.db_path) as conn:
         after = conn.execute("SELECT embedded_id, updated_at FROM lcm_embedding_backfill_inflight").fetchall()
