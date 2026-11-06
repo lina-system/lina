@@ -560,3 +560,26 @@ def test_text_keys_order_and_walk_bytewise_as_sqlite(routed):
             assert walked == sorted(keys), table
     finally:
         conn.close()
+
+
+def test_an_append_sends_lcm_x_s_connection_one_statement_per_message(routed, monkeypatch):
+    """Each message LCM-X appends is one INSERT of its placement row: its bound VALUES row needs no round trip."""
+    store = _lcm("store").MessageStore(routed("appends"))
+    try:
+        sent = []
+        pg = store._conn._pg
+        execute = pg.execute
+
+        def counting(query, *args, **kwargs):
+            sent.append(query)
+            return execute(query, *args, **kwargs)
+        monkeypatch.setattr(pg, "execute", counting)
+
+        def statements(n: int) -> int:
+            before = len(sent)
+            store.append_batch(f"s{n}", [{"role": "user", "content": f"line {i}"} for i in range(n)])
+            return len(sent) - before
+        statements(1)
+        assert statements(20) - statements(10) == 10
+    finally:
+        store.close()

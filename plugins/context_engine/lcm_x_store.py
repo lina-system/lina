@@ -188,6 +188,7 @@ _CONTROL = re.compile(r"^\s*(BEGIN|COMMIT|END|ROLLBACK|SAVEPOINT|RELEASE)\b(.*)$
 _PRAGMA = re.compile(r"^\s*PRAGMA\s+(?:\w+\.)?(\w+)\s*(?:\(\s*['\"]?([\w.]+)['\"]?\s*\)|=\s*(.+))?\s*;?\s*$", re.IGNORECASE | re.DOTALL)
 _MESSAGE_INSERT = re.compile(r"^\s*INSERT\s+(?:OR\s+(\w+)\s+)?INTO\s+messages\s*(?:\(([^)]*)\))?\s*((?:VALUES|SELECT|WITH)\b.*?);?\s*$",
                              re.IGNORECASE | re.DOTALL)
+_PLACEHOLDER_ROW = re.compile(r"\s*VALUES\s*\(\s*\?(?:\s*,\s*\?)*\s*\)\s*$", re.IGNORECASE)
 
 
 @dataclass(frozen=True)
@@ -1681,13 +1682,19 @@ class PgConnection:
 
     def _message_insert(self, cur: PgCursor, template: Template, params: Any) -> None:
         mode, cols, source = template.detail
-        query = f"SELECT * FROM ({source}) AS lcm_values" if source.lstrip()[:6].upper() == "VALUES" else source
-        probe = self.cursor()
-        self._run(probe, query, params)
+        if (_PLACEHOLDER_ROW.match(source) and isinstance(params, (list, tuple))
+                and len(params) == source.count("?")):
+            # One row of bound values (what LCM-X's appends send): the row is its parameters, no round trip.
+            source_rows = [tuple(_plain(v) for v in params)]
+        else:
+            query = f"SELECT * FROM ({source}) AS lcm_values" if source.lstrip()[:6].upper() == "VALUES" else source
+            probe = self.cursor()
+            self._run(probe, query, params)
+            source_rows = probe._rows
         names = list(cols) or self._catalog.columns("messages")
         conflict = {"IGNORE": " ON CONFLICT DO NOTHING"}.get(mode, "")
         stored: list[int] = []
-        for values in probe._rows:
+        for values in source_rows:
             row = dict(zip(names, values))
             # A row that names only some columns (a test's minimal messages table) gets what the store's own
             # write fills: no session, written now. A column named with NULL is still refused.
