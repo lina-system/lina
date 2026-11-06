@@ -378,7 +378,9 @@ def person_installed(root: Path, runner: RunnerPin, run: Callable[..., subproces
     lina_bins = {str(root / "bin"), str(root / "bin" / "runners")}
     dirs = [part for part in (path if path is not None else os.environ.get("PATH", "")).split(os.pathsep)
             if part and part not in lina_bins]
-    found = shutil.which(runner.bin, path=os.pathsep.join(dirs))
+    from hermes_platform.resolver import LookupContext, locate_command
+    hit = locate_command(runner.bin, LookupContext(path=os.pathsep.join(dirs)))
+    found = hit.command[0] if hit.found and hit.command else None
     if not found:
         return None
     asked = None if runner.check == "package" else ask_version([found], dict(os.environ), run)
