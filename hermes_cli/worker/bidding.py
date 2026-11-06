@@ -2,7 +2,8 @@
 
 Ready means: the runner is installed and its daemon up, ``lina worker serve`` runs, there is disk, the repo path
 exists, and a slot is free under the device's cap. The score is (running / cap, 0 for a ``fast`` device, load per
-core); lowest wins. ``no_repo`` never takes a task with a repo, ``last`` wins only when no other device can take it,
+core); lowest wins within the first available integer ``last`` tier (false/absent = 0, true = 1).
+``no_repo`` never takes a task with a repo,
 ``auto: false`` takes work only when named with ``--host``. When nobody can, the task waits in the hub's queue.
 """
 
@@ -14,17 +15,20 @@ from pathlib import Path
 from hermes_cli.worker.settings import Device
 
 
-def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int) -> str | None:
+def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
+              manual: bool = False) -> str | None:
     """Why *dev* cannot take the task now, or None when it can."""
     checks = (
-        (not dev.auto, "only when named with --host"),
+        (bool(probe.get("protocol_error")), probe.get("reason")),
+        (not manual and not dev.auto, "only when named with --host"),
         (bool(repo) and dev.no_repo, "takes no repo work"),
         ("error" in probe, f"unreachable: {probe.get('error')}"),
         (not probe.get("ready"), probe.get("why") or "runner not ready"),
         (not probe.get("serve"), "lina worker serve is not running"),
         (int(probe.get("free_gb") or 0) < min_free_gb, f"disk {probe.get('free_gb')}GB < {min_free_gb}GB"),
         (not probe.get("repo", True), "repo path missing"),
-        (int(probe.get("running") or 0) >= dev.cap, "full"),
+        (int(probe.get("named_running" if manual else "bid_running", probe.get("running")) or 0)
+         >= (dev.manual_cap if manual else dev.cap), "full"),
     )
     return next((why for failed, why in checks if failed), None)
 
@@ -34,33 +38,50 @@ def choose(candidates: list[Device], probes: list[dict], *, repo: str | None, mi
     """The winner (or None: queue) and one row per candidate with its probe, score or the reason it was passed."""
     rows, ready = [], []
     for dev, probe in zip(candidates, probes):
-        row = {"host": dev.name, "cap": dev.cap, **probe}
-        why = readiness(dev, probe, repo=repo, min_free_gb=min_free_gb)
-        if why and not (manual and why == "only when named with --host"):
+        capacity = dev.manual_cap if manual else dev.cap
+        running = int(probe.get("named_running" if manual else "bid_running", probe.get("running")) or 0)
+        row = {**probe, "host": dev.name, "cap": capacity, "running": running}
+        why = readiness(dev, probe, repo=repo, min_free_gb=min_free_gb, manual=manual)
+        if why:
             row["why"] = why
         else:
-            row["score"] = (int(probe.get("running") or 0) / dev.cap, 0 if dev.fast else 1,
+            row["score"] = (running / capacity, 0 if dev.fast else 1,
                             float(probe.get("load") or 0) / max(1, int(probe.get("cores") or 1)))
             ready.append((dev, row))
         rows.append(row)
-    if any(not dev.last for dev, _ in ready):
+    if ready and not manual:
+        tier = min(dev.last for dev, _ in ready)
         for dev, row in ready:
-            if dev.last:
+            if dev.last > tier:
                 row.pop("score")
                 row["why"] = "only when the others are full"
-        ready = [(dev, row) for dev, row in ready if not dev.last]
+        ready = [(dev, row) for dev, row in ready if dev.last == tier]
     best = min(ready, key=lambda pair: pair[1]["score"], default=None)
     return (best[0] if best else None), rows
 
 
-def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str) -> list[dict]:
+def missing_access(descriptor: dict | None, access: str | None) -> str | None:
+    """Why a device whose hello lacks *access* must not take the run (an older node would ignore the mode)."""
+    if not access:
+        return None
+    modes = ((descriptor or {}).get("capabilities") or {}).get("access_modes") or []
+    return None if access in modes else f"does not enforce access {access} (update the node)"
+
+
+def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str,
+              access: str | None = None) -> list[dict]:
     from hermes_cli.worker.transport import for_device
 
     def ask(dev: Device) -> dict:
-        reply = for_device(dev, worker_root).call(["probe", repo or "", runner], timeout=60)
+        contact = for_device(dev, worker_root)
+        reply = contact.call(["probe", repo or "", runner], timeout=60)
         if reply.code != 0:
+            if reply.json().get("protocol_error"):
+                return reply.json()
             return {"error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
-        return reply.json() or {"error": "no answer"}
+        found = reply.json() or {"error": "no answer"}
+        why = missing_access(contact.descriptor, access)
+        return {**found, "protocol_error": True, "reason": f"{dev.name} {why}"} if why else found
 
     if not candidates:
         return []
@@ -69,7 +90,7 @@ def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, 
 
 
 def bid(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str, min_free_gb: int = 5,
-        manual: bool = False) -> tuple[Device | None, list[dict]]:
+        manual: bool = False, access: str | None = None) -> tuple[Device | None, list[dict]]:
     pool = [dev for dev in candidates if manual or dev.auto]
-    return choose(pool, probe_all(pool, worker_root, repo=repo, runner=runner), repo=repo, min_free_gb=min_free_gb,
-                  manual=manual)
+    return choose(pool, probe_all(pool, worker_root, repo=repo, runner=runner, access=access), repo=repo,
+                  min_free_gb=min_free_gb, manual=manual)

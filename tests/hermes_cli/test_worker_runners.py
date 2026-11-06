@@ -19,6 +19,11 @@ from tests.hermes_cli import _worker_fakes as fakes
 NODE = shutil.which("node")
 
 
+@pytest.fixture(autouse=True)
+def isolated_process_table(monkeypatch):
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_processes._process_table", dict)
+
+
 class Lane:
     """One runner type on a worker root with one local device."""
 
@@ -37,7 +42,7 @@ class Lane:
         else:
             argv = fakes.install_fake_cli(self.fake)
             monkeypatch.setenv("FAKE_CLI_LOG", str(self.fake / "cli.jsonl"))
-            runners = f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n"
+            runners = f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n"
         self.runners_yaml = runners
         fakes.write_config(self.base, runners)
         self.runner = "omo" if kind == "omo" else "fakecli"
@@ -98,6 +103,7 @@ def test_start_question_answer_settle_result_follow_up(lane):
     manifest = fakes.as_json(out / "manifest.json")
     assert manifest["next_notes"] == 1 and set(manifest["files"]) >= {"report.md", "out/ok.txt", "final.md"}
     assert (out / "final.md").read_text().strip()
+    lane.launcher.join()  # The done state precedes delivery of the end notice.
     notices = list(lane.hub.store.notices.glob(f"{task_id}-done-1-*.md"))
     assert len(notices) == 1 and "lina worker accept" in notices[0].read_text()
 

@@ -4,11 +4,18 @@ confirmed stopped before the run counts as ended, so no agent keeps working in t
 import json
 import time
 
+import pytest
+
 from hermes_cli.worker.runners.base import Task
 from hermes_cli.worker.runners.omo_settle import Settle
 
 RUNNING = {"action": "state", "state": {"lifecycle": {"state": "running", "waitingOn": {}}, "isStreaming": True}}
 STOPPED = {"action": "state", "state": {"lifecycle": {"state": "cancelled", "waitingOn": {}}, "isStreaming": False}}
+
+
+@pytest.fixture(autouse=True)
+def isolated_process_table(monkeypatch):
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_processes._process_table", dict)
 
 
 class FakeSession:

@@ -63,6 +63,8 @@ cards:
   - key: gates
     title: "Gates in the card goal loop"
     assignee: sion
+    size: M                         # optional: S, M or L
+    kind: implementation            # optional: work category, free text
     todos: ["lina-system/lina#108", "[ ] write the gate doc"]
     ledger_todos:                    # optional, needs ledger_goal: record to-dos of this card
       - T120                         # an open to-do under G63, linked to the card
@@ -96,22 +98,62 @@ cards:
     max_turns: 10
     max_runtime: 2h
     # no `after: [gates]`: the gates card waits for this approval, so a link would deadlock
+  - key: board-screen
+    title: "Show gate results on the board screen"
+    assignee: sion
+    todos: ["lina-system/lina-app#40"]
+    outcome: "The board screen shows each card's gate results."
+    verification: "QA on a disposable instance against the screen feature map finds no defects."
+    stop_when: "The PR is merged and the QA result for its head has zero defects."
+    worker: "omo — screen change"
+    gates:
+      - "hermes kanban gate prs"
+      - "hermes kanban gate ui-qa"           # a card that changes a screen always lists ui-qa
+    max_turns: 40
+    max_runtime: 12h
 ```
 
 What gets created: a goal card, then one goal-mode work card per entry with its gates, turn budget
-and maximum runtime. A work card body has the sections Goal, To-dos, Outcome, Verification,
-Constraints, Boundaries, Stop when and Worker. Every work card is a link-parent of the goal card,
+and maximum runtime. Optional `size` (`S`, `M`, `L`) and `kind` (free text) become `Size: X` and
+`Kind: X` lines in the work body; omitting them adds no metadata lines. A work card body has the
+sections Goal, To-dos, Outcome, Verification, Constraints, Boundaries, Stop when, Worker and Record.
+Record asks the work session to keep the work record current: add a card comment marking discovered to-dos with
+`added-by: work-session` on checklist lines, for example `- [ ] check migration — added-by: work-session`.
+Record work that needs a bigger runner in a card comment with `escalate: todo -> runner - reason`, replacing `todo` and
+`reason` with the item and why the runner must handle it. These are record markers, not plan fields.
+Every work card is a link-parent of the goal card,
 so the goal card becomes ready only when all of them are done; `after:` adds a link from the named
 card.
 
 Gates: code cards use `gate prs` (every To-dos issue closed by a merged PR with green checks) and
 `gate dev owner/repo` (the branch is green after the merge); non-code cards use
 `gate artifact <path> --check "<cmd>"` and `gate review`; add `gate ask` when the card may ask
-the owner questions.
+the owner questions. A card that changes a screen people see also lists `gate ui-qa`.
+
+`gate ui-qa` reads the QA record on the card. Leave the aside-qa answer (`answer.md`) as it is, with
+one marker line on top, as a card comment (`hermes kanban comment <card> "<text>"`). The marker
+is `ui-qa-result v1 head=<sha> instance=disposable` (`<sha>` the head of the card's PR, at least 7
+hex characters). The answer's sections are `## (A) Defects`, `## (B) Verified`, `## (C) Suggestions`
+and `## (D) Map drift`; each list item under Defects is a defect (`- None.` is not), and so is each
+`- FAIL: ...` line under Verified. A run in progress is a comment `ui-qa-run v1 head=<sha> state=running`. The gate passes on
+the newest result for the PR head with all four sections and zero defects, fails with the defect
+list, fails on a result taken anywhere but a disposable instance or only for an older head (run QA
+again), and waits (exit 75) while the newest marker for the head is a running run.
 
 `gate review` never counts the card assignee's own approval: put it on the card being reviewed
 (`--owner <reviewer>` for an agent reviewer), and gate the reviewer's own card on what the reviewer
 writes (`gate artifact`).
+
+Waiting costs no turns. A goal-mode card whose judge says WAIT is parked in `scheduled`, with the
+event it waits for recorded on its `scheduled` event (`wait_for`): another card done, a review
+card's result, a PR's required checks finished, or a time. Each dispatcher tick checks that event
+and unblocks the card once when it happens. A worker records the same by hand with
+`hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|until:<time>`, or
+`hermes kanban block <id> --wait-for ...` (a `needs_input` block that returns to ready by
+itself); a `needs_input` block without `--wait-for` waits for a person. A spent `max_turns`,
+`max_runtime` or agent iteration budget is a planned stop: the run leaves a handoff comment and the
+card goes back to ready without counting toward `max_retries`. After `kanban.planned_stop_limit`
+(default 5) planned stops in a row the card is blocked `needs_input` for a person.
 
 ## Procedure
 

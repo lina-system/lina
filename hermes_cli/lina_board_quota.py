@@ -2,8 +2,11 @@
 percent and reset, and the burn rate in percent per hour.
 
 The accounts are ``lina_models.query("accounts")`` (the quota OCX caches per account; the probing ``quota`` view stays
-CLI-only). The rate needs history, so each read appends one row per account window to ``board/quota.jsonl`` under the
-LINA root, at most every ten minutes, and rows older than 14 days are dropped. Rate rules (the board's
+CLI-only). An OCX run outside LINA (``ocx.external``, lina#232) is read with ``account list --quota --json``: OCX 2.97
+puts no quota in the plain list. OCX keeps each account's quota for 10 minutes (``ACCOUNT_QUOTA_TTL_MS``,
+``src/providers/quota-wire.ts`` in OCX 2.97); after that a read probes the provider for that account, which may refresh
+its OAuth token, and ``QUOTA_EVERY = 600`` keeps LINA at one such read per 10 minutes. The rate needs history, so
+each read appends one row per account window to ``board/quota.jsonl`` under the LINA root, at most every ten minutes, and rows older than 14 days are dropped. Rate rules (the board's
 ``model/fleet.py``): over the last three hours inside one reset period, at least 30 minutes of records.
 """
 
@@ -26,6 +29,8 @@ WINDOWS = (("weekly", "weeklyPercent", "weeklyResetAt"), ("fiveHour", "fiveHourP
 # The window a service is read by: weekly, else monthly; Antigravity by its Gemini weekly window (OCX gives it no
 # weeklyPercent).
 MAIN_WINDOW = {"Antigravity": "custom:Gem (Weekly)"}
+# Providers named exactly, so ``google-antigravity`` stays Antigravity: ``google`` is a Gemini API key.
+EXACT_SERVICE = {"google": "Gemini"}
 
 
 def _number(value) -> float | None:
@@ -79,6 +84,8 @@ def runs_out(percent: float | None, rate: float | None, reset, now: float) -> bo
 
 def service_of(provider) -> str:
     text = str(provider or "").lower()
+    if text in EXACT_SERVICE:
+        return EXACT_SERVICE[text]
     return next((name for name, keys in SERVICES if any(key in text for key in keys)), str(provider or ""))
 
 
@@ -97,14 +104,17 @@ def _account(acct: dict, history: dict, n: int, name: str, now: float) -> dict:
     rows = []
     for window, percent, reset in windows(acct):
         rate = burn(history.get((acct.get("provider"), key, window), []), now)
-        rows.append({"key": window, "percent": percent, "resetAt": reset_time(reset), "ratePerHour": rate,
+        rows.append({"key": window, "percent": percent, "left": min(100.0, max(0.0, 100.0 - percent)),
+                     "resetAt": reset_time(reset), "ratePerHour": rate,
                      "warn": not acct.get("paused") and runs_out(percent, rate, reset, now)})
     pick = MAIN_WINDOW.get(name)
     main = next((row for row in rows if row["key"] == pick), None) if pick else (
         next((row for row in rows if row["key"] == "weekly"), None)
         or next((row for row in rows if row["key"] == "monthly"), None))
     five = next((row for row in rows if row["key"] == "fiveHour"), None)
+    state = "reauth" if acct.get("needsReauth") else "paused" if acct.get("paused") else "ok"
     return {"id": key, "number": n, "plan": acct.get("plan") or "", "paused": bool(acct.get("paused")),
+            "active": bool(acct.get("active")), "state": state,
             "unavailable": bool((acct.get("quota") or {}).get("quotaUnavailable")), "windows": rows,
             "mainWindow": main["key"] if main else None,
             "warn": any(row["warn"] for row in (main, five) if row), "_main": main}
@@ -118,8 +128,8 @@ def quota_view(accounts: list[dict], history: list[dict], now: float) -> list[di
         by_window.setdefault((row.get("provider"), row.get("id"), row.get("window")), []).append(row)
     groups: dict[str, list[dict]] = {}
     for acct in accounts:
-        if not windows(acct):
-            continue  # a pay-as-you-go key, or one OCX reads nothing for: nothing to show
+        if not windows(acct) and acct.get("type") != "api-key" and not acct.get("needsReauth"):
+            continue  # OCX reads nothing for it; API keys and accounts to sign in again stay listed
         name = service_of(acct.get("provider"))
         group = groups.setdefault(name, [])
         group.append(_account(acct, by_window, len(group) + 1, name, now))
@@ -168,17 +178,29 @@ _CACHE: dict[Path, tuple[float, list[dict]]] = {}
 _LOCK = threading.Lock()
 
 
+def missing(accounts: list[dict]) -> list[str]:
+    """The services of ``SERVICES`` OCX holds no account for."""
+    held = {service_of(acct.get("provider")) for acct in accounts}
+    return [name for name, _ in SERVICES if name not in held]
+
+
 def read(root: Path, now: float | None = None) -> list[dict]:
     """The quota view, reading OCX at most every ten minutes per LINA root (raises ``lina_ocx.OcxError``)."""
+    return view(root, now)["quota"]
+
+
+def view(root: Path, now: float | None = None) -> dict:
+    """``{quota, missing}``: the quota view and the services without an account."""
     from hermes_cli.lina_models import query
+    from hermes_cli.lina_ocx import external
     now = time.time() if now is None else now
     with _LOCK:
         cached = _CACHE.get(root)
         log = QuotaLog(root / "board" / "quota.jsonl")
         if cached is None or now - cached[0] >= QUOTA_EVERY:
-            data = query("accounts", root)
+            data = query("quota" if external(root) else "accounts", root)
             accounts = [a for a in (data.get("accounts") if isinstance(data, dict) else None) or [] if isinstance(a, dict)]
             log.add(accounts, now)
             _CACHE[root] = cached = (now, accounts)
         history = [row for row in log.rows(now) if now - row["at"] <= QUOTA_SPAN + QUOTA_EVERY]
-    return quota_view(cached[1], history, now)
+    return {"quota": quota_view(cached[1], history, now), "missing": missing(cached[1])}

@@ -779,7 +779,7 @@ DEFAULT_CONFIG = {
         # kanban_decomposer emits a JSON graph of child tasks (more tokens).
         "triage_specifier": _aux(120),
         "kanban_decomposer": _aux(180),
-        "profile_describer": _aux(60),   # 1-2 sentence profile blurb; short, cheap
+        "profile_describer": _aux(60), "board_lines": _aux(60),  # profile blurb; board card lines (lina#151)
         "goal_judge": _aux(60),          # /goal satisfaction + contract drafting; JSON calls
         # Curator skill-usage review can take minutes on reasoning models (umbrellas over hundreds
         # of skills); route cheaper via `hermes model` → auxiliary → Curator.
@@ -1306,9 +1306,9 @@ DEFAULT_CONFIG = {
         "user_char_limit": 1375,     # ~500 tokens at 2.75 chars/token
         # Periodic built-in memory review; 0 when an external provider auto-extracts.
         "nudge_interval": 10,
-        "external_messages": {"spool": ""},  # Host-level append-only collector spool; empty does nothing.
+        "external_messages": {"enabled": True, "spool": ""},  # Host-level collector source and spool.
         "provider": "",  # One external provider; empty = built-in only.
-        "auto_recall_append": False,  # Recall spliced into the user message, not a tool result (lina#21).
+        "auto_recall_append": False, "prefix_fingerprints": False,  # Recall in the user message (#21); prefix hashes, no text (#25).
     },
     # Subagent delegation: `backend` = task-routing strategy ("default": keys below), `backends.<name>` = its settings.
     "delegation": {
@@ -1883,9 +1883,13 @@ DEFAULT_CONFIG = {
         "review_dispatch": True,
         # Seconds between dispatcher ticks. Lower = snappier pickup; higher = less SQL pressure.
         "dispatch_interval_seconds": 60,
-        # Auto-block after this many consecutive non-success attempts (spawn_failed, timed_out,
-        # crashed) for the same task/profile. Reassignment resets the streak.
+        # Auto-block after this many consecutive non-success attempts (spawn_failed, crashed) for
+        # the same task/profile. Reassignment resets the streak.
         "failure_limit": 2,
+        # A run that ends at its turn budget, runtime limit or iteration budget is a planned stop:
+        # re-queued with a handoff, never counted above. After this many planned stops in a row
+        # without the card finishing, the card is blocked (needs_input) for a person.
+        "planned_stop_limit": 5,
         # Worker stdout/stderr log rotation at spawn time (2 MiB + one backup). Raise to keep more
         # early failure evidence from long-running workers.
         "worker_log_rotate_bytes": 2 * 1024 * 1024,
@@ -2593,7 +2597,9 @@ DEFAULT_CONFIG = {
         # (`*.foo.com`) supported.
         "extra_allowed_hosts": [],
     },
-    "ocx": {"port": 10100},  # LINA's one pinned OCX per root (hermes_cli/lina_ocx.py configured_port)
+    # LINA's one pinned OCX per root (hermes_cli/lina_ocx.py configured_port); external: {cli, data_dir} of an OCX run
+    # outside LINA, read only (lina_ocx.external, lina#232)
+    "ocx": {"port": 10100, "external": None},
     "desktop": {  # Hermes Desktop (Electron) launch options; only affect `hermes desktop`.
         # CSS font-family for the app's chat and UI text (e.g. "OpenDyslexic"). Layered in front
         # of the active theme's own sans stack so missing glyphs still fall through. Empty = the
@@ -2701,7 +2707,7 @@ DEFAULT_CONFIG = {
 }
 
 
-from hermes_cli.config_defaults_env import OptionalEnvVars, _base_url, _env, _msg, _prov, _setting, _skill, _tool
+from hermes_cli.config_defaults_env import LINA_ENV_VARS, OptionalEnvVars, _base_url, _env, _msg, _prov, _setting, _skill, _tool
 
 
 # Optional environment variables that enhance functionality. Feeds the dashboard keys page and setup
@@ -3107,4 +3113,4 @@ OPTIONAL_ENV_VARS = OptionalEnvVars({
     "HERMES_EPHEMERAL_SYSTEM_PROMPT": _setting(
         "Ephemeral system prompt injected at API-call time (never persisted to sessions)",
         "Ephemeral system prompt", None),
-})
+} | LINA_ENV_VARS)

@@ -2,9 +2,9 @@
 worker runs on cards and inbox.
 
 Sources: the work record (``lina work``: the owner's to-dos, decisions, due groups), ``lina worker`` (runs that are
-not kanban work cards, and the devices of ``devices.workers``), LINA's own OCX (quota). Each read is separate, so a
-source that fails shows up in ``errors`` and the counts made from it are ``None``, never 0. Every count is the length
-of a list in the same snapshot. Notice lines are in the work record's locale (``work.locale``).
+not kanban work cards, and the devices of ``devices.workers``), LINA's own OCX or ``ocx.external`` (quota). Each read
+is separate, so a source that fails shows up in ``errors`` and the counts made from it are ``None``, never 0. Every
+count is the length of a list in the same snapshot. Notice lines are in the work record's locale (``work.locale``).
 """
 
 from __future__ import annotations
@@ -155,9 +155,13 @@ def devices(now: float | None = None) -> dict:
 
 
 def quota(now: float | None = None) -> dict:
+    """``GET /api/lina/quota``: the quota view and the services OCX holds no account for (``missing``, null when
+    OCX could not be read)."""
+    from hermes_cli.lina_board_quota import view
     now, root, errors = time.time() if now is None else now, _root(), []
-    rows = _source("quota", errors, lambda: quota_read(root, now))
-    return {"version": API_VERSION, "at": now, "errors": errors, "quota": rows or []}
+    data = _source("quota", errors, lambda: view(root, now))
+    return {"version": API_VERSION, "at": now, "errors": errors, "quota": data["quota"] if data else [],
+            "missing": data["missing"] if data else None}
 
 
 def board(now: float | None = None) -> dict:
@@ -185,7 +189,13 @@ def board(now: float | None = None) -> dict:
                   "mine": [{k: row[k] for k in ("id", "title", "waiting", "due", "agent")} for row in (work or {}).get("mine", [])]},
         "due": work["due"] if work else {name: [] for name in ("overdue", "today", "week", "later")},
         "notices": lines or [], "machines": machines or [], "quota": services or [],
+        "writer": _writer(now),
     }
+
+
+def _writer(now: float) -> dict:
+    from hermes_cli.lina_board_plain import writer_state
+    return writer_state(now=now)
 
 
 def _notices_in_locale(root: Path, work: dict | None, review: list[dict]) -> list[dict]:

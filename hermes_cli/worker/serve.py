@@ -9,6 +9,7 @@ submissions, queued starts, ends a device could not report, unreachable devices 
 from __future__ import annotations
 
 import os
+import threading
 import time
 from pathlib import Path
 
@@ -68,14 +69,15 @@ def serve_once(worker_root: Path) -> None:
     tasks.mkdir(parents=True, exist_ok=True)
     (worker_root / device.HEARTBEAT).write_text(f"{time.time():.3f}\n", encoding="utf-8")
     device.reap()
-    cap = slots.cap(worker_root)
     for task_dir in sorted(tasks.glob("O*-*")):
+        pool = slots.task_pool(task_dir)
+        cap = slots.cap(worker_root, pool=pool)
         task = device.task_of(worker_root, task_dir.name)
         for run in _requests(task_dir):
             if task.path(f"taken.{run}").exists():
                 continue
             if (cap is not None and not task.path("cancelled").exists()
-                    and slots.running_others(worker_root, task.id) >= cap):
+                    and slots.running_others(worker_root, task.id, pool=pool) >= cap):
                 continue  # the device is full: the request waits for a later pass
             with device.task_lock(task):  # a follow-up queues into an untaken run under the same lock
                 taken = not _unfinished(task, run) and _take(task, run)
@@ -98,17 +100,26 @@ def serve_once(worker_root: Path) -> None:
 
 
 def serve(worker_root: Path | None = None, *, once: bool = False) -> int:
+    from hermes_cli.worker.protocol import begin_instance
+
     worker_root = worker_root or settings.root()
-    last_tick = 0.0
-    while True:
-        serve_once(worker_root)
-        if settings.devices(device.base_of(worker_root)) and time.monotonic() - last_tick >= HUB_TICK_S:
-            from hermes_cli.worker import hub
-            hub.tick(worker_root)
-            last_tick = time.monotonic()
-        if once:
-            return 0
-        time.sleep(2.0)
+    begin_instance(worker_root)
+    last_tick, writer, stop = 0.0, None, threading.Event()
+    try:
+        while True:
+            serve_once(worker_root)
+            if writer is None and not once:  # the board lines (lina#151) on their own thread, off this loop; the
+                from hermes_cli.lina_board_plain import start_writer  # gateway starts one too, the plain lock
+                writer = start_writer(worker_root, stop)  # keeps one writing per host
+            if settings.devices(device.base_of(worker_root)) and time.monotonic() - last_tick >= HUB_TICK_S:
+                from hermes_cli.worker import hub
+                hub.tick(worker_root)
+                last_tick = time.monotonic()
+            if once:
+                return 0
+            time.sleep(2.0)
+    finally:
+        stop.set()
 
 
 def heartbeat_age(worker_root: Path) -> float | None:

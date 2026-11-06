@@ -17,8 +17,13 @@ from .escalation import (
     _L3_TRUNCATION_MARKER, SummarySpendGuard, summarize_with_escalation, summary_route_available,
 )
 from .maintenance import backup_database
+from .sqlite_session import is_store_connection
 from .tokens import count_messages_tokens, count_tokens
 from .vector_store import VectorStore
+
+# LINA (lina#16): what the repair reports instead of a backup on the memory store.
+STORE_BACKUP_SKIPPED = ("on the memory store: no database file to back up; each group is repaired in its own "
+                        "transaction and rolled back on any change")
 
 _PROVENANCE_TABLE = "summary_node_provenance"  # #649 sidecar (escalation_level per node), when a store has it
 
@@ -255,7 +260,10 @@ def repair_level3_fragments(engine) -> dict[str, Any]:
                                        route_key_prefix="repair:"):  # the keys the repair dispatches on
             return {**result, "status": "refused", "groups": [],
                     "reason": "every summary route is refused; nothing was changed"}
-        result["backup"] = backup_database(engine)
+        if is_store_connection(conn):  # LINA: no database file to back up; each group commits in its own transaction
+            result["backup"] = {"ok": True, "skipped": STORE_BACKUP_SKIPPED}
+        else:
+            result["backup"] = backup_database(engine)
         if not result["backup"]["ok"]:
             return {**result, "status": "error", "groups": [],
                     "reason": f"backup failed: {result['backup']['error']}; nothing was changed"}

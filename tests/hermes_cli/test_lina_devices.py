@@ -50,6 +50,7 @@ def probes(monkeypatch):
     asked: list[str] = []
     monkeypatch.setattr(lina_devices, "probe", lambda dev, root, runner: found[dev.name])
     monkeypatch.setattr(lina_devices, "omo_status", lambda dev: asked.append(dev.name) or omo[dev.name])
+    monkeypatch.setattr(lina_devices, "runner_status", lambda dev, root: [])
     return asked
 
 
@@ -104,7 +105,7 @@ def local_device(tmp_path, monkeypatch):
           poll_s: 0.05
           min_free_gb: 0
           runners:
-            fakecli: {json.dumps({"type": "command", "argv": argv})}
+            fakecli: {json.dumps({"type": "command", "argv": argv, "access": "workspace-write"})}
         """), encoding="utf-8")
     launcher = fakes.ThreadLauncher().install(monkeypatch)
     stop = threading.Event()

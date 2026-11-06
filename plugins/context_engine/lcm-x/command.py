@@ -19,6 +19,7 @@ from typing import Any
 import uuid
 
 from . import config as config_choices
+from .sqlite_session import connect_database, is_store_connection
 from .ingest_policy import embedding_prefix_suffix, split_prefix_revision
 from .config import effective_embedding_model, embedding_provider_id, lcm_env_get
 from .command_auth import CommandInvocation, Decision, authorize
@@ -176,6 +177,8 @@ def _embedding_backfill_batch_size(max_batch_items: int | None = None) -> int:
 
 
 def _ensure_inflight_table(conn: sqlite3.Connection) -> None:
+    if is_store_connection(conn):  # LINA: the store's migrations own the schema
+        return
     expected_columns = (
         ("embedded_id", "TEXT", 0, None, 1),
         ("identity_hash", "TEXT", 0, None, 2),
@@ -1009,7 +1012,9 @@ def _doctor_repair_level3_apply_text(engine) -> str:
     if result["reason"]:
         lines.append(f"reason: {result['reason']}")
     backup = result["backup"]
-    if backup and backup["ok"]:
+    if backup and backup.get("skipped"):  # LINA: the memory store (lina#16)
+        lines.append(f"backup: skipped — {backup['skipped']}")
+    elif backup and backup["ok"]:
         lines += [f"backup_path: {backup['backup_path']}", f"backup_size: {_fmt_size(int(backup['backup_size']))}"]
     for number, group in enumerate(result["groups"], 1):
         head = f"group {number} (session {group['session_id']}, top node {group['top']}): {group['outcome']}"
@@ -1051,7 +1056,7 @@ def _classify_schema_stamp(db_path: Path) -> dict[str, Any]:
     so this uses a fresh read-only connection keyed on the path rather than the
     engine's own connection.
     """
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
+    conn = connect_database(sqlite3.connect, f"file:{db_path}?mode=ro", uri=True)
     try:
         return remediate_interim_schema_stamp(conn, apply=False)
     finally:
@@ -2451,7 +2456,7 @@ def _embedding_warmup_text(engine) -> str:
 def _embedding_read_connection(db_path: str | Path) -> sqlite3.Connection:
     """Open the existing database without allowing a dry run to create it."""
     uri = f"{Path(db_path).resolve().as_uri()}?mode=ro"
-    conn = sqlite3.connect(uri, uri=True, timeout=5.0)
+    conn = connect_database(sqlite3.connect, uri, uri=True, timeout=5.0)
     conn.row_factory = sqlite3.Row
     return conn
 
@@ -3595,7 +3600,7 @@ def _record_embedding_catchup(db_path, task: str, identity: str, remaining: int 
                               scan_state=None) -> None:
     """Best-effort advisory state after publication; never fail embedding work."""
     try:
-        conn = sqlite3.connect(db_path, timeout=5.0)
+        conn = connect_database(sqlite3.connect, db_path, timeout=5.0)
         try:
             with conn:
                 if scan_state is None:

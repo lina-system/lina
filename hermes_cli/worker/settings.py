@@ -5,10 +5,11 @@ devices:
   workers:                     # the work devices the hub bids over (`lina worker hosts`)
     build-a: {host: build-a, cap: 2, fast: true}      # ssh alias the hub reaches it by
     build-b: {host: build-b, cap: 1, no_repo: true}   # docs and light work only
-    here:    {host: local, cap: 1, last: true}        # this machine; only when the others are full
+    here:    {host: local, cap: 1, named_cap: 2, last: 2}  # tier 2 fallback; separate --host capacity
 worker:
   hub: {host: hub, lina: lina}     # how a device reaches the hub to report an end (ssh alias, lina command there)
   notice: {command: [my-notify, "{agent}"]}   # the end notice: body on stdin; unset = written to hub/notices only
+  card_link: {kind: hermes, command: [hermes]}  # runs from Hermes cards end on the card (kanban_link.py)
   models: {...}                    # see models.py
   runners: {...}                   # see runners/__init__.py
 ```
@@ -24,7 +25,7 @@ from pathlib import Path
 LOCAL = "local"
 DEFAULTS = {"cap": 1, "min_free_gb": 5, "unknown_after_s": 600, "input_max_mb": 300, "memory_max": "12G",
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
-            "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
+            "human_max_s": 3 * 3600.0, "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
 
 
 def child_pythonpath() -> str:
@@ -35,9 +36,21 @@ def child_pythonpath() -> str:
     return os.pathsep.join([own, *[p for p in os.environ.get("PYTHONPATH", "").split(os.pathsep) if p and p != own]])
 
 
+def lina_home() -> Path:
+    """LINA's root for the worker's state: ``LINA_HOME`` when set, whatever ``HERMES_HOME`` says. Without it, a
+    ``HERMES_HOME`` of Hermes Agent's (a Hermes card session's) is ignored for the platform default; any other is
+    how a LINA process hands its root to its children (services, devices over ssh, shims). ``HERMES_KANBAN_*`` is
+    never read."""
+    import os
+    from hermes_constants import get_default_hermes_root, is_hermes_agent_path, platform_default_home_for
+    hermes_home = os.environ.get("HERMES_HOME", "").strip()
+    if os.environ.get("LINA_HOME", "").strip() or not hermes_home or is_hermes_agent_path(hermes_home):
+        return platform_default_home_for(os.environ, Path.home())
+    return get_default_hermes_root()
+
+
 def root(base: Path | None = None) -> Path:
-    from hermes_cli.lina_ocx import lina_root
-    return (base or lina_root()) / "worker"
+    return (base or lina_home()) / "worker"
 
 
 def tasks_dir(worker_root: Path) -> Path:
@@ -54,8 +67,7 @@ def hub_dir(worker_root: Path) -> Path:
 
 def _config(base: Path | None = None) -> dict:
     from hermes_cli.config_backend import config_exists, read_config_doc_readonly
-    from hermes_cli.lina_ocx import lina_root
-    path = (base or lina_root()) / "config.yaml"
+    path = (base or lina_home()) / "config.yaml"
     doc = read_config_doc_readonly(path) if config_exists(path) else None
     return doc if isinstance(doc, dict) else {}
 
@@ -79,9 +91,14 @@ class Device:
     cap: int = 1
     fast: bool = False
     no_repo: bool = False
-    last: bool = False
+    last: int = 0
     auto: bool = True
     lina: str = "lina"  # the lina command on that device
+    named_cap: int | None = None  # independent --host capacity; defaults to cap
+
+    @property
+    def manual_cap(self) -> int:
+        return self.cap if self.named_cap is None else self.named_cap
 
     @property
     def local(self) -> bool:
@@ -93,8 +110,9 @@ def _device(name: str, item: dict) -> Device | None:
     if not isinstance(host, str) or not host or item.get("off") is True:
         return None
     return Device(name, host, max(1, int(item.get("cap") or DEFAULTS["cap"])), item.get("fast") is True,
-                  item.get("no_repo") is True, item.get("last") is True, item.get("auto") is not False,
-                  str(item.get("lina") or "lina"))
+                  item.get("no_repo") is True, max(0, int(item.get("last") or 0)), item.get("auto") is not False,
+                  str(item.get("lina") or "lina"),
+                  max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None)
 
 
 def devices(base: Path | None = None, raw: dict | None = None) -> list[Device]:

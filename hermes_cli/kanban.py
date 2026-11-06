@@ -158,7 +158,12 @@ def kanban_command(args: argparse.Namespace) -> int:
     # `boards …` manages board metadata and the current-board pointer itself, so it must ignore
     # the `--board` routing override (else `--board beta boards show` reports beta).
     if action == "boards":
-        return _dispatch_boards(args)
+        try:
+            return _dispatch_boards(args)
+        except kb.BoardPinnedError as exc:
+            # A board metadata write resolves the board first, so a fenced worker asking for
+            # another board is refused here too — with the message, not a traceback (#206).
+            return _err(f"kanban boards: {exc}")
 
     # `--board <slug>` pins HERMES_KANBAN_BOARD for the duration of this call so it inherits the
     # exact resolution the dispatcher uses for workers.
@@ -176,6 +181,13 @@ def kanban_command(args: argparse.Namespace) -> int:
         if normed != kb.DEFAULT_BOARD and not kb.board_exists(normed):
             return _err(f"kanban: board {normed!r} does not exist. "
                         f"Create it with `hermes kanban boards create {normed}`.")
+        # A dispatched worker / delegated child cannot reach another board: resolve the flag once
+        # here so every action refuses with the same message, including the ones that resolve
+        # without init_db (`repair`, `gate`). Unfenced callers get their board's own path back.
+        try:
+            kb.kanban_db_path(normed)
+        except kb.BoardPinnedError as exc:
+            return _err(f"kanban: {exc}")
         board_scope = kb.scoped_current_board(normed)
 
     with board_scope:
@@ -725,7 +737,8 @@ def _cmd_link(args: argparse.Namespace) -> int:
         if args.child_id == os.environ.get("HERMES_KANBAN_TASK") else None)
     with kbc.connect_closing() as conn:
         gated = kb.link_tasks(conn, args.parent_id, args.child_id,
-                              expected_child_run_id=expected_child_run_id)
+                              expected_child_run_id=expected_child_run_id,
+                              by=_profile_author(), reason=getattr(args, "reason", None))
     print(f"Linked {args.parent_id} -> {args.child_id}")
     if gated:
         print(
@@ -740,7 +753,8 @@ def _cmd_link(args: argparse.Namespace) -> int:
 
 def _cmd_unlink(args: argparse.Namespace) -> int:
     with kbc.connect_closing() as conn:
-        ok = kb.unlink_tasks(conn, args.parent_id, args.child_id)
+        ok = kb.unlink_tasks(conn, args.parent_id, args.child_id,
+                             by=_profile_author(), reason=getattr(args, "reason", None))
     return _ok_or_err(ok, f"No such link: {args.parent_id} -> {args.child_id}",
                       f"Unlinked {args.parent_id} -> {args.child_id}")
 
@@ -770,7 +784,7 @@ def _cmd_comment(args: argparse.Namespace) -> int:
             body = body[: max(0, args.max_len - len(suffix))].rstrip() + suffix
     author = args.author or _profile_author()
     with kbc.connect_closing() as conn:
-        kb.add_comment(conn, args.task_id, author, body)
+        _cli_comment(conn, args.task_id, author, body)
     print(f"Comment added to {args.task_id}")
     return 0
 
@@ -981,6 +995,7 @@ def _cmd_edit(args: argparse.Namespace) -> int:
         ok = kb.edit_task(
             conn, args.task_id, title=title, body=body, priority=priority,
             result=result, summary=summary, metadata=metadata,
+            by=_profile_author(), reason=getattr(args, "reason", None),
         )
     return _ok_or_err(
         ok,
@@ -989,13 +1004,38 @@ def _cmd_edit(args: argparse.Namespace) -> int:
     )
 
 
+def _cli_comment(conn, task_id: str, author: str, body: str) -> int:
+    """Record the CLI surface without attributing foreign comments to its target run."""
+    from agent.delegation_context import owned_kanban_task
+
+    run_id = _worker_run_id_for(task_id) if owned_kanban_task() == task_id else None
+    return kb.add_comment(conn, task_id, author, body,
+                          source={"surface": "cli", "session": os.environ.get("HERMES_SESSION_ID") or None},
+                          run_id=run_id)
+
+
 def _commented(conn, reason: Optional[str], author, prefix: str, op):
     """Wrap a per-task ``op`` so a ``reason`` is first recorded as a ``PREFIX: reason`` comment."""
     def run(tid):
         if reason:
-            kb.add_comment(conn, tid, author, f"{prefix}: {reason}")
+            _cli_comment(conn, tid, author, f"{prefix}: {reason}")
         return op(tid)
     return run
+
+
+def _wait_for_arg(conn, args: argparse.Namespace) -> tuple[Optional[dict], Optional[str]]:
+    """``(wait_for, error)`` for ``--wait-for``; a card or review wait must name an existing card."""
+    spec = getattr(args, "wait_for", None)
+    if not spec:
+        return None, None
+    from hermes_cli.kanban_db_wait import parse_wait_for
+    try:
+        wait_for = parse_wait_for(spec)
+    except ValueError as exc:
+        return None, str(exc)
+    if wait_for.get("task_id") and kb.get_task(conn, wait_for["task_id"]) is None:
+        return None, f"unknown task {wait_for['task_id']} in --wait-for"
+    return wait_for, None
 
 
 def _cmd_block(args: argparse.Namespace) -> int:
@@ -1005,6 +1045,10 @@ def _cmd_block(args: argparse.Namespace) -> int:
     ids = _bulk_ids(args)
     suffix = f": {reason}" if reason else ""
     with kbc.connect_closing() as conn:
+        wait_for, error = _wait_for_arg(conn, args)
+        if error or (wait_for and kind not in (None, "needs_input")):
+            return _err(error or "--wait-for applies to needs_input blocks only")
+        kind = "needs_input" if wait_for else kind
         def ok_msg(tid):
             # Report where it landed: dependency blocks -> todo, tripped unblock-loop breaker -> triage.
             landed = kb.get_task(conn, tid)
@@ -1021,7 +1065,7 @@ def _cmd_block(args: argparse.Namespace) -> int:
             return f"Blocked {tid}{suffix}"
 
         op = _commented(conn, reason, author, "BLOCKED", lambda tid: kb.block_task(
-            conn, tid, reason=reason, kind=kind, expected_run_id=_worker_run_id_for(tid)))
+            conn, tid, reason=reason, kind=kind, expected_run_id=_worker_run_id_for(tid), wait_for=wait_for))
         return _bulk_apply(ids, op, ok_msg, lambda tid: f"cannot block {tid}")
 
 
@@ -1031,8 +1075,11 @@ def _cmd_schedule(args: argparse.Namespace) -> int:
     ids = _bulk_ids(args)
     suffix = f": {reason}" if reason else ""
     with kbc.connect_closing() as conn:
+        wait_for, error = _wait_for_arg(conn, args)
+        if error:
+            return _err(error)
         op = _commented(conn, reason, author, "SCHEDULED", lambda tid: kb.schedule_task(
-            conn, tid, reason=reason, expected_run_id=_worker_run_id_for(tid)))
+            conn, tid, reason=reason, expected_run_id=_worker_run_id_for(tid), wait_for=wait_for))
         return _bulk_apply(ids, op, lambda tid: f"Scheduled {tid}{suffix}", lambda tid: f"cannot schedule {tid}")
 
 
@@ -1043,10 +1090,11 @@ def _cmd_unblock(args: argparse.Namespace) -> int:
     if rc:
         return rc
     reason = _stripped_or_none(getattr(args, "reason", None))
-    author = _profile_author() if reason else None
+    author = _profile_author()
     suffix = f": {reason}" if reason else ""
     with kbc.connect_closing() as conn:
-        op = _commented(conn, reason, author, "UNBLOCK", lambda tid: kb.unblock_task(conn, tid))
+        op = _commented(conn, reason, author, "UNBLOCK", lambda tid: kb.unblock_task(
+            conn, tid, by=author, reason=reason))
         return _bulk_apply(ids, op, lambda tid: f"Unblocked {tid}{suffix}",
                            lambda tid: f"cannot unblock {tid} (not blocked/scheduled?)")
 
@@ -1100,7 +1148,7 @@ def _cmd_reopen_review(args: argparse.Namespace) -> int:
             if not kb.reopen_review_task(conn, tid):
                 return False
             if reason:
-                kb.add_comment(conn, tid, author or "operator", f"CHANGES REQUESTED: {reason}")
+                _cli_comment(conn, tid, author or "operator", f"CHANGES REQUESTED: {reason}")
             return True
 
         return _bulk_apply(ids, op, lambda tid: f"Reopened {tid}{suffix}",

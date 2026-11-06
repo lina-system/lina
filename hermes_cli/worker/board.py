@@ -17,7 +17,7 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from urllib.parse import quote
 
-from hermes_cli.worker import bidding, runners, settings
+from hermes_cli.worker import bidding, kanban_link, record, runners, settings
 from hermes_cli.worker.hub import ENDED, Hub
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import MODES
@@ -96,20 +96,27 @@ def _lives(hub: Hub, jobs: list[dict]) -> dict[str, dict]:
 
 
 def cards(worker_root: Path, now: float) -> list[dict]:
-    """Runs not started from a kanban work card (lina#112 serves those) that run, wait, or moved in the last two
-    days, newest first."""
+    """Runs not started from a card on LINA's own board (lina#112 serves those) that run, wait, or moved in the last
+    two days, newest first. A run handed out from a Hermes card is listed here with its card and board."""
     store = Store(worker_root)
     ends = _ends(store)
-    jobs = [job for job in store.all() if not job.get("card") and _recent(job, ends.get(job["id"]), now)]
+    jobs = [job for job in store.all() if (not job.get("card") or kanban_link.on_hermes(job["card"]))
+            and _recent(job, ends.get(job["id"]), now)]
+    receipts = record.receipts_by_task(store)
     lives = _lives(Hub(worker_root, out=lambda *_: None), jobs)
+    from hermes_cli.lina_board_plain import lookup
+    plain = lookup("run", [job["id"] for job in jobs])
     out = []
     for job in reversed(jobs):
         live = lives.get(job["id"])
         state, reason = work_state(job, live)
         out.append({"id": job["id"], "title": _title(job), "state": state, "reason": reason, "agent": job.get("bot"),
                     "kind": job.get("mode"), "todo": job.get("todo"), "host": job.get("host"),
-                    "startedAt": job.get("started"), "endedAt": ends.get(job["id"]) if job.get("state") in ENDED else None,
-                    "now": _now_line(live) if state in ("in_progress", "waiting") and live else None})
+                    "startedAt": job.get("started"), "endedAt": record.ended_at(job, receipts.get(job["id"], [])),
+                    "now": _now_line(live) if state in ("in_progress", "waiting") and live else None,
+                    "card": (job.get("card") or {}).get("task"), "board": (job.get("card") or {}).get("board"),
+                    "model": record.served_model(job), "settingsRevision": record.settings_revision(job),
+                    "plain": plain[job["id"]]})
     return out
 
 

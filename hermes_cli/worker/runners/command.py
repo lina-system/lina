@@ -19,6 +19,9 @@ the CLI runs is refused: a CLI has no channel into a running turn.
 
 Every launch goes through ``/bin/sh`` writing the exit code to ``exit.<run>.<step>``, so any process (``send``,
 ``cancel``, a restarted service) reads the same state from the task folder.
+An answer saves the next step's handle before removing the question. State observes the question before loading
+that handle, so an absent question cannot be combined with the previous step. It checks the wrapper's liveness
+before reading that step's exit code: the wrapper publishes its exit code before exiting, not the other way round.
 """
 
 from __future__ import annotations
@@ -32,6 +35,8 @@ from pathlib import Path
 from hermes_platform.resolver import locate_command
 from tools.environments.local import build_subprocess_env
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
+from hermes_cli.worker.runners.access import recorded_access
+from hermes_cli.lina_work_settings import ACCESS
 
 _WRAP = 'rc_file=$1; shift; "$@"; echo $? > "$rc_file"'
 FINAL_MAX = 20000
@@ -77,8 +82,22 @@ class CommandRunner:
         self.name, self.argv = name, list(argv)
         self.follow_up_argv = list(spec.get("follow_up_argv") or argv)
         self.model_args = list(spec.get("model_args") or [])
+        self.access = spec.get("access")
+        self.access_args = spec.get("access_args")
+        if self.access_args is not None and (
+            not isinstance(self.access_args, dict) or any(
+                mode not in ACCESS or not isinstance(args, list) or not all(isinstance(arg, str) for arg in args)
+                for mode, args in self.access_args.items()
+            )
+        ):
+            raise RunnerError(f"runner {name}: `access_args` must map access modes to lists of strings")
         self.env = {str(k): str(v) for k, v in (spec.get("env") or {}).items()}
         self.limits = limits or {}
+
+    def honours(self, mode: str) -> tuple[bool, str]:
+        supported = mode in ACCESS and (mode in self.access_args if self.access_args is not None
+                                       else mode == self.access)
+        return supported, "" if supported else f"runner {self.name} cannot honour access {mode!r}"
 
     def _child_env(self) -> dict[str, str]:
         """The configured CLI signs in with its own credentials from the environment (API keys) and reads its own
@@ -100,10 +119,14 @@ class CommandRunner:
         return [each.format(**values) for each in base]
 
     def _launch(self, task: Task, run: int, step: int, base: list[str], model: ModelProfile | None,
-                text: str) -> Handle:
+                text: str, access: str) -> Handle:
+        supported, reason = self.honours(access)
+        if not supported:
+            raise RunnerError(reason)
         prompt_file = task.path(f"input.{run}.{step}.txt")
         prompt_file.write_text(text, encoding="utf-8")
         argv = self._argv(base, task, prompt_file, model)
+        argv += self.access_args[access] if self.access_args is not None else []
         rc_file = task.path(f"exit.{run}.{step}")
         rc_file.unlink(missing_ok=True)
         with prompt_file.open("rb") as stdin, task.path(f"stdout.{run}.txt").open("ab") as out, \
@@ -113,18 +136,21 @@ class CommandRunner:
                                     cwd=task.work, stdin=stdin, stdout=out, stderr=err, env=self._child_env())
         task.event(run, "launched", step=step, argv=argv[:1])
         handle = Handle(task, run, {"runner": self.name, "pid": proc.pid, "step": step, "since": time.time(),
-                                    "model": model.as_dict() if model else None})
+                                    "model": model.as_dict() if model else None, "access": access})
         handle.save()
         return handle
 
-    def start(self, task: Task, prompt: str, model: ModelProfile | None) -> Handle:
-        return self._launch(task, 1, 1, self.argv, model, prompt)
+    def start(self, task: Task, prompt: str, model: ModelProfile | None,
+              access: str = "workspace-write") -> Handle:
+        return self._launch(task, 1, 1, self.argv, model, prompt, access)
 
-    def follow_up(self, handle: Handle, text: str, *, run: int | None = None) -> tuple[str, Handle]:
+    def follow_up(self, handle: Handle, text: str, *, run: int | None = None,
+                  access: str | None = None) -> tuple[str, Handle]:
+        mode = recorded_access(handle, access)
         if _alive(handle.data.get("pid")):
             return "refused", handle
         model = ModelProfile.from_dict(handle.data.get("model"))
-        return "started", self._launch(handle.task, run or handle.run + 1, 1, self.follow_up_argv, model, text)
+        return "started", self._launch(handle.task, run or handle.run + 1, 1, self.follow_up_argv, model, text, mode)
 
     def _question(self, task: Task) -> Path:
         return task.work / "question.md"
@@ -150,31 +176,36 @@ class CommandRunner:
         return newest
 
     def state(self, handle: Handle) -> str:
+        question = self._question(handle.task).exists()
         handle.data.update(Handle.load(handle.task, handle.run).data)  # an answer may have started the next step
         if handle.task.path("cancelled").exists():
             self.stop(handle)
             return "cancelled"
+        alive = _alive(handle.data.get("pid"))
         code = self._exit_code(handle)
         quiet = time.time() - self._quiet_since(handle)
-        if code is None and _alive(handle.data.get("pid")):
+        if code is None and alive:
             if quiet >= self._stall_s():
                 self.stop(handle)
                 return "stalled"
             return "running"
         if code != 0:
             return "failed"
-        if self._question(handle.task).exists():
+        # Seen before the handle so an answer's next step is never paired with "no question"; seen again after the
+        # exit so a question the CLI wrote just before exiting is not missed (lina#199).
+        if question or self._question(handle.task).exists():
             return "stalled" if quiet >= self._stall_s() else "waiting_human"
         return "done"
 
     def answer(self, handle: Handle, text: str) -> dict:
+        access = recorded_access(handle)
         question = self._question(handle.task)
         if self._exit_code(handle) != 0 or not question.exists():
             return {"action": "refuse", "reason": "no_question"}
         step = int(handle.data.get("step", 1)) + 1
         model = ModelProfile.from_dict(handle.data.get("model"))
         self._launch(handle.task, handle.run, step, self.follow_up_argv, model,
-                     f"Answer to your question in question.md: {text}")
+                     f"Answer to your question in question.md: {text}", access)
         question.rename(handle.task.path(f"question.{handle.run}.{step - 1}.md"))  # after the step is recorded
         return {"action": "answer", "steps": 1, "still_pending": 0}
 

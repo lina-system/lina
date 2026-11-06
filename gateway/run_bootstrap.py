@@ -463,6 +463,27 @@ def _start_gateway_start_cron_and_housekeeping(runner):
     return cron_stop, cron_provider, cron_thread, housekeeping_thread
 
 
+def _start_board_lines_writer(stop: threading.Event) -> threading.Thread | None:
+    """The LINA board's checked card lines (lina#151) on their own daemon thread, off the event loop: every
+    install runs a gateway, kanban work cards need no worker device, and the thread stops with ``cron_stop``.
+    The root is the host's LINA root, so a multiplexed gateway starts one writer for all its profiles; the
+    worker service may start another, and the shared ``plain`` lock turns the second one's passes into no-ops.
+    It is not a profile runtime writer (``_start_gateway_start_cron_and_housekeeping``, ``process_ownership``): it
+    writes no profile state, only the host LINA root's ``board/plain.db`` under that lock, so it must not keep the
+    profile lock held after shutdown. A side feature: a start failure is logged and returns None, never a gateway
+    that cannot start."""
+    from hermes_cli.lina_board_plain import writer_thread
+    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.worker import settings
+    try:
+        thread = writer_thread(settings.root(lina_root()), stop)
+        thread.start()
+    except Exception:
+        logger.warning("Board lines writer did not start; card lines stay as they are", exc_info=True)
+        return None
+    return thread
+
+
 async def _start_gateway_shutdown_tail(
     runner, _control_server, cron_stop: threading.Event, cron_provider,
     cron_thread: Any, housekeeping_thread: threading.Thread,
@@ -893,6 +914,7 @@ async def start_gateway(config: Optional[GatewayConfig] = None, replace: bool = 
         # which stops the cron ticker and housekeeping before the adapters they deliver through close.
         from gateway.run_runtime import publish_gateway_runtime_ready, wait_gateway_runtime
         try:
+            _start_board_lines_writer(cron_stop)  # stops with cron_stop in the shutdown tail
             # READY only once adapters, cron and housekeeping run; missing systemd state just disables watchdog.
             publish_gateway_runtime_ready(runner)
             runner._start_systemd_watchdog()

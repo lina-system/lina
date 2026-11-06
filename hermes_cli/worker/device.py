@@ -23,15 +23,16 @@ from pathlib import Path
 import psutil
 
 from hermes_cli.process_identity import process_birth
+from hermes_cli.lina_work_settings import ACCESS
 from hermes_cli.worker import runners, settings, slots
 from hermes_platform.resolver import locate_command
 from tools.environments.local import build_subprocess_env
-from hermes_cli.worker.runners.base import LIVE, Handle, ModelProfile, RunnerError, Task
+from hermes_cli.worker.runners.base import LIVE, Handle, ModelProfile, RunnerError, Task, iter_artifact_files
 from hermes_cli.worker.task import (end_state, git_summary, lock_inputs, read_json, safe_id, stamp, write_json,
                                     write_manifest)
-from hermes_cli.worker.transport import notify_hub
+from hermes_cli.worker.transport import PACKED, notify_hub
 
-LIMIT_KEYS = ("poll_s", "stall_grace_s", "answered_grace_s", "background_max_s", "hard_timeout_s")
+LIMIT_KEYS = ("poll_s", "stall_grace_s", "answered_grace_s", "background_max_s", "hard_timeout_s", "human_max_s")
 HEARTBEAT = "serve.heartbeat"
 
 
@@ -50,11 +51,16 @@ def job_of(task: Task) -> dict:
 
 
 def runner_for(worker_root: Path, task: Task, job: dict):
-    """The job's runner: this device's own entry of that name when it has one (its local paths), else the hub's."""
+    """The job's runner: this device's own entry of that name when it has one (its local paths), else the hub's.
+    The model is always the job's (lina#257): the device's entry never names one, and when it has no ``model_args``
+    the hub's are used, so the job's model reaches the CLI."""
     worker = settings.section(base_of(worker_root))
     name = job.get("runner") or runners.default_name(worker)
     configured = worker.get("runners") if isinstance(worker.get("runners"), dict) else {}
-    spec = configured.get(name) or job.get("runner_spec") or runners.specs(worker).get(name) or {"type": name}
+    hub_spec = job.get("runner_spec") or {}
+    spec = configured.get(name) or hub_spec or runners.specs(worker).get(name) or {"type": name}
+    if spec is not hub_spec and not spec.get("model_args") and hub_spec.get("model_args"):
+        spec = {**spec, "model_args": hub_spec["model_args"]}
     return runners.build(name, spec, task.limits, base_of(worker_root))
 
 
@@ -157,6 +163,9 @@ def prepare(worker_root: Path, task: Task) -> None:
     """The task's ``work/``: a fresh worktree on ``omo/<ID>`` with push blocked, or a plain folder; then the inputs
     the hub copied in, made read-only and hashed."""
     job = job_of(task)
+    supported, reason = runner_for(worker_root, task, job).honours(job.get("access", "workspace-write"))
+    if not supported:
+        raise RunnerError(reason)
     if job.get("repo"):
         _prepare_repo(worker_root, task, job)
     task.work.mkdir(parents=True, exist_ok=True)
@@ -169,10 +178,14 @@ def prepare(worker_root: Path, task: Task) -> None:
 
 
 def _start_or_follow(runner, task: Task, run: int, job: dict) -> Handle:
+    access = job.get("access", "workspace-write")
+    supported, reason = runner.honours(access)
+    if not supported:
+        raise RunnerError(reason)
     prompt = task.path(f"prompt.{run}").read_text(encoding="utf-8-sig")
     if run == 1:
-        return runner.start(task, prompt, ModelProfile.from_dict(job.get("model")))
-    return runner.follow_up(Handle.load(task), prompt, run=run)[1]
+        return runner.start(task, prompt, ModelProfile.from_dict(job.get("model")), access=access)
+    return runner.follow_up(Handle.load(task), prompt, run=run, access=access)[1]
 
 
 def _settle(runner, task: Task, run: int, handle: Handle) -> str:
@@ -190,7 +203,7 @@ def run_task(worker_root: Path, task_id: str, run: int) -> str:
     job = job_of(task)
     task.path("state").write_text("running\n", encoding="utf-8")
     stamp(task, f"started.{run}")
-    task.event(run, "started", runner=job.get("runner"))
+    task.event(run, "started", runner=job.get("runner"), access=job.get("access", "workspace-write"))
     runner, handle, code = None, None, 0
     if task.path("cancelled").exists():  # cancelled between the launch and here: no session is opened
         task.path(f"rc.{run}").write_text("0\n", encoding="utf-8")
@@ -225,6 +238,7 @@ def stop_runner(runner, handle: Handle | None) -> None:
 
 
 def finish_run(worker_root: Path, task: Task, run: int, runner_state: str, runner=None, handle=None) -> str:
+    task.path(f"pid.{run}").unlink(missing_ok=True)
     files = runner.result(handle) if runner is not None and handle is not None else None
     summary = git_summary(task)
     if summary:
@@ -310,7 +324,10 @@ def probe(worker_root: Path, repo: str = "", runner_name: str = "") -> dict:
     running = slots.held(worker_root)
     repo_ok = not repo.startswith(("/", "~")) or (Path(repo).expanduser() / ".git").exists()
     load = os.getloadavg()[0] if hasattr(os, "getloadavg") else 0.0
+    memory_max = settings.setting("memory_max", worker=worker) if _systemd_available() else None
     return {"runner": name, "ready": ready, **({"runner_at": why} if ready else {"why": why}), "serve": serve, "running": running,
+            "memory_max": memory_max,
+            "bid_running": slots.held(worker_root, pool="bid"), "named_running": slots.held(worker_root, pool="named"),
             "cores": os.cpu_count() or 1, "load": round(load, 2), "free_gb": _free_gb(worker_root), "repo": repo_ok}
 
 
@@ -321,7 +338,10 @@ def steer(worker_root: Path, task_id: str, text: str) -> dict:
         return {"action": "not_live", "run": run}
     runner = runner_for(worker_root, task, job_of(task))
     try:
-        how, _ = runner.follow_up(Handle.load(task, run), text)
+        handle = Handle.load(task, run)
+        if _permission_pending(runner, handle):
+            return {"action": "error", "reason": "permission_dialog", "run": run}
+        how, _ = runner.follow_up(handle, text)
     except RunnerError as exc:
         return {"action": "error", "reason": str(exc)[:300], "run": run}
     task.event(run, "follow_up", how=how)
@@ -346,7 +366,33 @@ def follow_up(worker_root: Path, task_id: str, payload: dict) -> dict:
     ended, the next run is requested."""
     task = task_of(worker_root, task_id)
     with task_lock(task):
+        job = job_of(task)
+        current = job.get("access", "workspace-write")
+        access = payload.get("access", current)
+        if current not in ACCESS or access not in ACCESS or ACCESS.index(access) > ACCESS.index(current):
+            return {"action": "error", "reason": f"access {access!r} exceeds recorded mode {current!r}"}
         run = slots.requested(task.dir)
+        if access != current:
+            supported, reason = runner_for(worker_root, task, job).honours(access)
+            if not supported:
+                return {"action": "error", "reason": reason, "run": run}
+            if run and not task.path(f"rc.{run}").exists() and task.path(f"taken.{run}").exists():
+                if not alive(task, run) or not task.path("handle.json").exists():
+                    return {"action": "busy", "run": run}
+                live = read_json(task.path(f"live.{run}.json"), {}) or {}
+                reply = (answer(worker_root, task_id, payload["message"]) if live.get("state") == "waiting_human"
+                         else steer(worker_root, task_id, payload["message"]))
+                if reply.get("action") not in ("answer", "steered", "started"):
+                    return reply
+                job["access"] = access
+                write_json(task.path("job.json"), job)
+                grant = read_json(task.path("grant.json"), {}) or {}
+                write_json(task.path("grant.json"), {**grant, "access": access})
+                return reply
+            job["access"] = access
+            write_json(task.path("job.json"), job)
+            grant = read_json(task.path("grant.json"), {}) or {}
+            write_json(task.path("grant.json"), {**grant, "access": access})
         if run and not task.path(f"rc.{run}").exists():
             if not task.path(f"taken.{run}").exists():
                 with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:
@@ -361,11 +407,22 @@ def follow_up(worker_root: Path, task_id: str, payload: dict) -> dict:
         return {"action": "requested", "run": run}
 
 
+def _permission_pending(runner, handle: Handle) -> bool:
+    """Only runners with a permission channel can have a pending permission dialog."""
+    query = getattr(runner, "permission_pending", None)
+    return query is not None and query(handle)
+
+
 def human(worker_root: Path, task_id: str) -> dict:
     task = task_of(worker_root, task_id)
     run = last_run(task)
+    is_alive = alive(task, run)
+    if is_alive and task.path("handle.json").exists():
+        runner = runner_for(worker_root, task, job_of(task))
+        if _permission_pending(runner, Handle.load(task, run)):
+            return {"open": False, "permission": True, "run": run}
     contract = read_json(task.path(f"live.{run}.json"), {}) or {}
-    return {"open": alive(task, run) and contract.get("state") == "waiting_human", "run": run}
+    return {"open": is_alive and contract.get("state") == "waiting_human", "run": run}
 
 
 def answer(worker_root: Path, task_id: str, text: str) -> dict:
@@ -373,9 +430,13 @@ def answer(worker_root: Path, task_id: str, text: str) -> dict:
     run = last_run(task)
     runner = runner_for(worker_root, task, job_of(task))
     try:
-        reply = runner.answer(Handle.load(task, run), text)
+        handle = Handle.load(task, run)
+        if _permission_pending(runner, handle):
+            return {"action": "error", "reason": "permission_dialog", "run": run}
+        reply = runner.answer(handle, text)
     except RunnerError as exc:
-        reply = {"action": "error", "reason": str(exc)[:300]}
+        reason = str(exc)[:300]
+        reply = {"action": "error", "reason": "permission_dialog" if reason.startswith("permission_dialog:") else reason}
     task.event(run, "answer", action=reply.get("action"))
     return {**reply, "run": run}
 
@@ -402,11 +463,12 @@ def pack(worker_root: Path, task_id: str) -> bytes:
     task = task_of(worker_root, task_id)
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
-        for source, name in ((task.work / "report.md", "report.md"), (task.path("final.md"), "final.md"),
-                             (task.path("manifest.json"), "manifest.json"), (task.path("git.txt"), "git.txt"),
-                             (task.path(f"stderr.{last_run(task)}.txt"), "stderr.txt"), (task.work / "out", "out")):
-            if source.exists():
-                archive.add(str(source), arcname=name)
+        for name, relative in PACKED.items():
+            source = task.path(relative.format(run=last_run(task)))
+            if source.exists() and not source.is_symlink():
+                archive.add(str(source), arcname=name, recursive=False)
+        for source in iter_artifact_files(task.work / "out"):
+            archive.add(str(source), arcname=source.relative_to(task.work).as_posix(), recursive=False)
     return buffer.getvalue()
 
 
@@ -428,37 +490,26 @@ def _ok(value: dict) -> tuple[int, bytes]:
     return code, (json.dumps(value, ensure_ascii=False) + "\n").encode("utf-8")
 
 
-STDIN_VERBS = ("put", "untar", "send", "answer", "cancel", "follow_up")  # the verbs the hub sends a payload with
-
-
 def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[int, bytes]:
     """One ``_device`` verb: ``(exit code, stdout bytes)``."""
+    from hermes_cli.worker.protocol import verbs
+
     name, args = verb[0], verb[1:]
-    text = stdin.decode("utf-8", "replace")
     try:
-        table = {
-            "put": lambda: _ok(_put(worker_root, args[0], args[1], stdin)),
-            "untar": lambda: _ok(_untar(worker_root, args[0], args[1], stdin)),
-            "meta": lambda: _ok(meta(worker_root, args[0], live=args[1:] == ["live"])),
-            "probe": lambda: _ok(probe(worker_root, *args[:2])),
-            "reserve": lambda: _ok(slots.reserve(worker_root, safe_id(args[0]), int(args[1]))),
-            "send": lambda: _ok(steer(worker_root, args[0], text)),
-            "follow_up": lambda: _ok(follow_up(worker_root, args[0], json.loads(text))),
-            "human": lambda: _ok(human(worker_root, args[0])),
-            "answer": lambda: _ok(answer(worker_root, args[0], text)),
-            "cancel": lambda: _ok(cancel(worker_root, args[0], text)),
-            "pack": lambda: (0, pack(worker_root, args[0])),
-            "bundle": lambda: bundle(worker_root, *args[:2]),
-        }
+        table = verbs()
         if name not in table:
             return _ok({"action": "error", "reason": f"unknown verb {name}"})
-        return table[name]()
+        return table[name].handler(worker_root, args, stdin)
     except (IndexError, ValueError, OSError) as exc:
         return _ok({"action": "error", "reason": f"{name}: {exc}"[:300]})
 
 
 def run_argv(task: Task, run: int) -> list[str]:
     return [sys.executable, "-m", "hermes_cli.main", "worker", "_run", task.id, str(run)]
+
+
+def _systemd_available() -> bool:
+    return sys.platform.startswith("linux") and locate_command("systemd-run").found
 
 
 def launch(worker_root: Path, task: Task, run: int) -> None:
@@ -469,10 +520,11 @@ def launch(worker_root: Path, task: Task, run: int) -> None:
     # and the credentials the runner's agent needs, and finds hermes_cli through PYTHONPATH.
     child_env = build_subprocess_env(scrub_secrets=False, inherit_profile_home=False,
                                      extra={"PYTHONPATH": settings.child_pythonpath()})
-    if sys.platform.startswith("linux") and locate_command("systemd-run").found:
+    if _systemd_available():
         unit = f"lina-worker-{task.id}-{run}"
         env = [f"--setenv={key}={child_env[key]}" for key in ("HERMES_HOME", "PATH", "HOME", "LANG", "PYTHONPATH")
                if child_env.get(key)]
+        env.append(f"--setenv=LINA_HOME={settings.lina_home().resolve()}")
         cap = settings.setting("memory_max", base_of(worker_root))
         done = subprocess.run(["systemd-run", "--user", "--quiet", "--collect", "--unit", unit, "-p",
                                f"MemoryMax={cap}", *env, "--", *argv], capture_output=True, timeout=60, check=False)
@@ -489,3 +541,5 @@ def launch(worker_root: Path, task: Task, run: int) -> None:
     except psutil.Error:
         birth = None  # it already ended: alive() reads it as gone
     write_json(task.path(f"pid.{run}"), {"pid": proc.pid, "birth": birth})
+    if task.path(f"rc.{run}").exists():
+        task.path(f"pid.{run}").unlink(missing_ok=True)

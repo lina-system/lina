@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
+from .sqlite_session import connect_database
 from .config import hermes_auxiliary_compression_max_concurrency
 from .db_bootstrap import select_conversation_range
 from .fresh_tail import resolve_fresh_tail_boundary
@@ -513,7 +514,7 @@ class _LeafPrep:
         ):  # D-7: the host's single aux slot
             return
         uri = Path(job.db_path).resolve().as_uri() + "?mode=ro"
-        conn = sqlite3.connect(uri, uri=True, timeout=5.0, check_same_thread=False)
+        conn = connect_database(sqlite3.connect, uri, uri=True, timeout=5.0, check_same_thread=False)
         try:
             self._prepare_on(job, conn)
         finally:

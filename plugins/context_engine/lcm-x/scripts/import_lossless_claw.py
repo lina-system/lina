@@ -41,6 +41,7 @@ from hermes_lcm.dag import build_nodes_fts_spec  # noqa: E402
 from hermes_lcm.db_bootstrap import ensure_external_content_fts  # noqa: E402
 from hermes_lcm.ingest_protection import protect_message_for_ingest  # noqa: E402
 from hermes_lcm.message_content import normalize_content_value  # noqa: E402
+from hermes_lcm.sqlite_session import connect_database, store_backend  # noqa: E402  (LINA)
 from hermes_lcm.store import MessageStore, _normalize_source_value  # noqa: E402
 from hermes_lcm.tokens import count_message_tokens  # noqa: E402
 
@@ -787,10 +788,15 @@ def _imported_summary_map_from_conn(conn: sqlite3.Connection, import_id: str) ->
     return {str(row[0]): int(row[1]) for row in rows}
 
 
+def _target_present(target_db: Path) -> bool:
+    """LINA: the target holds LCM-X data: its file exists, or the host routes it to the Postgres store (lina#16)."""
+    return target_db.exists() or store_backend(target_db) is not None
+
+
 def _target_imported_message_map(target_db: Path, import_id: str) -> dict[int, int]:
-    if not target_db.exists():
+    if not _target_present(target_db):
         return {}
-    conn = sqlite3.connect(_readonly_sqlite_uri(target_db), uri=True)
+    conn = connect_database(sqlite3.connect, _readonly_sqlite_uri(target_db), uri=True)
     try:
         return _imported_message_map_from_conn(conn, import_id)
     finally:
@@ -798,9 +804,9 @@ def _target_imported_message_map(target_db: Path, import_id: str) -> dict[int, i
 
 
 def _target_imported_summary_map(target_db: Path, import_id: str) -> dict[str, int]:
-    if not target_db.exists():
+    if not _target_present(target_db):
         return {}
-    conn = sqlite3.connect(_readonly_sqlite_uri(target_db), uri=True)
+    conn = connect_database(sqlite3.connect, _readonly_sqlite_uri(target_db), uri=True)
     try:
         return _imported_summary_map_from_conn(conn, import_id)
     finally:
@@ -941,9 +947,9 @@ def _process_summary_candidates(
 
 
 def _existing_source_message_ids(target_db: Path, import_id: str) -> set[int]:
-    if not target_db.exists():
+    if not _target_present(target_db):
         return set()
-    conn = sqlite3.connect(target_db)
+    conn = connect_database(sqlite3.connect, target_db)
     try:
         if not _target_has_import_table(conn):
             return set()
@@ -957,9 +963,9 @@ def _existing_source_message_ids(target_db: Path, import_id: str) -> set[int]:
 
 
 def _existing_source_message_keys(target_db: Path, import_id: str) -> set[str]:
-    if not target_db.exists():
+    if not _target_present(target_db):
         return set()
-    conn = sqlite3.connect(target_db)
+    conn = connect_database(sqlite3.connect, target_db)
     try:
         if not _target_has_import_table(conn):
             return set()
@@ -2328,9 +2334,9 @@ def _jsonl_result_source_row_id(
 
 
 def _existing_tool_call_ids_by_source_session(target_db: Path, import_id: str) -> dict[str, set[str]]:
-    if not target_db.exists():
+    if not _target_present(target_db):
         return {}
-    conn = sqlite3.connect(target_db)
+    conn = connect_database(sqlite3.connect, target_db)
     try:
         if not _target_has_import_table(conn) or not _table_exists(conn, "messages"):
             return {}

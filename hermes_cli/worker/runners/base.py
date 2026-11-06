@@ -16,6 +16,7 @@ from __future__ import annotations
 import json
 import os
 import threading
+from collections.abc import Iterator
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Protocol
@@ -31,7 +32,8 @@ class RunnerError(RuntimeError):
 
 @dataclass(frozen=True)
 class ModelProfile:
-    """The main model of a run, recorded with it: where it came from (``mode:<mode>``, ``--model``, ``runner``)."""
+    """The main model of a run, recorded with it: where it came from (``--model``, ``runner:<runner>`` from the work
+    settings, ``mode:<mode>``, ``fallback:<ocx state>``, ``runner`` for the runner's own default)."""
     provider: str | None = None
     id: str | None = None
     thinking: str | None = None
@@ -94,9 +96,13 @@ class Runner(Protocol):
 
     def available(self) -> tuple[bool, str]: ...
 
-    def start(self, task: Task, prompt: str, model: ModelProfile | None) -> Handle: ...
+    def honours(self, mode: str) -> tuple[bool, str]: ...
 
-    def follow_up(self, handle: Handle, text: str, *, run: int | None = None) -> tuple[str, Handle]: ...
+    def start(self, task: Task, prompt: str, model: ModelProfile | None,
+              access: str = "workspace-write") -> Handle: ...
+
+    def follow_up(self, handle: Handle, text: str, *, run: int | None = None,
+                  access: str | None = None) -> tuple[str, Handle]: ...
 
     def answer(self, handle: Handle, text: str) -> dict: ...
 
@@ -107,15 +113,36 @@ class Runner(Protocol):
     def stop(self, handle: Handle) -> None: ...
 
 
+OUT_JUNK = frozenset({".scratch", ".venv", "venv", ".pytest_cache", "__pycache__", "node_modules",
+                      ".mypy_cache", ".ruff_cache", ".tox", ".git"})
+
+
+def iter_artifact_files(out: Path) -> Iterator[Path]:
+    """Regular deliverables under out, shared by result hashing and archive packing.
+
+    Prune tool trees before visiting them; symlinks are not delivered, even when
+    their targets happen to be regular files inside the task.
+    """
+    if out.is_symlink():
+        return
+    for root, dirs, names in os.walk(out):
+        directory = Path(root)
+        dirs[:] = sorted(name for name in dirs
+                         if name not in OUT_JUNK and not (directory / name).is_symlink())
+        for name in sorted(names):
+            path = directory / name
+            if not path.is_symlink() and path.is_file():
+                yield path
+
+
 def standard_result(task: Task) -> dict[str, Path]:
-    """``report.md``, ``final.md`` and every file under ``out/``, by the name the manifest records them under."""
+    """``report.md``, ``final.md`` and deliverable files under ``out/``, by manifest name."""
     files: dict[str, Path] = {}
     if (task.work / "report.md").is_file():
         files["report.md"] = task.work / "report.md"
     if task.path("final.md").is_file():
         files["final.md"] = task.path("final.md")
     out = task.work / "out"
-    if out.is_dir():
-        for path in sorted(p for p in out.rglob("*") if p.is_file()):
-            files[path.relative_to(task.work).as_posix()] = path
+    for path in iter_artifact_files(out):
+        files[path.relative_to(task.work).as_posix()] = path
     return files

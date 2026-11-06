@@ -38,6 +38,8 @@ on:
       - 'scripts/ci/check_lcm_x_subtree.py'
       - 'scripts/ci/subtree_check.py'
       - '.github/lcm-x-known-failures.txt'
+      - '.github/lcm-x-postgres-sqlite-only.txt'
+      - 'plugins/context_engine/lcm_x_store*.py'
       - '.github/workflows/lcm-x.yml'
   push:
     branches: [dev]
@@ -72,6 +74,8 @@ on:
       - 'scripts/ci/check_lcm_x_subtree.py'
       - 'scripts/ci/subtree_check.py'
       - '.github/lcm-x-known-failures.txt'
+      - '.github/lcm-x-postgres-sqlite-only.txt'
+      - 'plugins/context_engine/lcm_x_store*.py'
       - '.github/workflows/lcm-x.yml'
   workflow_dispatch:
 
@@ -162,6 +166,80 @@ jobs:
           # Runs alone, as upstream does: one of its tests asserts a wall-clock budget.
           run_with_store "$HERMES_PYTHON" -m pytest tests/test_embedding_privacy.py -q -m "not latency" -p no:cacheprovider \
             "${deselect[@]}"
+
+      - name: Check the checkout is clean
+        uses: ./.github/actions/check-clean-worktree
+
+  tests-postgres:
+    # The same suite with every LCM-X database on the memory store (lina#16): the pytest plugin
+    # plugins/context_engine/lcm_x_store_pytest.py routes LCM-X's connections to the test Postgres and deselects the
+    # tests that test SQLite itself (.github/lcm-x-postgres-sqlite-only.txt, one reason each); the SQLite job above
+    # still runs them. The same known failures are deselected. Not a required check.
+    name: LCM-X tests (Postgres)
+    runs-on: ubuntu-24.04
+    # Longer than the SQLite job: the suite took 45 minutes on 6 workers locally, and the seeded cold replay
+    # (18,000 messages, one text write each) alone runs 4-13 minutes on the store against 21 seconds on SQLite.
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@f548e57e544e1ff5a4c46bf1e1b8685f8e4a348a # v7.0.1
+        with:
+          fetch-depth: 0
+
+      - name: Fetch the old releases the rollback-reader tests archive
+        # The mirror carries the releases on upstream main; two release-branch commits and the fork's
+        # 2133610f (the base of test_fork_uid_sparse_rollback) are fetched by sha, as upstream's ci.yml does.
+        run: |
+          git fetch --no-tags origin +refs/heads/lcm-x-upstream:refs/remotes/origin/lcm-x-upstream
+          git fetch --no-tags --depth=1 https://github.com/electricsheephq/lcm-x.git \
+            f47b55e031b507b424ff5f480d8f2a80d358f1f0 6800cf45ad05280e6cf6fa9e1ad96c62b7132646
+          git fetch --no-tags --depth=1 https://github.com/thisisjun786/lcm-x.git 2133610fddba06cc92a0984012793f5c98da8fa1
+
+      - name: Set up locked Python and the LINA test environment
+        uses: ./.github/actions/setup-pm
+        with:
+          extras: '[]'
+          test-environment: 'true'
+
+      - name: Add LCM-X's own test dependencies
+        # The versions upstream's ci.yml installs (ruff for the maintainability report); numpy at LINA's pin.
+        # tiktoken is a LINA dependency, but LCM-X's suite is calibrated on its character estimate (upstream's
+        # ci.yml installs no tiktoken) and with it the counts would depend on a network fetch of the BPE file.
+        # tests/plugins/context_engine covers the engine in LINA's own environment.
+        # pytest-timeout: a test that hangs on the store (a trigger returning NULL, an implicit BEGIN left open, a
+        # connection never closed: each met while porting) fails with its own stack instead of the job's limit.
+        run: |
+          uv pip install --python "$HERMES_PYTHON" pytest-xdist==3.8.0 hypothesis==6.141.1 numpy==2.5.4 ruff==0.15.13 \
+            pytest-timeout==2.4.0
+          uv pip uninstall --python "$HERMES_PYTHON" tiktoken
+
+      - name: Run LCM-X's suite
+        working-directory: plugins/context_engine/lcm-x
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+          # LCM-X's real-host probes run this interpreter from the LINA root, so the plugin's own
+          # tools.py / config.py never shadow LINA's packages.
+          LCM_REAL_HERMES_PYTHON: ${{ env.HERMES_PYTHON }}
+          LCM_REAL_HERMES_SRC: ${{ github.workspace }}
+        run: |
+          export PATH="$(dirname "$HERMES_PYTHON"):$PATH"  # the ruff installed above
+          deselect=()
+          while IFS= read -r line; do
+            id="${line%%#*}"; id="${id%"${id##*[![:space:]]}"}"
+            [ -n "$id" ] && deselect+=(--deselect "$id")
+          done < "$GITHUB_WORKSPACE/.github/lcm-x-known-failures.txt"
+          echo "Deselecting ${#deselect[@]} known-failure argument(s)"
+          ulimit -n 1024
+          # The main suite's real Postgres fixture owns startup, migrations and teardown.
+          # Run its command from the host root so LCM-X's tests package cannot shadow tests.waiting.
+          run_with_store() {
+            (cd "$GITHUB_WORKSPACE" && "$HERMES_PYTHON" tests/_fixtures/memory_store.py \
+              bash -c 'cd "$1"; shift; exec "$@"' -- "$GITHUB_WORKSPACE/plugins/context_engine/lcm-x" "$@")
+          }
+          run_with_store "$HERMES_PYTHON" -m pytest tests/ -q -m "not latency" -n 4 -p no:cacheprovider --timeout 900 \
+            -p plugins.context_engine.lcm_x_store_pytest --ignore=tests/test_embedding_privacy.py "${deselect[@]}"
+          # Runs alone, as upstream does: one of its tests asserts a wall-clock budget.
+          run_with_store "$HERMES_PYTHON" -m pytest tests/test_embedding_privacy.py -q -m "not latency" -p no:cacheprovider \
+            --timeout 900 -p plugins.context_engine.lcm_x_store_pytest "${deselect[@]}"
 
       - name: Check the checkout is clean
         uses: ./.github/actions/check-clean-worktree

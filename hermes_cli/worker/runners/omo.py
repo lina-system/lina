@@ -22,7 +22,10 @@ import time
 from pathlib import Path
 
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
-from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view, stop_session
+from hermes_cli.worker.runners.access import recorded_access
+from hermes_cli.lina_work_settings import ACCESS
+from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view, parse_time, stop_session
+from hermes_cli.worker.runners.omo_processes import stop_task_processes
 from tools.environments.local import build_subprocess_env
 
 HELPERS = Path(__file__).resolve().parent
@@ -80,27 +83,33 @@ class OmoRunner:
             return False, "omo daemon not ready"
         return True, str(self.bin)
 
-    def _open_session(self, task: Task, prompt_file: Path, model: ModelProfile | None, run: int) -> tuple[dict | None, int]:
-        err = task.path(f"stderr.{run}.txt")
-        if model is not None and model.provider and model.id:
-            return self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine), str(task.work),
-                               task.id, str(prompt_file), model.provider, model.id, model.thinking or ""], 300, err)
-        return self.omo(["host", "session", "open", "--cwd", str(task.work), "--name", task.id,
-                         "--prompt", f"@{prompt_file}", "--json"], 300, err)
+    def honours(self, mode: str) -> tuple[bool, str]:
+        return mode in ACCESS, "" if mode in ACCESS else f"unknown access {mode!r}"
 
-    def start(self, task: Task, prompt: str, model: ModelProfile | None) -> Handle:
+    def _open_session(self, task: Task, prompt_file: Path, model: ModelProfile | None, run: int,
+                      access: str) -> tuple[dict | None, int]:
+        err = task.path(f"stderr.{run}.txt")
+        return self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine), str(task.work),
+                           task.id, str(prompt_file), model.provider or "" if model else "",
+                           model.id or "" if model else "", model.thinking or "" if model else "", access], 300, err)
+
+    def start(self, task: Task, prompt: str, model: ModelProfile | None,
+              access: str = "workspace-write") -> Handle:
+        supported, reason = self.honours(access)
+        if not supported:
+            raise RunnerError(reason)
         prompt_file = task.path("prompt.1")
         if not prompt_file.exists():
             prompt_file.write_text(prompt, encoding="utf-8")
         ensure, _ = self.omo(["daemon", "run", "--json"], 120, task.path("stderr.1.txt"))
         task.path("ensure.1.json").write_text(json.dumps(ensure or {}), encoding="utf-8")
-        opened, rc = self._open_session(task, prompt_file, model, 1)
+        opened, rc = self._open_session(task, prompt_file, model, 1, access)
         task.path("open.1.json").write_text(json.dumps(opened or {}), encoding="utf-8")
         if rc != 0 or not opened or not opened.get("durableSessionId"):
             raise RunnerError(f"omo started no session (rc {rc}): {(opened or {}).get('reason') or 'no answer'}")
         task.path("session.json").write_text(json.dumps(opened, ensure_ascii=False), encoding="utf-8")
         handle = Handle(task, 1, {"runner": self.name, "ref": opened["durableSessionId"],
-                                  "model": model.as_dict() if model else None})
+                                  "model": model.as_dict() if model else None, "access": access})
         handle.save()
         return handle
 
@@ -108,8 +117,22 @@ class OmoRunner:
         state = (self.session(["state", ref], 60) or {}).get("state") or {}
         return bool(state.get("isStreaming")) if state else True
 
-    def follow_up(self, handle: Handle, text: str, *, run: int | None = None) -> tuple[str, Handle]:
+    def _restore_access(self, handle: Handle, access: str | None = None) -> str:
+        mode = recorded_access(handle, access)
+        reply, rc = self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine),
+                                str(handle.task.work), handle.task.id, "", "", "", "", mode,
+                                handle.data["ref"]], 120, handle.task.path(f"stderr.{handle.run}.txt"))
+        if rc != 0 or not reply or reply.get("action") != "attach":
+            raise RunnerError("omo could not restore recorded session access")
+        return mode
+
+    def follow_up(self, handle: Handle, text: str, *, run: int | None = None,
+                  access: str | None = None) -> tuple[str, Handle]:
         """Into the live run (a steer; an idle session between background wakes takes a prompt), or as run *run*."""
+        recorded_access(handle, access)
+        if run is None and self.permission_pending(handle):
+            raise RunnerError("permission_dialog: permissions are decided by the run access mode")
+        mode = self._restore_access(handle, access)
         ref, task = handle.data["ref"], handle.task
         stamp = run or handle.run
         text_file = task.path(f"prompt.{run}" if run else f"steer.{stamp}.{len(list(task.dir.glob('steer.*')))}")
@@ -121,7 +144,7 @@ class OmoRunner:
             task.path(f"open.{run}.json").write_text(json.dumps(answer or {}), encoding="utf-8")
             if rc != 0:
                 raise RunnerError(f"omo prompt failed (rc {rc})")
-            new = Handle(task, run, dict(handle.data))
+            new = Handle(task, run, {**handle.data, "access": mode})
             new.save()
             return "started", new
         answer = None
@@ -131,17 +154,24 @@ class OmoRunner:
             answer = self.session(["steer", ref, f"@{text_file}"], 120)
         if not answer or answer.get("action") == "error":
             raise RunnerError(f"omo steer failed: {(answer or {}).get('reason') or 'no answer'}")
+        handle.data["access"] = mode
+        handle.save()
         return "steered", handle
 
     def answer(self, handle: Handle, text: str) -> dict:
         """Answer over the daemon socket; when no answer path takes it, close the run on its question so the answer
         goes to the next run (``answer_abort.<run>``)."""
+        if self.permission_pending(handle):
+            raise RunnerError("permission_dialog: permissions are decided by the run access mode")
+        self._restore_access(handle)
         task = handle.task
         answer_file = task.path(f"answer.{handle.run}.{len(list(task.dir.glob('answer.*')))}")
         answer_file.write_text(text, encoding="utf-8")
         reply, _ = self._call([str(self.node), str(HELPERS / "omo_answer.mjs"), str(self.engine), handle.data["ref"],
-                               str(answer_file)], 120, task.path(f"stderr.{handle.run}.txt"))
+                               str(answer_file), recorded_access(handle)], 120, task.path(f"stderr.{handle.run}.txt"))
         reply = reply or {"action": "error", "reason": "unreadable"}
+        if reply.get("reason") == "permission_dialog":
+            raise RunnerError("permission_dialog: permissions are decided by the run access mode")
         task.event(handle.run, "answer", reply={k: reply.get(k) for k in ("action", "steps", "still_pending",
                                                                            "reason")})
         if reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending"):
@@ -151,8 +181,47 @@ class OmoRunner:
         self.session(["wait", handle.data["ref"], "--until", "idle", "--timeout", "60000"], 90)
         return {**reply, "action": "aborted", "next_run": True}
 
+    def _permissions(self, handle: Handle, action: str) -> dict:
+        reply, rc = self._call([str(self.node), str(HELPERS / "omo_permissions.mjs"), str(self.engine),
+                               handle.data["ref"], str(handle.task.work), recorded_access(handle), action],
+                              120, handle.task.path(f"stderr.{handle.run}.txt"))
+        if rc != 0 or not reply or reply.get("action") != "permissions":
+            raise RunnerError(f"omo permission state unavailable: {(reply or {}).get('reason', 'no answer')}")
+        return reply
+
+    def permission_pending(self, handle: Handle) -> bool:
+        return self._permissions(handle, "inspect")["pending"]
+
     def state(self, handle: Handle) -> str:
-        return Settle(handle.task, handle.run, handle.data["ref"], self.session, self.limits).step()
+        snapshot = self.session(["state", handle.data["ref"]], 60)
+        if not snapshot or snapshot.get("action") != "state":
+            # An unreadable or error answer goes to Settle as it came (once), so its retry and error count apply.
+            first = [snapshot]
+
+            def as_read(args, timeout):
+                return first.pop() if args[0] == "state" and first else self.session(args, timeout)
+
+            return Settle(handle.task, handle.run, handle.data["ref"], as_read, self.limits).step()
+        state = snapshot.get("state") or {}
+        reply = self._permissions(handle, "settle") if state.get("pendingDialogs") else {
+            "pending": False, "decisions": [], "state": state}
+        for decision in reply["decisions"]:
+            handle.task.event(handle.run, "permission_denied" if decision["value"] == "Deny" else "permission_allowed",
+                              **{key: decision[key] for key in ("tool", "target", "mode", "request")})
+        if reply["decisions"]:
+            handle.task.path(f"permission_answered.{handle.run}").touch()
+        if reply["pending"]:
+            return "running"
+
+        def call(args, timeout):
+            # Judge the very snapshot whose dialogs were checked, not a second racy read.
+            nonlocal snapshot
+            if args[0] == "state" and snapshot is not None:
+                answer, snapshot = {"action": "state", "state": reply["state"]}, None
+                return answer
+            return self.session(args, timeout)
+
+        return Settle(handle.task, handle.run, handle.data["ref"], call, self.limits).step()
 
     def live_view(self, handle: Handle) -> dict:
         """What the session does now (``lina worker status``): read-only, never a settle step."""
@@ -161,17 +230,21 @@ class OmoRunner:
             return {}
         key, why = classify(view, {}, time.time(), float(self.limits.get("background_max_s", 3 * 3600.0)))
         tail = self.session(["read", handle.data["ref"], "--tail", "40"], 60) or {}
-        tools, last = [], ""
+        tools, last, steps = [], "", []
         for entry in tail.get("entries") or []:
-            message = entry.get("message") or {}
+            message, at = entry.get("message") or {}, parse_time(entry.get("timestamp"))
             for part in message.get("content") or []:
                 if isinstance(part, dict) and part.get("type") == "toolCall":
                     tools.append(part.get("name"))
+                    steps.append({"at": at, "kind": "tool"})  # the run record (lina#201) shows a count, never a name
                 if isinstance(part, dict) and part.get("type") == "text" and message.get("role") == "assistant":
-                    last = (part.get("text") or "").strip() or last
+                    text = (part.get("text") or "").strip()
+                    last = text or last
+                    if text:
+                        steps.append({"at": at, "kind": "said", "text": text[:300]})
         return {"dash": key, "why": why, "lifecycle": view.get("state"), "streaming": view.get("isStreaming"),
                 "pending": view.get("pendingMessageCount"), "questions": view.get("pendingQuestions"),
-                "tools": tools[-6:], "last": last[:300]}
+                "tools": tools[-6:], "last": last[:300], "tail": steps}
 
     def result(self, handle: Handle) -> dict[str, Path]:
         reply = self.session(["read", handle.data["ref"], "--messages"], 120) or {}
@@ -186,4 +259,12 @@ class OmoRunner:
 
     def stop(self, handle: Handle) -> None:
         if handle.data.get("ref"):
-            stop_session(self.session, handle.data["ref"], STOP_WAIT_S)
+            if not stop_session(self.session, handle.data["ref"], STOP_WAIT_S):
+                raise RunnerError("omo session did not stop")
+            # Capture and reap descendants before unload can kill their terminal leader.
+            handle.task.event(handle.run, "cancel_reap", **stop_task_processes(handle.task))
+            self.session(["unload", handle.data["ref"], "--force"], STOP_WAIT_S)
+        receipt = stop_task_processes(handle.task)
+        handle.task.event(handle.run, "cancel_reap", **receipt)
+        if receipt.get("left") or receipt.get("manifest_error") or receipt.get("errors"):
+            raise RunnerError("omo task cleanup incomplete; see cancel_reap receipt")

@@ -5,7 +5,10 @@ from __future__ import annotations
 from collections.abc import Callable, Iterator
 from contextlib import AbstractContextManager, contextmanager
 from dataclasses import dataclass
+import os
+from pathlib import Path
 import sqlite3
+from urllib.parse import unquote, urlsplit
 
 
 @dataclass(frozen=True)
@@ -27,9 +30,82 @@ class ConnectionPolicy:
     on_setup_error: Callable[[Exception], None] | None
 
 
+def store_backend(database: object, *, opening: bool = False) -> Callable[..., sqlite3.Connection] | None:
+    """LINA: a connection factory when the host routes *database* to its Postgres store, else None."""
+    try:
+        from plugins.context_engine.lcm_x_store import backend_for
+    except ImportError:
+        return None
+    return backend_for(database, opening=opening)
+
+
+def connect_database(opener: Callable[..., sqlite3.Connection], database: str | os.PathLike,
+                     **kwargs: object) -> sqlite3.Connection:
+    """LINA: ``opener(database, **kwargs)`` (the caller's ``sqlite3.connect``, so a test that replaces its module's
+    ``sqlite3`` still sees the call), or the host's store connection when the host routes that database (a path, or
+    a ``file:`` URI with ``uri=True``) to its Postgres store."""
+    path = str(database)
+    if kwargs.get("uri") and path.startswith("file:"):
+        parts = urlsplit(path)
+        path = unquote(parts.path)
+        kwargs = {**kwargs, "readonly": "mode=ro" in parts.query}
+    backend = store_backend(path)
+    if backend is not None and opener is sqlite3.connect:
+        return backend(**{k: v for k, v in kwargs.items() if k in ("timeout", "isolation_level", "readonly")})
+    if backend is not None:  # the caller's module sqlite3 was replaced (a test): its connect opens, as on SQLite
+        kwargs.pop("readonly", None)
+        return opener(database, **kwargs)
+    kwargs.pop("readonly", None)
+    return opener(database, **kwargs)
+
+
+def store_identity(database: object) -> dict | None:
+    """LINA: the host store's identity for a routed *database* (``{"store", "agent_id"}``), else None (lina#16)."""
+    try:
+        from plugins.context_engine.lcm_x_store import store_identity as identity
+    except ImportError:
+        return None
+    return identity(database)
+
+
+def database_present(database: os.PathLike | str) -> bool:
+    """LINA: the LCM database exists: its file, or the host's store it is routed to, reachable (lina#16)."""
+    return Path(database).exists() or store_identity(database) is not None
+
+
+def configured_store_backend() -> str:
+    """LINA: ``lcm.store_backend`` from the profile's config.yaml (``sqlite`` when unset; lina#16)."""
+    from .config import _load_hermes_config_yaml
+    section = _load_hermes_config_yaml().get("lcm")
+    value = section.get("store_backend") if isinstance(section, dict) else None
+    return str(value).strip().lower() if value else "sqlite"
+
+
+def route_to_host_store(database: object, backend: str, hermes_home: object = "") -> bool:
+    """LINA: route *database* to the host's store when ``lcm.store_backend`` is ``auto`` or ``postgres`` and the home
+    has no ``lcm.db`` yet (a home with one stays on SQLite until lina#24 moves it), as *hermes_home*'s profile (the
+    running home when empty), not the profile the path suggests. Returns whether it was routed."""
+    if str(backend).strip().lower() not in ("auto", "postgres"):
+        return False
+    try:
+        from plugins.context_engine.lcm_x_store import route_home
+    except ImportError:
+        return False
+    return route_home(database, hermes_home or None)
+
+
+def is_store_connection(conn: object) -> bool:
+    """LINA: whether *conn* is a store connection (its schema is the host's migrations, not this plugin's DDL)."""
+    return getattr(conn, "is_lina_store", False) is True
+
+
 def open_connection(policy: ConnectionPolicy) -> sqlite3.Connection:
     """Run exactly the supplied recipe, preserving caller-owned error cleanup."""
-    conn = sqlite3.connect(policy.database, **dict(policy.connect_kwargs))
+    backend = store_backend(policy.database, opening=True)
+    # LINA: a database the host routes to its store opens there and runs the same recipe; on the store SQLite's
+    # pragmas are no-ops except busy_timeout (its lock_timeout), and the schema-version refusal reads ctx.metadata.
+    conn = backend(**dict(policy.connect_kwargs)) if backend is not None else \
+        sqlite3.connect(policy.database, **dict(policy.connect_kwargs))
     # Some stores publish the handle (and create their lock) before setup.
     # Those operations were outside their setup exception handler as well.
     if policy.on_open is not None:

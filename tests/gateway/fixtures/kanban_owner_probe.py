@@ -166,7 +166,15 @@ def main():
                         # Killing the spawned worker ends the attempt: one crash, re-queued, as before the owner.
                         assert task.status == 'ready' and task.consecutive_failures == 1 and run['outcome'] == 'crashed', receipt
                     elif peer.mode == 'timeout':
-                        assert task.status == 'ready' and task.consecutive_failures == 1 and run['outcome'] == 'timed_out', receipt
+                        # A runtime end is a planned stop (lina#161): re-queued with a handoff, no failure.
+                        from hermes_cli.kanban_db_wait import DISPATCHER_ACTOR
+                        receipt['handoff'] = conn.execute(
+                            "SELECT count(*) FROM task_comments c JOIN task_events e ON e.task_id = c.task_id "
+                            "AND e.kind = 'commented' AND json_extract(e.payload, '$.comment_id') = c.id "
+                            "WHERE c.task_id = ? AND c.author = ? AND e.run_id = ?",
+                            (tid, DISPATCHER_ACTOR, params['run_id'])).fetchone()[0]
+                        assert task.status == 'ready' and task.consecutive_failures == 0 and run['outcome'] == 'timed_out', receipt
+                        assert receipt['handoff'] == 1, receipt
             finally:
                 subprocess.Popen = original_popen
             if peer.mode != 'complete':

@@ -83,6 +83,9 @@ _TASK_IDS = _arg("task_ids", nargs="+")
 _SLUG = _arg("slug")
 _TENANT = _arg("--tenant", help="Tenant namespace")
 _PRIORITY = _arg("--priority", type=int, default=0, help="Priority tiebreaker")
+_WAIT_FOR_HELP = ("Event that wakes the task by itself on a dispatcher tick: card:<id> (that card "
+                  "is done), review:<id> (that review card has its result), pr:<url|owner/repo#n> "
+                  "(the PR's required checks finished) or until:<epoch|ISO-8601>.")
 _RECLAIM_REASON = _reason("Human-readable reason (recorded on the reclaimed event)")
 _NOTIFY_TARGET = (
     _arg("--platform", required=True),
@@ -275,8 +278,8 @@ _SPECS = [
         _arg("--task", help="Only show diagnostics for one task id"),
         _json_flag(help="Emit JSON (structured) instead of the default human table"),
     ], aliases=["diag"], help="List active diagnostics on the current board"),
-    _cmd("link", [_arg("parent_id"), _arg("child_id")], help="Add a parent->child dependency"),
-    _cmd("unlink", [_arg("parent_id"), _arg("child_id")], help="Remove a parent->child dependency"),
+    _cmd("link", [_arg("parent_id"), _arg("child_id"), _reason("Audit reason")], help="Add a parent->child dependency"),
+    _cmd("unlink", [_arg("parent_id"), _arg("child_id"), _reason("Audit reason")], help="Remove a parent->child dependency"),
     _cmd("claim", [
         _TASK_ID,
         _arg("--ttl", type=int, default=kb.DEFAULT_CLAIM_TTL_SECONDS, help="Claim TTL in seconds (default: 900)"),
@@ -314,6 +317,7 @@ _SPECS = [
         _arg("--body", help="Replace the task body"),
         _arg("--priority", type=int, help="Replace the task priority"),
         _arg("--result", help="Backfilled task result text for a done task"),
+        _reason("Audit reason"),
         *_STEP_HANDOFF,
     ], help="Edit task fields or recovery fields on an already-completed task"),
     _cmd("block", [
@@ -326,11 +330,15 @@ _SPECS = [
                   "blocked for a human; 'transient' marks a maybe-flaky failure. "
                   "Repeated same-kind re-blocks after unblock route the task to "
                   "triage to break unblock loops. Omit for a generic block."),
+        _arg("--wait-for", metavar="EVENT", help=_WAIT_FOR_HELP + " Implies --kind needs_input; "
+             "without it a needs_input block waits for a person."),
     ], help="Mark one or more tasks blocked"),
     _cmd("schedule", [
         _TASK_ID,
         _arg("reason", nargs="*", help="Reason/timing note (also appended as a comment)"),
         _bulk_ids("schedule"),
+        _arg("--wait-for", metavar="EVENT", help=_WAIT_FOR_HELP + " Without it the task waits "
+             "for an explicit unblock."),
     ], help="Park one or more tasks in Scheduled (waiting on time, not human input)"),
     _cmd("unblock", [
         _reason("Optional reason/note — recorded as a comment before unblocking. Quote multi-word reasons."),
@@ -456,6 +464,8 @@ _SPECS = [
              "or was repaired, non-zero when it is still corrupt."
          )),
     _cmd("outcomes", [
+        _arg("--goal", help="Restrict outcomes to this goal card"),
+        _arg("--rebuild", action="store_true", help="Rebuild outcomes from recorded events"),
         _arg("--agent", help="Only cards assigned to this profile"),
         _arg("--kind", help="Only cards of this kind (the title word before ':', else 'general')"),
         _arg("--last", type=int, default=20, metavar="N", help="Newest N rows (default 20)"),
@@ -464,7 +474,7 @@ _SPECS = [
         _json_flag(),
     ], help="Planned against actual outcome of finished goal-mode work cards, "
             "with one summary line per agent and kind"),
-    _cmd("gate", [_arg("gate_argv", nargs=argparse.REMAINDER, metavar="prs|dev|artifact|review|ask ...")],
+    _cmd("gate", [_arg("gate_argv", nargs=argparse.REMAINDER, metavar="prs|dev|artifact|review|ask|ui-qa ...")],
          help="Deterministic work-card gates (exit 0 pass, 1 fail, 75 waiting); "
               "`hermes kanban gate <gate> --help` for each gate"),
     _cmd("plan", [

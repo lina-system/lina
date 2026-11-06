@@ -42,7 +42,7 @@ _SECTIONS = (
     ("worker", "Worker", True),
 )
 _CARD_KEYS = {"key", "title", "assignee", "todos", "ledger_todos", "gates", "max_turns",
-              "max_runtime", "workspace", "after", "triage", "decompose"} | {s[0] for s in _SECTIONS}
+              "max_runtime", "workspace", "after", "triage", "decompose", "size", "kind"} | {s[0] for s in _SECTIONS}
 
 
 class PlanError(ValueError):
@@ -71,6 +71,8 @@ class WorkCard:
     workspace: tuple[Optional[str], Optional[str]] = (None, None)
     after: list[str] = field(default_factory=list)
     ledger_todos: list[str | NewTodo] = field(default_factory=list)  # "T<n>" ids and new to-dos
+    size: str | None = None
+    kind: str | None = None
 
 
 @dataclass
@@ -250,6 +252,9 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
     sections = {}
     for name, heading, required in _SECTIONS:
         sections[heading] = _text(raw.get(name), where, name, required=required) or "None."
+    size = raw.get("size")
+    if size is not None and size not in ("S", "M", "L"):
+        raise PlanError(f"{where}: size must be S, M or L")
     return WorkCard(
         key=key,
         title=_text(raw.get("title"), where, "title"),
@@ -263,6 +268,8 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
         after=[_text(a, where, "after") for a in _list(raw.get("after"), where, "after")],
         ledger_todos=[_ledger_todo(item, where)
                       for item in _list(raw.get("ledger_todos"), where, "ledger_todos")],
+        size=size,
+        kind=_text(raw.get("kind"), where, "kind", required=False),
     )
 
 
@@ -371,9 +378,15 @@ def profile_check() -> Optional[Callable[[str], bool]]:
 
 def work_card_body(card: WorkCard, goal_id: str, goal_title: str) -> str:
     """The work card body: Goal, To-dos, then the ``/goal`` completion-contract fields."""
-    parts = [f"## Goal\n\n{goal_id} — {goal_title}",
+    metadata = "".join(f"\n{label}: {value}" for label, value in
+                       (("Size", card.size), ("Kind", card.kind)) if value is not None)
+    parts = [f"## Goal\n\n{goal_id} — {goal_title}{metadata}",
              "## To-dos\n\n" + "\n".join(f"- {t}" for t in card.todos)]
     parts += [f"## {heading}\n\n{card.sections[heading]}" for _, heading, _ in _SECTIONS]
+    parts.append("## Record\n\nKeep the work record current. For to-dos discovered during this work, "
+                 "add a card comment using `added-by: work-session` with checklist lines:\n"
+                 "- [ ] <to-do> — added-by: work-session\n\n"
+                 "Record escalation in a card comment: `escalate: todo -> runner - reason`.")
     return "\n\n".join(parts) + "\n"
 
 

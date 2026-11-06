@@ -79,3 +79,34 @@ def test_link_tasks_empty_when_no_links(kanban_home, api):
     detail = api.get(f"/api/plugins/kanban/tasks/{task_id}").json()
     assert detail["links"] == {"parents": [], "children": []}
     assert detail["link_tasks"] == []
+
+
+def test_dashboard_comment_records_surface_when_posted(kanban_home, api):
+    # Given a card reachable through the dashboard router.
+    with kbc.connect_closing() as conn:
+        tid = kb.create_task(conn, title="dashboard")
+
+    # When a dashboard comment is posted.
+    response = api.post(f"/api/plugins/kanban/tasks/{tid}/comments", json={"body": "note"})
+
+    # Then its event identifies the dashboard and the inserted comment.
+    assert response.status_code == 200
+    with kbc.connect_closing() as conn:
+        event = [e for e in kb.list_events(conn, tid) if e.kind == "commented"][-1]
+        assert event.payload["source"] == {"surface": "dashboard"}
+        assert event.payload["comment_id"] == kb.list_comments(conn, tid)[-1].id
+
+
+def test_dashboard_edit_records_actor_when_patched(kanban_home, api):
+    # Given a dashboard card.
+    with kbc.connect_closing() as conn:
+        tid = kb.create_task(conn, title="before")
+
+    # When the dashboard changes its title.
+    response = api.patch(f"/api/plugins/kanban/tasks/{tid}", json={"title": "after"})
+
+    # Then the shared edit event carries the dashboard actor.
+    assert response.status_code == 200
+    with kbc.connect_closing() as conn:
+        event = [e for e in kb.list_events(conn, tid) if e.kind == "edited"][-1]
+        assert event.payload == {"fields": ["title"], "by": "dashboard"}

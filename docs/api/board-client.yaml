@@ -1,6 +1,9 @@
 # Board endpoints the app reads beyond docs/api/work-client.yaml (lina#112): the owner's to-dos, decisions and due
 # groups from the work record, `lina worker` runs that are not kanban work cards, devices, quota and the inbox
-# notices; each agent's goals and to-dos (lina#166); the owner's writes and read marks (lina#149). Served by hermes_cli/web_routers/lina_board.py behind the dashboard auth gate (session token).
+# notices; each agent's goals and to-dos (lina#166); one worker run's record, round by round (lina#201); the owner's
+# writes and read marks (lina#149); the
+# change stream's messages (lina#150, a WebSocket: see ChangeMessage). Served by hermes_cli/web_routers/lina_board.py
+# behind the dashboard auth gate (session token).
 # tests/hermes_cli/test_lina_board_api.py validates served JSON against it, so a shape change here and in the code
 # land together. WorkState is the same enum as work-client.yaml.
 openapi: 3.0.3
@@ -87,6 +90,55 @@ paths:
                 $ref: "#/components/schemas/QuotaView"
         "304":
           description: Unchanged since the ETag sent.
+  /usage:
+    get:
+      operationId: getUsage
+      summary: >
+        Tokens, estimated cost and requests of one range from OCX, by model, provider, account and machine (lina#232).
+        No split by agent: every agent sends with the same OCX key, so OCX records none.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [today, 7d, 30d]
+            default: today
+      responses:
+        "200":
+          description: Usage.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageView"
+        "304":
+          description: Unchanged since the ETag sent.
+        "503":
+          description: OCX could not be read (not running, not installed, or the external OCX's proxy is down).
+  /models/state:
+    get:
+      operationId: getModelsState
+      summary: The models on and off, and for each machine whether its OCX link answered recently (lina#232).
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Models and links.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelsState"
+        "304":
+          description: Unchanged since the ETag sent.
+        "503":
+          description: OCX could not be read.
   /work/items:
     get:
       operationId: listWorkItems
@@ -138,6 +190,38 @@ paths:
           description: No such goal or to-do (an unknown id, an area, a memo or a dropped item).
         "503":
           description: The work record failed to read.
+  /work/runs/{id}/record:
+    get:
+      operationId: getWorkRunRecord
+      summary: One lina worker run's own record, round by round, newest round first (lina#201).
+      description: >
+        The run's session record lives on the build device that ran it and the hub cannot read it, so the record is
+        made of what the hub keeps: its receipts (each round's start and own end, the owner's verdict notes and
+        cancel reasons), the last fetched final message and report (an earlier round's are replaced by the next
+        fetch), and for the round going now the runner's live view (its recent sentences and tool steps; only its
+        last line from a device that does not send them). The sentences of a round that ended before the last
+        fetch are not on the hub and are not served.
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: string
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The run's record.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RunRecord"
+        "304":
+          description: Unchanged since the ETag sent.
+        "404":
+          description: No such worker run (an unknown or malformed id).
   /work/items/{id}/done:
     post:
       operationId: markWorkItemDone
@@ -309,6 +393,26 @@ paths:
           $ref: "#/components/responses/Refused"
         "503":
           $ref: "#/components/responses/Refused"
+  /status/checks:
+    get:
+      operationId: getStatusChecks
+      summary: >
+        The hub's own health checks (lina#233): one row per `<LINA root>/status/*.json` file, newest `at` first. A
+        missing folder is an empty list; a malformed file is one error row naming it, never a failed response.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The checks.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusChecks"
+        "304":
+          description: Unchanged since the ETag sent.
 components:
   responses:
     Refused:
@@ -383,9 +487,30 @@ components:
           additionalProperties:
             type: integer
             minimum: 0
+    PlainLines:
+      type: object
+      additionalProperties: false
+      description: >
+        Checked model-written lines (lina#151). A field that failed its check, or was never written, is null; the
+        raw source text is never served in its place.
+      required: [title, now, result]
+      properties:
+        title:
+          type: string
+          nullable: true
+          maxLength: 25
+        now:
+          type: string
+          nullable: true
+          maxLength: 60
+        result:
+          type: string
+          nullable: true
+          maxLength: 80
     RunCard:
       type: object
-      required: [id, title, state, reason, agent, kind, todo, host, startedAt, endedAt, now]
+      required: [id, title, state, reason, agent, kind, todo, host, startedAt, endedAt, now, model, settingsRevision,
+                 plain]
       properties:
         id:
           type: string
@@ -423,6 +548,130 @@ components:
           type: string
           nullable: true
           description: What the run does now, from the runner's live state (at most 120 characters).
+        model:
+          $ref: "#/components/schemas/RunModel"
+        settingsRevision:
+          $ref: "#/components/schemas/SettingsRevision"
+        plain:
+          $ref: "#/components/schemas/PlainLines"
+    RunModel:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [provider, id, thinking, source]
+      description: >
+        The model the run started with (lina#257); null when it runs on the runner's own default. A follow-up keeps
+        it.
+      properties:
+        provider:
+          type: string
+          nullable: true
+        id:
+          type: string
+          nullable: true
+        thinking:
+          type: string
+          nullable: true
+          description: The effort (off, minimal, low, medium, high, xhigh, max), null for the model's own.
+        source:
+          type: string
+          description: >
+            Where it came from: --model, runner:<runner> (the runner's model in the work settings), mode:<mode> (the
+            mode default), fallback:<off|out_of_quota|no_account> (the fallback model, because OCX said so of the
+            chosen one), runner (the runner's own default).
+    SettingsRevision:
+      type: string
+      nullable: true
+      description: The work-settings revision (r<n>) the run was submitted under; null for a run from before lina#257.
+    RecordRow:
+      type: object
+      additionalProperties: false
+      required: [at, kind, text, count]
+      properties:
+        at:
+          type: number
+          description: When it was said or done; a folded row's first step.
+        kind:
+          type: string
+          enum: [said, tools, comment]
+          description: >
+            said: the run's own sentence; tools: the tool steps between two sentences folded into one row;
+            comment: the owner's words (a verdict note, a cancel reason).
+        text:
+          type: string
+          nullable: true
+          description: Null on a tools row, which never carries tool names, paths, commands or ids.
+        count:
+          type: integer
+          minimum: 1
+          description: A tools row's steps; a said row's times the same sentence was said in a row; 1 on a comment.
+    RecordRound:
+      type: object
+      additionalProperties: false
+      required: [run, startedAt, endedAt, endKnown, startUnknown, result, verdict, stopped, rows]
+      description: >
+        One run of the task, from its own start to its own end. A row belongs to the round going at its time; a
+        row after a round's end and before the next round's start belongs to none.
+      properties:
+        run:
+          type: integer
+          nullable: true
+          description: The round's run number; null on the round whose start fell out of the kept history.
+        startedAt:
+          type: number
+          nullable: true
+        endedAt:
+          type: number
+          nullable: true
+          description: From the round's own end receipt only; null while it goes or when its end is not on record.
+        endKnown:
+          type: boolean
+        startUnknown:
+          type: boolean
+          description: The round's start fell out of the kept history; such a round is served only with content.
+        result:
+          type: string
+          nullable: true
+          description: The report's first line, on the round going when it was written; never on a round going now.
+        verdict:
+          type: string
+          nullable: true
+          enum: [accepted, rejected, null]
+          description: The owner's verdict, on the latest round that began before it.
+        stopped:
+          type: boolean
+          description: The round's own end says it stopped (stalled, failed, cancelled, no result, unreachable).
+        rows:
+          type: array
+          description: Oldest first.
+          items:
+            $ref: "#/components/schemas/RecordRow"
+    RunRecord:
+      type: object
+      additionalProperties: false
+      required: [id, at, model, settingsRevision, rounds, comments, errors]
+      properties:
+        id:
+          type: string
+        at:
+          type: number
+          description: Snapshot time (left out of the ETag).
+        model:
+          $ref: "#/components/schemas/RunModel"
+        settingsRevision:
+          $ref: "#/components/schemas/SettingsRevision"
+        rounds:
+          type: array
+          description: Newest round first.
+          items:
+            $ref: "#/components/schemas/RecordRound"
+        comments:
+          type: array
+          description: Comments made while no round was going, newest first; each stands on its own.
+          items:
+            $ref: "#/components/schemas/RecordRow"
+        errors:
+          $ref: "#/components/schemas/Errors"
     ItemRow:
       type: object
       required: [id, kind, title, due, agent]
@@ -583,13 +832,17 @@ components:
           nullable: true
     QuotaWindow:
       type: object
-      required: [key, percent, resetAt, ratePerHour, warn]
+      required: [key, percent, left, resetAt, ratePerHour, warn]
       properties:
         key:
           type: string
           description: weekly, fiveHour, monthly, or custom:<OCX label>.
         percent:
           type: number
+          description: The used share, as OCX reports it.
+        left:
+          type: number
+          description: 100 - percent, clamped to 0..100.
         resetAt:
           type: number
           nullable: true
@@ -602,7 +855,7 @@ components:
           description: At this rate the window reaches 100% before it resets.
     QuotaAccount:
       type: object
-      required: [id, number, plan, paused, unavailable, windows, mainWindow, warn]
+      required: [id, number, plan, paused, active, state, unavailable, windows, mainWindow, warn]
       properties:
         id:
           type: string
@@ -614,6 +867,13 @@ components:
           type: string
         paused:
           type: boolean
+        active:
+          type: boolean
+          description: OCX's active account of its provider.
+        state:
+          type: string
+          enum: [ok, paused, reauth]
+          description: reauth when OCX needs the account signed in again, else paused when paused, else ok.
         unavailable:
           type: boolean
         windows:
@@ -641,9 +901,135 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaAccount"
+    UsageTokens:
+      type: object
+      required: [total, input, output, cacheRead]
+      properties:
+        total:
+          type: integer
+        input:
+          type: integer
+        output:
+          type: integer
+        cacheRead:
+          type: integer
+    UsageRow:
+      type: object
+      description: Requests, tokens and OCX's estimated cost in USD (null when OCX prices none of them).
+      required: [requests, tokens, costUsd]
+      properties:
+        requests:
+          type: integer
+        tokens:
+          $ref: "#/components/schemas/UsageTokens"
+        costUsd:
+          type: number
+          nullable: true
+        model:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+        account:
+          type: string
+          nullable: true
+          description: OCX's accountLogLabel as given (may be a hash).
+        machine:
+          type: string
+          description: The name after `link:` of the machine's OCX access key.
+    UsageView:
+      type: object
+      required: [version, at, range, generatedAt, requests, tokens, costUsd, byModel, byProvider, byAccount, byMachine]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        range:
+          type: string
+          enum: [today, 7d, 30d]
+        generatedAt:
+          type: number
+          nullable: true
+        requests:
+          type: integer
+        tokens:
+          $ref: "#/components/schemas/UsageTokens"
+        costUsd:
+          type: number
+          nullable: true
+        byModel:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageRow"
+        byProvider:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageRow"
+        byAccount:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageRow"
+        byMachine:
+          type: array
+          description: >-
+            One row per OCX access key named `link:<machine>`, summed over this range's days from one 30-day
+            `usage --api-key-id` read per machine key. Those reads run in the background, started by a usage read at
+            most every 15 minutes; a read serves the last finished ones and never waits, so the list is empty until
+            the first one finishes and a day they have no record for counts 0 until the next.
+          items:
+            $ref: "#/components/schemas/UsageRow"
+    LinkState:
+      type: object
+      required: [machine, state, reportedAt, ok]
+      properties:
+        machine:
+          type: string
+          nullable: true
+          description: The link's alias in OCX.
+        state:
+          type: string
+          nullable: true
+          description: OCX's link state (connected, failed, ...).
+        reportedAt:
+          type: number
+          nullable: true
+        ok:
+          type: boolean
+          description: Connected and reported within the last 10 minutes.
+    ModelsState:
+      type: object
+      required: [version, at, enabled, disabled, enabledModels, machines]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        enabled:
+          type: integer
+        disabled:
+          type: integer
+        enabledModels:
+          type: array
+          description: The models on, by provider and model name.
+          items:
+            type: object
+            required: [provider, model]
+            properties:
+              provider:
+                type: string
+                nullable: true
+              model:
+                type: string
+                nullable: true
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkState"
     BoardSnapshot:
       type: object
-      required: [version, at, errors, counts, cards, inbox, due, notices, machines, quota]
+      required: [version, at, errors, counts, cards, inbox, due, notices, machines, quota, writer]
       properties:
         version:
           type: integer
@@ -673,6 +1059,23 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaService"
+        writer:
+          type: object
+          additionalProperties: false
+          description: >
+            The writer of the checked lines (lina#151). never = it has not run yet; stopped = its calls failed, or
+            work was left to write and nothing succeeded for 30 minutes (the app says the summaries stopped).
+          required: [state, lastSuccessAt, stoppedSince]
+          properties:
+            state:
+              type: string
+              enum: [ok, stopped, never]
+            lastSuccessAt:
+              type: integer
+              nullable: true
+            stoppedSince:
+              type: integer
+              nullable: true
     DueView:
       type: object
       required: [version, at, errors, today, count, due]
@@ -706,7 +1109,7 @@ components:
             $ref: "#/components/schemas/Machine"
     QuotaView:
       type: object
-      required: [version, at, errors, quota]
+      required: [version, at, errors, quota, missing]
       properties:
         version:
           type: integer
@@ -718,6 +1121,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaService"
+        missing:
+          type: array
+          nullable: true
+          description: Services OCX holds no account for (null when OCX could not be read).
+          items:
+            type: string
     Person:
       type: object
       additionalProperties: false
@@ -1068,6 +1477,63 @@ components:
           allOf:
             - $ref: "#/components/schemas/OwnerDone"
           nullable: true
+    ChangeEvent:
+      type: object
+      additionalProperties: false
+      description: One change; no item body (refetch the snapshot it touches).
+      required: [source, kind, id, at]
+      properties:
+        source:
+          type: string
+          enum: [work, worker, kanban, settings]
+          description: >
+            work = the work record's event table; worker = a `lina worker` run state change (hub receipts);
+            kanban = a kanban task event; settings = a work settings revision (`docs/api/settings-client.yaml`).
+        kind:
+          type: string
+          description: The store's own event kind (work event kind, worker receipt kind, kanban task event kind).
+        id:
+          type: string
+          description: The item, run or card the event is about.
+        at:
+          type: integer
+          nullable: true
+    ChangeBatch:
+      type: object
+      additionalProperties: false
+      required: [cursor, events]
+      properties:
+        cursor:
+          type: string
+          description: Opaque; send it back as since= to resume after a reconnect.
+        events:
+          type: array
+          items:
+            $ref: "#/components/schemas/ChangeEvent"
+    ChangeResync:
+      type: object
+      additionalProperties: false
+      required: [cursor, resync]
+      properties:
+        cursor:
+          type: string
+        resync:
+          type: boolean
+          enum: [true]
+          description: >
+            The since cursor was unreadable or older than the kept history, or a store that could not be read when
+            the cursor was taken reads again (what it wrote meanwhile is not known); refetch every snapshot.
+    ChangeMessage:
+      description: >
+        A message of the change stream (lina#150). GET /api/lina/events is a WebSocket, not a JSON route (OpenAPI
+        cannot describe it as a path): upgrade with the dashboard credential (?token=, as the other dashboard
+        sockets) and optional since=<cursor>. Without since the first message is a ChangeBatch with the tail cursor
+        and no events; with a kept since it is the missed events; otherwise one ChangeResync. Then a ChangeBatch
+        whenever something changed, at most every 300 ms, and one ChangeResync when a store that was down when the
+        cursor was taken reads again.
+      oneOf:
+        - $ref: "#/components/schemas/ChangeBatch"
+        - $ref: "#/components/schemas/ChangeResync"
     ActionResult:
       type: object
       additionalProperties: false
@@ -1107,3 +1573,58 @@ components:
         detail:
           type: string
           description: One line.
+    StatusCheck:
+      type: object
+      additionalProperties: false
+      required: [name, ok, line, at, staleAfter, stale, state, file]
+      properties:
+        name:
+          type: string
+          description: The check's own name from its status file; a malformed file falls back to the file stem.
+        ok:
+          type: boolean
+          description: What the check last reported; always false for an error row.
+        line:
+          type: string
+          description: >
+            One line for the owner; for an error row, the file name, a colon and a short reason. Text that is not
+            valid UTF-8 (a lone surrogate) is malformed, so no served text fails to encode.
+        at:
+          type: number
+          description: >
+            Unix epoch seconds the check last wrote (a malformed file's mtime). A file whose `at` is not a finite
+            number is malformed, so no served `at` is ever NaN or Infinity.
+        staleAfter:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Seconds after `at` the check is stale; null for an error row. A negative value is malformed.
+        stale:
+          type: boolean
+          description: True when `now - at > staleAfter`.
+        state:
+          type: string
+          enum: [ok, failing, stale, error]
+          description: >
+            stale when `now - at > staleAfter` (wins over ok/failing); failing when `ok` is false; error for a
+            malformed file (bad JSON, a bad field, a non-finite or negative time, text that is not valid UTF-8).
+        file:
+          type: string
+          description: >
+            The status file's name under `<LINA root>/status/`; bytes that are not UTF-8 are served as U+FFFD.
+    StatusChecks:
+      type: object
+      additionalProperties: false
+      required: [version, at, checks]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        at:
+          type: number
+          description: When the folder was read, Unix epoch seconds.
+        checks:
+          type: array
+          description: Newest `at` first.
+          items:
+            $ref: "#/components/schemas/StatusCheck"

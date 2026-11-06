@@ -248,7 +248,11 @@ def loop_gate_check(task_id: str, goal_text: str, *, workspace: Optional[str] = 
     ``{"wait": ...}`` = a gate is still waiting, re-check later; ``{"end": outcome, "reason": ...,
     "block": ...}`` = retries exhausted or gates cannot run, so block the card naming the gate;
     ``{"end": "stopped", ...}`` without ``block`` = this run no longer owns the card, so the loop
-    ends without touching it."""
+    ends without touching it.
+
+    The returned check carries ``park(reason, wait_for, handoff)``: the same run's step that parks
+    the card with ``schedule_task`` on the event it waits for (lina#161). With ``handoff`` (a spent
+    turn budget) it is a planned stop instead: ``kanban_db_handoff.park_turn_budget_end``. False = this run no longer owns the card."""
     def check() -> Optional[dict]:
         from hermes_cli import kanban_db as kb
         from hermes_cli.kanban_db_connect import connect_closing
@@ -274,6 +278,22 @@ def loop_gate_check(task_id: str, goal_text: str, *, workspace: Optional[str] = 
                     goal=goal_text, command=gate.command, exit_code=failure.exit_code,
                     attempt=gate.attempts, max_retries=gate.max_retries,
                     output=failure.output or "(no output)")}
+
+    def park(reason: str, wait_for: dict, handoff: Optional[str] = None) -> bool:
+        from hermes_cli import kanban_db as kb
+        from hermes_cli.kanban_db_connect import connect_closing
+
+        with (connect or connect_closing)() as conn:
+            task = kb.get_task(conn, task_id)
+            if task is None:
+                return False
+            if handoff:   # a spent turn budget: a planned stop (kanban_db_handoff)
+                from hermes_cli.kanban_db_handoff import park_turn_budget_end
+                return park_turn_budget_end(conn, task_id, run_id=run_id, reason=reason, handoff=handoff,
+                                            author=task.assignee or "goal-loop")
+            return kb.schedule_task(conn, task_id, reason=reason, wait_for=wait_for, expected_run_id=run_id)
+
+    check.park = park
     return check
 
 

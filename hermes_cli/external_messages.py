@@ -28,12 +28,23 @@ class IngestResult:
     offset: int = 0
 
 
+def enabled() -> bool:
+    """Read the host-wide source switch on every operation, including existing sessions."""
+    from hermes_cli.config_effective import load_user_config_effective
+    from hermes_constants import get_default_hermes_root
+
+    config = load_user_config_effective(get_default_hermes_root() / "config.yaml", fail_closed=True)
+    return config.get("memory", {}).get("external_messages", {}).get("enabled", True) is True
+
+
 def configured_spool() -> Path | None:
     """The host's root config owns this job, not the currently bound profile."""
     from hermes_cli.config_effective import load_user_config_effective
     from hermes_constants import get_default_hermes_root
 
     config = load_user_config_effective(get_default_hermes_root() / "config.yaml", fail_closed=True)
+    if config.get("memory", {}).get("external_messages", {}).get("enabled", True) is not True:
+        return None
     value = config.get("memory", {}).get("external_messages", {}).get("spool", "")
     if not isinstance(value, str):
         raise SpoolError("memory.external_messages.spool must be a path string")
@@ -137,6 +148,8 @@ class _SpoolReader:
 
 def ingest(spool: Path | None = None, *, cursor_key: str | None = None) -> IngestResult:
     """Consume complete lines under the collector's shared lock; never write beside the spool."""
+    if not enabled():
+        return IngestResult()
     path = spool if spool is not None else configured_spool()
     if path is None:
         return IngestResult()

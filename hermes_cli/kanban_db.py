@@ -6,7 +6,9 @@ another. Board resolution: ``board=`` arg > ``HERMES_KANBAN_BOARD`` > ``HERMES_K
 file path) > ``<root>/kanban/current`` > ``default`` — but only for unfenced callers; the dispatcher
 injects these into workers, and dispatched workers (``HERMES_KANBAN_TASK``), delegated children and
 board-enumerating machine flows (gateway notifier/watcher/dispatcher, ``pin_first_board_resolution``)
-always resolve through the pin, so workers physically cannot see other boards.
+always resolve through the pin, so workers physically cannot see other boards. A fenced caller that
+explicitly asks for another board is refused (:class:`BoardPinnedError`, naming both boards) rather
+than silently handed its own.
 Concurrency: WAL + ``BEGIN IMMEDIATE`` + compare-and-swap on ``tasks.status``/``claim_lock`` —
 SQLite serializes writers so one claimer wins, losers see zero rows (no retries, no distributed
 locks). Schema: tasks, task_links, task_comments, task_events, task_runs, attachments, notify subs.
@@ -30,6 +32,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from hermes_cli.kanban_workflow import DEFAULT_STATUSES as VALID_STATUSES
+from hermes_cli.kanban_db_wait import needs_input_wait, park_payload, scheduled_resume_status
 from toolsets import get_toolset_names
 from utils import unlink_files_older_than
 
@@ -326,6 +329,9 @@ def _resolve_rate_limit_cooldown_seconds() -> int:
 
 
 # --- Paths ---
+# Where a board's files live (kanban_home / board_dir / the *_root getters) is owned by the
+# kanban_db_paths sibling; this section keeps the slug resolution and the one fence-aware
+# resolver the rest of the module calls.
 
 DEFAULT_BOARD = "default"
 _CURRENT_BOARD_OVERRIDE: ContextVar[str | None] = ContextVar(
@@ -351,6 +357,10 @@ def pin_first_board_resolution():
     notifications. Explicit cross-board intent (CLI ``--board``, a model
     tool's ``board=``) is a USER property and must never run inside this
     context; with no pin set this context changes nothing.
+
+    Machine flows that resolve their OWN board go through
+    :func:`own_board_resolution` instead: a fenced dispatcher keeps the pin,
+    an unfenced one honours the board it was asked for (#206).
     """
     token = _PIN_FIRST_BOARD_RESOLUTION.set(True)
     try:
@@ -396,28 +406,6 @@ def _require_slug(slug: str) -> str:
     if not normed:
         raise ValueError("board slug is required")
     return normed
-
-
-def kanban_home() -> Path:
-    """``HERMES_KANBAN_HOME`` else ``get_default_hermes_root()``. Shared across
-    profiles BY DESIGN: resolving through the active profile's HERMES_HOME would
-    fork the board per profile and break the dispatcher/worker handoff."""
-    override = os.environ.get("HERMES_KANBAN_HOME", "").strip()
-    if override:
-        return Path(override).expanduser()
-    from hermes_constants import get_default_hermes_root
-    return get_default_hermes_root()
-
-
-def boards_root() -> Path:
-    """``<root>/kanban/boards`` — parent of the *additional* named boards.
-    ``default`` is deliberately not here (its DB stays at ``<root>/kanban.db``)."""
-    return kanban_home() / "kanban" / "boards"
-
-
-def current_board_path() -> Path:
-    """``<root>/kanban/current`` — one-line slug written by ``boards switch``; absent = ``default``."""
-    return kanban_home() / "kanban" / "current"
 
 
 def get_current_board() -> str:
@@ -482,24 +470,6 @@ def clear_current_board() -> None:
         current_board_path().unlink()
 
 
-def board_dir(board: Optional[str] = None) -> Path:
-    """``<root>/kanban/boards/<slug>/``. For ``default`` this holds metadata
-    only (board.json, workspaces/, logs/) — its DB stays at ``<root>/kanban.db``
-    for back-compat (:func:`kanban_db_path`).
-    """
-    return boards_root() / _slug_or_default(board)
-
-
-def board_exists(board: Optional[str] = None) -> bool:
-    """Board has a ``board.json`` on disk; ``default`` always exists."""
-    slug = _slug_or_default(board)
-    if slug == DEFAULT_BOARD:
-        return True
-    return _dir_holds_board(board_dir(slug))
-
-
-
-
 def _explicit_board_slug(board: Optional[str]) -> Optional[str]:
     """Explicit caller intent: a direct ``board=`` argument, else the scoped
     ``--board`` context (CLI ``hermes kanban --board``, dashboard plugin_api);
@@ -548,45 +518,28 @@ def _board_path(
     watcher / dispatcher ticks) and dispatched or delegated workers keep
     resolving through the pin. Without explicit intent the ``env_var`` override
     pins the file, else legacy ``<root>/<default_parts>`` for the ``default``
-    board, else ``board_dir(slug)/leaf``."""
+    board, else ``board_dir(slug)/leaf``.
+
+    A fenced caller asking for a board whose own file is NOT the pin gets
+    :class:`BoardPinnedError` instead of the silent reroute; machine flows
+    (:func:`pin_first_board_resolution`) keep the silent pin — the slug there is
+    an iteration variable, not caller intent."""
     pin = os.environ.get(env_var, "").strip() if env_var else ""
     slug = _explicit_board_slug(board)
     if pin and (slug is None or _explicit_board_intent_pinned()):
-        return Path(pin).expanduser()
+        pinned = Path(pin).expanduser()
+        if slug is not None and not _PIN_FIRST_BOARD_RESOLUTION.get():
+            refuse_cross_board_pin(slug, pinned, default_parts, leaf)
+        return pinned
     if slug is None:
         slug = get_current_board()
-    if slug == DEFAULT_BOARD:
-        return kanban_home().joinpath(*default_parts)
-    return board_dir(slug) / leaf
+    return own_board_path(slug, default_parts, leaf)
 
 
 def kanban_db_path(board: Optional[str] = None) -> Path:
     """``kanban.db`` path: ``HERMES_KANBAN_DB`` pins it (injected into workers);
     ``default`` -> ``<root>/kanban.db`` (back-compat), else the board dir."""
     return _board_path("HERMES_KANBAN_DB", board, ("kanban.db",), "kanban.db")
-
-
-def workspaces_root(board: Optional[str] = None) -> Path:
-    """Per-board scratch workspace root (``HERMES_KANBAN_WORKSPACES_ROOT`` wins);
-    ``default`` keeps the legacy ``<root>/kanban/workspaces/``."""
-    return _board_path("HERMES_KANBAN_WORKSPACES_ROOT", board, ("kanban", "workspaces"), "workspaces")
-
-
-def attachments_root(board: Optional[str] = None) -> Path:
-    """Per-board attachments root (``HERMES_KANBAN_ATTACHMENTS_ROOT`` wins). Workers
-    read attachments by absolute path, so remote terminal backends must mount it."""
-    return _board_path("HERMES_KANBAN_ATTACHMENTS_ROOT", board, ("kanban", "attachments"), "attachments")
-
-
-def task_attachments_dir(task_id: str, board: Optional[str] = None) -> Path:
-    """Return the per-task attachment directory ``<root>/<task_id>/``."""
-    return attachments_root(board=board) / task_id
-
-
-def worker_logs_dir(board: Optional[str] = None) -> Path:
-    """Per-board worker log dir (logs follow the board so ``hermes kanban log``
-    is unambiguous when two boards share a task id)."""
-    return _board_path(None, board, ("kanban", "logs"), "logs")
 
 
 # --- Data classes ---
@@ -1379,14 +1332,14 @@ def _inherit_notify_subs(
     Omitting columns here silently degrades routing: a DM-originated child completion falls back to
     chat_type='group' and wakes a fresh group-scoped session instead of the originating DM (issue #73030).
     """
-    parent_ids = tuple(dict.fromkeys(p for p in parents if p))
-    if not parent_ids:
+    parent_task_ids = tuple(dict.fromkeys(p for p in parents if p))
+    if not parent_task_ids:
         return
     row = conn.execute(
         "SELECT COALESCE(MAX(id), 0) AS cursor FROM task_events WHERE task_id = ?", (child_id,),
     ).fetchone()
     cursor = int(row["cursor"] if row is not None else 0)
-    placeholders = ",".join("?" * len(parent_ids))
+    placeholders = ",".join("?" * len(parent_task_ids))
     conn.execute(
         f"""
         INSERT OR IGNORE INTO kanban_notify_subs
@@ -1399,7 +1352,7 @@ def _inherit_notify_subs(
           FROM kanban_notify_subs
          WHERE task_id IN ({placeholders})
         """,
-        (child_id, int(created_at if created_at is not None else time.time()), cursor, *parent_ids),
+        (child_id, int(created_at if created_at is not None else time.time()), cursor, *parent_task_ids),
     )
 
 
@@ -1533,118 +1486,6 @@ def set_reasoning_effort(conn: sqlite3.Connection, task_id: str, effort: Optiona
     )
 
 
-# --- Links ---
-
-def link_tasks(
-    conn: sqlite3.Connection,
-    parent_id: str,
-    child_id: str,
-    *,
-    expected_child_run_id: Optional[int] = None,
-) -> bool:
-    """Link ``parent_id -> child_id``. Returns True when the link gated a
-    ``ready`` child back to ``todo`` (the new parent is not yet terminal), so
-    callers can surface the demotion instead of a silent status flip.
-
-    A running child cannot normally be gated retroactively, so reject the edge
-    rather than record a dependency that did not constrain the active run. The
-    owning worker may link its own active run for a subsequent dependency-block
-    handoff by supplying its trusted ``expected_child_run_id``.
-    """
-    if parent_id == child_id:
-        raise ValueError("a task cannot depend on itself")
-    gated = False
-    with write_txn(conn, allow_nested=True):
-        missing = _missing_task_ids(conn, [parent_id, child_id])
-        if missing:
-            raise ValueError(f"unknown task(s): {', '.join(missing)}")
-        child = conn.execute(
-            "SELECT status, current_run_id FROM tasks WHERE id = ?", (child_id,),
-        ).fetchone()
-        if child["status"] == "running" and (
-            expected_child_run_id is None
-            or child["current_run_id"] != expected_child_run_id
-        ):
-            raise ValueError(f"cannot link {parent_id} -> {child_id}: child is already running")
-        if _would_cycle(conn, parent_id, child_id):
-            raise ValueError(f"linking {parent_id} -> {child_id} would create a cycle")
-        _link(conn, parent_id, child_id)
-        # If child was ready but parent is not yet terminal, demote child to todo
-        # (archived counts as terminal, matching _parents_satisfied/recompute_ready).
-        if _task_status(conn, parent_id) not in ("done", "archived"):
-            cur = conn.execute(
-                "UPDATE tasks SET status = 'todo' WHERE id = ? AND status = 'ready'",
-                (child_id,),
-            )
-            gated = cur.rowcount == 1
-            if gated:
-                _append_event(
-                    conn,
-                    child_id,
-                    "dependency_wait",
-                    {"reason": "parent_not_done", "demoted": True, "parent": parent_id},
-                )
-        _append_event(
-            conn,
-            child_id,
-            "linked",
-            {"parent": parent_id, "child": child_id},
-        )
-        _inherit_notify_subs(conn, child_id, (parent_id,))
-    return gated
-
-
-def _would_cycle(conn: sqlite3.Connection, parent_id: str, child_id: str) -> bool:
-    """True iff ``parent_id`` is already a descendant of ``child_id``."""
-    seen = set()
-    stack = [child_id]
-    while stack:
-        node = stack.pop()
-        if node == parent_id:
-            return True
-        if node in seen:
-            continue
-        seen.add(node)
-        rows = conn.execute(
-            "SELECT child_id FROM task_links WHERE parent_id = ?", (node,)
-        ).fetchall()
-        stack.extend(r["child_id"] for r in rows)
-    return False
-
-
-def unlink_tasks(conn: sqlite3.Connection, parent_id: str, child_id: str) -> bool:
-    with write_txn(conn):
-        cur = conn.execute(
-            "DELETE FROM task_links WHERE parent_id = ? AND child_id = ?", (parent_id, child_id),
-        )
-        removed = cur.rowcount > 0
-        if removed:
-            _append_event(conn, child_id, "unlinked", {"parent": parent_id, "child": child_id})
-    if removed:
-        # Re-gate the child now (as complete_task/unblock_task do) instead of
-        # leaving it in todo until the next tick.
-        recompute_ready(conn)
-    return removed
-
-
-def _linked_ids(conn: sqlite3.Connection, want: str, where: str, task_id: str) -> list[str]:
-    rows = conn.execute(
-        f"SELECT {want} FROM task_links WHERE {where} = ? ORDER BY {want}", (task_id,)
-    ).fetchall()
-    return [r[want] for r in rows]
-
-
-# Dependency edge removed — re-evaluate promotion eligibility for the child immediately. Matches the
-# contract of complete_task and unblock_task; without this the child stays stuck in todo until the next
-# dispatcher tick or a manual `hermes kanban recompute` (issue #22459).
-def parent_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
-    return _linked_ids(conn, "parent_id", "child_id", task_id)
-
-
-def child_ids(conn: sqlite3.Connection, task_id: str) -> list[str]:
-    return _linked_ids(conn, "child_id", "parent_id", task_id)
-
-
 def task_graph_contexts(conn: sqlite3.Connection, task_ids: Iterable[str]) -> dict[str, dict]:
     """Bulk-load compact direct graph state for graph-aware diagnostics."""
     ordered_ids = list(dict.fromkeys(str(task_id) for task_id in task_ids if task_id))
@@ -1671,23 +1512,38 @@ def task_graph_context(conn: sqlite3.Connection, task_id: str) -> dict:
 
 
 # --- Comments & events ---
-
-def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str) -> int:
+def add_comment(conn: sqlite3.Connection, task_id: str, author: str, body: str, *,
+                source: Optional[dict] = None, run_id: Optional[int] = None) -> int:
     if not body or not body.strip():
         raise ValueError("comment body is required")
     if not author or not author.strip():
         raise ValueError("comment author is required")
     now = int(time.time())
-    # ``allow_nested=True``: graph builders (kanban_swarm blackboard seeding)
-    # compose comment writes under one outer commit.
+    # Graph builders (kanban_swarm blackboard seeding) compose writes under one commit.
     with write_txn(conn, allow_nested=True):
         _require_task(conn, task_id)
-        cur = conn.execute(
-            "INSERT INTO task_comments (task_id, author, body, created_at) "
-            "VALUES (?, ?, ?, ?)", (task_id, author.strip(), body.strip(), now),
-        )
-        _append_event(conn, task_id, "commented", {"author": author, "len": len(body)})
-        return int(cur.lastrowid or 0)
+        cur = conn.execute("INSERT INTO task_comments (task_id, author, body, created_at) VALUES (?, ?, ?, ?)",
+                           (task_id, author.strip(), body.strip(), now))
+        comment_id = int(cur.lastrowid or 0)
+        _append_event(conn, task_id, "commented", {"author": author, "len": len(body),
+                      "source": source, "comment_id": comment_id}, run_id=run_id)
+        return comment_id
+
+
+def comment_ids_written_by_run(conn: sqlite3.Connection, task_id: str, run_id: int) -> set[int]:
+    """Comments this run wrote on this card, rather than all notes by its profile."""
+    return {cid for event in list_events(conn, task_id) if event.kind == "commented" and event.run_id == run_id
+            and isinstance(cid := (event.payload or {}).get("comment_id"), int)}
+
+
+def _actor_payload(by: Optional[str], reason: Optional[str]) -> dict:
+    """Actor audit fields shared by interactive mutations; never persist raw reasons."""
+    from agent.redact import redact_sensitive_text
+
+    payload = {"by": by} if by is not None else {}
+    if reason is not None:
+        payload["reason"] = _first_line(redact_sensitive_text(reason, force=True), 200)
+    return payload
 
 
 def _require_task(conn: sqlite3.Connection, task_id: str) -> None:
@@ -1873,6 +1729,11 @@ def _end_run(
     run_id = _current_run_id(conn, task_id)
     if run_id is None:
         return None
+    prior = conn.execute("SELECT metadata FROM task_runs WHERE id = ?", (run_id,)).fetchone()
+    worker_session = _json_dict(prior["metadata"]).get("worker_session_id")
+    if worker_session:
+        # Session identity remains evidence for comments after terminal metadata replaces progress.
+        metadata = {**(metadata or {}), "worker_session_id": worker_session}
     conn.execute(
         """
         UPDATE task_runs
@@ -3016,6 +2877,7 @@ def edit_task(
     body: Optional[str] = None, priority: Optional[int] = None,
     result: Optional[str] = None, summary: Optional[str] = None,
     metadata: Optional[dict] = None, board: Optional[str] = None,
+    by: Optional[str] = None, reason: Optional[str] = None,
 ) -> bool:
     """Edit task fields, optionally backfilling a completed task's result."""
     changed_fields = [
@@ -3043,11 +2905,11 @@ def edit_task(
             (*params, task_id),
         )
         if priority is not None:
-            _append_event(conn, task_id, "reprioritized", {"priority": priority})
+            _append_event(conn, task_id, "reprioritized", {"priority": priority, **_actor_payload(by, reason)})
         if result is None:
             non_priority_fields = [field for field in changed_fields if field != "priority"]
             if non_priority_fields:
-                _append_event(conn, task_id, "edited", {"fields": non_priority_fields})
+                _append_event(conn, task_id, "edited", {"fields": non_priority_fields, **_actor_payload(by, reason)})
         else:
             handoff_summary = summary if summary is not None else result
             changed_fields.append("summary")
@@ -3081,6 +2943,7 @@ def edit_task(
                     "fields": ["result", "summary"] + (["metadata"] if metadata is not None else []),
                     "result_len": len(result) if result else 0,
                     "summary": _first_line(handoff_summary, 400) or None,
+                    **_actor_payload(by, reason),
                 },
                 run_id=run_id,
             )
@@ -3090,7 +2953,7 @@ def edit_task(
 
 def block_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
-    kind: Optional[str] = None, expected_run_id: Optional[int] = None,
+    kind: Optional[str] = None, expected_run_id: Optional[int] = None, wait_for: Optional[dict] = None,
 ) -> bool:
     """``running``/``ready`` -> ``blocked`` (or ``todo`` / ``triage``, see
     :func:`_route_block`). ``kind='dependency'`` with no incomplete parent is
@@ -3133,7 +2996,7 @@ def block_task(
             if classified != 1:
                 return False
             _append_event(conn, task_id, "blocked", {
-                "kind": kind, "reason": reason, "classified_in_place": True,
+                "kind": kind, "reason": reason, "classified_in_place": True, **needs_input_wait(kind, wait_for),
             })
             return True
         source_status = _retry_status_for_run(conn, task_id) if cur_row["status"] == "running" else "ready"
@@ -3151,8 +3014,8 @@ def block_task(
             prev_recurrences=int(_row_get(cur_row, "block_recurrences") or 0),
         )
         if rekind_reason:
-            payload["requested_kind"] = requested_kind
-            payload["rekind_reason"] = rekind_reason
+            payload.update(requested_kind=requested_kind, rekind_reason=rekind_reason)
+        payload.update(needs_input_wait(kind, wait_for))   # the event that wakes it (kanban_db_wait)
         sql = f"""
                 UPDATE tasks
                    SET status        = '{new_status}',
@@ -3521,15 +3384,17 @@ def _landing_status_after_parents(conn: sqlite3.Connection, task_id: str) -> str
     return "ready" if _parents_satisfied(conn, task_id) else "todo"
 
 
-def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
+def unblock_task(conn: sqlite3.Connection, task_id: str, *,
+    by: Optional[str] = None, reason: Optional[str] = None, keep_failures: bool = False,
+) -> bool:
     """``blocked``/``scheduled`` -> its resumable phase (parent re-gated; ``review``
     when that is where it left off), closing any leaked run first."""
     now = int(time.time())
-    with write_txn(conn):
+    with write_txn(conn, allow_nested=True):   # nested: the dispatcher wake revalidates first
         resume_status = (
             _resume_status_from_events(conn, task_id)
             if _task_status(conn, task_id) == "blocked"
-            else "ready"
+            else scheduled_resume_status(conn, task_id)
         )
         _reclaim_dangling_run(
             conn, task_id, statuses=("blocked", "scheduled"), now=now,
@@ -3544,24 +3409,20 @@ def unblock_task(conn: sqlite3.Connection, task_id: str) -> bool:
         )
         # ``block_kind``/``block_recurrences`` deliberately survive the unblock:
         # resetting them is the amnesia that let cron-unblock <-> re-block loop
-        # unbounded; only complete_task clears them. ``consecutive_failures``
-        # (the dispatcher's spawn/crash counter) IS reset — a deliberate unblock
-        # is a fresh start for the retry budget.
+        # unbounded; only complete_task clears them. ``consecutive_failures`` (the spawn/crash
+        # counter) IS reset by a deliberate unblock, a fresh start for the retry budget; an
+        # automatic wake (``keep_failures``, kanban_db_wait) keeps it: waiting is no recovery.
         cur = conn.execute(
-            "UPDATE tasks SET status = ?, current_run_id = NULL, "
-            "consecutive_failures = 0, last_failure_error = NULL "
-            "WHERE id = ? AND status IN ('blocked', 'scheduled')", (new_status, task_id),
+            "UPDATE tasks SET status = ?, current_run_id = NULL"
+            + ("" if keep_failures else ", consecutive_failures = 0, last_failure_error = NULL")
+            + " WHERE id = ? AND status IN ('blocked', 'scheduled')", (new_status, task_id),
         )
         if cur.rowcount != 1:
             return False
-        _append_event(
-            conn, task_id, "unblocked",
-            (
-                {"status": new_status, "resume_status": resume_status}
-                if new_status != "ready" or resume_status != "ready"
-                else None
-            ),
-        )
+        payload = _actor_payload(by, reason)
+        if new_status != "ready" or resume_status != "ready":
+            payload.update(status=new_status, resume_status=resume_status)
+        _append_event(conn, task_id, "unblocked", payload or None)
         return True
 
 
@@ -3831,11 +3692,11 @@ def delete_task(conn: sqlite3.Connection, task_id: str) -> bool:
 
 def schedule_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
-    expected_run_id: Optional[int] = None,
+    expected_run_id: Optional[int] = None, wait_for: Optional[dict] = None,
 ) -> bool:
-    """Park in ``scheduled`` (waiting on time, not a human; not dispatchable)
-    until ``unblock_task`` re-gates it."""
+    """Park in ``scheduled`` (a time or event wait, not dispatchable) until ``unblock_task``; see kanban_db_wait."""
     with write_txn(conn):
+        payload = park_payload(conn, task_id, reason, wait_for)
         params: list[Any] = [task_id]
         sql = """
             UPDATE tasks
@@ -3854,7 +3715,7 @@ def schedule_task(
         run_id = _end_or_synthesize_run(
             conn, task_id, outcome="scheduled", status="scheduled", summary=reason, synthesize=bool(reason),
         )
-        _append_event(conn, task_id, "scheduled", {"reason": reason}, run_id=run_id)
+        _append_event(conn, task_id, "scheduled", payload, run_id=run_id)
         return True
 
 
@@ -4121,6 +3982,21 @@ def latest_summary(conn: sqlite3.Connection, task_id: str) -> Optional[str]:
 
 
 # --- Split modules (imported at the tail: they import this module as ``_kb``) ---
+from hermes_cli.kanban_db_paths import (
+    BoardPinnedError,
+    attachments_root,
+    board_dir,
+    board_exists,
+    boards_root,
+    current_board_path,
+    kanban_home,
+    own_board_path,
+    own_board_resolution,
+    refuse_cross_board_pin,
+    task_attachments_dir,
+    worker_logs_dir,
+    workspaces_root,
+)
 from hermes_cli.kanban_db_boards import (
     _default_board_display_name,
     _dir_holds_board,
@@ -4156,5 +4032,13 @@ from hermes_cli.kanban_db_dispatch import (
     _worker_terminal_timeout_env,
 )
 from hermes_cli.kanban_db_goal import goal_run_status
+from hermes_cli.kanban_db_links import (
+    link_tasks,
+    unlink_tasks,
+    _would_cycle,
+    _linked_ids,
+    parent_ids,
+    child_ids,
+)
 from hermes_cli.kanban_db_runs import current_run_started_ats, latest_summaries
 from hermes_cli.kanban_outcomes import record_terminal_outcome

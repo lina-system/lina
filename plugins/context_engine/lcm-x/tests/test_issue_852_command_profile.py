@@ -2,7 +2,6 @@
 
 import importlib.util
 from pathlib import Path
-import re
 import sqlite3
 import sys
 import types
@@ -86,11 +85,6 @@ def _handler(plugin, monkeypatch, prototype, context, resolved=None):
         return resolved
 
     return plugin._make_command_handler(command.handle_lcm_command, prototype, resolve), calls
-
-
-def _without_pass_time(text):
-    # LINA: a background incremental embedding pass can stamp the next second between the two status reads.
-    return re.sub(r"(?m)^(embedding_incremental_last_pass: )\S+", r"\1<time>", text)
 
 
 @pytest.mark.parametrize("raw_args", ["embed backfill --apply", "embed warmup"])
@@ -244,6 +238,11 @@ def test_unresolved_other_bound_session_refuses_write_allows_read(
         monkeypatch.setattr(sys.modules["hermes_constants"], "profile_name_for_home", broken)
     elif profile_state == "home":
         monkeypatch.setattr(prototype, "_hermes_home", "")
+    # LINA: a background incremental embedding pass can stamp its state between the two status reads (a new
+    # second, or a first pass that turns "(never)" into "<time> no_profile"). Hold the state both reads see,
+    # so the whole status text, that line included, is still compared.
+    held = command.incremental_embedding_state(prototype._config.database_path)
+    monkeypatch.setattr(command, "incremental_embedding_state", lambda _db_path: held)
     expected = command.handle_lcm_command("status", prototype)
     if profile_state != "same":
         expected += f"\nstore: {prototype._config.database_path}"
@@ -251,7 +250,7 @@ def test_unresolved_other_bound_session_refuses_write_allows_read(
     handler, _ = _handler(plugin, monkeypatch, prototype, context)
 
     assert handler(raw_args) == OWNERSHIP_REFUSAL
-    assert _without_pass_time(handler("status")) == _without_pass_time(expected)
+    assert handler("status") == expected
     assert prototype._session_id == "bound-session"
     assert _snapshot(prototype) == before
 

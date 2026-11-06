@@ -25,6 +25,25 @@ def _unlink_pty_markers(app: FastAPI) -> None:
             pass
 
 
+def _start_push():
+    """The lina#244 push sender -> its stop. An optional feature never stops the web server: a sender that cannot
+    start leaves push off with one warning, and its stop never raises into the lifespan's teardown."""
+    try:
+        from hermes_cli.lina_push_watch import start
+
+        stop = start()
+    except Exception:
+        logger.warning("push: off, the sender did not start", exc_info=True)
+        return lambda: None
+
+    def stop_quietly() -> None:
+        try:
+            stop()
+        except Exception:
+            logger.warning("push: the sender did not stop cleanly", exc_info=True)
+    return stop_quietly
+
+
 @asynccontextmanager
 async def standalone_lifespan(app: "FastAPI"):
     from hermes_cli.web_server import (
@@ -161,9 +180,12 @@ async def standalone_lifespan(app: "FastAPI"):
 
     start_background_bootstrap()
 
+    stop_push = _start_push()
+
     try:
         yield
     finally:
+        stop_push()
         try:
             tui_gateway.server.clear_tui_message_injector()
         except Exception:
@@ -215,6 +237,7 @@ async def http_lifespan(app: FastAPI):
         asyncio.create_task(run_reaper(PTY_REGISTRY), name="gateway-api-pty-reaper"),
         asyncio.create_task(_dashboard_selftest_loop(), name="gateway-api-selftest"),
     ]
+    stop_push = _start_push()
     try:
         async with AsyncExitStack() as surface:
             if policy(app.state).host_terminal:
@@ -222,6 +245,7 @@ async def http_lifespan(app: FastAPI):
                 await surface.enter_async_context(host_terminal_lifespan(app))
             yield
     finally:
+        stop_push()
         for task in tasks:
             task.cancel()
         await asyncio.gather(*tasks, return_exceptions=True)

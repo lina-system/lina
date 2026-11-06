@@ -55,13 +55,13 @@ def test_a_queued_task_starts_from_the_tick_when_a_slot_frees(tmp_path, monkeypa
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
-    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n")
+    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n")
     root = base / "worker"
     launcher = fakes.ThreadLauncher().install(monkeypatch)
     full = {"value": True}
     real_probe = bidding.probe_all
     monkeypatch.setattr(bidding, "probe_all", lambda *a, **k: [
-        {**row, "running": 2} if full["value"] else row for row in real_probe(*a, **k)])
+        {**row, "running": 2, "bid_running": 2} if full["value"] else row for row in real_probe(*a, **k)])
     serve.serve_once(root)
     lines: list[str] = []
     hub = Hub(root, out=lines.append)

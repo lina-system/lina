@@ -34,6 +34,7 @@ from .compaction_policy import (
     resolve_threshold,
     threshold_tokens,
 )
+from .sqlite_session import configured_store_backend, route_to_host_store
 from .config import LCMConfig, _disabled_tool_names, containment_base_dir, host_message_uid_mode, lcm_env_get, profile_bound
 from .dag import SummaryDAG, SummaryNode
 from . import sender_capture
@@ -1638,6 +1639,7 @@ class LCMEngine(
         self._query_views = None
         self._adaptive_retrieval = None
         self._assertion_extractor = None
+        route_to_host_store(db_path, configured_store_backend(), hermes_home)  # LINA (lina#16)
         try:
             self._store = MessageStore(
                 db_path,

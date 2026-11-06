@@ -61,7 +61,9 @@ def put_tree(transport: Transport, task_id: str, rel: str, sources: list[Path]) 
         raise TransportError(f"copy into {rel}: {reply.err.strip()[-300:] or reply.json().get('reason')}")
 
 
-PACKED = ("report.md", "final.md", "manifest.json", "git.txt", "stderr.txt", "out")  # every name `pack` can send
+# Archive name -> task-relative source. Fetch clears these same names before extraction.
+PACKED = {"report.md": "work/report.md", "final.md": "final.md", "manifest.json": "manifest.json",
+          "git.txt": "git.txt", "stderr.txt": "stderr.{run}.txt", "out": "work/out"}
 
 
 def fetch(transport: Transport, task_id: str, dest: Path) -> list[str]:
@@ -116,8 +118,70 @@ class LocalTransport:
         return Reply(code, out)
 
 
-def for_device(dev: Device, worker_root: Path) -> Transport:
-    return LocalTransport(worker_root) if dev.local else SshTransport(dev)
+class NegotiatedTransport:
+    """One contact's descriptor; never persisted or shared across hub ticks."""
+
+    def __init__(self, raw: Transport, name: str):
+        self.raw, self.name = raw, name
+        self.descriptor: dict | None = None
+        self._hello: Reply | None = None
+        self._reason = ""
+        self._legacy = False
+
+    def _refused(self, reason: str) -> Reply:
+        code = self._hello.code if self._hello and not self._legacy and self._hello.code else 1
+        return Reply(code, json.dumps({"action": "error", "reason": reason, "protocol_error": True}).encode(), reason)
+
+    def refresh(self, timeout: float = 120) -> Reply:
+        from hermes_cli.worker import protocol
+
+        reply = self.raw.call(["hello"], timeout=timeout)
+        self._hello, self.descriptor = reply, reply.json()
+        self._legacy = reply.code != 0 and self.descriptor.get("reason") == "unknown verb hello"
+        self._reason = ""
+        if self._legacy:
+            self._reason = f"{self.name} needs update: worker hello is unavailable"
+        elif reply.code != 0:
+            self._reason = f"{self.name}: worker hello failed: {' '.join(reply.err.split()) or f'exit {reply.code}'}"
+        else:
+            bounds = self.descriptor.get("protocol")
+            if (not isinstance(bounds, dict) or type(bounds.get("min")) is not int
+                    or type(bounds.get("max")) is not int or not 0 <= bounds["min"] <= bounds["max"]):
+                self._reason = f"{self.name}: invalid worker protocol range"
+            elif bounds["min"] > protocol.PROTOCOL_MAX or bounds["max"] < protocol.PROTOCOL_MIN:
+                side = "this hub" if bounds["min"] > protocol.PROTOCOL_MAX else self.name
+                self._reason = (f"{self.name} speaks worker protocol {bounds['min']}-{bounds['max']}, "
+                                f"this hub {protocol.PROTOCOL_MIN}-{protocol.PROTOCOL_MAX}: update {side}")
+        return reply
+
+    def call(self, verb: list[str], stdin: bytes = b"", timeout: float = 120) -> Reply:
+        from hermes_cli.worker.protocol import verbs
+
+        if verb[0] == "hello":
+            return self.refresh(timeout)
+        if self._hello is None:
+            self.refresh(timeout)
+        info = verbs().get(verb[0])
+        if self._reason and not (self._legacy and info and info.legacy):
+            return self._refused(self._reason)
+        return self.raw.call(verb, stdin, timeout)
+
+    def service(self, action: str, recorded_instance_id: str) -> Reply:
+        """Recheck the recorded instance, then let the node compare-and-act; never retry a stale action."""
+        self.refresh()
+        if self._reason:
+            return self._refused(self._reason)
+        if not recorded_instance_id or self.descriptor.get("instance_id") != recorded_instance_id:
+            return self._refused(f"{self.name}: worker instance changed: refresh hello")
+        reply = self.call(["service", action, recorded_instance_id])
+        if reply.json().get("stale_instance"):
+            self.refresh()
+        return reply
+
+
+def for_device(dev: Device, worker_root: Path) -> NegotiatedTransport:
+    raw = LocalTransport(worker_root) if dev.local else SshTransport(dev)
+    return NegotiatedTransport(raw, dev.name)
 
 
 def notify_hub(notify: dict, task_id: str, state: str, run: int, worker_root: Path) -> bool:

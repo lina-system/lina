@@ -7,6 +7,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
 from typing import Any
+from .sqlite_session import database_present
 
 
 @dataclass(frozen=True)
@@ -41,8 +42,8 @@ def collect_status(engine: Any) -> StatusFacts:
 
     status = engine.get_status()
     db_path = Path(engine._store.db_path)
-    db_exists = db_path.exists()
-    db_size = db_path.stat().st_size if db_exists else 0
+    db_exists = database_present(db_path)  # LINA: or its store (lina#16)
+    db_size = db_path.stat().st_size if db_path.exists() else 0
     protection = status.get("ingest_protection") or command.sensitive_pattern_status(engine._config)
     stem_index = command.stem_index_status(engine._store.connection)
     return StatusFacts(

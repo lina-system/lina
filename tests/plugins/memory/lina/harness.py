@@ -35,6 +35,7 @@ class FakeHoncho:
             peer.id = peer_id
             peer.message.side_effect = lambda content, metadata=None, _p=peer_id: {
                 "peer": _p, "content": content, "metadata": metadata}
+            peer.chat.return_value = ""  # the SDK answers a string; no dialectic answer in the fake
             self._peers[peer_id] = peer
         return self._peers[peer_id]
 
@@ -109,6 +110,14 @@ def drain(agent) -> None:
     assert agent._memory_manager.flush_pending(timeout=60)
     for provider in agent._memory_manager.providers:
         getattr(provider, "_drain", lambda: None)()
+    # lina-memory hands a turn to Honcho, which writes it on its own thread; wait for that write too, or a
+    # read of the fake's `written` can run before it lands.
+    for provider in agent._memory_manager.providers:
+        honcho = getattr(provider, "_honcho", None)
+        for thread in (getattr(honcho, "_sync_thread", None), getattr(honcho, "_memwrite_thread", None)):
+            if thread is not None:
+                thread.join(timeout=60)
+                assert not thread.is_alive(), "a Honcho write is still running after 60 s"
 
 
 def lcm_rows(home: Path) -> list[tuple]:

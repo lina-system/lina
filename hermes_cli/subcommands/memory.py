@@ -37,10 +37,24 @@ def build_memory_parser(subparsers, *, cmd_memory: Callable) -> None:
     _eval_parser.add_argument("--honcho-url", default=None,
                               help="Honcho api for the old memory search (default: not run)")
     _eval_parser.add_argument("--json", default=None, help="also write the scores and every ranking here")
+    _cache_parser = memory_sub.add_parser(
+        "cache-report", help="Prompt-cache hit rate from OCX usage rows (the lina#17 baseline method)")
+    _cache_parser.add_argument("--usage", required=True, help="OCX usage.jsonl")
+    _cache_parser.add_argument("--from", dest="start", default=None, help="first ingress time, ISO with offset")
+    _cache_parser.add_argument("--to", dest="end", default=None, help="end of the window (exclusive), ISO with offset")
+    _cache_parser.add_argument("--conversation", action="append", default=None,
+                               help="keep only this conversation id (repeatable)")
+    _cache_parser.add_argument("--baseline", action="append", type=float, default=None,
+                               help="baseline hit rate in percent to compare with (repeatable)")
+    _cache_parser.add_argument("--fingerprints", default=None,
+                               help="prefix fingerprints (memory.prefix_fingerprints) for exact common prefixes")
+    _cache_parser.add_argument("--format", choices=["md", "tsv"], default="md")
     memory_parser.set_defaults(func=cmd_memory)
     from hermes_cli.external_messages import ingest_command
-    external = memory_sub.add_parser("external-messages", help="Ingest the collector's append-only spool")
+    external = memory_sub.add_parser("external-messages", help="Control external message collection")
     external_sub = external.add_subparsers(dest="external_messages_command", required=True)
+    for action in ("on", "off", "status"):
+        external_sub.add_parser(action, help=f"External messages: {action}")
     ingest = external_sub.add_parser("ingest", help="Ingest new complete spool events")
     ingest.add_argument("--spool", default=None, help="Override memory.external_messages.spool")
     ingest.set_defaults(func=ingest_command)

@@ -54,7 +54,7 @@ from .search_query import (
     should_apply_directness_rank_adjustment,
 )
 from .message_content import normalize_content_value as _normalize_content_value
-from .sqlite_session import ConnectionPolicy, TransactionOwner, open_connection
+from .sqlite_session import ConnectionPolicy, TransactionOwner, is_store_connection, open_connection
 from .sqlite_util import (
     _run_sqlite_write_with_snapshot_retry,
     _temporary_sqlite_busy_timeout,
@@ -116,6 +116,8 @@ def _matching_names_filter(names: Collection[str] | None, prefix: str) -> tuple[
 
 
 def _fetch_ranked_search_rows(conn: sqlite3.Connection, sql: str, args: list[Any]) -> list[list[Any]]:
+    if is_store_connection(conn):  # LINA: the packing below is a SQLite speed-up; the plain rows are the same
+        return [list(row)[1:] for row in conn.execute(sql, args).fetchall()]
     # A single SQLite result avoids reacquiring Python's GIL for every candidate.
     # JSON1 rounds REALs; tagged round-trip decimals preserve the original bits.
     names = [name.strip() for name in _MESSAGE_SELECT_COLUMNS.split(",")] + ["search_rank", "snippet"]
@@ -425,6 +427,12 @@ class MessageStore:
             on_open=lambda conn: setattr(self, "_conn", conn),
             on_setup_error=None,
         ))
+        if is_store_connection(self._conn):  # LINA: the schema is the store's migrations, its stem view complete
+            run_versioned_migrations(self._conn)  # refuses a newer build's stamp; records this build's
+            self._ensure_time_contract_columns()  # its columns are there; rows without ingested_at still get it
+            self._conn.commit()
+            self._stem_usable = ensure_message_stem_fts(self._conn, build_message_stem_fts_spec())
+            return
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS messages (
                 store_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -582,6 +590,8 @@ class MessageStore:
         ingested_at = time.time()
 
         with self._write_lock:
+            if is_store_connection(self._conn):  # LINA: the text row Hermes wrote for this message
+                self._conn.note_message_uid(msg.get("message_uid"))
             cur = self._conn.execute(
                 """INSERT INTO messages
                    (session_id, source, conversation_id, role, content, tool_call_id, tool_calls,
@@ -673,6 +683,8 @@ class MessageStore:
                 ts = time.time()
                 observed_at = _normalize_observed_at(msg.get("timestamp"))
                 sender = senders[index] if senders is not None else None
+                if is_store_connection(conn):  # LINA: the text row Hermes wrote for this message
+                    conn.note_message_uid(msg.get("message_uid"))
                 cur = conn.execute(
                     """INSERT INTO messages
                        (session_id, source, conversation_id, role, content, tool_call_id, tool_calls,

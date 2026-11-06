@@ -22,10 +22,13 @@ PREVIOUS = "Add the ShapeIndex encoder."
 CURRENT = "Now decode it back."
 DIALECTIC_ANSWER = "The user wants every encoder round-trip tested."
 LATENCY = 0.3
+# What firstTurnBaseWait / firstTurnDialecticWait are set to wherever a test checks the budget.
+FIRST_TURN_WAIT = 0.05
 
 
 def _provider(context_queries: list[str], *, save_messages: bool = False, prewarm_latency: float = LATENCY,
-              prewarm_answer: str = "Generic prewarm summary.", **cfg_overrides) -> HonchoMemoryProvider:
+              prewarm_answer: str = "Generic prewarm summary.",
+              prewarm_gate: threading.Event | None = None, **cfg_overrides) -> HonchoMemoryProvider:
     """A provider over a Honcho that answers slowly and holds the earlier turn only if it saved it."""
     manager = MagicMock()
     manager.get_or_create.return_value.messages = (
@@ -41,8 +44,12 @@ def _provider(context_queries: list[str], *, save_messages: bool = False, prewar
 
     def _dialectic(*_args, **_kwargs):
         if threading.current_thread().name == "honcho-prewarm-dialectic":
-            # health: allow HX013 -- the delay IS the behaviour under test (a prewarm slower than the resumed dialectic)
-            time.sleep(prewarm_latency)
+            if prewarm_gate is not None:
+                # The test releases this gate at teardown: a prewarm still in flight, with no clock in it.
+                prewarm_gate.wait()
+            else:
+                # health: allow HX013 -- the delay IS the behaviour under test (a prewarm slower than the resumed dialectic)
+                time.sleep(prewarm_latency)
             return prewarm_answer
         # health: allow HX013 -- the delay IS the behaviour under test (a Honcho slower than the turn budget)
         time.sleep(LATENCY)
@@ -69,6 +76,31 @@ def _memory(provider: HonchoMemoryProvider) -> MemoryManager:
     memory = MemoryManager(external_prefetch_timeout=0.2)
     memory.add_provider(provider)
     return memory
+
+
+class _RequestedWaits:
+    """Every ``Thread.join(timeout=...)`` the code under test asks for, in the order it asks.
+
+    The wait budgets are the behaviour under test. Timing the call with ``time.monotonic()``
+    measures thread spawn and scheduler latency too, which is what made this flake.
+    """
+
+    def __init__(self) -> None:
+        self.calls: list[tuple[str, float | None]] = []
+
+    def __enter__(self) -> "_RequestedWaits":
+        real_join = threading.Thread.join
+
+        def _join(thread, timeout=None):
+            self.calls.append((thread.name, timeout))
+            return real_join(thread, timeout)
+
+        self._patch = patch.object(threading.Thread, "join", _join)
+        self._patch.start()
+        return self
+
+    def __exit__(self, *_exc) -> None:
+        self._patch.stop()
 
 
 @pytest.mark.parametrize(
@@ -105,19 +137,30 @@ def test_first_turn_waits_outlast_the_memory_managers_prefetch_timeout():
 
 
 @pytest.mark.parametrize(
-    "turn, turn_start_kwargs",
-    [(1, {}), (2, {"previous_message": PREVIOUS})],
+    "turn, turn_start_kwargs, dialectic_thread",
+    [(1, {}, "honcho-prewarm-dialectic"), (2, {"previous_message": PREVIOUS}, "honcho-resume-dialectic")],
     ids=["new-session", "resumed"],
 )
-def test_first_turn_waits_are_bounded_by_the_first_turn_knobs(turn, turn_start_kwargs):
-    memory = _memory(_provider([], first_turn_base_wait=0.05, first_turn_dialectic_wait=0.05))
+def test_first_turn_waits_are_bounded_by_the_first_turn_knobs(turn, turn_start_kwargs, dialectic_thread):
+    # Held for the whole test, so the process-start prewarm is still in flight when the turn starts.
+    prewarm = threading.Event()
+    memory = _memory(_provider([], prewarm_gate=prewarm, first_turn_base_wait=FIRST_TURN_WAIT,
+                               first_turn_dialectic_wait=FIRST_TURN_WAIT))
 
-    started = time.monotonic()
-    memory.on_turn_start(turn, CURRENT, **turn_start_kwargs)
-    elapsed = time.monotonic() - started
+    try:
+        with _RequestedWaits() as waits:
+            memory.on_turn_start(turn, CURRENT, **turn_start_kwargs)
+        injected = memory.prefetch_all(CURRENT)
+    finally:
+        prewarm.set()
 
-    assert elapsed < LATENCY
-    assert "conclusions recalled for" not in memory.prefetch_all(CURRENT)
+    # The base layer is waited on first, then exactly one dialectic, each within its knob.
+    assert [name for name, _ in waits.calls] == ["honcho-base-first", dialectic_thread]
+    base_wait, dialectic_wait = [timeout for _, timeout in waits.calls]
+    assert base_wait is not None and 0 <= base_wait <= FIRST_TURN_WAIT
+    # The turn-1 dialectic wait uses its knob, not the 2s default it would fall back to.
+    assert dialectic_wait == FIRST_TURN_WAIT
+    assert "conclusions recalled for" not in injected
 
 
 def test_late_prewarm_does_not_replace_the_resumed_dialectic():

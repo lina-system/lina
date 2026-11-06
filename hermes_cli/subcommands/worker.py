@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+from hermes_cli.lina_work_settings import ACCESS
+
 
 def _hub():
     from hermes_cli.worker import settings
@@ -14,16 +16,28 @@ def _hub():
 def _submit(args) -> int:
     opts = {"briefs": args.brief, "mode": args.mode, "repo": args.repo, "inputs": args.input, "todo": args.todo,
             "host": args.host, "model": args.model, "topic": args.topic, "note": args.note, "at": args.at,
-            "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner}
+            "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner,
+            "card": _card(args), "size": args.size, "access": args.access,
+            "labels": [x.strip() for x in args.labels.split(",") if x.strip()] if args.labels else None}
     if args.bot:
         opts["bot"] = args.bot
     return _hub().submit({k: v for k, v in opts.items() if v is not None or k in ("wait",)})
 
 
+def _card(args) -> dict | None:
+    import os
+    from hermes_cli.worker.hub import HubError
+    if args.board and not args.card:
+        raise HubError("--board names the board of --card <id>")
+    return {"task": args.card, "board": args.board or os.environ.get("HERMES_KANBAN_BOARD") or None} if args.card else None
+
+
 def _device(args) -> int:
     from hermes_cli.worker import device, settings
+    from hermes_cli.worker.protocol import verbs
+    info = verbs().get(args.verb)
     code, out = device.dispatch(settings.root(), [args.verb, *args.args], sys.stdin.buffer.read()
-                                if args.verb in device.STDIN_VERBS else b"")
+                                if info and info.stdin else b"")
     sys.stdout.buffer.write(out)
     return code
 
@@ -53,7 +67,8 @@ def _tick(args) -> int:
 
 _ACTIONS = {
     "submit": _submit,
-    "send": lambda a: _hub().send(a.id, a.message),
+    "send": lambda a: _hub().send(a.id, a.message, _card(a), access=a.access),
+    "wait": lambda a: _hub().wait(_card(a), a.id),
     "status": lambda a: _hub().status(a.id, a.json),
     "result": lambda a: _hub().result(a.id),
     "accept": lambda a: _hub().verdict(a.id, True, a.note),
@@ -86,19 +101,25 @@ def _cmd_worker(args) -> None:
 
 
 def _submit_parser(sub) -> None:
+    from hermes_cli.lina_work_settings import SIZES
     from hermes_cli.worker.report import MODES
     p = sub.add_parser("submit", help="Hand a brief to a free work device (bidding), or queue it")
     p.add_argument("--brief", action="append", required=True, help="brief file; several make one batch (one notice)")
     p.add_argument("--mode", choices=list(MODES), default="ulw",
                    help="ulw (plan, do, verify), research, mass (parallel lanes), mass-research")
+    p.add_argument("--access", choices=ACCESS, default="workspace-write", help="access mode within the agent's ceiling")
     p.add_argument("--repo", help="owner/name (cloned into the device's repo cache) or a path on the device; the "
                                   "task works in a fresh worktree on omo/<ID> with push blocked")
     p.add_argument("--input", action="append", default=[], help="a file or folder copied read-only to input/")
     p.add_argument("--todo", help="the to-do this task works on (also its topic)")
     p.add_argument("--host", help="a device from devices.workers instead of bidding")
-    p.add_argument("--runner", help="a runner from worker.runners (default: worker.default_runner, else omo)")
+    p.add_argument("--runner", help="a runner from worker.runners (default: worker.routing on --labels/--size, "
+                                    "else worker.default_runner, else omo)")
+    p.add_argument("--labels", help="the issue's labels, comma separated (its runner label), for worker.routing")
+    p.add_argument("--size", type=lambda v: v.strip().removeprefix("size/"), choices=list(SIZES),
+                   help="the issue's size (S, M, L or size/S...), for worker.routing")
     p.add_argument("--model", help="an alias from worker.models.aliases or <provider>/<id>[:<thinking>] "
-                                   "(default: worker.models.defaults by mode)")
+                                   "(default: the runner's model, else worker.models.defaults by mode)")
     p.add_argument("--topic", help="short name of the work when there is no to-do")
     p.add_argument("--bot", "--agent", dest="bot", help="the agent the end notice goes to (default: this profile)")
     p.add_argument("--note", help="a note repeated at the top of the end notice")
@@ -106,6 +127,12 @@ def _submit_parser(sub) -> None:
     p.add_argument("--every", help="repeat interval: 30m, 6h, 1d, 7d")
     p.add_argument("--dry-notify", action="store_true", help="print the notice command instead of running it")
     p.add_argument("--wait", nargs="?", type=int, const=1800, help="wait in the foreground (seconds, default 1800)")
+    _card_args(p)
+
+
+def _card_args(p) -> None:
+    p.add_argument("--card", help="the Hermes card this run is handed out from (default: HERMES_KANBAN_TASK)")
+    p.add_argument("--board", help="that card's board (default: HERMES_KANBAN_BOARD)")
 
 
 def build_worker_parser(subparsers) -> None:
@@ -118,6 +145,7 @@ def build_worker_parser(subparsers) -> None:
                     "notice goes to the agent's chat and, from a work card, onto the card. Never poll: wait for it.")
     sub = parser.add_subparsers(dest="worker_action")
     _submit_parser(sub)
+    __import__("hermes_cli.subcommands.worker_settings", fromlist=["add_parser"]).add_parser(sub)  # lina#256
     for name, text in (("status", "Run, delivery and verdict state; live: what the agent does now"),
                        ("result", "Fetch report.md, final.md, out/, git.txt and check them against the manifest"),
                        ("receipts", "The append-only record of a task"), ("unschedule", "Switch a schedule off")):
@@ -129,6 +157,12 @@ def build_worker_parser(subparsers) -> None:
                                        "next run in the same session")
     send.add_argument("id")
     send.add_argument("message")
+    send.add_argument("--access", choices=ACCESS, help="same or lower access for the next run")
+    _card_args(send)
+    wait = sub.add_parser("wait", help="Record the runs to wait on and print the Hermes kanban_schedule tool "
+                                       "instruction; call that tool and end the turn")
+    wait.add_argument("id", nargs="*", help="the runs to wait on (default: every open run of the card)")
+    _card_args(wait)
     cancel = sub.add_parser("cancel", help="Stop the task (the task folder stays); one notice follows")
     cancel.add_argument("id")
     cancel.add_argument("--why")

@@ -645,6 +645,15 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
             return self._log_injection("fetched-but-empty")
         return self._log_injection("injected", self._truncate_to_budget("\n\n".join(parts)))
 
+    def recall_query(self, query: str, *, session_id: str = "") -> str:
+        """Explicit ``memory_recall``. Asks the backend for this query and does not move the injection cadence."""
+        del session_id  # the provider's session is the one prefetch_sync recalls against
+        if self._cron_skipped:
+            return ""
+        from .recall_sync import recall_query_sync
+        payload = recall_query_sync(self, query)
+        return self._log_injection("explicit-recall" if payload else "explicit-recall-empty", payload)
+
     def _previous_user_message(self) -> str:
         """The user message that opened the previous turn.
 
@@ -927,19 +936,11 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         session_kwargs: dict[str, str] = {}
         if author.get("is_bot"):
             # A bot's turn never lands in the human's session: its own a2a session or nothing.
-            if not getattr(self._config, "a2a_sessions", True):
-                logger.debug("Honcho sync skipped a bot-authored turn because a2aSessions is off")
+            target = self._a2a_write_target(author, base_key)
+            if target is None:
+                self._log_skipped_bot_write(author, base_key)
                 return
-            author_id = str(author.get("id") or "").strip()
-            if not author_id:
-                logger.debug("Honcho sync skipped a bot-authored turn that named no author id")
-                return
-            bot_peer_id = self._manager.resolve_author_peer_id(
-                base_key, author_id, author.get("name"), is_bot=True)
-            if not bot_peer_id or bot_peer_id == self._manager.assistant_peer_id():
-                logger.debug("Honcho sync skipped a bot-authored turn: author %s has no peer of its own", author_id)
-                return
-            target_key = self._a2a_session_key({**author, "id": author_id}, base_key)
+            target_key, bot_peer_id = target
             # The bot is the a2a session's own user peer, so its messages need no per-message author.
             session_kwargs["user_peer_id"] = bot_peer_id
             author_peer_id = None
@@ -968,18 +969,54 @@ class HonchoMemoryProvider(DialecticMixin, MemoryProvider):
         """The Honcho session this provider writes the current turn to ("" before Honcho is configured)."""
         return self._session_key
 
+    def _a2a_write_target(self, author: dict[str, Any], base_key: str) -> Optional[tuple[str, str]]:
+        """``(a2a session key, bot peer id)`` when this bot author is written to its own session.
+
+        Same rules as the bot branch of ``sync_turn``: a2a sessions on, an author id, and a peer of its
+        own (not this agent's aiPeer). None when that turn is not written."""
+        if not isinstance(author, dict) or not author.get("is_bot"):
+            return None
+        if not getattr(self._config, "a2a_sessions", True):
+            return None
+        author_id = str(author.get("id") or "").strip()
+        if not author_id or self._manager is None:
+            return None
+        bot_peer_id = self._manager.resolve_author_peer_id(
+            base_key, author_id, author.get("name"), is_bot=True)
+        if not bot_peer_id or bot_peer_id == self._manager.assistant_peer_id():
+            return None
+        return self._a2a_session_key({**author, "id": author_id}, base_key), bot_peer_id
+
+    def _log_skipped_bot_write(self, author: dict[str, Any], base_key: str) -> None:
+        if not getattr(self._config, "a2a_sessions", True):
+            logger.debug("Honcho sync skipped a bot-authored turn because a2aSessions is off")
+            return
+        author_id = str(author.get("id") or "").strip()
+        if not author_id:
+            logger.debug("Honcho sync skipped a bot-authored turn that named no author id")
+            return
+        logger.debug("Honcho sync skipped a bot-authored turn: author %s has no peer of its own", author_id or base_key)
+
     def source_keys(self, turn_author: Optional[dict[str, Any]] = None, *, session_key: str = "") -> dict[str, str]:
         """The Honcho names of this turn's person, agent and conversation, as Honcho derives them today (peerName,
         aliases and runtime identities; aiPeer; the resolved session key), each prefixed with the workspace. Empty
         before Honcho is configured. Reading them never creates or renames a peer. ``session_key`` is the session
-        the turn was in when it finished (default: the current one)."""
+        the turn was in when it finished (default: the current one).
+
+        A bot turn that ``sync_turn`` writes to an a2a session reports that session (the id Honcho stores)
+        as ``conversation`` and the human session as ``base_conversation``, so both name one conversation."""
         cfg = self._config
         key = session_key or self._session_key
         if cfg is None or not key:
             return {}
         workspace = str(getattr(cfg, "workspace_id", "") or "")
-        keys = {"agent": f"{workspace}:{assistant_peer_id_for(cfg)}", "conversation": f"{workspace}:{key}"}
         author = turn_author if isinstance(turn_author, dict) else {}
+        written = key
+        target = self._a2a_write_target(author, key)
+        if target is not None:
+            written = sanitize_peer_id(target[0])
+        keys = {"agent": f"{workspace}:{assistant_peer_id_for(cfg)}", "conversation": f"{workspace}:{written}",
+                "base_conversation": f"{workspace}:{key}"}
         if self._manager is not None and not author.get("is_bot"):
             try:
                 peer = (self._manager.resolve_author_peer_id(key, author.get("id"), author.get("name"))

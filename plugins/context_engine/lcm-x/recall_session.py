@@ -6,6 +6,7 @@ from functools import partial
 import json
 from pathlib import Path
 import sqlite3
+from .sqlite_session import connect_database
 import time
 
 from . import tokens
@@ -226,7 +227,7 @@ def deliver_session(ordered, response, *, engine, deadline, excluded, allowed, s
             io = RetrievalContext(engine._store, engine._dag)
         else:
             path = Path(engine._store.db_path).resolve()
-            conn = sqlite3.connect(f"{path.as_uri()}?mode=ro", uri=True, timeout=max(.001, deadline - time.monotonic()))
+            conn = connect_database(sqlite3.connect, f"{path.as_uri()}?mode=ro", uri=True, timeout=max(.001, deadline - time.monotonic()))
             conn.row_factory = sqlite3.Row
             conn.execute("PRAGMA query_only=ON")
             conn.set_progress_handler(lambda: int(time.monotonic() >= deadline), 1000)

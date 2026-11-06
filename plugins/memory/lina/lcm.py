@@ -46,6 +46,18 @@ def conversation_id(session_id: str) -> Optional[str]:
     return str(getattr(engine, "_conversation_id", "") or "") or None if engine is not None else None
 
 
+def use_engine(session_id: str, operation: Callable[[Any], Any], *, timeout: float = 5.0) -> tuple[bool, Any, str]:
+    """Run ``operation(engine)`` with the session's LCM engine under its stable-use lease: ``(used, value, why
+    not)``. Not used when LCM-X is not the context engine here or holds no engine for the session."""
+    registry = _registry()
+    if registry is None:
+        return False, None, "LCM-X is not the context engine of this agent"
+    if not session_id:
+        return False, None, "no session is open"
+    result = registry.use_active_lcm_engine(operation, session_id=session_id, timeout=timeout)
+    return result.used, result.value, "" if result.used else f"no LCM-X engine for this session ({result.status.value})"
+
+
 def hand_turn(history: Sequence[dict[str, Any]], *, session_id: str) -> bool:
     """Ingest ``history`` (the agent's transcript through this turn) into the session's LCM engine. True when an
     engine took it."""

@@ -122,7 +122,7 @@ def test_goal_card_waits_for_every_work_card(board, capsys):
     assert [g["command"] for g in json.loads(card.goal_gates)] == PLAN["cards"][0]["gates"]
     headings = [line for line in card.body.splitlines() if line.startswith("## ")]
     assert headings == ["## Goal", "## To-dos", "## Outcome", "## Verification", "## Constraints",
-                        "## Boundaries", "## Stop when", "## Worker"]
+                        "## Boundaries", "## Stop when", "## Worker", "## Record"]
     assert f"{goal_id} — {PLAN['goal']['title']}" in card.body
     assert "- lina-system/lina#108\n- [ ] write the gate doc" in card.body
     assert tasks[ids["review"]].assignee == "rev"
@@ -143,6 +143,36 @@ def test_rerun_returns_the_same_ids(board, capsys):
     assert again["goal"]["id"] == first["goal"]["id"]
     assert [c["id"] for c in again["cards"]] == [c["id"] for c in first["cards"]]
     assert len(_tasks()) == 4 and len(_links()) == 5
+
+
+@pytest.mark.parametrize("size", ["S", "M", "L"])
+def test_work_card_metadata_reaches_body_when_supplied(board, capsys, size):
+    # Given optional planning metadata on a work card.
+    plan = copy.deepcopy(PLAN)
+    plan["cards"][0].update(size=size, kind="implementation")
+
+    # When the real plan command writes the board.
+    desc = _plan(capsys, _write(board, plan))
+
+    # Then the stored body retains the metadata as labeled fields.
+    body = _tasks()[desc["cards"][0]["id"]].body
+    fields = dict(line.split(": ", 1) for line in body.splitlines() if ": " in line)
+    assert fields["Size"] == size
+    assert fields["Kind"] == "implementation"
+
+
+@pytest.mark.parametrize("size", ["XL", "small", 3, True, ["S"]])
+def test_invalid_size_is_refused_before_board_write(board, capsys, size):
+    # Given a size outside the plan's three supported sizes.
+    plan = copy.deepcopy(PLAN)
+    plan["cards"][0]["size"] = size
+
+    # When the real plan command validates it.
+    rc, _out, err = _run(capsys, _write(board, plan))
+
+    # Then it names the size contract and leaves the board untouched.
+    assert rc != 0 and "size must be S, M or L" in err
+    assert _tasks() == {} and _links() == set()
 
 
 def _refused(**change):

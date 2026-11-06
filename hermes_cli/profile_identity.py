@@ -197,11 +197,11 @@ def text_moved_for_rename(profile_dir: Path, old_canon: str, new_canon: str):
     directory move fails, so a failed rename leaves the store as it was. The state.db follows after the move
     (``_move_message_text``)."""
     from hermes_state_store import move_agent_rows, return_agent_rows, state_db_has_text
-    moved = move_agent_rows(old_canon, new_canon) if state_db_has_text(profile_dir / "state.db") else []
+    moved = move_agent_rows(old_canon, new_canon) if state_db_has_text(profile_dir / "state.db") else None
     try:
         yield
     except BaseException:
-        if moved:
+        if moved is not None:  # even with no text row moved, the profile's LCM records did
             return_agent_rows(moved, old_canon, new_canon)
         raise
 
