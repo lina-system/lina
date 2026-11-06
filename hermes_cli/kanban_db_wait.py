@@ -6,8 +6,8 @@ verdict, ``kanban schedule --wait-for``) or ``block_task(kind="needs_input")``
 (``kanban block --wait-for``). The awaited event rides that transition's event
 payload as ``wait_for``:
 
-* ``{"kind": "card", "task_id": ...}``     -- another card reaches ``done``
-* ``{"kind": "review", "task_id": ...}``   -- a review card it asked for has its result (``done``)
+* ``{"kind": "card", "task_id": ...}``     -- another card is completed (``done``, or archived after it)
+* ``{"kind": "review", "task_id": ...}``   -- a review card it asked for has its result (completed the same way)
 * ``{"kind": "pr", "repo": ..., "number": ...}`` -- the PR's required checks have all finished
 * ``{"kind": "until", "at": <epoch>}``     -- a recorded time passes
 
@@ -201,8 +201,12 @@ def pr_checks_finished(wait_for: dict[str, Any], assignee: Optional[str]) -> boo
 
 
 def _card_done(conn: sqlite3.Connection, task_id: str) -> bool:
-    row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
-    return row is not None and row["status"] == "done"
+    """Done, or archived after it was completed: ``completed_at`` is set only by ``complete_task``
+    (a reopen clears it), so an archive of an unfinished card is not completion."""
+    row = conn.execute("SELECT status, completed_at FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None:
+        return False
+    return row["status"] == "done" or (row["status"] == "archived" and row["completed_at"] is not None)
 
 
 def wait_met(conn: sqlite3.Connection, wait_for: dict[str, Any], *, assignee: Optional[str],

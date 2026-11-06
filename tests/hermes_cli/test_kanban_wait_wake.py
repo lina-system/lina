@@ -334,6 +334,42 @@ def test_runtime_end_hands_off_without_counting_toward_max_retries(board, monkey
     assert sum("runtime limit" in c.body for c in kb.list_comments(board, tid)) == 2
 
 
+def test_a_targetless_kanban_wait_parks_on_the_default_time_wait(board, monkeypatch):
+    raw = '{"verdict": "wait", "reason": "waiting on the deploy"}'
+
+    def judge(goal, response, **kwargs):
+        verdict, reason, parse_failed, directive = goals._parse_judge_response(raw, **kwargs)
+        return verdict, reason, parse_failed, directive, False
+
+    monkeypatch.setattr(goals, "judge_goal", judge)
+    tid, run_id = _running(board)
+    turns: list[str] = []
+    before = int(time.time())
+
+    assert _loop(board, tid, run_id, turns)["outcome"] == "parked"
+    wait_for = _wait_mod().recorded_wait(board, tid, "scheduled")
+    assert turns == []
+    assert wait_for["kind"] == "until"
+    assert before + goals.GATE_WAIT_MAX_S <= wait_for["at"] <= int(time.time()) + goals.GATE_WAIT_MAX_S
+    assert goals._parse_judge_response(raw)[0] == "continue"
+
+
+@pytest.mark.parametrize("kind", ["card", "review"])
+@pytest.mark.parametrize("completed", [True, False])
+def test_an_archived_upstream_counts_only_when_it_was_completed(board, kind, completed):
+    upstream = kb.create_task(board, title="upstream")
+    tid, run_id = _running(board)
+    assert kb.schedule_task(board, tid, reason="park", wait_for={"kind": kind, "task_id": upstream},
+                            expected_run_id=run_id)
+    if completed:
+        assert kb.complete_task(board, upstream, result="landed") is True
+    assert kb.archive_task(board, upstream) is True
+
+    spawned: list[str] = []
+    assert _tick(board, spawned).woken == ([tid] if completed else [])
+    assert (kb.get_task(board, tid).status == "scheduled") is (not completed)
+
+
 def test_kanban_judge_reply_names_card_events_only_for_a_kanban_judge():
     raw = '{"verdict": "wait", "wait_on_pr": "https://github.com/o/r/pull/7", "reason": "ci"}'
 

@@ -873,6 +873,9 @@ def _parse_judge_response(raw: str, *, kanban: bool = False) -> tuple[str, str, 
     seconds = _first_int("wait_for_seconds", "seconds", "wait_seconds")
     if seconds is not None:
         return "wait", reason, False, {"seconds": seconds}
+    if kanban:
+        # A kanban card parks on a default time wait (kanban_db_wait.wait_for_from_directive).
+        return "wait", reason, False, {}
     return "continue", f"{reason} (wait verdict had no target — continuing)", False, None
 
 
