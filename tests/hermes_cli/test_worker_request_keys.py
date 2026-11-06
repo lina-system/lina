@@ -4,12 +4,13 @@ is refused, the hub's key records survive a hub restart, and the device keeps th
 and ``send``."""
 
 import json
+import os
 import re
 from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli.worker import device, hub as hub_mod, protocol, serve
+from hermes_cli.worker import device, hub as hub_mod, kanban_link, protocol, serve
 from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.transport import Reply
 from tests.hermes_cli import _worker_fakes as fakes
@@ -22,6 +23,10 @@ class HubStopped(BaseException):
 
 @pytest.fixture
 def lane(tmp_path, monkeypatch):
+    # submit and send read the card from this process and its ancestors: a test run inside a card session has one.
+    for name in [name for name in os.environ if name.startswith("HERMES_KANBAN_")]:
+        monkeypatch.delenv(name)
+    monkeypatch.setattr(kanban_link, "card_from_ancestors", lambda *a, **k: None)
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
@@ -112,13 +117,62 @@ def test_a_follow_up_whose_device_reply_was_lost_is_not_run_twice(lane):
         return transport
 
     lane.mp.setattr(hub_mod, "for_device", lossy)
-    with pytest.raises(HubError, match="follow-up failed"):
+    with pytest.raises(HubError, match="follow_up got no reply .* send it again with request key rk-lost"):
         lane.hub.send(task_id, "more", request_key="rk-lost")
     assert lane.hub.send(task_id, "more", request_key="rk-lost") == 0
     assert [(r["action"], r["run"]) for r in replies] == [("requested", 2), ("requested", 2)]
     assert replies[1].get("replayed") is True
     assert _requests(lane, task_id) == ["request.1", "request.2"]
     assert lane.hub.store.load(task_id)["runs"] == 2
+
+
+def test_an_answer_whose_reply_was_lost_is_not_applied_again_by_another_verb(lane):
+    """The device took the answer, the reply was lost and the question closed: the retry must not steer or start a
+    run with the same words; it returns the first answer."""
+    task_id = _submitted(lane)
+    serve.serve_once(lane.root)
+    task_dir = lane.root / "tasks" / task_id
+    (task_dir / "live.1.json").write_text(json.dumps({"state": "waiting_human"}), encoding="utf-8")
+    lane.mp.setattr(device, "alive", lambda task, run: True)
+    lane.mp.setattr(hub_mod, "ANSWER_CLOSE_WAIT_S", 0)
+    answers, steers = [], []
+
+    def answer(worker_root, tid, text):
+        answers.append(text)
+        (task_dir / "live.1.json").write_text(json.dumps({"state": "running"}), encoding="utf-8")
+        return {"action": "answer", "steps": 1, "still_pending": 0, "run": 1}
+
+    lane.mp.setattr(device, "answer", answer)
+    lane.mp.setattr(device, "steer", lambda worker_root, tid, text: steers.append(text) or {"action": "steered",
+                                                                                            "run": 1})
+    real, lost = hub_mod.for_device, []
+
+    def lossy(dev, root):
+        transport = real(dev, root)
+        call = transport.call
+
+        def dropped(verb, stdin=b"", timeout=120):
+            reply = call(verb, stdin, timeout)
+            if verb[0] == "answer" and not lost:
+                lost.append(reply)
+                return Reply(255, b"", "connection reset by peer")
+            return reply
+
+        transport.call = dropped
+        return transport
+
+    lane.mp.setattr(hub_mod, "for_device", lossy)
+    with pytest.raises(HubError):
+        lane.hub.send(task_id, "blue", request_key="rk-answer")
+    files = {p.name: p.read_bytes() for p in task_dir.iterdir()
+             if p.name.startswith(("prompt.", "request.", "steer."))}
+    lane.lines.clear()
+    assert lane.hub.send(task_id, "blue", request_key="rk-answer") == 0
+    assert (answers, steers) == (["blue"], [])
+    assert lane.lines == [f"{task_id} answered the question of run 1; the same run goes on."]
+    assert {p.name: p.read_bytes() for p in task_dir.iterdir()
+            if p.name.startswith(("prompt.", "request.", "steer."))} == files
+    assert lane.hub.store.load(task_id)["request_keys"]["rk-answer"]["action"] == "answer"
 
 
 def test_the_same_key_with_other_arguments_is_refused(lane):
@@ -224,6 +278,22 @@ def test_the_device_answer_and_send_with_one_key_act_once(tmp_path, monkeypatch,
     assert replies[0]["action"] == replies[1]["action"] and replies[1]["replayed"] is True
     device.dispatch(root, [verb, task_id, "rk-other"], b"green")
     assert acted == ["blue", "green"]
+
+
+def test_a_key_the_device_has_seen_returns_its_reply_whatever_the_verb(tmp_path, monkeypatch):
+    root, task_id, task_dir = _device_task(tmp_path)
+    acted: list[str] = []
+    monkeypatch.setattr(device, "answer", lambda worker_root, tid, text: acted.append(f"answer {text}") or {
+        "action": "answer", "steps": 1, "still_pending": 0, "run": 1})
+    monkeypatch.setattr(device, "steer", lambda worker_root, tid, text: acted.append(f"steer {text}") or {
+        "action": "steered", "run": 1})
+    first = json.loads(device.dispatch(root, ["answer", task_id, "rk-device"], b"blue")[1])
+    steered = json.loads(device.dispatch(root, ["send", task_id, "rk-device"], b"blue")[1])
+    payload = json.dumps({"prompt": "blue", "message": "blue", "access": "workspace-write", "request_key": "rk-device"})
+    followed = json.loads(device.dispatch(root, ["follow_up", task_id], payload.encode("utf-8"))[1])
+    assert acted == ["answer blue"]
+    assert steered == followed == {**first, "replayed": True}
+    assert sorted(p.name for p in task_dir.glob("request.*")) == ["request.1"]
 
 
 def test_the_cli_makes_a_key_when_none_is_given_and_takes_one_with_key(lane, capsys):

@@ -628,34 +628,54 @@ class Hub:
             raise HubError(f"{task_id}: permission_dialog")
         if requested != recorded:
             return self._next_run(job, message, access=requested, request_key=request_key)
-        keyed = [request_key] if request_key else []
         if human.get("open"):
-            reply = self._device_write(job, transport, ["answer", task_id, *keyed], message.encode("utf-8"),
-                                       request_key)
-            if (reply.get("reason") or "").split(":", 1)[0] == "permission_dialog":
-                raise HubError(f"{task_id}: permission_dialog")
-            run = reply.get("run") or remote.get("run") or job.get("runs", 1)
-            self.store.receipt(task_id, "answer", run=run, response={k: reply.get(k) for k in (
-                "action", "steps", "still_pending", "reason")})
-            if reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending"):
-                request_keys.sent(self.store, task_id, request_key, "answer", run)
-                self.out(NEXT_RUN_WORDS["answer"].format(id=task_id, run=run))
-                return 0
-            if not self._closed(job, int(run)):
-                raise HubError(f"{task_id} run {run} did not close on its question; send again in a moment")
-            message = "Answer to the earlier question: " + message
-        elif remote.get("alive"):
-            reply = self._device_write(job, transport, ["send", task_id, *keyed], message.encode("utf-8"), request_key)
-            self.store.receipt(task_id, "steer", run=reply.get("run"), response=reply)
-            if reply.get("action") in ("steered", "started"):
-                request_keys.sent(self.store, task_id, request_key, reply["action"], reply.get("run"))
-                self.out(NEXT_RUN_WORDS["steered"].format(id=task_id, run=reply.get("run")))
-                return 0
-            if reply.get("action") == "refused":
-                raise HubError(f"{task_id}: runner {job.get('runner')} has no channel into a running turn; send it "
-                               "again when this run ends")
-            if reply.get("action") == "error":
-                raise HubError(f"steer failed: {reply.get('reason')}")
+            reply = self._device_write(job, transport, "answer", {"message": message}, request_key)
+            return self._answered(job, reply, remote, message, request_key)
+        if remote.get("alive"):
+            reply = self._device_write(job, transport, "send", {"message": message}, request_key)
+            return self._steered(job, reply, message, request_key)
+        return self._next_run(job, message, request_key=request_key)
+
+    def resend(self, task_id: str, record: dict) -> int:
+        """A keyed send whose device reply was lost: the verb it chose, with the same arguments and key, never a new
+        route (the task's state may have moved on, and another verb would apply the words a second time)."""
+        job, verb, args, key = self.need(task_id), record["device_verb"], record["device_args"], record["key"]
+        reply = self._device_write(job, self.transport(job), verb, args, key, record.get("device_key"))
+        if verb == "answer":
+            return self._answered(job, reply, self.meta(job), args["message"], key)
+        if verb == "send":
+            return self._steered(job, reply, args["message"], key)
+        return self._followed(job, reply, args, args["access"], key)
+
+    def _answered(self, job: dict, reply: dict, remote: dict, message: str, request_key: str | None) -> int:
+        task_id = job["id"]
+        if (reply.get("reason") or "").split(":", 1)[0] == "permission_dialog":
+            raise HubError(f"{task_id}: permission_dialog")
+        run = reply.get("run") or remote.get("run") or job.get("runs", 1)
+        self.store.receipt(task_id, "answer", run=run, response={k: reply.get(k) for k in (
+            "action", "steps", "still_pending", "reason")})
+        if reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending"):
+            request_keys.sent(self.store, task_id, request_key, "answer", run)
+            self.out(NEXT_RUN_WORDS["answer"].format(id=task_id, run=run))
+            return 0
+        if not self._closed(job, int(run)):
+            raise HubError(f"{task_id} run {run} did not close on its question; send again in a moment")
+        # The device keeps the answer's reply under the request key: the next run is its own device request.
+        return self._next_run(job, "Answer to the earlier question: " + message, request_key=request_key,
+                              device_key=f"{request_key}#next" if request_key else None)
+
+    def _steered(self, job: dict, reply: dict, message: str, request_key: str | None) -> int:
+        task_id = job["id"]
+        self.store.receipt(task_id, "steer", run=reply.get("run"), response=reply)
+        if reply.get("action") in ("steered", "started"):
+            request_keys.sent(self.store, task_id, request_key, reply["action"], reply.get("run"))
+            self.out(NEXT_RUN_WORDS["steered"].format(id=task_id, run=reply.get("run")))
+            return 0
+        if reply.get("action") == "refused":
+            raise HubError(f"{task_id}: runner {job.get('runner')} has no channel into a running turn; send it "
+                           "again when this run ends")
+        if reply.get("action") == "error":
+            raise HubError(f"steer failed: {reply.get('reason')}")
         return self._next_run(job, message, request_key=request_key)
 
     def _closed(self, job: dict, run: int) -> bool:
@@ -676,14 +696,15 @@ class Hub:
                                                                                         "by send")
         return True
 
-    def _next_run(self, job: dict, message: str, *, access: str | None = None, request_key: str | None = None) -> int:
+    def _next_run(self, job: dict, message: str, *, access: str | None = None, request_key: str | None = None,
+                  device_key: str | None = None) -> int:
         """Ask the device for the next run; it serializes this against a run still waiting, starting or running."""
         payload = {"prompt": follow_up_prompt(job.get("mode") or "ulw", message), "message": message,
                    "access": job.get("access", "workspace-write") if access is None else access}
-        if request_key:
-            payload["request_key"] = request_key
-        reply = self._device_write(job, self.transport(job), ["follow_up", job["id"]],
-                                   json.dumps(payload).encode("utf-8"), request_key)
+        reply = self._device_write(job, self.transport(job), "follow_up", payload, request_key, device_key)
+        return self._followed(job, reply, payload, access, request_key)
+
+    def _followed(self, job: dict, reply: dict, payload: dict, access: str | None, request_key: str | None) -> int:
         action, run = reply.get("action"), reply.get("run")
         if action in ("busy", "refused"):
             raise HubError(f"{job['id']} run {run} is starting or running and cannot take an instruction now; send it "
@@ -705,9 +726,24 @@ class Hub:
         self.out(NEXT_RUN_WORDS[action].format(id=job["id"], run=run))
         return 0
 
-    def _device_write(self, job: dict, transport, verb: list[str], data: bytes, request_key: str | None) -> dict:
-        """A device verb that changes the task, carrying the request key when there is one."""
-        reply = transport.call(verb, data, timeout=180).json()
+    def _device_write(self, job: dict, transport, verb: str, args: dict, request_key: str | None,
+                      device_key: str | None = None) -> dict:
+        """A device verb that changes the task (``answer``, ``send``, ``follow_up``), carrying the device key (the
+        request key unless named). With a request key the verb and its arguments go on the key's record first, so a
+        retry sends that same verb again. A failed call with no reply is an error, never read as the device's word."""
+        key = (device_key or request_key) if request_key else None
+        if request_key:
+            request_keys.calling(self.store, request_key, verb, args, key)
+        if verb == "follow_up":
+            argv, data = ["follow_up", job["id"]], json.dumps({**args, **({"request_key": key} if key else {})})
+        else:
+            argv, data = [verb, job["id"], *([key] if key else [])], args["message"]
+        answer = transport.call(argv, data.encode("utf-8"), timeout=180)
+        reply = answer.json()
+        if answer.code != 0 and not reply:
+            raise HubError(f"{job['id']}: {verb} got no reply from {job.get('host')} ("
+                           f"{answer.err.strip()[-200:] or f'exit {answer.code}'}); send it again"
+                           + (f" with request key {request_key}" if request_key else ""))
         if request_key:
             request_keys.note_device(self.store, job, transport)
         return reply

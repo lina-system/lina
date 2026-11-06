@@ -6,8 +6,10 @@ refused and writes nothing.
 The hub keeps one record per key, ``hub/keys/<sha256(key)>.json`` (``{key, op, args_sha256, task, run, action,
 at}``), written under the key's lock before any device is called and filled in with the result after it. A hub that
 stopped in between left the task ID there: the replay returns that task (the tick finishes its placement) and never
-bids it out again. A device whose hello lists ``request_keys`` keeps the key of ``follow_up``, ``answer`` and ``send``
-too (``keys.json`` in the task folder), so a device verb sent again after its reply was lost changes nothing there.
+bids it out again. A send records the device verb it chose (``device_verb``, ``device_args``, ``device_key``) before
+calling it, and a retry sends that verb again rather than routing anew. A device whose hello lists ``request_keys``
+keeps the reply of ``follow_up``, ``answer`` and ``send`` under the key alone (``keys.json`` in the task folder), so
+any write verb sent again with a key it has seen changes nothing there.
 """
 
 from __future__ import annotations
@@ -121,8 +123,9 @@ def _schedule(hub, opts: dict, record: dict) -> int:
 
 
 def send(hub, task_id: str, message: str, card: dict | None, access: str | None, key: str) -> int:
-    """``Hub.send`` with a request key. A record without a result (the hub or the device link stopped during the
-    send) is sent again with the same key: a device that keeps keys answers with its first reply."""
+    """``Hub.send`` with a request key. A record whose device call has no result (the hub or the device link
+    stopped during it) sends that same device verb again with the same key (``Hub.resend``): a device that keeps keys
+    answers with its first reply."""
     digest = args_sha256({"task": task_id, "message": message, "access": access, "card": card})
     with _lock(hub, key):
         record = _first(hub, key, "send", digest)
@@ -132,9 +135,18 @@ def send(hub, task_id: str, message: str, card: dict | None, access: str | None,
             return 0
         if record is None:
             hub.need(task_id)
-            _new_record(hub, key, "send", digest, task_id)
+            record = _new_record(hub, key, "send", digest, task_id)
         with hub.store.lock(f"send-{task_id}"):
+            if record.get("device_verb"):
+                return hub.resend(task_id, record)
             return hub._send_locked(task_id, message, card, access=access, request_key=key)
+
+
+def calling(store, key: str, verb: str, args: dict, device_key: str) -> None:
+    """Record the device verb a send chose, its arguments and the key it carries, before the call."""
+    record = store.load_key(key)
+    record.update(device_verb=verb, device_args=args, device_key=device_key)
+    store.save_key(record)
 
 
 def sent(store, task_id: str, key: str | None, action: str, run) -> None:

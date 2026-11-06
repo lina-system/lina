@@ -59,13 +59,19 @@ are refused, naming the key and the first request, and nothing is written.
 
 The hub keeps `hub/keys/<sha256(key)>.json` (`key, op, args_sha256, task, run,
 action, at`), written under the key's lock before any device is called and
-filled in after; the job carries `request_key` and a `request_keys` map. A
-replay of a record left without a result never bids again: it returns the
-recorded task, or sends again with the same key. On the device `follow_up`
-(payload `request_key`), `answer` and `send` (an optional trailing argument)
-keep `{verb:key: reply}` in the task's `keys.json` under the task lock, so a
-replayed verb returns its stored reply and changes nothing; replies that
-changed nothing are not kept. `hello` lists `request_keys` in `capabilities`.
+filled in after; the job carries `request_key` and a `request_keys` map.
+Before a send calls the device, the record also gets `device_verb`,
+`device_args` and `device_key`. A replay of a record left without a result
+never bids or routes again: it returns the recorded task, or calls the
+recorded verb again with the recorded arguments and key, so a question that
+closed after a lost `answer` reply is not steered or followed up anew. A call
+that fails with no reply is an error that names the key to send again with.
+On the device `follow_up` (payload `request_key`), `answer` and `send` (an
+optional trailing argument) keep `{key: reply}` in the task's `keys.json`
+under the task lock, so any write verb with a key it has seen returns the
+stored reply and changes nothing; replies that changed nothing are not kept.
+The run an answer starts after its question closed uses device key `<k>#next`.
+`hello` lists `request_keys` in `capabilities`.
 A device without it ignores the key; the hub's record is the only guard there,
 and the hub writes one `device_without_keys` receipt per task. `lina work`
 uses `lina-work:<outbox row id>`, schedules `lina-schedule:<ID>:<due time>`.

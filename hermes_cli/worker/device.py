@@ -364,37 +364,36 @@ KEYS = "keys.json"
 UNCHANGED = ("error", "refuse", "refused", "busy", "not_live")  # replies after which the task is as it was
 
 
-def _kept(task: Task, verb: str, key: str | None, act) -> dict:
-    """*act* once per request key, under the task's lock: a key seen before returns the reply it got then and changes
-    nothing. A reply that left the task as it was is not kept, so the same key can try again."""
+def _kept(task: Task, key: str | None, act) -> dict:
+    """*act* once per request key, under the task's lock: a key seen before, by whichever write verb, returns the
+    reply it got then and changes nothing (a retry the hub routes to another verb must not apply the words twice).
+    A reply that left the task as it was is not kept, so the same key can try again."""
     if not key:
         return act()
     kept = read_json(task.path(KEYS), {}) or {}
-    name = f"{verb}:{key}"
-    if name in kept:
-        return {**kept[name], "replayed": True}
+    if key in kept:
+        return {**kept[key], "replayed": True}
     reply = act()
     if reply.get("action") not in UNCHANGED:
-        write_json(task.path(KEYS), {**kept, name: reply})
+        write_json(task.path(KEYS), {**kept, key: reply})
     return reply
 
 
-def keyed(worker_root: Path, verb: str, args: list[str], act) -> dict:
+def keyed(worker_root: Path, args: list[str], act) -> dict:
     """``answer`` and ``send``, whose optional second argument is the hub's request key."""
     key = args[1] if len(args) > 1 else None
     if not key:
         return act()
     task = task_of(worker_root, args[0])
     with task_lock(task):
-        return _kept(task, verb, key, act)
+        return _kept(task, key, act)
 
 
 def follow_up(worker_root: Path, task_id: str, payload: dict) -> dict:
     """``follow_up``; its payload's ``request_key`` is kept like the key of ``answer`` and ``send``."""
     task = task_of(worker_root, task_id)
     with task_lock(task):
-        return _kept(task, "follow_up", payload.get("request_key"),
-                     lambda: _follow_up_locked(worker_root, task, task_id, payload))
+        return _kept(task, payload.get("request_key"), lambda: _follow_up_locked(worker_root, task, task_id, payload))
 
 
 def _follow_up_locked(worker_root: Path, task: Task, task_id: str, payload: dict) -> dict:
