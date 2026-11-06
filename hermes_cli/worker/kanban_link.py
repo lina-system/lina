@@ -11,7 +11,8 @@ is only read here. Where it lives is ``worker.card_link``:
   ``kanban [--board <b>] comment | attach | show | unblock``. No LINA code opens a kanban database in this mode.
   The hub writes start/end comments and attaches ``report.md``. The card's model schedules itself
   (``kanban_schedule``), naming the runs it waits on in the reason or in ``workers``; ``lina worker wait`` also
-  records them. The hub wakes it (``unblock``) once on a run's end (``wake``). The end is three steps
+  records them. The hub wakes it (``unblock --judge-wake <run>``, bare ``unblock`` on a Hermes without that option)
+  once on a run's end (``wake``). The end is three steps
   (``END_STEPS``); the hub keeps the ones that went through and retries the rest.
 """
 
@@ -149,22 +150,50 @@ def on_hermes(card: dict | None) -> bool:
     return bool(card) and card.get("kind") == HERMES
 
 
+def judged_cards(card: dict) -> list[dict]:
+    """The ``cards`` of a run on a Hermes card, in the shape Hermes reads from a job record to refuse the card's
+    ``complete`` / ``request-review`` while the run it launched is unjudged."""
+    return [{"id": card["task"], "board": card.get("board") or "default"}]
+
+
 def hub_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items()
             if key not in _HUB_SIDE_DROP and not key.startswith("HERMES_KANBAN_")}
 
 
-def _kanban(command: list[str], card: dict, verb: str, *args: str) -> str:
-    argv = [*command, "kanban", *(["--board", card["board"]] if card.get("board") else []), verb, card["task"], *args]
+def _run(command: list[str], card: dict, verb: str, *args: str, options: tuple[str, ...] = ()) -> tuple[
+        str, subprocess.CompletedProcess]:
+    argv = [*command, "kanban", *(["--board", card["board"]] if card.get("board") else []), verb, *options,
+            card["task"], *args]
+    shown = shlex.join(argv[:len(command) + 5 + len(options)])
     try:
-        done = subprocess.run(argv, text=True, encoding="utf-8", errors="replace", capture_output=True,
-                              env=hub_env(), timeout=COMMAND_TIMEOUT_S, check=False)
+        return shown, subprocess.run(argv, text=True, encoding="utf-8", errors="replace", capture_output=True,
+                                     env=hub_env(), timeout=COMMAND_TIMEOUT_S, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        raise CardLinkError(f"{shlex.join(argv[:len(command) + 5])}: {exc}") from exc
+        raise CardLinkError(f"{shown}: {exc}") from exc
+
+
+def _checked(shown: str, done: subprocess.CompletedProcess) -> str:
     if done.returncode != 0:
-        raise CardLinkError(f"{shlex.join(argv[:len(command) + 5])} exited {done.returncode}: "
-                            f"{(done.stderr or done.stdout).strip()[-300:]}")
+        raise CardLinkError(f"{shown} exited {done.returncode}: {(done.stderr or done.stdout).strip()[-300:]}")
     return done.stdout
+
+
+def _kanban(command: list[str], card: dict, verb: str, *args: str) -> str:
+    return _checked(*_run(command, card, verb, *args))
+
+
+def unblock(command: list[str], card: dict, run_id: str) -> str:
+    """Unblock the card for judging *run_id*; the form used, ``judge_wake`` or ``bare``.
+
+    ``--judge-wake`` lands the card ``ready`` even behind an open parent, so it can judge the run. A Hermes without
+    that option (argparse: exit 2, "unrecognized arguments") gets the bare ``unblock`` once."""
+    shown, done = _run(command, card, "unblock", options=("--judge-wake", run_id))
+    if done.returncode == 2 and ("unrecognized arguments" in done.stderr or "--judge-wake" in done.stderr):
+        _kanban(command, card, "unblock")
+        return "bare"
+    _checked(shown, done)
+    return "judge_wake"
 
 
 def comment(command: list[str], card: dict, body: str) -> None:
@@ -197,17 +226,18 @@ def record_run(card: dict, job: dict, link: dict) -> None:
 END_STEPS = ("comment", "attach", "wake")
 
 
-def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link: dict, report: Path | None) -> bool:
-    """One step of a run's end on a Hermes card; raises ``CardLinkError`` when it did not go through. True when
-    ``wake`` woke the card."""
+def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link: dict,
+             report: Path | None) -> str | None:
+    """One step of a run's end on a Hermes card; raises ``CardLinkError`` when it did not go through. The unblock
+    form (``judge_wake`` / ``bare``) when ``wake`` woke the card."""
     if step == "comment":
         comment(link["command"], card, body)
     elif step == "attach" and report is not None and report.is_file():
         _kanban(link["command"], card, "attach", str(report), "--name", f"report-{job['id']}-{run}.md",
                 "--author", AUTHOR)
     elif step == "wake":
-        return wake(store, card, link, job["id"])
-    return False
+        return wake(store, card, link, job["id"], judged=job.get("group") or job["id"])
+    return None
 
 
 def record_end(card: dict, job: dict, state: str, run: str, body: str) -> None:
@@ -262,8 +292,9 @@ def _still_open(store, run_id: str) -> bool:
     return job is None or job.get("state") not in ended
 
 
-def wake(store, card: dict, link: dict, run_id: str) -> bool:
-    """Unblock the card once if it waits on *run_id*; True when it was woken.
+def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) -> str | None:
+    """Unblock the card once if it waits on *run_id*, for judging *judged* (the run, or its ``OG-`` batch); the
+    unblock form (``judge_wake`` / ``bare``) when it was woken, else None.
 
     It waits on the run when its last ``scheduled`` event names it: then it is woken after the last run that
     schedule names has ended, and never while one this hub does not know is named.
@@ -285,18 +316,19 @@ def wake(store, card: dict, link: dict, run_id: str) -> bool:
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named:
             if any(_still_open(store, other) for other in named if other != run_id):
-                return False
+                return None
             if woken.is_file() and woken.read_text(encoding="utf-8-sig").strip() == schedule:
-                return False  # this schedule was woken already, by the end of another run it names
+                return None  # this schedule was woken already, by the end of another run it names
         elif run_id not in parked and status not in ("running", "ready"):
-            return False
+            return None
         if status in ("running", "ready"):  # not parked yet: it may still schedule on this run
             raise CardLinkError(f"card {card['task']} is {status}; waiting for kanban_schedule")
+        form = None
         if status == "scheduled":
-            _kanban(link["command"], card, "unblock")
+            form = unblock(link["command"], card, judged or run_id)
             if schedule:
                 woken.parent.mkdir(parents=True, exist_ok=True)
                 woken.write_text(schedule + "\n", encoding="utf-8")
         with contextlib.suppress(FileNotFoundError):
             mark.unlink()
-        return status == "scheduled"
+        return form

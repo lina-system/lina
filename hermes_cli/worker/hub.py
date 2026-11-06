@@ -846,14 +846,15 @@ class Hub:
                 self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
                 return f"card {card['task']}: {step} failed, retried on the next report or tick"
             entry["done"].append(step)
-            entry["woke"] = entry.get("woke") or woke
+            if woke:
+                entry["woke"], entry["unblock"] = True, woke
             self.store.save(job)
         del job["card_pending"][marker]
         self.store.save(job)
         if entry.get("report"):
             shutil.rmtree(Path(entry["report"]).parent, ignore_errors=True)
         self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
-                           woke=bool(entry.get("woke")))
+                           woke=bool(entry.get("woke")), unblock=entry.get("unblock"))
         return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
 
     def _report_snapshot(self, job: dict, marker: str) -> str | None:
