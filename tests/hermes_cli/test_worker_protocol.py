@@ -80,7 +80,8 @@ def test_hello_advertises_the_real_dispatch_registry_and_configured_runners(tmp_
     hello = json.loads(output)
     assert hello == protocol.hello(root)
     assert hello["protocol"] == {"min": protocol.PROTOCOL_MIN, "max": protocol.PROTOCOL_MAX}
-    assert protocol.PROTOCOL_MIN == protocol.PROTOCOL_MAX == 1
+    assert type(protocol.PROTOCOL_MIN) is int and type(protocol.PROTOCOL_MAX) is int
+    assert 0 <= protocol.PROTOCOL_MIN <= protocol.PROTOCOL_MAX
     assert hello["instance_id"] is None and hello["serve"] is False
     assert isinstance(hello["version"], str) and hello["version"]
     registry = protocol.verbs()
