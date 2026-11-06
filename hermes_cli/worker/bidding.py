@@ -60,16 +60,28 @@ def choose(candidates: list[Device], probes: list[dict], *, repo: str | None, mi
     return (best[0] if best else None), rows
 
 
-def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str) -> list[dict]:
+def missing_access(descriptor: dict | None, access: str | None) -> str | None:
+    """Why a device whose hello lacks *access* must not take the run (an older node would ignore the mode)."""
+    if not access:
+        return None
+    modes = ((descriptor or {}).get("capabilities") or {}).get("access_modes") or []
+    return None if access in modes else f"does not enforce access {access} (update the node)"
+
+
+def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str,
+              access: str | None = None) -> list[dict]:
     from hermes_cli.worker.transport import for_device
 
     def ask(dev: Device) -> dict:
-        reply = for_device(dev, worker_root).call(["probe", repo or "", runner], timeout=60)
+        contact = for_device(dev, worker_root)
+        reply = contact.call(["probe", repo or "", runner], timeout=60)
         if reply.code != 0:
             if reply.json().get("protocol_error"):
                 return reply.json()
             return {"error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
-        return reply.json() or {"error": "no answer"}
+        found = reply.json() or {"error": "no answer"}
+        why = missing_access(contact.descriptor, access)
+        return {**found, "protocol_error": True, "reason": f"{dev.name} {why}"} if why else found
 
     if not candidates:
         return []
@@ -78,7 +90,7 @@ def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, 
 
 
 def bid(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str, min_free_gb: int = 5,
-        manual: bool = False) -> tuple[Device | None, list[dict]]:
+        manual: bool = False, access: str | None = None) -> tuple[Device | None, list[dict]]:
     pool = [dev for dev in candidates if manual or dev.auto]
-    return choose(pool, probe_all(pool, worker_root, repo=repo, runner=runner), repo=repo, min_free_gb=min_free_gb,
-                  manual=manual)
+    return choose(pool, probe_all(pool, worker_root, repo=repo, runner=runner, access=access), repo=repo,
+                  min_free_gb=min_free_gb, manual=manual)

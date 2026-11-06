@@ -22,9 +22,9 @@ def _config(base: Path, extra: str = "") -> None:
     (base / "config.yaml").write_text(textwrap.dedent("""\
         worker:
           runners:
-            dsh: {type: command, argv: [dsh]}
-            grok-cursor: {type: command, argv: [grok]}
-            agy: {type: command, argv: [agy]}
+            dsh: {type: command, argv: [dsh], access: workspace-write}
+            grok-cursor: {type: command, argv: [grok], access: workspace-write}
+            agy: {type: command, argv: [agy], access: workspace-write}
         """) + extra, encoding="utf-8")
 
 
@@ -109,7 +109,7 @@ def test_submit_hands_a_pick_to_its_runner_and_records_it_on_the_work_card(tmp_p
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
-    fakes.write_config(base, f"dsh: {json.dumps({'type': 'command', 'argv': argv})}\n")
+    fakes.write_config(base, f"dsh: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n")
     launcher = fakes.ThreadLauncher().install(monkeypatch)
     serve.serve_once(base / "worker")
     plan = {"decisions": [{"action": "open", "repo": REPO, "issue": 12, "runner": "dsh", "waiting": 0}]}

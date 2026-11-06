@@ -176,6 +176,12 @@ class Hub:
         if resume and transport.call(["meta", tid], timeout=90).json().get("requested"):
             self._started(job, dev)  # the request reached the device before the hub stopped
             return
+        # The last gate on every path (bid, fixed host, resume): a node that does not advertise the run's access mode
+        # would ignore it and run with its old, wider permissions.
+        if not transport.descriptor:
+            transport.refresh(timeout=90)
+        if why := bidding.missing_access(transport.descriptor, job.get("access")):
+            raise HubError(f"{dev.name} {why}")
         device_job = {key: job.get(key) for key in ("id", "mode", "access", "runner", "runner_spec", "model", "repo", "branch",
                                                      "next_notes_rule")}
         device_job["notify"] = self._notify_spec(dev)
@@ -213,10 +219,11 @@ class Hub:
         table = None
         if job.get("fixed_host"):
             dev, table = bidding.bid([self.device(job["fixed_host"])], self.worker_root, repo=job.get("repo"),
-                                     runner=job["runner"], manual=True,
+                                     runner=job["runner"], manual=True, access=job.get("access"),
                                      min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))
         else:
             dev, table = bidding.bid(self.devices(), self.worker_root, repo=job.get("repo"), runner=job["runner"],
+                                     access=job.get("access"),
                                      min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))
             self.store.log(f"{job['id']} bid: " + "; ".join(
                 f"{r['host']} {r.get('running', '-')}/{r['cap']} {r.get('why', 'ok')}" for r in table)
@@ -935,7 +942,10 @@ class Hub:
             self._human_notice_locked(job, run, now)
 
     def _human_notice_locked(self, job: dict, run: str, now: float) -> None:
-        human = self.transport(job).call(["human", job["id"]], timeout=90).json()
+        try:  # a permission dialog is answered by the runner, never a person; an unknown answer still notifies
+            human = self.transport(job).call(["human", job["id"]], timeout=90).json()
+        except (TransportError, HubError, OSError):
+            human = {}
         if human.get("permission"):
             job.pop("human_since", None)
             return
