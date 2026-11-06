@@ -22,6 +22,7 @@ memory up to ten minutes) is served with ``errors: [{source: ocx, message}]``.
 
 from __future__ import annotations
 
+import logging
 import threading
 import time
 from pathlib import Path
@@ -38,6 +39,7 @@ WARN = {"off": "{who} 모델이 꺼져 있습니다", "out_of_quota": "{who} 모
         "no_account": "{who} 모델을 쓸 계정이 없습니다"}
 _LAST: dict[str, tuple[float, list, list]] = {}
 _LOCK = threading.Lock()
+log = logging.getLogger(__name__)
 
 
 def forget() -> None:
@@ -59,6 +61,7 @@ def read(root: Path, now: float) -> tuple[list, list, list[dict]]:
         live = lina_models.run(LIVE, root)
         quota = lina_models.run(QUOTA, root)
     except OcxError as exc:
+        log.warning("work settings: OCX could not be read: %s", exc)
         with _LOCK:
             hit = _LAST.get(key)
         error = [{"source": "ocx", "message": str(exc)}]

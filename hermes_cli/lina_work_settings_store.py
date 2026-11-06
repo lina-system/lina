@@ -162,7 +162,9 @@ class Store:
         if not changes:
             return base, []
         from hermes_cli.config_backend import write_config_keys
-        write_config_keys(self.config, ws.updates(base.doc, new))
+        # Dotted sets/removals at or below a work-settings key only: nothing else in config.yaml is named, so nothing
+        # else can be replaced or dropped (no deletion by omission; a removal is always an explicit key).
+        write_config_keys(self.config, ws.settings_updates(base.doc, new))
         stored = ws.snapshot(ws.read_config(self.config))  # what landed is the revision, so the next read agrees
         rev = self._write(base, stored, by, ws.diff(base.doc, stored), **extra)
         return rev, rev.audit["changes"]

@@ -80,11 +80,20 @@ async def _write(request: Request, if_match: Optional[str], change: Callable[[ob
     try:
         rev, changes = await run_in_threadpool(change, body, by, if_match.removeprefix("W/"))
     except Stale as exc:
-        return _json({"detail": f"the settings changed since you read them (now {exc.current.id}): read again"},
-                     exc.current.etag, 412)
+        current = exc.current
+        return _json({"detail": f"the settings changed since you read them (now r{int(current.n)}): read again"},
+                     current.etag, 412)
     except SettingsError as exc:
-        return JSONResponse(status_code=422, content={"detail": str(exc), "errors": exc.errors})
+        return JSONResponse(status_code=422, content=_invalid(exc.errors))
     return _json({"ok": True, "revision": _revision(rev), "changes": changes}, rev.etag)
+
+
+def _invalid(errors: list[dict]) -> dict:
+    """The 422 body, made only of the validator's own ``{path, message}`` strings (never exception text)."""
+    rows = [{"path": str(e.get("path", "")), "message": str(e.get("message", ""))} for e in errors] or [
+        {"path": "", "message": "refused"}]
+    more = f" (+{len(rows) - 1} more)" if len(rows) > 1 else ""
+    return {"detail": f"{rows[0]['path']}: {rows[0]['message']}{more}", "errors": rows}
 
 
 def _patch(body, by: dict, expect: str):
@@ -128,7 +137,13 @@ async def settings_revision(rev: str):
 async def settings_models(if_none_match: Optional[str] = Header(default=None)):
     from hermes_cli.lina_work_settings_models import view
     from hermes_cli.web_routers.lina_board import _serve
-    return await _serve(lambda: {"version": _version(), "at": time.time(), **view(_base())}, if_none_match)
+    def read() -> dict:
+        data = view(_base())
+        # OCX's own error text stays in the CLI and the log; the API names only the source that failed
+        data["errors"] = [{"source": str(e.get("source")), "message": "could not be read; the list is the last good one"
+                           if data["models"] else "could not be read"} for e in data["errors"]]
+        return {"version": _version(), "at": time.time(), **data}
+    return await _serve(read, if_none_match)
 
 
 @router.post(f"{BASE}/route")

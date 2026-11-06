@@ -224,6 +224,63 @@ def test_two_writer_processes_never_make_the_same_revision(root):
     assert workers["w0"]["cap"] == 12 and workers["w1"]["cap"] == 12
 
 
+SHARED = textwrap.dedent("""\
+    devices:
+      probe_s: 30   # not a work setting
+    worker:
+      hub: {host: hub, lina: lina}   # how a device reaches the hub
+      min_free_gb: 7
+      settings:
+        owner: {login: owner@example.test, devices: [phone-a]}
+    """)
+KEPT = ["  probe_s: 30   # not a work setting", "  hub: {host: hub, lina: lina}   # how a device reaches the hub",
+        "  min_free_gb: 7", "  settings:", "    owner: {login: owner@example.test, devices: [phone-a]}"]
+
+
+def test_writes_touch_only_work_settings_keys_and_keep_the_rest_of_shared_sections(root):
+    (root / "config.yaml").write_text(SHARED, encoding="utf-8")
+    store = _store(root)
+    assert store.current().id == "r0"
+
+    def kept() -> None:
+        lines = (root / "config.yaml").read_text(encoding="utf-8").splitlines()
+        assert all(line in lines for line in KEPT), lines
+
+    store.apply(_set("worker.default_runner", "omo"), CLI)
+    store.apply(_set("devices.workers.here", {"host": "local"}), CLI)
+    kept()
+    assert _config(root)["worker"]["default_runner"] == "omo"
+    store.apply(_set("devices.workers", None), CLI)
+    store.apply(_set("worker.default_runner", None), CLI)  # the last work setting goes, the sections stay
+    kept()
+    assert "default_runner" not in _config(root)["worker"] and "workers" not in _config(root)["devices"]
+    store.rollback({**CLI, "kind": "rollback"})
+    kept()
+    assert _config(root)["worker"]["default_runner"] == "omo"
+    store.rollback({**CLI, "kind": "rollback"})
+    kept()
+    assert store.current().doc == {} and "default_runner" not in _config(root)["worker"]
+
+
+@pytest.mark.parametrize(("patch", "where"), [
+    ({"worker": "broken"}, "worker"),
+    ({"devices": []}, "devices"),
+    ({"devices": {"workers": []}}, "devices.workers"),
+    ({"worker": {"runners": "codex"}}, "worker.runners"),
+    ({"worker": {"runners": {"codex": "command"}}}, "worker.runners.codex"),
+    ({"worker": {"models": ["planner"]}}, "worker.models"),
+    ({"devices": {"workers": {"build-a": 2}}}, "devices.workers.build-a"),
+])
+def test_a_section_or_entry_that_is_not_a_mapping_is_refused_with_its_path(root, patch, where):
+    from hermes_cli.lina_work_settings import SettingsError, merge_patch
+    store = _store(root)
+    before = (root / "config.yaml").read_bytes()
+    with pytest.raises(SettingsError) as refused:
+        store.apply(lambda doc: merge_patch(doc, patch), CLI)
+    assert where in [error["path"] for error in refused.value.errors]
+    assert (root / "config.yaml").read_bytes() == before
+
+
 # ---------------------------------------------------------------- lina devices through the layer
 def test_lina_devices_add_and_remove_show_in_the_history(root):
     from hermes_cli import lina_devices

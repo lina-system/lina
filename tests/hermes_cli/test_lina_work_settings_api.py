@@ -170,6 +170,32 @@ def test_an_invalid_patch_is_422_with_paths_and_writes_nothing(env, client):
     assert (env.root / "config.yaml").read_bytes() == before
 
 
+@pytest.mark.parametrize("patch", [{"worker": "broken"}, {"devices": []}])
+def test_a_non_mapping_section_is_422_with_its_path_and_the_body_holds_only_validator_text(env, client, patch):
+    _, etag = _get(client)
+    before = (env.root / "config.yaml").read_bytes()
+    reply = client.patch(BASE, json=patch, headers={"If-Match": etag})
+    assert reply.status_code == 422
+    body = _valid("ValidationError", reply.json())
+    first = body["errors"][0]
+    assert first["path"] == next(iter(patch)) and body["detail"].startswith(f"{first['path']}: {first['message']}")
+    assert (env.root / "config.yaml").read_bytes() == before
+
+
+def test_an_unexpected_failure_is_a_500_without_its_message(env, monkeypatch):
+    from hermes_cli import lina_work_settings_store, web_server
+
+    def boom(*_args, **_kwargs):
+        raise RuntimeError("internal-detail-7f3a /srv/secret")
+    monkeypatch.setattr(lina_work_settings_store.Store, "apply", boom)
+    client = TestClient(web_server.app, raise_server_exceptions=False)
+    client.headers[web_server._SESSION_HEADER_NAME] = web_server._SESSION_TOKEN
+    _, etag = _get(client)
+    reply = client.patch(BASE, json={"devices": {"workers": {"here": {"cap": 2}}}}, headers={"If-Match": etag})
+    assert reply.status_code == 500
+    assert "internal-detail-7f3a" not in reply.text and "/srv/secret" not in reply.text
+
+
 def test_history_one_revision_and_two_rollbacks_return_to_the_start(env, client):
     start, etag = _get(client)
     etag = client.patch(BASE, json={"devices": {"workers": {"here": {"cap": 2}}}},

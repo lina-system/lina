@@ -94,7 +94,9 @@ def _when(at) -> str:
 
 
 def _history(args) -> int:
-    for line in _store().history(args.limit):
+    store = _store()
+    store.current()  # an outside edit becomes its revision before the history is shown
+    for line in store.history(args.limit):
         by = line.get("by") or {}
         paths = ", ".join(c["path"] for c in line.get("changes") or [])
         print(f"{line['rev']:<6} {_when(line.get('at'))}  {by.get('kind')} {by.get('principal') or '-'}@"

@@ -83,6 +83,16 @@ def test_set_show_history_diff_and_rollback(root, capsys):
     assert "model" not in _config(root)["worker"]["runners"]["dsh"]
 
 
+def test_history_catches_an_outside_edit_first(root, capsys):
+    assert _lina("settings", "set", "devices.workers.here", "{host: local, cap: 1}") == 0
+    path = root / "config.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace("cap: 1", "cap: 4"), encoding="utf-8")
+    capsys.readouterr()
+    assert _lina("settings", "history", "--limit", "1") == 0
+    line = capsys.readouterr().out.splitlines()[0]
+    assert " outside " in line and "devices.workers.here.cap" in line
+
+
 def test_a_refused_set_exits_2_with_one_line_and_writes_nothing(root, capsys):
     before = (root / "config.yaml").read_bytes() if (root / "config.yaml").exists() else None
     assert _lina("settings", "set", "devices.workers.laptop", "{role: person, cap: 1}") == 2

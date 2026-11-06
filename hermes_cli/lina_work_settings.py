@@ -173,6 +173,17 @@ def updates(old: Any, new: Any, prefix: str = "") -> dict[str, Any]:
     return out
 
 
+def settings_updates(old: dict, new: dict) -> dict[str, Any]:
+    """``updates`` for two settings documents, emitted only at or below a work-settings key (``KEYS``): never at
+    ``devices``, ``worker`` or another section the settings share with other keys, so a write never replaces or
+    removes ``worker.hub``, the limits or the write gate's own keys."""
+    out: dict[str, Any] = {}
+    for top, key in KEYS:
+        path = f"{top}.{key}"
+        out.update(updates(get_path(old, path), get_path(new, path), path))
+    return out
+
+
 def _leaves(value: Any, prefix: str, out: dict) -> dict:
     if isinstance(value, dict) and value:
         for key, item in value.items():
@@ -340,7 +351,8 @@ def runner_table(doc: dict) -> dict[str, dict]:
     """The runners as ``lina worker`` sees them: omo is there even when not listed."""
     configured = get_path(doc, "worker.runners")
     table = {"omo": {"type": "omo"}}
-    table.update({str(k): v for k, v in (configured or {}).items() if isinstance(v, dict)})
+    if isinstance(configured, dict):
+        table.update({str(k): v for k, v in configured.items() if isinstance(v, dict)})
     return table
 
 
@@ -358,7 +370,10 @@ def validate(doc: Any) -> list[dict]:
         if not allowed:
             errors.append({"path": str(top), "message": "unknown key (known: devices, worker)"})
             continue
-        for key in value if isinstance(value, dict) else []:
+        if not isinstance(value, dict):
+            errors.append({"path": str(top), "message": "must be a mapping"})
+            continue
+        for key in value:
             if key not in allowed:
                 errors.append({"path": f"{top}.{key}", "message": f"not a work setting (known: {', '.join(allowed)})"})
     _devices(doc, errors)
