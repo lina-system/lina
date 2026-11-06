@@ -244,6 +244,7 @@ def install_ocx(root: Path, pin: Pins, node: Path, version: str, integrity: str,
 def install(root: Path | None = None, *, fetch: Callable[[str, Path], None] = download, out=print) -> int:
     """``lina models install``: the pinned Node and OCX, ``current`` set when there is none yet."""
     root = root or lina_root()
+    refuse_external("lina models install", root)
     pin = pins()
     node = install_node(root, pin, fetch)
     out(f"✓ Node {pin.node_version}: {node}")
@@ -280,6 +281,33 @@ def configured_port(root: Path | None = None) -> int:
         return int(load_config_readonly()["ocx"]["port"])
     finally:
         reset_hermes_home_override(token)
+
+
+def external(root: Path | None = None) -> dict[str, str] | None:
+    """``ocx.external: {cli, data_dir}`` of the LINA root (lina#232): an OCX the operator runs outside LINA, which
+    LINA only reads (``lina_models``). None when unset; ``data_dir`` may be absent (the CLI's own default then)."""
+    from hermes_cli.config import load_config_readonly
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    token = set_hermes_home_override(root or lina_root())
+    try:
+        value = load_config_readonly()["ocx"].get("external")
+    finally:
+        reset_hermes_home_override(token)
+    if not value:
+        return None
+    if not isinstance(value, dict) or not isinstance(value.get("cli"), str) or not value["cli"].strip():
+        raise OcxError("ocx.external needs `cli: <path to ocx>` (and optionally `data_dir: <OCX data dir>`)")
+    out = {"cli": str(Path(value["cli"]).expanduser())}
+    if value.get("data_dir"):
+        out["data_dir"] = str(Path(str(value["data_dir"])).expanduser())
+    return out
+
+
+def refuse_external(what: str, root: Path | None = None) -> None:
+    """Raise before any write of LINA's OCX (install, upgrade, takeover, refresh, start/stop) while ``ocx.external``
+    is set: that OCX is the operator's, and LINA only reads it."""
+    if external(root) is not None:
+        raise OcxError(f"`{what}` is refused: ocx.external is set, so LINA only reads the OCX run outside it")
 
 
 @contextlib.contextmanager

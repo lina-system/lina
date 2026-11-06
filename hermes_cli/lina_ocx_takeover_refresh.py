@@ -41,6 +41,8 @@ def pooled_providers(accounts: dict) -> list[str]:
 def refresh(providers: list[str] | None = None, root: Path | None = None, out=print) -> int:
     from hermes_cli.lina_models import query
     root = root or lina_ocx.lina_root()
+    if lina_ocx.external(root) is not None:
+        return 0  # lina#232: the operator's OCX refreshes itself; the cron entry stays quiet (`lina models refresh` refuses)
     version = lina_ocx.current_version(root)
     if version is None:
         out("refresh: OCX is not installed. Run `lina models install`.")
