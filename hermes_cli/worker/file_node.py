@@ -267,7 +267,7 @@ class FileNodeTransport:
         name = self.device.name
         if task.path(f"slot_wait.{run}").exists():
             pool, cap = self._capacity(task)
-            if slots.held(self.mirror, exclude=task.id, pool=pool) >= cap:
+            if not slots.admit(self.mirror, task.id, run, cap, pool=pool):
                 return "new", {"dash": f"waiting for a free slot on {name}"}
         tries = read_json(task.path(f"launch.{run}.json"), {}) or {}
         if int(tries.get("tries") or 0) and time.time() - float(tries.get("at") or 0) < LAUNCH_GAP_S:
@@ -441,13 +441,13 @@ class FileNodeTransport:
         if run and not task.path(f"rc.{run}").exists():
             return _answer({"action": "busy", "run": run})
         pool, cap = self._capacity(task)
-        free = slots.reserve(self.mirror, task.id, cap, pool=pool).get("action") == "reserved"
         run += 1
         task.path(f"prompt.{run}").write_text(payload["prompt"], encoding="utf-8")
-        if not free:  # the device is full: meta starts it once a slot frees, like a start that failed
-            task.path(f"slot_wait.{run}").write_text(f"{time.time():.3f}\n", encoding="utf-8")
+        # Every next run queues first and takes a slot through slots.admit (one lock, longest waiting first); one
+        # that is not admitted now is started by meta once a slot frees, like a start that failed.
+        task.path(f"{slots.WAIT}.{run}").write_text(f"{time.time():.6f}\n", encoding="utf-8")
         task.path(f"request.{run}").write_text(json.dumps({"run": run, "at": time.time()}), encoding="utf-8")
-        if free:
+        if slots.admit(self.mirror, task.id, run, cap, pool=pool):
             self.launch(task.id, run)  # a failed start is retried by meta
         return _answer({"action": "requested", "run": run})
 

@@ -386,6 +386,65 @@ def test_a_follow_up_waits_for_a_free_slot_before_its_run_starts(tmp_path, monke
     assert (hub.store.load(second)["state"], hub.store.load(first)["state"]) == ("done", "done")
 
 
+def _two_waiting_behind_a_third(tmp_path, monkeypatch) -> tuple[dict, Hub, list[str], str]:
+    """cap 1: two runs ended, a third holds the slot, both ended runs get a follow-up, then the third ends."""
+    node = _node(tmp_path, monkeypatch, nas_extra=", named_cap: 1")
+    hub = Hub(node["root"], out=lambda line: None)
+    done = []
+    for _ in range(2):
+        done.append(_submit(node))
+        _ended(node, done[-1])
+        hub.tick()
+    (node["nas"] / "omo" / "scenario.json").write_text(json.dumps({"first": "running"}))
+    third = _submit(node)
+    session = node["nas"] / "omo" / "state.json"
+    wait_until(lambda: json.loads(session.read_text())["phase"] == "running", what="the third run's session")
+    for task_id in done:
+        hub.send(task_id, "one more file")
+    hub.tick()
+    session.write_text(json.dumps({**json.loads(session.read_text()), "phase": "done"}))
+    wait_until(lambda: (node["home"] / "lina-file-node" / third / "rc.1").exists(), what="the third run's end")
+    return node, hub, done, third
+
+
+def _started(node: dict, task_id: str) -> bool:
+    return (node["home"] / "lina-file-node" / task_id / "prompt.2").exists()
+
+
+def test_two_waiting_follow_ups_start_one_after_the_other_once_the_slot_frees(tmp_path, monkeypatch):
+    node, hub, (first, second), third = _two_waiting_behind_a_third(tmp_path, monkeypatch)
+    hub.tick()
+    hub.tick()
+    assert hub.store.load(third)["state"] == "done"
+    assert (_started(node, first), _started(node, second)) == (True, False)  # the one that waited longest
+    wait_until(lambda: (node["home"] / "lina-file-node" / first / "rc.2").exists(), what="the first follow-up's end")
+    hub.tick()
+    hub.tick()
+    wait_until(lambda: (node["home"] / "lina-file-node" / second / "rc.2").exists(), what="the second follow-up's end")
+    hub.tick()
+    assert [hub.store.load(t)["state"] for t in (first, second)] == ["done", "done"]
+
+
+def test_two_pending_checks_at_once_start_only_one_waiting_run(tmp_path, monkeypatch):
+    import threading
+    node, hub, waiting, third = _two_waiting_behind_a_third(tmp_path, monkeypatch)
+    hub.transport(hub.store.load(third)).call(["meta", third])  # the third run ends here: its slot is free
+    contact = hub.transport(hub.store.load(waiting[0])).raw
+    gate = threading.Barrier(4)
+
+    def pending(task_id: str) -> None:
+        gate.wait()
+        contact._pending(contact._task(task_id), 2)
+
+    threads = [threading.Thread(target=pending, args=(task_id,)) for task_id in waiting * 2]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    assert sum(_started(node, task_id) for task_id in waiting) == 1
+    assert contact.call(["probe", "", "omo"]).json()["named_running"] == 1
+
+
 def test_device_roles_and_file_node_keys_are_read_from_config():
     found = {dev.name: dev for dev in settings.devices(raw={
         "a": {"host": "a"}, "nas": {"host": "nas", "kind": "file", "deny": ["/v/backup", "@*"], "volumes": ["/v"]},

@@ -34,7 +34,8 @@ model path: one ssh session from the hub carries the node's 127.0.0.1:10100 to t
   so `meta` (the hub tick) starts a requested run that has no start mark, at most 5 times a minute apart, then ends
   it `failed` ("launch failed after n tries") and frees its slot. A run whose earlier start did happen (its answer
   was lost) is adopted from its pid file on the node, never started twice. A follow-up takes a slot like a first
-  submit; while the device is full it waits and starts from the same place once one frees.
+  submit; while the device is full it waits (holding no slot) and the one that waited longest takes the next free
+  slot, under the slot lock, so waiting follow-ups never block each other or overfill the device.
 - **The hub judges the end.** On `meta` (the hub tick, `--wait`, `status`) the hub asks whether the runner is still
   the recorded process (pid and start time, never a bare pid), and once `rc.<n>` is there copies `report.md`,
   `out/`, the session state and the input hashes back, decides `done`/`done_empty`/`review`/`stalled`/`failed`/
