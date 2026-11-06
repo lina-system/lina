@@ -1,11 +1,13 @@
 """The hub's records under ``$LINA_HOME/worker/hub/``: one job file per task (the current view), ``receipts.jsonl``
-(append-only history, never rewritten), fetched results in ``out/<agent>/<ID>/``, schedules, notices and locks.
+(append-only history, never rewritten), fetched results in ``out/<agent>/<ID>/``, request keys, schedules, notices
+and locks.
 """
 
 from __future__ import annotations
 
 import contextlib
 import fcntl  # windows-footgun: ok — the hub runs on POSIX (launchd/systemd) only
+import hashlib
 import json
 import os
 import tempfile
@@ -26,6 +28,7 @@ class Store:
         self.jobs, self.outs = self.root / "jobs", self.root / "out"
         self.schedules, self.notices, self.locks = self.root / "schedules", self.root / "notices", self.root / "locks"
         self.receipts, self.log_file = self.root / "receipts.jsonl", self.root / "worker.log"
+        self.keys = self.root / "keys"
 
     def log(self, message: str) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -56,16 +59,18 @@ class Store:
         return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else None
 
     def save(self, job: dict) -> None:
-        """Replace the job file atomically; each write has its own temp file, so overlapping saves never collide."""
-        self.jobs.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(prefix=f".{job['id']}.", suffix=".tmp", dir=self.jobs)
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as fh:
-                fh.write(json.dumps(job, ensure_ascii=False, indent=1))
-            os.replace(tmp, self.path(job["id"]))
-        except BaseException:
-            Path(tmp).unlink(missing_ok=True)
-            raise
+        _replace(self.path(job["id"]), job)
+
+    @staticmethod
+    def key_name(key: str) -> str:
+        return hashlib.sha256(key.encode("utf-8")).hexdigest()
+
+    def load_key(self, key: str) -> dict | None:
+        path = self.keys / f"{self.key_name(key)}.json"
+        return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else None
+
+    def save_key(self, record: dict) -> None:
+        _replace(self.keys / f"{self.key_name(record['key'])}.json", record)
 
     @contextlib.contextmanager
     def edit(self, task_id: str):
@@ -134,3 +139,16 @@ class Store:
             finally:
                 held.discard(path)
                 fcntl.flock(handle, fcntl.LOCK_UN)
+
+
+def _replace(path: Path, record: dict) -> None:
+    """Replace *path* atomically; each write has its own temp file, so overlapping saves never collide."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(prefix=f".{path.stem}.", suffix=".tmp", dir=path.parent)
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as fh:
+            fh.write(json.dumps(record, ensure_ascii=False, indent=1))
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
