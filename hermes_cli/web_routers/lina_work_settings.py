@@ -21,14 +21,13 @@ BASE = "/api/lina/work/settings"
 
 
 def _store():
-    from hermes_cli.lina_ocx import lina_root
     from hermes_cli.lina_work_settings_store import Store
-    return Store(lina_root())
+    return Store()  # the work settings' own root (lina_work_settings.base), the one the worker reads
 
 
 def _base():
-    from hermes_cli.lina_ocx import lina_root
-    return lina_root()
+    from hermes_cli.lina_work_settings import base
+    return base()
 
 
 async def _current():

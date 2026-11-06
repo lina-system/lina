@@ -80,7 +80,7 @@ def ocx(tmp_path, monkeypatch):
     base = tmp_path / "lina"
     base.mkdir()
     (base / "config.yaml").write_text(CONFIG, encoding="utf-8")
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: base)
+    monkeypatch.setenv("LINA_HOME", str(base))
     fake = FakeOcx()
     monkeypatch.setattr(lina_models, "run", fake.run)
     from hermes_cli import lina_work_settings_models

@@ -52,14 +52,15 @@ def _number(value) -> float | None:
     return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
 
 
-def read(root: Path, now: float) -> tuple[list, list, list[dict]]:
-    """``(live rows, accounts, errors)``: OCX now, else the last good read of the last ten minutes, else nothing."""
+def read(now: float) -> tuple[list, list, list[dict]]:
+    """``(live rows, accounts, errors)``: OCX now, else the last good read of the last ten minutes, else nothing.
+    OCX is found the way ``lina models`` finds it (its own root, or ``ocx.external``), not at the settings' root."""
     from hermes_cli import lina_models
     from hermes_cli.lina_ocx import OcxError
-    key = str(root)
+    key = "ocx"
     try:
-        live = lina_models.run(LIVE, root)
-        quota = lina_models.run(QUOTA, root)
+        live = lina_models.run(LIVE)
+        quota = lina_models.run(QUOTA)
     except OcxError as exc:
         log.warning("work settings: OCX could not be read: %s", exc)
         with _LOCK:
@@ -172,7 +173,7 @@ def view(base: Path | None = None, now: float | None = None) -> dict:
     from hermes_cli.lina_work_settings_store import Store
     now = time.time() if now is None else now
     store = Store(base)
-    rows, accounts, errors = read(store.config.parent, now)
+    rows, accounts, errors = read(now)
     doc = store.current().doc
     worker = ws.mapping(doc.get("worker"))  # a wrong type reads as absent here; writes refuse it with its path
     models = ws.mapping(worker.get("models"))

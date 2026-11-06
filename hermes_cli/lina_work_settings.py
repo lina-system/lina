@@ -66,10 +66,17 @@ class SettingsError(ValueError):
         super().__init__(f"{where}{first['message']}{more}")
 
 
-def config_path(base: Path | None = None) -> Path:
-    """The LINA root's ``config.yaml``, found the way ``lina worker`` finds its root."""
+def base() -> Path:
+    """THE LINA root of the work settings: the one ``lina worker`` reads its config from
+    (``hermes_cli.worker.settings.lina_home``, lina#227). The store, the CLI, the API router and ``lina devices``
+    all resolve it here, so every writer and the worker see the same ``config.yaml``."""
     from hermes_cli.worker import settings
-    return settings.root(base).parent / "config.yaml"
+    return settings.lina_home()
+
+
+def config_path(root: Path | None = None) -> Path:
+    """``config.yaml`` of *root*, by default of :func:`base`."""
+    return (root or base()) / "config.yaml"
 
 
 UNREADABLE = ("cannot be read, does not parse or its top level is not a mapping; fix it first (nothing was written, "

@@ -12,7 +12,7 @@ import textwrap
 import pytest
 
 import hermes_yaml
-from hermes_cli import lina_models, lina_ocx
+from hermes_cli import lina_models
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -51,7 +51,7 @@ def root(request, tmp_path, monkeypatch):
     base.mkdir()
     if request.param == "today":
         (base / "config.yaml").write_text(TODAY, encoding="utf-8")
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: base)
+    monkeypatch.setenv("LINA_HOME", str(base))
     monkeypatch.setattr(lina_models, "run", lambda args, root=None: {
         ("models", "live", "--json"): [{"provider": "openai", "id": "m-open", "disabled": False,
                                         "reasoningEfforts": ["high"], "defaultReasoningEffort": "high"}],

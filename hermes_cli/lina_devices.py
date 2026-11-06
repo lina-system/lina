@@ -30,8 +30,9 @@ class DevicesError(RuntimeError):
 
 
 def _base(base: Path | None) -> Path:
-    from hermes_cli.lina_ocx import lina_root
-    return base or lina_root()
+    """The worker's LINA root (lina#227): the device list read, bid over and written here is the one the worker reads."""
+    from hermes_cli.lina_work_settings import base as settings_base
+    return base or settings_base()
 
 
 def probe(dev: settings.Device, worker_root: Path, runner: str) -> dict:

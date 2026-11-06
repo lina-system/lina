@@ -147,7 +147,7 @@ class Stream:
         self.root = root
         self.receipts = Store(settings.root(root)).receipts
         from hermes_cli.lina_work_settings_store import Store as SettingsStore
-        self.audit = SettingsStore(root).audit
+        self.audit = SettingsStore().audit  # the work settings' own root, as their writers use (lina#256)
         self.work_db: Any = None
         self.kanban_db: sqlite3.Connection | None = None
         self.executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="lina-events")

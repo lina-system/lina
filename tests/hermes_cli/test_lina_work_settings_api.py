@@ -17,7 +17,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import hermes_yaml
-from hermes_cli import lina_models, lina_ocx
+from hermes_cli import lina_models
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -87,7 +87,7 @@ class Env:
         self.tool.chmod(self.tool.stat().st_mode | stat.S_IXUSR)
         self.whois({"testclient": (OWNER, "phone-a")})
         self.owner(True)
-        monkeypatch.setattr(lina_ocx, "lina_root", lambda: self.root)
+        monkeypatch.setenv("LINA_HOME", str(self.root))
         monkeypatch.setattr(lina_models, "run", self._ocx)
         from hermes_cli import lina_work_settings_gate, lina_work_settings_models
         lina_work_settings_gate.GATE.reset()
@@ -234,6 +234,30 @@ def test_credential_like_keys_written_by_hand_never_show_in_settings_or_history(
 def test_route_answers_400_for_labels_that_are_present_but_not_a_list(env, client, labels):
     assert client.post(f"{BASE}/route", json={"labels": labels}).status_code == 400
     assert client.post(f"{BASE}/route", json={}).status_code == 200  # absent labels: no labels
+
+
+def test_the_cli_the_api_and_lina_devices_write_the_one_config_the_worker_reads(env, client):
+    """LINA_HOME (the worker's root, lina#227) and lina_ocx.lina_root() differ here, as they can in production."""
+    import argparse
+
+    from hermes_cli import lina_devices, lina_ocx
+    from hermes_cli.subcommands.worker import build_worker_parser
+    from hermes_cli.worker import settings
+    assert lina_ocx.lina_root() != env.root and settings.lina_home() == env.root
+    parser = argparse.ArgumentParser(prog="lina")
+    build_worker_parser(parser.add_subparsers(dest="command"))
+    args = parser.parse_args(["worker", "settings", "set", "devices.workers.cli-dev", "{host: cli-dev}"])
+    with pytest.raises(SystemExit) as done:
+        args.func(args)
+    assert done.value.code == 0
+    _, etag = _get(client)
+    reply = client.patch(BASE, json={"devices": {"workers": {"api-dev": {"host": "api-dev"}}}}, headers={"If-Match": etag})
+    assert reply.status_code == 200, reply.text
+    lina_devices.add("add-dev", "add-dev", out=lambda _line: None)
+    names = {dev.name for dev in settings.devices()}
+    assert {"cli-dev", "api-dev", "add-dev"} <= names
+    assert settings.section().get("settings")  # the same file also holds the write gate's owner
+    assert not (lina_ocx.lina_root() / "config.yaml").exists()
 
 
 def test_an_unexpected_failure_is_a_500_without_its_message(env, monkeypatch):

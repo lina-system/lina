@@ -15,7 +15,6 @@ from pathlib import Path
 import pytest
 
 import hermes_yaml
-from hermes_cli import lina_ocx
 
 pytestmark = pytest.mark.platforms("posix")
 
@@ -54,7 +53,7 @@ def root(tmp_path, monkeypatch):
     base = tmp_path / "lina"
     base.mkdir()
     (base / "config.yaml").write_text(TODAY, encoding="utf-8")
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: base)
+    monkeypatch.setenv("LINA_HOME", str(base))
     return base
 
 
@@ -181,7 +180,7 @@ def test_an_outside_edit_is_caught_on_the_next_read_as_its_own_revision(root):
 def test_a_fresh_root_starts_empty_and_the_first_change_is_r1(tmp_path, monkeypatch):
     base = tmp_path / "fresh"
     base.mkdir()
-    monkeypatch.setattr(lina_ocx, "lina_root", lambda: base)
+    monkeypatch.setenv("LINA_HOME", str(base))
     store = _store(base)
     assert store.current().id == "r0" and store.current().doc == {}
     rev, _ = store.apply(_set("devices.workers.here", {"host": "local", "cap": 1}), CLI)
@@ -194,9 +193,7 @@ def test_a_fresh_root_starts_empty_and_the_first_change_is_r1(tmp_path, monkeypa
 WRITER = textwrap.dedent("""\
     import sys
     from pathlib import Path
-    from hermes_cli import lina_ocx
     base, me, n = Path(sys.argv[1]), sys.argv[2], int(sys.argv[3])
-    lina_ocx.lina_root = lambda: base
     from hermes_cli.lina_work_settings import set_path
     from hermes_cli.lina_work_settings_store import Store
     go = base / "go"
