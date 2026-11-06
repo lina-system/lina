@@ -393,6 +393,26 @@ paths:
           $ref: "#/components/responses/Refused"
         "503":
           $ref: "#/components/responses/Refused"
+  /status/checks:
+    get:
+      operationId: getStatusChecks
+      summary: >
+        The hub's own health checks (lina#233): one row per `<LINA root>/status/*.json` file, newest `at` first. A
+        missing folder is an empty list; a malformed file is one error row naming it, never a failed response.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The checks.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusChecks"
+        "304":
+          description: Unchanged since the ETag sent.
 components:
   responses:
     Refused:
@@ -1511,3 +1531,58 @@ components:
         detail:
           type: string
           description: One line.
+    StatusCheck:
+      type: object
+      additionalProperties: false
+      required: [name, ok, line, at, staleAfter, stale, state, file]
+      properties:
+        name:
+          type: string
+          description: The check's own name from its status file; a malformed file falls back to the file stem.
+        ok:
+          type: boolean
+          description: What the check last reported; always false for an error row.
+        line:
+          type: string
+          description: >
+            One line for the owner; for an error row, the file name, a colon and a short reason. Text that is not
+            valid UTF-8 (a lone surrogate) is malformed, so no served text fails to encode.
+        at:
+          type: number
+          description: >
+            Unix epoch seconds the check last wrote (a malformed file's mtime). A file whose `at` is not a finite
+            number is malformed, so no served `at` is ever NaN or Infinity.
+        staleAfter:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Seconds after `at` the check is stale; null for an error row. A negative value is malformed.
+        stale:
+          type: boolean
+          description: True when `now - at > staleAfter`.
+        state:
+          type: string
+          enum: [ok, failing, stale, error]
+          description: >
+            stale when `now - at > staleAfter` (wins over ok/failing); failing when `ok` is false; error for a
+            malformed file (bad JSON, a bad field, a non-finite or negative time, text that is not valid UTF-8).
+        file:
+          type: string
+          description: >
+            The status file's name under `<LINA root>/status/`; bytes that are not UTF-8 are served as U+FFFD.
+    StatusChecks:
+      type: object
+      additionalProperties: false
+      required: [version, at, checks]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        at:
+          type: number
+          description: When the folder was read, Unix epoch seconds.
+        checks:
+          type: array
+          description: Newest `at` first.
+          items:
+            $ref: "#/components/schemas/StatusCheck"
