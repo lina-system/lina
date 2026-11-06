@@ -180,6 +180,60 @@ def test_needs_input_block_with_an_event_returns_to_ready_but_a_question_waits_f
     assert kb.get_task(board, on_person).status == "blocked"
 
 
+def test_wait_recorded_while_classifying_a_breaker_block_wakes_the_card_once(board):
+    upstream = kb.create_task(board, title="upstream")   # unassigned: the dispatcher never spawns it
+    tid = kb.create_task(board, title="crashed twice", assignee="worker")
+    for _ in range(2):
+        assert kb.claim_task(board, tid) is not None
+        kbd._record_task_failure(board, tid, "worker crashed", outcome="crashed", release_claim=True, end_run=True)
+    assert (kb.get_task(board, tid).status, kb.get_task(board, tid).block_kind) == ("blocked", None)
+    args = argparse.Namespace(task_id=tid, ids=None, reason=["needs", "upstream"], kind=None,
+                              wait_for=f"card:{upstream}")
+    assert kanban_cli._cmd_block(args) == 0
+    assert kb.get_task(board, tid).block_kind == "needs_input"
+
+    spawned: list[str] = []
+    assert _tick(board, spawned).woken == []
+    assert kb.complete_task(board, upstream, result="landed") is True
+    first = _tick(board, spawned)
+    second = _tick(board, spawned)
+
+    assert (first.woken, second.woken) == ([tid], [])
+    assert _event_kinds(board, tid).count("unblocked") == 1
+
+
+@pytest.mark.parametrize("stop", ["wait", "budget"])
+def test_a_parked_reviewer_run_wakes_back_into_review(board, monkeypatch, stop):
+    upstream = kb.create_task(board, title="upstream")
+    tid, impl_run = _running(board, "reviewed card")
+    assert kb.request_review(board, tid, summary="implemented", expected_run_id=impl_run) is True
+    review_run = kb.claim_review_task(board, tid).current_run_id
+    replies = [("wait", "needs upstream", False, {"card": upstream}, False)] if stop == "wait" else []
+    _scripted_judge(monkeypatch, *replies)
+
+    res = _loop(board, tid, review_run, [], max_turns=1)
+    assert res["outcome"] == {"wait": "parked", "budget": "handoff_budget"}[stop]
+    kb.complete_task(board, upstream, result="landed")
+    assert _wait_mod().wake_waiting_tasks(board) == [tid]
+
+    assert kb.get_task(board, tid).status == "review"
+    reclaimed = kb.claim_review_task(board, tid)
+    assert reclaimed is not None
+    claimed = [e for e in kb.list_events(board, tid) if e.kind == "claimed"][-1]
+    assert claimed.payload["source_status"] == "review"
+    assert kb.request_changes(board, tid, reason="fix the edge case", expected_run_id=reclaimed.current_run_id)[0] is True
+
+
+def test_a_manual_schedule_without_a_wait_still_unblocks_to_ready(board):
+    tid, impl_run = _running(board, "reviewed card")
+    assert kb.request_review(board, tid, summary="implemented", expected_run_id=impl_run) is True
+    review_run = kb.claim_review_task(board, tid).current_run_id
+
+    assert kb.schedule_task(board, tid, reason="handed to a worker run", expected_run_id=review_run)
+    assert kb.unblock_task(board, tid) is True
+    assert kb.get_task(board, tid).status == "ready"
+
+
 def test_turn_budget_end_hands_off_and_returns_to_ready_without_a_failure(board, monkeypatch):
     tid, run_id = _running(board)
     with kb.write_txn(board):

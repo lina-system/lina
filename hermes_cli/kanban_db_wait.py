@@ -101,6 +101,39 @@ def describe_wait(wait_for: dict[str, Any]) -> str:
     return f"unknown wait {wait_for!r}"
 
 
+def needs_input_wait(kind: Optional[str], wait_for: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """The ``wait_for`` part of a block event: only a ``needs_input`` block is woken by an event."""
+    return {"wait_for": wait_for} if wait_for and kind == "needs_input" else {}
+
+
+def park_payload(conn: sqlite3.Connection, task_id: str, reason: Optional[str],
+                 wait_for: Optional[dict[str, Any]]) -> dict[str, Any]:
+    """The ``scheduled`` event payload. A wait parked from a reviewer run (claimed from
+    ``review``) records ``resume_status: review`` so the wake returns it to review, not to an
+    implementation run. A schedule without ``wait_for`` records only its reason, as before."""
+    from hermes_cli import kanban_db as kb
+
+    payload: dict[str, Any] = {"reason": reason}
+    if not wait_for:
+        return payload
+    payload["wait_for"] = wait_for
+    row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is not None and row["status"] == "running" and kb._retry_status_for_run(conn, task_id) == "review":
+        payload["resume_status"] = "review"
+    return payload
+
+
+def scheduled_resume_status(conn: sqlite3.Connection, task_id: str) -> str:
+    """Where ``unblock_task`` returns a ``scheduled`` card: ``review`` when the event that parked
+    it recorded a review phase (:func:`park_payload`), else ``ready``."""
+    row = conn.execute(
+        "SELECT payload FROM task_events WHERE task_id = ? AND kind = 'scheduled' "
+        "ORDER BY created_at DESC, id DESC LIMIT 1", (task_id,),
+    ).fetchone()
+    payload = json.loads(row["payload"]) if row is not None and row["payload"] else {}
+    return "review" if payload.get("resume_status") == "review" else "ready"
+
+
 def recorded_wait(conn: sqlite3.Connection, task_id: str, status: str) -> Optional[dict[str, Any]]:
     """The ``wait_for`` of the transition that parked the card in ``status``, or None."""
     expected = _PARKED_EVENT_FOR_STATUS.get(status)
@@ -177,6 +210,6 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
 
 
 __all__ = [
-    "DISPATCHER_ACTOR", "WAIT_KINDS", "describe_wait", "parse_wait_for", "pr_checks_finished",
-    "recorded_wait", "wait_for_from_directive", "wait_met", "wake_waiting_tasks",
+    "DISPATCHER_ACTOR", "WAIT_KINDS", "describe_wait", "needs_input_wait", "park_payload",
+    "parse_wait_for", "pr_checks_finished", "recorded_wait", "scheduled_resume_status", "wait_for_from_directive", "wait_met", "wake_waiting_tasks",
 ]

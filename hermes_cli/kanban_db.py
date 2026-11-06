@@ -30,6 +30,7 @@ from pathlib import Path
 from typing import Any, Iterable, Optional
 
 from hermes_cli.kanban_workflow import DEFAULT_STATUSES as VALID_STATUSES
+from hermes_cli.kanban_db_wait import needs_input_wait, park_payload, scheduled_resume_status
 from toolsets import get_toolset_names
 from utils import unlink_files_older_than
 
@@ -3043,7 +3044,7 @@ def block_task(
             if classified != 1:
                 return False
             _append_event(conn, task_id, "blocked", {
-                "kind": kind, "reason": reason, "classified_in_place": True,
+                "kind": kind, "reason": reason, "classified_in_place": True, **needs_input_wait(kind, wait_for),
             })
             return True
         source_status = _retry_status_for_run(conn, task_id) if cur_row["status"] == "running" else "ready"
@@ -3062,8 +3063,7 @@ def block_task(
         )
         if rekind_reason:
             payload.update(requested_kind=requested_kind, rekind_reason=rekind_reason)
-        if wait_for and kind == "needs_input":   # the event that wakes it (kanban_db_wait)
-            payload["wait_for"] = wait_for
+        payload.update(needs_input_wait(kind, wait_for))   # the event that wakes it (kanban_db_wait)
         sql = f"""
                 UPDATE tasks
                    SET status        = '{new_status}',
@@ -3442,7 +3442,7 @@ def unblock_task(conn: sqlite3.Connection, task_id: str, *,
         resume_status = (
             _resume_status_from_events(conn, task_id)
             if _task_status(conn, task_id) == "blocked"
-            else "ready"
+            else scheduled_resume_status(conn, task_id)
         )
         _reclaim_dangling_run(
             conn, task_id, statuses=("blocked", "scheduled"), now=now,
@@ -3742,9 +3742,9 @@ def schedule_task(
     conn: sqlite3.Connection, task_id: str, *, reason: Optional[str] = None,
     expected_run_id: Optional[int] = None, wait_for: Optional[dict] = None,
 ) -> bool:
-    """Park in ``scheduled`` (waiting on time or an event, not a human; not dispatchable)
-    until ``unblock_task`` re-gates it; a ``wait_for`` event (kanban_db_wait) wakes it by itself."""
+    """Park in ``scheduled`` (a time or event wait, not dispatchable) until ``unblock_task``; see kanban_db_wait."""
     with write_txn(conn):
+        payload = park_payload(conn, task_id, reason, wait_for)
         params: list[Any] = [task_id]
         sql = """
             UPDATE tasks
@@ -3763,7 +3763,7 @@ def schedule_task(
         run_id = _end_or_synthesize_run(
             conn, task_id, outcome="scheduled", status="scheduled", summary=reason, synthesize=bool(reason),
         )
-        _append_event(conn, task_id, "scheduled", {"reason": reason, **({"wait_for": wait_for} if wait_for else {})}, run_id=run_id)
+        _append_event(conn, task_id, "scheduled", payload, run_id=run_id)
         return True
 
 
