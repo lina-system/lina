@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING
 
 from hermes_cli.kanban_db_dispatch_report import describe_suppression
 from hermes_cli.kanban_db_handoff import hand_off_or_hold
-from hermes_cli.kanban_db_wait import DISPATCHER_ACTOR, wake_waiting_tasks
+from hermes_cli.kanban_db_wait import DISPATCHER_ACTOR, wake_waiting_tasks, woken_for_pr_work
 from hermes_cli.quiet_single_query import KANBAN_WORKER_EXIT_TRAILER
 
 if TYPE_CHECKING:
@@ -1612,13 +1612,13 @@ def check_respawn_guard(
     #    now work on THAT PR — a closer or the implementer finishing it, not a
     #    duplicate implementation (#111910). A crash/reclaim is not a handoff,
     #    so the worker that opened the PR is still not re-spawned against it.
-    pr_times = [t for t, c in _rows_since(conn, "task_comments", task_id, now - _RESPAWN_GUARD_PR_WINDOW,
-                                          cols=", body", unreadable=now)  # duplicate-PR risk: fail closed
-                if _RESPAWN_GUARD_PR_URL_RE.search(_kb._lossy_text(c["body"]) or "")]
-    if pr_times:
-        # Strictly after: a same-second tie stays guarded (fail closed).
-        if any(_is_handoff_event(e["kind"], e["payload"]) for _, e in _rows_since(
-                conn, "task_events", task_id, max(pr_times),
+    pr_rows = [(t, m[0]) for t, c in _rows_since(conn, "task_comments", task_id, now - _RESPAWN_GUARD_PR_WINDOW,
+                                                 cols=", body", unreadable=now)  # duplicate-PR risk: fail closed
+               for m in [_RESPAWN_GUARD_PR_URL_RE.search(_kb._lossy_text(c["body"]) or "")] if m]
+    if pr_times := [t for t, _ in pr_rows]:
+        # Strictly after: a same-second tie stays guarded (fail closed). A wait met on THAT PR resumes it.
+        if woken_for_pr_work(conn, task_id, max(pr_times), [u for _, u in pr_rows]) or any(_is_handoff_event(
+                e["kind"], e["payload"]) for _, e in _rows_since(conn, "task_events", task_id, max(pr_times),
                 "AND kind IN ('assigned', 'changes_requested', 'review_reopened')", cols=", kind, payload", strict=True)):
             return None
         return "active_pr"

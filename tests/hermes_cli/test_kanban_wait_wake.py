@@ -371,6 +371,71 @@ def test_planned_stop_limit_from_config_holds_a_card_after_repeated_budget_ends(
     assert len([c for c in kb.list_comments(board, tid) if c.body.startswith("Handoff:")]) == 2
 
 
+def _pr_comment(conn, tid, number):
+    kb.add_comment(conn, tid, "worker", f"Opened https://github.com/o/r/pull/{number}, waiting for CI")
+
+
+def test_a_card_woken_by_its_pr_wait_respawns_past_the_active_pr_guard(board):
+    tid, run_id = _running(board)
+    _pr_comment(board, tid, 7)
+    assert kb.schedule_task(board, tid, reason="ci", wait_for={"kind": "pr", "repo": "o/r", "number": 7},
+                            expected_run_id=run_id)
+    assert _wait_mod().wake_waiting_tasks(board, pr_checks_fn=lambda wait_for, assignee: True) == [tid]
+
+    spawned: list[str] = []
+    _tick(board, spawned)
+    assert spawned == [tid]
+
+    # Only the first spawn after the wake goes on with the PR; a later respawn is guarded again.
+    kbd._record_task_failure(board, tid, "worker crashed", outcome="crashed", release_claim=True, end_run=True)
+    assert kbd.check_respawn_guard(board, tid) == "active_pr"
+
+
+@pytest.mark.parametrize("case", ["manual_unblock", "other_pr"])
+def test_the_active_pr_guard_still_holds_a_card_not_woken_for_that_pr(board, case):
+    tid, run_id = _running(board)
+    _pr_comment(board, tid, 8)
+    if case == "other_pr":
+        assert kb.schedule_task(board, tid, reason="ci", wait_for={"kind": "pr", "repo": "o/r", "number": 7},
+                                expected_run_id=run_id)
+        assert _wait_mod().wake_waiting_tasks(board, pr_checks_fn=lambda wait_for, assignee: True) == [tid]
+    else:
+        assert kb.schedule_task(board, tid, reason="handed to a person", expected_run_id=run_id)
+        assert kb.unblock_task(board, tid, by="operator") is True
+
+    spawned: list[str] = []
+    _tick(board, spawned)
+    assert spawned == []
+    assert kbd.check_respawn_guard(board, tid) == "active_pr"
+
+
+@pytest.mark.parametrize("stops", [("iteration", "iteration"), ("runtime", "iteration")])
+def test_a_reviewer_card_at_the_planned_stop_streak_is_held_and_unblocks_to_review(board, monkeypatch, stops):
+    from hermes_cli.kanban_db_handoff import end_iteration_budget_run
+
+    (Path(os.environ["HERMES_HOME"]) / "config.yaml").write_text("kanban:\n  planned_stop_limit: 2\n", encoding="utf-8")
+    monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
+    tid = kb.create_task(board, title="reviewed card", assignee="worker", max_runtime_seconds=1)
+    impl_run = kb.claim_task(board, tid).current_run_id
+    assert kb.request_review(board, tid, summary="implemented", expected_run_id=impl_run) is True
+
+    for stop in stops:
+        assert kb.claim_review_task(board, tid) is not None
+        if stop == "iteration":
+            assert end_iteration_budget_run(board, tid, used=60, maximum=60) is True
+        else:
+            kbd._set_worker_pid(board, tid, os.getpid())
+            with kb.write_txn(board):
+                board.execute("UPDATE task_runs SET started_at = ? WHERE id = "
+                              "(SELECT current_run_id FROM tasks WHERE id = ?)", (int(time.time()) - 30, tid))
+            assert kbd.enforce_max_runtime(board, signal_fn=lambda pid, sig: None) == [tid]
+
+    held = kb.get_task(board, tid)
+    assert (held.status, held.block_kind, held.consecutive_failures) == ("blocked", "needs_input", 0)
+    assert kb.unblock_task(board, tid, by="operator") is True
+    assert kb.get_task(board, tid).status == "review"
+
+
 def test_runtime_end_hands_off_without_counting_toward_max_retries(board, monkeypatch):
     monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
     tid = kb.create_task(board, title="long job", assignee="worker", max_runtime_seconds=1, max_retries=1)

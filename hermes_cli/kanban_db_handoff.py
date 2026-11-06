@@ -89,7 +89,39 @@ def hand_off_or_hold(conn: sqlite3.Connection, task_id: str, *, run_id: Optional
     streak = consecutive_planned_stops(conn, task_id)
     if streak < planned_stop_limit():
         return False
+    if back_to == "review":
+        return _hold_review_card(conn, task_id, _streak_reason(streak))
     return kb.block_task(conn, task_id, reason=_streak_reason(streak), kind="needs_input")
+
+
+def _hold_review_card(conn: sqlite3.Connection, task_id: str, reason: str) -> bool:
+    """``review`` -> ``blocked`` (``needs_input``) for a reviewer card at the streak.
+
+    ``block_task`` only moves running/ready cards, so a reviewer run that stopped as planned would
+    loop forever in review. The ``blocked`` event records ``resume_status: review``, which
+    ``unblock_task`` reads (``_resume_status_from_events``), so a person's unblock returns the card
+    to review, not to an implementation run. Like ``block_task`` it closes the hold with a
+    ``blocked`` run of its own, so the streak starts over after the unblock.
+    """
+    from hermes_cli import kanban_db as kb
+
+    with kb.write_txn(conn):
+        held = conn.execute(
+            "UPDATE tasks SET status = 'blocked', block_kind = 'needs_input', block_recurrences = "
+            "CASE WHEN block_kind = 'needs_input' THEN block_recurrences + 1 ELSE 1 END "
+            "WHERE id = ? AND status = 'review' AND claim_lock IS NULL", (task_id,),
+        ).rowcount
+        if held != 1:
+            return False
+        run_id = kb._end_or_synthesize_run(conn, task_id, outcome="blocked", status="blocked",
+                                          summary=reason, synthesize=True)
+        kb._append_event(conn, task_id, "blocked", {
+            "reason": reason, "kind": "needs_input", "source_status": "review", "resume_status": "review",
+        }, run_id=run_id)
+        task = kb.get_task(conn, task_id)
+    kb._fire_task_hook("kanban_task_blocked", task, task_id, run_id, reason=reason)
+    kb.record_terminal_outcome(conn, task_id)
+    return True
 
 
 def park_turn_budget_end(conn: sqlite3.Connection, task_id: str, *, run_id: Optional[int], reason: str,

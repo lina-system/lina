@@ -169,6 +169,39 @@ def _still_parked_by(conn: sqlite3.Connection, task_id: str, park_event_id: int)
     return parked is not None and parked[0] == park_event_id
 
 
+def _pr_ref(url: str) -> Optional[tuple[str, int]]:
+    match = re.search(r"github\.com/([^/\s]+/[^/\s]+)/pull/(\d+)", url or "", re.IGNORECASE)
+    return (match[1].lower(), int(match[2])) if match else None
+
+
+def woken_for_pr_work(conn: sqlite3.Connection, task_id: str, since: int, pr_urls: list[str]) -> bool:
+    """The respawn guard's ``active_pr`` exception for a card the dispatcher woke after its newest
+    PR comment (``since``): the next spawn goes on with that PR, it is no duplicate.
+
+    Only the first spawn after the wake passes (a later ``claimed`` closes it), and a ``pr`` wait
+    passes only when the PR the card waited for is one of the commented ``pr_urls``.
+    """
+    wake = conn.execute(
+        "SELECT id, payload FROM task_events WHERE task_id = ? AND kind = 'unblocked' AND created_at >= ? "
+        "ORDER BY id DESC LIMIT 1", (task_id, since),
+    ).fetchone()
+    payload = json.loads(wake["payload"]) if wake is not None and wake["payload"] else {}
+    if payload.get("by") != DISPATCHER_ACTOR or not str(payload.get("reason") or "").startswith("wait met: "):
+        return False
+    if conn.execute("SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'claimed' AND id > ?",
+                    (task_id, wake["id"])).fetchone():
+        return False
+    park = conn.execute(
+        "SELECT payload FROM task_events WHERE task_id = ? AND kind IN ('scheduled', 'blocked') AND id < ? "
+        "ORDER BY id DESC LIMIT 1", (task_id, wake["id"]),
+    ).fetchone()
+    wait_for = (json.loads(park["payload"]) if park is not None and park["payload"] else {}).get("wait_for") or {}
+    if wait_for.get("kind") != "pr":
+        return True
+    waited = (str(wait_for.get("repo") or "").lower(), int(wait_for.get("number") or 0))
+    return waited in {_pr_ref(url) for url in pr_urls}
+
+
 def dispatcher_wake(conn: sqlite3.Connection, task_id: str, park_event_id: int, wait_for: dict[str, Any]) -> bool:
     """Wake one parked card for its met event: the dispatcher's own unblock.
 
@@ -259,5 +292,6 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
 
 __all__ = [
     "DISPATCHER_ACTOR", "WAIT_KINDS", "describe_wait", "dispatcher_wake", "needs_input_wait", "park_payload",
-    "parse_wait_for", "pr_checks_finished", "recorded_wait", "scheduled_resume_status", "wait_for_from_directive", "wait_met", "wake_waiting_tasks",
+    "parse_wait_for", "pr_checks_finished", "recorded_wait", "scheduled_resume_status", "wait_for_from_directive",
+    "wait_met", "wake_waiting_tasks", "woken_for_pr_work",
 ]
