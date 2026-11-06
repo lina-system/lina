@@ -50,7 +50,7 @@ open(os.environ["FAKE_CHAT_LOG"], "a").write(sys.stdin.read())
 
 def _config(base: Path, command: list[str], runner: list[str] | None = None, devices: str = "", extra: str = "") -> None:
     base.mkdir(parents=True, exist_ok=True)
-    runners = f"    fakecli: {json.dumps({'type': 'command', 'argv': runner})}\n" if runner else "    {}\n"
+    runners = f"    fakecli: {json.dumps({'type': 'command', 'argv': runner, 'access': 'workspace-write'})}\n" if runner else "    {}\n"
     (base / "config.yaml").write_text(
         "devices:\n  workers:\n" + textwrap.indent(devices or "{}", "    ") + "\n"
         "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n"

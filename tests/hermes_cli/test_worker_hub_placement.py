@@ -22,7 +22,7 @@ def lane(tmp_path, monkeypatch):
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
-    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n")
+    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n")
     launched: list[tuple[str, int]] = []
     monkeypatch.setattr(device, "launch", lambda root, task, run: launched.append((task.id, run)))
     root = base / "worker"
