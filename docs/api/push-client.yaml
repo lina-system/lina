@@ -197,7 +197,8 @@ components:
           type: string
           description: >
             The item's key, used as the notification tag: `ask:<item>:<at>` (the bell notice key),
-            `reply:<item>:<comment>`, `blocked:<card>`, `question:<card>:<comment>`.
+            `reply:<item>:<comment>`, `blocked:<card>`, `question:<card>:<comment>`. An `ask` or `reply` key
+            is read-marked through `POST /api/lina/notices/read` (`keys`), which closes it on every device.
         kind:
           type: string
           enum: [ask, reply, blocked, question]

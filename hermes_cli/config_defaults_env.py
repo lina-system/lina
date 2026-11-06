@@ -115,3 +115,12 @@ def _base_url(name, prompt_name=None):
     """Provider ``*_BASE_URL`` override entry (advanced, not a secret)."""
     prompt = f"{prompt_name or name} base URL (leave empty for default)"
     return _prov(f"{name} base URL override", prompt, None, password=False)
+
+
+# LINA's own entries; config_defaults merges them into OPTIONAL_ENV_VARS (kept here so that file stays at its size cap).
+LINA_ENV_VARS = {
+    "LINA_PUSH_VAPID_PRIVATE_KEY": _setting(
+        "VAPID private key for Web Push to the owner's devices (lina#244): base64url of the raw 32-byte "
+        "P-256 private key, rendered by the hub's operator; without it push is off.",
+        "LINA Web Push VAPID private key", None, password=True, advanced=True),
+}

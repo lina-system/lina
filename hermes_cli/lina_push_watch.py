@@ -41,6 +41,7 @@ from utils import atomic_json_write, read_json_or_empty
 
 TICK_SECONDS = 1.0
 SWEEP_SECONDS = 300.0
+STOP_SECONDS = 5.0  # how long the web server's shutdown waits; a slower send finishes on its own, lock held
 BACKOFF_SECONDS = (30, 60, 120, 300, 600, 1800)
 TEXT_LIMIT = 300
 GONE = (404, 410)
@@ -109,6 +110,11 @@ def _replies(root: Path, read: set[str]) -> list[dict]:
     return out
 
 
+def reply_keys(root: Path) -> set[str]:
+    """The ``reply`` items open now, read-marked or not: the keys ``mark_read`` accepts beside the bell's notices."""
+    return {i["tag"] for i in _replies(root, set())}
+
+
 def _cards() -> list[dict]:
     from plugins.kanban.dashboard.work_api import get_inbox
     inbox = get_inbox(board=None)
@@ -162,6 +168,7 @@ class Sender:
                  clock: Callable[[], float] = time.time):
         self.root, self.vapid, self.post, self.clock = root, vapid, post, clock
         self.retry_at = 0.0
+        self.stop = threading.Event()
 
     def sweep(self) -> None:
         now = self.clock()
@@ -192,6 +199,8 @@ class Sender:
         if dev["retryAt"] > now:
             return
         for tag, message in list(dev["pending"].items()):
+            if self.stop.is_set():  # stopping: what is left stays owed in the state for the next start
+                return
             try:
                 status = lina_push.send(self.vapid, sub, message, self.post, now)
             except (OSError, ValueError, httpx.HTTPError) as exc:  # a bad stored key or the network: retried
@@ -218,6 +227,7 @@ class Sender:
         """The thread body: a sweep now, then one on every change of the three stores, every SWEEP_SECONDS and when
         a backoff runs out."""
         from hermes_cli.lina_board_events import Stream
+        self.stop = stop
         stream = Stream(self.root)
         try:
             cursor = stream.tail()
@@ -282,15 +292,24 @@ def start(root: Path | None = None) -> Callable[[], None]:
     folder.chmod(0o700)
     holder = _hold(folder / "sender.lock")
     if holder is None:
-        log.info("push: another process sends for %s", root)
+        log.info("push: another sender holds %s", root)
         return lambda: None
     from agent.memory_provider import spawn_context_thread
-    stop = threading.Event()
-    thread = spawn_context_thread(Sender(root, vapid).run, args=(stop,), name="lina-push")
-    thread.start()
+    stop, sender = threading.Event(), Sender(root, vapid)
+
+    def run() -> None:
+        try:
+            sender.run(stop)
+        finally:  # the lock leaves with the thread, never before it: a send still in flight keeps it
+            _release(holder)
+    thread = spawn_context_thread(run, name="lina-push")
+    try:
+        thread.start()
+    except BaseException:
+        _release(holder)
+        raise
 
     def halt() -> None:
         stop.set()
-        thread.join(timeout=5)
-        _release(holder)
+        thread.join(timeout=STOP_SECONDS)
     return halt

@@ -166,6 +166,29 @@ def test_a_changed_item_replaces_its_tag_and_an_item_that_leaves_is_closed_on_ev
                                                       {"type": "close", "tag": "reply:G1:c1"}]
 
 
+def test_marking_a_reply_read_closes_it_on_every_device_and_the_mark_survives_later_marks(work, device):
+    from hermes_cli.lina_board_write import Refused, current_notices, mark_read
+    tablet = Device("tablet")
+    lina_push.save_subscription(work.root, tablet.subscription())
+    sender = _sender(work, PushService(device, tablet))
+    sender.sweep()
+    _scene(work)
+    sender.sweep()
+    ask = next(m["tag"] for m in device.got if m["kind"] == "ask")
+    device.got.clear()
+    tablet.got.clear()
+    marked = mark_read({"keys": ["reply:T2:c1"]}, now=NOW)
+    assert marked["unread"] == len(current_notices(work.root, NOW))  # the bell's count is about its own notices
+    sender.sweep()
+    assert device.got == tablet.got == [{"v": 1, "type": "close", "tag": "reply:T2:c1"}]
+    device.got.clear()
+    mark_read({"keys": [ask]}, now=NOW)  # pruning to current keys keeps the reply's mark
+    sender.sweep()
+    assert device.got == [{"v": 1, "type": "close", "tag": ask}]
+    with pytest.raises(Refused, match="not a current notice"):
+        mark_read({"keys": ["reply:T9:c1"]}, now=NOW)
+
+
 def test_a_restart_neither_repeats_nor_misses_and_the_first_start_does_not_burst(work, device):
     _scene(work)
     service = PushService(device)
@@ -312,6 +335,42 @@ async def test_a_stop_that_raises_never_reaches_the_lifespan_teardown(work, monk
             pass
     pushes = [r for r in caplog.records if r.getMessage().startswith("push:")]
     assert [r.getMessage() for r in pushes] == ["push: the sender did not stop cleanly"] and pushes[0].exc_info
+
+
+def test_a_stop_during_a_slow_send_keeps_the_lock_until_the_thread_ends(work, device, monkeypatch):
+    _sender(work, PushService(device)).sweep()  # seeded
+    work.ok("wait", "T1", "--decide", "색을 고를까?")
+    work.ok("wait", "T2", "--decide", "로그 보관을 늘릴까?")  # two messages owed to the device
+    service = PushService(device)
+    sending, release = threading.Event(), threading.Event()
+
+    class Slow(Sender):
+        def __init__(self, root, vapid):
+            super().__init__(root, vapid, self.slow_post)
+
+        def slow_post(self, url, headers, body):
+            sending.set()
+            assert release.wait(30)
+            return service.post(url, headers, body)
+    monkeypatch.setattr(lina_push_watch, "Sender", Slow)
+    monkeypatch.setattr(lina_push_watch, "STOP_SECONDS", 0.2)
+    lock = work.root / "push" / "sender.lock"
+    halt = lina_push_watch.start(work.root)
+    thread = next(t for t in threading.enumerate() if t.name == "lina-push")
+    try:
+        assert sending.wait(30)
+        halt()  # the web server's shutdown gives up waiting; the send is still in flight
+        assert thread.is_alive() and lina_push_watch._hold(lock) is None
+    finally:
+        release.set()
+    thread.join(30)
+    assert not thread.is_alive()
+    fd = lina_push_watch._hold(lock)
+    assert fd is not None
+    lina_push_watch._release(fd)
+    assert len(device.got) == 1  # the stop was seen before the second message
+    state = json.loads((work.root / "push" / "state.json").read_text(encoding="utf-8-sig"))
+    assert len(state["devices"][lina_push.sub_id(device.endpoint)]["pending"]) == 1  # owed to the next start
 
 
 def test_without_a_key_the_sender_does_not_start_and_one_warning_is_logged(work, monkeypatch, caplog):

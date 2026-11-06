@@ -2701,7 +2701,7 @@ DEFAULT_CONFIG = {
 }
 
 
-from hermes_cli.config_defaults_env import OptionalEnvVars, _base_url, _env, _msg, _prov, _setting, _skill, _tool
+from hermes_cli.config_defaults_env import LINA_ENV_VARS, OptionalEnvVars, _base_url, _env, _msg, _prov, _setting, _skill, _tool
 
 
 # Optional environment variables that enhance functionality. Feeds the dashboard keys page and setup
@@ -3107,4 +3107,4 @@ OPTIONAL_ENV_VARS = OptionalEnvVars({
     "HERMES_EPHEMERAL_SYSTEM_PROMPT": _setting(
         "Ephemeral system prompt injected at API-call time (never persisted to sessions)",
         "Ephemeral system prompt", None),
-})
+} | LINA_ENV_VARS)

@@ -11,6 +11,7 @@ from cryptography.hazmat.primitives.asymmetric import ec
 from fastapi.testclient import TestClient
 
 from hermes_cli import lina_ocx, lina_push
+from hermes_cli.config import OPTIONAL_ENV_VARS
 from hermes_cli.lina_push import b64u, unb64u
 from tests.hermes_cli._lina_push_fakes import Device, PushService, throwaway_key, valid
 from tests.hermes_cli._work_env import NOW, WorkEnv
@@ -23,7 +24,6 @@ def work(tmp_path, monkeypatch):
     env = WorkEnv(tmp_path, monkeypatch)
     monkeypatch.setattr(lina_ocx, "lina_root", lambda: env.root)
     monkeypatch.delenv(lina_push.KEY_ENV, raising=False)
-    monkeypatch.delenv(lina_push.SUBJECT_ENV, raising=False)
     return env
 
 
@@ -53,8 +53,8 @@ def test_rfc8291_appendix_a_vector_reproduces_byte_for_byte():
                           "zAC8wEqKK6PBru3jl7A_yl95bQpu6cVPTpK4Mqgkf1CXztLVBSt2Ks3oZwbuwXPXLWyouBWLVWGNWQexSgSxsj_Qulcy4a-fN")
 
 
-def test_a_sent_message_carries_vapid_claims_for_the_endpoint_origin_and_decrypts_on_the_device(work, key, monkeypatch):
-    monkeypatch.setenv(lina_push.SUBJECT_ENV, "mailto:owner@example.org")
+def test_a_sent_message_carries_vapid_claims_for_the_endpoint_origin_and_decrypts_on_the_device(work, key):
+    work.config(extra="lina:\n  push:\n    subject: mailto:owner@example.org\n")
     vapid, _ = lina_push.vapid_key()
     device = Device("one")
     service = PushService(device)
@@ -78,6 +78,15 @@ def test_without_a_key_push_is_off_the_route_says_so_and_subscribing_is_refused(
     refused = client.post("/api/lina/push/subscriptions", json=Device("one").subscription())
     assert refused.status_code == 503 and valid("Error", refused.json())
     assert not (work.root / "push").exists()
+
+
+def test_the_subject_is_the_config_setting_with_the_project_url_by_default(work, key):
+    assert lina_push.vapid_key()[0].subject == lina_push.DEFAULT_SUBJECT
+    work.config(extra="lina:\n  push:\n    subject: owner@example.org\n")
+    vapid, why = lina_push.vapid_key()
+    assert vapid is None and why == "lina.push.subject must start with mailto: or https://"
+    assert "LINA_PUSH_VAPID_PRIVATE_KEY" in OPTIONAL_ENV_VARS and OPTIONAL_ENV_VARS["LINA_PUSH_VAPID_PRIVATE_KEY"]["password"]
+    assert not any(name.startswith("LINA_PUSH_SUBJECT") for name in OPTIONAL_ENV_VARS)
 
 
 @pytest.mark.parametrize("bad", ["", "not base64!", b64u(b"\x00" * 32), b64u(b"\x01" * 31)])
