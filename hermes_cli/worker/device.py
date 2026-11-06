@@ -29,7 +29,7 @@ from tools.environments.local import build_subprocess_env
 from hermes_cli.worker.runners.base import LIVE, Handle, ModelProfile, RunnerError, Task, iter_artifact_files
 from hermes_cli.worker.task import (end_state, git_summary, lock_inputs, read_json, safe_id, stamp, write_json,
                                     write_manifest)
-from hermes_cli.worker.transport import notify_hub
+from hermes_cli.worker.transport import PACKED, notify_hub
 
 LIMIT_KEYS = ("poll_s", "stall_grace_s", "answered_grace_s", "background_max_s", "hard_timeout_s", "human_max_s")
 HEARTBEAT = "serve.heartbeat"
@@ -406,11 +406,10 @@ def pack(worker_root: Path, task_id: str) -> bytes:
     task = task_of(worker_root, task_id)
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w") as archive:
-        for source, name in ((task.work / "report.md", "report.md"), (task.path("final.md"), "final.md"),
-                             (task.path("manifest.json"), "manifest.json"), (task.path("git.txt"), "git.txt"),
-                             (task.path(f"stderr.{last_run(task)}.txt"), "stderr.txt")):
-            if source.exists():
-                archive.add(str(source), arcname=name)
+        for name, relative in PACKED.items():
+            source = task.path(relative.format(run=last_run(task)))
+            if source.exists() and not source.is_symlink():
+                archive.add(str(source), arcname=name, recursive=False)
         for source in iter_artifact_files(task.work / "out"):
             archive.add(str(source), arcname=source.relative_to(task.work).as_posix(), recursive=False)
     return buffer.getvalue()

@@ -136,5 +136,5 @@ def test_pack_never_fetches_tool_trees(workspace):
         (folder / "hidden").write_text("not a deliverable")
     (out / "result.txt").write_text("delivered")
     with tarfile.open(fileobj=io.BytesIO(device.pack(worker, task.id))) as archive:
-        assert archive.getnames() == ["out/result.txt"]
+        assert archive.getnames() == ["out", "out/result.txt"]
         assert archive.extractfile("out/result.txt").read() == b"delivered"
