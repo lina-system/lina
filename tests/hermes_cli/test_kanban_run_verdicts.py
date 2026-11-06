@@ -16,6 +16,7 @@ from hermes_cli import goals
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli.kanban_db_wait import wake_waiting_tasks
+from hermes_cli.worker import board as worker_board
 from hermes_cli.worker import kanban_link, settings
 
 RUN = "OT-AGT1107120000"
@@ -192,3 +193,14 @@ def test_a_pause_with_no_reopen_condition_is_raised_once_after_a_day(conn):
     assert [n.name.split("-pause-")[0] for n in notices] == [open_card]
     assert _events(conn, open_card, "open_pause_raised")[0].payload["agent"] == "agent-a"
 
+
+def test_a_run_waiting_for_a_verdict_is_listed_under_the_agent_not_the_owner(conn):
+    assert worker_board.waiting_on({"bot": "agent-a"}, "waiting", "review") == "agent:agent-a"
+    assert worker_board.waiting_on({"bot": "agent-a"}, "in_progress", None) is None
+    card = kb.create_task(conn, title="card", assignee="agent-a")
+    _start(card)
+    _end(card)
+    from plugins.kanban.dashboard import work_api
+    facts = work_api._facts(conn, kb.get_task(conn, card))
+    assert work_api.card_detail(facts, int(time.time()))["runsAwaitingVerdict"] == [
+        {"id": RUN, "state": "done", "waitingOn": "agent:agent-a"}]

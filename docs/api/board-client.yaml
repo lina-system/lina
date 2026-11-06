@@ -527,6 +527,12 @@ components:
         agent:
           type: string
           nullable: true
+        waitingOn:
+          type: string
+          nullable: true
+          description: >
+            Who the run waits on: `agent:<name>` for a finished run waiting for the verdict of the agent that
+            handed it out (list it under that agent, not as an item for the owner); null otherwise.
         kind:
           type: string
           nullable: true
