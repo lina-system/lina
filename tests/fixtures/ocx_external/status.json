@@ -1,0 +1,232 @@
+{
+ "mainAccountHardLock": {
+  "enabled": false,
+  "state": "example",
+  "thresholds": {
+   "short": 2,
+   "long": 2
+  }
+ },
+ "fallback": {
+  "schema": "example",
+  "global": {
+   "model": false,
+   "provider": false
+  },
+  "providers": {},
+  "routes": {},
+  "devices": [
+   {
+    "id": "lnk_0000000000000001",
+    "kind": "link",
+    "alias": "machine-a",
+    "localFallback": false,
+    "model": null,
+    "provider": null
+   },
+   {
+    "id": "lnk_0000000000000002",
+    "kind": "link",
+    "alias": "machine-b",
+    "localFallback": false,
+    "model": null,
+    "provider": null
+   },
+   {
+    "id": "lnk_0000000000000003",
+    "kind": "link",
+    "alias": "machine-c",
+    "localFallback": false,
+    "model": null,
+    "provider": null
+   },
+   {
+    "id": "lnk_0000000000000004",
+    "kind": "link",
+    "alias": "machine-d",
+    "localFallback": false,
+    "model": null,
+    "provider": null
+   }
+  ],
+  "last": null,
+  "recent": [],
+  "source": "example"
+ },
+ "schemaVersion": 2,
+ "runtimeRole": "example",
+ "proxy": {
+  "running": true,
+  "pid": 4242,
+  "staleProcessState": false,
+  "health": {
+   "ok": true,
+   "url": "example",
+   "message": "example"
+  }
+ },
+ "dashboard": {
+  "url": "example"
+ },
+ "listen": {
+  "port": 10100,
+  "hostname": "example",
+  "source": "example"
+ },
+ "paths": {
+  "config": "example",
+  "pid": "example",
+  "runtime": "example"
+ },
+ "runtime": {
+  "source": "example"
+ },
+ "hub": null,
+ "remoteHub": {
+  "connected": false,
+  "origin": null,
+  "stateSource": "example",
+  "hubVersion": null,
+  "providers": [],
+  "oauth": [],
+  "subagentModels": [],
+  "truncated": false,
+  "claudeCodeEnabled": null
+ },
+ "codexAutostart": false,
+ "startup": {
+  "routingKind": "example",
+  "autostartEnabled": false,
+  "serviceInstalled": false,
+  "serviceViable": false,
+  "serviceEnabled": false,
+  "serviceRunning": false,
+  "serviceStale": false,
+  "serviceConflict": false,
+  "serviceSupported": false,
+  "shimInstalled": false,
+  "shimHealthy": false,
+  "platform": "example",
+  "routingAdoption": {
+   "adoption": "example",
+   "injectedAtMs": 0.5,
+   "staleClients": [
+    {
+     "pid": 2,
+     "startedAtMs": 1700000000000
+    }
+   ],
+   "observedClients": 2
+  },
+  "diagnosticStale": false,
+  "routingInjected": false,
+  "localRoutingDependency": false,
+  "status": "example",
+  "rebootSafe": false,
+  "protection": "example",
+  "shimCoverage": "example",
+  "recommendedCommand": null,
+  "recommendedAction": null,
+  "commands": {
+   "installService": "example",
+   "repairService": "example",
+   "installShim": "example",
+   "restoreNative": "example"
+  }
+ },
+ "defaultProvider": "example",
+ "config": {
+  "source": "example",
+  "error": null
+ },
+ "connection": {
+  "state": "example",
+  "catalog": "example",
+  "credentialFile": "example"
+ },
+ "service": {
+  "summary": "example"
+ },
+ "codexShim": {
+  "summary": "example"
+ },
+ "codexPlugins": {
+  "applicable": false,
+  "reason": "example",
+  "summary": "example"
+ },
+ "codexRuntime": {
+  "path": "example",
+  "version": "example",
+  "source": "example",
+  "newerAvailable": null,
+  "warning": null,
+  "catalogClamp": {
+   "active": false,
+   "removedEfforts": [],
+   "runtimeVersion": null
+  }
+ },
+ "codexHome": {
+  "applicable": false,
+  "mismatch": false,
+  "effectiveCodexHome": "example",
+  "appCodexHome": "example",
+  "orcaCodexHome": null,
+  "warning": null,
+  "action": null
+ },
+ "claudeDesktop": {
+  "desiredEnabled": false,
+  "policy": {
+   "ok": false,
+   "status": "example",
+   "state": "example",
+   "message": "example",
+   "action": "example"
+  }
+ },
+ "versionSkew": {
+  "cliVersion": "example",
+  "proxyVersion": "example",
+  "skewed": false,
+  "relation": "example",
+  "warning": null
+ },
+ "cliCommand": {
+  "configured": false,
+  "recordPath": "example",
+  "packageHandoff": "example",
+  "recordState": "example",
+  "expectedExecutable": null,
+  "handoffTarget": null,
+  "candidates": [
+   {
+    "path": "example",
+    "realpath": "example",
+    "pathIndex": 2,
+    "extension": "example"
+   }
+  ],
+  "pathFirst": {
+   "path": "example",
+   "realpath": "example",
+   "pathIndex": 2,
+   "extension": "example"
+  },
+  "desktopFirstOnPath": null,
+  "currentDirectoryCandidate": null,
+  "shellResolution": "example",
+  "issues": []
+ },
+ "install": {
+  "method": "example",
+  "evidence": {
+   "basis": "example"
+  }
+ },
+ "startupSource": "example",
+ "appliedCodexSettingsDigest": "example",
+ "lastApplyAt": null,
+ "runtimeStartedAt": null
+}

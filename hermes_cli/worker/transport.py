@@ -61,7 +61,9 @@ def put_tree(transport: Transport, task_id: str, rel: str, sources: list[Path]) 
         raise TransportError(f"copy into {rel}: {reply.err.strip()[-300:] or reply.json().get('reason')}")
 
 
-PACKED = ("report.md", "final.md", "manifest.json", "git.txt", "stderr.txt", "out")  # every name `pack` can send
+# Archive name -> task-relative source. Fetch clears these same names before extraction.
+PACKED = {"report.md": "work/report.md", "final.md": "final.md", "manifest.json": "manifest.json",
+          "git.txt": "git.txt", "stderr.txt": "stderr.{run}.txt", "out": "work/out"}
 
 
 def fetch(transport: Transport, task_id: str, dest: Path) -> list[str]:
