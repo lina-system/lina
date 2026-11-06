@@ -9,9 +9,12 @@ A result is one comment whose first line is the marker::
 
     ui-qa-result v1 head=<sha> instance=disposable
 
-followed by the four sections ``## Defects``, ``## Confirmed``, ``## Suggestions`` and
-``## Map differences``. Every list item under ``## Defects`` is a defect (``- None`` is not). A QA
-run in progress is a comment whose first line is ``ui-qa-run v1 head=<sha> state=running``.
+followed by the aside-qa answer as it is: the four sections ``## (A) Defects``, ``## (B) Verified``,
+``## (C) Suggestions`` and ``## (D) Map drift`` (the letter prefix is optional; ``Confirmed`` and
+``Map differences`` are accepted names too). Every list item under Defects is a defect (``- None.``
+is not), and so is every ``- FAIL: ...`` line under Verified: a Done when item the tool found
+broken. A QA run in progress is a comment whose first line is
+``ui-qa-run v1 head=<sha> state=running``.
 """
 from __future__ import annotations
 
@@ -20,7 +23,12 @@ from dataclasses import dataclass, field
 from typing import Iterable, Optional
 
 RESULT, RUN = "ui-qa-result", "ui-qa-run"
-SECTIONS = ("Defects", "Confirmed", "Suggestions", "Map differences")
+SECTIONS = ("Defects", "Verified", "Suggestions", "Map drift")
+_SECTION_NAMES = {"defects": "Defects", "verified": "Verified", "confirmed": "Verified",
+                  "suggestions": "Suggestions", "map drift": "Map drift", "map differences": "Map drift"}
+_LETTER = re.compile(r"^\([A-Da-d]\)\s*")
+_FAILED_CHECK = re.compile(r"^FAIL\s*:")
+_PASSED_CHECK = re.compile(r"^PASS\s*:")
 _MARKER = re.compile(r"^(ui-qa-result|ui-qa-run)\s+v1((?:\s+[a-z_]+=\S+)*)\s*$")
 _SHA = re.compile(r"^[0-9a-f]{7,40}$")
 _HEADING = re.compile(r"^(#{1,6})\s+(.*?)\s*#*\s*$")
@@ -62,16 +70,21 @@ def sections(body: str) -> dict[str, list[str]]:
     for raw in body.splitlines():
         heading = _HEADING.match(raw)
         if heading:
-            current = found.setdefault(heading[2].lower(), []) if len(heading[1]) == 2 else None
+            name = _SECTION_NAMES.get(_LETTER.sub("", heading[2].strip()).lower())
+            current = found.setdefault(name, []) if name and len(heading[1]) == 2 else None
             continue
         if current is not None:
             current.append(raw)
     return found
 
 
-def defects(lines: Iterable[str]) -> list[str]:
-    items = (_ITEM.match(line) for line in lines)
-    return [m[1] for m in items if m and not _NONE.match(m[1])]
+def _items(lines: Iterable[str]) -> list[str]:
+    return [m[1] for m in (_ITEM.match(line) for line in lines) if m and not _NONE.match(m[1])]
+
+
+def defects(found: dict[str, list[str]]) -> list[str]:
+    failed = [item for item in _items(found.get("Verified", [])) if _FAILED_CHECK.match(item)]
+    return _items(found.get("Defects", [])) + failed
 
 
 def _judge(result: Marker) -> Verdict:
@@ -80,14 +93,14 @@ def _judge(result: Marker) -> Verdict:
     if instance != "disposable":
         return Verdict("fail", f"{where} was taken on instance={instance or '-'}, not a disposable instance")
     found = sections(result.body)
-    missing = [name for name in SECTIONS if name.lower() not in found]
-    if missing:
-        return Verdict("fail", f"{where} lacks section(s): {', '.join(missing)}")
-    bad = defects(found["defects"])
-    if bad:
-        return Verdict("fail", f"{where} lists {len(bad)} defect(s)", bad)
-    confirmed = len(defects(found["confirmed"]))
-    return Verdict("pass", f"{where} (disposable): 0 defects, {confirmed} confirmed")
+    missing = [name for name in SECTIONS if name not in found]
+    bad = defects(found)
+    reasons = [f"lacks section(s): {', '.join(missing)}"] if missing else []
+    reasons += [f"lists {len(bad)} defect(s)"] if bad else []
+    if reasons:
+        return Verdict("fail", f"{where} {'; '.join(reasons)}", bad)
+    verified = sum(1 for item in _items(found["Verified"]) if _PASSED_CHECK.match(item))
+    return Verdict("pass", f"{where} (disposable): 0 defects, {verified} verified")
 
 
 def _same_head(marker: Marker, head: str) -> bool:

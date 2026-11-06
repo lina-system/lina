@@ -605,10 +605,10 @@ def _ui_issue(head=UI_HEAD):
     return [["closedByPullRequestsReferences", "number=12"], 0, {"data": {"repository": {"issue": issue}}}]
 
 
-def _qa(head=UI_HEAD, instance="disposable", defects="- None", drop=None):
-    parts = {"Defects": defects, "Confirmed": "- board loads\n- card opens", "Suggestions": "- wider column",
-             "Map differences": "None."}
-    body = "".join(f"\n## {name}\n\n{text}\n" for name, text in parts.items() if name != drop)
+def _qa(head=UI_HEAD, instance="disposable", defects="- None.", drop=None,
+        names=("(A) Defects", "(B) Verified", "(C) Suggestions", "(D) Map drift")):
+    texts = (defects, "- PASS: board loads\n- PASS: card opens", "- wider column", "- None.")
+    body = "".join(f"\n## {name}\n\n{text}\n" for name, text in zip(names, texts) if name != drop)
     return f"ui-qa-result v1 head={head} instance={instance}\n{body}"
 
 
@@ -617,7 +617,8 @@ def _running(head=UI_HEAD):
 
 
 @pytest.mark.parametrize("comments,expected,why", [
-    ([_qa()], gates.PASS, "0 defects, 2 confirmed"),
+    ([_qa()], gates.PASS, "0 defects, 2 verified"),
+    ([_qa(names=("Defects", "Confirmed", " Suggestions ", "Map differences"))], gates.PASS, "0 defects, 2 verified"),
     ([_qa(defects="- save button does nothing\n- title cut off")], gates.FAIL, "lists 2 defect(s)"),
     ([_qa(defects="- title cut off"), _qa(head=UI_HEAD[:7])], gates.PASS, "0 defects"),
     ([_qa(), _qa(defects="- title cut off")], gates.FAIL, "lists 1 defect(s)"),
@@ -626,7 +627,9 @@ def _running(head=UI_HEAD):
     ([_running(OLD_HEAD)], gates.FAIL, "no QA result for this head"),
     ([_qa(head=OLD_HEAD)], gates.FAIL, "is for head dddddddddd; run QA again"),
     ([_qa(instance="live")], gates.FAIL, "instance=live, not a disposable instance"),
-    ([_qa(drop="Map differences")], gates.FAIL, "lacks section(s): Map differences"),
+    ([_qa(drop="(D) Map drift")], gates.FAIL, "lacks section(s): Map drift"),
+    ([_qa(drop="(B) Verified", defects="- title cut off")], gates.FAIL,
+     "lacks section(s): Verified; lists 1 defect(s)"),
     (["QA looked fine to me"], gates.FAIL, "no QA result for this head"),
 ])
 def test_ui_qa_reads_the_newest_record_for_the_pr_head(board, gh, capsys, comments, expected, why):
@@ -660,6 +663,30 @@ def test_ui_qa_fails_without_a_pull_request(board, gh, capsys):
     gh.set([record])
     assert _run("ui-qa", "--card", tid) == gates.FAIL
     assert "no open or merged pull request" in capsys.readouterr().out
+
+
+ASIDE_QA_ANSWER = (Path(__file__).parent / "fixtures/kanban_gates/aside_qa_answer.md").read_text(encoding="utf-8")
+FAILED_CHECK = "- FAIL: status-usage, `7일` — the total still reads the `오늘` figure."
+
+
+@pytest.mark.parametrize("answer,expected,why,listed", [
+    (ASIDE_QA_ANSWER, gates.PASS, "0 defects, 18 verified", []),
+    (ASIDE_QA_ANSWER.replace("## (A) Defects\n- None.", "## (A) Defects\n- The 7일 button does nothing.", 1),
+     gates.FAIL, "lists 1 defect(s)", ["The 7일 button does nothing."]),
+    (ASIDE_QA_ANSWER.replace("## (C) Suggestions", FAILED_CHECK + "\n## (C) Suggestions", 1),
+     gates.FAIL, "lists 1 defect(s)", [FAILED_CHECK[2:]]),
+], ids=["as-is", "defect", "failed-check"])
+def test_ui_qa_reads_an_aside_qa_answer_as_it_is(board, gh, capsys, answer, expected, why, listed):
+    """The real aside-qa answer, with the marker line on top, is the card comment (lina#162)."""
+    assert answer != ASIDE_QA_ANSWER or expected == gates.PASS
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "qa", f"ui-qa-result v1 head={UI_HEAD} instance=disposable\n{answer}")
+    gh.set([_ui_issue()])
+    assert _run("ui-qa", "--card", tid) == expected
+    out = capsys.readouterr().out
+    assert why in out, out
+    assert [line[len("  defect: "):] for line in out.splitlines() if line.startswith("  defect: ")] == listed
 
 
 def test_board_is_opened_read_only(board):

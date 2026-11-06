@@ -130,12 +130,12 @@ Gates: code cards use `gate prs` (every To-dos issue closed by a merged PR with 
 `gate artifact <path> --check "<cmd>"` and `gate review`; add `gate ask` when the card may ask
 the owner questions. A card that changes a screen people see also lists `gate ui-qa`.
 
-`gate ui-qa` reads the QA record on the card; the QA tool that drives a disposable instance along
-the screen feature map writes it with `hermes kanban comment <card> "<text>"`. A result is one
-comment whose first line is `ui-qa-result v1 head=<sha> instance=disposable` (`<sha>` the head of
-the card's PR, at least 7 hex characters), followed by the sections `## Defects`, `## Confirmed`,
-`## Suggestions` and `## Map differences`; each list item under Defects is a defect (`- None` is
-not). A run in progress is a comment `ui-qa-run v1 head=<sha> state=running`. The gate passes on
+`gate ui-qa` reads the QA record on the card. Leave the aside-qa answer (`answer.md`) as it is, with
+one marker line on top, as a card comment (`hermes kanban comment <card> "<text>"`). The marker
+is `ui-qa-result v1 head=<sha> instance=disposable` (`<sha>` the head of the card's PR, at least 7
+hex characters). The answer's sections are `## (A) Defects`, `## (B) Verified`, `## (C) Suggestions`
+and `## (D) Map drift`; each list item under Defects is a defect (`- None.` is not), and so is each
+`- FAIL: ...` line under Verified. A run in progress is a comment `ui-qa-run v1 head=<sha> state=running`. The gate passes on
 the newest result for the PR head with all four sections and zero defects, fails with the defect
 list, fails on a result taken anywhere but a disposable instance or only for an older head (run QA
 again), and waits (exit 75) while the newest marker for the head is a running run.
