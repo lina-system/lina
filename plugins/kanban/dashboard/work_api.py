@@ -1,10 +1,11 @@
 """Work API for the app: goals, work cards, their worker runs and the owner inbox (lina#112).
 
 Mounted by ``plugin_api.py`` under ``/api/plugins/kanban/work`` (behind the dashboard auth gate).
-A work card is a goal-mode card that is a link-parent of another card; that child is its goal
-card. Reads open the board read-only; the one write (answer) reuses ``add_comment`` and
-``unblock_task``. ``work_state`` is the only place the five app states are computed. The schema
-the app's client generator reads is ``docs/api/work-client.yaml``.
+A work card is a goal-mode card, or any card whose body has a ``## To-dos`` section (lina#290); a
+goal card above it, when there is one, is its link-child. Reads open the board read-only; the one
+write (answer) reuses ``add_comment`` and ``unblock_task``. ``work_state`` is the only place the
+five app states are computed. The schema the app's client generator reads is
+``docs/api/work-client.yaml``.
 """
 
 from __future__ import annotations
@@ -22,6 +23,7 @@ from pydantic import BaseModel
 from hermes_cli import kanban_db
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli.goals import GATE_WAIT_EXIT_CODE
+from hermes_cli.kanban_gates import own_names
 from hermes_cli.kanban_goal_gates import GATE_EVENT_KIND
 
 router = APIRouter(prefix="/work")
@@ -88,25 +90,58 @@ class CardFacts:
     comments: list[kanban_db.Comment] = field(default_factory=list)
     runs: list[kanban_db.Run] = field(default_factory=list)
     board: Optional[str] = None  # the board the request resolved (``_board_slug``); None = the default board
+    own: set[str] = field(default_factory=set)  # ``own_names``: the implementer(s) and the assignee, never the reviewer
 
 
 def _facts(conn: sqlite3.Connection, task: kanban_db.Task, board: Optional[str] = None) -> CardFacts:
+    """A card's events, comments and runs, and the identities that own it. ``own_names`` reads only
+    the card's id and assignee, which is what the gates' card row carries into it."""
     return CardFacts(task, kanban_db.list_events(conn, task.id), kanban_db.list_comments(conn, task.id),
-                     kanban_db.list_runs(conn, task.id), board)
+                     kanban_db.list_runs(conn, task.id), board,
+                     own_names(conn, {"id": task.id, "assignee": task.assignee}))
+
+
+def _implementer(facts: CardFacts) -> Optional[str]:
+    """The agent that did the card — the ``agent`` the app lists and filters it by (lina#290).
+
+    ``request_review`` moves ``tasks.assignee`` to the reviewer, so the implementer comes from
+    ``own_names``: the first run by an identity it counts as the card's own, else an assignee it
+    counts, else the first of those identities. The learning record picks its ``assignee`` the
+    same way."""
+    return (next((r.profile for r in facts.runs if r.profile in facts.own), None)
+            or (facts.task.assignee if facts.task.assignee in facts.own else None)
+            or next(iter(sorted(facts.own)), None))
+
+
+def _reviewer(facts: CardFacts) -> Optional[str]:
+    """The reviewer, only when a review run exists: the latest run ``own_names`` does not count as
+    the card's own (as ``review_records`` reads them)."""
+    return next((r.profile for r in reversed(facts.runs) if r.profile and r.profile not in facts.own), None)
+
+
+def _agent_fields(facts: CardFacts) -> dict[str, Any]:
+    """``agent`` (the implementer), plus ``reviewer`` only where a review run exists."""
+    reviewer = _reviewer(facts)
+    return {"agent": _implementer(facts), **({"reviewer": reviewer} if reviewer is not None else {})}
+
+
+def _work_cards(conn: sqlite3.Connection) -> list[sqlite3.Row]:
+    """Every card the app lists as work (lina#290): a goal-mode card, or any non-archived card whose
+    body has a ``## To-dos`` section — with or without a goal card above it. The checked-line writer
+    selects the same cards (``hermes_cli.lina_board_plain._board_cards``)."""
+    from hermes_cli.lina_board_plain import is_work_card
+    rows = conn.execute("SELECT id, goal_mode, body, status FROM tasks "
+                        "ORDER BY created_at, rowid").fetchall()
+    return [r for r in rows if is_work_card(r["goal_mode"], r["body"], r["status"])]
 
 
 def _work_card_ids(conn: sqlite3.Connection) -> list[str]:
-    rows = conn.execute(
-        "SELECT DISTINCT t.id FROM task_links l JOIN tasks t ON t.id = l.parent_id "
-        "JOIN tasks c ON c.id = l.child_id "
-        "WHERE t.goal_mode = 1 AND t.status != 'archived' AND c.status != 'archived' "
-        "ORDER BY t.created_at, t.rowid").fetchall()
-    return [r["id"] for r in rows]
+    return [r["id"] for r in _work_cards(conn)]
 
 
 def _goal_work_cards(conn: sqlite3.Connection) -> dict[str, list[str]]:
-    """``{goal_card_id: [work_card_id, ...]}``."""
-    work = set(_work_card_ids(conn))
+    """``{goal_card_id: [work_card_id, ...]}`` for the goal-mode work cards that have a goal card."""
+    work = {r["id"] for r in _work_cards(conn) if r["goal_mode"]}
     goals: dict[str, list[str]] = {}
     rows = conn.execute(
         "SELECT l.parent_id, l.child_id FROM task_links l JOIN tasks c ON c.id = l.child_id "
@@ -291,7 +326,7 @@ def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
     state, reason = work_state(facts, now)
     todos = parse_todos(facts.task.body, _latest_gate_results(facts.events))
     return {
-        "id": facts.task.id, "title": facts.task.title, "agent": facts.task.assignee,
+        "id": facts.task.id, "title": facts.task.title, **_agent_fields(facts),
         "state": state, "reason": reason, "elapsedSeconds": _elapsed_seconds(facts.task, now),
         "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
         "now": now_line(facts),
@@ -338,7 +373,7 @@ def _goal_dict(conn: sqlite3.Connection, goal: kanban_db.Task, work_ids: list[st
     work = [_facts(conn, t, board) for t in filter(None, (kanban_db.get_task(conn, i) for i in work_ids))]
     state, reason = work_state(goal_facts, now)
     return {
-        "id": goal.id, "title": goal.title, "agent": goal.assignee, "state": state, "reason": reason,
+        "id": goal.id, "title": goal.title, **_agent_fields(goal_facts), "state": state, "reason": reason,
         "elapsedSeconds": _elapsed_seconds(goal, now),
         "workCards": [card_summary(f, now) for f in work],
         "evidence": [e for e in map(_evidence, [goal_facts, *work]) if e is not None],
@@ -349,7 +384,7 @@ def _inbox_blocked(facts: CardFacts, now: int) -> dict[str, Any]:
     state, reason = work_state(facts, now)
     payload = _latest_block_payload(facts.events)
     return {
-        "cardId": facts.task.id, "title": facts.task.title, "agent": facts.task.assignee,
+        "cardId": facts.task.id, "title": facts.task.title, **_agent_fields(facts),
         "state": state, "reason": reason, "blockKind": facts.task.block_kind,
         "blockReason": payload.get("reason"),
     }
@@ -400,9 +435,10 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
             return {"cards": []}
         cards = []
         for task in filter(None, (kanban_db.get_task(conn, i) for i in _work_card_ids(conn))):
-            if agent is not None and task.assignee != agent:
+            facts = _facts(conn, task, board)
+            if agent is not None and _implementer(facts) != agent:
                 continue
-            summary = card_summary(_facts(conn, task, board), now)
+            summary = card_summary(facts, now)
             if state is None or summary["state"] == state:
                 cards.append(summary)
         return {"cards": cards}
@@ -427,7 +463,7 @@ def get_inbox(board: Optional[str] = Query(None)):
             if task.status == "blocked":
                 blocked.append(_inbox_blocked(facts, now))
             questions += [{
-                "cardId": task.id, "title": task.title, "agent": task.assignee,
+                "cardId": task.id, "title": task.title, **_agent_fields(facts),
                 "commentId": c.id, "body": c.body, "askedAt": c.created_at,
             } for c in open_questions(facts)]
         return {"blocked": blocked, "questions": questions}

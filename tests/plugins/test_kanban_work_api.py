@@ -23,6 +23,7 @@ from hermes_cli.kanban_goal_gates import run_card_gates
 REPO = Path(__file__).resolve().parents[2]
 WORK = "/api/plugins/kanban/work"
 AGENT = "worker-a"
+REVIEWER = "worker-b"
 
 
 def _openapi_to_jsonschema(node):
@@ -128,6 +129,71 @@ def test_state_follows_each_column_and_counts_only_live_runs(client, conn, tmp_p
     listed = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"agent": AGENT}).json())
     assert {c["id"] for c in listed["cards"]} == set(ids.values()) | {triage}
     assert client.get(f"{WORK}/cards", params={"state": "running"}).status_code == 400
+
+
+def test_a_reviewed_card_is_listed_under_the_agent_that_did_it(client, conn):
+    """lina#290: ``request_review`` reassigns the card to the reviewer, so the list, its ``agent`` filter and the
+    card's ``agent`` stay on the implementer, and the reviewer is sent on its own field."""
+    reviewed, approved = _card(conn, "in review"), _card(conn, "reviewed then done")
+    _goal(conn, [reviewed, approved])
+    for tid in (reviewed, approved):
+        _running(conn, tid)  # the run's profile is the card's assignee, so AGENT did it
+        assert kb.request_review(conn, tid, reviewer=REVIEWER)
+        assert kb.claim_review_task(conn, tid, claimer=REVIEWER)  # a review run: the reviewer
+    assert kb.complete_task(conn, approved, summary="merged acme/widgets#7", force=True)
+
+    listed = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"agent": AGENT}).json())
+    assert {c["id"] for c in listed["cards"]} == {reviewed, approved}
+    assert {(c["agent"], c["reviewer"]) for c in listed["cards"]} == {(AGENT, REVIEWER)}
+    assert [c["state"] for c in listed["cards"]] == ["in_progress", "done"]
+    assert client.get(f"{WORK}/cards", params={"agent": REVIEWER}).json()["cards"] == []
+    detail = _card_json(client, reviewed)
+    assert (detail["agent"], detail["reviewer"]) == (AGENT, REVIEWER)
+
+
+def test_a_reviewed_goal_card_and_a_blocked_reviewed_card_carry_the_implementer(client, conn):
+    """lina#290: the goal row and the inbox rows carry the implementer too, the reviewer beside it."""
+    part = _card(conn, "part")
+    goal = _goal(conn, [part])
+    _running(conn, part)
+    assert kb.complete_task(conn, part, summary="merged acme/widgets#8")  # the goal card becomes ready
+    assert kb.claim_task(conn, goal) is not None
+    assert kb.request_review(conn, goal, reviewer=REVIEWER)
+    assert kb.claim_review_task(conn, goal, claimer=REVIEWER)
+
+    row = _valid("WorkGoal", client.get(f"{WORK}/goals/{goal}").json())
+    assert (row["agent"], row["reviewer"]) == ("main", REVIEWER)
+
+    blocked = _card(conn, "blocked")
+    _goal(conn, [blocked])
+    _running(conn, blocked)
+    assert kb.request_review(conn, blocked, reviewer=REVIEWER)
+    assert kb.claim_review_task(conn, blocked, claimer=REVIEWER)
+    assert kb.block_task(conn, blocked, reason="pick a colour", kind="needs_input")
+    kb.add_comment(conn, blocked, REVIEWER, "질문: which colour?")
+    inbox = _valid("Inbox", client.get(f"{WORK}/inbox").json())
+    item = next(b for b in inbox["blocked"] if b["cardId"] == blocked)
+    question = next(q for q in inbox["questions"] if q["cardId"] == blocked)
+    assert (item["agent"], item["reviewer"]) == (AGENT, REVIEWER)
+    assert (question["agent"], question["reviewer"]) == (AGENT, REVIEWER)
+
+
+def test_a_goal_mode_card_and_a_todos_card_are_listed_without_a_goal_card(client, conn):
+    """lina#290: a goal-mode card registered on its own and a plain card with a ``## To-dos`` section are work
+    cards, though no goal card sits above either."""
+    lone = _card(conn, "no goal card above it")
+    todos = kb.create_task(conn, title="opened by the decomposer", assignee=AGENT,
+                           body="## Goal\n- ship\n\n## To-dos\n- [ ] rotate the disks")
+    _running(conn, lone)
+
+    running = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"state": "in_progress"}).json())
+    assert [c["id"] for c in running["cards"]] == [lone]
+    listed = {c["id"] for c in client.get(f"{WORK}/cards", params={"agent": AGENT}).json()["cards"]}
+    assert listed == {lone, todos}
+
+    assert kb.complete_task(conn, lone, summary="rotated both disks", force=True)
+    done = _valid("WorkCardList", client.get(f"{WORK}/cards", params={"state": "done"}).json())
+    assert [c["id"] for c in done["cards"]] == [lone]
 
 
 def test_successor_run_does_not_inherit_waiting_gate_state(client, conn, tmp_path):

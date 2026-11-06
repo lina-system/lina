@@ -10,8 +10,8 @@ info:
   description: >
     Goals (goal cards with their work cards and the evidence that closed them), work cards
     (summary and detail), and the owner inbox with one write: answer an item as the owner.
-    A work card is a goal-mode kanban card that is a link-parent of another card (its goal
-    card). Times are Unix epoch seconds.
+    A work card is a goal-mode kanban card, or any card whose body has a `## To-dos` section;
+    a goal card above it, when there is one, is its link-child. Times are Unix epoch seconds.
 servers:
   - url: /api/plugins/kanban
 paths:
@@ -52,6 +52,7 @@ paths:
         - name: agent
           in: query
           required: false
+          description: The agent that did the card (its implementer), the value the summary's `agent` carries.
           schema:
             type: string
         - name: state
@@ -156,6 +157,20 @@ components:
       description: >
         One word after the state, when there is one: the column for planned; review or gate
         for waiting; the block kind, gate, budget or unresponsive for stopped.
+    Agent:
+      type: string
+      nullable: true
+      description: >
+        The agent that did the card — its implementer, not its reviewer: `request_review` moves the
+        board's assignee to the reviewer, so the implementer comes from the card's own runs and its
+        review requests (lina#290). A reviewed card is listed under this agent, and the `agent` filter
+        counts by it.
+    Reviewer:
+      type: string
+      nullable: true
+      description: >
+        The agent that reviewed the card; present only when a review run exists, and never a substitute
+        for `agent`.
     TodoProgress:
       type: object
       additionalProperties: false
@@ -197,8 +212,9 @@ components:
         title:
           type: string
         agent:
-          type: string
-          nullable: true
+          $ref: "#/components/schemas/Agent"
+        reviewer:
+          $ref: "#/components/schemas/Reviewer"
         state:
           $ref: "#/components/schemas/WorkState"
         reason:
@@ -324,8 +340,9 @@ components:
         title:
           type: string
         agent:
-          type: string
-          nullable: true
+          $ref: "#/components/schemas/Agent"
+        reviewer:
+          $ref: "#/components/schemas/Reviewer"
         state:
           $ref: "#/components/schemas/WorkState"
         reason:
@@ -391,8 +408,9 @@ components:
         title:
           type: string
         agent:
-          type: string
-          nullable: true
+          $ref: "#/components/schemas/Agent"
+        reviewer:
+          $ref: "#/components/schemas/Reviewer"
         state:
           $ref: "#/components/schemas/WorkState"
         reason:
@@ -428,8 +446,9 @@ components:
         title:
           type: string
         agent:
-          type: string
-          nullable: true
+          $ref: "#/components/schemas/Agent"
+        reviewer:
+          $ref: "#/components/schemas/Reviewer"
         state:
           $ref: "#/components/schemas/WorkState"
         reason:
@@ -451,8 +470,9 @@ components:
         title:
           type: string
         agent:
-          type: string
-          nullable: true
+          $ref: "#/components/schemas/Agent"
+        reviewer:
+          $ref: "#/components/schemas/Reviewer"
         commentId:
           type: integer
         body:
