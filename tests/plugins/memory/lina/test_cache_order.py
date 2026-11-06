@@ -126,7 +126,7 @@ def _configure(home, url: str, memory: str = "") -> None:
     (home / "config.yaml").write_text(config, encoding="utf-8")
 
 
-def _agent(home, server, session_id: str):
+def _agent(home, server, session_id: str, start: datetime):
     from hermes_state import SessionDB
     from run_agent import AIAgent
 
@@ -135,6 +135,10 @@ def _agent(home, server, session_id: str):
                     skip_context_files=True, session_id=session_id, platform="cli",
                     session_db=SessionDB(db_path=home / "state.db"), skip_background_review=True,
                     enabled_toolsets=["skills", "memory", "todo"])
+    # These session ids carry no date stamp, so the prompt's "Conversation started:" date comes from
+    # agent.session_start, minted from the real clock at init. Pin it to the test clock: otherwise the
+    # first turn already tells a date other than the pinned one and the day never turns as the test says.
+    agent.session_start = start
     server.agent = agent
     assert type(agent.context_compressor).__module__ == "plugins.context_engine.lcm-x.engine"
     return agent
@@ -176,7 +180,7 @@ def test_fifty_turns_each_request_starts_with_the_previous_one_except_across_a_c
     with recording_model() as server:
         server.url = f"http://127.0.0.1:{server.server_port}/v1"
         _configure(home, server.url)
-        agent = _agent(home, server, "sess-prefix")
+        agent = _agent(home, server, "sess-prefix", clock.now)
 
         def before_turn(n: int) -> None:
             if n == SKILL_TURN:
@@ -240,7 +244,7 @@ def test_upper_summary_block_keeps_its_bytes_across_the_next_compaction(home, cl
     with recording_model() as server:
         server.url = f"http://127.0.0.1:{server.server_port}/v1"
         _configure(home, server.url)
-        agent = _agent(home, server, "sess-pin")
+        agent = _agent(home, server, "sess-pin", clock.now)
         compactions = agent.context_compressor
 
         def before_turn(n: int) -> None:
@@ -271,7 +275,7 @@ def test_auto_recall_append_setting_splices_recall_into_the_user_message(home, c
     with recording_model() as server:
         server.url = f"http://127.0.0.1:{server.server_port}/v1"
         _configure(home, server.url, "  auto_recall_append: true\n")
-        agent = _agent(home, server, "sess-append")
+        agent = _agent(home, server, "sess-append", clock.now)
         _converse(agent, RECALL_TURN + 1)
         messages = server.requests[-1].body["messages"]
 
