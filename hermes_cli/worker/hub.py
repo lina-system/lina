@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -27,6 +28,8 @@ ENDED = ("done", "done_empty", "review", "stalled", "failed", "cancelled")
 VERDICT_WORDS = {None: "no verdict yet", "accepted": "accepted", "rejected": "rejected"}
 HUMAN_NOTICE_AFTER_S = 120
 ANSWER_CLOSE_WAIT_S = 150
+# A Hermes card run's result fetch: tried on each report and tick (30 s) before its end goes out without report.md.
+FETCH_TRIES = 10
 
 
 def _start_time(pid: int) -> int | None:
@@ -58,6 +61,7 @@ class Hub:
         self.base = worker_root.parent
         self.store = Store(worker_root)
         self.worker = settings.section(self.base)
+        self.fetched: bool | None = None
 
 
     def devices(self) -> list[settings.Device]:
@@ -594,11 +598,15 @@ class Hub:
         return _start_time(pid) == start
 
     def _notice_body(self, job: dict, kind: str, run: str) -> tuple[str, Path]:
+        """The end notice and where the results are; ``self.fetched`` says whether fetching them worked (None:
+        nothing to fetch)."""
         out_dir, check = self.store.out_dir(job), {}
         if job.get("host") and kind != "unknown":
             try:
                 out_dir, check = self.fetch(job)
+                self.fetched = True
             except (TransportError, HubError) as exc:
+                self.fetched = False
                 self.store.receipt(job["id"], "fetch_failed", error=str(exc)[:300])
             job.update(self.store.load(job["id"]) or {})
         manifest = read_json(out_dir / "manifest.json", {}) or {}
@@ -630,12 +638,14 @@ class Hub:
             self.store.save(job)
             return "waiter"
         self.store.save(job)
+        self.fetched = None
         text, _ = self._notice_body(job, kind, run)
+        fetched = self.fetched
         job.setdefault("notified", []).append(marker)
         job["notice"] = text
         self.store.save(job)
         if kanban_link.on_hermes(job.get("card")):  # the card is the one place the run ends: no chat notice
-            how = self._card_end(job, kind, run, text)
+            how = self._card_end(job, kind, run, text, fetched)
         else:
             how = self.group_notice(job["group"]) if job.get("group") else self._deliver(job, text, f"{kind}-{run}")
             if job.get("card"):
@@ -649,12 +659,20 @@ class Hub:
             else None
         return notice.deliver(job, text, tag, self.store.notices, command)
 
-    def _card_end(self, job: dict, kind: str, run: str, text: str) -> str:
+    def _card_end(self, job: dict, kind: str, run: str, text: str, fetched: bool | None = None) -> str:
+        """A run's end on its card. On a Hermes card it becomes pending work (``card_pending``): its result fetch
+        when that failed, then ``kanban_link.END_STEPS``, with this run's own report.md kept aside for the attachment."""
         card = job["card"]
         if kanban_link.on_hermes(card):
-            job.setdefault("card_pending", {})[f"{kind}:{run}"] = {"kind": kind, "run": run, "text": text, "done": []}
+            marker = f"{kind}:{run}"
+            job.setdefault("card_pending", {})[marker] = {
+                "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
+                "fetch_tries": 1 if fetched is False else 0,
+                "report": None if fetched is False else self._report_snapshot(job, marker)}
             self.store.save(job)
-            return self._card_steps(job, f"{kind}:{run}")
+            if fetched is False:
+                return f"card {card['task']}: result not fetched yet (1/{FETCH_TRIES}), retried on the next report or tick"
+            return self._card_steps(job, marker)
         try:
             kanban_link.record_end(card, job, kind, run, text)
         except (ValueError, OSError) as exc:
@@ -667,13 +685,17 @@ class Hub:
         """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
         went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
         under the job's lock."""
-        card, link, entry = job["card"], self._link(), job["card_pending"][marker]
+        card, link = job["card"], self._link()
+        if job["card_pending"][marker].get("fetch_pending") and not self._card_fetch(job, marker):
+            return (f"card {card['task']}: result not fetched yet ({job['card_pending'][marker]['fetch_tries']}/"
+                    f"{FETCH_TRIES}), retried on the next report or tick")
+        entry = job["card_pending"][marker]
         for step in kanban_link.END_STEPS:
             if step in entry["done"]:
                 continue
             try:
                 woke = kanban_link.end_step(step, self.store, card, job, entry["run"], entry["text"], link,
-                                            self.store.out_dir(job) / "report.md")
+                                            Path(entry["report"]) if entry.get("report") else None)
             except (OSError, kanban_link.CardLinkError) as exc:
                 self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
                 return f"card {card['task']}: {step} failed, retried on the next report or tick"
@@ -682,9 +704,39 @@ class Hub:
             self.store.save(job)
         del job["card_pending"][marker]
         self.store.save(job)
+        if entry.get("report"):
+            shutil.rmtree(Path(entry["report"]).parent, ignore_errors=True)
         self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
                            woke=bool(entry.get("woke")))
         return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
+
+    def _report_snapshot(self, job: dict, marker: str) -> str | None:
+        """A copy of the run's report.md as fetched now: a later run's fetch replaces the one in out/."""
+        report = self.store.out_dir(job) / "report.md"
+        if not report.is_file():
+            return None
+        kept = self.store.root / "card_reports" / f"{job['id']}-{marker.replace(':', '-')}" / "report.md"
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(report, kept)
+        return str(kept)
+
+    def _card_fetch(self, job: dict, marker: str) -> bool:
+        """Fetch the results of a pending end again; True once the end can go on (fetched, or out of tries: then
+        without report.md, saying so)."""
+        kind, run = job["card_pending"][marker]["kind"], job["card_pending"][marker]["run"]
+        self.fetched = None
+        text, _ = self._notice_body(job, kind, run)  # reloads the job: read the entry after it
+        entry = job["card_pending"][marker]
+        if self.fetched:
+            entry.update(text=text, fetch_pending=False, report=self._report_snapshot(job, marker))
+        else:
+            entry["fetch_tries"] += 1
+            if entry["fetch_tries"] >= FETCH_TRIES:
+                entry["fetch_pending"] = False
+                entry["text"] += (f"- report.md could not be fetched from {job.get('host')} after {FETCH_TRIES} tries: "
+                                  f"`lina worker result {job['id']}` fetches it again.\n")
+        self.store.save(job)
+        return not entry["fetch_pending"]
 
     def _retry_cards(self, task_id: str) -> None:
         with self.store.lock(task_id):

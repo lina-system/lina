@@ -114,12 +114,12 @@ def record_run(card: dict, job: dict, link: dict) -> None:
 END_STEPS = ("comment", "attach", "wake")
 
 
-def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link: dict, report: Path) -> bool:
+def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link: dict, report: Path | None) -> bool:
     """One step of a run's end on a Hermes card; raises ``CardLinkError`` when it did not go through. True when
     ``wake`` woke the card."""
     if step == "comment":
         _comment(link["command"], card, body)
-    elif step == "attach" and report.is_file():
+    elif step == "attach" and report is not None and report.is_file():
         _kanban(link["command"], card, "attach", str(report), "--name", f"report-{job['id']}-{run}.md",
                 "--author", AUTHOR)
     elif step == "wake":

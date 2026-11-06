@@ -15,9 +15,11 @@ import pytest
 
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
+from hermes_cli.worker import hub as hub_module
 from hermes_cli.worker import serve, settings
 from hermes_cli.worker.board import cards
 from hermes_cli.worker.hub import Hub, HubError
+from hermes_cli.worker.transport import TransportError
 from tests.hermes_cli import _worker_fakes as fakes
 
 AGENT = "agent-a"
@@ -29,8 +31,10 @@ once = os.path.join(os.environ.get("FAKE_KANBAN_FAIL_ONCE", ""), verb)
 failed = bool(os.environ.get("FAKE_KANBAN_FAIL_ONCE")) and os.path.exists(once)
 if failed:
     os.remove(once)
+# Hermes keeps a copy of an attached file: record what it was given at that moment.
+content = open(sys.argv[sys.argv.index(verb) + 2], encoding="utf-8").read() if verb == "attach" and not failed else None
 with open(os.environ["FAKE_KANBAN_LOG"], "a") as fh:
-    fh.write(json.dumps({"argv": sys.argv[1:], "ok": not failed,
+    fh.write(json.dumps({"argv": sys.argv[1:], "ok": not failed, "content": content,
                          "env": sorted(k for k in os.environ if k.startswith("HERMES_"))}) + "\\n")
 sys.exit(1 if failed else 0)
 """
@@ -129,7 +133,7 @@ def test_a_hermes_card_gets_start_end_and_report_through_the_command_and_no_kanb
     assert end[end.index("--author") + 1] == "lina-worker"
     assert f"lina worker accept {task_id}" in end[-1]
     assert attach[:5] == ["kanban", "--board", BOARD, "attach", CARD]
-    assert Path(attach[5]).name == "report.md" and "## 다음에 알아야 할 것" in Path(attach[5]).read_text("utf-8")
+    assert Path(attach[5]).name == "report.md" and "## 다음에 알아야 할 것" in made[2]["content"]
     # unblock refuses inside a card session's environment, and LINA's home must not leak into Hermes's CLI
     assert not [name for call in made for name in call["env"]
                 if name.startswith("HERMES_KANBAN_") or name in ("HERMES_HOME", "HERMES_PROFILE")]
@@ -207,6 +211,85 @@ def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_thr
     hub.notify(run, "done", "1")
     assert _verbs(calls()) == ["comment", "schedule", "comment", "attach", "unblock"]
     assert not hub.store.load(run).get("card_pending")
+
+
+def _attached(calls: list[dict]) -> list[tuple[str, str]]:
+    """``(stored name, content)`` of each attachment that went through."""
+    out = []
+    for call in calls:
+        argv = call["argv"]
+        if call["ok"] and argv[argv.index(BOARD) + 1] == "attach":
+            out.append((argv[argv.index("--name") + 1], call["content"]))
+    return out
+
+
+@pytest.fixture
+def on_a_device(queued, monkeypatch):
+    """A run placed on a device whose result fetch is played by *results*: each call returns the next entry, an
+    exception is raised, a string is written as the run's report.md, None writes no report."""
+    hub, submit, calls = queued
+    run = submit()
+    hub.store.update(run, host="far", state="running")
+    results: list = []
+
+    def fetch(transport, task_id, out_dir):
+        outcome = results.pop(0) if results else None
+        if isinstance(outcome, Exception):
+            raise outcome
+        out_dir.mkdir(parents=True, exist_ok=True)
+        if outcome is not None:
+            (out_dir / "report.md").write_text(outcome, encoding="utf-8")
+    monkeypatch.setattr(hub_module, "fetch", fetch)
+    monkeypatch.setattr(Hub, "transport", lambda self, job: None)
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    return hub, run, results, calls
+
+
+def test_a_failed_result_fetch_is_retried_before_the_report_is_attached_and_the_card_woken(on_a_device):
+    hub, run, results, calls = on_a_device
+    results += [TransportError("far: connection reset"), "# run 1 report\n"]
+    hub.notify(run, "done", "1")
+    assert _verbs(calls())[2:] == []  # the end waits for its result
+    hub.tick()
+    assert _verbs(calls())[2:] == ["comment", "attach", "unblock"]
+    assert _attached(calls()) == [(f"report-{run}-1.md", "# run 1 report\n")]
+    assert not hub.store.load(run).get("card_pending")
+
+
+def test_a_run_with_no_report_completes_without_an_attachment(on_a_device):
+    hub, run, results, calls = on_a_device
+    results.append(None)
+    hub.notify(run, "done", "1")
+    assert _verbs(calls())[2:] == ["comment", "unblock"]
+    assert not hub.store.load(run).get("card_pending")
+
+
+def test_a_result_that_never_arrives_ends_the_card_saying_so(on_a_device):
+    hub, run, results, calls = on_a_device
+    results += [TransportError("far: unreachable")] * hub_module.FETCH_TRIES
+    hub.notify(run, "done", "1")
+    for _ in range(hub_module.FETCH_TRIES):
+        hub.tick()
+    assert _verbs(calls())[2:] == ["comment", "unblock"]
+    end = calls()[2]["argv"][-1]
+    assert "report.md could not be fetched" in end and f"lina worker result {run}" in end
+    assert not hub.store.load(run).get("card_pending")
+
+
+def test_a_retried_attachment_carries_its_own_runs_report(queued, tmp_path, monkeypatch):
+    hub, submit, calls = queued
+    run = submit()
+    out = hub.store.out_dir(hub.store.load(run))
+    out.mkdir(parents=True)
+    (out / "report.md").write_text("run 1\n", encoding="utf-8")
+    fail = tmp_path / "fail-once"
+    fail.mkdir()
+    (fail / "attach").touch()
+    monkeypatch.setenv("FAKE_KANBAN_FAIL_ONCE", str(fail))
+    hub.notify(run, "done", "1")
+    (out / "report.md").write_text("run 2\n", encoding="utf-8")  # the next run's results land in the same folder
+    hub.tick()
+    assert _attached(calls()) == [(f"report-{run}-1.md", "run 1\n")]
 
 
 def test_the_end_of_a_run_on_a_running_card_is_a_comment_only(queued):
