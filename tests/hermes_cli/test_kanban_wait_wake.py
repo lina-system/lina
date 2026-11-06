@@ -391,6 +391,22 @@ def test_a_card_woken_by_its_pr_wait_respawns_past_the_active_pr_guard(board):
     assert kbd.check_respawn_guard(board, tid) == "active_pr"
 
 
+@pytest.mark.parametrize(("waited", "spawns"), [(7, True), (9, False)])
+def test_every_pr_url_in_a_comment_counts_for_a_satisfied_pr_wait(board, waited, spawns):
+    tid, run_id = _running(board)
+    kb.add_comment(board, tid, "worker", "Based on https://github.com/o/r/pull/6; opened https://github.com/o/r/pull/7")
+    assert kb.schedule_task(board, tid, reason="ci", wait_for={"kind": "pr", "repo": "o/r", "number": waited},
+                            expected_run_id=run_id)
+    assert _wait_mod().wake_waiting_tasks(board, pr_checks_fn=lambda wait_for, assignee: True) == [tid]
+
+    spawned: list[str] = []
+    _tick(board, spawned)
+
+    assert spawned == ([tid] if spawns else [])
+    if not spawns:
+        assert kbd.check_respawn_guard(board, tid) == "active_pr"
+
+
 @pytest.mark.parametrize("case", ["manual_unblock", "other_pr"])
 def test_the_active_pr_guard_still_holds_a_card_not_woken_for_that_pr(board, case):
     tid, run_id = _running(board)
