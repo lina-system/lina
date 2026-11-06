@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter
 from copy import deepcopy
+from graphlib import CycleError, TopologicalSorter
 import hashlib
 import json
 
@@ -134,14 +135,24 @@ def manifest(data: dict[str, list[dict]], texts: dict[int, dict], workspace: str
 def source_links(data: dict[str, list[dict]]) -> dict:
     messages = {r["public_id"] for r in data["message_meta"]}
     documents = {r["id"] for r in data["documents"]}
+    targets = documents | messages
+    dependencies = {document: set() for document in documents}
     for row in data["documents"]:
         for field, value in document_references(row):
-            targets = documents if field == "copied_from" else documents | messages
-            if value not in targets:
+            if value not in (documents if field == "copied_from" else targets):
                 raise ValueError(f"unresolved document {field} reference: {row['id']} -> {value}")
+            if value in documents:
+                dependencies[row["id"]].add(value)
     for row in data["document_sources"]:
-        if row["derived_id"] not in documents or row["source_id"] not in documents | messages:
+        if row["derived_id"] not in documents or row["source_id"] not in targets:
             raise ValueError(f"unresolved document_sources edge: {row['derived_id']} -> {row['source_id']}")
+        if row["source_id"] in documents:
+            dependencies[row["derived_id"]].add(row["source_id"])
+    # Normalized and undrained references can form a cycle only when combined.
+    try:
+        TopologicalSorter(dependencies).prepare()
+    except CycleError as error:
+        raise ValueError("cyclic document source reference") from error
     counts = Counter("message" if r["source_id"] in messages else
                      "document" if r["source_id"] in documents else "unresolved"
                      for r in data["document_sources"])

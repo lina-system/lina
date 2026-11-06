@@ -50,9 +50,6 @@ def archive_reference(legacy_archive, field, source_id):
         conn.execute("UPDATE public.documents SET source_ids=%s, internal_metadata=%s WHERE id=%s",
                      (Jsonb([source_id, "not an id", 17]) if field == "column" else None,
                       Jsonb(metadata), CHILD))
-        # A cycle exercises fixed-point closure without importing private siblings.
-        conn.execute("UPDATE public.documents SET internal_metadata=%s WHERE id=%s",
-                     (Jsonb({"premise_ids": [CHILD]}), PARENT))
         assert conn.execute("SELECT count(*) FROM public.document_sources").fetchone() == (0,)
         assert conn.execute("SELECT version_num FROM public.alembic_version").fetchone() == ("a7c3e9f1b2d4",)
     dump = options["work_dir"] / "legacy.dump"
@@ -80,8 +77,6 @@ def test_legacy_archive_closes_excluded_ancestors_when_raw_reference_exists(lega
         value = raw if field == "column" else metadata[field]
         assert value == (identities[PARENT] if field == "copied_from" else [identities[PARENT], "not an id", 17])
         assert metadata["custom"] == {"source_ids": [MISSING]}
-        assert conn.execute("SELECT internal_metadata->'premise_ids' FROM ltm.documents WHERE id=%s",
-                            (identities[PARENT],)).fetchone() == ([identities[CHILD]],)
     assert migrate_honcho(**options)["inserted"] == 0
 
 
@@ -156,3 +151,65 @@ def test_namespace_preserves_malformed_prose_when_legacy_field_is_not_an_identit
     assert transformed["documents"][0]["internal_metadata"] == metadata
     if field == "column":
         assert transformed["documents"][0]["source_ids"] == "not an array"
+
+
+def cycle_archive(legacy_archive, kind):
+    """Persist real normalized/undrained provenance, including excluded ancestors."""
+    source, options = legacy_archive
+    other, ancestor = "d5" * 10 + "d", "d6" * 10 + "d"
+    normalized = [(CHILD, PARENT), (PARENT, CHILD)]
+    raw = []
+    if kind in FIELDS:
+        normalized = []
+        raw = [(CHILD, kind, PARENT), (PARENT, kind, CHILD)]
+    elif kind == "mixed":
+        normalized = [(CHILD, PARENT)]
+        raw = [(PARENT, "premise_ids", CHILD)]
+    elif kind == "self":
+        normalized = [(CHILD, CHILD)]
+    elif kind == "diamond":
+        normalized = [(CHILD, PARENT), (CHILD, other), (PARENT, ancestor)]
+        # The shared ancestor is reachable through both representations.
+        raw = [(CHILD, "column", PARENT), (other, "source_ids", ancestor)]
+    with psycopg.connect(source) as conn:
+        conn.execute("UPDATE public.documents SET source_ids=NULL, internal_metadata='{}'")
+        for derived, target in normalized:
+            conn.execute("INSERT INTO public.document_sources(derived_id,source_id,workspace_name) "
+                         "VALUES (%s,%s,'alpha')", (derived, target))
+        for derived, field, target in raw:
+            if field == "column":
+                conn.execute("UPDATE public.documents SET source_ids=%s WHERE id=%s", (Jsonb([target]), derived))
+            else:
+                value = target if field == "copied_from" else [target]
+                conn.execute("UPDATE public.documents SET internal_metadata=%s WHERE id=%s",
+                             (Jsonb({field: value}), derived))
+    dump = options["work_dir"] / "cycle.dump"
+    with dump.open("wb") as stream:
+        subprocess.run([*pg_command("pg_dump"), "--format=custom", "--no-owner", "--no-privileges", source],
+                       stdout=stream, stderr=subprocess.PIPE, check=True, timeout=120)
+    return {**options, "copied_dump": dump}
+
+
+@pytest.mark.parametrize("kind", ("normalized", *FIELDS, "mixed", "self"))
+def test_document_cycle_refuses_archive_without_publication(legacy_archive, kind):
+    # Given: every endpoint exists, but selected and dependency rows form a cycle.
+    options = cycle_archive(legacy_archive, kind)
+    # When / Then: validation refuses before text, registry or graph publication.
+    with pytest.raises(ValueError, match="cyclic document"):
+        migrate_honcho(**options)
+    with psycopg.connect(options["destination_dsn"]) as conn:
+        assert conn.execute("SELECT count(*) FROM ltm.workspaces WHERE name='legacy-copy'").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM memory.messages WHERE agent_id='legacy-copy'").fetchone() == (0,)
+        assert conn.execute("SELECT count(*) FROM memory.identity_keys WHERE key LIKE 'legacy-copy%'").fetchone() == (0,)
+
+
+def test_document_diamond_preserves_shared_ancestors(legacy_archive):
+    # Given: duplicate representations and converging paths, not a backedge.
+    options = cycle_archive(legacy_archive, "diamond")
+    # When: the real archive is restored, selected, namespaced and published.
+    report = migrate_honcho(**options)
+    # Then: both branches and their shared ancestor survive an exact replay.
+    assert report["ok"] and report["source_manifest"] == report["destination_manifest"]
+    assert {CHILD, PARENT, "d5" * 10 + "d", "d6" * 10 + "d"} <= report["identity_maps"]["documents"].keys()
+    assert report["document_sources"]["count"] == 3
+    assert migrate_honcho(**options)["inserted"] == 0

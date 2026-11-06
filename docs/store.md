@@ -333,6 +333,7 @@ legacy document arrays (`source_ids` column, metadata `source_ids`, metadata `pr
 `copied_from`. Valid legacy IDs enter dependency closure before remapping, even in lower-precedence arrays.
 Malformed elements, prose `premises`/`sources`, arbitrary nested metadata and URLs are not rewritten.
 The reconciler has not necessarily drained legacy arrays: a7c3 is DDL-only.
+Cycles (including self-loops) across normalized and retained legacy document references are refused before destination publication; shared-ancestor DAGs remain valid.
 
 Queue payloads distinguish integer message IDs, public message IDs, scoped peer/session names, and deletion
 resources: observation deletion uses a document ID (including an already-deleted target); session deletion
