@@ -626,9 +626,27 @@ _comment_poll_last_attempt: float = 0.0
 _comment_watermark: dict[str, int] = {}
 
 
+def _write_comment_receipts(agent: Any, kb: Any, conn: Any, tid: str, run_id: Optional[int]) -> None:
+    """A queued steer is not received until it appears in the live conversation."""
+    pending = getattr(agent, "_kanban_comment_receipts", {}).get((tid, run_id), [])
+    messages = getattr(agent, "_session_messages", [])
+    landed = [(note, refs) for note, refs in pending if any(
+        m.get("role") == "user" and note in str(m.get("content") or "") for m in messages)]
+    if not landed:
+        return
+    where = f"run {run_id}" if run_id is not None else "session"
+    # Commit a whole batch together so a failed write cannot duplicate partial receipts.
+    with kb.write_txn(conn, allow_nested=True):
+        for _note, refs in landed:
+            for ref in refs:
+                kb.add_comment(conn, tid, author=_persisted_identity(),
+                               body=f"[received] {where}: {ref}", run_id=run_id)
+    agent._kanban_comment_receipts[(tid, run_id)] = [p for p in pending if p not in landed]
+
+
 def inject_new_comments_from_env(agent: Any) -> bool:
     """Steer new operator comments on the worker's task into ``agent``; True iff a
-    steer was injected; never raises. Own comments (``_persisted_identity``) are skipped."""
+    steer was injected; never raises. Skip this run's comments, not its profile's."""
     global _comment_poll_last_attempt
     # Operator notes address the dispatcher-owned worker; a delegate_task child sharing
     # this process must neither receive them nor advance the shared watermark (#112817).
@@ -638,10 +656,13 @@ def inject_new_comments_from_env(agent: Any) -> bool:
             or (now - _comment_poll_last_attempt) < _COMMENT_POLL_MIN_INTERVAL_SECONDS):
         return False
     _comment_poll_last_attempt = now
+    own_run = _worker_run_id(tid)
     seen = _comment_watermark.get(tid)
     try:
         with _board(None, quiet_close=True) as (kb, conn):
+            _write_comment_receipts(agent, kb, conn, tid, own_run)
             rows = kb.list_comments_after(conn, tid, after_id=seen or 0)
+            mine = kb.comment_ids_written_by_run(conn, tid, own_run) if own_run is not None else None
     except Exception:
         logger.debug("comment-inject: bridge failed", exc_info=True)
         return False
@@ -651,11 +672,11 @@ def inject_new_comments_from_env(agent: Any) -> bool:
         return False
     # Advance past everything read (including our own notes) so nothing is re-injected.
     _comment_watermark[tid] = max(c.id for c in rows)
-    # Same resolution the write side used, so a worker skips its OWN comments even
-    # when the dispatcher did not pin HERMES_PROFILE (echoed notes would otherwise
-    # re-enter the live turn as fake operator steering).
+    # A main session shares the profile name but not the card worker's run.
+    # Only unbound workers need the legacy author-based echo guard.
     own = _persisted_identity()
-    fresh = [c for c in rows if (c.author or "").strip() != own and (c.body or "").strip()]
+    fresh = [c for c in rows if (c.body or "").strip()
+             and (c.id not in mine if mine is not None else (c.author or "").strip() != own)]
     if not fresh:
         return False
     lines = [f"- {c.author or 'operator'}: {c.body.strip()}" for c in fresh]
@@ -663,10 +684,17 @@ def inject_new_comments_from_env(agent: Any) -> bool:
             + " on your kanban task from the operator (delivered mid-run). "
             + "Take it into account for the work you're doing right now:\n" + "\n".join(lines))
     try:
-        return bool(agent.steer(note))
+        steered = bool(agent.steer(note))
     except Exception:
         logger.debug("comment-inject: steer failed", exc_info=True)
         return False
+    if steered:
+        refs = tuple(f'{c.author or "operator"} {time.strftime("%H:%M", time.localtime(c.created_at))} '
+                     f'"{" ".join(c.body.split())[:40]}"' for c in fresh)
+        if not hasattr(agent, "_kanban_comment_receipts"):
+            agent._kanban_comment_receipts = {}
+        agent._kanban_comment_receipts.setdefault((tid, own_run), []).append((note, refs))
+    return steered
 
 
 # --- Handlers ---
