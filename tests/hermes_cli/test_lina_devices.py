@@ -104,7 +104,7 @@ def local_device(tmp_path, monkeypatch):
           poll_s: 0.05
           min_free_gb: 0
           runners:
-            fakecli: {json.dumps({"type": "command", "argv": argv})}
+            fakecli: {json.dumps({"type": "command", "argv": argv, "access": "workspace-write"})}
         """), encoding="utf-8")
     launcher = fakes.ThreadLauncher().install(monkeypatch)
     stop = threading.Event()

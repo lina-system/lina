@@ -116,7 +116,8 @@ export class RpcClient {
     appendFileSync(join(fake, "rpc.jsonl"), JSON.stringify({ openSession: options }) + "\\n");
     if (options.sessionPath) return {};
     const scenario = JSON.parse(readFileSync(join(fake, "scenario.json"), "utf8"));
-    writeFileSync(stateFile, JSON.stringify({ phase: scenario.first, cwd: options.cwd, prompts: [], opened: options }));
+    writeFileSync(stateFile, JSON.stringify({ phase: scenario.first, cwd: options.cwd, prompts: [], opened: options,
+                                            opened_at: new Date().toISOString() }));
     return { sessionId: "host-1", state: { sessionFile: "/fake/ses.jsonl", sessionId: "ses-fake-1", cwd: options.cwd,
              model: { provider: options.provider, id: options.modelId }, thinkingLevel: options.thinkingLevel } };
   }

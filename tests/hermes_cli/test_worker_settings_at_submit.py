@@ -40,11 +40,11 @@ CONFIG = """\
 worker:
   runners:
     codex: {type: command, argv: [codex, "-"], model_args: [--model, "{id}"], model: "prov/m-off:high",
-            fallback_model: prov/m-open}
-    dsh: {type: command, argv: [dsh, "-"], model: zed/m-out}
-    fine: {type: command, argv: [fine, "-"], model: "prov/m-open:high"}
-    stuck: {type: command, argv: [stuck, "-"], model: prov/m-off, fallback_model: gone/m-gone}
-    agy: {type: command, argv: [agy, "-"]}
+            fallback_model: prov/m-open, access: workspace-write}
+    dsh: {type: command, argv: [dsh, "-"], model: zed/m-out, access: workspace-write}
+    fine: {type: command, argv: [fine, "-"], model: "prov/m-open:high", access: workspace-write}
+    stuck: {type: command, argv: [stuck, "-"], model: prov/m-off, fallback_model: gone/m-gone, access: workspace-write}
+    agy: {type: command, argv: [agy, "-"], access: workspace-write}
     idle: {type: command, argv: [idle, "-"], "on": false}
   models:
     aliases: {planner: {provider: prov, id: m-plan, thinking: medium}}
@@ -195,7 +195,7 @@ def test_on_the_device_the_job_s_model_wins_and_the_device_s_entry_gives_the_loc
     base = tmp_path / "device"
     script = "import json, sys; open('argv.json', 'w').write(json.dumps(sys.argv[1:]))"
     fakes.write_config(base, f"codex: {{type: command, argv: {json.dumps([sys.executable, '-c', script])}, "
-                             "model: other/m-device}\n")
+                             "model: other/m-device, access: workspace-write}\n")
     root = base / "worker"
     task = Task("OT-DEV0001", root / "tasks" / "OT-DEV0001", {})
     task.work.mkdir(parents=True)

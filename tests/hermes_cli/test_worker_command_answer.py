@@ -20,8 +20,9 @@ def test_state_does_not_finish_an_old_step_after_answer(tmp_path: Path, monkeypa
     task.work.mkdir()
     gate = task.path("release")
     os.mkfifo(gate)
-    runner = CommandRunner("cli", {"argv": ["/bin/sh", "-c", 'read release < "$1"', "sh", str(gate)]})
-    handle = Handle(task, 1, {"runner": "cli", "step": 1, "since": time.time()})
+    runner = CommandRunner("cli", {"argv": ["/bin/sh", "-c", 'read release < "$1"', "sh", str(gate)],
+                                   "access": "workspace-write"})
+    handle = Handle(task, 1, {"runner": "cli", "step": 1, "since": time.time(), "access": "workspace-write"})
     handle.save()
     task.path("exit.1.1").write_text("0\n", encoding="utf-8")
     (task.work / "question.md").write_text("Which colour?\n", encoding="utf-8")
