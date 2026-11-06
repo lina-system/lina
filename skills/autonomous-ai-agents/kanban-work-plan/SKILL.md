@@ -127,9 +127,10 @@ card's result, a PR's required checks finished, or a time. Each dispatcher tick 
 and unblocks the card once when it happens. A worker records the same by hand with
 `hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|until:<time>`, or
 `hermes kanban block <id> --wait-for ...` (a `needs_input` block that returns to ready by
-itself); a `needs_input` block without `--wait-for` waits for a person. A spent `max_turns` or
-`max_runtime` is a planned stop: the run leaves a handoff comment and the card goes back to ready
-without counting toward `max_retries`.
+itself); a `needs_input` block without `--wait-for` waits for a person. A spent `max_turns`,
+`max_runtime` or agent iteration budget is a planned stop: the run leaves a handoff comment and the
+card goes back to ready without counting toward `max_retries`. After `kanban.planned_stop_limit`
+(default 5) planned stops in a row the card is blocked `needs_input` for a person.
 
 ## Procedure
 

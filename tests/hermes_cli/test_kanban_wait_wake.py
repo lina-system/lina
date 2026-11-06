@@ -355,6 +355,22 @@ def test_turn_budget_end_hands_off_and_returns_to_ready_without_a_failure(board,
     assert "blocked" not in _event_kinds(board, tid)
 
 
+def test_planned_stop_limit_from_config_holds_a_card_after_repeated_budget_ends(board, monkeypatch):
+    (Path(os.environ["HERMES_HOME"]) / "config.yaml").write_text("kanban:\n  planned_stop_limit: 2\n", encoding="utf-8")
+    tid = kb.create_task(board, title="long card", assignee="worker")
+    _scripted_judge(monkeypatch)
+
+    run_id = kb.claim_task(board, tid).current_run_id
+    assert _loop(board, tid, run_id, [], max_turns=1)["outcome"] == "handoff_budget"
+    assert _wait_mod().wake_waiting_tasks(board) == [tid]
+    run_id = kb.claim_task(board, tid).current_run_id
+    _loop(board, tid, run_id, [], max_turns=1)
+
+    task = kb.get_task(board, tid)
+    assert (task.status, task.block_kind, task.consecutive_failures) == ("blocked", "needs_input", 0)
+    assert len([c for c in kb.list_comments(board, tid) if c.body.startswith("Handoff:")]) == 2
+
+
 def test_runtime_end_hands_off_without_counting_toward_max_retries(board, monkeypatch):
     monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
     tid = kb.create_task(board, title="long job", assignee="worker", max_runtime_seconds=1, max_retries=1)

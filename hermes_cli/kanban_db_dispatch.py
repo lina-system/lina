@@ -27,6 +27,7 @@ from typing import Optional
 from typing import TYPE_CHECKING
 
 from hermes_cli.kanban_db_dispatch_report import describe_suppression
+from hermes_cli.kanban_db_handoff import hand_off_or_hold
 from hermes_cli.kanban_db_wait import DISPATCHER_ACTOR, wake_waiting_tasks
 from hermes_cli.quiet_single_query import KANBAN_WORKER_EXIT_TRAILER
 
@@ -703,11 +704,9 @@ def enforce_max_runtime(conn: sqlite3.Connection, *, signal_fn=None) -> list[str
                 )
                 _kb._append_event(conn, tid, "timed_out", payload, run_id=run_id)
                 timed_out.append(tid)
-        if cur.rowcount == 1:
-            _kb.add_comment(conn, tid, DISPATCHER_ACTOR, (
-                f"Handoff: the run reached its runtime limit ({error}) and was stopped as planned. "
-                f"The card is back in {retry_status}; the next run continues from this card's "
-                "comments and prior attempts."), run_id=run_id)
+        if cur.rowcount == 1:   # a planned stop: hand off, or hold the card after a streak of them
+            hand_off_or_hold(conn, tid, run_id=run_id, author=DISPATCHER_ACTOR,
+                             why=f"the run reached its runtime limit ({error}) and was stopped as planned")
     return timed_out
 
 
