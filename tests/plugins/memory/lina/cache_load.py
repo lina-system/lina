@@ -81,6 +81,9 @@ def _drive(home, server, clock) -> None:
                     skip_context_files=True, session_id="sess-load", platform="cli",
                     session_db=SessionDB(db_path=home / "state.db"), skip_background_review=True,
                     enabled_toolsets=["skills", "memory", "todo"])
+    # agent_init stamps the start from the real clock and "sess-load" carries no date stamp, so pin the
+    # conversation start to the load's own clock; otherwise the midnight date note below never happens.
+    agent.session_start = clock.now
     server.compaction_count = lambda: agent.context_compressor.compression_count
     history = None
     with patch("agent.auxiliary_client.call_llm", side_effect=_fake_summary_model):

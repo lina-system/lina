@@ -1,0 +1,153 @@
+
+[0;36m☤ Hermes Agent Setup[0m
+
+[0;36m→[0m Checking for uv...
+[0;32m✓[0m pinned uv found (uv 0.13.5 (x86_64-unknown-linux-gnu))
+[0;36m→[0m Installing python + tools + dependencies via pm (hash-verified via uv.lock)...
+[0;36m→[0m (first run on a fresh checkout can take 1-5 minutes)
+Downloading cpython-3.14.9-linux-x86_64-gnu (download) (35.0MiB)
+ Downloaded cpython-3.14.9-linux-x86_64-gnu (download)
+Installed Python 3.14.9 in 1.57s
+ + cpython-3.14.9-linux-x86_64-gnu
+Preparing the isolated Hermes runtime…
+  → Installing Python dependencies…
+  ✓ Installing Python dependencies
+  ffmpeg:   3.3%  4.0 MiB / 120.7 MiB
+  ffmpeg:   6.6%  8.0 MiB / 120.7 MiB
+  ffmpeg:   9.9%  12.0 MiB / 120.7 MiB
+  ffmpeg:  13.3%  16.0 MiB / 120.7 MiB
+  ffmpeg:  16.6%  20.0 MiB / 120.7 MiB
+  ffmpeg:  19.9%  24.0 MiB / 120.7 MiB
+  ffmpeg:  23.2%  28.0 MiB / 120.7 MiB
+  ffmpeg:  26.5%  32.0 MiB / 120.7 MiB
+  ffmpeg:  29.8%  36.0 MiB / 120.7 MiB
+  ffmpeg:  33.1%  40.0 MiB / 120.7 MiB
+  ffmpeg:  36.4%  44.0 MiB / 120.7 MiB
+  ffmpeg:  39.8%  48.0 MiB / 120.7 MiB
+  ffmpeg:  43.1%  52.1 MiB / 120.7 MiB
+  ffmpeg:  46.5%  56.1 MiB / 120.7 MiB
+  ffmpeg:  49.8%  60.1 MiB / 120.7 MiB
+  ffmpeg:  53.1%  64.1 MiB / 120.7 MiB
+  ffmpeg:  56.4%  68.1 MiB / 120.7 MiB
+  ffmpeg:  59.7%  72.1 MiB / 120.7 MiB
+  ffmpeg:  63.0%  76.1 MiB / 120.7 MiB
+  ffmpeg:  66.3%  80.1 MiB / 120.7 MiB
+  ffmpeg:  69.6%  84.1 MiB / 120.7 MiB
+  ffmpeg:  73.0%  88.1 MiB / 120.7 MiB
+  ffmpeg:  76.3%  92.1 MiB / 120.7 MiB
+  ffmpeg:  79.6%  96.1 MiB / 120.7 MiB
+  ffmpeg:  83.0%  100.2 MiB / 120.7 MiB
+  ffmpeg:  86.4%  104.3 MiB / 120.7 MiB
+  ffmpeg:  89.7%  108.3 MiB / 120.7 MiB
+  ffmpeg:  93.1%  112.5 MiB / 120.7 MiB
+  ffmpeg:  96.5%  116.6 MiB / 120.7 MiB
+  ffmpeg:  99.9%  120.6 MiB / 120.7 MiB
+  ffmpeg: 100.0%  120.7 MiB / 120.7 MiB
+  ffmpeg: 100.0%  120.7 MiB / 120.7 MiB
+  ffmpeg: unpacking
+✓ ffmpeg
+  node:  12.3%  4.0 MiB / 32.5 MiB
+  node:  24.8%  8.1 MiB / 32.5 MiB
+  node:  37.3%  12.1 MiB / 32.5 MiB
+  node:  49.6%  16.1 MiB / 32.5 MiB
+  node:  62.1%  20.2 MiB / 32.5 MiB
+  node:  74.6%  24.3 MiB / 32.5 MiB
+  node:  87.3%  28.4 MiB / 32.5 MiB
+  node:  99.8%  32.5 MiB / 32.5 MiB
+  node: 100.0%  32.5 MiB / 32.5 MiB
+  node: 100.0%  32.5 MiB / 32.5 MiB
+  node: unpacking
+✓ node
+  npm: 100.0%  2.9 MiB / 2.9 MiB
+  npm: 100.0%  2.9 MiB / 2.9 MiB
+  npm: unpacking
+✓ npm
+  python:   5.5%  4.0 MiB / 72.7 MiB
+  python:  11.0%  8.0 MiB / 72.7 MiB
+  python:  16.5%  12.0 MiB / 72.7 MiB
+  python:  22.0%  16.0 MiB / 72.7 MiB
+  python:  27.5%  20.0 MiB / 72.7 MiB
+  python:  33.0%  24.0 MiB / 72.7 MiB
+  python:  38.5%  28.0 MiB / 72.7 MiB
+  python:  44.0%  32.0 MiB / 72.7 MiB
+  python:  49.5%  36.0 MiB / 72.7 MiB
+  python:  55.0%  40.0 MiB / 72.7 MiB
+  python:  60.5%  44.0 MiB / 72.7 MiB
+  python:  66.1%  48.1 MiB / 72.7 MiB
+  python:  71.7%  52.2 MiB / 72.7 MiB
+  python:  77.4%  56.3 MiB / 72.7 MiB
+  python:  82.9%  60.3 MiB / 72.7 MiB
+  python:  88.6%  64.5 MiB / 72.7 MiB
+  python:  94.2%  68.6 MiB / 72.7 MiB
+  python:  99.9%  72.6 MiB / 72.7 MiB
+  python: 100.0%  72.7 MiB / 72.7 MiB
+  python: 100.0%  72.7 MiB / 72.7 MiB
+  python: unpacking
+✓ python
+  ripgrep: 100.0%  2.2 MiB / 2.2 MiB
+  ripgrep: 100.0%  2.2 MiB / 2.2 MiB
+  ripgrep: unpacking
+✓ ripgrep
+  → Installing Python dependencies…
+  ✓ Installing Python dependencies
+✓ venv
+  → Resolving Python dependencies…
+  ✓ Resolving Python dependencies
+  → Installing Python dependencies…
+  ✓ Installing Python dependencies
+✓ test environment
+  chromium:   2.4%  4.0 MiB / 167.3 MiB
+  chromium:   4.8%  8.0 MiB / 167.3 MiB
+  chromium:   7.2%  12.0 MiB / 167.3 MiB
+  chromium:   9.6%  16.0 MiB / 167.3 MiB
+  chromium:  12.0%  20.0 MiB / 167.3 MiB
+  chromium:  14.3%  24.0 MiB / 167.3 MiB
+  chromium:  16.7%  28.0 MiB / 167.3 MiB
+  chromium:  19.1%  32.0 MiB / 167.3 MiB
+  chromium:  21.5%  36.0 MiB / 167.3 MiB
+  chromium:  23.9%  40.0 MiB / 167.3 MiB
+  chromium:  26.3%  44.0 MiB / 167.3 MiB
+  chromium:  28.7%  48.0 MiB / 167.3 MiB
+  chromium:  31.1%  52.0 MiB / 167.3 MiB
+  chromium:  33.5%  56.0 MiB / 167.3 MiB
+  chromium:  35.9%  60.0 MiB / 167.3 MiB
+  chromium:  38.3%  64.0 MiB / 167.3 MiB
+  chromium:  40.6%  68.0 MiB / 167.3 MiB
+  chromium:  43.6%  72.9 MiB / 167.3 MiB
+  chromium:  46.0%  76.9 MiB / 167.3 MiB
+  chromium:  48.4%  80.9 MiB / 167.3 MiB
+  chromium:  50.8%  84.9 MiB / 167.3 MiB
+  chromium:  53.1%  88.9 MiB / 167.3 MiB
+  chromium:  55.5%  92.9 MiB / 167.3 MiB
+  chromium:  57.9%  96.9 MiB / 167.3 MiB
+  chromium:  60.9%  101.8 MiB / 167.3 MiB
+  chromium:  63.3%  105.8 MiB / 167.3 MiB
+  chromium:  65.6%  109.8 MiB / 167.3 MiB
+  chromium:  68.0%  113.8 MiB / 167.3 MiB
+  chromium:  70.4%  117.8 MiB / 167.3 MiB
+  chromium:  72.8%  121.8 MiB / 167.3 MiB
+  chromium:  75.8%  126.7 MiB / 167.3 MiB
+  chromium:  78.1%  130.7 MiB / 167.3 MiB
+  chromium:  80.5%  134.7 MiB / 167.3 MiB
+  chromium:  82.9%  138.7 MiB / 167.3 MiB
+  chromium:  85.8%  143.6 MiB / 167.3 MiB
+  chromium:  88.2%  147.6 MiB / 167.3 MiB
+  chromium:  90.6%  151.6 MiB / 167.3 MiB
+  chromium:  93.5%  156.5 MiB / 167.3 MiB
+  chromium:  96.5%  161.4 MiB / 167.3 MiB
+  chromium:  98.9%  165.4 MiB / 167.3 MiB
+  chromium: 100.0%  167.3 MiB / 167.3 MiB
+  chromium: 100.0%  167.3 MiB / 167.3 MiB
+  chromium: unpacking
+✓ chromium
+  cua-driver:  18.2%  5.0 MiB / 27.5 MiB
+  cua-driver:  32.8%  9.0 MiB / 27.5 MiB
+  cua-driver:  50.5%  13.9 MiB / 27.5 MiB
+  cua-driver:  66.6%  18.3 MiB / 27.5 MiB
+  cua-driver:  82.8%  22.7 MiB / 27.5 MiB
+  cua-driver:  98.4%  27.0 MiB / 27.5 MiB
+  cua-driver: 100.0%  27.5 MiB / 27.5 MiB
+  cua-driver: 100.0%  27.5 MiB / 27.5 MiB
+  cua-driver: unpacking
+✓ cua-driver
+[0;32m✓[0m Tools + dependencies installed (hash-verified via pm + uv.lock)

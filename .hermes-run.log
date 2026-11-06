@@ -1,0 +1,42 @@
+▶ environment missing or stale for /home/jun/quick/lina-252-20261106-092409/repo — re-running under run-in-hermes-env
+
+[0;36m☤ Hermes Agent Setup[0m
+
+[0;36m→[0m Checking for uv...
+[0;32m✓[0m pinned uv found (uv 0.13.5 (x86_64-unknown-linux-gnu))
+[0;36m→[0m Installing python + tools + dependencies via pm (hash-verified via uv.lock)...
+[0;36m→[0m (first run on a fresh checkout can take 1-5 minutes)
+Python 3.14 is already installed
+✓ ffmpeg
+✓ node
+✓ npm
+✓ python
+✓ ripgrep
+✓ venv
+  → Resolving Python dependencies…
+  ✓ Resolving Python dependencies
+✓ test environment
+✓ chromium
+✓ cua-driver
+[0;32m✓[0m Tools + dependencies installed (hash-verified via pm + uv.lock)
+▶ running per-file parallel test suite via run_tests_parallel.py
+  (TZ=UTC LANG=C.UTF-8 PYTHONHASHSEED=0; clean env)
+▶ pre-compiling bytecode cache
+▶ launching test runner
+Memory store tests use a Postgres from docker (lina-test-pg-99248be7e65b).
+Discovered 1 test files (~3 tests) under ['tests/plugins/memory/lina/test_cache_order.py']; running with -j 1
+[100.0% |     3/~3 | ✓0 | ✗0] ✗ tests/plugins/memory/lina/test_cache_order.py (3 tests, 0.0s)
+
+=== Summary: 1 files, 0 tests passed, 0 failed; FAILED: 1 of 1 file (100% complete) in 0.0s (1 workers) ===
+
+=== ✗ NO TESTS RAN — 0 collected across 1 file. This is NOT a pass. ===
+  Common causes: the selected venv has no pytest; a -k/-m filter matched nothing; or collection errored in every file.
+  Check the per-file output above for the real error.
+
+=== Failure output ===
+
+--- tests/plugins/memory/lina/test_cache_order.py ---
+runner crashed: OSError(30, 'Read-only file system')
+
+=== 1 file where no tests ran (timeout before collection, pytest usage error, etc.) ===
+  tests/plugins/memory/lina/test_cache_order.py
