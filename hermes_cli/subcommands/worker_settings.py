@@ -69,18 +69,40 @@ def _edit(args) -> int:
         fh.write(hermes_yaml.safe_dump(rev.doc, sort_keys=False) if rev.doc else "{}\n")
     editor = shlex.split(os.environ.get("VISUAL") or os.environ.get("EDITOR") or "vi")
     subprocess.run([*editor, name], check=False, stdin=None)  # health: allow HX006 -- an interactive editor on this terminal runs as long as the person edits
+    new = _load(Path(name))
+    if new is None:  # saved empty (blank or comments only): like an empty commit message, nothing is changed
+        Path(name).unlink(missing_ok=True)
+        print(f"{rev.id}: the file was saved empty; nothing changed")
+        return 0
     try:
-        new = hermes_yaml.safe_load(Path(name).read_text(encoding="utf-8-sig")) or {}
-        check(new)
-    except (SettingsError, ValueError) as exc:
-        raise SettingsError(getattr(exc, "errors", None) or [{"path": "", "message": str(exc)}]) from exc
+        check(new)  # a root that is not a mapping (false, 0, "", []) is refused here, never read as {}
+    except SettingsError as exc:
+        first = exc.errors[0]
+        raise SettingsError([{**first, "message": f"{first['message']} (your text is kept in {name})"},
+                             *exc.errors[1:]]) from exc
     Path(name).unlink(missing_ok=True)
     return _changes(*store.apply(lambda _doc: new, cli_by(), expect=rev.etag))
 
 
+def _load(path: Path):
+    """A YAML file as parsed: ``None`` only when it holds nothing (blank or comments only). Every other value, falsey
+    or not, is returned as it is, so validation can refuse a root that is not a mapping."""
+    from ruamel.yaml import YAMLError
+
+    from hermes_cli.lina_work_settings import SettingsError
+    try:
+        return hermes_yaml.safe_load(path.read_text(encoding="utf-8-sig"))
+    except YAMLError as exc:
+        raise SettingsError([{"path": "", "message": f"{path} does not parse as YAML"}]) from exc
+
+
 def _validate(args) -> int:
     from hermes_cli.lina_work_settings import validate
-    doc = hermes_yaml.safe_load(Path(args.file).read_text(encoding="utf-8-sig")) or {} if args.file else _store().current().doc
+    if args.file:
+        loaded = _load(Path(args.file))
+        doc = {} if loaded is None else loaded  # only an empty file is empty settings
+    else:
+        doc = _store().current().doc
     errors = validate(doc)
     for error in errors:
         print(f"{error['path']}: {error['message']}")

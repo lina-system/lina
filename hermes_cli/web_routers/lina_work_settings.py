@@ -102,7 +102,8 @@ def _invalid(errors: list[dict]) -> dict:
     rows = [{"path": str(e.get("path", "")), "message": str(e.get("message", ""))} for e in errors] or [
         {"path": "", "message": "refused"}]
     more = f" (+{len(rows) - 1} more)" if len(rows) > 1 else ""
-    return {"detail": f"{rows[0]['path']}: {rows[0]['message']}{more}", "errors": rows}
+    where = f"{rows[0]['path']}: " if rows[0]["path"] else ""
+    return {"detail": f"{where}{rows[0]['message']}{more}", "errors": rows}
 
 
 def _patch(body, by: dict, expect: str):
@@ -167,7 +168,11 @@ async def settings_route(request: Request):
         body = json.loads(await request.body() or b"{}")
     except ValueError as exc:
         raise HTTPException(status_code=400, detail="the body is not JSON") from exc
-    labels, size = (body.get("labels") or [], body.get("size")) if isinstance(body, dict) else (None, None)
+    if isinstance(body, dict):
+        labels = [] if body.get("labels") is None else body["labels"]  # absent or null: no labels; false, 0, "", {}: 400
+        size = body.get("size")
+    else:
+        labels, size = None, None
     if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels) or size not in (None, "S", "M", "L"):
         raise HTTPException(status_code=400, detail='the body is {"labels": [text], "size": "S"|"M"|"L"|null}')
     doc = (await _current()).doc

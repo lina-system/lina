@@ -230,6 +230,12 @@ def test_credential_like_keys_written_by_hand_never_show_in_settings_or_history(
     assert "tok-alias-1" in path.read_text(encoding="utf-8")
 
 
+@pytest.mark.parametrize("labels", [False, 0, "", {}, "docs"])
+def test_route_answers_400_for_labels_that_are_present_but_not_a_list(env, client, labels):
+    assert client.post(f"{BASE}/route", json={"labels": labels}).status_code == 400
+    assert client.post(f"{BASE}/route", json={}).status_code == 200  # absent labels: no labels
+
+
 def test_an_unexpected_failure_is_a_500_without_its_message(env, monkeypatch):
     from hermes_cli import lina_work_settings_store, web_server
 

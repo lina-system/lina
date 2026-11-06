@@ -62,7 +62,8 @@ class SettingsError(ValueError):
         self.errors = errors
         first = errors[0] if errors else {"path": "", "message": "refused"}
         more = f" (+{len(errors) - 1} more)" if len(errors) > 1 else ""
-        super().__init__(f"{first['path']}: {first['message']}{more}")
+        where = f"{first['path']}: " if first["path"] else ""  # the root has no path to name
+        super().__init__(f"{where}{first['message']}{more}")
 
 
 def config_path(base: Path | None = None) -> Path:

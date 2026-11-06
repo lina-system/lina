@@ -114,6 +114,54 @@ def test_a_config_that_is_not_a_readable_mapping_exits_2_and_is_left_alone(root,
     assert list((root / "work-settings").glob("revisions/r*.yaml")) == []
 
 
+def _editor_writing(tmp_path, monkeypatch, text: str) -> None:
+    saved = tmp_path / "saved.yaml"
+    saved.write_text(text, encoding="utf-8")
+    editor = tmp_path / "editor"
+    editor.write_text(f"#!{sys.executable}\nimport shutil, sys\nshutil.copyfile({str(saved)!r}, sys.argv[1])\n",
+                      encoding="utf-8")
+    editor.chmod(editor.stat().st_mode | stat.S_IXUSR)
+    monkeypatch.setenv("EDITOR", str(editor))
+    monkeypatch.delenv("VISUAL", raising=False)
+
+
+def _state(root) -> tuple:
+    path = root / "config.yaml"
+    return (path.read_bytes() if path.exists() else None,
+            sorted(p.name for p in (root / "work-settings").glob("revisions/r*.yaml")))
+
+
+NOT_MAPPINGS = ["false\n", "0\n", '""\n', "[]\n"]
+
+
+@pytest.mark.parametrize("saved", NOT_MAPPINGS, ids=["false", "zero", "empty-text", "empty-list"])
+def test_edit_saving_a_root_that_is_not_a_mapping_exits_2_and_writes_nothing(root, tmp_path, monkeypatch, capsys,
+                                                                            saved):
+    _lina("settings", "show")  # any outside revision of today's config is taken first
+    before = _state(root)
+    _editor_writing(tmp_path, monkeypatch, saved)
+    assert _lina("settings", "edit") == 2
+    assert capsys.readouterr().err.strip().splitlines()[-1].startswith("lina worker settings: ")
+    assert _state(root) == before
+
+
+@pytest.mark.parametrize("saved", ["", "   \n", "# only a comment\n"], ids=["empty", "blank", "comment"])
+def test_edit_saving_an_empty_file_changes_nothing(root, tmp_path, monkeypatch, saved):
+    _lina("settings", "show")
+    before = _state(root)
+    _editor_writing(tmp_path, monkeypatch, saved)
+    assert _lina("settings", "edit") == 0
+    assert _state(root) == before
+
+
+@pytest.mark.parametrize("saved", NOT_MAPPINGS, ids=["false", "zero", "empty-text", "empty-list"])
+def test_validate_a_file_whose_root_is_not_a_mapping_exits_1(root, tmp_path, capsys, saved):
+    path = tmp_path / "candidate.yaml"
+    path.write_text(saved, encoding="utf-8")
+    assert _lina("settings", "validate", str(path)) == 1
+    assert "the settings are a mapping" in capsys.readouterr().out
+
+
 def test_settings_with_no_subcommand_shows_the_settings(root, capsys):
     assert _lina("settings") == 0
     assert capsys.readouterr().out.startswith("# r")
