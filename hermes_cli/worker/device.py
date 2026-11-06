@@ -51,11 +51,16 @@ def job_of(task: Task) -> dict:
 
 
 def runner_for(worker_root: Path, task: Task, job: dict):
-    """The job's runner: this device's own entry of that name when it has one (its local paths), else the hub's."""
+    """The job's runner: this device's own entry of that name when it has one (its local paths), else the hub's.
+    The model is always the job's (lina#257): the device's entry never names one, and when it has no ``model_args``
+    the hub's are used, so the job's model reaches the CLI."""
     worker = settings.section(base_of(worker_root))
     name = job.get("runner") or runners.default_name(worker)
     configured = worker.get("runners") if isinstance(worker.get("runners"), dict) else {}
-    spec = configured.get(name) or job.get("runner_spec") or runners.specs(worker).get(name) or {"type": name}
+    hub_spec = job.get("runner_spec") or {}
+    spec = configured.get(name) or hub_spec or runners.specs(worker).get(name) or {"type": name}
+    if spec is not hub_spec and not spec.get("model_args") and hub_spec.get("model_args"):
+        spec = {**spec, "model_args": hub_spec["model_args"]}
     return runners.build(name, spec, task.limits, base_of(worker_root))
 
 

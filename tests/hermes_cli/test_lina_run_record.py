@@ -183,6 +183,22 @@ def test_the_run_card_ends_where_its_record_s_newest_round_ends(fakes, client):
     assert card["endedAt"] == _record(client, "OT-ALP0007")["rounds"][0]["endedAt"] == E2
 
 
+def test_the_record_and_the_card_serve_the_run_s_model_and_settings_revision(fakes, client):
+    """lina#257: the model a run started with (without its alias) and the settings revision it was submitted under;
+    both null for a run from before, or on the runner's own default."""
+    model = {"provider": "prov", "id": "m-open", "thinking": "high", "alias": "builder", "source": "fallback:off"}
+    fakes.job("OT-ALP0011", state="done", model=model, settings={"rev": "r3", "runner_source": "default",
+                                                                  "model_source": "fallback:off", "ocx_check": "off"})
+    fakes.job("OT-ALP0012", state="done")
+    cards = {c["id"]: c for c in _valid("BoardSnapshot", client.get("/api/lina/board").json())["cards"]}
+
+    served = {"provider": "prov", "id": "m-open", "thinking": "high", "source": "fallback:off"}
+    for tid, want in (("OT-ALP0011", (served, "r3")), ("OT-ALP0012", (None, None))):
+        found = _record(client, tid)
+        assert (found["model"], found["settingsRevision"]) == want
+        assert (cards[tid]["model"], cards[tid]["settingsRevision"]) == want
+
+
 def test_the_record_is_behind_the_auth_gate_and_answers_304_until_it_changes(work, fakes, client):
     from hermes_cli import web_server
     _two_rounds(fakes, "OT-ALP0008", first_end=True, state="running")

@@ -115,6 +115,7 @@ def cards(worker_root: Path, now: float) -> list[dict]:
                     "startedAt": job.get("started"), "endedAt": record.ended_at(job, receipts.get(job["id"], [])),
                     "now": _now_line(live) if state in ("in_progress", "waiting") and live else None,
                     "card": (job.get("card") or {}).get("task"), "board": (job.get("card") or {}).get("board"),
+                    "model": record.served_model(job), "settingsRevision": record.settings_revision(job),
                     "plain": plain[job["id"]]})
     return out
 

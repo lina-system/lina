@@ -17,7 +17,8 @@ import shutil
 import time
 from pathlib import Path
 
-from hermes_cli.lina_work_settings import ACCESS
+from hermes_cli.lina_work_settings import ACCESS, SettingsError
+from hermes_cli.lina_work_settings_route import decide
 from hermes_cli.worker import bidding, kanban_link, models, notice, runners, settings
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt
@@ -88,7 +89,12 @@ class Hub:
         agent = opts["bot"]
         tid = self.store.new_id(agent)
         branch = f"omo/{tid}" if opts.get("repo") else None
-        runner = opts.get("runner") or runners.default_name(self.worker)
+        try:
+            decision = decide(self.base, opts.get("runner"), opts["mode"], opts.get("model"), opts.get("labels"),
+                              opts.get("size"))
+        except SettingsError as exc:
+            raise HubError(str(exc)) from exc
+        runner = decision.runner
         spec = runners.specs(self.worker).get(runner)
         if spec is None:
             raise HubError(f"no runner {runner!r} (configured: {', '.join(runners.specs(self.worker))})")
@@ -101,7 +107,7 @@ class Hub:
         supported, reason = runners.build(runner, spec).honours(access)
         if not supported:
             raise HubError(reason)
-        model = models.for_run(opts["mode"], opts.get("model"), self.worker)
+        model = decision.model
         grant = {"access": access, "workspace": "work/ of the task folder", "inputs_readonly": True, "push": False,
                  "private_read_in_place": opts.get("private_inputs") or [],
                  "repo": opts.get("repo"), "outside_effects": "report only (messages, publish, delete, money, "
@@ -116,11 +122,14 @@ class Hub:
                + _private_lines(opts.get("private_inputs") or []), "state": "new",
                "private_inputs": opts.get("private_inputs") or [],
                "grant": grant, "delivery": "pending", "verdict": None, "group": group, "next_notes_rule": True,
-               "card": opts.get("card"), "card_start_pending": kanban_link.on_hermes(opts.get("card"))}
+               "card": opts.get("card"), "card_start_pending": kanban_link.on_hermes(opts.get("card")),
+               "settings": decision.settings}
         self.store.save(job)
         self.store.receipt(tid, "submitted", bot=agent, topic=job["topic"], mode=job["mode"], runner=runner,
                            model=job["model"], brief=str(brief), repo=job["repo"], group=group, grant=grant,
-                           card=job["card"], input_id=f"{tid}.1", access=access)
+                           card=job["card"], input_id=f"{tid}.1", settings=decision.settings, access=access)
+        if decision.fallback:
+            self.store.receipt(tid, "model_fallback", **decision.fallback)
         return job
 
     def _link_card(self, job: dict) -> None:
