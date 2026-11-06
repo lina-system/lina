@@ -281,6 +281,28 @@ def test_cards_of_every_live_board_get_lines_and_a_broken_board_is_skipped(work,
     assert any("a-broken" in r.getMessage() for r in caplog.records if r.levelname == "WARNING")
 
 
+def test_the_writer_reads_the_same_work_cards_the_list_serves(work, model, client):
+    """lina#290: the checked-line writer selects the cards the work list serves — a goal-mode card with no goal
+    card above it, and a plain card with a ``## To-dos`` section — so each gets its checked title."""
+    from hermes_cli import kanban_db as kb
+    from hermes_cli import kanban_db_connect as kbc
+    from hermes_cli.lina_board_plain import write_board
+    kb.init_db()
+    conn = kbc.connect()
+    try:
+        lone = kb.create_task(conn, title="Weekly photo backup check", goal_mode=True, assignee="alpha")
+        todos = kb.create_task(conn, title="Rotate the build machine disks", assignee="alpha",
+                               body="## To-dos\n- [ ] rotate both disks before the next build")
+    finally:
+        conn.close()
+
+    listed = {card["id"] for card in client.get("/api/plugins/kanban/work/cards").json()["cards"]}
+    write_board(work.root, NOW)
+
+    assert listed == {lone, todos}
+    assert {key for key in _rows(work) if key[2] == "title"} == {("card", lone, "title"), ("card", todos, "title")}
+
+
 def _titles_by_source(monkeypatch) -> list[str]:
     """A fake model whose title says which card it came from, so two boards' lines can be told apart."""
     from agent import auxiliary_client

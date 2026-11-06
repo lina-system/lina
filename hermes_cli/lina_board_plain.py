@@ -1,5 +1,6 @@
 """Checked model-written card lines (lina#151): a short title, a "doing now" line and a result line for every
-``lina worker`` run and every goal-mode kanban card, served as ``plain`` on run cards and work cards.
+``lina worker`` run and every work card (``is_work_card``: a goal-mode card, or any card whose body has a
+``## To-dos`` section), served as ``plain`` on run cards and work cards.
 
 The writer runs on its own daemon thread, started once by the hub's worker service (``start_writer``), never in the
 service loop or the hub tick and never in a request: a slow model call holds back nothing but the next pass. For each (kind, id, field) it hashes the field's source text
@@ -41,7 +42,7 @@ log = logging.getLogger(__name__)
 
 
 class Source(NamedTuple):
-    kind: str  # "run" (a lina worker job) or "card" (a goal-mode kanban card)
+    kind: str  # "run" (a lina worker job) or "card" (a work card, ``is_work_card``)
     id: str
     field: str
     text: str
@@ -367,6 +368,14 @@ def run_sources(root: Path, now: float, lives: dict[str, dict] | None = None) ->
 
 
 _ISSUE_REF = re.compile(r"\b[\w.-]+/[\w.-]+#\d+\b")
+_TODO_HEADING = re.compile(r"^##\s+To-?dos\s*$", re.IGNORECASE | re.MULTILINE)
+
+
+def is_work_card(goal_mode: int | bool, body: str | None, status: str) -> bool:
+    """A card the app lists as work, and this writer keeps lines for (lina#290): a goal-mode card, or
+    any non-archived card whose body has a ``## To-dos`` section. A goal card above it is not required;
+    ``work_api`` selects the same set."""
+    return status != "archived" and (bool(goal_mode) or bool(_TODO_HEADING.search(body or "")))
 
 
 def _boards(kanban_db) -> list[str]:
@@ -379,7 +388,7 @@ def _boards(kanban_db) -> list[str]:
 
 
 def card_sources() -> list[Source]:
-    """Goal-mode kanban cards of every live board (the client API serves any board's cards, ``?board=``), each
+    """Work cards (``is_work_card``) of every live board (the client API serves any board's cards, ``?board=``), each
     under its board (``board_key``). The board list is iterated the dispatcher's way, inside
     ``pin_first_board_resolution``: with ``HERMES_KANBAN_DB`` set every slug resolves to that one file, read once
     under the first slug listed (the default board). A board that cannot be read is logged and skipped."""
@@ -400,15 +409,20 @@ def card_sources() -> list[Source]:
 
 
 def _board_cards(kanban_db, path: Path, board: str) -> list[Source]:
-    """One board's goal-mode cards over a read-only connection (a pass never initializes or migrates a board):
-    title from the card title plus the issue it names, now from its latest comment, result from its result (or its
-    latest run's summary) once it is done."""
+    """One board's work cards (``is_work_card``, the set the work API lists) over a read-only connection (a pass
+    never initializes or migrates a board): title from the card title plus the issue it names, now from its latest
+    comment, result from its result (or its latest run's summary) once it is done."""
     conn = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True, timeout=5)
     conn.row_factory = sqlite3.Row
     conn.text_factory = kanban_db._lossy_text
     try:
         out = []
-        for (task_id,) in conn.execute("SELECT id FROM tasks WHERE goal_mode = 1 AND status != 'archived'").fetchall():
+        rows = conn.execute("SELECT id, goal_mode, body, status FROM tasks "
+                            "ORDER BY created_at, rowid").fetchall()
+        for row in rows:
+            if not is_work_card(row["goal_mode"], row["body"], row["status"]):
+                continue
+            task_id = row["id"]
             task = kanban_db.get_task(conn, task_id)
             issue = _ISSUE_REF.search(task.body or "")
             comments = [c for c in kanban_db.list_comments(conn, task_id) if (c.body or "").strip()]
