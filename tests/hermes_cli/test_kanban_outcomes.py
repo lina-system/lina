@@ -293,6 +293,17 @@ def test_quick_issue_end_comments_each_count_one_run_on_their_issue(kanban_home)
     assert (row["worker_run_count"], row["planned_todos"]) == (2, 2)
 
 
+def test_quick_issue_run_on_another_issue_belongs_to_the_card_scope(kanban_home):
+    body = "## To-dos\n- acme/repo#8\n"
+    with kbc.connect_closing() as conn:
+        tid = _card_with_comments(conn, "fix: quick-issue", body, [
+            "[quick-issue] acme/repo#5 → PR #8 (lina, 12분, 3 파일)"])
+        row = dict(_outcome_rows(conn, tid)[0])
+    assert json.loads(row["worker_runs"]) == {
+        ko.CARD_SCOPE: [{"runner": "quick-issue", "id": "acme/repo#5"}]}
+    assert row["worker_run_count"] == 1
+
+
 def test_refresh_runs_gh_as_the_assignee_profile(kanban_home, monkeypatch):
     seen = []
 

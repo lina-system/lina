@@ -215,8 +215,9 @@ def _worker_runs(comments: list[sqlite3.Row], todos: list[dict], events=()) -> d
     refs = {t["ref"] for t in todos if "number" in t}
     for c in comments:
         for run_id in quick_issue_runs(c["body"]):
-            # Keyed by the issue the end comment names, never by a PR number it also carries.
-            todo = run_id if run_id in refs else _todo_for_comment(c["body"], todos)
+            # Keyed by the issue the end comment names, never by a PR number it also carries: an
+            # issue that is no to-do of this card belongs to the card as a whole.
+            todo = run_id if run_id in refs else CARD_SCOPE
             runs.setdefault(todo, []).append({"runner": "quick-issue", "id": run_id})
         for runner, run_id in worker_ids(c["body"]):
             if run_id in seen:
