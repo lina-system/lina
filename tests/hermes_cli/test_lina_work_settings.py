@@ -4,6 +4,7 @@ and the route resolver. Every value is synthetic."""
 
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import subprocess
@@ -286,6 +287,62 @@ def test_a_section_or_entry_that_is_not_a_mapping_is_refused_with_its_path(root,
         store.apply(lambda doc: merge_patch(doc, patch), CLI)
     assert where in [error["path"] for error in refused.value.errors]
     assert (root / "config.yaml").read_bytes() == before
+
+
+def _switch(root):
+    """A runner going from omo to command (type + argv) and a cap, in one change: three keys."""
+    path = root / "config.yaml"
+    path.write_text(TODAY.replace("  runners:\n", "  runners:\n    omo2: {type: omo}\n"), encoding="utf-8")
+    store = _store(root)
+    store.current()
+
+    def edit(doc):
+        doc["worker"]["runners"]["omo2"] = {"type": "command", "argv": ["omo2", "-"]}
+        doc["devices"]["workers"]["build-a"]["cap"] = 3
+        return doc
+    return path, store, edit
+
+
+def _whole(state: dict) -> bool:
+    """The old settings or the new ones, never a mix."""
+    runner, cap = state["worker"]["runners"]["omo2"], state["devices"]["workers"]["build-a"]["cap"]
+    return (runner, cap) in (({"type": "omo"}, 2), ({"type": "command", "argv": ["omo2", "-"]}, 3))
+
+
+def test_one_change_is_one_replacement_of_config_yaml_and_no_reader_sees_half_of_it(root, monkeypatch):
+    import utils
+    path, store, edit = _switch(root)
+    real, seen = utils.atomic_replace, []
+
+    def spy(*args, **kwargs):
+        done = real(*args, **kwargs)
+        if Path(args[1]) == path:  # a lina worker command reading config.yaml right after this replace
+            seen.append(hermes_yaml.safe_load(path.read_text(encoding="utf-8")))
+        return done
+    monkeypatch.setattr(utils, "atomic_replace", spy)
+    store.apply(edit, CLI)
+    assert len(seen) == 1 and all(_whole(state) for state in seen)
+    text = path.read_text(encoding="utf-8")
+    assert "# the work devices" in text and "# the fast one" in text
+    assert '      argv: [codex, exec, "-"]' in text  # an untouched line keeps its flow style and quotes
+    assert text.index("devices:") < text.index("worker:") and text.index("min_free_gb") < text.index("runners:")
+
+
+def test_a_write_cut_short_leaves_the_old_settings_or_the_new_ones_never_half(root, monkeypatch):
+    import utils
+    path, store, edit = _switch(root)
+    real, calls = utils.atomic_replace, []
+
+    def cut(*args, **kwargs):
+        if Path(args[1]) == path:
+            calls.append(1)
+            if len(calls) == 2:  # the process dies before a second replacement of config.yaml
+                raise KeyboardInterrupt
+        return real(*args, **kwargs)
+    monkeypatch.setattr(utils, "atomic_replace", cut)
+    with contextlib.suppress(KeyboardInterrupt):
+        store.apply(edit, CLI)
+    assert _whole(_config(root))
 
 
 REMNANT = "worker.runners.codex: has fields the work settings don't manage (env)"

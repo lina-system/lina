@@ -8,7 +8,7 @@
 ```
 
 A change takes the lock, catches an outside edit first, validates the new settings, writes the changed keys to
-``config.yaml`` in one grouped ``write_config_keys`` (comments and untouched keys stay), then links the next
+``config.yaml`` in one atomic replacement (``write_keys``; comments and untouched keys stay), then links the next
 revision file into place (``os.link`` fails on an existing name, so two writers can never make the same revision)
 and appends its audit line. A refusal writes nothing.
 
@@ -161,14 +161,13 @@ class Store:
         changes = ws.diff(base.doc, new)
         if not changes:
             return base, []
-        from hermes_cli.config_backend import write_config_keys
         # Dotted sets/removals at or below a work-settings key only: nothing else in config.yaml is named, so nothing
         # else can be replaced or dropped (no deletion by omission; a removal is always an explicit key).
         raw = ws.read_config(self.config)
         refused = ws.remnants(base.doc, new, raw)
         if refused:
             raise ws.SettingsError(refused)
-        write_config_keys(self.config, ws.settings_updates(base.doc, new, raw))
+        write_keys(self.config, ws.settings_updates(base.doc, new, raw))
         stored = ws.snapshot(ws.read_config(self.config))  # what landed is the revision, so the next read agrees
         rev = self._write(base, stored, by, ws.diff(base.doc, stored), **extra)
         return rev, rev.audit["changes"]
@@ -195,6 +194,18 @@ class Store:
 
     def history(self, limit: int = 20) -> list[dict]:
         return list(reversed(self.lines()))[:max(0, limit)]
+
+
+def write_keys(path: Path, updates: dict) -> None:
+    """One settings change as ONE write: on the file backend one temp file + atomic replace of ``config.yaml``
+    (``write_config_keys`` there replaces the file once per key, so a ``lina worker`` command reading in between, or
+    an interrupted write, would see half a change); elsewhere ``write_config_keys``, already one CAS patch."""
+    from hermes_cli.config_backend import supports_file_tooling, write_config_keys
+    if supports_file_tooling():
+        from utils import atomic_roundtrip_yaml_update_many
+        atomic_roundtrip_yaml_update_many(path, updates)
+    else:
+        write_config_keys(path, updates)
 
 
 def cli_by() -> dict:
