@@ -350,6 +350,22 @@ def test_an_end_held_by_a_hub_that_stopped_before_sending_it_goes_out_once(far, 
     assert len(_receipts(far.hub, task_id, "delivery_duplicate")) == 1
 
 
+def test_a_late_retry_of_an_earlier_runs_end_leaves_the_run_going_now(far):
+    task_id = far.run(1)
+    unsaved = far.hub.store.load(task_id)
+    far.hub.notify(task_id, "done", "1")
+    far.hub.store.save({**unsaved, "runs": 2})  # the job's save of that end is lost; a follow-up started run 2
+    far.remote[task_id] = {"state": "running", "run": 2, "alive": True}
+
+    far.hub.notify(task_id, "done", "1")  # run 1's report, retried
+    far.tick()
+
+    job = far.hub.store.load(task_id)
+    assert (job["state"], job["runs"]) == ("running", 2)
+    assert [entry["delivery"] for entry in job["notified"]] == [f"{task_id}:1:run.completed"]
+    assert len(far.chats()) == 1
+
+
 def test_a_node_whose_runs_ended_after_an_outage_is_told_of_its_next_outage(far):
     first, second = far.run(1), far.run(2)
     far.down = True

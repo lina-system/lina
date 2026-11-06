@@ -879,44 +879,77 @@ class Hub:
             node_watch.mark_unknown(self.store, job["id"])
             return f"{events.HOST_UNAVAILABLE}: one notice per outage of {job.get('host')} (the tick)"
         end = events.marker(job["id"], kind, run)
+        if str(run).isdigit() and 1 <= int(run) < int(job.get("runs") or 1):
+            return self._earlier_end(job, kind, run, end)
+        if end["delivery"] in (job.get("deliveries_pending") or {}):
+            return self._end_advance(job, end["delivery"])
         if events.delivered(job, kind, run) or events.done(self.store, end["delivery"]):
             return self._end_again(job, kind, run, end)
-        if end["delivery"] not in (job.get("deliveries_pending") or {}):
-            if str(run).isdigit() and int(run) > int(job.get("runs") or 1):
-                self._adopt(job, int(run))
-            elif str(run).isdigit() and int(run) >= 1 and int(run) < int(job.get("runs") or 1):
-                # A late end of an earlier run (its notice retried after a follow-up started the next one): record
-                # it, never let it end the run that is going now. A cancel before any run starts ("0") is about the
-                # task, not a run report, and always applies.
-                job.setdefault("notified", []).append(end)
-                self.store.save(job)
-                self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True, delivery=end["delivery"],
-                                   **events.fields(kind))
-                return "earlier run"
-            self._end_held(job, kind, run, end["delivery"])
-        held = events.pending(job, kind, run)
-        if self._waiter_alive(job) or held:  # the waiter shows it; a Hermes card's end work goes on from its steps
-            self._end_done(job, end)
-            return self._card_steps(job, held) if held else "waiter"
-        self.fetched = None
-        text, _ = self._notice_body(job, kind, run)
-        fetched = self.fetched
-        job["notice"] = text
+        if str(run).isdigit() and int(run) > int(job.get("runs") or 1):
+            self._adopt(job, int(run))
+        job.update(state=kind, last_state=kind)
+        job.setdefault("deliveries_pending", {})[end["delivery"]] = {"kind": kind, "run": run, "stage": "held",
+                                                                     "created": time.time()}
         self.store.save(job)
-        how = self._end_out(job, kind, run, text, fetched, end["delivery"])
-        self._end_done(job, end)
-        self.store.receipt(job["id"], "notified", how=how[:200], state=kind, run=run, delivery=end["delivery"],
+        self.store.receipt(job["id"], "exec_end", state=kind, run=run, delivery=end["delivery"], **events.fields(kind))
+        return self._end_advance(job, end["delivery"])
+
+    def _earlier_end(self, job: dict, kind: str, run: str, end: dict) -> str:
+        """A late end of an earlier run (its report retried after a follow-up started the next one): its marker is
+        recorded, and it never ends the run that is going now. A cancel before any run starts ("0") is about the task,
+        not a run report, and is not one of these."""
+        if events.delivered(job, kind, run):
+            events.duplicate(self.store, job["id"], kind, run, end["delivery"])
+            return "already"
+        job.setdefault("notified", []).append(end)
+        self.store.save(job)
+        self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True, delivery=end["delivery"],
                            **events.fields(kind))
-        self.store.log(f"{job['id']} {events.headline(kind)} {end['delivery']}: {how}")
+        return "earlier run"
+
+    def _end_advance(self, job: dict, delivery: str) -> str:
+        """Move a held end on, never back, saving each move under the job's lock (the caller holds it): **held**
+        (``deliveries_pending``) → **staged** (on a Hermes card its ``card_pending`` entry written, else the send
+        returned) → **done** (``deliveries.jsonl``, then ``notified``). A staged end is never built or sent again,
+        and a Hermes card's steps run only once it is done, from here or from ``_card_steps``'s own retries."""
+        held = job["deliveries_pending"][delivery]
+        kind, run = held["kind"], held["run"]
+        staged_now = held.get("stage") != "staged" and delivery not in (job.get("card_pending") or {})
+        how = self._end_stage(job, kind, run, delivery) if staged_now else "staged before the hub stopped"
+        self._end_done(job, events.marker(job["id"], kind, run))
+        entry = (job.get("card_pending") or {}).get(delivery)
+        if entry and staged_now and entry["fetch_pending"]:
+            how = f"card {job['card']['task']}: result not fetched yet (1/{FETCH_TRIES}), retried on the next report " \
+                  "or tick"
+        elif entry:
+            how = self._card_steps(job, delivery)
+        if how != "waiter":
+            self.store.receipt(job["id"], "notified", how=how[:200], state=kind, run=run, delivery=delivery,
+                               **events.fields(kind))
+        self.store.log(f"{job['id']} {events.headline(kind)} {delivery}: {how}")
         return how
 
-    def _end_held(self, job: dict, kind: str, run: str, delivery: str) -> None:
-        """The end on the job before anything is sent: a send that fails, or a hub that stops before it, leaves it
-        held (``deliveries_pending``) for the next report or tick."""
-        job.update(state=kind, last_state=kind)
-        job.setdefault("deliveries_pending", {})[delivery] = {"kind": kind, "run": run, "created": time.time()}
+    def _end_stage(self, job: dict, kind: str, run: str, delivery: str) -> str:
+        """Build the end and hand it over: to the waiter (it shows it), to a Hermes card's work (the card is the one
+        place its run ends), else to the chat (a batch: once all of it ended) and on the run's card. Saved as staged."""
+        if self._waiter_alive(job):
+            how = "waiter"
+        else:
+            self.fetched = None
+            text, _ = self._notice_body(job, kind, run)  # reloads the job: read what is held after it
+            job["notice"] = text
+            if kanban_link.on_hermes(job.get("card")):
+                self._card_stage(job, kind, run, text, self.fetched, delivery)
+                how = f"card {job['card']['task']}: staged"
+            else:
+                self.store.save(job)
+                how = self.group_notice(job["group"]) if job.get("group") else \
+                    self._deliver(job, events.signed(text, delivery), f"{kind}-{run}")
+                if job.get("card"):
+                    self._card_end(job, kind, run, text, delivery=delivery)
+        job["deliveries_pending"][delivery]["stage"] = "staged"
         self.store.save(job)
-        self.store.receipt(job["id"], "exec_end", state=kind, run=run, delivery=delivery, **events.fields(kind))
+        return how
 
     def _end_done(self, job: dict, end: dict) -> None:
         """The end went out: its id in ``deliveries.jsonl``, then on the job, no longer held."""
@@ -938,44 +971,30 @@ class Hub:
         pending = events.pending(job, kind, run)
         return self._card_steps(job, pending) if pending else "already"
 
-    def _retry_end(self, task_id: str, held: dict) -> None:
+    def _retry_end(self, job: dict, delivery: str) -> str:
+        """A held end moved on by the tick. Called under the job's lock."""
         try:
-            self.store.log(f"{task_id} held end {held['kind']} {held['run']}: "
-                           f"{self.notify(task_id, held['kind'], held['run'])}")
+            return self._end_advance(job, delivery)
         except (TransportError, HubError, OSError) as exc:
-            self.store.log(f"{task_id} held end {held['kind']} {held['run']} not sent on tick: {exc}")
-
-    def _end_out(self, job: dict, kind: str, run: str, text: str, fetched: bool | None, delivery: str) -> str:
-        """Send the end: on a Hermes card only (the card is the one place its run ends), else to the chat (a batch:
-        once all of it ended) and on the run's card."""
-        if kanban_link.on_hermes(job.get("card")):
-            return self._card_end(job, kind, run, text, fetched, delivery=delivery)
-        how = self.group_notice(job["group"]) if job.get("group") else \
-            self._deliver(job, events.signed(text, delivery), f"{kind}-{run}")
-        if job.get("card"):
-            self._card_end(job, kind, run, text, delivery=delivery)
-        return how
+            return f"not sent on tick: {exc}"
 
     def _deliver(self, job: dict, text: str, tag: str) -> str:
         command = (self.worker.get("notice") or {}).get("command") if isinstance(self.worker.get("notice"), dict) \
             else None
         return notice.deliver(job, text, tag, self.store.notices, command)
 
-    def _card_end(self, job: dict, kind: str, run: str, text: str, fetched: bool | None = None, *,
-                  delivery: str) -> str:
-        """A run's end on its card. On a Hermes card it becomes pending work (``card_pending``, under its delivery
-        id): its result fetch when that failed, then ``kanban_link.END_STEPS``, with this run's own report.md kept
-        aside for the attachment."""
+    def _card_stage(self, job: dict, kind: str, run: str, text: str, fetched: bool | None, delivery: str) -> None:
+        """A run's end on its Hermes card as card work (``card_pending``, under its delivery id; the caller saves it):
+        its result fetch when that failed, then ``kanban_link.END_STEPS``, with this run's own report.md kept aside
+        for the attachment."""
+        job.setdefault("card_pending", {})[delivery] = {
+            "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
+            "fetch_tries": 1 if fetched is False else 0, "delivery": delivery,
+            "report": None if fetched is False else self._report_snapshot(job, delivery)}
+
+    def _card_end(self, job: dict, kind: str, run: str, text: str, *, delivery: str) -> str:
+        """A run's end on its LINA card: the board's event and comment."""
         card = job["card"]
-        if kanban_link.on_hermes(card):
-            job.setdefault("card_pending", {})[delivery] = {
-                "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
-                "fetch_tries": 1 if fetched is False else 0, "delivery": delivery,
-                "report": None if fetched is False else self._report_snapshot(job, delivery)}
-            self.store.save(job)
-            if fetched is False:
-                return f"card {card['task']}: result not fetched yet (1/{FETCH_TRIES}), retried on the next report or tick"
-            return self._card_steps(job, delivery)
         try:
             kanban_link.record_end(card, job, kind, run, events.signed(text, delivery))
         except (ValueError, OSError) as exc:
@@ -1055,7 +1074,10 @@ class Hub:
             job = self.store.load(task_id) or {}
             if job.get("card_start_pending"):
                 self._link_card(job)
-            for marker in list(job.get("card_pending") or {}):
+            held = list(job.get("deliveries_pending") or {})
+            for delivery in held:  # its card work, if any, goes on from there once it is done
+                self.store.log(f"{task_id} held end {delivery}: {self._retry_end(job, delivery)}")
+            for marker in [marker for marker in job.get("card_pending") or {} if marker not in held]:
                 self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker)}")
 
     def wait(self, card: dict | None, task_ids: list[str] | None = None) -> int:
@@ -1110,10 +1132,8 @@ class Hub:
                 return
             self.run_due_schedules()
             for job in self.store.all():
-                if job.get("card_start_pending") or job.get("card_pending"):
+                if job.get("card_start_pending") or job.get("card_pending") or job.get("deliveries_pending"):
                     self._retry_cards(job["id"])
-                for held in list((job.get("deliveries_pending") or {}).values()):
-                    self._retry_end(job["id"], held)
             node_watch.watch(self)
             for job in self.store.all():
                 if job.get("state") == "queued":

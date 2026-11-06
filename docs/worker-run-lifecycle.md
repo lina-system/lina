@@ -79,18 +79,21 @@ the usual words. Their last line is `delivery <id>`.
 
 The delivery id is `<task>:<run>:<event>`. A question adds `:<question key>`
 (the omo runner's question ids, else a hash of the question). An outage's id is
-`<node>:host.unavailable:<outage start>`. Under the job's lock the hub first
-holds a run's end on the job (`deliveries_pending`: its kind, run and time),
-then builds the notice and sends it. Only once the send has returned does it
-append the id to `hub/deliveries.jsonl` and mark it on the job. An end on a
-Hermes card is done once its card work (`card_pending`) holds it, because that
-work is retried step by step. An id in `deliveries.jsonl` is done. A repeat of
-it, whether from a device retrying its report, the tick seeing the same end or a
-hub that restarted, is recorded as a `delivery_duplicate` receipt and sent
-nowhere. An id that is held but not done, because the send failed or the hub
-stopped before it, is sent by the next report or tick. Older job files whose
-`notified` entries read `<state>:<run>` or `human:<run>` count as already
-delivered.
+`<node>:host.unavailable:<outage start>`. A run's end moves through three
+states on its job, each saved under the job's lock and never undone. It is
+**held** (`deliveries_pending`: its kind, run and time), then **staged** (the
+chat send returned, or on a Hermes card its `card_pending` entry is written),
+then **done** (its id appended to `hub/deliveries.jsonl` and marked in
+`notified`). One step of the hub makes every move. A held end that the send
+failed on, or that a stopped hub left, is moved on by the next report or tick. A
+staged end is never built or sent again, and a Hermes card's steps (comment,
+attachment, wake) run only once the end is done, each step once. An id in
+`deliveries.jsonl` is done. A repeat of it, whether from a device retrying its
+report, the tick seeing the same end or a hub that restarted, is recorded as a
+`delivery_duplicate` receipt and sent nowhere. A late report of a run older than
+the job's current run only adds its marker to `notified`. It never changes the
+job's state. Older job files whose `notified` entries read `<state>:<run>` or
+`human:<run>` count as already delivered.
 
 The tick keeps one record per node in `hub/nodes/<node>.json` (`failures`,
 `down_since`, `notified_outage`). A tick on which no call to the node about its

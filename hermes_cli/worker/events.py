@@ -6,12 +6,12 @@ and ``notified`` receipts, the job's ``notified`` list, the card's event and com
 starts with it (``run.completed (done)``).
 
 Its delivery id is ``<task>:<run>:<event>`` (a question adds ``:<question key>``) or
-``<node>:host.unavailable:<outage start>``. A run's end is first held on its job (``deliveries_pending``), then sent;
-only once the send returned does the hub append its id to ``hub/deliveries.jsonl`` (the ``deliveries`` lock) and mark
-it on the job. An id in that file is done: a repeat (a device retry, the tick, a hub restart) is recorded as
-``delivery_duplicate`` and sent nowhere. An id held but not done (the send failed, or the hub stopped before it) is
-sent by the next report or tick. Job files from before keep ``<state>:<run>`` and ``human:<run>[:<key>]`` markers,
-which count as delivered too.
+``<node>:host.unavailable:<outage start>``. A run's end is held on its job (``deliveries_pending``), then staged (sent,
+or on a Hermes card written as card work), then done: its id appended to ``hub/deliveries.jsonl`` (the ``deliveries``
+lock) and marked on the job (``Hub._end_advance`` makes every move). An id in that file is done: a repeat (a device
+retry, the tick, a hub restart) is recorded as ``delivery_duplicate`` and sent nowhere. An id held but not done (the
+send failed, or the hub stopped before it) is moved on by the next report or tick. Job files from before keep
+``<state>:<run>`` and ``human:<run>[:<key>]`` markers, which count as delivered too.
 """
 
 from __future__ import annotations
