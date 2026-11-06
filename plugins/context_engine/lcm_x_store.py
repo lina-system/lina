@@ -43,11 +43,18 @@ def _route_key(database: str | Path) -> str:
     return str(Path(str(database)).expanduser().resolve())
 
 
+def agent_for_home(hermes_home: str | Path | None) -> str:
+    """The store agent of a Hermes home (default: the running one): the agent its state.db writes message text as,
+    so LCM-X's rows and the text it reads are the profile's whatever ``LCM_DATABASE_PATH`` says."""
+    from hermes_constants import get_hermes_home
+    from hermes_state_store import agent_id_for
+    return agent_id_for(Path(str(hermes_home or get_hermes_home())) / "state.db")
+
+
 def route(database: str | Path, agent_id: Optional[str] = None) -> str:
     """Send every LCM-X connection to *database* (an ``lcm.db`` path, which need not exist) to the store, acting
-    for *agent_id* (default: the profile of the home the path is in). Returns the agent id."""
-    from hermes_state_store import agent_id_for
-    agent = agent_id or agent_id_for(Path(str(database)))
+    for *agent_id* (default, for a caller that knows no home: the home the path is in). Returns the agent id."""
+    agent = agent_id or agent_for_home(Path(str(database)).parent)
     with _ROUTES_LOCK:
         _ROUTES[_route_key(database)] = agent
     return agent
@@ -68,16 +75,17 @@ def store_identity(database: str | Path) -> Optional[dict]:
         conn.close()
 
 
-def route_home(database: str | Path) -> bool:
+def route_home(database: str | Path, hermes_home: str | Path | None = None) -> bool:
     """``lcm.store_backend: auto|postgres``: a home with no ``lcm.db`` (or ``:memory:``) keeps its LCM-X data on the
-    store; an existing ``lcm.db`` stays the home's store until lina#24 moves it in (nothing is read from it here)."""
+    store, as the agent of *hermes_home* (default: the running home), wherever its ``lcm.db`` path points; an
+    existing ``lcm.db`` stays the home's store until lina#24 moves it in (nothing is read from it here)."""
     path = Path(str(database))
     if str(database).startswith((":memory:", "file:")):
         return False
     if path.exists():
         logger.warning("LCM-X keeps using %s: a home's lcm.db moves to the memory store with lina#24", path)
         return False
-    route(path)
+    route(path, agent_for_home(hermes_home))
     return True
 
 

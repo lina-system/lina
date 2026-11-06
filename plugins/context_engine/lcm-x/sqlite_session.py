@@ -81,16 +81,17 @@ def configured_store_backend() -> str:
     return str(value).strip().lower() if value else "sqlite"
 
 
-def route_to_host_store(database: object, backend: str) -> bool:
+def route_to_host_store(database: object, backend: str, hermes_home: object = "") -> bool:
     """LINA: route *database* to the host's store when ``lcm.store_backend`` is ``auto`` or ``postgres`` and the home
-    has no ``lcm.db`` yet (a home with one stays on SQLite until lina#24 moves it). Returns whether it was routed."""
+    has no ``lcm.db`` yet (a home with one stays on SQLite until lina#24 moves it), as *hermes_home*'s profile (the
+    running home when empty), not the profile the path suggests. Returns whether it was routed."""
     if str(backend).strip().lower() not in ("auto", "postgres"):
         return False
     try:
         from plugins.context_engine.lcm_x_store import route_home
     except ImportError:
         return False
-    return route_home(database)
+    return route_home(database, hermes_home or None)
 
 
 def is_store_connection(conn: object) -> bool:

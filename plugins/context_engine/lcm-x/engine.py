@@ -1639,7 +1639,7 @@ class LCMEngine(
         self._query_views = None
         self._adaptive_retrieval = None
         self._assertion_extractor = None
-        route_to_host_store(db_path, configured_store_backend())  # LINA (lina#16)
+        route_to_host_store(db_path, configured_store_backend(), hermes_home)  # LINA (lina#16)
         try:
             self._store = MessageStore(
                 db_path,
