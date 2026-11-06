@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import subprocess
 import sys
 import textwrap
@@ -44,6 +45,11 @@ def installed(tmp_path):
     return root, tmp_path, run
 
 
+def _without_age(text: str) -> str:
+    """*text* with each ``handed out <age> ago`` read at its own moment replaced by one placeholder."""
+    return re.sub(r"handed out (?:\d+h \d+m|\d+m|\d+s|-) ago", "handed out <age> ago", text)
+
+
 @pytest.mark.platforms("posix")
 def test_the_shim_keeps_its_root_whatever_hermes_home_says_and_that_home_names_the_owner(installed):
     root, tmp, run = installed
@@ -58,7 +64,7 @@ def test_the_shim_keeps_its_root_whatever_hermes_home_says_and_that_home_names_t
     status = run("status", task_id)
     assert status.returncode == 0 and status.stdout.startswith(f"{task_id} · agent-b · switch-check")
     attach = run("attach", task_id)
-    assert (attach.returncode, attach.stdout) == (0, status.stdout)
+    assert (attach.returncode, _without_age(attach.stdout)) == (0, _without_age(status.stdout))
     assert run("card", task_id).stdout == f"{task_id}: no card\n"
     assert run("accept", task_id, "--note", "fine").returncode == 0
     receipts = [json.loads(line) for line in (root / "worker" / "hub" / "receipts.jsonl").read_text("utf-8").splitlines()]
