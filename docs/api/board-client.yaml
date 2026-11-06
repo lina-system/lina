@@ -509,7 +509,8 @@ components:
           maxLength: 80
     RunCard:
       type: object
-      required: [id, title, state, reason, agent, kind, todo, host, startedAt, endedAt, now, plain]
+      required: [id, title, state, reason, agent, kind, todo, host, startedAt, endedAt, now, model, settingsRevision,
+                 plain]
       properties:
         id:
           type: string
@@ -547,8 +548,41 @@ components:
           type: string
           nullable: true
           description: What the run does now, from the runner's live state (at most 120 characters).
+        model:
+          $ref: "#/components/schemas/RunModel"
+        settingsRevision:
+          $ref: "#/components/schemas/SettingsRevision"
         plain:
           $ref: "#/components/schemas/PlainLines"
+    RunModel:
+      type: object
+      nullable: true
+      additionalProperties: false
+      required: [provider, id, thinking, source]
+      description: >
+        The model the run started with (lina#257); null when it runs on the runner's own default. A follow-up keeps
+        it.
+      properties:
+        provider:
+          type: string
+          nullable: true
+        id:
+          type: string
+          nullable: true
+        thinking:
+          type: string
+          nullable: true
+          description: The effort (off, minimal, low, medium, high, xhigh, max), null for the model's own.
+        source:
+          type: string
+          description: >
+            Where it came from: --model, runner:<runner> (the runner's model in the work settings), mode:<mode> (the
+            mode default), fallback:<off|out_of_quota|no_account> (the fallback model, because OCX said so of the
+            chosen one), runner (the runner's own default).
+    SettingsRevision:
+      type: string
+      nullable: true
+      description: The work-settings revision (r<n>) the run was submitted under; null for a run from before lina#257.
     RecordRow:
       type: object
       additionalProperties: false
@@ -615,13 +649,17 @@ components:
     RunRecord:
       type: object
       additionalProperties: false
-      required: [id, at, rounds, comments, errors]
+      required: [id, at, model, settingsRevision, rounds, comments, errors]
       properties:
         id:
           type: string
         at:
           type: number
           description: Snapshot time (left out of the ETag).
+        model:
+          $ref: "#/components/schemas/RunModel"
+        settingsRevision:
+          $ref: "#/components/schemas/SettingsRevision"
         rounds:
           type: array
           description: Newest round first.

@@ -27,8 +27,24 @@ worker:
     - {name: small, when: {runner_label: runner/dsh, size: [S]}, runner: dsh}
 ```
 
-`role`, `on`, `model`, `fallback_model`, `access`, `models.fallback` and `routing` are read by the run path from
-lina#257; today's worker ignores them. A model is an alias or `<provider>/<id>[:<effort>]`.
+`on`, `model`, `fallback_model`, `models.fallback` and `routing` are read at submit (see below); `role` and `access`
+are recorded only. A model is an alias or `<provider>/<id>[:<effort>]`.
+
+## At submit
+
+`lina worker submit` picks through this layer (lina#257):
+
+- the runner: `--runner`, else the first `routing` rule that holds for `--labels a,b` and `--size S|M|L` (a card
+  session passes the issue's runner label and size), else `default_runner`. A runner with `on: false` is refused.
+- the model: `--model`, else the runner's `model`, else the mode default (`models.defaults`), else the runner's own.
+  When OCX has it `off`, `out_of_quota` or `no_account` and the fallback (the runner's `fallback_model`, else
+  `models.fallback`) is usable, the run starts on the fallback and gets one `model_fallback` receipt
+  `{from, to, why}`; when the fallback is not usable either, the chosen model stays. `--model` is checked, never
+  replaced. When OCX cannot be read (and the last good list is gone) the check is `unchecked`; a run never waits.
+- the job and its `submitted` receipt carry `settings: {rev, runner_source: --runner|routing:<rule>|default,
+  model_source, ocx_check: ok|off|out_of_quota|no_account|unchecked}`; the run record and the run card serve
+  `model` and `settingsRevision`. A follow-up keeps the run's model, and on the device the job's model wins over the
+  device's own runner entry (which still gives the local `argv`).
 
 Validation (nothing is written on a refusal, the reply names each path): unknown keys; unknown runners in
 `default_runner` and `routing`; an off default runner; `cap`, `named_cap`, `last`, `auto` or `host` on a `person`
