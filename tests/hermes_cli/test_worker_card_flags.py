@@ -75,7 +75,7 @@ def test_send_explicit_card_overrides_env_and_refuses_wrong_card(shell, monkeypa
     hub.store.update(job["id"], host="fake", state="running")
     monkeypatch.setenv("HERMES_KANBAN_TASK", "t_env")
     messages = []
-    monkeypatch.setattr(Hub, "_next_run", lambda self, job, message: messages.append(message) or 0)
+    monkeypatch.setattr(Hub, "_next_run", lambda self, job, message, **_: messages.append(message) or 0)
     monkeypatch.setattr(Hub, "meta", lambda *args: {"alive": False})
 
     class Transport:
