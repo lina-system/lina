@@ -122,7 +122,7 @@ class Store:
         if path in held:
             yield True
             return
-        with open(path, "w") as handle:
+        with open(path, "w", encoding="utf-8") as handle:
             try:
                 fcntl.flock(handle, fcntl.LOCK_EX | (0 if wait else fcntl.LOCK_NB))
             except BlockingIOError:

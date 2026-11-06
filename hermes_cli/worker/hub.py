@@ -13,6 +13,7 @@ from __future__ import annotations
 import json
 import os
 import re
+import shutil
 import time
 from pathlib import Path
 
@@ -27,6 +28,8 @@ ENDED = ("done", "done_empty", "review", "stalled", "failed", "cancelled")
 VERDICT_WORDS = {None: "no verdict yet", "accepted": "accepted", "rejected": "rejected"}
 HUMAN_NOTICE_AFTER_S = 120
 ANSWER_CLOSE_WAIT_S = 150
+# A Hermes card run's result fetch: tried on each report and tick (30 s) before its end goes out without report.md.
+FETCH_TRIES = 10
 
 
 def _start_time(pid: int) -> int | None:
@@ -58,6 +61,7 @@ class Hub:
         self.base = worker_root.parent
         self.store = Store(worker_root)
         self.worker = settings.section(self.base)
+        self.fetched: bool | None = None
 
 
     def devices(self) -> list[settings.Device]:
@@ -89,6 +93,7 @@ class Hub:
             raise HubError(f"no runner {runner!r} (configured: {', '.join(runners.specs(self.worker))})")
         model = models.for_run(opts["mode"], opts.get("model"), self.worker)
         grant = {"workspace": "work/ of the task folder", "inputs_readonly": True, "push": False,
+                 "private_read_in_place": opts.get("private_inputs") or [],
                  "repo": opts.get("repo"), "outside_effects": "report only (messages, publish, delete, money, "
                                                               "credentials need the owner)"}
         job = {"id": tid, "bot": agent, "topic": opts["topic"], "host": None, "fixed_host": opts.get("host"),
@@ -96,7 +101,9 @@ class Hub:
                "todo": opts.get("todo"), "runner": runner, "runner_spec": spec,
                "model": model.as_dict() if model else None, "created": time.time(), "runs": 1, "notified": [],
                "extra": opts.get("note"), "dry_notify": bool(opts.get("dry_notify")), "inputs": opts["inputs"],
-               "prompt": first_prompt(opts["mode"], brief.read_text(encoding="utf-8-sig"), branch), "state": "new",
+               "prompt": first_prompt(opts["mode"], brief.read_text(encoding="utf-8-sig"), branch)
+               + _private_lines(opts.get("private_inputs") or []), "state": "new",
+               "private_inputs": opts.get("private_inputs") or [],
                "grant": grant, "delivery": "pending", "verdict": None, "group": group, "next_notes_rule": True,
                "card": opts.get("card")}
         self.store.save(job)
@@ -109,8 +116,8 @@ class Hub:
         if not job.get("card"):
             return
         try:
-            kanban_link.record_run(job["card"], job)
-        except (ValueError, OSError) as exc:
+            kanban_link.record_run(job["card"], job, self._link())
+        except (ValueError, OSError, kanban_link.CardLinkError) as exc:
             self.store.receipt(job["id"], "card_link_failed", error=str(exc)[:300])
             self.out(f"lina worker: could not record {job['id']} on card {job['card']['task']}: {exc}")
             return
@@ -203,7 +210,23 @@ class Hub:
         self.start_on(job, dev)
         return dev.name
 
-    def _inputs(self, inputs: list[str]) -> list[str]:
+    def _link(self) -> dict:
+        try:
+            return kanban_link.config(self.worker)
+        except kanban_link.CardLinkError as exc:
+            raise HubError(str(exc)) from exc
+
+    def _hub_node(self, host: str | None) -> str:
+        """The device a run on the owner's private files goes to: a local device (the hub itself), never another."""
+        local = [dev for dev in self.devices() if dev.local]
+        if host is None and local:
+            return local[0].name
+        if host is not None and any(dev.name == host for dev in local):
+            return host
+        raise HubError("--input names the owner's private files: they are read only on the hub node, in place "
+                       f"({'--host ' + ' or '.join(d.name for d in local) if local else 'no local device in devices.workers'})")
+
+    def _inputs(self, inputs: list[str], private_inputs: list[str]) -> list[str]:
         private = [Path(p).expanduser().resolve() for p in self.worker.get("private_paths") or []]
         limit = int(settings.setting("input_max_mb", worker=self.worker))
         checked = []
@@ -212,7 +235,8 @@ class Hub:
             if not path.exists():
                 raise HubError(f"--input not found: {path}")
             if any(path == p or p in path.parents for p in private):
-                raise HubError(f"--input is a private source ({path}); private originals are not handed to workers")
+                private_inputs.append(str(path))  # read in place on the hub node, never copied to a device
+                continue
             size = sum(f.stat().st_size for f in path.rglob("*") if f.is_file()) if path.is_dir() else \
                 path.stat().st_size
             if size > limit * (1 << 20):
@@ -226,17 +250,24 @@ class Hub:
             if not brief.is_file():
                 raise HubError(f"brief not found: {brief}")
         opts.setdefault("bot", caller_agent())
-        opts.setdefault("card", kanban_link.card_from_env())
+        if not opts.get("card"):
+            opts["card"] = kanban_link.card_from_env()
+        opts["card"] = kanban_link.card_for(opts["card"], self._link())
         opts["topic"] = opts.get("topic") or opts.get("todo") or (opts["card"] or {}).get("task")
         if not opts["topic"]:
             raise HubError("--todo <to-do ID> is required (or --topic <short name> for work without a to-do)")
         if opts.get("at") or opts.get("every"):
             return self.schedule(opts)
-        opts["inputs"] = self._inputs(opts.get("inputs") or [])
+        opts["private_inputs"] = []
+        opts["inputs"] = self._inputs(opts.get("inputs") or [], opts["private_inputs"])
+        if opts["private_inputs"]:
+            opts["host"] = self._hub_node(opts.get("host"))
         group = self.store.new_id(opts["bot"], "OG") if len(briefs) > 1 else None
         jobs = [self._submit_one(brief, opts, group) for brief in briefs]
         if group:
             self.out(f"{group} batch of {len(jobs)} · one notice when all of them end.")
+        elif opts.get("wait") is None and kanban_link.on_hermes(opts["card"]):
+            self.out(f"The end lands on card {opts['card']['task']}. Park it with `lina worker wait` and end the turn.")
         elif opts.get("wait") is None:
             self.out(f"The end notice goes to {opts['bot']}'s chat. Do not poll.")
         if opts.get("wait") is not None and len(jobs) == 1:
@@ -572,11 +603,15 @@ class Hub:
         return _start_time(pid) == start
 
     def _notice_body(self, job: dict, kind: str, run: str) -> tuple[str, Path]:
+        """The end notice and where the results are; ``self.fetched`` says whether fetching them worked (None:
+        nothing to fetch)."""
         out_dir, check = self.store.out_dir(job), {}
         if job.get("host") and kind != "unknown":
             try:
                 out_dir, check = self.fetch(job)
+                self.fetched = True
             except (TransportError, HubError) as exc:
+                self.fetched = False
                 self.store.receipt(job["id"], "fetch_failed", error=str(exc)[:300])
             job.update(self.store.load(job["id"]) or {})
         manifest = read_json(out_dir / "manifest.json", {}) or {}
@@ -592,7 +627,7 @@ class Hub:
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
         marker = f"{kind}:{run}"
         if marker in job.get("notified", []):
-            return "already"
+            return self._card_steps(job, marker) if marker in (job.get("card_pending") or {}) else "already"
         if str(run).isdigit() and int(run) >= 1 and int(run) != int(job.get("runs") or 1):
             # A late end of an earlier run (its notice retried after a follow-up started the next one): record it,
             # never let it end the run that is going now. Task-level notices are not run reports and always apply:
@@ -608,13 +643,18 @@ class Hub:
             self.store.save(job)
             return "waiter"
         self.store.save(job)
+        self.fetched = None
         text, _ = self._notice_body(job, kind, run)
+        fetched = self.fetched
         job.setdefault("notified", []).append(marker)
         job["notice"] = text
         self.store.save(job)
-        how = self.group_notice(job["group"]) if job.get("group") else self._deliver(job, text, f"{kind}-{run}")
-        if job.get("card"):
-            self._card_end(job, kind, run, text)
+        if kanban_link.on_hermes(job.get("card")):  # the card is the one place the run ends: no chat notice
+            how = self._card_end(job, kind, run, text, fetched)
+        else:
+            how = self.group_notice(job["group"]) if job.get("group") else self._deliver(job, text, f"{kind}-{run}")
+            if job.get("card"):
+                self._card_end(job, kind, run, text)
         self.store.receipt(job["id"], "notified", how=how[:200], state=kind, run=run)
         self.store.log(f"{job['id']} {kind}: {how}")
         return how
@@ -624,13 +664,121 @@ class Hub:
             else None
         return notice.deliver(job, text, tag, self.store.notices, command)
 
-    def _card_end(self, job: dict, kind: str, run: str, text: str) -> None:
+    def _card_end(self, job: dict, kind: str, run: str, text: str, fetched: bool | None = None) -> str:
+        """A run's end on its card. On a Hermes card it becomes pending work (``card_pending``): its result fetch
+        when that failed, then ``kanban_link.END_STEPS``, with this run's own report.md kept aside for the attachment."""
+        card = job["card"]
+        if kanban_link.on_hermes(card):
+            marker = f"{kind}:{run}"
+            job.setdefault("card_pending", {})[marker] = {
+                "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
+                "fetch_tries": 1 if fetched is False else 0,
+                "report": None if fetched is False else self._report_snapshot(job, marker)}
+            self.store.save(job)
+            if fetched is False:
+                return f"card {card['task']}: result not fetched yet (1/{FETCH_TRIES}), retried on the next report or tick"
+            return self._card_steps(job, marker)
         try:
-            kanban_link.record_end(job["card"], job, kind, run, text)
+            kanban_link.record_end(card, job, kind, run, text)
         except (ValueError, OSError) as exc:
             self.store.receipt(job["id"], "card_notice_failed", error=str(exc)[:300])
-            return
-        self.store.receipt(job["id"], "card_noticed", card=job["card"], state=kind, run=run)
+            return f"card {card['task']}: failed ({str(exc)[:120]})"
+        self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=False)
+        return f"card {card['task']}"
+
+    def _card_steps(self, job: dict, marker: str) -> str:
+        """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
+        went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
+        under the job's lock."""
+        card, link = job["card"], self._link()
+        if job["card_pending"][marker].get("fetch_pending") and not self._card_fetch(job, marker):
+            return (f"card {card['task']}: result not fetched yet ({job['card_pending'][marker]['fetch_tries']}/"
+                    f"{FETCH_TRIES}), retried on the next report or tick")
+        entry = job["card_pending"][marker]
+        for step in kanban_link.END_STEPS:
+            if step in entry["done"]:
+                continue
+            try:
+                woke = kanban_link.end_step(step, self.store, card, job, entry["run"], entry["text"], link,
+                                            Path(entry["report"]) if entry.get("report") else None)
+            except (OSError, kanban_link.CardLinkError) as exc:
+                self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
+                return f"card {card['task']}: {step} failed, retried on the next report or tick"
+            entry["done"].append(step)
+            entry["woke"] = entry.get("woke") or woke
+            self.store.save(job)
+        del job["card_pending"][marker]
+        self.store.save(job)
+        if entry.get("report"):
+            shutil.rmtree(Path(entry["report"]).parent, ignore_errors=True)
+        self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
+                           woke=bool(entry.get("woke")))
+        return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
+
+    def _report_snapshot(self, job: dict, marker: str) -> str | None:
+        """A copy of the run's report.md as fetched now: a later run's fetch replaces the one in out/."""
+        report = self.store.out_dir(job) / "report.md"
+        if not report.is_file():
+            return None
+        kept = self.store.root / "card_reports" / f"{job['id']}-{marker.replace(':', '-')}" / "report.md"
+        kept.parent.mkdir(parents=True, exist_ok=True)
+        shutil.copyfile(report, kept)
+        return str(kept)
+
+    def _card_fetch(self, job: dict, marker: str) -> bool:
+        """Fetch the results of a pending end again; True once the end can go on (fetched, or out of tries: then
+        without report.md, saying so). The device keeps only its latest run's results: when the manifest names a later
+        run, they are not this run's, and the end goes on without them."""
+        kind, run = job["card_pending"][marker]["kind"], job["card_pending"][marker]["run"]
+        self.fetched = None
+        text, out_dir = self._notice_body(job, kind, run)  # reloads the job: read the entry after it
+        entry = job["card_pending"][marker]
+        fetched_run = (read_json(out_dir / "manifest.json", {}) or {}).get("run")
+        if self.fetched and fetched_run is not None and str(fetched_run) != str(run):
+            entry["fetch_pending"] = False
+            entry["text"] += (f"- Run {run}'s results were replaced by a later run before they could be fetched, so no "
+                              "report is attached.\n")
+        elif self.fetched:
+            entry.update(text=text, fetch_pending=False, report=self._report_snapshot(job, marker))
+        else:
+            entry["fetch_tries"] += 1
+            if entry["fetch_tries"] >= FETCH_TRIES:
+                entry["fetch_pending"] = False
+                entry["text"] += (f"- report.md could not be fetched from {job.get('host')} after {FETCH_TRIES} tries: "
+                                  f"`lina worker result {job['id']}` fetches it again.\n")
+        self.store.save(job)
+        return not entry["fetch_pending"]
+
+    def _retry_cards(self, task_id: str) -> None:
+        with self.store.lock(task_id):
+            job = self.store.load(task_id) or {}
+            for marker in list(job.get("card_pending") or {}):
+                self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker)}")
+
+    def wait(self, card: dict | None, task_ids: list[str] | None = None) -> int:
+        """Park the Hermes card these runs were handed out from (`kanban schedule`): its session ends the turn and
+        the first run end that follows wakes it. Refused when nothing on the card is still open."""
+        link = self._link()
+        if link["kind"] != kanban_link.HERMES:
+            raise HubError("wait parks a Hermes card: set worker.card_link {kind: hermes, command: [...]}")
+        card = card or kanban_link.card_from_env()
+        if not card:
+            raise HubError("wait: no card (--card <id> --board <slug>, or run it in the card's session)")
+        card = kanban_link.card_for(card, link)
+        with self.store.lock(f"card-{kanban_link.card_key(card)}"):
+            open_runs = [job["id"] for job in self.store.all()
+                         if (job.get("card") or {}).get("task") == card["task"]
+                         and (job.get("card") or {}).get("board") == card.get("board")
+                         and job.get("state") not in ENDED + ("unknown",) and (not task_ids or job["id"] in task_ids)]
+            if not open_runs:
+                raise HubError(f"card {card['task']} has no open run to wait for; read the ends on the card "
+                               "(`lina worker status <ID>`, `lina worker result <ID>`)")
+            try:
+                kanban_link.park(self.store, card, link, open_runs)
+            except kanban_link.CardLinkError as exc:
+                raise HubError(f"could not park card {card['task']}: {exc}") from exc
+        self.out(f"card {card['task']} parked on {', '.join(open_runs)}: end the turn, the first end wakes it.")
+        return 0
 
     def group_notice(self, group: str) -> str:
         members = [job for job in self.store.all() if job.get("group") == group]
@@ -661,6 +809,9 @@ class Hub:
             if not held:
                 return
             self.run_due_schedules()
+            for job in self.store.all():
+                if job.get("card_pending"):
+                    self._retry_cards(job["id"])
             for job in self.store.all():
                 if job.get("state") == "queued":
                     if not self._try_place(job):
@@ -712,10 +863,21 @@ class Hub:
         marker = f"human:{run}"
         if now - job["human_since"] >= HUMAN_NOTICE_AFTER_S and marker not in job.get("notified", []):
             job.setdefault("notified", []).append(marker)
-            how = self._deliver(job, notice.body(job, "human", run, self.store.out_dir(job), {}), f"human-{run}")
+            text = notice.body(job, "human", run, self.store.out_dir(job), {})
+            if kanban_link.on_hermes(job.get("card")):
+                how = self._card_end(job, "human", run, text)
+            else:
+                how = self._deliver(job, text, f"human-{run}")
+                if job.get("card"):
+                    self._card_end(job, "human", run, text)
             self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run)
-            if job.get("card"):
-                self._card_end(job, "human", run, notice.body(job, "human", run, self.store.out_dir(job), {}))
+
+
+def _private_lines(paths: list[str]) -> str:
+    if not paths:
+        return ""
+    return ("\nThe owner's private files, to read where they are (never copy them into this folder, out/ or "
+            "report.md, and never change them):\n" + "".join(f"- {path}\n" for path in paths))
 
 
 def parse_every(value: str) -> int:
