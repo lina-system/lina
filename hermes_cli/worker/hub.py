@@ -22,6 +22,7 @@ from pathlib import Path
 from hermes_cli.lina_work_settings import ACCESS, SettingsError
 from hermes_cli.lina_work_settings_route import decide
 from hermes_cli.worker import bidding, kanban_link, models, notice, runners, settings
+from hermes_cli.worker.file_node_deny import review_reason
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt, with_hub_rules
 from hermes_cli.worker.runners.base import RunnerError
@@ -543,6 +544,9 @@ class Hub:
                         else ""))
             if live.get("last"):
                 self.out(f"  last said: {live['last'][:240]}")
+        elif state == "review" and (why := review_reason(
+                (read_json(self.store.out_dir(job) / "manifest.json", {}) or {}).get("deny_check"))):
+            self.out(f"  needs review — {why} (the end notice names them; `lina worker result {job['id']}`).")
         elif state == "review":
             self.out(f"  needs review: the '{NEXT_NOTES}' section of report.md is missing or empty. "
                      f"`lina worker send {job['id']} \"fill that section\"`, or copy it yourself and accept.")

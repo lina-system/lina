@@ -23,12 +23,12 @@ from tests.hermes_cli import _worker_fakes as fakes
 from tests.waiting import wait_until
 
 NODE_TOOLS = ("bash", "tar", "sha256sum", "setsid", "nohup", "cat", "sed", "cut", "head", "tail", "grep", "df", "tr",
-              "wc", "date", "sleep", "mkdir", "chmod", "rm", "cp", "mv")
+              "wc", "date", "sleep", "mkdir", "chmod", "rm", "cp", "mv", "sort")
 AGENT = "agent-a"
 
 
 def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first: str = "done",
-          nas_extra: str = "") -> dict:
+          nas_extra: str = "", deny_extra: str = "") -> dict:
     nas, base, hub_bin = tmp_path / "nas", tmp_path / "lina", tmp_path / "hub-bin"
     home, node_bin, volume = nas / "home", nas / "bin", nas / "volume"
     for path in (home / ".bun" / "bin", node_bin, hub_bin, volume / "backup", volume / "share" / "#recycle"):
@@ -68,7 +68,7 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first:
     (base / "config.yaml").write_text(textwrap.dedent(f"""\
         devices:
           workers:
-            nas: {{host: nas-host, kind: file, omo: "~/.bun/bin/omo", deny: ["{volume}/backup", "#recycle"],
+            nas: {{host: nas-host, kind: file, omo: "~/.bun/bin/omo", deny: ["{volume}/backup", "#recycle"{deny_extra}],
                    volumes: ["{volume}"], scan_s: {scan_s}{nas_extra}}}
             build: {{host: local, cap: 1}}
         worker:
@@ -257,7 +257,7 @@ def test_an_unreadable_denied_folder_ends_the_run_as_review_not_seen_whole(tmp_p
     node = _node(tmp_path, monkeypatch)
     locked = node["volume"] / "backup" / "locked"
     locked.mkdir()
-    locked.chmod(0)
+    locked.chmod(0o300)  # the run's user may write there but cannot read it: a change could hide there
     try:
         task_id = _submit(node)
         _ended(node, task_id)
@@ -443,6 +443,121 @@ def test_two_pending_checks_at_once_start_only_one_waiting_run(tmp_path, monkeyp
         thread.join()
     assert sum(_started(node, task_id) for task_id in waiting) == 1
     assert contact.call(["probe", "", "omo"]).json()["named_running"] == 1
+
+
+def _follow_up_waiting_behind_a_running_run(tmp_path, monkeypatch) -> tuple[dict, Hub, str, Path]:
+    node = _node(tmp_path, monkeypatch, nas_extra=", named_cap: 1")
+    hub = Hub(node["root"], out=lambda line: None)
+    first = _submit(node)
+    _ended(node, first)
+    hub.tick()
+    (node["nas"] / "omo" / "scenario.json").write_text(json.dumps({"first": "running"}))
+    _submit(node)
+    session = node["nas"] / "omo" / "state.json"
+    wait_until(lambda: json.loads(session.read_text())["phase"] == "running", what="the second run's session")
+    hub.send(first, "one more file")
+    return node, hub, first, session
+
+
+def test_a_waiting_run_does_not_start_while_the_model_path_is_down(tmp_path, monkeypatch):
+    node, hub, first, session = _follow_up_waiting_behind_a_running_run(tmp_path, monkeypatch)
+    (node["nas"] / "healthz").write_text("000")
+    session.write_text(json.dumps({**json.loads(session.read_text()), "phase": "done"}))
+    second = next(job["id"] for job in hub.store.all() if job["id"] != first)
+    wait_until(lambda: (node["home"] / "lina-file-node" / second / "rc.1").exists(), what="the second run's end")
+    hub.tick()
+    hub.tick()
+    mirror = node["root"] / "file_nodes" / "nas" / "tasks" / first
+    assert not _started(node, first) and not (mirror / "launch.2.json").exists()  # waiting, not a failed start
+    meta = hub.transport(hub.store.load(first)).call(["meta", first]).json()
+    assert meta["state"] == "new" and "model path through the hub does not answer" in meta["live"]["dash"]
+    (node["nas"] / "healthz").write_text("200")
+    hub.tick()
+    assert _started(node, first)
+
+
+def test_a_folder_moved_into_a_denied_folder_is_caught_with_its_old_files(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    folder = node["volume"] / "share" / "old-photos"
+    folder.mkdir()
+    for name in ("a.jpg", "b.jpg"):
+        (folder / name).write_text(name)
+        os.utime(folder / name, (946684800, 946684800))
+    os.utime(folder, (946684800, 946684800))
+    task_id = _submit(node)
+    _ended(node, task_id)
+    folder.rename(node["volume"] / "backup" / "old-photos")  # only the folder's ctime changes
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "review"
+    text = _notice(node, task_id)
+    moved = f"{node['volume']}/backup/old-photos"
+    assert f"  - {moved}/\n" in text and f"{moved}/a.jpg" in text and f"{moved}/b.jpg" in text
+
+
+def _aliased(tmp_path, monkeypatch) -> dict:
+    """A container app's bind mounts under @appdata: an undenied share (home) and a denied one (backup)."""
+    from hermes_cli.worker import file_node_deny
+    node = _node(tmp_path, monkeypatch, deny_extra=', "@*"')
+    shares = node["volume"] / "@appdata" / "apps" / "all_shares"
+    for name in ("home", "backup"):
+        (shares / name).mkdir(parents=True)
+    mounts = node["nas"] / "mounts"
+    mounts.write_text(f"fake {node['volume']} btrfs rw,subvol=/@vol 0 0\n"
+                      f"fake {shares}/home btrfs rw,subvol=/@vol/home 0 0\n"
+                      f"fake {shares}/backup btrfs rw,subvol=/@vol/backup 0 0\n")
+    monkeypatch.setattr(file_node_deny, "MOUNTS", str(mounts))
+    return {**node, "shares": shares}
+
+
+def test_changes_seen_through_a_bind_mount_of_an_undenied_share_are_not_counted(tmp_path, monkeypatch):
+    node = _aliased(tmp_path, monkeypatch)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    (node["shares"] / "home" / "state.json").write_text("{}")
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "done"
+    assert "Aliases skipped: 1" in _notice(node, task_id)
+
+
+def test_changes_through_a_bind_mount_of_a_denied_folder_still_count(tmp_path, monkeypatch):
+    node = _aliased(tmp_path, monkeypatch)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    (node["shares"] / "backup" / "moved.txt").write_text("x")
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "review"
+    assert f"{node['shares']}/backup/moved.txt" in _notice(node, task_id)
+
+
+def test_a_folder_the_run_can_neither_read_nor_write_counts_as_seen(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    locked = node["volume"] / "backup" / "locked"
+    locked.mkdir()
+    locked.chmod(0)
+    try:
+        task_id = _submit(node)
+        _ended(node, task_id)
+        hub = Hub(node["root"])
+        hub.tick()
+        assert hub.store.load(task_id)["state"] == "done"
+        assert "Unreadable by the run's user (and not writable): 1 folder(s)" in _notice(node, task_id)
+    finally:
+        locked.chmod(0o755)
+
+
+def test_status_names_the_denied_folder_check_as_the_reason_for_review(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    (node["volume"] / "backup" / "moved.txt").write_text("x")
+    Hub(node["root"]).tick()
+    lines: list[str] = []
+    Hub(node["root"], out=lines.append).status(task_id)
+    text = "\n".join(lines)
+    assert "needs review — files changed under a denied folder" in text and "section of report.md" not in text
 
 
 def test_device_roles_and_file_node_keys_are_read_from_config():

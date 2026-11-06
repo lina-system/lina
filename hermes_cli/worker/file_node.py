@@ -216,6 +216,11 @@ class FileNodeTransport:
         with task_lock(task):
             if task.path(f"taken.{run}").exists():
                 return {"action": "put", "launched": run}
+            # Checked at submit, but a run can start much later (a waiting follow-up, a retried start): without the
+            # model path it waits, and that wait is not a failed start.
+            reply, found = self.facts()
+            if reply.code == 0 and not found["ready"]:
+                return {"action": "put", "waiting": found["why"]}
             started = self._launch_locked(task, run)
             if started.get("action") == "error":
                 tries = read_json(task.path(f"launch.{run}.json"), {}) or {}
@@ -272,7 +277,10 @@ class FileNodeTransport:
         tries = read_json(task.path(f"launch.{run}.json"), {}) or {}
         if int(tries.get("tries") or 0) and time.time() - float(tries.get("at") or 0) < LAUNCH_GAP_S:
             return "new", {"dash": f"start on {name} failed {tries['tries']}x, tried again soon"}
-        if self.launch(task.id, run).get("action") != "error":
+        started = self.launch(task.id, run)
+        if started.get("waiting"):
+            return "new", {"dash": f"not started on {name}: {started['waiting']}"}
+        if started.get("action") != "error":
             return "running", {}
         tries = read_json(task.path(f"launch.{run}.json"), {}) or {}
         if int(tries.get("tries") or 0) >= LAUNCH_TRIES:
@@ -399,9 +407,11 @@ class FileNodeTransport:
 
     def _deny_check(self, task: Task, run: int) -> dict:
         limit = self.device.scan_s
-        reply = self.rsh(bash.DENY_SCAN, self._remote(task.id), run, limit, *deny.scan_args(self.device),
+        mounts = self.rsh(bash.MOUNTS, deny.MOUNTS, timeout=60).out.decode("utf-8", "replace")
+        skips = deny.aliases(mounts, self.device.deny)
+        reply = self.rsh(bash.DENY_SCAN, self._remote(task.id), run, limit, *deny.scan_args(self.device, skips),
                          timeout=limit + 60)
-        check = deny.parse_scan(reply.out.decode("utf-8", "replace"), reply.code, limit)
+        check = deny.parse_scan(reply.out.decode("utf-8", "replace"), reply.code, limit, len(skips))
         write_json(task.path(f"deny.{run}.json"), check)
         return check
 

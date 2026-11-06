@@ -74,9 +74,48 @@ def submit_refusal(dev: Device, texts: list[str], inputs: list[str]) -> str | No
     return None
 
 
-def scan_args(dev: Device) -> list[str]:
+MOUNTS = "/proc/mounts"  # the node's mount table, read on the node
+
+
+def denied(path: str, deny: tuple[str, ...]) -> bool:
+    """*path* is a denied folder or lies under one (an absolute entry, or a folder named like a pattern)."""
+    roots, names = split(deny)
+    return _hit(path, roots, names) is not None
+
+
+def _unescape(field: str) -> str:
+    return re.sub(r"\\([0-7]{3})", lambda found: chr(int(found.group(1), 8)), field)
+
+
+def aliases(mounts: str, deny: tuple[str, ...]) -> list[str]:
+    """Mount points under a denied folder whose source lies outside every denied folder: the same files seen a second
+    time through a bind mount (a container app binding every share under its own ``@appdata`` folder). A btrfs mount
+    names its source by ``subvol=``; its path is the mount point of a mount of the same device with a parent
+    subvolume, plus the rest. A mount whose source cannot be placed, or is denied too, is looked through as usual."""
+    table = []
+    for line in mounts.splitlines():
+        parts = line.split()
+        if len(parts) >= 4:
+            options = dict(option.partition("=")[::2] for option in parts[3].split(","))
+            subvol = options.get("subvol")
+            table.append((parts[0], _unescape(parts[1]).rstrip("/") or "/", subvol.rstrip("/") if subvol else None))
+    found = []
+    for device, point, subvol in table:
+        if subvol is None or not denied(point, deny):
+            continue
+        for other, where, parent in table:
+            inside = parent is not None and (subvol == parent or subvol.startswith(parent + "/"))
+            if other != device or where == point or where.startswith(point + "/") or not inside:
+                continue
+            if not denied(where.rstrip("/") + subvol[len(parent):], deny):
+                found.append(point)
+                break
+    return sorted(set(found))
+
+
+def scan_args(dev: Device, skips: list[str]) -> list[str]:
     roots, names = split(dev.deny)
-    return [str(len(roots)), *roots, str(len(names)), *names, *dev.volumes]
+    return [str(len(roots)), *roots, str(len(names)), *names, str(len(skips)), *skips, *dev.volumes]
 
 
 LISTED_MAX = 50000  # lines the node sends back; a longer list is not seen whole
@@ -88,11 +127,12 @@ def owned(lines: list[str], uid: str) -> tuple[list[str], int]:
     Backup, sync and indexing services write under denied folders all the time as their own users; only files the
     run's user owns are the run's. A file of another user that the run edited in place keeps that owner and is not
     counted: the gap of this check."""
-    mine, others = [], 0
+    mine, others, seen = [], 0, set()
     for line in lines:
         owner, tab, path = line.partition("\t")
-        if not tab:
+        if not tab or path in seen:  # a file under a moved folder can be listed twice
             continue
+        seen.add(path)
         if owner == uid:
             mine.append(path)
         else:
@@ -100,7 +140,7 @@ def owned(lines: list[str], uid: str) -> tuple[list[str], int]:
     return mine, others
 
 
-def parse_scan(out: str, code: int, limit: int) -> dict:
+def parse_scan(out: str, code: int, limit: int, skipped: int = 0) -> dict:
     """The node's scan answer as ``{"complete", "count", "files", "others", "why"?}``: ``count``/``files`` are the
     run user's changed files, ``others`` the changes owned by other users; an unreadable answer is incomplete."""
     head, _, listing = out.partition("files:\n")
@@ -109,7 +149,8 @@ def parse_scan(out: str, code: int, limit: int) -> dict:
     mine, others = owned(lines, fields.get("uid", ""))
     total = int(fields["count"]) if fields.get("count", "").strip().isdigit() else len(lines)
     check = {"complete": code == 0 and fields.get("complete") == "1" and "uid" in fields, "files": mine[:200],
-             "count": len(mine), "others": others, "uid": fields.get("uid"), "limit_s": limit}
+             "count": len(mine), "others": others, "uid": fields.get("uid"), "limit_s": limit,
+             "aliases_skipped": skipped, "unreadable": int(fields.get("unreadable") or 0)}
     if total > len(lines):
         check["complete"], check["why"] = False, f"{total} changed files, only the first {len(lines)} were read"
     if not check["complete"]:
@@ -129,8 +170,7 @@ def with_check(text: str, check: dict | None) -> str:
     if not check:
         return text
     if check.get("forced_review"):
-        reason = "files changed under a denied folder" if check.get("count") else "the denied-folder check did not finish"
-        text = _REVIEW_HEAD.sub(f"needs review — {reason}\n", text, count=1)
+        text = _REVIEW_HEAD.sub(f"needs review — {review_reason(check)}\n", text, count=1)
     lines = ["- Denied-folder check (a check, not a sandbox: the run could reach the whole volume): "]
     if check.get("count"):
         lines[0] += f"{check['count']} file(s) owned by the run's user changed under a denied folder during the run:"
@@ -142,6 +182,19 @@ def with_check(text: str, check: dict | None) -> str:
     lines.append(f"- Changed by other users: {check.get('others') or 0}, not counted (backup, sync and indexing "
                  "services write there as their own users). A file of another user that the run edited in place keeps "
                  "that owner and is not counted either.")
+    if check.get("aliases_skipped"):
+        lines.append(f"- Aliases skipped: {check['aliases_skipped']} (bind mounts under a denied folder whose source is "
+                     "outside every denied folder).")
+    if check.get("unreadable"):
+        lines.append(f"- Unreadable by the run's user (and not writable): {check['unreadable']} folder(s), counted as "
+                     "seen: the run could not have written there.")
     if not check.get("complete"):
         lines.append(f"- Not every denied folder was seen: {check.get('why')}.")
     return text + "\n".join(lines) + "\n"
+
+
+def review_reason(check: dict | None) -> str | None:
+    """The reason the denied-folder check gave a run ``review`` (end notice, card comment, ``lina worker status``)."""
+    if not check or not check.get("forced_review"):
+        return None
+    return "files changed under a denied folder" if check.get("count") else "the denied-folder check did not finish"

@@ -36,6 +36,9 @@ model path: one ssh session from the hub carries the node's 127.0.0.1:10100 to t
   was lost) is adopted from its pid file on the node, never started twice. A follow-up takes a slot like a first
   submit; while the device is full it waits (holding no slot) and the one that waited longest takes the next free
   slot, under the slot lock, so waiting follow-ups never block each other or overfill the device.
+- **The model path is asked again before every start.** A run that starts later than its submit (a waiting
+  follow-up, a retried start) does not start while the model path does not answer: it waits with that reason and
+  starts on a later tick, and the wait is not counted as a failed start.
 - **The hub judges the end.** On `meta` (the hub tick, `--wait`, `status`) the hub asks whether the runner is still
   the recorded process (pid and start time, never a bare pid), and once `rc.<n>` is there copies `report.md`,
   `out/`, the session state and the input hashes back, decides `done`/`done_empty`/`review`/`stalled`/`failed`/
@@ -93,6 +96,19 @@ files changed on the backup share, 75 under the drive sync folder, 16 under the 
 index folders inside a share, and none of them belonged to the node account. They are reported as a count
 ("changed by other users: n, not counted") and do not end a run as `review`.
 
+A folder moved into a denied folder gets a new status-change time while its old files keep theirs: a folder of the
+run's user whose ctime alone changed after the start is listed with everything under it.
+
+The same files can show up twice: on a real node a container app bind-mounted all 15 shares under its own `@appdata`
+folder, so the run user's home appeared again under `@*`, and all 59 changed files of one run (omo's own state and the
+run folder) were seen through that alias, with 0 under a real denied folder. The node's `/proc/mounts` is read
+before the look: a mount point under a denied folder whose source (its btrfs `subvol=`, placed through a mount of the
+same device) lies outside every denied folder is skipped ("aliases skipped: n"); one whose source is denied is
+looked through. Folders the run's user can neither read nor write ("Permission denied" from find, and `test -w`
+fails as that user) count as seen, since the run could not have written there ("unreadable by the run's user (and
+not writable): n"); a folder it may write but not read, or any other find error, still means the look did not
+see everything.
+
 One changed file owned by the run's user, or a look that did not finish (time limit, a find error), ends a `done`
 run as `review`; the end notice and the card comment name the files (up to 50) or say why the look was not
 finished.
@@ -102,6 +118,9 @@ only finds changes after the fact. A run that edits another user's existing file
 unchanged, so the check does not count it.
 
 ## Limits
+
+- `lina worker status` names the denied-folder check as the reason for a `review` it caused, in the same
+  words as the end notice and the card comment.
 
 - No answer channel to an omo question: a run waiting on a question shows `waiting for an answer`; send a
   follow-up (it is steered into the turn) or cancel it.
