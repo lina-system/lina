@@ -51,11 +51,6 @@ class SourceReport:
         }
 
 
-def lcm_waiting_for_issue_16() -> dict:
-    """Round 1 preserves the LCM snapshot but makes no claim that its rows moved."""
-    return {"status": "waiting", "message": "lcm: waiting for #16", "counted": False}
-
-
 def duplicate_report(agent: str) -> dict:
     """Query immutable identities; raw Hermes IDs may legitimately have several text versions."""
     from hermes_state_store import _owner_connection

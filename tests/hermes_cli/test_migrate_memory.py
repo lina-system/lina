@@ -38,7 +38,7 @@ def test_real_cli_migrates_one_profile_and_replays_without_inserts(tmp_path, _me
 
     assert done.returncode == 0, done.stdout + done.stderr
     report = json.loads(done.stdout)
-    assert report["ok"] and report["lcm"]["counted"] is False
+    assert report["ok"] and report["lcm"]["counted"] is True
     assert report["sources"][0]["source_rows"] == 5
     assert memory_store_sql("SELECT DISTINCT agent_id FROM memory.messages WHERE source='agent'") == [("alpha-copy",)]
     assert source.read_bytes() == before

@@ -13,7 +13,8 @@ from pathlib import Path
 from hermes_cli.migrate_memory_agent import migrate_agent
 from hermes_cli.migrate_memory_copy import _safe, snapshot
 from hermes_cli.migrate_memory_external import migrate_external
-from hermes_cli.migrate_memory_report import duplicate_report, lcm_waiting_for_issue_16
+from hermes_cli.migrate_memory_report import duplicate_report
+from hermes_cli.migrate_memory_lcm import migrate_lcm
 from hermes_state_store import StoreUnavailableError, _owner_connection
 
 
@@ -38,13 +39,20 @@ def _paths(args) -> tuple[Path, Path, Path]:
     return source, home, work
 
 
-def _publish_files(copied: Path, destination: Path) -> list[str]:
+def _publish_files(copied: Path, destination: Path, *, lcm_store: bool = False) -> list[str]:
     files = []
     for path in sorted(copied.rglob("*")):
         if not path.is_file() or path.name in {"state.db", "lcm.db", "work.db"}:
             continue
         relative = path.relative_to(copied)
         target = _safe(destination / relative)
+        if relative == Path("config.yaml") and lcm_store:
+            from hermes_cli.config import atomic_config_write
+            config = json.loads(path.read_text())
+            config.update(context={"engine": "lcm-x"}, lcm={"store_backend": "postgres"})
+            atomic_config_write(target, config)
+            files.append(str(relative))
+            continue
         if target.exists():
             if target.is_symlink() or target.read_bytes() != path.read_bytes():
                 raise ValueError(f"destination file differs: {relative}")
@@ -104,34 +112,48 @@ def _profile(args) -> dict:
         receipt_path.write_text(json.dumps(receipt, indent=2) + "\n")
     agent = migrate_agent(copied.state_db, destination / "state.db", args.agent)
     reports = [agent.as_dict()]
-    lcm = lcm_waiting_for_issue_16()
-    honcho = {"status": "not_supplied", "counted": False}
+    lcm = migrate_lcm(copied.lcm_db, copied.state_db, destination, args.agent, work)
+    honcho = {"status": "not_supplied", "counted": True, "ok": True, "reason": "no_archive_supplied"}
     if copied.honcho_dump is not None:
         from hermes_cli.migrate_memory_honcho import migrate_honcho
         honcho = migrate_honcho(copied.honcho_dump, args.profile, args.agent, work,
                                workspace=args.honcho_workspace,
                                selection_path=copied.root / "external/honcho-config.json",
                                honcho_python=Path(args.honcho_python) if args.honcho_python else None)
+        honcho["counted"] = True
     if copied.spool is not None and spool is not None:
         reports.append(migrate_external(copied.spool, spool).as_dict())
-    work_report = {"status": "not_supplied", "counted": False}
+    work_report = {"status": "not_supplied", "counted": True, "ok": True, "reason": "no_work_source_supplied"}
     if copied.work_db is not None:
         from hermes_cli.migrate_memory_work import migrate_work
         work_report = migrate_work(copied.work_db, home, args.profile, args.agent)
-    files = _publish_files(copied.profile_dir, destination)
+        work_report["counted"] = True
+    files = _publish_files(copied.profile_dir, destination, lcm_store=copied.lcm_db is not None)
+    if copied.lcm_db is not None and "config.yaml" not in files:
+        from hermes_cli.config import atomic_config_write
+        atomic_config_write(destination / "config.yaml", {"context": {"engine": "lcm-x"}, "lcm": {"store_backend": "postgres"}})
+        files.append("config.yaml")
     if copied.honcho_dump is not None:
         _publish_honcho_config(copied.root / "external/honcho-config.json", destination,
                                args.profile, args.agent, home / "store")
         files.append("honcho.json")
     duplicates = duplicate_report(args.agent)
+    steps = {"identity": {"counted": True, "ok": agent.ok}, "agent": {"counted": True, "ok": agent.ok},
+             "lcm": {"counted": lcm["counted"], "ok": lcm["ok"]},
+             "honcho": {"counted": honcho["counted"], "ok": honcho["ok"]},
+             "external": {"counted": True, "ok": all(r["ok"] for r in reports[1:]),
+                          "status": "imported" if copied.spool is not None else "not_supplied"},
+             "embeddings": {"counted": True, "ok": True, "status": "accounted_deferred"},
+             "work": {"counted": work_report["counted"], "ok": work_report["ok"]}}
     return {"format": 1, "round": 2, "profile": args.profile, "agent": args.agent,
             "destination_home": str(destination), "copies": [asdict(row) for row in copied.receipt],
             "sources": reports, "lcm": lcm, "honcho": honcho, "work": work_report,
             "files": files, "duplicates": duplicates,
-            "complete": False,
-            "embeddings": {"status": "deferred", "command": "lina store reembed",
+            "complete": duplicates["ok"] and all(s["counted"] and s["ok"] for s in steps.values()),
+            "steps": steps,
+            "embeddings": {"status": "deferred", "counted": True, "ok": True, "command": "lina store reembed",
                            "reason": "No embedding endpoint is called; Honcho reports legacy vector disposition."},
-            "ok": all(report["ok"] for report in reports) and duplicates["ok"]
+            "ok": lcm["ok"] and all(report["ok"] for report in reports) and duplicates["ok"]
                   and honcho.get("ok", honcho.get("status") == "not_supplied")
                   and work_report.get("ok", work_report.get("status") == "not_supplied")}
 
@@ -168,9 +190,10 @@ def run(args) -> int:
                     json.dumps(current, ensure_ascii=False, indent=2, default=str) + "\n")
                 if not current["ok"]:
                     break
-            report = {"format": 1, "round": 2, "profiles": reports, "complete": False,
+            report = {"format": 1, "round": 2, "profiles": reports,
+                      "complete": len(reports) == len(profiles) and all(item["complete"] for item in reports),
                       "ok": len(reports) == len(profiles) and all(item["ok"] for item in reports),
-                      "lcm": lcm_waiting_for_issue_16()}
+                      "lcm": {"counted": all(item["lcm"]["counted"] for item in reports)}}
         else:
             _, _, work = _paths(args)
             report = _profile(args)
@@ -178,7 +201,7 @@ def run(args) -> int:
         # PostgreSQL errors may include source text or credentials: expose only their type.
         detail = str(exc) if isinstance(exc, ValueError) else type(exc).__name__
         report = {"format": 1, "round": 2, "ok": False, "error": detail,
-                  "lcm": lcm_waiting_for_issue_16()}
+                  "lcm": {"counted": False, "ok": False}}
     text = json.dumps(report, ensure_ascii=False, indent=2, default=str)
     if work is not None and work.is_dir():
         _safe(work / "migration-report.json").write_text(text + "\n")

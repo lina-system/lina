@@ -264,8 +264,9 @@ that option is only an explicit interpreter override. The API and deriver are ne
 unrelated destination workspaces remain intact. Legacy vectors, including 1536-wide ones, are explicitly
 left for `lina store reembed`; migration never calls an embedding endpoint.
 
-Round 2 still reports `lcm: waiting for #16` and excludes LCM messages and summary nodes from imported
-counts. The copied `lcm.db` is retained for Round 3. The copied work ledger imports the selected profile's
+The copied `lcm.db` is imported through LCM-X's existing `PgConnection` route after agent messages and before
+Honcho. Host text is matched by session, role, observed time (or legacy timestamp), content digest and
+`MessageStore.text_uids_with_digest`; unmatched text uses the same shared writer. The copied work ledger imports the selected profile's
 records and relations, renaming its owner to the new agent. Required area/project/goal/run/to-do ancestors
 and referenced parent events retain their original owners and are listed separately. This includes a
 to-do's closing run and both endpoints of its run relations. The destination work store keeps one migration
@@ -282,8 +283,9 @@ Agent manifests hash the full immutable text payload, including tool/API fields,
 Large agent imports keep hash-only manifests in JSONL sidecars beside the destination state database and
 include their paths, counts and file SHA256 values in the report; text is read and verified in bounded batches.
 Raw native identities can legitimately have several immutable versions; the report discloses them separately
-from duplicate version identities. `ok` means the included migration checks passed; `complete` remains false
-while LCM is deferred. An accounting mismatch exits nonzero.
+from duplicate version identities. `ok` means the included migration checks passed; `complete` requires every
+step to be counted and ok, including explicit absence and deferred-vector accounting. It does not mean an
+embedding endpoint was called. An accounting mismatch exits nonzero.
 
 Repeating the same command verifies and reuses the same snapshots rather than capturing new source data;
 it inserts nothing and fails if copied destination messages were lost or changed. Use a new work directory
@@ -359,8 +361,39 @@ Per-source policies:
 - **Honcho:** each destination agent owns a separate deterministic text-ID graph and receipt-backed positive
   integer allocations. Shared source people/sessions do not cause a global rename. Person registry aliases
   are agent-qualified; equal display names alone do not merge people. Preserve verified conversation aliases.
-- **Files and LCM:** file payloads and arbitrary links are not identity-remapped. LCM remains deferred until #16;
-  legacy vectors require reembedding rather than copying an unverified model's vectors.
+- **Files and LCM:** file payloads and arbitrary links are not identity-remapped. LCM native IDs are scoped by
+  destination agent and remain intact; global surrogate/vector IDs are allocated by the destination and recorded
+  in its import receipt. Legacy vectors require compatible model/1024-wide float32 provenance or reembedding.
+
+### Native LCM copies
+
+The source `lcm.db` is opened read-only, without running schema migrations on it. The destination path is routed
+with `lcm_x_store.route(path, agent)`; SQLite-shaped inserts pass through its translator and message interceptor,
+not a second PostgreSQL text writer. High-level `append` cannot copy history losslessly because it applies ingest
+protection and replaces ingestion timestamps. The routed SQL preserves historical placement columns.
+
+The import retains messages, summary nodes and provenance, lifecycle/migration metadata, assertion sources and
+relations, prior importer receipts, rollups and their sources/state/invalidations, entities/aliases/keys/notes/events,
+host-file revision records, Teams policy/audit records, message relations/host UID bindings, and trajectory corpus,
+source/state/asset/transition records and profile metadata. Per-agent native IDs remain unchanged; global rowids
+are omitted on insert and mapped in `ctx.metadata`'s `lina_memory_import:v1` receipt. Registry `lcm_conversation`
+aliases resolve to the same conversation identity as host transcript sessions.
+
+Query corpus generations/views are caches rebuilt from the imported corpus. FTS tables and their shadow tables
+are rebuilt by store indexes. Binary vector accelerators and trajectory vector indexes are rebuilt from retained
+text; source backfill leases are not resumed. Unknown populated tables are refused rather than silently dropped.
+The SQLite-only fork quarantine is accepted only when empty because #16 has no corresponding destination table.
+Every source table receives accounting, including skipped cache rows and their reasons.
+
+Compatible summary/chunk vectors use the existing 0008 views; other model/width/dtype vectors are counted as
+deferred. `lina store reembed --source memory` (also `all`) includes LCM summaries, with separate per-agent progress
+and global vector keys. Migration itself never calls an embedding endpoint. The new profile selects LCM-X with
+`lcm.store_backend: postgres`; it does not receive an active local `lcm.db` copy.
+
+Reruns compare only receipted copied rows and their native-ID/hash manifests. Newly appended live rows are outside
+that subset; missing or modified copied durable rows fail. Text commits before placements through the existing
+host writer: a failed placement transaction can leave unreferenced text, but deterministic native UIDs reuse it
+on retry and no dangling placement is published. `held_by_context` keeps migrated placements' text alive during GC.
 
 ### Search
 
