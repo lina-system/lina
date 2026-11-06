@@ -1,7 +1,7 @@
 """``lina worker`` runs handed out from a Hermes kanban card (lina#227).
 
 With ``worker.card_link: {kind: hermes, command: [...]}`` every write to the card goes through that command
-(``kanban comment | attach | schedule | unblock``); LINA code never opens a kanban database. The commands here are
+(``kanban comment | attach | show | unblock``); LINA code never opens a kanban database. The commands here are
 a fake that records its argv, except where the real kanban CLI runs against a scratch Hermes home."""
 
 import json
@@ -31,11 +31,16 @@ once = os.path.join(os.environ.get("FAKE_KANBAN_FAIL_ONCE", ""), verb)
 failed = bool(os.environ.get("FAKE_KANBAN_FAIL_ONCE")) and os.path.exists(once)
 if failed:
     os.remove(once)
+if "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ and verb != "show":
+    failed = True
+    print("delegate_task child contexts cannot mutate", file=sys.stderr)
 # Hermes keeps a copy of an attached file: record what it was given at that moment.
 content = open(sys.argv[sys.argv.index(verb) + 2], encoding="utf-8").read() if verb == "attach" and not failed else None
 with open(os.environ["FAKE_KANBAN_LOG"], "a") as fh:
     fh.write(json.dumps({"argv": sys.argv[1:], "ok": not failed, "content": content,
                          "env": sorted(k for k in os.environ if k.startswith("HERMES_"))}) + "\\n")
+if verb == "show":
+    print(json.dumps({"task": {"status": os.environ.get("FAKE_KANBAN_STATUS", "scheduled")}}))
 sys.exit(1 if failed else 0)
 """
 FAKE_CHAT = """import os, sys
@@ -160,6 +165,7 @@ def queued(tmp_path, fake_kanban):
         Hub(hub.worker_root, out=lines.append).submit({
             "briefs": [fakes.brief(tmp_path, "do it", name)], "mode": "ulw", "bot": AGENT, "topic": "t",
             "wait": None, "card": {"task": CARD, "board": BOARD}})
+        hub.tick()
         return lines[0].split()[0]
     return hub, submit, calls
 
@@ -168,11 +174,11 @@ def test_wait_parks_the_card_and_the_first_end_wakes_it_once(queued):
     hub, submit, calls = queued
     first, second = submit("a.md"), submit("b.md")
     assert hub.wait({"task": CARD, "board": BOARD}) == 0
-    assert _verbs(calls()) == ["comment", "comment", "schedule"]
+    assert _verbs(calls()) == ["comment", "comment"]
 
     hub.notify(first, "done", "1")
     hub.notify(first, "done", "1")  # the same end reported again (device and tick) adds nothing
-    assert _verbs(calls())[3:] == ["comment", "unblock"]
+    assert _verbs(calls())[2:] == ["comment", "show", "unblock"]
     assert calls()[-1]["argv"][-1] == CARD
 
     hub.notify(second, "done", "1")  # the card runs again: the comment only
@@ -184,10 +190,10 @@ def test_wait_on_one_run_is_woken_only_by_that_runs_end(queued):
     waited, other = submit("a.md"), submit("b.md")
     assert hub.wait({"task": CARD, "board": BOARD}, [waited]) == 0
     hub.notify(other, "done", "1")
-    assert _verbs(calls())[3:] == ["comment"]
+    assert _verbs(calls())[2:] == ["comment"]
     hub.notify(waited, "done", "1")
     hub.notify(waited, "done", "1")
-    assert _verbs(calls())[3:] == ["comment", "comment", "unblock"]
+    assert _verbs(calls())[2:] == ["comment", "comment", "show", "unblock"]
 
 
 def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_through(queued, tmp_path, monkeypatch):
@@ -209,7 +215,7 @@ def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_thr
     hub.tick()  # the unblock goes
     hub.tick()
     hub.notify(run, "done", "1")
-    assert _verbs(calls()) == ["comment", "schedule", "comment", "attach", "unblock"]
+    assert _verbs(calls()) == ["comment", "comment", "attach", "show", "show", "unblock"]
     assert not hub.store.load(run).get("card_pending")
 
 
@@ -254,9 +260,9 @@ def test_a_failed_result_fetch_is_retried_before_the_report_is_attached_and_the_
     hub, run, results, calls = on_a_device
     results += [TransportError("far: connection reset"), "# run 1 report\n"]
     hub.notify(run, "done", "1")
-    assert _verbs(calls())[2:] == []  # the end waits for its result
+    assert _verbs(calls())[1:] == []  # the end waits for its result
     hub.tick()
-    assert _verbs(calls())[2:] == ["comment", "attach", "unblock"]
+    assert _verbs(calls())[1:] == ["comment", "attach", "show", "unblock"]
     assert _attached(calls()) == [(f"report-{run}-1.md", "# run 1 report\n")]
     assert not hub.store.load(run).get("card_pending")
 
@@ -267,10 +273,10 @@ def test_a_retried_fetch_that_finds_a_later_run_does_not_label_its_results_as_th
     hub.notify(run, "done", "1")
     hub.store.update(run, runs=2, state="running")  # `send` started run 2 on the device before the retry
     hub.tick()
-    assert _verbs(calls())[2:] == ["comment", "unblock"]
-    assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[2]["argv"][-1]
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
+    assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[1]["argv"][-1]
     hub.notify(run, "done", "2")
-    assert _verbs(calls())[2:] == ["comment", "unblock", "comment", "attach"]
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock", "comment", "attach"]
     assert _attached(calls()) == [(f"report-{run}-2.md", "run 2 report\n")]
     assert not hub.store.load(run).get("card_pending")
 
@@ -279,7 +285,7 @@ def test_a_run_with_no_report_completes_without_an_attachment(on_a_device):
     hub, run, results, calls = on_a_device
     results.append(None)
     hub.notify(run, "done", "1")
-    assert _verbs(calls())[2:] == ["comment", "unblock"]
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
     assert not hub.store.load(run).get("card_pending")
 
 
@@ -289,8 +295,8 @@ def test_a_result_that_never_arrives_ends_the_card_saying_so(on_a_device):
     hub.notify(run, "done", "1")
     for _ in range(hub_module.FETCH_TRIES):
         hub.tick()
-    assert _verbs(calls())[2:] == ["comment", "unblock"]
-    end = calls()[2]["argv"][-1]
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
+    end = calls()[1]["argv"][-1]
     assert "report.md could not be fetched" in end and f"lina worker result {run}" in end
     assert not hub.store.load(run).get("card_pending")
 
@@ -408,16 +414,19 @@ def test_submit_card_and_board_name_the_card_and_lina_home_alone_holds_the_state
     jobs = list((lina / "worker" / "hub" / "jobs").glob("OT-*.json"))
     assert len(jobs) == 1 and json.loads(jobs[0].read_text("utf-8"))["card"] == {
         "task": CARD, "board": BOARD, "kind": "hermes"}
+    assert calls() == []
+    Hub(lina / "worker").tick()
     assert calls()[0]["argv"][:5] == ["kanban", "--board", BOARD, "comment", CARD]
     assert not (hermes / "worker").exists()
 
 
 def test_the_card_session_environment_names_the_card(tmp_path, card_shell):
-    _, _, calls = card_shell
+    lina, _, calls = card_shell
     assert _cli(["submit", "--brief", fakes.brief(tmp_path, "do it"), "--topic", "t"]) == 0
+    Hub(lina / "worker").tick()
     assert calls()[0]["argv"][:5] == ["kanban", "--board", "envboard", "comment", "t_env"]
     assert _cli(["wait"]) == 0
-    assert calls()[-1]["argv"][:5] == ["kanban", "--board", "envboard", "schedule", "t_env"]
+    assert len(calls()) == 1
 
 
 def test_the_state_root_comes_from_lina_home_never_from_a_hermes_card_session(tmp_path, monkeypatch):

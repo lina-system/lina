@@ -112,7 +112,8 @@ class Hub:
                + _private_lines(opts.get("private_inputs") or []), "state": "new",
                "private_inputs": opts.get("private_inputs") or [],
                "grant": grant, "delivery": "pending", "verdict": None, "group": group, "next_notes_rule": True,
-               "card": opts.get("card"), "settings": decision.settings}
+               "card": opts.get("card"), "card_start_pending": kanban_link.on_hermes(opts.get("card")),
+               "settings": decision.settings}
         self.store.save(job)
         self.store.receipt(tid, "submitted", bot=agent, topic=job["topic"], mode=job["mode"], runner=runner,
                            model=job["model"], brief=str(brief), repo=job["repo"], group=group, grant=grant,
@@ -124,6 +125,8 @@ class Hub:
     def _link_card(self, job: dict) -> None:
         if not job.get("card"):
             return
+        if kanban_link.on_hermes(job["card"]) and "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
+            return
         try:
             kanban_link.record_run(job["card"], job, self._link())
         except (ValueError, OSError, kanban_link.CardLinkError) as exc:
@@ -131,6 +134,9 @@ class Hub:
             self.out(f"lina worker: could not record {job['id']} on card {job['card']['task']}: {exc}")
             return
         self.store.receipt(job["id"], "card_linked", card=job["card"])
+        if job.get("card_start_pending"):
+            job.pop("card_start_pending")
+            self.store.save(job)
 
     def _notify_spec(self, dev: settings.Device) -> dict:
         if dev.local:
@@ -258,10 +264,7 @@ class Hub:
         for brief in briefs:
             if not brief.is_file():
                 raise HubError(f"brief not found: {brief}")
-        opts.setdefault("bot", caller_agent())
-        if not opts.get("card"):
-            opts["card"] = kanban_link.card_from_env()
-        opts["card"] = kanban_link.card_for(opts["card"], self._link())
+        self._submit_identity(opts)
         opts["topic"] = opts.get("topic") or opts.get("todo") or (opts["card"] or {}).get("task")
         if not opts["topic"]:
             raise HubError("--todo <to-do ID> is required (or --topic <short name> for work without a to-do)")
@@ -276,18 +279,38 @@ class Hub:
         if group:
             self.out(f"{group} batch of {len(jobs)} · one notice when all of them end.")
         elif opts.get("wait") is None and kanban_link.on_hermes(opts["card"]):
-            self.out(f"The end lands on card {opts['card']['task']}. Park it with `lina worker wait` and end the turn.")
+            self.out(f"The end lands on card {opts['card']['task']}. Run `lina worker wait --card "
+                     f"{opts['card']['task']}" + (f" --board {opts['card']['board']}" if opts['card'].get('board') else "")
+                     + "` and follow its kanban_schedule instruction.")
         elif opts.get("wait") is None:
             self.out(f"The end notice goes to {opts['bot']}'s chat. Do not poll.")
         if opts.get("wait") is not None and len(jobs) == 1:
             return self._wait(jobs[0]["id"], float(opts["wait"]))
         return 0
 
+    def _submit_identity(self, opts: dict) -> None:
+        explicit_card, link = bool(opts.get("card")), self._link()
+        opts["card"] = kanban_link.card_for(opts.get("card") or kanban_link.card_from_env(), link)
+        if not opts["card"] and link["kind"] == kanban_link.HERMES and \
+                "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
+            raise HubError("Hermes card session: pass --card <id> --board <slug>")
+        opts["bot_source"] = "--bot" if opts.get("bot") else "current profile"
+        if not opts.get("bot"):
+            if explicit_card and kanban_link.on_hermes(opts["card"]):
+                for name in ("HERMES_PROFILE", "HERMES_PROFILE_NAME"):
+                    profile = os.environ.get(name, "").strip()
+                    if profile:
+                        opts["bot"], opts["bot_source"] = profile, name
+                        break
+            if not opts.get("bot"):
+                opts["bot"] = caller_agent()
+
     def _submit_one(self, brief: Path, opts: dict, group: str | None) -> dict:
         job = self.make_job(brief, opts, group)
         if opts.get("wait") is not None and not group:
             job.update(self.store.update(job["id"], waiter=os.getpid(), waiter_start=_start_time(os.getpid())) or {})
-        self._link_card(job)
+        if not kanban_link.on_hermes(job.get("card")):
+            self._link_card(job)
         try:
             host = self.place(job)
         except (TransportError, HubError, RunnerError, OSError) as exc:
@@ -297,8 +320,8 @@ class Hub:
             else:
                 job.update(self.store.update(job["id"], state="queued") or {})
                 self.store.receipt(job["id"], "start_failed_requeued", error=str(exc)[:300])
-        self.out(f"{job['id']} handed out · {job['bot']} · topic {job['topic']} · mode {job['mode']} · runner "
-                 f"{job['runner']} · model {models.label(job['model'])} · "
+        self.out(f"{job['id']} handed out · {job['bot']} ({opts['bot_source']}) · topic {job['topic']} · "
+                 f"mode {job['mode']} · runner {job['runner']} · model {models.label(job['model'])} · "
                  f"{host or 'queued (starts when a device is free)'}"
                  + (f" · repo {job['repo']} branch {job['branch']}" if job.get("repo") else ""))
         return job
@@ -488,8 +511,11 @@ class Hub:
         return 0
 
 
-    def send(self, task_id: str, message: str) -> int:
+    def send(self, task_id: str, message: str, card: dict | None = None) -> int:
         job = self.need(task_id)
+        card = card or kanban_link.card_from_env()
+        if card and any((job.get("card") or {}).get(key) != card.get(key) for key in ("task", "board")):
+            raise HubError(f"{task_id}: run does not belong to card {card['task']} on board {card.get('board')}")
         if not job.get("host"):
             raise HubError(f"{task_id} has not started yet (queued): cancel it and submit a new brief instead")
         if job.get("state") == "placing":
@@ -634,6 +660,8 @@ class Hub:
         return text, out_dir
 
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
+        if job.get("card_start_pending"):
+            self._link_card(job)
         marker = f"{kind}:{run}"
         if marker in job.get("notified", []):
             return self._card_steps(job, marker) if marker in (job.get("card_pending") or {}) else "already"
@@ -700,6 +728,8 @@ class Hub:
         went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
         under the job's lock."""
         card, link = job["card"], self._link()
+        if job.get("card_start_pending") or "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
+            return f"card {card['task']}: pending hub tick"
         if job["card_pending"][marker].get("fetch_pending") and not self._card_fetch(job, marker):
             return (f"card {card['task']}: result not fetched yet ({job['card_pending'][marker]['fetch_tries']}/"
                     f"{FETCH_TRIES}), retried on the next report or tick")
@@ -761,12 +791,13 @@ class Hub:
     def _retry_cards(self, task_id: str) -> None:
         with self.store.lock(task_id):
             job = self.store.load(task_id) or {}
+            if job.get("card_start_pending"):
+                self._link_card(job)
             for marker in list(job.get("card_pending") or {}):
                 self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker)}")
 
     def wait(self, card: dict | None, task_ids: list[str] | None = None) -> int:
-        """Park the Hermes card these runs were handed out from (`kanban schedule`): its session ends the turn and
-        the first run end that follows wakes it. Refused when nothing on the card is still open."""
+        """Record open runs and tell the card's model how to schedule itself. The hub wakes it after a run ends."""
         link = self._link()
         if link["kind"] != kanban_link.HERMES:
             raise HubError("wait parks a Hermes card: set worker.card_link {kind: hermes, command: [...]}")
@@ -782,11 +813,9 @@ class Hub:
             if not open_runs:
                 raise HubError(f"card {card['task']} has no open run to wait for; read the ends on the card "
                                "(`lina worker status <ID>`, `lina worker result <ID>`)")
-            try:
-                kanban_link.park(self.store, card, link, open_runs)
-            except kanban_link.CardLinkError as exc:
-                raise HubError(f"could not park card {card['task']}: {exc}") from exc
-        self.out(f"card {card['task']} parked on {', '.join(open_runs)}: end the turn, the first end wakes it.")
+            kanban_link.park(self.store, card, open_runs)
+        self.out(f"Call Hermes kanban_schedule with workers={json.dumps(open_runs)}, "
+                 f"reason=\"waiting on lina worker {' '.join(open_runs)}\", then end the turn.")
         return 0
 
     def group_notice(self, group: str) -> str:
@@ -819,7 +848,7 @@ class Hub:
                 return
             self.run_due_schedules()
             for job in self.store.all():
-                if job.get("card_pending"):
+                if job.get("card_start_pending") or job.get("card_pending"):
                     self._retry_cards(job["id"])
             for job in self.store.all():
                 if job.get("state") == "queued":
