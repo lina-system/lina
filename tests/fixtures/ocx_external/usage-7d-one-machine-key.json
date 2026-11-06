@@ -345,7 +345,7 @@
  "filter": {
   "provider": null,
   "model": null,
-  "apiKeyId": "lk0000000000000000000000000000000001",
+  "apiKeyId": "00000000-0000-4000-8000-000000000001",
   "matched": true,
   "comboOverlap": false
  },
