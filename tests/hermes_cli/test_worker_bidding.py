@@ -61,7 +61,7 @@ def test_a_queued_task_starts_from_the_tick_when_a_slot_frees(tmp_path, monkeypa
     full = {"value": True}
     real_probe = bidding.probe_all
     monkeypatch.setattr(bidding, "probe_all", lambda *a, **k: [
-        {**row, "running": 2} if full["value"] else row for row in real_probe(*a, **k)])
+        {**row, "running": 2, "bid_running": 2} if full["value"] else row for row in real_probe(*a, **k)])
     serve.serve_once(root)
     lines: list[str] = []
     hub = Hub(root, out=lines.append)

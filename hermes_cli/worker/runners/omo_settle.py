@@ -19,10 +19,11 @@ from datetime import datetime
 from typing import Callable
 
 from hermes_cli.worker.runners.base import Task
+from hermes_cli.worker.runners.omo_processes import live_work_processes, stop_task_processes
 
 OmoCall = Callable[[list[str], float], dict | None]
 MOVING = ("thinking", "tool", "running", "checking")
-CONTRACT = {"done": "done", "idle_after_question": "done", "failed": "failed", "cancelled": "cancelled",
+CONTRACT = {"done": "done", "idle_after_question": "done", "idle_after_background": "done", "failed": "failed", "cancelled": "cancelled",
             "stalled": "stalled"}
 LOCAL_ENDS = ("timeout", "cancelled", "stalled", "error")  # ends the worker imposes while the session may still be working
 SEALED = ("done", "failed", "cancelled")
@@ -61,12 +62,23 @@ def background_items(view: dict) -> list[dict]:
             for group in view["waitingOn"].get("background") or [] for item in group.get("items") or []]
 
 
+def real_question(view: dict) -> bool:
+    return bool(view.get("pendingQuestions") or view.get("pendingDialogs") or any(
+        not str(h.get("requestId", "")).startswith("question:")
+        for h in (view.get("waitingOn") or {}).get("human") or []))
+
+
+def receipt_source(source: str) -> bool:
+    return source == "terminal-monitors" or source.startswith("delivery:")
+
+
 def _waiting(view: dict, activity: dict, now: float, background_max_s: float) -> tuple[str, str]:
     waiting = view["waitingOn"]
     active = sum(int(group.get("activeCount") or 0) for group in waiting.get("background") or [])
     children = int(waiting.get("children") or 0)
     old = [item for item in background_items(view)
-           if parse_time(item["startedAt"]) and now - parse_time(item["startedAt"]) > background_max_s]
+           if not receipt_source(item["source"] or "") and parse_time(item["startedAt"])
+           and now - parse_time(item["startedAt"]) > background_max_s]
     if old:
         return "stalled", f"background older than {int(background_max_s)}s: {old[0]['label']}"
     if view.get("state") in ("waiting_background", "waiting_children") and active + children > 0:
@@ -91,7 +103,7 @@ def classify(view: dict, activity: dict, now: float, background_max_s: float) ->
         return "done", ""
     if state in ("failed", "cancelled"):
         return state, (view.get("failure") or {}).get("reason") or ""
-    if state == "waiting_human" or waiting.get("human") or view.get("pendingQuestions"):
+    if real_question(view):
         return "human", ",".join(h.get("kind", "?") for h in waiting.get("human") or []) or "question"
     if state in ("paused", "held"):
         return "stalled", f"{state} {','.join(view.get('holds') or [])}".strip()
@@ -111,6 +123,24 @@ def answered_and_idle(view: dict, task: Task) -> bool:
     return (synthetic and not view.get("pendingQuestions") and not view.get("pendingDialogs")
             and not view.get("isStreaming") and not view.get("pendingMessageCount")
             and (task.work / "report.md").is_file())
+
+
+def answered_with_receipts(view: dict, activity: dict, task: Task, run: int) -> bool:
+    """Only a completed answer and this run's report can retire leftover receipts."""
+    waiting = view["waitingOn"]
+    groups = waiting.get("background") or []
+    if (view.get("state") != "waiting_background" or not groups or real_question(view)
+            or waiting.get("children") or view.get("isStreaming") or view.get("isBashRunning")
+            or view.get("isCompacting") or view.get("pendingMessageCount")
+            or any(not receipt_source(g.get("source") or "") for g in groups)
+            or activity.get("last_msg_role") != "assistant" or activity.get("last_msg_tool_call")
+            or activity.get("last_msg_stop") != "stop"):
+        return False
+    try:
+        started = float(task.path(f"started.{run}").read_text(encoding="utf-8-sig").strip())
+        return (task.work / "report.md").stat().st_mtime >= started
+    except (OSError, ValueError):
+        return False
 
 
 def stopped(view: dict | None) -> bool:
@@ -154,6 +184,15 @@ class Settle:
             self.mem["stopping"] = {"outcome": outcome, **extra}
             self._save()
             return "running"
+        if outcome in LOCAL_ENDS:
+            self.task.event(self.run, "cancel_reap", **stop_task_processes(self.task))
+            self.call(["unload", self.ref, "--force"], 60)
+            receipt = stop_task_processes(self.task)
+            self.task.event(self.run, "cancel_reap", **receipt)
+            if receipt.get("left") or receipt.get("manifest_error") or receipt.get("errors"):
+                self.mem["stopping"] = {"outcome": outcome, **extra}
+                self._save()
+                return "running"
         result = {"outcome": outcome, "waited_s": round(time.time() - self.mem["start"], 1),
                   "wakes": self.mem["wakes"], **extra}
         self.task.path(f"wait.{self.run}.json").write_text(json.dumps(result, ensure_ascii=False), encoding="utf-8")
@@ -172,13 +211,19 @@ class Settle:
                 self._note_entry(entry)
             if answer.get("nextSince"):
                 self.mem["cursor"] = str(answer["nextSince"])
-        return {key: self.mem.get(key) for key in ("last_entry_at", "last_entry_type", "last_tool", "last_text")}
+        return {key: self.mem.get(key) for key in ("last_entry_at", "last_entry_type", "last_tool", "last_text",
+                                                   "last_msg_role", "last_msg_stop", "last_msg_tool_call")}
 
     def _note_entry(self, entry: dict) -> None:
         at = parse_time(entry.get("timestamp"))
         if at and (self.mem.get("last_entry_at") is None or at > self.mem["last_entry_at"]):
             self.mem["last_entry_at"] = at
         message = entry.get("message") or {}
+        if message.get("role"):
+            self.mem["last_msg_role"] = message["role"]
+            self.mem["last_msg_stop"] = message.get("stopReason")
+            self.mem["last_msg_tool_call"] = any(
+                isinstance(part, dict) and part.get("type") == "toolCall" for part in message.get("content") or [])
         self.mem["last_entry_type"] = entry.get("customType") or message.get("role") or entry.get("type")
         for part in message.get("content") or []:
             if not isinstance(part, dict):
@@ -225,10 +270,15 @@ class Settle:
             return self._finish("done", via="no lifecycle")
         if key == "stalled" and why.startswith("background older than"):
             return self._finish("stalled", why=why, **extra)
-        if (key == "human" and answered_and_idle(view, self.task)
+        if (answered_and_idle(view, self.task)
                 and quiet >= float(self.limits.get("answered_grace_s", 60.0))):
             return self._finish("idle_after_question", why="the turn ended after its question was answered", **extra)
-        if key in ("stalled", "stalled_suspect", "human") and quiet >= grace:
+        if key == "human":
+            since = self.mem.setdefault("human_since", now)
+            if now - since >= float(self.limits.get("human_max_s", 3 * 3600.0)):
+                return self._finish("stalled", why="open question exceeded its wait limit", **extra)
+            return None
+        if key in ("stalled", "stalled_suspect") and quiet >= grace:
             return self._finish("stalled", why=why, **extra)
         if key == "background" and quiet >= grace and not background_items(view):
             return self._finish("stalled", why="no recorded activity", **extra)
@@ -254,11 +304,23 @@ class Settle:
             self._save()
             return self._finish("error", why="state unreadable 8 times") if self.mem["errs"] >= 8 else "running"
         self.mem["errs"] = 0
+        if not real_question(view):
+            self.mem.pop("human_since", None)
         now = time.time()
         activity = self._activity()
+        work = live_work_processes(self.task)
+        if work and not real_question(view):
+            self.mem["quiet_since"] = None
+            self._save()
+            if now - self.mem["start"] > float(self.limits.get("hard_timeout_s", 43200.0)):
+                return self._finish("timeout", live_processes=work)
+            return "running"
         key, why = classify(view, activity, now, float(self.limits.get("background_max_s", 3 * 3600.0)))
         self._record(view, key, why, activity, now)
         quiet = self._quiet(key, activity, now)
+        if (answered_with_receipts(view, activity, self.task, self.run)
+                and quiet >= float(self.limits.get("answered_grace_s", 60.0))):
+            return self._finish("idle_after_background", why="answer and report left only receipts")
         ended = self._judge(view, key, why, quiet, now)
         if ended:
             return ended
