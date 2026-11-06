@@ -168,9 +168,10 @@ or an agent's message without `reply_to`) on a finished place is stored and star
   `stored` with the attempt recorded and is resolved by reading the transcript, never re-sent blindly. The Telegram
   double reply came from treating such a send as failed (lina#214; the fix waits for an in-flight final send,
   `gateway/stream_consumer.py:48-51`).
-- **Order.** Per target session, messages are delivered in the order the core accepted them. A later message never
-  overtakes an earlier undelivered one to the same session; several waiting messages join one model call together, in
-  order. Different sessions are independent.
+- **Order.** Per target session, messages are delivered in the order the core accepted them. When a message becomes
+  deliverable mid-run (section 3), every earlier undelivered message to that session joins the same model call ahead of
+  it, notes included, so nothing is overtaken and nothing holds back a later instruction or answer; several waiting
+  messages join one model call together, in order. Different sessions are independent.
 - **A session that is gone.** The place picks the next owner (section 1): a card's next run, the goal session resumed or
   started, the chat's conversation. The delivery records the new target and the reason, so the owner sees which
   session answered.
@@ -260,7 +261,8 @@ sees the same line under his request, in the app (a follow-up app issue).
 one turn) becomes a work card owned by the target, linked to the sender's place; the chat gets the card's link and
 the one-line answer, not the work. The rule is enforced in the target's turn: a turn started by an agent message may read
 and reply, and its first call to a tool that writes or runs is refused with "make a card" (the tool list stays as it is,
-so the cached prefix is untouched). Results come back as the card's end, to the asking session (section 4).
+so the cached prefix is untouched). Creating that card is the one write such a turn may make: the card tool is exempt,
+and the core links the new card to the sender's place. Results come back as the card's end, to the asking session (section 4).
 
 **Loop cap.** Between two agents, a thread (messages linked by `reply_to`) runs at most three round trips without a
 message from the owner. The fourth agent message in that thread is held, and the asking session gets one question to
