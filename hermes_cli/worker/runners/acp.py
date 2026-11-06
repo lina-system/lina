@@ -10,9 +10,7 @@ from __future__ import annotations
 import contextlib
 import json
 import os
-import re
 import selectors
-import shlex
 import signal
 import subprocess
 import threading
@@ -78,33 +76,6 @@ def _inside(work: Path, target: str) -> bool:
         return False
 
 
-def _safe_command(work: Path, raw: dict) -> bool:
-    """A cwd alone does not confine a shell. Accept only a small literal grammar."""
-    command = raw.get("command")
-    if not isinstance(command, str) or re.search(r"[\n\r`$;&|<()\\*?\[\]{}~]", command):
-        return False
-    cwd = raw.get("cwd", str(work))
-    if not isinstance(cwd, str) or not _inside(work, cwd):
-        return False
-    try:
-        words = shlex.split(command)
-    except ValueError:
-        return False
-    if words in (["pwd"], ["ls"], ["git", "status", "--short"], ["git", "diff", "--stat"]):
-        return True
-    # A literal echo/printf redirection is enough for simple artifact creation;
-    # arbitrary programs and shell compositions do not prove a workspace boundary.
-    match = re.fullmatch(r"\s*(echo|printf)\s+(.+?)\s*(>>?)\s*([^>]+)\s*", command)
-    if not match:
-        return False
-    try:
-        args, targets = shlex.split(match[2]), shlex.split(match[4])
-    except ValueError:
-        return False
-    return (bool(args) and ">" not in match[2] and len(targets) == 1
-            and _inside(Path(cwd), targets[0]) and _inside(work, str(Path(cwd) / targets[0])))
-
-
 def _permission(work: Path, mode: str, call: dict) -> tuple[bool, list[str]]:
     raw = call.get("rawInput") or {}
     if not isinstance(raw, dict):
@@ -116,12 +87,15 @@ def _permission(work: Path, mode: str, call: dict) -> tuple[bool, list[str]]:
     targets = [target for target in targets if isinstance(target, str)]
     if mode == "full":
         return True, targets
+    if mode in ("read-only", "workspace-write") and call.get("kind") in ("read", "search", "fetch", "think"):
+        return True, targets
     if mode != "workspace-write":
         return False, targets
     if call.get("kind") in ("edit", "delete"):
         return not malformed and bool(targets) and all(_inside(work, target) for target in targets), targets
     if call.get("kind") == "execute":
-        return _safe_command(work, raw), [str(raw.get("command", "unknown"))]
+        cwd = raw.get("cwd")
+        return isinstance(cwd, str) and bool(cwd.strip()) and _inside(work, cwd), [str(cwd)]
     return False, targets
 
 
@@ -367,7 +341,12 @@ class _Session:
         raw = params.get("toolInput", {})
         kinds = {"write_file": "edit", "create_file": "edit", "edit_file": "edit",
                  "str_replace_editor": "edit", "search_replace": "edit",
-                 "run_terminal_command": "execute", "bash": "execute"}
+                 "write": "edit", "run_terminal_command": "execute", "bash": "execute",
+                 "read_file": "read", "read": "read", "list_dir": "read",
+                 "grep": "search", "glob": "search", "search": "search", "web_search": "search",
+                 "web_fetch": "fetch", "fetch": "fetch", "think": "think"}
+        if kinds.get(name) == "execute" and isinstance(raw, dict) and "cwd" not in raw:
+            raw = {**raw, "cwd": params.get("cwd")}
         call = {"kind": kinds.get(name, "other"), "rawInput": raw, "title": name}
         mode = self.access_mode()
         allow, targets = _permission(self.handle.task.work, mode, call)

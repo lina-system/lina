@@ -61,9 +61,11 @@ Claude Code and Codex use the public `@zed-industries/claude-agent-acp` and
 `@zed-industries/codex-acp` adapters; provisioning and version pins are maintained separately.
 
 - The client advertises no file-system and no terminal capability (both false).
-- Permission requests are answered by the runner, never a person. `read-only` rejects every request;
-  `workspace-write` answers `allow_once` for edits of known workspace files and bounded commands, and rejects
-  the rest; `full` answers `allow_once`.
+- Permission requests are answered by the runner, never a person. `read-only` allows `read`, `search`, `fetch`
+  and `think`, and rejects writes and execution. `workspace-write` also answers `allow_once` for edits/deletions
+  whose targets are all inside the worktree, and arbitrary commands with a known, nonempty cwd inside it.
+  Missing, empty or outside command cwd and unknown kinds are rejected; `full` answers `allow_once` for all kinds.
+  Grok uses the tool's explicit cwd, or the hook's explicit execution cwd when the tool omits it.
 - Grok's native tools do not always ask ACP permission. Its flavor requires the advertised blocking
   `x.ai/hooks` pre-tool hook and registers it on every new or reopened session; a missing hook fails before
   a prompt runs. This gate uses the same access policy and logs its allow/deny decisions.
@@ -76,6 +78,10 @@ Claude Code and Codex use the public `@zed-industries/claude-agent-acp` and
 
 The wire format follows the [public ACP schema](https://agentclientprotocol.com/protocol/schema).
 Real-node work-card delivery through grok and dsh still needs verification after node deployment.
+
+workspace-write is enforced by the task boundary, not by a shell grammar; the runner keeps edits inside the worktree and refuses commands whose cwd is outside it.
+As with omo, the LINA task boundary supplies the worktree, blocked push, read-only input copies and Linux
+transient unit. The runner does not claim an OS sandbox or inspect shell command contents.
 
 omo: workspace-write is enforced by the task boundary (worktree, blocked push, read-only inputs), not by an omo preset, because the engine's workspace preset asks on every codemode eval
 
