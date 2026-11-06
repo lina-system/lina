@@ -210,6 +210,16 @@ def test_refusal_names_the_card_and_writes_nothing(board, capsys, plan, names):
     ("screen", ["hermes kanban gate prs", "hermes kanban gate ui-qa"], False),
     ("screen", [{"command": "hermes kanban gate ui-qa --author qa"}], False),
     ("screen", ["python3 kanban_gates.py --db board.db ui-qa"], False),
+    ("screen", ["python3 hermes_cli/kanban_gates.py ui-qa"], False),
+    ("screen", ["hermes kanban --board work gate ui-qa --card X"], False),
+    ("screen", ["/opt/bin/lina -p qa kanban gate ui-qa"], False),
+    ("screen", ["echo gate ui-qa"], True),
+    ("screen", ["hermes kanban gate review --owner ui-qa"], True),
+    ("screen", [{"command": "echo gate ui-qa"}], True),
+    ("screen", ["sh -c 'hermes kanban gate ui-qa'"], True),
+    ("screen", ["env FOO=1 hermes kanban gate ui-qa"], True),
+    ("screen", ["hermes kanban gate ui-qa || true"], True),
+    ("screen", ["hermes kanban show ui-qa"], True),
     ("implementation", ["hermes kanban gate prs"], False),
 ])
 def test_screen_card_needs_the_ui_qa_gate(board, capsys, kind, gates, refused):

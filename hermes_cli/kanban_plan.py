@@ -197,15 +197,57 @@ def _gates(value: Any, where: str, *, required: bool) -> list[Any]:
     return gates
 
 
+_CLI_NAMES = {"hermes", "lina"}  # `lina` is another name for the `hermes` entry point
+_PYTHONS = {"python", "python3"}
+
+
+def _gate_argv(words: list[str]) -> Optional[list[str]]:
+    """The arguments ``kanban_gates.main`` receives when the shell runs *words*, or None when
+    *words* do not run a kanban gate: ``[.../]hermes|lina [top-level flags] kanban [--board B]
+    gate ...`` or ``[python[3]] [.../]kanban_gates.py ...``. Anything else in front (``echo``,
+    ``sh -c``, ``env``, interpreter flags) runs another program."""
+    from hermes_cli import kanban_parser
+    from hermes_cli._parser import command_argv
+
+    name = Path(words[0]).name if words else ""
+    if name in _PYTHONS and len(words) > 1 and Path(words[1]).name == "kanban_gates.py":
+        return words[2:]
+    if name == "kanban_gates.py":
+        return words[1:]
+    rest = command_argv(words[1:]) if name in _CLI_NAMES else []
+    if rest[:1] != ["kanban"]:
+        return None
+    parser = argparse.ArgumentParser(add_help=False)
+    kanban_parser.build_parser(parser.add_subparsers(dest="command"))
+    args = _quiet_parse(parser, rest)
+    return args.gate_argv if args is not None and args.kanban_action == "gate" else None
+
+
+def _quiet_parse(parser: argparse.ArgumentParser, argv: list[str]) -> Optional[argparse.Namespace]:
+    """``parser.parse_args(argv)``, None instead of argparse's usage error (or ``--help`` exit)."""
+    import contextlib
+    import io
+
+    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+        try:
+            return parser.parse_args(argv)
+        except SystemExit:
+            return None
+
+
 def _runs_ui_qa(gate: Any) -> bool:
-    """True when the gate command runs ``kanban gate ui-qa`` (or ``kanban_gates.py ui-qa``)."""
+    """True when the gate command, as the card's shell runs it, selects ``gate ui-qa``. The gate
+    arguments go through ``kanban_gates.build_parser`` itself, so ``review --owner ui-qa`` is the
+    review gate and ``ui-qa || true`` (extra words ui-qa does not take) is refused."""
+    from hermes_cli import kanban_gates
+
     command = gate if isinstance(gate, str) else gate.get("command", "")
     try:
-        words = shlex.split(command)
+        argv = _gate_argv(shlex.split(command))
     except ValueError:
         return False
-    starts = [i for i, w in enumerate(words) if w == "gate" or w.endswith("kanban_gates.py")]
-    return bool(starts) and "ui-qa" in words[starts[0] + 1:]
+    args = _quiet_parse(kanban_gates.build_parser(), argv) if argv is not None else None
+    return args is not None and args.gate == "ui-qa"
 
 
 def _check_screen_gate(kind: Optional[str], gates: list[Any], where: str) -> None:
