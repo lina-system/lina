@@ -4,7 +4,7 @@ Sources:
 
 * ``agent``: agent turns in ``memory.messages`` (``source = 'agent'``, roles user and assistant);
 * ``messages``: external messages in ``memory.messages`` (``source = 'messages'``);
-* ``memory``: Honcho's conclusions (``ltm.documents``, kind ``document`` keyed by ``vec_id``).
+* ``memory``: Honcho conclusions and LCM-X summary nodes (through its vector view).
 
 A ``memory.messages`` row becomes one ``vec.chunks`` row (its text, cut at ``embedding.max_chars``) and one
 ``vec.embeddings`` row of kind ``chunk``. Rows go in id order, a batch per transaction, and
@@ -160,6 +160,10 @@ def reembed(connect: Callable[[], Any], client: Any, sources: Sequence[str], *, 
         for source in sources:
             counts = reembed_source(conn, client.embed, source=source, model=client.model, batch_size=batch_size,
                                     from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
+            if source == "memory":
+                from hermes_cli.store_reembed_lcm import reembed_summaries
+                reembed_summaries(conn, client.embed, counts, model=client.model, batch_size=batch_size,
+                                  from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
             out(counts.line())
             results.append(counts)
         return results
