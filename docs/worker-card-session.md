@@ -66,9 +66,12 @@ may close past it with `hermes kanban complete|request-review --allow-unjudged`,
   `wait_for`. A schedule that names the run is met by its end and woken as usual.
 - A run that ended over an hour ago without a verdict is raised once: a comment on its card, or, when the card is
   done, archived or deleted, the starting agent's main session through `worker.notice.command`. Never the owner.
+  - A card counts as gone when it is done, archived or deleted: no card session reads a comment there any more.
 - A pause (`scheduled`) whose reason names no run ID, card ID or time and that has no `wait_for` is raised once per
   pause to the main session of the agent that paused it, after 24 hours.
-- The board API lists a finished run waiting for a verdict with `waitingOn: agent:<name>`, and a card's detail
+  - That agent is the profile of the run that made the pause, else the card's assignee.
+- The board API lists a finished run waiting for a verdict with `waitingOn: agent:<name>` and counts it under that
+  agent (`counts.agents`), never in the owner's `inbox.review`, `review` notices or `counts.inbox`; a card's detail
   lists its `runsAwaitingVerdict`: the agent's to-do, not the owner's.
 
 ## The owner's private files
