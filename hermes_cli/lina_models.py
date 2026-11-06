@@ -10,7 +10,10 @@ With ``ocx.external: {cli, data_dir}`` the reads run that CLI (the caller's envi
 ``data_dir`` is given) and nothing is ever written to that OCX: an argv outside ``read_only`` raises before anything
 is spawned, the write verbs of ``lina models`` / ``lina services`` refuse (``lina_ocx.refuse_external``), and a read
 fails while ``ocx status --json`` says the proxy is not running. Each argv's output is kept for 60 s, so the app's
-polling does not multiply OCX calls (a call takes about 0.3 s, ``status`` 2.7 s).
+polling does not multiply OCX calls (a call takes about 0.3 s, ``status`` 2.7 s). The gate uses the last
+``status --json``, refreshed in the background at most every 60 s (only the first read waits for one), so a stopped
+proxy is noticed on the first read after the next refresh; a refresh that fails is raised by the next read, and the
+read after that waits for a new ``status --json``.
 
 Usage per machine is not read per request: OCX keeps only four filtered usage aggregates, so a filtered read is
 mostly a cold scan of its whole usage log (about 10 s on a large one). A ``/usage`` read starts, in a background
@@ -73,6 +76,21 @@ class _Machines:
 _MACHINES: dict[Path, _Machines] = {}
 
 
+class _Stale:
+    """One argv's last answer, served while a background read refreshes it."""
+
+    def __init__(self) -> None:
+        self.lock = threading.Lock()
+        self.value: Any = None
+        self.have = False
+        self.at = 0.0
+        self.error: lina_ocx.OcxError | None = None
+        self.thread: threading.Thread | None = None
+
+
+_STALE: dict[tuple, _Stale] = {}
+
+
 def read_only(args: tuple[str, ...]) -> bool:
     """The argv an external OCX may be run with: the fixed reads, and ``usage --range <r> [--api-key-id <id>]``.
     Never ``--refresh`` (it probes upstream) and no other verb."""
@@ -117,6 +135,40 @@ def _external(ext: dict[str, str], args: tuple[str, ...]) -> Any:
     return json.loads(hit[1])
 
 
+def _refresh(ext: dict[str, str], args: tuple[str, ...], entry: _Stale) -> None:
+    try:
+        value = _external(ext, args)
+    except lina_ocx.OcxError as exc:
+        with entry.lock:
+            entry.error = exc
+        return
+    with entry.lock:
+        entry.value, entry.have, entry.at = value, True, _clock()
+
+
+def _stale(ext: dict[str, str], args: tuple[str, ...]) -> Any:
+    """``args``' last answer; once it is ``CACHE_S`` old, one background read refreshes it. The first read waits. A
+    failed refresh is raised by the next read, which drops the last answer so the read after it waits again."""
+    from agent.memory_provider import spawn_context_thread
+
+    key = (ext["cli"], ext.get("data_dir"), args)
+    with _GUARD:
+        entry = _STALE.setdefault(key, _Stale())
+    with entry.lock:
+        if entry.error is not None:
+            error, entry.error, entry.have, entry.value = entry.error, None, False, None
+            raise error
+        if entry.have:
+            if _clock() - entry.at >= CACHE_S and (entry.thread is None or not entry.thread.is_alive()):
+                entry.thread = spawn_context_thread(_refresh, args=(ext, args, entry), name="lina-ocx-refresh")
+                entry.thread.start()
+            return entry.value
+    value = _external(ext, args)
+    with entry.lock:
+        entry.value, entry.have, entry.at = value, True, _clock()
+    return value
+
+
 def _own(root: Path, args: tuple[str, ...]) -> Any:
     version = lina_ocx.current_version(root)
     if version is None:
@@ -133,7 +185,7 @@ def _read(root: Path, ext: dict[str, str] | None, args: tuple[str, ...]) -> Any:
     if not read_only(args):
         raise lina_ocx.OcxError(f"`ocx {' '.join(args)}` is not a read; ocx.external is read-only")
     if args != STATUS:
-        status = _external(ext, STATUS)
+        status = _stale(ext, STATUS)
         if not (isinstance(status, dict) and (status.get("proxy") or {}).get("running") is True):
             raise lina_ocx.OcxError(f"the OCX of ocx.external ({ext['cli']}) is not running: "
                                     "`ocx status --json` says proxy.running is not true")
@@ -217,10 +269,13 @@ def _machine_days(root: Path) -> list[tuple[str, list[tuple[str, dict]]]]:
 
 
 def _join(root: Path | None = None, timeout: float | None = None) -> None:
-    """Wait for the fan-out in flight at ``root`` (tests)."""
+    """Wait for the fan-out in flight at ``root``, then for every background refresh (tests)."""
     state = _MACHINES.get(root or lina_ocx.lina_root())
-    thread = state.thread if state else None
-    if thread is not None:
+    if state is not None and state.thread is not None:
+        state.thread.join(timeout)
+    with _GUARD:
+        refreshes = [entry.thread for entry in _STALE.values() if entry.thread is not None]
+    for thread in refreshes:
         thread.join(timeout)
 
 

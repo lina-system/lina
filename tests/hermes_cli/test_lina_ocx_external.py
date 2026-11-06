@@ -4,7 +4,8 @@ The OCX is a fake CLI that prints ``tests/fixtures/ocx_external``: synthetic dat
 ``--json`` output (key names, nesting, nulls, ms vs s epochs), with invented values around one fixed time. It logs every
 argv it is run with, so a test sees exactly what reached it. The per-machine usage files are answered for every
 ``--api-key-id``; with ``LINA_TEST_HOLD`` such a read waits until that file exists, with ``LINA_TEST_KEY_FAIL`` it
-fails. The machine rows come from a background fan-out of 30-day reads (lina#273).
+fails (``LINA_TEST_HOLD_STATUS`` / ``LINA_TEST_STATUS_FAIL`` do the same for ``status --json``). The machine rows come
+from a background fan-out of 30-day reads, and the status gate is refreshed in the background (lina#273).
 """
 
 from __future__ import annotations
@@ -50,6 +51,16 @@ if len(args) == 6 and args[:2] == ["usage", "--range"] and args[3] == "--api-key
     if os.environ.get("LINA_TEST_KEY_FAIL"):
         print("usage aggregate failed", file=sys.stderr)
         sys.exit(1)
+if args == ["status", "--json"]:
+    hold = os.environ.get("LINA_TEST_HOLD_STATUS")
+    deadline = time.monotonic() + 30
+    while hold and not os.path.exists(hold):
+        if time.monotonic() > deadline:
+            sys.exit(3)
+        time.sleep(0.01)
+    if os.environ.get("LINA_TEST_STATUS_FAIL"):
+        print("status probe failed", file=sys.stderr)
+        sys.exit(1)
 if name is None:
     print("unknown command: " + " ".join(args), file=sys.stderr)
     sys.exit(2)
@@ -93,6 +104,7 @@ def ocx(tmp_path, monkeypatch):
     monkeypatch.setattr(lina_ocx, "own_proxy_running", lambda *a: pytest.fail("the own-proxy check ran"))
     monkeypatch.setattr(lina_models, "_CACHE", {})
     monkeypatch.setattr(lina_models, "_MACHINES", {})
+    monkeypatch.setattr(lina_models, "_STALE", {})
     monkeypatch.setenv("LINA_TEST_CALLER", "kept")
     fake.root = root
     yield fake
@@ -207,6 +219,7 @@ def test_each_argv_is_read_once_a_minute(ocx, monkeypatch):
     assert ocx.argvs().count("usage --range 7d --json") == 1
     clock[0] += 61
     lina_models.query("accounts")
+    lina_models._join()  # the gate's status is refreshed in the background
     assert ocx.argvs().count("status --json") == ocx.argvs().count("account list --json") == 2
 
 
@@ -352,6 +365,68 @@ def test_a_failed_fan_out_keeps_the_rows_and_the_next_waits_15_minutes(ocx, monk
     lina_models._join()
     assert len(_key_reads(ocx)) == failed + len(_machine_keys())
     assert lina_models.usage("7d")["byMachine"] == rows
+
+
+def _status_calls(ocx) -> int:
+    return ocx.argvs().count("status --json")
+
+
+def _usage_reads(client) -> list:
+    return [client.get(f"/api/lina/usage?range={range_}") for range_ in lina_models.RANGES]
+
+
+def _gate_after_a_good_status(ocx, client, monkeypatch) -> list[float]:
+    """One good status read (the first read waits for it), then the clock past the gate's 60 s."""
+    clock = [10_000.0]
+    monkeypatch.setattr(lina_models, "_clock", lambda: clock[0])
+    assert [response.status_code for response in _usage_reads(client)] == [200] * 3
+    lina_models._join()
+    assert ocx.argvs()[0] == "status --json" and _status_calls(ocx) == 1  # before any data argv
+    clock[0] += 61
+    return clock
+
+
+def test_a_usage_read_never_waits_for_the_status_gate_s_refresh(ocx, client, monkeypatch, tmp_path):
+    _gate_after_a_good_status(ocx, client, monkeypatch)
+    release = tmp_path / "release-status"
+    monkeypatch.setenv("LINA_TEST_HOLD_STATUS", str(release))
+    try:
+        first = _usage_reads(client)
+        wait_until(lambda: _status_calls(ocx) == 2, what="the held status refresh")
+        responses = [*first, *_usage_reads(client)]  # answered while the status refresh is held
+        assert [response.status_code for response in responses] == [200] * 6
+        for response in responses:
+            _valid("UsageView", response.json())
+        assert _status_calls(ocx) == 2  # exactly one status call in flight
+        assert sum(entry.thread.is_alive() for entry in lina_models._STALE.values() if entry.thread) == 1
+    finally:
+        release.touch()
+        lina_models._join(timeout=60)
+    assert _status_calls(ocx) == 2
+
+
+def test_a_background_status_saying_not_running_fails_the_next_read(ocx, client, monkeypatch):
+    _gate_after_a_good_status(ocx, client, monkeypatch)
+    monkeypatch.setenv("LINA_TEST_OCX_DOWN", "1")
+    assert client.get("/api/lina/usage?range=7d").status_code == 200  # the last status, refreshed behind it
+    lina_models._join()
+    response = client.get("/api/lina/usage?range=7d")
+    assert response.status_code == 503 and "not running" in response.json()["detail"]
+
+
+def test_a_failed_background_status_fails_the_next_read_and_the_one_after_waits(ocx, client, monkeypatch):
+    _gate_after_a_good_status(ocx, client, monkeypatch)
+    monkeypatch.setenv("LINA_TEST_STATUS_FAIL", "1")
+    assert client.get("/api/lina/usage?range=today").status_code == 200
+    lina_models._join()
+    assert _status_calls(ocx) == 2
+    response = client.get("/api/lina/usage?range=today")
+    assert response.status_code == 503 and "status probe failed" in response.json()["detail"]
+    assert _status_calls(ocx) == 2  # the failure was remembered, not read again
+    monkeypatch.delenv("LINA_TEST_STATUS_FAIL")
+    response = client.get("/api/lina/usage?range=today")
+    assert response.status_code == 200 and _status_calls(ocx) == 3  # this read waited for a new status
+    assert not any(entry.thread and entry.thread.is_alive() for entry in lina_models._STALE.values())
 
 
 def test_quota_reads_the_cached_quota_and_names_state_left_and_missing(ocx, client):
