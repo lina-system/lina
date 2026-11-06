@@ -15,7 +15,8 @@ def _submit(args) -> int:
     opts = {"briefs": args.brief, "mode": args.mode, "repo": args.repo, "inputs": args.input, "todo": args.todo,
             "host": args.host, "model": args.model, "topic": args.topic, "note": args.note, "at": args.at,
             "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner,
-            "card": _card(args)}
+            "card": _card(args), "size": args.size,
+            "labels": [x.strip() for x in args.labels.split(",") if x.strip()] if args.labels else None}
     if args.bot:
         opts["bot"] = args.bot
     return _hub().submit({k: v for k, v in opts.items() if v is not None or k in ("wait",)})
@@ -96,6 +97,7 @@ def _cmd_worker(args) -> None:
 
 
 def _submit_parser(sub) -> None:
+    from hermes_cli.lina_work_settings import SIZES
     from hermes_cli.worker.report import MODES
     p = sub.add_parser("submit", help="Hand a brief to a free work device (bidding), or queue it")
     p.add_argument("--brief", action="append", required=True, help="brief file; several make one batch (one notice)")
@@ -106,9 +108,13 @@ def _submit_parser(sub) -> None:
     p.add_argument("--input", action="append", default=[], help="a file or folder copied read-only to input/")
     p.add_argument("--todo", help="the to-do this task works on (also its topic)")
     p.add_argument("--host", help="a device from devices.workers instead of bidding")
-    p.add_argument("--runner", help="a runner from worker.runners (default: worker.default_runner, else omo)")
+    p.add_argument("--runner", help="a runner from worker.runners (default: worker.routing on --labels/--size, "
+                                    "else worker.default_runner, else omo)")
+    p.add_argument("--labels", help="the issue's labels, comma separated (its runner label), for worker.routing")
+    p.add_argument("--size", type=lambda v: v.strip().removeprefix("size/"), choices=list(SIZES),
+                   help="the issue's size (S, M, L or size/S...), for worker.routing")
     p.add_argument("--model", help="an alias from worker.models.aliases or <provider>/<id>[:<thinking>] "
-                                   "(default: worker.models.defaults by mode)")
+                                   "(default: the runner's model, else worker.models.defaults by mode)")
     p.add_argument("--topic", help="short name of the work when there is no to-do")
     p.add_argument("--bot", "--agent", dest="bot", help="the agent the end notice goes to (default: this profile)")
     p.add_argument("--note", help="a note repeated at the top of the end notice")
