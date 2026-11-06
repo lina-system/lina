@@ -64,8 +64,11 @@ worker:
       agy: <account to choose>
 ```
 
-The command gets the sign-in address on **stdin**, never in argv, and these
-variables:
+The command gets the sign-in address on **stdin**, never in argv. Its environment
+is the hub's child-process environment with Hermes' secrets scrubbed
+(`build_subprocess_env(scrub_secrets=True)`): provider keys and bot, GitHub and
+remote-compute tokens are dropped, while PATH, HOME (`HERMES_REAL_HOME` when HOME
+is redirected), DISPLAY and SSH_AUTH_SOCK pass. It also gets these variables:
 
 | Variable | Value |
 |---|---|

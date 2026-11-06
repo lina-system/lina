@@ -92,7 +92,8 @@ mode = sys.argv[1]
 address = sys.stdin.readline().strip()
 with open(os.environ["FAKE_BROWSER_SEEN"], "w", encoding="utf-8") as seen:
     json.dump({{"argv": sys.argv[1:], "account": os.environ.get("LINA_SIGN_IN_ACCOUNT"),
-               "return": os.environ.get("LINA_SIGN_IN_RETURN"), "got_address": bool(address)}}, seen)
+               "return": os.environ.get("LINA_SIGN_IN_RETURN"), "got_address": bool(address),
+               "secret": "GITHUB_TOKEN" in os.environ}}, seen)
 print("browser opened " + address, file=sys.stderr)
 if mode in ("two_step", "new_device", "account_choice"):
     print("needs_person: " + mode, file=sys.stderr)
@@ -203,6 +204,7 @@ class Hub:
 
 def test_grok_signs_in_on_the_node_through_the_hub_browser_and_a_return_tunnel(tmp_path, monkeypatch):
     hub = Hub(tmp_path, monkeypatch)
+    monkeypatch.setenv("GITHUB_TOKEN", "ghp_not_for_the_browser_command")
 
     result, _ = hub.sign_in("grok")
 
@@ -213,8 +215,9 @@ def test_grok_signs_in_on_the_node_through_the_hub_browser_and_a_return_tunnel(t
     assert len(tunnels) == 1 and tunnels[0][tunnels[0].index("-L") + 1].count(":127.0.0.1:") == 1, \
         "the browser's return goes to the node's listener through one ssh -L"
     seen = json.loads(hub.seen.read_text(encoding="utf-8"))
-    assert seen == {"argv": ["ok"], "account": "person@example.test", "return": "loopback", "got_address": True}, \
-        "the address reaches the browser command on stdin only, with the runner's account in its env"
+    assert seen == {"argv": ["ok"], "account": "person@example.test", "return": "loopback", "got_address": True,
+                    "secret": False}, \
+        "the address reaches the browser command on stdin only, with the runner's account and no hub secret in its env"
     assert not hub.cache.exists(), "the node's runner report cache is gone, so hello probes again"
     assert hub.hellos == 2
     assert hub.leftovers() == [], "the node's 0600 folder with the address is removed"

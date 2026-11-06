@@ -24,7 +24,6 @@ from __future__ import annotations
 
 import fcntl  # windows-footgun: ok — the hub that signs nodes in runs on POSIX only
 import logging
-import os
 import queue
 import shlex
 import subprocess
@@ -241,8 +240,9 @@ def _browser(conf: dict, runner: str, address: str, mode: str) -> tuple[str, str
     output is read, never shown."""
     command = conf["command"]
     account = (conf.get("accounts") or {}).get(runner) or ""
-    env = {**os.environ, "LINA_SIGN_IN_RUNNER": runner, "LINA_SIGN_IN_ACCOUNT": str(account),
-           "LINA_SIGN_IN_RETURN": mode}
+    from tools.environments.local import build_subprocess_env
+    env = build_subprocess_env(scrub_secrets=True, extra={
+        "LINA_SIGN_IN_RUNNER": runner, "LINA_SIGN_IN_ACCOUNT": str(account), "LINA_SIGN_IN_RETURN": mode})
     try:
         done = subprocess.run(command, input=address + "\n", capture_output=True, text=True, encoding="utf-8",
                               errors="replace", env=env, timeout=BROWSER_TIMEOUT_S, check=False)
