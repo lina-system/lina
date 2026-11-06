@@ -89,7 +89,7 @@ def _linux_process_table() -> dict[int, Process]:
 def _portable_process_table() -> dict[int, Process]:
     """Read portable ps and lsof output; also exercised with fake output on Linux."""
     rows = {}
-    output = subprocess.run(["/bin/ps", "-axww", "-o", "pid,ppid,pgid,stat,command"],
+    output = subprocess.run(["/bin/ps", "-axww", "-o", "pid,ppid,pgid,stat,lstart,command"],
                             capture_output=True, text=True, errors="replace", timeout=20, check=False)
     cwds = {}
     user = str(os.getuid()) if hasattr(os, "getuid") else getpass.getuser()
@@ -102,15 +102,17 @@ def _portable_process_table() -> dict[int, Process]:
         if line.startswith("n") and pid is not None:
             cwds[pid] = line[1:]
     for line in output.stdout.splitlines():
-        fields = line.split(None, 4)
-        if len(fields) != 5 or not fields[0].isdigit():
+        fields = line.split(None, 9)
+        if len(fields) != 10 or not fields[0].isdigit():
             continue
         try:
             pid, parent, group = map(int, fields[:3])
-            argv = tuple(shlex.split(fields[4]))
+            argv = tuple(shlex.split(fields[9]))
         except ValueError:
             continue
-        rows[pid] = Process(pid, parent, group, fields[3], argv, cwds.get(pid), fields[4])
+        # lstart survives exec; the command text does not. PID is the table key.
+        birth = " ".join(fields[4:9])
+        rows[pid] = Process(pid, parent, group, fields[3], argv, cwds.get(pid), birth)
     return rows
 
 

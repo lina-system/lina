@@ -86,9 +86,9 @@ def test_portable_ps_lsof_parsing(api, task, monkeypatch):
 
     def run(argv, **kwargs):
         calls.append(argv)
-        text = (" PID PPID PGID STAT COMMAND\n"
-                "10 1 10 S node /opt/node_modules/omo-ai/cli.js\n"
-                "11 10 11 S /usr/bin/python 'build file.py'\n"
+        text = (" PID PPID PGID STAT STARTED COMMAND\n"
+                "10 1 10 S Fri Nov  6 00:00:00 2026 node /opt/node_modules/omo-ai/cli.js\n"
+                "11 10 11 S Fri Nov  6 00:00:01 2026 /usr/bin/python 'build file.py'\n"
                 "broken row\n12 bad 12 S sleep 10\n") if argv[0] == "/bin/ps" else (
                     f"p11\nn{task.work}\npbad\nn/ignored\n")
         return subprocess.CompletedProcess(argv, 0, text, "")
@@ -98,7 +98,7 @@ def test_portable_ps_lsof_parsing(api, task, monkeypatch):
     assert rows[11].cwd == str(task.work)
     assert rows[11].argv == ("/usr/bin/python", "build file.py")
     assert set(rows) == {10, 11}
-    assert calls[0][1:] == ["-axww", "-o", "pid,ppid,pgid,stat,command"]
+    assert calls[0][1:] == ["-axww", "-o", "pid,ppid,pgid,stat,lstart,command"]
     assert calls[1][1:] == ["-a", "-d", "cwd", "-u", str(os.getuid()), "-Fpn"]
 
 
@@ -123,6 +123,53 @@ def test_cancel_empty_manifest_is_removed(api, task, monkeypatch):
     monkeypatch.setattr(api, "_process_table", dict)
     assert api.stop_task_processes(task)["left"] == []
     assert not target.exists()
+
+
+@pytest.mark.parametrize("exits", [False, True])
+def test_portable_exec_keeps_identity_until_process_is_gone(api, task, monkeypatch, exits):
+    manifest(task, backgrounds=[{"runtime": {"pid": 21, "processGroupId": 21}}])
+    scans, alive, signals = [0], [True], []
+
+    def run(argv, **kwargs):
+        text = f"p21\nn{task.work}\n"
+        if argv[0] == "/bin/ps":
+            scans[0] += 1
+            command = "/bin/bash build.sh" if scans[0] == 1 else "/usr/bin/python build.py"
+            birth = "Fri Nov  6 00:00:00 2026 " if "lstart" in argv[-1] else ""
+            text = f"21 1 21 S {birth}{command}\n" if alive[0] else ""
+        return subprocess.CompletedProcess(argv, 0, text, "")
+
+    def kill(pid, sig):
+        signals.append((pid, sig))
+        if exits and sig == signal.SIGKILL:
+            alive[0] = False
+
+    monkeypatch.setattr(api.subprocess, "run", run)
+    monkeypatch.setattr(api, "_process_table", api._portable_process_table)
+    monkeypatch.setattr(api.os, "kill", kill)
+    monkeypatch.setattr(api, "TERM_WAIT_S", 0)
+    monkeypatch.setattr(api, "KILL_WAIT_S", 0)
+    receipt = api.stop_task_processes(task)
+    assert signals == [(21, signal.SIGTERM), (21, signal.SIGKILL)]
+    assert [row["pid"] for row in receipt["killed"]] == ([21] if exits else [])
+    assert [row["pid"] for row in receipt["left"]] == ([] if exits else [21])
+
+
+def test_portable_reused_pid_has_a_different_birth_identity(api, task, monkeypatch):
+    births = iter(("Fri Nov 6 00:00:00 2026", "Fri Nov 6 00:01:00 2026"))
+
+    def run(argv, **kwargs):
+        text = f"p21\nn{task.work}\n"
+        if argv[0] == "/bin/ps":
+            birth = next(births)
+            column = f"{birth} " if "lstart" in argv[-1] else ""
+            text = f"21 1 21 S {column}/bin/bash build.sh\n"
+        return subprocess.CompletedProcess(argv, 0, text, "")
+
+    monkeypatch.setattr(api.subprocess, "run", run)
+    first = api._portable_process_table()[21]
+    replacement = api._portable_process_table()[21]
+    assert first.identity != replacement.identity
 
 
 @pytest.mark.platforms("linux")
