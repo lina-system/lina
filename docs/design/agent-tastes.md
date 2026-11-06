@@ -2,7 +2,7 @@
 
 Design note for #307. It settles where an agent's own likes and dislikes (tastes, #49) live once the memory
 pipeline (#198) and LCM-X on the one store (#16) are the base. It replaces the placement part of the 11-02
-design (the trial's `model.md` §7) and the M0/M1 issue drafts that came with it. Nothing is built from this
+design (its placement part) and the M0/M1 issue drafts that came with it. Nothing is built from this
 note alone; the follow-up issues start in M1, after M0 and the worker-migration track close.
 
 Code is cited as `path:line` at `dev` 7a61324. That commit is 8c88306 plus two commits that touch only the work
@@ -21,6 +21,65 @@ the code.
 | LCM-X | A summary may tell that the agent voiced a taste as an event. It never states one as a standing trait and never feeds the refiner. A forgotten taste is re-summarized away at the next compaction. |
 | Isolation | Taste rows carry `agent_id` and get the store's agent policy (`services/store/initdb/10-lina-store.sh:35-47`). Evidence from another agent's words is refused at write time. |
 | Protected domains | Checked at write time (keyword list plus a one-question judge) and after the turn (shrunken output, skipped checks). Tested with a labelled candidate set and the questionnaire's boundary items asked with and without tastes. |
+
+## The taste record and its rules
+
+What this note keeps from the 11-02 trial design, with its numbers unchanged. Only the three changes marked below
+are new.
+
+### The record
+
+One record per (agent, target).
+
+| Field | Meaning |
+| --- | --- |
+| `id` | Stable id. Journal rows, events and tombstones reference it. |
+| `agent` | The owning agent. Only this agent's turns read it; no other agent ever does. |
+| `target.kind` | `topic`, `task_type`, `tone` (a way of speaking or writing), `tool`, `method` (a way of working), `media`, `other`. |
+| `target.label` | Short and concrete, for example "spreadsheet cleanup" or "long bullet lists". No names of people, no contact details. |
+| `valence` | `like`, `dislike` or `indifferent`. "Indifferent" is recorded only after evidence was looked at, so it differs from "no record". |
+| `strength` | 0.0 to 1.0. |
+| `status` | `candidate`, `active`, `core`, `dormant`, `forgotten`. |
+| `origin` | The route that created it (below). |
+| `evidence[]` | Items `{date, route, sign, weight, journal_uid, message_uids, note}`. **Change 1:** every item points at `memory.messages` uids (the journal row and the turns it cites), not at `state.db` message ids, which no longer exist on a LINA home (§2). |
+| `first_seen` | Date the candidate was created. |
+| `history[]` | `{date, from, to, reason, by}` per change of status, strength or valence; append-only; used for rollback. **Change 2:** kept as rows of the taste event log, not as a list inside the record. **Change 3:** `by` is `agent`, `review` or `owner`. |
+| `baseline` | The day-0 forced-choice answer, if one exists, so what experience added is told apart from what the base model already prefers. |
+| `protected_check` | `{passed, at, rule}`: the result of the boundary check (§5) at the last write. |
+
+Not a taste: facts about the owner (the owner's person card), rules (SOUL), a feeling about one event (a journal
+line), plans.
+
+### Routes
+
+Strength is recomputed at each daily review as `clamp(Σ sign × weight × decay(age), 0, cap of the strongest route
+present)`.
+
+| Route | One evidence item | Weight | Minimum evidence to reach `active` | Cap from this route alone |
+| --- | --- | --- | --- | --- |
+| Exposure | The agent worked with or discussed the target in its own session; at most one a day. | +0.05 | 6 items on at least 4 distinct days | 0.3 |
+| Outcome | Its own work involving the target clearly went well (verified success, finished smoothly) or badly (failed, rework, wasted time). | ±0.15, ×1.5 when the journal intensity is 3 | 2 items on at least 2 days | 0.8 |
+| Owner reaction | The owner praised, showed annoyance at, or ignored output tied to the target, in this agent's own session. | +0.10 praise, −0.10 annoyance, −0.03 ignored | Never alone: needs at least one non-reaction item | 0.4 |
+| Consistency | The review infers the target from existing active tastes. | +0.05, at most once | Never alone; creates a `candidate` only | 0.2 |
+| Role temperament | Seeded once at day 0 from the agent's role. | Fixed 0.3, no decay | Starts `active`; at most 3 per agent | 0.3 |
+
+### Status transitions
+
+- `candidate → active`: strength ≥ 0.4, the route's minimum-evidence rule holds, and the boundary check passes.
+- `active → core`: active for ≥ 30 days and strength ≥ 0.6; at most 5 core per agent; only in the weekly batch, so
+  the cached front of the prompt changes at most once a week.
+- `active → dormant`: strength below 0.2. Dormant tastes stay out of the prompt and come back on new evidence.
+- A `candidate` with no new evidence for 14 days is deleted (not tombstoned).
+- Any status `→ forgotten`: only by the owner (§4).
+
+**One-trial dislike.** A single bad outcome at intensity 3 creates a `candidate` dislike at 0.3. If no second
+negative item arrives within 14 days it expires; if one does, it becomes `active`.
+
+**Decay.** Evidence weight halves every 30 days (`decay(age) = 0.5^(age / 30)`). Core tastes decay at half that
+speed (half-life 60 days). Role temperaments do not decay.
+
+**Budgets.** At most 12 `active` plus `core` per agent. At most 2 status changes per daily review. Dislikes at most
+one third of `active`. No taste comes from another agent's journal or from what another agent reported.
 
 ## 1. Source of truth
 
@@ -60,8 +119,9 @@ tombstone). The rows go in a new migration with `agent_id` and `lina_apply_agent
 log with `forget` and `undo`) but lives outside the LCM-X subtree, because that store is engine-private, off by
 default and does not purge.
 
-Record fields stay as in `model.md` §1, with three changes: evidence points at `memory.messages.uid` (not at
-`state.db` integer ids, see §2), `history` becomes rows of the event log, and `by` is `agent | review | owner`.
+The record's fields are listed in "The taste record and its rules" above, with the three changes made there:
+evidence points at `memory.messages` uids, history becomes rows of the event log, and `by` is `agent | review |
+owner`.
 
 ### What Honcho holds: nothing
 
@@ -94,7 +154,7 @@ injected and never evidence. Exact deletion is possible if it is ever needed: Ho
 | Stage | What it does for tastes |
 | --- | --- |
 | 1 Keep | The agent's own turns are already `memory.messages` rows (`agent_id` = the agent, `source = 'agent'`). Journal lines become rows too (`source = 'heart'`, `scope = 'agent'`), so they get uids, versions and the forget column. |
-| 2 Refine | The taste refiner runs in the daily review: it reads the day's journal rows and own-session rows, applies the route rules (`model.md` §2, kept), writes evidence and status changes, at most 2 per day. Promotion to `core` and the core summary are written only in a weekly batch. |
+| 2 Refine | The taste refiner runs in the daily review: it reads the day's journal rows and own-session rows, applies the route rules ("The taste record and its rules"), writes evidence and status changes, at most 2 per day. Promotion to `core` and the core summary are written only in a weekly batch. |
 | 3 Pick | Per turn, at most 3 `active` non-core tastes whose target matches the turn, only in turns that answer the owner (not cron, worker or relay turns). |
 | 4 Place | The core summary in the frozen self-note section; picked tastes in the found-memory tool result (§3). |
 
@@ -120,9 +180,11 @@ optional `pref` field (target, kind, dir, route).
 moved to `memory.messages` (`hermes_state_common.py:284`, `hermes_state_schema.py:524`). A `SessionDB` opened on
 an empty home has `sessions` and `transcript_rows` and no `messages`, and the heart query (`evidence.py:18-19`)
 fails on it with `no such table: messages` (measured with a throwaway probe). The heart tests build a legacy `messages` table by hand
-(`tests/hermes_cli/test_heart_journal.py:46-50`), so they do not see it. On a LINA home `lina heart write` and
-`lina heart candidates` cannot work until evidence moves to `memory.messages` uids. The same stale read breaks the
-prefix-stability e2e test (§3).
+(`tests/hermes_cli/test_heart_journal.py:46-50`), so they do not see it. Today's agents do not see it either: they
+run on homes whose `state.db` predates v33, and a pre-v33 store keeps its old `messages` table until #24 imports it
+(`hermes_state_schema.py:524-525`). So the failure is real for every new LINA home and for every home after #24's
+import; until evidence moves to `memory.messages` uids, `lina heart write` and `lina heart candidates` cannot work
+there. The same stale read breaks the prefix-stability e2e test (§3).
 
 In LINA the path is:
 
@@ -187,7 +249,10 @@ through `scripts/run_tests.sh`. The cache-order test passed without pinning the 
 `session_start` to the test clock (`tests/plugins/memory/lina/test_cache_order.py:138-141`), so the date failure
 #254 describes did not occur here. `tests/e2e/core/history/test_prefix_stability.py` fails its 3 cases on
 `no such table: messages`: its helper reads `state.db` messages (`tests/e2e/core/history/_helpers.py:166`), the same
-v33 staleness as `lina heart`. That failure has nothing to do with tastes.
+v33 staleness as `lina heart`. That failure has nothing to do with tastes and is filed separately, in M0. No CI job
+runs that file today: the full-suite discovery skips `e2e/` (`scripts/run_tests_parallel.py:133`), the catalog
+lane skips `tests/e2e/` (`scripts/ci/catalog_test_files.py:27`), and `.github/workflows/ci.yml` has no e2e job
+(`docs/ci.md:26`: "the e2e lanes ... are not run").
 
 ### Hit rate against the #17 baseline (estimate)
 
@@ -274,11 +339,15 @@ Reporting, honesty, permissions, verification, following the owner's instruction
 ## 6. Owner decisions applied
 
 - **No screen, no waiting.** Tastes are never shown in the app and nothing waits on the owner.
-- **The weekly check in LINA.** In the trial it is a sheet the owner marks. In LINA it becomes one short chat
-  message a week, in the agent's own chat, only when its tastes changed: at most 3 changes in plain words, sent
-  silently (no notification), in the #261 shape. The owner answers by talking ("맞아", "그건 아니야", "그 취향은
+- **The weekly check in LINA.** In the trial it is a sheet the owner marks. In LINA, by default, it is one line
+  inside the agent's next ordinary reply to the owner, at most once a week and only when its tastes changed: at most
+  3 changes in plain words, no separate message. The owner answers by talking ("맞아", "그건 아니야", "그 취향은
   버려") or not at all; no answer changes nothing. "아니다" is a measurement and moves the taste back to candidate;
-  "버려" is the forget path. Open item 1 covers whether this message is allowed under #261.
+  "버려" is the forget path. Open item 1 keeps the question of a separate weekly message open.
+- **Temperaments obey the protected domains.** The write-time check (§5) applies to role temperaments too: a
+  temperament whose target names reporting, honesty, permissions, verification, the owner's instructions or safety
+  is not seeded. Applied to the trial's set: the development lead's "likes work that is checked by running it"
+  names verification and is reworded to "likes rebuilding a tangled structure cleanly".
 - **Voicing a different taste:** at most once a week per agent, never in task reports; it shares the weekly budget.
 - **Role temperaments:** 1–3 per agent at fixed strength 0.3, stored as taste rows with `origin = temperament`, not
   decayed, forgotten like any other.
@@ -299,7 +368,7 @@ Reporting, honesty, permissions, verification, following the owner's instruction
 
 | 11-02 claim | Status | Today |
 | --- | --- | --- |
-| §1 record fields, §2 routes, weights, thresholds, decay, budgets | Kept | Evidence ids change to `memory.messages` uids; the owner's name in `by` becomes `owner`. |
+| 11-02 §1 record fields, §2 routes, weights, thresholds, decay, budgets | Kept, written out in "The taste record and its rules" | Evidence ids change to `memory.messages` uids; history becomes event rows; the owner's name in `by` becomes `owner`. |
 | §3 tastes only as tie-breakers and colour | Kept | Proactive topics and task choice wait for M2–M3 (owner decision). |
 | §4 boundary: fixed sentence before taste text, write-time check, expression check, measurement | Kept, with a gap | The keyword list lacks safety, instructions and secrets (`hermes_cli/heart/locale.py:9-13`). |
 | §5 the owner's card wins for things delivered to the owner; a contrary taste may be voiced once a week | Kept | Matches the owner decision. |
@@ -312,7 +381,7 @@ Reporting, honesty, permissions, verification, following the owner's instruction
 | `issues.md` M0 draft "reserve schema and cache slot" | Dropped | No M0 work (owner decision). Its prefix test is done here as an experiment. |
 | `issues.md` M1 drafts | Replaced | See the follow-up drafts for #307. |
 | `hermes-trial.md`: "this repository reads only SOUL.md as the identity slot (`load_soul_md`)" | Kept, refined | True for the core (`agent/system_prompt.py:562-568`); the self note arrives through a plugin section frozen per session. |
-| Journal evidence ids from `state.db` | Corrected (measured) | `state.db` v33 has no `messages` table; `lina heart` evidence lookup fails on LINA homes. |
+| Journal evidence ids from `state.db` | Corrected (measured) | `state.db` v33 has no `messages` table; `lina heart` evidence lookup fails on new LINA homes and on every home after #24's import (pre-v33 homes still keep the old table). |
 
 ## 9. Changes to the context order
 
@@ -342,17 +411,14 @@ Proposed table (proposed, not yet in `docs/memory-layer.md`):
 
 ## 10. Open items
 
-1. **The weekly message and #261.** #261 lets an agent speak only when the owner can use, decide or must do
-   something. A weekly taste message is none of those. Recommended default: send it silently in the agent's own
-   chat, at most once a week, only with changes; if #261's rule is read strictly, fold it into the agent's next
-   ordinary reply instead.
-2. **Temperaments that touch verification.** The development lead's "likes work that is checked by running it"
-   names verification. Read strictly, the owner's rule rejects it, even though it only adds checking. Recommended
-   default: strict; reword it to a target outside the protected domains or drop it.
-3. **Summary re-summarization on forget.** Whether LCM-X can retire a summary node on demand
+1. **The weekly message and #261.** #261 lets an agent start a message only for something the owner can use,
+   decide or must do, and a taste change is none of those. Recommended default: fold it into the agent's next
+   ordinary reply to the owner, at most once a week, only when tastes changed; no separate message. Open: whether
+   the owner wants a separate weekly message after all.
+2. **Summary re-summarization on forget.** Whether LCM-X can retire a summary node on demand
    (`ctx.lcm_rollup_invalidations`) is unverified; until it is, a forgotten taste can stay in a pinned upper node
    until that node is condensed again.
-4. **Journal as `memory.messages` rows.** Adding `source = 'heart'` is a new source in the keep stage; #198's
+3. **Journal as `memory.messages` rows.** Adding `source = 'heart'` is a new source in the keep stage; #198's
    source contract (adapter, versions, forget, redaction) applies to it.
 
 Follow-up issue drafts are filed from this note in M1; none starts before M0 and the worker-migration track close.
