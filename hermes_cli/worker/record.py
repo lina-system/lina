@@ -204,8 +204,25 @@ def _outcomes(kept: list[dict], job: dict, receipts: list[dict], told: tuple) ->
     return out
 
 
+def served_model(job: dict) -> dict | None:
+    """The run's model as the client API serves it: ``{provider, id, thinking, source}``, None on the runner's own
+    default."""
+    model = job.get("model")
+    if not isinstance(model, dict):
+        return None
+    return {"provider": model.get("provider"), "id": model.get("id"), "thinking": model.get("thinking"),
+            "source": model.get("source") or "runner"}
+
+
+def settings_revision(job: dict) -> str | None:
+    """The work-settings revision the run was submitted under (lina#257); None for a run from before."""
+    settings = job.get("settings")
+    rev = settings.get("rev") if isinstance(settings, dict) else None
+    return str(rev) if rev else None
+
+
 def record(worker_root: Path, run_id: str, now: float) -> dict:
-    """``{id, at, rounds, comments, errors}``: rounds newest first, each with its rows oldest first; ``comments`` are
+    """``{id, at, model, settingsRevision, rounds, comments, errors}``: rounds newest first, each with its rows oldest first; ``comments`` are
     the ones made while no round was going."""
     try:
         store = Store(worker_root)
@@ -242,4 +259,5 @@ def record(worker_root: Path, run_id: str, now: float) -> dict:
                        "endKnown": one["end"] is not None, "startUnknown": one["start"] is None,
                        "result": outcome.get("result"), "verdict": outcome.get("verdict"),
                        "stopped": one["end_state"] in STOPPED_ENDS, "rows": _fold(placed[index])})
-    return {"id": job["id"], "at": now, "rounds": served[::-1], "comments": _fold(loose)[::-1], "errors": errors}
+    return {"id": job["id"], "at": now, "model": served_model(job), "settingsRevision": settings_revision(job),
+            "rounds": served[::-1], "comments": _fold(loose)[::-1], "errors": errors}
