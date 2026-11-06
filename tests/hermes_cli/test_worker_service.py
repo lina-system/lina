@@ -24,7 +24,8 @@ def test_the_definitions_run_lina_worker_serve_from_this_lina_home(tmp_path):
     assert "Description=LINA lina-worker" in unit and "-m hermes_cli.main worker serve" in unit
     assert f'Environment="HERMES_HOME={tmp_path}"' in unit
     plist = plistlib.loads(service.definition("launchd", tmp_path).encode())
-    assert plist["Label"] == "ai.lina.worker" and plist["ProgramArguments"][-2:] == ["worker", "serve"]
+    assert plist["Label"] == "ai.lina.worker" and plist["ProgramArguments"][0] == "/usr/bin/osascript"
+    assert "-m hermes_cli.main worker serve >> " in plist["ProgramArguments"][-1]
 
 
 @pytest.mark.platforms("linux")

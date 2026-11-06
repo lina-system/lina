@@ -33,10 +33,10 @@ def definition_path(kind: str) -> Path:
 
 
 def definition(kind: str, root: Path, version: str, port: int) -> str:
-    from hermes_cli.lina_services import service_definition
+    from hermes_cli.lina_services import service_definition, service_logs
     label = LAUNCHD_LABEL if kind == "launchd" else SYSTEMD_UNIT
     return service_definition(kind, label, lina_ocx.ocx_argv(root, version, "start", "--port", str(port)),
-                              lina_ocx.ocx_env(root))
+                              lina_ocx.ocx_env(root), logs=service_logs(root, "ocx"))
 
 
 def _run(argv: list[str]) -> subprocess.CompletedProcess:
