@@ -49,16 +49,25 @@ def lock_dir(root: Path) -> Path:
     return root / "web" / "host-locks"
 
 
+class EndpointError(ValueError):
+    """``dashboard.port`` of the LINA root is not a port number."""
+
+
 def endpoint(root: Path) -> tuple[str, int]:
-    """``dashboard.host`` and ``dashboard.port`` of the LINA root's ``config.yaml``, else the defaults."""
-    from hermes_cli.config_backend import config_exists, read_config_doc_readonly
-    from hermes_cli.config_defaults import DEFAULT_CONFIG
-    path = root / "config.yaml"
-    doc = read_config_doc_readonly(path) if config_exists(path) else None
-    section = doc.get("dashboard") if isinstance(doc, dict) else None
-    section = section if isinstance(section, dict) else {}
-    defaults = DEFAULT_CONFIG["dashboard"]
-    return str(section.get("host") or defaults["host"]), int(section.get("port") or defaults["port"])
+    """``dashboard.host`` and ``dashboard.port`` of the LINA root through the config loader (defaults, managed
+    overlay, ``${VAR}`` expansion), bound to the root whatever profile this process runs as."""
+    from hermes_cli.config import cfg_get, load_config_readonly
+    from hermes_constants import reset_hermes_home_override, set_hermes_home_override
+    token = set_hermes_home_override(root)
+    try:
+        config = load_config_readonly()
+    finally:
+        reset_hermes_home_override(token)
+    host, port = cfg_get(config, "dashboard", "host"), cfg_get(config, "dashboard", "port")
+    text = str(port).strip()
+    if isinstance(port, bool) or not text.isdigit() or not 0 < int(text) < 65536:
+        raise EndpointError(f"dashboard.port in {root / 'config.yaml'} is {port!r}, not a port number (1-65535)")
+    return str(host), int(text)
 
 
 def definition(kind: str, root: Path) -> str:
@@ -66,8 +75,9 @@ def definition(kind: str, root: Path) -> str:
     from hermes_cli.worker import settings
     label = LAUNCHD_LABEL if kind == "launchd" else SYSTEMD_UNIT
     host, port = endpoint(root)
-    argv = [sys.executable, "-m", "hermes_cli.main", "dashboard", "--host", host, "--port", str(port), "--no-open",
-            "--skip-build", "--isolated"]
+    # `-p default`: the root itself, never the profile a person last picked with `lina profile use` (active_profile).
+    argv = [sys.executable, "-m", "hermes_cli.main", "-p", "default", "dashboard", "--host", host, "--port", str(port),
+            "--no-open", "--skip-build", "--isolated"]
     env = {"HERMES_HOME": str(root), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
            "PYTHONPATH": settings.child_pythonpath(), "HERMES_WEB_DIST": str(web_dist()),
            "HERMES_GATEWAY_LOCK_DIR": str(lock_dir(root))}
@@ -98,7 +108,10 @@ def own_pids(root: Path) -> list[int]:
 
 
 def running(root: Path) -> bool:
-    host, port = endpoint(root)
+    try:
+        host, port = endpoint(root)
+    except EndpointError:
+        return False
     return bool(own_pids(root)) and _answers(host, port)
 
 
@@ -108,7 +121,10 @@ def state(root: Path | None = None) -> str:
     kind = backend()
     if kind is None or not definition_path(kind).exists():
         return "not installed"
-    host, port = endpoint(root)
+    try:
+        host, port = endpoint(root)
+    except EndpointError as exc:
+        return f"stopped ({exc})"
     return f"running ({host}:{port})" if running(root) else "stopped"
 
 
@@ -123,7 +139,11 @@ def start(root: Path | None = None, out=print) -> int:
     if not (dist / "index.html").is_file():
         out(f"web: no built web UI at {dist}; build it first (npm run build -w web), the service never builds it")
         return 1
-    host, port = endpoint(root)
+    try:
+        host, port = endpoint(root)
+    except EndpointError as exc:
+        out(f"web: {exc}")
+        return 1
     if running(root):
         out(f"✓ web already running on {host}:{port}")
         return 0

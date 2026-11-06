@@ -93,10 +93,54 @@ def test_web_runs_the_dashboard_of_the_lina_root_on_the_configured_endpoint(tmp_
     port = _free_port()
     (root / "config.yaml").write_text(f"dashboard:\n  host: localhost\n  port: {port}\n", encoding="utf-8")
     argv, env = _systemd_parts(web.definition("systemd", root))
-    assert argv[:4] == [sys.executable, "-m", "hermes_cli.main", "dashboard"]
-    assert argv[4:] == ["--host", "localhost", "--port", str(port), "--no-open", "--skip-build", "--isolated"]
+    assert argv[:6] == [sys.executable, "-m", "hermes_cli.main", "-p", "default", "dashboard"]
+    assert argv[6:] == ["--host", "localhost", "--port", str(port), "--no-open", "--skip-build", "--isolated"]
     assert env["HERMES_HOME"] == str(root) and env["HERMES_WEB_DIST"] == str(web.web_dist())
     assert env["HERMES_GATEWAY_LOCK_DIR"] == str(web.lock_dir(root))
+
+
+def _active_profile(root, name="ops"):
+    """A live named profile the person last picked with `profile use` (the sticky ``active_profile``)."""
+    (root / "profiles" / name).mkdir(parents=True)
+    (root / "profiles" / name / "config.yaml").write_text("{}\n", encoding="utf-8")
+    (root / "active_profile").write_text(f"{name}\n", encoding="utf-8")
+
+
+def test_the_service_command_runs_the_root_whatever_profile_is_active(tmp_path, monkeypatch):
+    """The CLI's profile override reads the root's ``active_profile``; the service command must still land on the
+    root, or the server opens a profile's state and ``running(root)`` never sees it."""
+    from hermes_cli import main as hermes_main
+    root = tmp_path / "lina"
+    _active_profile(root)
+    argv, env = _systemd_parts(web.definition("systemd", root))
+    monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
+    monkeypatch.setenv("HERMES_HOME", env["HERMES_HOME"])
+    monkeypatch.setattr(sys, "argv", ["hermes", *argv[3:]])
+    hermes_main._apply_profile_override()
+    assert os.environ["HERMES_HOME"] == str(root)
+    assert sys.argv[1:3] == ["dashboard", "--host"]
+
+
+def test_the_endpoint_comes_through_the_config_loader_and_a_bad_port_is_refused(tmp_path, monkeypatch):
+    root = tmp_path / "lina"
+    root.mkdir()
+    port = _free_port()
+    monkeypatch.setenv("LINA_WEB_TEST_PORT", str(port))
+    (root / "config.yaml").write_text("dashboard:\n  port: ${LINA_WEB_TEST_PORT}\n", encoding="utf-8")
+    argv, _env = _systemd_parts(web.definition("systemd", root))
+    assert argv[argv.index("--port") + 1] == str(port)
+
+    (root / "config.yaml").write_text("dashboard:\n  port: nine\n", encoding="utf-8")
+    calls, lines = [], []
+    dist = tmp_path / "web_dist"
+    dist.mkdir()
+    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
+    monkeypatch.setattr(web, "web_dist", lambda: dist)
+    monkeypatch.setattr(web, "definition_path", lambda kind: tmp_path / "units" / "lina-web.service")
+    monkeypatch.setattr(web, "_run", calls.append)
+    assert web.start(root, out=lines.append) == 1
+    assert len(lines) == 1 and "dashboard.port" in lines[0] and "'nine'" in lines[0]
+    assert calls == [] and not (tmp_path / "units").exists()
 
 
 @pytest.mark.platforms("linux")
@@ -175,6 +219,7 @@ def test_web_serves_the_app_beside_another_homes_dashboard_and_stops_only_itself
     root, other_home = tmp_path / "lina", tmp_path / "other-home"
     root.mkdir()
     other_home.mkdir()
+    _active_profile(root)
     port, other_port = _free_port(), _free_port()
     (root / "config.yaml").write_text(f"dashboard:\n  port: {port}\n  app_dist: {app}\n", encoding="utf-8")
     account_env = {**os.environ, "HOME": str(tmp_path / "acct"), "PYTHONPATH": worker_settings.child_pythonpath()}
