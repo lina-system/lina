@@ -1,6 +1,7 @@
 """The hub's records under ``$LINA_HOME/worker/hub/``: one job file per task (the current view), ``receipts.jsonl``
-(append-only history, never rewritten), fetched results in ``out/<agent>/<ID>/``, request keys, schedules, notices
-and locks.
+(append-only history, never rewritten), fetched results in ``out/<agent>/<ID>/``, request keys, schedules, notices,
+``deliveries.jsonl`` (the delivery ids sent, append-only: ``events``), one record per node (``nodes/<node>.json``:
+``node_watch``) and locks.
 """
 
 from __future__ import annotations
@@ -29,6 +30,7 @@ class Store:
         self.schedules, self.notices, self.locks = self.root / "schedules", self.root / "notices", self.root / "locks"
         self.receipts, self.log_file = self.root / "receipts.jsonl", self.root / "worker.log"
         self.keys = self.root / "keys"
+        self.deliveries, self.nodes = self.root / "deliveries.jsonl", self.root / "nodes"
 
     def log(self, message: str) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -71,6 +73,13 @@ class Store:
 
     def save_key(self, record: dict) -> None:
         _replace(self.keys / f"{self.key_name(record['key'])}.json", record)
+
+    def load_node(self, node: str) -> dict | None:
+        path = self.nodes / f"{node}.json"
+        return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else None
+
+    def save_node(self, record: dict) -> None:
+        _replace(self.nodes / f"{record['node']}.json", record)
 
     @contextlib.contextmanager
     def edit(self, task_id: str):

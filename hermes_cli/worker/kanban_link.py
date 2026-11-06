@@ -5,8 +5,8 @@ The card is named by ``submit --card <id> --board <slug>`` or by the card sessio
 removes both from a card session's terminal, so the card's worker process above it is the usual source. The card
 is only read here. Where it lives is ``worker.card_link``:
 
-* unset or ``{kind: lina}``: LINA's own board, through the kanban DB API (``worker_run`` and ``worker_run_ended``
-  events, the end notice as a comment).
+* unset or ``{kind: lina}``: LINA's own board, through the kanban DB API (``worker_run``, ``worker_run_ended`` and
+  ``worker_host_unavailable`` events, each carrying its ``events`` kind, the end notice as a comment).
 * ``{kind: hermes, command: [hermes]}``: a Hermes Agent card, written only through that command's
   ``kanban [--board <b>] comment | attach | show | unblock``. No LINA code opens a kanban database in this mode.
   The hub writes start/end comments and attaches ``report.md``. The card's model schedules itself
@@ -27,6 +27,8 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+from hermes_cli.worker import events
 
 AUTHOR = "lina-worker"
 HERMES = "hermes"
@@ -215,7 +217,22 @@ def record_end(card: dict, job: dict, state: str, run: str, body: str) -> None:
     from hermes_cli import kanban_db as kb
     from hermes_cli.kanban_db_connect import connect_closing
     _event(card, "worker_run_ended", {"run_id": job["id"], "runner": job.get("runner"), "state": state, "run": run,
-                                      "device": job.get("host"), "delivery": job.get("delivery")})
+                                      "device": job.get("host"), "delivery": job.get("delivery"),
+                                      **events.fields(state)})
+    with connect_closing(board=card.get("board")) as conn:
+        kb.add_comment(conn, card["task"], AUTHOR, body)
+
+
+def record_host(card: dict, link: dict, body: str, payload: dict | None) -> None:
+    """A node's outage (*payload*: its ``host.unavailable`` event) or its return (None) on a card: one comment for
+    all of the card's runs on that node."""
+    if on_hermes(card):
+        comment(link["command"], card, body)
+        return
+    from hermes_cli import kanban_db as kb
+    from hermes_cli.kanban_db_connect import connect_closing
+    if payload:
+        _event(card, "worker_host_unavailable", payload)
     with connect_closing(board=card.get("board")) as conn:
         kb.add_comment(conn, card["task"], AUTHOR, body)
 

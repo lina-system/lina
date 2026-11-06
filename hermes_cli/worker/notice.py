@@ -1,8 +1,9 @@
 """The one short notice a run's end sends to the agent that handed it out: state, where the result is, what to do.
 
-It never pastes ``report.md`` or the final answer. It goes to the agent's chat through ``worker.notice.command``
-(argv, ``{agent}`` filled in, the body on stdin) and is always kept in ``hub/notices/``; a run started from a work
-card also gets it as a comment on that card (``kanban_link``).
+It starts with the end's event (``events``) and ends with its delivery id. It never pastes ``report.md`` or the final
+answer. It goes to the agent's chat through ``worker.notice.command`` (argv, ``{agent}`` filled in, the body on stdin)
+and is always kept in ``hub/notices/``; a run started from a work card also gets it as a comment on that card
+(``kanban_link``).
 """
 
 from __future__ import annotations
@@ -13,6 +14,7 @@ import subprocess
 import time
 from pathlib import Path
 
+from hermes_cli.worker import events
 from hermes_cli.worker.report import NEXT_NOTES
 
 STATE_WORDS = {"queued": "queued (no free device)", "running": "running", "done": "done",
@@ -105,25 +107,22 @@ def _cancelled(job: dict, out_dir: Path, **_) -> str:
     return f"cancelled — {job.get('cancel_why') or '-'}\n- Results so far: {out_dir}/\n"
 
 
-def _unknown(job: dict, out_dir: Path, *, unknown_after_s: int, **_) -> str:
-    return (f"device unreachable — no contact with {job.get('host')} for over {unknown_after_s // 60} min; "
-            f"the task was not moved to another device.\nTo do: when it is back, `lina worker status {job['id']}`.\n")
-
-
 _BODIES = {
     "done": lambda job, out_dir, check, notes, **_: _ended(job, "done", out_dir, check, notes),
     "review": lambda job, out_dir, check, notes, **_: _ended(job, "review", out_dir, check, notes),
-    "done_empty": _done_empty, "stalled": _stalled, "human": _human, "cancelled": _cancelled, "unknown": _unknown,
+    "done_empty": _done_empty, "stalled": _stalled, "human": _human, "cancelled": _cancelled,
 }
 
 
 def body(job: dict, kind: str, run: str, out_dir: Path, check: dict, *, notes: int | None = None,
-         quiet_s: float = 0, err_tail: str = "", unknown_after_s: int = 600) -> str:
-    """The notice for the end *kind* of run *run*; any other end reads as failed."""
+         quiet_s: float = 0, err_tail: str = "", note: str | None = None) -> str:
+    """The notice for the end *kind* of run *run*, starting with its event (``run.completed (done)``); any other end
+    reads as failed. *note*, the one left at hand-out, comes right under the first line."""
     write = _BODIES.get(kind)
-    text = (write(job, out_dir, check=check, notes=notes, quiet_s=quiet_s, unknown_after_s=unknown_after_s)
-            if write else _failed(job, out_dir, err_tail))
-    return _head(job, run) + text
+    text = (write(job, out_dir, check=check, notes=notes, quiet_s=quiet_s) if write
+            else _failed(job, out_dir, err_tail))
+    first, _, rest = (_head(job, run) + text).partition("\n")
+    return f"{events.headline(kind)} · {first}\n" + (f"[note left at hand-out] {note}\n" if note else "") + rest
 
 
 def deliver(job: dict, text: str, tag: str, notices_dir: Path, command: list[str] | None) -> str:

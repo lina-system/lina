@@ -61,3 +61,40 @@ Hashing and fetching use the same pruned traversal. Under `out/`, directories
 Symlinks are omitted. Regular files with one of those names remain deliverables.
 `git.txt` includes branches, heads and recent commits of extra worktrees within
 the task directory, including detached worktrees, but excludes outside trees.
+
+## Run ends: three events, one delivery each
+
+Every end the hub records is one of three events:
+
+| Event | When | Also carries |
+|---|---|---|
+| `run.completed` | a run ended | `end_state`: `done`, `review`, `done_empty`, `stalled`, `failed` or `cancelled` |
+| `question` | a run has waited on a person for 120 seconds | the question key |
+| `host.unavailable` | a node cannot be reached | the node and the outage start |
+
+The event is on the `exec_end` and `notified` receipts, in the job's `notified`
+list, in the card's event payload and comment, and in the chat notice. Notices
+and comments start with it, for example `run.completed (done) · …`, followed by
+the usual words. Their last line is `delivery <id>`.
+
+The delivery id is `<task>:<run>:<event>`. A question adds `:<question key>`
+(the omo runner's question ids, else a hash of the question). An outage's id is
+`<node>:host.unavailable:<outage start>`. The hub appends each id to
+`hub/deliveries.jsonl` under one lock before it sends anything. A repeat of an
+id, whether from a device retrying its report, the tick seeing the same end or a
+hub that restarted in between, is recorded as a `delivery_duplicate` receipt and
+sent nowhere. Older job files whose `notified` entries read `<state>:<run>` or
+`human:<run>` count as already delivered.
+
+The tick keeps one record per node in `hub/nodes/<node>.json` (`failures`,
+`down_since`, `notified_outage`). A tick on which no call to the node about its
+running or `unknown` runs was answered is one failed contact. A call counts as
+unanswered when it is unreachable, or when it reports a running run's task as
+missing. On the third failed contact in a row the hub sends one
+`host.unavailable` notice. It names the node, the outage start and each running
+run with its card, and goes to each agent the runs belong to, with one comment
+per card. Those runs become `unknown` without a notice of their own. Nothing more
+is sent while the node stays down. The first answered contact afterwards sends
+one line, `<node> is back after <duration>; runs <ids> continue`, and resets the
+record. An `unknown` run whose device then reports it running or ended goes back
+under watch, so its end is delivered once like any other.

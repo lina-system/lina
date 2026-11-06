@@ -118,7 +118,7 @@ def _one_run_on_a_device(tmp_path, monkeypatch, command) -> tuple[Path, str]:
     task_id = lines[0].split()[0]
     serve.serve_once(root)
     hub = Hub(root, out=lines.append)
-    fakes.until(lambda: "done:1" in hub.store.load(task_id)["notified"], what="the run ended")
+    fakes.until(lambda: "done:1" in fakes.notified(hub.store.load(task_id)), what="the run ended")
     launcher.join()
     return root, task_id
 

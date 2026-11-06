@@ -12,6 +12,7 @@ from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.runners.base import Handle, RunnerError
 from hermes_cli.worker.task import read_json, write_json
 from hermes_cli.worker.transport import Reply
+from tests.hermes_cli import _worker_fakes as fakes
 
 
 @pytest.fixture
@@ -188,4 +189,4 @@ def test_tick_still_delivers_normal_human_question(lane, monkeypatch):
     hub.tick()
     # Then the existing human question notice still arrives.
     assert len(delivered) == 1
-    assert hub.need(task.id)["notified"] == ["human:1"]
+    assert fakes.notified(hub.need(task.id)) == ["question:1"]

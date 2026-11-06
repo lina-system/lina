@@ -74,6 +74,6 @@ def test_a_queued_task_starts_from_the_tick_when_a_slot_frees(tmp_path, monkeypa
     hub.tick()
     assert hub.store.load(task_id)["host"] == "here"
     serve.serve_once(root)
-    fakes.until(lambda: "done:1" in hub.store.load(task_id)["notified"], what="the queued task ran")
+    fakes.until(lambda: "done:1" in fakes.notified(hub.store.load(task_id)), what="the queued task ran")
     assert [r["kind"] for r in hub.store.receipts_of(task_id)][:3] == ["submitted", "queued", "award"]
     launcher.join()
