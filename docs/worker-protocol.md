@@ -79,7 +79,12 @@ key; the device treats the key as opaque.
 A reply the device marks `replayed` is reconciled, never applied as new: the
 hub fills in the key's record, writes `request_replayed` and prints the replay
 line, moves the task's run, state, delivery and verdict only to a run newer
-than the one it holds, and never raises its access.
+than the one it holds, and never raises its access. An end reported for a run
+newer than the hub's (its follow-up reply was lost, keyed or not) adopts that
+run (receipt `run_adopted`, its access from the device's `meta`) and is
+delivered as usual; only an end of an older run is recorded silently. A later
+replay of the request that started an adopted run that has ended changes
+nothing but the key's record.
 `hello` lists `request_keys` in `capabilities`.
 A device without it ignores the key; the hub's record is the only guard there,
 and the hub writes one `device_without_keys` receipt per task. `lina work`

@@ -810,6 +810,17 @@ class Hub:
                 return "no job"
             return self._notify_locked(job, kind, run)
 
+    def _adopt(self, job: dict, run: int) -> None:
+        """An end reported for a run newer than the job's: the hub missed the reply of the follow-up that started it
+        (an ssh drop, keyed or not), so the run is the task's now and its end is delivered as usual."""
+        held, remote = int(job.get("runs") or 1), self.meta(job)
+        job.update(runs=run, delivery="pending", verdict=None)
+        # The device job holds the access its latest run was requested with.
+        if str(remote.get("run")) == str(run) and remote.get("access") in ACCESS:
+            job.setdefault("run_access", {})[str(run)] = remote["access"]
+        self.store.save(job)
+        self.store.receipt(job["id"], "run_adopted", run=run, **{"from": held})
+
     def _waiter_alive(self, job: dict) -> bool:
         """The ``submit --wait`` process is still the one that registered: ``(pid, start time)``, never a bare
         PID (a reused PID would swallow the end notice with nobody left to show it)."""
@@ -847,7 +858,9 @@ class Hub:
         marker = f"{kind}:{run}"
         if marker in job.get("notified", []):
             return self._card_steps(job, marker) if marker in (job.get("card_pending") or {}) else "already"
-        if str(run).isdigit() and int(run) >= 1 and int(run) != int(job.get("runs") or 1):
+        if str(run).isdigit() and int(run) > int(job.get("runs") or 1):
+            self._adopt(job, int(run))
+        elif str(run).isdigit() and int(run) >= 1 and int(run) < int(job.get("runs") or 1):
             # A late end of an earlier run (its notice retried after a follow-up started the next one): record it,
             # never let it end the run that is going now. Task-level notices are not run reports and always apply:
             # a cancel before any run starts ("0") and an unreachable device ("x").

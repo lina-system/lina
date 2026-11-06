@@ -173,6 +173,85 @@ def test_a_replayed_follow_up_never_moves_the_task_back_to_its_run(lane):
     assert [(r["state"], r["run"]) for r in ends] == [("done", "3")]
 
 
+def _first_follow_up_reply_lost(lane) -> None:
+    real, lost = hub_mod.for_device, []
+
+    def lossy(dev, root):
+        transport = real(dev, root)
+        call = transport.call
+
+        def dropped(verb, stdin=b"", timeout=120):
+            reply = call(verb, stdin, timeout)
+            if verb[0] == "follow_up" and not lost:
+                lost.append(reply.json())
+                return Reply(255, b"", "connection reset by peer")
+            return reply
+
+        transport.call = dropped
+        return transport
+
+    lane.mp.setattr(hub_mod, "for_device", lossy)
+
+
+def _run_2_started_unseen(lane, task_id: str, key: str | None) -> None:
+    """A follow-up started run 2 on the device and its reply never reached the hub; run 2 then ended there."""
+    _first_follow_up_reply_lost(lane)
+    with pytest.raises(HubError, match="follow_up got no reply"):
+        lane.hub.send(task_id, "more", request_key=key)
+    assert lane.hub.store.load(task_id)["runs"] == 1
+    serve.serve_once(lane.root)
+    (lane.root / "tasks" / task_id / "rc.2").write_text("0\n")
+
+
+def _notified(lane, task_id: str) -> list[tuple]:
+    return [(r["state"], r["run"]) for r in lane.hub.store.receipts_of(task_id) if r["kind"] == "notified"]
+
+
+def test_the_end_of_a_run_whose_follow_up_reply_was_lost_is_delivered_once(lane):
+    task_id = _submitted(lane)
+    lane.hub.store.update(task_id, card={"task": "t_card", "board": None})
+    comments: list[tuple] = []
+    lane.mp.setattr(kanban_link, "record_end", lambda card, job, kind, run, text: comments.append((kind, run)))
+    _ended(lane, task_id)
+    assert lane.hub.notify(task_id, "done", "1") != "earlier run"
+    _run_2_started_unseen(lane, task_id, "rk-unseen")
+    assert lane.hub.notify(task_id, "done", "2") != "earlier run"
+    adopted = [r for r in lane.hub.store.receipts_of(task_id) if r["kind"] == "run_adopted"]
+    assert [(r["run"], r["from"]) for r in adopted] == [(2, 1)]
+    before = lane.hub.store.load(task_id)
+    lane.lines.clear()
+    assert lane.hub.send(task_id, "more", request_key="rk-unseen") == 0
+    assert lane.lines == [f"{task_id} replay of request key rk-unseen: requested run 2"]
+    assert lane.hub.notify(task_id, "done", "2") == "already"
+    job = lane.hub.store.load(task_id)
+    assert {k: v for k, v in job.items() if k != "request_keys"} == before
+    assert (job["runs"], job["state"], job["run_access"]["2"]) == (2, "done", "workspace-write")
+    assert _notified(lane, task_id) == [("done", "1"), ("done", "2")]
+    assert comments == [("done", "1"), ("done", "2")]
+    assert _requests(lane, task_id) == ["request.1", "request.2"]
+
+
+def test_the_end_of_a_run_an_unkeyed_send_started_unseen_is_delivered_once(lane):
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    _run_2_started_unseen(lane, task_id, None)
+    assert lane.hub.notify(task_id, "done", "2") != "earlier run"
+    assert lane.hub.notify(task_id, "done", "2") == "already"
+    assert (lane.hub.store.load(task_id)["runs"], _notified(lane, task_id)) == (2, [("done", "2")])
+
+
+def test_the_end_of_a_run_older_than_the_task_holds_stays_silent(lane):
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    _run_2_started_unseen(lane, task_id, None)
+    lane.hub.notify(task_id, "done", "2")
+    assert lane.hub.notify(task_id, "done", "1") == "earlier run"
+    stale = [r for r in lane.hub.store.receipts_of(task_id) if r["kind"] == "exec_end" and r.get("stale")]
+    assert [(r["state"], r["run"]) for r in stale] == [("done", "1")]
+    assert _notified(lane, task_id) == [("done", "2")]
+    assert lane.hub.store.load(task_id)["state"] == "done"
+
+
 def test_an_answer_whose_reply_was_lost_is_not_applied_again_by_another_verb(lane):
     """The device took the answer, the reply was lost and the question closed: the retry must not steer or start a
     run with the same words; it returns the first answer."""
