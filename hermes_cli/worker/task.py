@@ -104,6 +104,10 @@ def write_manifest(task: Task, run: int, files: dict[str, Path] | None = None) -
     for key, name in (("wait", f"wait.{run}.json"), ("lifecycle", f"lifecycle.{run}.json")):
         manifest[key] = read_json(task.path(name))
     manifest["model"] = (read_json(task.path("job.json"), {}) or {}).get("model")
+    handle = read_json(task.path("handle.json"), {}) or {}
+    if handle.get("run") == run and "requested_model" in handle:
+        manifest["model"] = handle.get("model")
+        manifest["requested_model"] = handle["requested_model"]
     write_json(task.path("manifest.json"), manifest)
     return manifest
 
