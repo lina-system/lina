@@ -139,7 +139,8 @@ def test_the_endpoint_comes_through_the_config_loader_and_a_bad_port_is_refused(
     monkeypatch.setattr(web, "definition_path", lambda kind: tmp_path / "units" / "lina-web.service")
     monkeypatch.setattr(web, "_run", calls.append)
     assert web.start(root, out=lines.append) == 1
-    assert len(lines) == 1 and "dashboard.port" in lines[0] and "'nine'" in lines[0]
+    assert len(lines) == 1 and "dashboard.port" in lines[0] and "is not a port number" in lines[0]
+    assert "nine" not in lines[0]  # the configured value itself is never printed
     assert calls == [] and not (tmp_path / "units").exists()
 
 
@@ -242,7 +243,7 @@ def test_web_serves_the_app_beside_another_homes_dashboard_and_stops_only_itself
         assert web.start(root, out=lambda line: None) == 0, (tmp_path / "web.log").read_text()
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/app/", timeout=10) as page:
             assert page.status == 200 and '<div id="root">lina-app</div>' in page.read().decode()
-        assert web.state(root) == f"running (127.0.0.1:{port})"
+        assert web.state(root) == "running"
         assert web.own_pids(root) == [systemd.proc.pid]
         assert hr.read_record(hr.ROLE_SERVE).pid == record.pid  # LINA's server never became the account's owner
 

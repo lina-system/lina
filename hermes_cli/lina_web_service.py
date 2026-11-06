@@ -66,7 +66,7 @@ def endpoint(root: Path) -> tuple[str, int]:
     host, port = cfg_get(config, "dashboard", "host"), cfg_get(config, "dashboard", "port")
     text = str(port).strip()
     if isinstance(port, bool) or not text.isdigit() or not 0 < int(text) < 65536:
-        raise EndpointError(f"dashboard.port in {root / 'config.yaml'} is {port!r}, not a port number (1-65535)")
+        raise EndpointError(f"dashboard.port in {root / 'config.yaml'} is not a port number (1-65535)")
     return str(host), int(text)
 
 
@@ -122,10 +122,10 @@ def state(root: Path | None = None) -> str:
     if kind is None or not definition_path(kind).exists():
         return "not installed"
     try:
-        host, port = endpoint(root)
+        endpoint(root)
     except EndpointError as exc:
         return f"stopped ({exc})"
-    return f"running ({host}:{port})" if running(root) else "stopped"
+    return "running" if running(root) else "stopped"
 
 
 def start(root: Path | None = None, out=print) -> int:
@@ -145,10 +145,11 @@ def start(root: Path | None = None, out=print) -> int:
         out(f"web: {exc}")
         return 1
     if running(root):
-        out(f"✓ web already running on {host}:{port}")
+        out("✓ web already running")
         return 0
     if _answers(host, port):
-        out(f"web: port {port} is already in use by another process; set dashboard.port in config.yaml to a free port")
+        out("web: the configured dashboard.port is already in use by another process; set dashboard.port in "
+            "config.yaml to a free port")
         return 1
     path = definition_path(kind)
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -161,15 +162,16 @@ def start(root: Path | None = None, out=print) -> int:
         _run(["systemctl", "--user", "enable", SYSTEMD_UNIT])
         loaded = _run(["systemctl", "--user", "restart", SYSTEMD_UNIT])
     if loaded.returncode != 0:
-        out(f"web: {kind} refused {path.name}: {(loaded.stderr or loaded.stdout).strip()}")
+        out(f"web: {kind} refused {path.name} (exit {loaded.returncode}); see the logs in {root / 'logs'}")
         return 1
     deadline = time.monotonic() + START_WAIT_S
     while time.monotonic() < deadline:
         if running(root):
-            out(f"✓ web running on http://{host}:{port}/app/ ({path})")
+            out(f"✓ web running ({path}); the app is at /app/ on the configured dashboard.host/dashboard.port")
             return 0
         time.sleep(0.5)
-    out(f"web: started {path.name}, but no dashboard of {root} answered on {host}:{port} (see {root / 'logs'})")
+    out(f"web: started {path.name}, but no dashboard of {root} answered on the configured "
+        f"dashboard.host/dashboard.port (see {root / 'logs'})")
     return 1
 
 
