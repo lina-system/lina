@@ -33,7 +33,7 @@ def verbs() -> dict[str, Verb]:
 
     return {
         "hello": Verb(lambda root, args, data: d._ok(hello(root)), "read"),
-        "service": Verb(lambda root, args, data: d._ok(service_action(root, args[0], args[1])), "destructive"),
+        "service": Verb(lambda root, args, data: d._ok(service_verb(root, args)), "destructive"),
         "put": Verb(lambda root, args, data: d._ok(d._put(root, args[0], args[1], data)), "write", stdin=True),
         "untar": Verb(lambda root, args, data: d._ok(d._untar(root, args[0], args[1], data)), "write", stdin=True),
         "meta": Verb(lambda root, args, data: d._ok(d.meta(root, args[0], live=args[1:] == ["live"])), "read", legacy=True),
@@ -74,21 +74,41 @@ def begin_instance(worker_root: Path) -> str:
     return instance_id
 
 
-def hello(worker_root: Path) -> dict:
-    """Describe this installation and its supported access-mode vocabulary."""
-    from hermes_cli.lina_work_settings import ACCESS
-    from hermes_cli.lina_version import LINA_VERSION
-    from hermes_cli.worker import runners, serve, settings
+def identity(worker_root: Path) -> tuple[bool, str | None]:
+    """Whether serve is live and its instance; the compare-and-act boundary reads only this, never the runner probes."""
+    from hermes_cli.worker import serve
 
     age = serve.heartbeat_age(worker_root)
     active = age is not None and age < 60
     record = read_json(worker_root / INSTANCE, {}) or {}
-    offered = runners.specs(settings.section(worker_root.parent))
+    return active, record.get("instance_id") if active else None
+
+
+def hello(worker_root: Path) -> dict:
+    """Describe this installation, its offered runners with their pins and readiness (lina#222, bounded by
+    ``lina_runners.HELLO_TIMEOUT_S``) and its supported access-mode vocabulary."""
+    from hermes_cli import lina_runners
+    from hermes_cli.lina_work_settings import ACCESS
+    from hermes_cli.lina_version import LINA_VERSION
+
+    active, instance_id = identity(worker_root)
     return {"protocol": {"min": PROTOCOL_MIN, "max": PROTOCOL_MAX},
-            "instance_id": record.get("instance_id") if active else None, "serve": active,
+            "instance_id": instance_id, "serve": active,
             "version": LINA_VERSION,
-            "capabilities": {"runners": [{"name": name, "type": spec.get("type")} for name, spec in offered.items()],
+            "capabilities": {"runners": lina_runners.cached_node_report(worker_root),
                              "access_modes": list(ACCESS), "verbs": list(verbs())}}
+
+
+def service_verb(worker_root: Path, args: list[str]) -> dict:
+    """``service <ocx|worker> <action> [instance_id]`` through ``lina_runners.node_service`` (lina#222); the #218
+    form ``service <stop|restart> <instance_id>`` still means the worker."""
+    from hermes_cli import lina_runners
+
+    named = bool(args) and args[0] in lina_runners.SERVICE_ACTIONS
+    action, instance_id = (list(args[1:3] if named else args[:2]) + ["", ""])[:2]
+    if named:
+        return lina_runners.node_service(worker_root, args[0], action, instance_id)
+    return service_action(worker_root, action, instance_id)
 
 
 def service_action(worker_root: Path, action: str, instance_id: str) -> dict:
@@ -98,8 +118,7 @@ def service_action(worker_root: Path, action: str, instance_id: str) -> dict:
     if action not in ("stop", "restart"):
         return {"action": "error", "reason": "service expects stop or restart"}
     with instance_lock(worker_root):
-        current = hello(worker_root)
-        if not instance_id or current["instance_id"] != instance_id:
+        if not instance_id or identity(worker_root)[1] != instance_id:
             return {"action": "error", "reason": "worker instance changed: refresh hello", "stale_instance": True}
         lines: list[str] = []
         code = service.stop(worker_root.parent, out=lines.append)

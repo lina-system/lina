@@ -1,5 +1,5 @@
 {
-  "_comment": "Runtimes LINA installs for itself (lina#32, lina#34), read by hermes_cli/lina_ocx.py and hermes_cli/lina_omo.py. Node serves OCX, omo and ocx-omo (>= 24); its sha256 per platform comes from nodejs.org/dist/v<version>/SHASUMS256.txt. The OCX and omo integrity is npm's dist.integrity for that exact version; tests/hermes_cli/test_lina_deps_pin.py checks it against the registry.",
+  "_comment": "Runtimes LINA installs for itself (lina#32, lina#34), read by hermes_cli/lina_ocx.py and hermes_cli/lina_omo.py. Node serves OCX, omo and ocx-omo (>= 24); its sha256 per platform comes from nodejs.org/dist/v<version>/SHASUMS256.txt. The OCX and omo integrity is npm's dist.integrity for that exact version; tests/hermes_cli/test_lina_deps_pin.py checks it against the registry. Runners (lina#222): `npm` runners are installed like omo, and their integrity is npm's dist.integrity; `binary`/`tarball` runners come from the URL their own installer script downloads, checked against `sha256` or `sha512` per platform (agy's sha512 is its release manifest's; grok and cursor-agent publish none, so LINA recorded the sha256 of the official artifact, and grok's GCS md5 matched). `sign_in` names the read-only check in hermes_cli/lina_runners.py; `env` is set in the shim LINA runs them through.",
   "node": {
     "version": "24.22.2",
     "dist": "https://nodejs.org/dist",
@@ -20,5 +20,129 @@
     "version": "5.1.51",
     "integrity": "sha512-SiJt+Apf1UWGX8rJsIbnXWSqyQAcVcDLYBqDAOAdVarzpfifHp6fOH0yYa5R1X9eueQnwOjh/S8iaymCB5VRHg==",
     "license": "Sustainable Use License 1.0, not open source: installed from npm onto the person's own machine at install time, never vendored, bundled or committed into this repo or a release artifact"
+  },
+  "runners": {
+    "codex": {
+      "installer": "npm",
+      "package": "@openai/codex",
+      "version": "0.166.0-alpha.5.1",
+      "integrity": "sha512-agRE7KtoI+2zrPV59soKKCxkDaK0qaoz3qmnjKZ3VtkpiMzkcxke2POlgQfLv09Wy6ZnaXEcX73UQh5y3UXZoA==",
+      "bin": "codex",
+      "sign_in": "ocx"
+    },
+    "claude": {
+      "installer": "npm",
+      "package": "@anthropic-ai/claude-code",
+      "version": "2.1.311",
+      "integrity": "sha512-7SgBitii1ZscdbRJXLcub7Vv2pfvH3wo7RrCKg4vZpklIfz9HgigJFFJGIjCY6jzoPDvbQcwwugvm3A8PTejzw==",
+      "bin": "claude",
+      "sign_in": "ocx",
+      "env": {
+        "DISABLE_AUTOUPDATER": "1"
+      }
+    },
+    "dsh": {
+      "installer": "npm",
+      "package": "@deepseek-ai/dsh",
+      "version": "0.2.1-rc.5",
+      "integrity": "sha512-WkyJZv4zl9sCAxSzRctGm58m0rilGqwR6pniBiLOz5CPDfHfDuAUicg0AAazXI7oj/Cph6/cjNTncA/rpLTXpw==",
+      "bin": "dsh",
+      "sign_in": "unknown"
+    },
+    "claude-agent-acp": {
+      "installer": "npm",
+      "package": "@zed-industries/claude-agent-acp",
+      "version": "0.23.1",
+      "integrity": "sha512-aQ1gAm1MBalwEgE/VB/m4z6sXw/fRccNOW268pNLXnWV704ZuLbbm0N+oEv8KTmd53dJ6YzMhMpD8p5ig6C+sA==",
+      "bin": "claude-agent-acp",
+      "check": "package",
+      "sign_in": "ocx"
+    },
+    "codex-acp": {
+      "installer": "npm",
+      "package": "@zed-industries/codex-acp",
+      "version": "0.16.0",
+      "integrity": "sha512-XKzqztT5R8Wg1BVFnk6/U4JVx5GNUaZgxpf9gP2Cw6BsknvJWh3aefcAGZQljgdMivRqczjNKYL4F6H65dc5vA==",
+      "bin": "codex-acp",
+      "check": "package",
+      "sign_in": "ocx"
+    },
+    "grok": {
+      "installer": "binary",
+      "version": "1.0.70",
+      "bin": "grok",
+      "entry": "grok",
+      "sign_in": "grok",
+      "artifacts": {
+        "darwin-arm64": {
+          "url": "https://x.ai/cli/grok-1.0.70-macos-aarch64",
+          "sha256": "5c8a688251bf61e35370b828b6a353b0a20fcc3f64000de8a91d426039f29cec"
+        },
+        "darwin-x64": {
+          "url": "https://x.ai/cli/grok-1.0.70-macos-x86_64",
+          "sha256": "d9ecd462f1f3c3b40a7a131944987ee7ed1c38069b7009cc4107398ab767f484"
+        },
+        "linux-arm64": {
+          "url": "https://x.ai/cli/grok-1.0.70-linux-aarch64",
+          "sha256": "3aa36883574b263088e5addffe241f55430e8daaee1a0c4934b02180007a9761"
+        },
+        "linux-x64": {
+          "url": "https://x.ai/cli/grok-1.0.70-linux-x86_64",
+          "sha256": "22d281c5964c5444147328096ba2a221f3f0874c6858e27c825656a80f6e58e9"
+        }
+      }
+    },
+    "cursor-agent": {
+      "installer": "tarball",
+      "version": "2026.10.22-27dcf5f",
+      "bin": "cursor-agent",
+      "entry": "cursor-agent",
+      "strip": 1,
+      "sign_in": "cursor",
+      "artifacts": {
+        "darwin-arm64": {
+          "url": "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/darwin/arm64/agent-cli-package.tar.gz",
+          "sha256": "2f5b0a3dd5fb951cecffac813867d8a08d810e59837d59fd5f12d69b922398d7"
+        },
+        "darwin-x64": {
+          "url": "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/darwin/x64/agent-cli-package.tar.gz",
+          "sha256": "7a3cfbf0fcfb979b6213feb5f9fd10fbc7cd4e51ab28c3b572bb935e0b114961"
+        },
+        "linux-arm64": {
+          "url": "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/linux/arm64/agent-cli-package.tar.gz",
+          "sha256": "22a36df9720830668ccd4d707e5190204ab9c8a0efb2f068cc914895f804d3ec"
+        },
+        "linux-x64": {
+          "url": "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/linux/x64/agent-cli-package.tar.gz",
+          "sha256": "85296944e4600a83c4b764f578d1502bf9c416db200d33a593e8f3ecabfdc294"
+        }
+      }
+    },
+    "agy": {
+      "installer": "tarball",
+      "version": "1.5.2",
+      "bin": "agy",
+      "entry": "antigravity",
+      "strip": 0,
+      "sign_in": "agy",
+      "artifacts": {
+        "darwin-arm64": {
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.2-4951595792859136/darwin-arm/cli_mac_arm64.tar.gz",
+          "sha512": "89c9080f26d99bb94c2aed1bf67e0612dc7803a77fc64963e6c95377de6dd0d6269931f413a21ab2ba885c3f4ee8343727520c5ff94740345ac06b4b73085d67"
+        },
+        "darwin-x64": {
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.2-4951595792859136/darwin-x64/cli_mac_x64.tar.gz",
+          "sha512": "e1820cab27aa3462383c15d9d69995f3b3fad9ed7cb5208bb0a5d7b8696ef2690baef6df8604bb769d584a1094cc0ed64afe0173ee45523ec36413695b7966ff"
+        },
+        "linux-arm64": {
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.2-4951595792859136/linux-arm/cli_linux_arm64.tar.gz",
+          "sha512": "9a141da7b218c640a962188b388905f065cc307425bbeff6e74c07f95266f93526f6d0dee9bad876b79431403f5b30ef4e6514f5f44fbf06dca2a077f54f6175"
+        },
+        "linux-x64": {
+          "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.2-4951595792859136/linux-x64/cli_linux_x64.tar.gz",
+          "sha512": "aa876c0813572efaf85ed47983cc937414705d40490cbdb54f6e255656a4f8744ae38e457823e924fa8270b348124e0521d3cda3fec6824bb2d14b98a7a05baa"
+        }
+      }
+    }
   }
 }
