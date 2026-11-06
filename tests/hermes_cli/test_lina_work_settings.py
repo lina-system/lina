@@ -395,6 +395,60 @@ def test_credential_like_keys_at_any_depth_never_reach_a_revision_or_the_audit_a
     assert all(value in text for value in SECRETS) and _config(root)["devices"]["workers"]["build-a"]["cap"] == 3
 
 
+FALSEY = [False, 0, "", []]
+SECTIONS = [  # (patch putting the wrong value at the path, path); [] is valid for worker.routing (no rules)
+    (lambda v: {"worker": v}, "worker"),
+    (lambda v: {"worker": {"models": v}}, "worker.models"),
+    (lambda v: {"worker": {"models": {"aliases": v}}}, "worker.models.aliases"),
+    (lambda v: {"worker": {"models": {"defaults": v}}}, "worker.models.defaults"),
+    (lambda v: {"worker": {"models": {"fallback": v}}}, "worker.models.fallback"),
+    (lambda v: {"worker": {"models": {"aliases": {"planner": v}}}}, "worker.models.aliases.planner"),
+    (lambda v: {"worker": {"runners": v}}, "worker.runners"),
+    (lambda v: {"worker": {"runners": {"codex": v}}}, "worker.runners.codex"),
+    (lambda v: {"worker": {"routing": v}}, "worker.routing"),
+    (lambda v: {"worker": {"routing": [v]}}, "worker.routing[0]"),
+    (lambda v: {"worker": {"routing": [{"name": "r", "runner": "omo", "when": v}]}}, "worker.routing[0].when"),
+    (lambda v: {"devices": v}, "devices"),
+    (lambda v: {"devices": {"workers": v}}, "devices.workers"),
+    (lambda v: {"devices": {"workers": {"build-a": v}}}, "devices.workers.build-a"),
+]
+
+
+CASES = [(patch, where, value) for patch, where in SECTIONS for value in FALSEY
+         if not (where == "worker.routing" and value == [])]
+
+
+@pytest.mark.parametrize(("patch", "where", "value"), CASES, ids=[f"{w}={v!r}" for _, w, v in CASES])
+def test_a_falsey_wrong_type_on_any_section_is_refused_with_its_path(root, patch, where, value):
+    from hermes_cli.lina_work_settings import SettingsError, merge_patch
+    store = _store(root)
+    store.current()
+    before = (root / "config.yaml").read_bytes()
+    with pytest.raises(SettingsError) as refused:
+        store.apply(lambda doc: merge_patch(doc, patch(value)), CLI)
+    assert where in [e["path"] for e in refused.value.errors], refused.value.errors
+    assert (root / "config.yaml").read_bytes() == before
+    assert [line["rev"] for line in _audit(root)] == ["r1"]
+
+
+def test_a_mapping_holding_an_excluded_field_is_never_replaced_by_a_non_mapping(root):
+    from hermes_cli.lina_work_settings import SettingsError, merge_patch, remnants, snapshot
+    path = root / "config.yaml"
+    path.write_text(TODAY.replace("    defaults: {research: planner}\n",
+                                  "    defaults: {research: planner}\n    api_token: tok-models-1\n"), encoding="utf-8")
+    store = _store(root)
+    store.current()
+    with pytest.raises(SettingsError) as refused:
+        store.apply(lambda doc: merge_patch(doc, {"worker": {"models": False}}), CLI)
+    assert "worker.models" in [e["path"] for e in refused.value.errors]
+    assert "tok-models-1" in path.read_text(encoding="utf-8")
+    raw = _config(root)
+    old = snapshot(raw)
+    for value in FALSEY:  # the write guard on its own, whatever validation says
+        new = merge_patch(old, {"worker": {"models": value}})
+        assert "worker.models" in [e["path"] for e in remnants(old, new, raw)], value
+
+
 REMNANT = "worker.runners.codex: has fields the work settings don't manage (env)"
 
 
@@ -500,6 +554,15 @@ def _routed_doc() -> dict:
                        "runners": {"agy": {"type": "command", "argv": ["agy", "-"]},
                                    "dsh": {"type": "command", "argv": ["dsh", "-"]},
                                    "codex": {"type": "command", "argv": ["codex", "-"], "on": False}}}}
+
+
+@pytest.mark.parametrize("routing", [5, "docs", {"name": "x"}, [{"name": "r", "runner": "agy", "when": "x"}],
+                                     [{"name": "r", "runner": "agy", "when": {"labels_any": 3, "size": 7}}]])
+def test_the_route_resolver_reads_a_wrong_typed_routing_as_no_rule_and_never_crashes(routing):
+    from hermes_cli.lina_work_settings_route import route
+    doc = _routed_doc()
+    doc["worker"]["routing"] = routing
+    assert route(doc, ["docs"], "S")["runner"] in ("omo", "agy")
 
 
 @pytest.mark.parametrize(("labels", "size", "runner", "rule"), [

@@ -130,6 +130,15 @@ def test_each_runner_mode_default_and_the_fallback_say_whether_their_model_is_us
     assert data["errors"] == []
 
 
+@pytest.mark.parametrize("models", ["x", 3, ["planner"], {"defaults": ["research"], "aliases": "y", "fallback": 4}])
+def test_a_wrong_typed_models_section_written_by_hand_reads_as_absent(ocx, tmp_path, models):
+    import json as _json
+    path = tmp_path / "lina" / "config.yaml"
+    path.write_text(CONFIG.split("\n  models:")[0] + f"\n  models: {_json.dumps(models)}\n", encoding="utf-8")
+    data = _view()
+    assert data["modes"] == [] and {row["name"] for row in data["runners"]} >= {"omo", "codex"}
+
+
 def test_ocx_unreadable_serves_the_last_good_list_for_ten_minutes_with_an_error_and_writes_nothing(ocx, tmp_path):
     good = _view(T)
     config = (tmp_path / "lina" / "config.yaml").read_bytes()

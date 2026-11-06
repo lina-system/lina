@@ -91,6 +91,19 @@ def plain(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
 
 
+def mapping(value: Any) -> dict:
+    """*value* when it is a mapping, else ``{}``: for READING a document that may hold a wrong type (a hand edit).
+    Never ``value or {}``: that also turns a present ``false``/``0``/``""``/``[]`` into "absent". Validation
+    reports a present wrong type with its path instead (``_section``)."""
+    return value if isinstance(value, dict) else {}
+
+
+def _section(value: Any, schema: dict, path: str, errors: list[dict]) -> dict:
+    """An optional mapping being validated: absent (``None``) is empty; anything else that is not a mapping, falsey
+    or not, is one error with its path."""
+    return {} if value is None else _fields(value, schema, path, errors)
+
+
 def _excluded_key(key: Any) -> bool:
     return key == KEEP_OUT or bool(SECRET.search(str(key)))
 
@@ -135,7 +148,7 @@ def snapshot(config: dict) -> dict:
         if isinstance(section, dict) and section.get(key) not in (None, {}, []):
             doc.setdefault(top, {})[key] = scrub(plain(section[key]), f"{top}.{key}")
     for top, key in KEYS:  # a table left empty by that is no setting either
-        if (doc.get(top) or {}).get(key) == {}:
+        if mapping(doc.get(top)).get(key) == {}:
             del doc[top][key]
             if not doc[top]:
                 del doc[top]
@@ -251,7 +264,7 @@ def _remnants_at(old: Any, new: Any, raw: Any, path: str, errors: list[dict]) ->
     if not isinstance(raw, dict):
         return
     own = _own_fields(path, raw)
-    if own and old is not None and new is None:
+    if own and old is not None and not isinstance(new, dict):  # removed, or replaced by a non-mapping
         errors.append(_refusal(path, own))
         return
     for key, item in raw.items():
@@ -293,7 +306,7 @@ def _kept_updates(old: Any, new: Any, path: str, raw: Any) -> dict[str, Any]:
         return {}
     if not _held(path, raw) or not (new is None or isinstance(new, dict)) or not (old is None or isinstance(old, dict)):
         return updates(old, new, path)
-    old, new = old or {}, new or {}
+    old, new = mapping(old), mapping(new)  # both are None or a mapping here
     out: dict[str, Any] = {}
     for key in [*old, *(k for k in new if k not in old)]:
         out.update(_kept_updates(old.get(key), new.get(key), f"{path}.{key}", raw.get(key)))
@@ -309,7 +322,7 @@ def settings_updates(old: dict, new: dict, raw: dict | None = None) -> dict[str,
     out: dict[str, Any] = {}
     for top, key in KEYS:
         path = f"{top}.{key}"
-        out.update(_kept_updates(get_path(old, path), get_path(new, path), path, get_path(raw or {}, path)))
+        out.update(_kept_updates(get_path(old, path), get_path(new, path), path, get_path(mapping(raw), path)))
     return out
 
 
@@ -424,8 +437,8 @@ def _runners(doc: dict, aliases: dict, errors: list[dict]) -> dict:
 def _models(doc: dict, errors: list[dict]) -> dict:
     from hermes_cli.worker.models import THINKING
     from hermes_cli.worker.report import MODES
-    models = _fields(get_path(doc, "worker.models") or {}, {"aliases": "", "defaults": "", "fallback": "model"},
-                     "worker.models", errors)
+    models = _section(get_path(doc, "worker.models"), {"aliases": "", "defaults": "", "fallback": "model"},
+                      "worker.models", errors)
     aliases = _named(models.get("aliases"), "worker.models.aliases", errors)
     for name, item in aliases.items():
         entry = _fields(item, ALIAS, f"worker.models.aliases.{name}", errors)
@@ -435,7 +448,7 @@ def _models(doc: dict, errors: list[dict]) -> dict:
         if not entry.get("provider") or not entry.get("id"):
             errors.append({"path": f"worker.models.aliases.{name}", "message": "an alias needs provider and id"})
     lowered = {str(k).lower(): v for k, v in aliases.items()}
-    defaults = models.get("defaults") or {}
+    defaults = {} if models.get("defaults") is None else models["defaults"]
     if not isinstance(defaults, dict):
         errors.append({"path": "worker.models.defaults", "message": "must be a mapping of mode to model"})
         defaults = {}
@@ -478,11 +491,11 @@ def _rule(i: int, item: Any, count: int, names: set[str], known: set[str], error
             errors.append({"path": f"{path}.{key}", "message": "required"})
     if isinstance(runner, str) and runner not in known:
         errors.append({"path": f"{path}.runner", "message": f"no runner {runner!r}"})
-    when = _fields(rule.get("when") or {}, WHEN, f"{path}.when", errors)
+    when = _section(rule.get("when"), WHEN, f"{path}.when", errors)
     sizes = when.get("size")
     if isinstance(sizes, list) and any(not isinstance(s, str) or s not in SIZES for s in sizes):
         errors.append({"path": f"{path}.when.size", "message": f"sizes are {', '.join(SIZES)}"})
-    if not when and i != count - 1:
+    if rule.get("when") in (None, {}) and i != count - 1:
             errors.append({"path": f"{path}.when", "message": "a rule that matches everything must be the last"})
 
 

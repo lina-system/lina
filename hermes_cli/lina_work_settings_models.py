@@ -69,7 +69,8 @@ def read(root: Path, now: float) -> tuple[list, list, list[dict]]:
             return hit[1], hit[2], error
         return [], [], error
     rows = [r for r in live if isinstance(r, dict)] if isinstance(live, list) else []
-    accounts = [a for a in (quota.get("accounts") or []) if isinstance(a, dict)] if isinstance(quota, dict) else []
+    listed = quota.get("accounts") if isinstance(quota, dict) else None
+    accounts = [a for a in listed if isinstance(a, dict)] if isinstance(listed, list) else []
     with _LOCK:
         _LAST[key] = (now, rows, accounts)
     return rows, accounts, []
@@ -79,7 +80,8 @@ def _windows(account: dict, model_id: str) -> list[tuple[float, float | None]]:
     quota = account.get("quota") if isinstance(account.get("quota"), dict) else {}
     out = [(_number(quota.get(value)), reset_time(quota.get(reset))) for _, value, reset in (*WINDOWS, *EXTRA_WINDOWS)
            if _number(quota.get(value)) is not None]
-    for row in quota.get("customWindows") or []:
+    custom = quota.get("customWindows")
+    for row in custom if isinstance(custom, list) else []:
         if isinstance(row, dict) and _number(row.get("percent")) is not None \
                 and row.get("modelId") in (None, "", model_id):
             out.append((_number(row["percent"]), reset_time(row.get("resetAt"))))
@@ -93,6 +95,10 @@ def _headroom(account: dict, model_id: str) -> tuple[float, float | None] | None
     top = max(percent for percent, _ in wins)
     resets = [reset for percent, reset in wins if percent == top and reset is not None]
     return 100.0 - top, min(resets) if resets else None
+
+
+def _list(value) -> list:
+    return value if isinstance(value, list) else []
 
 
 def _off(row: dict) -> bool:
@@ -114,7 +120,7 @@ def model_row(row: dict, accounts: list[dict]) -> dict:
         state = "unknown" if len(heads) < len(usable) else "out_of_quota"
     left = None if best is None else max(0.0, min(100.0, best[0]))
     return {"provider": row.get("provider"), "id": row.get("id"), "namespaced": row.get("namespaced"),
-            "name": row.get("displayName"), "efforts": [str(e) for e in row.get("reasoningEfforts") or []],
+            "name": row.get("displayName"), "efforts": [str(e) for e in _list(row.get("reasoningEfforts"))],
             "defaultEffort": row.get("defaultReasoningEffort"), "state": state,
             "left": None if left is None else (int(left) if left == int(left) else left),
             "resetAt": None if best is None else best[1], "accounts": len(usable)}
@@ -142,7 +148,13 @@ def _state(value: str | None, worker: dict, rows: list[dict], accounts: list[dic
     return model_row(row, accounts)["state"]
 
 
+def _text(value) -> str | None:
+    """A model value read from the settings; a wrong type (a hand edit validation never saw) reads as unset."""
+    return value if isinstance(value, str) and value else None
+
+
 def _check(who: str, value: str | None, fallback: str | None, worker: dict, ctx: tuple) -> dict:
+    value, fallback = _text(value), _text(fallback)
     state = _state(value, worker, *ctx)
     usable = state is None or state in USABLE
     if usable:
@@ -162,14 +174,14 @@ def view(base: Path | None = None, now: float | None = None) -> dict:
     store = Store(base)
     rows, accounts, errors = read(store.config.parent, now)
     doc = store.current().doc
-    worker = doc.get("worker") or {}
-    models = worker.get("models") or {}
-    fallback = models.get("fallback")
+    worker = ws.mapping(doc.get("worker"))  # a wrong type reads as absent here; writes refuse it with its path
+    models = ws.mapping(worker.get("models"))
+    fallback = _text(models.get("fallback"))
     ctx = (rows, accounts, bool(rows) or not errors)
-    runners = [{"name": name, **_check(name, spec.get("model"), spec.get("fallback_model") or fallback, worker, ctx)}
+    runners = [{"name": name, **_check(name, spec.get("model"), _text(spec.get("fallback_model")) or fallback, worker, ctx)}
                for name, spec in ws.runner_table(doc).items()]
     modes = [{"mode": mode, **_check(f"{mode} 기본", value, fallback, worker, ctx)}
-             for mode, value in (models.get("defaults") or {}).items()]
+             for mode, value in ws.mapping(models.get("defaults")).items()]
     last = _check("대체", fallback, None, worker, ctx)
     warnings = [row["warning"] for row in (*runners, *modes, last) if row["warning"]]
     return {"models": [model_row(r, accounts) for r in rows if not _off(r)], "runners": runners, "modes": modes,

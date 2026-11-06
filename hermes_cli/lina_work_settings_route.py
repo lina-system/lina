@@ -12,11 +12,14 @@ from hermes_cli import lina_work_settings as ws
 
 
 def _holds(when: dict, labels: set[str], size: str | None) -> bool:
-    if when.get("runner_label") and when["runner_label"] not in labels:
+    """A condition of a wrong type (a hand edit validation never saw) never matches; it never raises either."""
+    label, any_of, sizes = when.get("runner_label"), when.get("labels_any"), when.get("size")
+    if label not in (None, "") and (not isinstance(label, str) or label not in labels):
         return False
-    if when.get("labels_any") and not labels.intersection(when["labels_any"]):
+    if any_of not in (None, []) and (not isinstance(any_of, list)
+                                     or not labels.intersection(x for x in any_of if isinstance(x, str))):
         return False
-    return not when.get("size") or size in when["size"]
+    return sizes in (None, []) or isinstance(sizes, list) and size in sizes
 
 
 def route(doc: dict, labels: list[str] | None = None, size: str | None = None) -> dict:
@@ -24,9 +27,12 @@ def route(doc: dict, labels: list[str] | None = None, size: str | None = None) -
     for the default)."""
     table = ws.runner_table(doc)
     found = set(labels or [])
-    for rule in ws.get_path(doc, "worker.routing") or []:
-        if not isinstance(rule, dict) or table.get(rule.get("runner"), {}).get("on") is False:
+    rules = ws.get_path(doc, "worker.routing")
+    for rule in rules if isinstance(rules, list) else []:
+        runner = rule.get("runner") if isinstance(rule, dict) else None
+        if not isinstance(runner, str) or runner not in table or table[runner].get("on") is False:
             continue
-        if rule.get("runner") in table and _holds(rule.get("when") or {}, found, size):
+        when = rule.get("when")
+        if (when is None or isinstance(when, dict)) and _holds(ws.mapping(when), found, size):
             return {"runner": rule["runner"], "rule": rule.get("name"), "matched": True}
     return {"runner": ws.default_runner(doc), "rule": None, "matched": False}
