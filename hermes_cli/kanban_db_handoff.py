@@ -55,6 +55,40 @@ def _run_is_planned_stop(conn: sqlite3.Connection, task_id: str, run_id: int, ou
     return bool((payload.get("wait_for") or {}).get(HANDOFF_KEY))
 
 
+def _run_is_park(conn: sqlite3.Connection, task_id: str, run_id: int, outcome: Optional[str]) -> bool:
+    """A run that ended parked on a recorded wait (``scheduled``/``blocked`` with ``wait_for``)."""
+    if outcome not in ("scheduled", "blocked"):
+        return False
+    row = conn.execute(
+        "SELECT payload FROM task_events WHERE task_id = ? AND run_id = ? AND kind = ? ORDER BY id DESC LIMIT 1",
+        (task_id, run_id, outcome),
+    ).fetchone()
+    payload = json.loads(row["payload"]) if row is not None and row["payload"] else {}
+    return isinstance(payload.get("wait_for"), dict)
+
+
+def latest_attempt_run(conn: sqlite3.Connection, task_id: str) -> Optional[sqlite3.Row]:
+    """The latest ended run that was a real attempt, for the respawn guards (``outcome``,
+    ``ended_at``, ``metadata``), or None.
+
+    A park on a recorded wait (WAIT verdict, ``--wait-for``, the turn-budget re-queue) and a
+    planned stop (``timed_out``: runtime or iteration limit) are no attempts: they say nothing
+    about whether the next spawn can succeed. Skipping them keeps every guard reading the run
+    that did. For example, a crash whose output merely mentions ``auth`` stays a crash after the
+    card was parked and woken, so ``last_failure_error`` (kept by the wake) is not read as an
+    auth blocker.
+    """
+    rows = conn.execute(
+        "SELECT id, outcome, ended_at, metadata FROM task_runs WHERE task_id = ? AND ended_at IS NOT NULL "
+        "ORDER BY ended_at DESC, id DESC", (task_id,),
+    )
+    for row in rows:
+        if row["outcome"] == "timed_out" or _run_is_park(conn, task_id, int(row["id"]), row["outcome"]):
+            continue
+        return row
+    return None
+
+
 def consecutive_planned_stops(conn: sqlite3.Connection, task_id: str) -> int:
     """How many of the card's latest ended runs in a row were planned stops."""
     rows = conn.execute(
@@ -173,5 +207,5 @@ def end_iteration_budget_run(conn: sqlite3.Connection, task_id: str, *, used: in
 
 __all__ = [
     "DEFAULT_PLANNED_STOP_LIMIT", "HANDOFF_KEY", "consecutive_planned_stops", "end_iteration_budget_run",
-    "hand_off_or_hold", "park_turn_budget_end", "planned_stop_limit",
+    "hand_off_or_hold", "latest_attempt_run", "park_turn_budget_end", "planned_stop_limit",
 ]

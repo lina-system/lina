@@ -436,6 +436,66 @@ def test_a_reviewer_card_at_the_planned_stop_streak_is_held_and_unblocks_to_revi
     assert kb.get_task(board, tid).status == "review"
 
 
+_CRASH_OUTPUT = "worker crashed; last output: $ gh auth status"
+
+
+def _crashed_once(conn, tid, error=_CRASH_OUTPUT, outcome="crashed"):
+    assert kb.claim_task(conn, tid) is not None
+    kbd._record_task_failure(conn, tid, error, outcome=outcome, release_claim=True, end_run=True)
+    # The attempt ended before anything that follows it: order runs by time, not by a same-second tie.
+    with kb.write_txn(conn):
+        conn.execute("UPDATE task_runs SET started_at = started_at - 120, ended_at = ended_at - 60 "
+                     "WHERE task_id = ?", (tid,))
+
+
+def _park_and_wake(conn, tid, park):
+    run_id = kb.claim_task(conn, tid).current_run_id
+    wait_for = {"kind": "until", "at": 0}
+    if park == "schedule":
+        assert kb.schedule_task(conn, tid, reason="waiting", wait_for=wait_for, expected_run_id=run_id)
+    else:
+        assert kb.block_task(conn, tid, reason="waiting", kind="needs_input", wait_for=wait_for,
+                             expected_run_id=run_id)
+    assert _wait_mod().wake_waiting_tasks(conn) == [tid]
+
+
+@pytest.mark.parametrize("park", ["schedule", "block"])
+def test_a_woken_card_is_not_held_by_an_old_crash_that_mentions_auth(board, park):
+    tid = kb.create_task(board, title="crashed once", assignee="worker")
+    _crashed_once(board, tid)
+    _park_and_wake(board, tid, park)
+
+    spawned: list[str] = []
+    _tick(board, spawned)
+
+    assert spawned == [tid]
+    assert kb.get_task(board, tid).consecutive_failures == 1
+
+
+def test_a_runtime_end_after_a_crash_is_not_read_as_an_auth_blocker(board, monkeypatch):
+    monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
+    tid = kb.create_task(board, title="crashed once", assignee="worker", max_runtime_seconds=1)
+    _crashed_once(board, tid)
+    assert kb.claim_task(board, tid) is not None
+    kbd._set_worker_pid(board, tid, os.getpid())
+    with kb.write_txn(board):
+        board.execute("UPDATE task_runs SET started_at = ? WHERE id = "
+                      "(SELECT current_run_id FROM tasks WHERE id = ?)", (int(time.time()) - 30, tid))
+    assert kbd.enforce_max_runtime(board, signal_fn=lambda pid, sig: None) == [tid]
+
+    assert kbd.check_respawn_guard(board, tid) is None
+
+
+def test_a_real_auth_failure_still_holds_the_card_across_a_park(board):
+    tid = kb.create_task(board, title="no login", assignee="worker")
+    _crashed_once(board, tid, error="gh: HTTP 401 Unauthorized", outcome="spawn_failed")
+    assert kbd.check_respawn_guard(board, tid) == "blocker_auth"
+
+    _park_and_wake(board, tid, "schedule")
+
+    assert kbd.check_respawn_guard(board, tid) == "blocker_auth"
+
+
 def test_runtime_end_hands_off_without_counting_toward_max_retries(board, monkeypatch):
     monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
     tid = kb.create_task(board, title="long job", assignee="worker", max_runtime_seconds=1, max_retries=1)

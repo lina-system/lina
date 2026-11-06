@@ -27,7 +27,7 @@ from typing import Optional
 from typing import TYPE_CHECKING
 
 from hermes_cli.kanban_db_dispatch_report import describe_suppression
-from hermes_cli.kanban_db_handoff import hand_off_or_hold
+from hermes_cli.kanban_db_handoff import hand_off_or_hold, latest_attempt_run
 from hermes_cli.kanban_db_wait import DISPATCHER_ACTOR, wake_waiting_tasks, woken_for_pr_work
 from hermes_cli.quiet_single_query import KANBAN_WORKER_EXIT_TRAILER
 
@@ -1558,12 +1558,8 @@ def check_respawn_guard(
     #    condition is not the card's, so it retries forever, spaced, and never
     #    reaches the breaker.
     rl_cooldown = _kb._resolve_rate_limit_cooldown_seconds()
-    latest_run = conn.execute(
-        "SELECT outcome, ended_at, metadata FROM task_runs "
-        "WHERE task_id = ? AND ended_at IS NOT NULL "
-        "ORDER BY ended_at DESC LIMIT 1",
-        (task_id,),
-    ).fetchone()
+    # The latest real ATTEMPT: parks and planned stops (lina#161) are skipped, see latest_attempt_run.
+    latest_run = latest_attempt_run(conn, task_id)
     if latest_run is not None and latest_run["outcome"] == "spawn_failed":
         if rl_cooldown > 0 and _kb._json_dict(latest_run["metadata"]).get("infrastructure"):
             ended_at = _kb._to_epoch(latest_run["ended_at"])
