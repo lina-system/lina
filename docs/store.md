@@ -218,6 +218,184 @@ A state.db write that adds text writes it to Postgres first, in a transaction th
 SQLite's; a rollback or retry of the SQLite write rolls it back too. A crash between the two commits
 leaves a text row nothing points at, never a placement row without text.
 
+### Copying legacy memory into a new agent
+
+```sh
+LINA_HOME=/path/to/new-lina HERMES_HOME=/path/to/new-lina \
+  lina migrate memory --from /path/to/old-home --source-profile alpha --as alpha-copy \
+  --work-dir /path/to/migration-copy --honcho-dump /path/to/honcho.dump \
+  --spool /path/to/spool --work-db /path/to/work.db
+```
+
+`--source-profile` selects the old profile; global `--profile` still selects the profile running LINA.
+The destination is the running LINA root's `profiles/<new name>`, with an independent agent identity.
+`--home` defaults to that root; an explicitly different root is refused before copying or writing. Run the
+command from the new agent's destination installation, whose store must already be installed and reachable.
+Global `--profile` may select a runtime profile within that root; it does not change the source selection.
+The command uses SQLite's online backup API, never opens an original
+database for writing, and reads only retained snapshots after the copy step. It copies skills, persona
+and memory files; credentials are excluded and config is limited to non-secret memory settings.
+Each database snapshot is consistent on its own, not a common snapshot instant across databases.
+
+The copied Honcho input is a pre-split logical `pg_dump` archive, not a physical store backup. The selected
+profile's `honcho.json` supplies its host (`hermes` for default, `hermes_<profile>` for a named profile):
+workspace, AI peer, person peer and observation mode. A shared workspace is not imported wholesale. The
+migration selects the profile's recall-visible observer/target collections and sessions containing its AI
+peer, maps that AI peer to the new agent, and reports excluded other-agent and other-workspace rows.
+References from selected rows also retain their necessary session, peer, collection, document or message
+ancestors, listed as `dependencies`. This follows references outward; it does not import the ancestor's
+unrelated session participants, messages or private recall siblings.
+Source transport URLs and keys are not published into the new home; its Honcho config points to the
+destination store's local Honcho port.
+
+Several source profiles may share one Honcho workspace. Each destination agent receives deterministic
+21-character text IDs derived from its name and the source identity; scoped session and ordinary peer names
+are preserved. Integer IDs use each destination table's own identity sequence, allocated in source timestamp
+order with source ID as the tie-break. The receipt retains these allocated IDs for exact replay, alongside
+original IDs and explicit source UIDs. Migrated history lands with IDs after existing destination rows;
+the intended first use is a fresh agent store (lina#41), since ID order is not cross-import timestamp order.
+Pre-existing rows are never rekeyed. Foreign keys,
+citations and typed JSON identity fields use those maps, so importing a second profile cannot link it to the
+first agent's rows. Existing matching destination-agent text may still be reused after content verification.
+
+The archive is restored into a disposable database and upgraded with Honcho's actual Alembic chain in
+the installed store's Honcho image. No separate Python environment or `--honcho-python` is needed;
+that option is only an explicit interpreter override. The API and deriver are never started. Existing
+unrelated destination workspaces remain intact. Legacy vectors, including 1536-wide ones, are explicitly
+left for `lina store reembed`; migration never calls an embedding endpoint.
+
+The copied `lcm.db` is imported through LCM-X's existing `PgConnection` route after agent messages and before
+Honcho. Host text is matched by session, role, observed time (or legacy timestamp), content digest and
+`MessageStore.text_uids_with_digest`; unmatched text uses the same shared writer. The copied work ledger imports the selected profile's
+records and relations, renaming its owner to the new agent. Required area/project/goal/run/to-do ancestors
+and referenced parent events retain their original owners and are listed separately. This includes a
+to-do's closing run and both endpoints of its run relations. The destination work store keeps one migration
+profile-to-agent map: an all-profile run registers every name before importing; a single run registers only
+its arbitrary `--as` name and refuses a conflicting remap. Mapped owners apply equally to selected rows
+and ancestors; unmapped owners remain unchanged. A later owner import promotes only previously receipted
+foreign ancestors whose source and stored content still match, in the same work transaction. Other existing
+rows are never promoted. Profiles commit separately; an interrupted batch resumes by matching completed
+profiles on an identical retry. Counts and manifests compare only the selected subset, not unrelated rows.
+
+The command prints JSON and writes the same result to `--work-dir/migration-report.json`. It includes copy
+receipts, per-source accounting and bidirectional manifests, actual duplicate queries, and reference checks.
+Agent manifests hash the full immutable text payload, including tool/API fields, not just visible content.
+Large agent imports keep hash-only manifests in JSONL sidecars beside the destination state database and
+include their paths, counts and file SHA256 values in the report; text is read and verified in bounded batches.
+Raw native identities can legitimately have several immutable versions; the report discloses them separately
+from duplicate version identities. `ok` means the included migration checks passed; `complete` requires every
+step to be counted and ok, including explicit absence and deferred-vector accounting. It does not mean an
+embedding endpoint was called. An accounting mismatch exits nonzero.
+
+Repeating the same command verifies and reuses the same snapshots rather than capturing new source data;
+it inserts nothing and fails if copied destination messages were lost or changed. Use a new work directory
+to capture new source data. External ingestion keeps its cursor in the destination store under the original
+spool path, so subsequent live ingestion continues from the copied prefix. If that cursor has advanced,
+migration verifies the copy against the original spool's committed prefix and checks every copied message
+version without moving the cursor or changing live heads. Later versions are not part of the copied subset.
+A changed prefix is rejected; an unavailable original spool cannot prove an advanced cursor's byte prefix.
+Honcho reruns verify the imported durable subset rather than demanding that the whole live workspace
+remain frozen. Queue consumption and retries are accounted for from the original dump receipt, with
+current queue counts reported separately; reruns never recreate consumed jobs. New live rows are outside
+the copied subset, while missing imported identities or changed durable content still fail verification.
+
+After checking one profile, `--all-source-profiles --as copied` processes profiles sequentially as
+`copied-default`, `copied-alpha`, and so on, retaining each profile's report under the work directory.
+
+### Migration identity and reference inventory
+
+This inventory follows `services/honcho/src/models.py`, its typed payload consumers, and all 33 Alembic
+revisions from `a1b2c3d4e5f6` through `l13_message_split` (whose parent is `l19_vec_embeddings`, not l12).
+The identity-changing steps are `d429de0e5338` (peer paradigm/text PKs), `917195d9b5e9` (embedding IDs),
+`ec8f94139b02` (queue message/workspace columns), `f1a2b3c4d5e6` (legacy source arrays),
+`a7c3e9f1b2d4` (DDL-only normalized document edges), `c4d8e2f6a1b3` (citations), l19 (vector owner IDs)
+and l13 (shared text IDs). Other revisions preserve these identities while changing indexes, scoped names,
+configuration, counters, tombstones or constraints. The archive is upgraded through that ancestry before
+selection; counts describe the upgraded retained graph, not obsolete pre-upgrade tables.
+
+| Id-bearing columns | Destination identity | References and preserved distinctions |
+| --- | --- | --- |
+| `workspaces.id`, `peers.id`, `sessions.id`, `collections.id` | Deterministic 21-character agent/source IDs | Workspace FKs use `name`, not workspace ID. Queue `session_id` uses the session PK; other session fields use scoped names. Documents refer to collection observer/observed/workspace names, not collection ID. |
+| `documents.id` | Deterministic text ID | `document_sources.derived_id`, citation `conclusion_id`, `copied_from`, legacy source arrays and observation-deletion resource/key. |
+| `message_meta.public_id` | Deterministic text ID | Embedding `message_id`, citation `message_id`, polymorphic source edges/arrays, summary `message_public_id`, queue `payload.message_public_id`. These are not shared bigint IDs. |
+| `memory.messages.message_id`, `message_meta.message_id` | Validated existing text reuse or destination `memory.messages` identity allocation | Queue `message_id`, legacy queue payload integer, both summary integer boundaries, nested document metadata `message_ids`. Receipt retains original pre-l13 integer/public ID and staging-to-destination map. |
+| `documents.vec_id` | Destination documents identity sequence; receipt map | `vec.embeddings(kind='document',item_id)` after reembedding; old vectors are deferred. |
+| `message_embeddings.id` | Destination embedding identity sequence; receipt map | `vec.embeddings(kind='message',item_id)` for Honcho chunks; its own `message_id` is a text public ID. |
+| `queue.id` | Destination queue identity sequence; receipt map | Worker job identity, not message identity. Consumed jobs are not recreated on replay. |
+| `session_peers` composite PK | Workspace and selected-AI name mapping | Preserve session name and ordinary peer name; composite name FKs remain within the destination workspace. |
+| `document_sources` composite PK | Mapped document/public endpoints | Source may be a document or message public ID; missing retained targets fail. Keep edge position. |
+| `conclusion_source_messages` composite PK | Mapped document and public-message endpoints | Both endpoints are text identities; preserve citation position. |
+| `active_queue_sessions.id`, `webhook_endpoints.id` | Excluded from selected imports | Worker leases and webhook endpoints are not migrated memory; zero retained counts do not mean their source tables were empty. |
+| Shared text `uid`, registry identities | Destination-qualified Honcho UID or verified existing UID; registry alias resolution | Top-level message metadata UID/agent bindings follow chosen text. Registry IDs are not Honcho nanoids. |
+
+Typed JSON references include both short/long summary boundaries; nested integer `message_ids`; all three
+legacy document arrays (`source_ids` column, metadata `source_ids`, metadata `premise_ids`); and document-only
+`copied_from`. Valid legacy IDs enter dependency closure before remapping, even in lower-precedence arrays.
+Malformed elements, prose `premises`/`sources`, arbitrary nested metadata and URLs are not rewritten.
+The reconciler has not necessarily drained legacy arrays: a7c3 is DDL-only.
+Cycles (including self-loops) across normalized and retained legacy document references are refused before destination publication; shared-ancestor DAGs remain valid.
+
+Queue payloads distinguish integer message IDs, public message IDs, scoped peer/session names, and deletion
+resources: observation deletion uses a document ID (including an already-deleted target); session deletion
+uses a session **name**. Encoded work-unit keys remap their workspace/peer slots and observation resource,
+not session names, dream types or global reconciler keys. Known webhook payload workspace/peer fields are
+typed names; arbitrary event data is opaque. Peer-card metadata changes the selected AI's `<peer>_peer_card`
+key, not the card text. Session sequence numbers, edge positions and runtime counters are not identities.
+
+The Honcho JSON report includes `reference_inventory`: class name to occurrence count, including zero-count
+classes, for the retained source graph after closure. Counts include identity columns, relational references,
+typed JSON references and scoped-name fields inspected/preserved by the remapping contract. Each repeated
+array member counts separately; a work-unit key counts once, not once per encoded slot. Generated IDs count
+their owner rows; shared-message references exclude separately reported text-row allocations. Legacy raw
+array counts are separate from normalized edge counts. These counts are not row totals or vector totals.
+The regression runs the real remappers and requires every changed identity field to be covered by the
+inventory, so a newly remapped field cannot silently disappear from reporting.
+
+Per-source policies:
+
+- **Agent transcripts:** local placement IDs stay in each destination profile's SQLite store. Shared text
+  uses agent-qualified UID/version identity; copied immutable payloads are verified without rejecting later live rows.
+- **External messages:** platform/room/native identity plus immutable payload version is globally shared;
+  do not rename or duplicate it per profile. Retain the original spool cursor and verify copied versions.
+- **Work:** preserve native work IDs. Store-owned profile mappings apply to selected rows and ancestors;
+  only receipted unchanged foreign ancestors can later be promoted. Other content collisions fail.
+- **Honcho:** each destination agent owns a separate deterministic text-ID graph and receipt-backed positive
+  integer allocations. Shared source people/sessions do not cause a global rename. Person registry aliases
+  are agent-qualified; equal display names alone do not merge people. Preserve verified conversation aliases.
+- **Files and LCM:** file payloads and arbitrary links are not identity-remapped. LCM native IDs are scoped by
+  destination agent and remain intact; global surrogate/vector IDs are allocated by the destination and recorded
+  in its import receipt. Legacy vectors require compatible model/1024-wide float32 provenance or reembedding.
+
+### Native LCM copies
+
+The source `lcm.db` is opened read-only, without running schema migrations on it. The destination path is routed
+with `lcm_x_store.route(path, agent)`; SQLite-shaped inserts pass through its translator and message interceptor,
+not a second PostgreSQL text writer. High-level `append` cannot copy history losslessly because it applies ingest
+protection and replaces ingestion timestamps. The routed SQL preserves historical placement columns.
+
+The import retains messages, summary nodes and provenance, lifecycle/migration metadata, assertion sources and
+relations, prior importer receipts, rollups and their sources/state/invalidations, entities/aliases/keys/notes/events,
+host-file revision records, Teams policy/audit records, message relations/host UID bindings, and trajectory corpus,
+source/state/asset/transition records and profile metadata. Per-agent native IDs remain unchanged; global rowids
+are omitted on insert and mapped in `ctx.metadata`'s `lina_memory_import:v1` receipt. Registry `lcm_conversation`
+aliases resolve to the same conversation identity as host transcript sessions.
+
+Query corpus generations/views are caches rebuilt from the imported corpus. FTS tables and their shadow tables
+are rebuilt by store indexes. Binary vector accelerators and trajectory vector indexes are rebuilt from retained
+text; source backfill leases are not resumed. Unknown populated tables are refused rather than silently dropped.
+The SQLite-only fork quarantine is accepted only when empty because #16 has no corresponding destination table.
+Every source table receives accounting, including skipped cache rows and their reasons.
+
+Compatible summary/chunk vectors use the existing 0008 views; other model/width/dtype vectors are counted as
+deferred. `lina store reembed --source memory` (also `all`) includes LCM summaries, with separate per-agent progress
+and global vector keys. Migration itself never calls an embedding endpoint. The new profile selects LCM-X with
+`lcm.store_backend: postgres`; it does not receive an active local `lcm.db` copy.
+
+Reruns compare only receipted copied rows and their native-ID/hash manifests. Newly appended live rows are outside
+that subset; missing or modified copied durable rows fail. Text commits before placements through the existing
+host writer: a failed placement transaction can leave unreferenced text, but deterministic native UIDs reuse it
+on retry and no dangling placement is published. `held_by_context` keeps migrated placements' text alive during GC.
+
 ### Search
 
 `session_search` and `SessionDB.search_messages` ask Postgres for the matching rows, then keep the visible
