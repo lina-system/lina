@@ -193,6 +193,23 @@ def updates(old: Any, new: Any, prefix: str = "") -> dict[str, Any]:
 
 
 ENTRY_TABLES = ("devices.workers", "worker.runners")
+TURN_OFF = {"devices.workers": "off: true", "worker.runners": "on: false"}
+
+
+def remnants(old: dict, new: dict, raw: dict) -> list[dict]:
+    """Removals that would leave an entry behind with only fields the settings do not own (a runner's ``env``,
+    credential-like keys): such an entry has no ``type`` and ``lina worker`` would build it as a broken runner, so the
+    removal, or a rollback that would do it, is refused instead. The way to stop using it is to turn it off."""
+    errors = []
+    for table in ENTRY_TABLES:
+        kept, wanted, held = get_path(old, table) or {}, get_path(new, table) or {}, get_path(raw, table)
+        for name, entry in (held.items() if isinstance(held, dict) else []):
+            fields = sorted(str(k) for k in entry if _excluded_key(k)) if isinstance(entry, dict) else []
+            if fields and name in kept and name not in wanted:
+                errors.append({"path": f"{table}.{name}", "message": (
+                    f"has fields the work settings don't manage ({', '.join(fields)}); turn it off with "
+                    f"{TURN_OFF[table]}, or remove those fields in config.yaml first")})
+    return errors
 
 
 def _held(path: str, raw: Any) -> bool:
@@ -222,7 +239,8 @@ def settings_updates(old: dict, new: dict, raw: dict | None = None) -> dict[str,
     """``updates`` for two settings documents, emitted only at or below a work-settings key (``KEYS``): never at
     ``devices``, ``worker`` or another section the settings share with other keys, so a write never replaces or
     removes ``worker.hub``, the limits or the write gate's own keys. *raw* is the parsed file: a runner or device
-    that holds excluded fields there keeps them through a removal and a rollback."""
+    that holds excluded fields there is written field by field, so they stay (removing such an entry is refused
+    before this, see ``remnants``)."""
     out: dict[str, Any] = {}
     for top, key in KEYS:
         path = f"{top}.{key}"

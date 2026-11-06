@@ -41,6 +41,13 @@ TODAY = textwrap.dedent("""\
     """)
 
 
+@pytest.fixture(autouse=True)
+def _every_runner_keeps_its_type(tmp_path):
+    yield
+    from tests.hermes_cli._work_settings_scan import untyped_runners
+    assert untyped_runners(tmp_path) == []
+
+
 @pytest.fixture
 def root(tmp_path, monkeypatch):
     base = tmp_path / "lina"
@@ -281,23 +288,47 @@ def test_a_section_or_entry_that_is_not_a_mapping_is_refused_with_its_path(root,
     assert (root / "config.yaml").read_bytes() == before
 
 
-def test_removing_a_runner_keeps_its_env_and_a_rollback_brings_the_runner_back_beside_it(root):
+REMNANT = "worker.runners.codex: has fields the work settings don't manage (env)"
+
+
+@pytest.mark.parametrize("path", ["worker.runners.codex", "worker.runners"])
+def test_removing_a_runner_that_holds_env_is_refused_and_writes_nothing(root, path):
+    from hermes_cli.lina_work_settings import SettingsError
     store = _store(root)
     store.current()
-    store.apply(_set("worker.runners.codex", None), CLI)
-    runner = _config(root)["worker"]["runners"]["codex"]
-    assert runner == {"env": {"CODEX_HOME": "/srv/codex"}}
-    assert "codex" not in store.current().doc["worker"].get("runners", {})  # what is left is not a setting
-    whole = {"type": "command", "argv": ["codex", "exec", "-"], "env": {"CODEX_HOME": "/srv/codex"}}
-    store.rollback({**CLI, "kind": "rollback"})  # the runner as it was, env untouched
-    assert _config(root)["worker"]["runners"]["codex"] == whole
+    before = (root / "config.yaml").read_bytes()
+    with pytest.raises(SettingsError) as refused:
+        store.apply(_set(path, None), CLI)
+    assert str(refused.value).startswith(REMNANT) and "on: false" in str(refused.value)
+    assert (root / "config.yaml").read_bytes() == before
+    assert [line["rev"] for line in _audit(root)] == ["r1"]
 
-    store.apply(_set("worker.runners.dsh", {"type": "command", "argv": ["dsh", "-"]}), CLI)
-    store.apply(_set("worker.runners", None), CLI)  # removing the whole table: the same
-    assert _config(root)["worker"]["runners"] == {"codex": {"env": {"CODEX_HOME": "/srv/codex"}}}
-    store.rollback({**CLI, "kind": "rollback"})
-    assert _config(root)["worker"]["runners"]["codex"] == whole
-    assert _config(root)["worker"]["runners"]["dsh"] == {"type": "command", "argv": ["dsh", "-"]}
+
+def test_turning_a_runner_off_keeps_its_env_type_and_argv(root):
+    store = _store(root)
+    store.current()
+    store.apply(_set("worker.runners.codex.on", False), CLI)
+    assert _config(root)["worker"]["runners"]["codex"] == {
+        "type": "command", "argv": ["codex", "exec", "-"], "env": {"CODEX_HOME": "/srv/codex"}, "on": False}
+
+
+def test_a_rollback_that_would_leave_a_runner_without_its_type_is_refused(root):
+    from hermes_cli.lina_work_settings import SettingsError
+    path = root / "config.yaml"
+    path.write_text(TODAY.replace("    codex:\n      type: command\n      argv: [codex, exec, \"-\"]\n"
+                                  "      env: {CODEX_HOME: /srv/codex}\n", "    dsh: {type: command, argv: [dsh, \"-\"]}\n"),
+                    encoding="utf-8")
+    store = _store(root)
+    store.current()
+    store.apply(_set("worker.runners.codex", {"type": "command", "argv": ["codex", "-"]}), CLI)
+    path.write_text(path.read_text(encoding="utf-8").replace("codex:\n", "codex:\n      env: {CODEX_HOME: /srv/codex}\n"),
+                    encoding="utf-8")  # env added by hand: not a work setting, so no new revision
+    before = path.read_bytes()
+    with pytest.raises(SettingsError) as refused:
+        store.rollback({**CLI, "kind": "rollback"})
+    assert str(refused.value).startswith(REMNANT)
+    assert path.read_bytes() == before
+    assert [line["rev"] for line in store.history()] == ["r2", "r1"]
 
 
 def _typed_doc() -> dict:

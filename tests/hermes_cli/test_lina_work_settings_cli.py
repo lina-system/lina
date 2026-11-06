@@ -38,6 +38,13 @@ def _lina(*argv: str) -> int:
     return done.value.code or 0
 
 
+@pytest.fixture(autouse=True)
+def _every_runner_keeps_its_type(tmp_path):
+    yield
+    from tests.hermes_cli._work_settings_scan import untyped_runners
+    assert untyped_runners(tmp_path) == []
+
+
 @pytest.fixture(params=["fresh", "today"])
 def root(request, tmp_path, monkeypatch):
     base = tmp_path / "lina"
@@ -81,6 +88,19 @@ def test_set_show_history_diff_and_rollback(root, capsys):
     assert _lina("settings", "rollback") == 0
     assert "rollback of" in capsys.readouterr().out
     assert "model" not in _config(root)["worker"]["runners"]["dsh"]
+
+
+def test_removing_a_runner_that_holds_env_exits_2_and_writes_nothing(root, capsys):
+    path = root / "config.yaml"
+    path.write_text("worker:\n  runners:\n    codex: {type: command, argv: [codex, '-'], env: {SOME_HOME: /srv/x}}\n",
+                    encoding="utf-8")
+    before = path.read_bytes()
+    assert _lina("settings", "set", "worker.runners.codex", "null") == 2
+    err = capsys.readouterr().err
+    assert err.startswith("lina worker settings: worker.runners.codex: has fields the work settings don't manage (env)")
+    assert path.read_bytes() == before
+    assert _lina("settings", "set", "worker.runners.codex.on", "false") == 0
+    assert _config(root)["worker"]["runners"]["codex"]["env"] == {"SOME_HOME": "/srv/x"}
 
 
 def test_settings_with_no_subcommand_shows_the_settings(root, capsys):

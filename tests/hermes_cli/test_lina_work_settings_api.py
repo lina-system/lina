@@ -114,7 +114,9 @@ class Env:
 
 @pytest.fixture
 def env(tmp_path, monkeypatch):
-    return Env(tmp_path, monkeypatch)
+    yield Env(tmp_path, monkeypatch)
+    from tests.hermes_cli._work_settings_scan import untyped_runners
+    assert untyped_runners(tmp_path) == []
 
 
 @pytest.fixture
@@ -196,6 +198,20 @@ def test_a_wrong_type_is_422_with_its_path_never_a_500(env, client, patch, where
     reply = client.patch(BASE, json=patch, headers={"If-Match": etag})
     assert reply.status_code == 422, reply.text
     assert where in [e["path"] for e in _valid("ValidationError", reply.json())["errors"]]
+
+
+def test_removing_a_runner_that_holds_env_is_422_and_writes_nothing(env, client):
+    path = env.root / "config.yaml"
+    path.write_text(path.read_text(encoding="utf-8").replace(
+        'model: openai/m-open}', 'model: openai/m-open, env: {SOME_HOME: /srv/x}}'), encoding="utf-8")
+    _, etag = _get(client)
+    before = path.read_bytes()
+    reply = client.patch(BASE, json={"worker": {"runners": {"codex": None}, "routing": None}},
+                         headers={"If-Match": etag})
+    assert reply.status_code == 422
+    body = _valid("ValidationError", reply.json())
+    assert body["errors"][0]["path"] == "worker.runners.codex" and "(env)" in body["errors"][0]["message"]
+    assert path.read_bytes() == before
 
 
 def test_an_unexpected_failure_is_a_500_without_its_message(env, monkeypatch):
