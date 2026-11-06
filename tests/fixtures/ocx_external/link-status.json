@@ -1,0 +1,174 @@
+{
+ "role": "home",
+ "listener": {
+  "state": "example",
+  "port": 40001
+ },
+ "child": null,
+ "local": {
+  "version": "example",
+  "relayAuth": "example",
+  "features": [
+   "example"
+  ]
+ },
+ "links": [
+  {
+   "id": "lnk_0000000000000001",
+   "alias": "machine-a",
+   "direction": "hub-initiated",
+   "state": "connected",
+   "since": "2023-11-14T22:13:20.000Z",
+   "reason": null,
+   "tunnelPort": 40001,
+   "lastApplyAt": 1700000000000,
+   "runtimeStartedAt": 1700000000000,
+   "appliedCodexSettingsDigest": "example",
+   "reportedAt": 1699999970000,
+   "peer": {
+    "observedAt": "2023-11-14T22:13:20.000Z",
+    "version": "example",
+    "versionRange": null,
+    "relayAuth": "example",
+    "features": [
+     "example"
+    ],
+    "compatibility": "example",
+    "reasons": [
+     "example"
+    ]
+   },
+   "tunnel": {
+    "attempt": 2,
+    "nextRetryAt": null,
+    "lastTransition": {
+     "from": "example",
+     "to": "example",
+     "at": "2023-11-14T22:13:20.000Z",
+     "cause": null
+    },
+    "lastFailure": null
+   }
+  },
+  {
+   "id": "lnk_0000000000000002",
+   "alias": "machine-b",
+   "direction": "hub-initiated",
+   "state": "connected",
+   "since": "2023-11-14T22:13:20.000Z",
+   "reason": null,
+   "tunnelPort": 40001,
+   "lastApplyAt": 1700000000000,
+   "runtimeStartedAt": 1700000000000,
+   "appliedCodexSettingsDigest": "example",
+   "reportedAt": 1699999910000,
+   "peer": {
+    "observedAt": "2023-11-14T22:13:20.000Z",
+    "version": "example",
+    "versionRange": null,
+    "relayAuth": "example",
+    "features": [
+     "example"
+    ],
+    "compatibility": "example",
+    "reasons": [
+     "example"
+    ]
+   },
+   "tunnel": {
+    "attempt": 2,
+    "nextRetryAt": null,
+    "lastTransition": {
+     "from": "example",
+     "to": "example",
+     "at": "2023-11-14T22:13:20.000Z",
+     "cause": null
+    },
+    "lastFailure": {
+     "cause": "example",
+     "at": "2023-11-14T22:13:20.000Z"
+    }
+   }
+  },
+  {
+   "id": "lnk_0000000000000003",
+   "alias": "machine-c",
+   "direction": "hub-initiated",
+   "state": "failed",
+   "since": "2023-11-14T22:13:20.000Z",
+   "reason": "timeout",
+   "tunnelPort": 40001,
+   "lastApplyAt": 1700000000000,
+   "runtimeStartedAt": 1700000000000,
+   "appliedCodexSettingsDigest": "example",
+   "reportedAt": 1699989200000,
+   "peer": {
+    "observedAt": "2023-11-14T22:13:20.000Z",
+    "version": "example",
+    "versionRange": null,
+    "relayAuth": "example",
+    "features": [
+     "example"
+    ],
+    "compatibility": "example",
+    "reasons": [
+     "example"
+    ]
+   },
+   "tunnel": {
+    "attempt": 2,
+    "nextRetryAt": "2023-11-14T22:13:20.000Z",
+    "lastTransition": {
+     "from": "example",
+     "to": "example",
+     "at": "2023-11-14T22:13:20.000Z",
+     "cause": "example"
+    },
+    "lastFailure": {
+     "cause": "example",
+     "at": "2023-11-14T22:13:20.000Z"
+    }
+   }
+  },
+  {
+   "id": "lnk_0000000000000004",
+   "alias": "machine-d",
+   "direction": "hub-initiated",
+   "state": "connected",
+   "since": "2023-11-14T22:13:20.000Z",
+   "reason": null,
+   "tunnelPort": 40001,
+   "lastApplyAt": 1700000000000,
+   "runtimeStartedAt": 1700000000000,
+   "appliedCodexSettingsDigest": "example",
+   "reportedAt": 1699996400000,
+   "peer": {
+    "observedAt": "2023-11-14T22:13:20.000Z",
+    "version": "example",
+    "versionRange": null,
+    "relayAuth": "example",
+    "features": [
+     "example"
+    ],
+    "compatibility": "example",
+    "reasons": [
+     "example"
+    ]
+   },
+   "tunnel": {
+    "attempt": 2,
+    "nextRetryAt": null,
+    "lastTransition": {
+     "from": "example",
+     "to": "example",
+     "at": "2023-11-14T22:13:20.000Z",
+     "cause": null
+    },
+    "lastFailure": {
+     "cause": "example",
+     "at": "2023-11-14T22:13:20.000Z"
+    }
+   }
+  }
+ ]
+}
