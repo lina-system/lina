@@ -7,6 +7,7 @@ from hermes_cli.worker.runners.omo import OmoRunner
 
 
 def test_stop_removes_restartable_commands_but_keeps_file_watchers(tmp_path, monkeypatch):
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_processes._process_table", dict)
     task = Task("OT-CANCEL", tmp_path / "task")
     task.dir.mkdir()
     session_dir = tmp_path / "session"

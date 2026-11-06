@@ -57,6 +57,69 @@ def test_scope_ancestry_and_argv_literals(api, task, monkeypatch):
     assert {p["pid"] for p in api.live_work_processes(task)} == {11, 12}
 
 
+@pytest.mark.parametrize("foreign_inside", [False, True])
+def test_foreign_cwd_is_never_resolved_before_ownership(api, task, monkeypatch, foreign_inside):
+    foreign = task.dir / "foreign" if foreign_inside else task.dir.parent / "foreign"
+    outside = task.dir.parent / f"{task.dir.name}-other"
+    rows = {10: proc(api, 10, 1, 10, "/", ("node", "/opt/node_modules/omo-ai/cli.js")),
+            11: proc(api, 11, 10, 11, task.work),
+            12: proc(api, 12, 1, 12, foreign),
+            13: proc(api, 13, 10, 13, outside)}
+    resolve = Path.resolve
+    resolved = []
+
+    def guarded(path, *args, **kwargs):
+        assert path not in (foreign, outside), "unowned or out-of-task cwd was resolved"
+        resolved.append(path)
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", guarded)
+    monkeypatch.setattr(api, "_process_table", lambda: rows)
+    assert {row["pid"] for row in api.live_work_processes(task)} == {11}
+    assert task.work in resolved
+
+
+@pytest.mark.parametrize("error", [FileNotFoundError, PermissionError])
+def test_unresolvable_owned_cwd_is_not_owned(api, task, monkeypatch, error):
+    missing = task.dir / "unavailable"
+    rows = {10: proc(api, 10, 1, 10, "/", ("node", "/opt/node_modules/omo-ai/cli.js")),
+            11: proc(api, 11, 10, 11, task.work),
+            12: proc(api, 12, 10, 12, missing)}
+    resolve = Path.resolve
+
+    def guarded(path, *args, **kwargs):
+        if path == missing:
+            raise error("cwd unavailable")
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", guarded)
+    monkeypatch.setattr(api, "_process_table", lambda: rows)
+    assert {row["pid"] for row in api.live_work_processes(task)} == {11}
+
+
+@pytest.mark.platforms("posix")
+def test_linux_census_reads_cwd_link_without_resolving_target(api, tmp_path, monkeypatch):
+    entry = tmp_path / "proc" / "21"
+    entry.mkdir(parents=True)
+    (entry / "stat").write_text("21 (bash) " + " ".join(["S", "1", "21", *(["0"] * 17)]))
+    (entry / "cmdline").write_bytes(b"bash\0")
+    (entry / "environ").write_bytes(b"")
+    foreign = tmp_path / "foreign-home"
+    (entry / "cwd").symlink_to(foreign)
+    iterdir, resolve = Path.iterdir, Path.resolve
+
+    def entries(path):
+        return iter([entry]) if path == Path("/proc") else iterdir(path)
+
+    def guarded(path, *args, **kwargs):
+        assert path not in (entry / "cwd", foreign), "census resolved a cwd target"
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "iterdir", entries)
+    monkeypatch.setattr(Path, "resolve", guarded)
+    assert api._linux_process_table()[21].cwd == str(foreign)
+
+
 @pytest.mark.parametrize("recorded", [False, True])
 def test_only_monitor_primitives_are_excluded(api, task, monkeypatch, recorded):
     manifest(task, [{"runtimeKind": "command", "runtime": {"pid": 21, "processGroupId": 21}}]
@@ -179,11 +242,6 @@ def test_live_exact_cleanup_preserves_owner_and_stray(api, task, monkeypatch):
     runtime = task.dir / ".omo" / "agent" / "runtime" / "fixture" / "python"
     runtime.parent.mkdir(parents=True)
     runtime.symlink_to(sys.executable)
-    # The test runner may itself be below the real shared omo daemon. Bound
-    # runtime identity to the fixture so the independently launched stray is foreign.
-    is_runtime = api._is_runtime
-    monkeypatch.setattr(api, "_is_runtime", lambda row: bool(row.argv and row.argv[0] == str(runtime))
-                        and is_runtime(row))
     owner_code = (
         "import os,signal,subprocess,sys; signal.signal(signal.SIGTERM,signal.SIG_IGN); "
         "p=subprocess.Popen([sys.argv[2],'-c',"
@@ -202,6 +260,14 @@ def test_live_exact_cleanup_preserves_owner_and_stray(api, task, monkeypatch):
             selector.register(read_fd, selectors.EVENT_READ)
             assert selector.select(timeout=10), "child never became ready"
             child = int(os.read(read_fd, 64).strip())
+        # Read real process records only for this fixture's three known PIDs.
+        iterdir = Path.iterdir
+
+        def entries(path):
+            return iter(path / str(pid) for pid in (owner.pid, child, stray.pid)) if path == Path("/proc") else iterdir(path)
+
+        monkeypatch.setattr(Path, "iterdir", entries)
+        monkeypatch.setattr(api, "_process_table", api._linux_process_table)
         manifest(task, backgrounds=[{"runtime": {"pid": child, "processGroupId": owner.pid,
                                                  "argv": [sys.executable]}}])
         assert {p["pid"] for p in api.live_work_processes(task)} == {child}

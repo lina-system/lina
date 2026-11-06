@@ -71,7 +71,7 @@ def _linux_process_table() -> dict[int, Process]:
             fields = (entry / "stat").read_text(encoding="utf-8-sig").rsplit(")", 1)[1].split()
             argv = tuple(x.decode(errors="replace") for x in (entry / "cmdline").read_bytes().split(b"\0") if x)
             try:
-                cwd = str((entry / "cwd").resolve(strict=True))
+                cwd = os.readlink(entry / "cwd")
             except OSError:
                 cwd = None
             try:
@@ -151,6 +151,16 @@ def _is_runtime(process: Process) -> bool:
     return False
 
 
+def _task_cwd(cwd: str, root: Path) -> bool:
+    """Resolve only owned candidates already lexically inside the task directory."""
+    if cwd != str(root) and not cwd.startswith(str(root) + os.sep):
+        return False
+    try:
+        return Path(cwd).resolve().is_relative_to(root)
+    except OSError:
+        return False
+
+
 def _owned(task: Task, rows: dict[int, Process], manifest: dict) -> tuple[list[Process], set[int]]:
     root = task.dir.resolve()
     protected, cursor = set(), os.getpid()
@@ -172,15 +182,16 @@ def _owned(task: Task, rows: dict[int, Process], manifest: dict) -> tuple[list[P
     for pid, row in rows.items():
         if pid in protected or pid in runtimes or row.state.startswith("Z") or not row.cwd or not row.argv:
             continue
-        if not Path(row.cwd).resolve().is_relative_to(root):
-            continue
         cursor, seen = pid, set()
         while cursor > 1 and cursor in rows and cursor not in seen:
             seen.add(cursor)
             if cursor in anchors or cursor in runtimes:
-                found.append(row)
                 break
             cursor = rows[cursor].ppid
+        else:
+            continue
+        if _task_cwd(row.cwd, root):
+            found.append(row)
     return found, monitor_groups
 
 
