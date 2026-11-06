@@ -9,6 +9,8 @@
   ``service_definition`` by ``hermes_cli/lina_ocx_service.py``.
 * ``worker``: ``lina worker serve`` (#35), launchd ``ai.lina.worker`` / systemd ``lina-worker``, written through
   ``service_definition`` by ``hermes_cli/worker/service.py``. Its runs reach models through OCX.
+* ``web``: the dashboard server of the LINA root (the app at ``/app/``, #168), launchd ``ai.lina.web`` / systemd
+  ``lina-web``, written through ``service_definition`` by ``hermes_cli/lina_web_service.py`` (lina#288).
 
 A LINA gateway never starts beside a Hermes Agent gateway of the same profile name: both would poll the same bot
 tokens. ``loaded_hermes_agent_gateway`` is the read-only probe ``gateway/run_bootstrap.py`` asks before it binds.
@@ -49,6 +51,7 @@ SERVICES = (
     Service("store", "lina-store", "lina-store", "lina-store"),
     Service("ocx", "ai.lina.ocx", "lina-ocx", "LINA_OCX"),
     Service("worker", "ai.lina.worker", "lina-worker", "LINA_Worker"),
+    Service("web", "ai.lina.web", "lina-web", "LINA_Web"),
 )
 BY_NAME = {service.name: service for service in SERVICES}
 
@@ -107,8 +110,13 @@ def _worker_state() -> str:
     return service.state()
 
 
+def _web_state() -> str:
+    from hermes_cli import lina_web_service
+    return lina_web_service.state()
+
+
 _STATE: dict[str, Callable[[], str]] = {"gateway": _gateway_state, "store": _store_state, "ocx": _ocx_state,
-                                        "worker": _worker_state}
+                                        "worker": _worker_state, "web": _web_state}
 
 
 def state(service: Service) -> str:
@@ -189,12 +197,20 @@ def _worker(verb: str) -> None:
         sys.exit(code)
 
 
+def _web(verb: str) -> None:
+    from hermes_cli import lina_web_service
+    code = lina_web_service.VERBS[verb]()
+    if code:
+        sys.exit(code)
+
+
 def worker_running() -> bool:
     from hermes_cli.worker import service
     return service.running()
 
 
-_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "ocx": _ocx, "worker": _worker}
+_VERBS: dict[str, Callable[[str], None]] = {"gateway": _gateway, "store": _run_store, "ocx": _ocx, "worker": _worker,
+                                            "web": _web}
 
 # Who runs on whom: a service is not stopped or restarted while a service that uses it still runs (the gateway's and
 # the worker's model calls go through OCX).
@@ -240,14 +256,40 @@ def install_gateway_step(*, services: bool, out=print) -> int:
         return exc.code if isinstance(exc.code, int) else 1
 
 
-def service_definition(kind: str, label: str, argv: list[str], env: dict[str, str]) -> str:
-    """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.ocx`` (#32) and
-    ``ai.lina.worker`` (#35).
+def service_logs(root: Path, name: str) -> tuple[Path, Path]:
+    """``<root>/logs/<name>.log`` and ``<name>.error.log``, the folder made: a launchd job's shell appends to them
+    and fails to start when the folder is missing."""
+    logs = root / "logs"
+    logs.mkdir(parents=True, exist_ok=True)
+    return logs / f"{name}.log", logs / f"{name}.error.log"
+
+
+def service_env(env: dict[str, str]) -> dict[str, str]:
+    """*env* without what a Hermes card session's shell carries: ``HERMES_KANBAN_*``, ``HERMES_DELEGATED_CHILD_CONTEXT``
+    and a ``HERMES_HOME`` of Hermes Agent's (lina#288). A job started from that shell must not run as that card."""
+    from hermes_constants import is_hermes_agent_path
+    return {key: value for key, value in env.items()
+            if not key.startswith("HERMES_KANBAN_") and key != "HERMES_DELEGATED_CHILD_CONTEXT"
+            and not (key == "HERMES_HOME" and is_hermes_agent_path(value))}
+
+
+def service_definition(kind: str, label: str, argv: list[str], env: dict[str, str], *,
+                       logs: tuple[Path, Path]) -> str:
+    """A launchd plist or a systemd user unit running *argv* as *label*: ``ai.lina.ocx`` (#32), ``ai.lina.worker``
+    (#35) and ``ai.lina.web`` (#288).
+
+    On launchd the job's first program is ``/usr/bin/osascript`` (``gateway_launchd.launchd_program_arguments``):
+    macOS privacy judges a job's file access by that program, and a job that starts the system Python or an unsigned
+    interpreter directly is refused the LINA root on an external disk or stops on a consent dialog nobody sees
+    (lina#288). *logs* (stdout, stderr) are appended by that wrapper; systemd keeps the journal.
 
     ``MaterializeDatalessFiles``: launchd jobs do not download cloud placeholders by default, so opening a not yet
     downloaded file of a synced Desk would fail in the job and every child it starts (lina#37)."""
+    env = service_env(env)
     if kind == "launchd":
-        return plistlib.dumps({"Label": label, "ProgramArguments": list(argv), "EnvironmentVariables": dict(env),
+        from hermes_cli.gateway_launchd import launchd_program_arguments
+        program = launchd_program_arguments(list(argv), *logs)
+        return plistlib.dumps({"Label": label, "ProgramArguments": program, "EnvironmentVariables": env,
                                "RunAtLoad": True, "KeepAlive": True, "MaterializeDatalessFiles": True}).decode()
     if kind == "systemd":
         lines = ["[Unit]", f"Description=LINA {label}", "", "[Service]"]

@@ -31,6 +31,7 @@ def account(tmp_path, monkeypatch):
     monkeypatch.setattr(gateway_cli, "_is_service_installed", lambda: False)
     # OCX's unit lives under the account's real config dir; keep `all` from seeing (and stopping) a real one.
     monkeypatch.setattr("hermes_cli.lina_ocx_service.definition_path", lambda kind: tmp_path / "units" / "lina-ocx")
+    monkeypatch.setattr("hermes_cli.lina_web_service.definition_path", lambda kind: tmp_path / "units" / "lina-web")
     verbs = []
     monkeypatch.setattr(gateway_cli, "gateway_command", lambda args: verbs.append(vars(args)))
     return {"store": tmp_path / "store", "verbs": verbs}
@@ -199,10 +200,16 @@ def test_install_starts_the_gateway_only_with_services(account, capsys):
     assert [verb["gateway_command"] for verb in account["verbs"]] == ["install"]
 
 
-def test_service_definition_seam_runs_the_given_argv():
+def test_service_definition_seam_runs_the_given_argv(tmp_path):
+    """launchd starts the argv under osascript with the service's own logs (lina#288); systemd runs it bare."""
+    from hermes_cli.gateway_launchd import launchd_program_arguments
+    logs = lina_services.service_logs(tmp_path, "ocx")
     plist = plistlib.loads(lina_services.service_definition(
-        "launchd", "ai.lina.ocx", ["/opt/lina/bin/lina", "ocx", "run"], {"HERMES_HOME": "/srv/lina"}).encode())
+        "launchd", "ai.lina.ocx", ["/opt/lina/bin/lina", "ocx", "run"], {"HERMES_HOME": "/srv/lina"},
+        logs=logs).encode())
     assert (plist["Label"], plist["ProgramArguments"], plist["EnvironmentVariables"]) == (
-        "ai.lina.ocx", ["/opt/lina/bin/lina", "ocx", "run"], {"HERMES_HOME": "/srv/lina"})
-    unit = lina_services.service_definition("systemd", "lina-worker", ["/opt/lina/bin/lina", "worker"], {})
+        "ai.lina.ocx", launchd_program_arguments(["/opt/lina/bin/lina", "ocx", "run"], *logs),
+        {"HERMES_HOME": "/srv/lina"})
+    unit = lina_services.service_definition("systemd", "lina-worker", ["/opt/lina/bin/lina", "worker"], {},
+                                            logs=logs)
     assert "ExecStart=/opt/lina/bin/lina worker" in unit.splitlines()
