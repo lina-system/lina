@@ -3,7 +3,9 @@ percent and reset, and the burn rate in percent per hour.
 
 The accounts are ``lina_models.query("accounts")`` (the quota OCX caches per account; the probing ``quota`` view stays
 CLI-only). An OCX run outside LINA (``ocx.external``, lina#232) is read with ``account list --quota --json``: OCX 2.97
-puts no quota in the plain list, and without ``--refresh`` that view serves OCX's cache. The rate needs history, so
+puts no quota in the plain list. OCX keeps each account's quota for 10 minutes (``ACCOUNT_QUOTA_TTL_MS``,
+``src/providers/quota-wire.ts`` in OCX 2.97); after that a read probes the provider for that account, which may refresh
+its OAuth token, and ``QUOTA_EVERY = 600`` keeps LINA at one such read per 10 minutes. The rate needs history, so
 each read appends one row per account window to ``board/quota.jsonl`` under the LINA root, at most every ten minutes, and rows older than 14 days are dropped. Rate rules (the board's
 ``model/fleet.py``): over the last three hours inside one reset period, at least 30 minutes of records.
 """

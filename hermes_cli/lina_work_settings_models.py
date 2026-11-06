@@ -77,6 +77,14 @@ def read(now: float) -> tuple[list, list, list[dict]]:
     return rows, accounts, []
 
 
+def last_good(now: float) -> tuple[list, list] | None:
+    """``(live rows, accounts)`` of the last good read when it is at most ten minutes old, else None. Never calls
+    OCX: the run path decides from this at submit (lina#257), so a hanging OCX never holds a submit."""
+    with _LOCK:
+        hit = _LAST.get("ocx")
+    return (hit[1], hit[2]) if hit and now - hit[0] <= LAST_GOOD_S else None
+
+
 def _windows(account: dict, model_id: str) -> list[tuple[float, float | None]]:
     quota = account.get("quota") if isinstance(account.get("quota"), dict) else {}
     out = [(_number(quota.get(value)), reset_time(quota.get(reset))) for _, value, reset in (*WINDOWS, *EXTRA_WINDOWS)

@@ -20,8 +20,8 @@ worker:
     - {name: docs, when: {runner_label: runner/agy, labels_any: [docs], size: [S, M]}, runner: agy}
 ```
 
-``role``, ``on``, ``model``, ``fallback_model``, ``access``, ``models.fallback`` and ``routing`` are new; today's
-worker ignores them (the run-path half is lina#257). This module is the schema: the keys taken out of a config
+``role``, ``on``, ``model``, ``fallback_model``, ``access``, ``models.fallback`` and ``routing`` are new; the run
+path reads all but ``role`` and ``access`` at submit (``lina_work_settings_route.decide``, lina#257). This module is the schema: the keys taken out of a config
 (``snapshot``), validation, dotted paths and the field diff. Revisions live in ``lina_work_settings_store``.
 
 A runner's ``env`` and any credential-like key are never part of the settings: they stay in ``config.yaml`` as they
