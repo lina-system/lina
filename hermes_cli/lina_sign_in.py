@@ -90,9 +90,39 @@ rm -rf "$d"
 [ -e "$d" ] || echo cleaned
 """
 
+# The terminal for a runner that needs one (agy): python3's pty module runs argv[2:] on a new pseudo-terminal in its
+# own session, records the child's pid in argv[1] (the folder's `pids`, for STOP_SCRIPT), copies stdin (the CLI's
+# input fifo) to the terminal and drops what the CLI draws. macOS's BSD `script` cannot be used here: with a fifo on
+# stdin it ends at once (`tcgetattr/ioctl: Operation not supported on socket`) without running the command.
+PTY_HELPER = r'''
+import os, pty, select, sys
+pid, master = pty.fork()
+if pid == 0:
+    os.execvp(sys.argv[2], sys.argv[2:])
+with open(sys.argv[1], "a") as pids:
+    pids.write("%d\n" % pid)
+fds = [0, master]
+while True:
+    ready = select.select(fds, [], [])[0]
+    if 0 in ready:
+        data = os.read(0, 1024)
+        if data:
+            os.write(master, data)
+        else:
+            fds.remove(0)
+    if master in ready:
+        try:
+            if not os.read(master, 4096):
+                break
+        except OSError:
+            break
+status = os.waitpid(pid, 0)[1]
+sys.exit(os.WEXITSTATUS(status) if os.WIFEXITED(status) else 1)
+'''.strip()
+
 # $1 command (shell words), $2 credential under $HOME, $3 1 = run under a terminal, $4 report cache to remove,
 # $5 seconds before Enter on the first menu ("" = none), $6 STOP_SCRIPT. Lines out: `dir <folder>`, `url <address>`,
-# `signed`, `exit <n>`, `no-url`, `cleaned`. Lines in: `code <code>`, `stop`.
+# `signed`, `exit <n>`, `no-url`, `no-pty`, `cleaned`. Lines in: `code <code>`, `stop`.
 NODE_SCRIPT = r"""
 set -u
 cmd=$1; cred=$2; pty=$3; cache=$4; menu=$5; stop=$6
@@ -112,7 +142,17 @@ chmod 700 "$d/open"
 mkfifo "$d/in"
 if [ "$pty" = 1 ]; then
   enter=$(printf '\r')
-  case $(uname) in Darwin) set -- script -q /dev/null sh -c "$cmd" ;; *) set -- script -qfec "$cmd" /dev/null ;; esac
+  py=$(command -v python3 2>/dev/null || true)
+  if [ -n "$py" ]; then
+    cat > "$d/pty" <<'EOF'
+__PTY_HELPER__
+EOF
+    set -- "$py" "$d/pty" "$d/pids" sh -c "$cmd"
+  elif [ "$(uname)" != Darwin ] && command -v script > /dev/null 2>&1; then
+    set -- script -qfec "$cmd" /dev/null
+  else
+    echo no-pty; exit 1
+  fi
 else
   enter=''
   set -- sh -c "$cmd"
@@ -137,7 +177,7 @@ while IFS= read -r line; do
     stop) break ;;
   esac
 done
-"""
+""".replace("__PTY_HELPER__", PTY_HELPER)
 
 
 class SignInError(RuntimeError):
@@ -310,7 +350,9 @@ def _steps(session: NodeSession, host: str | None, conf: dict, runner: str) -> t
     try:
         if not session.opened():
             return "failed", "the node did not answer"
-        word, address = session.out.expect(("url", "no-url", "exit"), URL_WAIT_S + MENU_DELAY_S + 30)
+        word, address = session.out.expect(("url", "no-url", "no-pty", "exit"), URL_WAIT_S + MENU_DELAY_S + 30)
+        if word == "no-pty":
+            return "failed", "no pty helper on the node: this runner needs python3 there for its terminal"
         if word != "url":
             return "failed", "the runner gave no sign-in address" if word else "the node did not answer"
         port = loopback_port(address)

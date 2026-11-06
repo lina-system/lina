@@ -34,7 +34,11 @@ and a one-line `reason`. When a person is needed it also has `need` and
    node.
    - Grok: `grok login --oauth`, a loopback sign-in. Its address returns to
      `http://127.0.0.1:<port>/...` on the node.
-   - agy: `agy` without arguments, under a terminal (`script`). Enter picks the
+   - agy: `agy` without arguments, under a terminal that a small python3 `pty`
+     helper opens on the node, on every OS. macOS's BSD `script` cannot run with
+     a fifo on stdin. Without python3, a Linux node falls back to
+     `script -qfec`, and a macOS node is refused with "no pty helper on the
+     node". Enter picks the
      first entry of its menu, Google OAuth. Its address returns to a page on the
      provider's site that shows a code to paste. There is no local return.
 3. For a loopback return, the hub opens `ssh -L <port>:127.0.0.1:<port> <node>`.
@@ -47,7 +51,7 @@ and a one-line `reason`. When a person is needed it also has `need` and
 5. The hub closes the tunnel and asks the node session to stop, then ends the
    session if it has not ended within 10 s. It then runs a separate short stop
    call on the node. That call stops every process the session recorded and all
-   their descendants (a CLI under `script` included), and removes the folder and
+   their descendants (a CLI under the pty helper included), and removes the folder and
    the node's runner report cache (`<LINA root>/worker/runners.report.json`).
    Its `cleaned` is the confirmation; without it the result is `failed`. The hub
    then reads `hello` again and returns `signed_in` only when the node now

@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import shlex
+import shutil
 import sys
 import textwrap
 from pathlib import Path
@@ -119,9 +120,21 @@ urllib.request.urlopen(back + "?" + urllib.parse.urlencode({{"code": {code!r}, "
 """
 
 
+FAKE_SCRIPT = """\
+#!/bin/sh
+echo "$@" >> "$FAKE_SCRIPT_LOG"
+if [ -n "${{FAKE_SCRIPT_BSD:-}}" ]; then
+    echo "script: tcgetattr/ioctl: Operation not supported on socket" >&2
+    exit 1
+fi
+exec {real} "$@"
+"""
+
+
 def _script(path: Path, template: str) -> Path:
     path.parent.mkdir(parents=True, exist_ok=True)
-    path.write_text(template.format(python=sys.executable, code=CODE, state=STATE), encoding="utf-8")
+    path.write_text(template.format(python=sys.executable, code=CODE, state=STATE,
+                                    real=shutil.which("script") or "false"), encoding="utf-8")
     path.chmod(0o755)
     return path
 
@@ -147,6 +160,10 @@ class Hub:
         self.ssh_log = tmp_path / "ssh.log"
         self.seen = tmp_path / "browser-seen.json"
         _script(self.fakes / "bin" / "ssh", FAKE_SSH)
+        _script(self.fakes / "bin" / "script", FAKE_SCRIPT)
+        (self.fakes / "bin" / "python3").symlink_to(sys.executable)
+        self.script_log = tmp_path / "script.log"
+        monkeypatch.setenv("FAKE_SCRIPT_LOG", str(self.script_log))
         browser_cmd = _script(self.fakes / "browser", FAKE_BROWSER)
         _script(self.node_root / "bin" / "runners" / "grok", FAKE_GROK)
         _script(self.node_root / "bin" / "runners" / "agy", FAKE_AGY)
@@ -295,6 +312,18 @@ def test_agy_takes_the_code_its_return_page_shows_from_the_browser_command(tmp_p
     assert not [call for call in hub.ssh_calls() if "-L" in call], "a return to a page needs no tunnel"
     assert CODE not in printed and hub.leftovers() == []
     assert not _alive(int((hub.node_home / "cli.pid").read_text())), "agy's terminal session is stopped"
+    assert not hub.script_log.exists(), "the terminal comes from the python3 pty helper on every OS, never `script`"
+
+
+def test_agy_signs_in_where_bsd_script_cannot_run_with_a_fifo_on_stdin(tmp_path, monkeypatch):
+    hub = Hub(tmp_path, monkeypatch, mode="code")
+    monkeypatch.setenv("FAKE_SCRIPT_BSD", "1")
+
+    result, _ = hub.sign_in("agy")
+
+    assert result["state"] == "signed_in", result
+    assert hub.leftovers() == []
+    assert not _alive(int((hub.node_home / "cli.pid").read_text()))
 
 
 def test_a_node_session_that_never_sees_stop_is_still_stopped_and_cleaned(tmp_path, monkeypatch):
