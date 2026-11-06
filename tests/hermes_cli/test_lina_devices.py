@@ -50,6 +50,7 @@ def probes(monkeypatch):
     asked: list[str] = []
     monkeypatch.setattr(lina_devices, "probe", lambda dev, root, runner: found[dev.name])
     monkeypatch.setattr(lina_devices, "omo_status", lambda dev: asked.append(dev.name) or omo[dev.name])
+    monkeypatch.setattr(lina_devices, "runner_status", lambda dev, root: [])
     return asked
 
 

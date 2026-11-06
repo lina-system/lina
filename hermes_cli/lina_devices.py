@@ -5,6 +5,10 @@ Readiness of one device: ssh reachable (a local device always is), the pinned om
 device: ``current`` is the pin) when its runner is omo, free disk, the cap and what runs now, from the same ``probe``
 the bidding uses. ``check <name> --run-smoke`` hands one tiny real task to that device through ``lina worker`` and
 reports ``done`` or ``failed`` with the run ID; it runs only when asked.
+
+Each device also shows its runners (lina#222): pinned and installed version, sign-in and one reason when not ready,
+from ``lina runners status --offered`` on the device. ``sign-in`` gathers the runners a person has to sign in to into
+one question per runner, and ``service`` reads or restarts OCX and the worker of a device through the service layer.
 """
 
 from __future__ import annotations
@@ -50,7 +54,19 @@ def omo_status(dev: settings.Device) -> dict:
     if dev.local:
         from hermes_cli.lina_omo import status
         return status()
-    remote = shlex.join([*shlex.split(dev.lina), "omo", "status", "--json"])
+    return _remote_json(dev, ["omo", "status", "--json"])
+
+
+def runner_status(dev: settings.Device, worker_root: Path) -> list | dict:
+    """``lina runners status --offered --json`` on *dev* (in this process for a local device)."""
+    if dev.local:
+        from hermes_cli.lina_runners import node_report
+        return node_report(worker_root)
+    return _remote_json(dev, ["runners", "status", "--offered", "--json"])
+
+
+def _remote_json(dev: settings.Device, args: list[str]) -> list | dict:
+    remote = shlex.join([*shlex.split(dev.lina), *args])
     try:
         done = subprocess.run(["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=10", dev.host, remote],
                               capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120,
@@ -60,7 +76,20 @@ def omo_status(dev: settings.Device) -> dict:
     try:
         return json.loads(done.stdout) if done.returncode == 0 else {"error": done.stderr.strip()[-160:]}
     except ValueError:
-        return {"error": "lina omo status gave no JSON"}
+        return {"error": f"lina {' '.join(args[:2])} gave no JSON"}
+
+
+def runner_rows(dev: settings.Device, worker_root: Path, found: dict) -> list[dict]:
+    """The device's runner rows; when it cannot be asked, the runners the hub offers, each ``unreachable`` (or
+    ``update`` when it answers but has no ``lina runners`` yet)."""
+    from hermes_cli.lina_runners import offered
+    got = runner_status(dev, worker_root) if found["ssh"] and not found.get("protocol_error") else None
+    if isinstance(got, list):
+        return got
+    why = "unreachable" if got is None else "update"
+    return [{"runner": name, "name": pin.name if pin else None, "pinned": pin.version if pin else None,
+             "installed": None, "sign_in": None, "ready": False, "why": why}
+            for name, pin in offered(settings.section(worker_root.parent))]
 
 
 def readiness(dev: settings.Device, worker_root: Path) -> dict:
@@ -78,6 +107,7 @@ def readiness(dev: settings.Device, worker_root: Path) -> dict:
     if why is None and row["omo"] is False:
         why = f"pinned omo {omo.get('pinned') or '?'} not current ({omo.get('error') or omo.get('current') or 'none'})"
     row["ready"], row["why"] = why is None, why
+    row["runners"] = runner_rows(dev, worker_root, found)
     return row
 
 
@@ -107,8 +137,82 @@ def list_devices(base: Path | None = None, *, as_json: bool = False, out=print) 
     elif not rows:
         out("no devices: `lina devices add <name> --host <ssh alias|local>`")
     for row in [] if as_json else rows:
-        out(render(row))
+        _render_with_runners(row, out)
     return 0
+
+
+def _render_with_runners(row: dict, out) -> None:
+    from hermes_cli.lina_runners import render as render_runners
+    out(render(row))
+    for line in render_runners([item for item in row.get("runners") or [] if item.get("pinned") or item.get("why")]):
+        out(f"  {line}")
+
+
+def sign_in_questions(rows: list[dict]) -> list[dict]:
+    """One inbox question per runner a person has to sign in to, listing those nodes and how to sign in on each
+    (lina#222). Writing it into the inbox and the sign-in button are #230 / #234."""
+    from hermes_cli.lina_runners import how_to_sign_in
+    asks: dict[str, dict] = {}
+    for row in rows:
+        for item in row.get("runners") or []:
+            if item.get("sign_in") != "signed_out":
+                continue
+            ask = asks.setdefault(item["name"], {"runner": item["name"], "nodes": []})
+            ask["nodes"].append({"node": row["name"],
+                                 "how": how_to_sign_in(item.get("sign_in_by") or "", item["name"], row["name"])})
+    for ask in asks.values():
+        names = ", ".join(node["node"] for node in ask["nodes"])
+        ask["question"] = f"Sign in to {ask['runner']} on {len(ask['nodes'])} node(s): {names}"
+    return list(asks.values())
+
+
+def sign_in(base: Path | None = None, *, as_json: bool = False, out=print) -> int:
+    """``lina devices sign-in``: the sign-in questions over every device (read-only)."""
+    base = _base(base)
+    asks = sign_in_questions([readiness(dev, settings.root(base)) for dev in _devices(base)])
+    if as_json:
+        out(json.dumps(asks, ensure_ascii=False))
+        return 0
+    if not asks:
+        out("no runner waits for a sign-in")
+    for ask in asks:
+        out(ask["question"])
+        for node in ask["nodes"]:
+            out(f"  {node['node']}: {node['how']}")
+    return 0
+
+
+def service_call(dev: settings.Device, worker_root: Path, which: str, action: str) -> dict:
+    """OCX or worker status/restart on *dev*. The worker goes through #218's negotiated ``service`` verb with the
+    instance its ``hello`` reports now; OCX goes through ``lina_runners.node_service`` on the node."""
+    from hermes_cli.lina_runners import node_service
+    if which == "ocx":
+        if dev.local:
+            return node_service(worker_root, "ocx", action)
+        return {"service": "ocx", "action": "error",
+                "reason": f"{dev.name}: OCX on another node needs the node's `service` verb to carry ocx (next round)"}
+    transport = for_device(dev, worker_root)
+    reply = transport.refresh(timeout=60)
+    descriptor = transport.descriptor or {}
+    if reply.code != 0:
+        return {"service": "worker", "action": "error",
+                "reason": descriptor.get("reason") or reply.err.strip()[-160:] or f"exit {reply.code}"}
+    if action == "status":
+        return {"service": "worker", "action": "status", "serve": descriptor.get("serve"),
+                "instance_id": descriptor.get("instance_id")}
+    return {"service": "worker", **transport.service(action, descriptor.get("instance_id") or "").json()}
+
+
+def service(name: str, which: str, action: str, *, base: Path | None = None, as_json: bool = False,
+            out=print) -> int:
+    base = _base(base)
+    result = service_call(device(name, base), settings.root(base), which, action)
+    if as_json:
+        out(json.dumps(result, ensure_ascii=False))
+    else:
+        detail = result.get("reason") or result.get("state") or ("serving" if result.get("serve") else "not serving")
+        out(f"{name} {which} {result.get('action')}: {detail}")
+    return 1 if result.get("action") == "error" else 0
 
 
 def add(name: str, host: str, *, base: Path | None = None, cap: int = 1, fast: bool = False, no_repo: bool = False,
@@ -154,7 +258,7 @@ def check(name: str, *, base: Path | None = None, run_smoke: bool = False, timeo
     if as_json:
         out(json.dumps(row, ensure_ascii=False))
     else:
-        out(render(row))
+        _render_with_runners(row, out)
         if run_smoke:
             out(f"smoke: {row['smoke']['state']} · run {row['smoke']['id'] or '-'}"
                 + (f" · {row['smoke']['why']}" if row["smoke"].get("why") else ""))
