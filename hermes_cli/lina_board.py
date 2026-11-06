@@ -22,8 +22,19 @@ logger = logging.getLogger(__name__)
 
 
 def _root() -> Path:
+    """The board's own root: the work record, the quota view and the read marks (``lina_ocx.lina_root``). Worker
+    state is not read from here but through :func:`_worker_base` (lina#269)."""
     from hermes_cli.lina_ocx import lina_root
     return lina_root()
+
+
+def _worker_base() -> Path:
+    """The root ``lina worker`` writes its state under: ``worker/settings.py``'s ``lina_home`` (lina#227) — ``LINA_HOME``,
+    and a ``HERMES_HOME`` of Hermes Agent's (a Hermes card session's) ignored for the platform default. The board's
+    worker views and the event stream resolve it here and nowhere else, so both read the runs, devices and run
+    receipts the worker itself wrote (lina#269)."""
+    from hermes_cli.worker import settings
+    return settings.lina_home()
 
 
 def _item_row(item: dict, recs: dict) -> dict:
@@ -60,21 +71,25 @@ def work_read(root: Path) -> dict:
             env.reset()
 
 
-def worker_read(root: Path, now: float) -> list[dict]:
+def worker_read(_board_root: Path, now: float) -> list[dict]:
+    """The runs ``lina worker`` holds, read from the root the worker writes (``_worker_base``, lina#269). The board
+    root the callers pass is not where they are: the worker's state lives under its own root."""
     from hermes_cli.worker import settings
     from hermes_cli.worker.board import cards
-    return cards(settings.root(root), now)
+    return cards(settings.root(_worker_base()), now)
 
 
-def devices_read(root: Path, now: float, errors: list[dict]) -> list[dict]:
-    """The devices with readiness and load; a metrics reader that fails adds an error and leaves its fields empty."""
+def devices_read(_board_root: Path, now: float, errors: list[dict]) -> list[dict]:
+    """The devices with readiness and load; a metrics reader that fails adds an error and leaves its fields empty.
+    The devices and their ``devices.metrics.beszel`` path come from the worker's own config, the same root as
+    :func:`worker_read` (lina#269); the board root the callers pass holds none of it."""
     from hermes_cli.worker import settings
     from hermes_cli.worker.board import beszel_path, beszel_read, machines
     metrics = None
-    path = beszel_path(root)
+    path = beszel_path(_worker_base())
     if path is not None:
         metrics = _source("metrics", errors, lambda: beszel_read(path, now))
-    return machines(settings.root(root), metrics, now)
+    return machines(settings.root(_worker_base()), metrics, now)
 
 
 def quota_read(root: Path, now: float) -> list[dict]:

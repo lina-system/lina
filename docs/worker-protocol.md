@@ -45,6 +45,56 @@ node response refreshes hello without retrying the action. There is no new human
 service-control CLI in this change. This guard is instance checking, not access
 authorization; the SSH account remains the existing trust boundary.
 
+## Request keys
+
+`lina worker submit` and `send` take `--key <k>` (Python: `opts["request_key"]`,
+`Hub.send(..., request_key=)`); without one the CLI makes `rk-<uuid4 hex>` and
+prints `request key: <k>` on stderr before anything else. The same key with the
+same arguments (a sha256 over canonical JSON of what defines the request: the
+brief bytes, mode, repo, inputs, to-do, topic, host, runner, model, labels,
+size, access, card, owner and schedule for submit; task, message, access and
+card for send) returns the first result and starts, places or sends nothing:
+`<ID> replay of request key <k>`, receipt `request_replayed`. Other arguments
+are refused, naming the key and the first request, and nothing is written.
+A key must match `^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$`; any other is refused
+(`request key must match <pattern>: <k>`) before anything is written.
+
+The hub keeps `hub/keys/<sha256(key)>.json` (`key, op, args_sha256, task, run,
+action, at`), written under the key's lock before any device is called and
+filled in after; the job carries `request_key` and a `request_keys` map.
+Before a send calls the device, the record also gets `device_verb`,
+`device_args`, `device_phase` and `device_key`. A replay of a record left without a result
+never bids or routes again: it returns the recorded task, or calls the
+recorded verb again with the recorded arguments and key, so a question that
+closed after a lost `answer` reply is not steered or followed up anew. A call
+that fails with no reply is an error that names the key to send again with.
+On the device `follow_up` (payload `request_key`), `answer` and `send` (an
+optional trailing argument) keep `{key: reply}` in the task's `keys.json`
+under the task lock, so any write verb with a key it has seen returns the
+stored reply and changes nothing; replies that changed nothing are not kept.
+A device call never carries the caller key itself but `<k>#<phase>`: `req`
+for the request's first device call, `next` for the run an answer starts after
+its question closed. A caller key cannot hold `#`, so it never equals a device
+key; the device treats the key as opaque.
+A reply the device marks `replayed` is reconciled, never applied as new: the
+hub fills in the key's record, writes `request_replayed` and prints the replay
+line, moves the task's run, state, delivery and verdict only to a run newer
+than the one it holds, and never raises its access. An end reported for a run
+newer than the hub's (its follow-up reply was lost, keyed or not) adopts that
+run (receipt `run_adopted`): the hub sets what that reply would have set, the
+run, a fresh state, delivery and verdict, the run's access from the device's
+`meta` and the task's access lowered to it (never raised), and delivers the
+end as usual; only an end of an older run is recorded silently. A later
+replay of the request that started an adopted run that has ended changes
+nothing but the key's record and lowers the task's access to the request's.
+Before a send chooses its access, the hub lowers its job to the device's
+access from `meta` when that is lower (receipt `access_synced`, `from`/`to`);
+the device's value never raises it.
+`hello` lists `request_keys` in `capabilities`.
+A device without it ignores the key; the hub's record is the only guard there,
+and the hub writes one `device_without_keys` receipt per task. `lina work`
+uses `lina-work:<outbox row id>`, schedules `lina-schedule:<ID>:<due time>`.
+
 ## Run access modes
 
 `lina worker submit --access read-only|workspace-write|full` defaults to
