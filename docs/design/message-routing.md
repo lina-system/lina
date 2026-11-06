@@ -48,18 +48,19 @@ Rules that follow from the table:
   today, so the app's to-do chat (lina-app#9) and a comment on that to-do reach the same session.
 - On every open place (any place not finished) the owner's plain comment is an `instruction`, whether the owning
   session is running, parked or idle: it joins the running turn, wakes the parked session, or starts the idle one's
-  next turn now. Only the "Place finished" column treats a plain comment as a `note` (section 2, intent).
+  next turn now. On a finished place the same plain comment is still an `instruction`; the "Place finished" column
+  decides what it does there (a new linked task by default, section 3).
 
 ## 2. One message model
 
 | Field | Meaning | Comes from |
 | --- | --- | --- |
-| `id` | the message id and its idempotency key | the client that posts it (the app makes one per send and reuses it on retry); the gateway uses the platform message id; an agent tool call uses its call id |
+| `id` | the message id and its idempotency key, unique across the whole install | the client that posts it (the app makes one per send and reuses it on retry); an agent tool call uses its call id; a message from a chat platform gets an id the core makes from the platform, the receiving agent, the conversation and the platform message id, because a platform message id is unique only inside its chat (the transcript's own dedupe checks it per session, `hermes_state_messages.py:1906`). The scoped source key is kept on the record beside the id |
 | `author` | owner, an agent profile, a worker, or the system | **the route it arrived on**, never its text: the signed-in app session, the paired chat user, the agent profile of a tool call. Same rule as the policy table (`docs/memory-layer.md:68-82`): "A turn's route comes from where it arrived, never from its text" |
 | `place` | `{kind, id}`: `chat`, `goal`, `task`, `run`, `decision`, `notice`, `report` | the address it was posted on |
 | `target` | `{agent, session_id, run_id}` | resolved by the core at delivery from the place (section 1); recorded with each delivery attempt |
 | `reply_to` | the message, question or notice this one answers | the client (the app knows which question it is answering; Telegram gives `reply_to_message_id`, `gateway/platforms/event.py:99-100`) |
-| `intent` | `instruction`, `answer` (to a question), `decision` (on a decision), `note` | the control the owner used: a decision button or the inbox answer field gives `decision` or `answer`; an owner's plain comment on any open (not finished) place is `instruction`, whether its session is running, parked or idle; `note` is only a message on a finished place, an agent's message without `reply_to`, or a message its author marks as a note; an agent's message with `reply_to` names its intent |
+| `intent` | `instruction`, `answer` (to a question), `decision` (on a decision), `note` | the control the owner used: a decision button or the inbox answer field gives `decision` or `answer`; an owner's plain comment is `instruction` on every place, open or finished, whether its session is running, parked or idle; `note` is only an agent's message without `reply_to`, or a message its author marks as a note; an agent's message with `reply_to` names its intent |
 | `body` | the text and attachments | as posted |
 | `delivery` | `stored`, `delivered_mid_run`, `queued_next_turn`, `woke_session`, `read`; plus `undeliverable` with a reason | the core, one transition at a time, each with time, target and run |
 
@@ -101,8 +102,8 @@ nothing interrupts a model call for a message, because a cancelled call loses wo
 enough to pay for that by default (the gateway's `redirect` exists for an owner who wants it,
 `agent/interrupt_control.py:323-327`).
 
-**Waits for the next turn** when the intent is `note` (a finished place, an agent's message without `reply_to`, or a
-message marked as a note), or when the turn ends before the message reaches a model call. An owner `instruction` to an
+**Waits for the next turn** when the intent is `note` (an agent's message without `reply_to`, or a message marked as
+a note), or when the turn ends before the message reaches a model call. An owner `instruction` to an
 idle session does not wait: it starts that session's next turn now. The last case exists
 today: steered text left over after the final answer is handed back as `pending_steer`
 (`agent/turn_finalizer.py:828-833`). In this design that leftover keeps its message id, its state becomes
@@ -129,8 +130,8 @@ is replaced by delivery of the message itself to the asking session.
 **A message on a finished goal or task starts a new task linked to it**, owned by the same agent, with the message as its
 first instruction. Done was decided by gates and a judge (lina#225, lina#295), and reopening would undo a verdict nobody
 re-judged. Reopen applies in two cases only: within the record's ten-minute undo window (lina-app#5), and when the
-owner's message is a `decision` that rejects the item's last verdict. A `note` on a finished place is stored and starts
-nothing.
+owner's message is a `decision` that rejects the item's last verdict. Only a `note` (one its author marked as a note,
+or an agent's message without `reply_to`) on a finished place is stored and starts nothing.
 
 ## 4. What comes back
 
@@ -155,7 +156,8 @@ nothing.
 
 ## 5. Failure and order
 
-- **Retries.** The message `id` is the idempotency key end to end. Posting the same id again returns the stored message
+- **Retries.** The message `id` (section 2: install-wide, with a platform message id namespaced by platform, receiving
+  agent and conversation) is the idempotency key end to end. Posting the same id again returns the stored message
   and its delivery state; nothing is written twice. Delivery into a session is keyed by the same id: the steer carries
   it as its ticket (`agent/interrupt_control.py:310-321` takes a `ticket`), and "delivered" is decided by finding that id
   in the transcript, not by matching the note text as the card receipt does today
