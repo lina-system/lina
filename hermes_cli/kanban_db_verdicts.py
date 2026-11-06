@@ -200,8 +200,8 @@ def _wake_comment(task_id: str, run_id: str, state: str, back: dict, parents: li
              else "its schedule")
     return (f"[kanban · automatic] run {run_id} is {state} and needs this card's verdict. Woken while the card "
             f"waits on {waits}: judge it with `lina worker accept {run_id} --note ...`, `lina worker reject "
-            f"{run_id} --why ...` or `lina worker cancel {run_id} --why ...`, then call kanban_complete; while "
-            f"the card still waits it goes back to waiting instead of finishing.")
+            f"{run_id} --why ...` or `lina worker cancel {run_id} --why ...`, then call kanban_complete: the "
+            f"card goes back to waiting instead of finishing.")
 
 
 def wake_for_run(conn: sqlite3.Connection, task_id: str, run_id: str, state: str) -> bool:
