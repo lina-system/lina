@@ -90,11 +90,11 @@ def _portable_process_table() -> dict[int, Process]:
     """Read portable ps and lsof output; also exercised with fake output on Linux."""
     rows = {}
     output = subprocess.run(["/bin/ps", "-axww", "-o", "pid,ppid,pgid,stat,lstart,command"],
-                            capture_output=True, text=True, errors="replace", timeout=20, check=False)
+                            capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=20, check=False)
     cwds = {}
     user = str(os.getuid()) if hasattr(os, "getuid") else getpass.getuser()
     cwd_output = subprocess.run(["/usr/sbin/lsof", "-a", "-d", "cwd", "-u", user, "-Fpn"],
-                                capture_output=True, text=True, errors="replace", timeout=30, check=False)
+                                capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=30, check=False)
     pid = None
     for line in cwd_output.stdout.splitlines():
         if line.startswith("p"):
