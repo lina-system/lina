@@ -3,6 +3,7 @@
 from contextlib import closing
 import json
 import sqlite3
+import pytest
 
 from tests.hermes_cli.test_migrate_memory import _command, _run
 from tests.plugins.context_engine.test_lcm_x_on_store import _lcm
@@ -113,3 +114,40 @@ def test_two_agents_keep_scoped_native_ids_and_distinct_text(tmp_path, _memory_s
                             "GROUP BY agent_id ORDER BY agent_id") == [("alpha-copy", 3, 1, 3), ("second-copy", 3, 1, 3)]
     assert memory_store_sql("SELECT count(*) FROM ctx.lcm_messages p JOIN memory.messages m ON m.uid=p.text_uid "
                             "WHERE p.agent_id<>m.agent_id") == [(0,)]
+
+
+def test_interrupted_graph_rolls_back_and_reuses_committed_text(tmp_path, _memory_store, memory_store_sql, monkeypatch):
+    from hermes_cli.migrate_memory_agent import migrate_agent
+    from hermes_cli import migrate_memory_lcm as migration
+
+    _command(tmp_path, _memory_store)
+    source = tmp_path / "hermes/profiles/alpha"
+    destination = tmp_path / "lina/profiles/alpha-copy"
+    migrate_agent(source / "state.db", destination / "state.db", "alpha-copy")
+    original = migration._insert
+
+    def interrupted(conn, table, row):
+        if table == "summary_nodes":
+            raise ValueError("injected summary failure")
+        return original(conn, table, row)
+
+    with monkeypatch.context() as patcher:
+        patcher.setattr(migration, "_insert", interrupted)
+        with pytest.raises(ValueError, match="injected summary failure"):
+            migration.migrate_lcm(source / "lcm.db", source / "state.db", destination, "alpha-copy", tmp_path)
+    assert memory_store_sql("SELECT count(*) FROM ctx.lcm_messages") == [(0,)]
+    text_count = memory_store_sql("SELECT count(*) FROM memory.messages")
+    report = migration.migrate_lcm(source / "lcm.db", source / "state.db", destination, "alpha-copy", tmp_path)
+    assert report["ok"] and report["inserted"] == 5
+    assert memory_store_sql("SELECT count(*) FROM memory.messages") == text_count
+
+
+def test_summary_cycle_is_refused_before_any_lcm_rows(tmp_path, _memory_store, memory_store_sql):
+    command = _command(tmp_path, _memory_store)
+    with closing(sqlite3.connect(tmp_path / "hermes/profiles/alpha/lcm.db")) as source:
+        source.execute("UPDATE summary_nodes SET source_type='nodes',source_ids='[2]' WHERE node_id=1")
+        source.commit()
+    result = _run(command, tmp_path)
+    assert result.returncode == 1
+    assert "cyclic LCM summary reference" in json.loads(result.stdout)["error"]
+    assert memory_store_sql("SELECT count(*) FROM ctx.summary_nodes") == [(0,)]
