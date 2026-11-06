@@ -78,6 +78,22 @@ def test_real_dispatcher_lifecycle(tmp_path, mode):
     print(json.dumps(receipt))
 
 
+def test_dispatcher_probe_config_passes_boot_migration(tmp_path, monkeypatch):
+    """The probe's config.yaml must not depend on a host stamping it: written as-is it
+    reads as current, so boot maintenance migrates nothing and refuses nothing (#259)."""
+    import importlib
+    from hermes_cli import post_update
+    from hermes_cli.config_version_stamp import read_config_version_stamp
+    monkeypatch.syspath_prepend(str(Path(__file__).parent / 'fixtures'))
+    probe = importlib.import_module('kanban_owner_probe')
+    monkeypatch.setenv('HERMES_HOME', str(tmp_path))
+    probe.write_config(tmp_path, {'terminal': {'backend': 'local'}})
+
+    stamp, latest = read_config_version_stamp(raise_on_parse_error=True)
+    assert stamp == latest
+    assert post_update.step_migrate_config() == {'ok': True, 'skipped': 'up-to-date'}
+
+
 def test_late_launcher_cannot_stamp_replacement_claim(tmp_path, monkeypatch):
     from contextlib import closing
     from hermes_cli import kanban_db as kb, kanban_db_dispatch as dispatch
