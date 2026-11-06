@@ -462,32 +462,32 @@ class _Session:
             self.check_stall()
 
     def cleanup(self) -> None:
-        if self.proc.poll() is None:
-            if self.session_id:
-                try:
+        try:
+            if self.proc.poll() is None and self.session_id:
+                with contextlib.suppress(OSError, ValueError):
                     self.send({"method": "session/cancel", "params": {"sessionId": self.session_id}})
                     if "close" in self.capabilities.get("sessionCapabilities", {}):
                         self.request("session/close", {"sessionId": self.session_id})
-                except (BrokenPipeError, OSError):
-                    pass  # the child already closed its input
-            self.proc.stdin.close()
+        finally:
+            with contextlib.suppress(OSError, ValueError):
+                self.proc.stdin.close()
             try:
-                self.proc.wait(timeout=1)
-            except subprocess.TimeoutExpired:
-                os.killpg(self.proc.pid, signal.SIGTERM)  # windows-footgun: ok — POSIX work devices only
                 try:
                     self.proc.wait(timeout=1)
                 except subprocess.TimeoutExpired:
+                    with contextlib.suppress(ProcessLookupError):
+                        os.killpg(self.proc.pid, signal.SIGTERM)  # windows-footgun: ok — POSIX work devices only
+                    with contextlib.suppress(subprocess.TimeoutExpired):
+                        self.proc.wait(timeout=1)
+            finally:
+                # A grandchild can outlive an already exited group leader.
+                with contextlib.suppress(ProcessLookupError):
                     os.killpg(self.proc.pid, signal.SIGKILL)  # windows-footgun: ok — POSIX work devices only
-                    self.proc.wait()
-        # A grandchild can outlive an already exited group leader.
-        try:
-            os.killpg(self.proc.pid, signal.SIGKILL)  # windows-footgun: ok — POSIX work devices only
-        except ProcessLookupError:
-            pass
-        self.proc.stdin.close()
-        self.proc.stdout.close()
-        self.selector.close()
+                self.proc.wait()
+                with contextlib.suppress(OSError, ValueError):
+                    self.proc.stdout.close()
+                with contextlib.suppress(OSError, ValueError):
+                    self.selector.close()
 
     def run(self, prompt: str, previous: dict) -> None:
         state = "failed"
@@ -501,6 +501,8 @@ class _Session:
             with self.handle.task.path(f"stderr.{self.handle.run}.txt").open("a", encoding="utf-8") as stream:
                 stream.write(f"ACP: {exc}\n")
         finally:
-            self.cleanup()
-            with _lock(self.handle):
-                self.publish(state)
+            try:
+                self.cleanup()
+            finally:
+                with _lock(self.handle):
+                    self.publish(state)
