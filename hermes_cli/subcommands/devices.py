@@ -14,6 +14,8 @@ def _cmd_devices(args) -> None:
                              manual=args.manual, lina=args.lina),
         "remove": lambda: d.remove(args.name),
         "check": lambda: d.check(args.name, run_smoke=args.run_smoke, timeout=args.timeout, as_json=args.json),
+        "sign-in": lambda: d.sign_in(as_json=args.json),
+        "service": lambda: d.service(args.name, args.service, args.action, as_json=args.json),
     }
     try:
         sys.exit(actions[action]())
@@ -27,7 +29,8 @@ def build_devices_parser(subparsers) -> None:
     parser = subparsers.add_parser(
         "devices", help="The work devices lina worker bids over, with their readiness",
         description="devices.workers in the LINA root's config.yaml. Readiness: ssh reachable, the pinned omo present "
-                    "(`lina omo status`), free disk, cap and what runs now. `check <name> --run-smoke` runs one tiny "
+                    "(`lina omo status`), free disk, cap and what runs now, and per runner the pinned and installed version, sign-in and one reason "
+                    "when not ready (`lina runners`). `check <name> --run-smoke` runs one tiny "
                     "real task there through lina worker and reports done or failed with the run ID.")
     sub = parser.add_subparsers(dest="devices_action")
     sub.add_parser("list", help="Every device with its readiness").add_argument("--json", action="store_true")
@@ -47,4 +50,11 @@ def build_devices_parser(subparsers) -> None:
                        help="also run one tiny real task there through lina worker (exit 1 unless it ends done)")
     check.add_argument("--timeout", type=float, default=1800, help="seconds to wait for the smoke task (default 1800)")
     check.add_argument("--json", action="store_true")
+    sub.add_parser("sign-in", help="One question per runner a person has to sign in to, with the nodes and how "
+                                    "(read-only)").add_argument("--json", action="store_true")
+    service = sub.add_parser("service", help="Status or restart of a device's OCX or worker through the service layer")
+    service.add_argument("name")
+    service.add_argument("service", choices=("ocx", "worker"))
+    service.add_argument("action", choices=("status", "restart"))
+    service.add_argument("--json", action="store_true")
     parser.set_defaults(func=_cmd_devices)
