@@ -343,28 +343,35 @@ def private(tmp_path, fake_kanban):
     base, owned = tmp_path / "lina", tmp_path / "owner"
     owned.mkdir()
     (owned / "notes.md").write_text("the owner's own notes\n", encoding="utf-8")
-    _config(base, command, devices="here: {host: local, cap: 1}\nfar: {host: build-a, cap: 1}",
+    _config(base, command, fakes.install_fake_cli(tmp_path / "fake"),
+            devices="here: {host: local, cap: 1}\nfar: {host: build-a, cap: 1}",
             extra=f"  private_paths: {json.dumps([str(owned)])}\n")
     lines: list[str] = []
 
     def submit(**opts) -> dict:
         Hub(base / "worker", out=lines.append).submit({
             "briefs": [fakes.brief(tmp_path, "read the notes")], "mode": "ulw", "bot": AGENT, "topic": "t",
-            "wait": None, "inputs": [str(owned / "notes.md")], **opts})
+            "wait": None, "runner": "fakecli", "inputs": [str(owned / "notes.md")], **opts})
         return Hub(base / "worker").store.load(next(line for line in lines if line.startswith("OT-")).split()[0])
-    return submit, owned / "notes.md"
+    return submit, owned / "notes.md", base / "worker"
 
 
 def test_private_files_are_refused_on_any_node_but_the_hub(private):
-    submit, _ = private
+    submit, _, _ = private
     with pytest.raises(HubError, match="hub node"):
         submit(host="far")
 
 
 def test_work_on_private_files_runs_on_the_hub_node_and_reads_them_in_place(private):
-    submit, notes = private
+    """Named work waits until its device is ready (lina#228): the hub node's ``lina worker serve`` is not up at
+    submit, so the run is pinned to it and queued, never bid out; the next tick after the hub comes up places it."""
+    submit, notes, root = private
     job = submit()
-    assert (job["fixed_host"], job["host"]) == ("here", "here")
+    assert (job["fixed_host"], job["host"], job["state"]) == ("here", None, "queued")
+    serve.serve_once(root)
+    Hub(root, out=lambda *_: None).tick()
+    job = Hub(root).store.load(job["id"])
+    assert (job["fixed_host"], job["host"], job["state"]) == ("here", "here", "running")
     assert job["inputs"] == [] and job["private_inputs"] == [str(notes)]
     assert str(notes) in job["prompt"]
 
