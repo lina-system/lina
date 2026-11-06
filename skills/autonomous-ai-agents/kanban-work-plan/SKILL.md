@@ -131,6 +131,12 @@ Gates: code cards use `gate prs` (every To-dos issue closed by a merged PR with 
 `gate artifact <path> --check "<cmd>"` and `gate review`; add `gate ask` when the card may ask
 the owner questions. A card that changes a screen people see is marked `kind: screen` and lists
 `gate ui-qa`; `kanban plan` refuses a `kind: screen` card whose gates do not run `gate ui-qa`.
+A gate counts as ui-qa only as one simple command of an allowed form: `hermes|lina [-p NAME |
+--profile NAME | --profile=NAME] kanban [--board B] gate ui-qa ...` or `[python|python3]
+/abs/path/kanban_gates.py ui-qa ...`. The profile option is the only top-level option allowed;
+`--version`, `-h` or any other word before `kanban` does not count. Programs are named bare (from
+PATH) or by absolute path, never relative to the workspace. No `env`, `exec`, `sh -c`, `$`,
+backquotes, newlines or `; & | < > ( )` outside quotes.
 
 `gate ui-qa` reads the QA record on the card. Leave the aside-qa answer (`answer.md`) as it is, with
 one marker line on top, as a card comment (`hermes kanban comment <card> "<text>"`). The marker

@@ -199,24 +199,77 @@ def _gates(value: Any, where: str, *, required: bool) -> list[Any]:
 
 _CLI_NAMES = {"hermes", "lina"}  # `lina` is another name for the `hermes` entry point
 _PYTHONS = {"python", "python3"}
+_SHELL_OPERATORS = set("();<>|&")
+
+
+def _shell_words(command: str) -> Optional[list[str]]:
+    """The words of *command* when bash runs it as ONE simple command, else None.
+
+    None for anything that could run more than the gate or change its exit code: a newline (a
+    second command), ``$`` or a backquote (expansion, command substitution), and an unquoted
+    operator ``; & | < > ( )`` even inside a word (``X;true``). Quoted text stays one word, as in
+    bash; ``#`` is not taken as a comment, so text after it is still checked."""
+    if any(c in command for c in "\n\r$`"):
+        return None
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="".join(_SHELL_OPERATORS))
+    lexer.whitespace_split, lexer.commenters = True, ""
+    try:
+        words = list(lexer)
+    except ValueError:  # an unclosed quote
+        return None
+    operator = any(w and set(w) <= _SHELL_OPERATORS for w in words)
+    return None if operator or not words else words
+
+
+def _program(word: str, names: set[str]) -> bool:
+    """*word* runs one of *names*: a bare name (found on PATH) or an absolute path. A relative
+    path (``./hermes``, ``bin/hermes``) is refused: it resolves in the card's workspace, which the
+    card's own worker writes."""
+    return Path(word).name in names and ("/" not in word or word.startswith("/"))
+
+
+def _kanban_argv(words: list[str]) -> Optional[list[str]]:
+    """What follows ``kanban`` in ``hermes|lina [-p NAME | --profile NAME | --profile=NAME]
+    kanban ...``, or None. The profile option is the ONLY top-level option a gate may carry, at
+    most once, with a valid profile name; any other word before ``kanban`` (``--version``,
+    ``-h``, an unknown flag, another subcommand) means the command is not a gate: ``main``
+    exits on ``--version`` and ``--help`` before it dispatches."""
+    from hermes_constants import PROFILE_ID_RE
+
+    rest = words
+    if rest[:1] in (["-p"], ["--profile"]) and len(rest) > 1:
+        name, rest = rest[1], rest[2:]
+    elif rest and rest[0].startswith("--profile="):
+        name, rest = rest[0].split("=", 1)[1], rest[1:]
+    else:
+        name = None
+    if name is not None and not PROFILE_ID_RE.match(name.strip().casefold()):
+        return None
+    return rest[1:] if rest[:1] == ["kanban"] else None
 
 
 def _gate_argv(words: list[str]) -> Optional[list[str]]:
-    """The arguments ``kanban_gates.main`` receives when the shell runs *words*, or None when
-    *words* do not run a kanban gate: ``[.../]hermes|lina [top-level flags] kanban [--board B]
-    gate ...`` or ``[python[3]] [.../]kanban_gates.py ...``. Anything else in front (``echo``,
-    ``sh -c``, ``env``, interpreter flags) runs another program."""
-    from hermes_cli import kanban_parser
-    from hermes_cli._parser import command_argv
+    """The arguments ``kanban_gates.main`` receives when bash runs *words*, or None when *words*
+    do not run a kanban gate. The forms (an allowlist; anything else runs another program):
 
-    name = Path(words[0]).name if words else ""
-    if name in _PYTHONS and len(words) > 1 and Path(words[1]).name == "kanban_gates.py":
+    - ``hermes|lina [-p NAME | --profile NAME | --profile=NAME] kanban [--board B] gate ...``
+      (what follows ``kanban`` goes through the real kanban parser);
+    - ``[python|python3] kanban_gates.py ...`` (the script by absolute path after python).
+
+    Each program is a bare name or an absolute path (:func:`_program`); no ``env``, ``exec``,
+    ``command``, ``sh -c`` or interpreter flags in front."""
+    from hermes_cli import kanban_parser
+
+    # python opens its script argument relative to the cwd (the workspace), never from PATH.
+    if _program(words[0], _PYTHONS) and len(words) > 1 and words[1].startswith("/") \
+            and Path(words[1]).name == "kanban_gates.py":
         return words[2:]
-    if name == "kanban_gates.py":
+    if _program(words[0], {"kanban_gates.py"}):
         return words[1:]
-    rest = command_argv(words[1:]) if name in _CLI_NAMES else []
-    if rest[:1] != ["kanban"]:
+    rest = _kanban_argv(words[1:]) if _program(words[0], _CLI_NAMES) else None
+    if rest is None:
         return None
+    rest = ["kanban", *rest]
     parser = argparse.ArgumentParser(add_help=False)
     kanban_parser.build_parser(parser.add_subparsers(dest="command"))
     args = _quiet_parse(parser, rest)
@@ -236,16 +289,15 @@ def _quiet_parse(parser: argparse.ArgumentParser, argv: list[str]) -> Optional[a
 
 
 def _runs_ui_qa(gate: Any) -> bool:
-    """True when the gate command, as the card's shell runs it, selects ``gate ui-qa``. The gate
-    arguments go through ``kanban_gates.build_parser`` itself, so ``review --owner ui-qa`` is the
-    review gate and ``ui-qa || true`` (extra words ui-qa does not take) is refused."""
+    """True when the gate command, as the card's bash runs it, is one simple command
+    (:func:`_shell_words`) of an allowed form (:func:`_gate_argv`) whose gate arguments select
+    ``ui-qa`` in ``kanban_gates.build_parser`` itself, so ``review --owner ui-qa`` is the review
+    gate and extra words ui-qa does not take are refused."""
     from hermes_cli import kanban_gates
 
     command = gate if isinstance(gate, str) else gate.get("command", "")
-    try:
-        argv = _gate_argv(shlex.split(command))
-    except ValueError:
-        return False
+    words = _shell_words(command)
+    argv = _gate_argv(words) if words else None
     args = _quiet_parse(kanban_gates.build_parser(), argv) if argv is not None else None
     return args is not None and args.gate == "ui-qa"
 
