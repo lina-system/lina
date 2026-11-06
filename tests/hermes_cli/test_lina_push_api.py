@@ -54,7 +54,6 @@ def test_rfc8291_appendix_a_vector_reproduces_byte_for_byte():
 
 
 def test_a_sent_message_carries_vapid_claims_for_the_endpoint_origin_and_decrypts_on_the_device(work, key):
-    work.config(extra="lina:\n  push:\n    subject: mailto:owner@example.org\n")
     vapid, _ = lina_push.vapid_key()
     device = Device("one")
     service = PushService(device)
@@ -67,7 +66,7 @@ def test_a_sent_message_carries_vapid_claims_for_the_endpoint_origin_and_decrypt
     public = ec.EllipticCurvePublicKey.from_encoded_point(ec.SECP256R1(), unb64u(k))
     claims = jwt.decode(token, public, algorithms=["ES256"], audience="https://fcm.googleapis.com",
                         options={"verify_exp": False})
-    assert claims == {"aud": "https://fcm.googleapis.com", "exp": claims["exp"], "sub": "mailto:owner@example.org"}
+    assert claims == {"aud": "https://fcm.googleapis.com", "exp": claims["exp"], "sub": PROJECT_URL}
     assert NOW < claims["exp"] <= NOW + 24 * 3600
     assert headers["Content-Encoding"] == "aes128gcm" and len(headers["Topic"]) <= 32
 
@@ -80,13 +79,15 @@ def test_without_a_key_push_is_off_the_route_says_so_and_subscribing_is_refused(
     assert not (work.root / "push").exists()
 
 
-def test_the_subject_is_the_config_setting_with_the_project_url_by_default(work, key):
-    assert lina_push.vapid_key()[0].subject == lina_push.DEFAULT_SUBJECT
-    work.config(extra="lina:\n  push:\n    subject: owner@example.org\n")
-    vapid, why = lina_push.vapid_key()
-    assert vapid is None and why == "lina.push.subject must start with mailto: or https://"
+def test_the_jwt_sub_is_the_project_url_and_the_key_is_a_registered_secret(work, key):
+    vapid, _ = lina_push.vapid_key()
+    token = lina_push.vapid_jwt(vapid, "https://web.push.apple.com/QGuQyavXutnMH", NOW)
+    assert jwt.decode(token, options={"verify_signature": False})["sub"] == PROJECT_URL
     assert "LINA_PUSH_VAPID_PRIVATE_KEY" in OPTIONAL_ENV_VARS and OPTIONAL_ENV_VARS["LINA_PUSH_VAPID_PRIVATE_KEY"]["password"]
     assert not any(name.startswith("LINA_PUSH_SUBJECT") for name in OPTIONAL_ENV_VARS)
+
+
+PROJECT_URL = "https://github.com/lina-system/lina"
 
 
 @pytest.mark.parametrize("bad", ["", "not base64!", b64u(b"\x00" * 32), b64u(b"\x01" * 31)])

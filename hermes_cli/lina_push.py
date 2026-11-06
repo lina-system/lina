@@ -1,9 +1,9 @@
 """Web Push to the owner's devices (lina#244): the VAPID key, the subscriptions and one encrypted message.
 
 - The key: ``LINA_PUSH_VAPID_PRIVATE_KEY`` (base64url of the raw 32-byte P-256 private key), read from the environment
-  only (``.env`` holds secrets); the subject is the setting ``lina.push.subject`` in config.yaml (``mailto:`` or
-  ``https:``; default the project URL). Without a usable key push is off. The key is never written, logged or
-  returned; only its public half leaves this module.
+  only (``.env`` holds secrets). Without a usable key push is off. The key is never written, logged or returned; only
+  its public half leaves this module. The JWT's ``sub`` is the fixed project URL (``SUBJECT``): RFC 8292 needs only a
+  contact URI, and nobody needs to change it.
 - Subscriptions: one file per device in ``$LINA_HOME/push/subscriptions/<id>.json`` (mode 600), the id a hash of the
   endpoint, so adding the same endpoint again refreshes it. An endpoint must be ``https`` on a known push service host,
   so a client cannot make the core post to an address of its choosing.
@@ -35,8 +35,8 @@ from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from hermes_cli.lina_board_write import Refused, _body
 from utils import atomic_json_write, read_json_or_empty
 
-KEY_ENV, SUBJECT_CONFIG = "LINA_PUSH_VAPID_PRIVATE_KEY", "lina.push.subject"
-DEFAULT_SUBJECT = "https://github.com/lina-system/lina"
+KEY_ENV = "LINA_PUSH_VAPID_PRIVATE_KEY"
+SUBJECT = "https://github.com/lina-system/lina"
 JWT_SECONDS = 12 * 3600  # RFC 8292 allows at most 24 h
 TTL_SECONDS = 86400
 RECORD_SIZE = 4096
@@ -70,30 +70,13 @@ def _public_bytes(key: ec.EllipticCurvePublicKey) -> bytes:
 class Vapid:
     private: ec.EllipticCurvePrivateKey = field(repr=False)
     public: str  # base64url of the uncompressed point: the app's applicationServerKey
-    subject: str
-
-
-def push_subject() -> str:
-    """``lina.push.subject`` in config.yaml (a setting, not a secret), default the project URL."""
-    from hermes_cli.config import load_config_readonly
-    push = ((load_config_readonly().get("lina") or {}).get("push") or {})
-    subject = push.get("subject") if isinstance(push, dict) else None
-    return (subject.strip() if isinstance(subject, str) else "") or DEFAULT_SUBJECT
 
 
 def vapid_key() -> tuple[Vapid | None, str]:
-    """The key from the environment and the subject from config.yaml, or None and the reason push is off (no key
-    text in the reason)."""
-    from hermes_cli.config_backend import ConfigBackendUnavailable
+    """The key from the environment, or None and the reason push is off (no key text in the reason)."""
     raw = (os.environ.get(KEY_ENV) or "").strip()
     if not raw:
         return None, f"{KEY_ENV} is not set"
-    try:
-        subject = push_subject()
-    except ConfigBackendUnavailable:
-        return None, "config.yaml could not be read for lina.push.subject"
-    if not subject.startswith(("mailto:", "https://")):
-        return None, f"{SUBJECT_CONFIG} must start with mailto: or https://"
     try:
         secret = unb64u(raw)
         if len(secret) != 32:
@@ -101,7 +84,7 @@ def vapid_key() -> tuple[Vapid | None, str]:
         private = ec.derive_private_key(int.from_bytes(secret, "big"), ec.SECP256R1())
     except ValueError:
         return None, f"{KEY_ENV} is not base64url of a raw P-256 private key"
-    return Vapid(private, b64u(_public_bytes(private.public_key())), subject), ""
+    return Vapid(private, b64u(_public_bytes(private.public_key()))), ""
 
 
 def key_view() -> dict:
@@ -117,7 +100,7 @@ def origin(endpoint: str) -> str:
 
 def vapid_jwt(vapid: Vapid, endpoint: str, now: float) -> str:
     import jwt
-    claims = {"aud": origin(endpoint), "exp": int(now) + JWT_SECONDS, "sub": vapid.subject}
+    claims = {"aud": origin(endpoint), "exp": int(now) + JWT_SECONDS, "sub": SUBJECT}
     return jwt.encode(claims, vapid.private, algorithm="ES256", headers={"typ": "JWT"})
 
 
