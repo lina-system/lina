@@ -236,3 +236,40 @@ def test_only_agent_turn_text_is_collected_by_transcript_references(tmp_path, me
         assert memory_store_sql("SELECT uid FROM memory.messages") == [("messages:kakao:42",)]
     finally:
         db.close()
+
+
+def test_a_message_uid_lookup_reads_its_versions_not_every_row_with_the_same_content(memory_store_sql):
+    """lina#16: LCM-X finds Hermes's text row of a message by its uid family and content digest. Content repeats ("ok"),
+    so the rows the lookup reads must not grow with the other messages that share it."""
+    from hermes_state_store import TEXT_FIELDS, _sha256
+
+    def put(store, message_uid, *values):
+        return store.put_text(message_uid=message_uid, values=values + (None,) * (len(TEXT_FIELDS) - len(values)),
+                              role="user", tool_name=None, tool_call_id=None, timestamp=None, session_id="s",
+                              seq_in_session=None, meta={})
+
+    def rows_read(store):
+        with store._writer_cursor() as cur:
+            cur.execute("SELECT coalesce(seq_tup_read, 0) + coalesce(idx_tup_fetch, 0) FROM pg_stat_xact_user_tables"
+                        " WHERE relid = 'memory.messages'::regclass")
+            return cur.fetchone()[0]
+
+    store = MessageStore("uid-family-lookup")
+    try:
+        with store.write():
+            first = put(store, "target", "ok")
+            second = put(store, "target", "ok", json.dumps([{"id": "call-1"}]))
+        assert second.startswith(first + "#")
+        memory_store_sql(
+            "INSERT INTO memory.messages (uid, source, agent_id, role, content, content_sha256)"
+            " SELECT 'agent:uid-family-lookup:other-' || i, 'agent', 'uid-family-lookup', 'user', 'ok', %s"
+            " FROM generate_series(1, 5000) AS i", (_sha256("ok"),))
+        memory_store_sql("ANALYZE memory.messages")
+        with store.write():
+            before = rows_read(store)
+            found = store.text_uids_with_digest("target", _sha256("ok"))
+            read = rows_read(store) - before
+        assert found == [first, second]
+        assert read <= 4
+    finally:
+        store.close()

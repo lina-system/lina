@@ -593,8 +593,11 @@ class MessageStore:
         *content_sha256*, first written first: how LCM-X finds the row Hermes wrote for a message it stores."""
         base = self.base_uid(message_uid)
         with self._cursor() as cur:
-            cur.execute("SELECT uid FROM memory.messages WHERE (uid = %s OR uid LIKE %s) AND content_sha256 = %s"
-                        " AND forgotten_at IS NULL ORDER BY message_id", (base, _like_escape(base) + "#%", content_sha256))
+            # The versions 'base#...' are the byte range ['base#', 'base$'): comparisons are leakproof, so under the
+            # row-level security of memory.messages they can use messages_uid_c, where LIKE (not leakproof) cannot.
+            cur.execute("SELECT uid FROM memory.messages WHERE (uid = %s OR (uid COLLATE \"C\" >= %s AND uid COLLATE \"C\" < %s))"
+                        " AND content_sha256 = %s AND forgotten_at IS NULL ORDER BY message_id",
+                        (base, base + "#", base + "$", content_sha256))
             return [row[0] for row in cur.fetchall()]
 
     def held_by_context(self, uids: Sequence[str]) -> set[str]:
