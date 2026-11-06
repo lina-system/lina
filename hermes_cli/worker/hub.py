@@ -749,7 +749,8 @@ class Hub:
             self.store.receipt(job["id"], "answer" if action == "answer" else "steer", run=run, response=reply)
         else:
             self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run,
-                               **({"queued": True} if action == "queued" else {}))
+                               **({"queued": True} if action == "queued" else {}),
+                               **({"request_key": request_key} if request_key else {}))
         request_keys.sent(self.store, job["id"], request_key, action, run)
         self.out(NEXT_RUN_WORDS[action].format(id=job["id"], run=run))
         return 0

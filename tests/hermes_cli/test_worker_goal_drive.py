@@ -259,6 +259,64 @@ def test_after_three_follow_ups_in_one_attempt_the_next_blocks_the_card_with_an_
     _never_done(drive)
 
 
+def _review(drive, task_id: str, key: str) -> None:
+    """The card session sends a review round (``lina worker send --key``) to the task's ended run."""
+    assert _hub(drive).send(task_id, "Codex review: fix the findings below.", request_key=key) == 0
+
+
+def test_review_rounds_from_the_card_session_count_toward_the_follow_up_limit(drive):
+    (drive.gh / "rules.json").write_text(json.dumps([[r"^pr list", [], 0]]))
+    task = _submit(drive, repo="acme/app")
+    for _ in range(2):
+        _end(drive, task, "done")
+        _tick(drive)
+    _end(drive, task, "done", report=True)
+    _review(drive, task, "rk-review-1")
+    assert _requests(drive, task) == ["request.1", "request.2", "request.3", "request.4"]
+    _red_check(drive)
+    real = time.time
+    drive.mp.setattr(goal_drive.time, "time", lambda: real() + 61)  # past the cached "no pull request" read
+    _end(drive, task, "done", report=True)
+    _tick(drive)
+    assert _requests(drive, task) == ["request.1", "request.2", "request.3", "request.4"]
+    (block,) = _writes(drive, "block", WORK)
+    assert "3 follow-ups on run" in block[-1] and "the last from the card session, now: red-check" in block[-1]
+
+
+def test_a_steer_into_a_live_run_is_not_a_follow_up_round(drive):
+    task = _submit(drive)
+    _end(drive, task, "done")
+    _tick(drive)
+    _end(drive, task, "done", report=True)
+    _review(drive, task, "rk-review-1")
+    _hub(drive).store.receipt(task, "steer", run=3, response={"action": "steered", "run": 3})  # as Hub._steered
+    _end(drive, task, "done")
+    _tick(drive)
+    assert _requests(drive, task) == ["request.1", "request.2", "request.3", "request.4"]
+    assert not _writes(drive, "block")
+    _end(drive, task, "done")
+    _tick(drive)
+    assert _requests(drive, task)[-1] == "request.4" and len(_writes(drive, "block", WORK)) == 1
+
+
+def test_a_fourth_round_sent_by_the_card_session_blocks_the_card_on_the_next_tick(drive):
+    task = _submit(drive)
+    for _ in range(3):
+        _end(drive, task, "done")
+        _tick(drive)
+    _end(drive, task, "done", report=True)
+    _tick(drive)
+    assert not _writes(drive, "block")
+    _review(drive, task, "rk-review-4")
+    assert _requests(drive, task)[-1] == "request.5"
+    _tick(drive)
+    (block,) = _writes(drive, "block", WORK)
+    assert block[-1].startswith("Build it · 갈림길 · 4 follow-ups on run ")
+    assert "the last from the card session)" in block[-1]
+    _tick(drive)
+    assert len(_writes(drive, "block")) == 1
+
+
 def _outage(drive, on: bool) -> None:
     """While on, every device is unreachable (the hub's ``meta`` gets no reply)."""
     if not hasattr(drive, "down"):

@@ -34,12 +34,25 @@ Each rule acts at most once per action id.
 | `red-check` | The run ended (`done`, `done_empty`, `review`) and its branch has an open pull request with a red required check | One follow-up to the run naming the check, with the last 80 lines of its log. Required checks are read the way `hermes kanban gate prs` reads them. The same head is followed up once; a new push is needed for another. |
 | `check-park` | Same, but the required checks are still running | Parks the work card with `schedule --wait-for pr:<repo>#<n>`. |
 | `deliverable` | The run ended `done`, `done_empty` or `review` with no pull request for its branch (a run with a repository), no `report.md` and no file in `out/` | One follow-up asking for it. |
-| `block` | A follow-up is due and the attempt has had 3 already | Blocks the work card with kind `needs_input` and one inbox line, `<card title> · 갈림길 · <one line>`, and stops driving that card. |
+| `block` | A follow-up is due and the attempt has had 3 rounds already, or the attempt already has more than 3 | Blocks the work card with kind `needs_input` and one inbox line, `<card title> · 갈림길 · <one line>` naming who sent the last round, and stops driving that card. |
 | `node-park` | The run's node is lost and its device is still unreachable | Parks the work card with `schedule --wait-for until:<time>` (`worker.unknown_after_s` ahead). |
 | `resubmit` | The run's node was lost, and once the device answers again the run ended there or never started | Submits the same brief on another allowed node (the bid winner among the other devices), from the pushed branch: `origin/<branch>` when GitHub has the branch, else the repository's default. Not while another run of the same to-do is live. A new attempt. |
 | `node-continued` | Same, but the device says the run went on | Nothing is moved; the ledger records it. |
 | `usage-park`, `usage-resume` | The run ended `failed`, `stalled` or `done_empty` and its end text or stderr matches its runner's usage-limit pattern | Parks the work card until the reset time (an ISO time after `reset`, or `reset in <n> <unit>`; else 1 h), then sends one message that continues the same task. Not a new attempt and not a follow-up. |
 | `usage-move` | Same, with `worker.goal_limits.usage_move: true` and another node free | Submits the same brief on that node instead of waiting. Same attempt. |
+
+### Follow-up rounds
+
+The limit of 3 counts every follow-up round of one attempt (one hub task), whoever sends it: the drive's own
+follow-ups and the card session's (`lina worker send`, `omo-task send`, for example a review round with Codex
+findings on the pull request). The drive reads them from the hub, not from its ledger: each run of the task after its
+first one, plus each follow-up queued into a run that had not started yet (the hub's `follow_up` receipts). A steer
+into a live run is not a round, and neither is the drive's own continue after a usage limit.
+
+Three rounds are allowed. When a fourth is needed, the drive blocks the work card instead of sending it. The drive
+cannot stop a fourth round the card session sends itself; on its next tick it sees four rounds and blocks the card
+with the same line. The line names who sent the last round (`the goal drive` or `the card session`), taken from the
+request key on that round's `follow_up` receipt.
 
 "Node lost" is one function, `goal_drive.node_lost(job)`. Today it is the hub's `unknown` end: the device stayed
 unreachable for `worker.unknown_after_s`. lina#223 switches that function to its `host.unavailable` event.
@@ -61,7 +74,7 @@ The ledger is `$LINA_HOME/worker/hub/goals/<goal card>.json`, written under the 
 | Key | Holds |
 |---|---|
 | `attempts` | Attempt number per hub task. A new task of a to-do is the next attempt, except one the drive moved for a usage limit. |
-| `followups` | Follow-ups sent per task (one task is one attempt). |
+| `followups` | Follow-ups the drive itself sent per task. The limit does not read it: it counts every round from the hub. |
 | `runs` | Runs per task. |
 | `started_at` | The goal's start: its first task's hand-out time. |
 | `actions` | Action id → time and result. |

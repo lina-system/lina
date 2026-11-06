@@ -208,7 +208,7 @@ def tick(hub) -> None:
     goals: dict[str, dict] = {}
     for jobs in by_card.values():
         card = jobs[0]["card"]
-        if not any(_settled(job) for job in jobs):
+        if not any(_settled(job) for job in jobs) and kanban_link.kept_view(hub.store, card) is None:
             continue
         try:
             view = _view(hub, board, card)
@@ -358,6 +358,10 @@ class Drive:
 
         def ids(rule: str) -> str:
             return action_id(self.goal, job["card"]["task"], attempt, run, rule)
+        count, by = self.rounds(job)
+        if count > FOLLOW_UPS:  # a round the drive did not send went past the limit: it cannot be stopped, only met
+            self._block_card(card, job, ids, count, by)
+            return
         if node_lost(job):
             self._node_lost(card, job, ids)
             return
@@ -374,9 +378,9 @@ class Drive:
         from hermes_cli.worker.hub import ENDED
         if ids(rule) in self.ledger["actions"]:
             return
-        sent = int(self.ledger["followups"].get(job["id"], 0))
+        sent, by = self.rounds(job)
         if sent >= FOLLOW_UPS:
-            self._block_card(card, job, ids, rule)
+            self._block_card(card, job, ids, sent, by, rule)
             return
         if job.get("state") in ENDED and sum(self.ledger["runs"].values()) + 1 > self.limits["runs"]:
             self.stop("runs", f"a follow-up would start run {sum(self.ledger['runs'].values()) + 1}")
@@ -384,14 +388,32 @@ class Drive:
 
         def send(aid: str) -> str:
             self.hub.send(job["id"], message, job["card"], request_key=aid)
-            self.ledger["followups"][job["id"]] = sent + 1
-            return f"follow-up {sent + 1}/{FOLLOW_UPS} ({rule}) on {job['id']}"
+            self.ledger["followups"][job["id"]] = int(self.ledger["followups"].get(job["id"], 0)) + 1
+            return f"follow-up round {sent + 1}/{FOLLOW_UPS} ({rule}) on {job['id']}"
         self.act(ids(rule), send)
 
-    def _block_card(self, card: dict, job: dict, ids, rule: str) -> None:
+    def rounds(self, job: dict) -> tuple[int, str]:
+        """The follow-up rounds of the task (one attempt), whoever sent them, and who sent the last one. A round is a
+        run after the first or a follow-up queued into a run that had not started, as the hub's ``follow_up``
+        receipts record them; a steer into a live run is not one, nor the drive's own continue after a usage limit."""
+        keys = job.get("request_keys") or {}
+        resumed = sum(1 for key, sent in keys.items()
+                      if key.endswith(":usage-resume") and sent.get("action") in ("requested", "queued"))
+        follow_ups = [r for r in self.hub.store.receipts_of(job["id"]) if r["kind"] == "follow_up"]
+        count = int(job.get("runs") or 1) - 1 + sum(1 for r in follow_ups if r.get("queued")) - resumed
+        return max(0, count), self._sender(follow_ups[-1] if follow_ups else None, keys)
+
+    def _sender(self, receipt: dict | None, keys: dict) -> str:
+        if receipt is None:
+            return "a send the hub kept no receipt of"
+        key = receipt.get("request_key") or next(
+            (key for key, sent in keys.items() if str(sent.get("run")) == str(receipt.get("run"))), None)
+        return "the goal drive" if key and key.startswith(f"{_part(self.goal)}:") else "the card session"
+
+    def _block_card(self, card: dict, job: dict, ids, count: int, by: str, rule: str | None = None) -> None:
         title = (card["view"] or {}).get("title") or job["card"]["task"]
-        reason = (f"{title} · 갈림길 · {FOLLOW_UPS} follow-ups on run {job['id']} did not settle it (now: {rule}); "
-                  "continue, rescope or stop?")
+        reason = (f"{title} · 갈림길 · {count} follow-ups on run {job['id']} did not settle it (the last from {by}"
+                  + (f", now: {rule}" if rule else "") + "); continue, rescope or stop?")
         self.act(ids("block"), lambda _aid: self.block(job["card"], reason))
         self.ledger["blocked"][job["card"]["task"]] = ids("block")
         self.save()
