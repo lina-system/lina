@@ -536,3 +536,27 @@ def test_a_subquery_in_from_needs_no_name(routed):
                             "ON k = m.key WHERE m.key = 'a'").fetchall() == [("a", 2)]
     finally:
         conn.close()
+
+
+def test_text_keys_order_and_walk_bytewise_as_sqlite(routed):
+    """SQLite orders and compares text bytewise (BINARY), and LCM-X walks its keys with ``> ? ORDER BY ... LIMIT``
+    cursors (embedding backfill ids such as ``331:0``). The store's database orders by its locale (en_US.utf8 for
+    the store image), which ignores punctuation; ctx's text columns and the connection's temp tables use "C"."""
+    db = routed("bytewise")
+    _stores(db)[0].close()
+    keys = ["33:0", "331:0", "3310:0", "332:0", "a-b", "a_b", "aB", "Ab", "ab", "a b", "é", "z"]
+    conn = lcm_x_store.backend_for(db)()
+    try:
+        conn.executemany("INSERT INTO metadata(key, value) VALUES (?, 'walk')", [(k,) for k in keys])
+        conn.execute("CREATE TEMP TABLE walk_ids(id TEXT PRIMARY KEY, value TEXT)")
+        conn.executemany("INSERT INTO walk_ids(id, value) VALUES (?, 'walk')", [(k,) for k in keys])
+        for table, column in (("metadata", "key"), ("walk_ids", "id")):
+            assert [r[0] for r in conn.execute(f"SELECT {column} FROM {table} WHERE value = 'walk' ORDER BY {column}")] == sorted(keys)
+            walked, cursor = [], ""
+            while page := [r[0] for r in conn.execute(
+                    f"SELECT {column} FROM {table} WHERE value = 'walk' AND {column} > ? ORDER BY {column} LIMIT 3", (cursor,))]:
+                walked += page
+                cursor = page[-1]
+            assert walked == sorted(keys), table
+    finally:
+        conn.close()

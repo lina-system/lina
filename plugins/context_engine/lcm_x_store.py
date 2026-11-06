@@ -776,6 +776,8 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
         masked = re.sub(r"\bINTEGER\b", "bigint", masked, flags=re.IGNORECASE)
         masked = re.sub(r"\bREAL\b", "double precision", masked, flags=re.IGNORECASE)
         masked = re.sub(r"\bBLOB\b", "bytea", masked, flags=re.IGNORECASE)
+        # SQLite compares text bytewise (BINARY), as ctx's tables do; the database's locale must not order it.
+        masked = re.sub(r"\bTEXT\b", 'text COLLATE "C"', masked, flags=re.IGNORECASE)
     masked = _expand_stars(masked, catalog)
     masked = _bare_joins(_alias_subqueries(masked))
     for each in re.finditer(r"\bjson_each\(\w+\.source_ids\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
