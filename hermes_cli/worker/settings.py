@@ -10,6 +10,8 @@ worker:
   hub: {host: hub, lina: lina}     # how a device reaches the hub to report an end (ssh alias, lina command there)
   notice: {command: [my-notify, "{agent}"]}   # the end notice: body on stdin; unset = written to hub/notices only
   card_link: {kind: hermes, command: [hermes]}  # runs from Hermes cards end on the card (kanban_link.py)
+  todo_link: {kind: hermes, command: [my-todo]}  # `<command> link|evidence|note <to-do> ...` for --todo; unset = none
+  hub_rules: "- This machine is the hub: ..."     # added to the first prompt of a run on a `host: local` device
   models: {...}                    # see models.py
   runners: {...}                   # see runners/__init__.py
 ```
@@ -47,6 +49,39 @@ def lina_home() -> Path:
     if os.environ.get("LINA_HOME", "").strip() or not hermes_home or is_hermes_agent_path(hermes_home):
         return platform_default_home_for(os.environ, Path.home())
     return get_default_hermes_root()
+
+
+CALLER_HERMES_HOME = "LINA_CALLER_HERMES_HOME"  # the caller's Hermes Agent HERMES_HOME, kept by the shim
+
+
+def caller_hermes_home() -> Path | None:
+    """The Hermes Agent ``HERMES_HOME`` the caller ran under: the one the ``omo-task`` shim kept before LINA's
+    bootstrap dropped it, else a ``HERMES_HOME`` under Hermes Agent's home still in this process."""
+    import os
+    from hermes_constants import is_hermes_agent_path
+    kept = os.environ.get(CALLER_HERMES_HOME, "").strip()
+    if kept:
+        return Path(kept).expanduser()
+    home = os.environ.get("HERMES_HOME", "").strip()
+    return Path(home).expanduser() if home and is_hermes_agent_path(home) else None
+
+
+def hub_rules(worker: dict) -> str:
+    """``worker.hub_rules``: the text added to the first prompt of a run on the hub node; "" when unset."""
+    value = worker.get("hub_rules")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def todo_link(worker: dict) -> list[str] | None:
+    """``worker.todo_link: {kind: hermes, command: [...]}`` as its argv; None when unset. ValueError when it is
+    malformed."""
+    link = worker.get("todo_link")
+    if link is None:
+        return None
+    command = link.get("command") if isinstance(link, dict) and link.get("kind") == "hermes" else None
+    if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+        raise ValueError("worker.todo_link must be {kind: hermes, command: [<argv>]}")
+    return command
 
 
 def root(base: Path | None = None) -> Path:

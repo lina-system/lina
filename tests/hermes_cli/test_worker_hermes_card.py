@@ -131,8 +131,8 @@ def test_a_hermes_card_gets_start_end_and_report_through_the_command_and_no_kanb
 
     assert opened == []
     made = calls()
-    assert _verbs(made) == ["comment", "comment", "attach"]
-    start, end, attach = (call["argv"] for call in made)
+    assert _verbs(made) == ["comment", "comment", "attach", "show"]  # show: does the card's schedule name the run
+    start, end, attach, _ = (call["argv"] for call in made)
     assert start[:5] == ["kanban", "--board", BOARD, "comment", CARD] and task_id in start[-1]
     assert end[:5] == ["kanban", "--board", BOARD, "comment", CARD]
     assert end[end.index("--author") + 1] == "lina-worker"
@@ -182,7 +182,7 @@ def test_wait_parks_the_card_and_the_first_end_wakes_it_once(queued):
     assert calls()[-1]["argv"][-1] == CARD
 
     hub.notify(second, "done", "1")  # the card runs again: the comment only
-    assert _verbs(calls())[5:] == ["comment"]
+    assert _verbs(calls())[5:] == ["comment", "show"]
 
 
 def test_wait_on_one_run_is_woken_only_by_that_runs_end(queued):
@@ -190,10 +190,10 @@ def test_wait_on_one_run_is_woken_only_by_that_runs_end(queued):
     waited, other = submit("a.md"), submit("b.md")
     assert hub.wait({"task": CARD, "board": BOARD}, [waited]) == 0
     hub.notify(other, "done", "1")
-    assert _verbs(calls())[2:] == ["comment"]
+    assert _verbs(calls())[2:] == ["comment", "show"]
     hub.notify(waited, "done", "1")
     hub.notify(waited, "done", "1")
-    assert _verbs(calls())[2:] == ["comment", "comment", "show", "unblock"]
+    assert _verbs(calls())[2:] == ["comment", "show", "comment", "show", "unblock"]
 
 
 def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_through(queued, tmp_path, monkeypatch):
@@ -276,7 +276,7 @@ def test_a_retried_fetch_that_finds_a_later_run_does_not_label_its_results_as_th
     assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
     assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[1]["argv"][-1]
     hub.notify(run, "done", "2")
-    assert _verbs(calls())[1:] == ["comment", "show", "unblock", "comment", "attach"]
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock", "comment", "attach", "show"]
     assert _attached(calls()) == [(f"report-{run}-2.md", "run 2 report\n")]
     assert not hub.store.load(run).get("card_pending")
 
@@ -321,7 +321,7 @@ def test_the_end_of_a_run_on_a_running_card_is_a_comment_only(queued):
     hub, submit, calls = queued
     run = submit()
     hub.notify(run, "failed", "1")
-    assert _verbs(calls()) == ["comment", "comment"]
+    assert _verbs(calls()) == ["comment", "comment", "show"]  # read only: no schedule names the run
 
 
 def test_wait_with_no_open_run_on_the_card_does_not_park_it(queued):

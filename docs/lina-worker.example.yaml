@@ -13,6 +13,8 @@ worker:
   hub: {host: hub, lina: lina}               # how a device reaches the hub to report an end (ssh alias, lina there)
   notice:
     command: [notify-agent, "{agent}"]       # the end notice for the agent's chat, body on stdin
+  todo_link: {kind: hermes, command: [my-todo]}  # runs `link|evidence|note <to-do> ...` for --todo; unset = none
+  hub_rules: "- This machine is the hub: never open secrets or the owner's private records."  # host: local runs
   default_runner: omo
   # Requested access defaults to workspace-write. An agent needs an explicit full ceiling for full access.
   access: {reviewer: read-only, builder: workspace-write}

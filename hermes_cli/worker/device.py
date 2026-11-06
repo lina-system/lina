@@ -422,7 +422,11 @@ def human(worker_root: Path, task_id: str) -> dict:
         if _permission_pending(runner, Handle.load(task, run)):
             return {"open": False, "permission": True, "run": run}
     contract = read_json(task.path(f"live.{run}.json"), {}) or {}
-    return {"open": is_alive and contract.get("state") == "waiting_human", "run": run}
+    reply = {"open": is_alive and contract.get("state") == "waiting_human", "run": run}
+    question = task.work / "question.md"  # a command runner's question (runners/command.py)
+    if reply["open"] and question.is_file() and not question.is_symlink():
+        reply["question"] = question.read_text(encoding="utf-8-sig", errors="replace")[:4000]
+    return reply
 
 
 def answer(worker_root: Path, task_id: str, text: str) -> dict:
