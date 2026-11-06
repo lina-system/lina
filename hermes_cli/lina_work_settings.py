@@ -44,12 +44,14 @@ KEEP_OUT = "env"
 ROLES = ("work", "files", "person")
 ACCESS = ("read-only", "workspace-write", "full")
 SIZES = ("S", "M", "L")
+FLAVORS = ("grok", "dsh", "agy", "claude", "codex")  # an ACP runner's agent; omitted = generic
 LIMITS = {"devices.workers": 128, "worker.runners": 64, "worker.routing": 64}
 _BOOL, _INT, _STR, _STRS = "bool", "int", "str", "strs"
 DEVICE = {"host": _STR, "role": _STR, "cap": _INT, "named_cap": _INT, "last": "last", "fast": _BOOL,
           "no_repo": _BOOL, "off": _BOOL, "auto": _BOOL, "lina": _STR}
 RUNNER = {"type": _STR, "argv": _STRS, "follow_up_argv": _STRS, "model_args": _STRS, "on": _BOOL, "model": "model",
-          "fallback_model": "model", "access": _STR, "access_args": "access_args", "bin": _STR, "node": _STR, "engine": _STR}
+          "fallback_model": "model", "access": _STR, "access_args": "access_args", "bin": _STR, "node": _STR, "engine": _STR,
+          "flavor": _STR}
 ALIAS = {"provider": _STR, "id": _STR, "thinking": _STR}
 RULE = {"name": _STR, "when": "when", "runner": _STR}
 WHEN = {"runner_label": _STR, "labels_any": _STRS, "size": _STRS}
@@ -434,6 +436,13 @@ def _runners(doc: dict, aliases: dict, errors: list[dict]) -> dict:
             errors.append({"path": f"{path}.type", "message": f"one of {', '.join(TYPES)}"})
         if entry.get("type") == "command" and not entry.get("argv"):
             errors.append({"path": f"{path}.argv", "message": "a command runner needs its argv"})
+        if entry.get("type") == "acp" and not entry.get("argv"):
+            errors.append({"path": f"{path}.argv", "message": "an acp runner needs its argv: a non-empty list of non-empty texts"})
+        if "flavor" in entry and isinstance(entry["flavor"], str):
+            if entry.get("type") != "acp":
+                errors.append({"path": f"{path}.flavor", "message": "only an acp runner has a flavor"})
+            elif entry["flavor"] not in FLAVORS:
+                errors.append({"path": f"{path}.flavor", "message": f"one of {', '.join(FLAVORS)}"})
         if "access" in entry and (not isinstance(entry["access"], str) or entry["access"] not in ACCESS):
             errors.append({"path": f"{path}.access", "message": f"one of {', '.join(ACCESS)}"})
         if "access_args" in entry:

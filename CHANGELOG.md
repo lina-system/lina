@@ -15,6 +15,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Added
 
+- ACP worker runners: `type: acp` with a mandatory `argv` and an optional `flavor` (`grok`, `dsh`, `agy`, `claude`, `codex`; omitted is generic) in the work settings, with access-mode permission answers, no client fs or terminal, `question.md` as `waiting_human`, session load/resume across runs and steering by cancel then prompt (see [docs/worker-protocol.md](docs/worker-protocol.md)).
 - Worker runs record an access mode, enforce per-agent ceilings and runner-specific permissions without follow-up escalation, and declare device verb effects while keeping push blocked (lina#220).
 - Worker contacts negotiate protocol ranges and capabilities before verbs, preserve legacy run recovery, and guard service controls with per-start instance identities (lina#218).
 - `lina worker submit` picks the runner (`--runner`, else the routing rules on the new `--labels`/`--size`, else the default; a runner that is off is refused) and the model (`--model`, else the runner's model, else the mode default) from the work settings, starts on the fallback model with one `model_fallback` receipt when OCX has the chosen one off or out of quota, and records the settings revision, both sources and the OCX check on the job and its `submitted` receipt; on the device the job's model wins, and the run record and run card serve `model` and `settingsRevision` (lina#257).

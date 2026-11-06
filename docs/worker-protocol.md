@@ -47,9 +47,35 @@ and appears in status and notice headlines.
 A command runner declares `access_args`, a mapping from modes to argv lists
 appended on starts, follow-ups and answers. Without that mapping, its fixed
 `access` is its only supported mode; with neither declaration it cannot start.
-See `lina-worker.example.yaml` for Codex sandbox and Claude permission flags.
+The ACP examples in `lina-worker.example.yaml` use protocol permission answers instead of CLI bypass flags.
 The omo runner sets a session preset only for `read-only`. Both hub and
-device refuse unsupported modes with a reason. ACP is not implemented here.
+device refuse unsupported modes with a reason.
+
+## ACP runners
+
+A runner of `type: acp` speaks the Agent Client Protocol to a child process over stdio. Its `argv` is mandatory
+(a non-empty list of non-empty texts); the optional `flavor` is one of `grok`, `dsh`, `agy`, `claude` or `codex`,
+and an omitted flavor is generic. The entry points are `grok agent stdio`, `dsh acp`, `agy acp`, `claude-agent-acp`
+and `codex-acp`. Settings carry no bypass flags.
+Claude Code and Codex use the public `@zed-industries/claude-agent-acp` and
+`@zed-industries/codex-acp` adapters; provisioning and version pins are maintained separately.
+
+- The client advertises no file-system and no terminal capability (both false).
+- Permission requests are answered by the runner, never a person. `read-only` rejects every request;
+  `workspace-write` answers `allow_once` for edits of known workspace files and bounded commands, and rejects
+  the rest; `full` answers `allow_once`.
+- Grok's native tools do not always ask ACP permission. Its flavor requires the advertised blocking
+  `x.ai/hooks` pre-tool hook and registers it on every new or reopened session; a missing hook fails before
+  a prompt runs. This gate uses the same access policy and logs its allow/deny decisions.
+- A `question.md` moves the run to `waiting_human`; the answer is prompted into the same session.
+- The next run of a task loads or resumes the session when the agent advertises it, else it starts a new session
+  whose first prompt carries the previous final report summary. Events record which method was used.
+- A live `send` steer cancels the active turn, then prompts the same session; prompts are never concurrent.
+- Successful `end_turn` completes the run; `cancelled` cancels it, and refusal or exhausted limits fail it.
+  `stall_grace_s` remains the idle limit. A run closes its agent process group before publishing its ending.
+
+The wire format follows the [public ACP schema](https://agentclientprotocol.com/protocol/schema).
+Real-node work-card delivery through grok and dsh still needs verification after node deployment.
 
 omo: workspace-write is enforced by the task boundary (worktree, blocked push, read-only inputs), not by an omo preset, because the engine's workspace preset asks on every codemode eval
 
