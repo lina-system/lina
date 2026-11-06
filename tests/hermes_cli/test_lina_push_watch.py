@@ -272,6 +272,48 @@ def test_the_started_sender_wakes_on_a_record_write_long_before_its_sweep(work, 
     assert [(m["kind"], m["target"]) for m in device.got] == [("ask", "T2")]
 
 
+def _lifespan(monkeypatch, which: str):
+    """One of the two web server lifespans, with the standalone one's unrelated boot services stubbed out."""
+    from hermes_cli import web_server as web
+    from tui_gateway import methods_groups
+    for name in ("_warm_gateway_module", "_eager_reconcile_own_session_db", "_start_desktop_cron_ticker",
+                 "_terminate_desktop_managed_gateway"):
+        monkeypatch.setattr(web, name, lambda *a, **k: None)
+    for name in ("start_hosted_room_service", "stop_hosted_room_service"):
+        monkeypatch.setattr(methods_groups, name, lambda *a, **k: None)
+    monkeypatch.setattr(web.app.state, "gateway_runner", object() if which == "http" else None, raising=False)
+    return web.app.router.lifespan_context(web.app)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("which", ["standalone", "http"])
+async def test_a_sender_that_cannot_start_leaves_push_off_and_the_web_server_starts(work, key, monkeypatch, caplog,
+                                                                                    which):
+    (work.root / "push").write_text("not a folder", encoding="utf-8")
+    entered = False
+    with caplog.at_level(logging.WARNING, logger="hermes_cli"):
+        async with _lifespan(monkeypatch, which):
+            entered = True
+            assert not [t for t in threading.enumerate() if t.name == "lina-push"]
+    assert entered
+    pushes = [r for r in caplog.records if r.getMessage().startswith("push:")]
+    assert [r.getMessage() for r in pushes] == ["push: off, the sender did not start"]
+    assert pushes[0].exc_info and issubclass(pushes[0].exc_info[0], OSError)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("which", ["standalone", "http"])
+async def test_a_stop_that_raises_never_reaches_the_lifespan_teardown(work, monkeypatch, caplog, which):
+    def stop():
+        raise OSError("lock file gone")
+    monkeypatch.setattr(lina_push_watch, "start", lambda: stop)
+    with caplog.at_level(logging.WARNING, logger="hermes_cli"):
+        async with _lifespan(monkeypatch, which):
+            pass
+    pushes = [r for r in caplog.records if r.getMessage().startswith("push:")]
+    assert [r.getMessage() for r in pushes] == ["push: the sender did not stop cleanly"] and pushes[0].exc_info
+
+
 def test_without_a_key_the_sender_does_not_start_and_one_warning_is_logged(work, monkeypatch, caplog):
     monkeypatch.delenv(lina_push.KEY_ENV, raising=False)
     with caplog.at_level(logging.INFO, logger="hermes_cli"):

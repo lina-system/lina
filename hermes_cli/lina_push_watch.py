@@ -23,6 +23,7 @@ logged with the endpoint's host only.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import json
 import logging
@@ -30,6 +31,7 @@ import os
 import threading
 import time
 from pathlib import Path
+from contextlib import suppress
 from typing import Callable
 
 import httpx
@@ -42,6 +44,15 @@ SWEEP_SECONDS = 300.0
 BACKOFF_SECONDS = (30, 60, 120, 300, 600, 1800)
 TEXT_LIMIT = 300
 GONE = (404, 410)
+# fcntl is Unix-only; Windows locks a byte range with msvcrt (the shape of agent/vault_store.py).
+msvcrt = None
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - platform-specific fallback
+    fcntl = None
+    with suppress(ImportError):
+        import msvcrt
+_HELD = {errno.EAGAIN, errno.EACCES, errno.EDEADLK}  # flock's EWOULDBLOCK; msvcrt's EACCES / EDEADLOCK
 SOURCES = {"ask": "work", "reply": "work", "blocked": "kanban", "question": "kanban"}
 log = logging.getLogger(__name__)
 
@@ -226,11 +237,40 @@ class Sender:
             stream.executor.shutdown(wait=False)
 
 
+def _hold(path: Path) -> int | None:
+    """The sender lock, taken without waiting -> its descriptor, or None while another process holds it. msvcrt
+    locks a byte range, so the file always holds one byte."""
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    try:
+        if os.fstat(fd).st_size == 0:
+            os.write(fd, b" ")
+        if fcntl:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        elif msvcrt:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_NBLCK, 1)
+    except OSError as exc:
+        os.close(fd)
+        if exc.errno in _HELD:
+            return None
+        raise
+    return fd
+
+
+def _release(fd: int) -> None:
+    try:
+        if fcntl:
+            fcntl.flock(fd, fcntl.LOCK_UN)
+        elif msvcrt:
+            os.lseek(fd, 0, os.SEEK_SET)
+            msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+    finally:
+        os.close(fd)
+
+
 def start(root: Path | None = None) -> Callable[[], None]:
     """Start the sender with the web server -> its stop. Without a key, or with another sender already holding this
-    root, nothing starts and the stop does nothing."""
-    import fcntl
-
+    root, nothing starts and the stop does nothing. Other failures raise; the lifespan turns them into push off."""
     from hermes_cli.lina_board import _root
     vapid, why = lina_push.vapid_key()
     if vapid is None:
@@ -240,11 +280,8 @@ def start(root: Path | None = None) -> Callable[[], None]:
     folder = lina_push.push_dir(root)
     folder.mkdir(parents=True, exist_ok=True)
     folder.chmod(0o700)
-    holder = os.open(folder / "sender.lock", os.O_RDWR | os.O_CREAT, 0o600)
-    try:
-        fcntl.flock(holder, fcntl.LOCK_EX | fcntl.LOCK_NB)
-    except BlockingIOError:
-        os.close(holder)
+    holder = _hold(folder / "sender.lock")
+    if holder is None:
         log.info("push: another process sends for %s", root)
         return lambda: None
     from agent.memory_provider import spawn_context_thread
@@ -255,5 +292,5 @@ def start(root: Path | None = None) -> Callable[[], None]:
     def halt() -> None:
         stop.set()
         thread.join(timeout=5)
-        os.close(holder)
+        _release(holder)
     return halt
