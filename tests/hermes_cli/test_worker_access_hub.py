@@ -110,7 +110,7 @@ def sending(lane, monkeypatch):
             "action": state["action"], "run": 2, "steps": 1}
         return Reply(0, json.dumps(reply).encode(), "")
 
-    monkeypatch.setattr(hub, "transport", lambda job: SimpleNamespace(call=call))
+    monkeypatch.setattr(hub, "transport", lambda job: SimpleNamespace(call=call, descriptor=None))
     monkeypatch.setattr(hub, "meta", lambda job, **kw: {"alive": state["alive"], "run": 1})
     monkeypatch.setattr(hub_mod.kanban_link, "card_from_env", lambda: None)
     return hub, job["id"], state, calls
