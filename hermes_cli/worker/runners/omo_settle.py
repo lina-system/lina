@@ -278,7 +278,6 @@ class Settle:
             if now - since >= float(self.limits.get("human_max_s", 3 * 3600.0)):
                 return self._finish("stalled", why="open question exceeded its wait limit", **extra)
             return None
-        self.mem.pop("human_since", None)
         if key in ("stalled", "stalled_suspect") and quiet >= grace:
             return self._finish("stalled", why=why, **extra)
         if key == "background" and quiet >= grace and not background_items(view):
@@ -305,6 +304,8 @@ class Settle:
             self._save()
             return self._finish("error", why="state unreadable 8 times") if self.mem["errs"] >= 8 else "running"
         self.mem["errs"] = 0
+        if not real_question(view):
+            self.mem.pop("human_since", None)
         now = time.time()
         activity = self._activity()
         work = live_work_processes(self.task)

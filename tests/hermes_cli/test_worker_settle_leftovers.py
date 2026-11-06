@@ -85,3 +85,24 @@ def test_live_work_prevents_sealed_engine_from_closing_run(tmp_path, monkeypatch
     monkeypatch.setattr("hermes_cli.worker.runners.omo_settle.live_work_processes",
                         lambda task: [{"pid": 123, "cmd": "build"}], raising=False)
     assert settle.step() == "running"
+
+
+def test_new_question_after_answered_live_work_gets_its_own_clock(tmp_path, monkeypatch):
+    settle, state, calls = session_case(tmp_path, monkeypatch, dialogs=[{"id": "first"}])
+    now, work = [1000], []
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_settle.time.time", lambda: now[0])
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_settle.live_work_processes", lambda task: work)
+    assert settle.step() == "waiting_human"
+    now[0] = 1050
+    state["pendingDialogs"] = []
+    work.append({"pid": 123, "cmd": "build"})
+    assert settle.step() == "running"
+
+    # A fresh poll object reads the clock persisted by the live-work path.
+    now[0] = 1200
+    state["pendingDialogs"] = [{"id": "second"}]
+    work.clear()
+    resumed = Settle(settle.task, 1, settle.ref, settle.call, settle.limits)
+    assert resumed.step() == "waiting_human"
+    assert "abort" not in calls
+    assert json.loads(resumed.file.read_text())["human_since"] == 1200
