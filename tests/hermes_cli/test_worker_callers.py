@@ -264,6 +264,18 @@ def test_a_card_still_running_when_its_run_ends_is_woken_on_a_later_tick(board):
     assert _woke(calls) == 1 and not hub.store.load(run).get("card_pending")
 
 
+def test_a_run_that_ends_before_its_card_schedules_wakes_the_card_once_it_schedules_on_it(board):
+    hub, submit, show, calls = board
+    run = submit()
+    show("running", [])
+    hub.notify(run, "done", "1")
+    assert _woke(calls) == 0 and hub.store.load(run).get("card_pending")
+    show("scheduled", [_scheduled(f"waiting on lina worker {run}", [run])])
+    hub.tick()
+    hub.tick()
+    assert _woke(calls) == 1 and not hub.store.load(run).get("card_pending")
+
+
 @pytest.fixture
 def asking(tmp_path, kanban, monkeypatch):
     """A run on a Hermes card waiting on a person's answer, its device played in-process."""

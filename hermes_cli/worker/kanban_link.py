@@ -267,7 +267,8 @@ def wake(store, card: dict, link: dict, run_id: str) -> bool:
 
     It waits on the run when its last ``scheduled`` event names it: then it is woken after the last run that
     schedule names has ended, and never while one this hub does not know is named.
-    Else when ``park`` (``lina worker wait``) recorded the run. The end of a run the card does not wait on, or
+    Else when ``park`` (``lina worker wait``) recorded the run. A card still ``running`` or ``ready`` has not
+    scheduled itself yet, so the wake is retried on the next tick. The end of a run the card does not wait on, or
     whose schedule still waits on others, leaves it parked."""
     with store.lock(f"card-{card_key(card)}"):
         mark = _parked_path(store, card)
@@ -287,9 +288,9 @@ def wake(store, card: dict, link: dict, run_id: str) -> bool:
                 return False
             if woken.is_file() and woken.read_text(encoding="utf-8-sig").strip() == schedule:
                 return False  # this schedule was woken already, by the end of another run it names
-        elif run_id not in parked:
+        elif run_id not in parked and status not in ("running", "ready"):
             return False
-        if status in ("running", "ready"):
+        if status in ("running", "ready"):  # not parked yet: it may still schedule on this run
             raise CardLinkError(f"card {card['task']} is {status}; waiting for kanban_schedule")
         if status == "scheduled":
             _kanban(link["command"], card, "unblock")
