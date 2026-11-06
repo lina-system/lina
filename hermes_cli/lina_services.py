@@ -209,6 +209,13 @@ def act(verb: str, name: str) -> int:
     gateway uses the memory store and OCX, the worker uses OCX), so the person stops the user first, with that
     service's own command and its own checks (the gateway asks before it interrupts live sessions)."""
     service = BY_NAME[name]
+    if name == "ocx":
+        from hermes_cli.lina_ocx import OcxError, refuse_external
+        try:
+            refuse_external(f"lina services {verb} ocx")  # lina#232: an OCX run outside LINA is only read
+        except OcxError as exc:
+            print(f"OCX: {exc}")
+            return 1
     if service.issue:
         print(f"{name} is not installed yet: lina{service.issue} adds it.")
         return 1
