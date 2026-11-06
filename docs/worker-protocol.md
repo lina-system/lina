@@ -4,9 +4,14 @@ Every hub contact created by `transport.for_device` asks `_device hello` before
 its first verb, including local devices. The descriptor is cached only in that
 transport object, never on disk or across ticks. It contains `protocol.min` and
 `protocol.max` (currently both 1), `version` (the informational LINA release),
-`instance_id`, `serve`, and `capabilities`: configured runner names and types,
-access modes (`read-only`, `workspace-write`, `full`), and supported verbs.
-Runner versions and login checks belong to #222.
+`instance_id`, `serve`, and `capabilities`: the configured runners, access modes
+(`read-only`, `workspace-write`, `full`), and supported verbs. Each runner row
+(`lina_runners.node_report`, #222) carries `name` and `type`, and for a runner
+LINA pins also `pin`, `pinned`, `installed` (read from the active install),
+`person_installed`, `sign_in`, `ready` and one `why`. The runner probes run in
+parallel within `lina_runners.HELLO_TIMEOUT_S`; a probe that fails or is late
+gives `why: unknown` with `why_detail`, and hello still answers. The instance
+identity is read apart from these probes (`protocol.identity`).
 
 Compatibility depends only on overlapping inclusive protocol ranges. Disjoint
 ranges block every non-hello verb and report both ranges and which side needs an
@@ -28,6 +33,11 @@ running tasks survive worker service restarts.
 For future hub service controls, `NegotiatedTransport.service(action, recorded_id)`
 refreshes hello and refuses a changed instance without acting. The internal
 `_device service <stop|restart> <instance_id>` gate compares again on the device.
+The verb also takes `service <ocx|worker> <action> [instance_id]` (#222):
+`worker status|stop|restart` (stop and restart through the same instance gate)
+and `ocx status|restart` through the node's service layer
+(`lina_runners.node_service`); the older form still means the worker. Its
+effect stays `destructive`, the strongest of the actions it carries.
 Identity publication and compare-and-stop share a file lock, so a newly published
 instance cannot be stopped using the previous record. Restart starts the service
 after releasing that lock, allowing the new loop to publish its identity. A stale

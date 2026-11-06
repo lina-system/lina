@@ -39,15 +39,20 @@ global npm) is only read: `status` shows its path and `--version` as
   does not answer with the new version. Only npm runners accept a version other
   than the pin. Moving the pin across nodes is #238.
 - `lina runners rollback <name>`: back to the version before the last upgrade.
-- `lina runners status [--json] [--offered]`: per runner `pinned`, `installed`,
-  `versions`, `person_installed`, `sign_in` (`signed_in`, `signed_out`,
-  `api_key`, `ocx`, or `unknown` with `sign_in_why`), `ready` and one `why`
-  (`prepare`, `update`, `sign in`). `--offered` reports only the runners this
-  node offers in `worker.runners`, matched by name or by the command in `argv`;
-  this is what `hello` will carry.
+- `lina runners status [--json] [--offered]`: per runner `pinned`, `current`
+  (the `current` link), `installed` (what the active install is: an npm
+  runner's installed `package.json` with its entry present, another runner's
+  `--version`; `installed_why` when it cannot say), `versions`,
+  `person_installed`, `sign_in` (`signed_in`, `signed_out`, `api_key`, `ocx`,
+  or `unknown` with `sign_in_why`), `ready` and one `why` (`prepare`, `update`,
+  `sign in`, `unknown`). A runner that updated itself in place shows `update`;
+  a missing entry shows `prepare`. `--offered` reports the runners this node
+  offers in `worker.runners`, matched by name or by the command in `argv`; this
+  is what `hello` carries.
 
-Each `--version` the status asks is bounded by 10 s, and the rows run in
-parallel. Credential files are only checked for existence, never opened.
+Each `--version` the status asks is bounded by 10 s, the rows run in parallel,
+and the report `hello` carries is bounded by 20 s as a whole. Credential files
+are only checked for existence, never opened.
 
 ## Automatic updates
 
@@ -58,26 +63,23 @@ cursor-agent and agy have no switch LINA could confirm from their help or docs;
 
 ## Devices
 
-`lina devices` shows each device's runners from `lina runners status --offered`
-on that device (in-process for a local one). A device ssh cannot reach lists the
-runners the hub offers, each `unreachable`; a device without `lina runners` yet,
-each `update`.
+`lina devices` shows each device's runners from that device's `hello`, through
+the negotiated transport (in-process for a local one). A device ssh cannot reach
+lists the runners the hub offers, each `unreachable`; a device without hello, or
+whose hello has no runner rows yet, each `update`.
 
 `lina devices sign-in [--json]` gathers the runners that are `signed_out` on some
 nodes into one question per runner, naming the nodes and how to sign in on each.
 Writing it into the inbox and the hub's sign-in button are #230 and #234.
 
-`lina devices service <name> <ocx|worker> <status|restart>`: the worker goes
-through #218's `NegotiatedTransport.service` with the instance its `hello`
-reports; OCX goes through `lina_runners.node_service`, which calls the service
-layer (`lina_services.act`, its refusals included: OCX is not restarted while
-the worker or gateway runs on it).
+`lina devices service <name> <ocx|worker> <status|restart>`: on any device
+through its `service` verb. The worker goes through #218's
+`NegotiatedTransport.service` with the instance its `hello` reports; OCX is
+`service ocx <action>`, which the node hands to `lina_runners.node_service` and
+the service layer (`lina_services.act`, its refusals included: OCX is not
+restarted while the worker or gateway runs on it).
 
 ## Not wired yet
 
-`hermes_cli/worker/protocol.py` is unchanged in this round (#220 edits it). The
-next round replaces the runner list in `hello()`'s `capabilities.runners` with
-`lina_runners.node_report(worker_root)` and lets the `service` verb carry
-`ocx|worker` to `lina_runners.node_service`; until then OCX of a remote device
-is refused, and the runner `argv` in `docs/lina-worker.example.yaml` still names
-the bare commands instead of `$LINA_HOME/bin/runners/<name>`.
+The runner `argv` in `docs/lina-worker.example.yaml` still names the bare
+commands instead of `$LINA_HOME/bin/runners/<name>`.
