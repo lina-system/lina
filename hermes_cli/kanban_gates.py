@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""``hermes kanban gate prs|dev|artifact|review|ask`` -- deterministic work-card gates.
+"""``hermes kanban gate prs|dev|artifact|review|ask|ui-qa`` -- deterministic work-card gates.
 
 A work card is done by evidence, not by the agent's word (lina-system/lina#107).
 Each gate prints one short line per check and exits 0 (pass), 1 (fail) or
@@ -160,7 +160,7 @@ def gh_json(*args: str):
 
 _ISSUE_QUERY = """query($owner:String!,$name:String!,$number:Int!){repository(owner:$owner,name:$name){
 issue(number:$number){state stateReason body closedByPullRequestsReferences(first:20,includeClosedPrs:true){
-nodes{number url merged mergedAt mergeCommit{oid} repository{nameWithOwner} labels(first:50){nodes{name}}}}}}}"""
+nodes{number url state headRefOid merged mergedAt mergeCommit{oid} repository{nameWithOwner} labels(first:50){nodes{name}}}}}}}"""
 
 
 def fetch_issue(repo: str, number: int) -> dict:
@@ -437,6 +437,34 @@ def gate_ask(args: argparse.Namespace, conn: sqlite3.Connection, report: Report)
 
 
 
+def gate_ui_qa(args: argparse.Namespace, conn: sqlite3.Connection, report: Report) -> None:
+    """Each open or merged PR of the card's To-dos issues (the PRs ``gate prs`` reads) needs a
+    passing disposable-instance QA result for its head; the record format is ``kanban_ui_qa``."""
+    card = load_card(conn, args.card)
+    issues = card_todos(card["body"])[0]
+    if not issues:
+        report.line(FAIL, f"{card['id']}: no owner/repo#n issues under ## To-dos")
+        return
+    prs = {}
+    for repo, number in issues:
+        for pr in (fetch_issue(repo, number).get("closedByPullRequestsReferences") or {}).get("nodes") or []:
+            if pr and (pr.get("merged") or pr.get("state") == "OPEN") and pr.get("headRefOid"):
+                prs[pr["url"]] = pr
+    if not prs:
+        report.line(FAIL, f"{card['id']}: no open or merged pull request closes the card's issues")
+        return
+    comments = [(row["id"], row["body"]) for row in conn.execute(
+        "SELECT id, body FROM task_comments WHERE task_id = ? ORDER BY id", (card["id"],))]
+    verdict_for = _sibling("kanban_ui_qa").ui_qa_verdict
+    for pr in prs.values():
+        verdict = verdict_for(comments, pr["headRefOid"])
+        repo = (pr.get("repository") or {}).get("nameWithOwner") or ""
+        code = {"pass": PASS, "fail": FAIL, "wait": WAIT}[verdict.code]
+        report.line(code, f"{repo}#{pr['number']} head {pr['headRefOid'][:10]}: {verdict.text}")
+        for defect in verdict.defects:
+            print(f"  defect: {defect}")
+
+
 def build_parser(prog: str = "kanban gate") -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog=prog, description="Deterministic work-card gates: exit 0 pass, 1 fail, 75 waiting.")
     parser.add_argument("--db", help="Board DB (default: $HERMES_KANBAN_DB)")
@@ -459,6 +487,8 @@ def build_parser(prog: str = "kanban gate") -> argparse.ArgumentParser:
     review.add_argument("--owner", action="append", metavar="NAME",
                         help=f"Comment author that counts as the owner (repeatable; default: {', '.join(DEFAULT_OWNERS)})")
     sub.add_parser("ask", parents=[card], help="Every question the assignee raised has a later answer")
+    sub.add_parser("ui-qa", parents=[card],
+                   help="The card's PR head has a disposable-instance QA result with zero defects")
     return parser
 
 
@@ -473,7 +503,7 @@ def _configured_owner() -> str | None:
         return None
 
 
-_BOARD_GATES = {"prs": gate_prs, "dev": gate_dev, "review": gate_review, "ask": gate_ask}
+_BOARD_GATES = {"prs": gate_prs, "dev": gate_dev, "review": gate_review, "ask": gate_ask, "ui-qa": gate_ui_qa}
 
 
 def main(argv: list[str] | None = None, *, default_db: str | None = None, prog: str = "kanban gate") -> int:

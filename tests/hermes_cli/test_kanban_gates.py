@@ -592,6 +592,76 @@ def test_ask_passes_without_questions_and_ignores_others_questions(board):
 
 
 
+UI_HEAD, OLD_HEAD = "c" * 40, "d" * 40
+UI_TODOS = "Screen work.\n\n## To-dos\n\n- acme/app#12\n"
+
+
+def _ui_issue(head=UI_HEAD):
+    prs = [{"number": 35, "url": "https://github.com/acme/app/pull/35", "state": "OPEN", "merged": False,
+            "headRefOid": head, "repository": {"nameWithOwner": "acme/app"}},
+           {"number": 30, "url": "https://github.com/acme/app/pull/30", "state": "CLOSED", "merged": False,
+            "headRefOid": OLD_HEAD, "repository": {"nameWithOwner": "acme/app"}}]
+    issue = {"state": "OPEN", "stateReason": None, "body": "", "closedByPullRequestsReferences": {"nodes": prs}}
+    return [["closedByPullRequestsReferences", "number=12"], 0, {"data": {"repository": {"issue": issue}}}]
+
+
+def _qa(head=UI_HEAD, instance="disposable", defects="- None", drop=None):
+    parts = {"Defects": defects, "Confirmed": "- board loads\n- card opens", "Suggestions": "- wider column",
+             "Map differences": "None."}
+    body = "".join(f"\n## {name}\n\n{text}\n" for name, text in parts.items() if name != drop)
+    return f"ui-qa-result v1 head={head} instance={instance}\n{body}"
+
+
+def _running(head=UI_HEAD):
+    return f"ui-qa-run v1 head={head} state=running"
+
+
+@pytest.mark.parametrize("comments,expected,why", [
+    ([_qa()], gates.PASS, "0 defects, 2 confirmed"),
+    ([_qa(defects="- save button does nothing\n- title cut off")], gates.FAIL, "lists 2 defect(s)"),
+    ([_qa(defects="- title cut off"), _qa(head=UI_HEAD[:7])], gates.PASS, "0 defects"),
+    ([_qa(), _qa(defects="- title cut off")], gates.FAIL, "lists 1 defect(s)"),
+    ([_qa(), _running()], gates.WAIT, "in progress"),
+    ([_running(), _qa()], gates.PASS, "0 defects"),
+    ([_running(OLD_HEAD)], gates.FAIL, "no QA result for this head"),
+    ([_qa(head=OLD_HEAD)], gates.FAIL, "is for head dddddddddd; run QA again"),
+    ([_qa(instance="live")], gates.FAIL, "instance=live, not a disposable instance"),
+    ([_qa(drop="Map differences")], gates.FAIL, "lacks section(s): Map differences"),
+    (["QA looked fine to me"], gates.FAIL, "no QA result for this head"),
+])
+def test_ui_qa_reads_the_newest_record_for_the_pr_head(board, gh, capsys, comments, expected, why):
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        for body in comments:
+            kb.add_comment(conn, tid, "qa", body)
+    gh.set([_ui_issue()])
+    assert _run("ui-qa", "--card", tid) == expected
+    out = capsys.readouterr().out
+    assert f"acme/app#35 head {UI_HEAD[:10]}: " in out and why in out, out
+    assert "#30" not in out, "a closed, unmerged PR is not the card's PR"
+
+
+def test_ui_qa_fail_prints_each_defect_and_runs_as_a_plain_file(board, gh, tmp_path):
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        kb.add_comment(conn, tid, "qa", _qa(defects="- save button does nothing\n- title cut off"))
+    gh.set([_ui_issue()])
+    env = {**os.environ, "HERMES_KANBAN_TASK": tid, "PYTHONPATH": ""}
+    result = subprocess.run([sys.executable, "-I", str(GATES_FILE), "ui-qa"], cwd=tmp_path, env=env, check=False,
+                            capture_output=True, text=True, encoding="utf-8", timeout=60)
+    assert result.returncode == gates.FAIL, result.stdout + result.stderr
+    assert "defect: save button does nothing" in result.stdout and "defect: title cut off" in result.stdout
+
+
+def test_ui_qa_fails_without_a_pull_request(board, gh, capsys):
+    tid = _card(UI_TODOS)
+    record = _ui_issue()
+    record[2]["data"]["repository"]["issue"]["closedByPullRequestsReferences"]["nodes"].pop(0)
+    gh.set([record])
+    assert _run("ui-qa", "--card", tid) == gates.FAIL
+    assert "no open or merged pull request" in capsys.readouterr().out
+
+
 def test_board_is_opened_read_only(board):
     tid = _card()
     conn = gates.open_board(str(board))
