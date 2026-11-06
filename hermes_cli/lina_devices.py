@@ -274,6 +274,7 @@ def check(name: str, *, base: Path | None = None, run_smoke: bool = False, timeo
 def smoke(dev: settings.Device, base: Path, *, timeout: float) -> dict:
     """One tiny real task on *dev* through ``lina worker submit --host <dev> --wait``: its end state and run ID."""
     from hermes_cli.worker.hub import ENDED, Hub, HubError
+    from hermes_cli.worker.request_keys import new_key
     from hermes_cli.worker.transport import TransportError
     worker_root = settings.root(base)
     brief = settings.hub_dir(worker_root) / "smoke" / f"{dev.name}.md"
@@ -283,7 +284,8 @@ def smoke(dev: settings.Device, base: Path, *, timeout: float) -> dict:
     hub = Hub(worker_root, out=lines.append)
     try:
         hub.submit({"briefs": [str(brief)], "mode": "ulw", "host": dev.name, "topic": f"device smoke {dev.name}",
-                    "inputs": [], "wait": timeout, "dry_notify": True})  # a check messages nobody
+                    "inputs": [], "wait": timeout, "dry_notify": True,  # a check messages nobody
+                    "request_key": new_key()})
     except (HubError, TransportError, OSError) as exc:
         return {"state": "failed", "id": None, "why": str(exc)[:300]}
     task_id = next((line.split()[0] for line in lines if " handed out " in line), None)

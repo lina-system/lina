@@ -139,7 +139,7 @@ def _submit(h, run_id: str, payload: dict) -> None:
             # placement on the same device instead of bidding again (a second bid could start the task twice).
             h.resume_placement(job["id"])
         return  # the worker took it before the crash: nothing to hand out again
-    opts = dict(payload["opts"])
+    opts = dict(payload["opts"], request_key=payload["request_key"])
     if opts.get("card"):
         opts["card"] = dict(opts["card"])
     code = h.submit(opts)
@@ -148,7 +148,7 @@ def _submit(h, run_id: str, payload: dict) -> None:
 
 
 def _send(h, run_id: str, payload: dict) -> None:
-    h.send(run_id, payload["message"])
+    h.send(run_id, payload["message"], request_key=payload["request_key"])
 
 
 def _verdict(h, run_id: str, payload: dict) -> None:
@@ -162,12 +162,13 @@ def _cancel(h, run_id: str, payload: dict) -> None:
 CALLS = {"submit": _submit, "send": _send, "retry": _send, "accept": _verdict, "review": _verdict, "cancel": _cancel}
 
 
-def _call_worker(op: str, run_id: str, payload: dict) -> None:
+def _call_worker(oid: int, op: str, run_id: str, payload: dict) -> None:
     from hermes_cli.worker.hub import HubError
     from hermes_cli.worker.runners.base import RunnerError
     h = hub(run_id if op == "submit" else None)
     try:
-        CALLS[op](h, run_id, dict(payload, op=op))
+        # The outbox row is the request: resuming it after a lost reply is the same request, never a second one.
+        CALLS[op](h, run_id, dict(payload, op=op, request_key=f"lina-work:{oid}"))
     except HubError as exc:
         # A cancel the device did not acknowledge leaves the run going there: never record it cancelled.
         if op == "cancel" and h.store.load(run_id):
@@ -206,7 +207,7 @@ def dispatch() -> int:
     done = 0
     for oid, run_id, op, payload in pending():
         try:
-            _call_worker(op, run_id, json.loads(payload))
+            _call_worker(oid, op, run_id, json.loads(payload))
         except HandOffError as exc:
             _finish(oid, run_id, op, str(exc)[:500])
             warn(t("{run}: 작업이 받지 않았다 — {why}", run=run_id, why=exc))

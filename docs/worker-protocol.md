@@ -45,6 +45,31 @@ node response refreshes hello without retrying the action. There is no new human
 service-control CLI in this change. This guard is instance checking, not access
 authorization; the SSH account remains the existing trust boundary.
 
+## Request keys
+
+`lina worker submit` and `send` take `--key <k>` (Python: `opts["request_key"]`,
+`Hub.send(..., request_key=)`); without one the CLI makes `rk-<uuid4 hex>` and
+prints `request key: <k>` on stderr before anything else. The same key with the
+same arguments (a sha256 over canonical JSON of what defines the request: the
+brief bytes, mode, repo, inputs, to-do, topic, host, runner, model, labels,
+size, access, card, owner and schedule for submit; task, message, access and
+card for send) returns the first result and starts, places or sends nothing:
+`<ID> replay of request key <k>`, receipt `request_replayed`. Other arguments
+are refused, naming the key and the first request, and nothing is written.
+
+The hub keeps `hub/keys/<sha256(key)>.json` (`key, op, args_sha256, task, run,
+action, at`), written under the key's lock before any device is called and
+filled in after; the job carries `request_key` and a `request_keys` map. A
+replay of a record left without a result never bids again: it returns the
+recorded task, or sends again with the same key. On the device `follow_up`
+(payload `request_key`), `answer` and `send` (an optional trailing argument)
+keep `{verb:key: reply}` in the task's `keys.json` under the task lock, so a
+replayed verb returns its stored reply and changes nothing; replies that
+changed nothing are not kept. `hello` lists `request_keys` in `capabilities`.
+A device without it ignores the key; the hub's record is the only guard there,
+and the hub writes one `device_without_keys` receipt per task. `lina work`
+uses `lina-work:<outbox row id>`, schedules `lina-schedule:<ID>:<due time>`.
+
 ## Run access modes
 
 `lina worker submit --access read-only|workspace-write|full` defaults to
