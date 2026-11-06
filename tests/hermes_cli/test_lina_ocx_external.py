@@ -127,6 +127,20 @@ def test_an_argv_outside_the_read_list_never_reaches_the_cli(ocx, argv):
     assert ocx.calls() == []
 
 
+@pytest.mark.parametrize("key_id", ["00000000-0000-4000-8000-000000000001", "Abc123"])
+def test_an_access_key_id_of_ocx_s_real_shape_is_read(ocx, key_id):
+    argv = ("usage", "--range", "7d", "--api-key-id", key_id, "--json")
+    lina_models.run(argv)
+    assert ocx.calls()[-1]["argv"] == list(argv)  # the id stays one argument: no split, no extra flag
+
+
+@pytest.mark.parametrize("key_id", ["-x", "--refresh", "a b", "a=b", "", "a" * 65])
+def test_an_access_key_id_that_could_be_another_argument_never_reaches_the_cli(ocx, key_id):
+    with pytest.raises(lina_ocx.OcxError, match="read-only"):
+        lina_models.run(("usage", "--range", "7d", "--api-key-id", key_id, "--json"))
+    assert ocx.calls() == []
+
+
 @pytest.mark.parametrize("argv", [["install"], ["upgrade"], ["rollback"], ["refresh"], ["takeover", "plan", "--from", "x"],
                                   ["takeover", "switch", "--from", "x"]])
 def test_write_verbs_of_lina_models_refuse_without_spawning(ocx, capsys, monkeypatch, argv):
