@@ -94,7 +94,7 @@ Claude Code and Codex use the public `@zed-industries/claude-agent-acp` and
   as applied.
 
 The wire format follows the [public ACP schema](https://agentclientprotocol.com/protocol/schema).
-Real-node work-card delivery through grok and dsh still needs verification after node deployment.
+Real-node runs of these agents, each ending on its work card, are checked when they move onto the nodes (#236).
 
 workspace-write is enforced by the task boundary, not by a shell grammar; the runner keeps edits inside the worktree and refuses commands whose cwd is outside it.
 As with omo, the LINA task boundary supplies the worktree, blocked push, read-only input copies and Linux
