@@ -31,6 +31,15 @@ def _base():
     return lina_root()
 
 
+async def _current():
+    """The settings now; 503 with the validator's fixed line while config.yaml cannot be read as a mapping."""
+    from hermes_cli.lina_work_settings import SettingsError
+    try:
+        return await run_in_threadpool(lambda: _store().current())
+    except SettingsError as exc:
+        raise HTTPException(status_code=503, detail=_invalid(exc.errors)["detail"]) from exc
+
+
 def _peer(request: Request) -> str:
     return request.client.host if request.client else ""
 
@@ -55,7 +64,7 @@ def _version() -> int:
 async def get_settings(request: Request, if_none_match: Optional[str] = Header(default=None)):
     from hermes_cli.lina_work_settings import validate
     from hermes_cli.lina_work_settings_gate import GATE
-    rev = await run_in_threadpool(lambda: _store().current())
+    rev = await _current()
     if if_none_match == rev.etag:
         return Response(status_code=304, headers={"ETag": rev.etag, "Cache-Control": "no-cache"})
     writable = await run_in_threadpool(GATE.writable, _peer(request), _base())
@@ -137,8 +146,13 @@ async def settings_revision(rev: str):
 async def settings_models(if_none_match: Optional[str] = Header(default=None)):
     from hermes_cli.lina_work_settings_models import view
     from hermes_cli.web_routers.lina_board import _serve
+    from hermes_cli.lina_work_settings import SettingsError
+
     def read() -> dict:
-        data = view(_base())
+        try:
+            data = view(_base())
+        except SettingsError as exc:
+            raise HTTPException(status_code=503, detail=_invalid(exc.errors)["detail"]) from exc
         # OCX's own error text stays in the CLI and the log; the API names only the source that failed
         data["errors"] = [{"source": str(e.get("source")), "message": "could not be read; the list is the last good one"
                            if data["models"] else "could not be read"} for e in data["errors"]]
@@ -156,5 +170,5 @@ async def settings_route(request: Request):
     labels, size = (body.get("labels") or [], body.get("size")) if isinstance(body, dict) else (None, None)
     if not isinstance(labels, list) or not all(isinstance(x, str) for x in labels) or size not in (None, "S", "M", "L"):
         raise HTTPException(status_code=400, detail='the body is {"labels": [text], "size": "S"|"M"|"L"|null}')
-    doc = (await run_in_threadpool(lambda: _store().current())).doc
+    doc = (await _current()).doc
     return _json({"version": _version(), "at": time.time(), **route(doc, labels, size)})

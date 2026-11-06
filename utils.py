@@ -14,7 +14,6 @@ import threading
 import time
 from contextlib import suppress
 from pathlib import Path
-from collections.abc import Mapping
 from typing import Any, Union
 from urllib.parse import urlparse
 
@@ -556,35 +555,6 @@ def atomic_roundtrip_yaml_update(path: str | Path, key_path: str, value: Any) ->
     ``value=None`` removes the key (a ``key: null`` leftover reads as absent everywhere but
     litters the file and diverges from whole-document writers that drop the key).
     """
-    path = Path(path)
-    from hermes_constants import mkdir_under_hermes_home
-
-    mkdir_under_hermes_home(path.parent)
-    yaml_rt, config = _roundtrip_load(path)
-    if _roundtrip_set(config, key_path, value):
-        _roundtrip_dump(path, yaml_rt, config)
-
-
-def atomic_roundtrip_yaml_update_many(path: str | Path, updates: Mapping[str, Any]) -> None:
-    """Several dotted keys (``None`` removes one) as ONE temp file + atomic replace.
-
-    :func:`atomic_roundtrip_yaml_update` per key would publish each step: a reader between two
-    of them sees a half-applied change, and an interrupted run leaves it. Same navigation,
-    comment/order/quoting preservation and unreadable-file failure as that function.
-    """
-    path = Path(path)
-    from hermes_constants import mkdir_under_hermes_home
-
-    mkdir_under_hermes_home(path.parent)
-    yaml_rt, config = _roundtrip_load(path)
-    changed = [_roundtrip_set(config, key_path, value) for key_path, value in updates.items()]
-    if any(changed):
-        _roundtrip_dump(path, yaml_rt, config)
-
-
-def _roundtrip_set(config, key_path: str, value: Any) -> bool:
-    """Apply one dotted set (``None`` = remove) to a loaded round-trip map; False when there was
-    nothing to remove under a missing or scalar parent (the file then needs no write)."""
     from ruamel.yaml.comments import CommentedMap
     # Honor escaped dots and prefer existing literal dotted keys (model IDs like ``glm-5.3``) over
     # blind splitting — same navigation as ``hermes config set``'s ``_set_nested``; otherwise
@@ -592,6 +562,11 @@ def _roundtrip_set(config, key_path: str, value: Any) -> bool:
     # See #91607.
     from hermes_cli.config import _greedy_literal_match, _split_key_path
 
+    path = Path(path)
+    from hermes_constants import mkdir_under_hermes_home
+
+    mkdir_under_hermes_home(path.parent)
+    yaml_rt, config = _roundtrip_load(path)
     current = config
     keys = _split_key_path(key_path)
     i = 0
@@ -603,15 +578,16 @@ def _roundtrip_set(config, key_path: str, value: Any) -> bool:
                 current.pop(seg, None)
             else:
                 current[seg] = value
-            return True
+            break
         next_value = current.get(seg)
         if not isinstance(next_value, CommentedMap):
             if value is None:
-                return False  # nothing to remove under a missing/scalar parent
+                return  # nothing to remove under a missing/scalar parent
             next_value = CommentedMap()
             current[seg] = next_value
         current = next_value
         i += consumed
+    _roundtrip_dump(path, yaml_rt, config)
 
 
 # ruamel's round-trip dumper resolves plain scalars under YAML 1.2, where only true/false/null are

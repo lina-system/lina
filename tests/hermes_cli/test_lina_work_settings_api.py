@@ -214,6 +214,22 @@ def test_removing_a_runner_that_holds_env_is_422_and_writes_nothing(env, client)
     assert path.read_bytes() == before
 
 
+def test_credential_like_keys_written_by_hand_never_show_in_settings_or_history(env, client):
+    path = env.root / "config.yaml"
+    text = path.read_text(encoding="utf-8")
+    text = text.replace("build-a: {host: build-a, cap: 2}", "build-a: {host: build-a, cap: 2, password: tok-dev-3}")
+    text = text.replace("model: openai/m-open}", "model: openai/m-open, auth_token: tok-run-4}")
+    text = text.replace("runner: codex}", "runner: codex, secret_note: tok-route-2}")
+    text = text.replace("  routing:", "  models:\n    aliases: {planner: {provider: p, id: i, api_token: tok-alias-1}}\n  routing:")
+    path.write_text(text, encoding="utf-8")
+    bodies = [client.get(BASE).text, client.get(f"{BASE}/history").text, client.get(f"{BASE}/history/r1").text]
+    for body in bodies:
+        for word in ("tok-dev-3", "tok-run-4", "tok-route-2", "tok-alias-1", "password", "auth_token", "secret_note",
+                     "api_token"):
+            assert word not in body, (word, body[:200])
+    assert "tok-alias-1" in path.read_text(encoding="utf-8")
+
+
 def test_an_unexpected_failure_is_a_500_without_its_message(env, monkeypatch):
     from hermes_cli import lina_work_settings_store, web_server
 

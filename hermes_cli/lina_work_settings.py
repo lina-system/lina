@@ -71,10 +71,19 @@ def config_path(base: Path | None = None) -> Path:
     return settings.root(base).parent / "config.yaml"
 
 
+UNREADABLE = ("cannot be read, does not parse or its top level is not a mapping; fix it first (nothing was written, "
+              "the log names the cause)")
+
+
 def read_config(path: Path) -> dict:
-    from hermes_cli.config_backend import config_exists, read_config_doc
-    doc = read_config_doc(path) if config_exists(path) else None
-    return doc if isinstance(doc, dict) else {}
+    """The parsed config through the writer seam's own guard (``require_readable_config_before_write``): a missing
+    or empty file is ``{}``; an unreadable or unparseable file, or a root that is not a mapping (``false``, a list, a
+    scalar), is refused, so it is never read as ``{}`` and then overwritten."""
+    from hermes_cli.config import require_readable_config_before_write
+    try:
+        return require_readable_config_before_write(path)
+    except RuntimeError as exc:  # its refusal; the guard has logged the cause
+        raise SettingsError([{"path": "config.yaml", "message": UNREADABLE}]) from exc
 
 
 def plain(value: Any) -> Any:
@@ -82,39 +91,49 @@ def plain(value: Any) -> Any:
     return json.loads(json.dumps(value, default=str))
 
 
-def _clean(entry: Any) -> Any:
-    if not isinstance(entry, dict):
-        return entry
-    return {k: v for k, v in entry.items() if not _excluded_key(k)}
-
-
 def _excluded_key(key: Any) -> bool:
     return key == KEEP_OUT or bool(SECRET.search(str(key)))
 
 
-def _entries(table: dict) -> dict:
-    """Each entry without its excluded fields; an entry that held only excluded fields is not a setting at all."""
+# Mappings whose keys are names someone chose (a device, a runner, an alias, a mode), not fields: a runner named
+# ``monkey`` is a setting. Every other key at any depth is a field, and a credential-like field is never captured.
+NAME_TABLES = ("devices.workers", "worker.runners", "worker.models.aliases", "worker.models.defaults")
+
+
+def _excluded_at(path: str, key: Any) -> bool:
+    return path not in NAME_TABLES and _excluded_key(key)
+
+
+def _child(path: str, key: Any) -> str:
+    return f"{path}.{key}" if path else str(key)
+
+
+def scrub(value: Any, path: str = "") -> Any:
+    """*value* without ``env`` or any credential-like field at any depth. An entry of a name table that held only
+    such fields is not a setting at all, and neither is a table left empty by that."""
+    if isinstance(value, list):
+        return [scrub(item, f"{path}[{i}]") for i, item in enumerate(value)]
+    if not isinstance(value, dict):
+        return value
     out = {}
-    for name, item in table.items():
-        cleaned = _clean(item)
-        if cleaned or not item:
-            out[name] = cleaned
+    for key, item in value.items():
+        if _excluded_at(path, key):
+            continue
+        cleaned = scrub(item, _child(path, key))
+        if path in NAME_TABLES and item and cleaned == {}:
+            continue
+        out[key] = cleaned
     return out
 
 
 def snapshot(config: dict) -> dict:
-    """The work-settings keys of a parsed config, without ``env`` or credential-like fields."""
+    """The work-settings keys of a parsed config, without ``env`` or credential-like fields at any depth: what is
+    stored in a revision, diffed into the audit and served."""
     doc: dict = {}
     for top, key in KEYS:
         section = config.get(top)
         if isinstance(section, dict) and section.get(key) not in (None, {}, []):
-            doc.setdefault(top, {})[key] = plain(section[key])
-    workers = (doc.get("devices") or {}).get("workers")
-    if isinstance(workers, dict):
-        doc["devices"]["workers"] = _entries(workers)
-    runners = (doc.get("worker") or {}).get("runners")
-    if isinstance(runners, dict):
-        doc["worker"]["runners"] = _entries(runners)
+            doc.setdefault(top, {})[key] = scrub(plain(section[key]), f"{top}.{key}")
     for top, key in KEYS:  # a table left empty by that is no setting either
         if (doc.get(top) or {}).get(key) == {}:
             del doc[top][key]
@@ -192,33 +211,79 @@ def updates(old: Any, new: Any, prefix: str = "") -> dict[str, Any]:
     return out
 
 
-ENTRY_TABLES = ("devices.workers", "worker.runners")
 TURN_OFF = {"devices.workers": "off: true", "worker.runners": "on: false"}
 
 
-def remnants(old: dict, new: dict, raw: dict) -> list[dict]:
-    """Removals that would leave an entry behind with only fields the settings do not own (a runner's ``env``,
-    credential-like keys): such an entry has no ``type`` and ``lina worker`` would build it as a broken runner, so the
-    removal, or a rollback that would do it, is refused instead. The way to stop using it is to turn it off."""
-    errors = []
-    for table in ENTRY_TABLES:
-        kept, wanted, held = get_path(old, table) or {}, get_path(new, table) or {}, get_path(raw, table)
-        for name, entry in (held.items() if isinstance(held, dict) else []):
-            fields = sorted(str(k) for k in entry if _excluded_key(k)) if isinstance(entry, dict) else []
-            if fields and name in kept and name not in wanted:
-                errors.append({"path": f"{table}.{name}", "message": (
-                    f"has fields the work settings don't manage ({', '.join(fields)}); turn it off with "
-                    f"{TURN_OFF[table]}, or remove those fields in config.yaml first")})
-    return errors
+def _own_fields(path: str, raw: Any) -> list[str]:
+    """The excluded fields the file holds directly in the mapping at *path*."""
+    return sorted(str(k) for k in raw if _excluded_at(path, k)) if isinstance(raw, dict) else []
 
 
 def _held(path: str, raw: Any) -> bool:
     """Whether the file holds excluded fields (a runner's ``env``, credential-like keys) at or under *path*."""
+    if isinstance(raw, list):
+        return any(_held(f"{path}[{i}]", item) for i, item in enumerate(raw))
     if not isinstance(raw, dict):
         return False
-    if any(path.startswith(t + ".") and path.count(".") == t.count(".") + 1 for t in ENTRY_TABLES):
-        return any(_excluded_key(k) for k in raw)
-    return any(_held(f"{path}.{k}", v) for k, v in raw.items())
+    return bool(_own_fields(path, raw)) or any(_held(_child(path, k), v) for k, v in raw.items())
+
+
+def _held_fields(path: str, raw: Any) -> list[str]:
+    if isinstance(raw, list):
+        return sorted({f for i, item in enumerate(raw) for f in _held_fields(f"{path}[{i}]", item)})
+    if not isinstance(raw, dict):
+        return []
+    return sorted({*_own_fields(path, raw), *(f for k, v in raw.items() for f in _held_fields(_child(path, k), v))})
+
+
+def _refusal(path: str, fields: list[str]) -> dict:
+    table = path.rsplit(".", 1)[0]
+    off = f"turn it off with {TURN_OFF[table]}, or " if table in TURN_OFF and path.count(".") == table.count(".") + 1 else ""
+    return {"path": path, "message": f"has fields the work settings don't manage ({', '.join(fields)}); {off}"
+                                      "remove those fields in config.yaml first"}
+
+
+def _remnants_at(old: Any, new: Any, raw: Any, path: str, errors: list[dict]) -> None:
+    if isinstance(raw, list):  # a list is written whole: it can keep nothing the settings do not hold
+        if old != new and _held(path, raw):
+            errors.append(_refusal(path, _held_fields(path, raw)))
+        return
+    if not isinstance(raw, dict):
+        return
+    own = _own_fields(path, raw)
+    if own and old is not None and new is None:
+        errors.append(_refusal(path, own))
+        return
+    for key, item in raw.items():
+        if not _excluded_at(path, key):
+            _remnants_at(old.get(key) if isinstance(old, dict) else None, new.get(key) if isinstance(new, dict) else None,
+                         item, _child(path, key), errors)
+
+
+def remnants(old: dict, new: dict, raw: dict) -> list[dict]:
+    """Changes that would drop or strand fields the settings do not own (a runner's ``env``, credential-like keys at
+    any depth): removing a mapping that holds them would leave it behind without its own fields (a runner without
+    ``type``, which ``lina worker`` builds as a broken runner), and a list (``worker.routing``) is written whole, so
+    changing one that holds them would delete them. Such a change, or a rollback that would make it, is refused; a
+    runner or device is stopped by turning it off."""
+    errors: list[dict] = []
+    for top, key in KEYS:
+        path = f"{top}.{key}"
+        _remnants_at(get_path(old, path), get_path(new, path), get_path(raw, path), path, errors)
+    return errors
+
+
+def apply_updates(doc: dict, sets: dict[str, Any]) -> dict:
+    """A copy of *doc* with every dotted set (``None`` = remove) applied, with the navigation ``hermes config set``
+    uses: escaped dots (``a\\.b``) and an existing literal dotted key (``glm-5.3``) over blind splitting."""
+    from hermes_cli.config import _set_nested, _unset_nested
+    out = copy.deepcopy(doc)
+    for path, value in sets.items():
+        if value is None:
+            _unset_nested(out, path)
+        else:
+            _set_nested(out, path, copy.deepcopy(value))
+    return out
 
 
 def _kept_updates(old: Any, new: Any, path: str, raw: Any) -> dict[str, Any]:

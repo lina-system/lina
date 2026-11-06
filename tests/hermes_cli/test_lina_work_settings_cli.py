@@ -103,6 +103,17 @@ def test_removing_a_runner_that_holds_env_exits_2_and_writes_nothing(root, capsy
     assert _config(root)["worker"]["runners"]["codex"]["env"] == {"SOME_HOME": "/srv/x"}
 
 
+@pytest.mark.parametrize("text", ["false\n", "[]\n", "7\n", "devices: [unclosed\n"])
+def test_a_config_that_is_not_a_readable_mapping_exits_2_and_is_left_alone(root, capsys, text):
+    path = root / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    assert _lina("settings", "set", "devices.workers.here", "{host: local}") == 2
+    last = capsys.readouterr().err.strip().splitlines()[-1]  # the config guard's own warning, naming the cause, comes first
+    assert last.startswith("lina worker settings: config.yaml: ")
+    assert path.read_text(encoding="utf-8") == text
+    assert list((root / "work-settings").glob("revisions/r*.yaml")) == []
+
+
 def test_settings_with_no_subcommand_shows_the_settings(root, capsys):
     assert _lina("settings") == 0
     assert capsys.readouterr().out.startswith("# r")

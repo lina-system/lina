@@ -345,6 +345,56 @@ def test_a_write_cut_short_leaves_the_old_settings_or_the_new_ones_never_half(ro
     assert _whole(_config(root))
 
 
+@pytest.mark.parametrize("text", ["false\n", "[]\n", "just a line\n", "devices: [unclosed\n"],
+                         ids=["false", "list", "scalar", "invalid"])
+def test_a_config_that_cannot_be_read_as_a_mapping_is_never_overwritten(root, text):
+    from hermes_cli.lina_work_settings import SettingsError
+    path = root / "config.yaml"
+    path.write_text(text, encoding="utf-8")
+    with pytest.raises(SettingsError) as refused:
+        _store(root).apply(_set("devices.workers.here", {"host": "local"}), CLI)
+    assert "\n" not in str(refused.value) and str(refused.value).startswith("config.yaml: ")
+    assert path.read_text(encoding="utf-8") == text
+    assert list((root / "work-settings").glob("revisions/r*.yaml")) == []
+
+
+def test_dotted_updates_honour_escaped_dots_and_existing_dotted_names():
+    from hermes_cli.lina_work_settings import apply_updates
+    doc = {"model_overrides": {"glm-5.3": {"x": 1}}, "keep": 1}
+    out = apply_updates(doc, {"providers.qwen3\\.5.ctx": 8, "model_overrides.glm-5.3.x": 2, "keep": None})
+    assert out == {"model_overrides": {"glm-5.3": {"x": 2}}, "providers": {"qwen3.5": {"ctx": 8}}}
+    assert doc == {"model_overrides": {"glm-5.3": {"x": 1}}, "keep": 1}  # the input is not changed
+
+
+SECRETS = {"tok-alias-1": "worker.models.aliases.planner.api_token", "tok-route-2": "worker.routing[0].secret_note",
+           "tok-dev-3": "devices.workers.build-a.password", "tok-run-4": "worker.runners.codex.auth_token"}
+
+
+def _with_secrets(root) -> Path:
+    path = root / "config.yaml"
+    text = TODAY.replace("cap: 2, fast: true}", "cap: 2, fast: true, password: tok-dev-3}")
+    text = text.replace("thinking: medium}", "thinking: medium, api_token: tok-alias-1}")
+    text = text.replace("      env: {CODEX_HOME: /srv/codex}\n", "      env: {CODEX_HOME: /srv/codex}\n      auth_token: tok-run-4\n")
+    text += "  routing:\n    - {name: docs, when: {labels_any: [docs]}, runner: codex, secret_note: tok-route-2}\n"
+    path.write_text(text, encoding="utf-8")
+    return path
+
+
+def test_credential_like_keys_at_any_depth_never_reach_a_revision_or_the_audit_and_stay_in_config(root):
+    path = _with_secrets(root)
+    store = _store(root)
+    seen = store.current()
+    stored = "".join(p.read_text(encoding="utf-8") for p in (root / "work-settings").rglob("*") if p.is_file())
+    for value, where in SECRETS.items():
+        leaf = where.rsplit(".", 1)[1]
+        assert value not in stored and leaf not in stored, where
+        assert value not in json.dumps(seen.doc)
+    assert seen.doc["worker"]["routing"][0] == {"name": "docs", "when": {"labels_any": ["docs"]}, "runner": "codex"}
+    store.apply(_set("devices.workers.build-a.cap", 3), CLI)
+    text = path.read_text(encoding="utf-8")
+    assert all(value in text for value in SECRETS) and _config(root)["devices"]["workers"]["build-a"]["cap"] == 3
+
+
 REMNANT = "worker.runners.codex: has fields the work settings don't manage (env)"
 
 

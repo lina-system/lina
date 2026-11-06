@@ -197,15 +197,22 @@ class Store:
 
 
 def write_keys(path: Path, updates: dict) -> None:
-    """One settings change as ONE write: on the file backend one temp file + atomic replace of ``config.yaml``
-    (``write_config_keys`` there replaces the file once per key, so a ``lina worker`` command reading in between, or
-    an interrupted write, would see half a change); elsewhere ``write_config_keys``, already one CAS patch."""
+    """One settings change as ONE write through the config writer seam. On the file backend: the guarded read
+    (``require_readable_config_before_write``: an unreadable file or a non-mapping root is refused, never read as
+    ``{}``), every set/unset applied in memory, then one ``atomic_config_replace`` (one temp file + atomic replace,
+    comments kept). ``write_config_keys`` there would replace the file once per key, so a ``lina worker`` command
+    reading in between, or an interrupted write, would see half a change. Elsewhere ``write_config_keys``, already
+    one CAS patch."""
     from hermes_cli.config_backend import supports_file_tooling, write_config_keys
-    if supports_file_tooling():
-        from utils import atomic_roundtrip_yaml_update_many
-        atomic_roundtrip_yaml_update_many(path, updates)
-    else:
+    if not supports_file_tooling():
         write_config_keys(path, updates)
+        return
+    from hermes_cli.config import atomic_config_replace
+    current = ws.read_config(path)
+    try:
+        atomic_config_replace(path, ws.apply_updates(current, updates))  # removals here are deliberate
+    except RuntimeError as exc:  # the seam's own fail-closed refusal (the file changed under us into one it can't read)
+        raise ws.SettingsError([{"path": "config.yaml", "message": ws.UNREADABLE}]) from exc
 
 
 def cli_by() -> dict:
