@@ -134,18 +134,56 @@ def scheduled_resume_status(conn: sqlite3.Connection, task_id: str) -> str:
     return "review" if payload.get("resume_status") == "review" else "ready"
 
 
-def recorded_wait(conn: sqlite3.Connection, task_id: str, status: str) -> Optional[dict[str, Any]]:
-    """The ``wait_for`` of the transition that parked the card in ``status``, or None."""
-    expected = _PARKED_EVENT_FOR_STATUS.get(status)
+def _latest_park_event(conn: sqlite3.Connection, task_id: str) -> Optional[sqlite3.Row]:
     placeholders = ",".join("?" for _ in _PARK_EVENT_KINDS)
-    row = conn.execute(
-        f"SELECT kind, payload FROM task_events WHERE task_id = ? AND kind IN ({placeholders}) "
+    return conn.execute(
+        f"SELECT id, kind, payload FROM task_events WHERE task_id = ? AND kind IN ({placeholders}) "
         "ORDER BY created_at DESC, id DESC LIMIT 1", (task_id, *_PARK_EVENT_KINDS),
     ).fetchone()
-    if row is None or row["kind"] != expected or not row["payload"]:
+
+
+def _parked_wait(conn: sqlite3.Connection, task_id: str, status: str) -> Optional[tuple[int, dict[str, Any]]]:
+    """``(event id, wait_for)`` of the transition that parked the card in ``status``, or None."""
+    row = _latest_park_event(conn, task_id)
+    if row is None or row["kind"] != _PARKED_EVENT_FOR_STATUS.get(status) or not row["payload"]:
         return None
     wait_for = json.loads(row["payload"]).get("wait_for")
-    return wait_for if isinstance(wait_for, dict) and wait_for.get("kind") in WAIT_KINDS else None
+    if not (isinstance(wait_for, dict) and wait_for.get("kind") in WAIT_KINDS):
+        return None
+    return int(row["id"]), wait_for
+
+
+def recorded_wait(conn: sqlite3.Connection, task_id: str, status: str) -> Optional[dict[str, Any]]:
+    """The ``wait_for`` of the transition that parked the card in ``status``, or None."""
+    parked = _parked_wait(conn, task_id, status)
+    return parked[1] if parked else None
+
+
+def _still_parked_by(conn: sqlite3.Connection, task_id: str, park_event_id: int) -> bool:
+    """The card is still parked by the very event its wait was read from, in a wakeable state."""
+    row = conn.execute("SELECT status, block_kind FROM tasks WHERE id = ?", (task_id,)).fetchone()
+    if row is None or not (row["status"] == "scheduled"
+                           or (row["status"] == "blocked" and row["block_kind"] == "needs_input")):
+        return False
+    parked = _parked_wait(conn, task_id, row["status"])
+    return parked is not None and parked[0] == park_event_id
+
+
+def dispatcher_wake(conn: sqlite3.Connection, task_id: str, park_event_id: int, wait_for: dict[str, Any]) -> bool:
+    """Wake one parked card for its met event: the dispatcher's own unblock.
+
+    Under one write transaction it first re-checks that the card is still parked by
+    ``park_event_id`` (a person may have unblocked and re-parked it while a PR check was being
+    read), then unblocks it keeping ``consecutive_failures``: waiting is not a recovery, so only
+    a deliberate unblock by a person resets the retry budget.
+    """
+    from hermes_cli import kanban_db as kb
+
+    with kb.write_txn(conn):
+        if not _still_parked_by(conn, task_id, park_event_id):
+            return False
+        return kb.unblock_task(conn, task_id, by=DISPATCHER_ACTOR, keep_failures=True,
+                               reason=f"wait met: {describe_wait(wait_for)}")
 
 
 def pr_checks_finished(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
@@ -182,8 +220,8 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
     """Unblock every parked card whose recorded event happened; returns the woken ids.
 
     Parked = ``scheduled``, or ``blocked`` with ``block_kind = 'needs_input'``. Network reads
-    (PR checks) run outside any write transaction; ``unblock_task`` re-checks the status under
-    its own, so a card a person unblocked meanwhile is not woken twice.
+    (PR checks) run outside any write transaction; :func:`dispatcher_wake` re-checks the parking
+    event under its own, so a card unblocked or re-parked meanwhile is not woken by the old wait.
     """
     from hermes_cli import kanban_db as kb
 
@@ -195,21 +233,21 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
     ).fetchall()
     woken: list[str] = []
     for row in rows:
-        wait_for = recorded_wait(conn, row["id"], row["status"])
-        if wait_for is None:
+        parked = _parked_wait(conn, row["id"], row["status"])
+        if parked is None:
             continue
+        park_event_id, wait_for = parked
         try:
             met = wait_met(conn, wait_for, assignee=row["assignee"], now=now, pr_checks_fn=pr_checks_fn)
         except Exception:  # health: allow BLE001 -- one unreadable wait must not stall the tick for every other card; logged with traceback, retried next tick
             kb._log.warning("kanban: wait check failed for %s (%s)", row["id"], wait_for, exc_info=True)
             continue
-        if met and kb.unblock_task(conn, row["id"], by=DISPATCHER_ACTOR,
-                                   reason=f"wait met: {describe_wait(wait_for)}"):
+        if met and dispatcher_wake(conn, row["id"], park_event_id, wait_for):
             woken.append(row["id"])
     return woken
 
 
 __all__ = [
-    "DISPATCHER_ACTOR", "WAIT_KINDS", "describe_wait", "needs_input_wait", "park_payload",
+    "DISPATCHER_ACTOR", "WAIT_KINDS", "describe_wait", "dispatcher_wake", "needs_input_wait", "park_payload",
     "parse_wait_for", "pr_checks_finished", "recorded_wait", "scheduled_resume_status", "wait_for_from_directive", "wait_met", "wake_waiting_tasks",
 ]

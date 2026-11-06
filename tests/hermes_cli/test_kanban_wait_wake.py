@@ -234,6 +234,69 @@ def test_a_manual_schedule_without_a_wait_still_unblocks_to_ready(board):
     assert kb.get_task(board, tid).status == "ready"
 
 
+def _crash(conn, tid):
+    assert kb.claim_task(conn, tid) is not None
+    kbd._record_task_failure(conn, tid, "worker crashed", outcome="crashed", release_claim=True, end_run=True)
+
+
+def test_an_automatic_wake_keeps_the_failure_count(board, monkeypatch):
+    tid = kb.create_task(board, title="flaky", assignee="worker")
+    _crash(board, tid)
+    run_id = kb.claim_task(board, tid).current_run_id
+    _scripted_judge(monkeypatch, ("wait", "backing off", False, {"seconds": 60}, False))
+    assert _loop(board, tid, run_id, [])["outcome"] == "parked"
+
+    assert _wait_mod().wake_waiting_tasks(board, now=int(time.time()) + 120) == [tid]
+    task = kb.get_task(board, tid)
+    assert (task.status, task.consecutive_failures) == ("ready", 1)
+
+
+def test_crashes_alternating_with_budget_handoffs_reach_max_retries(board, monkeypatch):
+    tid = kb.create_task(board, title="flaky", assignee="worker", max_retries=2)
+    _scripted_judge(monkeypatch)
+    _crash(board, tid)
+    run_id = kb.claim_task(board, tid).current_run_id
+    assert _loop(board, tid, run_id, [], max_turns=1)["outcome"] == "handoff_budget"
+    assert _wait_mod().wake_waiting_tasks(board) == [tid]
+
+    _crash(board, tid)
+
+    task = kb.get_task(board, tid)
+    assert (task.status, task.consecutive_failures) == ("blocked", 2)
+    assert "gave_up" in _event_kinds(board, tid)
+
+
+def test_a_manual_unblock_still_resets_the_failure_count(board):
+    tid = kb.create_task(board, title="flaky", assignee="worker")
+    _crash(board, tid)
+    run_id = kb.claim_task(board, tid).current_run_id
+    assert kb.schedule_task(board, tid, reason="park", wait_for={"kind": "until", "at": 0}, expected_run_id=run_id)
+
+    assert kb.unblock_task(board, tid) is True
+    assert kb.get_task(board, tid).consecutive_failures == 0
+
+
+@pytest.mark.parametrize("repark", ["question", "other_event"])
+def test_a_card_re_parked_during_a_pr_read_is_not_woken_by_the_old_result(board, repark):
+    upstream = kb.create_task(board, title="upstream")
+    tid, run_id = _running(board)
+    assert kb.schedule_task(board, tid, reason="ci", wait_for={"kind": "pr", "repo": "o/r", "number": 7},
+                            expected_run_id=run_id)
+
+    def checks_finish_while_someone_re_parks(wait_for, assignee):
+        assert kb.unblock_task(board, tid) is True
+        if repark == "question":
+            assert kb.block_task(board, tid, reason="which colour?", kind="needs_input") is True
+        else:
+            assert kb.schedule_task(board, tid, reason="now upstream", wait_for={"kind": "card", "task_id": upstream})
+        return True
+
+    assert _wait_mod().wake_waiting_tasks(board, pr_checks_fn=checks_finish_while_someone_re_parks) == []
+    task = kb.get_task(board, tid)
+    expected = ("blocked", "needs_input") if repark == "question" else ("scheduled", None)
+    assert (task.status, task.block_kind) == expected
+
+
 def test_turn_budget_end_hands_off_and_returns_to_ready_without_a_failure(board, monkeypatch):
     tid, run_id = _running(board)
     with kb.write_txn(board):
