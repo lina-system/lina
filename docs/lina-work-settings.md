@@ -40,7 +40,8 @@ are recorded only. A model is an alias or `<provider>/<id>[:<effort>]`.
   When OCX has it `off`, `out_of_quota` or `no_account` and the fallback (the runner's `fallback_model`, else
   `models.fallback`) is usable, the run starts on the fallback and gets one `model_fallback` receipt
   `{from, to, why}`; when the fallback is not usable either, the chosen model stays. `--model` is checked, never
-  replaced. When OCX cannot be read (and the last good list is gone) the check is `unchecked`; a run never waits.
+  replaced. A submit never calls OCX: it decides from the models list this process last read (`…/models` or
+  `lina worker settings models`, kept 10 minutes); without one the check is `unchecked` and the chosen model stays.
 - the job and its `submitted` receipt carry `settings: {rev, runner_source: --runner|routing:<rule>|default,
   model_source, ocx_check: ok|off|out_of_quota|no_account|unchecked}`; the run record and the run card serve
   `model` and `settingsRevision`. A follow-up keeps the run's model, and on the device the job's model wins over the

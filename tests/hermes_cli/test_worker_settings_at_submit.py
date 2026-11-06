@@ -1,17 +1,22 @@
 """The run path reads the work settings at submit (lina#257): the runner from ``--runner``, the routing rules or the
 default; the model from ``--model``, the runner's model or the mode default; the fallback model when OCX has the
 chosen one off or out of quota; the revision, both sources and the OCX check on the job and its ``submitted``
-receipt; and on the device the job's model over the device's own runner entry. OCX is a fake with synthetic rows."""
+receipt; and on the device the job's model over the device's own runner entry. A submit never calls OCX: it reads
+the models view's last good list of the last ten minutes, else the check is ``unchecked``. OCX is a fake with synthetic
+rows."""
 
 from __future__ import annotations
 
 import json
 import sys
+import threading
+import time
 from pathlib import Path
 
 import pytest
 
-from hermes_cli import lina_models, lina_ocx
+from hermes_cli import lina_models
+from hermes_cli import lina_work_settings_models as wm
 from hermes_cli.worker import device
 from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.runners.base import ModelProfile, Task
@@ -51,12 +56,19 @@ worker:
 
 
 class FakeOcx:
+    """``lina_models.run``: answers at once, or with ``hang`` blocks until released (30 s at most)."""
+
     def __init__(self):
-        self.error: str | None = None
+        self.calls: list[tuple] = []
+        self.entered = threading.Event()
+        self.release = threading.Event()
+        self.hang = False
 
     def run(self, args, root=None):
-        if self.error:
-            raise lina_ocx.OcxError(self.error)
+        self.calls.append(tuple(args))
+        self.entered.set()
+        if self.hang:
+            self.release.wait(30)
         return {("models", "live", "--json"): LIVE, ("account", "list", "--quota", "--json"): QUOTA}[tuple(args)]
 
 
@@ -64,10 +76,18 @@ class FakeOcx:
 def ocx(monkeypatch):
     fake = FakeOcx()
     monkeypatch.setattr(lina_models, "run", fake.run)
-    from hermes_cli import lina_work_settings_models
-    lina_work_settings_models.forget()
+    wm.forget()
     yield fake
-    lina_work_settings_models.forget()
+    fake.release.set()
+    wm.forget()
+
+
+@pytest.fixture
+def fresh(ocx):
+    """The models view has just read OCX (``GET /work/settings/models`` keeps that read as the last good list)."""
+    wm.read(time.time())
+    ocx.calls.clear()
+    return ocx
 
 
 @pytest.fixture
@@ -101,7 +121,7 @@ def test_the_runner_is_the_flag_else_the_routing_rule_else_the_default_and_an_of
         _job(hub, tmp_path, runner="idle")
 
 
-def test_the_model_is_the_flag_else_the_runner_s_else_the_mode_default_and_the_receipt_carries_it(hub, tmp_path):
+def test_the_model_is_the_flag_else_the_runner_s_else_the_mode_default_and_the_receipt_carries_it(hub, tmp_path, fresh):
     flag = _job(hub, tmp_path, runner="fine", model="zed/m-out")
     own = _job(hub, tmp_path, runner="fine")
     mode = _job(hub, tmp_path, runner="agy", mode="research")
@@ -120,7 +140,7 @@ def test_the_model_is_the_flag_else_the_runner_s_else_the_mode_default_and_the_r
     assert submitted[0]["settings"] == flag["settings"] and submitted[0]["model"] == flag["model"]
 
 
-def test_a_model_ocx_has_off_runs_on_the_runner_s_fallback_with_one_receipt(hub, tmp_path):
+def test_a_model_ocx_has_off_runs_on_the_runner_s_fallback_with_one_receipt(hub, tmp_path, fresh):
     job = _job(hub, tmp_path, runner="codex")
 
     assert _picked(job) == ("codex", ("prov", "m-open", None), {"rev": "r1", "runner_source": "--runner",
@@ -131,7 +151,7 @@ def test_a_model_ocx_has_off_runs_on_the_runner_s_fallback_with_one_receipt(hub,
                                                                   "why": "off"}
 
 
-def test_a_model_out_of_quota_runs_on_the_settings_fallback_and_an_unusable_fallback_keeps_the_model(hub, tmp_path):
+def test_a_model_out_of_quota_runs_on_the_settings_fallback_and_an_unusable_fallback_keeps_the_model(hub, tmp_path, fresh):
     quota = _job(hub, tmp_path, runner="dsh")
     stuck = _job(hub, tmp_path, runner="stuck")
 
@@ -143,14 +163,32 @@ def test_a_model_out_of_quota_runs_on_the_settings_fallback_and_an_unusable_fall
     assert [r["kind"] for r in hub.store.receipts_of(stuck["id"])] == ["submitted"]
 
 
-def test_ocx_unreadable_keeps_the_chosen_model_unchecked(hub, tmp_path, ocx):
-    ocx.error = "OCX is not running"
+def test_a_submit_never_calls_ocx_and_a_hanging_ocx_does_not_hold_it(hub, tmp_path, ocx):
+    ocx.hang = True
 
     job = _job(hub, tmp_path, runner="codex")
 
+    assert not ocx.entered.is_set() and ocx.calls == []
     assert _picked(job)[1] == ("prov", "m-off", "high")
     assert (job["settings"]["model_source"], job["settings"]["ocx_check"]) == ("runner:codex", "unchecked")
     assert [r["kind"] for r in hub.store.receipts_of(job["id"])] == ["submitted"]
+
+
+def test_a_fresh_models_snapshot_decides_the_fallback_without_calling_ocx(hub, tmp_path, fresh):
+    job = _job(hub, tmp_path, runner="codex")
+
+    assert fresh.calls == []
+    assert (job["settings"]["model_source"], job["settings"]["ocx_check"]) == ("fallback:off", "off")
+
+
+def test_a_models_snapshot_older_than_ten_minutes_is_not_used(hub, tmp_path, ocx):
+    wm.read(time.time() - wm.LAST_GOOD_S - 60)
+    ocx.calls.clear()
+
+    job = _job(hub, tmp_path, runner="codex")
+
+    assert ocx.calls == []
+    assert _picked(job)[1] == ("prov", "m-off", "high") and job["settings"]["ocx_check"] == "unchecked"
 
 
 def test_on_the_device_the_job_s_model_wins_and_the_device_s_entry_gives_the_local_argv(tmp_path):

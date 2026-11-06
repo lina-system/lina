@@ -65,8 +65,9 @@ def decide(base: Path | None, runner: str | None, mode: str, override: str | Non
     """The runner (``--runner``, else routing on *labels*/*size*, else the default; one that is off is refused with
     ``SettingsError``) and the model (``--model``, else the runner's ``model``, else the mode default). When OCX has
     that model ``off``, ``out_of_quota`` or ``no_account`` and the fallback (the runner's ``fallback_model``, else
-    ``worker.models.fallback``) is usable, the fallback is used; an explicit ``--model`` is only checked. OCX that
-    cannot be read (and has no last good list) makes the check ``unchecked``; nothing waits for it."""
+    ``worker.models.fallback``) is usable, the fallback is used; an explicit ``--model`` is only checked. OCX is never
+    called here: the check reads the models view's last good list of this process (``last_good``), and without one
+    of the last ten minutes it is ``unchecked``, so a submit never waits on OCX."""
     from hermes_cli import lina_work_settings_models as wm
     from hermes_cli.lina_work_settings_store import Store
     from hermes_cli.worker import models
@@ -91,9 +92,9 @@ def decide(base: Path | None, runner: str | None, mode: str, override: str | Non
         value = wm._text(ws.mapping(ws.mapping(worker.get("models")).get("defaults")).get(mode))
         model = models.for_run(mode, None, worker)
     check, fallback = "unchecked", None
-    if model is not None:
-        rows, accounts, errors = wm.read(time.time() if now is None else now)
-        ctx = (rows, accounts, bool(rows) or not errors)
+    snapshot = wm.last_good(time.time() if now is None else now) if model is not None else None
+    if snapshot is not None:
+        ctx = (*snapshot, True)
         state = wm._state(value, worker, *ctx)
         check = state if state in CHECKED else "unchecked"
         other = wm._text(spec.get("fallback_model")) or wm._text(ws.mapping(worker.get("models")).get("fallback"))
