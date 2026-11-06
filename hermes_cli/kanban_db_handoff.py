@@ -85,10 +85,31 @@ def latest_attempt_run(conn: sqlite3.Connection, task_id: str) -> Optional[sqlit
         "ORDER BY ended_at DESC, id DESC", (task_id,),
     )
     for row in rows:
-        if row["outcome"] == "timed_out" or _run_is_park(conn, task_id, int(row["id"]), row["outcome"]):
+        if _not_an_attempt(conn, task_id, row):
             continue
         return row
     return None
+
+
+def _not_an_attempt(conn: sqlite3.Connection, task_id: str, run: sqlite3.Row) -> bool:
+    """A park on a recorded wait or a planned stop: the one rule ``latest_attempt_run`` and
+    ``worker_started_since`` share."""
+    return run["outcome"] == "timed_out" or _run_is_park(conn, task_id, int(run["id"]), run["outcome"])
+
+
+def worker_started_since(conn: sqlite3.Connection, task_id: str, event_id: int) -> bool:
+    """Whether a run claimed after ``event_id`` was a real attempt whose worker started.
+
+    A worker started when its pid was recorded on the run (``task_runs.worker_pid``). A claim
+    the host refused, a spawn or workspace failure, or a reclaim before the worker came up
+    leaves no pid, so it is no attempt. Neither is a park or a planned stop
+    (``_not_an_attempt``). A run still open with a pid counts: its worker is at work.
+    """
+    rows = conn.execute(
+        "SELECT r.id, r.outcome, r.worker_pid FROM task_events e JOIN task_runs r ON r.id = e.run_id "
+        "WHERE e.task_id = ? AND e.kind = 'claimed' AND e.id > ?", (task_id, event_id),
+    ).fetchall()
+    return any(r["worker_pid"] is not None and not _not_an_attempt(conn, task_id, r) for r in rows)
 
 
 def consecutive_planned_stops(conn: sqlite3.Connection, task_id: str) -> int:
@@ -210,4 +231,5 @@ def end_iteration_budget_run(conn: sqlite3.Connection, task_id: str, *, used: in
 __all__ = [
     "DEFAULT_PLANNED_STOP_LIMIT", "HANDOFF_KEY", "consecutive_planned_stops", "end_iteration_budget_run",
     "hand_off_or_hold", "latest_attempt_run", "park_turn_budget_end", "planned_stop_limit",
+    "worker_started_since",
 ]

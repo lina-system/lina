@@ -404,19 +404,93 @@ def _pr_comment(conn, tid, number):
     kb.add_comment(conn, tid, "worker", f"Opened https://github.com/o/r/pull/{number}, waiting for CI")
 
 
-def test_a_card_woken_by_its_pr_wait_respawns_past_the_active_pr_guard(board):
-    tid, run_id = _running(board)
-    _pr_comment(board, tid, 7)
-    assert kb.schedule_task(board, tid, reason="ci", wait_for={"kind": "pr", "repo": "o/r", "number": 7},
+_WORKER_PID = 424242
+
+
+def _woken_on_pr(conn, tid=None):
+    """A card that commented PR 7, waited on its checks and was woken by the dispatcher."""
+    tid, run_id = _running(conn) if tid is None else (tid, kb.claim_task(conn, tid).current_run_id)
+    _pr_comment(conn, tid, 7)
+    assert kb.schedule_task(conn, tid, reason="ci", wait_for={"kind": "pr", "repo": "o/r", "number": 7},
                             expected_run_id=run_id)
-    assert _wait_mod().wake_waiting_tasks(board, pr_checks_fn=lambda wait_for, assignee: True) == [tid]
+    assert _wait_mod().wake_waiting_tasks(conn, pr_checks_fn=lambda wait_for, assignee: True) == [tid]
+    return tid
+
+
+def _tick_with_worker(conn, spawned):
+    """A dispatcher tick whose spawn starts a worker (its pid is recorded on the run)."""
+    return kbd.dispatch_once(conn, spawn_fn=lambda task, ws: spawned.append(task.id) or _WORKER_PID)
+
+
+def test_a_card_woken_by_its_pr_wait_respawns_past_the_active_pr_guard(board, monkeypatch):
+    monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
+    tid = _woken_on_pr(board)
+
+    spawned: list[str] = []
+    _tick_with_worker(board, spawned)
+    assert spawned == [tid]
+
+    # The first real attempt after the wake spends it: once that worker crashed, a respawn is guarded again.
+    kbd._record_task_failure(board, tid, "worker crashed", outcome="crashed", release_claim=True, end_run=True)
+    assert kbd.check_respawn_guard(board, tid) == "active_pr"
+
+
+def test_a_host_refused_spawn_after_a_wake_keeps_the_wake_for_the_next_tick(board, monkeypatch):
+    from tools.process_registry import RestartSafeScopeUnavailable
+
+    tid = _woken_on_pr(board)
+
+    def refuse(task, workspace):
+        raise RestartSafeScopeUnavailable("no restart-safe scope")
+
+    kbd.dispatch_once(board, spawn_fn=refuse)
+    assert [r.outcome for r in kb.list_runs(board, tid)][-1] == "spawn_failed"
+    with kb.write_txn(board):   # the infrastructure cooldown has passed
+        board.execute("UPDATE task_runs SET ended_at = ended_at - 100000 WHERE task_id = ? AND outcome = 'spawn_failed'",
+                      (tid,))
 
     spawned: list[str] = []
     _tick(board, spawned)
+
     assert spawned == [tid]
 
-    # Only the first spawn after the wake goes on with the PR; a later respawn is guarded again.
-    kbd._record_task_failure(board, tid, "worker crashed", outcome="crashed", release_claim=True, end_run=True)
+
+@pytest.mark.parametrize("outcome", ["crashed", "reclaimed"])
+@pytest.mark.parametrize("worker_started", [True, False])
+def test_only_a_run_whose_worker_started_spends_the_wake(board, outcome, worker_started):
+    tid = _woken_on_pr(board)
+    assert kb.claim_task(board, tid) is not None
+    if worker_started:
+        kbd._set_worker_pid(board, tid, _WORKER_PID)
+    kbd._record_task_failure(board, tid, "run ended", outcome=outcome, release_claim=True, end_run=True)
+
+    assert kbd.check_respawn_guard(board, tid) == ("active_pr" if worker_started else None)
+
+
+def test_a_planned_stop_after_a_wake_keeps_the_wake(board, monkeypatch):
+    monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
+    tid = kb.create_task(board, title="long card", assignee="worker", max_runtime_seconds=1)
+    _woken_on_pr(board, tid)
+    assert kb.claim_task(board, tid) is not None
+    kbd._set_worker_pid(board, tid, os.getpid())
+    with kb.write_txn(board):
+        board.execute("UPDATE task_runs SET started_at = ? WHERE id = "
+                      "(SELECT current_run_id FROM tasks WHERE id = ?)", (int(time.time()) - 30, tid))
+    assert kbd.enforce_max_runtime(board, signal_fn=lambda pid, sig: None) == [tid]
+
+    assert kbd.check_respawn_guard(board, tid) is None
+
+
+@pytest.mark.parametrize("after_wake", ["newer_pr_comment", "person_unblock"])
+def test_a_newer_pr_comment_or_a_person_ends_the_wake(board, after_wake):
+    tid = _woken_on_pr(board)
+    if after_wake == "newer_pr_comment":   # same second as the wake: ordered by event, not by time
+        _pr_comment(board, tid, 8)
+    else:
+        run_id = kb.claim_task(board, tid).current_run_id
+        assert kb.schedule_task(board, tid, reason="handed to a person", expected_run_id=run_id)
+        assert kb.unblock_task(board, tid, by="operator") is True
+
     assert kbd.check_respawn_guard(board, tid) == "active_pr"
 
 

@@ -174,22 +174,40 @@ def _pr_ref(url: str) -> Optional[tuple[str, int]]:
     return (match[1].lower(), int(match[2])) if match else None
 
 
-def woken_for_pr_work(conn: sqlite3.Connection, task_id: str, since: int, pr_urls: list[str]) -> bool:
-    """The respawn guard's ``active_pr`` exception for a card the dispatcher woke after its newest
-    PR comment (``since``): the next spawn goes on with that PR, it is no duplicate.
-
-    Only the first spawn after the wake passes (a later ``claimed`` closes it), and a ``pr`` wait
-    passes only when the PR the card waited for is one of the commented ``pr_urls``.
-    """
-    wake = conn.execute(
-        "SELECT id, payload FROM task_events WHERE task_id = ? AND kind = 'unblocked' AND created_at >= ? "
-        "ORDER BY id DESC LIMIT 1", (task_id, since),
+def _wake_after_pr_comments(conn: sqlite3.Connection, task_id: str,
+                            pr_rows: list[tuple[int, str, int]]) -> Optional[sqlite3.Row]:
+    """The latest ``unblocked`` event after every PR comment, by event order: each comment's
+    ``commented`` event is the anchor, so a same-second tie is ordered too. A comment written
+    without one (no event) falls back to its time."""
+    ids = [cid for _, _, cid in pr_rows]
+    anchor = conn.execute(
+        f"SELECT MAX(id) FROM task_events WHERE task_id = ? AND kind = 'commented' AND "
+        f"json_extract(payload, '$.comment_id') IN ({','.join('?' for _ in ids)})", (task_id, *ids),
+    ).fetchone()[0]
+    after, value = ("id > ?", anchor) if anchor is not None else ("created_at >= ?", max(t for t, _, _ in pr_rows))
+    return conn.execute(
+        f"SELECT id, payload FROM task_events WHERE task_id = ? AND kind = 'unblocked' AND {after} "
+        "ORDER BY id DESC LIMIT 1", (task_id, value),
     ).fetchone()
+
+
+def woken_for_pr_work(conn: sqlite3.Connection, task_id: str, pr_rows: list[tuple[int, str, int]]) -> bool:
+    """The respawn guard's ``active_pr`` exception for a card the dispatcher woke after its PR
+    comments (``pr_rows``: ``(time, url, comment id)``): the next attempt goes on with that PR.
+
+    The wake's permission is spent by the first real attempt after it: a run whose worker
+    started (``kanban_db_handoff.worker_started_since``, the same attempt rule as the respawn
+    guards). A refused or failed spawn, a reclaim before the worker came up, a park or a planned
+    stop leaves it intact. A ``pr`` wait passes only when the waited PR is one of the commented
+    URLs, and a person's later unblock or a newer PR comment ends the exception.
+    """
+    from hermes_cli.kanban_db_handoff import worker_started_since
+
+    wake = _wake_after_pr_comments(conn, task_id, pr_rows)
     payload = json.loads(wake["payload"]) if wake is not None and wake["payload"] else {}
     if payload.get("by") != DISPATCHER_ACTOR or not str(payload.get("reason") or "").startswith("wait met: "):
         return False
-    if conn.execute("SELECT 1 FROM task_events WHERE task_id = ? AND kind = 'claimed' AND id > ?",
-                    (task_id, wake["id"])).fetchone():
+    if worker_started_since(conn, task_id, wake["id"]):
         return False
     park = conn.execute(
         "SELECT payload FROM task_events WHERE task_id = ? AND kind IN ('scheduled', 'blocked') AND id < ? "
@@ -199,7 +217,7 @@ def woken_for_pr_work(conn: sqlite3.Connection, task_id: str, since: int, pr_url
     if wait_for.get("kind") != "pr":
         return True
     waited = (str(wait_for.get("repo") or "").lower(), int(wait_for.get("number") or 0))
-    return waited in {_pr_ref(url) for url in pr_urls}
+    return waited in {_pr_ref(url) for _, url, _ in pr_rows}
 
 
 def dispatcher_wake(conn: sqlite3.Connection, task_id: str, park_event_id: int, wait_for: dict[str, Any]) -> bool:
