@@ -19,6 +19,11 @@ from tests.hermes_cli import _worker_fakes as fakes
 NODE = shutil.which("node")
 
 
+@pytest.fixture(autouse=True)
+def isolated_process_table(monkeypatch):
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_processes._process_table", dict)
+
+
 class Lane:
     """One runner type on a worker root with one local device."""
 

@@ -10,6 +10,11 @@ from hermes_cli.worker.runners.base import Task
 from hermes_cli.worker.runners.omo_settle import Settle
 
 
+@pytest.fixture(autouse=True)
+def isolated_process_table(monkeypatch):
+    monkeypatch.setattr("hermes_cli.worker.runners.omo_processes._process_table", dict)
+
+
 def session_case(tmp_path, monkeypatch, *, source="terminal-monitors", human=None, dialogs=None,
                  report_time=950, role="assistant", stop="stop"):
     monkeypatch.setattr("hermes_cli.worker.runners.omo_settle.time.time", lambda: 1000)
