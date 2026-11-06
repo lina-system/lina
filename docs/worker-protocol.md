@@ -85,6 +85,13 @@ Claude Code and Codex use the public `@zed-industries/claude-agent-acp` and
 - A live `send` steer cancels the active turn, then prompts the same session; prompts are never concurrent.
 - Successful `end_turn` completes the run; `cancelled` cancels it, and refusal or exhausted limits fail it.
   `stall_grace_s` remains the idle limit. A run closes its agent process group before publishing its ending.
+- Requested models use the session's advertised model config selector (`session/set_config_option`) or
+  advertised legacy models (`session/set_model`). Only an agent-confirmed current model ID is recorded as
+  `model` in the handle and run manifest; the original profile is retained as `requested_model`. An unsupported,
+  refused or unconfirmed choice records `model: null` and a `model_not_applied` event. Explicit `--model` requests
+  fail before prompting in that case; routing/default choices continue with the agent default. A run without a
+  requested model is never blocked on model selection. Unconfirmed aliases and reasoning levels are not reported
+  as applied.
 
 The wire format follows the [public ACP schema](https://agentclientprotocol.com/protocol/schema).
 Real-node work-card delivery through grok and dsh still needs verification after node deployment.

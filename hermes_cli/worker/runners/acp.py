@@ -127,7 +127,8 @@ class AcpRunner:
         if not supported:
             raise RunnerError(reason)
         handle = Handle(task, run, {"runner": self.name, "access": access, "since": time.time(),
-                                    "owner_pid": os.getpid(), "model": model.as_dict() if model else None})
+                                    "owner_pid": os.getpid(), "model": None,
+                                    "requested_model": model.as_dict() if model else None})
         _inbox(handle).mkdir()
         session = _Session(self, handle)
         with task.path(f"stderr.{run}.txt").open("ab") as err:
@@ -171,7 +172,8 @@ class AcpRunner:
             return "refused", handle
         previous = _json(_status_path(handle))
         return "started", self._launch(handle.task, run or handle.run + 1, text,
-                                        ModelProfile.from_dict(handle.data.get("model")), mode, previous)
+                                        ModelProfile.from_dict(handle.data.get("requested_model", handle.data.get("model"))),
+                                        mode, previous)
 
     def answer(self, handle: Handle, text: str) -> dict:
         mode = recorded_access(handle)
@@ -236,6 +238,7 @@ class _Session:
         self.final = ""
         self.state = "running"
         self.stopping = False
+        self.current_model: str | None = None
         self.selector = selectors.DefaultSelector()
 
     def publish(self, state: str) -> None:
@@ -292,7 +295,11 @@ class _Session:
                 return
             update = params.get("update", {})
             kind = update.get("sessionUpdate")
-            if kind in ("tool_call", "tool_call_update"):
+            if kind == "current_model_update":
+                self.current_model = update.get("currentModelId")
+            elif kind == "config_option_update":
+                self.current_model = self.model_id(update)
+            elif kind in ("tool_call", "tool_call_update"):
                 call_id = update.get("toolCallId", "")
                 self.calls.setdefault(call_id, {}).update(update)
             elif kind == "agent_message_chunk" and update.get("content", {}).get("type") == "text":
@@ -358,6 +365,48 @@ class _Session:
         self.send({"id": request_id, "result": {"decision": "allow" if allow else "deny",
                                                 "reason": "LINA run access policy"}})
 
+    @staticmethod
+    def model_id(response: dict) -> str | None:
+        option = next((item for item in response.get("configOptions", []) if item.get("category") == "model"), {})
+        model = (option.get("currentValue") or response.get("models", {}).get("currentModelId")
+                 or response.get("_meta", {}).get("modelState", {}).get("currentModelId"))
+        return model if isinstance(model, str) and model else None
+
+    def apply_model(self, opened: dict) -> None:
+        """An acknowledgement alone is not evidence that the agent selected a model."""
+        requested = self.handle.data.get("requested_model")
+        if not requested:
+            return
+        wanted = requested["id"]
+        self.current_model = self.model_id(opened)
+        reason = "agent did not advertise model selection"
+        try:
+            if self.current_model != wanted:
+                option = next((item for item in opened.get("configOptions", [])
+                               if item.get("category") == "model" and item.get("type") == "select"), None)
+                if option is not None:
+                    response = self.rpc("session/set_config_option", {"sessionId": self.session_id,
+                                        "configId": option["id"], "value": wanted})
+                elif opened.get("models"):
+                    response = self.rpc("session/set_model", {"sessionId": self.session_id, "modelId": wanted})
+                else:
+                    raise RunnerError(reason)
+                self.current_model = self.model_id(response) or self.current_model
+            if self.current_model != wanted:
+                raise RunnerError(f"agent did not confirm requested model (current: {self.current_model!r})")
+        except RunnerError as exc:
+            self.handle.task.event(self.handle.run, "model_not_applied", flavor=self.runner.flavor,
+                                   requested_model=requested, reason=str(exc))
+            if requested.get("source") == "--model":
+                raise RunnerError(f"explicit model was not applied: {exc}") from exc
+            return
+        # ACP confirms an ID, not an OCX alias or a requested reasoning level.
+        self.handle.data["model"] = ModelProfile(requested.get("provider"), self.current_model,
+                                                source=requested.get("source", "runner")).as_dict()
+        self.handle.save()
+        self.handle.task.event(self.handle.run, "model_applied", flavor=self.runner.flavor,
+                               model=self.handle.data["model"], current_model_id=self.current_model)
+
     def open(self, previous: dict) -> str:
         initialized = self.rpc("initialize", {"protocolVersion": 1,
                                "clientInfo": {"name": "lina-worker", "version": "1"},
@@ -387,6 +436,7 @@ class _Session:
         if not self.session_id:
             raise RunnerError("ACP session/new returned no sessionId")
         self.handle.task.event(self.handle.run, "session_opened", method=method, session_id=self.session_id)
+        self.apply_model(opened)
         self.publish("running")
         if previous_id and method == "session/new":
             pieces = []
