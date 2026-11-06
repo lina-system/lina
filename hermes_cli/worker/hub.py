@@ -722,12 +722,18 @@ class Hub:
 
     def _card_fetch(self, job: dict, marker: str) -> bool:
         """Fetch the results of a pending end again; True once the end can go on (fetched, or out of tries: then
-        without report.md, saying so)."""
+        without report.md, saying so). The device keeps only its latest run's results: when the manifest names a later
+        run, they are not this run's, and the end goes on without them."""
         kind, run = job["card_pending"][marker]["kind"], job["card_pending"][marker]["run"]
         self.fetched = None
-        text, _ = self._notice_body(job, kind, run)  # reloads the job: read the entry after it
+        text, out_dir = self._notice_body(job, kind, run)  # reloads the job: read the entry after it
         entry = job["card_pending"][marker]
-        if self.fetched:
+        fetched_run = (read_json(out_dir / "manifest.json", {}) or {}).get("run")
+        if self.fetched and fetched_run is not None and str(fetched_run) != str(run):
+            entry["fetch_pending"] = False
+            entry["text"] += (f"- Run {run}'s results were replaced by a later run before they could be fetched, so no "
+                              "report is attached.\n")
+        elif self.fetched:
             entry.update(text=text, fetch_pending=False, report=self._report_snapshot(job, marker))
         else:
             entry["fetch_tries"] += 1
