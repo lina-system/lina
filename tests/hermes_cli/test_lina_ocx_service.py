@@ -44,9 +44,12 @@ def test_systemd_unit_runs_the_pinned_bun_and_ocx_with_its_data_dir(root):
 
 
 def test_launchd_plist_is_ai_lina_ocx_with_the_pinned_paths(root):
+    from hermes_cli.gateway_launchd import launchd_program_arguments
     plist = plistlib.loads(lina_ocx_service.definition("launchd", root, "2.95.0", 10123).encode())
     assert plist["Label"] == "ai.lina.ocx"
-    assert plist["ProgramArguments"] == lina_ocx.ocx_argv(root, "2.95.0", "start", "--port", "10123")
+    assert plist["ProgramArguments"] == launchd_program_arguments(
+        lina_ocx.ocx_argv(root, "2.95.0", "start", "--port", "10123"),
+        root / "logs" / "ocx.log", root / "logs" / "ocx.error.log")
     assert plist["EnvironmentVariables"]["OPENCODEX_HOME"] == str(root / "ocx")
     assert not plist["Label"].startswith("com.opencodex")
 

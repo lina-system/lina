@@ -40,6 +40,30 @@ def build_migrate_parser(subparsers) -> None:
         help="Skip activating the generated file through Relay's validator before writing it")
     migrate_relay.set_defaults(func=_cmd_migrate_relay)
     migrate_parser.set_defaults(func=cmd_migrate)
+    _build_memory_parser(migrate_subparsers)
+
+
+def _build_memory_parser(subparsers) -> None:
+    parser = subparsers.add_parser("memory", help="Copy a legacy profile into a new LINA agent and verify it")
+    parser.add_argument("--from", dest="from_", required=True, help="Legacy Hermes home (never written)")
+    selection = parser.add_mutually_exclusive_group(required=True)
+    selection.add_argument("--source-profile", dest="profile", help="One source profile; use default for the root profile")
+    selection.add_argument("--all-source-profiles", dest="all_profiles", action="store_true",
+                           help="Copy source profiles sequentially after preflight")
+    parser.add_argument("--as", dest="agent", required=True, help="New agent name; prefix in all-profile mode")
+    parser.add_argument("--home", help="Destination LINA root (defaults to the running home; a different root is refused)")
+    parser.add_argument("--work-dir", required=True, help="Retained input copies and migration-report.json")
+    parser.add_argument("--honcho-dump", help="Logical dump of old Honcho; never a live service")
+    parser.add_argument("--honcho-workspace", help="Assert the workspace selected by the copied profile's honcho.json")
+    parser.add_argument("--honcho-python", help="Override the installed store image with an explicit Honcho interpreter")
+    parser.add_argument("--spool", help="Copied collector input, events.jsonl or its directory")
+    parser.add_argument("--work-db", help="Old work-ledger work.db to copy and filter")
+    parser.set_defaults(func=_cmd_migrate_memory)
+
+
+def _cmd_migrate_memory(args) -> None:
+    from hermes_cli.migrate_memory import run
+    raise SystemExit(run(args))
 
 
 def _cmd_migrate_relay(args) -> None:
