@@ -307,6 +307,32 @@ def _integer_json_each(masked: str, catalog: Catalog) -> str:
     return _JSON_EACH_IN.sub(cast, masked)
 
 
+_SUBQUERY_FOLLOW = frozenset("WHERE ORDER GROUP LIMIT OFFSET JOIN LEFT RIGHT INNER CROSS FULL NATURAL ON USING UNION "
+                              "EXCEPT INTERSECT HAVING WINDOW RETURNING".split())
+
+
+def _alias_subqueries(masked: str) -> str:
+    """SQLite (and Postgres 16+) take ``FROM (SELECT ...)`` with no name; Postgres 15, the store's version, refuses
+    it: a subquery in FROM or JOIN with no alias gets one."""
+    out, pos = [], 0
+    for m in re.finditer(r"\b(?:FROM|JOIN)\s*\(\s*(?=SELECT\b|WITH\b|VALUES\b)", masked, re.IGNORECASE):
+        if m.start() < pos:
+            continue
+        depth, end = 1, m.end()
+        while end < len(masked) and depth:
+            depth += {"(": 1, ")": -1}.get(masked[end], 0)
+            end += 1
+        if depth:
+            continue
+        follow = re.match(r"\s*(AS\s+)?([A-Za-z_]\w*)", masked[end:], re.IGNORECASE)
+        named = follow is not None and (follow.group(1) is not None or follow.group(2).upper() not in _SUBQUERY_FOLLOW)
+        out.append(masked[pos:m.end()] + _alias_subqueries(masked[m.end():end - 1]) + ")"
+                   + ("" if named else f" AS lcm_subquery_{m.start()}"))
+        pos = end
+    out.append(masked[pos:])
+    return "".join(out)
+
+
 def _apply_rewrites(masked: str) -> str:
     for pattern, repl in _REWRITES:
         masked = pattern.sub(repl, masked)
@@ -457,12 +483,13 @@ def _expand_stars(masked: str, catalog: Catalog) -> str:
 
 
 def _item_end(text: str, pos: int) -> int:
-    """End of the FROM item starting at *pos*: a name or a call (balanced parentheses), then an optional alias."""
-    m = re.compile(r"\s*[\w.]+").match(text, pos)
-    if not m:
-        return pos
+    """End of the FROM item starting at *pos*: a name, a call or a subquery (balanced parentheses), then an optional
+    alias."""
+    m = re.compile(r"\s*[\w.]*").match(text, pos)
     end = m.end()
     call = re.compile(r"\s*\(").match(text, end)
+    if not call and not m.group().strip():
+        return pos
     if call:
         end = call.end() - 1
         depth = 0
@@ -750,13 +777,13 @@ def _translate_cached(sql: str, catalog_key: int) -> Template:
         masked = re.sub(r"\bREAL\b", "double precision", masked, flags=re.IGNORECASE)
         masked = re.sub(r"\bBLOB\b", "bytea", masked, flags=re.IGNORECASE)
     masked = _expand_stars(masked, catalog)
-    masked = _bare_joins(masked)
+    masked = _bare_joins(_alias_subqueries(masked))
     for each in re.finditer(r"\bjson_each\(\w+\.source_ids\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
         alias = each.group(1)
         masked = re.sub(rf"\b{alias}\.value(\s*(?:<=|>=|<|>)\s*\x01\d+\x01)",
                         rf"CAST({alias}.value AS bigint)\1", masked)
     masked = _apply_rewrites(_recursive_limit(masked))
-    masked = _integer_json_each(masked, catalog)
+    masked = _alias_subqueries(_integer_json_each(masked, catalog))  # and those the rewrites wrote
     # json_each.value is text on Postgres, but SQLite keeps JSON numbers numeric.
     for alias in re.findall(r"ctx\.json_each\([^()]*\)\s+(?:AS\s+)?(\w+)", masked, re.IGNORECASE):
         masked = re.sub(rf"\b{alias}\.value(?=\s*(?:<=|>=|<|>)\s*\x01)",

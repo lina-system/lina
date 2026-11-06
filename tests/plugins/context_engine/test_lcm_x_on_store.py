@@ -518,3 +518,21 @@ def test_lina_app_analyzes_ctx_and_vec_tables_and_nothing_else(routed, memory_st
         assert analyzed("memory.messages") == []
     finally:
         conn.close()
+
+
+def test_a_subquery_in_from_needs_no_name(routed):
+    """SQLite takes ``FROM (SELECT ...)`` with no alias, and LCM-X writes it so; Postgres 15 (the store's version)
+    refuses it, so the translator names such a subquery, nested or joined."""
+    db = routed("subquery")
+    _stores(db)[0].close()
+    conn = lcm_x_store.backend_for(db)()
+    try:
+        conn.execute("INSERT INTO metadata(key, value) VALUES ('a', '1'), ('b', '3')")
+        assert conn.execute("SELECT MIN(id), MAX(id) FROM (SELECT CAST(value AS INTEGER) AS id FROM metadata "
+                            "WHERE key IN ('a', 'b')) WHERE id > 0").fetchone() == (1, 3)
+        assert conn.execute("SELECT key FROM (SELECT key FROM (SELECT key FROM metadata WHERE key = 'b')) "
+                            "ORDER BY key").fetchall() == [("b",)]
+        assert conn.execute("SELECT m.key, n FROM metadata m JOIN (SELECT key AS k, 2 AS n FROM metadata) "
+                            "ON k = m.key WHERE m.key = 'a'").fetchall() == [("a", 2)]
+    finally:
+        conn.close()
