@@ -244,6 +244,34 @@ def test_the_key_never_appears_in_responses_logs_the_work_record_or_the_push_sta
     assert repr(lina_push.vapid_key()[0]).count(key) == 0
 
 
+def test_the_started_sender_wakes_on_a_record_write_long_before_its_sweep(work, device, monkeypatch):
+    service = PushService(device)
+    pushed, seeded = threading.Event(), threading.Event()
+
+    class Watched(Sender):
+        def __init__(self, root, vapid):
+            super().__init__(root, vapid, self.post_and_tell)
+
+        def post_and_tell(self, url, headers, body):
+            status = service.post(url, headers, body)
+            pushed.set()
+            return status
+
+        def sweep(self):
+            super().sweep()
+            seeded.set()
+    monkeypatch.setattr(lina_push_watch, "Sender", Watched)
+    assert lina_push_watch.SWEEP_SECONDS >= 60
+    halt = lina_push_watch.start(work.root)
+    try:
+        assert seeded.wait(30)
+        work.ok("wait", "T2", "--decide", "로그 보관을 늘릴까?")  # one row in the work record's event table
+        assert pushed.wait(30)
+    finally:
+        halt()
+    assert [(m["kind"], m["target"]) for m in device.got] == [("ask", "T2")]
+
+
 def test_without_a_key_the_sender_does_not_start_and_one_warning_is_logged(work, monkeypatch, caplog):
     monkeypatch.delenv(lina_push.KEY_ENV, raising=False)
     with caplog.at_level(logging.INFO, logger="hermes_cli"):
