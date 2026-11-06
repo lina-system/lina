@@ -226,7 +226,8 @@ def _attached(calls: list[dict]) -> list[tuple[str, str]]:
 @pytest.fixture
 def on_a_device(queued, monkeypatch):
     """A run placed on a device whose result fetch is played by *results*: each call returns the next entry, an
-    exception is raised, a string is written as the run's report.md, None writes no report."""
+    exception is raised, a string is written as the run's report.md, ``(report, run)`` also writes a manifest of
+    that run, None writes no report."""
     hub, submit, calls = queued
     run = submit()
     hub.store.update(run, host="far", state="running")
@@ -237,10 +238,14 @@ def on_a_device(queued, monkeypatch):
         if isinstance(outcome, Exception):
             raise outcome
         out_dir.mkdir(parents=True, exist_ok=True)
+        if isinstance(outcome, tuple):
+            outcome, manifest_run = outcome
+            (out_dir / "manifest.json").write_text(json.dumps({"run": manifest_run, "files": {}}), encoding="utf-8")
         if outcome is not None:
             (out_dir / "report.md").write_text(outcome, encoding="utf-8")
     monkeypatch.setattr(hub_module, "fetch", fetch)
     monkeypatch.setattr(Hub, "transport", lambda self, job: None)
+    monkeypatch.setattr(Hub, "meta", lambda self, job, live=False: {"state": "running", "alive": True})
     assert hub.wait({"task": CARD, "board": BOARD}) == 0
     return hub, run, results, calls
 
@@ -253,6 +258,20 @@ def test_a_failed_result_fetch_is_retried_before_the_report_is_attached_and_the_
     hub.tick()
     assert _verbs(calls())[2:] == ["comment", "attach", "unblock"]
     assert _attached(calls()) == [(f"report-{run}-1.md", "# run 1 report\n")]
+    assert not hub.store.load(run).get("card_pending")
+
+
+def test_a_retried_fetch_that_finds_a_later_run_does_not_label_its_results_as_the_earlier_run(on_a_device):
+    hub, run, results, calls = on_a_device
+    results += [TransportError("far: connection reset"), ("run 2 report\n", 2), ("run 2 report\n", 2)]
+    hub.notify(run, "done", "1")
+    hub.store.update(run, runs=2, state="running")  # `send` started run 2 on the device before the retry
+    hub.tick()
+    assert _verbs(calls())[2:] == ["comment", "unblock"]
+    assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[2]["argv"][-1]
+    hub.notify(run, "done", "2")
+    assert _verbs(calls())[2:] == ["comment", "unblock", "comment", "attach"]
+    assert _attached(calls()) == [(f"report-{run}-2.md", "run 2 report\n")]
     assert not hub.store.load(run).get("card_pending")
 
 
