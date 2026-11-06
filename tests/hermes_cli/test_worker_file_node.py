@@ -27,7 +27,8 @@ NODE_TOOLS = ("bash", "tar", "sha256sum", "setsid", "nohup", "cat", "sed", "cut"
 AGENT = "agent-a"
 
 
-def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first: str = "done") -> dict:
+def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first: str = "done",
+          nas_extra: str = "") -> dict:
     nas, base, hub_bin = tmp_path / "nas", tmp_path / "lina", tmp_path / "hub-bin"
     home, node_bin, volume = nas / "home", nas / "bin", nas / "volume"
     for path in (home / ".bun" / "bin", node_bin, hub_bin, volume / "backup", volume / "share" / "#recycle"):
@@ -44,12 +45,20 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first:
     (nas / "omo" / "scenario.json").write_text(json.dumps({"first": first}))
     (hub_bin / "ssh").write_text(textwrap.dedent(f"""\
         #!{sys.executable}
-        import os, sys
+        import os, subprocess, sys
         nas = {str(nas)!r}
         with open(os.path.join(nas, "ssh.log"), "a") as fh:
             fh.write(sys.argv[-2] + "\\n")
         env = {{"HOME": os.path.join(nas, "home"), "PATH": os.path.join(nas, "bin"), "FAKE_NAS": nas,
                "FAKE_OMO_DIR": os.path.join(nas, "omo"), "LANG": "C.UTF-8"}}
+        faults = os.path.join(nas, "launch_faults")  # one line per start: fail (never sent) or lose (answer lost)
+        if "runner.sh" in sys.argv[-1] and os.path.exists(faults):
+            pending = open(faults).read().split()
+            if pending:
+                open(faults, "w").write("\\n".join(pending[1:]))
+                if pending[0] == "lose":
+                    subprocess.run(["/bin/sh", "-c", sys.argv[-1]], env=env, capture_output=True)
+                sys.exit(255)
         os.execve("/bin/sh", ["sh", "-c", sys.argv[-1]], env)
         """))
     for script in (node_bin / "find", node_bin / "curl", hub_bin / "ssh"):
@@ -60,7 +69,7 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first:
         devices:
           workers:
             nas: {{host: nas-host, kind: file, omo: "~/.bun/bin/omo", deny: ["{volume}/backup", "#recycle"],
-                   volumes: ["{volume}"], scan_s: {scan_s}}}
+                   volumes: ["{volume}"], scan_s: {scan_s}{nas_extra}}}
             build: {{host: local, cap: 1}}
         worker:
           poll_s: 0.05
@@ -287,6 +296,94 @@ def test_lina_devices_shows_a_file_node_from_its_hello_without_asking_lina_on_it
     (node["nas"] / "healthz").write_text("000")
     row = _devices_row(node)
     assert row["ready"] is False and row["why"].startswith("model path through the hub does not answer")
+
+
+def test_a_file_moved_into_a_denied_folder_is_caught_by_its_ctime(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    old = node["volume"] / "share" / "old-report.txt"
+    old.write_text("kept")
+    os.utime(old, (946684800, 946684800))  # 2000-01-01: its mtime is long before the run
+    task_id = _submit(node)
+    _ended(node, task_id)
+    old.rename(node["volume"] / "backup" / "old-report.txt")  # the move keeps the mtime, sets a new ctime
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "review"
+    assert f"{node['volume']}/backup/old-report.txt" in _notice(node, task_id)
+
+
+def _opens(node: dict) -> int:
+    calls = (node["nas"] / "omo" / "calls.jsonl").read_text().splitlines()
+    return sum(1 for line in calls if json.loads(line)[:3] == ["host", "session", "open"])
+
+
+def test_a_start_that_never_reached_the_node_is_started_on_the_next_tick(tmp_path, monkeypatch):
+    from hermes_cli.worker import file_node
+    monkeypatch.setattr(file_node, "LAUNCH_GAP_S", 0.0)
+    node = _node(tmp_path, monkeypatch)
+    (node["nas"] / "launch_faults").write_text("fail\n")
+    task_id = _submit(node)
+    assert not (node["home"] / "lina-file-node" / task_id / "pid.1").exists()
+    Hub(node["root"]).tick()
+    _ended(node, task_id)
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "done" and _opens(node) == 1
+
+
+def test_a_start_whose_answer_was_lost_is_adopted_and_never_run_twice(tmp_path, monkeypatch):
+    from hermes_cli.worker import file_node
+    monkeypatch.setattr(file_node, "LAUNCH_GAP_S", 0.0)
+    node = _node(tmp_path, monkeypatch)
+    (node["nas"] / "launch_faults").write_text("lose\n")
+    task_id = _submit(node)
+    _ended(node, task_id)
+    hub = Hub(node["root"])
+    hub.tick()
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "done" and _opens(node) == 1
+    events = (node["root"] / "file_nodes" / "nas" / "tasks" / task_id / "events.1.jsonl").read_text()
+    assert '"adopted": true' in events
+
+
+def test_a_start_that_keeps_failing_ends_failed_and_frees_the_slot(tmp_path, monkeypatch):
+    from hermes_cli.worker import file_node
+    monkeypatch.setattr(file_node, "LAUNCH_GAP_S", 0.0)
+    monkeypatch.setattr(file_node, "LAUNCH_TRIES", 2)
+    node = _node(tmp_path, monkeypatch)
+    (node["nas"] / "launch_faults").write_text("fail\n" * 9)
+    task_id = _submit(node)
+    hub = Hub(node["root"])
+    hub.tick()
+    hub.tick()
+    job = hub.store.load(task_id)
+    assert job["state"] == "failed" and "launch failed after 2 tries" in _notice(node, task_id)
+    assert hub.transport(job).call(["probe", "", "omo"]).json()["named_running"] == 0
+
+
+def test_a_follow_up_waits_for_a_free_slot_before_its_run_starts(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, nas_extra=", named_cap: 1")
+    first = _submit(node)
+    _ended(node, first)
+    hub = Hub(node["root"], out=lambda line: None)
+    hub.tick()
+    (node["nas"] / "omo" / "scenario.json").write_text(json.dumps({"first": "running"}))
+    second = _submit(node)
+    session = node["nas"] / "omo" / "state.json"
+    wait_until(lambda: session.exists() and json.loads(session.read_text())["phase"] == "running",
+               what="the second run's session")
+    hub.send(first, "one more file")
+    first_remote = node["home"] / "lina-file-node" / first
+    hub.tick()
+    assert not (first_remote / "prompt.2").exists()  # the second run holds the only slot
+    state = json.loads(session.read_text())
+    session.write_text(json.dumps({**state, "phase": "done"}))
+    wait_until(lambda: (node["home"] / "lina-file-node" / second / "rc.1").exists(), what="the second run's end")
+    hub.tick()
+    hub.tick()
+    wait_until(lambda: (first_remote / "rc.2").exists(), what="the follow-up run's end")
+    hub.tick()
+    assert (hub.store.load(second)["state"], hub.store.load(first)["state"]) == ("done", "done")
 
 
 def test_device_roles_and_file_node_keys_are_read_from_config():

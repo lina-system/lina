@@ -30,6 +30,11 @@ model path: one ssh session from the hub carries the node's 127.0.0.1:10100 to t
   move and change files only inside the paths the brief names, never read or write the device's `deny` entries
   (listed one by one), delete nothing (move it and list every move in report.md; permanent deletion is the
   owner's), and report any other outside effect instead of doing it. The report.md contract stays the same.
+- **A start that did not reach the node is started again.** There is no serve on the node to pick up a request,
+  so `meta` (the hub tick) starts a requested run that has no start mark, at most 5 times a minute apart, then ends
+  it `failed` ("launch failed after n tries") and frees its slot. A run whose earlier start did happen (its answer
+  was lost) is adopted from its pid file on the node, never started twice. A follow-up takes a slot like a first
+  submit; while the device is full it waits and starts from the same place once one frees.
 - **The hub judges the end.** On `meta` (the hub tick, `--wait`, `status`) the hub asks whether the runner is still
   the recorded process (pid and start time, never a bare pid), and once `rc.<n>` is there copies `report.md`,
   `out/`, the session state and the input hashes back, decides `done`/`done_empty`/`review`/`stalled`/`failed`/
@@ -75,7 +80,8 @@ the whole volume as the node's user, so no narrower mode can be enforced there, 
 whose path (or a file inside an input folder) falls under one, is refused at submit, before the node is asked
 anything.
 
-After a run the node looks for files changed under the denied folders since the run started: the absolute folders,
+After a run the node looks for files changed under the denied folders since the run started (a newer modification
+time or a newer status-change time, so a file moved or renamed into one is caught too): the absolute folders,
 and folders matching a name pattern up to three levels below each entry of `volumes`. The look runs in its own
 session and is killed after `scan_s` seconds (backup folders can hold terabytes); a `find` that exits non-zero
 (an unreadable folder, an I/O error) has not seen everything either.

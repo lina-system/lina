@@ -30,6 +30,9 @@ from hermes_cli.worker.transport import Reply
 ACCESS_MODES = ("full",)  # the run reaches the whole volume: no narrower mode is enforced there
 VERBS = ("hello", "probe", "reserve", "put", "untar", "meta", "send", "follow_up", "human", "answer", "cancel", "pack")
 MIRROR = "file_nodes"
+# A run whose start did not reach the node is started again from ``meta`` (the hub tick): at most LAUNCH_TRIES times,
+# LAUNCH_GAP_S apart, then it ends failed and frees its slot. There is no serve on the node to pick it up.
+LAUNCH_TRIES, LAUNCH_GAP_S = 5, 60.0
 SEALED = ("done", "failed", "cancelled")
 
 
@@ -206,8 +209,22 @@ class FileNodeTransport:
         return _answer(device._untar(self.mirror, args[0], args[1], data))
 
     def launch(self, task_id: str, run: int) -> dict:
-        """Send run *run*'s files to the node and start its runner there, in its own session."""
+        """Send run *run*'s files to the node and start its runner there, in its own session; a failed start is
+        counted in ``launch.<n>.json`` for the retry in ``meta``."""
+        from hermes_cli.worker.device import task_lock
         task = self._task(task_id)
+        with task_lock(task):
+            if task.path(f"taken.{run}").exists():
+                return {"action": "put", "launched": run}
+            started = self._launch_locked(task, run)
+            if started.get("action") == "error":
+                tries = read_json(task.path(f"launch.{run}.json"), {}) or {}
+                write_json(task.path(f"launch.{run}.json"), {"tries": int(tries.get("tries") or 0) + 1,
+                                                             "at": time.time(), "error": started["reason"]})
+            return started
+
+    def _launch_locked(self, task: Task, run: int) -> dict:
+        task_id = task.id
         job = read_json(task.path("job.json"), {}) or {}
         if job.get("repo"):
             return {"action": "error", "reason": "a file node takes no repository work"}
@@ -235,9 +252,33 @@ class FileNodeTransport:
             return {"action": "error", "reason": f"start on {self.device.name}: "
                                                  f"{' '.join(reply.err.split())[-300:] or f'exit {reply.code}'}"}
         task.path(f"taken.{run}").write_text(f"{time.time():.3f}\n", encoding="utf-8")
+        task.path(f"slot_wait.{run}").unlink(missing_ok=True)
         task.event(run, "started", runner="omo", node=self.device.name, pid=_fields(reply)["started"],
-                   access=job.get("access"))
+                   access=job.get("access"), adopted=_fields(reply).get("adopted") == "1")
         return {"action": "put", "launched": run}
+
+    def _capacity(self, task: Task) -> tuple[str, int]:
+        pool = slots.task_pool(task.dir)
+        return pool, self.device.manual_cap if pool == "named" else self.device.cap
+
+    def _pending(self, task: Task, run: int) -> tuple[str, dict]:
+        """Run *run* is requested but not started on the node: start it once a slot is free (a follow-up waits for
+        one) and the last failed start is LAUNCH_GAP_S old; after LAUNCH_TRIES failed starts it ends failed."""
+        name = self.device.name
+        if task.path(f"slot_wait.{run}").exists():
+            pool, cap = self._capacity(task)
+            if slots.held(self.mirror, exclude=task.id, pool=pool) >= cap:
+                return "new", {"dash": f"waiting for a free slot on {name}"}
+        tries = read_json(task.path(f"launch.{run}.json"), {}) or {}
+        if int(tries.get("tries") or 0) and time.time() - float(tries.get("at") or 0) < LAUNCH_GAP_S:
+            return "new", {"dash": f"start on {name} failed {tries['tries']}x, tried again soon"}
+        if self.launch(task.id, run).get("action") != "error":
+            return "running", {}
+        tries = read_json(task.path(f"launch.{run}.json"), {}) or {}
+        if int(tries.get("tries") or 0) >= LAUNCH_TRIES:
+            why = f"launch failed after {tries['tries']} tries: {tries.get('error')}"
+            return self.finish(task, run, gone=True, why=why), {}
+        return "new", {"dash": f"start on {name} failed {tries['tries']}x, tried again soon"}
 
     def _meta(self, args, data, timeout) -> Reply:
         task = self._task(args[0])
@@ -255,13 +296,15 @@ class FileNodeTransport:
             else:
                 state = self.finish(task, run, gone=not found.get("rc"))
         elif run and not task.path(f"rc.{run}").exists():
-            state = "new"
+            state, live = self._pending(task, run)
         return _answer({"state": state or "new", "run": run, "requested": run, "rc": _read(task, f"rc.{run}"),
                         "alive": alive, "report": (task.work / "report.md").is_file(),
                         "final": _read(task, "final.md")[:600], "live": live})
 
-    def finish(self, task: Task, run: int, *, gone: bool = False) -> str:
-        """Run *run* ended on the node: copy what it left, judge it here, record the end (``rc.<n>`` last)."""
+    def finish(self, task: Task, run: int, *, gone: bool = False, why: str = "") -> str:
+        """Run *run* ended on the node: copy what it left, judge it here, record the end (``rc.<n>`` last). *gone*:
+        nothing to copy (the runner vanished, or never started: *why*)."""
+        gone_why = why
         from hermes_cli.worker.device import task_lock
         with task_lock(task):
             if task.path(f"rc.{run}").exists():
@@ -270,6 +313,8 @@ class FileNodeTransport:
             if not gone:
                 rc = self._collect(task, run)
             runner_state, why = self._runner_state(task, run, gone)
+            if gone and gone_why and runner_state == "failed":
+                why = gone_why
             write_json(task.path(f"wait.{run}.json"), {"outcome": _read(task, f"outcome.{run}") or "gone",
                                                       "via": "file node", **({"why": why} if why else {})})
             if why:
@@ -389,13 +434,22 @@ class FileNodeTransport:
         run = slots.requested(task.dir)
         if self._live_now(task, run):
             return self._steer(task, run, payload["message"].encode("utf-8"), timeout)
+        if run and not task.path(f"rc.{run}").exists() and not task.path(f"taken.{run}").exists():
+            with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:  # still waiting to start
+                fh.write("\n\n" + payload["message"])
+            return _answer({"action": "queued", "run": run})
         if run and not task.path(f"rc.{run}").exists():
             return _answer({"action": "busy", "run": run})
+        pool, cap = self._capacity(task)
+        free = slots.reserve(self.mirror, task.id, cap, pool=pool).get("action") == "reserved"
         run += 1
         task.path(f"prompt.{run}").write_text(payload["prompt"], encoding="utf-8")
+        if not free:  # the device is full: meta starts it once a slot frees, like a start that failed
+            task.path(f"slot_wait.{run}").write_text(f"{time.time():.3f}\n", encoding="utf-8")
         task.path(f"request.{run}").write_text(json.dumps({"run": run, "at": time.time()}), encoding="utf-8")
-        started = self.launch(task.id, run)
-        return _answer(started if started.get("action") == "error" else {"action": "requested", "run": run})
+        if free:
+            self.launch(task.id, run)  # a failed start is retried by meta
+        return _answer({"action": "requested", "run": run})
 
     def _human(self, args, data, timeout) -> Reply:
         """No answer channel to omo's questions on a file node: a question is left to a follow-up or a cancel."""
@@ -419,6 +473,7 @@ class FileNodeTransport:
                                                              f"{' '.join(reply.err.split())[-300:] or f'exit {reply.code}'}"})
             alive = self._live_now(task, run)
         elif run and not task.path(f"rc.{run}").exists():
+            task.path(f"slot_wait.{run}").unlink(missing_ok=True)
             task.path("state").write_text("cancelled\n", encoding="utf-8")
             task.path(f"rc.{run}").write_text("0\n", encoding="utf-8")
         task.event(run, "cancel", why=why[:300])

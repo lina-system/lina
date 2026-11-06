@@ -28,9 +28,12 @@ printf 'bash=%s\n' "$BASH_VERSION"
 """
 
 # stdin: a tar of the task files for this run (id, prompt.<n>, runner.sh, and work/input for run 1).
+# A run that already has its pid file was started by an earlier call whose answer was lost: it is adopted, never
+# started twice.
 LAUNCH = r"""set -e
 T="$HOME/$1"; N=$2; shift 2
 """ + _START + r"""mkdir -p "$T"
+if [ -s "$T/pid.$N" ]; then cat > /dev/null; printf 'started=%s\nadopted=1\n' "$(cat "$T/pid.$N")"; exit 0; fi
 tar -xf - -C "$T"
 [ -d "$T/work/input" ] && chmod -R a-w "$T/work/input"
 mkdir -p "$T/work/out"
@@ -141,7 +144,8 @@ tail -n 1 "$T/abort.again.json"; exit "$rc"
 
 # deny_scan <task dir> <run> <limit s> <n roots> <roots…> <n names> <names…> <volumes…>: files changed since the run
 # started under the denied folders (absolute roots, and folders named like a pattern up to 3 levels into a volume).
-# Each line is "<owner uid><TAB><path>"; the hub counts only the run's own uid (``file_node_deny.owned``). Both
+# Changed means a newer mtime or ctime: a file moved or renamed into a denied folder keeps its mtime but gets a new
+# ctime. Each line is "<owner uid><TAB><path>"; the hub counts only the run's own uid (``file_node_deny.owned``). Both
 # finds' exit codes land in deny_rc.<n>: a find stopped by an unreadable folder has not seen everything.
 # The look runs in its own session and is killed at the limit: there is no timeout(1) on the node.
 DENY_SCAN = r"""T="$HOME/$1"; N=$2; LIMIT=$3; shift 3
@@ -159,7 +163,8 @@ if [ "$nn" -gt 0 ] && [ "$#" -gt 0 ]; then
   while IFS= read -r dir; do found+=("$dir"); done < "$T/deny_dirs.$N.txt"
 fi
 if [ "${#found[@]}" -gt 0 ]; then
-  find "${found[@]}" -path "$T" -prune -o -newer "$T/started.$N" \( -type f -o -type l \) -printf '%U\t%p\n' 2>/dev/null; s=$?
+  find "${found[@]}" -path "$T" -prune -o \( -newer "$T/started.$N" -o -cnewer "$T/started.$N" \) \( -type f -o -type l \) \
+    -printf '%U\t%p\n' 2>/dev/null; s=$?
 fi
 echo "$d $s" > "$T/deny_rc.$N"
 EOF
