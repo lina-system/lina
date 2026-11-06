@@ -215,6 +215,52 @@ def test_an_unreachable_node_lists_the_hub_s_runners_unreachable_and_an_old_one_
     assert {name: cell[4] for name, cell in _cells(machines["old-d"]).items()} == dict.fromkeys(offered, "update")
 
 
+class Raw:
+    """A node's raw transport under the real ``NegotiatedTransport``: one fixed answer to ``hello``, READY to
+    ``probe``."""
+
+    def __init__(self, hello: Reply):
+        self.hello = hello
+
+    def call(self, verb, stdin=b"", timeout=120):
+        if self.hello.code == 255:
+            return self.hello
+        return self.hello if verb[0] == "hello" else Reply(0, json.dumps(READY).encode())
+
+
+@pytest.mark.parametrize("hello, reachable, why", [
+    (Reply(0, json.dumps({"protocol": {"min": 99, "max": 99}}).encode()), True, "update"),
+    (Reply(1, b"", "lina: worker crashed"), True, "unknown"),
+    (Reply(255, b"", "ssh: connect to host build-a port 22: No route to host"), False, "unreachable"),
+], ids=["protocol-range", "hello-failed", "ssh-255"])
+def test_a_node_refusing_the_protocol_is_update_a_failed_hello_unknown_only_no_ssh_unreachable(
+        root, nodes, ssh, client, monkeypatch, hello, reachable, why):
+    from hermes_cli.worker.transport import NegotiatedTransport
+    monkeypatch.setattr(lina_board_devices, "for_device", lambda dev, _root: NegotiatedTransport(Raw(hello), dev.name))
+    build = next(m for m in _devices(client)["machines"] if m["name"] == "build-a")
+
+    assert build["reachable"] is reachable
+    assert {cell["name"]: cell["why"] for cell in build["runners"]} == dict.fromkeys(("omo", "codex", "grok"), why)
+
+
+def test_the_role_is_the_device_s_own_when_it_carries_one(root, nodes, ssh, client, monkeypatch):
+    import dataclasses
+
+    from hermes_cli.worker import settings
+
+    @dataclasses.dataclass(frozen=True)
+    class RoleDevice(settings.Device):
+        role: str = "work"
+    real = settings.devices
+    monkeypatch.setattr(settings, "devices", lambda base=None, raw=None: [
+        RoleDevice(**{f.name: getattr(dev, f.name) for f in dataclasses.fields(dev)},
+                   role="files" if dev.name in ("build-a", "store-b") else "work") for dev in real(base, raw)])
+
+    assert lina_board_devices.role(root.path, "build-a") == "files", "the config entry says work; the device wins"
+    assert [(m["name"], m["role"]) for m in _devices(client)["machines"]][-2:] == [("build-a", "files"),
+                                                                                   ("store-b", "files")]
+
+
 def test_the_omo_cell_is_served_from_a_background_read_every_ten_minutes(root, nodes, ssh, client):
     nodes.inline = False
     first = next(m for m in _devices(client)["machines"] if m["name"] == "store-b")

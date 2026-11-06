@@ -53,6 +53,7 @@ ACTIONS_LOG = Path("board") / "device-actions.jsonl"
 _VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.\-]+)?")
 # What a sign-in reason may carry that must never be shown or kept: an address, a device code, a long token.
 _SECRETISH = re.compile(r"\S*://\S*|\b[A-Z0-9]{4,}-[A-Z0-9]{4,}\b|\b[A-Za-z0-9_\-]{24,}\b")
+_UPDATE = re.compile(r"\bupdate\b")
 _STATE_WORD = re.compile(r"^[a-z_]{1,32}$")
 
 
@@ -114,7 +115,11 @@ def _workers(base: Path) -> dict:
 
 
 def role(base: Path, name: str) -> str:
-    """The entry's role (``work`` when unset). Read from the config entry until ``Device`` carries it (lina#229)."""
+    """The entry's role (``work`` when unset): ``Device.role`` when the device carries it (lina#229), else the config
+    entry's. The config fallback is removed once lina#229 is merged."""
+    dev = next((dev for dev in settings.devices(base) if dev.name == name), None)
+    if getattr(dev, "role", None) in (*NODE_ROLES, "person"):
+        return dev.role
     entry = _workers(base).get(name)
     value = entry.get("role", "work") if isinstance(entry, dict) else "work"
     return value if value in (*NODE_ROLES, "person") else "work"
@@ -198,13 +203,14 @@ def _cells(dev: settings.Device, base: Path, probe: dict, descriptor: dict | Non
     omo_names = {name for name, kind, _ in offers if kind == "omo"}
     descriptor = descriptor or {}
     rows = (descriptor.get("capabilities") or {}).get("runners") if isinstance(descriptor, dict) else None
-    hello_ok = reachable and "error" not in probe and not probe.get("protocol_error")
-    if hello_ok and isinstance(rows, list) and all(isinstance(r, dict) and "pinned" in r for r in rows):
+    refused = bool(probe.get("protocol_error"))
+    if reachable and not refused and isinstance(rows, list) and all(isinstance(r, dict) and "pinned" in r
+                                                                    for r in rows):
         status = _omo_status((str(base), dev.name), dev) if omo_names else None
         probe_ready = bool(probe.get("ready")) if default_runner in omo_names else None
         return [omo_cell(str(r.get("name")), r.get("type"), status, probe_ready, omo_fleet)
                 if r.get("type") == "omo" else runner_cell(r, fleet) for r in rows]
-    why = "update" if hello_ok or (reachable and descriptor.get("reason") == "unknown verb hello") else "unreachable"
+    why = _fallback_why(probe, descriptor, reachable, refused)
     cells = []
     for name, kind, pin in offers:
         if kind == "omo":
@@ -212,6 +218,19 @@ def _cells(dev: settings.Device, base: Path, probe: dict, descriptor: dict | Non
         elif pin is not None:
             cells.append(_cell(name, kind, pin.version, None, None, False, why))
     return cells
+
+
+def _fallback_why(probe: dict, descriptor: dict, reachable: bool, refused: bool) -> str:
+    """Why a node shows no runner rows: ``unreachable`` only when ssh did not reach it; ``update`` when it answered
+    but its worker is too old or speaks another protocol range (the refusal says ``update``) or its hello has no
+    runner rows yet; ``unknown`` when hello failed for another reason."""
+    if not reachable:
+        return "unreachable"
+    if refused:
+        return "update" if _UPDATE.search(str(probe.get("reason") or "")) else "unknown"
+    if descriptor.get("reason") == "unknown verb hello" or descriptor.get("protocol") is not None:
+        return "update"
+    return "unknown"
 
 
 def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
