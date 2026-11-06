@@ -42,6 +42,7 @@ def _run(args) -> int:
         "refresh": lambda: lina_ocx_takeover_refresh.refresh(args.providers or None),
     }
     if args.models_action in actions:
+        lina_ocx.refuse_external(f"lina models {args.models_action}")  # lina#232: that OCX is only read
         return actions[args.models_action]()
     return _view(args)
 

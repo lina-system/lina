@@ -90,6 +90,55 @@ paths:
                 $ref: "#/components/schemas/QuotaView"
         "304":
           description: Unchanged since the ETag sent.
+  /usage:
+    get:
+      operationId: getUsage
+      summary: >
+        Tokens, estimated cost and requests of one range from OCX, by model, provider, account and machine (lina#232).
+        No split by agent: every agent sends with the same OCX key, so OCX records none.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+        - name: range
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [today, 7d, 30d]
+            default: today
+      responses:
+        "200":
+          description: Usage.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UsageView"
+        "304":
+          description: Unchanged since the ETag sent.
+        "503":
+          description: OCX could not be read (not running, not installed, or the external OCX's proxy is down).
+  /models/state:
+    get:
+      operationId: getModelsState
+      summary: The models on and off, and for each machine whether its OCX link answered recently (lina#232).
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: Models and links.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ModelsState"
+        "304":
+          description: Unchanged since the ETag sent.
+        "503":
+          description: OCX could not be read.
   /work/items:
     get:
       operationId: listWorkItems
@@ -344,6 +393,26 @@ paths:
           $ref: "#/components/responses/Refused"
         "503":
           $ref: "#/components/responses/Refused"
+  /status/checks:
+    get:
+      operationId: getStatusChecks
+      summary: >
+        The hub's own health checks (lina#233): one row per `<LINA root>/status/*.json` file, newest `at` first. A
+        missing folder is an empty list; a malformed file is one error row naming it, never a failed response.
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The checks.
+          headers:
+            ETag:
+              $ref: "#/components/headers/ETag"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/StatusChecks"
+        "304":
+          description: Unchanged since the ETag sent.
 components:
   responses:
     Refused:
@@ -725,13 +794,17 @@ components:
           nullable: true
     QuotaWindow:
       type: object
-      required: [key, percent, resetAt, ratePerHour, warn]
+      required: [key, percent, left, resetAt, ratePerHour, warn]
       properties:
         key:
           type: string
           description: weekly, fiveHour, monthly, or custom:<OCX label>.
         percent:
           type: number
+          description: The used share, as OCX reports it.
+        left:
+          type: number
+          description: 100 - percent, clamped to 0..100.
         resetAt:
           type: number
           nullable: true
@@ -744,7 +817,7 @@ components:
           description: At this rate the window reaches 100% before it resets.
     QuotaAccount:
       type: object
-      required: [id, number, plan, paused, unavailable, windows, mainWindow, warn]
+      required: [id, number, plan, paused, active, state, unavailable, windows, mainWindow, warn]
       properties:
         id:
           type: string
@@ -756,6 +829,13 @@ components:
           type: string
         paused:
           type: boolean
+        active:
+          type: boolean
+          description: OCX's active account of its provider.
+        state:
+          type: string
+          enum: [ok, paused, reauth]
+          description: reauth when OCX needs the account signed in again, else paused when paused, else ok.
         unavailable:
           type: boolean
         windows:
@@ -783,6 +863,128 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaAccount"
+    UsageTokens:
+      type: object
+      required: [total, input, output, cacheRead]
+      properties:
+        total:
+          type: integer
+        input:
+          type: integer
+        output:
+          type: integer
+        cacheRead:
+          type: integer
+    UsageRow:
+      type: object
+      description: Requests, tokens and OCX's estimated cost in USD (null when OCX prices none of them).
+      required: [requests, tokens, costUsd]
+      properties:
+        requests:
+          type: integer
+        tokens:
+          $ref: "#/components/schemas/UsageTokens"
+        costUsd:
+          type: number
+          nullable: true
+        model:
+          type: string
+          nullable: true
+        provider:
+          type: string
+          nullable: true
+        account:
+          type: string
+          nullable: true
+          description: OCX's accountLogLabel as given (may be a hash).
+        machine:
+          type: string
+          description: The name after `link:` of the machine's OCX access key.
+    UsageView:
+      type: object
+      required: [version, at, range, generatedAt, requests, tokens, costUsd, byModel, byProvider, byAccount, byMachine]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        range:
+          type: string
+          enum: [today, 7d, 30d]
+        generatedAt:
+          type: number
+          nullable: true
+        requests:
+          type: integer
+        tokens:
+          $ref: "#/components/schemas/UsageTokens"
+        costUsd:
+          type: number
+          nullable: true
+        byModel:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageRow"
+        byProvider:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageRow"
+        byAccount:
+          type: array
+          items:
+            $ref: "#/components/schemas/UsageRow"
+        byMachine:
+          type: array
+          description: One row per OCX access key named `link:<machine>`.
+          items:
+            $ref: "#/components/schemas/UsageRow"
+    LinkState:
+      type: object
+      required: [machine, state, reportedAt, ok]
+      properties:
+        machine:
+          type: string
+          nullable: true
+          description: The link's alias in OCX.
+        state:
+          type: string
+          nullable: true
+          description: OCX's link state (connected, failed, ...).
+        reportedAt:
+          type: number
+          nullable: true
+        ok:
+          type: boolean
+          description: Connected and reported within the last 10 minutes.
+    ModelsState:
+      type: object
+      required: [version, at, enabled, disabled, enabledModels, machines]
+      properties:
+        version:
+          type: integer
+        at:
+          type: number
+        enabled:
+          type: integer
+        disabled:
+          type: integer
+        enabledModels:
+          type: array
+          description: The models on, by provider and model name.
+          items:
+            type: object
+            required: [provider, model]
+            properties:
+              provider:
+                type: string
+                nullable: true
+              model:
+                type: string
+                nullable: true
+        machines:
+          type: array
+          items:
+            $ref: "#/components/schemas/LinkState"
     BoardSnapshot:
       type: object
       required: [version, at, errors, counts, cards, inbox, due, notices, machines, quota, writer]
@@ -865,7 +1067,7 @@ components:
             $ref: "#/components/schemas/Machine"
     QuotaView:
       type: object
-      required: [version, at, errors, quota]
+      required: [version, at, errors, quota, missing]
       properties:
         version:
           type: integer
@@ -877,6 +1079,12 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/QuotaService"
+        missing:
+          type: array
+          nullable: true
+          description: Services OCX holds no account for (null when OCX could not be read).
+          items:
+            type: string
     Person:
       type: object
       additionalProperties: false
@@ -1323,3 +1531,58 @@ components:
         detail:
           type: string
           description: One line.
+    StatusCheck:
+      type: object
+      additionalProperties: false
+      required: [name, ok, line, at, staleAfter, stale, state, file]
+      properties:
+        name:
+          type: string
+          description: The check's own name from its status file; a malformed file falls back to the file stem.
+        ok:
+          type: boolean
+          description: What the check last reported; always false for an error row.
+        line:
+          type: string
+          description: >
+            One line for the owner; for an error row, the file name, a colon and a short reason. Text that is not
+            valid UTF-8 (a lone surrogate) is malformed, so no served text fails to encode.
+        at:
+          type: number
+          description: >
+            Unix epoch seconds the check last wrote (a malformed file's mtime). A file whose `at` is not a finite
+            number is malformed, so no served `at` is ever NaN or Infinity.
+        staleAfter:
+          type: number
+          minimum: 0
+          nullable: true
+          description: Seconds after `at` the check is stale; null for an error row. A negative value is malformed.
+        stale:
+          type: boolean
+          description: True when `now - at > staleAfter`.
+        state:
+          type: string
+          enum: [ok, failing, stale, error]
+          description: >
+            stale when `now - at > staleAfter` (wins over ok/failing); failing when `ok` is false; error for a
+            malformed file (bad JSON, a bad field, a non-finite or negative time, text that is not valid UTF-8).
+        file:
+          type: string
+          description: >
+            The status file's name under `<LINA root>/status/`; bytes that are not UTF-8 are served as U+FFFD.
+    StatusChecks:
+      type: object
+      additionalProperties: false
+      required: [version, at, checks]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        at:
+          type: number
+          description: When the folder was read, Unix epoch seconds.
+        checks:
+          type: array
+          description: Newest `at` first.
+          items:
+            $ref: "#/components/schemas/StatusCheck"
