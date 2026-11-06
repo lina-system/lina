@@ -23,6 +23,7 @@ _SERIAL = re.compile(r"^\s*Serial with:(.*)$", re.MULTILINE)
 _SERIAL_REF = re.compile(r"(?:(?:([\w.-]+)/)?([\w.-]+))?#(\d+)(?!\d)")
 _SCOPE = re.compile(r"^\s*[a-z]+\(([^)]+)\)!?:")
 _BRANCH = re.compile(r"^[a-z]+/(\d+)-")
+_SIZE = re.compile(r"^\W*Size:\s*([SML])\b", re.MULTILINE)
 _CLOSES = re.compile(r"\b(?:close[sd]?|fix(?:e[sd])?|resolve[sd]?)\s+#(\d+)\b", re.IGNORECASE)
 
 
@@ -80,6 +81,15 @@ def _ref(key: tuple[str, int], home: str) -> str:
 def scope_of(title: str) -> str:
     match = _SCOPE.match(title)
     return match.group(1).strip() if match else ""
+
+
+def size_of(labels: list[str], body: str) -> str | None:
+    """``S``/``M``/``L`` from the ``size/*`` label, else the body's ``Size:`` line, else None."""
+    found = next((label[5:] for label in labels if label in ("size/S", "size/M", "size/L")), None)
+    if found:
+        return found
+    line = _SIZE.search(body or "")
+    return line.group(1) if line else None
 
 
 def runner_of(labels: list[str], runners: dict[str, str]) -> str | None:
@@ -230,7 +240,8 @@ def decide(snapshot: dict) -> dict:
     for key in sorted(issues, key=lambda k: (-waiting[k], -chain[k], repos.index(k[0]), k[1])):
         issue, full = issues[key], key[0]
         base = {"repo": full, "issue": key[1], "title": issue["title"], "waiting": waiting[key], "chain": chain[key],
-                "longest": chain[key] == longest, "runner": runner_of(issue["labels"], snapshot.get("runners") or {})}
+                "longest": chain[key] == longest, "runner": runner_of(issue["labels"], snapshot.get("runners") or {}),
+                "labels": issue["labels"], "size": size_of(issue["labels"], issue["body"])}
 
         def hold(kind, reason, shown=True):
             decisions.append(dict(base, action="skip", kind=kind, reason=reason, shown=shown))
@@ -321,9 +332,26 @@ def run_next(gh, repos: list[str], record, *, submit_picks: bool, base: Path | N
         return plan, submit(plan, base, hub)
 
 
+def _hand_off(decision: dict, base: Path | None) -> dict:
+    """The routing part of the submit options (lina#283): the issue's labels and size always; ``runner`` (the runner
+    label's, recorded ``--runner``) only when no ``worker.routing`` rule holds, so a rule that holds is chosen by
+    ``decide()`` itself and recorded ``routing:<rule>``. With no rules every issue goes where its label says."""
+    from hermes_cli.lina_work_settings_route import route
+    from hermes_cli.lina_work_settings_store import Store
+    labels, size = decision.get("labels") or [], decision.get("size")
+    opts = {"labels": labels, "size": size}
+    hit = route(Store(base).current().doc, labels, size)
+    if hit["matched"]:
+        decision["runner"] = hit["runner"]  # the line names the runner the run goes to
+    else:
+        opts["runner"] = decision["runner"]
+    return opts
+
+
 def submit(plan: dict, base: Path | None = None, hub=None) -> bool:
     """Hand each pick to its runner through ``lina worker`` (#35). Inside a work card (``HERMES_KANBAN_TASK``)
     the hub records each run on that card. True when every hand-off worked."""
+    from hermes_cli.lina_work_settings import SettingsError
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub import Hub, HubError
     from hermes_cli.worker.runners.base import RunnerError
@@ -338,9 +366,9 @@ def submit(plan: dict, base: Path | None = None, hub=None) -> bool:
         said: list[str] = []
         try:
             (hub or Hub(worker_settings.root(base), out=said.append)).submit(
-                {"briefs": [str(path)], "mode": "ulw", "repo": full, "runner": decision["runner"],
+                {"briefs": [str(path)], "mode": "ulw", "repo": full, **_hand_off(decision, base),
                  "topic": f"{full}#{n}", "wait": None})
-        except (HubError, RunnerError, TransportError, OSError) as exc:
+        except (HubError, RunnerError, TransportError, OSError, SettingsError) as exc:
             decision["submit"] = {"ok": False, "why": str(exc)[:200]}
             ok = False
             continue

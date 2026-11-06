@@ -30,6 +30,11 @@ def first_prompt(mode: str, brief: str, branch: str | None) -> str:
     return f"{MODES[mode]} {brief.strip()}\n\n{rules}"
 
 
+def with_hub_rules(prompt: str, rules: str) -> str:
+    """A first prompt for the hub node: ``worker.hub_rules`` after the standard rules; nothing added when empty."""
+    return prompt if not rules else prompt.rstrip("\n") + "\n" + rules.rstrip("\n") + "\n"
+
+
 def follow_up_prompt(mode: str, message: str) -> str:
     """A new run starts with the task's mode prefix, like the first one; a text that already carries it is kept."""
     prefix = MODES.get(mode, MODES["ulw"])

@@ -16,10 +16,11 @@ from __future__ import annotations
 from pathlib import Path
 
 from hermes_cli.worker.runners.base import RunnerError
+from hermes_cli.worker.runners.acp import AcpRunner
 from hermes_cli.worker.runners.command import CommandRunner
 from hermes_cli.worker.runners.omo import OmoRunner
 
-TYPES = {"omo": OmoRunner, "command": CommandRunner}
+TYPES = {"omo": OmoRunner, "command": CommandRunner, "acp": AcpRunner}
 DEFAULT = "omo"
 
 
