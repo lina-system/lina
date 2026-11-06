@@ -31,8 +31,10 @@ def _card(args) -> dict | None:
 
 def _device(args) -> int:
     from hermes_cli.worker import device, settings
+    from hermes_cli.worker.protocol import verbs
+    info = verbs().get(args.verb)
     code, out = device.dispatch(settings.root(), [args.verb, *args.args], sys.stdin.buffer.read()
-                                if args.verb in device.STDIN_VERBS else b"")
+                                if info and info.stdin else b"")
     sys.stdout.buffer.write(out)
     return code
 

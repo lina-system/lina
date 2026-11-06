@@ -100,7 +100,10 @@ def serve_once(worker_root: Path) -> None:
 
 
 def serve(worker_root: Path | None = None, *, once: bool = False) -> int:
+    from hermes_cli.worker.protocol import begin_instance
+
     worker_root = worker_root or settings.root()
+    begin_instance(worker_root)
     last_tick, writer, stop = 0.0, None, threading.Event()
     try:
         while True:

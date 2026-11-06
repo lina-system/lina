@@ -1,0 +1,109 @@
+"""Worker wire contract and service identity; release versions are informational only."""
+
+from __future__ import annotations
+
+import contextlib
+import fcntl  # windows-footgun: ok — worker services run on POSIX devices only
+import os
+import time
+from collections.abc import Callable, Iterator
+from dataclasses import dataclass
+from pathlib import Path
+from uuid import uuid4
+
+from hermes_cli.worker.task import read_json, write_json
+
+PROTOCOL_MIN = 1
+PROTOCOL_MAX = 1
+INSTANCE = "serve.instance.json"
+
+
+@dataclass(frozen=True)
+class Verb:
+    handler: Callable[[Path, list[str], bytes], tuple[int, bytes]]
+    stdin: bool = False
+    legacy: bool = False
+
+
+def verbs() -> dict[str, Verb]:
+    """The only dispatch table, including payload and legacy recovery contracts."""
+    import json
+    from hermes_cli.worker import device as d
+
+    return {
+        "hello": Verb(lambda root, args, data: d._ok(hello(root))),
+        "service": Verb(lambda root, args, data: d._ok(service_action(root, args[0], args[1]))),
+        "put": Verb(lambda root, args, data: d._ok(d._put(root, args[0], args[1], data)), stdin=True),
+        "untar": Verb(lambda root, args, data: d._ok(d._untar(root, args[0], args[1], data)), stdin=True),
+        "meta": Verb(lambda root, args, data: d._ok(d.meta(root, args[0], live=args[1:] == ["live"])), legacy=True),
+        "probe": Verb(lambda root, args, data: d._ok(d.probe(root, *args[:2]))),
+        "reserve": Verb(lambda root, args, data: d._ok(d.slots.reserve(
+            root, d.safe_id(args[0]), int(args[1]), pool=args[2] if len(args) > 2 else "bid"))),
+        "send": Verb(lambda root, args, data: d._ok(d.steer(root, args[0], data.decode("utf-8", "replace"))), stdin=True),
+        "follow_up": Verb(lambda root, args, data: d._ok(d.follow_up(root, args[0], json.loads(data))), stdin=True),
+        "human": Verb(lambda root, args, data: d._ok(d.human(root, args[0])), legacy=True),
+        "answer": Verb(lambda root, args, data: d._ok(d.answer(root, args[0], data.decode("utf-8", "replace"))), stdin=True),
+        "cancel": Verb(lambda root, args, data: d._ok(d.cancel(root, args[0], data.decode("utf-8", "replace"))),
+                       stdin=True, legacy=True),
+        "pack": Verb(lambda root, args, data: (0, d.pack(root, args[0])), legacy=True),
+        "bundle": Verb(lambda root, args, data: d.bundle(root, *args[:2]), legacy=True),
+    }
+
+
+@contextlib.contextmanager
+def instance_lock(worker_root: Path) -> Iterator[None]:
+    """Serialize instance publication with the compare-and-stop boundary."""
+    worker_root.mkdir(parents=True, exist_ok=True)
+    with (worker_root / "serve.instance.lock").open("a") as handle:
+        fcntl.flock(handle, fcntl.LOCK_EX)  # windows-footgun: ok — POSIX worker services only
+        try:
+            yield
+        finally:
+            fcntl.flock(handle, fcntl.LOCK_UN)  # windows-footgun: ok — POSIX worker services only
+
+
+def begin_instance(worker_root: Path) -> str:
+    """Publish a new identity before this service writes its first heartbeat."""
+    from hermes_cli.worker.device import HEARTBEAT
+
+    instance_id = str(uuid4())
+    with instance_lock(worker_root):
+        (worker_root / HEARTBEAT).unlink(missing_ok=True)
+        write_json(worker_root / INSTANCE, {"instance_id": instance_id, "pid": os.getpid(), "started_at": time.time()})
+    return instance_id
+
+
+def hello(worker_root: Path) -> dict:
+    """Describe this installation. Access modes are reserved for #220, not inferred here."""
+    from hermes_cli.lina_version import LINA_VERSION
+    from hermes_cli.worker import runners, serve, settings
+
+    age = serve.heartbeat_age(worker_root)
+    active = age is not None and age < 60
+    record = read_json(worker_root / INSTANCE, {}) or {}
+    offered = runners.specs(settings.section(worker_root.parent))
+    return {"protocol": {"min": PROTOCOL_MIN, "max": PROTOCOL_MAX},
+            "instance_id": record.get("instance_id") if active else None, "serve": active,
+            "version": LINA_VERSION,
+            "capabilities": {"runners": [{"name": name, "type": spec.get("type")} for name, spec in offered.items()],
+                             "access_modes": [], "verbs": list(verbs())}}
+
+
+def service_action(worker_root: Path, action: str, instance_id: str) -> dict:
+    """Stop only the compared instance; restart starts outside the publication lock."""
+    from hermes_cli.worker import service
+
+    if action not in ("stop", "restart"):
+        return {"action": "error", "reason": "service expects stop or restart"}
+    with instance_lock(worker_root):
+        current = hello(worker_root)
+        if not instance_id or current["instance_id"] != instance_id:
+            return {"action": "error", "reason": "worker instance changed: refresh hello", "stale_instance": True}
+        lines: list[str] = []
+        code = service.stop(worker_root.parent, out=lines.append)
+    # Starting while holding the lock would deadlock the new serve's identity publication.
+    if code == 0 and action == "restart":
+        code = service.start(worker_root.parent, out=lines.append)
+    if code:
+        return {"action": "error", "reason": " ".join(lines) or f"service {action} failed"}
+    return {"action": action, "instance_id": instance_id}
