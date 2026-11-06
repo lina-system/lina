@@ -32,7 +32,7 @@ import subprocess
 import tarfile
 import urllib.error
 import urllib.request
-from concurrent.futures import ThreadPoolExecutor
+from concurrent.futures import Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Callable
@@ -41,9 +41,10 @@ from hermes_cli import lina_ocx
 
 OcxError = lina_ocx.OcxError
 PROBE_TIMEOUT_S = 10.0
+HELLO_TIMEOUT_S = 20.0
 _VERSION = re.compile(r"\d+\.\d+\.\d+(?:-[0-9A-Za-z.\-]+)?")
 SIGN_IN_OK = ("signed_in", "api_key", "ocx")
-SERVICE_ACTIONS = ("status", "restart")
+SERVICE_ACTIONS = {"ocx": ("status", "restart"), "worker": ("status", "stop", "restart")}
 # downloads.cursor.com answers 403 to urllib's default ``Python-urllib`` agent.
 USER_AGENT = "lina-runners"
 
@@ -384,6 +385,27 @@ def person_installed(root: Path, runner: RunnerPin, run: Callable[..., subproces
     return {"path": found, "version": asked}
 
 
+def active_version(root: Path, runner: RunnerPin,
+                   run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> tuple[str | None, str | None]:
+    """What the active install is, read from it rather than from the ``current`` link's name: an npm runner's
+    installed ``package.json`` with its entry present, another runner's bounded ``--version``. Returns the version,
+    or None and why it cannot say."""
+    if current_version(root, runner) is None:
+        return None, "not installed"
+    entry = entry_path(root, runner)
+    if not entry.exists():
+        return None, f"{entry} is missing"
+    if runner.installer != "npm":
+        version = ask_version([str(entry)], run_env(root, runner), run)
+        return (version, None) if version else (None, f"{entry} --version gave no version")
+    manifest = vendor_dir(root, runner.name) / "current" / "node_modules" / runner.package / "package.json"
+    try:
+        version = json.loads(manifest.read_text(encoding="utf-8-sig")).get("version")
+    except (OSError, ValueError):
+        version = None
+    return (version, None) if version else (None, f"{manifest} has no version")
+
+
 def _why(runner: RunnerPin, installed: str | None, sign_in: str) -> str | None:
     if installed is None:
         return "prepare"
@@ -396,57 +418,67 @@ def _why(runner: RunnerPin, installed: str | None, sign_in: str) -> str | None:
 
 def row(root: Path, runner: RunnerPin, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
         path: str | None = None) -> dict:
-    installed = current_version(root, runner)
+    installed, installed_why = active_version(root, runner, run)
     sign_in, sign_in_why = SIGN_IN.get(runner.sign_in, SIGN_IN["unknown"])()
     why = _why(runner, installed, sign_in)
-    return {"name": runner.name, "pinned": runner.version, "installed": installed,
-            "versions": installed_versions(root, runner), "person_installed": person_installed(root, runner, run, path),
+    return {"name": runner.name, "pin": runner.name, "pinned": runner.version, "current": current_version(root, runner),
+            "installed": installed, "installed_why": installed_why, "versions": installed_versions(root, runner), "person_installed": person_installed(root, runner, run, path),
             "sign_in": sign_in, "sign_in_by": runner.sign_in, "sign_in_why": sign_in_why,
             "shim": str(shim_path(root, runner.name)) if shim_path(root, runner.name).exists() else None,
             "ready": why is None, "why": why}
 
 
-def _rows(root: Path, selected: list[tuple[str, RunnerPin]], run) -> list[dict]:
-    """Rows in parallel: each ``--version`` it asks is bounded by ``PROBE_TIMEOUT_S``, so the whole is too."""
-    if not selected:
-        return []
-    with ThreadPoolExecutor(max_workers=len(selected)) as pool:
-        rows = list(pool.map(lambda item: {**row(root, item[1], run=run), "runner": item[0]}, selected))
-    return rows
-
-
 def status(root: Path | None = None, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[dict]:
-    """``lina runners status``: every pinned runner on this node (read-only)."""
+    """``lina runners status``: every pinned runner on this node (read-only), probed in parallel."""
     root = root or lina_ocx.lina_root()
-    return _rows(root, [(name, runner) for name, runner in pins().items()], run)
+    selected = list(pins().values())
+    with ThreadPoolExecutor(max_workers=max(1, len(selected))) as pool:
+        return list(pool.map(lambda runner: row(root, runner, run=run), selected))
 
 
-def offered(worker: dict) -> list[tuple[str, RunnerPin | None]]:
-    """The runners this node offers (``worker.runners``), each with the pin that serves it: by name, else by its
-    argv's command. omo has its own pin and status (``lina omo status``) and is left out."""
+def offered(worker: dict) -> list[tuple[str, str | None, RunnerPin | None]]:
+    """The runners this node offers (``worker.runners``) with their type and the pin that serves each: by name, else
+    by its argv's command. omo has its own pin and status (``lina omo status``), so it has none here."""
     from hermes_cli.worker import runners
     table = pins()
     by_bin = {runner.bin: runner for runner in table.values()}
     result = []
     for name, spec in runners.specs(worker).items():
-        if spec.get("type") == "omo":
-            continue
         argv = spec.get("argv") if isinstance(spec.get("argv"), list) else []
         command = Path(str(argv[0])).name if argv else ""
-        result.append((name, table.get(name) or by_bin.get(command)))
+        pin = None if spec.get("type") == "omo" else table.get(name) or by_bin.get(command)
+        result.append((name, spec.get("type"), pin))
     return result
 
 
-def node_report(worker_root: Path, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> list[dict]:
-    """What ``hello`` carries under ``capabilities.runners`` (lina#222): one row per offered runner. A runner with no
-    pin is reported as not managed by LINA (``pinned`` None, ``ready`` None)."""
+def _settled(future: Future, runner: RunnerPin, timeout: float) -> dict:
+    """A finished row, or the pin with ``why: unknown`` when its probe failed or did not answer in time."""
+    if future.done() and future.exception() is None:
+        return future.result()
+    detail = f"no answer in {timeout:g}s" if not future.done() else f"probe failed: {future.exception()}"
+    return {"pin": runner.name, "pinned": runner.version, "installed": None, "sign_in": None,
+            "sign_in_by": runner.sign_in, "ready": False, "why": "unknown", "why_detail": detail}
+
+
+def node_report(worker_root: Path, *, run: Callable[..., subprocess.CompletedProcess] = subprocess.run,
+                timeout: float = HELLO_TIMEOUT_S) -> list[dict]:
+    """What ``hello`` carries under ``capabilities.runners`` (lina#222): one row per offered runner with its ``name``
+    and ``type``, and for a pinned one its versions, sign-in and one reason. Probes run in parallel and the whole is
+    bounded by *timeout*, so hello never waits longer; a probe that fails or is late gives ``why: unknown``. A
+    runner with no pin is not managed by LINA (``pinned`` None, ``ready`` None)."""
     from hermes_cli.worker import settings
     root = worker_root.parent
     pairs = offered(settings.section(root))
-    managed = [(name, runner) for name, runner in pairs if runner is not None]
-    rows = {item["runner"]: item for item in _rows(root, managed, run)}
-    return [rows.get(name) or {"runner": name, "name": None, "pinned": None, "ready": None, "why": None}
-            for name, _ in pairs]
+    pool = ThreadPoolExecutor(max_workers=max(1, len(pairs)))
+    futures = {name: pool.submit(row, root, pin, run=run) for name, _, pin in pairs if pin is not None}
+    wait(list(futures.values()), timeout=timeout)
+    pool.shutdown(wait=False, cancel_futures=True)
+    rows = []
+    for name, kind, pin in pairs:
+        found = _settled(futures[name], pin, timeout) if pin is not None else \
+            {"pin": None, "pinned": None, "ready": None, "why": None}
+        rows.append({**found, "name": name, "type": kind})
+    return rows
 
 
 def _ocx_act(action: str) -> dict:
@@ -471,16 +503,17 @@ def node_service(worker_root: Path, service: str, action: str, instance_id: str 
     its state comes from the service layer."""
     from hermes_cli import lina_services
     from hermes_cli.worker import protocol
-    if action not in SERVICE_ACTIONS or service not in ("ocx", "worker"):
-        return {"service": service, "action": "error", "reason": "service expects ocx|worker and status|restart"}
+    if action not in SERVICE_ACTIONS.get(service, ()):
+        return {"service": service, "action": "error",
+                "reason": "service expects ocx status|restart or worker status|stop|restart"}
     if service == "ocx":
         if action == "status":
             return {"service": "ocx", "action": "status", "state": lina_services.state(lina_services.BY_NAME["ocx"])}
         return _ocx_act(action)
     if action == "status":
-        hello = protocol.hello(worker_root)
+        serve, instance_id = protocol.identity(worker_root)
         return {"service": "worker", "action": "status", "state": lina_services.state(lina_services.BY_NAME["worker"]),
-                "serve": hello["serve"], "instance_id": hello["instance_id"]}
+                "serve": serve, "instance_id": instance_id}
     return {"service": "worker", **protocol.service_action(worker_root, action, instance_id)}
 
 
@@ -488,12 +521,12 @@ def render(rows: list[dict]) -> list[str]:
     lines = []
     for item in rows:
         if item.get("pinned") is None:
-            lines.append(f"{item['runner']:<17} not pinned by LINA" + (f" · not ready: {item['why']}" if item.get("why")
+            lines.append(f"{item['name']:<17} not pinned by LINA" + (f" · not ready: {item['why']}" if item.get("why")
                                                                        else ""))
             continue
         person = item.get("person_installed") or {}
         sign = (item.get("sign_in") or "-") + (f" ({item['sign_in_why']})" if item.get("sign_in_why") else "")
-        lines.append(f"{item.get('runner') or item['name']:<17} pinned {item['pinned']} · installed "
+        lines.append(f"{item['name']:<17} pinned {item['pinned']} · installed "
                      f"{item.get('installed') or '-'} · person {person.get('version') or ('-' if not person else '?')} · "
                      f"sign-in {sign} · " + ("ready" if item["ready"] else f"not ready: {item['why']}"))
     return lines

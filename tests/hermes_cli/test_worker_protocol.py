@@ -89,6 +89,7 @@ def test_hello_advertises_the_real_dispatch_registry_and_configured_runners(tmp_
     assert {entry["name"]: entry["type"] for entry in hello["capabilities"]["runners"]} == {
         name: spec["type"] for name, spec in runners.specs(settings.section(base)).items()
     }
+    assert all({"pin", "pinned", "ready", "why"} <= set(entry) for entry in hello["capabilities"]["runners"])
     assert isinstance(hello["capabilities"]["access_modes"], list)
     assert {name for name, verb in registry.items() if verb.legacy} == {
         "meta", "human", "pack", "bundle", "cancel",

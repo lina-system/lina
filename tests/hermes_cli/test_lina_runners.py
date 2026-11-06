@@ -250,10 +250,78 @@ def test_node_report_follows_the_runners_the_node_offers(world):
 
     rows = lina_runners.node_report(world["root"] / "worker")
 
-    assert [row["runner"] for row in rows] == ["codex", "sonnet", "mine"], "omo has its own status and is left out"
-    assert rows[0]["name"] == "codex" and rows[0]["why"] == "prepare"
-    assert rows[1]["name"] == "claude" and rows[1]["ready"] is True, "a runner is matched by its command"
-    assert rows[2] == {"runner": "mine", "name": None, "pinned": None, "ready": None, "why": None}
+    assert [(row["name"], row["type"]) for row in rows] == [
+        ("omo", "omo"), ("codex", "command"), ("sonnet", "command"), ("mine", "command")]
+    assert rows[0]["pin"] is None, "omo has its own pin and status"
+    assert rows[1]["pin"] == "codex" and rows[1]["why"] == "prepare"
+    assert rows[2]["pin"] == "claude" and rows[2]["ready"] is True, "a runner is matched by its command"
+    assert rows[3] == {"name": "mine", "type": "command", "pin": None, "pinned": None, "ready": None, "why": None}
+
+
+@pytest.mark.platforms("posix")
+def test_hello_carries_the_runner_rows(world):
+    from hermes_cli.worker import device
+    (world["root"] / "config.yaml").write_text(
+        "worker:\n  runners:\n    codex: {type: command, argv: [codex, exec]}\n", encoding="utf-8")
+    assert _install(world, "codex") == 0
+
+    code, output = device.dispatch(world["root"] / "worker", ["hello"])
+
+    assert code == 0
+    rows = {row["name"]: row for row in json.loads(output)["capabilities"]["runners"]}
+    assert rows["codex"]["type"] == "command"
+    assert (rows["codex"]["pinned"], rows["codex"]["installed"], rows["codex"]["ready"]) == ("1.0.0", "1.0.0", True)
+    assert rows["codex"]["person_installed"]["version"] == "0.9.0" and rows["codex"]["sign_in"] == "ocx"
+
+
+@pytest.mark.platforms("posix")
+def test_a_late_or_failing_probe_does_not_hold_hello(world, monkeypatch):
+    import threading
+    (world["root"] / "config.yaml").write_text(
+        "worker:\n  runners:\n    codex: {type: command, argv: [codex]}\n    grok: {type: command, argv: [grok]}\n",
+        encoding="utf-8")
+    release = threading.Event()
+
+    def hang(argv, **kwargs):
+        release.wait(30)  # the probe never answers while the report is built
+        raise subprocess.TimeoutExpired(argv, 30)
+
+    try:
+        rows = {row["name"]: row for row in lina_runners.node_report(world["root"] / "worker", run=hang, timeout=0.5)}
+    finally:
+        release.set()
+    assert (rows["codex"]["why"], rows["codex"]["why_detail"]) == ("unknown", "no answer in 0.5s")
+    assert rows["codex"]["pinned"] == "1.0.0" and rows["codex"]["ready"] is False
+
+    def broken():
+        raise RuntimeError("check broke")
+
+    monkeypatch.setitem(lina_runners.SIGN_IN, "grok", broken)
+    rows = {row["name"]: row for row in lina_runners.node_report(world["root"] / "worker")}
+    assert rows["grok"]["why"] == "unknown" and "check broke" in rows["grok"]["why_detail"]
+    assert rows["codex"]["why"] == "prepare", "one failing probe leaves the other rows alone"
+
+
+@pytest.mark.platforms("posix")
+def test_status_reads_the_active_install_not_the_link_name(world):
+    assert _install(world) == 0
+    root = world["root"]
+    cursor = world["table"]["cursor-agent"]
+    entry = lina_runners.entry_path(root, cursor)
+    entry.write_text(f"#!{sys.executable}\nprint('2099.1.1')\n")  # updated itself in place, under the pinned dir
+
+    rows = {row["name"]: row for row in lina_runners.status(root)}
+    assert rows["cursor-agent"]["current"] == cursor.version
+    assert (rows["cursor-agent"]["installed"], rows["cursor-agent"]["why"]) == ("2099.1.1", "update")
+
+    manifest = lina_runners.vendor_dir(root, "codex") / "current" / "node_modules" / "@openai/codex" / "package.json"
+    manifest.write_text(json.dumps({"name": "@openai/codex", "version": "1.0.9"}))
+    (lina_runners.entry_path(root, world["table"]["grok"])).unlink()
+
+    rows = {row["name"]: row for row in lina_runners.status(root)}
+    assert (rows["codex"]["installed"], rows["codex"]["why"]) == ("1.0.9", "update")
+    assert (rows["grok"]["installed"], rows["grok"]["why"]) == (None, "prepare")
+    assert "missing" in rows["grok"]["installed_why"]
 
 
 def test_the_shipped_pins_carry_a_version_and_integrity_for_every_runner():

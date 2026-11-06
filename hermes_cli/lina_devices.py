@@ -58,11 +58,16 @@ def omo_status(dev: settings.Device) -> dict:
 
 
 def runner_status(dev: settings.Device, worker_root: Path) -> list | dict:
-    """``lina runners status --offered --json`` on *dev* (in this process for a local device)."""
-    if dev.local:
-        from hermes_cli.lina_runners import node_report
-        return node_report(worker_root)
-    return _remote_json(dev, ["runners", "status", "--offered", "--json"])
+    """The runner rows *dev*'s ``hello`` carries (lina#222), through the negotiated transport (in-process for a local
+    device). A device without hello, or whose hello predates the runner rows, gives ``{"legacy": True}``."""
+    contact = for_device(dev, worker_root)
+    reply = contact.refresh(timeout=60)
+    descriptor = contact.descriptor or {}
+    if reply.code != 0:
+        return {"error": descriptor.get("reason") or reply.err.strip()[-160:] or f"exit {reply.code}",
+                "legacy": descriptor.get("reason") == "unknown verb hello"}
+    rows = (descriptor.get("capabilities") or {}).get("runners") or []
+    return rows if all("pinned" in item for item in rows) else {"error": "hello has no runner rows", "legacy": True}
 
 
 def _remote_json(dev: settings.Device, args: list[str]) -> list | dict:
@@ -81,15 +86,15 @@ def _remote_json(dev: settings.Device, args: list[str]) -> list | dict:
 
 def runner_rows(dev: settings.Device, worker_root: Path, found: dict) -> list[dict]:
     """The device's runner rows; when it cannot be asked, the runners the hub offers, each ``unreachable`` (or
-    ``update`` when it answers but has no ``lina runners`` yet)."""
+    ``update`` when it answers but its hello has no runner rows yet)."""
     from hermes_cli.lina_runners import offered
     got = runner_status(dev, worker_root) if found["ssh"] and not found.get("protocol_error") else None
     if isinstance(got, list):
         return got
-    why = "unreachable" if got is None else "update"
-    return [{"runner": name, "name": pin.name if pin else None, "pinned": pin.version if pin else None,
-             "installed": None, "sign_in": None, "ready": False, "why": why}
-            for name, pin in offered(settings.section(worker_root.parent))]
+    why = "update" if got and got.get("legacy") else "unreachable"
+    return [{"name": name, "type": kind, "pin": pin.name, "pinned": pin.version, "installed": None, "sign_in": None,
+             "ready": False, "why": why}
+            for name, kind, pin in offered(settings.section(worker_root.parent)) if pin is not None]
 
 
 def readiness(dev: settings.Device, worker_root: Path) -> dict:
@@ -183,15 +188,14 @@ def sign_in(base: Path | None = None, *, as_json: bool = False, out=print) -> in
 
 
 def service_call(dev: settings.Device, worker_root: Path, which: str, action: str) -> dict:
-    """OCX or worker status/restart on *dev*. The worker goes through #218's negotiated ``service`` verb with the
-    instance its ``hello`` reports now; OCX goes through ``lina_runners.node_service`` on the node."""
-    from hermes_cli.lina_runners import node_service
-    if which == "ocx":
-        if dev.local:
-            return node_service(worker_root, "ocx", action)
-        return {"service": "ocx", "action": "error",
-                "reason": f"{dev.name}: OCX on another node needs the node's `service` verb to carry ocx (next round)"}
+    """OCX or worker status/restart on *dev* (lina#222), always through the node's ``service`` verb: the worker
+    restart keeps #218's compare-and-act with the instance its ``hello`` reports now; OCX goes to the node's service
+    layer (``lina_runners.node_service``)."""
     transport = for_device(dev, worker_root)
+    if which == "ocx":
+        reply = transport.call(["service", "ocx", action])
+        return reply.json() or {"service": "ocx", "action": "error",
+                                "reason": reply.err.strip()[-160:] or f"exit {reply.code}"}
     reply = transport.refresh(timeout=60)
     descriptor = transport.descriptor or {}
     if reply.code != 0:
