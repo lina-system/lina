@@ -14,10 +14,18 @@ def _hub():
 def _submit(args) -> int:
     opts = {"briefs": args.brief, "mode": args.mode, "repo": args.repo, "inputs": args.input, "todo": args.todo,
             "host": args.host, "model": args.model, "topic": args.topic, "note": args.note, "at": args.at,
-            "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner}
+            "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner,
+            "card": _card(args)}
     if args.bot:
         opts["bot"] = args.bot
     return _hub().submit({k: v for k, v in opts.items() if v is not None or k in ("wait",)})
+
+
+def _card(args) -> dict | None:
+    from hermes_cli.worker.hub import HubError
+    if args.board and not args.card:
+        raise HubError("--board names the board of --card <id>")
+    return {"task": args.card, "board": args.board or None} if args.card else None
 
 
 def _device(args) -> int:
@@ -54,6 +62,7 @@ def _tick(args) -> int:
 _ACTIONS = {
     "submit": _submit,
     "send": lambda a: _hub().send(a.id, a.message),
+    "wait": lambda a: _hub().wait(_card(a), a.id),
     "status": lambda a: _hub().status(a.id, a.json),
     "result": lambda a: _hub().result(a.id),
     "accept": lambda a: _hub().verdict(a.id, True, a.note),
@@ -106,6 +115,12 @@ def _submit_parser(sub) -> None:
     p.add_argument("--every", help="repeat interval: 30m, 6h, 1d, 7d")
     p.add_argument("--dry-notify", action="store_true", help="print the notice command instead of running it")
     p.add_argument("--wait", nargs="?", type=int, const=1800, help="wait in the foreground (seconds, default 1800)")
+    _card_args(p)
+
+
+def _card_args(p) -> None:
+    p.add_argument("--card", help="the Hermes card this run is handed out from (default: HERMES_KANBAN_TASK)")
+    p.add_argument("--board", help="that card's board (default: HERMES_KANBAN_BOARD)")
 
 
 def build_worker_parser(subparsers) -> None:
@@ -130,6 +145,10 @@ def build_worker_parser(subparsers) -> None:
                                        "next run in the same session")
     send.add_argument("id")
     send.add_argument("message")
+    wait = sub.add_parser("wait", help="Park the Hermes card these runs came from (kanban schedule) and end the "
+                                       "turn: the first run end wakes it")
+    wait.add_argument("id", nargs="*", help="the runs to wait on (default: every open run of the card)")
+    _card_args(wait)
     cancel = sub.add_parser("cancel", help="Stop the task (the task folder stays); one notice follows")
     cancel.add_argument("id")
     cancel.add_argument("--why")

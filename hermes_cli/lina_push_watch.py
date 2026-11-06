@@ -115,13 +115,19 @@ def reply_keys(root: Path) -> set[str]:
     return {i["tag"] for i in _replies(root, set())}
 
 
-def _cards() -> list[dict]:
+def _cards(root: Path) -> list[dict]:
+    from hermes_cli.work import env
     from plugins.kanban.dashboard.work_api import get_inbox
     inbox = get_inbox(board=None)
-    out = [_item(f"blocked:{c['cardId']}", "blocked", c["cardId"], 0, " · ".join(filter(None, (c["agent"], c["title"]))),
+    # The card's agent is a profile id (alpha); the title shows the agent's name (알파), as a reply's does.
+    names = dict(env.load(root).agents)
+
+    def title(card: dict) -> str:
+        return " · ".join(filter(None, (names.get(card["agent"], card["agent"]), card["title"])))
+    out = [_item(f"blocked:{c['cardId']}", "blocked", c["cardId"], 0, title(c),
                  c.get("blockReason") or c.get("blockKind") or c.get("reason")) for c in inbox["blocked"]]
-    out += [_item(f"question:{q['cardId']}:{q['commentId']}", "question", q["cardId"], q["askedAt"],
-                  " · ".join(filter(None, (q["agent"], q["title"]))), q["body"]) for q in inbox["questions"]]
+    out += [_item(f"question:{q['cardId']}:{q['commentId']}", "question", q["cardId"], q["askedAt"], title(q), q["body"])
+            for q in inbox["questions"]]
     return out
 
 
@@ -132,7 +138,7 @@ def wanted(root: Path) -> tuple[dict[str, dict], set[str]]:
     errors: list[dict] = []
     read = _source("work", errors, lambda: read_marks(root))
     work = None if read is None else _source("work", errors, lambda: _asks(root, read) + _replies(root, read))
-    cards = _source("kanban", errors, _cards)
+    cards = _source("kanban", errors, lambda: _cards(root))
     items = {i["tag"]: i for i in (work or []) + (cards or [])}
     return items, {e["source"] for e in errors}
 

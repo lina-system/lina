@@ -42,7 +42,8 @@ READS = frozenset({("account", "list", "--json"), ("account", "list", "--quota",
                    ("link", "status", "--json"), ("access", "key", "list", "--json"), STATUS})
 CACHE_S = 60
 LINK_FRESH_S = 600
-_KEY_ID = re.compile(r"[A-Za-z0-9_]+")
+# OCX's access-key ids are UUIDs with hyphens; the first char is alphanumeric so an id can never be another argument.
+_KEY_ID = re.compile(r"[A-Za-z0-9][A-Za-z0-9_-]{0,63}")
 _CACHE: dict[tuple, tuple[float, str]] = {}
 _LOCKS: dict[tuple, threading.Lock] = {}
 _GUARD = threading.Lock()

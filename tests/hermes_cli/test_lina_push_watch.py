@@ -122,6 +122,9 @@ def test_the_pushed_set_is_the_inbox_set_and_progress_finished_runs_reviews_and_
         ("ask", "T1"), ("reply", "T2"), ("blocked", cards["blocked"]), ("question", cards["asking"])}
     assert pushed["reply:T2:c1"]["body"] == "로그를 남겼다"
     assert pushed[f"blocked:{cards['blocked']}"]["body"] == "배포해도 될까요?"
+    # A card's agent is a profile id; the title names the agent as the record does (a Latin id would blank it).
+    assert pushed[f"blocked:{cards['blocked']}"]["title"] == "알파 · 배포 승인"
+    assert next(m for m in pushed.values() if m["kind"] == "question")["title"] == "알파 · 범위 질문"
 
 
 def test_a_changed_item_replaces_its_tag_and_an_item_that_leaves_is_closed_on_every_device(work, device):
