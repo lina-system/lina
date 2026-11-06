@@ -24,7 +24,7 @@ def lane(tmp_path, monkeypatch):
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
-    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n")
+    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n")
     config = base / "config.yaml"
     config.write_text(config.read_text().replace("here: {host: local, cap: 2}", "here: {host: local, cap: 1}"))
     launched: list[tuple[str, int]] = []

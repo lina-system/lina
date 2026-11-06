@@ -34,7 +34,7 @@ def test_a_run_from_a_card_is_recorded_on_it_and_its_end_notice_is_a_comment(boa
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
-    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n")
+    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n")
     root = base / "worker"
     launcher = fakes.ThreadLauncher().install(monkeypatch)
     serve.serve_once(root)
@@ -70,7 +70,7 @@ def test_a_run_outside_a_card_writes_nothing_to_any_board(board, tmp_path, monke
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
-    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n")
+    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n")
     fakes.ThreadLauncher().install(monkeypatch)
     lines: list[str] = []
     Hub(base / "worker", out=lines.append).submit({"briefs": [fakes.brief(tmp_path, "SCENARIO:done")], "mode": "ulw",

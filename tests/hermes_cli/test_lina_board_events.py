@@ -329,7 +329,7 @@ def hub(work, tmp_path, monkeypatch):
         worker:
           min_free_gb: 0
           runners:
-            fakecli: {json.dumps({"type": "command", "argv": argv})}
+            fakecli: {json.dumps({"type": "command", "argv": argv, "access": "workspace-write"})}
         """))
     monkeypatch.setattr(device, "launch", lambda *_: None)
     root = settings.root(work.root)

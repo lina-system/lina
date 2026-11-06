@@ -143,6 +143,22 @@ def answered_with_receipts(view: dict, activity: dict, task: Task, run: int) -> 
         return False
 
 
+def permission_answered_and_done(view: dict, activity: dict, task: Task, run: int) -> bool:
+    """Retire an engine permission hold only after its final assistant response and no live work."""
+    waiting = view.get("waitingOn") or {}
+    human = waiting.get("human") or []
+    groups = waiting.get("background") or []
+    return (task.path(f"permission_answered.{run}").exists() and bool(human or groups)
+            and view.get("state") in ("waiting_human", "waiting_background")
+            and all(str(item.get("requestId", "")).startswith("question:") for item in human)
+            and all(receipt_source(group.get("source") or "") for group in groups)
+            and not real_question(view) and not waiting.get("children") and not view.get("holds")
+            and not view.get("isCompacting") and not view.get("restoring") and view.get("persisted") is not False
+            and not view.get("isStreaming") and not view.get("isBashRunning") and not view.get("pendingMessageCount")
+            and activity.get("last_msg_role") == "assistant" and activity.get("last_msg_stop") == "stop"
+            and not activity.get("last_msg_tool_call"))
+
+
 def stopped(view: dict | None) -> bool:
     """The engine reports the session at rest: sealed, or neither running a turn, streaming nor in a bash call."""
     if view is None:
@@ -315,6 +331,8 @@ class Settle:
             if now - self.mem["start"] > float(self.limits.get("hard_timeout_s", 43200.0)):
                 return self._finish("timeout", live_processes=work)
             return "running"
+        if permission_answered_and_done(view, activity, self.task, self.run):
+            return self._finish("idle_after_question", why="permission decided and final response delivered")
         key, why = classify(view, activity, now, float(self.limits.get("background_max_s", 3 * 3600.0)))
         self._record(view, key, why, activity, now)
         quiet = self._quiet(key, activity, now)
