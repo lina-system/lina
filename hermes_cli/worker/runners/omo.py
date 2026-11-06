@@ -129,6 +129,9 @@ class OmoRunner:
     def follow_up(self, handle: Handle, text: str, *, run: int | None = None,
                   access: str | None = None) -> tuple[str, Handle]:
         """Into the live run (a steer; an idle session between background wakes takes a prompt), or as run *run*."""
+        recorded_access(handle, access)
+        if run is None and self.permission_pending(handle):
+            raise RunnerError("permission_dialog: permissions are decided by the run access mode")
         mode = self._restore_access(handle, access)
         ref, task = handle.data["ref"], handle.task
         stamp = run or handle.run
@@ -158,13 +161,17 @@ class OmoRunner:
     def answer(self, handle: Handle, text: str) -> dict:
         """Answer over the daemon socket; when no answer path takes it, close the run on its question so the answer
         goes to the next run (``answer_abort.<run>``)."""
+        if self.permission_pending(handle):
+            raise RunnerError("permission_dialog: permissions are decided by the run access mode")
         self._restore_access(handle)
         task = handle.task
         answer_file = task.path(f"answer.{handle.run}.{len(list(task.dir.glob('answer.*')))}")
         answer_file.write_text(text, encoding="utf-8")
         reply, _ = self._call([str(self.node), str(HELPERS / "omo_answer.mjs"), str(self.engine), handle.data["ref"],
-                               str(answer_file)], 120, task.path(f"stderr.{handle.run}.txt"))
+                               str(answer_file), recorded_access(handle)], 120, task.path(f"stderr.{handle.run}.txt"))
         reply = reply or {"action": "error", "reason": "unreadable"}
+        if reply.get("reason") == "permission_dialog":
+            raise RunnerError("permission_dialog: permissions are decided by the run access mode")
         task.event(handle.run, "answer", reply={k: reply.get(k) for k in ("action", "steps", "still_pending",
                                                                            "reason")})
         if reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending"):
@@ -174,8 +181,39 @@ class OmoRunner:
         self.session(["wait", handle.data["ref"], "--until", "idle", "--timeout", "60000"], 90)
         return {**reply, "action": "aborted", "next_run": True}
 
+    def _permissions(self, handle: Handle, action: str) -> dict:
+        reply, rc = self._call([str(self.node), str(HELPERS / "omo_permissions.mjs"), str(self.engine),
+                               handle.data["ref"], str(handle.task.work), recorded_access(handle), action],
+                              120, handle.task.path(f"stderr.{handle.run}.txt"))
+        if rc != 0 or not reply or reply.get("action") != "permissions":
+            raise RunnerError(f"omo permission state unavailable: {(reply or {}).get('reason', 'no answer')}")
+        return reply
+
+    def permission_pending(self, handle: Handle) -> bool:
+        return self._permissions(handle, "inspect")["pending"]
+
     def state(self, handle: Handle) -> str:
-        return Settle(handle.task, handle.run, handle.data["ref"], self.session, self.limits).step()
+        snapshot = self.session(["state", handle.data["ref"]], 60)
+        state = (snapshot or {}).get("state") or {}
+        reply = self._permissions(handle, "settle") if state.get("pendingDialogs") else {
+            "pending": False, "decisions": [], "state": state}
+        for decision in reply["decisions"]:
+            handle.task.event(handle.run, "permission_denied" if decision["value"] == "Deny" else "permission_allowed",
+                              **{key: decision[key] for key in ("tool", "target", "mode", "request")})
+        if reply["decisions"]:
+            handle.task.path(f"permission_answered.{handle.run}").touch()
+        if reply["pending"]:
+            return "running"
+
+        def call(args, timeout):
+            # Judge the very snapshot whose dialogs were checked, not a second racy read.
+            nonlocal snapshot
+            if args[0] == "state" and snapshot is not None:
+                answer, snapshot = {"action": "state", "state": reply["state"]}, None
+                return answer
+            return self.session(args, timeout)
+
+        return Settle(handle.task, handle.run, handle.data["ref"], call, self.limits).step()
 
     def live_view(self, handle: Handle) -> dict:
         """What the session does now (``lina worker status``): read-only, never a settle step."""

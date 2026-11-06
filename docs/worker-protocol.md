@@ -52,6 +52,24 @@ The omo runner applies `read-only`, `workspace` or `full-access` to the individu
 session, rather than changing its shared daemon's configuration. Both hub and
 device refuse unsupported modes with a reason. ACP is not implemented here.
 
+Omo permission dialogs are machine decisions, not human questions. The runner
+answers `Deny` for read-only writes, external workspace targets and requests it
+cannot classify; allowed in-workspace file edits receive `Allow once`. Decisions
+are recorded as `permission_denied` or `permission_allowed` with tool, target and
+mode. Hub, device and runner answer paths reject permission-dialog replies, even
+if the text is `Allow once`. A larger grant requires a new task.
+
+The installed engine's default without an override is `full-access`. Its
+`workspace` preset allows file edits and bash but asks for external directories;
+`read-only` asks rather than denying writes, which is why the runner resolves
+dialogs. Codemode may hide bash behind eval. The worker permits only a single
+literal JSON `tool.bash`/`tool.monitor` bridge for `ls`, `git status --short`,
+`git add` of a local filename, or `git commit -m` with a literal message. General
+eval code is denied. These engine rules are not an OS sandbox for arbitrary
+shell code; no preset offers full-access eval with guaranteed filesystem
+confinement. The worker keeps the narrower workspace preset rather than
+silently raising access to match the unrestricted default.
+
 `send --access` can retain or lower access for subsequent work, never raise it.
 Omitting the option preserves the recorded mode; answers preserve the current
 run's mode. The device independently checks follow-up payloads against its

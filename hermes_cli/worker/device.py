@@ -338,7 +338,10 @@ def steer(worker_root: Path, task_id: str, text: str) -> dict:
         return {"action": "not_live", "run": run}
     runner = runner_for(worker_root, task, job_of(task))
     try:
-        how, _ = runner.follow_up(Handle.load(task, run), text)
+        handle = Handle.load(task, run)
+        if _permission_pending(runner, handle):
+            return {"action": "error", "reason": "permission_dialog", "run": run}
+        how, _ = runner.follow_up(handle, text)
     except RunnerError as exc:
         return {"action": "error", "reason": str(exc)[:300], "run": run}
     task.event(run, "follow_up", how=how)
@@ -404,11 +407,22 @@ def follow_up(worker_root: Path, task_id: str, payload: dict) -> dict:
         return {"action": "requested", "run": run}
 
 
+def _permission_pending(runner, handle: Handle) -> bool:
+    """Only runners with a permission channel can have a pending permission dialog."""
+    query = getattr(runner, "permission_pending", None)
+    return query is not None and query(handle)
+
+
 def human(worker_root: Path, task_id: str) -> dict:
     task = task_of(worker_root, task_id)
     run = last_run(task)
+    is_alive = alive(task, run)
+    if is_alive and task.path("handle.json").exists():
+        runner = runner_for(worker_root, task, job_of(task))
+        if _permission_pending(runner, Handle.load(task, run)):
+            return {"open": False, "permission": True, "run": run}
     contract = read_json(task.path(f"live.{run}.json"), {}) or {}
-    return {"open": alive(task, run) and contract.get("state") == "waiting_human", "run": run}
+    return {"open": is_alive and contract.get("state") == "waiting_human", "run": run}
 
 
 def answer(worker_root: Path, task_id: str, text: str) -> dict:
@@ -416,9 +430,13 @@ def answer(worker_root: Path, task_id: str, text: str) -> dict:
     run = last_run(task)
     runner = runner_for(worker_root, task, job_of(task))
     try:
-        reply = runner.answer(Handle.load(task, run), text)
+        handle = Handle.load(task, run)
+        if _permission_pending(runner, handle):
+            return {"action": "error", "reason": "permission_dialog", "run": run}
+        reply = runner.answer(handle, text)
     except RunnerError as exc:
-        reply = {"action": "error", "reason": str(exc)[:300]}
+        reason = str(exc)[:300]
+        reply = {"action": "error", "reason": "permission_dialog" if reason.startswith("permission_dialog:") else reason}
     task.event(run, "answer", action=reply.get("action"))
     return {**reply, "run": run}
 

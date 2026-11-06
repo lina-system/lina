@@ -543,11 +543,15 @@ class Hub:
         if ACCESS.index(requested) > ACCESS.index(recorded):
             raise HubError(f"access {requested} exceeds recorded access {recorded}; submit a new task")
         transport, remote = self.transport(job), self.meta(job)
-        human = transport.call(["human", task_id], timeout=90).json().get("open")
+        human = transport.call(["human", task_id], timeout=90).json()
+        if human.get("permission"):
+            raise HubError(f"{task_id}: permission_dialog")
         if requested != recorded:
             return self._next_run(job, message, access=requested)
-        if human:
+        if human.get("open"):
             reply = transport.call(["answer", task_id], message.encode("utf-8"), timeout=180).json()
+            if (reply.get("reason") or "").split(":", 1)[0] == "permission_dialog":
+                raise HubError(f"{task_id}: permission_dialog")
             run = reply.get("run") or remote.get("run") or job.get("runs", 1)
             self.store.receipt(task_id, "answer", run=run, response={k: reply.get(k) for k in (
                 "action", "steps", "still_pending", "reason")})
@@ -931,6 +935,10 @@ class Hub:
             self._human_notice_locked(job, run, now)
 
     def _human_notice_locked(self, job: dict, run: str, now: float) -> None:
+        human = self.transport(job).call(["human", job["id"]], timeout=90).json()
+        if human.get("permission"):
+            job.pop("human_since", None)
+            return
         job.setdefault("human_since", now)
         marker = f"human:{run}"
         if now - job["human_since"] >= HUMAN_NOTICE_AFTER_S and marker not in job.get("notified", []):

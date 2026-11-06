@@ -81,7 +81,13 @@ try {
 		const { state } = opened;
 		await client.setSessionName(name);
 		const disposition = await client.prompt(
-			readFileSync(promptFile, "utf8"),
+			readFileSync(promptFile, "utf8") +
+				`\n\nWorker access mode: ${access}. Permission dialogs are answered by the worker, never by a person. ` +
+				`A permission denial is final for this run: do not ask for approval, retry the denied operation, or use another tool to bypass it. ` +
+				`If access blocks the requested task, report that and finish. ` +
+				(access !== "full"
+					? `Use file tools directly. When bash is hidden, the worker accepts a single literal eval bridge, for example await tool.bash({"command":"ls"}). Use JSON arguments and no surrounding code. Workspace bridges support ls, git status --short, git add with a local filename, and git commit -m with a literal message, joined by && if needed. General eval code is denied. `
+					: ""),
 		);
 		reply = {
 			action: "open",

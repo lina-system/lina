@@ -103,10 +103,10 @@ def test_start_question_answer_settle_result_follow_up(lane):
     manifest = fakes.as_json(out / "manifest.json")
     assert manifest["next_notes"] == 1 and set(manifest["files"]) >= {"report.md", "out/ok.txt", "final.md"}
     assert (out / "final.md").read_text().strip()
+    lane.launcher.join()  # The done state precedes delivery of the end notice.
     notices = list(lane.hub.store.notices.glob(f"{task_id}-done-1-*.md"))
     assert len(notices) == 1 and "lina worker accept" in notices[0].read_text()
 
-    lane.launcher.join()  # The end notice precedes the run thread exiting; the next send starts a new run.
     lane.scenario("question", follow_up="done")
     assert lane.hub.send(task_id, "SCENARIO:done also add a line") == 0
     assert "started run 2" in lane.lines[-1]
