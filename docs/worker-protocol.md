@@ -71,6 +71,10 @@ optional trailing argument) keep `{key: reply}` in the task's `keys.json`
 under the task lock, so any write verb with a key it has seen returns the
 stored reply and changes nothing; replies that changed nothing are not kept.
 The run an answer starts after its question closed uses device key `<k>#next`.
+A reply the device marks `replayed` is reconciled, never applied as new: the
+hub fills in the key's record, writes `request_replayed` and prints the replay
+line, moves the task's run, state, delivery and verdict only to a run newer
+than the one it holds, and never raises its access.
 `hello` lists `request_keys` in `capabilities`.
 A device without it ignores the key; the hub's record is the only guard there,
 and the hub writes one `device_without_keys` receipt per task. `lina work`

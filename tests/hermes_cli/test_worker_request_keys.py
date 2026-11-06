@@ -31,7 +31,8 @@ def lane(tmp_path, monkeypatch):
     argv = fakes.install_fake_cli(fake)
     monkeypatch.setenv("FAKE_CLI_LOG", str(fake / "cli.jsonl"))
     monkeypatch.setenv("LINA_HOME", str(base))
-    fakes.write_config(base, f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n")
+    spec = {"type": "command", "argv": argv, "access_args": {mode: [] for mode in hub_mod.ACCESS}}
+    fakes.write_config(base, f"fakecli: {json.dumps(spec)}\n")
     launched: list[tuple[str, int]] = []
     monkeypatch.setattr(device, "launch", lambda root, task, run: launched.append((task.id, run)))
     root = base / "worker"
@@ -126,6 +127,51 @@ def test_a_follow_up_whose_device_reply_was_lost_is_not_run_twice(lane):
     assert lane.hub.store.load(task_id)["runs"] == 2
 
 
+def test_a_replayed_follow_up_never_moves_the_task_back_to_its_run(lane):
+    """K1 started run 2 and its reply was lost; K2 started run 3 with less access. The retry of K1 gets run 2's reply
+    back: the task stays on run 3 with K2's access, and run 3's end is its own notice."""
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    real, lost = hub_mod.for_device, []
+
+    def lossy(dev, root):
+        transport = real(dev, root)
+        call = transport.call
+
+        def dropped(verb, stdin=b"", timeout=120):
+            reply = call(verb, stdin, timeout)
+            if verb[0] == "follow_up" and json.loads(stdin).get("request_key") == "rk-k1" and not lost:
+                lost.append(reply.json())
+                return Reply(255, b"", "connection reset by peer")
+            return reply
+
+        transport.call = dropped
+        return transport
+
+    lane.mp.setattr(hub_mod, "for_device", lossy)
+    with pytest.raises(HubError):
+        lane.hub.send(task_id, "more", request_key="rk-k1")
+    assert [(r["action"], r["run"]) for r in lost] == [("requested", 2)]
+    serve.serve_once(lane.root)
+    (lane.root / "tasks" / task_id / "rc.2").write_text("0\n")
+    assert lane.hub.send(task_id, "less", access="read-only", request_key="rk-k2") == 0
+    job = lane.hub.store.load(task_id)
+    assert (job["runs"], job["access"], job["grant"]["access"]) == (3, "read-only", "read-only")
+    lane.lines.clear()
+    assert lane.hub.send(task_id, "more", request_key="rk-k1") == 0
+    assert lane.lines == [f"{task_id} replay of request key rk-k1: requested run 2"]
+    job = lane.hub.store.load(task_id)
+    assert (job["runs"], job["state"], job["access"], job["grant"]["access"]) == (3, "running", "read-only",
+                                                                                 "read-only")
+    assert job["request_keys"]["rk-k1"]["run"] == 2
+    assert _kinds(lane.hub, task_id).count("request_replayed") == 1
+    assert _requests(lane, task_id) == ["request.1", "request.2", "request.3"]
+    assert lane.hub.notify(task_id, "done", "3") != "earlier run"
+    assert lane.hub.notify(task_id, "done", "3") == "already"
+    ends = [r for r in lane.hub.store.receipts_of(task_id) if r["kind"] == "notified"]
+    assert [(r["state"], r["run"]) for r in ends] == [("done", "3")]
+
+
 def test_an_answer_whose_reply_was_lost_is_not_applied_again_by_another_verb(lane):
     """The device took the answer, the reply was lost and the question closed: the retry must not steer or start a
     run with the same words; it returns the first answer."""
@@ -169,7 +215,7 @@ def test_an_answer_whose_reply_was_lost_is_not_applied_again_by_another_verb(lan
     lane.lines.clear()
     assert lane.hub.send(task_id, "blue", request_key="rk-answer") == 0
     assert (answers, steers) == (["blue"], [])
-    assert lane.lines == [f"{task_id} answered the question of run 1; the same run goes on."]
+    assert lane.lines == [f"{task_id} replay of request key rk-answer: answer run 1"]
     assert {p.name: p.read_bytes() for p in task_dir.iterdir()
             if p.name.startswith(("prompt.", "request.", "steer."))} == files
     assert lane.hub.store.load(task_id)["request_keys"]["rk-answer"]["action"] == "answer"

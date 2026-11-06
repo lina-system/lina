@@ -160,6 +160,27 @@ def sent(store, task_id: str, key: str | None, action: str, run) -> None:
         job.setdefault("request_keys", {})[key] = {"action": action, "run": run, "at": record["at"]}
 
 
+def reconcile(hub, task_id: str, key: str, reply: dict, *, access: str | None = None,
+              run_access: str | None = None) -> int:
+    """A reply the device kept for *key* (``replayed``): what it says happened before, so it is filled in and never
+    applied as new. The task moves only to a run newer than the one it holds (another request may have started a
+    later run since), and a replay never raises the task's access."""
+    from hermes_cli.worker.hub import ACCESS
+    action, run = reply["action"], reply.get("run")
+    with hub.store.edit(task_id) as job:
+        held = int(job.get("runs") or 1)
+        if action == "requested" and int(run) > held:
+            job.update(runs=run, state="running", delivery="pending", verdict=None)
+        recorded = job.get("access", "workspace-write")
+        if access in ACCESS and int(run or held) >= held and ACCESS.index(access) < ACCESS.index(recorded):
+            job.update(access=access, grant={**job["grant"], "access": access})
+        if run_access and action in ("queued", "requested"):
+            job.setdefault("run_access", {}).setdefault(str(run), run_access)
+    sent(hub.store, task_id, key, action, run)
+    _replayed(hub, hub.store.load_key(key), task_id, f"{task_id} replay of request key {key}: {action} run {run}")
+    return 0
+
+
 def note_device(store, job: dict, transport) -> None:
     """A device whose hello does not list ``request_keys`` ignores the key: the hub's record is the only guard there,
     said once per task."""

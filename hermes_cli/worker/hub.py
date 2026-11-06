@@ -652,9 +652,13 @@ class Hub:
         if (reply.get("reason") or "").split(":", 1)[0] == "permission_dialog":
             raise HubError(f"{task_id}: permission_dialog")
         run = reply.get("run") or remote.get("run") or job.get("runs", 1)
+        answered = reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending")
+        # A replayed answer that left its question open goes on to the next run only while its run is the task's.
+        if reply.get("replayed") and (answered or int(run) < int(job.get("runs") or 1)):
+            return request_keys.reconcile(self, task_id, request_key, {**reply, "run": run})
         self.store.receipt(task_id, "answer", run=run, response={k: reply.get(k) for k in (
             "action", "steps", "still_pending", "reason")})
-        if reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending"):
+        if answered:
             request_keys.sent(self.store, task_id, request_key, "answer", run)
             self.out(NEXT_RUN_WORDS["answer"].format(id=task_id, run=run))
             return 0
@@ -666,6 +670,8 @@ class Hub:
 
     def _steered(self, job: dict, reply: dict, message: str, request_key: str | None) -> int:
         task_id = job["id"]
+        if reply.get("replayed") and reply.get("action") in ("steered", "started"):
+            return request_keys.reconcile(self, task_id, request_key, reply)
         self.store.receipt(task_id, "steer", run=reply.get("run"), response=reply)
         if reply.get("action") in ("steered", "started"):
             request_keys.sent(self.store, task_id, request_key, reply["action"], reply.get("run"))
@@ -711,6 +717,9 @@ class Hub:
                            "again when it is live or has ended")
         if action not in NEXT_RUN_WORDS:
             raise HubError(f"follow-up failed: {reply.get('reason') or reply}")
+        if reply.get("replayed"):
+            return request_keys.reconcile(self, job["id"], request_key, reply, access=access,
+                                          run_access=payload["access"])
         if access is not None:
             self.store.update(job["id"], access=access, grant={**job["grant"], "access": access})
         if action in ("queued", "requested"):
