@@ -8,7 +8,8 @@ The card is named by ``submit --card <id> --board <slug>`` or by the card sessio
 * ``{kind: hermes, command: [hermes]}``: a Hermes Agent card, written only through that command's
   ``kanban [--board <b>] comment | attach | schedule | unblock``. No LINA code opens a kanban database in this mode.
   The run's start and end are comments, ``report.md`` is attached, and a card parked by ``lina worker wait``
-  (``schedule``) is woken (``unblock``) once by the first end that follows.
+  (``schedule``) is woken (``unblock``) once by the end of a run it waits on. The end is three steps
+  (``END_STEPS``); the hub keeps the ones that went through and retries the rest.
 """
 
 from __future__ import annotations
@@ -110,13 +111,24 @@ def record_run(card: dict, job: dict, link: dict) -> None:
                                 "model": job.get("model"), "repo": job.get("repo"), "branch": job.get("branch")})
 
 
-def record_end(card: dict, job: dict, state: str, run: str, body: str, link: dict, report: Path | None = None) -> None:
-    if on_hermes(card):
+END_STEPS = ("comment", "attach", "wake")
+
+
+def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link: dict, report: Path) -> bool:
+    """One step of a run's end on a Hermes card; raises ``CardLinkError`` when it did not go through. True when
+    ``wake`` woke the card."""
+    if step == "comment":
         _comment(link["command"], card, body)
-        if report is not None and report.is_file():
-            _kanban(link["command"], card, "attach", str(report), "--name", f"report-{job['id']}-{run}.md",
-                    "--author", AUTHOR)
-        return
+    elif step == "attach" and report.is_file():
+        _kanban(link["command"], card, "attach", str(report), "--name", f"report-{job['id']}-{run}.md",
+                "--author", AUTHOR)
+    elif step == "wake":
+        return wake(store, card, link, job["id"])
+    return False
+
+
+def record_end(card: dict, job: dict, state: str, run: str, body: str) -> None:
+    """The end of a run on a card of LINA's own board."""
     from hermes_cli import kanban_db as kb
     from hermes_cli.kanban_db_connect import connect_closing
     _event(card, "worker_run_ended", {"run_id": job["id"], "runner": job.get("runner"), "state": state, "run": run,
@@ -150,11 +162,16 @@ def park(store, card: dict, link: dict, open_runs: list[str]) -> None:
             raise
 
 
-def wake(store, card: dict, link: dict) -> bool:
-    """Unblock the card once if ``park`` left it parked; True when it was."""
+def wake(store, card: dict, link: dict, run_id: str) -> bool:
+    """Unblock the card once if ``park`` left it parked on *run_id*; True when it was. The end of a run the card
+    does not wait on leaves it parked."""
     with store.lock(f"card-{card_key(card)}"):
         mark = _parked_path(store, card)
-        if not mark.exists():
+        try:
+            waited = mark.read_text(encoding="utf-8-sig").splitlines()[0].split()
+        except (FileNotFoundError, IndexError):
+            return False
+        if run_id not in waited:
             return False
         _kanban(link["command"], card, "unblock")
         with contextlib.suppress(FileNotFoundError):

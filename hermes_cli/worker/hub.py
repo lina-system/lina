@@ -614,7 +614,7 @@ class Hub:
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
         marker = f"{kind}:{run}"
         if marker in job.get("notified", []):
-            return "already"
+            return self._card_steps(job, marker) if marker in (job.get("card_pending") or {}) else "already"
         if str(run).isdigit() and int(run) >= 1 and int(run) != int(job.get("runs") or 1):
             # A late end of an earlier run (its notice retried after a follow-up started the next one): record it,
             # never let it end the run that is going now. Task-level notices are not run reports and always apply:
@@ -650,15 +650,47 @@ class Hub:
         return notice.deliver(job, text, tag, self.store.notices, command)
 
     def _card_end(self, job: dict, kind: str, run: str, text: str) -> str:
-        card, link = job["card"], self._link()
+        card = job["card"]
+        if kanban_link.on_hermes(card):
+            job.setdefault("card_pending", {})[f"{kind}:{run}"] = {"kind": kind, "run": run, "text": text, "done": []}
+            self.store.save(job)
+            return self._card_steps(job, f"{kind}:{run}")
         try:
-            kanban_link.record_end(card, job, kind, run, text, link, self.store.out_dir(job) / "report.md")
-            woke = kanban_link.on_hermes(card) and kanban_link.wake(self.store, card, link)
-        except (ValueError, OSError, kanban_link.CardLinkError) as exc:
+            kanban_link.record_end(card, job, kind, run, text)
+        except (ValueError, OSError) as exc:
             self.store.receipt(job["id"], "card_notice_failed", error=str(exc)[:300])
             return f"card {card['task']}: failed ({str(exc)[:120]})"
-        self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=woke)
-        return f"card {card['task']}" + (" (woken)" if woke else "")
+        self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=False)
+        return f"card {card['task']}"
+
+    def _card_steps(self, job: dict, marker: str) -> str:
+        """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
+        went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
+        under the job's lock."""
+        card, link, entry = job["card"], self._link(), job["card_pending"][marker]
+        for step in kanban_link.END_STEPS:
+            if step in entry["done"]:
+                continue
+            try:
+                woke = kanban_link.end_step(step, self.store, card, job, entry["run"], entry["text"], link,
+                                            self.store.out_dir(job) / "report.md")
+            except (OSError, kanban_link.CardLinkError) as exc:
+                self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
+                return f"card {card['task']}: {step} failed, retried on the next report or tick"
+            entry["done"].append(step)
+            entry["woke"] = entry.get("woke") or woke
+            self.store.save(job)
+        del job["card_pending"][marker]
+        self.store.save(job)
+        self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
+                           woke=bool(entry.get("woke")))
+        return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
+
+    def _retry_cards(self, task_id: str) -> None:
+        with self.store.lock(task_id):
+            job = self.store.load(task_id) or {}
+            for marker in list(job.get("card_pending") or {}):
+                self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker)}")
 
     def wait(self, card: dict | None, task_ids: list[str] | None = None) -> int:
         """Park the Hermes card these runs were handed out from (`kanban schedule`): its session ends the turn and
@@ -714,6 +746,9 @@ class Hub:
             if not held:
                 return
             self.run_due_schedules()
+            for job in self.store.all():
+                if job.get("card_pending"):
+                    self._retry_cards(job["id"])
             for job in self.store.all():
                 if job.get("state") == "queued":
                     if not self._try_place(job):

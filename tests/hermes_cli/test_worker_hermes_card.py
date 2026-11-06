@@ -24,8 +24,15 @@ AGENT = "agent-a"
 CARD, BOARD = "t_card1", "ops"
 
 FAKE_KANBAN = """import json, os, sys
+verb = sys.argv[sys.argv.index("kanban") + 3] if "--board" in sys.argv else sys.argv[sys.argv.index("kanban") + 1]
+once = os.path.join(os.environ.get("FAKE_KANBAN_FAIL_ONCE", ""), verb)
+failed = bool(os.environ.get("FAKE_KANBAN_FAIL_ONCE")) and os.path.exists(once)
+if failed:
+    os.remove(once)
 with open(os.environ["FAKE_KANBAN_LOG"], "a") as fh:
-    fh.write(json.dumps({"argv": sys.argv[1:], "env": sorted(k for k in os.environ if k.startswith("HERMES_"))}) + "\\n")
+    fh.write(json.dumps({"argv": sys.argv[1:], "ok": not failed,
+                         "env": sorted(k for k in os.environ if k.startswith("HERMES_"))}) + "\\n")
+sys.exit(1 if failed else 0)
 """
 FAKE_CHAT = """import os, sys
 open(os.environ["FAKE_CHAT_LOG"], "a").write(sys.stdin.read())
@@ -55,7 +62,8 @@ def fake_kanban(tmp_path, monkeypatch):
 
 
 def _verbs(calls: list[dict]) -> list[str]:
-    return [call["argv"][call["argv"].index(BOARD) + 1] for call in calls]
+    """The verbs of the calls that went through."""
+    return [call["argv"][call["argv"].index(BOARD) + 1] for call in calls if call["ok"]]
 
 
 def _no_kanban_db(monkeypatch) -> list[str]:
@@ -165,6 +173,40 @@ def test_wait_parks_the_card_and_the_first_end_wakes_it_once(queued):
 
     hub.notify(second, "done", "1")  # the card runs again: the comment only
     assert _verbs(calls())[5:] == ["comment"]
+
+
+def test_wait_on_one_run_is_woken_only_by_that_runs_end(queued):
+    hub, submit, calls = queued
+    waited, other = submit("a.md"), submit("b.md")
+    assert hub.wait({"task": CARD, "board": BOARD}, [waited]) == 0
+    hub.notify(other, "done", "1")
+    assert _verbs(calls())[3:] == ["comment"]
+    hub.notify(waited, "done", "1")
+    hub.notify(waited, "done", "1")
+    assert _verbs(calls())[3:] == ["comment", "comment", "unblock"]
+
+
+def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_through(queued, tmp_path, monkeypatch):
+    hub, submit, calls = queued
+    run = submit()
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    report = hub.store.out_dir(hub.store.load(run)) / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# report\n", encoding="utf-8")
+    fail = tmp_path / "fail-once"
+    fail.mkdir()
+    for verb in ("comment", "attach", "unblock"):
+        (fail / verb).touch()
+    monkeypatch.setenv("FAKE_KANBAN_FAIL_ONCE", str(fail))
+
+    hub.notify(run, "done", "1")  # the comment fails
+    hub.notify(run, "done", "1")  # the device reports again: the comment goes, the attachment fails
+    hub.tick()  # the attachment goes, the unblock fails
+    hub.tick()  # the unblock goes
+    hub.tick()
+    hub.notify(run, "done", "1")
+    assert _verbs(calls()) == ["comment", "schedule", "comment", "attach", "unblock"]
+    assert not hub.store.load(run).get("card_pending")
 
 
 def test_the_end_of_a_run_on_a_running_card_is_a_comment_only(queued):
