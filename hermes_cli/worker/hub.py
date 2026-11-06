@@ -10,10 +10,12 @@ report.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
@@ -21,7 +23,7 @@ from hermes_cli.lina_work_settings import ACCESS, SettingsError
 from hermes_cli.lina_work_settings_route import decide
 from hermes_cli.worker import bidding, kanban_link, models, notice, runners, settings
 from hermes_cli.worker.hub_store import Store
-from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt
+from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt, with_hub_rules
 from hermes_cli.worker.runners.base import RunnerError
 from hermes_cli.worker.task import read_json, verify
 from hermes_cli.worker.transport import TransportError, fetch, for_device, put, put_tree
@@ -47,6 +49,36 @@ class HubError(RuntimeError):
 def caller_agent() -> str:
     from hermes_cli.profiles import get_active_profile_name
     return get_active_profile_name() or "default"
+
+
+def owner(bot: str | None = None) -> tuple[str, str]:
+    """The agent a call is made for, and where the name came from: ``--bot``, else ``HERMES_PROFILE``, else
+    ``HERMES_PROFILE_NAME``, else the profile the caller's Hermes Agent ``HERMES_HOME`` names
+    (``<root>/profiles/<name>``; the root itself is ``default``), else LINA's active profile."""
+    if bot:
+        return bot, "--bot"
+    for name in ("HERMES_PROFILE", "HERMES_PROFILE_NAME"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value, name
+    home = settings.caller_hermes_home()
+    if home is not None:
+        return (home.name if home.parent.name == "profiles" else "default"), "HERMES_HOME"
+    return caller_agent(), "current profile"
+
+
+def _question_text(item) -> str:
+    """The words of a pending question as the runner's live view carries it."""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, list):
+        return "\n".join(text for text in map(_question_text, item) if text)
+    if isinstance(item, dict):
+        for key in ("question", "text", "prompt", "title", "message"):
+            if isinstance(item.get(key), str) and item[key].strip():
+                return item[key].strip()
+        return _question_text(item.get("questions") or [])
+    return ""
 
 
 def _ago(at: float | None) -> str:
@@ -188,7 +220,8 @@ class Hub:
         put(transport, tid, "job.json", json.dumps(device_job, ensure_ascii=False))
         put(transport, tid, "id", tid + "\n")
         put(transport, tid, "grant.json", json.dumps(job["grant"], ensure_ascii=False) + "\n")
-        put(transport, tid, "prompt.1", job["prompt"])
+        put(transport, tid, "prompt.1", with_hub_rules(job["prompt"], settings.hub_rules(self.worker))
+            if dev.local else job["prompt"])
         if job.get("inputs"):
             put_tree(transport, tid, "input.upload", [Path(p) for p in job["inputs"]])
         put(transport, tid, "request.1", json.dumps({"run": 1, "at": time.time()}))
@@ -293,6 +326,8 @@ class Hub:
             opts["host"] = self._hub_node(opts.get("host"))
         group = self.store.new_id(opts["bot"], "OG") if len(briefs) > 1 else None
         jobs = [self._submit_one(brief, opts, group) for brief in briefs]
+        for job in jobs if opts.get("todo") else []:
+            self._todo(job, "link", opts["todo"], f"omo:{job['id']}")
         if group:
             self.out(f"{group} batch of {len(jobs)} · one notice when all of them end.")
         elif opts.get("wait") is None and kanban_link.on_hermes(opts["card"]):
@@ -306,21 +341,29 @@ class Hub:
         return 0
 
     def _submit_identity(self, opts: dict) -> None:
-        explicit_card, link = bool(opts.get("card")), self._link()
+        link = self._link()
         opts["card"] = kanban_link.card_for(opts.get("card") or kanban_link.card_from_env(), link)
         if not opts["card"] and link["kind"] == kanban_link.HERMES and \
                 "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
             raise HubError("Hermes card session: pass --card <id> --board <slug>")
-        opts["bot_source"] = "--bot" if opts.get("bot") else "current profile"
-        if not opts.get("bot"):
-            if explicit_card and kanban_link.on_hermes(opts["card"]):
-                for name in ("HERMES_PROFILE", "HERMES_PROFILE_NAME"):
-                    profile = os.environ.get(name, "").strip()
-                    if profile:
-                        opts["bot"], opts["bot_source"] = profile, name
-                        break
-            if not opts.get("bot"):
-                opts["bot"] = caller_agent()
+        opts["bot"], opts["bot_source"] = owner(opts.get("bot"))
+
+    def _todo(self, job: dict, *args: str) -> None:
+        """``worker.todo_link``'s command with *args* on the run's to-do; a failure is one line, never an error."""
+        try:
+            command = settings.todo_link(self.worker)
+            if not command:
+                return
+            done = subprocess.run([*command, *args], text=True, encoding="utf-8", errors="replace",
+                                  capture_output=True, env=kanban_link.hub_env(),
+                                  timeout=kanban_link.COMMAND_TIMEOUT_S, check=False)
+            if done.returncode != 0:
+                raise OSError(f"exited {done.returncode}: {(done.stderr or done.stdout).strip()[-200:]}")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            self.store.receipt(job["id"], "todo_link_failed", verb=args[0], error=str(exc)[:300])
+            self.out(f"lina worker: to-do {job.get('todo')}: {args[0]} for {job['id']} failed: {exc}"[:400])
+            return
+        self.store.receipt(job["id"], "todo_linked", verb=args[0], todo=job.get("todo"))
 
     def _submit_one(self, brief: Path, opts: dict, group: str | None) -> dict:
         job = self.make_job(brief, opts, group)
@@ -658,9 +701,23 @@ class Hub:
         job = self.need(task_id)
         verdict = "accepted" if accepted else "rejected"
         job = self.store.update(task_id, verdict=verdict, verdict_note=note) or job
-        self.store.receipt(task_id, "verdict", verdict=verdict, note=note[:500], by=caller_agent(),
+        self.store.receipt(task_id, "verdict", verdict=verdict, note=note[:500], by=owner()[0],
                            delivery=job.get("delivery"))
         self.out(f"{task_id} {verdict}")
+        if accepted and job.get("todo"):
+            self._todo(job, "evidence", job["todo"], f"omo:{task_id}")
+            if note:
+                self._todo(job, "note", job["todo"], f"{task_id} checked: {note}")
+        return 0
+
+    def card(self, task_id: str, card: str | None = None, drop: str | None = None) -> int:
+        """The card a run was handed out from; a run's card is set at submit and never changed afterwards."""
+        job = self.need(task_id)
+        if card or drop:
+            raise HubError(f"{task_id}: a run's card is set at submit (--card); it cannot be added or dropped")
+        linked = job.get("card")
+        self.out(f"{linked['task']}  {linked.get('board') or '-'}  ({linked.get('kind') or 'lina'})" if linked
+                 else f"{task_id}: no card")
         return 0
 
 
@@ -950,17 +1007,47 @@ class Hub:
             job.pop("human_since", None)
             return
         job.setdefault("human_since", now)
+        if now - job["human_since"] < HUMAN_NOTICE_AFTER_S:
+            return
+        if kanban_link.on_hermes(job.get("card")):
+            self._card_question(job, run, human)
+            return
         marker = f"human:{run}"
-        if now - job["human_since"] >= HUMAN_NOTICE_AFTER_S and marker not in job.get("notified", []):
+        if marker not in job.get("notified", []):
             job.setdefault("notified", []).append(marker)
             text = notice.body(job, "human", run, self.store.out_dir(job), {})
-            if kanban_link.on_hermes(job.get("card")):
-                how = self._card_end(job, "human", run, text)
-            else:
-                how = self._deliver(job, text, f"human-{run}")
-                if job.get("card"):
-                    self._card_end(job, "human", run, text)
+            how = self._deliver(job, text, f"human-{run}")
+            if job.get("card"):
+                self._card_end(job, "human", run, text)
             self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run)
+
+    def _card_question(self, job: dict, run: str, human: dict) -> None:
+        """One comment on the run's Hermes card for each question it waits on, with the question; a comment that
+        did not go through is tried again on the next tick. Called under the job's lock."""
+        text, key = (human.get("question") or "").strip(), ""
+        if not text:  # the omo runner's questions come with its live view
+            questions = [q for q in (self.meta(job, live=True).get("live") or {}).get("questions") or []
+                         if isinstance(q, dict)]
+            text = _question_text(questions)
+            key = ",".join(str(q["id"]) for q in questions if q.get("id"))
+        key = key or (hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if text else "-")
+        marker = f"human:{run}:{key}"
+        if marker in job.get("notified", []) or job.get("card_start_pending") or \
+                "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
+            return
+        body = (f"[lina worker · automatic] run {job['id']} (run {run}) waits for an answer:\n\n"
+                + (text or "(the question did not come with the run's state: `lina worker status "
+                           f"{job['id']}` shows it)")
+                + f"\n\nAnswer with `lina worker send {job['id']} \"<answer>\"`; to stop: "
+                  f"`lina worker cancel {job['id']} --why …`.")
+        try:
+            kanban_link.comment(self._link()["command"], job["card"], body)
+        except (OSError, kanban_link.CardLinkError) as exc:
+            self.store.receipt(job["id"], "card_notice_failed", step="question", error=str(exc)[:300])
+            return
+        job.setdefault("notified", []).append(marker)
+        self.store.receipt(job["id"], "notified", how=f"card {job['card']['task']}: question", state="human",
+                           run=run)
 
 
 def _private_lines(paths: list[str]) -> str:

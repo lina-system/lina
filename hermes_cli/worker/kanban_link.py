@@ -1,14 +1,17 @@
 """A run handed out from a work card: its start and its end are written on that card.
 
 The card is named by ``submit --card <id> --board <slug>`` or by the card session's own environment
-(``HERMES_KANBAN_TASK``, ``HERMES_KANBAN_BOARD``). Where it lives is ``worker.card_link``:
+(``HERMES_KANBAN_TASK``, ``HERMES_KANBAN_BOARD``) of this process, else of its nearest ancestor that has it: Hermes
+removes both from a card session's terminal, so the card's worker process above it is the usual source. The card
+is only read here. Where it lives is ``worker.card_link``:
 
 * unset or ``{kind: lina}``: LINA's own board, through the kanban DB API (``worker_run`` and ``worker_run_ended``
   events, the end notice as a comment).
 * ``{kind: hermes, command: [hermes]}``: a Hermes Agent card, written only through that command's
   ``kanban [--board <b>] comment | attach | show | unblock``. No LINA code opens a kanban database in this mode.
-  The hub writes start/end comments and attaches ``report.md``. ``lina worker wait`` records the runs; the card's
-  model schedules itself, then the hub wakes it (``unblock``) once on a run's end. The end is three steps
+  The hub writes start/end comments and attaches ``report.md``. The card's model schedules itself
+  (``kanban_schedule``), naming the runs it waits on in the reason or in ``workers``; ``lina worker wait`` also
+  records them. The hub wakes it (``unblock``) once on a run's end (``wake``). The end is three steps
   (``END_STEPS``); the hub keeps the ones that went through and retries the rest.
 """
 
@@ -17,9 +20,12 @@ from __future__ import annotations
 import contextlib
 import json
 import os
+import re
 import shlex
 import subprocess
+import sys
 import time
+from collections.abc import Callable
 from pathlib import Path
 
 AUTHOR = "lina-worker"
@@ -28,6 +34,10 @@ COMMAND_TIMEOUT_S = 120
 # LINA's own home and the card session's identity must not reach Hermes's CLI: HERMES_HOME would point it at LINA's
 # root, ``unblock`` refuses inside a card session (HERMES_KANBAN_TASK), and the author is always ``AUTHOR``.
 _HUB_SIDE_DROP = ("HERMES_HOME", "HERMES_PROFILE", "HERMES_PROFILE_NAME")
+ANCESTOR_LEVELS = 16
+# A run or batch ID as a whole token: not inside a longer word, and not the head of ``<ID>-<n>`` (another run).
+RUN_ID = re.compile(r"(?<![A-Za-z0-9_])(?<![A-Za-z0-9]-)(O[TG]-[A-Z0-9]{1,3}[0-9]{10}(?:-[0-9]+)?)(?![A-Za-z0-9_])"
+                    r"(?!-[A-Za-z0-9])")
 
 
 class CardLinkError(RuntimeError):
@@ -50,11 +60,82 @@ def config(worker: dict) -> dict:
     return {"kind": HERMES, "command": command}
 
 
-def card_from_env() -> dict | None:
-    task = (os.environ.get("HERMES_KANBAN_TASK") or "").strip()
+def _card_of(env) -> dict | None:
+    task = (env.get("HERMES_KANBAN_TASK") or "").strip()
     if not task:
         return None
-    return {"task": task, "board": (os.environ.get("HERMES_KANBAN_BOARD") or "").strip() or None}
+    return {"task": task, "board": (env.get("HERMES_KANBAN_BOARD") or "").strip() or None}
+
+
+def card_from_env() -> dict | None:
+    """The card of this process's environment, else of its nearest ancestor's."""
+    return _card_of(os.environ) or card_from_ancestors()
+
+
+def proc_env(pid: int) -> dict[str, str]:
+    """The environment *pid* was started with; {} when it cannot be read. Linux: ``/proc/<pid>/environ``. macOS:
+    ``sysctl KERN_PROCARGS2`` (Apple-signed binaries hide theirs; the Hermes Python shows it)."""
+    raw = _procargs(pid)
+    env: dict[str, str] = {}
+    for part in raw:
+        key, sep, value = part.partition(b"=")
+        if sep and key:
+            env[key.decode(errors="replace")] = value.decode(errors="replace")
+    return env
+
+
+def _procargs(pid: int) -> list[bytes]:
+    try:
+        return Path(f"/proc/{pid}/environ").read_bytes().split(b"\0")
+    except OSError:
+        pass
+    if sys.platform != "darwin":
+        return []
+    import ctypes
+    import ctypes.util
+    import struct
+    libc = ctypes.CDLL(ctypes.util.find_library("c"), use_errno=True)
+    mib = (ctypes.c_int * 3)(1, 49, int(pid))  # CTL_KERN, KERN_PROCARGS2
+    size = ctypes.c_size_t(0)
+    if libc.sysctl(mib, 3, None, ctypes.byref(size), None, 0) != 0 or not size.value:
+        return []
+    buf = ctypes.create_string_buffer(size.value)
+    if libc.sysctl(mib, 3, buf, ctypes.byref(size), None, 0) != 0:
+        return []
+    raw = buf.raw[:size.value]
+    argc, rest = struct.unpack_from("i", raw, 0)[0], raw[4:]
+    start = rest.find(b"\0")  # the exec path, its NUL padding, argv, then the environment
+    while 0 <= start < len(rest) and rest[start:start + 1] == b"\0":
+        start += 1
+    parts = rest[start:].split(b"\0")[argc:]
+    return parts[:parts.index(b"")] if b"" in parts else parts
+
+
+def parent_pid(pid: int) -> int:
+    try:
+        return int(Path(f"/proc/{pid}/stat").read_text(encoding="utf-8-sig").rsplit(")", 1)[1].split()[1])
+    except (OSError, IndexError, ValueError):
+        pass
+    try:
+        done = subprocess.run(["ps", "-o", "ppid=", "-p", str(pid)], capture_output=True, text=True, encoding="utf-8",
+                              errors="replace", timeout=5, check=False)
+        return int(done.stdout.strip() or 0)
+    except (OSError, ValueError, subprocess.TimeoutExpired):
+        return 0
+
+
+def card_from_ancestors(pid: int | None = None, *, env_of: Callable[[int], dict] = proc_env,
+                        parent_of: Callable[[int], int] = parent_pid) -> dict | None:
+    """The card in the environment of the nearest ancestor of this process (from its parent, up to
+    ``ANCESTOR_LEVELS``) that has ``HERMES_KANBAN_TASK``; its board from the same environment."""
+    pid = os.getppid() if pid is None else pid
+    for _ in range(ANCESTOR_LEVELS):
+        if pid <= 1:
+            return None
+        if card := _card_of(env_of(pid)):
+            return card
+        pid = parent_of(pid)
+    return None
 
 
 def card_for(card: dict | None, link: dict) -> dict | None:
@@ -68,7 +149,7 @@ def on_hermes(card: dict | None) -> bool:
     return bool(card) and card.get("kind") == HERMES
 
 
-def _hub_env() -> dict[str, str]:
+def hub_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items()
             if key not in _HUB_SIDE_DROP and not key.startswith("HERMES_KANBAN_")}
 
@@ -77,7 +158,7 @@ def _kanban(command: list[str], card: dict, verb: str, *args: str) -> str:
     argv = [*command, "kanban", *(["--board", card["board"]] if card.get("board") else []), verb, card["task"], *args]
     try:
         done = subprocess.run(argv, text=True, encoding="utf-8", errors="replace", capture_output=True,
-                              env=_hub_env(), timeout=COMMAND_TIMEOUT_S, check=False)
+                              env=hub_env(), timeout=COMMAND_TIMEOUT_S, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
         raise CardLinkError(f"{shlex.join(argv[:len(command) + 5])}: {exc}") from exc
     if done.returncode != 0:
@@ -86,7 +167,7 @@ def _kanban(command: list[str], card: dict, verb: str, *args: str) -> str:
     return done.stdout
 
 
-def _comment(command: list[str], card: dict, body: str) -> None:
+def comment(command: list[str], card: dict, body: str) -> None:
     _kanban(command, card, "comment", "--author", AUTHOR, "--", body)
 
 
@@ -107,7 +188,7 @@ def _start_line(job: dict) -> str:
 
 def record_run(card: dict, job: dict, link: dict) -> None:
     if on_hermes(card):
-        _comment(link["command"], card, _start_line(job))
+        comment(link["command"], card, _start_line(job))
         return
     _event(card, "worker_run", {"run_id": job["id"], "runner": job.get("runner"), "mode": job.get("mode"),
                                 "model": job.get("model"), "repo": job.get("repo"), "branch": job.get("branch")})
@@ -120,7 +201,7 @@ def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link:
     """One step of a run's end on a Hermes card; raises ``CardLinkError`` when it did not go through. True when
     ``wake`` woke the card."""
     if step == "comment":
-        _comment(link["command"], card, body)
+        comment(link["command"], card, body)
     elif step == "attach" and report is not None and report.is_file():
         _kanban(link["command"], card, "attach", str(report), "--name", f"report-{job['id']}-{run}.md",
                 "--author", AUTHOR)
@@ -158,25 +239,63 @@ def park(store, card: dict, open_runs: list[str]) -> None:
         mark.write_text(" ".join(open_runs) + f"\n{time.time():.3f}\n", encoding="utf-8")
 
 
+def _last_schedule(view: dict) -> tuple[list[str], str | None]:
+    """The runs the card's last ``scheduled`` event names (its ``reason`` and ``goal_park.workers``), and that
+    event's identity; ``([], None)`` when it has none."""
+    for event in reversed(view.get("events") or []):
+        if isinstance(event, dict) and event.get("kind") == "scheduled":
+            payload = event.get("payload") if isinstance(event.get("payload"), dict) else {}
+            park = payload.get("goal_park") if isinstance(payload.get("goal_park"), dict) else {}
+            text = " ".join([str(payload.get("reason") or ""), *map(str, park.get("workers") or [])])
+            return list(dict.fromkeys(RUN_ID.findall(text))), f"{event.get('created_at')}:{event.get('run_id')}"
+    return [], None
+
+
+def _still_open(store, run_id: str) -> bool:
+    """A run (or batch) this hub did not start counts as open: the tool that started it wakes the card."""
+    from hermes_cli.worker.hub import ENDED
+    ended = ENDED + ("unknown",)
+    if run_id.startswith("OG-"):
+        members = [job for job in store.all() if job.get("group") == run_id]
+        return not members or any(job.get("state") not in ended for job in members)
+    job = store.load(run_id)
+    return job is None or job.get("state") not in ended
+
+
 def wake(store, card: dict, link: dict, run_id: str) -> bool:
-    """Unblock the card once if ``park`` left it parked on *run_id*; True when it was. The end of a run the card
-    does not wait on leaves it parked."""
+    """Unblock the card once if it waits on *run_id*; True when it was woken.
+
+    It waits on the run when its last ``scheduled`` event names it: then it is woken after the last run that
+    schedule names has ended, and never while one this hub does not know is named.
+    Else when ``park`` (``lina worker wait``) recorded the run. The end of a run the card does not wait on, or
+    whose schedule still waits on others, leaves it parked."""
     with store.lock(f"card-{card_key(card)}"):
         mark = _parked_path(store, card)
         try:
-            waited = mark.read_text(encoding="utf-8-sig").splitlines()[0].split()
+            parked = mark.read_text(encoding="utf-8-sig").splitlines()[0].split()
         except (FileNotFoundError, IndexError):
-            return False
-        if run_id not in waited:
-            return False
+            parked = []
         try:
-            status = json.loads(_kanban(link["command"], card, "show", "--json"))["task"]["status"]
+            view = json.loads(_kanban(link["command"], card, "show", "--json"))
+            status = view["task"]["status"]
         except (ValueError, KeyError, TypeError) as exc:
             raise CardLinkError("kanban show did not return task.status") from exc
+        named, schedule = _last_schedule(view)
+        woken = store.root / "cards" / f"{card_key(card)}.woken"
+        if run_id in named:
+            if any(_still_open(store, other) for other in named if other != run_id):
+                return False
+            if woken.is_file() and woken.read_text(encoding="utf-8-sig").strip() == schedule:
+                return False  # this schedule was woken already, by the end of another run it names
+        elif run_id not in parked:
+            return False
         if status in ("running", "ready"):
             raise CardLinkError(f"card {card['task']} is {status}; waiting for kanban_schedule")
         if status == "scheduled":
             _kanban(link["command"], card, "unblock")
+            if schedule:
+                woken.parent.mkdir(parents=True, exist_ok=True)
+                woken.write_text(schedule + "\n", encoding="utf-8")
         with contextlib.suppress(FileNotFoundError):
             mark.unlink()
         return status == "scheduled"

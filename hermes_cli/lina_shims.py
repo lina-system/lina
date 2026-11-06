@@ -7,20 +7,28 @@ output) and exits with the wrapped command's code.
 
 Who owns a task ID: ``lina worker``'s hub record (``worker/hub/jobs/<ID>.json``) is the registry of the IDs it started.
 An ID it does not hold was started by the old tool, and goes to the old ``omo-task`` kept beside it when
-``worker.legacy_omo_task`` names it. One call goes to one tool, never both.
+``worker.legacy_omo_task`` names it. One call goes to one tool, never both, except ``list``: ``lina worker``'s tasks,
+then the old tool's ``list``.
+
+An installed shim always runs in the LINA root it was installed for (``LINA_HOME``). A caller's ``HERMES_HOME``
+outside that root is Hermes Agent's profile home: it is taken out of the environment (LINA would drop it) and kept
+as ``LINA_CALLER_HERMES_HOME``, so ``lina worker`` can name the caller's profile as a run's owner.
 """
 
 from __future__ import annotations
 
 import os
+import subprocess
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 
 TOOLS = {"omo-task": "worker", "work": "work"}
-ID_VERBS = frozenset({"status", "send", "cancel", "result", "accept", "reject", "fork", "receipts", "unschedule"})
+ID_VERBS = frozenset({"status", "send", "cancel", "result", "accept", "reject", "fork", "receipts", "unschedule",
+                      "attach", "card"})
 NO_FORK = ("omo-task fork: lina worker has no fork. Submit a new brief instead (`omo-task submit --brief <file> "
            "--input <the task's out/>`), or `omo-task send <ID> <message>` for the next run in the same session.")
+LEGACY_LIST_TIMEOUT_S = 120
 TEMPLATES = Path(__file__).resolve().parents[1] / "scripts" / "shims"
 
 
@@ -29,6 +37,7 @@ class Route:
     to: str  # "lina", "legacy" or "refuse"
     argv: list[str]
     message: str = ""
+    then: list[str] = field(default_factory=list)  # the old tool's argv run after lina's (``list``)
 
 
 def _task_id(args: list[str]) -> str | None:
@@ -58,11 +67,25 @@ def route(tool: str, args: list[str], base: Path | None = None) -> Route:
         return Route("legacy", [legacy, *args])
     if tool == "omo-task" and args[:1] == ["fork"]:
         return Route("refuse", [], NO_FORK)
+    if tool == "omo-task" and args[:1] == ["list"] and (legacy := legacy_omo_task(base)):
+        return Route("lina", [TOOLS[tool], *args], then=[legacy, *args])
     return Route("lina", [TOOLS[tool], *args])
+
+
+def keep_caller_home(environ=os.environ) -> None:
+    """Move a ``HERMES_HOME`` outside the LINA root (Hermes Agent's) to ``LINA_CALLER_HERMES_HOME``."""
+    from hermes_cli.worker import settings
+    raw = environ.get("HERMES_HOME", "").strip()
+    if not raw:
+        return
+    home, root = Path(raw).expanduser().resolve(), settings.lina_home().resolve()
+    if home != root and root not in home.parents:
+        environ[settings.CALLER_HERMES_HOME] = environ.pop("HERMES_HOME")
 
 
 def main(argv: list[str] | None = None) -> None:
     tool, *args = sys.argv[1:] if argv is None else argv
+    keep_caller_home()
     decision = route(tool, args)
     if decision.to == "refuse":
         print(decision.message, file=sys.stderr)
@@ -71,11 +94,26 @@ def main(argv: list[str] | None = None) -> None:
         os.execv(decision.argv[0], decision.argv)
     from hermes_cli.main import main as lina_main
     sys.argv = ["lina", *decision.argv]
-    lina_main()
+    if not decision.then:
+        lina_main()
+        return
+    try:
+        lina_main()
+        code = 0
+    except SystemExit as ended:
+        code = ended.code if isinstance(ended.code, int) else (0 if ended.code is None else 1)
+    sys.stdout.flush()
+    try:
+        legacy = subprocess.run(decision.then, check=False, timeout=LEGACY_LIST_TIMEOUT_S).returncode
+    except subprocess.TimeoutExpired:
+        print(f"omo-task list: the old tool did not answer in {LEGACY_LIST_TIMEOUT_S} s", file=sys.stderr)
+        legacy = 1
+    sys.exit(code or legacy)
 
 
 def install(base: Path | None = None, *, out=print) -> int:
-    """``lina install --shims``: write ``omo-task`` and ``work`` into ``$LINA_HOME/bin/`` for this interpreter."""
+    """``lina install --shims``: write ``omo-task`` and ``work`` into ``$LINA_HOME/bin/`` for this interpreter, each
+    pinned to that LINA root."""
     from hermes_cli.lina_ocx import lina_root
     from hermes_cli.worker.settings import child_pythonpath
     root = base or lina_root()
