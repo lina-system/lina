@@ -292,6 +292,37 @@ def test_adopting_a_run_never_raises_the_access_the_hub_holds(lane):
     assert (job["runs"], job["access"], job["grant"]["access"]) == (2, "read-only", "read-only")
 
 
+def test_access_lowered_into_a_queued_run_survives_its_end_before_the_retry(lane):
+    """The keyed send lowered access while run 1 still waited for serve (queued into it); the reply was lost and run 1
+    ended before the retry. The next plain send starts run 2 read-only."""
+    task_id = _submitted(lane)
+    _first_follow_up_reply_lost(lane)
+    with pytest.raises(HubError, match="follow_up got no reply"):
+        lane.hub.send(task_id, "less", access="read-only", request_key="rk-queued")
+    _ended(lane, task_id)
+    assert lane.hub.notify(task_id, "done", "1") != "earlier run"
+    lane.lines.clear()
+    assert lane.hub.send(task_id, "less", access="read-only", request_key="rk-queued") == 0
+    assert lane.lines == [f"{task_id} replay of request key rk-queued: queued run 1"]
+    assert lane.hub.send(task_id, "again") == 0
+    access, grant, runs = _access(lane, task_id)
+    assert (access, grant, runs["2"], lane.hub.store.load(task_id)["runs"]) == ("read-only", "read-only",
+                                                                               "read-only", 2)
+
+
+def test_a_lower_access_the_device_holds_is_what_the_next_send_uses(lane):
+    task_id = _submitted(lane)
+    _ended(lane, task_id)
+    device_job = lane.root / "tasks" / task_id / "job.json"
+    device_job.write_text(json.dumps({**json.loads(device_job.read_text(encoding="utf-8")), "access": "read-only"}),
+                          encoding="utf-8")
+    assert lane.hub.send(task_id, "again") == 0
+    access, grant, runs = _access(lane, task_id)
+    assert (access, grant, runs["2"]) == ("read-only", "read-only", "read-only")
+    synced = [r for r in lane.hub.store.receipts_of(task_id) if r["kind"] == "access_synced"]
+    assert [(r["from"], r["to"]) for r in synced] == [("workspace-write", "read-only")]
+
+
 def test_an_answer_whose_reply_was_lost_is_not_applied_again_by_another_verb(lane):
     """The device took the answer, the reply was lost and the question closed: the retry must not steer or start a
     run with the same words; it returns the first answer."""

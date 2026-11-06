@@ -86,7 +86,10 @@ run, a fresh state, delivery and verdict, the run's access from the device's
 `meta` and the task's access lowered to it (never raised), and delivers the
 end as usual; only an end of an older run is recorded silently. A later
 replay of the request that started an adopted run that has ended changes
-nothing but the key's record.
+nothing but the key's record and lowers the task's access to the request's.
+Before a send chooses its access, the hub lowers its job to the device's
+access from `meta` when that is lower (receipt `access_synced`, `from`/`to`);
+the device's value never raises it.
 `hello` lists `request_keys` in `capabilities`.
 A device without it ignores the key; the hub's record is the only guard there,
 and the hub writes one `device_without_keys` receipt per task. `lina work`

@@ -90,6 +90,17 @@ def _question_text(item) -> str:
     return ""
 
 
+def _allowed_access(job: dict, access: str | None) -> str:
+    """The access a send asks for (the job's when None); refused when unknown or above the job's."""
+    recorded = job.get("access", "workspace-write")
+    requested = recorded if access is None else access
+    if requested not in ACCESS or recorded not in ACCESS:
+        raise HubError(f"invalid access mode: {requested!r}")
+    if ACCESS.index(requested) > ACCESS.index(recorded):
+        raise HubError(f"access {requested} exceeds recorded access {recorded}; submit a new task")
+    return requested
+
+
 def _ago(at: float | None) -> str:
     if not at:
         return "-"
@@ -616,13 +627,10 @@ class Hub:
             raise HubError(f"{task_id} has not started yet (queued): cancel it and submit a new brief instead")
         if job.get("state") == "placing":
             raise HubError(f"{task_id} is still being handed to {job['host']}: send it again in a moment")
-        recorded = job.get("access", "workspace-write")
-        requested = recorded if access is None else access
-        if requested not in ACCESS or recorded not in ACCESS:
-            raise HubError(f"invalid access mode: {requested!r}")
-        if ACCESS.index(requested) > ACCESS.index(recorded):
-            raise HubError(f"access {requested} exceeds recorded access {recorded}; submit a new task")
+        _allowed_access(job, access)
         transport, remote = self.transport(job), self.meta(job)
+        job = self._synced_access(job, remote.get("access"))
+        recorded, requested = job.get("access", "workspace-write"), _allowed_access(job, access)
         human = transport.call(["human", task_id], timeout=90).json()
         if human.get("permission"):
             raise HubError(f"{task_id}: permission_dialog")
@@ -635,6 +643,16 @@ class Hub:
             reply = self._device_write(job, transport, "send", {"message": message}, request_key)
             return self._steered(job, reply, message, request_key)
         return self._next_run(job, message, request_key=request_key)
+
+    def _synced_access(self, job: dict, device_access: str | None) -> dict:
+        """The job with its access lowered to the device job's when that is lower: a lowering whose reply never
+        reached the hub (lost, replayed after its run ended) is what the device holds. Never raised from it."""
+        with self.store.edit(job["id"]) as stored:
+            before = stored.get("access", "workspace-write")
+            request_keys.lower_access(stored, device_access)
+        if stored.get("access", "workspace-write") != before:
+            self.store.receipt(job["id"], "access_synced", **{"from": before, "to": stored["access"]})
+        return stored
 
     def resend(self, task_id: str, record: dict) -> int:
         """A keyed send whose device reply was lost: the verb it chose, with the same arguments and key, never a new

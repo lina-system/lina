@@ -205,18 +205,17 @@ def reconcile(hub, task_id: str, key: str, reply: dict, *, access: str | None = 
               run_access: str | None = None) -> int:
     """A reply the device kept for *key* (``replayed``): what it says happened before, so it is filled in and never
     applied as new. The task moves only to a run newer than the one it holds (another request may have started a
-    later run since), and a replay never raises the task's access. A run the task holds that has ended (its end
-    adopted the run) is left as it is."""
+    later run since). The task's access is lowered to the request's whatever became of its run (lowering never
+    undoes a newer restriction) and never raised; a run the task holds that has ended keeps its state."""
     from hermes_cli.worker.hub import ENDED
     action, run = reply["action"], reply.get("run")
     with hub.store.edit(task_id) as job:
         held = int(job.get("runs") or 1)
         going = int(run or held) > held or (int(run or held) == held and job.get("state") not in ENDED)
         taken = action == "requested" and take_run(job, run, run_access)
-        if going and not taken:
-            lower_access(job, access)
-            if run_access and action in ("queued", "requested"):
-                job.setdefault("run_access", {}).setdefault(str(run), run_access)
+        lower_access(job, access)
+        if going and not taken and run_access and action in ("queued", "requested"):
+            job.setdefault("run_access", {}).setdefault(str(run), run_access)
     sent(hub.store, task_id, key, action, run)
     _replayed(hub, hub.store.load_key(key), task_id, f"{task_id} replay of request key {key}: {action} run {run}")
     return 0
