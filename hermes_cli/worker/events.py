@@ -6,10 +6,12 @@ and ``notified`` receipts, the job's ``notified`` list, the card's event and com
 starts with it (``run.completed (done)``).
 
 Its delivery id is ``<task>:<run>:<event>`` (a question adds ``:<question key>``) or
-``<node>:host.unavailable:<outage start>``. The hub appends the ids it delivers to ``hub/deliveries.jsonl`` under the
-``deliveries`` lock before it sends anything: a repeat (a device retry, the tick, a hub restart in between) is
-recorded as ``delivery_duplicate`` and sent nowhere. Job files from before keep ``<state>:<run>`` and
-``human:<run>[:<key>]`` markers, which count as delivered too.
+``<node>:host.unavailable:<outage start>``. A run's end is first held on its job (``deliveries_pending``), then sent;
+only once the send returned does the hub append its id to ``hub/deliveries.jsonl`` (the ``deliveries`` lock) and mark
+it on the job. An id in that file is done: a repeat (a device retry, the tick, a hub restart) is recorded as
+``delivery_duplicate`` and sent nowhere. An id held but not done (the send failed, or the hub stopped before it) is
+sent by the next report or tick. Job files from before keep ``<state>:<run>`` and ``human:<run>[:<key>]`` markers,
+which count as delivered too.
 """
 
 from __future__ import annotations
@@ -76,16 +78,21 @@ def signed(text: str, delivery: str | None) -> str:
     return f"{text.rstrip()}\n\ndelivery {delivery}\n" if delivery else text
 
 
-def claim(store, delivery: str, **record) -> bool:
-    """Record *delivery* as delivered before it is sent; False when it was already."""
+def done(store, delivery: str) -> bool:
+    """*delivery* went out (it is in ``deliveries.jsonl``)."""
+    with store.lock("deliveries"):
+        return delivery in _delivered_ids(store)
+
+
+def record(store, delivery: str, **fields_) -> None:
+    """Record *delivery* as done, once its send returned."""
     with store.lock("deliveries"):
         if delivery in _delivered_ids(store):
-            return False
+            return
         store.root.mkdir(parents=True, exist_ok=True)
         with store.deliveries.open("a", encoding="utf-8") as fh:
-            fh.write(json.dumps({"id": delivery, "at": time.strftime("%FT%T%z"), **record}, ensure_ascii=False,
+            fh.write(json.dumps({"id": delivery, "at": time.strftime("%FT%T%z"), **fields_}, ensure_ascii=False,
                                 default=str) + "\n")
-    return True
 
 
 def _delivered_ids(store) -> set[str]:

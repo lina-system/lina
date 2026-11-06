@@ -8,7 +8,7 @@ its running runs, which become ``unknown`` (no notice of their own), to each age
 per card. While the node stays down nothing more is sent. The first answered tick afterwards sends one line,
 ``<node> is back after <duration>; runs <ids> continue``, and resets the record. A run left ``unknown`` whose device
 answers ``running`` or an end goes back under the tick's watch (``Hub._watch``), so its end is delivered once like any
-other.
+other. A tick that finds no watched run on a node, or a placement published on it, resets its record too.
 """
 
 from __future__ import annotations
@@ -37,6 +37,17 @@ def watch(hub) -> None:
             _failed_contact(hub, node, jobs)
         else:
             _answered(hub, node, jobs, replies)
+    for path in hub.store.nodes.glob("*.json"):
+        if path.stem not in nodes:
+            reset(hub.store, path.stem)
+
+
+def reset(store, node: str) -> None:
+    """*node* holds no outage any more (no watched run is left on it, or a placement on it was published): a later
+    loss of contact counts from zero and is told again."""
+    record = store.load_node(node)
+    if record and (record.get("failures") or record.get("notified_outage")):
+        store.save_node({"node": node, "failures": 0, "down_since": None, "notified_outage": None})
 
 
 def _failed(job: dict, reply: dict) -> bool:
@@ -62,27 +73,35 @@ def _failed_contact(hub, node: str, jobs: list[dict]) -> None:
     record["failures"] += 1
     record["down_since"] = record["down_since"] or time.time()
     if record["failures"] >= FAILED_CONTACTS and not record["notified_outage"]:
-        _unavailable(hub, node, record, [job for job in jobs if job.get("state") == "running"])
+        _unavailable(hub, node, record, jobs)
     hub.store.save_node(record)
 
 
-def _unavailable(hub, node: str, record: dict, running: list[dict]) -> None:
+def _unavailable(hub, node: str, record: dict, jobs: list[dict]) -> None:
+    """The outage told once: its running runs become ``unknown`` first, then the notice goes out, then its id is
+    done. A hub that stopped in between finds those runs ``unknown`` with this outage on them and tells it then."""
     delivery = events.outage_id(node, record["down_since"])
-    named = [job for job in running if mark_unknown(hub.store, job["id"], delivery)]
+    named = [job for job in jobs if _held(job, delivery) or mark_unknown(hub.store, job["id"], delivery)]
     if not named:
         return
     record.update(notified_outage=delivery, runs=[job["id"] for job in named])
-    if not events.claim(hub.store, delivery, node=node, runs=record["runs"]):
+    if events.done(hub.store, delivery):
         for job in named:
             events.duplicate(hub.store, job["id"], "unknown", "x", delivery)
         return
     payload = {"device": node, "since": record["down_since"], "delivery": delivery, **events.fields("unknown")}
     how = _tell(hub, named, events.signed(_outage_text(node, record, named), delivery),
                 f"{events.HOST_UNAVAILABLE}-{node}", payload)
+    events.record(hub.store, delivery, node=node, runs=record["runs"])
     for job in named:
         hub.store.receipt(job["id"], "notified", how=how[:200], state="unknown", run="x", delivery=delivery,
                           **events.fields("unknown"))
     hub.store.log(f"{node} {events.HOST_UNAVAILABLE} {delivery}: {how}")
+
+
+def _held(job: dict, delivery: str) -> bool:
+    return job.get("state") == "unknown" and any(isinstance(entry, dict) and entry.get("delivery") == delivery
+                                                 for entry in job.get("notified") or [])
 
 
 def _outage_text(node: str, record: dict, jobs: list[dict]) -> str:
@@ -103,7 +122,7 @@ def _answered(hub, node: str, jobs: list[dict], replies: dict[str, dict]) -> Non
     record = hub.store.load_node(node)
     if not record or not record.get("failures"):
         return
-    hub.store.save_node({"node": node, "failures": 0, "down_since": None, "notified_outage": None})
+    reset(hub.store, node)
     if not record.get("notified_outage"):
         return
     from hermes_cli.worker.hub import _ago

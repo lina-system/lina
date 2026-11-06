@@ -79,12 +79,18 @@ the usual words. Their last line is `delivery <id>`.
 
 The delivery id is `<task>:<run>:<event>`. A question adds `:<question key>`
 (the omo runner's question ids, else a hash of the question). An outage's id is
-`<node>:host.unavailable:<outage start>`. The hub appends each id to
-`hub/deliveries.jsonl` under one lock before it sends anything. A repeat of an
-id, whether from a device retrying its report, the tick seeing the same end or a
-hub that restarted in between, is recorded as a `delivery_duplicate` receipt and
-sent nowhere. Older job files whose `notified` entries read `<state>:<run>` or
-`human:<run>` count as already delivered.
+`<node>:host.unavailable:<outage start>`. Under the job's lock the hub first
+holds a run's end on the job (`deliveries_pending`: its kind, run and time),
+then builds the notice and sends it. Only once the send has returned does it
+append the id to `hub/deliveries.jsonl` and mark it on the job. An end on a
+Hermes card is done once its card work (`card_pending`) holds it, because that
+work is retried step by step. An id in `deliveries.jsonl` is done. A repeat of
+it, whether from a device retrying its report, the tick seeing the same end or a
+hub that restarted, is recorded as a `delivery_duplicate` receipt and sent
+nowhere. An id that is held but not done, because the send failed or the hub
+stopped before it, is sent by the next report or tick. Older job files whose
+`notified` entries read `<state>:<run>` or `human:<run>` count as already
+delivered.
 
 The tick keeps one record per node in `hub/nodes/<node>.json` (`failures`,
 `down_since`, `notified_outage`). A tick on which no call to the node about its
@@ -96,5 +102,7 @@ run with its card, and goes to each agent the runs belong to, with one comment
 per card. Those runs become `unknown` without a notice of their own. Nothing more
 is sent while the node stays down. The first answered contact afterwards sends
 one line, `<node> is back after <duration>; runs <ids> continue`, and resets the
-record. An `unknown` run whose device then reports it running or ended goes back
-under watch, so its end is delivered once like any other.
+record. A tick that finds no running or `unknown` run on a node, or a placement
+published on it, resets its record too, so its next outage is told again. An
+`unknown` run whose device then reports it running or ended goes back under
+watch, so its end is delivered once like any other.

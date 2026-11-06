@@ -292,3 +292,78 @@ def test_a_run_that_outlives_an_outage_has_its_end_delivered_once(far, ends):
     assert outage.startswith("host.unavailable · ") and end.startswith("run.completed (done) · ")
     assert back == "far is back after 1m; " + (f"runs {task_id} continue\n" if ends == "after it is back"
                                                else "no run continues\n")
+
+
+class HubStopped(BaseException):
+    """The hub process ending where it is raised."""
+
+
+def _fetch_failing_once(monkeypatch, error: BaseException) -> None:
+    calls = []
+
+    def fetch(transport, task_id, out):
+        calls.append(task_id)
+        if len(calls) == 1:
+            raise error
+        out.mkdir(parents=True, exist_ok=True)
+    monkeypatch.setattr(hub_module, "fetch", fetch)
+
+
+def _sent_once(far: Far, task_id: str) -> None:
+    delivery = f"{task_id}:1:run.completed"
+    (chat,) = far.chats()
+    assert chat.startswith("run.completed (done) · ") and chat.splitlines()[-1] == f"delivery {delivery}"
+    comments, _ = _on_card(far.card)
+    assert len(comments) == 1 and comments[0].splitlines()[-1] == f"delivery {delivery}"
+    assert [r["delivery"] for r in _receipts(far.hub, task_id, "notified")] == [delivery]
+    job = far.hub.store.load(task_id)
+    assert job["state"] == "done" and not job.get("deliveries_pending")
+
+
+def test_an_end_whose_notice_could_not_be_built_goes_out_once_on_the_retry(far, monkeypatch):
+    task_id = far.run(1, on_card=True)
+    _fetch_failing_once(monkeypatch, OSError("no space left on device"))
+    with pytest.raises(OSError):
+        far.hub.notify(task_id, "done", "1")
+    assert far.chats() == []
+
+    far.hub.notify(task_id, "done", "1")  # the device retries its report
+    far.hub.notify(task_id, "done", "1")
+    far.tick()
+
+    _sent_once(far, task_id)
+    assert len(_receipts(far.hub, task_id, "delivery_duplicate")) == 1
+
+
+def test_an_end_held_by_a_hub_that_stopped_before_sending_it_goes_out_once(far, monkeypatch):
+    task_id = far.run(1, on_card=True)
+    _fetch_failing_once(monkeypatch, HubStopped())
+    with pytest.raises(HubStopped):
+        far.hub.notify(task_id, "done", "1")
+    assert far.chats() == []
+
+    far.hub = Hub(far.root, out=lambda *_: None)
+    far.tick()  # the restarted hub sends what was held
+    far.hub.notify(task_id, "done", "1")  # the device's report arrives again
+
+    _sent_once(far, task_id)
+    assert len(_receipts(far.hub, task_id, "delivery_duplicate")) == 1
+
+
+def test_a_node_whose_runs_ended_after_an_outage_is_told_of_its_next_outage(far):
+    first, second = far.run(1), far.run(2)
+    far.down = True
+    far.tick(3)
+    far.hub.notify(first, "done", "1")  # the runs end; their device's reports reach the hub
+    far.hub.notify(second, "done", "1")
+    far.tick()
+
+    third = far.run(3)
+    far.tick(2)
+    assert len(far.chats()) == 3
+    far.tick()
+
+    outage, _, _, again = far.chats()
+    assert again.startswith("host.unavailable · ") and f"- {third} · " in again and first not in again
+    assert again.splitlines()[-1] == f"delivery far:host.unavailable:{int(START + 4 * TICK_S)}"
+    assert outage.splitlines()[-1] == f"delivery far:host.unavailable:{int(START)}"

@@ -253,6 +253,7 @@ class Hub:
     def _started(self, job: dict, dev: settings.Device) -> None:
         job.update(self.store.update(job["id"], state="running", started=time.time()) or {})
         self.store.receipt(job["id"], "run_started", run=1, host=dev.name, award=job.get("award"))
+        node_watch.reset(self.store, dev.name)
 
     def place(self, job: dict) -> str | None:
         """Start *job* on its fixed device or on the bid winner; None when it stays queued.
@@ -715,13 +716,14 @@ class Hub:
         end = events.marker(job["id"], "stalled", run)
         with self.store.edit(job["id"]) as job:
             first = not events.delivered(job, "stalled", run)
+            if first and events.done(self.store, end["delivery"]):
+                events.duplicate(self.store, job["id"], "stalled", run, end["delivery"])
+            elif first:
+                self.store.receipt(job["id"], "exec_end", state="stalled", run=str(run), delivery=end["delivery"],
+                                   why="closed on an open question by send", **events.fields("stalled"))
+                events.record(self.store, end["delivery"], task=job["id"], run=str(run))
             if first:
                 job.setdefault("notified", []).append(end)
-        if first and not events.claim(self.store, end["delivery"], task=job["id"], run=str(run)):
-            events.duplicate(self.store, job["id"], "stalled", run, end["delivery"])
-        elif first:
-            self.store.receipt(job["id"], "exec_end", state="stalled", run=str(run), delivery=end["delivery"],
-                               why="closed on an open question by send", **events.fields("stalled"))
         return True
 
     def _next_run(self, job: dict, message: str, *, access: str | None = None, request_key: str | None = None,
@@ -877,45 +879,71 @@ class Hub:
             node_watch.mark_unknown(self.store, job["id"])
             return f"{events.HOST_UNAVAILABLE}: one notice per outage of {job.get('host')} (the tick)"
         end = events.marker(job["id"], kind, run)
-        if events.delivered(job, kind, run):
-            events.duplicate(self.store, job["id"], kind, run, end["delivery"])
-            pending = events.pending(job, kind, run)
-            return self._card_steps(job, pending) if pending else "already"
-        if str(run).isdigit() and int(run) > int(job.get("runs") or 1):
-            self._adopt(job, int(run))
-        elif str(run).isdigit() and int(run) >= 1 and int(run) < int(job.get("runs") or 1):
-            # A late end of an earlier run (its notice retried after a follow-up started the next one): record it,
-            # never let it end the run that is going now. A cancel before any run starts ("0") is about the task,
-            # not a run report, and always applies.
-            job.setdefault("notified", []).append(end)
-            self.store.save(job)
-            self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True, delivery=end["delivery"],
-                               **events.fields(kind))
-            return "earlier run"
-        job.update(state=kind, last_state=kind)
-        if not events.claim(self.store, end["delivery"], task=job["id"], run=run):
-            # Sent before by a hub that stopped before saving this job: recorded now, sent nowhere.
-            job.setdefault("notified", []).append(end)
-            self.store.save(job)
-            events.duplicate(self.store, job["id"], kind, run, end["delivery"])
-            return "already"
-        self.store.receipt(job["id"], "exec_end", state=kind, run=run, delivery=end["delivery"], **events.fields(kind))
-        if self._waiter_alive(job):
-            job.setdefault("notified", []).append(end)
-            self.store.save(job)
-            return "waiter"
-        self.store.save(job)
+        if events.delivered(job, kind, run) or events.done(self.store, end["delivery"]):
+            return self._end_again(job, kind, run, end)
+        if end["delivery"] not in (job.get("deliveries_pending") or {}):
+            if str(run).isdigit() and int(run) > int(job.get("runs") or 1):
+                self._adopt(job, int(run))
+            elif str(run).isdigit() and int(run) >= 1 and int(run) < int(job.get("runs") or 1):
+                # A late end of an earlier run (its notice retried after a follow-up started the next one): record
+                # it, never let it end the run that is going now. A cancel before any run starts ("0") is about the
+                # task, not a run report, and always applies.
+                job.setdefault("notified", []).append(end)
+                self.store.save(job)
+                self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True, delivery=end["delivery"],
+                                   **events.fields(kind))
+                return "earlier run"
+            self._end_held(job, kind, run, end["delivery"])
+        held = events.pending(job, kind, run)
+        if self._waiter_alive(job) or held:  # the waiter shows it; a Hermes card's end work goes on from its steps
+            self._end_done(job, end)
+            return self._card_steps(job, held) if held else "waiter"
         self.fetched = None
         text, _ = self._notice_body(job, kind, run)
         fetched = self.fetched
-        job.setdefault("notified", []).append(end)
         job["notice"] = text
         self.store.save(job)
         how = self._end_out(job, kind, run, text, fetched, end["delivery"])
+        self._end_done(job, end)
         self.store.receipt(job["id"], "notified", how=how[:200], state=kind, run=run, delivery=end["delivery"],
                            **events.fields(kind))
         self.store.log(f"{job['id']} {events.headline(kind)} {end['delivery']}: {how}")
         return how
+
+    def _end_held(self, job: dict, kind: str, run: str, delivery: str) -> None:
+        """The end on the job before anything is sent: a send that fails, or a hub that stops before it, leaves it
+        held (``deliveries_pending``) for the next report or tick."""
+        job.update(state=kind, last_state=kind)
+        job.setdefault("deliveries_pending", {})[delivery] = {"kind": kind, "run": run, "created": time.time()}
+        self.store.save(job)
+        self.store.receipt(job["id"], "exec_end", state=kind, run=run, delivery=delivery, **events.fields(kind))
+
+    def _end_done(self, job: dict, end: dict) -> None:
+        """The end went out: its id in ``deliveries.jsonl``, then on the job, no longer held."""
+        events.record(self.store, end["delivery"], task=job["id"], run=end["run"])
+        if end not in job.setdefault("notified", []):
+            job["notified"].append(end)
+        (job.get("deliveries_pending") or {}).pop(end["delivery"], None)
+        if not job.get("deliveries_pending"):
+            job.pop("deliveries_pending", None)
+        self.store.save(job)
+
+    def _end_again(self, job: dict, kind: str, run: str, end: dict) -> str:
+        """A repeat of an end that went out (a device retry, the tick, a hub restart): recorded, sent nowhere; the
+        card work it left goes on."""
+        if not events.delivered(job, kind, run):  # out before a hub that stopped could save it on the job
+            job.update(state=kind, last_state=kind)
+            self._end_done(job, end)
+        events.duplicate(self.store, job["id"], kind, run, end["delivery"])
+        pending = events.pending(job, kind, run)
+        return self._card_steps(job, pending) if pending else "already"
+
+    def _retry_end(self, task_id: str, held: dict) -> None:
+        try:
+            self.store.log(f"{task_id} held end {held['kind']} {held['run']}: "
+                           f"{self.notify(task_id, held['kind'], held['run'])}")
+        except (TransportError, HubError, OSError) as exc:
+            self.store.log(f"{task_id} held end {held['kind']} {held['run']} not sent on tick: {exc}")
 
     def _end_out(self, job: dict, kind: str, run: str, text: str, fetched: bool | None, delivery: str) -> str:
         """Send the end: on a Hermes card only (the card is the one place its run ends), else to the chat (a batch:
@@ -1084,6 +1112,8 @@ class Hub:
             for job in self.store.all():
                 if job.get("card_start_pending") or job.get("card_pending"):
                     self._retry_cards(job["id"])
+                for held in list((job.get("deliveries_pending") or {}).values()):
+                    self._retry_end(job["id"], held)
             node_watch.watch(self)
             for job in self.store.all():
                 if job.get("state") == "queued":
@@ -1139,20 +1169,22 @@ class Hub:
         if now - job["human_since"] < HUMAN_NOTICE_AFTER_S:
             return
         text, key = self._question(job, human)
+        end = events.marker(job["id"], "human", run, key)
         if events.delivered(job, "human", run, key):
             return
-        if kanban_link.on_hermes(job.get("card")):
-            self._card_question(job, run, text, key)
-            return
-        end = events.marker(job["id"], "human", run, key)
-        job.setdefault("notified", []).append(end)
-        if not events.claim(self.store, end["delivery"], task=job["id"], run=run):
+        if events.done(self.store, end["delivery"]):  # out before a hub that stopped could save it on the job
+            job.setdefault("notified", []).append(end)
             events.duplicate(self.store, job["id"], "human", run, end["delivery"])
+            return
+        if kanban_link.on_hermes(job.get("card")):
+            self._card_question(job, run, text, end)
             return
         text = notice.body(job, "human", run, self.store.out_dir(job), {})
         how = self._deliver(job, events.signed(text, end["delivery"]), f"human-{run}")
         if job.get("card"):
             self._card_end(job, "human", run, text, delivery=end["delivery"])
+        events.record(self.store, end["delivery"], task=job["id"], run=run)
+        job.setdefault("notified", []).append(end)
         self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run, delivery=end["delivery"],
                            **events.fields("human"))
 
@@ -1170,16 +1202,11 @@ class Hub:
             key = ",".join(str(q["id"]) for q in questions if q.get("id"))
         return text, key or (hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if text else "-")
 
-    def _card_question(self, job: dict, run: str, text: str, key: str) -> None:
+    def _card_question(self, job: dict, run: str, text: str, end: dict) -> None:
         """One comment on the run's Hermes card for each question it waits on, with the question. It is card work
-        (``card_pending``: the comment step only), so a comment that did not go through is tried again on the next
-        tick. Called under the job's lock."""
+        (``card_pending``: the comment step only), done once held there: a comment that did not go through is tried
+        again on the next tick. Called under the job's lock."""
         if job.get("card_start_pending") or "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
-            return
-        end = events.marker(job["id"], "human", run, key)
-        job.setdefault("notified", []).append(end)
-        if not events.claim(self.store, end["delivery"], task=job["id"], run=run):
-            events.duplicate(self.store, job["id"], "human", run, end["delivery"])
             return
         body = (f"{events.headline('human')} · [lina worker · automatic] run {job['id']} (run {run}) waits for an "
                 "answer:\n\n" + (text or "(the question did not come with the run's state: `lina worker status "
@@ -1189,6 +1216,9 @@ class Hub:
         job.setdefault("card_pending", {})[end["delivery"]] = {
             "kind": "human", "run": run, "text": body, "done": ["attach", "wake"], "fetch_pending": False,
             "fetch_tries": 0, "delivery": end["delivery"], "report": None}
+        job.setdefault("notified", []).append(end)
+        self.store.save(job)
+        events.record(self.store, end["delivery"], task=job["id"], run=run)
         how = self._card_steps(job, end["delivery"])
         self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run, delivery=end["delivery"],
                            **events.fields("human"))
