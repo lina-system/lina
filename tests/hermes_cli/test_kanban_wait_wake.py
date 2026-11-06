@@ -159,6 +159,45 @@ def test_pr_wait_is_met_only_when_every_required_check_has_finished(monkeypatch,
     assert _wait_mod().pr_checks_finished({"kind": "pr", "repo": "o/r", "number": 7}, None) is finished
 
 
+_HEAD = "a" * 40
+
+
+def _fake_github(monkeypatch, *, conclusion: str, head_recheck):
+    """The GitHub answers ``collect_acceptance`` reads for one PR with one required check."""
+    from hermes_cli import kanban_pr_acceptance
+
+    def api(endpoint, *, query=None, paginate=False, profile_home=None):
+        if endpoint == "graphql":
+            return {"data": {"repository": {"pullRequest": {
+                "headRefOid": _HEAD, "baseRefName": "dev", "state": "OPEN",
+                "baseRef": {"branchProtectionRule": {"requiredStatusChecks": [{"context": "tests", "app": None}]}}}}}}
+        if "/rules/branches/" in endpoint or endpoint.endswith("/statuses?per_page=100"):
+            return [[]]
+        if "/check-runs" in endpoint:
+            return [{"total_count": 1, "check_runs": [{"id": 1, "name": "tests", "app": {"id": 5},
+                     "status": "completed", "conclusion": conclusion, "head_sha": _HEAD}]}]
+        return head_recheck()
+
+    monkeypatch.setattr(kanban_pr_acceptance, "_api", api)
+    monkeypatch.setattr(kanban_pr_acceptance, "_assignee_profile_home", lambda assignee: None)
+
+
+def test_a_pr_wait_keeps_waiting_when_the_head_recheck_fails(monkeypatch):
+    def unreachable():
+        raise OSError("network is unreachable")
+
+    _fake_github(monkeypatch, conclusion="success", head_recheck=unreachable)
+
+    assert _wait_mod().pr_checks_finished({"kind": "pr", "repo": "o/r", "number": 7}, None) is False
+
+
+def test_a_pr_wait_is_met_by_a_completed_read_whose_check_was_cancelled(monkeypatch):
+    _fake_github(monkeypatch, conclusion="cancelled", head_recheck=lambda: {
+        "head": {"sha": _HEAD}, "base": {"ref": "dev"}, "state": "open"})
+
+    assert _wait_mod().pr_checks_finished({"kind": "pr", "repo": "o/r", "number": 7}, None) is True
+
+
 def test_needs_input_block_with_an_event_returns_to_ready_but_a_question_waits_for_a_person(board, capsys):
     upstream = kb.create_task(board, title="upstream", assignee="other")
     on_event, _ = _running(board, "blocked on upstream")

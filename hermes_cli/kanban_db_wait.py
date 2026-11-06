@@ -187,15 +187,21 @@ def dispatcher_wake(conn: sqlite3.Connection, task_id: str, park_event_id: int, 
 
 
 def pr_checks_finished(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
-    """True once every required check on the PR's head has a conclusion (pass or fail)."""
+    """True once every required check on the PR's head has a conclusion (pass, fail, or an
+    infrastructure conclusion such as cancelled), read from complete evidence only.
+
+    ``collect_acceptance`` sets ``detail`` on every path that stops before the closing head/base
+    re-read: an unreadable PR, an auth refusal, a collection error (``infra``, possibly with checks
+    already gathered) and a head that moved (``stale``). Those keep waiting and are re-read next
+    tick. The one early stop that is complete is "no required checks" (``required == []``). A
+    receipt without ``detail`` ran to the end, so its ``infra`` can only be a check's conclusion.
+    """
     from hermes_cli.kanban_pr_acceptance import collect_acceptance
 
     url = f"https://github.com/{wait_for['repo']}/pull/{int(wait_for['number'])}"
     receipt = collect_acceptance(url, None, assignee)
-    if "required" not in receipt or receipt.get("classification") in ("auth", "stale"):
-        return False   # the evidence could not be read: keep waiting, re-checked next tick
-    if not receipt["required"]:
-        return True    # nothing required: there is nothing left to wait for
+    if "detail" in receipt:
+        return receipt.get("required") == []
     checks = receipt.get("checks") or []
     return bool(checks) and all(c.get("classification") not in _UNFINISHED_CHECKS for c in checks)
 
