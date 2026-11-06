@@ -51,7 +51,7 @@ from .search_query import (
     should_apply_directness_rank_adjustment,
 )
 from .store import _normalize_source_value, _UNKNOWN_SOURCE, _legacy_blank_source_clause
-from .sqlite_session import ConnectionPolicy, open_connection
+from .sqlite_session import ConnectionPolicy, is_store_connection, open_connection
 from .sqlite_util import _run_sqlite_write_with_snapshot_retry
 
 
@@ -194,6 +194,10 @@ class SummaryDAG:
             on_open=lambda conn: setattr(self, "_conn", conn),
             on_setup_error=None,
         ))
+        if is_store_connection(self._conn):  # LINA: the schema is the store's migrations
+            run_versioned_migrations(self._conn)  # refuses a newer build's stamp; records this build's
+            self._conn.commit()
+            return
         self._conn.executescript("""
             CREATE TABLE IF NOT EXISTS summary_nodes (
                 node_id INTEGER PRIMARY KEY AUTOINCREMENT,

@@ -49,6 +49,47 @@ every turn into the same `lcm.db`. Plugin discovery skips it with one warning na
 `plugin-catalog/removed.yaml` refuses `hermes plugins install hermes-lcm-x` (the live catalog still lists
 it). Remove such a copy with `hermes plugins remove hermes-lcm-x`.
 
+## On the store
+
+LCM-X can keep its data in LINA's Postgres store (lina#16) instead of `lcm.db`: its summary graph and every other
+table in schema `ctx`, message text in `memory.messages`. `plugins/context_engine/lcm_x_store.py` routes an `lcm.db`
+path to the store (`route(path)`); `sqlite_session.open_connection` then returns a `PgConnection`, which logs in as
+`lina_app` with `lina.agent_id` set to the home's profile and runs LCM-X's own SQLite SQL through a translator. The
+schema is `services/store/migrations/0007_ctx_lcm.sql`: LCM-X's tables under their own names, each with
+`agent_id` (row-level security) and keys led by it, the SQLite functions LCM-X calls, and the triggers as PL/pgSQL.
+
+- `messages` is a view: the placement row `ctx.lcm_messages` (LCM-only columns, `text_uid`, `content_sha256`)
+  joined to `memory.messages`. Storing a message the host wrote first reuses that row (by `message_uid` and
+  digest); other text (an ingest-protection stub, a message with no uid) is written once through
+  `hermes_state_store.MessageStore.put_text`. `lina store gc` counts `ctx.lcm_messages` as a holder.
+- Full text: `messages_fts`, `nodes_fts` and `lcm_trajectory_states_fts` are views over the `simple` tsvector
+  and `pg_trgm` indexes; `MATCH` becomes a tsquery built from the FTS5 query, `bm25`/`rank` `ts_rank_cd`.
+  Korean, Chinese and Japanese queries take LCM-X's LIKE path, which runs as `ILIKE` on the trigram index, so
+  `회의` finds `회의록을`.
+- Vectors live in `vec` (`0008_ctx_lcm_vectors.sql`), as views under LCM-X's names. A summary vector is a
+  `vec.embeddings` row of kind `summary` (`item_id` = the node id, `model` = the model of LCM-X's embedding
+  profile). A chunk (`<store_id>:<chunk_index>`, a span of one message) is a `vec.chunks` row (source `lcm-x`,
+  `message_ids` = the `memory.messages` id, `chunk_index`, `text` = the span) and a `vec.embeddings` row of kind
+  `chunk`; `vec.chunks` is keyed by `(source, message_ids, chunk_index)`, NULLs not distinct, so whole-message chunks
+  (`chunk_index` NULL, `lina store reembed`) are unchanged. `vec.embeddings` is 1024 wide (the one embedding model,
+  [store.md](store.md)): a vector of another width is refused.
+- The schema creators and verifiers of `db_bootstrap.py` (and `command.py`'s backfill table) return at once on a
+  store connection. The side readers that open `lcm.db` directly go through `sqlite_session.connect_database`.
+
+`lcm.store_backend` in `config.yaml` (`sqlite` by default; `auto` or `postgres`) puts a home with no `lcm.db` on the
+store when the engine binds its storage; a home with an `lcm.db` keeps it, with a warning. An `lcm.db` is never read or
+changed by any of this; moving its data in is #24.
+
+What is not done yet: LCM-X's suite does not pass on the store yet, so `.github/workflows/lcm-x.yml` does not run it
+there. The Postgres run deselects the tests listed in `.github/lcm-x-postgres-sqlite-only.txt` (they test SQLite itself,
+one reason per line; the SQLite job keeps running them). The suite on the store:
+
+```sh
+cd plugins/context_engine/lcm-x
+LINA_TEST_PG_DSN=<superuser DSN of a throwaway cluster with pgvector> PYTHONPATH=../../.. \
+  python -m pytest tests/ -p plugins.context_engine.lcm_x_store_pytest -m "not latency"
+```
+
 ## Remote
 
 ```sh

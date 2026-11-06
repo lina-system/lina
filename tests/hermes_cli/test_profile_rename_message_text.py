@@ -232,3 +232,104 @@ def test_a_store_without_vec_tables_still_renames(profile_env, memory_store_sql)
     finally:
         memory_store_sql("ALTER SCHEMA vec_hidden RENAME TO vec")
     assert set(_agents(memory_store_sql)) == {"lighthouse"}
+
+
+_LCM_PLUGIN = Path(__file__).resolve().parents[2] / "plugins" / "context_engine" / "lcm-x"
+_LCM_PACKAGE = "lina_lcm_x_rename"
+
+
+def _lcm(module: str):
+    import importlib
+    import importlib.util
+    import sys
+    if _LCM_PACKAGE not in sys.modules:
+        spec = importlib.util.spec_from_file_location(_LCM_PACKAGE, _LCM_PLUGIN / "__init__.py",
+                                                      submodule_search_locations=[str(_LCM_PLUGIN)])
+        package = importlib.util.module_from_spec(spec)
+        package.__path__ = [str(_LCM_PLUGIN)]
+        sys.modules[_LCM_PACKAGE] = package
+    return importlib.import_module(f"{_LCM_PACKAGE}.{module}")
+
+
+def _lcm_engine(profile_dir: Path, monkeypatch):
+    monkeypatch.setenv("HERMES_HOME", str(profile_dir))  # where the engine reads lcm.store_backend
+    # No temporal rollups: their maintenance thread outlives shutdown() and would write into the next test's store.
+    return _lcm("engine").LCMEngine(config=_lcm("config").LCMConfig(embeddings_enabled=False,
+                                                                     temporal_rollups_enabled=False),
+                                    hermes_home=str(profile_dir))
+
+
+def _seed_lcm(profile_dir: Path, memory_store_sql, monkeypatch) -> int:
+    """An LCM-X home on the store (lcm.store_backend: postgres) with two messages, a summary of them and the
+    summary's vector; returns the summary's node id."""
+    import time
+
+    from plugins.context_engine import lcm_x_store
+    (profile_dir / "config.yaml").write_text("lcm:\n  store_backend: postgres\n")
+    engine = _lcm_engine(profile_dir, monkeypatch)
+    try:
+        engine.on_session_start("lcm", conversation_id="c1")
+        ids = engine._store.append_batch("lcm", [{"role": "user", "content": "the harbor tide table is in drawer 4"},
+                                                 {"role": "assistant", "content": "noted: drawer 4"}])
+        node_id = engine._dag.add_node(_lcm("dag").SummaryNode(
+            session_id="lcm", summary="where the tide table is kept", source_ids=ids, token_count=6,
+            created_at=time.time()))
+    finally:
+        engine.shutdown()
+        lcm_x_store.unroute(profile_dir / "lcm.db")
+        monkeypatch.setenv("HERMES_HOME", str(profile_dir.parent.parent))
+    memory_store_sql("INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding) "
+                     "VALUES ('summary', %s, 'harbor', 'qwen3-embedding-8b', 1024, %s::vector)",
+                     (node_id, "[" + ",".join(["0"] * 1023 + ["1"]) + "]"))
+    return node_id
+
+
+def _lcm_owners(memory_store_sql) -> dict[str, set]:
+    """Who holds the LCM records: the agents of ctx's placements and summaries, of the summary vectors, and the
+    agent each placement's text uid names."""
+    return {
+        "placements": {r[0] for r in memory_store_sql("SELECT agent_id FROM ctx.lcm_messages")},
+        "summaries": {r[0] for r in memory_store_sql("SELECT agent_id FROM ctx.summary_nodes")},
+        "summary vectors": {r[0] for r in memory_store_sql("SELECT agent_id FROM vec.embeddings WHERE kind = 'summary'")},
+        "text uids": {r[0].split(":")[1] for r in memory_store_sql("SELECT text_uid FROM ctx.lcm_messages")},
+    }
+
+
+def test_a_renamed_store_profile_keeps_its_lcm_summaries_and_their_text(profile_env, memory_store_sql, monkeypatch):
+    """Codex P1 on #242: a profile on the store (lcm.store_backend: postgres) keeps its LCM records in ctx under
+    its agent; a rename moves them, the summary vectors and the placements' text uids with the text."""
+    from plugins.context_engine import lcm_x_store
+    profile_dir = create_profile("harbor", no_alias=True)
+    _seed(profile_dir)
+    node_id = _seed_lcm(profile_dir, memory_store_sql, monkeypatch)
+    assert set(_lcm_owners(memory_store_sql)["placements"]) == {"harbor"}
+
+    new_dir = _rename("harbor", "lighthouse")
+
+    assert _lcm_owners(memory_store_sql) == {key: {"lighthouse"} for key in
+                                             ("placements", "summaries", "summary vectors", "text uids")}
+    engine = _lcm_engine(new_dir, monkeypatch)
+    try:
+        assert engine._dag.get_node(node_id).summary == "where the tide table is kept"
+        engine.on_session_start("lcm", conversation_id="c1")
+        expanded = engine.handle_tool_call("lcm_expand", {"node_id": node_id})
+        assert "the harbor tide table is in drawer 4" in expanded
+    finally:
+        engine.shutdown()
+        lcm_x_store.unroute(new_dir / "lcm.db")
+
+
+def test_a_failed_rename_gives_the_lcm_records_back(profile_env, memory_store_sql, monkeypatch):
+    from hermes_cli.profile_identity import text_moved_for_rename
+
+    profile_dir = create_profile("harbor", no_alias=True)
+    _seed(profile_dir)
+    _seed_lcm(profile_dir, memory_store_sql, monkeypatch)
+    before = _lcm_owners(memory_store_sql)
+    with pytest.raises(OSError, match="directory move failed"):
+        with text_moved_for_rename(profile_dir, "harbor", "lighthouse"):
+            assert _lcm_owners(memory_store_sql)["placements"] == {"lighthouse"}
+            raise OSError("directory move failed")
+
+    assert _lcm_owners(memory_store_sql) == before == {key: {"harbor"} for key in before}
+    assert set(_agents(memory_store_sql)) == {"harbor"}

@@ -588,6 +588,24 @@ class MessageStore:
                     inserted += len(cur.fetchall())
         return inserted
 
+    def text_uids_with_digest(self, message_uid: str, content_sha256: str) -> list[str]:
+        """The uids of *message_uid*'s text versions (``agent:<p>:<uid>`` and its ``#`` versions) whose content has
+        *content_sha256*, first written first: how LCM-X finds the row Hermes wrote for a message it stores."""
+        base = self.base_uid(message_uid)
+        with self._cursor() as cur:
+            # The versions 'base#...' are the byte range ['base#', 'base$'): comparisons are leakproof, so under the
+            # row-level security of memory.messages they can use messages_uid_c, where LIKE (not leakproof) cannot.
+            cur.execute("SELECT uid FROM memory.messages WHERE (uid = %s OR (uid COLLATE \"C\" >= %s AND uid COLLATE \"C\" < %s))"
+                        " AND content_sha256 = %s AND forgotten_at IS NULL ORDER BY message_id",
+                        (base, base + "#", base + "$", content_sha256))
+            return [row[0] for row in cur.fetchall()]
+
+    def held_by_context(self, uids: Sequence[str]) -> set[str]:
+        """The uids among *uids* an LCM-X message of this agent points at (``ctx.lcm_messages``, lina#16)."""
+        with self._cursor() as cur:
+            cur.execute("SELECT DISTINCT text_uid FROM ctx.lcm_messages WHERE text_uid = ANY(%s)", (list(uids),))
+            return {row[0] for row in cur.fetchall()}
+
     def count(self) -> int:
         with self._cursor() as cur:
             cur.execute("SELECT count(*) FROM memory.messages")
@@ -1086,6 +1104,8 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
             " WHERE o.agent_id = %s AND starts_with(o.uid, %s)"
             " AND n.native->>'payload_sha256' IS DISTINCT FROM o.native->>'payload_sha256'",
             (new_prefix, len(old_prefix) + 1, old_agent, old_prefix)).fetchone()
+        with conn.cursor() as cur:
+            held = _lcm_records_of(cur, old_agent) and _lcm_records_of(cur, new_agent)
     except psycopg.Error as exc:
         raise StoreUnavailableError(f"cannot check the memory store: {exc}".strip()) from exc
     finally:
@@ -1094,6 +1114,8 @@ def check_agent_move(old_agent: str, new_agent: str) -> None:
         raise MessageTextRestoreError(
             f"{clash[0]} message text(s) of {old_agent!r} would take uids that other text of {new_agent!r} already "
             f"holds (first: {clash[1]}); nothing was moved")
+    if held:
+        raise MessageTextRestoreError(f"agent {new_agent!r} already has LCM records ({held}); nothing was moved")
 
 
 def _follow_text_owner(cur, from_agent: str, to_agent: str) -> None:
@@ -1111,11 +1133,75 @@ def _follow_text_owner(cur, from_agent: str, to_agent: str) -> None:
                 (to_agent, from_agent, to_agent))
 
 
-def move_agent_rows(old_agent: str, new_agent: str) -> list[str]:
+class MovedRows(list):
+    """The new uids ``move_agent_rows`` gave text rows, and whether it moved the agent's LCM records too (a repeated
+    move finds them moved already), so ``return_agent_rows`` undoes exactly that move."""
+    lcm_moved = False
+
+
+_LCM_COMMIT_COUNTER = "ctx.lcm_data_version"
+
+
+def _lcm_tables(cur) -> list[str]:
+    """The ctx tables that key rows by agent (LCM-X's records, migration 0007); none on a store from before it."""
+    cur.execute("SELECT format('%I.%I', n.nspname, c.relname) FROM pg_class c"
+                " JOIN pg_namespace n ON n.oid = c.relnamespace"
+                " JOIN pg_attribute a ON a.attrelid = c.oid AND a.attname = 'agent_id' AND NOT a.attisdropped"
+                " WHERE n.nspname = 'ctx' AND c.relkind IN ('r', 'p') AND NOT c.relispartition ORDER BY 1")
+    return [row[0] for row in cur.fetchall()]
+
+
+def _lcm_records_of(cur, agent: str) -> Optional[str]:
+    """The first ctx table (or ``vec.embeddings`` for summary vectors) holding rows of *agent*, or None. The commit
+    counter behind PRAGMA data_version (ctx.lcm_data_version) records nothing of the agent's and is not counted."""
+    for table in _lcm_tables(cur):
+        if table == _LCM_COMMIT_COUNTER:
+            continue
+        cur.execute(f"SELECT 1 FROM {table} WHERE agent_id = %s LIMIT 1", (agent,))
+        if cur.fetchone():
+            return table
+    cur.execute("SELECT to_regclass('vec.embeddings') IS NOT NULL")
+    if cur.fetchone()[0]:
+        cur.execute("SELECT 1 FROM vec.embeddings WHERE kind = 'summary' AND agent_id = %s LIMIT 1", (agent,))
+        if cur.fetchone():
+            return "vec.embeddings"
+    return None
+
+
+def _follow_lcm_owner(cur, from_agent: str, to_agent: str) -> None:
+    """Give *to_agent* every LCM-X record of *from_agent*: the rows of each ctx table, its summary vectors
+    (vec.embeddings kind ``summary``), and its placements' text uids (``agent:<from>:`` -> ``agent:<to>:``, the
+    uids its text now has). *to_agent* must hold none (``_lcm_records_of``), so the move back is exactly this one.
+    ctx's foreign keys lead with agent_id and do not cascade, and ctx.lcm_memory_events refuses any UPDATE, so the
+    owner moves the rows with triggers and key checks off (session_replication_role, this transaction only): every
+    table moves in the same transaction, the text each placement names is the text it named, and nothing for the
+    triggers to record changes. A store from before migration 0007 has no ctx tables and nothing to move."""
+    tables = _lcm_tables(cur)
+    if not tables:
+        return
+    from_prefix, to_prefix = _agent_prefixes(from_agent, to_agent)
+    cur.execute("SET LOCAL session_replication_role = replica")
+    if _LCM_COMMIT_COUNTER in tables:  # the moved counter takes the place of any count *to_agent* had
+        cur.execute(f"DELETE FROM {_LCM_COMMIT_COUNTER} WHERE agent_id = %s", (to_agent,))
+    for table in tables:
+        cur.execute(f"UPDATE {table} SET agent_id = %s WHERE agent_id = %s", (to_agent, from_agent))
+    cur.execute("UPDATE ctx.lcm_messages SET text_uid = %s || substr(text_uid, %s)"
+                " WHERE agent_id = %s AND starts_with(text_uid, %s)",
+                (to_prefix, len(from_prefix) + 1, to_agent, from_prefix))
+    cur.execute("SELECT to_regclass('vec.embeddings') IS NOT NULL")
+    if cur.fetchone()[0]:
+        cur.execute("UPDATE vec.embeddings SET agent_id = %s WHERE kind = 'summary' AND agent_id = %s",
+                    (to_agent, from_agent))
+    cur.execute("SET LOCAL session_replication_role = origin")
+
+
+def move_agent_rows(old_agent: str, new_agent: str) -> MovedRows:
     """Hand *old_agent*'s text rows to *new_agent* in one transaction (as the owner role: row-level security keeps
     lina_app inside one agent): agent_id and the uid prefix ``agent:<old>:`` -> ``agent:<new>:``. A row whose new
     uid already holds the same text stays where it is (its copy is there); one held by other text fails the move.
-    The embedded text and vectors of the moved rows (vec.chunks, kind ``chunk``) move with them. Returns the new uids, so ``return_agent_rows`` can undo exactly this move."""
+    The embedded text and vectors of the moved rows (vec.chunks, kind ``chunk``) move with them, and so do the agent's
+    LCM-X records (``_follow_lcm_owner``) unless *new_agent* has its own. Returns the new uids, so
+    ``return_agent_rows`` can undo exactly this move."""
     import psycopg
     old_prefix, new_prefix = _agent_prefixes(old_agent, new_agent)
     conn = _owner_connection()
@@ -1129,6 +1215,14 @@ def move_agent_rows(old_agent: str, new_agent: str) -> list[str]:
                 (new_agent, new_prefix, len(old_prefix) + 1, old_agent, old_prefix, new_prefix, len(old_prefix) + 1))
             moved = [row[0] for row in cur.fetchall()]
             _follow_text_owner(cur, old_agent, new_agent)
+            moved = MovedRows(moved)
+            if _lcm_records_of(cur, old_agent):
+                held = _lcm_records_of(cur, new_agent)
+                if held:
+                    raise MessageTextRestoreError(
+                        f"agent {new_agent!r} already has LCM records ({held}); nothing was moved")
+                _follow_lcm_owner(cur, old_agent, new_agent)
+                moved.lcm_moved = True
             return moved
     except psycopg.Error as exc:
         raise StoreUnavailableError(
@@ -1146,6 +1240,8 @@ def return_agent_rows(uids: Sequence[str], old_agent: str, new_agent: str) -> No
             cur.execute("UPDATE memory.messages SET agent_id = %s, uid = %s || substr(uid, %s) WHERE uid = ANY(%s)",
                         (old_agent, old_prefix, len(new_prefix) + 1, list(uids)))
             _follow_text_owner(cur, new_agent, old_agent)
+            if getattr(uids, "lcm_moved", False):
+                _follow_lcm_owner(cur, new_agent, old_agent)
     finally:
         conn.close()
 
@@ -1161,8 +1257,10 @@ def move_agent_texts(db_path: Path, old_agent: str, new_agent: str) -> int:
 
 def collect_session_db_text(db: Any, *, older_than_days: float = DEFAULT_COLLECT_DAYS) -> int:
     """``collect_unreferenced`` for a SessionDB's agent, counting references in its state.db."""
-    return db.message_store.collect_unreferenced(
-        lambda uids: db._read_retrying_ioerr(lambda conn: held_text_uids(conn, uids)), older_than_days=older_than_days)
+    store = db.message_store
+    return store.collect_unreferenced(
+        lambda uids: db._read_retrying_ioerr(lambda conn: held_text_uids(conn, uids)) | store.held_by_context(uids),
+        older_than_days=older_than_days)
 
 
 @dataclass(frozen=True)

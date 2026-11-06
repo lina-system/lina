@@ -27,6 +27,7 @@ from hermes_lcm.reconcile import (  # noqa: E402
     _is_hermes_persisted_output_marker, _PRESERVED_TODO_CONTEXT_PREFIX,
     _MODEL_SWITCH_NOTIFICATION_PREFIX, _OOB_MESSAGE_BLOCK_MARKER,
 )
+from hermes_lcm.sqlite_session import connect_database  # noqa: E402  (LINA)
 from hermes_lcm.store import _normalize_observed_at  # noqa: E402
 
 
@@ -83,7 +84,8 @@ def main(argv=None):
     if args.apply and (not backup or not backup.is_file() or backup in (db, state_path)):
         parser.error('--apply requires a separate existing --backup-confirmed file')
     state = sqlite3.connect(state_path.as_uri() + '?mode=ro', uri=True)
-    conn = sqlite3.connect(db.as_uri() + ('?mode=rw' if args.apply else '?mode=ro'), uri=True, isolation_level=None)
+    conn = connect_database(sqlite3.connect, db.as_uri() + ('?mode=rw' if args.apply else '?mode=ro'), uri=True,
+                            isolation_level=None)  # LINA: the store seam (lina#16)
     state.row_factory = conn.row_factory = sqlite3.Row
     try:
         state.execute('BEGIN')

@@ -60,6 +60,7 @@ from hermes_lcm.ingest_protection import (  # noqa: E402
     redact_sensitive_value,
     sensitive_pattern_status,
 )
+from hermes_lcm.sqlite_session import connect_database, store_identity  # noqa: E402  (LINA)
 from hermes_lcm.tokens import count_tokens  # noqa: E402
 
 
@@ -183,7 +184,7 @@ def _contains_serialized_media(content: str) -> bool:
 
 def _read_only_connection(database_path: Path) -> sqlite3.Connection:
     uri = f"{database_path.expanduser().resolve().as_uri()}?mode=ro"
-    connection = sqlite3.connect(uri, uri=True)
+    connection = connect_database(sqlite3.connect, uri, uri=True)  # LINA: the store seam (lina#16)
     connection.row_factory = sqlite3.Row
     try:
         refuse_schema_version_too_new(connection)
@@ -477,16 +478,21 @@ def _write_manifest(
 
 
 def _target_binding(database_path: Path, storage_dir: Path) -> dict[str, Any]:
-    database_path = database_path.expanduser().resolve(strict=True)
     storage_dir = storage_dir.expanduser().resolve(strict=False)
-    database_stat = database_path.stat()
     storage_stat = storage_dir.stat() if storage_dir.exists() else None
-    return {
-        "database": {
+    store = store_identity(database_path)
+    if store is not None:  # LINA: a database on the host's store is bound by the store's identity (lina#16)
+        database = {"path_sha256": _path_digest(database_path.expanduser().resolve(strict=False)), **store}
+    else:
+        database_path = database_path.expanduser().resolve(strict=True)
+        database_stat = database_path.stat()
+        database = {
             "path_sha256": _path_digest(database_path),
             "device": int(database_stat.st_dev),
             "inode": int(database_stat.st_ino),
-        },
+        }
+    return {
+        "database": database,
         "storage_root": {
             "path_sha256": _path_digest(storage_dir),
             "device": int(storage_stat.st_dev) if storage_stat is not None else None,
@@ -1107,7 +1113,7 @@ def main(argv: list[str] | None = None) -> int:
     config = LCMConfig.from_env()
     hermes_home = Path(args.hermes_home or os.environ.get("HERMES_HOME") or "~/.hermes").expanduser().resolve()
     database_path = Path(args.database or config.database_path or hermes_home / "lcm.db").expanduser().resolve()
-    if not database_path.is_file():
+    if not database_path.is_file() and store_identity(database_path) is None:  # LINA: or on the host store
         raise SystemExit("LCM database does not exist")
 
     try:

@@ -467,6 +467,7 @@ _SUPPORTED_LCM_CONFIG_YAML_KEYS = {
     "expansion_reasoning_effort",
     "embedding_query_prefix", "embedding_document_prefix",
     "threshold_full_sweep_max_passes",
+    "store_backend",  # LINA: read by sqlite_session.configured_store_backend (lina#16)
 }
 
 
