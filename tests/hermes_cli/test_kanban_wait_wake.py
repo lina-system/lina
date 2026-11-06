@@ -336,6 +336,35 @@ def test_a_card_re_parked_during_a_pr_read_is_not_woken_by_the_old_result(board,
     assert (task.status, task.block_kind) == expected
 
 
+def test_a_second_wait_for_block_after_a_met_wait_is_not_a_block_loop(board):
+    first, second = (kb.create_task(board, title=t) for t in ("upstream A", "upstream B"))
+    tid, run_id = _running(board, "waits twice")
+    assert kb.block_task(board, tid, reason="needs A", kind="needs_input",
+                         wait_for={"kind": "card", "task_id": first}, expected_run_id=run_id) is True
+    assert kb.complete_task(board, first, result="done") is True
+    assert _wait_mod().wake_waiting_tasks(board) == [tid]
+
+    run_id = kb.claim_task(board, tid).current_run_id
+    assert kb.block_task(board, tid, reason="needs B", kind="needs_input",
+                         wait_for={"kind": "card", "task_id": second}, expected_run_id=run_id) is True
+    parked = kb.get_task(board, tid)
+    assert (parked.status, parked.block_kind) == ("blocked", "needs_input")
+
+    assert kb.complete_task(board, second, result="done") is True
+    assert _wait_mod().wake_waiting_tasks(board) == [tid]
+
+
+def test_a_repeated_needs_input_block_a_person_unblocked_still_goes_to_triage(board):
+    tid, run_id = _running(board, "asks twice")
+    assert kb.block_task(board, tid, reason="which colour?", kind="needs_input", expected_run_id=run_id) is True
+    assert kb.unblock_task(board, tid, by="operator") is True
+
+    run_id = kb.claim_task(board, tid).current_run_id
+    assert kb.block_task(board, tid, reason="which colour?", kind="needs_input", expected_run_id=run_id) is True
+
+    assert kb.get_task(board, tid).status == "triage"
+
+
 def test_turn_budget_end_hands_off_and_returns_to_ready_without_a_failure(board, monkeypatch):
     tid, run_id = _running(board)
     with kb.write_txn(board):

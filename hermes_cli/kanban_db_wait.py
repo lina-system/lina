@@ -209,14 +209,22 @@ def dispatcher_wake(conn: sqlite3.Connection, task_id: str, park_event_id: int, 
     ``park_event_id`` (a person may have unblocked and re-parked it while a PR check was being
     read), then unblocks it keeping ``consecutive_failures``: waiting is not a recovery, so only
     a deliberate unblock by a person resets the retry budget.
+
+    A met wait is a block that resolved itself, not a loop a person has to break, so it is not
+    counted as a repeat: ``block_recurrences`` goes back to 0 (``block_kind`` stays). The next
+    ``--wait-for`` block is therefore a first block again, while a block a person unblocked keeps
+    counting toward ``BLOCK_RECURRENCE_LIMIT`` (triage).
     """
     from hermes_cli import kanban_db as kb
 
     with kb.write_txn(conn):
         if not _still_parked_by(conn, task_id, park_event_id):
             return False
-        return kb.unblock_task(conn, task_id, by=DISPATCHER_ACTOR, keep_failures=True,
-                               reason=f"wait met: {describe_wait(wait_for)}")
+        woken = kb.unblock_task(conn, task_id, by=DISPATCHER_ACTOR, keep_failures=True,
+                                reason=f"wait met: {describe_wait(wait_for)}")
+        if woken:
+            conn.execute("UPDATE tasks SET block_recurrences = 0 WHERE id = ?", (task_id,))
+        return woken
 
 
 def pr_checks_finished(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
