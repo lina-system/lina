@@ -10,6 +10,12 @@ upstream failure accounting guarded against (#29747). That guard is kept separat
 latest ``kanban.planned_stop_limit`` (default 5) runs in a row are all planned stops, the card is
 blocked ``needs_input`` with no ``wait_for``, for a person to look at.
 
+A streak is broken by anything in between, so planned stops alternating with parks on a recorded
+wait (a WAIT verdict, ``--wait-for``) never reach it. ``kanban.planned_stop_total_limit``
+(default 20) bounds those too (lina#258): planned stops since the card was last held for a person
+(a ``blocked`` run that is no park), whatever came between them. Past it the card is blocked the
+same way, and that hold starts the count over.
+
 The streak is read from the run history, no schema of its own. A run is a planned stop when its
 outcome is ``timed_out`` (runtime or iteration limit), or ``scheduled`` with a ``scheduled``
 event whose ``wait_for`` carries ``handoff`` (the turn-budget re-queue). Any other run end
@@ -23,25 +29,33 @@ import time
 from typing import Optional
 
 DEFAULT_PLANNED_STOP_LIMIT = 5
+DEFAULT_PLANNED_STOP_TOTAL_LIMIT = 20
 HANDOFF_KEY = "handoff"
 
 
-def planned_stop_limit() -> int:
-    """``kanban.planned_stop_limit`` from config.yaml; an unusable value falls back to the default."""
+def _kanban_limit(key: str, default: int) -> int:
+    """``kanban.<key>`` from config.yaml; an unusable value falls back to ``default``."""
     from hermes_cli import kanban_db as kb
     from hermes_cli.config import load_config
 
-    raw = ((load_config() or {}).get("kanban") or {}).get("planned_stop_limit", DEFAULT_PLANNED_STOP_LIMIT)
+    raw = ((load_config() or {}).get("kanban") or {}).get(key, default)
     try:
         limit = int(raw)
     except (TypeError, ValueError):
         limit = 0
     if limit < 1:
         # The value itself is not logged: a config value read here is untrusted text.
-        kb._log.warning("kanban: invalid kanban.planned_stop_limit (%s); using %d", type(raw).__name__,
-                        DEFAULT_PLANNED_STOP_LIMIT)
-        return DEFAULT_PLANNED_STOP_LIMIT
+        kb._log.warning("kanban: invalid kanban.%s (%s); using %d", key, type(raw).__name__, default)
+        return default
     return limit
+
+
+def planned_stop_limit() -> int:
+    return _kanban_limit("planned_stop_limit", DEFAULT_PLANNED_STOP_LIMIT)
+
+
+def planned_stop_total_limit() -> int:
+    return _kanban_limit("planned_stop_total_limit", DEFAULT_PLANNED_STOP_TOTAL_LIMIT)
 
 
 def _run_is_planned_stop(conn: sqlite3.Connection, task_id: str, run_id: int, outcome: Optional[str]) -> bool:
@@ -132,9 +146,39 @@ def consecutive_planned_stops(conn: sqlite3.Connection, task_id: str) -> int:
     return streak
 
 
+def planned_stops_since_hold(conn: sqlite3.Connection, task_id: str) -> int:
+    """Planned stops among the card's ended runs since it was last held for a person: a
+    ``blocked`` run that is no park on a recorded wait."""
+    rows = conn.execute(
+        "SELECT id, outcome FROM task_runs WHERE task_id = ? AND ended_at IS NOT NULL ORDER BY id DESC",
+        (task_id,),
+    ).fetchall()
+    total = 0
+    for row in rows:
+        run_id, outcome = int(row["id"]), row["outcome"]
+        if outcome == "blocked" and not _run_is_park(conn, task_id, run_id, outcome):
+            break
+        total += _run_is_planned_stop(conn, task_id, run_id, outcome)
+    return total
+
+
 def _streak_reason(streak: int) -> str:
     return (f"{streak} planned stops in a row (turn budget, runtime or iteration limit) without the "
             "card finishing; a person should look at it before it runs again.")
+
+
+def _hold_reason(conn: sqlite3.Connection, task_id: str, *, pending: int) -> Optional[str]:
+    """Why the card must now be held for a person, or None. ``pending`` counts a planned stop
+    whose run is not ended yet (the turn-budget re-queue decides before it parks)."""
+    streak = consecutive_planned_stops(conn, task_id) + pending
+    if streak >= planned_stop_limit():
+        return _streak_reason(streak)
+    total = planned_stops_since_hold(conn, task_id) + pending
+    if total >= planned_stop_total_limit():
+        return (f"{total} planned stops (turn budget, runtime or iteration limit) since this card was "
+                "last held for a person, with waits in between, and it still has not finished; a "
+                "person should look at it before it runs again.")
+    return None
 
 
 def hand_off_or_hold(conn: sqlite3.Connection, task_id: str, *, run_id: Optional[int], why: str,
@@ -149,12 +193,12 @@ def hand_off_or_hold(conn: sqlite3.Connection, task_id: str, *, run_id: Optional
     kb.add_comment(conn, task_id, author, (
         f"Handoff: {why}. The card is back in {back_to}; the next run continues from this card's "
         "comments and prior attempts."), run_id=run_id)
-    streak = consecutive_planned_stops(conn, task_id)
-    if streak < planned_stop_limit():
+    reason = _hold_reason(conn, task_id, pending=0)
+    if reason is None:
         return False
     if back_to == "review":
-        return _hold_review_card(conn, task_id, _streak_reason(streak))
-    return kb.block_task(conn, task_id, reason=_streak_reason(streak), kind="needs_input")
+        return _hold_review_card(conn, task_id, reason)
+    return kb.block_task(conn, task_id, reason=reason, kind="needs_input")
 
 
 def _hold_review_card(conn: sqlite3.Connection, task_id: str, reason: str) -> bool:
@@ -195,10 +239,9 @@ def park_turn_budget_end(conn: sqlite3.Connection, task_id: str, *, run_id: Opti
     text is written as a comment either way. False = this run no longer owns the card."""
     from hermes_cli import kanban_db as kb
 
-    streak = consecutive_planned_stops(conn, task_id) + 1
-    if streak >= planned_stop_limit():
-        moved = kb.block_task(conn, task_id, reason=_streak_reason(streak), kind="needs_input",
-                              expected_run_id=run_id)
+    hold = _hold_reason(conn, task_id, pending=1)
+    if hold is not None:
+        moved = kb.block_task(conn, task_id, reason=hold, kind="needs_input", expected_run_id=run_id)
     else:
         wait_for = {"kind": "until", "at": int(time.time()), HANDOFF_KEY: "turn_budget"}
         moved = kb.schedule_task(conn, task_id, reason=reason, wait_for=wait_for, expected_run_id=run_id)
@@ -235,7 +278,7 @@ def end_iteration_budget_run(conn: sqlite3.Connection, task_id: str, *, used: in
 
 
 __all__ = [
-    "DEFAULT_PLANNED_STOP_LIMIT", "HANDOFF_KEY", "consecutive_planned_stops", "end_iteration_budget_run",
-    "hand_off_or_hold", "latest_attempt_run", "park_turn_budget_end", "planned_stop_limit",
-    "worker_started_since",
+    "DEFAULT_PLANNED_STOP_LIMIT", "DEFAULT_PLANNED_STOP_TOTAL_LIMIT", "HANDOFF_KEY", "consecutive_planned_stops",
+    "end_iteration_budget_run", "hand_off_or_hold", "latest_attempt_run", "park_turn_budget_end",
+    "planned_stop_limit", "planned_stop_total_limit", "planned_stops_since_hold", "worker_started_since",
 ]
