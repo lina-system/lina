@@ -42,7 +42,7 @@ class Lane:
         else:
             argv = fakes.install_fake_cli(self.fake)
             monkeypatch.setenv("FAKE_CLI_LOG", str(self.fake / "cli.jsonl"))
-            runners = f"fakecli: {json.dumps({'type': 'command', 'argv': argv})}\n"
+            runners = f"fakecli: {json.dumps({'type': 'command', 'argv': argv, 'access': 'workspace-write'})}\n"
         self.runners_yaml = runners
         fakes.write_config(self.base, runners)
         self.runner = "omo" if kind == "omo" else "fakecli"

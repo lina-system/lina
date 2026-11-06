@@ -49,7 +49,7 @@ _BOOL, _INT, _STR, _STRS = "bool", "int", "str", "strs"
 DEVICE = {"host": _STR, "role": _STR, "cap": _INT, "named_cap": _INT, "last": "last", "fast": _BOOL,
           "no_repo": _BOOL, "off": _BOOL, "auto": _BOOL, "lina": _STR}
 RUNNER = {"type": _STR, "argv": _STRS, "follow_up_argv": _STRS, "model_args": _STRS, "on": _BOOL, "model": "model",
-          "fallback_model": "model", "access": _STR, "bin": _STR, "node": _STR, "engine": _STR}
+          "fallback_model": "model", "access": _STR, "access_args": "access_args", "bin": _STR, "node": _STR, "engine": _STR}
 ALIAS = {"provider": _STR, "id": _STR, "thinking": _STR}
 RULE = {"name": _STR, "when": "when", "runner": _STR}
 WHEN = {"runner_label": _STR, "labels_any": _STRS, "size": _STRS}
@@ -436,6 +436,15 @@ def _runners(doc: dict, aliases: dict, errors: list[dict]) -> dict:
             errors.append({"path": f"{path}.argv", "message": "a command runner needs its argv"})
         if "access" in entry and (not isinstance(entry["access"], str) or entry["access"] not in ACCESS):
             errors.append({"path": f"{path}.access", "message": f"one of {', '.join(ACCESS)}"})
+        if "access_args" in entry:
+            args = entry["access_args"]
+            if not isinstance(args, dict):
+                errors.append({"path": f"{path}.access_args", "message": "must be a mapping of access modes to arguments"})
+            else:
+                for mode, argv in args.items():
+                    if mode not in ACCESS or not isinstance(argv, list) or not all(isinstance(arg, str) for arg in argv):
+                        errors.append({"path": f"{path}.access_args.{mode}",
+                                       "message": f"a mode from {', '.join(ACCESS)} with a list of strings"})
         for key in ("model", "fallback_model"):
             if key in entry and (why := _model_error(entry[key], aliases)):
                 errors.append({"path": f"{path}.{key}", "message": why})

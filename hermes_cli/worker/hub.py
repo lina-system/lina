@@ -17,6 +17,7 @@ import shutil
 import time
 from pathlib import Path
 
+from hermes_cli.lina_work_settings import ACCESS
 from hermes_cli.worker import bidding, kanban_link, models, notice, runners, settings
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt
@@ -91,13 +92,23 @@ class Hub:
         spec = runners.specs(self.worker).get(runner)
         if spec is None:
             raise HubError(f"no runner {runner!r} (configured: {', '.join(runners.specs(self.worker))})")
+        access = opts.get("access", "workspace-write")
+        ceiling = self.worker.get("access", {}).get(agent, "workspace-write")
+        if access not in ACCESS or ceiling not in ACCESS:
+            raise HubError(f"invalid access mode or ceiling: {access!r}, {ceiling!r}")
+        if ACCESS.index(access) > ACCESS.index(ceiling):
+            raise HubError(f"access {access} exceeds worker.access.{agent} ceiling {ceiling}")
+        supported, reason = runners.build(runner, spec).honours(access)
+        if not supported:
+            raise HubError(reason)
         model = models.for_run(opts["mode"], opts.get("model"), self.worker)
-        grant = {"workspace": "work/ of the task folder", "inputs_readonly": True, "push": False,
+        grant = {"access": access, "workspace": "work/ of the task folder", "inputs_readonly": True, "push": False,
                  "private_read_in_place": opts.get("private_inputs") or [],
                  "repo": opts.get("repo"), "outside_effects": "report only (messages, publish, delete, money, "
                                                               "credentials need the owner)"}
         job = {"id": tid, "bot": agent, "topic": opts["topic"], "host": None, "fixed_host": opts.get("host"),
-               "repo": opts.get("repo"), "branch": branch, "mode": opts["mode"], "brief": str(brief),
+               "repo": opts.get("repo"), "branch": branch, "mode": opts["mode"], "access": access,
+               "run_access": {"1": access}, "brief": str(brief),
                "todo": opts.get("todo"), "runner": runner, "runner_spec": spec,
                "model": model.as_dict() if model else None, "created": time.time(), "runs": 1, "notified": [],
                "extra": opts.get("note"), "dry_notify": bool(opts.get("dry_notify")), "inputs": opts["inputs"],
@@ -109,7 +120,7 @@ class Hub:
         self.store.save(job)
         self.store.receipt(tid, "submitted", bot=agent, topic=job["topic"], mode=job["mode"], runner=runner,
                            model=job["model"], brief=str(brief), repo=job["repo"], group=group, grant=grant,
-                           card=job["card"], input_id=f"{tid}.1")
+                           card=job["card"], input_id=f"{tid}.1", access=access)
         return job
 
     def _link_card(self, job: dict) -> None:
@@ -156,7 +167,7 @@ class Hub:
         if resume and transport.call(["meta", tid], timeout=90).json().get("requested"):
             self._started(job, dev)  # the request reached the device before the hub stopped
             return
-        device_job = {key: job.get(key) for key in ("id", "mode", "runner", "runner_spec", "model", "repo", "branch",
+        device_job = {key: job.get(key) for key in ("id", "mode", "access", "runner", "runner_spec", "model", "repo", "branch",
                                                      "next_notes_rule")}
         device_job["notify"] = self._notify_spec(dev)
         put(transport, tid, "job.json", json.dumps(device_job, ensure_ascii=False))
@@ -432,8 +443,9 @@ class Hub:
 
     def status(self, task_id: str, as_json: bool = False) -> int:
         job = self.need(task_id)
+        access = job.get("run_access", {}).get(str(job.get("runs", 1)), job.get("access", "workspace-write"))
         head = (f"{job['id']} · {job['bot']} · {job['topic']} · mode {job.get('mode')} · runner {job.get('runner')} · "
-                f"model {models.label(job.get('model'))}")
+                f"model {models.label(job.get('model'))} · access {access}")
         if not job.get("host"):
             state = job.get("state", "queued")
             self.out(f"{head} · {notice.STATE_WORDS.get(state, state)} · handed out {_ago(job['created'])} ago"
@@ -501,7 +513,12 @@ class Hub:
         return 0
 
 
-    def send(self, task_id: str, message: str, card: dict | None = None) -> int:
+    def send(self, task_id: str, message: str, card: dict | None = None, *, access: str | None = None) -> int:
+        # Keep access decisions and device requests in the same order across concurrent senders.
+        with self.store.lock(f"send-{task_id}"):
+            return self._send_locked(task_id, message, card, access=access)
+
+    def _send_locked(self, task_id: str, message: str, card: dict | None, *, access: str | None) -> int:
         job = self.need(task_id)
         card = card or kanban_link.card_from_env()
         if card and any((job.get("card") or {}).get(key) != card.get(key) for key in ("task", "board")):
@@ -510,8 +527,17 @@ class Hub:
             raise HubError(f"{task_id} has not started yet (queued): cancel it and submit a new brief instead")
         if job.get("state") == "placing":
             raise HubError(f"{task_id} is still being handed to {job['host']}: send it again in a moment")
+        recorded = job.get("access", "workspace-write")
+        requested = recorded if access is None else access
+        if requested not in ACCESS or recorded not in ACCESS:
+            raise HubError(f"invalid access mode: {requested!r}")
+        if ACCESS.index(requested) > ACCESS.index(recorded):
+            raise HubError(f"access {requested} exceeds recorded access {recorded}; submit a new task")
         transport, remote = self.transport(job), self.meta(job)
-        if transport.call(["human", task_id], timeout=90).json().get("open"):
+        human = transport.call(["human", task_id], timeout=90).json().get("open")
+        if requested != recorded:
+            return self._next_run(job, message, access=requested)
+        if human:
             reply = transport.call(["answer", task_id], message.encode("utf-8"), timeout=180).json()
             run = reply.get("run") or remote.get("run") or job.get("runs", 1)
             self.store.receipt(task_id, "answer", run=run, response={k: reply.get(k) for k in (
@@ -554,12 +580,21 @@ class Hub:
                                                                                         "by send")
         return True
 
-    def _next_run(self, job: dict, message: str) -> int:
+    def _next_run(self, job: dict, message: str, *, access: str | None = None) -> int:
         """Ask the device for the next run; it serializes this against a run still waiting, starting or running."""
-        payload = {"prompt": follow_up_prompt(job.get("mode") or "ulw", message), "message": message}
+        payload = {"prompt": follow_up_prompt(job.get("mode") or "ulw", message), "message": message,
+                   "access": job.get("access", "workspace-write") if access is None else access}
         reply = self.transport(job).call(["follow_up", job["id"]], json.dumps(payload).encode("utf-8"),
                                          timeout=180).json()
         action, run = reply.get("action"), reply.get("run")
+        if action in ("queued", "requested", "steered", "started", "answer") and access is not None:
+            self.store.update(job["id"], access=access, grant={**job["grant"], "access": access})
+        if action in ("queued", "requested"):
+            self.store.update(job["id"], run_access={**job.get("run_access", {}), str(run): payload["access"]})
+        if action == "answer":
+            self.store.receipt(job["id"], "answer", run=run, response=reply)
+            self.out(f"{job['id']} answered the question of run {run}; the same run goes on.")
+            return 0
         if action == "queued":
             self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run, queued=True)
             self.out(f"{job['id']} run {run} has not started yet: the instruction was added to it.")

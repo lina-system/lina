@@ -23,6 +23,7 @@ from pathlib import Path
 import psutil
 
 from hermes_cli.process_identity import process_birth
+from hermes_cli.lina_work_settings import ACCESS
 from hermes_cli.worker import runners, settings, slots
 from hermes_platform.resolver import locate_command
 from tools.environments.local import build_subprocess_env
@@ -157,6 +158,9 @@ def prepare(worker_root: Path, task: Task) -> None:
     """The task's ``work/``: a fresh worktree on ``omo/<ID>`` with push blocked, or a plain folder; then the inputs
     the hub copied in, made read-only and hashed."""
     job = job_of(task)
+    supported, reason = runner_for(worker_root, task, job).honours(job.get("access", "workspace-write"))
+    if not supported:
+        raise RunnerError(reason)
     if job.get("repo"):
         _prepare_repo(worker_root, task, job)
     task.work.mkdir(parents=True, exist_ok=True)
@@ -169,10 +173,14 @@ def prepare(worker_root: Path, task: Task) -> None:
 
 
 def _start_or_follow(runner, task: Task, run: int, job: dict) -> Handle:
+    access = job.get("access", "workspace-write")
+    supported, reason = runner.honours(access)
+    if not supported:
+        raise RunnerError(reason)
     prompt = task.path(f"prompt.{run}").read_text(encoding="utf-8-sig")
     if run == 1:
-        return runner.start(task, prompt, ModelProfile.from_dict(job.get("model")))
-    return runner.follow_up(Handle.load(task), prompt, run=run)[1]
+        return runner.start(task, prompt, ModelProfile.from_dict(job.get("model")), access=access)
+    return runner.follow_up(Handle.load(task), prompt, run=run, access=access)[1]
 
 
 def _settle(runner, task: Task, run: int, handle: Handle) -> str:
@@ -190,7 +198,7 @@ def run_task(worker_root: Path, task_id: str, run: int) -> str:
     job = job_of(task)
     task.path("state").write_text("running\n", encoding="utf-8")
     stamp(task, f"started.{run}")
-    task.event(run, "started", runner=job.get("runner"))
+    task.event(run, "started", runner=job.get("runner"), access=job.get("access", "workspace-write"))
     runner, handle, code = None, None, 0
     if task.path("cancelled").exists():  # cancelled between the launch and here: no session is opened
         task.path(f"rc.{run}").write_text("0\n", encoding="utf-8")
@@ -350,7 +358,33 @@ def follow_up(worker_root: Path, task_id: str, payload: dict) -> dict:
     ended, the next run is requested."""
     task = task_of(worker_root, task_id)
     with task_lock(task):
+        job = job_of(task)
+        current = job.get("access", "workspace-write")
+        access = payload.get("access", current)
+        if current not in ACCESS or access not in ACCESS or ACCESS.index(access) > ACCESS.index(current):
+            return {"action": "error", "reason": f"access {access!r} exceeds recorded mode {current!r}"}
         run = slots.requested(task.dir)
+        if access != current:
+            supported, reason = runner_for(worker_root, task, job).honours(access)
+            if not supported:
+                return {"action": "error", "reason": reason, "run": run}
+            if run and not task.path(f"rc.{run}").exists() and task.path(f"taken.{run}").exists():
+                if not alive(task, run) or not task.path("handle.json").exists():
+                    return {"action": "busy", "run": run}
+                live = read_json(task.path(f"live.{run}.json"), {}) or {}
+                reply = (answer(worker_root, task_id, payload["message"]) if live.get("state") == "waiting_human"
+                         else steer(worker_root, task_id, payload["message"]))
+                if reply.get("action") not in ("answer", "steered", "started"):
+                    return reply
+                job["access"] = access
+                write_json(task.path("job.json"), job)
+                grant = read_json(task.path("grant.json"), {}) or {}
+                write_json(task.path("grant.json"), {**grant, "access": access})
+                return reply
+            job["access"] = access
+            write_json(task.path("job.json"), job)
+            grant = read_json(task.path("grant.json"), {}) or {}
+            write_json(task.path("grant.json"), {**grant, "access": access})
         if run and not task.path(f"rc.{run}").exists():
             if not task.path(f"taken.{run}").exists():
                 with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:

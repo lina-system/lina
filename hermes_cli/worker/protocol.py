@@ -21,6 +21,7 @@ INSTANCE = "serve.instance.json"
 @dataclass(frozen=True)
 class Verb:
     handler: Callable[[Path, list[str], bytes], tuple[int, bytes]]
+    effect: str
     stdin: bool = False
     legacy: bool = False
 
@@ -31,22 +32,22 @@ def verbs() -> dict[str, Verb]:
     from hermes_cli.worker import device as d
 
     return {
-        "hello": Verb(lambda root, args, data: d._ok(hello(root))),
-        "service": Verb(lambda root, args, data: d._ok(service_action(root, args[0], args[1]))),
-        "put": Verb(lambda root, args, data: d._ok(d._put(root, args[0], args[1], data)), stdin=True),
-        "untar": Verb(lambda root, args, data: d._ok(d._untar(root, args[0], args[1], data)), stdin=True),
-        "meta": Verb(lambda root, args, data: d._ok(d.meta(root, args[0], live=args[1:] == ["live"])), legacy=True),
-        "probe": Verb(lambda root, args, data: d._ok(d.probe(root, *args[:2]))),
+        "hello": Verb(lambda root, args, data: d._ok(hello(root)), "read"),
+        "service": Verb(lambda root, args, data: d._ok(service_action(root, args[0], args[1])), "destructive"),
+        "put": Verb(lambda root, args, data: d._ok(d._put(root, args[0], args[1], data)), "write", stdin=True),
+        "untar": Verb(lambda root, args, data: d._ok(d._untar(root, args[0], args[1], data)), "write", stdin=True),
+        "meta": Verb(lambda root, args, data: d._ok(d.meta(root, args[0], live=args[1:] == ["live"])), "read", legacy=True),
+        "probe": Verb(lambda root, args, data: d._ok(d.probe(root, *args[:2])), "read"),
         "reserve": Verb(lambda root, args, data: d._ok(d.slots.reserve(
-            root, d.safe_id(args[0]), int(args[1]), pool=args[2] if len(args) > 2 else "bid"))),
-        "send": Verb(lambda root, args, data: d._ok(d.steer(root, args[0], data.decode("utf-8", "replace"))), stdin=True),
-        "follow_up": Verb(lambda root, args, data: d._ok(d.follow_up(root, args[0], json.loads(data))), stdin=True),
-        "human": Verb(lambda root, args, data: d._ok(d.human(root, args[0])), legacy=True),
-        "answer": Verb(lambda root, args, data: d._ok(d.answer(root, args[0], data.decode("utf-8", "replace"))), stdin=True),
+            root, d.safe_id(args[0]), int(args[1]), pool=args[2] if len(args) > 2 else "bid")), "write"),
+        "send": Verb(lambda root, args, data: d._ok(d.steer(root, args[0], data.decode("utf-8", "replace"))), "write", stdin=True),
+        "follow_up": Verb(lambda root, args, data: d._ok(d.follow_up(root, args[0], json.loads(data))), "write", stdin=True),
+        "human": Verb(lambda root, args, data: d._ok(d.human(root, args[0])), "read", legacy=True),
+        "answer": Verb(lambda root, args, data: d._ok(d.answer(root, args[0], data.decode("utf-8", "replace"))), "write", stdin=True),
         "cancel": Verb(lambda root, args, data: d._ok(d.cancel(root, args[0], data.decode("utf-8", "replace"))),
-                       stdin=True, legacy=True),
-        "pack": Verb(lambda root, args, data: (0, d.pack(root, args[0])), legacy=True),
-        "bundle": Verb(lambda root, args, data: d.bundle(root, *args[:2]), legacy=True),
+                       "destructive", stdin=True, legacy=True),
+        "pack": Verb(lambda root, args, data: (0, d.pack(root, args[0])), "read", legacy=True),
+        "bundle": Verb(lambda root, args, data: d.bundle(root, *args[:2]), "read", legacy=True),
     }
 
 
@@ -74,7 +75,8 @@ def begin_instance(worker_root: Path) -> str:
 
 
 def hello(worker_root: Path) -> dict:
-    """Describe this installation. Access modes are reserved for #220, not inferred here."""
+    """Describe this installation and its supported access-mode vocabulary."""
+    from hermes_cli.lina_work_settings import ACCESS
     from hermes_cli.lina_version import LINA_VERSION
     from hermes_cli.worker import runners, serve, settings
 
@@ -86,7 +88,7 @@ def hello(worker_root: Path) -> dict:
             "instance_id": record.get("instance_id") if active else None, "serve": active,
             "version": LINA_VERSION,
             "capabilities": {"runners": [{"name": name, "type": spec.get("type")} for name, spec in offered.items()],
-                             "access_modes": [], "verbs": list(verbs())}}
+                             "access_modes": list(ACCESS), "verbs": list(verbs())}}
 
 
 def service_action(worker_root: Path, action: str, instance_id: str) -> dict:

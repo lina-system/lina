@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import sys
 
+from hermes_cli.lina_work_settings import ACCESS
+
 
 def _hub():
     from hermes_cli.worker import settings
@@ -15,7 +17,7 @@ def _submit(args) -> int:
     opts = {"briefs": args.brief, "mode": args.mode, "repo": args.repo, "inputs": args.input, "todo": args.todo,
             "host": args.host, "model": args.model, "topic": args.topic, "note": args.note, "at": args.at,
             "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner,
-            "card": _card(args)}
+            "card": _card(args), "access": args.access}
     if args.bot:
         opts["bot"] = args.bot
     return _hub().submit({k: v for k, v in opts.items() if v is not None or k in ("wait",)})
@@ -64,7 +66,7 @@ def _tick(args) -> int:
 
 _ACTIONS = {
     "submit": _submit,
-    "send": lambda a: _hub().send(a.id, a.message, _card(a)),
+    "send": lambda a: _hub().send(a.id, a.message, _card(a), access=a.access),
     "wait": lambda a: _hub().wait(_card(a), a.id),
     "status": lambda a: _hub().status(a.id, a.json),
     "result": lambda a: _hub().result(a.id),
@@ -103,6 +105,7 @@ def _submit_parser(sub) -> None:
     p.add_argument("--brief", action="append", required=True, help="brief file; several make one batch (one notice)")
     p.add_argument("--mode", choices=list(MODES), default="ulw",
                    help="ulw (plan, do, verify), research, mass (parallel lanes), mass-research")
+    p.add_argument("--access", choices=ACCESS, default="workspace-write", help="access mode within the agent's ceiling")
     p.add_argument("--repo", help="owner/name (cloned into the device's repo cache) or a path on the device; the "
                                   "task works in a fresh worktree on omo/<ID> with push blocked")
     p.add_argument("--input", action="append", default=[], help="a file or folder copied read-only to input/")
@@ -148,6 +151,7 @@ def build_worker_parser(subparsers) -> None:
                                        "next run in the same session")
     send.add_argument("id")
     send.add_argument("message")
+    send.add_argument("--access", choices=ACCESS, help="same or lower access for the next run")
     _card_args(send)
     wait = sub.add_parser("wait", help="Record the runs to wait on and print the Hermes kanban_schedule tool "
                                        "instruction; call that tool and end the turn")

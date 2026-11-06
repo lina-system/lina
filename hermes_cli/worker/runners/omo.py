@@ -22,6 +22,8 @@ import time
 from pathlib import Path
 
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
+from hermes_cli.worker.runners.access import recorded_access
+from hermes_cli.lina_work_settings import ACCESS
 from hermes_cli.worker.runners.omo_settle import Settle, classify, lifecycle_view, parse_time, stop_session
 from hermes_cli.worker.runners.omo_processes import stop_task_processes
 from tools.environments.local import build_subprocess_env
@@ -81,27 +83,33 @@ class OmoRunner:
             return False, "omo daemon not ready"
         return True, str(self.bin)
 
-    def _open_session(self, task: Task, prompt_file: Path, model: ModelProfile | None, run: int) -> tuple[dict | None, int]:
-        err = task.path(f"stderr.{run}.txt")
-        if model is not None and model.provider and model.id:
-            return self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine), str(task.work),
-                               task.id, str(prompt_file), model.provider, model.id, model.thinking or ""], 300, err)
-        return self.omo(["host", "session", "open", "--cwd", str(task.work), "--name", task.id,
-                         "--prompt", f"@{prompt_file}", "--json"], 300, err)
+    def honours(self, mode: str) -> tuple[bool, str]:
+        return mode in ACCESS, "" if mode in ACCESS else f"unknown access {mode!r}"
 
-    def start(self, task: Task, prompt: str, model: ModelProfile | None) -> Handle:
+    def _open_session(self, task: Task, prompt_file: Path, model: ModelProfile | None, run: int,
+                      access: str) -> tuple[dict | None, int]:
+        err = task.path(f"stderr.{run}.txt")
+        return self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine), str(task.work),
+                           task.id, str(prompt_file), model.provider or "" if model else "",
+                           model.id or "" if model else "", model.thinking or "" if model else "", access], 300, err)
+
+    def start(self, task: Task, prompt: str, model: ModelProfile | None,
+              access: str = "workspace-write") -> Handle:
+        supported, reason = self.honours(access)
+        if not supported:
+            raise RunnerError(reason)
         prompt_file = task.path("prompt.1")
         if not prompt_file.exists():
             prompt_file.write_text(prompt, encoding="utf-8")
         ensure, _ = self.omo(["daemon", "run", "--json"], 120, task.path("stderr.1.txt"))
         task.path("ensure.1.json").write_text(json.dumps(ensure or {}), encoding="utf-8")
-        opened, rc = self._open_session(task, prompt_file, model, 1)
+        opened, rc = self._open_session(task, prompt_file, model, 1, access)
         task.path("open.1.json").write_text(json.dumps(opened or {}), encoding="utf-8")
         if rc != 0 or not opened or not opened.get("durableSessionId"):
             raise RunnerError(f"omo started no session (rc {rc}): {(opened or {}).get('reason') or 'no answer'}")
         task.path("session.json").write_text(json.dumps(opened, ensure_ascii=False), encoding="utf-8")
         handle = Handle(task, 1, {"runner": self.name, "ref": opened["durableSessionId"],
-                                  "model": model.as_dict() if model else None})
+                                  "model": model.as_dict() if model else None, "access": access})
         handle.save()
         return handle
 
@@ -109,8 +117,19 @@ class OmoRunner:
         state = (self.session(["state", ref], 60) or {}).get("state") or {}
         return bool(state.get("isStreaming")) if state else True
 
-    def follow_up(self, handle: Handle, text: str, *, run: int | None = None) -> tuple[str, Handle]:
+    def _restore_access(self, handle: Handle, access: str | None = None) -> str:
+        mode = recorded_access(handle, access)
+        reply, rc = self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine),
+                                str(handle.task.work), handle.task.id, "", "", "", "", mode,
+                                handle.data["ref"]], 120, handle.task.path(f"stderr.{handle.run}.txt"))
+        if rc != 0 or not reply or reply.get("action") != "attach":
+            raise RunnerError("omo could not restore recorded session access")
+        return mode
+
+    def follow_up(self, handle: Handle, text: str, *, run: int | None = None,
+                  access: str | None = None) -> tuple[str, Handle]:
         """Into the live run (a steer; an idle session between background wakes takes a prompt), or as run *run*."""
+        mode = self._restore_access(handle, access)
         ref, task = handle.data["ref"], handle.task
         stamp = run or handle.run
         text_file = task.path(f"prompt.{run}" if run else f"steer.{stamp}.{len(list(task.dir.glob('steer.*')))}")
@@ -122,7 +141,7 @@ class OmoRunner:
             task.path(f"open.{run}.json").write_text(json.dumps(answer or {}), encoding="utf-8")
             if rc != 0:
                 raise RunnerError(f"omo prompt failed (rc {rc})")
-            new = Handle(task, run, dict(handle.data))
+            new = Handle(task, run, {**handle.data, "access": mode})
             new.save()
             return "started", new
         answer = None
@@ -132,11 +151,14 @@ class OmoRunner:
             answer = self.session(["steer", ref, f"@{text_file}"], 120)
         if not answer or answer.get("action") == "error":
             raise RunnerError(f"omo steer failed: {(answer or {}).get('reason') or 'no answer'}")
+        handle.data["access"] = mode
+        handle.save()
         return "steered", handle
 
     def answer(self, handle: Handle, text: str) -> dict:
         """Answer over the daemon socket; when no answer path takes it, close the run on its question so the answer
         goes to the next run (``answer_abort.<run>``)."""
+        self._restore_access(handle)
         task = handle.task
         answer_file = task.path(f"answer.{handle.run}.{len(list(task.dir.glob('answer.*')))}")
         answer_file.write_text(text, encoding="utf-8")

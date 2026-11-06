@@ -5,7 +5,7 @@ its first verb, including local devices. The descriptor is cached only in that
 transport object, never on disk or across ticks. It contains `protocol.min` and
 `protocol.max` (currently both 1), `version` (the informational LINA release),
 `instance_id`, `serve`, and `capabilities`: configured runner names and types,
-access modes (currently empty, reserved for #220), and supported verbs.
+access modes (`read-only`, `workspace-write`, `full`), and supported verbs.
 Runner versions and login checks belong to #222.
 
 Compatibility depends only on overlapping inclusive protocol ranges. Disjoint
@@ -17,8 +17,8 @@ an update and cannot accept new work, but `meta`, `human`, `pack`, `bundle` and
 
 `protocol.verbs()` is the sole verb-to-information table. Device dispatch, stdin
 handling, the advertised verbs and legacy recovery permissions all derive from
-it. A future verb's effect classification belongs in this table, not a second
-dispatch list.
+it. Each verb declares its `effect` (`read`, `write`, `destructive`) in that same
+table; completeness tests reject missing or unknown effects.
 
 Each `serve()` start publishes a fresh UUID, PID and start time in
 `worker/serve.instance.json` before writing its heartbeat. A missing or stale
@@ -34,3 +34,27 @@ after releasing that lock, allowing the new loop to publish its identity. A stal
 node response refreshes hello without retrying the action. There is no new human
 service-control CLI in this change. This guard is instance checking, not access
 authorization; the SSH account remains the existing trust boundary.
+
+## Run access modes
+
+`lina worker submit --access read-only|workspace-write|full` defaults to
+`workspace-write`. The hub refuses a request above `worker.access.<agent>` in
+`config.yaml` (also defaulting to `workspace-write`); it never silently lowers
+the requested mode. This ceiling is outside the versioned work-settings keys.
+The mode is recorded on the hub job, grant, submission receipt and device job,
+and appears in status and notice headlines.
+
+A command runner declares `access_args`, a mapping from modes to argv lists
+appended on starts, follow-ups and answers. Without that mapping, its fixed
+`access` is its only supported mode; with neither declaration it cannot start.
+See `lina-worker.example.yaml` for Codex sandbox and Claude permission flags.
+The omo runner applies `read-only`, `workspace` or `full-access` to the individual
+session, rather than changing its shared daemon's configuration. Both hub and
+device refuse unsupported modes with a reason. ACP is not implemented here.
+
+`send --access` can retain or lower access for subsequent work, never raise it.
+Omitting the option preserves the recorded mode; answers preserve the current
+run's mode. The device independently checks follow-up payloads against its
+record, so bypassing the hub cannot escalate a task. A repository task retains
+its worktree-local `remote.origin.pushurl` block even in `full` mode. The access
+mode does not grant permission to push.

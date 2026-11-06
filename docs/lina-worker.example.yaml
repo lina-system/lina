@@ -14,6 +14,8 @@ worker:
   notice:
     command: [notify-agent, "{agent}"]       # the end notice for the agent's chat, body on stdin
   default_runner: omo
+  # Requested access defaults to workspace-write. An agent needs an explicit full ceiling for full access.
+  access: {reviewer: read-only, builder: workspace-write}
   models:
     aliases:                                 # names for --model; ids are whatever the runner's provider serves
       planner: {provider: opencodex, id: planning-model-id, thinking: medium}
@@ -27,15 +29,24 @@ worker:
     omo: {type: omo}                         # built in: LINA's pinned omo (lina#34)
     claude:
       type: command
-      argv: [claude, -p, --permission-mode, acceptEdits]
-      follow_up_argv: [claude, -p, --continue, --permission-mode, acceptEdits]
+      argv: [claude, -p]
+      follow_up_argv: [claude, -p, --continue]
+      access_args:
+        read-only: [--permission-mode, plan]
+        workspace-write: [--permission-mode, acceptEdits]
+        full: [--permission-mode, bypassPermissions]
       model_args: [--model, "{id}"]
     codex:
       type: command
-      argv: [codex, exec, --full-auto, "-"]
+      argv: [codex, exec, "-"]
+      access_args:
+        read-only: [--sandbox, read-only]
+        workspace-write: [--sandbox, workspace-write]
+        full: [--sandbox, danger-full-access]
     opencode:
       type: command
       argv: [opencode, run]
+      # Configure access_args or a fixed access matching the CLI's actual permissions before use.
     # The single-issue runners of lina#35's context, registered the same way. The argv below is an example: take
     # each CLI's own non-interactive flags from the hermes-ops quick-issue prototype. Which issue goes to which runner
     # is lina#63's routing table, not set here.

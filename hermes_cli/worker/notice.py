@@ -27,8 +27,9 @@ ENVIRONMENT = re.compile(r"\b(40[1378]|429|5\d\d)\b|proxy|network|timed? ?out|OO
 
 def _head(job: dict, run: str) -> str:
     what = f"to-do {job['todo']}" if job.get("todo") else f"topic {job.get('topic')}"
+    access = job.get("run_access", {}).get(str(run), job.get("access", "workspace-write"))
     return (f"[lina worker · automatic] {job['bot']} · {what} · run {job['id']} ({job.get('runner')} on "
-            f"{job.get('host') or '-'}, run {run}): ")
+            f"{job.get('host') or '-'}, run {run}, access {access}): ")
 
 
 def _result_line(job: dict, out_dir: Path) -> str:
