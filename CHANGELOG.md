@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- `GET /api/lina/usage` no longer waits on per-machine OCX reads: `byMachine` is summed from one `usage --range 30d --api-key-id` read per `link:` key, run one after another in the background at most every 15 minutes and started by a usage read; a failed round keeps the previous rows (lina#273).
 - A kanban goal-mode card whose judge says WAIT is parked (`scheduled`) on the event it waits for, recorded on the card, and the dispatcher wakes it once when that card is done, that review has its result, that PR's required checks finish or that time passes (`kanban schedule|block --wait-for` record the same by hand); a spent turn budget, runtime limit or agent iteration budget hands off and returns the card to ready without counting toward `max_retries`, and `kanban.planned_stop_limit` (default 5) such stops in a row block the card for a person.
 
 ### Added
