@@ -6,7 +6,9 @@ another. Board resolution: ``board=`` arg > ``HERMES_KANBAN_BOARD`` > ``HERMES_K
 file path) > ``<root>/kanban/current`` > ``default`` — but only for unfenced callers; the dispatcher
 injects these into workers, and dispatched workers (``HERMES_KANBAN_TASK``), delegated children and
 board-enumerating machine flows (gateway notifier/watcher/dispatcher, ``pin_first_board_resolution``)
-always resolve through the pin, so workers physically cannot see other boards.
+always resolve through the pin, so workers physically cannot see other boards. A fenced caller that
+explicitly asks for another board is refused (:class:`BoardPinnedError`, naming both boards) rather
+than silently handed its own.
 Concurrency: WAL + ``BEGIN IMMEDIATE`` + compare-and-swap on ``tasks.status``/``claim_lock`` —
 SQLite serializes writers so one claimer wins, losers see zero rows (no retries, no distributed
 locks). Schema: tasks, task_links, task_comments, task_events, task_runs, attachments, notify subs.
@@ -327,6 +329,9 @@ def _resolve_rate_limit_cooldown_seconds() -> int:
 
 
 # --- Paths ---
+# Where a board's files live (kanban_home / board_dir / the *_root getters) is owned by the
+# kanban_db_paths sibling; this section keeps the slug resolution and the one fence-aware
+# resolver the rest of the module calls.
 
 DEFAULT_BOARD = "default"
 _CURRENT_BOARD_OVERRIDE: ContextVar[str | None] = ContextVar(
@@ -352,6 +357,10 @@ def pin_first_board_resolution():
     notifications. Explicit cross-board intent (CLI ``--board``, a model
     tool's ``board=``) is a USER property and must never run inside this
     context; with no pin set this context changes nothing.
+
+    Machine flows that resolve their OWN board go through
+    :func:`own_board_resolution` instead: a fenced dispatcher keeps the pin,
+    an unfenced one honours the board it was asked for (#206).
     """
     token = _PIN_FIRST_BOARD_RESOLUTION.set(True)
     try:
@@ -397,28 +406,6 @@ def _require_slug(slug: str) -> str:
     if not normed:
         raise ValueError("board slug is required")
     return normed
-
-
-def kanban_home() -> Path:
-    """``HERMES_KANBAN_HOME`` else ``get_default_hermes_root()``. Shared across
-    profiles BY DESIGN: resolving through the active profile's HERMES_HOME would
-    fork the board per profile and break the dispatcher/worker handoff."""
-    override = os.environ.get("HERMES_KANBAN_HOME", "").strip()
-    if override:
-        return Path(override).expanduser()
-    from hermes_constants import get_default_hermes_root
-    return get_default_hermes_root()
-
-
-def boards_root() -> Path:
-    """``<root>/kanban/boards`` — parent of the *additional* named boards.
-    ``default`` is deliberately not here (its DB stays at ``<root>/kanban.db``)."""
-    return kanban_home() / "kanban" / "boards"
-
-
-def current_board_path() -> Path:
-    """``<root>/kanban/current`` — one-line slug written by ``boards switch``; absent = ``default``."""
-    return kanban_home() / "kanban" / "current"
 
 
 def get_current_board() -> str:
@@ -483,24 +470,6 @@ def clear_current_board() -> None:
         current_board_path().unlink()
 
 
-def board_dir(board: Optional[str] = None) -> Path:
-    """``<root>/kanban/boards/<slug>/``. For ``default`` this holds metadata
-    only (board.json, workspaces/, logs/) — its DB stays at ``<root>/kanban.db``
-    for back-compat (:func:`kanban_db_path`).
-    """
-    return boards_root() / _slug_or_default(board)
-
-
-def board_exists(board: Optional[str] = None) -> bool:
-    """Board has a ``board.json`` on disk; ``default`` always exists."""
-    slug = _slug_or_default(board)
-    if slug == DEFAULT_BOARD:
-        return True
-    return _dir_holds_board(board_dir(slug))
-
-
-
-
 def _explicit_board_slug(board: Optional[str]) -> Optional[str]:
     """Explicit caller intent: a direct ``board=`` argument, else the scoped
     ``--board`` context (CLI ``hermes kanban --board``, dashboard plugin_api);
@@ -549,45 +518,28 @@ def _board_path(
     watcher / dispatcher ticks) and dispatched or delegated workers keep
     resolving through the pin. Without explicit intent the ``env_var`` override
     pins the file, else legacy ``<root>/<default_parts>`` for the ``default``
-    board, else ``board_dir(slug)/leaf``."""
+    board, else ``board_dir(slug)/leaf``.
+
+    A fenced caller asking for a board whose own file is NOT the pin gets
+    :class:`BoardPinnedError` instead of the silent reroute; machine flows
+    (:func:`pin_first_board_resolution`) keep the silent pin — the slug there is
+    an iteration variable, not caller intent."""
     pin = os.environ.get(env_var, "").strip() if env_var else ""
     slug = _explicit_board_slug(board)
     if pin and (slug is None or _explicit_board_intent_pinned()):
-        return Path(pin).expanduser()
+        pinned = Path(pin).expanduser()
+        if slug is not None and not _PIN_FIRST_BOARD_RESOLUTION.get():
+            refuse_cross_board_pin(slug, pinned, default_parts, leaf)
+        return pinned
     if slug is None:
         slug = get_current_board()
-    if slug == DEFAULT_BOARD:
-        return kanban_home().joinpath(*default_parts)
-    return board_dir(slug) / leaf
+    return own_board_path(slug, default_parts, leaf)
 
 
 def kanban_db_path(board: Optional[str] = None) -> Path:
     """``kanban.db`` path: ``HERMES_KANBAN_DB`` pins it (injected into workers);
     ``default`` -> ``<root>/kanban.db`` (back-compat), else the board dir."""
     return _board_path("HERMES_KANBAN_DB", board, ("kanban.db",), "kanban.db")
-
-
-def workspaces_root(board: Optional[str] = None) -> Path:
-    """Per-board scratch workspace root (``HERMES_KANBAN_WORKSPACES_ROOT`` wins);
-    ``default`` keeps the legacy ``<root>/kanban/workspaces/``."""
-    return _board_path("HERMES_KANBAN_WORKSPACES_ROOT", board, ("kanban", "workspaces"), "workspaces")
-
-
-def attachments_root(board: Optional[str] = None) -> Path:
-    """Per-board attachments root (``HERMES_KANBAN_ATTACHMENTS_ROOT`` wins). Workers
-    read attachments by absolute path, so remote terminal backends must mount it."""
-    return _board_path("HERMES_KANBAN_ATTACHMENTS_ROOT", board, ("kanban", "attachments"), "attachments")
-
-
-def task_attachments_dir(task_id: str, board: Optional[str] = None) -> Path:
-    """Return the per-task attachment directory ``<root>/<task_id>/``."""
-    return attachments_root(board=board) / task_id
-
-
-def worker_logs_dir(board: Optional[str] = None) -> Path:
-    """Per-board worker log dir (logs follow the board so ``hermes kanban log``
-    is unambiguous when two boards share a task id)."""
-    return _board_path(None, board, ("kanban", "logs"), "logs")
 
 
 # --- Data classes ---
@@ -4030,6 +3982,21 @@ def latest_summary(conn: sqlite3.Connection, task_id: str) -> Optional[str]:
 
 
 # --- Split modules (imported at the tail: they import this module as ``_kb``) ---
+from hermes_cli.kanban_db_paths import (
+    BoardPinnedError,
+    attachments_root,
+    board_dir,
+    board_exists,
+    boards_root,
+    current_board_path,
+    kanban_home,
+    own_board_path,
+    own_board_resolution,
+    refuse_cross_board_pin,
+    task_attachments_dir,
+    worker_logs_dir,
+    workspaces_root,
+)
 from hermes_cli.kanban_db_boards import (
     _default_board_display_name,
     _dir_holds_board,

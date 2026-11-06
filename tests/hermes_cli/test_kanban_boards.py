@@ -101,25 +101,28 @@ class TestPathResolution:
 
 
     def test_env_var_db_override_still_wins(self, fresh_home, tmp_path, monkeypatch):
-        """``HERMES_KANBAN_DB`` pins the file regardless of ``board=`` arg for every
-        execution the dispatcher fences (the 5ec6baa multi-boards isolation: workers
-        physically cannot see other boards): its dispatched workers (``HERMES_KANBAN_TASK``)
-        and delegated children / descendants (``HERMES_DELEGATED_CHILD_CONTEXT``). An
-        explicit board that outranked the pin would also escape
-        ``kanban_path_is_fenced``, which checks the pinned path / fenced root. Outside
-        those fences an explicit board is the caller's own intent and wins (see
-        ``test_explicit_board_trumps_env_var_db_override`` below)."""
+        """``HERMES_KANBAN_DB`` pins the file for every execution the dispatcher fences
+        (the 5ec6baa multi-boards isolation: workers physically cannot see other boards):
+        its dispatched workers (``HERMES_KANBAN_TASK``) and delegated children /
+        descendants (``HERMES_DELEGATED_CHILD_CONTEXT``). An explicit board that
+        outranked the pin would also escape ``kanban_path_is_fenced``, which checks the
+        pinned path / fenced root, so it is REFUSED (#206) instead of silently answered
+        with the pinned board. Outside those fences an explicit board is the caller's
+        own intent and wins (see ``test_explicit_board_trumps_env_var_db_override``)."""
         forced = tmp_path / "custom.db"
         monkeypatch.setenv("HERMES_KANBAN_DB", str(forced))
         assert kb.kanban_db_path() == forced
         assert kb.kanban_db_path(board=None) == forced
-        # Dispatched worker identity: the pin still fences explicit board intent.
+        # Dispatched worker identity: the pin fences explicit board intent, and asking
+        # for another board is an error rather than a silent reroute.
         monkeypatch.setenv("HERMES_KANBAN_TASK", "t_fence_probe")
-        assert kb.kanban_db_path(board="ignored") == forced
+        with pytest.raises(kb.BoardPinnedError):
+            kb.kanban_db_path(board="ignored")
         # Delegated children / spawned descendants are fenced the same way.
         from agent.delegation_context import DELEGATED_CHILD_ENV_MARKER
         monkeypatch.setenv(DELEGATED_CHILD_ENV_MARKER, "1")
-        assert kb.kanban_db_path(board="ignored") == forced
+        with pytest.raises(kb.BoardPinnedError):
+            kb.kanban_db_path(board="ignored")
 
     def test_env_var_db_override_wins_when_board_not_passed(self, fresh_home, tmp_path, monkeypatch):
         """``HERMES_KANBAN_DB`` pins the file when no explicit ``board=`` is given
