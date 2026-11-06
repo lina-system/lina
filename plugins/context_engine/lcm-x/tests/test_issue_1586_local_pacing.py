@@ -152,6 +152,9 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
     clock = Clock()
     monkeypatch.setattr(maintenance, "time", clock)
     monkeypatch.setattr(engines, "time", clock)
+    # Put the paced idle wait hours out of reach of any cap this test uses: the interrupt is then the
+    # only thing that can end the wait in time, so a wait that ignored it fails instead of passing late.
+    monkeypatch.setattr(maintenance, "_LOCAL_IDLE_MULTIPLIER", maintenance._LOCAL_IDLE_MULTIPLIER * 10_000)
     admitted = threading.Event()
     waits = []
     observed = []
@@ -181,6 +184,8 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
     engine.on_session_start("duty", context_length=200000)
     assert admitted.wait(2), "no paced continuation was admitted"
     assert waits[0] >= maintenance._LOCAL_IDLE_MULTIPLIER * 1.25
+    # Hours away, so the wait below cannot end by the delay running out: only the interrupt ends it.
+    assert waits[0] > WAIT_CAP_S * 10
     assert observed[0]["delay"] == pytest.approx(maintenance._LOCAL_IDLE_MULTIPLIER * observed[0]["active_s"])
     assert observed[0]["vectors_written"] == observed[0]["rows_written"] == 1
     assert observed[0]["overrun_s"] == 0.25
@@ -190,8 +195,9 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
         engine._retire_embedding_maintenance(wait=True)
     else:
         maintenance._STOP_EMBEDDING_MAINTENANCE.set()
-    # The paced continuation was never admitted: the interrupt ends the duty wait instead of riding
-    # out the idle delay and running another pass. The scheduler's own state is the signal.
+    # The paced continuation (hours away) was never admitted: the interrupt ends the duty wait instead
+    # of riding out the idle delay and running another pass. The scheduler's own state is the signal,
+    # and the wait above only ends inside the cap if the interrupt is what ended it.
     _wait_for("the duty wait to end", lambda: _pending_passes(engine))
     assert len(observed) == 1
     assert engine.drain_embedding_maintenance(0)
