@@ -32,8 +32,10 @@ Delivery modes, used in the table:
 | Goal | goal-mode card and its record goal | the goal's session (the goal card's session) | mid-run | wake | resume; start if the session is gone | new task linked to the goal (default); reopen on the two cases in section 3 |
 | Task (to-do) | record to-do, or the work card it spawned | the session of its open work card when one exists; else the owning agent's main session (`hermes_cli/work/board.py:15-20`, `hermes_cli/work/notify.py:44-46`) | mid-run | wake | next turn of the owning agent's main session (started if idle) | same as goal |
 | Run (a worker run) | `lina worker send` / answer (`hermes_cli/worker/hub.py:553-583`) | the run itself while it lives; the card session that started it once it ended | mid-run (the runner's steer; a runner with no channel gets next turn) | queued into the not yet started run (`hermes_cli/worker/hub.py:618-621`) | the card session that started the run, next turn; it decides on a follow-up run | the card session, next turn |
-| Inbox decision (a record decision, a card blocked on a question, a run's open question) | three paths (section 8) | the session that asked | mid-run | wake; only that question is released | resume the asking session | the decision is closed: the message becomes a note on the place |
+| Inbox decision (a record decision, a card blocked on a question, a run's open question) | three paths (section 9) | the session that asked | mid-run | wake; only that question is released | resume the asking session | the decision is closed: the message becomes a note on the place |
 | Reply to a pushed notice (app notification, Telegram reply to a notice message) | lands in the chat session it was typed in (`gateway/run_inbound.py:1579-1588`) | the owner of the place the notice is about | as that place | as that place | as that place | as that place |
+| Agent-to-agent chat (one agent writes to another) | a separate Bot Chat session per agent, the only session the tool works in (`tools/bot_mode_dm.py:215`) | the target agent's main session; a card session only when the message names a card that agent owns (section 7) | next turn; mid-run only when it answers a question the target asked | wake only for an answer to the target's question; otherwise next turn | next turn | n/a |
+| Owner relay ("tell the investing agent ...", in any channel) | the agent paraphrases the owner into a Bot Chat message, or uses a shell wrapper and a retry queue outside a Bot Chat | one relay record; delivered like agent-to-agent chat, answered to the asking session (section 7) | as agent-to-agent chat | as agent-to-agent chat | as agent-to-agent chat | n/a |
 | Report card (lina#263, lina-app#50) | not built | the session that wrote the report: its card's session while the card is open, else the author agent's main session | mid-run | wake | next turn of the author's main session | n/a (a report has versions, not an end) |
 
 Rules that follow from the table:
@@ -170,7 +172,7 @@ nothing.
   session answered.
 - **A busy agent.** Busy is not a refusal. A message to a busy session is stored and joins the running turn or waits for
   the next one; the sender never holds a turn open waiting for the target. That ends the agent-to-agent busy loop
-  (section 8, row 4).
+  (section 9, row 4; section 7).
 - **Host restart in the middle.** A message is acknowledged to the client only after it is stored. On start, the core
   reconciles every message not in `read`: one found in its target's transcript becomes `read`; one in `stored` or
   `queued_next_turn` is delivered again by its place's rule; one marked `delivered_mid_run` whose turn died with the host
@@ -196,7 +198,74 @@ nothing.
   it is a `decision` with `reply_to` that approval request, arriving on the owner's authenticated route. An agent's
   message never approves anything.
 
-## 7. Context order
+## 7. Agent to agent
+
+Agents talk to each other through the same model: a message on a place, delivered to the place's owner, answered on
+the same place. Today's path is mapped in section 9, row 4; this section closes each gap there.
+
+**Places.** Each agent has one agent-to-agent chat, a place owned by that agent's **main session**. There is no separate
+agent-to-agent session: today the tool works only in a dedicated Bot Chat session (`tools/bot_mode_dm.py:203-218`), so a
+request the owner makes in a messenger chat has to leave that conversation to be sent. In this design any session of
+an agent can send, and the message lands on the target's agent-to-agent chat. When the owner, in any channel, asks one
+agent to tell another something, that request becomes **one relay record**:
+
+| Field | Meaning |
+| --- | --- |
+| `request` | the owner's request as given, kept as provenance: the id of the owner's own turn in the sending agent's conversation and the exact span of the owner's words to pass on |
+| `sender` | the agent that relays |
+| `target` | the agent the owner named |
+| `origin` | the conversation and session the request came from (the asking session) |
+| `message` | the relay message: the owner's span, quoted, and the sender's own lines around it, under one message id |
+| `delivery` | `queued`, `delivered`, `read`, `answered`, each with its time, from `work.message_delivery` |
+
+A relay record is a message (section 2) with intent `instruction` and place the target's agent-to-agent chat; the
+record adds `request` and `origin`.
+
+**Which session receives it.** The target's main session, by default. A card session receives it only when the message
+names a card the target owns (it is then a message on that card, section 1). It never lands in a card or session of an
+agent that does not own the place (section 6).
+
+**Which session gets the answer.** The asking session: the sender's card session when a card sent the message, else the
+sender's main session. The target answers with `reply_to` the message; the answer is delivered to the asking session by
+the same rules and never to the target's own chat, the sender's Bot Chat, or the owner. The asking session decides what
+the owner hears, once (lina#261).
+
+**Busy target.** Stored, acknowledged to the sender at once, and delivered at the target's next turn; it joins a running
+turn only when it answers a question the target asked (section 3). Busy, a session open on another surface and a live
+CLI holding the session are not refusals: the message waits on the place, not on the session. The same request sent
+twice is one delivery: the message id is the request key, as in lina#219, and the delivery has one id, as in lina#223.
+A sender that retries after an unknown outcome reuses the id and gets the stored state back (section 5).
+
+**Speaker provenance.** The route decides whose words are whose (`docs/memory-layer.md:68-82`). In a relay, the owner's
+span is stored as the owner's words only when the core can prove it: the `request` names an owner turn in the sending
+agent's conversation that arrived on a person route, and the span is found verbatim in that turn. The relay itself, and
+anything the sender adds, are the sender agent's words. An agent's text that only claims "the owner said ..." without a
+proven span stays the agent's words, in the target's transcript and in memory. Today the opposite happens: the tool asks
+the model to paraphrase the owner (`tools/bot_mode_dm.py:86`) and stamps the whole message with a bot author
+(`tools/bot_mode_dm.py:248`), which memory stores as the bot's words (`plugins/memory/lina/policy.yaml:23`, `30`). The
+proven span needs one new policy route, an owner relay whose quoted span is the person's words; lina#310 keeps gateway
+notes out of the owner's words in the same table.
+
+**What the sender sees and says.** The sender reads the delivery record, never guesses: one line "delivered at hh:mm",
+then the target's answer when it comes, and "read" in between when the sender is asked. Today's tool returns a dispatch
+acknowledgement that it says is not a delivery receipt (`tools/bot_mode_dm.py:79`). The owner who asked for the relay
+sees the same line under his request, in the app (a follow-up app issue).
+
+**Long work goes to a card.** A message that asks for more than one reply (it needs tools beyond reading, or more than
+one turn) becomes a work card owned by the target, linked to the sender's place; the chat gets the card's link and
+the one-line answer, not the work. The rule is enforced in the target's turn: a turn started by an agent message may read
+and reply, and its first call to a tool that writes or runs is refused with "make a card" (the tool list stays as it is,
+so the cached prefix is untouched). Results come back as the card's end, to the asking session (section 4).
+
+**Loop cap.** Between two agents, a thread (messages linked by `reply_to`) runs at most three round trips without a
+message from the owner. The fourth agent message in that thread is held, and the asking session gets one question to
+put to the owner: go on, or stop. A message from the owner on either side resets the count.
+
+**Approvals.** An agent's message never approves anything, relayed or not (section 6). A relayed owner span is the
+owner's words for memory and context, not a decision: an approval still needs the owner's own `decision` on his own
+route.
+
+## 8. Context order
 
 The reference is the "Context order" section of `docs/memory-layer.md` (`docs/memory-layer.md:44-60`). This design adds
 no new row; it changes two cells of one row and adds one sentence under the table.
@@ -260,14 +329,14 @@ The full table after both sets of changes, **proposed**:
 | Lower summary nodes (depth 0) and the recent turns, including delivered messages: a message delivered mid-run is its own user entry after the latest tool result; one delivered at the next turn or on a wake is that turn's user message (lina#309) | LCM-X, then the transcript | appended every turn, and mid-run when a delivered message joins a running turn; replaced at a compaction (lina#309) |
 | Found memory: the turn's recall and up to three of this agent's own tastes picked for the turn, labelled as tastes, as a `memory_recall` tool call and its result, after the user message. `memory_recall` is a real read-only tool (`agent/memory_recall_tool.py`) listed with the provider's tools, so strict providers accept the call (lina#307) | `agent/turn_context.py` `recall_tool_rows` | per turn |
 
-## 8. Today's paths mapped
+## 9. Today's paths mapped
 
 | # | Path | Code today | Failure seen in operation | What the design changes |
 | --- | --- | --- | --- | --- |
 | 1 | Agent chat (Telegram DM; the app's to-do talk) | one gateway turn per message; a busy session is interrupted by default, or steered or queued by mode (`gateway/run.py:3339`, `gateway/run_busy.py:680-729`); the app talks in a separate API session per agent because the gateway refuses an API turn into a Telegram conversation (`hermes_cli/lina_talk.py:4-11`, `gateway/session_api_turn.py:144`), and carries the exchange into the next DM turn as model-facing text (`gateway/app_talk_carry.py:88-99`); a busy agent answers 429 in the app (lina-app `src/screens/talk.tsx:17-30`) | one gateway process serves every agent, so a restart drops each agent's turn in the default `interrupt` mode (`gateway/run_busy.py:107-110`); the app and Telegram are two sessions; a busy agent refuses the app message | stored first, then mid-run or next turn; busy is never a refusal; the carry becomes a persisted note message; restart reconciles by message id |
 | 2 | Kanban card comment | a comment on a running card is polled on activity ticks at most every 6 s and steered as a user entry after the next tool result (`agent/activity_tracking.py:74-82`, `tools/kanban_tools.py:621-697`); comments on cards that do not run are read at the next run start | same-agent comments were dropped mid-run: the reader skipped every comment authored by the profile name. Fixed in this repository by lina#246 (skip only ids written by this run, `tools/kanban_tools.py:659-679`); the install carried the same fix as a local patch, not in the repo history. Still open: delivery waits for a tool call, a run that ends first never sees the note, and the receipt is matched by note text (`tools/kanban_tools.py:629-644`). Board counts: 149 main-session comments, 140 receipts | the comment is a message with an id; "delivered" is found by id; a note left after the run's last model call is queued for the card's next turn or wakes it |
 | 3 | Record comment and decision answer | the comment is stored on the record, then one line (text cut to 80 characters) goes to the answering agent's chat through `work.notice.command` (`hermes_cli/work/cmd_comments.py:54-56`, `hermes_cli/work/notify.py:20-41`); the install's ledger is an ops script, not in the repo, that sends the same line through the bot-to-bot queue | the answer reaches the agent's main chat, not the card or run that asked; when the main session answered a worker question instead of the card, the card did not learn that the scope changed | a decision is a message to the asking session with `reply_to` the question; the main-chat line goes away |
-| 4 | Agent-to-agent message | Bot Chat delivery with delivery ids and admission refusals, `session_busy` among them (`gateway/session_bot.py:25-37`); the desktop relay expires envelopes after 900 s (`tools/bot_relay.py:43`); the install retries a busy target every 2 minutes for 6 hours, 7 days for record and worker notices (ops script, not in the repo) | a busy or held target refuses; 895 queued messages delivered in five days, 285 needed two or more attempts, median 143 s, p90 about 26 min, worst 2.1 h, 10 expired undelivered in seven days | the message is stored on the target's place and delivered next turn (mid-run only when it answers that agent's question); no blocking sender turn, no busy loop |
+| 4 | Agent-to-agent message and owner relay | `message_agent` works only in a Bot Chat session (`tools/bot_mode_dm.py:203-218`), stamps the sender as a bot author (`tools/bot_mode_dm.py:245-248`) and tells the model to paraphrase, never paste, the owner's words (`tools/bot_mode_dm.py:86`); its answer is a dispatch acknowledgement, not a delivery receipt (`tools/bot_mode_dm.py:79`); Bot Chat admission keeps delivery ids and receipts and refuses on the owner's state, `session_busy` and a live CLI holding the session among them (`gateway/session_bot.py:25-37`, `600-610`); memory stores a bot author's turn as the bot's words (`plugins/memory/lina/policy.yaml:23`, `30`); the desktop relay expires envelopes after 900 s (`tools/bot_relay.py:43`); the install retries a busy target every 2 minutes for 6 hours, 7 days for record and worker notices (ops script, not in the repo) | a busy or held target refuses. Durable queue over 14 days: 1527 messages, 1129 delivered on the first attempt, 236 on the second, 162 needed three or more; median queue-to-delivery 122 s, p90 712 s; 104 never delivered (expired or still pending), most to the development agent. Over five days: 895 delivered, 285 needed two or more attempts, worst 2.1 h. One agent's records over three weeks: 24 relay sends, 8 refused because the target's chat was open on another surface, 4 owner relay requests on 4 separate days. A relayed owner request arrives as the sending agent's paraphrase, and its answer arrives in the sender's Bot Chat, not in the conversation the owner asked in | the message is stored on a place the target owns and delivered once, next turn (mid-run only when it answers that agent's question); the sender sees delivered, read and answered; an owner relay keeps the owner's words with their source turn; the answer goes to the asking session; long work becomes a card (section 7) |
 | 5 | Worker end notice | the hub writes the end as a card comment, attaches the report and wakes a parked card (`hermes_cli/worker/kanban_link.py:116-140`, `161-182`), and also sends a notice to the agent's chat (`hermes_cli/worker/notice.py:120-142`); a run waiting on a person sends a notice after 120 s (`hermes_cli/worker/hub.py:31`) | two judges: the card session and the main session both reacted to one end (two pull requests, an overwritten verdict); a card waiting behind an unfinished parent is not woken (`hermes_cli/worker/kanban_link.py:176-182` wakes only a `scheduled` card; the install's wake script moved such a card to `todo`, ops script, not in the repo), so nobody judged the run (lina#295); 31 wake comments in five days, wake log 88 lines with 2 errors | a run's end is an event on the run's place, delivered to the card session only, with lina#223's one delivery id; a parent wait does not hold back a run-end delivery (lina#295 Done when 2) |
 | 6 | Card event notice | the notifier sends terminal events to the chat that made the card and/or wakes that chat's session by `delivery_mode` (`gateway/kanban_watchers_notifier.py:47`, `517-519`, `574-600`) | one event reached the owner several times: a passive ping, the woken agent's reply, a worker notice; the install now defaults to `wake` (a local patch, not in the repo) | an event goes once, from the agent that owns the place the owner asked on (section 4); `wake` becomes the rule, not a setting |
 | 7 | Telegram reply | the replied-to text is prepended to the new message in the same chat session (`gateway/run_inbound.py:1579-1588`) | a reply to a notice about a card reaches the chat session, not the card; numbered replies bound to the wrong list (lina#299); the same final reply sent twice after a slow acknowledgement (lina#211, lina#214) | every sent notice records its delivery id and platform message id with its place; a reply to it is a message on that place; a reply to an ordinary chat message stays agent chat |
@@ -278,7 +347,7 @@ message to it is stored and the app says "waiting, the card is in triage" instea
 to a running card by comment can be missed by a run already finishing, which the delivery state now shows (`read` or
 `queued_next_turn`) instead of a receipt comment.
 
-## 9. Comparison
+## 10. Comparison
 
 Sources were opened and read for this note unless marked snippet-only.
 
@@ -289,6 +358,8 @@ Sources were opened and read for this note unless marked snippet-only.
 | How the reply comes back | `chat.postMessage` with `thread_ts`, or streaming; a status ("processing") shows while the agent works and clears on reply ([setStatus](https://docs.slack.dev/reference/methods/assistant.threads.setStatus), read) | the agent emits activities (`thought`, `elicitation`, `action`, `response`, `error`); the session's state follows the last activity; an acknowledgement is expected within 10 s of `created` | a pull request with commits, comments and a session log; commit messages link the session log ([risks and mitigations](https://docs.github.com/en/copilot/concepts/agents/coding-agent/risks-and-mitigations), read) |
 | Duplicates and retries | a unique `event_id` per event; three retries (at once, 1 min, 5 min) with `x-slack-retry-num` and `x-slack-retry-reason`; a 3 s acknowledgement limit ([Events API](https://docs.slack.dev/apis/events-api/), read) | the webhook must answer within 5 s; up to 3 retries after 1 min, 1 h and 6 h; signed with `Linear-Signature` and a timestamp ([webhooks](https://linear.app/developers/webhooks), read) | answer within 10 s; `X-GitHub-Delivery` is unique per event and stays the same on redelivery ([handling deliveries](https://docs.github.com/en/webhooks/using-webhooks/handling-webhook-deliveries), [best practices](https://docs.github.com/en/webhooks/using-webhooks/best-practices-for-using-webhooks), read) |
 | Approvals | the app's scopes; no per-message approval in the platform | workspace admins install the agent; `elicitation` asks the user for confirmation in the session ([agents](https://linear.app/developers/agents), read); stop and other signals exist, their list was not read | only users with write access can trigger the agent, and comments from others are never shown to it; the agent cannot approve or merge; workflows wait for a person to approve them; the requester's approval does not count ([risks and mitigations](https://docs.github.com/en/copilot/concepts/agents/coding-agent/risks-and-mitigations), [reviewing PRs](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/review-copilot-prs), read) |
+
+**Agent to agent.** None of the three products defines one agent sending a message to another agent in the pages read. Linear's agent session events go only to the agent they are addressed to ([agent interaction](https://linear.app/developers/agent-interaction), read), and agents cannot be project members or leads ([agents](https://linear.app/developers/agents), read); a hand-off between agents is not described. Slack's AI app pages describe one app in a thread with a user ([AI apps](https://docs.slack.dev/ai/developing-ai-apps), read). GitHub's Copilot cloud agent responds only to comments from people with write access ([existing PR](https://docs.github.com/en/copilot/how-tos/use-copilot-agents/coding-agent/make-changes-to-an-existing-pr), read). Section 7 is therefore LINA's own design, built on the same place, id and reply rules as the rest.
 
 **What we take.**
 
