@@ -17,17 +17,16 @@ const [
 	access,
 	ref,
 ] = process.argv.slice(2);
-const presets = new Map([["read-only", "read-only"], [
-	"workspace-write",
-	"workspace",
-], ["full", "full-access"]]);
-const permissionPreset = presets.get(access);
+const permissions = access === "read-only"
+	? { permissionPreset: "read-only" }
+	: {};
 const done = (value, code = 0) => {
 	process.stdout.write(JSON.stringify(value) + "\n");
 	process.exit(code);
 };
 if (
-	!engine || !cwd || !name || (!promptFile && !ref) || !permissionPreset ||
+	!engine || !cwd || !name || (!promptFile && !ref) ||
+	!["read-only", "workspace-write", "full"].includes(access) ||
 	Boolean(provider) !== Boolean(modelId)
 ) {
 	done({ action: "error", reason: "usage" }, 2);
@@ -66,7 +65,7 @@ try {
 		await client.openSession({
 			sessionPath: found.row.sessionPath,
 			cwd: found.row.cwd,
-			permissionPreset,
+			...permissions,
 		});
 		reply = { action: "attach" };
 	} else {
@@ -74,7 +73,7 @@ try {
 		const opened = await client.openSession({
 			cwd,
 			retain_on_disconnect: true,
-			permissionPreset,
+			...permissions,
 			...(provider ? { provider, modelId } : {}),
 			...(thinking ? { thinkingLevel: thinking } : {}),
 		});
@@ -84,10 +83,7 @@ try {
 			readFileSync(promptFile, "utf8") +
 				`\n\nWorker access mode: ${access}. Permission dialogs are answered by the worker, never by a person. ` +
 				`A permission denial is final for this run: do not ask for approval, retry the denied operation, or use another tool to bypass it. ` +
-				`If access blocks the requested task, report that and finish. ` +
-				(access !== "full"
-					? `Use file tools directly. When bash is hidden, the worker accepts a single literal eval bridge, for example await tool.bash({"command":"ls"}). Use JSON arguments and no surrounding code. Workspace bridges support ls, git status --short, git add with a local filename, and git commit -m with a literal message, joined by && if needed. General eval code is denied. `
-					: ""),
+				`If access blocks the requested task, report that and finish. `,
 		);
 		reply = {
 			action: "open",

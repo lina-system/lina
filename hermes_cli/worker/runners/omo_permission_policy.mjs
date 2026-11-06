@@ -90,16 +90,10 @@ export function permissionDecision(dialog, access, cwd, call) {
 		};
 	}
 	if (
-		access === "full" &&
-		["edit", "read", "list", "grep", "glob", "bash", "external_directory"]
-			.includes(tool)
-	) {
-		allow = true;
-	} else if (
 		["edit", "read", "list"].includes(tool) && target !== "unknown" &&
 		target !== "Unknown" &&
 		!/[\n\r*?\[\]$~]/.test(target) &&
-		(tool !== "edit" || access === "workspace-write")
+		(tool !== "edit" || access !== "read-only")
 	) {
 		const root = canonical(cwd);
 		const path = canonical(resolve(cwd, target));
@@ -107,7 +101,7 @@ export function permissionDecision(dialog, access, cwd, call) {
 		allow = step !== null && !isAbsolute(step) && step !== ".." &&
 			!step.startsWith("../");
 	}
-	// Shell policy is enforced by omo's workspace preset. An unexpected shell ask is not
-	// evidence that an arbitrary command is confined; unknown/custom/external requests deny.
+	// A project/global ask is not evidence that an arbitrary command is confined.
+	// Unknown/custom/external requests deny even when the session omits a preset.
 	return { tool, target, mode: access, value: allow ? "Allow once" : "Deny" };
 }

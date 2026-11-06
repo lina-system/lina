@@ -12,16 +12,17 @@ import { pathToFileURL } from "node:url";
 import { isPermissionDialog } from "./omo_permission_policy.mjs";
 
 const [engine, sessionId, answerFile, access] = process.argv.slice(2);
-const permissionPreset = {
-	"read-only": "read-only",
-	"workspace-write": "workspace",
-	full: "full-access",
-}[access];
+const permissions = access === "read-only"
+	? { permissionPreset: "read-only" }
+	: {};
 const done = (value, code = 0) => {
 	process.stdout.write(JSON.stringify(value) + "\n");
 	process.exit(code);
 };
-if (!engine || !sessionId || !answerFile || !permissionPreset) {
+if (
+	!engine || !sessionId || !answerFile ||
+	!["read-only", "workspace-write", "full"].includes(access)
+) {
 	done({ action: "error", reason: "usage" }, 2);
 }
 const text = readFileSync(answerFile, "utf8").trim();
@@ -109,7 +110,7 @@ try {
 	await client.openSession({
 		sessionPath: found.row.sessionPath,
 		cwd: found.row.cwd,
-		permissionPreset,
+		...permissions,
 	});
 	const steps = [];
 	// Several questions come one at a time, and a fallback select may open an input: at most 8 frames.

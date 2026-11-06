@@ -117,7 +117,7 @@ def omo(task, tmp_path, monkeypatch):
     return runner, fake
 
 
-@pytest.mark.parametrize(("mode", "preset"), zip(ACCESS, ("read-only", "workspace", "full-access")))
+@pytest.mark.parametrize(("mode", "preset"), zip(ACCESS, ("read-only", None, None)))
 @pytest.mark.parametrize("model", [None, ModelProfile("proxy", "model-x", "high")])
 def test_omo_sets_session_permission_with_or_without_model(task, omo, mode, preset, model):
     # Given an isolated RPC engine and optional explicit model.
@@ -126,19 +126,21 @@ def test_omo_sets_session_permission_with_or_without_model(task, omo, mode, pres
     handle = runner.start(task, "work", model, mode)
     # Then permission is a session RPC field, never a daemon setting.
     opened = json.loads((fake / "state.json").read_text())["opened"]
-    assert opened["permissionPreset"] == preset
+    assert {key: value for key, value in opened.items() if key == "permissionPreset"} == (
+        {"permissionPreset": preset} if preset else {})
     assert opened.get("modelId") == (model.id if model else None)
     assert Handle.load(task).data["access"] == handle.data["access"] == mode
     assert runner.honours(mode) == (True, "")
 
 
 @pytest.mark.parametrize("action", ["follow_up", "answer"])
+@pytest.mark.parametrize("mode", ACCESS)
 def test_omo_restores_recorded_permission_before_continuation(
-    task, omo, action: Literal["follow_up", "answer"],
+    task, omo, action: Literal["follow_up", "answer"], mode,
 ):
-    # Given a recorded read-only session.
+    # Given a recorded session mode.
     runner, fake = omo
-    handle = runner.start(task, "work", None, "read-only")
+    handle = runner.start(task, "work", None, mode)
     # When continuing or answering through the runner.
     match action:
         case "follow_up":
@@ -147,10 +149,13 @@ def test_omo_restores_recorded_permission_before_continuation(
             runner.answer(Handle.load(task), "blue")
         case unreachable:
             assert_never(unreachable)
-    # Then an explicit preset is sent on the existing-session attach.
+    # Then every attach, including permission inspection and answer, preserves the mapping.
     opens = [json.loads(line)["openSession"] for line in (fake / "rpc.jsonl").read_text().splitlines()
              if "openSession" in json.loads(line)]
-    assert opens[1] == {"sessionPath": "/fake/ses.jsonl", "cwd": str(task.work), "permissionPreset": "read-only"}
+    expected = {"sessionPath": "/fake/ses.jsonl", "cwd": str(task.work)}
+    if mode == "read-only":
+        expected["permissionPreset"] = "read-only"
+    assert opens[1:] and all(opened == expected for opened in opens[1:])
     assert Handle.load(task).data["access"] == handle.data["access"]
 
 
@@ -171,10 +176,11 @@ def test_follow_up_rejects_access_change_before_any_side_effect(task, command, o
 
 
 def test_omo_default_access_is_workspace_write(task, omo):
-    # Given no model and no access override, when starting, then workspace applies.
+    # Given no model and no access override, task access is workspace without an engine preset.
     runner, fake = omo
-    runner.start(task, "work", None)
-    assert json.loads((fake / "state.json").read_text())["opened"]["permissionPreset"] == "workspace"
+    handle = runner.start(task, "work", None)
+    assert "permissionPreset" not in json.loads((fake / "state.json").read_text())["opened"]
+    assert handle.data["access"] == "workspace-write"
 
 
 @pytest.mark.parametrize("kind", ["command", "omo"])

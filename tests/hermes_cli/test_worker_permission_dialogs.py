@@ -80,6 +80,8 @@ def pending(lane, mode, target, tool="edit"):
     ("read-only", "probe.txt", "Deny"),
     ("workspace-write", "probe.txt", "Allow once"),
     ("workspace-write", "../outside.txt", "Deny"),
+    ("full", "probe.txt", "Allow once"),
+    ("full", "../outside.txt", "Deny"),
 ])
 def test_permission_is_settled_without_human_state(lane, mode, target, reply):
     runner, task, record, handle = pending(lane, mode, target)
@@ -113,6 +115,14 @@ def test_unknown_permission_is_denied_even_in_full(lane):
     runner, _, record, handle = pending(lane, "full", "probe.txt", tool="unknown")
     assert runner.state(handle) == "running"
     assert json.loads(record.read_text())["responses"] == ["Deny"]
+
+
+def test_readonly_eval_is_denied_without_executing_code(lane):
+    runner, task, record, handle = pending(lane, "read-only", "probe.txt", tool="eval")
+    assert runner.state(handle) == "running"
+    assert runner.state(handle) == "done"
+    assert json.loads(record.read_text())["responses"] == ["Deny"]
+    assert not (task.work / "probe.txt").exists()
 
 
 @pytest.mark.parametrize(("code", "expected"), [

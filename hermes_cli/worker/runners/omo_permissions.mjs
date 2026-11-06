@@ -8,17 +8,18 @@ import {
 } from "./omo_permission_policy.mjs";
 
 const [engine, ref, cwd, access, action] = process.argv.slice(2);
-const preset = {
-	"read-only": "read-only",
-	"workspace-write": "workspace",
-	full: "full-access",
-}[access];
+const permissions = access === "read-only"
+	? { permissionPreset: "read-only" }
+	: {};
 const agentDir = process.env.OMO_CODING_AGENT_DIR ||
 	join(homedir(), ".omo", "agent");
 let client;
 let reply;
 try {
-	if (!preset || !["inspect", "settle"].includes(action)) {
+	if (
+		!["read-only", "workspace-write", "full"].includes(access) ||
+		!["inspect", "settle"].includes(action)
+	) {
 		throw new Error("invalid permission request");
 	}
 	const { RpcClient } = await import(
@@ -38,7 +39,7 @@ try {
 	await client.openSession({
 		sessionPath: found.row.sessionPath,
 		cwd: found.row.cwd,
-		permissionPreset: preset,
+		...permissions,
 	});
 	const state = await client.getState();
 	const dialogs = (state.pendingDialogs || []).filter(isPermissionDialog);

@@ -48,9 +48,17 @@ A command runner declares `access_args`, a mapping from modes to argv lists
 appended on starts, follow-ups and answers. Without that mapping, its fixed
 `access` is its only supported mode; with neither declaration it cannot start.
 See `lina-worker.example.yaml` for Codex sandbox and Claude permission flags.
-The omo runner applies `read-only`, `workspace` or `full-access` to the individual
-session, rather than changing its shared daemon's configuration. Both hub and
+The omo runner sets a session preset only for `read-only`. Both hub and
 device refuse unsupported modes with a reason. ACP is not implemented here.
+
+omo: workspace-write is enforced by the task boundary (worktree, blocked push, read-only inputs), not by an omo preset, because the engine's workspace preset asks on every codemode eval
+
+`workspace-write` and `full` both omit `permissionPreset`, matching today's
+omo-task default (`full-access` without project/global overrides). Their session
+settings are identical; their distinction is the hub ceiling and recorded mode.
+The task brief requires work inside the worktree, inputs are read-only copies,
+push is blocked, and Linux workers run in transient units. This is the task
+boundary, not an omo filesystem sandbox; the shared daemon is not reconfigured.
 
 Omo permission dialogs are machine decisions, not human questions. The runner
 answers `Deny` for read-only writes, external workspace targets and requests it
@@ -59,16 +67,16 @@ are recorded as `permission_denied` or `permission_allowed` with tool, target an
 mode. Hub, device and runner answer paths reject permission-dialog replies, even
 if the text is `Allow once`. A larger grant requires a new task.
 
-The installed engine's default without an override is `full-access`. Its
-`workspace` preset allows file edits and bash but asks for external directories;
-`read-only` asks rather than denying writes, which is why the runner resolves
-dialogs. Codemode may hide bash behind eval. The worker permits only a single
-literal JSON `tool.bash`/`tool.monitor` bridge for `ls`, `git status --short`,
-`git add` of a local filename, or `git commit -m` with a literal message. General
-eval code is denied. These engine rules are not an OS sandbox for arbitrary
-shell code; no preset offers full-access eval with guaranteed filesystem
-confinement. The worker keeps the narrower workspace preset rather than
-silently raising access to match the unrestricted default.
+Installed omo-ai 5.1.51 engine sources under
+`dist/core/extensions/builtin/permission-system/`: `config.js:4,8` defines the
+full-access default; `config.js:9-17` makes workspace ask by default and permits
+read/list/grep/edit/bash, but not eval. `parsers.js:119-135` always adds a separate
+eval permission even when a cell's tools request narrower permissions.
+Read-only retains its preset and automatically denies write/eval requests.
+If project/global rules cause a dialog in workspace/full, the machine policy
+still answers it, never a person: allowed targets receive Allow once and
+forbidden or unknown requests receive Deny. The narrow literal eval bridge is
+only a fallback for such dialogs, not a restriction on ordinary no-preset eval.
 
 `send --access` can retain or lower access for subsequent work, never raise it.
 Omitting the option preserves the recorded mode; answers preserve the current
