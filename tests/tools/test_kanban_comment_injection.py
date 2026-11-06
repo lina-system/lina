@@ -11,6 +11,7 @@ new comments steer, and own-authored comments are skipped.
 
 from __future__ import annotations
 
+import json
 import sys
 from pathlib import Path
 
@@ -39,6 +40,7 @@ def worker_home(tmp_path, monkeypatch):
     home = tmp_path / "hermes_home"
     home.mkdir()
     monkeypatch.setenv("HERMES_HOME", str(home))
+    monkeypatch.setenv("HOME", str(tmp_path))
     monkeypatch.setattr(Path, "home", lambda: tmp_path)
     for var in ("HERMES_KANBAN_DB", "HERMES_KANBAN_WORKSPACES_ROOT", "HERMES_KANBAN_HOME", "HERMES_KANBAN_BOARD"):
         monkeypatch.delenv(var, raising=False)
@@ -51,6 +53,7 @@ def worker_home(tmp_path, monkeypatch):
     # Reset module-level poll state so tests don't leak into each other.
     kt._comment_watermark.clear()
     kt._comment_poll_last_attempt = 0.0
+    monkeypatch.delenv("HERMES_KANBAN_RUN_ID", raising=False)
     return home
 
 
@@ -63,6 +66,126 @@ def test_noop_without_worker_env(worker_home, monkeypatch):
     monkeypatch.delenv("HERMES_KANBAN_TASK", raising=False)
     agent = FakeAgent()
     assert kt.inject_new_comments_from_env(agent) is False
+    assert agent.steers == []
+
+
+def _running_worker(monkeypatch, profile="worker-bot"):
+    with kbc.connect_closing() as conn:
+        tid = kb.create_task(conn, title="comment delivery", assignee=profile)
+        run_id = kb.claim_task(conn, tid).current_run_id
+    monkeypatch.setenv("HERMES_KANBAN_TASK", tid)
+    monkeypatch.setenv("HERMES_KANBAN_RUN_ID", str(run_id))
+    monkeypatch.setenv("HERMES_PROFILE", profile)
+    agent = FakeAgent()
+    assert kt.inject_new_comments_from_env(agent) is False
+    return tid, run_id, agent
+
+
+def test_same_profile_main_session_instructions_arrive_three_times(worker_home, monkeypatch):
+    """Regression for #246: all three main-session notes used to be dropped."""
+    # Given a running card whose main session uses the same profile name.
+    tid, _, agent = _running_worker(monkeypatch)
+    delivered = []
+    bodies = [f"main-session instruction {i}" for i in range(3)]
+    # When each instruction arrives in a separate polling window.
+    for body in bodies:
+        with monkeypatch.context() as main:
+            main.delenv("HERMES_KANBAN_TASK")
+            main.delenv("HERMES_KANBAN_RUN_ID")
+            result = json.loads(kt._handle_comment({"task_id": tid, "body": body}))
+            assert result["ok"], result
+        _unthrottle()
+        delivered.append(kt.inject_new_comments_from_env(agent))
+    # Then every instruction reaches the worker, once and in order.
+    assert delivered == [True, True, True]
+    assert len(agent.steers) == 3
+    assert all(body in note for body, note in zip(bodies, agent.steers))
+
+
+def test_own_run_comment_is_skipped_in_mixed_batch(worker_home, monkeypatch):
+    # Given own progress and main-session guidance with the same author.
+    tid, _, agent = _running_worker(monkeypatch)
+    own = "own progress must not echo"
+    other = "main-session guidance must arrive"
+    result = json.loads(kt._handle_comment({"task_id": tid, "body": own}))
+    assert result["ok"], result
+    with kbc.connect_closing() as conn:
+        kb.add_comment(conn, tid, author="worker-bot", body=other)
+    # When polling the mixed batch.
+    _unthrottle()
+    assert kt.inject_new_comments_from_env(agent) is True
+    # Then only the foreign note is delivered, with no replay on the next poll.
+    assert len(agent.steers) == 1
+    assert other in agent.steers[0]
+    assert own not in agent.steers[0]
+    _unthrottle()
+    assert kt.inject_new_comments_from_env(agent) is False
+
+
+def test_own_run_comment_is_skipped(worker_home, monkeypatch):
+    # Given a comment written by this card's own tool session.
+    tid, _, agent = _running_worker(monkeypatch)
+    result = json.loads(kt._handle_comment({"task_id": tid, "body": "own progress"}))
+    assert result["ok"], result
+    # When the worker polls.
+    _unthrottle()
+    assert kt.inject_new_comments_from_env(agent) is False
+    # Then the comment never echoes.
+    assert agent.steers == []
+
+
+def test_other_run_comment_with_same_author_arrives(worker_home, monkeypatch):
+    # Given a real different run on another card writing on this card.
+    tid, _, agent = _running_worker(monkeypatch)
+    with kbc.connect_closing() as conn:
+        other = kb.create_task(conn, title="other run", assignee="worker-bot")
+        other_run = kb.claim_task(conn, other).current_run_id
+        kb.add_comment(conn, tid, author="worker-bot", body="other run guidance", run_id=other_run)
+    # When the bound worker polls.
+    _unthrottle()
+    assert kt.inject_new_comments_from_env(agent) is True
+    # Then a different run's comment is not mistaken for its own.
+    assert "other run guidance" in agent.steers[0]
+
+
+def test_worker_run_end_comment_arrives(worker_home, monkeypatch):
+    from hermes_cli.worker.kanban_link import record_end
+
+    # Given a card whose profile even matches the worker-end author.
+    tid, _, agent = _running_worker(monkeypatch, profile="lina-worker")
+    record_end({"task": tid}, {"id": "external-run", "runner": "local"},
+               "done", "external-run", "worker run finished")
+    # When the card's live bridge polls the real worker-end write.
+    _unthrottle()
+    assert kt.inject_new_comments_from_env(agent) is True
+    # Then the completion notice reaches the card without restarting it.
+    assert "worker run finished" in agent.steers[0]
+
+
+def test_receipts_follow_live_delivery_once_without_echo(worker_home, monkeypatch):
+    # Given two foreign comments queued but not yet drained into the conversation.
+    tid, run_id, agent = _running_worker(monkeypatch)
+    agent._session_messages = []
+    with kbc.connect_closing() as conn:
+        for body in ("first instruction", "second instruction"):
+            kb.add_comment(conn, tid, author="operator", body=body)
+    _unthrottle()
+    assert kt.inject_new_comments_from_env(agent) is True
+    _unthrottle()
+    assert kt.inject_new_comments_from_env(agent) is False
+    with kbc.connect_closing() as conn:
+        assert len(kb.list_comments(conn, tid)) == 2
+    # When the queued steer lands as a live user row, then two polls run.
+    agent._session_messages.append({"role": "user", "content": agent.steers.pop()})
+    for _ in range(2):
+        _unthrottle()
+        assert kt.inject_new_comments_from_env(agent) is False
+    # Then each delivered comment has one receipt attributed to this run, with no echo.
+    with kbc.connect_closing() as conn:
+        receipts = kb.list_comments(conn, tid)[2:]
+        events = [e for e in kb.list_events(conn, tid) if e.kind == "commented" and e.run_id == run_id]
+    assert len(receipts) == 2
+    assert {e.payload["comment_id"] for e in events} == {c.id for c in receipts}
     assert agent.steers == []
 
 

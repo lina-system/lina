@@ -1,0 +1,235 @@
+# Web Push to the owner's devices (lina#244). Served by hermes_cli/web_routers/lina_push.py behind the dashboard auth
+# gate (session token), like the other client routes; the sender is hermes_cli/lina_push_watch.py.
+# tests/hermes_cli/test_lina_push_api.py validates every served body against these schemas, and
+# tests/hermes_cli/test_lina_push_watch.py every decrypted push message against PushMessage, so a shape change here and
+# in the code land together.
+openapi: 3.0.3
+info:
+  title: LINA push API
+  version: 0.1.0
+  description: >
+    The core pushes to the owner's subscribed devices for exactly three things: a decision to make (`ask`), an agent's
+    reply to his comment (`reply`), and a work card stopped for him (`blocked` waiting for him, or an open `question`).
+    Progress, finished runs, reviews and the owner's own to-dos never push. There are no quiet hours: a message goes
+    out when the item appears or changes; the device's Focus and Do Not Disturb decide when to stay silent. Every
+    message is encrypted per RFC 8291 (aes128gcm) and signed with the core's VAPID key (RFC 8292); the service worker
+    receives one PushMessage as JSON. One notification per item: its tag is the item's key, a changed item is sent
+    again under the same tag (replace it), and when the item leaves the set (answered, read-marked, unblocked,
+    resolved) a `close` message names the tag to close.
+servers:
+  - url: /api/lina
+paths:
+  /push/key:
+    get:
+      operationId: getPushKey
+      summary: Whether push is set up, and the public VAPID key to subscribe with (applicationServerKey).
+      parameters:
+        - $ref: "#/components/parameters/IfNoneMatch"
+      responses:
+        "200":
+          description: The key view. `ETag` is set; a matching `If-None-Match` answers 304.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PushKey"
+        "304":
+          description: Not changed since the given ETag.
+  /push/subscriptions:
+    post:
+      operationId: savePushSubscription
+      summary: Add or refresh this device's subscription (idempotent by endpoint).
+      description: >
+        The body is the browser's `PushSubscription.toJSON()`. The endpoint must be `https` on a known push service
+        host (Apple, Google, Mozilla, Microsoft). Writes share the client API's limit of 30 a minute per client.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SubscriptionRequest"
+      responses:
+        "200":
+          description: Stored.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SubscriptionResult"
+        "400":
+          description: The body is malformed, the endpoint is refused, or the keys are not a P-256 key and 16-byte secret.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many writes from this client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "503":
+          description: Push is not set up on this core (no VAPID key).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+  /push/subscriptions/remove:
+    post:
+      operationId: removePushSubscription
+      summary: Remove this device's subscription.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemoveRequest"
+      responses:
+        "200":
+          description: Removed, or there was none for this endpoint (`removed` false).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemoveResult"
+        "400":
+          description: The body is malformed.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: Too many writes from this client.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+components:
+  parameters:
+    IfNoneMatch:
+      name: If-None-Match
+      in: header
+      required: false
+      schema:
+        type: string
+  schemas:
+    PushKey:
+      type: object
+      additionalProperties: false
+      required: [version, enabled, publicKey]
+      properties:
+        version:
+          type: integer
+          enum: [1]
+        enabled:
+          type: boolean
+          description: False when the core has no VAPID key; then nothing is sent and subscribing answers 503.
+        publicKey:
+          type: string
+          nullable: true
+          description: base64url of the uncompressed P-256 public key (65 bytes); null when push is off.
+          pattern: "^[A-Za-z0-9_-]{87}$"
+    SubscriptionRequest:
+      type: object
+      additionalProperties: false
+      required: [endpoint, keys]
+      properties:
+        endpoint:
+          type: string
+          maxLength: 2048
+        expirationTime:
+          type: integer
+          nullable: true
+          description: Milliseconds since the epoch; past it the core forgets the subscription.
+        keys:
+          type: object
+          required: [p256dh, auth]
+          properties:
+            p256dh:
+              type: string
+            auth:
+              type: string
+    SubscriptionResult:
+      type: object
+      additionalProperties: false
+      required: [ok, id, created]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        id:
+          type: string
+          pattern: "^[0-9a-f]{32}$"
+        created:
+          type: boolean
+          description: False when this endpoint was already stored and is now refreshed.
+    RemoveRequest:
+      type: object
+      additionalProperties: false
+      required: [endpoint]
+      properties:
+        endpoint:
+          type: string
+    RemoveResult:
+      type: object
+      additionalProperties: false
+      required: [ok, removed]
+      properties:
+        ok:
+          type: boolean
+          enum: [true]
+        removed:
+          type: boolean
+    PushMessage:
+      description: What the service worker receives (the decrypted payload).
+      oneOf:
+        - $ref: "#/components/schemas/ShowMessage"
+        - $ref: "#/components/schemas/CloseMessage"
+    ShowMessage:
+      type: object
+      additionalProperties: false
+      required: [v, type, tag, kind, target, at, title, body]
+      properties:
+        v:
+          type: integer
+          enum: [1]
+        type:
+          type: string
+          enum: [show]
+        tag:
+          type: string
+          description: >
+            The item's key, used as the notification tag: `ask:<item>:<at>` (the bell notice key),
+            `reply:<item>:<comment>`, `blocked:<card>`, `question:<card>:<comment>`. An `ask` or `reply` key
+            is read-marked through `POST /api/lina/notices/read` (`keys`), which closes it on every device.
+        kind:
+          type: string
+          enum: [ask, reply, blocked, question]
+        target:
+          type: string
+          description: The work record item (ask, reply) or kanban card (blocked, question) to open.
+        at:
+          type: integer
+          description: Seconds since the epoch the item came in; 0 when not known (a blocked card).
+        title:
+          type: string
+          maxLength: 300
+        body:
+          type: string
+          maxLength: 300
+    CloseMessage:
+      type: object
+      additionalProperties: false
+      required: [v, type, tag]
+      properties:
+        v:
+          type: integer
+          enum: [1]
+        type:
+          type: string
+          enum: [close]
+        tag:
+          type: string
+    Error:
+      type: object
+      required: [detail]
+      properties:
+        detail:
+          type: string

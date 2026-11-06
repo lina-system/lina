@@ -176,15 +176,20 @@ class Hub:
             return self._place_locked(job)
 
     def _reserve(self, job: dict, dev: settings.Device) -> bool:
-        reply = for_device(dev, self.worker_root).call(["reserve", job["id"], str(dev.cap)], timeout=60).json()
+        named = bool(job.get("fixed_host"))
+        capacity = dev.manual_cap if named else dev.cap
+        reply = for_device(dev, self.worker_root).call(
+            ["reserve", job["id"], str(capacity), *(["named"] if named else [])], timeout=60).json()
         if reply.get("action") != "reserved":
-            self.store.log(f"{job['id']} {dev.name}: no slot ({reply.get('held')}/{dev.cap} held)")
+            self.store.log(f"{job['id']} {dev.name}: no slot ({reply.get('held')}/{capacity} held)")
         return reply.get("action") == "reserved"
 
     def _place_locked(self, job: dict) -> str | None:
         table = None
         if job.get("fixed_host"):
-            dev = self.device(job["fixed_host"])
+            dev, table = bidding.bid([self.device(job["fixed_host"])], self.worker_root, repo=job.get("repo"),
+                                     runner=job["runner"], manual=True,
+                                     min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))
         else:
             dev, table = bidding.bid(self.devices(), self.worker_root, repo=job.get("repo"), runner=job["runner"],
                                      min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))

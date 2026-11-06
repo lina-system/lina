@@ -315,6 +315,7 @@ def test_every_receipt_is_streamed_except_the_noise_and_unknown_kinds_are_stream
 def hub(work, tmp_path, monkeypatch):
     """The real hub with one local device whose runs are never launched (the placement is what the board shows)."""
     import json
+    import os
     import textwrap
 
     from hermes_cli.worker import device, serve, settings
@@ -333,12 +334,13 @@ def hub(work, tmp_path, monkeypatch):
     monkeypatch.setattr(device, "launch", lambda *_: None)
     root = settings.root(work.root)
     serve.serve_once(root)
+    # Named hosts now pass readiness checks too; filesystem time must match the fixture clock.
+    os.utime(root / device.HEARTBEAT, (work.clock[0], work.clock[0]))
     return Hub(root, out=lambda *_: None)
 
 
 def _submit(hub, work: WorkEnv, host: str | None = "here") -> str:
-    """A brief handed to the hub; with *host* it goes to that device without a bid (the fixed test clock makes the
-    device's serve heartbeat look stale to the bidder)."""
+    """A brief handed to the hub, optionally naming the fixture's ready device."""
     from tests.hermes_cli import _worker_fakes as fakes
     hub.submit({"briefs": [fakes.brief(work.tmp, "# 디스크 점검\n")], "mode": "ulw", "topic": "disk", "bot": "alpha",
                 "runner": "fakecli", "wait": None, "host": host})

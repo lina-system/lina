@@ -69,14 +69,15 @@ def serve_once(worker_root: Path) -> None:
     tasks.mkdir(parents=True, exist_ok=True)
     (worker_root / device.HEARTBEAT).write_text(f"{time.time():.3f}\n", encoding="utf-8")
     device.reap()
-    cap = slots.cap(worker_root)
     for task_dir in sorted(tasks.glob("O*-*")):
+        pool = slots.task_pool(task_dir)
+        cap = slots.cap(worker_root, pool=pool)
         task = device.task_of(worker_root, task_dir.name)
         for run in _requests(task_dir):
             if task.path(f"taken.{run}").exists():
                 continue
             if (cap is not None and not task.path("cancelled").exists()
-                    and slots.running_others(worker_root, task.id) >= cap):
+                    and slots.running_others(worker_root, task.id, pool=pool) >= cap):
                 continue  # the device is full: the request waits for a later pass
             with device.task_lock(task):  # a follow-up queues into an untaken run under the same lock
                 taken = not _unfinished(task, run) and _take(task, run)
