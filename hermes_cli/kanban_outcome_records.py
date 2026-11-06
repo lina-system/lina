@@ -3,20 +3,45 @@
 from __future__ import annotations
 
 import json
+from typing import Optional
 
 from agent.redact import redact_sensitive_text
 from hermes_cli.kanban_gates import DEFAULT_OWNERS
 
 TOOL_NAMES = frozenset({"lina-work", "lina-worker", "quick-issue"})
+# A ``scheduled`` park is a wait, not a failure; it keeps its own kind so a fleet pause and a
+# worker wait (a schedule whose reason names the worker) stay distinguishable in ``stops``.
 STOP_KINDS = frozenset({"blocked", "dependency_wait", "block_loop_detected", "timed_out",
-                        "gave_up", "crashed", "reclaimed", "spawn_failed"})
+                        "gave_up", "crashed", "reclaimed", "spawn_failed", "scheduled"})
 RESUME_KINDS = frozenset({"claimed", "unblocked", "promoted", "completed"})
+MAIN_SESSION_SUFFIX = "-main"
 
 
 def short_text(value) -> str:
     lines = str(value or "").splitlines()
     return redact_sensitive_text(lines[0] if lines else "", force=True,
                                  file_read=True, secret_file=True)[:200]
+
+
+def main_session(name, own) -> Optional[str]:
+    """The main session a comment author name belongs to, or None for any other name.
+
+    One rule for every profile: ``<profile>-main`` names ``profile``'s main session when
+    ``profile`` is one of the card's own names, and an own name is the main session itself.
+    """
+    name = str(name or "")
+    if name in own:
+        return name
+    base = name[:-len(MAIN_SESSION_SUFFIX)]
+    return base if name.endswith(MAIN_SESSION_SUFFIX) and base in own else None
+
+
+def _same_author(first, second, own) -> bool:
+    """Two names that record one hand: the same name, or the same main session."""
+    first, second = str(first or ""), str(second or "")
+    session = main_session(first, own)
+    return bool(first) and bool(second) and (
+        first == second or (session is not None and session == main_session(second, own)))
 
 
 def payload(event) -> dict:
@@ -63,19 +88,19 @@ def touch_records(task, comments, events, runs, own, now) -> list[dict]:
         touches.append({"at": at, "by": author, "source": source or {"surface": "legacy"},
                         "kind": "answer" if author in DEFAULT_OWNERS else "comment",
                         "line": short_text(comment["body"])})
-    _add_event_touches(touches, events, comments)
+    _add_event_touches(touches, events, comments, own)
     return sorted(touches, key=lambda item: item["at"])
 
 
-def _add_event_touches(touches, events, comments) -> None:
+def _add_event_touches(touches, events, comments, own) -> None:
     paired = set()
     for event in events:
         data = payload(event)
         kind = {"unblocked": "unblock", "edited": "edit", "linked": "link", "unlinked": "link"}.get(event["kind"])
-        actor = unblock_actor(event, comments) if event["kind"] == "unblocked" else data.get("by")
+        actor = unblock_actor(event, comments, own) if event["kind"] == "unblocked" else data.get("by")
         if kind and (actor or event["kind"] == "unblocked") and actor not in TOOL_NAMES:
             line = short_text(data.get("reason"))
-            match = (_unblock_match(touches, paired, event, actor, line, comments)
+            match = (_unblock_match(touches, paired, event, actor, line, comments, own)
                      if kind == "unblock" else None)
             if match is not None:
                 touches[match]["kind"] = "answer" if actor in DEFAULT_OWNERS else "unblock"
@@ -86,40 +111,48 @@ def _add_event_touches(touches, events, comments) -> None:
                             "kind": kind, "line": line})
 
 
-def _unblock_match(touches, paired, event, actor, line, comments):
+def _unblock_match(touches, paired, event, actor, line, comments, own):
     """Index of the comment touch this ``unblocked`` event already accounts for.
 
     The CLI records one act twice -- a ``UNBLOCK: <reason>`` comment and the event
     carrying ``<reason>`` -- and a legacy event with no reason names its actor in
-    that same comment. Pair only those shapes: a different second, author or text
-    is a second act and keeps its own touch.
+    that same comment or in the main session's own note. Pair only those shapes: a
+    different second, author or text is a second act and keeps its own touch.
     """
     lines = set()
     if line:
         lines.update((line, short_text(f"UNBLOCK: {line}")))
     else:
-        legacy = unblock_comment(event, comments)
+        legacy = unblock_comment(event, comments, own)
         if legacy is None:
             return None
         lines.add(short_text(legacy["body"]))
     return next((i for i, touch in enumerate(touches)
                  if i not in paired and touch["kind"] in ("comment", "answer")
-                 and touch["by"] == actor and touch["at"] == event["created_at"]
+                 and _same_author(touch["by"], actor, own) and touch["at"] == event["created_at"]
                  and touch["line"] in lines), None)
 
 
-def unblock_comment(event, comments):
-    """The one same-second ``UNBLOCK:`` comment a reason-less unblock records its actor in."""
-    matches = [c for c in comments if c["created_at"] == event["created_at"]
-               and c["task_id"] == event["task_id"] and c["body"].startswith("UNBLOCK:")]
-    return matches[0] if len(matches) == 1 else None
+def unblock_comment(event, comments, own=()):
+    """The one same-second comment a reason-less unblock records its actor in.
+
+    The CLI writes ``UNBLOCK: <reason>``; a main session signs its resume note
+    ``<profile>-main`` instead, and that note is the same hand as the unblock beside it.
+    """
+    same_second = [c for c in comments if c["created_at"] == event["created_at"]
+                   and c["task_id"] == event["task_id"]]
+    legacy = [c for c in same_second if c["body"].startswith("UNBLOCK:")]
+    if legacy:
+        return legacy[0] if len(legacy) == 1 else None
+    notes = [c for c in same_second if main_session(c["author"], own)]
+    return notes[0] if len(notes) == 1 else None
 
 
-def unblock_actor(event, comments):
+def unblock_actor(event, comments, own=()):
     actor = payload(event).get("by")
     if actor is not None:
         return actor
-    comment = unblock_comment(event, comments)
+    comment = unblock_comment(event, comments, own)
     return comment["author"] if comment is not None else None
 
 
@@ -152,7 +185,7 @@ def replan_records(comments, events, runs) -> list[dict]:
     return sorted(records, key=lambda item: item["at"])
 
 
-def stop_records(events, now, comments=()) -> tuple[list[dict], int]:
+def stop_records(events, now, comments=(), own=()) -> tuple[list[dict], int]:
     records, intervals = [], []
     for index, event in enumerate(events):
         if event["kind"] not in STOP_KINDS:
@@ -161,7 +194,7 @@ def stop_records(events, now, comments=()) -> tuple[list[dict], int]:
         until = resume["created_at"] if resume is not None else None
         by = None
         if resume is not None:
-            by = unblock_actor(resume, comments) if resume["kind"] == "unblocked" else "dispatcher"
+            by = unblock_actor(resume, comments, own) if resume["kind"] == "unblocked" else "dispatcher"
         data = payload(event)
         at, end = event["created_at"], until if until is not None else now
         records.append({"at": at, "kind": event["kind"],
@@ -191,7 +224,7 @@ def learning_records(conn, task, comments, events, runs, now) -> dict:
     if implementer is None:
         implementer = task["assignee"] if task["assignee"] in own else next(iter(sorted(own)), None)
     touches = touch_records(task, comments, events, runs, own, now)
-    stops, stopped = stop_records(events, now, comments)
+    stops, stopped = stop_records(events, now, comments, own)
     waits = [e["created_at"] for e in events if e["kind"] == "goal_gate" and payload(e).get("exit_code") == 75]
     terminal = [e["created_at"] for e in events if e["kind"] in ("completed", "blocked", "gave_up")]
     end = now
@@ -201,7 +234,8 @@ def learning_records(conn, task, comments, events, runs, now) -> dict:
         end = max(terminal, default=now)
     return {"assignee": implementer, "touches": touches,
             "owner_answers": sum(t["kind"] == "answer" and t["by"] in DEFAULT_OWNERS for t in touches),
-            "main_session_touches": sum(t["by"] in own and t["by"] not in DEFAULT_OWNERS for t in touches),
+            "main_session_touches": sum(1 for t in touches
+                                        if main_session(t["by"], own) and t["by"] not in DEFAULT_OWNERS),
             "replans": replan_records(comments, events, runs), "stops": stops,
             "reviews": review_records(runs, own), "stopped_seconds": stopped,
             "lead_seconds": max(0, (end or now) - task["created_at"]),

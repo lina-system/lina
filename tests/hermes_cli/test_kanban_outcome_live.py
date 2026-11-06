@@ -120,6 +120,42 @@ def test_standalone_owner_unblock_does_not_count_as_an_answer(board):
     assert row["owner_answers"] == 0
 
 
+def test_scheduled_pause_is_a_stop_until_the_unblocking_actor(board):
+    conn, clock = board
+    tid = kb.create_task(conn, title="work", assignee="lina", goal_mode=True)
+    kb.claim_task(conn, tid)
+    clock[0] += 10
+    kb.schedule_task(conn, tid)
+    clock[0] += 65 * 3600
+    kb.unblock_task(conn, tid, by="sion")
+    row = ko.compute_outcome(conn, tid, include_active=True)
+    assert [(s["kind"], s["seconds"], s["resumed_by"]) for s in row["stops"]] == [
+        ("scheduled", 65 * 3600, "sion")]
+    assert row["stopped_seconds"] == 65 * 3600
+
+
+@pytest.mark.parametrize("by,resumed_by", [("lina", "lina"), (None, "lina-main")],
+                         ids=["actor", "reason-only-note"])
+def test_main_session_resume_note_and_reason_less_unblock_are_one_hand(board, by, resumed_by):
+    conn, clock = board
+    tid = kb.create_task(conn, title="work", assignee="lina", goal_mode=True)
+    run_id = kb.claim_task(conn, tid).current_run_id
+    clock[0] += 10
+    kb.add_comment(conn, tid, "lina", "own work note", run_id=run_id)
+    clock[0] += 10
+    kb.add_comment(conn, tid, "lina", "paused for the fleet-wide pause", source={"surface": "cli"})
+    kb.schedule_task(conn, tid)
+    clock[0] += 65 * 3600
+    kb.add_comment(conn, tid, "lina-main", "resumed after the fleet pause", source={"surface": "cli"})
+    kb.unblock_task(conn, tid, by=by)
+    row = ko.compute_outcome(conn, tid, include_active=True)
+    assert [(t["by"], t["kind"], t["line"]) for t in row["touches"]] == [
+        ("lina", "comment", "paused for the fleet-wide pause"),
+        ("lina-main", "unblock", "resumed after the fleet pause")]
+    assert row["main_session_touches"] == 2
+    assert row["stops"][0]["resumed_by"] == resumed_by
+
+
 @pytest.mark.parametrize("resume", [True, False], ids=["running", "terminal-new-event"])
 def test_goal_recomputes_stale_rows_and_preserves_measured_sizes(board, resume):
     conn, clock = board
