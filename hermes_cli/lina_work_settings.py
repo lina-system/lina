@@ -85,7 +85,21 @@ def plain(value: Any) -> Any:
 def _clean(entry: Any) -> Any:
     if not isinstance(entry, dict):
         return entry
-    return {k: v for k, v in entry.items() if k != KEEP_OUT and not SECRET.search(str(k))}
+    return {k: v for k, v in entry.items() if not _excluded_key(k)}
+
+
+def _excluded_key(key: Any) -> bool:
+    return key == KEEP_OUT or bool(SECRET.search(str(key)))
+
+
+def _entries(table: dict) -> dict:
+    """Each entry without its excluded fields; an entry that held only excluded fields is not a setting at all."""
+    out = {}
+    for name, item in table.items():
+        cleaned = _clean(item)
+        if cleaned or not item:
+            out[name] = cleaned
+    return out
 
 
 def snapshot(config: dict) -> dict:
@@ -97,10 +111,15 @@ def snapshot(config: dict) -> dict:
             doc.setdefault(top, {})[key] = plain(section[key])
     workers = (doc.get("devices") or {}).get("workers")
     if isinstance(workers, dict):
-        doc["devices"]["workers"] = {name: _clean(item) for name, item in workers.items()}
+        doc["devices"]["workers"] = _entries(workers)
     runners = (doc.get("worker") or {}).get("runners")
     if isinstance(runners, dict):
-        doc["worker"]["runners"] = {name: _clean(item) for name, item in runners.items()}
+        doc["worker"]["runners"] = _entries(runners)
+    for top, key in KEYS:  # a table left empty by that is no setting either
+        if (doc.get(top) or {}).get(key) == {}:
+            del doc[top][key]
+            if not doc[top]:
+                del doc[top]
     return doc
 
 
@@ -173,14 +192,41 @@ def updates(old: Any, new: Any, prefix: str = "") -> dict[str, Any]:
     return out
 
 
-def settings_updates(old: dict, new: dict) -> dict[str, Any]:
+ENTRY_TABLES = ("devices.workers", "worker.runners")
+
+
+def _held(path: str, raw: Any) -> bool:
+    """Whether the file holds excluded fields (a runner's ``env``, credential-like keys) at or under *path*."""
+    if not isinstance(raw, dict):
+        return False
+    if any(path.startswith(t + ".") and path.count(".") == t.count(".") + 1 for t in ENTRY_TABLES):
+        return any(_excluded_key(k) for k in raw)
+    return any(_held(f"{path}.{k}", v) for k, v in raw.items())
+
+
+def _kept_updates(old: Any, new: Any, path: str, raw: Any) -> dict[str, Any]:
+    """``updates``, except that a mapping holding excluded fields in the file is never set or removed whole: its
+    included fields are, one by one, so the excluded ones stay where they are."""
+    if old == new:
+        return {}
+    if not _held(path, raw) or not (new is None or isinstance(new, dict)) or not (old is None or isinstance(old, dict)):
+        return updates(old, new, path)
+    old, new = old or {}, new or {}
+    out: dict[str, Any] = {}
+    for key in [*old, *(k for k in new if k not in old)]:
+        out.update(_kept_updates(old.get(key), new.get(key), f"{path}.{key}", raw.get(key)))
+    return out
+
+
+def settings_updates(old: dict, new: dict, raw: dict | None = None) -> dict[str, Any]:
     """``updates`` for two settings documents, emitted only at or below a work-settings key (``KEYS``): never at
     ``devices``, ``worker`` or another section the settings share with other keys, so a write never replaces or
-    removes ``worker.hub``, the limits or the write gate's own keys."""
+    removes ``worker.hub``, the limits or the write gate's own keys. *raw* is the parsed file: a runner or device
+    that holds excluded fields there keeps them through a removal and a rollback."""
     out: dict[str, Any] = {}
     for top, key in KEYS:
         path = f"{top}.{key}"
-        out.update(updates(get_path(old, path), get_path(new, path), path))
+        out.update(_kept_updates(get_path(old, path), get_path(new, path), path, get_path(raw or {}, path)))
     return out
 
 
@@ -253,7 +299,7 @@ def _devices(doc: dict, errors: list[dict]) -> None:
         path = f"devices.workers.{name}"
         entry = _fields(item, DEVICE, path, errors)
         role = entry.get("role", "work")
-        if role not in ROLES:
+        if not isinstance(role, str) or role not in ROLES:  # the lookups below run only on a text
             errors.append({"path": f"{path}.role", "message": f"one of {', '.join(ROLES)}"})
         elif role == "person":
             errors += [{"path": f"{path}.{key}", "message": "a person device is never a node: no caps, no host"}
@@ -280,11 +326,11 @@ def _runners(doc: dict, aliases: dict, errors: list[dict]) -> dict:
     for name, item in runners.items():
         path = f"worker.runners.{name}"
         entry = _fields(item, RUNNER, path, errors)
-        if entry.get("type") not in TYPES:
+        if not isinstance(entry.get("type"), str) or entry["type"] not in TYPES:
             errors.append({"path": f"{path}.type", "message": f"one of {', '.join(TYPES)}"})
         if entry.get("type") == "command" and not entry.get("argv"):
             errors.append({"path": f"{path}.argv", "message": "a command runner needs its argv"})
-        if "access" in entry and entry["access"] not in ACCESS:
+        if "access" in entry and (not isinstance(entry["access"], str) or entry["access"] not in ACCESS):
             errors.append({"path": f"{path}.access", "message": f"one of {', '.join(ACCESS)}"})
         for key in ("model", "fallback_model"):
             if key in entry and (why := _model_error(entry[key], aliases)):
@@ -300,7 +346,8 @@ def _models(doc: dict, errors: list[dict]) -> dict:
     aliases = _named(models.get("aliases"), "worker.models.aliases", errors)
     for name, item in aliases.items():
         entry = _fields(item, ALIAS, f"worker.models.aliases.{name}", errors)
-        if entry.get("thinking") is not None and entry["thinking"] not in THINKING:
+        thinking = entry.get("thinking")
+        if thinking is not None and (not isinstance(thinking, str) or thinking not in THINKING):
             errors.append({"path": f"worker.models.aliases.{name}.thinking", "message": f"one of {', '.join(THINKING)}"})
         if not entry.get("provider") or not entry.get("id"):
             errors.append({"path": f"worker.models.aliases.{name}", "message": "an alias needs provider and id"})
@@ -310,7 +357,7 @@ def _models(doc: dict, errors: list[dict]) -> dict:
         errors.append({"path": "worker.models.defaults", "message": "must be a mapping of mode to model"})
         defaults = {}
     for mode, value in defaults.items():
-        if mode not in MODES:
+        if not isinstance(mode, str) or mode not in MODES:
             errors.append({"path": f"worker.models.defaults.{mode}", "message": f"modes are {', '.join(MODES)}"})
         elif why := (_type_error("model", value) or _model_error(value, lowered)):
             errors.append({"path": f"worker.models.defaults.{mode}", "message": why})
@@ -330,20 +377,29 @@ def _routing(doc: dict, known: set[str], errors: list[dict]) -> None:
         errors.append({"path": "worker.routing", "message": f"at most {LIMITS['worker.routing']} rules"})
     names: set[str] = set()
     for i, item in enumerate(rules):
-        path = f"worker.routing[{i}]"
-        rule = _fields(item, RULE, path, errors)
-        if rule.get("name") in names:
-            errors.append({"path": f"{path}.name", "message": f"{rule['name']!r} is used twice"})
-        names.add(rule.get("name"))
-        for key in ("name", "runner"):
-            if key not in rule:
-                errors.append({"path": f"{path}.{key}", "message": "required"})
-        if "runner" in rule and rule["runner"] not in known:
-            errors.append({"path": f"{path}.runner", "message": f"no runner {rule['runner']!r}"})
-        when = _fields(rule.get("when") or {}, WHEN, f"{path}.when", errors)
-        if any(size not in SIZES for size in when.get("size") or [] if isinstance(when.get("size"), list)):
-            errors.append({"path": f"{path}.when.size", "message": f"sizes are {', '.join(SIZES)}"})
-        if not when and i != len(rules) - 1:
+        _rule(i, item, len(rules), names, known, errors)
+
+
+def _rule(i: int, item: Any, count: int, names: set[str], known: set[str], errors: list[dict]) -> None:
+    """One routing rule. Each lookup (name used twice, runner known, size allowed) runs only on a value whose type
+    passed: a wrong type is one error with its path, never an exception."""
+    path = f"worker.routing[{i}]"
+    rule = _fields(item, RULE, path, errors)
+    name, runner = rule.get("name"), rule.get("runner")
+    if isinstance(name, str):
+        if name in names:
+            errors.append({"path": f"{path}.name", "message": f"{name!r} is used twice"})
+        names.add(name)
+    for key in ("name", "runner"):
+        if key not in rule:
+            errors.append({"path": f"{path}.{key}", "message": "required"})
+    if isinstance(runner, str) and runner not in known:
+        errors.append({"path": f"{path}.runner", "message": f"no runner {runner!r}"})
+    when = _fields(rule.get("when") or {}, WHEN, f"{path}.when", errors)
+    sizes = when.get("size")
+    if isinstance(sizes, list) and any(not isinstance(s, str) or s not in SIZES for s in sizes):
+        errors.append({"path": f"{path}.when.size", "message": f"sizes are {', '.join(SIZES)}"})
+    if not when and i != count - 1:
             errors.append({"path": f"{path}.when", "message": "a rule that matches everything must be the last"})
 
 
@@ -381,7 +437,10 @@ def validate(doc: Any) -> list[dict]:
     _runners(doc, aliases, errors)
     table = runner_table(doc)
     name = default_runner(doc)
-    if name not in table:
+    chosen = get_path(doc, "worker.default_runner")
+    if chosen is not None and (why := _type_error(_STR, chosen)):
+        errors.append({"path": "worker.default_runner", "message": why})
+    elif name not in table:
         errors.append({"path": "worker.default_runner", "message": f"no runner {name!r} (known: {', '.join(table)})"})
     elif table[name].get("on") is False:
         errors.append({"path": "worker.default_runner", "message": f"runner {name!r} is off"})

@@ -192,4 +192,4 @@ def add_parser(sub) -> None:
     route.add_argument("--size", choices=["S", "M", "L"])
     models = ss.add_parser("models", help="OCX's enabled models with state, quota left and reset")
     models.add_argument("--json", action="store_true")
-    parser.set_defaults(func=_cmd)
+    parser.set_defaults(func=_cmd, json=False, rev=None)  # no subcommand = show, which reads both

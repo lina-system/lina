@@ -281,6 +281,63 @@ def test_a_section_or_entry_that_is_not_a_mapping_is_refused_with_its_path(root,
     assert (root / "config.yaml").read_bytes() == before
 
 
+def test_removing_a_runner_keeps_its_env_and_a_rollback_brings_the_runner_back_beside_it(root):
+    store = _store(root)
+    store.current()
+    store.apply(_set("worker.runners.codex", None), CLI)
+    runner = _config(root)["worker"]["runners"]["codex"]
+    assert runner == {"env": {"CODEX_HOME": "/srv/codex"}}
+    assert "codex" not in store.current().doc["worker"].get("runners", {})  # what is left is not a setting
+    whole = {"type": "command", "argv": ["codex", "exec", "-"], "env": {"CODEX_HOME": "/srv/codex"}}
+    store.rollback({**CLI, "kind": "rollback"})  # the runner as it was, env untouched
+    assert _config(root)["worker"]["runners"]["codex"] == whole
+
+    store.apply(_set("worker.runners.dsh", {"type": "command", "argv": ["dsh", "-"]}), CLI)
+    store.apply(_set("worker.runners", None), CLI)  # removing the whole table: the same
+    assert _config(root)["worker"]["runners"] == {"codex": {"env": {"CODEX_HOME": "/srv/codex"}}}
+    store.rollback({**CLI, "kind": "rollback"})
+    assert _config(root)["worker"]["runners"]["codex"] == whole
+    assert _config(root)["worker"]["runners"]["dsh"] == {"type": "command", "argv": ["dsh", "-"]}
+
+
+def _typed_doc() -> dict:
+    return {"devices": {"workers": {"here": {"host": "local"}}},
+            "worker": {"default_runner": "omo",
+                       "runners": {"codex": {"type": "command", "argv": ["codex", "-"]}},
+                       "models": {"aliases": {"planner": {"provider": "p", "id": "i"}},
+                                  "defaults": {"research": "planner"}, "fallback": "p/m"},
+                       "routing": [{"name": "r", "when": {"labels_any": ["a"]}, "runner": "codex"}]}}
+
+
+FIELDS = [*(f"devices.workers.here.{k}" for k in ("host", "role", "cap", "named_cap", "last", "fast", "no_repo",
+                                                   "off", "auto", "lina")),
+          *(f"worker.runners.codex.{k}" for k in ("type", "argv", "follow_up_argv", "model_args", "on", "model",
+                                                   "fallback_model", "access", "bin", "node", "engine")),
+          *(f"worker.models.aliases.planner.{k}" for k in ("provider", "id", "thinking")),
+          "worker.models.defaults.research", "worker.models.fallback", "worker.default_runner",
+          "worker.routing[0].name", "worker.routing[0].runner", "worker.routing[0].when.runner_label",
+          "worker.routing[0].when.labels_any", "worker.routing[0].when.size"]
+WRONG = [[["x"]], {"k": ["v"]}]
+
+
+def _put(doc: dict, field: str, value) -> dict:
+    from hermes_cli.lina_work_settings import set_path
+    if field.startswith("worker.routing[0]."):
+        rule = doc["worker"]["routing"][0]
+        set_path(rule, field.removeprefix("worker.routing[0]."), value)
+        return doc
+    return set_path(doc, field, value)
+
+
+@pytest.mark.parametrize("value", WRONG, ids=["nested-list", "mapping"])
+@pytest.mark.parametrize("field", FIELDS)
+def test_every_wrong_type_on_every_field_is_refused_with_its_path_never_an_exception(field, value):
+    from hermes_cli.lina_work_settings import validate
+    assert validate(_typed_doc()) == []
+    errors = validate(_put(_typed_doc(), field, value))
+    assert any(e["path"] == field or e["path"].startswith((field + ".", field + "[")) for e in errors), errors
+
+
 # ---------------------------------------------------------------- lina devices through the layer
 def test_lina_devices_add_and_remove_show_in_the_history(root):
     from hermes_cli import lina_devices

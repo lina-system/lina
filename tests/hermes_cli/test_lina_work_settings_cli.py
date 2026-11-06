@@ -83,6 +83,11 @@ def test_set_show_history_diff_and_rollback(root, capsys):
     assert "model" not in _config(root)["worker"]["runners"]["dsh"]
 
 
+def test_settings_with_no_subcommand_shows_the_settings(root, capsys):
+    assert _lina("settings") == 0
+    assert capsys.readouterr().out.startswith("# r")
+
+
 def test_history_catches_an_outside_edit_first(root, capsys):
     assert _lina("settings", "set", "devices.workers.here", "{host: local, cap: 1}") == 0
     path = root / "config.yaml"

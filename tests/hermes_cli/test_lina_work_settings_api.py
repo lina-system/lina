@@ -182,6 +182,22 @@ def test_a_non_mapping_section_is_422_with_its_path_and_the_body_holds_only_vali
     assert (env.root / "config.yaml").read_bytes() == before
 
 
+@pytest.mark.parametrize(("patch", "where"), [
+    ({"worker": {"routing": [{"name": [], "runner": "omo"}]}}, "worker.routing[0].name"),
+    ({"worker": {"routing": [{"name": "r", "runner": ["omo"]}]}}, "worker.routing[0].runner"),
+    ({"worker": {"routing": [{"name": "r", "runner": "omo", "when": {"size": [{"S": 1}]}}]}},
+     "worker.routing[0].when.size"),
+    ({"worker": {"runners": {"codex": {"type": ["command"]}}}}, "worker.runners.codex.type"),
+    ({"devices": {"workers": {"here": {"role": {"a": 1}}}}}, "devices.workers.here.role"),
+    ({"worker": {"default_runner": ["omo"]}}, "worker.default_runner"),
+])
+def test_a_wrong_type_is_422_with_its_path_never_a_500(env, client, patch, where):
+    _, etag = _get(client)
+    reply = client.patch(BASE, json=patch, headers={"If-Match": etag})
+    assert reply.status_code == 422, reply.text
+    assert where in [e["path"] for e in _valid("ValidationError", reply.json())["errors"]]
+
+
 def test_an_unexpected_failure_is_a_500_without_its_message(env, monkeypatch):
     from hermes_cli import lina_work_settings_store, web_server
 
