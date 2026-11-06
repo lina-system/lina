@@ -41,7 +41,17 @@ are recorded only. A model is an alias or `<provider>/<id>[:<effort>]`.
   `models.fallback`) is usable, the run starts on the fallback and gets one `model_fallback` receipt
   `{from, to, why}`; when the fallback is not usable either, the chosen model stays. `--model` is checked, never
   replaced. A submit never calls OCX: it decides from the models list this process last read (`…/models` or
-  `lina worker settings models`, kept 10 minutes); without one the check is `unchecked` and the chosen model stays.
+  `lina worker settings models`, kept 10 minutes), else from `work-settings/models-last-good.json`, the snapshot
+  every good read writes (whole: a temp file, then a rename) for the submits that run in a process of their own
+  (`lina worker submit`, `lina work submit`, the omo-task shim). It keeps only what the check uses: per model its
+  provider, id, efforts and off flags; per account its provider, paused and sign-in flags and quota windows (no
+  account name, email, id or label); and `at`, the read time. It stays fresh while someone has the models view open
+  (the hub page reads it once a minute); older than 10 minutes, missing or unreadable, the check is `unchecked` and
+  the chosen model stays.
+- from `lina work next --submit` (lina#283): each pick goes with its issue's labels and size (its `size/S|M|L` label,
+  else its body's `Size:` line). The runner is the first `routing` rule that holds (`routing:<rule>`), else the
+  runner its runner label names (`--runner`, as before), else `default_runner`; with no rules every issue goes where
+  its label says. A rule whose runner is off is passed over, and a runner that is off is refused with one line.
 - the job and its `submitted` receipt carry `settings: {rev, runner_source: --runner|routing:<rule>|default,
   model_source, ocx_check: ok|off|out_of_quota|no_account|unchecked}`; the run record and the run card serve
   `model` and `settingsRevision`. A follow-up keeps the run's model, and on the device the job's model wins over the
@@ -67,7 +77,15 @@ a new revision, so a second rollback undoes the first. `lina devices add|remove`
 The CLI on the hub always writes (principal: the OS user, device `local`). Through the API a write needs the
 dashboard credential, and the peer's `tailscale whois` must give the owner login on one of the owner's devices, at
 most 30 writes a minute per device. Any whois error refuses the write; reads never depend on it. With no owner
-configured nobody writes through the API (`writable: false`). These keys are not work settings, so the API cannot
+configured nobody writes through the API (`writable: false`).
+
+Behind the hub's own `tailscale serve` (to a loopback port) the direct peer is `127.0.0.1` or `::1`, which whois
+does not know; then the gate (the `writable` flag and the write, and its rate limit) judges the last
+`X-Forwarded-For` entry, which `tailscale serve` sets to the tailnet source address, replacing what the client sent.
+Any other direct peer's `X-Forwarded-For` is ignored, and a loopback request without the header (or with a
+malformed one) is judged as `127.0.0.1`, as before. Trusting a loopback peer's header adds nothing over the CLI: a
+process that can reach the loopback port already runs on the hub, where `lina worker settings set` writes with no
+gate. uvicorn's `proxy_headers` stays as the dashboard sets it. These keys are not work settings, so the API cannot
 change them:
 
 ```yaml
