@@ -77,6 +77,21 @@ worker:
   access: {files-agent: full}        # a file node runs with access full only
 ```
 
+Add this node on the hub through the work settings, without editing `config.yaml` by hand:
+
+```sh
+lina worker settings set devices.workers.files '{host: files, kind: file, role: files, omo: "~/.bun/bin/omo", deny: [/volume1/backup, "#recycle", "#snapshot", "@*"], volumes: [/volume1], root: lina-file-node, model_check: "http://127.0.0.1:10100/healthz", scan_s: 300}'
+lina worker settings set worker.access.files-agent full
+lina worker settings validate
+lina worker hosts
+```
+
+Each `set` creates a revision; `lina worker settings rollback` undoes the last change. `kind` defaults to `lina`;
+the six file-node fields above are accepted only with `kind: file`. `deny` and `volumes` may be empty lists but
+their entries must be non-blank text; `omo` and `root` must be non-blank text, `model_check` an http/https URL
+with a host, and `scan_s` a positive integer. Omitted fields use the defaults shown above (`omo: omo` and empty
+`deny`/`volumes`). A file node cannot have `role: work` or `role: person`.
+
 `role` applies to every device: `work` (the default; bid on), `files` (only by `--host`, never with `--repo`),
 `person` (never takes work, even when named). A run on a file node asks for `--access full`: the session reaches
 the whole volume as the node's user, so no narrower mode can be enforced there, and the node says so in its
