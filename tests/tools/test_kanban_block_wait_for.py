@@ -32,9 +32,10 @@ def worker(monkeypatch, tmp_path):
 
 
 def _block(**args) -> dict:
-    from tools import kanban_tools
+    from tools import kanban_tools  # registers the kanban handlers
+    from tools.registry import registry
 
-    return json.loads(kanban_tools._handle_block({"reason": "waiting on the upstream card", **args}))
+    return json.loads(registry.dispatch("kanban_block", {"reason": "waiting on the upstream card", **args}))
 
 
 def test_a_block_with_wait_for_records_the_event_and_wakes_when_it_happens(worker):
