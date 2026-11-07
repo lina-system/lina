@@ -140,9 +140,11 @@ def test_removed_named_device_fails_and_places_the_next_task_on_the_same_tick(la
     hub.tick()
 
     ended = hub.store.load(first)
-    assert ended["state"] == "failed" and ended["notified"] == ["failed:0"]
+    delivery = f"{first}:0:run.completed"
+    assert ended["state"] == "failed"
+    assert [(entry["delivery"], entry["end_state"]) for entry in ended["notified"]] == [(delivery, "failed")]
     assert hub.store.load(second)["state"] == "running"
-    assert card_ends == [ended["notice"]]
+    assert card_ends == [f"{ended['notice'].rstrip()}\n\ndelivery {delivery}\n"]
     reason = [line for line in ended["notice"].splitlines() if "gone" in line]
     assert len(reason) == 1
     (notice,) = hub.store.notices.glob(f"{first}-failed-0-*.md")
