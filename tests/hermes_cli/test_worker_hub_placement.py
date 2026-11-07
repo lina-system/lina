@@ -4,6 +4,7 @@ instead of bidding again; a cancel that never reached the device is an error, no
 earlier run never ends the run that is going now."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
@@ -32,9 +33,9 @@ def lane(tmp_path, monkeypatch):
             "mp": monkeypatch}
 
 
-def _submit(lane) -> str:
+def _submit(lane, host=None) -> str:
     lane["hub"].submit({"briefs": [fakes.brief(lane["tmp"], "SCENARIO:done one")], "mode": "ulw", "topic": "place",
-                        "bot": "sion", "runner": "fakecli", "wait": None})
+                        "bot": "sion", "runner": "fakecli", "wait": None, "host": host})
     return lane["hub"].store.all()[-1]["id"]
 
 
@@ -114,3 +115,53 @@ def test_task_level_notices_still_end_the_task(lane, kind, run):
     hub = lane["hub"]
     assert hub.notify(task_id, kind, run) != "earlier run"
     assert hub.store.load(task_id)["state"] == kind
+
+
+def test_unknown_named_device_is_refused_before_creating_a_task(lane):
+    hub = lane["hub"]
+    with pytest.raises(HubError) as error:
+        _submit(lane, "missing")
+    assert len(str(error.value).splitlines()) == 1
+    assert "missing" in str(error.value) and "here" in str(error.value)
+    assert hub.store.all() == []
+
+
+def test_removed_named_device_fails_and_places_the_next_task_on_the_same_tick(lane):
+    hub = lane["hub"]
+    (here,) = hub.devices()
+    devices = [replace(here, name="gone", cap=0), replace(here, cap=0)]
+    lane["mp"].setattr(hub, "devices", lambda: devices)
+    first, second = _submit(lane, "gone"), _submit(lane, "here")
+    card_ends = []
+    hub.store.update(first, card={"task": "card-1", "kind": "lina"})
+    lane["mp"].setattr(hub_mod.kanban_link, "record_end", lambda *args: card_ends.append(args[-1]))
+    devices[:] = [here]
+
+    hub.tick()
+
+    ended = hub.store.load(first)
+    assert ended["state"] == "failed" and ended["notified"] == ["failed:0"]
+    assert hub.store.load(second)["state"] == "running"
+    assert card_ends == [ended["notice"]]
+    reason = [line for line in ended["notice"].splitlines() if "gone" in line]
+    assert len(reason) == 1
+    (notice,) = hub.store.notices.glob(f"{first}-failed-0-*.md")
+    assert notice.read_text() == card_ends[0]
+    hub.tick()
+    assert len(card_ends) == 1
+
+
+def test_full_named_device_waits_without_blocking_another_device(lane):
+    hub = lane["hub"]
+    (here,) = hub.devices()
+    devices = [replace(here, name="full", cap=0), replace(here, cap=0)]
+    lane["mp"].setattr(hub, "devices", lambda: devices)
+    first, second = _submit(lane, "full"), _submit(lane, "here")
+    devices[:] = [devices[0], here]
+
+    hub.tick()
+
+    assert hub.store.load(first)["state"] == "queued"
+    assert hub.store.load(first)["notified"] == []
+    assert hub.store.load(second)["state"] == "running"
+    assert hub.store.load(second)["host"] == "here"
