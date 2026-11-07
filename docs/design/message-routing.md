@@ -143,10 +143,13 @@ or an agent's message without `reply_to`) on a finished place is stored and star
 - **Who.** Every reply carries the answering agent and the session kind (main session, goal session, run), from the
   delivery record, so "which session answered" is never guessed from text.
 - **One notice per event.** Every event that could reach the owner has one delivery id: a reply's id is its message id;
-  a run's end is one of lina#223's three kinds with its own delivery id; a card event is the event row. Each surface
-  sends for an id at most once and skips ids another surface already sent:
+  a run's end is one of lina#223's three kinds with its own delivery id; a card event is the event row. The surface
+  for an id is chosen before anything is sent, never by which sender runs first: a reply goes on the channel the owner
+  posted on (a Telegram reply to a notice is answered in Telegram), and every other surface skips its id. Each surface
+  sends for an id at most once:
   - push sends only lina#244's three kinds, tagged with the place key, and closes on read
-    (`hermes_cli/lina_push_watch.py:3-16`, lina-app `src/app.tsx:485-498`, lina-app#53);
+    (`hermes_cli/lina_push_watch.py:3-16`, lina-app `src/app.tsx:485-498`, lina-app#53); for a reply, only when the
+    owner posted in the app, so a push never takes the place of a chat reply;
   - a chat message goes only when the owner posted the original in chat, or when the event is one lina#261 says the
     owner must hear; it is sent by the agent that owns the place, never by a notifier and the agent both;
   - a card comment for a run's end is the record, not a notice;
