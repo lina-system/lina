@@ -11,10 +11,12 @@ and the OCX model list. A change applies from the next submit.
 devices:
   workers:
     build-a: {host: build-a, role: work, cap: 2, named_cap: 2, last: 0, fast: true, no_repo: false}
-    nas:     {host: nas, role: files, cap: 1, auto: false, no_repo: true}
-    laptop:  {role: person}            # status only: never a cap, never a host
+    nas:     {host: nas, kind: file, role: files, omo: omo, deny: ["#recycle"], volumes: [/volume1],
+              root: lina-file-node, model_check: "http://127.0.0.1:10100/healthz", scan_s: 300}
+    laptop:  {host: laptop-ssh, role: person}  # status only: never a node
 worker:
   default_runner: omo
+  access: {files-agent: full, reader: read-only, builder: workspace-write}
   runners:
     codex: {type: command, argv: [codex, exec, "-"], on: true, model: "opencodex/impl-model:high",
             fallback_model: opencodex/small-model, access: workspace-write}
@@ -27,8 +29,15 @@ worker:
     - {name: small, when: {runner_label: runner/dsh, size: [S]}, runner: dsh}
 ```
 
-`on`, `model`, `fallback_model`, `models.fallback` and `routing` are read at submit (see below); `role` and `access`
-are recorded only. A model is an alias or `<provider>/<id>[:<effort>]`.
+`on`, `model`, `fallback_model`, `models.fallback` and `routing` are read at submit (see below).
+`worker.access` maps agent names to their access ceiling (`read-only`, `workspace-write` or `full`), read at submit;
+it is distinct from a runner's `access`. It participates in revisions, rollback and outside-edit tracking.
+A model is an alias or `<provider>/<id>[:<effort>]`.
+
+Device `kind` is `lina` (default) or `file`. Only `kind: file` accepts `omo`, `deny`, `volumes`, `root`,
+`model_check` and `scan_s`; its role defaults to `files`, and cannot be `work` or `person`.
+Omitted file fields use the worker reader's defaults: `omo: omo`, empty `deny`/`volumes`, `root: lina-file-node`,
+`model_check: http://127.0.0.1:10100/healthz`, `scan_s: 300`. See [file-node configuration](file-node.md#configuration).
 
 ## At submit
 
@@ -58,8 +67,13 @@ are recorded only. A model is an alias or `<provider>/<id>[:<effort>]`.
   device's own runner entry (which still gives the local `argv`).
 
 Validation (nothing is written on a refusal, the reply names each path): unknown keys; unknown runners in
-`default_runner` and `routing`; an off default runner; `cap`, `named_cap`, `last`, `auto` or `host` on a `person`
-device; a work or files device without `host`; a `command` runner without `argv`; credential-like keys
+`default_runner` and `routing`; an off default runner; node fields on a `person` device (only `host`, `role` and
+`kind: lina` are accepted); any device without a non-empty `host`; a kind other than `lina` or `file`;
+file-only fields on another kind; a file device with `role: work|person`; empty/non-text `omo` or `root`;
+`deny`/`volumes` other than lists of non-blank texts (empty lists are allowed); `model_check` other than an
+http/https URL with a host; `scan_s` other than a positive integer (booleans are refused);
+`worker.access` other than a mapping of agent names (letters, digits, `-`, `_`, up to 41 characters) to
+`read-only|workspace-write|full`; a `command` runner without `argv`; credential-like keys
 (`key`, `token`, `secret`, `password`) and a runner's `env`, which stay in `config.yaml` untouched and never reach a
 revision; at most 128 devices, 64 runners and 64 rules.
 
