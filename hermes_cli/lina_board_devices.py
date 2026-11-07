@@ -395,10 +395,31 @@ def restart(name: str, body, by: dict, base: Path) -> dict:
         if service not in SERVICES:
             raise Refused(400, 'the body is {"service": "worker"|"ocx"}')
         result = service_call(dev, settings.root(base), service, "restart")
-        if result.get("action") == "error":
-            raise Refused(502, clean(result.get("reason")) or f"{name} refused the restart")
+        if not _restarted(service, result):
+            raise Refused(502, clean(result.get("reason")) or f"{name} gave no restart result")
         return _reply(name, "restart", "restarted")
     return _logged(base, by, name, "restart", {"service": service}, work)
+
+
+def _restarted(service: str, result: dict) -> bool:
+    """Only the node's own answer to a restart it carried out: the worker's names the instance it compared
+    (``protocol.service_action``), OCX's the service layer's state after it (``lina_runners._ocx_act``)."""
+    proof = result.get("instance_id") if service == "worker" else result.get("state")
+    return (result.get("service") == service and result.get("action") == "restart" and isinstance(proof, str)
+            and bool(proof.strip()))
+
+
+def _offered_by(dev: settings.Device, base: Path, runner: str) -> bool:
+    """Whether the device view can draw *runner* for *dev*: the hub's ``worker.runners`` (the cells of a node it
+    cannot read), else the node's own ``hello`` runner rows, asked with one contact only when the hub has no such
+    runner."""
+    from hermes_cli.lina_runners import offered
+    if runner in {offer for offer, _, _ in offered(settings.section(base))}:
+        return True
+    contact = for_device(dev, settings.root(base))
+    contact.refresh(timeout=60)
+    rows = ((contact.descriptor or {}).get("capabilities") or {}).get("runners")
+    return isinstance(rows, list) and any(isinstance(row, dict) and row.get("name") == runner for row in rows)
 
 
 def _start_sign_in(name: str, runner: str, base: Path) -> dict:
@@ -419,14 +440,13 @@ def _sign_in_module_present() -> bool:
 def sign_in(name: str, body, by: dict, base: Path) -> dict:
     """``POST /devices/{name}/sign-in`` ``{"runner": "<name>"}``: starts the sign-in in the background and answers
     ``started`` at once; its end is a second log line, and the app sees it in the node's ``signIn``."""
-    from hermes_cli.lina_runners import offered
     runner = _field(body, "runner")
     key = (str(base), name, runner)
 
     def work() -> dict:
-        _node(base, name)
-        if runner not in {offer for offer, _, _ in offered(settings.section(base))}:
-            raise Refused(400, 'the body is {"runner": "<a runner of worker.runners>"}')
+        dev = _node(base, name)
+        if runner is None or not _offered_by(dev, base, runner):
+            raise Refused(400, 'the body is {"runner": "<a runner this node offers>"}')
         if not _sign_in_module_present():
             raise Refused(501, "sign-in is not on this core yet (lina#230)")
         with _SIGNING_LOCK:

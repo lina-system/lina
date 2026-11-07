@@ -75,6 +75,9 @@ class Contact:
             self.descriptor = {"protocol": {"min": 1, "max": 1}, "capabilities": {"runners": HELLO[self.name]}}
         return Reply(0, json.dumps(READY).encode())
 
+    def refresh(self, timeout=120):
+        return self.call(["hello"], timeout=timeout)
+
 
 class Nodes:
     def __init__(self, monkeypatch):
@@ -338,7 +341,7 @@ class Actions:
         self.root = root
         self.gate: tuple = (OWNER, 0, "")
         self.services: list[tuple] = []
-        self.service_reply = {"service": "worker", "action": "restart", "state": "running"}
+        self.service_reply = {"service": "ocx", "action": "restart", "state": "running (pid 4242)"}
         monkeypatch.setattr(GATE, "check", lambda peer, base=None, now=None: self.gate)
         monkeypatch.setattr(lina_devices, "service_call", self._service)
 
@@ -398,6 +401,30 @@ def test_an_unknown_service_or_runner_is_400(actions, client, path, body):
     assert reply.status_code == 400 and actions.services == []
 
 
+@pytest.mark.parametrize("service, reply", [
+    ("worker", {"service": "worker", "action": "restart", "instance_id": "w-0002"}),
+    ("ocx", {"service": "ocx", "action": "restart", "state": "running (pid 4242)"}),
+], ids=["worker", "ocx"])
+def test_a_restart_the_node_carried_out_is_restarted(actions, client, service, reply):
+    actions.service_reply = reply
+    body = _action(client.post("/api/lina/devices/build-a/restart", json={"service": service}), 200)
+    assert body["state"] == "restarted" and actions.log()[0]["state"] == "restarted"
+
+
+@pytest.mark.parametrize("service, reply", [
+    ("worker", {"service": "worker"}),
+    ("worker", {"service": "worker", "action": "stopped", "instance_id": "w-0002"}),
+    ("worker", {"service": "worker", "action": "restart"}),
+    ("ocx", {"service": "ocx", "action": "restart", "state": None}),
+    ("ocx", {"service": "worker", "action": "restart", "instance_id": "w-0002"}),
+], ids=["empty-reply", "unknown-action", "worker-no-instance", "ocx-no-state", "other-service"])
+def test_a_restart_without_the_node_s_affirmative_answer_is_502(actions, client, service, reply):
+    actions.service_reply = reply
+    reply = client.post("/api/lina/devices/build-a/restart", json={"service": service})
+    assert (reply.status_code, reply.json()["detail"]) == (502, "build-a gave no restart result")
+    assert [(line["state"], line["reason"]) for line in actions.log()] == [("refused", "build-a gave no restart result")]
+
+
 def test_a_node_that_refuses_the_restart_is_502_with_its_reason(actions, client):
     actions.service_reply = {"service": "worker", "action": "error", "reason": "build-a: worker instance changed"}
     reply = client.post("/api/lina/devices/build-a/restart", json={"service": "worker"})
@@ -408,6 +435,17 @@ def test_a_node_that_refuses_the_restart_is_502_with_its_reason(actions, client)
 def test_the_core_s_sign_in_start_takes_the_call_the_route_makes():
     from hermes_cli import lina_sign_in
     inspect.signature(lina_sign_in.start).bind("build-a", "grok", base=Path("/lina"))
+
+
+def test_sign_in_takes_a_runner_only_the_node_offers(actions, nodes, start, client, root):
+    nodes.inline = True
+    body = _action(client.post("/api/lina/devices/build-a/sign-in", json={"runner": "claude"}), 202)
+    assert body["state"] == "started" and start.calls == [("build-a", "claude", root.path)]
+    assert nodes.calls.count(("build-a", "hello")) == 1, "one contact, only because the hub has no such runner"
+
+    refused = client.post("/api/lina/devices/build-a/sign-in", json={"runner": "nobody"})
+    assert (refused.status_code, refused.json()["detail"]) == (400, 'the body is {"runner": "<a runner this node offers>"}')
+    assert client.post("/api/lina/devices/store-b/sign-in", json={"runner": "claude"}).status_code == 400
 
 
 def test_sign_in_is_501_until_lina_230_lands(actions, client, monkeypatch):
