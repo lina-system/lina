@@ -200,9 +200,8 @@ or an agent's message without `reply_to`) on a finished place is stored and star
   its replies and notices go only to the owner's devices; agents without that scope cannot read its messages.
 - **Approvals still gate.** A message can ask for anything; the asking does not authorize it. Money, deletion,
   publishing, credentials and sending in the owner's name stay behind approvals (`tools/approval.py:142`,
-  `docs/design/hermes-patterns.md` P1; held outbound drafts in lina#301). An owner message satisfies an approval only when
-  it is a `decision` with `reply_to` that approval request, arriving on the owner's authenticated route. An agent's
-  message never approves anything.
+  `docs/design/hermes-patterns.md` P1; held outbound drafts in lina#301). No message satisfies an approval, the owner's
+  included: an approval is given only through lina#322's approval path. An agent's message never approves anything.
 
 ## 7. Agent to agent
 
@@ -269,8 +268,7 @@ message from the owner. The fourth agent message in that thread is held, and the
 put to the owner: go on, or stop. A message from the owner on either side resets the count.
 
 **Approvals.** An agent's message never approves anything, relayed or not (section 6). A relayed owner span is the
-owner's words for memory and context, not a decision: an approval still needs the owner's own `decision` on his own
-route.
+owner's words for memory and context, not a decision: an approval still takes lina#322's path.
 
 ## 8. Context order
 
