@@ -17,7 +17,7 @@ import pytest
 
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
-from hermes_cli.worker import device, events, kanban_link, serve
+from hermes_cli.worker import device, events, kanban_link, node_watch, serve
 from hermes_cli.worker import hub as hub_module
 from hermes_cli.worker.hub import Hub
 from hermes_cli.worker.transport import Reply
@@ -414,6 +414,27 @@ def test_an_outage_whose_chat_command_failed_goes_out_once_on_the_retry(far, mon
     assert chat.startswith("host.unavailable · ") and chat.splitlines()[-1] == f"delivery {delivery}"
     assert len(_on_card(far.card)[0]) == 1 and events.done(far.hub.store, delivery)
     assert [r["delivery"] for r in _receipts(far.hub, task_id, "notified")] == [delivery]
+
+
+def test_a_placement_reset_while_an_outage_notice_goes_out_stays(far, monkeypatch):
+    far.run(1)
+    deliver, placed = Hub._deliver, []
+
+    def deliver_while_placing(self, job, text, tag):
+        sent = deliver(self, job, text, tag)
+        if not placed:  # a placement on the node is published while the notice is going out
+            placed.append(node_watch.reset(self.store, "far"))
+        return sent
+    monkeypatch.setattr(Hub, "_deliver", deliver_while_placing)
+    far.down = True
+    far.tick(3)
+    second = far.run(2)
+    far.tick(3)
+
+    first_notice, again = far.chats()
+    assert first_notice.splitlines()[-1] == f"delivery far:host.unavailable:{int(START)}"
+    assert again.splitlines()[-1] == f"delivery far:host.unavailable:{int(START + 3 * TICK_S)}"
+    assert f"- {second} · " in again
 
 
 def test_a_late_retry_of_an_earlier_runs_end_leaves_the_run_going_now(far):

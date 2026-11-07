@@ -82,6 +82,17 @@ class Store:
         _replace(self.nodes / f"{record['node']}.json", record)
 
     @contextlib.contextmanager
+    def edit_node(self, node: str):
+        """Read-modify-write of one node record under its lock (never held across a send): the record as stored now,
+        or a fresh one, saved on exit when it changed."""
+        with self.lock(f"node-{node}"):
+            record = self.load_node(node) or {"node": node, "failures": 0, "down_since": None, "notified_outage": None}
+            before = json.dumps(record, sort_keys=True)
+            yield record
+            if json.dumps(record, sort_keys=True) != before:
+                self.save_node(record)
+
+    @contextlib.contextmanager
     def edit(self, task_id: str):
         """Read-modify-write of one job under its lock (the one ``notify`` holds): the job as stored now, saved on
         exit. None when there is no such job."""

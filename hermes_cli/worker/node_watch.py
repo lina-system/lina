@@ -13,6 +13,9 @@ other. A tick that finds no watched run on a node, or a placement published on i
 Each of those notices is queued on the node record first, one item per place it goes (``pending``: each agent's chat,
 each card), and an item leaves the queue once it went out; the next ticks retry what failed and send nothing twice. The
 outage's delivery id is done only once every place was told.
+
+Every change to a node record is one read-modify-write under its lock (``Store.edit_node``), never held across a send:
+a reset that lands while a notice is going out (a placement published on the node) stays.
 """
 
 from __future__ import annotations
@@ -32,7 +35,7 @@ def watch(hub) -> None:
     hub.contacts = {}
     for path in hub.store.nodes.glob("*.json"):
         if (record := hub.store.load_node(path.stem)) and record.get("pending"):
-            hub.store.log(f"{path.stem} notices retried: {_flush(hub, record)}")
+            hub.store.log(f"{path.stem} notices retried: {_flush(hub, path.stem)}")
     nodes: dict[str, list[dict]] = {}
     for job in hub.store.all():
         if job.get("state") in WATCHED and job.get("host") and time.time() - job["created"] < WATCH_FOR_S:
@@ -52,10 +55,15 @@ def watch(hub) -> None:
 def reset(store, node: str) -> None:
     """*node* holds no outage any more (no watched run is left on it, or a placement on it was published): a later
     loss of contact counts from zero and is told again."""
-    record = store.load_node(node)
-    if record and (record.get("failures") or record.get("notified_outage")):
-        store.save_node({"node": node, "failures": 0, "down_since": None, "notified_outage": None,
-                         **({"pending": record["pending"]} if record.get("pending") else {})})
+    with store.edit_node(node) as record:
+        _reset(record)
+
+
+def _reset(record: dict) -> None:
+    """No failed contact counted, no outage told; the notices still queued stay (``_flush`` drops an outage's that
+    is not the record's any more)."""
+    record.update(failures=0, down_since=None, notified_outage=None)
+    record.pop("runs", None)
 
 
 def _failed(job: dict, reply: dict) -> bool:
@@ -77,31 +85,33 @@ def mark_unknown(store, task_id: str, delivery: str | None = None) -> bool:
 
 
 def _failed_contact(hub, node: str, jobs: list[dict]) -> None:
-    record = hub.store.load_node(node) or {"node": node, "failures": 0, "down_since": None, "notified_outage": None}
-    record["failures"] += 1
-    record["down_since"] = record["down_since"] or time.time()
-    if record["failures"] >= FAILED_CONTACTS and not record["notified_outage"]:
-        _unavailable(hub, node, record, jobs)
-    hub.store.save_node(record)
+    with hub.store.edit_node(node) as record:
+        record["failures"] += 1
+        record["down_since"] = record["down_since"] or time.time()
+        queued = record["failures"] >= FAILED_CONTACTS and not record["notified_outage"] and \
+            _unavailable(hub, node, record, jobs)
+    if queued:
+        hub.store.log(f"{node} {events.HOST_UNAVAILABLE} {queued}: {_flush(hub, node)}")
 
 
-def _unavailable(hub, node: str, record: dict, jobs: list[dict]) -> None:
+def _unavailable(hub, node: str, record: dict, jobs: list[dict]) -> str | None:
     """The outage told once: its running runs become ``unknown`` first, then the notice is queued on the node record
-    for each place it goes and sent; its id is done once every one of them went out (``_flush``). A hub that stopped
-    before queueing it finds those runs ``unknown`` with this outage on them and tells it then."""
+    for each place it goes (sent by ``_flush`` once the record is saved); its id is done once every one of them went
+    out. A hub that stopped before queueing it finds those runs ``unknown`` with this outage on them and tells it
+    then. The delivery id when it was queued."""
     delivery = events.outage_id(node, record["down_since"])
     named = [job for job in jobs if _held(job, delivery) or mark_unknown(hub.store, job["id"], delivery)]
     if not named:
-        return
+        return None
     record.update(notified_outage=delivery, runs=[job["id"] for job in named])
     if events.done(hub.store, delivery):
         for job in named:
             events.duplicate(hub.store, job["id"], "unknown", "x", delivery)
-        return
+        return None
     payload = {"device": node, "since": record["down_since"], "delivery": delivery, **events.fields("unknown")}
-    how = _tell(hub, record, named, events.signed(_outage_text(node, record, named), delivery),
-                f"{events.HOST_UNAVAILABLE}-{node}", payload, key=delivery, delivery=delivery)
-    hub.store.log(f"{node} {events.HOST_UNAVAILABLE} {delivery}: {how}")
+    _queue(record, named, events.signed(_outage_text(node, record, named), delivery),
+           f"{events.HOST_UNAVAILABLE}-{node}", payload, key=delivery, delivery=delivery)
+    return delivery
 
 
 def _held(job: dict, delivery: str) -> bool:
@@ -124,20 +134,20 @@ def _answered(hub, node: str, jobs: list[dict], replies: dict[str, dict]) -> Non
         if job.get("state") == "unknown" and not reply.get("unreachable") and not reply.get("missing") \
                 and reply.get("state") in ("running", *events.END_STATES):
             _back_under_watch(hub, job["id"], node, reply)
-    record = hub.store.load_node(node)
-    if not record or not record.get("failures"):
-        return
-    reset(hub.store, node)
-    if not record.get("notified_outage"):
-        return
     from hermes_cli.worker.hub import _ago
-    going = [job["id"] for job in jobs if replies[job["id"]].get("state") == "running"]
-    line = f"{node} is back after {_ago(record['down_since'])}; " + \
-        (f"runs {', '.join(going)} continue\n" if going else "no run continues\n")
-    told = [job for job in map(hub.store.load, record.get("runs") or []) if job]
-    how = _tell(hub, hub.store.load_node(node), told, line, f"host.back-{node}", None,
-                key=f"{record['notified_outage']}:back")
-    hub.store.log(f"{node} back after the outage {record['notified_outage']}: {how}")
+    with hub.store.edit_node(node) as record:
+        outage, since, runs = record["notified_outage"], record["down_since"], record.get("runs") or []
+        if not record["failures"]:
+            return
+        _reset(record)
+        if outage:
+            going = [job["id"] for job in jobs if replies[job["id"]].get("state") == "running"]
+            line = f"{node} is back after {_ago(since)}; " + \
+                (f"runs {', '.join(going)} continue\n" if going else "no run continues\n")
+            _queue(record, [job for job in map(hub.store.load, runs) if job], line, f"host.back-{node}", None,
+                   key=f"{outage}:back")
+    if outage:
+        hub.store.log(f"{node} back after the outage {outage}: {_flush(hub, node)}")
 
 
 def _back_under_watch(hub, task_id: str, node: str, reply: dict) -> None:
@@ -151,10 +161,10 @@ def _back_under_watch(hub, task_id: str, node: str, reply: dict) -> None:
         hub.store.receipt(task_id, "host_back", host=node, state=reply.get("state"), run=reply.get("run"))
 
 
-def _tell(hub, record: dict, jobs: list[dict], text: str, tag: str, payload: dict | None, *, key: str,
-          delivery: str | None = None) -> str:
-    """*text* queued on the node *record* (``pending``, under *key* and each place it goes), once to each agent whose
-    runs these are (a run on a Hermes card is told on its card only) and once on each of their cards, then sent."""
+def _queue(record: dict, jobs: list[dict], text: str, tag: str, payload: dict | None, *, key: str,
+           delivery: str | None = None) -> None:
+    """*text* queued on the node *record* (``pending``, under *key* and each place it goes): once to each agent whose
+    runs these are (a run on a Hermes card is told on its card only) and once on each of their cards."""
     pending, runs = record.setdefault("pending", {}), [job["id"] for job in jobs]
     for job in jobs:
         common = {"text": text, "tag": tag, "delivery": delivery, "runs": runs}
@@ -164,29 +174,36 @@ def _tell(hub, record: dict, jobs: list[dict], text: str, tag: str, payload: dic
             pending.setdefault(f"{key} card:{kanban_link.card_key(job['card'])}",
                                {**common, "card": job["card"], "card_runs": [], "payload": payload}
                                )["card_runs"].append(job["id"])
-    hub.store.save_node(record)
-    return _flush(hub, record)
 
 
-def _flush(hub, record: dict) -> str:
-    """Send each notice still queued on the node *record*, dropping each one that went out; a failed one stays for the
-    next tick. An outage whose every place was told is done (``deliveries.jsonl``, a ``notified`` receipt per run)."""
+def _flush(hub, node: str) -> str:
+    """Send each notice queued on *node*'s record, with no lock held while it goes; after each send the record is read
+    again and only that item changes: one that went out leaves the queue, a failed one stays for the next tick, and one
+    for an outage the record no longer holds (it was reset meanwhile) is dropped. An outage whose every place was told
+    is done (``deliveries.jsonl``, a ``notified`` receipt per run)."""
+    with hub.store.edit_node(node) as record:
+        queued = dict(record.get("pending") or {})
     said: dict[str | None, list[str]] = {}
-    runs: dict[str, list[str]] = {}
-    for name, item in list(record["pending"].items()):
+    for name, item in queued.items():
         how, sent = _send(hub, item)
         said.setdefault(item["delivery"], []).append(how)
-        if sent:
-            del record["pending"][name]
-            hub.store.save_node(record)
-            runs[item["delivery"]] = item["runs"]
-    left = {item["delivery"] for item in record["pending"].values()}
-    for delivery in [delivery for delivery in runs if delivery and delivery not in left]:
-        events.record(hub.store, delivery, node=record["node"], runs=runs[delivery])
-        for run in runs[delivery]:
-            hub.store.receipt(run, "notified", how="; ".join(said[delivery])[:200], state="unknown", run="x",
-                              delivery=delivery, **events.fields("unknown"))
+        with hub.store.edit_node(node) as record:
+            pending = record.get("pending") or {}
+            stale = item["delivery"] is not None and item["delivery"] != record["notified_outage"]
+            if name not in pending or not (sent or stale):
+                continue
+            del pending[name]
+            done = sent and not stale and not any(other["delivery"] == item["delivery"] for other in pending.values())
+        if done and item["delivery"]:
+            _outage_done(hub, node, item, said[item["delivery"]])
     return "; ".join(how for hows in said.values() for how in hows)
+
+
+def _outage_done(hub, node: str, item: dict, said: list[str]) -> None:
+    events.record(hub.store, item["delivery"], node=node, runs=item["runs"])
+    for run in item["runs"]:
+        hub.store.receipt(run, "notified", how="; ".join(said)[:200], state="unknown", run="x",
+                          delivery=item["delivery"], **events.fields("unknown"))
 
 
 def _send(hub, item: dict) -> tuple[str, bool]:
