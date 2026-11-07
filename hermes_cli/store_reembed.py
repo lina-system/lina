@@ -192,6 +192,9 @@ def run(args) -> int:
     from hermes_cli.config import load_config
     from hermes_state_store import StoreUnavailableError
     config = load_config()
+    if args.from_index:
+        from hermes_cli.store_import_vectors import run as import_run
+        return import_run(args, config)
     try:
         settings = EmbeddingSettings.from_config(config)
         max_chars = int((config.get("embedding") or {}).get("max_chars") or DEFAULT_MAX_CHARS)

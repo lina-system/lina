@@ -181,7 +181,8 @@ lina memory external-messages ingest --spool /path/to/synthetic/events.jsonl
 The existing gateway cron ticker checks every five minutes, once outside its profile loop. A host lock and
 persisted size/mtime signature avoid duplicate work across gateway processes and unchanged spools. Collection
 completion is observed through appended complete lines, not a collector hook; the collector itself is unchanged.
-Neither this job nor its CLI reads the collector's derived SQLite database or writes in its directory.
+Neither this job nor its CLI reads the collector's derived SQLite database or writes in its directory; only
+`lina store reembed --from-index` reads that index, read-only ("Importing the collector's vectors" below).
 
 The job opens the spool read-only under a shared `flock`, verifies SHA256 of the consumed byte prefix, and
 parses only new newline-terminated events. An incomplete tail waits for the next invocation. A truncated or
@@ -517,6 +518,39 @@ agent's rows in `vec.embeddings`, its Honcho workspace's and the shared external
 `{"id", "source", "agent", "question", "expected": [refs], "honcho": {"workspace", "observer", "observed"}}`;
 a ref is a `memory.messages` uid or a Honcho conclusion id. A synthetic set (36 questions over a 48-item corpus)
 is in `tests/fixtures/memory_eval/`.
+
+### Importing the collector's vectors
+
+```sh
+lina store reembed --source messages --from-index <collector index.db> [--batch-size 500]
+```
+
+The message collector keeps its own derived index: one full-width vector per chunk of up to ten consecutive
+messages of one room. Where those vectors were written by `embedding.model`, `--from-index` cuts them to the
+width of `vec.embeddings` with `truncate_stored` (`agent/embedding_client.py`) instead of embedding the text
+again. It reads the index read-only (SQLite `mode=ro`), never the collector's text, and needs `embedding.model`
+and `embedding.dimensions` but not the endpoint. The index it reads has this shape (a collector index of another
+shape needs a view of these names first):
+
+| Table | Columns |
+| --- | --- |
+| `chunks` | `chunk_id INTEGER PRIMARY KEY`, `model TEXT` (the model that wrote the vector), `dim INTEGER`, `embedding BLOB` (`dim` float32 values, little-endian) |
+| `chunk_messages` | `chunk_id INTEGER`, `position INTEGER` (order in the chunk), `message_uid TEXT` (the collector uid) |
+
+A chunk becomes one `vec.chunks` row (`source = 'messages'`, `message_ids` = the `memory.messages` ids of
+`messages:<collector uid>` in chunk order, `text` = their LINA text joined by newlines) and one `chunk` vector of
+`embedding.model`, both with the shared owner `*`, as `reembed` writes shared external messages. Left for
+`lina store reembed --source messages` and counted on the last line: chunks with a message that is not a shared,
+unforgotten row of `memory.messages` (not ingested yet, forgotten, or not `scope = 'agents'`), empty chunks (no
+messages, or only empty text), vectors of another model, and vectors that cannot be cut (fewer values than the
+table's width, a blob that is not `dim` float32 values, a zero vector). The import keeps no cursor and leaves
+`vec.reembed_progress` alone: a chunk is keyed by its message ids, so a rerun goes through the index again and
+inserts nothing it inserted before (`N already in the store`).
+
+Model names are compared by the part after the last `/`, exactly otherwise: the collector's
+`qwen/qwen3-embedding-8b` (the provider prefix its endpoint uses) is LINA's `qwen3-embedding-8b`, and
+`text-embedding-3-small` is another model. Rows are written with the configured `embedding.model` string, the one
+searches read.
 
 ## Backup and restore
 
