@@ -4,6 +4,9 @@ A task holds a slot from the hub's reservation until its newest requested run en
 is waiting for ``serve``, preparing or running: counting only launched runs let a batch land on one ``cap: 1``
 device and ``serve`` launch them all. The reservation is checked and written under one lock, so two hubs placing
 at once cannot both take the last slot; ``serve`` holds launches to the cap the hub reserved with.
+
+A requested run marked ``slot_wait.<n>`` (a file node's follow-up while the device is full) holds no slot: it waits,
+and ``admit`` lets the one that waited longest take a free slot under the same lock. Other devices never write it.
 """
 
 from __future__ import annotations
@@ -19,6 +22,7 @@ RESERVED = "reserved"
 RESERVE_TTL_S = 600.0  # a reservation the hub never followed with a request (it crashed) frees its slot
 CAP_FILE = "cap"
 POOL_FILE = "slot_pool"
+WAIT = "slot_wait"
 
 
 def task_pool(task_dir: Path) -> str:
@@ -34,10 +38,22 @@ def requested(task_dir: Path) -> int:
     return max(runs, default=0)
 
 
+def waiting_since(task_dir: Path) -> float | None:
+    """When the newest requested run began to wait for a slot; None when it does not wait."""
+    run = requested(task_dir)
+    mark = task_dir / f"{WAIT}.{run}"
+    if not run or not mark.exists() or (task_dir / f"rc.{run}").exists():
+        return None
+    try:
+        return float(mark.read_text(encoding="utf-8-sig").strip())
+    except (OSError, ValueError):
+        return 0.0
+
+
 def holds_slot(task_dir: Path) -> bool:
     run = requested(task_dir)
     if run:
-        return not (task_dir / f"rc.{run}").exists()
+        return not (task_dir / f"rc.{run}").exists() and not (task_dir / f"{WAIT}.{run}").exists()
     reserved = task_dir / RESERVED
     return reserved.exists() and time.time() - reserved.stat().st_mtime < RESERVE_TTL_S
 
@@ -79,6 +95,24 @@ def _locked(worker_root: Path):
             yield
         finally:
             fcntl.flock(handle, fcntl.LOCK_UN)  # windows-footgun: ok — POSIX work devices only
+
+
+def admit(worker_root: Path, task_id: str, run: int, device_cap: int, *, pool: str = "bid") -> bool:
+    """Let *task_id*'s waiting run *run* take a slot: under the slot lock, only while fewer than *device_cap* runs
+    hold one in *pool* and it waited longest there. Its wait mark goes then, so it holds the slot from here on; a run
+    that does not wait is admitted already."""
+    with _locked(worker_root):
+        mark = settings.tasks_dir(worker_root) / task_id / f"{WAIT}.{run}"
+        if not mark.exists():
+            return True
+        if held(worker_root, exclude=task_id, pool=pool) >= device_cap:
+            return False
+        queue = sorted((since, d.name) for d in _task_dirs(worker_root)
+                       if task_pool(d) == pool and (since := waiting_since(d)) is not None)
+        if queue and queue[0][1] != task_id:
+            return False
+        mark.unlink()
+        return True
 
 
 def reserve(worker_root: Path, task_id: str, device_cap: int, *, pool: str = "bid") -> dict:
