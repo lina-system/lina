@@ -66,6 +66,26 @@ def _reset(record: dict) -> None:
     record.pop("runs", None)
 
 
+def outage_of(store, job: dict) -> str | None:
+    """The delivery id of the newest outage that made *job* ``unknown``: the one its node record sent and names it
+    while the run is still ``unknown``, else the one the job carries from ``mark_unknown`` (kept after its node is
+    back). None when no outage of its node marked it."""
+    node = job.get("host")
+    if not node:
+        return None
+    record = store.load_node(node) or {}
+    if job.get("state") == "unknown" and record.get("notified_outage") and job["id"] in (record.get("runs") or []):
+        return record["notified_outage"]
+    prefix = events.outage_id(node, 0).rsplit(":", 1)[0] + ":"
+    return next((entry["delivery"] for entry in reversed(job.get("notified") or [])
+                 if isinstance(entry, dict) and str(entry.get("delivery") or "").startswith(prefix)), None)
+
+
+def outage_open(store, node: str, delivery: str) -> bool:
+    """*node*'s outage *delivery* is still open: no tick has had an answer from the node since it was told."""
+    return (store.load_node(node) or {}).get("notified_outage") == delivery
+
+
 def _failed(job: dict, reply: dict) -> bool:
     return bool(reply.get("unreachable") or (reply.get("missing") and job.get("state") == "running"))
 

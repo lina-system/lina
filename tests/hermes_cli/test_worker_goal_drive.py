@@ -92,7 +92,6 @@ def drive(tmp_path, monkeypatch):
         (base / "config.yaml").write_text(
             f"devices:\n  workers:\n    here: {{host: local, cap: 4}}\n    there: {there}\n"
             "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n"
-            "  unknown_after_s: 0\n"
             f"  card_link: {json.dumps(link)}\n"
             f"  runners:\n    fakecli: {json.dumps(spec)}\n" + extra)
     configure()
@@ -378,13 +377,37 @@ def _outage(drive, on: bool) -> None:
     drive.down = on
 
 
-def test_a_lost_node_waits_while_the_outage_is_open_and_moves_once_after_the_run_did_not_continue(drive):
+def _lose_node(drive) -> None:
+    """The node becomes unreachable and stays so for ``node_watch.FAILED_CONTACTS`` ticks: it sends
+    ``host.unavailable`` and its running runs become ``unknown``."""
+    from hermes_cli.worker import node_watch
+    _outage(drive, True)
+    for _ in range(node_watch.FAILED_CONTACTS):
+        _tick(drive)
+
+
+def test_two_unreachable_ticks_are_not_a_lost_node_and_the_drive_does_nothing(drive):
+    # A hub before lina#223 ended the run as lost after this many seconds unreachable; the key is gone now.
+    drive.configure("  unknown_after_s: 0\n")
     task = _submit(drive)
     _outage(drive, True)
     _tick(drive)
     _tick(drive)
     hub = _hub(drive)
+    assert hub.store.load(task)["state"] == "running"
+    assert hub.store.load_node("here")["failures"] == 2 and not hub.store.load_node("here")["notified_outage"]
+    assert not _writes(drive, "schedule") and not _writes(drive, "block")
+    assert [job["id"] for job in hub.store.all()] == [task]
+    assert not (drive.root / "hub" / "goals" / "t-goal.json").exists() or _ledger(drive)["actions"] == {}
+
+
+def test_a_lost_node_waits_while_the_outage_is_open_and_moves_once_after_the_run_did_not_continue(drive):
+    task = _submit(drive)
+    _lose_node(drive)
+    _tick(drive)  # the outage is still open
+    hub = _hub(drive)
     assert hub.store.load(task)["state"] == "unknown"
+    assert hub.store.load_node("here")["notified_outage"]
     assert [job["id"] for job in hub.store.all()] == [task]
     assert [call[2] for call in _writes(drive, "schedule", WORK)] == ["--wait-for"]
     _outage(drive, False)
@@ -403,8 +426,7 @@ def test_a_lost_node_waits_while_the_outage_is_open_and_moves_once_after_the_run
 def test_a_lost_node_run_is_not_moved_to_a_node_that_takes_no_automatic_work(drive):
     drive.configure(there="{host: local, cap: 4, auto: false}")
     task = _submit(drive)
-    _outage(drive, True)
-    _tick(drive)
+    _lose_node(drive)
     _outage(drive, False)
     (drive.root / "tasks" / task / "rc.1").write_text("1\n")
     (drive.root / "tasks" / task / "state").write_text("failed\n")
@@ -415,8 +437,7 @@ def test_a_lost_node_run_is_not_moved_to_a_node_that_takes_no_automatic_work(dri
 
 def test_a_lost_node_whose_run_went_on_is_not_moved(drive):
     task = _submit(drive)
-    _outage(drive, True)
-    _tick(drive)
+    _lose_node(drive)
     _outage(drive, False)
     (drive.root / "tasks" / task / "state").write_text("running\n")
     _tick(drive)
@@ -427,8 +448,7 @@ def test_a_lost_node_whose_run_went_on_is_not_moved(drive):
 
 def test_a_lost_node_is_not_moved_while_another_run_of_the_same_to_do_is_live(drive):
     task = _submit(drive)
-    _outage(drive, True)
-    _tick(drive)
+    _lose_node(drive)
     _outage(drive, False)
     (drive.root / "tasks" / task / "state").write_text("failed\n")
     (drive.root / "tasks" / task / "rc.1").write_text("1\n")

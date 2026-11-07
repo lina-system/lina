@@ -34,7 +34,7 @@ import re
 import subprocess
 import time
 
-from hermes_cli.worker import bidding, kanban_link, request_keys, settings
+from hermes_cli.worker import bidding, kanban_link, node_watch, request_keys, settings
 from hermes_cli.worker.hub_store import _replace
 
 LIMITS = {"workers": 3, "attempts": 3, "runs": 40, "wall_h": 24}
@@ -79,10 +79,10 @@ def limits(worker: dict) -> dict:
     return out
 
 
-def node_lost(job: dict) -> bool:
-    """The run's node is unavailable. Today that is the hub's ``unknown`` end: the device stayed unreachable for
-    ``worker.unknown_after_s``. lina#223 switches this one function to its ``host.unavailable`` event."""
-    return job.get("state") == "unknown"
+def node_lost(job: dict, store) -> bool:
+    """The run's node is unavailable: the run is ``unknown`` because ``node_watch`` sent its node's
+    ``host.unavailable`` (``FAILED_CONTACTS`` failed contacts in a row) and that outage names it."""
+    return job.get("state") == "unknown" and node_watch.outage_of(store, job) is not None
 
 
 def goal_of(body: str | None) -> str | None:
@@ -227,10 +227,10 @@ def _settled(job: dict) -> bool:
 
 
 def _view(hub, board: Board, card: dict) -> dict | None:
-    """The card as read at its last run end (``kanban_link.kept_view``): a Hermes card is never read again for this.
-    A LINA card is read once from its board."""
+    """The card as read at its last run end (``kanban_link.kept_view``), else read once from the board and kept (a
+    run made ``unknown`` by an outage has no end on its card)."""
     view = kanban_link.kept_view(hub.store, card)
-    if view is None and not kanban_link.on_hermes(card):
+    if view is None:
         view = board.show(card)
         kanban_link.keep_view(hub.store, card, view)
     return view
@@ -289,7 +289,8 @@ class Drive:
         ledger = json.loads(self.path.read_text(encoding="utf-8-sig")) if self.path.is_file() else {}
         ledger.pop("workers", None)  # an older ledger's held workers: holds now live only inside one pass
         ledger["runs"] = {task: count for task, count in (ledger.get("runs") or {}).items() if ":" not in task}
-        for name in ("attempts", "followups", "runs", "actions", "usage", "blocked", "moved", "github", "notes"):
+        for name in ("attempts", "followups", "runs", "actions", "usage", "blocked", "moved", "github", "notes",
+                     "outages"):
             ledger.setdefault(name, {})
         ledger.setdefault("goal", self.goal)
         return ledger
@@ -467,8 +468,9 @@ class Drive:
         if count > FOLLOW_UPS:  # a round the drive did not send went past the limit: it cannot be stopped, only met
             self._block_card(card, job, ids, count, by)
             return
-        if node_lost(job):
-            self._node_lost(card, job, ids)
+        outage = node_watch.outage_of(self.hub.store, job)
+        if outage and self.ledger["outages"].get(job["id"]) != outage:  # an outage of its node not yet settled
+            self._node_lost(card, job, ids, outage)
             return
         if self._usage(card, job, ids):
             return
@@ -700,25 +702,38 @@ class Drive:
                 parts.append((out / name).read_text(encoding="utf-8-sig", errors="replace")[-4000:])
         return "\n".join(parts)
 
-    def _node_lost(self, card: dict, job: dict, ids) -> None:
-        """Wait while the device is unreachable; once it answers, move the run only when it did not continue."""
+    def _node_lost(self, card: dict, job: dict, ids, outage: str) -> None:
+        """A run an outage of its node made ``unknown`` (``node_watch``). While the outage is open the card is parked;
+        once the node answered again, the run is moved only when it did not continue there: it ended (the tick put it
+        back under watch and delivered its end) or the device does not have it. The outage is settled for this task
+        once the run went on or was moved."""
         from hermes_cli.worker.hub import ENDED, HubError
+        from hermes_cli.worker.serve import HUB_TICK_S
         from hermes_cli.worker.transport import TransportError
-        try:
-            remote = self.hub.meta(job)
-        except (TransportError, HubError, OSError) as exc:
-            remote = {"unreachable": True, "why": str(exc)[:200]}
-        if remote.get("unreachable"):
-            after = int(settings.setting("unknown_after_s", worker=self.hub.worker))
-            self.park(card, ids("node-park"), f"until:{_iso(self.now + after)}",
-                      f"goal drive: the node of run {job['id']} is unreachable")
+        if node_lost(job, self.hub.store) and node_watch.outage_open(self.hub.store, job["host"], outage):
+            back_by = self.now + node_watch.FAILED_CONTACTS * HUB_TICK_S  # no wait-for names a node's return
+            self.park(card, ids("node-park"), f"until:{_iso(back_by)}",
+                      f"goal drive: the node of run {job['id']} is unavailable ({outage})")
             return
-        later = str(remote.get("run") or "") not in ("", str(job.get("runs") or 1))
-        if not remote.get("missing") and (remote.get("state") not in ENDED or later):
-            self.act(ids("node-continued"), lambda _aid: f"{job.get('host')} answered: run {remote.get('run')} "
+        state = job.get("state")
+        if state == "unknown":  # the node answered, but not for this run
+            try:
+                remote = self.hub.meta(job)
+            except (TransportError, HubError, OSError) as exc:
+                remote = {"unreachable": True, "why": str(exc)[:200]}
+            if remote.get("unreachable"):
+                return
+            went_on = not remote.get("missing") and remote.get("state") not in ENDED
+        else:
+            went_on, remote = state not in ENDED, {"run": job.get("runs"), "state": state}
+        if went_on:
+            self.act(ids("node-continued"), lambda _aid: f"{job.get('host')} is back: run {remote.get('run')} "
                                                          f"{remote.get('state')}; not moved")
+        elif not self.move(card, job, ids, "resubmit", same_attempt=False) or \
+                ids("resubmit") not in self.ledger["actions"]:
             return
-        self.move(card, job, ids, "resubmit", same_attempt=False)
+        self.ledger["outages"][job["id"]] = outage
+        self.save()
 
     def move(self, card: dict, job: dict, ids, rule: str, same_attempt: bool) -> bool:
         """The same brief on another allowed node, from the pushed branch; never while another run of the to-do is

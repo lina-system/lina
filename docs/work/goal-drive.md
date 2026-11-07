@@ -50,7 +50,7 @@ Each rule acts at most once per action id.
 | `check-park` | Same, but the required checks are still running | Parks the work card with `schedule --wait-for pr:<repo>#<n>`. |
 | `deliverable` | The run ended `done`, `done_empty` or `review` with no pull request for its branch (a run with a repository), no `report.md` and no file in `out/` | One follow-up asking for it. |
 | `block` | A follow-up is due and the attempt has had 3 rounds already, or the attempt already has more than 3 | Blocks the work card with kind `needs_input` and one inbox line, `<card title> · 갈림길 · <one line>` naming who sent the last round, and stops driving that card. |
-| `node-park` | The run's node is lost and its device is still unreachable | Parks the work card with `schedule --wait-for until:<time>` (`worker.unknown_after_s` ahead). |
+| `node-park` | The run's node is lost and its outage is still open (no tick has had an answer from it) | Parks the work card with `schedule --wait-for until:<time>`, `node_watch.FAILED_CONTACTS` hub ticks (3 × 30 s) ahead: no `--wait-for` event names a node's return, and that is the soonest the next outage could be told. |
 | `resubmit` | The run's node was lost, and once the device answers again the run ended there or never started | Submits the same brief on another allowed node, from the pushed branch. The node is chosen by automatic placement among the other devices, so an `auto: false` device takes no moved run, except the device the original run was handed out to with `--host`. When no node can take it, the ledger's `notes` say why for each device, and the drive tries again on the next tick. The branch: `origin/<branch>` when GitHub has the branch, else the repository's default. Not while another run of the same to-do is live. A new attempt. |
 | `node-continued` | Same, but the device says the run went on | Nothing is moved; the ledger records it. |
 | `usage-park`, `usage-resume` | The run ended `failed`, `stalled` or `done_empty` and its end text or stderr matches its runner's usage-limit pattern | Parks the work card until the reset time (an ISO time after `reset`, or `reset in <n> <unit>`; else 1 h), then sends one message that continues the same task. Not a new attempt and not a follow-up. |
@@ -69,8 +69,13 @@ cannot stop a fourth round the card session sends itself; on its next tick it se
 with the same line. The line names who sent the last round (`the goal drive` or `the card session`), taken from the
 request key on that round's `follow_up` receipt.
 
-"Node lost" is one function, `goal_drive.node_lost(job)`. Today it is the hub's `unknown` end: the device stayed
-unreachable for `worker.unknown_after_s`. lina#223 switches that function to its `host.unavailable` event.
+"Node lost" is one function, `goal_drive.node_lost(job, store)`, on lina#223's outage record
+(`hub/nodes/<node>.json`, read through `node_watch.outage_of` and `node_watch.outage_open`): the run is `unknown`
+because its node failed `node_watch.FAILED_CONTACTS` (3) contacts in a row and `host.unavailable` was sent for it, and
+that outage names the run (the node record's `runs`, or the outage's delivery id on the job). One or two unreachable
+ticks are not a lost node, and the drive does nothing for them. When the node answers again, the tick puts the run
+back under watch (`running`, then its end if it has one); the drive then moves it only when it did not continue, and
+records the outage as settled for that task (`outages` in the ledger).
 
 GitHub is read at most once per run per tick, and each pull request and check read is kept 60 s.
 
@@ -98,6 +103,7 @@ The ledger is `$LINA_HOME/worker/hub/goals/<goal card>.json`, written under the 
 | `started_at` | The goal's start: its first task's hand-out time. |
 | `actions` | Action id → time and result. |
 | `usage`, `moved`, `blocked`, `red_heads`, `github` | Usage waits, moved tasks, cards the drive blocked, followed-up heads, cached GitHub reads. |
+| `outages` | Per task, the outage (its delivery id) the drive settled: the run went on, or it was moved. |
 | `notes` | Why the drive left a card (`skipped: card <status>`), a write the board refused (`card_write_refused: …`), or a run (`not moved: …`, `deferred: …`). |
 | `stopped` | Set when a limit stopped the drive for this goal. |
 
