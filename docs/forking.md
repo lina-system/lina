@@ -51,6 +51,8 @@ When taking upstream changes, do not change upstream LICENSE files or copyright 
 
 `prune-list.txt` at the repository root lists the upstream paths LINA does not carry; its header explains the format. The CI "Prune check" fails while a tracked file matches it.
 
+After deleting upstream paths, and on every intake before the merge is committed, run `python3 scripts/ci/check_pruned_imports.py --upstream <ref>`: it fails while kept code imports a module that only deleted upstream files provided (its exceptions, each with a reason, are listed in the script).
+
 ## Our patches on top of upstream
 
 Changes we carry that upstream does not have are ordinary commits on `dev`. When upstream fixes the same problem, prefer upstream's fix and remove ours in the merge pull request.
