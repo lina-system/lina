@@ -68,8 +68,13 @@ def test_gateway_job_is_a_launchd_osascript_child_that_reads_as_unsupervised(tmp
         assert job.poll() is None
     finally:
         release.write_text("", encoding="utf-8")
-    assert wait_until(lambda: job.poll() is not None, timeout=30)
-    assert job.poll() == 0
+    try:
+        assert wait_until(lambda: job.poll() is not None, timeout=30)
+        assert job.poll() == 0
+    finally:
+        # Unload this test's own job: under test isolation no later start sweeps finished jobs (#372).
+        subprocess.run(["launchctl", "remove", job.target.rsplit("/", 1)[1]], capture_output=True,
+                       check=False, stdin=subprocess.DEVNULL)
 
 
 def _recording_launchctl(calls: list[tuple[str, ...]]):
