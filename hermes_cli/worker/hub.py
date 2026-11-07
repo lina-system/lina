@@ -451,7 +451,7 @@ class Hub:
             while time.time() < deadline:
                 time.sleep(min(15.0, max(0.5, timeout / 20)))
                 job = self.need(task_id)
-                if job.get("state") in ENDED:
+                if not job.get("host") and job.get("state") in ENDED:
                     self.out(f"{task_id} {notice.STATE_WORDS.get(job['state'])}"
                              + (f" · {job['placement_error']}" if job.get("placement_error") else ""))
                     return 0

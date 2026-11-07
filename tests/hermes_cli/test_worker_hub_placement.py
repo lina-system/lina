@@ -10,6 +10,7 @@ import pytest
 
 from hermes_cli.worker import device, hub as hub_mod, serve
 from hermes_cli.worker.hub import Hub, HubError
+from hermes_cli.worker.task import write_manifest
 from hermes_cli.worker.transport import Reply
 from tests.hermes_cli import _worker_fakes as fakes
 
@@ -196,4 +197,34 @@ def test_wait_reports_removed_named_device_failure(lane):
     assert job["waiter"] is None and job["waiter_start"] is None
     assert lane["lines"][-1] == f"{job['id']} failed · {job['placement_error']}"
     assert "gone" in lane["lines"][-1] and len(lane["lines"][-1].splitlines()) == 1
+    assert not list(hub.store.notices.glob(f"{job['id']}-*"))
+
+
+def test_wait_fetches_result_after_tick_records_device_end(lane):
+    hub = lane["hub"]
+
+    def finish_device_and_tick(seconds):
+        (job,) = hub.store.all()
+        task = device.task_of(lane["root"], job["id"])
+        task.work.mkdir(parents=True, exist_ok=True)
+        (task.work / "report.md").write_text(fakes.REPORT_WITH_NOTES)
+        write_manifest(task, 1)
+        task.path("rc.1").write_text("0")
+        task.path("state").write_text("done")
+        hub.tick()
+        assert hub.store.load(job["id"])["state"] == "done"
+        assert not (hub.store.out_dir(job) / "report.md").exists()
+
+    lane["mp"].setattr(hub_mod.time, "sleep", finish_device_and_tick)
+
+    result = hub.submit({"briefs": [fakes.brief(lane["tmp"], "SCENARIO:done one")], "mode": "ulw",
+                         "topic": "place", "bot": "sion", "runner": "fakecli", "host": "here", "wait": 30})
+
+    (job,) = hub.store.all()
+    out_dir = hub.store.out_dir(job)
+    assert result == 0
+    assert lane["lines"][-1] == f"{job['id']} done · result {out_dir}"
+    assert (out_dir / "report.md").read_text() == fakes.REPORT_WITH_NOTES
+    assert job["delivery"] == "ok"
+    assert job["waiter"] is None and job["waiter_start"] is None
     assert not list(hub.store.notices.glob(f"{job['id']}-*"))
