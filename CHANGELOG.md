@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- An omo run whose session the engine keeps `running` and streaming after the work is done now ends: once no session entry is recorded for `stall_grace_s` (default 600 s) and only receipts (`terminal-monitors`, empty `delivery:*` groups) are left, the run ends `done` when the last assistant message ended with `stop` and no tool call and this run's `report.md` is newer than its start, else `stalled` naming the frozen streaming state; the end notice says which rule ended the run (lina#404).
 - A model has one name across the OCX list, the settings check and the omo runner: `<provider>/<id>` and `opencodex/<provider>/<id>` are the same model, so the settings check and `decide` read its state, quota and fallback from the one OCX row, the omo runner opens the session through OCX's `opencodex` provider with the namespaced id, and the run record and run page show the `<provider>/<id>` form whichever was written (lina#385).
 - Worker follow-ups reopen parked omo sessions from their recorded transcript with the same access mode; unknown and ambiguous session references report their specific reasons instead of a generic restore failure (lina#391).
 - Work settings accept validated file-node device fields and per-agent `worker.access` ceilings, including revisions, rollback and outside edits, so file nodes can be configured through the CLI (lina#389).

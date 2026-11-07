@@ -17,6 +17,7 @@ from typing import NamedTuple
 
 from hermes_cli.worker import events
 from hermes_cli.worker.report import NEXT_NOTES
+from hermes_cli.worker.task import read_json
 
 STATE_WORDS = {"queued": "queued (no free device)", "running": "running", "done": "done",
                "done_empty": "nothing delivered", "review": "needs review", "stalled": "no answer (stalled)",
@@ -104,6 +105,14 @@ def _human(job: dict, out_dir: Path, **_) -> str:
             f"and answer with `lina worker send {tid} \"<answer>\"`; to stop: `lina worker cancel {tid} --why …`.\n")
 
 
+def _rule(out_dir: Path, run: str) -> str:
+    """Which rule ended run *run*, from its settle outcome (``wait`` in ``manifest.json``)."""
+    manifest = read_json(out_dir / "manifest.json", {}) or {}
+    wait = manifest.get("wait") if str(manifest.get("run")) == str(run) else None
+    rule = (wait or {}).get("via") or (wait or {}).get("why") or (wait or {}).get("outcome")
+    return f"- Ended by: {str(rule)[:160]}\n" if rule else ""
+
+
 def _cancelled(job: dict, out_dir: Path, **_) -> str:
     return f"cancelled — {job.get('cancel_why') or '-'}\n- Results so far: {out_dir}/\n"
 
@@ -123,7 +132,8 @@ def body(job: dict, kind: str, run: str, out_dir: Path, check: dict, *, notes: i
     text = (write(job, out_dir, check=check, notes=notes, quiet_s=quiet_s) if write
             else _failed(job, out_dir, err_tail))
     first, _, rest = (_head(job, run) + text).partition("\n")
-    return f"{events.headline(kind)} · {first}\n" + (f"[note left at hand-out] {note}\n" if note else "") + rest
+    return (f"{events.headline(kind)} · {first}\n" + (f"[note left at hand-out] {note}\n" if note else "")
+            + _rule(out_dir, run) + rest)
 
 
 class Sent(NamedTuple):
