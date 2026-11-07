@@ -984,8 +984,8 @@ DEFAULT_CONFIG = {
     },
     "webapp": {"enabled": False, "host": "127.0.0.1", "port": 9120, "public_url": ""},  # gateway/webapp_listener.py
     "dashboard": {
-        # Visual theme: "default" | "midnight" | "ember" | "mono" | "cyberpunk" | "rose"
-        "theme": "default", "app_dist": "",  # app_dist: lina-app build served at /app/; LINA_APP_DIST wins
+        # theme: "default" | "midnight" | "ember" | "mono" | "cyberpunk" | "rose"; app_dist: lina-app build at /app/
+        "theme": "default", "app_dist": "", "host": "127.0.0.1", "port": 9119,  # host/port: `lina services` web
         # Process-isolation rollout controls. Read via the raw config loader, so tui_gateway.server
         # also owns explicit defaults.
         "turn_isolation": False,
@@ -1887,11 +1887,11 @@ DEFAULT_CONFIG = {
         # the same task/profile. Reassignment resets the streak.
         "failure_limit": 2,
         # A run that ends at its turn budget, runtime limit or iteration budget is a planned stop:
-        # re-queued with a handoff, never counted above. After this many planned stops in a row
-        # without the card finishing, the card is blocked (needs_input) for a person.
+        # re-queued with a handoff, never counted above. Blocked (needs_input) for a person after
+        # planned_stop_limit in a row, or planned_stop_total_limit since last held, waits between.
         "planned_stop_limit": 5,
-        # Worker stdout/stderr log rotation at spawn time (2 MiB + one backup). Raise to keep more
-        # early failure evidence from long-running workers.
+        "planned_stop_total_limit": 20,
+        # Worker stdout/stderr log rotation at spawn time (2 MiB + one backup); raise for more.
         "worker_log_rotate_bytes": 2 * 1024 * 1024,
         "worker_log_backup_count": 1,
         # Profile for the root/orchestration task after Triage decomposition; "" = default profile.

@@ -453,9 +453,13 @@ def gate_ui_qa(args: argparse.Namespace, conn: sqlite3.Connection, report: Repor
     if not prs:
         report.line(FAIL, f"{card['id']}: no open or merged pull request closes the card's issues")
         return
-    comments = [(row["id"], row["body"]) for row in conn.execute(
-        "SELECT id, body FROM task_comments WHERE task_id = ? ORDER BY id", (card["id"],))]
-    verdict_for = _sibling("kanban_ui_qa").ui_qa_verdict
+    ui_qa = _sibling("kanban_ui_qa")
+    rows = [(row["id"], row["author"], row["body"]) for row in conn.execute(
+        "SELECT id, author, body FROM task_comments WHERE task_id = ? ORDER BY id", (card["id"],))]
+    comments, ignored = ui_qa.qa_side_records(rows, own_names(conn, card), set(args.author) if args.author else None)
+    if ignored:
+        print(f"note: ignored QA record(s) not written by the QA side: {', '.join(ignored)}")
+    verdict_for = ui_qa.ui_qa_verdict
     for pr in prs.values():
         verdict = verdict_for(comments, pr["headRefOid"])
         repo = (pr.get("repository") or {}).get("nameWithOwner") or ""
@@ -487,8 +491,11 @@ def build_parser(prog: str = "kanban gate") -> argparse.ArgumentParser:
     review.add_argument("--owner", action="append", metavar="NAME",
                         help=f"Comment author that counts as the owner (repeatable; default: {', '.join(DEFAULT_OWNERS)})")
     sub.add_parser("ask", parents=[card], help="Every question the assignee raised has a later answer")
-    sub.add_parser("ui-qa", parents=[card],
-                   help="The card's PR head has a disposable-instance QA result with zero defects")
+    ui_qa = sub.add_parser("ui-qa", parents=[card],
+                           help="The card's PR head has a disposable-instance QA result with zero defects")
+    ui_qa.add_argument("--author", action="append", metavar="NAME",
+                       help="Comment author that runs the QA tool (repeatable; default: anyone but the card's "
+                            "assignee, whose own QA records never count)")
     return parser
 
 

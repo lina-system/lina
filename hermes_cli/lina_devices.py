@@ -184,8 +184,16 @@ def sign_in_questions(rows: list[dict]) -> list[dict]:
     return list(asks.values())
 
 
-def sign_in(base: Path | None = None, *, as_json: bool = False, out=print) -> int:
-    """``lina devices sign-in``: the sign-in questions over every device (read-only)."""
+def sign_in(base: Path | None = None, *, node: str | None = None, runner: str | None = None, as_json: bool = False,
+            out=print) -> int:
+    """``lina devices sign-in``: the sign-in questions over every device (read-only); with a node and a runner, that
+    runner's sign-in on that node from the hub's browser (``lina_sign_in.start``, lina#230)."""
+    if node is not None:
+        from hermes_cli.lina_sign_in import start
+        result = start(node, runner, base=base)
+        out(json.dumps(result, ensure_ascii=False) if as_json else
+            f"{result['node']} {result['runner']}: {result['state']} · {result['reason']}")
+        return 0 if result["state"] == "signed_in" else 1
     base = _base(base)
     asks = sign_in_questions([readiness(dev, settings.root(base)) for dev in _devices(base)])
     if as_json:
@@ -287,6 +295,7 @@ def check(name: str, *, base: Path | None = None, run_smoke: bool = False, timeo
 def smoke(dev: settings.Device, base: Path, *, timeout: float) -> dict:
     """One tiny real task on *dev* through ``lina worker submit --host <dev> --wait``: its end state and run ID."""
     from hermes_cli.worker.hub import ENDED, Hub, HubError
+    from hermes_cli.worker.request_keys import new_key
     from hermes_cli.worker.transport import TransportError
     worker_root = settings.root(base)
     brief = settings.hub_dir(worker_root) / "smoke" / f"{dev.name}.md"
@@ -296,7 +305,8 @@ def smoke(dev: settings.Device, base: Path, *, timeout: float) -> dict:
     hub = Hub(worker_root, out=lines.append)
     try:
         hub.submit({"briefs": [str(brief)], "mode": "ulw", "host": dev.name, "topic": f"device smoke {dev.name}",
-                    "inputs": [], "wait": timeout, "dry_notify": True})  # a check messages nobody
+                    "inputs": [], "wait": timeout, "dry_notify": True,  # a check messages nobody
+                    "request_key": new_key()})
     except (HubError, TransportError, OSError) as exc:
         return {"state": "failed", "id": None, "why": str(exc)[:300]}
     task_id = next((line.split()[0] for line in lines if " handed out " in line), None)

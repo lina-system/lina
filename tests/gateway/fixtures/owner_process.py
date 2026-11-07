@@ -14,7 +14,8 @@ ROOT = Path(__file__).resolve().parents[3]
 def owner_env(home: Path, user: Path, model_url: str) -> dict:
     env = {k: os.environ[k] for k in ('PATH', 'LANG', 'TZ', 'TIRITH_ENABLED', 'LINA_STORE_DSN') if k in os.environ}
     env.update(HOME=str(user), USERPROFILE=str(user), HERMES_HOME=str(home), PYTHONPATH=str(ROOT),
-               PYTHONUNBUFFERED='1', OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=model_url)
+               PYTHONUNBUFFERED='1', OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=model_url,
+               LINA_TEST_NO_HERMES_AGENT_GATEWAY='1')  # never read the account's launchd/systemd (lina#259)
     return env
 
 
