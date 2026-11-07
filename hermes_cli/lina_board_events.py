@@ -38,7 +38,7 @@ from typing import Any, NamedTuple
 
 from fastapi import WebSocket, WebSocketDisconnect, status
 
-from hermes_cli.lina_board import _WORK_LOCK, _root
+from hermes_cli.lina_board import _WORK_LOCK, _root, _worker_base
 
 BATCH_SECONDS = 0.3
 PAGE = 200
@@ -145,7 +145,9 @@ class Stream:
         from hermes_cli.worker import settings
         from hermes_cli.worker.hub_store import Store
         self.root = root
-        self.receipts = Store(settings.root(root)).receipts
+        # The receipts are the worker's own state, so they come from the root the worker writes (lina#269): the
+        # board's root serves the work record and the read marks, and is not where the worker's hub lives.
+        self.receipts = Store(settings.root(_worker_base())).receipts
         from hermes_cli.lina_work_settings_store import Store as SettingsStore
         self.audit = SettingsStore().audit  # the work settings' own root, as their writers use (lina#256)
         self.work_db: Any = None

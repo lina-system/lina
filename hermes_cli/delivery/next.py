@@ -354,6 +354,7 @@ def submit(plan: dict, base: Path | None = None, hub=None) -> bool:
     from hermes_cli.lina_work_settings import SettingsError
     from hermes_cli.worker import settings as worker_settings
     from hermes_cli.worker.hub import Hub, HubError
+    from hermes_cli.worker.request_keys import new_key
     from hermes_cli.worker.runners.base import RunnerError
     from hermes_cli.worker.transport import TransportError
     briefs = settings.lina_root(base) / "work" / "briefs"
@@ -367,7 +368,7 @@ def submit(plan: dict, base: Path | None = None, hub=None) -> bool:
         try:
             (hub or Hub(worker_settings.root(base), out=said.append)).submit(
                 {"briefs": [str(path)], "mode": "ulw", "repo": full, **_hand_off(decision, base),
-                 "topic": f"{full}#{n}", "wait": None})
+                 "topic": f"{full}#{n}", "wait": None, "request_key": new_key()})
         except (HubError, RunnerError, TransportError, OSError, SettingsError) as exc:
             decision["submit"] = {"ok": False, "why": str(exc)[:200]}
             ok = False
