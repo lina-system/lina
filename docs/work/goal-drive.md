@@ -79,11 +79,12 @@ The usage-limit pattern is a runner's `usage_limit` in the work settings; withou
 
 ## Action ids and the ledger
 
-Every action has the id `<goal card>:<work card>:<to-do>:<attempt>:<run>:<rule>`, with characters outside letters,
-digits, `.` and `-` written as `-` (`t_goal` becomes `t-goal`, `acme/app#1` becomes `acme-app-1`). `<to-do>` is the
-run's to-do (`--todo`), or its hub task ID when it has none, so two to-dos of one card never share an id. An id that
-would be longer than 128 characters writes `<to-do>` as the first 12 hex digits of its sha256. A goal limit's block
-uses `goal` as its to-do and `0` as attempt and run. The id matches `request_keys.CALLER_KEY`, and every follow-up and
+Every action has the id `<goal card>:<work card>:<hub task>:<run>:<rule>`, with characters outside letters, digits,
+`.` and `-` written as `-` (`t_goal` becomes `t-goal`). `<hub task>` is the run's hub task ID (`OT-…`). It is unique
+per to-do, per attempt and per move, and it stays the same across a hub restart, so it alone tells two to-dos of one
+card apart, and a moved task from the task it was moved from (each move is its own task with its own ids). An id that
+would be longer than 128 characters writes `<hub task>` as the first 12 hex digits of its sha256. A goal limit's block
+uses `goal` as its task and `0` as its run. The id matches `request_keys.CALLER_KEY`, and every follow-up and
 submit carries it as its request key, so a hub restarted in the middle of a pass repeats nothing: the device writes
 are replayed, not run again.
 
@@ -94,10 +95,11 @@ The ledger is `$LINA_HOME/worker/hub/goals/<goal card>.json`, written under the 
 | `attempts` | Attempt number per hub task. A new task of a to-do is the next attempt, except one the drive moved for a usage limit. |
 | `followups` | Follow-ups the drive itself sent per task. The limit does not read it: it counts every round from the hub. |
 | `runs` | Runs per task, and one run held per action id while its send is under way. |
+| `workers` | One live worker held per action id while its send is under way. |
 | `started_at` | The goal's start: its first task's hand-out time. |
 | `actions` | Action id → time and result. |
 | `usage`, `moved`, `blocked`, `red_heads`, `github` | Usage waits, moved tasks, cards the drive blocked, followed-up heads, cached GitHub reads. |
-| `notes` | Why the drive left a card (`skipped: card <status>`), a write the board refused (`card_write_refused: …`), or a run (`not moved: …`). |
+| `notes` | Why the drive left a card (`skipped: card <status>`), a write the board refused (`card_write_refused: …`), or a run (`not moved: …`, `deferred: …`). |
 | `stopped` | Set when a limit stopped the drive for this goal. |
 
 A `block` the drive made just before the hub stopped is not made again: the drive reads the card first and leaves a
@@ -109,13 +111,20 @@ and each continue after a usage limit, the drive reserves one run in `runs` unde
 and checks the limit against everything held. A send that fails gives its reservation back; one that went through
 turns it into its task's run. Two sends in one tick can therefore never pass `runs` together.
 
+Live workers are held the same way, next to the run: each of those sends also reserves one worker in `workers` and
+checks the goal's live runs (its tasks as the hub holds them at that moment, plus tasks the drive moved in this tick)
+plus the workers held against `workers`. When that is full, the send is not made: it is deferred to a later tick and
+the ledger's `notes` say `deferred: the workers limit (<n>) is reached (<live> live)`. A deferred send does not stop
+the goal; it goes out on the first tick with a free worker. The worker reservation is given back once the send is
+made (the task itself is live then) or when it fails.
+
 ## Limits
 
 Per goal, in the work settings under `worker.goal_limits`:
 
 | Key | Default | Reached when |
 |---|---|---|
-| `workers` | 3 | more live runs than this at once |
+| `workers` | 3 | more live runs than this at once (the card session started them); a send of the drive's own that would pass it waits instead |
 | `attempts` | 3 | a to-do has more attempts than this, or a move would start one more |
 | `runs` | 40 | more runs than this, or the next run (a follow-up, a move or a continue) would pass it |
 | `wall_h` | 24 | this many hours since the goal's start |

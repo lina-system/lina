@@ -104,13 +104,15 @@ def _part(value) -> str:
 ID_MAX = 128  # request_keys.CALLER_KEY: one leading character and up to 127 more
 
 
-def action_id(goal: str, card: str, todo: str, attempt: int, run: int, rule: str) -> str:
-    """``<goal card>:<work card>:<to-do>:<attempt>:<run>:<rule>``, a caller request key (``request_keys.CALLER_KEY``).
-    A to-do that would make the id longer than ``ID_MAX`` is written as the first 12 hex digits of its sha256."""
+def action_id(goal: str, card: str, task: str, run: int, rule: str) -> str:
+    """``<goal card>:<work card>:<hub task>:<run>:<rule>``, a caller request key (``request_keys.CALLER_KEY``). The hub
+    task ID is unique per attempt and per move and survives a hub restart, so it alone names the to-do and the
+    attempt. A task ID that would make the id longer than ``ID_MAX`` is written as the first 12 hex digits of its
+    sha256."""
     import hashlib
-    parts = [_part(p) for p in (goal, card, todo, attempt, run, rule)]
+    parts = [_part(p) for p in (goal, card, task, run, rule)]
     if len(":".join(parts)) > ID_MAX:
-        parts[2] = hashlib.sha256(str(todo).encode("utf-8")).hexdigest()[:12]
+        parts[2] = hashlib.sha256(str(task).encode("utf-8")).hexdigest()[:12]
     return request_keys.checked(":".join(parts))
 
 
@@ -279,11 +281,13 @@ class Drive:
         self.statuses: dict[str, str | None] = {}  # this tick's board status of each card acted on
         self.tried: set[tuple[str, str]] = set()  # board writes tried this tick: a refused one waits for the next
         self.halted = False  # a limit was reached this tick, whether or not the board took the goal card's block
+        self.created: list[str] = []  # tasks the drive submitted this tick (live, not yet in this pass's jobs)
 
     def _load(self) -> dict:
         import json
         ledger = json.loads(self.path.read_text(encoding="utf-8-sig")) if self.path.is_file() else {}
-        for name in ("attempts", "followups", "runs", "actions", "usage", "blocked", "moved", "github", "notes"):
+        for name in ("attempts", "followups", "runs", "workers", "actions", "usage", "blocked", "moved", "github",
+                     "notes"):
             ledger.setdefault(name, {})
         ledger.setdefault("goal", self.goal)
         return ledger
@@ -371,7 +375,7 @@ class Drive:
         """Block the goal card on limit *name* and stop the drive for this goal."""
         reason = (f"{self.goal_title} · 갈림길 · the goal drive stopped at its {name} limit "
                   f"({self.limits[name]}): {value}; raise worker.goal_limits.{name} or end the goal?")
-        aid = action_id(self.goal, self.goal, "goal", 0, 0, f"limit-{name}")
+        aid = action_id(self.goal, self.goal, "goal", 0, f"limit-{name}")
         self.halted = True
         if not self.act(aid, lambda _aid: self.block(self.goal_card, reason)):
             return  # the board refused: the goal is not stopped yet, the block is tried again on the next tick
@@ -436,10 +440,10 @@ class Drive:
 
     # ---------------------------------------------------------------- one run
     def _job(self, card: dict, job: dict) -> None:
-        attempt, run = self.ledger["attempts"][job["id"]], int(job.get("runs") or 1)
+        run = int(job.get("runs") or 1)
 
         def ids(rule: str) -> str:
-            return action_id(self.goal, job["card"]["task"], job.get("todo") or job["id"], attempt, run, rule)
+            return action_id(self.goal, job["card"]["task"], job["id"], run, rule)
         count, by = self.rounds(job)
         if count > FOLLOW_UPS:  # a round the drive did not send went past the limit: it cannot be stopped, only met
             self._block_card(card, job, ids, count, by)
@@ -465,7 +469,7 @@ class Drive:
             self._block_card(card, job, ids, sent, by, rule)
             return
         starts = job.get("state") in ENDED  # into an ended run the follow-up starts the next one
-        if starts and not self.reserve(ids(rule)):
+        if starts and not self.reserve(ids(rule), job):
             return
 
         def send(aid: str) -> str:
@@ -475,25 +479,44 @@ class Drive:
             return f"follow-up round {sent + 1}/{FOLLOW_UPS} ({rule}) on {job['id']}"
         self.act(ids(rule), send)
 
-    def reserve(self, aid: str) -> bool:
-        """Hold one run of the goal's run budget for action *aid* before it is sent (``ledger["runs"][aid]``), so two
-        sends in one tick cannot both pass the limit; False (and the goal stopped) when the budget is spent."""
+    def reserve(self, aid: str, job: dict) -> bool:
+        """Hold one run of the goal's run budget and one live worker for action *aid* before it is sent
+        (``ledger["runs"][aid]``, ``ledger["workers"][aid]``), so two sends in one tick cannot both pass a limit. A
+        spent run budget stops the goal; a full worker count defers the send to a later tick (noted). False when it
+        must not be sent now."""
         held = sum(count for key, count in self.ledger["runs"].items() if key != aid)
         if held + 1 > self.limits["runs"]:
             self.stop("runs", f"the next run would be run {held + 1}")
             return False
-        self.ledger["runs"][aid] = 1
+        busy = self.live() + sum(count for key, count in self.ledger["workers"].items() if key != aid)
+        if busy + 1 > self.limits["workers"]:
+            note = f"deferred: the workers limit ({self.limits['workers']}) is reached ({busy} live)"
+            if self.ledger["notes"].get(job["id"]) != note:
+                self.ledger["notes"][job["id"]] = note
+                self.save()
+            return False
+        self.ledger["runs"][aid] = self.ledger["workers"][aid] = 1
         self.save()
         return True
 
+    def live(self) -> int:
+        """The goal's live runs now: its tasks as the hub holds them at this moment, and the ones moved this tick."""
+        from hermes_cli.worker.hub import ENDED
+        ids = [job["id"] for job in self.jobs()] + self.created
+        return sum(1 for task in ids if ((self.hub.store.load(task) or {}).get("state") or "new")
+                   not in ENDED + ("unknown",))
+
     def started(self, aid: str, task: str | None, send) -> None:
-        """Run *send*; its reserved run becomes *task*'s, or is released when the send fails (or started none)."""
+        """Run *send*; its reserved run becomes *task*'s, or is released when the send fails (or started none). Its
+        reserved worker is released either way: once sent, the task itself is live."""
         try:
             send()
         except BaseException:
             self.ledger["runs"].pop(aid, None)
+            self.ledger["workers"].pop(aid, None)
             self.save()
             raise
+        self.ledger["workers"].pop(aid, None)
         if self.ledger["runs"].pop(aid, None) and task:
             self.ledger["runs"][task] = self.ledger["runs"].get(task, 0) + 1
         self.save()
@@ -623,7 +646,7 @@ class Drive:
         wait = self.ledger["usage"].get(job["id"])
         if wait and int(wait["run"]) == run:
             if self.now >= float(wait["until"]) and ids("usage-resume") not in self.ledger["actions"] \
-                    and self.may_act(card) and self.reserve(ids("usage-resume")):
+                    and self.may_act(card) and self.reserve(ids("usage-resume"), job):
                 self.act(ids("usage-resume"), lambda aid: self.started(aid, job["id"], lambda: self.hub.send(
                     job["id"], "The usage limit has reset. Carry on with the task where you stopped.", job["card"],
                     request_key=aid)) or "continued after the usage limit")
@@ -701,12 +724,13 @@ class Drive:
             self.hub.store.log(f"goal drive: {job['id']} {note}")
             return False
 
-        if not self.reserve(ids(rule)):
+        if not self.reserve(ids(rule), job):
             return True
 
         def submit(aid: str) -> str:
             self.started(aid, None, lambda: self.hub.submit(self._brief_opts(job, node, aid)))
             new = self.hub.store.load_key(aid)["task"]
+            self.created.append(new)
             self.ledger["runs"][new] = max(1, self.ledger["runs"].get(new, 0))
             self.save()
             self.ledger["attempts"][new] = attempt
