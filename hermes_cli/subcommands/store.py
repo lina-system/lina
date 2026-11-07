@@ -102,5 +102,8 @@ def build_store_parser(subparsers) -> None:
     reembed.add_argument("--from-start", action="store_true",
                          help="ignore where the last run stopped and go through every row again")
     reembed.add_argument("--max-batches", type=int, default=None, help="stop after this many batches per source")
+    reembed.add_argument("--from-index", metavar="DB", default=None,
+                         help="with --source messages: import the message collector's stored chunk vectors from its "
+                              "SQLite index (read-only) instead of embedding; the rest is left for reembed")
     sub.add_parser("upgrade", help="Upgrade Honcho: backup, rehearsal migration, one migration job, smoke test")
     parser.set_defaults(func=_cmd_store, store_parser=parser)

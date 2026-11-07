@@ -181,7 +181,8 @@ lina memory external-messages ingest --spool /path/to/synthetic/events.jsonl
 The existing gateway cron ticker checks every five minutes, once outside its profile loop. A host lock and
 persisted size/mtime signature avoid duplicate work across gateway processes and unchanged spools. Collection
 completion is observed through appended complete lines, not a collector hook; the collector itself is unchanged.
-Neither this job nor its CLI reads the collector's derived SQLite database or writes in its directory.
+Neither this job nor its CLI reads the collector's derived SQLite database or writes in its directory; only
+`lina store reembed --from-index` reads that index, read-only ("Importing the collector's vectors" below).
 
 The job opens the spool read-only under a shared `flock`, verifies SHA256 of the consumed byte prefix, and
 parses only new newline-terminated events. An incomplete tail waits for the next invocation. A truncated or
@@ -522,6 +523,58 @@ agent's rows in `vec.embeddings`, its Honcho workspace's and the shared external
 `{"id", "source", "agent", "question", "expected": [refs], "honcho": {"workspace", "observer", "observed"}}`;
 a ref is a `memory.messages` uid or a Honcho conclusion id. A synthetic set (36 questions over a 48-item corpus)
 is in `tests/fixtures/memory_eval/`.
+
+### Importing the collector's vectors
+
+```sh
+lina store reembed --source messages --from-index <collector index.db> [--batch-size 500]
+```
+
+The message collector keeps its own derived SQLite index: one full-width vector per chunk of up to ten consecutive
+messages of one room. Where `meta.vector_model` is `embedding.model`, `--from-index` cuts those vectors to the
+width of `vec.embeddings` with `truncate_stored` (`agent/embedding_client.py`) instead of embedding the text
+again. It opens the index read-only (SQLite `mode=ro`), never uses the collector's text, and needs
+`embedding.model` and `embedding.dimensions` but not the endpoint. It reads the collector's tables:
+
+| Table | Columns used |
+| --- | --- |
+| `meta(key, value)` | `vector_model` (e.g. `qwen/qwen3-embedding-8b`) and `vector_dimension` (e.g. `1536`), once for the whole index |
+| `chunks(id, source, room_id, start_ts, end_ts, text)` | `id` |
+| `chunk_messages(chunk_id, uid, ordinal)` | the chunk's collector uids, in `ordinal` order |
+| `chunk_vectors` | sqlite-vec `vec0(embedding float[<dim>] distance_metric=cosine)`, `rowid = chunks.id` |
+
+LINA does not depend on sqlite-vec, so the vectors are read from the shadow tables `vec0` 0.1.x creates:
+`chunk_vectors_rowids(rowid, id, chunk_id, chunk_offset)` places a chunk's vector in a block,
+`chunk_vectors_vector_chunks00(rowid, vectors)` holds a block's float32 little-endian vectors back to back (one is
+`vectors[offset*dim*4 : (offset+1)*dim*4]`), and `chunk_vectors_chunks(chunk_id, size, validity, rowids)` gives
+the block's size and a validity bitmap whose cleared bits are deleted cells, which are skipped. The import
+refuses an index whose `chunk_vectors_info` `CREATE_VERSION` does not start with `v0.1.`, since another version may
+store vectors differently.
+
+A chunk becomes one `vec.chunks` row (`source = 'messages'`, `source_ref = 'collector'`, `message_ids` = the
+`memory.messages` ids of `messages:<chunk_messages.uid>` in `ordinal` order, `text` = their LINA text joined by
+newlines) and one `chunk` vector of `embedding.model`, both with the shared owner `*`, as `reembed` writes shared
+external messages. A collector uid is the message's first version: a message edited later (`#<digest>` versions)
+gets the vector under its unsuffixed uid. Left for `lina store reembed --source messages` and counted on the last
+line:
+
+- chunks with a message that is not a shared, unforgotten row of `memory.messages` (not ingested yet, forgotten,
+  or not `scope = 'agents'`);
+- empty chunks (no messages, or only empty text);
+- every chunk of an index whose `vector_model` is another model;
+- unusable vectors: no live vector for the chunk, a block that is not `size` vectors of `vector_dimension`
+  values, fewer values than the table's width, or a zero vector.
+
+The import keeps no cursor and leaves `vec.reembed_progress` alone. A chunk is keyed by its message ids, so a rerun
+goes through the index again and inserts nothing it inserted before (`N already in the store`). `reembed --source
+messages` skips a message that an imported chunk with a vector of its model covers and counts it (`N covered by
+imported collector chunks`), so a same-model message is cut once and never embedded again; only the rest are
+embedded.
+
+Model names are compared by the part after the last `/`, exactly otherwise: the collector's
+`qwen/qwen3-embedding-8b` (the provider prefix its endpoint uses) is LINA's `qwen3-embedding-8b`, and
+`text-embedding-3-small` is another model. Rows are written with the configured `embedding.model` string, the one
+searches read.
 
 ## Backup and restore
 
