@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- Worker follow-ups reopen parked omo sessions from their recorded transcript with the same access mode; unknown and ambiguous session references report their specific reasons instead of a generic restore failure (lina#391).
 - A gateway started under test isolation stays a plain child instead of a launchd job: `start_gateway_job` returns `None` without a single `launchctl` call while `HERMES_TEST_ISOLATION` is set, so the e2e history tests no longer leave `com.nousresearch.lina.runtime.*` jobs in the developer's own `gui/<uid>` domain, outside the sandbox and out of the test's process tracking (lina#372).
 - `lina migrate memory` no longer refuses a profile with a shared skill linked into `skills/`: a symlink inside `skills/`, `memories/`, `memory/` or `personas/` is skipped without reading its target and listed in the report's `skipped_symlinks`; a symlinked profile directory, `state.db` or `lcm.db` is still refused (lina#366).
 - `lina store reembed --source messages` gives the vectors of shared external messages (NULL `agent_id`, `scope = 'agents'`) the shared owner `*` instead of the string `'None'`, and migration 0009 lets every agent read them (SELECT-only, as 0005 does for the messages) and gives that owner to vectors already written with `'None'`, so the memory search's vector leg and `lina memory eval-search` find them as any agent (lina#364).

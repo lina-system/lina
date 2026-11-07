@@ -61,10 +61,14 @@ try {
 				.href
 		);
 		const found = await resolveSessionRef(client, ref, agentDir);
-		if (found.kind !== "live") throw new Error(`session is ${found.kind}`);
+		if (found.kind === "unknown") throw new Error("session is unknown");
+		if (found.kind === "ambiguous") {
+			throw new Error(`session is ambiguous: ${found.candidates.join(", ")}`);
+		}
+		const session = found.kind === "live" ? found.row : found;
 		await client.openSession({
-			sessionPath: found.row.sessionPath,
-			cwd: found.row.cwd,
+			sessionPath: session.sessionPath,
+			cwd: session.cwd,
 			...permissions,
 		});
 		reply = { action: "attach" };

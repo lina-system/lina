@@ -68,6 +68,9 @@ if verb == "open":
     say({{"action": "open", "sessionId": "host-1", "durableSessionId": "ses-fake-1", "sessionPath": "/fake/ses.jsonl",
           "cwd": cwd, "name": rest[rest.index("--name") + 1], "reused": False}})
 if verb == "prompt":
+    if s.get("resolution", "live") != "live":
+        print(json.dumps({{"action": "error", "reason": "session not live"}}))
+        sys.exit(1)
     text = open(rest[1][1:]).read()
     s.setdefault("prompts", []).append(text)
     scenario = json.load(open(os.path.join(fake, "scenario.json")))
@@ -114,7 +117,14 @@ export class RpcClient {
   async stop() {}
   async openSession(options) {
     appendFileSync(join(fake, "rpc.jsonl"), JSON.stringify({ openSession: options }) + "\\n");
-    if (options.sessionPath) return {};
+    if (options.sessionPath) {
+      const s = load();
+      if (options.sessionPath !== "/fake/ses.jsonl" || options.cwd !== s.cwd) throw new Error("wrong session");
+      s.resolution = "live";
+      s.attached = options;
+      writeFileSync(stateFile, JSON.stringify(s));
+      return {};
+    }
     const scenario = JSON.parse(readFileSync(join(fake, "scenario.json"), "utf8"));
     writeFileSync(stateFile, JSON.stringify({ phase: scenario.first, cwd: options.cwd, prompts: [], opened: options,
                                             opened_at: new Date().toISOString() }));
@@ -145,6 +155,10 @@ import { readFileSync } from "node:fs";
 import { join } from "node:path";
 export async function resolveSessionRef(client, ref) {
   const s = JSON.parse(readFileSync(join(process.env.FAKE_OMO_DIR, "state.json"), "utf8"));
+  if (s.resolution === "parked") return { kind: "parked", sessionPath: "/fake/ses.jsonl", cwd: s.cwd,
+                                        durableSessionId: "ses-fake-1" };
+  if (s.resolution === "unknown") return { kind: "unknown" };
+  if (s.resolution === "ambiguous") return { kind: "ambiguous", candidates: ["host-1", "host-2"] };
   return ref === "ses-fake-1" ? { kind: "live", row: { sessionPath: "/fake/ses.jsonl", cwd: s.cwd } } : { kind: "unknown" };
 }
 """
