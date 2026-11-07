@@ -13,7 +13,6 @@ import json
 import os
 import re
 import signal
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -206,12 +205,14 @@ class GatewayUnderTest:
     def user_rows(self, needle: str) -> list[str]:
         if not self.db_path.exists():
             return []
-        conn = sqlite3.connect(f"file:{self.db_path}?mode=ro", uri=True, timeout=30)
-        try:
-            return [r[0] for r in conn.execute(
-                "SELECT content FROM messages WHERE role='user' AND content LIKE ?", (f"%{needle}%",))]
-        finally:
-            conn.close()
+        from hermes_state import SessionDB
+        from hermes_state_store import text_sql
+
+        content = text_sql("content")
+        with SessionDB(db_path=self.db_path, read_only=True) as db:
+            return [r[0] for r in db._read_all(
+                f"SELECT {content} FROM transcript_rows WHERE role='user' AND {content} LIKE ?",
+                (f"%{needle}%",))]
 
 
 def _deep_merge(a: dict[str, Any], b: dict[str, Any]) -> dict[str, Any]:

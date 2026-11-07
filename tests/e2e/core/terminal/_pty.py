@@ -344,14 +344,15 @@ class PtyHermes:
 
     def persisted_messages(self) -> list[tuple[str, str, str]]:
         """(session_id, role, content) for every user/assistant row in the sandbox state.db."""
-        db = self.hermes_home / "state.db"
-        if not db.exists():
+        db_path = self.hermes_home / "state.db"
+        if not db_path.exists():
             return []
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
-        try:
-            rows = conn.execute(
-                "SELECT session_id, role, COALESCE(content, '') FROM messages "
-                "WHERE role IN ('user', 'assistant') ORDER BY id").fetchall()
-        finally:
-            conn.close()
+        from hermes_state import SessionDB
+        from hermes_state_store import text_sql
+
+        content = text_sql("content")
+        with SessionDB(db_path=db_path, read_only=True) as db:
+            rows = db._read_all(
+                f"SELECT session_id, role, COALESCE({content}, '') FROM transcript_rows "
+                "WHERE role IN ('user', 'assistant') ORDER BY id")
         return [(str(s), str(r), str(c)) for s, r, c in rows]

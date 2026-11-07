@@ -16,7 +16,6 @@ import re
 import secrets
 import signal
 import socket
-import sqlite3
 import subprocess
 import sys
 import threading
@@ -175,15 +174,14 @@ class Backend:
 
     # state.db, read-only (never a second writer next to the backend's)
     def db_rows(self, sql: str, args: Iterable[Any] = ()) -> list[tuple]:
+        """Read state.db through SessionDB so ``msg_text`` resolves transcript text."""
         path = self.hermes_home / "state.db"
         if not path.exists():
             return []
-        conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=30)
-        try:
-            conn.execute("PRAGMA busy_timeout=30000")
-            return conn.execute(sql, tuple(args)).fetchall()
-        finally:
-            conn.close()
+        from hermes_state import SessionDB
+
+        with SessionDB(db_path=path, read_only=True) as db:
+            return [tuple(row) for row in db._read_all(sql, tuple(args))]
 
 
 class WSClient:

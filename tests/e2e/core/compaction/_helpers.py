@@ -23,7 +23,6 @@ import base64
 import json
 import random
 import re
-import sqlite3
 import threading
 import time
 from dataclasses import dataclass, field
@@ -323,22 +322,23 @@ def norm_list(msgs: Iterable[dict[str, Any]]) -> list[tuple]:
 
 
 def db_rows(db_path: Path, session_id: str) -> list[dict[str, Any]]:
-    conn = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True, timeout=30)
-    try:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT id, role, content, tool_call_id, tool_calls, active, compacted FROM messages "
-            "WHERE session_id = ? ORDER BY id", (session_id,)).fetchall()
-        out = []
-        for r in rows:
-            d = dict(r)
-            content = d["content"]
-            if isinstance(content, str) and content.startswith("\x00json:"):
-                d["content"] = flatten(json.loads(content[len("\x00json:"):]))
-            out.append(d)
-        return out
-    finally:
-        conn.close()
+    """Session rows through SessionDB; text columns come from the memory store."""
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
+
+    content, calls = text_sql("content"), text_sql("tool_calls")
+    with SessionDB(db_path=db_path, read_only=True) as db:
+        rows = [dict(r) for r in db._read_all(
+            f"SELECT id, role, {content} AS content, tool_call_id, {calls} AS tool_calls, "
+            "active, compacted FROM transcript_rows WHERE session_id = ? ORDER BY id",
+            (session_id,))]
+    out = []
+    for d in rows:
+        stored = d["content"]
+        if isinstance(stored, str) and stored.startswith("\x00json:"):
+            d["content"] = flatten(json.loads(stored[len("\x00json:"):]))
+        out.append(d)
+    return out
 
 
 def active_rows(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
