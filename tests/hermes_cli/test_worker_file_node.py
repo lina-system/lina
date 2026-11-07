@@ -23,7 +23,7 @@ from tests.hermes_cli import _worker_fakes as fakes
 from tests.waiting import wait_until
 
 NODE_TOOLS = ("bash", "tar", "sha256sum", "setsid", "nohup", "cat", "sed", "cut", "head", "tail", "grep", "df", "tr",
-              "wc", "date", "sleep", "mkdir", "chmod", "rm", "cp", "mv", "sort", "nice")
+              "wc", "date", "sleep", "mkdir", "chmod", "rm", "cp", "mv", "nice", "comm", "join")
 AGENT = "agent-a"
 
 
@@ -38,8 +38,12 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first:
     real_find = shutil.which("find")
     (node_bin / "find").write_text(f'#!/bin/sh\ncase "$*" in *-writable*)  # a find of the denied-folder look\n'
                                    f'  {shutil.which("cut")} -d" " -f19 /proc/$$/stat >> "$FAKE_NAS/find.nice" ;; esac\n'
-                                   f'{real_find} "$@"; rc=$?\n'  # slow_find: a look that runs out of time
-                                   f'case "$*" in *-newer*) [ -f "$FAKE_NAS/slow_find" ] && sleep 30 ;; esac\nexit $rc\n')
+                                   f'{real_find} "$@"; rc=$?\n'  # slow_find / slow_before: a look that runs out of time
+                                   f'case "$*" in *-newer*) [ -f "$FAKE_NAS/slow_find" ] && sleep 30 ;;\n'
+                                   f'  *"-type f"*) [ -f "$FAKE_NAS/slow_before" ] && sleep 30 ;; esac\nexit $rc\n')
+    # the look's own sorts (sort -o) note the memory limit they run under
+    (node_bin / "sort").write_text(f'#!/bin/sh\ncase "$*" in *-o*) ulimit -v >> "$FAKE_NAS/sort.ulimit" ;; esac\n'
+                                   f'exec {shutil.which("sort")} "$@"\n')
     (node_bin / "curl").write_text('#!/bin/sh\ncat "$FAKE_NAS/healthz" 2>/dev/null || printf 000\n')
     (nas / "healthz").write_text("200")
     fakes.install_fake_omo(nas / "omo", "")
@@ -47,7 +51,7 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first:
     (nas / "omo" / "scenario.json").write_text(json.dumps({"first": first}))
     (hub_bin / "ssh").write_text(textwrap.dedent(f"""\
         #!{sys.executable}
-        import os, subprocess, sys
+        import os, subprocess, sys, time
         nas = {str(nas)!r}
         with open(os.path.join(nas, "ssh.log"), "a") as fh:
             fh.write(sys.argv[-2] + "\\n")
@@ -58,12 +62,17 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first:
             pending = open(faults).read().split()
             if pending:
                 open(faults, "w").write("\\n".join(pending[1:]))
+                if pending[0] == "hold":  # a start still on its way while the test acts
+                    open(os.path.join(nas, "launch_waiting"), "w").close()
+                    while not os.path.exists(os.path.join(nas, "launch_go")):
+                        time.sleep(0.05)
+                    os.execve("/bin/sh", ["sh", "-c", sys.argv[-1]], env)
                 if pending[0] == "lose":
                     subprocess.run(["/bin/sh", "-c", sys.argv[-1]], env=env, capture_output=True)
                 sys.exit(255)
         os.execve("/bin/sh", ["sh", "-c", sys.argv[-1]], env)
         """))
-    for script in (node_bin / "find", node_bin / "curl", hub_bin / "ssh"):
+    for script in (node_bin / "find", node_bin / "sort", node_bin / "curl", hub_bin / "ssh"):
         script.chmod(0o755)
     monkeypatch.setenv("PATH", f"{hub_bin}{os.pathsep}{os.environ['PATH']}")
     base.mkdir(parents=True)
@@ -276,7 +285,7 @@ def test_an_unreadable_denied_folder_ends_the_run_as_review_not_seen_whole(tmp_p
 
 def test_only_changes_owned_by_the_runs_user_count_against_the_run():
     from hermes_cli.worker import file_node_deny as deny
-    other_only = "complete=1\nuid=1026\ncount=3\nfiles:\n0\t/v/backup/a\n1024\t/v/@synologydrive/b\n0\t/v/s/@eaDir/c\n"
+    other_only = "complete=1\nbefore=1\nuid=1026\ncount=3\nfiles:\n0\t/v/backup/a\n1024\t/v/@synologydrive/b\n0\t/v/s/@eaDir/c\n"
     check = deny.parse_scan(other_only, 0, 300)
     assert (check["count"], check["others"], deny.needs_review(check)) == (0, 3, False)
     assert "Changed by other users: 3, not counted" in deny.with_check("", check)
@@ -717,6 +726,108 @@ def test_the_look_runs_at_nice_19_and_never_walks_snapshots_or_unwritable_trees(
         assert set((node["nas"] / "find.nice").read_text().split()) == {"19"}  # every find of the look
     finally:
         _writable_again(big)
+
+
+def test_a_cancel_while_the_start_is_on_its_way_cancels_the_run_on_the_node(tmp_path, monkeypatch):
+    import threading
+    node = _node(tmp_path, monkeypatch, first="running")
+    aborts = _abort_watch(node, stubborn=False)
+    (node["nas"] / "launch_faults").write_text("hold\n")
+    ids: list[str] = []
+    submit = threading.Thread(target=lambda: ids.append(_submit(node)))
+    submit.start()
+    wait_until(lambda: (node["nas"] / "launch_waiting").exists(), what="the start on its way")
+    tasks = node["root"] / "file_nodes" / "nas" / "tasks"
+    task_id = next(path.name for path in tasks.iterdir())
+    cancel = threading.Thread(target=lambda: Hub(node["root"], out=lambda line: None).cancel(task_id, "not now"))
+    cancel.start()
+    wait_until(lambda: (tasks / task_id / "cancelled").exists(), what="the cancel mark")
+    assert not (tasks / task_id / "rc.1").exists()  # the slot is kept while the start is on its way
+    (node["nas"] / "launch_go").write_text("")
+    submit.join()
+    cancel.join()
+    remote = node["home"] / "lina-file-node" / task_id
+    wait_until(lambda: (remote / "rc.1").exists(), what="the run's end on the node")
+    assert (remote / "cancelled").exists() and (remote / "outcome.1").read_text().strip() == "cancelled_stopped"
+    assert aborts.read_text().count("abort") == 1
+    hub = Hub(node["root"])
+    hub.tick()
+    job = hub.store.load(task_id)
+    assert job["state"] == "cancelled" and hub.transport(job).call(["probe", "", "omo"]).json()["named_running"] == 0
+
+
+def _kept(node: dict) -> Path:
+    kept = node["volume"] / "backup" / "kept.txt"
+    kept.write_text("kept")
+    return kept
+
+
+def test_a_file_the_run_moves_out_of_a_denied_folder_ends_review_naming_it(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    kept = _kept(node)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    kept.rename(node["volume"] / "share" / "kept.txt")
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "review"
+    text = _notice(node, task_id)
+    assert "needs review — files removed from a denied folder" in text
+    assert f"owned by the run's user: 1:\n  - {kept}\n" in text
+
+
+def test_a_file_the_run_deletes_in_a_denied_folder_ends_review(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    kept = _kept(node)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    kept.unlink()
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "review" and f"  - {kept}\n" in _notice(node, task_id)
+
+
+def test_a_file_of_another_user_gone_from_a_denied_folder_is_only_counted(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    task_id = _submit(node)
+    remote = _ended(node, task_id)["remote"]
+    before = remote / "deny_before.1"  # as if a backup service's own file had been there and is gone now
+    lines = before.read_text().splitlines() + [f"{node['volume']}/backup/ghost.txt\t4242"]
+    before.write_text("".join(f"{line}\n" for line in sorted(set(lines))))
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "done"
+    assert "Removed, owned by other users: 1" in _notice(node, task_id)
+
+
+def test_a_list_before_the_run_that_runs_out_of_time_leaves_the_check_incomplete(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, scan_s=1)
+    (node["nas"] / "slow_before").write_text("")
+    task_id = _submit(node)
+    _ended(node, task_id)
+    (node["nas"] / "slow_before").unlink()
+    hub = Hub(node["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "review"
+    assert "the list taken before the run did not finish (not finished in 1s)" in _notice(node, task_id)
+
+
+def test_the_looks_run_under_their_memory_limit(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    Hub(node["root"]).tick()
+    assert set((node["nas"] / "sort.ulimit").read_text().split()) == {"1048576"}  # before and after alike
+
+    from hermes_cli.worker import file_node_deny
+    small = _node(tmp_path / "small", monkeypatch)
+    monkeypatch.setattr(file_node_deny, "SCAN_MEMORY_KB", 1024)  # far too little for find: the look cannot run
+    task_id = _submit(small)
+    _ended(small, task_id)
+    hub = Hub(small["root"])
+    hub.tick()
+    assert hub.store.load(task_id)["state"] == "review"
+    assert "out of memory under ulimit -v 1024 KiB" in _notice(small, task_id)
 
 
 def test_device_roles_and_file_node_keys_are_read_from_config():

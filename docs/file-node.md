@@ -40,6 +40,9 @@ model path: one ssh session from the hub carries the node's 127.0.0.1:10100 to t
   session to abort; the runner aborts it as soon as it is there, and waits to see it stop, before its end marks
   (as at the hard limit; a session not seen to stop is aborted again before the slot is freed). A failed abort is
   reported by `lina worker cancel`, not hidden.
+- **A cancel and a start take turns.** A cancel that arrives while a start is still on its way (the upload, or the
+  ssh answer) waits for it under the task lock, then cancels the run on the node like any running run; the slot is
+  freed only once that run ended. A run that has not started is never started after a cancel.
 - **Follow-ups change a run under the task lock.** The next run's number, its prompt (or an instruction added to
   a run still waiting to start) and its request are written under one lock, so two follow-ups at once both keep
   their instruction.
@@ -117,6 +120,15 @@ not read, 245 changes by other users, 14 aliases). They are counted ("not writab
 into: n"), also when the look runs out of time. The gap: a folder the run may write inside one it may not (DSM
 ACLs) is not seen either. A folder it may write but not read, or any other find error, still means the look did
 not see everything.
+
+Before the session starts, `runner.sh` lists every file in the folders the run's user may write, with the same
+rules (alias skips, unwritable folders pruned, snapshots never walked, `nice -n 19`). After the run the same walk is
+compared with that list as streams (`sort`, `comm`, `join`): a file of the run's user that is gone (deleted or moved
+out) is named and ends a `done` run as `review`; files of other users that are gone are only counted ("Removed,
+owned by other users: n"), because backup and Drive services remove and replace files there all the time, and this
+is a check, not a sandbox. A list before the run that did not finish leaves the check incomplete. Both walks and
+the comparison run under `ulimit -v` 1 GiB (a node with 12 GB of memory once had its processes killed by the
+kernel); going over the limit leaves the check incomplete too.
 
 Snapshot folders (`#snapshot`, `@sharesnap`) are never looked into, writable or not: a snapshot is a read-only copy
 the run cannot change, and walking the shares' snapshots once loaded a real node to 260, cut its ssh session and

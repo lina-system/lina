@@ -216,6 +216,8 @@ class FileNodeTransport:
         with task_lock(task):
             if task.path(f"taken.{run}").exists():
                 return {"action": "put", "launched": run}
+            if task.path("cancelled").exists():  # cancelled while this run waited: it never starts
+                return {"action": "put", "cancelled": True}
             # Checked at submit, but a run can start much later (a waiting follow-up, a retried start): without the
             # model path it waits, and that wait is not a failed start.
             reply, found = self.facts()
@@ -247,6 +249,11 @@ class FileNodeTransport:
             archive.addfile(script, io.BytesIO(bash.RUNNER.encode()))
             if run == 1 and (task.work / "input").is_dir():
                 archive.add(str(task.work / "input"), arcname="work/input")
+            if self.device.deny:  # runner.sh takes the denied-folder list before the session starts
+                for name, text in (("deny_check.sh", bash.DENY_SCAN), ("deny.args", self._deny_args(task))):
+                    entry = tarfile.TarInfo(name)
+                    entry.size, entry.mode = len(text.encode()), 0o644
+                    archive.addfile(entry, io.BytesIO(text.encode()))
         worker = settings.section(self.worker_root.parent)
         poll = float(settings.setting("poll_s", worker=worker))
         hard = int(float(settings.setting("hard_timeout_s", worker=worker)))
@@ -405,13 +412,23 @@ class FileNodeTransport:
         reply = self.rsh(bash.ABORT, self._remote(task.id), self.device.omo, timeout=120)
         task.event(run, "abort_again", rc=reply.code, out=reply.out.decode("utf-8", "replace")[-200:])
 
-    def _deny_check(self, task: Task, run: int) -> dict:
-        limit = self.device.scan_s
+    def _deny_args(self, task: Task) -> str:
+        """The look's arguments after <mode> (limit, memory, roots, names, alias skips, volumes), one per line, kept
+        in the mirror so the look after the run walks exactly what the list before it walked."""
         mounts = self.rsh(bash.MOUNTS, deny.MOUNTS, timeout=60).out.decode("utf-8", "replace")
         skips = deny.aliases(mounts, self.device.deny)
-        reply = self.rsh(bash.DENY_SCAN, self._remote(task.id), run, limit, *deny.scan_args(self.device, skips),
-                         timeout=limit + 60)
-        check = deny.parse_scan(reply.out.decode("utf-8", "replace"), reply.code, limit, len(skips))
+        lines = [str(self.device.scan_s), str(deny.SCAN_MEMORY_KB), *deny.scan_args(self.device, skips)]
+        task.path("deny.args").write_text("\n".join(lines) + "\n", encoding="utf-8")
+        return "\n".join(lines) + "\n"
+
+    def _deny_check(self, task: Task, run: int) -> dict:
+        limit = self.device.scan_s
+        saved = _read(task, "deny.args")
+        args = saved.splitlines() if saved else self._deny_args(task).splitlines()
+        nr = int(args[2])
+        skipped = int(args[3 + nr + 1 + int(args[3 + nr])])
+        reply = self.rsh(bash.DENY_SCAN, self._remote(task.id), run, "after", *args, timeout=limit + 60)
+        check = deny.parse_scan(reply.out.decode("utf-8", "replace"), reply.code, limit, skipped)
         write_json(task.path(f"deny.{run}.json"), check)
         return check
 
@@ -474,20 +491,27 @@ class FileNodeTransport:
         task = self._task(args[0])
         if not task.dir.is_dir():
             return _answer({"action": "cancel", "missing": True})
+        from hermes_cli.worker.device import task_lock
         run, why = slots.requested(task.dir), data.decode("utf-8", "replace") or "cancelled"
+        # The mark first: a launch that holds the lock now sees it on its next start. Then the lock: a launch in
+        # flight (upload, ssh answer) finishes first, so its run is on the node and is cancelled there, and the slot is
+        # kept until that run has ended; only a run that never started ends here.
         task.path("cancelled").write_text(why + "\n", encoding="utf-8")
+        with task_lock(task):
+            run = slots.requested(task.dir)
+            on_node = bool(run) and task.path(f"taken.{run}").exists() and not task.path(f"rc.{run}").exists()
+            if run and not on_node and not task.path(f"rc.{run}").exists():
+                task.path(f"slot_wait.{run}").unlink(missing_ok=True)
+                task.path("state").write_text("cancelled\n", encoding="utf-8")
+                task.path(f"rc.{run}").write_text("0\n", encoding="utf-8")
         alive = False
-        if run and task.path(f"taken.{run}").exists() and not task.path(f"rc.{run}").exists():
+        if on_node:
             reply = self.rsh(bash.CANCEL, self._remote(task.id), self.device.omo, stdin=why.encode("utf-8"),
                              timeout=timeout)
             if reply.code != 0:  # the abort itself failed: say so, with omo's answer
                 said = ' '.join((reply.err + " " + reply.out.decode("utf-8", "replace")).split())[-300:]
                 return _answer({"action": "error", "reason": f"cancel on {self.device.name}: {said or f'exit {reply.code}'}"})
             alive = self._live_now(task, run)
-        elif run and not task.path(f"rc.{run}").exists():
-            task.path(f"slot_wait.{run}").unlink(missing_ok=True)
-            task.path("state").write_text("cancelled\n", encoding="utf-8")
-            task.path(f"rc.{run}").write_text("0\n", encoding="utf-8")
         task.event(run, "cancel", why=why[:300])
         return _answer({"action": "cancel", "run": run, "alive": alive})
 

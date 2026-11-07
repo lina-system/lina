@@ -52,6 +52,12 @@ set -u
 T=$1; N=$2; OMO=${3/#\~/$HOME}; POLL=$4; HARD=$5; MODEL=${6:-}
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
 cd "$T/work" || exit 1
+# The denied-folder list before the session starts (deny_check.sh in its before mode), so the hub can tell what the run
+# removed or moved out; a list that did not finish leaves the check incomplete. Then the start mark.
+if [ -s "$T/deny.args" ]; then
+  mapfile -t DA < "$T/deny.args"
+  bash "$T/deny_check.sh" "$T" "$N" before "${DA[@]}" > "$T/deny_before.$N.out" 2>&1 < /dev/null
+fi
 date +%s > "$T/started.$N"
 o() { local f=$1; shift; "$OMO" "$@" < /dev/null > "$f" 2>> "$T/stderr.$N.txt"; }
 # stop <why>: abort the turn and wait a little to see it stop -> outcome <why>_stopped or <why>_not_stopped
@@ -148,35 +154,41 @@ export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
 tail -n 1 "$T/abort.again.json"; exit "$rc"
 """
 
-# deny_scan <task dir> <run> <limit s> <n roots> <roots…> <n names> <names…> <n skips> <skips…> <volumes…>: files
-# changed since the run started under the denied folders (absolute roots, and folders named like a pattern up to 3
-# levels into a volume). Changed means a newer mtime or ctime: a file moved or renamed into a denied folder keeps its
-# mtime but gets a new ctime. A folder moved in gets a new ctime while its files keep theirs, so a folder of the run's
-# user whose ctime alone is newer is listed (with a trailing /) together with everything under it. <skips> are bind-mount aliases of
-# undenied folders (``file_node_deny.aliases``). Each line is "<owner uid><TAB><path>"; the hub counts only the run's
-# own uid (``file_node_deny.owned``). A folder the run's user cannot write is not looked into (``! -writable``, the
-# run could not have changed it; a writable folder below it, possible with DSM ACLs, is not seen either). The finds'
-# exit codes land in deny_rc.<n> and their errors in deny_err.<n>: an unreadable folder the run may write, or any other
-# error, means the look did not see everything.
-# The look runs in its own session at nice 19 (no ionice on the node) and is killed at the limit: there is no
-# timeout(1) on the node.
-DENY_SCAN = r"""T="$HOME/$1"; N=$2; LIMIT=$3; shift 3
+# deny_scan <task dir> <run> <before|after> <limit s> <memory KiB> <n roots> <roots…> <n names> <names…> <n skips>
+# <skips…> <volumes…>: the denied-folder look (absolute roots, and folders named like a pattern up to 3 levels into a
+# volume). <task dir> is relative to $HOME, or absolute when runner.sh calls it.
+# - before (runner.sh, ahead of the session): every file and link in the folders the run's user may write, as
+#   "<path><TAB><uid>" sorted into deny_before.<n>.
+# - after (the hub, once the run ended): files changed since the run started (a newer mtime or ctime: a file moved or
+#   renamed in keeps its mtime but gets a new ctime; a folder of the run's user moved in, whose ctime alone changed, is
+#   listed with a trailing / together with everything under it), one line "<uid><TAB><path>" each; and the files of
+#   the before list that are gone now (deleted or moved out), compared as streams (sort, comm, join).
+# <skips> are bind-mount aliases of undenied folders (``file_node_deny.aliases``); the hub counts only the run's own
+# uid (``file_node_deny.owned``). Folders the run's user cannot write are not looked into (``! -writable``; a writable
+# folder below one of them, possible with DSM ACLs, is not seen either), nor are snapshot folders. The finds' and the
+# comparison's exit codes land in deny_rc.<n>.<mode> and their errors in deny_err.<n>.<mode>: an unreadable folder the
+# run may write, or any other error, means the look did not see everything.
+# Both looks run in their own session at nice 19 (no ionice on the node) under ulimit -v <memory KiB> (a node that
+# ran out of memory had its processes killed by the kernel), and are killed at the limit: there is no timeout(1).
+DENY_SCAN = r"""case "$1" in /*) T=$1 ;; *) T="$HOME/$1" ;; esac
+N=$2; MODE=$3; LIMIT=$4; MEM=$5; shift 5
 nr=$1; shift; roots=("${@:1:$nr}"); shift "$nr"
 nn=$1; shift; names=("${@:1:$nn}"); shift "$nn"
 np=$1; shift; skips=("${@:1:$np}"); shift "$np"
-[ -f "$T/started.$N" ] || { echo complete=0; echo 'why=the run left no start mark'; exit 0; }
+if [ "$MODE" = after ] && [ ! -f "$T/started.$N" ]; then echo complete=0; echo 'why=the run left no start mark'; exit 0; fi
 cat > "$T/deny_scan.sh" <<'EOF'
 export LC_ALL=C
-T=$1; N=$2; nr=$3; shift 3
+T=$1; N=$2; MODE=$3; nr=$4; shift 4
 roots=("${@:1:$nr}"); shift "$nr"; nn=$1; shift; names=("${@:1:$nn}"); shift "$nn"
 np=$1; shift; skips=("${@:1:$np}"); shift "$np"
-S="$T/started.$N"; E="$T/deny_err.$N"; : > "$E"
+S="$T/started.$N"; E="$T/deny_err.$N.$MODE"; : > "$E"
+B="$T/deny_before.$N"; A="$T/deny_after.$N"
 skip=(-path "$T"); for p in "${skips[@]}"; do skip+=(-o -path "$p"); done
 # Snapshot folders are read-only copies the run cannot change, and walking them once loaded a real node to 260 and cut
 # its ssh and model-path sessions: never looked into, writable or not.
 skip+=(-o -name '#snapshot' -o -name '@sharesnap')
 NW="$T/deny_nw.$N"; : > "$NW.d"; : > "$NW.s"
-found=(); d=0; s=0; m=0
+found=(); d=0; s=0; m=0; c=0
 for r in "${roots[@]}"; do [ -e "$r" ] && found+=("$r"); done
 if [ "$nn" -gt 0 ] && [ "$#" -gt 0 ]; then
   expr=(); for p in "${names[@]}"; do [ "${#expr[@]}" -gt 0 ] && expr+=(-o); expr+=(-name "$p"); done
@@ -184,22 +196,42 @@ if [ "$nn" -gt 0 ] && [ "$#" -gt 0 ]; then
     -o -type d ! -writable -fprint "$NW.d" -prune > "$T/deny_dirs.$N.txt" 2>> "$E"; d=$?
   while IFS= read -r dir; do found+=("$dir"); done < "$T/deny_dirs.$N.txt"
 fi
-: > "$T/moved.$N.txt"
+if [ "$MODE" = before ]; then
+  : > "$B.raw"
+  if [ "${#found[@]}" -gt 0 ]; then
+    find "${found[@]}" \( "${skip[@]}" \) -prune -o -type d ! -writable -fprint "$NW.s" -prune \
+      -o \( -type f -o -type l \) -printf '%p\t%U\n' > "$B.raw" 2>> "$E"; s=$?
+  fi
+  sort -u -o "$B" "$B.raw" 2>> "$E" || c=$?
+  rm -f "$B.raw"
+  echo "$d $s $m $c" > "$T/deny_rc.$N.$MODE"
+  exit 0
+fi
+: > "$T/moved.$N.txt"; : > "$A.raw"; : > "$T/removed.$N"
 if [ "${#found[@]}" -gt 0 ]; then
   find "${found[@]}" \( "${skip[@]}" \) -prune -o -type d ! -writable -fprint "$NW.s" -prune \
-    -o \( -newer "$S" -o -cnewer "$S" \) \( -type f -o -type l \) \
-    -printf '%U\t%p\n' -o -type d -uid "$EUID" -cnewer "$S" ! -newer "$S" -printf '%U\t%p/\n' -fprint "$T/moved.$N.txt" \
-    2>> "$E"; s=$?
+    -o \( -type f -o -type l \) -fprintf "$A.raw" '%p\t%U\n' \( -newer "$S" -o -cnewer "$S" \) -printf '%U\t%p\n' \
+    -o -type d -uid "$EUID" -cnewer "$S" ! -newer "$S" -printf '%U\t%p/\n' -fprint "$T/moved.$N.txt" 2>> "$E"; s=$?
   while IFS= read -r dir; do
     find "$dir" \( "${skip[@]}" \) -prune -o -type d ! -writable -prune -o \( -type f -o -type l \) -printf '%U\t%p\n' \
       2>> "$E" || m=$?
   done < "$T/moved.$N.txt"
 fi
-echo "$d $s $m" > "$T/deny_rc.$N"
+if [ -f "$B" ]; then
+  { sort -u -o "$A" "$A.raw" && cut -f1 "$B" > "$B.paths" && cut -f1 "$A" > "$A.paths" \
+      && comm -23 "$B.paths" "$A.paths" > "$T/removed.$N.all" \
+      && sed 's#$#/#' "$NW.d" "$NW.s" > "$T/removed.$N.unseen" \
+      && { grep -v -F -f "$T/removed.$N.unseen" "$T/removed.$N.all" || [ $? = 1 ]; } > "$T/removed.$N.paths" \
+      && join -t $'\t' "$T/removed.$N.paths" "$B" > "$T/removed.$N"; } 2>> "$E" || c=$?
+  # A path under a folder this look did not go into (not writable now) is not seen, not removed.
+  rm -f "$A.raw" "$B.paths" "$A.paths" "$T/removed.$N".{all,unseen,paths}
+fi
+echo "$d $s $m $c" > "$T/deny_rc.$N.$MODE"
 EOF
-rm -f "$T/deny_rc.$N"
-setsid nice -n 19 bash "$T/deny_scan.sh" "$T" "$N" "$nr" "${roots[@]}" "$nn" "${names[@]}" "$np" "${skips[@]}" "$@" \
-  > "$T/deny.$N.txt" 2>/dev/null < /dev/null &
+rm -f "$T/deny_rc.$N.$MODE"
+( ulimit -v "$MEM" 2>/dev/null
+  exec setsid nice -n 19 bash "$T/deny_scan.sh" "$T" "$N" "$MODE" "$nr" "${roots[@]}" "$nn" "${names[@]}" "$np" \
+    "${skips[@]}" "$@" ) > "$T/deny.$N.$MODE.txt" 2>/dev/null < /dev/null &
 pid=$!; i=0; ticks=$((LIMIT * 10))
 while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$ticks" ]; do sleep 0.1; i=$((i + 1)); done
 timed_out=0
@@ -214,23 +246,34 @@ while IFS= read -r line; do
       if [ -w "$p" ]; then writable=$((writable + 1)); else echo "$p" >> "$T/deny_unreadable.$N"; fi ;;
     *) other=$((other + 1)) ;;
   esac
-done < "$T/deny_err.$N"
+done < "$T/deny_err.$N.$MODE" 2>/dev/null
 nw=$(cat "$T/deny_nw.$N.d" "$T/deny_nw.$N.s" "$T/deny_unreadable.$N" 2>/dev/null | sort -u | wc -l)
 echo "notwritable=$nw"
 if [ "$timed_out" = 1 ]; then
   echo complete=0; echo "why=not finished in ${LIMIT}s"
-elif ! read -r d s m < "$T/deny_rc.$N" 2>/dev/null; then
-  echo complete=0; echo 'why=the look left no exit code'
+elif ! read -r d s m c < "$T/deny_rc.$N.$MODE" 2>/dev/null; then
+  echo complete=0; echo "why=the look left no exit code (out of memory under ulimit -v ${MEM} KiB?)"
+elif [ "$c" != 0 ]; then
+  echo complete=0; echo "why=the comparison exited $c"
 elif [ "$d$s$m" = 000 ] || { [ "$writable" = 0 ] && [ "$other" = 0 ] && [ -s "$T/deny_unreadable.$N" ]; }; then
   echo complete=1
 else
-  code=$(for c in $d $s $m; do [ "$c" != 0 ] && { echo "$c"; break; }; done)
+  code=$(for x in $d $s $m; do [ "$x" != 0 ] && { echo "$x"; break; }; done)
   echo complete=0; echo "why=find exited $code (unreadable but writable: $writable, other errors: $other)"
 fi
+[ "$MODE" = before ] && exit 0
+if grep -qx 'complete=1' "$T/deny_before.$N.out" 2>/dev/null; then
+  echo before=1
+else
+  echo before=0; printf 'before_why=%s\n' "$(sed -n 's/^why=//p' "$T/deny_before.$N.out" 2>/dev/null | head -n 1)"
+fi
 printf 'uid=%s\n' "$EUID"
-printf 'count=%s\n' "$(wc -l < "$T/deny.$N.txt")"
+printf 'count=%s\n' "$(wc -l < "$T/deny.$N.$MODE.txt")"
+printf 'removed_count=%s\n' "$(wc -l < "$T/removed.$N" 2>/dev/null || echo 0)"
+echo removed:
+head -n 50000 "$T/removed.$N" 2>/dev/null
 echo files:
-head -n 50000 "$T/deny.$N.txt"
+head -n 50000 "$T/deny.$N.$MODE.txt"
 """
 
 # mounts <file>: the node's mount table (``/proc/mounts``), for the aliases the denied-folder look skips.

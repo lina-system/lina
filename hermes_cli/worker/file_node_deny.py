@@ -75,6 +75,7 @@ def submit_refusal(dev: Device, texts: list[str], inputs: list[str]) -> str | No
 
 
 MOUNTS = "/proc/mounts"  # the node's mount table, read on the node
+SCAN_MEMORY_KB = 1 << 20  # ulimit -v of each look and its comparison: 1 GiB
 
 
 def denied(path: str, deny: tuple[str, ...]) -> bool:
@@ -140,26 +141,51 @@ def owned(lines: list[str], uid: str) -> tuple[list[str], int]:
     return mine, others
 
 
+def _sections(out: str) -> tuple[dict[str, str], list[str], list[str]]:
+    """The scan answer's fields, ``removed:`` lines (``<path><TAB><uid>``) and ``files:`` lines."""
+    fields, removed, files, section = {}, [], [], None
+    for line in out.splitlines():
+        if line in ("removed:", "files:"):
+            section = line
+        elif section == "removed:" and line.strip():
+            removed.append(line)
+        elif section == "files:" and line.strip():
+            files.append(line)
+        elif section is None and "=" in line:
+            key, _, value = line.partition("=")
+            fields[key] = value
+    return fields, removed, files
+
+
 def parse_scan(out: str, code: int, limit: int, skipped: int = 0) -> dict:
-    """The node's scan answer as ``{"complete", "count", "files", "others", "why"?}``: ``count``/``files`` are the
-    run user's changed files, ``others`` the changes owned by other users; an unreadable answer is incomplete."""
-    head, _, listing = out.partition("files:\n")
-    fields = dict(line.split("=", 1) for line in head.splitlines() if "=" in line)
-    lines = [line for line in listing.splitlines() if line.strip()]
+    """The node's scan answer as ``{"complete", "count", "files", "others", "removed", "removed_count",
+    "removed_others", "why"?}``: ``count``/``files`` are the run user's changed files and ``removed`` its files gone
+    since the list taken before the run, ``others``/``removed_others`` those of other users; an unreadable answer, or
+    a before list that did not finish, is incomplete."""
+    fields, removed_lines, lines = _sections(out)
     mine, others = owned(lines, fields.get("uid", ""))
+    gone, gone_others = owned(["\t".join(line.rsplit("\t", 1)[::-1]) for line in removed_lines], fields.get("uid", ""))
     total = int(fields["count"]) if fields.get("count", "").strip().isdigit() else len(lines)
     check = {"complete": code == 0 and fields.get("complete") == "1" and "uid" in fields, "files": mine[:200],
              "count": len(mine), "others": others, "uid": fields.get("uid"), "limit_s": limit,
-             "aliases_skipped": skipped, "not_writable": int(fields.get("notwritable") or 0)}
+             "aliases_skipped": skipped, "not_writable": int(fields.get("notwritable") or 0),
+             "removed": gone[:200], "removed_count": len(gone), "removed_others": gone_others}
     if total > len(lines):
         check["complete"], check["why"] = False, f"{total} changed files, only the first {len(lines)} were read"
+    removed_total = int(fields["removed_count"]) if fields.get("removed_count", "").strip().isdigit() else 0
+    if removed_total > len(removed_lines):
+        check["complete"], check["why"] = False, f"{removed_total} removed files, only the first {len(removed_lines)} were read"
+    if check["complete"] and fields.get("before") != "1":
+        check["complete"] = False
+        check["why"] = "the list taken before the run did not finish" + (
+            f" ({fields['before_why']})" if fields.get("before_why") else "")
     if not check["complete"]:
         check.setdefault("why", fields.get("why") or f"the look did not answer (exit {code})")
     return check
 
 
 def needs_review(check: dict | None) -> bool:
-    return bool(check) and (bool(check.get("count")) or not check.get("complete"))
+    return bool(check) and (bool(check.get("count")) or bool(check.get("removed_count")) or not check.get("complete"))
 
 
 _REVIEW_HEAD = re.compile(rf"needs review — the '{re.escape(NEXT_NOTES)}' section of report\.md is (missing|empty)\n")
@@ -179,6 +205,12 @@ def with_check(text: str, check: dict | None) -> str:
             lines.append(f"  - … {check['count'] - min(50, len(check.get('files', [])))} more")
     else:
         lines[0] += "no file owned by the run's user changed."
+    if check.get("removed_count"):
+        lines.append(f"- Removed or moved out of a denied folder, owned by the run's user: {check['removed_count']}:")
+        lines += [f"  - {path}" for path in check.get("removed", [])[:50]]
+    if check.get("removed_others"):
+        lines.append(f"- Removed, owned by other users: {check['removed_others']} (not counted: backup and sync services "
+                     "remove files there as their own users).")
     lines.append(f"- Changed by other users: {check.get('others') or 0}, not counted (backup, sync and indexing "
                  "services write there as their own users). A file of another user that the run edited in place keeps "
                  "that owner and is not counted either.")
@@ -198,4 +230,8 @@ def review_reason(check: dict | None) -> str | None:
     """The reason the denied-folder check gave a run ``review`` (end notice, card comment, ``lina worker status``)."""
     if not check or not check.get("forced_review"):
         return None
-    return "files changed under a denied folder" if check.get("count") else "the denied-folder check did not finish"
+    if check.get("count"):
+        return "files changed under a denied folder"
+    if check.get("removed_count"):
+        return "files removed from a denied folder"
+    return "the denied-folder check did not finish"
