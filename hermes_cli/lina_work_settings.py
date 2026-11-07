@@ -6,7 +6,7 @@ LINA root's ``config.yaml``, the ones ``lina worker`` already reads on every com
 devices:
   workers:
     build-a: {host: build-a, role: work, cap: 2, named_cap: 2, last: 0, fast: true}
-    laptop:  {role: person}                      # the owner's own device: status only, never a cap, never a host
+    laptop:  {host: laptop-ssh, role: person}     # the owner's own device: ssh status only, never a node
 worker:
   default_runner: omo
   runners:
@@ -408,8 +408,10 @@ def _devices(doc: dict, errors: list[dict]) -> None:
         if not isinstance(role, str) or role not in ROLES:  # the lookups below run only on a text
             errors.append({"path": f"{path}.role", "message": f"one of {', '.join(ROLES)}"})
         elif role == "person":
-            errors += [{"path": f"{path}.{key}", "message": "a person device is never a node: no caps, no host"}
-                       for key in ("cap", "named_cap", "last", "auto", "host") if key in entry]
+            errors += [{"path": f"{path}.{key}", "message": "a person device carries only host (ssh alias) and role"}
+                       for key in entry if key in DEVICE and key not in ("host", "role")]
+            if "host" not in entry:
+                errors.append({"path": f"{path}.host", "message": "a person device needs its host (ssh alias) for status"})
         elif "host" not in entry:
             errors.append({"path": f"{path}.host", "message": "a work or files device needs its host (ssh alias or local)"})
 

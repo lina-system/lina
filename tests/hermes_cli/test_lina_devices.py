@@ -89,6 +89,38 @@ def test_add_and_remove_edit_the_list_lina_worker_bids_over(base):
         lina_devices.add("bad.name", "x", base=base)
 
 
+def test_person_saved_with_a_host_appears_in_settings_cli_and_api(tmp_path, monkeypatch):
+    from fastapi.testclient import TestClient
+    from hermes_cli import lina_board_devices, web_server
+    from hermes_cli.lina_work_settings import set_path
+    from hermes_cli.lina_work_settings_store import Store
+
+    monkeypatch.setenv("LINA_HOME", str(tmp_path))
+    Store(tmp_path).apply(
+        lambda doc: set_path(doc, "devices.workers.laptop", {"host": "laptop-ssh", "role": "person"}),
+        {"kind": "cli", "principal": "tester", "device": "local"})
+
+    assert [(dev.name, dev.host, dev.role) for dev in settings.devices()] == [
+        ("laptop", "laptop-ssh", "person")]
+    assert lina_devices.device("laptop", tmp_path).host == "laptop-ssh"
+    monkeypatch.setattr(lina_devices, "probe", lambda *args: {"ssh": False})
+    lines: list[str] = []
+    assert lina_devices.list_devices(as_json=True, out=lines.append) == 0
+    assert [(row["name"], row["host"]) for row in json.loads(lines[0])] == [("laptop", "laptop-ssh")]
+
+    # Keep the real view and config reader; only the remote status read is replaced.
+    monkeypatch.setattr(lina_board_devices, "PERSON", lina_board_devices._Lazy(900))
+    monkeypatch.setattr(lina_board_devices, "_spawn", lambda work: work())
+    monkeypatch.setattr(lina_board_devices, "person_read", lambda *args: {
+        "reachable": True, "checkedAt": 1, "versions": {}})
+    with TestClient(web_server.app) as client:
+        client.headers[web_server._SESSION_HEADER_NAME] = web_server._SESSION_TOKEN
+        reply = client.get("/api/lina/devices")
+    assert reply.status_code == 200
+    assert [(row["name"], row["role"]) for row in reply.json()["person"]] == [("laptop", "person")]
+    assert reply.json()["machines"] == []
+
+
 @pytest.fixture
 def local_device(tmp_path, monkeypatch):
     """A LINA root whose only device is this machine, running a ``command`` runner, and its serve loop."""
