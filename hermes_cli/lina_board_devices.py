@@ -1,7 +1,7 @@
 """The devices view of the client API (lina#234): every entry of ``devices.workers`` by its role, and the owner's
 two device actions.
 
-Nodes (``role: work`` and ``role: files``) are read through one negotiated contact each (``transport.for_device``):
+Nodes (``Device.role`` ``work`` and ``files``, lina#229) are read through one negotiated contact each (``transport.for_device``):
 its first call is ``hello``, then ``probe``, so a node costs the same two ssh calls as before. The probe gives the
 machine row (``worker.board.machine``); the same contact's ``hello`` descriptor gives one runner cell per runner the
 node reports (lina#222, #218): the hub's pinned (fleet) version, the installed one, the sign-in state and one reason
@@ -10,7 +10,7 @@ one whose ``hello`` predates the runner rows shows them ``update``. The omo cell
 the node, which is slow: each node's last answer is served and a background read refreshes it at most every 10
 minutes, started by a read (a failed read keeps the last answer).
 
-Person devices (``role: person``, the entry's name is its ssh alias) are never nodes: no probe, no hello, no
+Person devices (``Device.role == "person"``, lina#229; the entry's host is its ssh alias) are never nodes: no probe, no hello, no
 service. One ssh call in the person's login shell prints the first line of ``--version`` of each runner the hub
 pins and of omo, at most every 15 minutes in the background, started by a read; a failed read marks the device
 unreachable and keeps the last versions. The read changes nothing on the device.
@@ -108,26 +108,12 @@ OMO = _Lazy(OMO_EVERY_S)
 PERSON = _Lazy(PERSON_EVERY_S)
 
 
-def _workers(base: Path) -> dict:
-    devices = settings._config(base).get("devices")
-    workers = devices.get("workers") if isinstance(devices, dict) else None
-    return workers if isinstance(workers, dict) else {}
-
-
-def role(base: Path, name: str) -> str:
-    """The entry's role (``work`` when unset): ``Device.role`` when the device carries it (lina#229), else the config
-    entry's. The config fallback is removed once lina#229 is merged."""
-    dev = next((dev for dev in settings.devices(base) if dev.name == name), None)
-    if getattr(dev, "role", None) in (*NODE_ROLES, "person"):
-        return dev.role
-    entry = _workers(base).get(name)
-    value = entry.get("role", "work") if isinstance(entry, dict) else "work"
-    return value if value in (*NODE_ROLES, "person") else "work"
+def _people(base: Path) -> list[settings.Device]:
+    return [dev for dev in settings.devices(base) if dev.role == "person"]
 
 
 def person_names(base: Path) -> list[str]:
-    return [str(name) for name, entry in _workers(base).items()
-            if isinstance(entry, dict) and entry.get("role") == "person" and entry.get("off") is not True]
+    return [dev.name for dev in _people(base)]
 
 
 def _contact(dev: settings.Device, worker_root: Path, runner: str) -> tuple[dict, dict | None, bool]:
@@ -186,6 +172,12 @@ def omo_cell(name: str, kind, status: dict | None, probe_ready: bool | None, fle
     return _cell(name, kind, fleet, installed, "ocx", why is None, why)
 
 
+def _file_node_omo(rows: list[dict]) -> dict:
+    """A file node has no lina to run ``lina omo status`` (lina#229): its hello's omo row says what it runs."""
+    omo = next((row for row in rows if row.get("type") == "omo"), {})
+    return {"current": omo.get("installed"), "daemon": {"running": bool(omo.get("ready"))}}
+
+
 def _omo_status(key, dev: settings.Device):
     from hermes_cli.lina_devices import omo_status
 
@@ -206,7 +198,8 @@ def _cells(dev: settings.Device, base: Path, probe: dict, descriptor: dict | Non
     refused = bool(probe.get("protocol_error"))
     if reachable and not refused and isinstance(rows, list) and all(isinstance(r, dict) and "pinned" in r
                                                                     for r in rows):
-        status = _omo_status((str(base), dev.name), dev) if omo_names else None
+        status = _file_node_omo(rows) if dev.kind == settings.FILE_KIND else \
+            _omo_status((str(base), dev.name), dev) if omo_names else None
         probe_ready = bool(probe.get("ready")) if default_runner in omo_names else None
         return [omo_cell(str(r.get("name")), r.get("type"), status, probe_ready, omo_fleet)
                 if r.get("type") == "omo" else runner_cell(r, fleet) for r in rows]
@@ -250,7 +243,7 @@ def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
     worker = settings.section(base)
     runner = runners.default_name(worker)
     min_free = int(settings.setting("min_free_gb", worker=worker))
-    devs = [dev for dev in settings.devices(base) if role(base, dev.name) in NODE_ROLES]
+    devs = [dev for dev in settings.devices(base) if dev.role in NODE_ROLES]
     if not devs:
         return []
     with ThreadPoolExecutor(len(devs)) as pool:
@@ -260,7 +253,7 @@ def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
         row = machine(dev, probe, (metrics or {}).get(dev.name) or (metrics or {}).get(dev.host), now, min_free)
         cells = _cells(dev, base, probe, descriptor, reachable, runner)
         _mark_signing(base, dev.name, cells, reachable)
-        row.update(role=role(base, dev.name), reachable=reachable, runners=cells)
+        row.update(role=dev.role, reachable=reachable, runners=cells)
         rows.append(row)
     return sorted(rows, key=lambda row: (NODE_ROLES.index(row["role"]), STATES.index(row["state"])))
 
@@ -314,10 +307,10 @@ def people(base: Path) -> list[dict]:
     tools = _person_tools()
     bins = [tool_bin for _, tool_bin, _ in tools]
     out = []
-    for name in person_names(base):
-        seen = PERSON.get((str(base), name), lambda previous, alias=name: person_read(alias, bins, previous))
+    for dev in _people(base):
+        seen = PERSON.get((str(base), dev.name), lambda previous, alias=dev.host: person_read(alias, bins, previous))
         versions = (seen or {}).get("versions") or {}
-        out.append({"name": name, "role": "person", "reachable": (seen or {}).get("reachable"),
+        out.append({"name": dev.name, "role": "person", "reachable": (seen or {}).get("reachable"),
                     "checkedAt": (seen or {}).get("checkedAt"),
                     "tools": [{"name": tool, "fleet": fleet, "installed": versions.get(tool_bin)}
                               for tool, tool_bin, fleet in tools]})

@@ -140,7 +140,7 @@ def root(tmp_path, monkeypatch):
             store-b: {host: store-b, role: files}
             gone-c: {host: gone-c, role: work}
             old-d: {host: old-d}
-            laptop: {role: person}
+            laptop: {host: laptop-ssh, role: person}
         worker:
           min_free_gb: 0
           runners:
@@ -249,23 +249,19 @@ def test_a_node_refusing_the_protocol_is_update_a_failed_hello_unknown_only_no_s
     assert {cell["name"]: cell["why"] for cell in build["runners"]} == dict.fromkeys(("omo", "codex", "grok"), why)
 
 
-def test_the_role_is_the_device_s_own_when_it_carries_one(root, nodes, ssh, client, monkeypatch):
-    import dataclasses
+def test_roles_come_from_the_device_config_as_lina_229_reads_it(root, nodes, ssh, client, monkeypatch):
+    config = root.path / "config.yaml"
+    config.write_text(config.read_text().replace("    laptop:", "    nas-e: {host: nas-e, kind: file}\n    laptop:"))
+    monkeypatch.setitem(HELLO, "nas-e", [{"name": "omo", "type": "omo", "pin": None, "pinned": None, "installed": OMO,
+                                          "sign_in": None, "ready": True, "why": None}])
+    view = _devices(client)
 
-    from hermes_cli.worker import settings
-
-    @dataclasses.dataclass(frozen=True)
-    class RoleDevice(settings.Device):
-        role: str = "work"
-    real = settings.devices
-    monkeypatch.setattr(settings, "devices", lambda base=None, raw=None: [
-        RoleDevice(**{f.name: getattr(dev, f.name) for f in dataclasses.fields(dev)},
-                   role="files" if dev.name in ("build-a", "store-b") else "work") for dev in real(base, raw)])
-
-    assert lina_board_devices.role(root.path, "build-a") == "files", "the config entry says work; the device wins"
-    assert [(m["name"], m["role"]) for m in _devices(client)["machines"]][-2:] == [("build-a", "files"),
-                                                                                   ("store-b", "files")]
-
+    roles = {m["name"]: m["role"] for m in view["machines"]}
+    assert (roles["store-b"], roles["nas-e"]) == ("files", "files"), "role: files, and a kind: file node's default"
+    assert [p["name"] for p in view["person"]] == ["laptop"] and "laptop" not in roles
+    nas = next(m for m in view["machines"] if m["name"] == "nas-e")
+    assert _cells(nas) == {"omo": (OMO, OMO, "ocx", True, None)}, "a file node's omo is its hello's, not lina omo status"
+    assert "nas-e" not in nodes.omo_reads
 
 def test_the_omo_cell_is_served_from_a_background_read_every_ten_minutes(root, nodes, ssh, client):
     nodes.inline = False
@@ -314,7 +310,7 @@ def test_person_devices_show_status_and_tool_versions_from_one_read_only_ssh_cal
     assert tools["grok"] == (FLEET["grok"], "0.0.9") and tools["claude"] == (FLEET["claude"], None)
     assert "claude-agent-acp" not in tools, "an adapter checked by its package is never started for --version"
     argv, kwargs = ssh.calls[0]
-    assert argv[:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"] and argv[-2] == "laptop"
+    assert argv[:5] == ["ssh", "-o", "BatchMode=yes", "-o", "ConnectTimeout=5"] and argv[-2] == "laptop-ssh"
     assert kwargs["timeout"] == lina_board_devices.PERSON_TIMEOUT_S and "-lc" in argv[-1]
 
     ssh.code = 255
