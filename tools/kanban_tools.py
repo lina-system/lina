@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 from agent.redact import redact_sensitive_text
 from hermes_cli.goals import judge_goal
+from hermes_cli.kanban_db_verdicts import return_to_wait, verdict_wake_open
 from tools.registry import no_cache_check_fn, registry, tool_error
 from hermes_cli.config import cfg_get, load_config
 from tools.kanban_tools_schemas import (
@@ -781,6 +782,14 @@ def _handle_complete(args: dict, **kw) -> str:
     _require_dict_metadata(metadata)
     metadata = _stamp_worker_session_metadata(tid, metadata)
     with _board(args.get("board")) as (kb, conn):
+        # A card woken only to judge a run (lina#295) is not finishing: once those runs are judged it goes
+        # back to what it waited on (its open parent, or its schedule); an unjudged one raises, naming it.
+        if verdict_wake_open(conn, tid) and return_to_wait(conn, tid, expected_run_id=_worker_run_id(tid)):
+            returned_to = kb.get_task(conn, tid).status
+            return _ok(task_id=tid, returned_to=returned_to,
+                       note="the runs that woke this card are judged; " + (
+                           "the wait it was parked on is met and it goes on in its next run. End this turn."
+                           if returned_to == "ready" else "it waits again. End this turn."))
         # Goal-mode pre-completion judge gate (Issue #38367). Prevent workers from bypassing the auxiliary
         # judge by calling kanban_complete before acceptance criteria are met. Only enforce when a judge is
         # actually reachable — see _goal_judge_available for why an unavailable judge fails open.

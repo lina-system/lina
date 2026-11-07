@@ -85,7 +85,21 @@ def write_board_metadata(
     slug = _kb._slug_or_default(board)
     # Resolved BEFORE the write: a fenced worker asking for another board is refused here,
     # so a refusal never leaves a board.json behind for a board it cannot open (#206).
-    db_path = str(_kb.kanban_db_path(slug))
+    db_path = _kb.kanban_db_path(slug)
+    return _write_metadata_file(
+        slug, db_path, name=name, description=description, icon=icon, color=color,
+        archived=archived, default_workdir=default_workdir, project_id=project_id,
+    )
+
+
+def _write_metadata_file(
+    slug: str, db_path: Path, *, name: Optional[str], description: Optional[str],
+    icon: Optional[str], color: Optional[str], archived: Optional[bool],
+    default_workdir: Optional[str], project_id: Optional[str],
+) -> dict:
+    """Write ``board.json`` for *slug*, whose board resolution (*db_path*) the caller has
+    already made. Kept apart so :func:`remove_board` can write the tombstone with the
+    resolution it made before the move (#259)."""
     meta = read_board_metadata(slug)
     # db_path is derived on every read; never persist it into board.json.
     meta.pop("db_path", None)
@@ -106,7 +120,7 @@ def write_board_metadata(
     path.write_text(
         json.dumps(meta, indent=2, ensure_ascii=False) + "\n", encoding="utf-8",
     )
-    meta["db_path"] = db_path
+    meta["db_path"] = str(db_path)
     return meta
 
 
@@ -162,8 +176,10 @@ def remove_board(slug: str, *, archive: bool = True) -> dict:
         raise ValueError("the 'default' board cannot be removed")
     # Resolve the board BEFORE touching anything: a fenced caller asking for another
     # board has to be refused while the board is still where it was, not after the
-    # move (an archived board would answer "refused" with no tombstone, #206).
-    _kb.kanban_db_path(normed)
+    # move (an archived board would answer "refused" with no tombstone, #206). The
+    # tombstone below reuses this resolution: once the directory has moved, a board
+    # whose kanban.db links to the pin no longer resolves to it (#259).
+    db_path = _kb.kanban_db_path(normed)
     d = _kb.board_dir(normed)
     if not d.exists():
         raise ValueError(f"board {normed!r} does not exist")
@@ -193,8 +209,9 @@ def remove_board(slug: str, *, archive: bool = True) -> dict:
         # tabs / gateway pollers can keep calling connect(board=slug) after the
         # archive; without a marker the resurrect-guard cannot tell an archived
         # slug from a brand-new one and an empty board would reappear (#43243).
-        write_board_metadata(
+        _write_metadata_file(
             normed,
+            db_path,
             name=prior_meta.get("name"),
             description=prior_meta.get("description"),
             icon=prior_meta.get("icon"),

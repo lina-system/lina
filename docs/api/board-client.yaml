@@ -586,7 +586,9 @@ components:
         agents:
           type: object
           nullable: true
-          description: Running cards per agent (configured agents with none read 0).
+          description: >
+            Each agent's own work: its running cards plus its finished runs waiting for its verdict
+            (`waitingOn: agent:<name>`, never in the owner's inbox); configured agents with none read 0.
           additionalProperties:
             type: integer
             minimum: 0
@@ -630,6 +632,13 @@ components:
         agent:
           type: string
           nullable: true
+        waitingOn:
+          type: string
+          nullable: true
+          description: >
+            Who the run waits on: `agent:<name>` for a finished run waiting for the verdict of the agent that
+            handed it out. Such a run is counted under that agent in `counts.agents`, never in `inbox.review`, the
+            `review` notices or `counts.inbox`; null otherwise (shown as before).
         kind:
           type: string
           nullable: true

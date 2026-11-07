@@ -303,7 +303,8 @@ def meta(worker_root: Path, task_id: str, live: bool = False) -> dict:
         if hasattr(runner, "live_view"):
             live_view.update({k: v for k, v in runner.live_view(Handle.load(task)).items() if v is not None})
     return {"state": state or "new", "run": run, "requested": slots.requested(task.dir), "rc": _read(task, f"rc.{run}"), "alive": is_alive,
-            "report": (task.work / "report.md").is_file(), "final": _read(task, "final.md")[:600], "live": live_view}
+            "report": (task.work / "report.md").is_file(), "final": _read(task, "final.md")[:600], "live": live_view,
+            "access": (read_json(task.path("job.json"), {}) or {}).get("access")}
 
 
 def _free_gb(path: Path) -> int:
@@ -360,51 +361,85 @@ def task_lock(task: Task):
             fcntl.flock(handle, fcntl.LOCK_UN)  # windows-footgun: ok — POSIX work devices only
 
 
+KEYS = "keys.json"
+UNCHANGED = ("error", "refuse", "refused", "busy", "not_live")  # replies after which the task is as it was
+
+
+def _kept(task: Task, key: str | None, act) -> dict:
+    """*act* once per request key, under the task's lock: a key seen before, by whichever write verb, returns the
+    reply it got then and changes nothing (a retry the hub routes to another verb must not apply the words twice).
+    A reply that left the task as it was is not kept, so the same key can try again."""
+    if not key:
+        return act()
+    kept = read_json(task.path(KEYS), {}) or {}
+    if key in kept:
+        return {**kept[key], "replayed": True}
+    reply = act()
+    if reply.get("action") not in UNCHANGED:
+        write_json(task.path(KEYS), {**kept, key: reply})
+    return reply
+
+
+def keyed(worker_root: Path, args: list[str], act) -> dict:
+    """``answer`` and ``send``, whose optional second argument is the hub's request key."""
+    key = args[1] if len(args) > 1 else None
+    if not key:
+        return act()
+    task = task_of(worker_root, args[0])
+    with task_lock(task):
+        return _kept(task, key, act)
+
+
 def follow_up(worker_root: Path, task_id: str, payload: dict) -> dict:
+    """``follow_up``; its payload's ``request_key`` is kept like the key of ``answer`` and ``send``."""
+    task = task_of(worker_root, task_id)
+    with task_lock(task):
+        return _kept(task, payload.get("request_key"), lambda: _follow_up_locked(worker_root, task, task_id, payload))
+
+
+def _follow_up_locked(worker_root: Path, task: Task, task_id: str, payload: dict) -> dict:
     """A person's follow-up, so that a task has at most one requested-or-running run: queued into the newest run
     while it waits for ``serve``, steered into it while it is live, refused while it is starting; once that run
     ended, the next run is requested."""
-    task = task_of(worker_root, task_id)
-    with task_lock(task):
-        job = job_of(task)
-        current = job.get("access", "workspace-write")
-        access = payload.get("access", current)
-        if current not in ACCESS or access not in ACCESS or ACCESS.index(access) > ACCESS.index(current):
-            return {"action": "error", "reason": f"access {access!r} exceeds recorded mode {current!r}"}
-        run = slots.requested(task.dir)
-        if access != current:
-            supported, reason = runner_for(worker_root, task, job).honours(access)
-            if not supported:
-                return {"action": "error", "reason": reason, "run": run}
-            if run and not task.path(f"rc.{run}").exists() and task.path(f"taken.{run}").exists():
-                if not alive(task, run) or not task.path("handle.json").exists():
-                    return {"action": "busy", "run": run}
-                live = read_json(task.path(f"live.{run}.json"), {}) or {}
-                reply = (answer(worker_root, task_id, payload["message"]) if live.get("state") == "waiting_human"
-                         else steer(worker_root, task_id, payload["message"]))
-                if reply.get("action") not in ("answer", "steered", "started"):
-                    return reply
-                job["access"] = access
-                write_json(task.path("job.json"), job)
-                grant = read_json(task.path("grant.json"), {}) or {}
-                write_json(task.path("grant.json"), {**grant, "access": access})
+    job = job_of(task)
+    current = job.get("access", "workspace-write")
+    access = payload.get("access", current)
+    if current not in ACCESS or access not in ACCESS or ACCESS.index(access) > ACCESS.index(current):
+        return {"action": "error", "reason": f"access {access!r} exceeds recorded mode {current!r}"}
+    run = slots.requested(task.dir)
+    if access != current:
+        supported, reason = runner_for(worker_root, task, job).honours(access)
+        if not supported:
+            return {"action": "error", "reason": reason, "run": run}
+        if run and not task.path(f"rc.{run}").exists() and task.path(f"taken.{run}").exists():
+            if not alive(task, run) or not task.path("handle.json").exists():
+                return {"action": "busy", "run": run}
+            live = read_json(task.path(f"live.{run}.json"), {}) or {}
+            reply = (answer(worker_root, task_id, payload["message"]) if live.get("state") == "waiting_human"
+                     else steer(worker_root, task_id, payload["message"]))
+            if reply.get("action") not in ("answer", "steered", "started"):
                 return reply
             job["access"] = access
             write_json(task.path("job.json"), job)
             grant = read_json(task.path("grant.json"), {}) or {}
             write_json(task.path("grant.json"), {**grant, "access": access})
-        if run and not task.path(f"rc.{run}").exists():
-            if not task.path(f"taken.{run}").exists():
-                with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:
-                    fh.write("\n\n" + payload["message"])
-                task.event(run, "follow_up", how="queued")
-                return {"action": "queued", "run": run}
-            reply = steer(worker_root, task_id, payload["message"])
-            return reply if reply["action"] != "not_live" else {"action": "busy", "run": run}
-        run = max(run, last_run(task)) + 1
-        task.path(f"prompt.{run}").write_text(payload["prompt"], encoding="utf-8")
-        task.path(f"request.{run}").write_text(json.dumps({"run": run, "at": time.time()}), encoding="utf-8")
-        return {"action": "requested", "run": run}
+            return reply
+        job["access"] = access
+        write_json(task.path("job.json"), job)
+        grant = read_json(task.path("grant.json"), {}) or {}
+        write_json(task.path("grant.json"), {**grant, "access": access})
+    if run and not task.path(f"rc.{run}").exists():
+        if not task.path(f"taken.{run}").exists():
+            with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:
+                fh.write("\n\n" + payload["message"])
+            task.event(run, "follow_up", how="queued")
+            return {"action": "queued", "run": run}
+        reply = steer(worker_root, task_id, payload["message"])
+        return reply if reply["action"] != "not_live" else {"action": "busy", "run": run}
+    run = max(run, last_run(task)) + 1
+    task.path(f"prompt.{run}").write_text(payload["prompt"], encoding="utf-8")
+    task.path(f"request.{run}").write_text(json.dumps({"run": run, "at": time.time()}), encoding="utf-8")
+    return {"action": "requested", "run": run}
 
 
 def _permission_pending(runner, handle: Handle) -> bool:

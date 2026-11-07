@@ -186,7 +186,7 @@ def test_board_serves_every_part_with_counts_equal_to_its_lists(work, fakes, cli
     assert [row["target"] for row in board["inbox"]["decide"]] == ["T1", "G1"]
     assert [row["answered"] for row in board["inbox"]["decide"]] == [False, True]
     assert [(row["id"], row["waiting"]) for row in board["inbox"]["mine"]] == [("T3", False), ("T4", True)]
-    assert board["inbox"]["review"] == ["OT-BET0008", "OT-ALP0002"]
+    assert board["inbox"]["review"] == ["OT-BET0008"]  # OT-ALP0002 waits on alpha's verdict (lina#295)
     assert {name: [row["id"] for row in rows] for name, rows in board["due"].items()} == {
         "overdue": ["T3"], "today": ["T1"], "week": [], "later": []}
     assert [(m["name"], m["state"], m["why"]) for m in board["machines"]] == [("build-a", "down", "unreachable"),
@@ -196,14 +196,32 @@ def test_board_serves_every_part_with_counts_equal_to_its_lists(work, fakes, cli
     assert "someone@example.com" not in json.dumps(board)
 
     counts, inbox = board["counts"], board["inbox"]
-    assert counts["inbox"] == len(inbox["decide"]) + len(inbox["review"]) + len(inbox["mine"]) == 6
+    assert counts["inbox"] == len(inbox["decide"]) + len(inbox["review"]) + len(inbox["mine"]) == 5
     assert counts["running"] == sum(card["state"] == "in_progress" for card in board["cards"]) == 1
     assert counts["stopped"] == sum(card["state"] == "stopped" for card in board["cards"]) == 1
     assert counts["done"] == sum(card["state"] == "done" for card in board["cards"]) == 1
     assert counts["due"] == sum(len(rows) for rows in board["due"].values()) == 2
-    assert counts["agents"] == {"alpha": 1, "beta": 0}
-    assert sorted(note["kind"] for note in board["notices"]) == ["ask", "ask", "review", "review", "todo", "todo"]
+    assert counts["agents"] == {"alpha": 2, "beta": 0}
+    assert sorted(note["kind"] for note in board["notices"]) == ["ask", "ask", "review", "todo", "todo"]
     assert any("결정 필요: 색을 고를까?" in note["line"] for note in board["notices"])
+
+
+def test_a_run_waiting_on_an_agent_s_verdict_is_that_agent_s_not_the_owner_s(work, fakes, client):
+    """lina#295: a finished run with no verdict is the agent's to judge; a run asking a question is the owner's."""
+    _record(work)
+    fakes.job("OT-ALP0002", state="done", ended=NOW - 600)
+    fakes.job("OT-BET0008", agent="beta")
+    fakes.live["OT-BET0008"] = {"state": "running", "live": {"dash": "human", "why": "asked which colour"}}
+
+    board = _valid("BoardSnapshot", client.get("/api/lina/board").json())
+
+    rows = {card["id"]: card["waitingOn"] for card in board["cards"]}
+    assert rows == {"OT-ALP0002": "agent:alpha", "OT-BET0008": None}
+    counts, inbox = board["counts"], board["inbox"]
+    assert inbox["review"] == ["OT-BET0008"]
+    assert [note["target"] for note in board["notices"] if note["kind"] == "review"] == ["OT-BET0008"]
+    assert counts["inbox"] == len(inbox["decide"]) + len(inbox["mine"]) + 1
+    assert counts["agents"] == {"alpha": 1, "beta": 0}
 
 
 @pytest.mark.parametrize("path", list(ROUTES))
