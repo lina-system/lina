@@ -18,6 +18,14 @@ no longer parked, so later ticks never wake it again. A parked card with no
 ``wait_for`` (a manual schedule, a block on a person's answer) is left alone:
 whoever parked it unblocks it.
 
+A wait that can no longer be met by itself is handed to a person once (lina#258): the card
+becomes a ``needs_input`` block without ``wait_for`` (:func:`hold_for_person`), its reason naming
+why. That is a card or review wait whose upstream card was archived without finishing or
+deleted, and a wait that could not be read ``WAIT_READ_FAILURE_LIMIT`` ticks in a row (a PR
+wait whose evidence keeps failing, for example a gh login that cannot read the repository).
+Each failed read is a ``wait_read_failed`` event carrying the failure and the running count;
+the first good read after failures writes ``wait_read_ok``, so only consecutive failures count.
+
 The same tick runs ``kanban_db_verdicts.verdict_tick``: a card woken to judge a run goes back to
 waiting once it is judged, and a run or a pause nobody acts on is raised once (lina#295).
 """
@@ -40,6 +48,14 @@ _PARK_EVENT_KINDS = ("scheduled", "blocked", "unblocked", "gave_up")
 _PARKED_EVENT_FOR_STATUS = {"scheduled": "scheduled", "blocked": "blocked"}
 # Required-check classifications (kanban_pr_acceptance) that mean "not finished yet".
 _UNFINISHED_CHECKS = {"pending", "missing", "stale"}
+# Consecutive failed reads of one parked wait before it goes to a person: about half an hour
+# at the default kanban.dispatch_interval_seconds (60), long enough to ride out a GitHub blip.
+WAIT_READ_FAILURE_LIMIT = 30
+_READ_EVENT_KINDS = ("wait_read_failed", "wait_read_ok")
+
+
+class WaitReadFailed(Exception):
+    """The evidence for a wait could not be collected; the message names the failure."""
 
 
 def _parse_until(value: str) -> int:
@@ -113,13 +129,14 @@ def park_payload(conn: sqlite3.Connection, task_id: str, reason: Optional[str],
                  wait_for: Optional[dict[str, Any]]) -> dict[str, Any]:
     """The ``scheduled`` event payload. A wait parked from a reviewer run (claimed from
     ``review``) records ``resume_status: review`` so the wake returns it to review, not to an
-    implementation run. A schedule without ``wait_for`` records only its reason, as before."""
+    implementation run. A manual schedule (no ``wait_for``) from a reviewer run records it too
+    (lina#258), so its unblock also returns to review; any other run's schedule records only its
+    reason and its ``wait_for``."""
     from hermes_cli import kanban_db as kb
 
     payload: dict[str, Any] = {"reason": reason}
-    if not wait_for:
-        return payload
-    payload["wait_for"] = wait_for
+    if wait_for:
+        payload["wait_for"] = wait_for
     row = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()
     if row is not None and row["status"] == "running" and kb._retry_status_for_run(conn, task_id) == "review":
         payload["resume_status"] = "review"
@@ -248,24 +265,121 @@ def dispatcher_wake(conn: sqlite3.Connection, task_id: str, park_event_id: int, 
         return woken
 
 
-def pr_checks_finished(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
+def read_pr_checks(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
     """True once every required check on the PR's head has a conclusion (pass, fail, or an
     infrastructure conclusion such as cancelled), read from complete evidence only.
 
     ``collect_acceptance`` sets ``detail`` on every path that stops before the closing head/base
-    re-read: an unreadable PR, an auth refusal, a collection error (``infra``, possibly with checks
-    already gathered) and a head that moved (``stale``). Those keep waiting and are re-read next
-    tick. The one early stop that is complete is "no required checks" (``required == []``). A
-    receipt without ``detail`` ran to the end, so its ``infra`` can only be a check's conclusion.
+    re-read. A head that moved (``stale``) keeps waiting and is re-read next tick. An unreadable PR,
+    an auth refusal or a collection error (``infra``, possibly with checks already gathered) raises
+    :class:`WaitReadFailed` naming the receipt's classification and detail, which the tick counts.
+    The one early stop that is complete is "no required checks" (``required == []``). A receipt
+    without ``detail`` ran to the end, so its ``infra`` can only be a check's conclusion.
     """
     from hermes_cli.kanban_pr_acceptance import collect_acceptance
 
     url = f"https://github.com/{wait_for['repo']}/pull/{int(wait_for['number'])}"
     receipt = collect_acceptance(url, None, assignee)
     if "detail" in receipt:
-        return receipt.get("required") == []
+        if receipt.get("required") == []:
+            return True
+        if receipt.get("classification") == "stale":
+            return False
+        raise WaitReadFailed(f"{receipt.get('classification')}: {receipt['detail']}")
     checks = receipt.get("checks") or []
     return bool(checks) and all(c.get("classification") not in _UNFINISHED_CHECKS for c in checks)
+
+
+def pr_checks_finished(wait_for: dict[str, Any], assignee: Optional[str]) -> bool:
+    """:func:`read_pr_checks` with a failed read reported as not finished."""
+    try:
+        return read_pr_checks(wait_for, assignee)
+    except WaitReadFailed:
+        return False
+
+
+def hold_for_person(conn: sqlite3.Connection, task_id: str, park_event_id: int, reason: str) -> bool:
+    """End a wait that cannot be met by itself: the card becomes a ``needs_input`` block with no
+    ``wait_for``, so the tick leaves it to a person, who reads ``reason`` on the board.
+
+    Only while ``park_event_id`` still parks the card (same re-check as :func:`dispatcher_wake`).
+    A ``scheduled`` card moves to ``blocked``; a ``needs_input`` block stays blocked and gets a
+    new ``blocked`` event without the wait. A review phase the park recorded is carried as
+    ``resume_status: review``, so the person's unblock returns the card to review. Like
+    ``kanban_db_handoff._hold_review_card`` it records a ``blocked`` run of its own.
+    """
+    from hermes_cli import kanban_db as kb
+
+    with kb.write_txn(conn):
+        if not _still_parked_by(conn, task_id, park_event_id):
+            return False
+        status = conn.execute("SELECT status FROM tasks WHERE id = ?", (task_id,)).fetchone()["status"]
+        if status == "scheduled":
+            resume_status = scheduled_resume_status(conn, task_id)
+            conn.execute(
+                "UPDATE tasks SET status = 'blocked', block_kind = 'needs_input', block_recurrences = "
+                "CASE WHEN block_kind = 'needs_input' THEN block_recurrences + 1 ELSE 1 END "
+                "WHERE id = ? AND status = 'scheduled'", (task_id,),
+            )
+        else:
+            resume_status = kb._resume_status_from_events(conn, task_id)
+        run_id = kb._end_or_synthesize_run(conn, task_id, outcome="blocked", status="blocked",
+                                          summary=reason, synthesize=True)
+        kb._append_event(conn, task_id, "blocked", {
+            "reason": reason, "kind": "needs_input", "source_status": status,
+            **({"resume_status": "review"} if resume_status == "review" else {}),
+        }, run_id=run_id)
+        task = kb.get_task(conn, task_id)
+    kb._fire_task_hook("kanban_task_blocked", task, task_id, run_id, reason=reason)
+    kb.record_terminal_outcome(conn, task_id)
+    return True
+
+
+def _upstream_ended_unfinished(conn: sqlite3.Connection, wait_for: dict[str, Any]) -> Optional[str]:
+    """``archived``/``deleted`` when a card or review wait's upstream card ended without being
+    completed (see :func:`_card_done`), so the awaited event can never happen; else None."""
+    if wait_for["kind"] not in ("card", "review"):
+        return None
+    row = conn.execute("SELECT status, completed_at FROM tasks WHERE id = ?",
+                       (str(wait_for.get("task_id")),)).fetchone()
+    if row is None:
+        return "deleted"
+    return "archived" if row["status"] == "archived" and row["completed_at"] is None else None
+
+
+def _consecutive_read_failures(conn: sqlite3.Connection, task_id: str, park_event_id: int) -> int:
+    row = conn.execute(
+        f"SELECT kind, payload FROM task_events WHERE task_id = ? AND id > ? AND kind IN "
+        f"({','.join('?' for _ in _READ_EVENT_KINDS)}) ORDER BY id DESC LIMIT 1",
+        (task_id, park_event_id, *_READ_EVENT_KINDS),
+    ).fetchone()
+    if row is None or row["kind"] != "wait_read_failed" or not row["payload"]:
+        return 0
+    return int(json.loads(row["payload"]).get("count") or 0)
+
+
+def _record_read(conn: sqlite3.Connection, task_id: str, park_event_id: int, wait_for: dict[str, Any],
+                 failure: Optional[str]) -> None:
+    """Count a failed read of the card's wait (``failure``) or end a run of them (None); hand the
+    card to a person once ``WAIT_READ_FAILURE_LIMIT`` reads in a row have failed."""
+    from hermes_cli import kanban_db as kb
+
+    if failure is None and not _consecutive_read_failures(conn, task_id, park_event_id):
+        return   # the usual good read: nothing to write, no write lock
+    with kb.write_txn(conn):
+        if not _still_parked_by(conn, task_id, park_event_id):
+            return
+        count = _consecutive_read_failures(conn, task_id, park_event_id)
+        if failure is None:
+            if count:
+                kb._append_event(conn, task_id, "wait_read_ok", {"after_failures": count})
+            return
+        count += 1
+        kb._append_event(conn, task_id, "wait_read_failed", {"failure": failure, "count": count})
+    if count >= WAIT_READ_FAILURE_LIMIT:
+        hold_for_person(conn, task_id, park_event_id, (
+            f"The wait ({describe_wait(wait_for)}) could not be read {count} times in a row; last "
+            f"failure: {failure}. It no longer waits by itself: fix the cause, then unblock the card."))
 
 
 def _card_done(conn: sqlite3.Connection, task_id: str) -> bool:
@@ -298,7 +412,7 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
     from hermes_cli import kanban_db as kb
 
     now = int(time.time()) if now is None else int(now)
-    pr_checks_fn = pr_checks_fn or pr_checks_finished
+    pr_checks_fn = pr_checks_fn or read_pr_checks
     rows = conn.execute(
         "SELECT id, status, assignee FROM tasks WHERE status = 'scheduled' "
         "OR (status = 'blocked' AND block_kind = 'needs_input') ORDER BY created_at ASC"
@@ -309,11 +423,22 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
         if parked is None:
             continue
         park_event_id, wait_for = parked
+        ended = _upstream_ended_unfinished(conn, wait_for)
+        if ended:
+            hold_for_person(conn, row["id"], park_event_id, (
+                f"The card this one waited for ({wait_for.get('task_id')}) was {ended} without "
+                "finishing, so the wait can never be met. Decide what it waits on now, then unblock it."))
+            continue
         try:
             met = wait_met(conn, wait_for, assignee=row["assignee"], now=now, pr_checks_fn=pr_checks_fn)
-        except Exception:  # health: allow BLE001 -- one unreadable wait must not stall the tick for every other card; logged with traceback, retried next tick
-            kb._log.warning("kanban: wait check failed for %s (%s)", row["id"], wait_for, exc_info=True)
+        except WaitReadFailed as exc:
+            _record_read(conn, row["id"], park_event_id, wait_for, str(exc))
             continue
+        except Exception as exc:  # health: allow BLE001 -- one unreadable wait must not stall the tick for every other card; logged with traceback, counted, retried next tick
+            kb._log.warning("kanban: wait check failed for %s (%s)", row["id"], wait_for, exc_info=True)
+            _record_read(conn, row["id"], park_event_id, wait_for, f"error: {type(exc).__name__}")
+            continue
+        _record_read(conn, row["id"], park_event_id, wait_for, None)
         if met and dispatcher_wake(conn, row["id"], park_event_id, wait_for):
             woken.append(row["id"])
     from hermes_cli.kanban_db_verdicts import verdict_tick
@@ -322,7 +447,8 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
 
 
 __all__ = [
-    "DISPATCHER_ACTOR", "WAIT_KINDS", "describe_wait", "dispatcher_wake", "needs_input_wait", "park_payload",
-    "parse_wait_for", "pr_checks_finished", "recorded_wait", "scheduled_resume_status", "wait_for_from_directive",
-    "wait_met", "wake_waiting_tasks", "woken_for_pr_work",
+    "DISPATCHER_ACTOR", "WAIT_KINDS", "WAIT_READ_FAILURE_LIMIT", "WaitReadFailed", "describe_wait",
+    "dispatcher_wake", "hold_for_person", "needs_input_wait", "park_payload", "parse_wait_for",
+    "pr_checks_finished", "read_pr_checks", "recorded_wait", "scheduled_resume_status",
+    "wait_for_from_directive", "wait_met", "wake_waiting_tasks", "woken_for_pr_work",
 ]

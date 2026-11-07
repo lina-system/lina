@@ -16,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from hermes_cli.worker import settings
+from hermes_cli.worker import kanban_link, settings
 
 
 _HELD = threading.local()  # lock files this thread holds
@@ -61,6 +61,11 @@ class Store:
         return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else None
 
     def save(self, job: dict) -> None:
+        """Replace the job file atomically; each write has its own temp file, so overlapping saves never collide.
+
+        A job on a Hermes card carries ``cards`` (``kanban_link.judged_cards``), added on its first save."""
+        if kanban_link.on_hermes(job.get("card")) and "cards" not in job:
+            job["cards"] = kanban_link.judged_cards(job["card"])
         _replace(self.path(job["id"]), job)
 
     @staticmethod

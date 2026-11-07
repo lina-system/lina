@@ -180,7 +180,15 @@ class NegotiatedTransport:
 
 
 def for_device(dev: Device, worker_root: Path) -> NegotiatedTransport:
-    raw = LocalTransport(worker_root) if dev.local else SshTransport(dev)
+    """In this process for the hub's own machine, the hub-run verbs for a file node (``kind: file``), else ssh."""
+    from hermes_cli.worker.settings import FILE_KIND
+    if dev.local:
+        raw: Transport = LocalTransport(worker_root)
+    elif dev.kind == FILE_KIND:
+        from hermes_cli.worker.file_node import FileNodeTransport
+        raw = FileNodeTransport(dev, worker_root)
+    else:
+        raw = SshTransport(dev)
     return NegotiatedTransport(raw, dev.name)
 
 

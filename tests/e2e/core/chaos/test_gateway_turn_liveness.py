@@ -29,7 +29,6 @@ from __future__ import annotations
 
 import json
 import re
-import sqlite3
 import sys
 import time
 import uuid
@@ -226,26 +225,28 @@ def _wait_until(pred: Callable[[], object], timeout: float) -> bool:
 
 
 def _session_with(state_db: Path, needle: str) -> str | None:
-    conn = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=10)
-    try:
-        row = conn.execute(
-            "SELECT session_id FROM messages WHERE role = 'user' AND content LIKE ? ORDER BY id DESC LIMIT 1",
-            (f"%{needle}%",)).fetchone()
-    finally:
-        conn.close()
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
+
+    content = text_sql("content")
+    with SessionDB(db_path=state_db, read_only=True) as db:
+        row = db._read_one(
+            f"SELECT session_id FROM transcript_rows WHERE role = 'user' AND {content} LIKE ? "
+            "ORDER BY id DESC LIMIT 1",
+            (f"%{needle}%",))
     return row[0] if row else None
 
 
 def _persisted(state_db: Path, session_id: str) -> list[dict[str, Any]]:
-    conn = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=10)
-    try:
-        conn.row_factory = sqlite3.Row
-        rows = conn.execute(
-            "SELECT role, content, tool_call_id, tool_calls FROM messages "
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
+
+    content, calls = text_sql("content"), text_sql("tool_calls")
+    with SessionDB(db_path=state_db, read_only=True) as db:
+        rows = [dict(r) for r in db._read_all(
+            f"SELECT role, {content} AS content, tool_call_id, {calls} AS tool_calls FROM transcript_rows "
             "WHERE session_id = ? AND active = 1 AND role IN ('user', 'assistant', 'tool') ORDER BY id",
-            (session_id,)).fetchall()
-    finally:
-        conn.close()
+            (session_id,))]
     out = []
     for r in rows:
         m: dict[str, Any] = {"role": r["role"], "content": r["content"]}

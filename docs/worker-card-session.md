@@ -47,6 +47,8 @@ active profile. The submit line names the owner and its source; `accept` and `re
   them ends; one that names a run this hub did not start is left to the tool that started it. A scheduled card is
   unblocked once; running/ready means the model has not parked yet, so the wake stays pending for the next tick.
   Other states (including done, archived and blocked) finish without a wake. The end comment is already on the card.
+- The wake is `unblock --judge-wake <run id>` (the batch ID for an `OG-` batch), so the card lands `ready` to judge
+  the run even behind an open parent; a Hermes without that option gets a bare `unblock` once (receipt `unblock: bare`).
 - A run that waits on a person's answer writes one comment with the question, once per question (no attachment,
   no wake); answer it with `lina worker send <ID> "<answer>"`.
 - No chat notice is sent for a run on a Hermes card. The agent's main session hears about it from the card's own end.

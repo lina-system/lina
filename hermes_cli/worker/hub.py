@@ -22,6 +22,7 @@ from pathlib import Path
 from hermes_cli.lina_work_settings import ACCESS, SettingsError
 from hermes_cli.lina_work_settings_route import decide
 from hermes_cli.worker import bidding, kanban_link, models, notice, request_keys, runners, settings
+from hermes_cli.worker.file_node_deny import review_reason
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt, with_hub_rules
 from hermes_cli.worker.runners.base import RunnerError
@@ -357,6 +358,7 @@ class Hub:
         opts["inputs"] = self._inputs(opts.get("inputs") or [], opts["private_inputs"])
         if opts["private_inputs"]:
             opts["host"] = self._hub_node(opts.get("host"))
+        self._named_device_gate(opts, briefs)
         group = group or (self.store.new_id(opts["bot"], "OG") if len(briefs) > 1 else None)
         jobs = [self._submit_one(brief, opts, group, tid) for brief, tid in zip(briefs, ids or [None] * len(briefs))]
         for job in jobs if opts.get("todo") else []:
@@ -377,6 +379,20 @@ class Hub:
         if opts.get("wait") is not None and len(jobs) == 1:
             return self._wait(jobs[0]["id"], float(opts["wait"]))
         return 0
+
+    def _named_device_gate(self, opts: dict, briefs: list[Path]) -> None:
+        """Refuse at submit what the ``--host`` device would never take: its role (``person``; a repo on ``files``),
+        and for a file node a denied folder in a brief or input, or a model path that does not answer."""
+        dev = next((d for d in self.devices() if d.name == opts.get("host")), None)
+        if dev is None:
+            return
+        if why := bidding.role_refusal(dev, opts.get("repo")):
+            raise HubError(f"--host {dev.name}: {why}")
+        if dev.kind == settings.FILE_KIND:
+            from hermes_cli.worker.file_node import submit_refusal
+            texts = [brief.read_text(encoding="utf-8-sig", errors="replace") for brief in briefs]
+            if why := submit_refusal(dev, self.worker_root, texts, opts["inputs"]):
+                raise HubError(why)
 
     def _submit_identity(self, opts: dict) -> None:
         link = self._link()
@@ -568,6 +584,9 @@ class Hub:
                         else ""))
             if live.get("last"):
                 self.out(f"  last said: {live['last'][:240]}")
+        elif state == "review" and (why := review_reason(
+                (read_json(self.store.out_dir(job) / "manifest.json", {}) or {}).get("deny_check"))):
+            self.out(f"  needs review — {why} (the end notice names them; `lina worker result {job['id']}`).")
         elif state == "review":
             self.out(f"  needs review: the '{NEXT_NOTES}' section of report.md is missing or empty. "
                      f"`lina worker send {job['id']} \"fill that section\"`, or copy it yourself and accept.")
@@ -870,6 +889,9 @@ class Hub:
         text = notice.body(job, kind, run, out_dir, check, notes=manifest.get("next_notes"),
                            quiet_s=float((manifest.get("wait") or {}).get("quiet_s") or 0), err_tail=err_tail,
                            note=job.get("extra"))
+        if kind != "unknown" and str(manifest.get("run")) == str(run):
+            from hermes_cli.worker.file_node_deny import with_check
+            text = with_check(text, manifest.get("deny_check"))
         return text, out_dir
 
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
@@ -1040,14 +1062,15 @@ class Hub:
                 self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
                 return f"card {card['task']}: {step} failed, retried on the next report or tick"
             entry["done"].append(step)
-            entry["woke"] = entry.get("woke") or woke
+            if woke:
+                entry["woke"], entry["unblock"] = True, woke
             self.store.save(job)
         del job["card_pending"][marker]
         self.store.save(job)
         if entry.get("report"):
             shutil.rmtree(Path(entry["report"]).parent, ignore_errors=True)
         self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
-                           woke=bool(entry.get("woke")))
+                           woke=bool(entry.get("woke")), unblock=entry.get("unblock"))
         return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
 
     def _report_snapshot(self, job: dict, marker: str) -> str | None:

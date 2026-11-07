@@ -73,9 +73,10 @@ def test_the_board_reads_the_runs_devices_and_run_events_the_worker_wrote(split_
     assert [run["id"] for run in runs] == ["OT-ALP0001"], "the run the worker wrote is on the board"
 
     errors: list[dict] = []
-    machines = lina_board.devices_read(board_root, now, errors)
+    devices = lina_board.devices_read(board_root, now, errors)
     assert errors == []
-    assert [machine["name"] for machine in machines] == ["here"], "the devices are the worker's own config's"
+    assert [machine["name"] for machine in devices["machines"]] == ["here"], "the devices are the worker's own config's"
+    assert devices["person"] == []
 
     stream = lina_board_events.Stream(board_root)
     try:

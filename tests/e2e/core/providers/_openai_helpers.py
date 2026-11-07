@@ -11,7 +11,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 import time
@@ -243,20 +242,21 @@ def wait_until(pred: Callable[[], Any], timeout: float, what: str, interval: flo
 
 
 def db_messages(h: Home, session_id: str | None = None) -> list[dict[str, Any]]:
-    """Active message rows (oldest first), read-only; every session when ``session_id`` is None."""
+    """Active message rows (oldest first), read-only; every session when ``session_id`` is None.
+
+    Text columns come from the memory store through SessionDB."""
     if not h.db_path.exists():
         return []
-    con = sqlite3.connect(f"file:{h.db_path}?mode=ro", uri=True, timeout=10)
-    con.row_factory = sqlite3.Row
-    try:
-        sql = "SELECT * FROM messages WHERE active = 1"
-        params: tuple = ()
-        if session_id:
-            sql += " AND session_id = ?"
-            params = (session_id,)
-        return [dict(r) for r in con.execute(sql + " ORDER BY id", params)]
-    finally:
-        con.close()
+    from hermes_state import SessionDB
+    from hermes_state_store import text_columns_sql
+
+    sql = f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE active = 1"
+    params: tuple = ()
+    if session_id:
+        sql += " AND session_id = ?"
+        params = (session_id,)
+    with SessionDB(db_path=h.db_path, read_only=True) as db:
+        return [dict(r) for r in db._read_all(sql + " ORDER BY id", params)]
 
 
 def db_tool_calls(rows: list[dict[str, Any]]) -> list[dict[str, Any]]:
