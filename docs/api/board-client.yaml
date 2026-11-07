@@ -57,7 +57,9 @@ paths:
   /devices:
     get:
       operationId: getDevices
-      summary: The work devices (devices.workers) with readiness, load and, with a metrics reader, usage.
+      summary: >
+        The devices of devices.workers by role (lina#234): the nodes (work, files) with readiness, load, runners and,
+        with a metrics reader, usage; the person devices with their status and tool versions only.
       parameters:
         - $ref: "#/components/parameters/IfNoneMatch"
       responses:
@@ -72,6 +74,107 @@ paths:
                 $ref: "#/components/schemas/DevicesView"
         "304":
           description: Unchanged since the ETag sent.
+  /devices/{name}/restart:
+    post:
+      operationId: restartDeviceService
+      summary: >
+        The owner restarts a node's worker or OCX through the node's service layer (lina#234). Only from the owner's
+        devices (the work settings' owner-device gate); logged to <LINA root>/board/device-actions.jsonl.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [service]
+              properties:
+                service:
+                  type: string
+                  enum: [worker, ocx]
+      responses:
+        "200":
+          description: Restarted.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceAction"
+        "400":
+          $ref: "#/components/responses/Refused"
+        "403":
+          $ref: "#/components/responses/Refused"
+        "404":
+          $ref: "#/components/responses/Refused"
+        "409":
+          description: A person device, which is never a node.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refusal"
+        "429":
+          $ref: "#/components/responses/Refused"
+        "502":
+          description: The node refused; detail is its reason.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refusal"
+  /devices/{name}/sign-in:
+    post:
+      operationId: startDeviceSignIn
+      summary: >
+        The owner starts a runner's sign-in on a node (lina#230's start function, lina#234). The start runs in the
+        background: the answer is 202 at once, its end is a second line in device-actions.jsonl, and the app sees
+        it in the node's runner signIn. No sign-in address, code or token is ever in a reply or the log.
+      parameters:
+        - name: name
+          in: path
+          required: true
+          schema:
+            type: string
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [runner]
+              properties:
+                runner:
+                  type: string
+                  description: A runner of worker.runners.
+      responses:
+        "202":
+          description: Started (state started).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DeviceAction"
+        "400":
+          $ref: "#/components/responses/Refused"
+        "403":
+          $ref: "#/components/responses/Refused"
+        "404":
+          $ref: "#/components/responses/Refused"
+        "409":
+          description: A person device, or a sign-in of the same runner on the same device is already running.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refusal"
+        "429":
+          $ref: "#/components/responses/Refused"
+        "501":
+          description: This core has no sign-in start yet (lina#230).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Refusal"
   /quota:
     get:
       operationId: getQuota
@@ -483,7 +586,9 @@ components:
         agents:
           type: object
           nullable: true
-          description: Running cards per agent (configured agents with none read 0).
+          description: >
+            Each agent's own work: its running cards plus its finished runs waiting for its verdict
+            (`waitingOn: agent:<name>`, never in the owner's inbox); configured agents with none read 0.
           additionalProperties:
             type: integer
             minimum: 0
@@ -527,6 +632,13 @@ components:
         agent:
           type: string
           nullable: true
+        waitingOn:
+          type: string
+          nullable: true
+          description: >
+            Who the run waits on: `agent:<name>` for a finished run waiting for the verdict of the agent that
+            handed it out. Such a run is counted under that agent in `counts.agents`, never in `inbox.review`, the
+            `review` notices or `counts.inbox`; null otherwise (shown as before).
         kind:
           type: string
           nullable: true
@@ -790,10 +902,22 @@ components:
           description: The owner marked it read (kept by the core per owner, the same on every device).
     Machine:
       type: object
-      required: [name, state, why, cpu, memory, disk, temp, load, cores, running, cap, freeGb, metricsAt]
+      required: [name, role, reachable, state, why, cpu, memory, disk, temp, load, cores, running, cap, freeGb,
+                 metricsAt, runners]
       properties:
         name:
           type: string
+        role:
+          type: string
+          enum: [work, files]
+          description: work takes bid work; files takes named work only.
+        reachable:
+          type: boolean
+          description: Whether ssh (or the local contact) reached the node.
+        runners:
+          type: array
+          items:
+            $ref: "#/components/schemas/RunnerCell"
         state:
           type: string
           enum: [ok, warn, down]
@@ -829,6 +953,102 @@ components:
           nullable: true
         metricsAt:
           type: number
+          nullable: true
+    RunnerCell:
+      type: object
+      additionalProperties: false
+      required: [name, type, fleet, installed, signIn, signingIn, ready, why]
+      description: >
+        One runner on a node, from its hello (lina#222, lina#218). A node that cannot be reached lists the runners
+        the hub offers, each why unreachable; one whose hello has no runner rows yet lists them why update.
+      properties:
+        name:
+          type: string
+        type:
+          type: string
+          nullable: true
+        fleet:
+          type: string
+          nullable: true
+          description: >
+            The hub's pinned version (pm/lina-deps.json; omo's own pin for omo); null for a runner LINA does not pin.
+            lina#238 moves the fleet version to its own record later.
+        installed:
+          type: string
+          nullable: true
+          description: The version the node reports installed (omo, from the node's last `lina omo status`).
+        signIn:
+          type: string
+          nullable: true
+          enum: [signed_in, signed_out, api_key, ocx, unknown, null]
+        signingIn:
+          type: boolean
+          description: >
+            True while a sign-in this hub started for this runner on this node is still running
+            (POST /devices/{name}/sign-in); false otherwise. How it ended shows in signIn on a later read.
+        ready:
+          type: boolean
+          nullable: true
+          description: Null for a runner LINA does not pin.
+        why:
+          type: string
+          nullable: true
+          enum: [update, prepare, sign_in, unreachable, unknown, null]
+          description: >
+            One reason when not ready. update also when the installed version is not the fleet version, whatever the
+            node says; unknown when the node gave no reason or omo's status was not read yet.
+    PersonDevice:
+      type: object
+      additionalProperties: false
+      required: [name, role, reachable, checkedAt, tools]
+      description: >
+        An owner's own device (role person): never a node, never probed, never given work. Read only, at most every
+        15 minutes in the background: one ssh call prints each tool's --version; nothing on it is changed.
+      properties:
+        name:
+          type: string
+        role:
+          type: string
+          enum: [person]
+        reachable:
+          type: boolean
+          nullable: true
+          description: Null until the first read ends; false keeps the last versions read.
+        checkedAt:
+          type: number
+          nullable: true
+        tools:
+          type: array
+          items:
+            type: object
+            additionalProperties: false
+            required: [name, fleet, installed]
+            properties:
+              name:
+                type: string
+              fleet:
+                type: string
+                nullable: true
+              installed:
+                type: string
+                nullable: true
+    DeviceAction:
+      type: object
+      additionalProperties: false
+      required: [ok, device, action, state, reason]
+      properties:
+        ok:
+          type: boolean
+        device:
+          type: string
+        action:
+          type: string
+          enum: [restart, sign-in]
+        state:
+          type: string
+          description: restarted, or started for a sign-in.
+        reason:
+          type: string
           nullable: true
     QuotaWindow:
       type: object
@@ -1095,7 +1315,7 @@ components:
           $ref: "#/components/schemas/DueGroups"
     DevicesView:
       type: object
-      required: [version, at, errors, machines]
+      required: [version, at, errors, machines, person]
       properties:
         version:
           type: integer
@@ -1105,8 +1325,13 @@ components:
           $ref: "#/components/schemas/Errors"
         machines:
           type: array
+          description: The nodes, work first, then files; in each, down, then warn, then ok.
           items:
             $ref: "#/components/schemas/Machine"
+        person:
+          type: array
+          items:
+            $ref: "#/components/schemas/PersonDevice"
     QuotaView:
       type: object
       required: [version, at, errors, quota, missing]

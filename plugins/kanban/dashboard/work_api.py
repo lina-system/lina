@@ -298,6 +298,15 @@ def worker_runs(comments: list[kanban_db.Comment]) -> list[dict[str, Any]]:
     return list(seen.values())  # comments come in id order, so this is first-seen order
 
 
+def runs_awaiting_verdict(facts: CardFacts) -> list[dict[str, Any]]:
+    """Runs this card started (``lina worker``) with no verdict yet; each waits on the agent that judges it
+    (the run's own agent, else the card's implementer), never on the owner (lina#295)."""
+    from hermes_cli.kanban_db_verdicts import verdicts_of_events
+    fallback = _implementer(facts)
+    return [{"id": r["run_id"], "state": r["state"], "waitingOn": f"agent:{r['agent'] or fallback}"}
+            for r in verdicts_of_events(facts.events) if not r["judged"] and (r["agent"] or fallback)]
+
+
 def open_questions(facts: CardFacts) -> list[kanban_db.Comment]:
     """Assignee comments starting ``질문:`` / ``Q:`` with no later comment by someone else."""
     assignee = facts.task.assignee
@@ -348,6 +357,7 @@ def card_detail(facts: CardFacts, now: int) -> dict[str, Any]:
         **card_summary(facts, now),
         "todos": parse_todos(facts.task.body, gates),
         "workerRuns": worker_runs(facts.comments),
+        "runsAwaitingVerdict": runs_awaiting_verdict(facts),
         "gates": gates,
         "comments": [{"id": c.id, "author": c.author, "body": c.body, "createdAt": c.created_at}
                      for c in facts.comments],

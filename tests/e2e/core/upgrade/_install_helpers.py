@@ -223,13 +223,20 @@ def tree_digest(path: Path) -> dict[str, str]:
 
 
 def db_state(db: Path) -> dict:
+    """Integrity, session ids, and a digest of transcript text read through the store."""
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     try:
         integrity = con.execute("PRAGMA integrity_check").fetchall()
         sessions = sorted(r[0] for r in con.execute("SELECT id FROM sessions"))
-        msgs = con.execute("SELECT session_id, role, content FROM messages ORDER BY id").fetchall()
     finally:
         con.close()
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
+
+    content = text_sql("content")
+    with SessionDB(db_path=db, read_only=True) as state:
+        msgs = [tuple(r) for r in state._read_all(
+            f"SELECT session_id, role, {content} FROM transcript_rows ORDER BY id")]
     return {"integrity": integrity, "sessions": sessions,
             "messages": hashlib.sha256(repr(msgs).encode()).hexdigest(), "n_messages": len(msgs)}
 

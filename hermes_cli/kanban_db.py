@@ -33,6 +33,7 @@ from typing import Any, Iterable, Optional
 
 from hermes_cli.kanban_workflow import DEFAULT_STATUSES as VALID_STATUSES
 from hermes_cli.kanban_db_wait import needs_input_wait, park_payload, scheduled_resume_status
+from hermes_cli.kanban_db_verdicts import gate_unjudged_runs, verdict_wake_open
 from toolsets import get_toolset_names
 from utils import unlink_files_older_than
 
@@ -2046,10 +2047,9 @@ def claim_task(
     lock = claimer or _claimer_id()
     expires = now + _resolve_claim_ttl_seconds(ttl_seconds)
     with write_txn(conn):
-        # Single enforcement point: never ready -> running with an undone
-        # parent, whichever writer set 'ready'. Demote to 'todo';
-        # recompute_ready re-promotes when the parents finish.
-        if not _parents_satisfied(conn, task_id):
+        # Single enforcement point: never ready -> running with an undone parent (bar an open verdict
+        # wake, kanban_db_verdicts), whichever writer set 'ready'. Demote to 'todo'; recompute_ready re-promotes.
+        if not _parents_satisfied(conn, task_id) and not verdict_wake_open(conn, task_id):
             conn.execute(
                 "UPDATE tasks SET status = 'todo' "
                 "WHERE id = ? AND status = 'ready'", (task_id,),
@@ -2467,12 +2467,11 @@ def complete_task(
     conn: sqlite3.Connection, task_id: str, *, result: Optional[str] = None,
     summary: Optional[str] = None, metadata: Optional[dict] = None,
     created_cards: Optional[Iterable[str]] = None, expected_run_id: Optional[int] = None,
-    fire_lifecycle_hook: bool = True, force: bool = False,
+    fire_lifecycle_hook: bool = True, force: bool = False, allow_unjudged: bool = False,
 ) -> bool:
-    """``running|ready|blocked|review -> done``; records ``result``.
-
-    ``ready`` is accepted for manual CLI completion, ``review`` for human
-    approval. A ``running`` task under a live claim is only completed with
+    """``running|ready|blocked|review -> done``; records ``result``. Refused (``UnjudgedRunsError``) while a
+    run the card started has no verdict, unless ``allow_unjudged`` (operator; ``gate_unjudged_runs``).
+    ``ready`` is accepted for manual CLI completion, ``review`` for human approval. A ``running`` task under a live claim is only completed with
     proof of ownership (``expected_run_id``) or ``force=True`` (explicit
     operator override) — otherwise :class:`LiveClaimError`, the same fence
     :func:`request_review` applies. With no active run the handoff fields survive via
@@ -2505,6 +2504,7 @@ def complete_task(
         # reopened while this task waited.
         if not _parents_satisfied(conn, task_id):
             return False
+        gate_unjudged_runs(conn, task_id, "complete", allow=allow_unjudged)
         if acceptance is not None and not record_acceptance(conn, task_id, acceptance):
             return False
         trow = conn.execute(
@@ -3090,23 +3090,22 @@ def request_review(
     conn: sqlite3.Connection, task_id: str, *, summary: Optional[str] = None,
     metadata: Optional[dict] = None, reviewer: Optional[str] = None,
     expected_run_id: Optional[int] = None, force: bool = False, with_reason: bool = False,
+    allow_unjudged: bool = False,
 ):
-    """``running``/``ready`` -> ``review``; never touches block recurrence accounting.
+    """``running``/``ready`` -> ``review``; never touches block recurrence accounting. Refused like
+    :func:`complete_task` while a run the card started has no verdict (``allow_unjudged`` overrides).
 
-    Implementer and reviewer are recorded on the event so requested changes
-    route back to the right profile; ``reviewer`` reassigns the task, and on
-    re-review defaults to the latest ``changes_requested`` provenance. A live
-    claim is only cleared with proof of ownership (``expected_run_id``) or
+    Implementer and reviewer are recorded on the event so requested changes route back to the right
+    profile; ``reviewer`` reassigns the task, and on re-review defaults to the latest ``changes_requested``
+    provenance. A live claim is only cleared with proof of ownership (``expected_run_id``) or
     ``force=True``. Returns ``bool``, or ``(ok, reason)`` with ``with_reason``.
 
-    ``metadata["artifacts"]`` names the handoff's deliverable
-    files; a review handoff is the last implementer transition, and the
-    *reviewer's* completion is what cleans the managed scratch workspace up, so
-    the files are staged into the task's durable attachments dir here and the
-    staged paths ride the ``review_requested`` payload for the notifier to
-    upload. A declared artifact that cannot be preserved raises
-    :class:`ArtifactPreservationError`, rolling the whole transition back: the
-    task stays ``running`` and retryable, with no attachments and no event.
+    ``metadata["artifacts"]`` names the handoff's deliverable files; a review handoff is the last
+    implementer transition, and the *reviewer's* completion is what cleans the managed scratch workspace
+    up, so the files are staged into the task's durable attachments dir here and the staged paths ride
+    the ``review_requested`` payload for the notifier to upload. A declared artifact that cannot be
+    preserved raises :class:`ArtifactPreservationError`, rolling the whole transition back: the task
+    stays ``running`` and retryable, with no attachments and no event.
     """
 
     def _ret(ok: bool, reason: Optional[str] = None):
@@ -3126,6 +3125,7 @@ def request_review(
         with write_txn(conn):
             if not _parents_satisfied(conn, task_id):
                 return _ret(False, "parent dependencies are not satisfied")
+            gate_unjudged_runs(conn, task_id, "request_review", allow=allow_unjudged)
             trow = conn.execute(
                 "SELECT assignee, status, claim_lock, current_run_id, worker_pid, "
                 "worker_started_at FROM tasks WHERE id = ?", (task_id,),

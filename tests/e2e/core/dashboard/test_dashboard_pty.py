@@ -87,15 +87,26 @@ def _main_requests(p: H.Profile) -> list[dict]:
 def _user_rows(p: H.Profile, needle: str) -> list[tuple[str, str]]:
     if not p.db.exists():
         return []
-    return [(str(s), str(c)) for s, c in H.db_rows(
-        p.db, "SELECT session_id, COALESCE(content, '') FROM messages WHERE role = 'user' AND content LIKE ?",
-        (f"%{needle}%",))]
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
+
+    content = text_sql("content")
+    with SessionDB(db_path=p.db, read_only=True) as db:
+        rows = db._read_all(
+            f"SELECT session_id, COALESCE({content}, '') FROM transcript_rows "
+            f"WHERE role = 'user' AND {content} LIKE ?",
+            (f"%{needle}%",))
+    return [(str(s), str(c)) for s, c in rows]
 
 
 def _user_sessions(p: H.Profile) -> set[str]:
     if not p.db.exists():
         return set()
-    return {str(s) for (s,) in H.db_rows(p.db, "SELECT DISTINCT session_id FROM messages WHERE role = 'user'")}
+    from hermes_state import SessionDB
+
+    with SessionDB(db_path=p.db, read_only=True) as db:
+        rows = db._read_all("SELECT DISTINCT session_id FROM transcript_rows WHERE role = 'user'")
+    return {str(s) for (s,) in rows}
 
 
 class Chat:

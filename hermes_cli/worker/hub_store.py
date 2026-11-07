@@ -1,6 +1,7 @@
 """The hub's records under ``$LINA_HOME/worker/hub/``: one job file per task (the current view), ``receipts.jsonl``
-(append-only history, never rewritten), fetched results in ``out/<agent>/<ID>/``, request keys, schedules, notices
-and locks.
+(append-only history, never rewritten), fetched results in ``out/<agent>/<ID>/``, request keys, schedules, notices,
+``deliveries.jsonl`` (the delivery ids sent, append-only: ``events``), one record per node (``nodes/<node>.json``:
+``node_watch``) and locks.
 """
 
 from __future__ import annotations
@@ -15,7 +16,7 @@ import threading
 import time
 from pathlib import Path
 
-from hermes_cli.worker import settings
+from hermes_cli.worker import kanban_link, settings
 
 
 _HELD = threading.local()  # lock files this thread holds
@@ -29,6 +30,7 @@ class Store:
         self.schedules, self.notices, self.locks = self.root / "schedules", self.root / "notices", self.root / "locks"
         self.receipts, self.log_file = self.root / "receipts.jsonl", self.root / "worker.log"
         self.keys = self.root / "keys"
+        self.deliveries, self.nodes = self.root / "deliveries.jsonl", self.root / "nodes"
 
     def log(self, message: str) -> None:
         self.root.mkdir(parents=True, exist_ok=True)
@@ -59,6 +61,11 @@ class Store:
         return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else None
 
     def save(self, job: dict) -> None:
+        """Replace the job file atomically; each write has its own temp file, so overlapping saves never collide.
+
+        A job on a Hermes card carries ``cards`` (``kanban_link.judged_cards``), added on its first save."""
+        if kanban_link.on_hermes(job.get("card")) and "cards" not in job:
+            job["cards"] = kanban_link.judged_cards(job["card"])
         _replace(self.path(job["id"]), job)
 
     @staticmethod
@@ -71,6 +78,24 @@ class Store:
 
     def save_key(self, record: dict) -> None:
         _replace(self.keys / f"{self.key_name(record['key'])}.json", record)
+
+    def load_node(self, node: str) -> dict | None:
+        path = self.nodes / f"{node}.json"
+        return json.loads(path.read_text(encoding="utf-8-sig")) if path.is_file() else None
+
+    def save_node(self, record: dict) -> None:
+        _replace(self.nodes / f"{record['node']}.json", record)
+
+    @contextlib.contextmanager
+    def edit_node(self, node: str):
+        """Read-modify-write of one node record under its lock (never held across a send): the record as stored now,
+        or a fresh one, saved on exit when it changed."""
+        with self.lock(f"node-{node}"):
+            record = self.load_node(node) or {"node": node, "failures": 0, "down_since": None, "notified_outage": None}
+            before = json.dumps(record, sort_keys=True)
+            yield record
+            if json.dumps(record, sort_keys=True) != before:
+                self.save_node(record)
 
     @contextlib.contextmanager
     def edit(self, task_id: str):

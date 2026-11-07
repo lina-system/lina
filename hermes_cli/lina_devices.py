@@ -104,11 +104,16 @@ def readiness(dev: settings.Device, worker_root: Path) -> dict:
     found = probe(dev, worker_root, runner)
     row = {"name": dev.name, "host": dev.host, "cap": dev.cap, "runner": runner, "ssh": found["ssh"],
            "free_gb": found.get("free_gb"), "running": found.get("running"), "serve": found.get("serve")}
-    omo = omo_status(dev) if found["ssh"] and not found.get("protocol_error") and runner == "omo" else {}
-    row["omo"] = None if runner != "omo" else bool(omo.get("pinned") and omo.get("current") == omo.get("pinned"))
+    reachable = found["ssh"] and not found.get("protocol_error")
+    hello = _file_node_hello(dev, worker_root) if reachable and dev.kind == settings.FILE_KIND else {}
+    omo = omo_status(dev) if reachable and runner == "omo" and dev.kind != settings.FILE_KIND else {}
+    row["omo"] = (hello.get("omo") if dev.kind == settings.FILE_KIND else None if runner != "omo"
+                  else bool(omo.get("pinned") and omo.get("current") == omo.get("pinned")))
     why = bidding.readiness(dev, found, repo=None, min_free_gb=int(settings.setting("min_free_gb", worker=worker)))
     if why == "only when named with --host":
         why = None
+    if hello and not hello.get("ready"):
+        why = hello.get("why") or why
     if why is None and row["omo"] is False:
         why = f"pinned omo {omo.get('pinned') or '?'} not current ({omo.get('error') or omo.get('current') or 'none'})"
     row["ready"], row["why"] = why is None, why
@@ -116,8 +121,16 @@ def readiness(dev: settings.Device, worker_root: Path) -> dict:
     return row
 
 
+def _file_node_hello(dev: settings.Device, worker_root: Path) -> dict:
+    """A file node's own hello (lina#229): it has no lina to answer ``lina omo status``, so its omo version and its
+    readiness (the model path through the hub) come from here."""
+    contact = for_device(dev, worker_root)
+    contact.refresh(timeout=60)
+    return contact.descriptor or {}
+
+
 def render(row: dict) -> str:
-    omo = {None: "-", True: "ok", False: "missing"}[row["omo"]]
+    omo = {None: "-", True: "ok", False: "missing"}.get(row["omo"], row["omo"])  # a file node: its omo version
     return (f"{row['name']:<14} {row['host']:<14} cap {row['cap']} · running {row.get('running', '-')} · ssh "
             f"{'ok' if row['ssh'] else 'unreachable'} · omo {omo} · free disk {row.get('free_gb', '-')}GB · "
             + ("ready" if row["ready"] else f"not ready: {row['why']}"))
@@ -171,8 +184,16 @@ def sign_in_questions(rows: list[dict]) -> list[dict]:
     return list(asks.values())
 
 
-def sign_in(base: Path | None = None, *, as_json: bool = False, out=print) -> int:
-    """``lina devices sign-in``: the sign-in questions over every device (read-only)."""
+def sign_in(base: Path | None = None, *, node: str | None = None, runner: str | None = None, as_json: bool = False,
+            out=print) -> int:
+    """``lina devices sign-in``: the sign-in questions over every device (read-only); with a node and a runner, that
+    runner's sign-in on that node from the hub's browser (``lina_sign_in.start``, lina#230)."""
+    if node is not None:
+        from hermes_cli.lina_sign_in import start
+        result = start(node, runner, base=base)
+        out(json.dumps(result, ensure_ascii=False) if as_json else
+            f"{result['node']} {result['runner']}: {result['state']} · {result['reason']}")
+        return 0 if result["state"] == "signed_in" else 1
     base = _base(base)
     asks = sign_in_questions([readiness(dev, settings.root(base)) for dev in _devices(base)])
     if as_json:

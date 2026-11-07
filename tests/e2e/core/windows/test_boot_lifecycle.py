@@ -30,7 +30,6 @@ import pytest
 from hermes_cli.version_info import get_version_info
 from tests.e2e.core.windows._helpers import (
     WinHome,
-    db_rows,
     hermes,
     hermes_argv,
     hermes_exe,
@@ -40,6 +39,7 @@ from tests.e2e.core.windows._helpers import (
     nonce,
     owned_processes,
     owned_survivors,
+    persisted_messages,
     run,
     taskkill_tree,
     wait_until,
@@ -75,7 +75,7 @@ def test_chat_oneshot_turn_persists(tmp_path: Path) -> None:
 
     announced = re.search(r"session_id:\s*(\S+)", res.stdout + res.stderr)
     assert announced, f"CLI did not announce a session id:\n{res.tail()}"
-    rows = db_rows(home, "SELECT session_id, role, content FROM messages ORDER BY id")
+    rows = persisted_messages(home)
     by_role = {r["role"]: r for r in rows}
     assert prompt_id in (by_role.get("user") or {"content": ""})["content"], rows
     assert reply_id in (by_role.get("assistant") or {"content": ""})["content"], rows

@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional
 
 from agent.redact import redact_sensitive_text
 from hermes_cli.goals import judge_goal
+from hermes_cli.kanban_db_verdicts import return_to_wait, verdict_wake_open
 from tools.registry import no_cache_check_fn, registry, tool_error
 from hermes_cli.config import cfg_get, load_config
 from tools.kanban_tools_schemas import (
@@ -781,6 +782,14 @@ def _handle_complete(args: dict, **kw) -> str:
     _require_dict_metadata(metadata)
     metadata = _stamp_worker_session_metadata(tid, metadata)
     with _board(args.get("board")) as (kb, conn):
+        # A card woken only to judge a run (lina#295) is not finishing: once those runs are judged it goes
+        # back to what it waited on (its open parent, or its schedule); an unjudged one raises, naming it.
+        if verdict_wake_open(conn, tid) and return_to_wait(conn, tid, expected_run_id=_worker_run_id(tid)):
+            returned_to = kb.get_task(conn, tid).status
+            return _ok(task_id=tid, returned_to=returned_to,
+                       note="the runs that woke this card are judged; " + (
+                           "the wait it was parked on is met and it goes on in its next run. End this turn."
+                           if returned_to == "ready" else "it waits again. End this turn."))
         # Goal-mode pre-completion judge gate (Issue #38367). Prevent workers from bypassing the auxiliary
         # judge by calling kanban_complete before acceptance criteria are met. Only enforce when a judge is
         # actually reachable — see _goal_judge_available for why an unavailable judge fails open.
@@ -859,6 +868,8 @@ def _handle_block(args: dict, **kw) -> str:
     with _board(args.get("board")) as (kb, conn):
         _check(kind is None or kind in kb.VALID_BLOCK_KINDS,
                f"kind must be one of {sorted(kb.VALID_BLOCK_KINDS)} (or omit it)")
+        wait_for = _block_wait_for(kb, conn, args.get("wait_for"), kind)
+        kind = "needs_input" if wait_for else kind
         # The goal loop treats ANY blocked status as terminal, so kanban_block
         # would be an escape hatch around the completion judge: goal_mode tasks
         # may only block on genuine external blockers.
@@ -875,10 +886,11 @@ def _handle_block(args: dict, **kw) -> str:
                f"{sorted(_GOAL_MODE_BLOCK_ALLOWED_KINDS)} (got {kind!r}). If the task is actually "
                f"finished or cannot proceed for another reason, call kanban_complete instead — "
                f"the completion judge will evaluate it.")
-        ok = kb.block_task(conn, tid, reason=reason, kind=kind, expected_run_id=_worker_run_id(tid))
+        ok = kb.block_task(conn, tid, reason=reason, kind=kind, expected_run_id=_worker_run_id(tid),
+                           wait_for=wait_for)
         _check(ok, f"could not block {tid} (unknown id or not in running/ready)")
         landed_kind = kb.get_task(conn, tid).block_kind
-        extra: dict = {"block_kind": landed_kind}
+        extra: dict = {"block_kind": landed_kind, **({"wait_for": wait_for} if wait_for else {})}
         if kind == "dependency" and landed_kind != kind:
             # block_task re-kinds a dependency wait that no open parent can satisfy.
             extra["requested_kind"] = kind
@@ -888,6 +900,25 @@ def _handle_block(args: dict, **kw) -> str:
                 "instead of parking in todo where the dispatcher would respawn it."
             )
         return _ok_landed(kb, conn, tid, "blocked", **extra)
+
+
+def _block_wait_for(kb, conn, spec: Any, kind: Optional[str]) -> Optional[dict]:
+    """``wait_for`` for ``kanban_block``, parsed like ``hermes kanban block --wait-for``
+    (``kanban_db_wait.parse_wait_for``): only a ``needs_input`` block waits on an event, and a
+    card or review wait must name an existing card."""
+    if spec is None:
+        return None
+    from hermes_cli.kanban_db_wait import parse_wait_for
+
+    _check(isinstance(spec, str), "wait_for must be a string such as 'card:<task id>'")
+    try:
+        wait_for = parse_wait_for(spec)
+    except ValueError as exc:
+        raise _Reject(f"kanban_block: {exc}. Nothing changed.") from None
+    _check(kind in (None, "needs_input"), "wait_for applies to needs_input blocks only")
+    _check(not wait_for.get("task_id") or kb.get_task(conn, wait_for["task_id"]) is not None,
+           f"unknown task {wait_for.get('task_id')} in wait_for")
+    return wait_for
 
 
 @_kanban_handler("kanban_schedule")

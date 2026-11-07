@@ -168,7 +168,8 @@ _NEW_SQL = """
 
 
 def new_vector(conn, query_vector: Sequence[float], model: str, question: Question, k: int = TOP_K) -> list[str]:
-    owners = [question.agent, question.honcho.get("workspace", "hermes")]
+    from hermes_state_store import SHARED_VECTOR_OWNER
+    owners = [question.agent, question.honcho.get("workspace", "hermes"), SHARED_VECTOR_OWNER]
     literal = "[" + ",".join(repr(float(v)) for v in query_vector) + "]"
     sql = _NEW_SQL
     if conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:

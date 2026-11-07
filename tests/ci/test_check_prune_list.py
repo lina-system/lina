@@ -138,6 +138,32 @@ def test_sync_merges_removes_the_prune_set_and_reports_new_paths(tmp_path):
                 "--repo", repo).returncode == 0
 
 
+def test_sync_never_moves_new_files_of_a_pruned_directory_into_a_kept_one(tmp_path):
+    # LINA deleted pruned/ and added the same files under vendor/: git's directory-rename
+    # detection would place upstream's new pruned/c.txt at vendor/c.txt, out of the prune set.
+    repo = tmp_path / "lina"
+    repo.mkdir()
+    _git(repo, "init", "-q", "-b", "upstream")
+    same = {"a.txt": "alpha\n" * 20, "b.txt": "beta\n" * 20}
+    _commit(repo, {f"pruned/{name}": text for name, text in same.items()}, "upstream base")
+    _git(repo, "switch", "-q", "-c", "dev")
+    files: dict[str, str | None] = {"prune-list.txt": "pruned\n", "pruned": None,
+                                    **{f"vendor/{name}": text for name, text in same.items()}}
+    for src in (CHECK, SYNC):
+        files[str(src.relative_to(REPO))] = src.read_text(encoding="utf-8")
+    _commit(repo, files, "lina: prune and vendor")
+    _git(repo, "switch", "-q", "upstream")
+    _commit(repo, {"pruned/c.txt": "new upstream file\n"}, "upstream adds")
+    _git(repo, "switch", "-q", "-c", "chore/take-upstream", "dev")
+
+    proc = _run(repo, sys.executable, repo / "scripts" / "sync-upstream", "upstream")
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _git(repo, "diff", "--name-only", "--diff-filter=U") == ""
+    tracked = _tracked(repo)
+    assert "vendor/c.txt" not in tracked and "pruned/c.txt" not in tracked
+    assert not (repo / "vendor" / "c.txt").exists()
+
+
 def test_sync_lists_conflicts_left_in_kept_files(tmp_path):
     repo = _fork(tmp_path)
     _commit(repo, {"keep.py": "base\nlina line\n"}, "lina edits keep.py")

@@ -414,7 +414,8 @@ def test_learning_replans_and_worker_events_are_deduplicated(kanban_home):
                 ("worker_run", {"run_id": "job-456", "runner": "omo"}),
             ):
                 kb._append_event(conn, tid, kind, payload)
-        kb.complete_task(conn, tid, result="ok", expected_run_id=run_id)
+        # The hub has no record of these runs, so they have no verdict: close past the gate (lina#295).
+        assert kb.complete_task(conn, tid, result="ok", expected_run_id=run_id, allow_unjudged=True)
         row = ko.compute_outcome(conn, tid, now=now)
     assert {r["kind"] for r in row["replans"]} == {"edit", "added", "escalation", "decomposed", "link"}
     assert next(r["reason"] for r in row["replans"] if r["kind"] == "edit") == "scope"

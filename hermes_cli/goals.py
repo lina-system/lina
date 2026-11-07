@@ -1711,6 +1711,24 @@ def _kanban_park_on_wait(verdict: str, park, wait_directive, reason: str, task_i
     return verdict, ("parked", describe_wait(wait_for))
 
 
+def _kanban_unjudged_done(verdict: str, reason: str, task_id: str, log) -> tuple[str, str]:
+    """A judge "done" is not done while a run the card started has no verdict (lina#295): it becomes a
+    continuation naming the runs, so the worker judges them instead of being nudged to finish."""
+    if verdict != "done":
+        return verdict, reason
+    from hermes_cli.kanban_db_connect import connect_closing
+    from hermes_cli.kanban_db_verdicts import unjudged_runs
+
+    with connect_closing() as conn:
+        runs = unjudged_runs(conn, task_id)
+    if not runs:
+        return verdict, reason
+    named = ", ".join(f"{run_id} ({state})" for run_id, state in runs)
+    log(f"kanban goal loop: task {task_id} judged done but runs have no verdict: {named}")
+    return "continue", (f"Not done: runs this card started have no verdict: {named}. Judge each with "
+                        "`lina worker accept|reject|cancel <id>` before finishing.")
+
+
 def _kanban_budget_end(park, block, task_id: str, turns_used: int, max_turns: int, reason: str, log) -> tuple[str, str]:
     """Turn budget spent: a planned stop. With a park step the run hands off (comment) and the card
     goes back to ready on the next dispatcher tick without a failure; otherwise the legacy block."""
@@ -1839,6 +1857,7 @@ def run_kanban_goal_loop(
             verdict, parked = _kanban_park_on_wait(verdict, park, _wait, reason, task_id, _log)
             if parked:
                 return _result(*parked)
+            verdict, reason = _kanban_unjudged_done(verdict, reason, task_id, _log)
             _log(f"kanban goal loop: turn {turns_used}/{max_turns} verdict={verdict} reason={_truncate(reason, 120)}")
 
             if verdict == "blocked":
