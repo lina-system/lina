@@ -302,3 +302,35 @@ def test_a_board_whose_db_is_a_symlink_to_the_pin_is_its_own_board(boards, monke
     assert kb.kanban_db_path(board="private") == shared
     with pytest.raises(kb.BoardPinnedError):
         kb.kanban_db_path(board="other")
+
+
+def test_worker_rm_of_its_symlinked_own_board_archives_and_leaves_a_tombstone(boards, monkeypatch, capsys):
+    """``boards rm`` of a worker's own board whose ``kanban.db`` links to the pin: the
+    move takes the symlink with it, so the tombstone write must use the pin check made
+    before the move. The board is archived AND an ``archived`` tombstone sits at the
+    slug, so a stale caller cannot recreate it (#259)."""
+    from hermes_cli import kanban as kc
+
+    shared = kb.kanban_home() / "shared" / "kanban.db"
+    shared.parent.mkdir()
+    shared.write_bytes(b"")
+    board_dir = kb.boards_root() / "private"
+    (board_dir / "kanban.db").unlink()
+    (board_dir / "kanban.db").symlink_to(shared)
+
+    monkeypatch.setenv("HERMES_KANBAN_DB", str(shared))
+    monkeypatch.setenv("HERMES_KANBAN_BOARD", "private")
+    monkeypatch.setenv("HERMES_KANBAN_TASK", "t_pinned_worker")
+
+    parser = argparse.ArgumentParser(prog="hermes", add_help=False)
+    sub = parser.add_subparsers(dest="command")
+    kc.build_parser(sub)
+    rc = kc.kanban_command(parser.parse_args(["kanban", "boards", "rm", "private"]))
+
+    assert rc == 0, capsys.readouterr().err
+    archived = list((kb.boards_root() / "_archived").iterdir())
+    assert [p.name.startswith("private-") for p in archived] == [True]
+    assert (archived[0] / "kanban.db").is_symlink()
+    tombstone = json.loads((board_dir / "board.json").read_text(encoding="utf-8"))
+    assert tombstone["archived"] is True and tombstone["slug"] == "private"
+    assert "db_path" not in tombstone
