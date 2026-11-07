@@ -114,7 +114,7 @@ def _submit(drive, todo: str = "acme/app#1", host: str = "here", **opts) -> str:
     hub = _hub(drive)
     before = {job["id"] for job in hub.store.all()}
     hub.submit({"briefs": [fakes.brief(drive.tmp, f"SCENARIO:done {todo}", f"brief-{len(before)}.md")], "mode": "ulw",
-                "todo": todo, "bot": "sion", "runner": "fakecli", "wait": None, "host": host,
+                "todo": todo, "bot": "tester", "runner": "fakecli", "wait": None, "host": host,
                 "card": {"task": WORK, "board": BOARD}, **opts})
     (new,) = {job["id"] for job in hub.store.all()} - before
     return new
