@@ -20,6 +20,10 @@ REAL_PREPARE = maintenance.start_local_model_prepare
 # reaching it fails with what is still outstanding.
 WAIT_CAP_S = 300.0
 POLL_S = 0.1
+# The engine's paced idle loop re-reads the stop flag once per condition wait and bounds each wait by
+# this slice; the delay itself is hours away. Counting wake-ups therefore proves the interrupt is seen
+# promptly without timing anything: a longer poll or a wait that rides out the delay both fail.
+PACED_POLL_S = 0.5
 
 
 def _wait_for(what, pending):
@@ -158,8 +162,18 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
     admitted = threading.Event()
     waits = []
     observed = []
+    paced_waits = []
     original = scheduler.schedule
     real_pass = engines.run_incremental_embedding_pass
+    real_wait = scheduler._condition.wait
+
+    def counted_wait(timeout=None):
+        # Record the poll the worker actually asks for, at entry: the stop flag is read once per wake,
+        # so the slice it sleeps for is the whole contract, and the entry is visible before it returns.
+        if timeout is not None and threading.current_thread() is scheduler._worker:
+            paced_waits.append({"timeout": timeout,
+                                "stop_set": maintenance._STOP_EMBEDDING_MAINTENANCE.is_set()})
+        return real_wait(timeout)
 
     def measured(*args, **kwargs):
         result = real_pass(*args, **kwargs)
@@ -181,6 +195,7 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
     monkeypatch.setattr(command, "_embedding_backfill_summary_run", run)
     monkeypatch.setattr(scheduler, "schedule", schedule)
     monkeypatch.setattr(engines, "run_incremental_embedding_pass", measured)
+    monkeypatch.setattr(scheduler._condition, "wait", counted_wait)
     engine.on_session_start("duty", context_length=200000)
     assert admitted.wait(2), "no paced continuation was admitted"
     assert waits[0] >= maintenance._LOCAL_IDLE_MULTIPLIER * 1.25
@@ -191,6 +206,9 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
     assert observed[0]["overrun_s"] == 0.25
     assert observed[0]["remaining"] is True
     assert observed[0]["scan_frontier_advance"] is False
+    # The worker is inside its paced idle wait, so the next thing it does is poll the interrupt. Its
+    # entry is recorded before it sleeps: the wake-up count below needs no clock.
+    _wait_for("the paced idle wait", lambda: "" if paced_waits else "the worker has not entered it")
     if interrupt == "retire":
         engine._retire_embedding_maintenance(wait=True)
     else:
@@ -200,6 +218,13 @@ def test_duty_wait_is_retirement_interruptible(local_store, monkeypatch, interru
     # and the wait above only ends inside the cap if the interrupt is what ended it.
     _wait_for("the duty wait to end", lambda: _pending_passes(engine))
     assert len(observed) == 1
+    # Every wait the paced loop asked for is a poll, not the delay: a regression that slept for the
+    # delay, or for several seconds per wake, fails here even though the loop still ends in the cap.
+    assert all(wait["timeout"] <= PACED_POLL_S for wait in paced_waits), paced_waits
+    # At most the one wake that sees the stop flag may be entered after the interrupt: a loop that kept
+    # waiting instead of returning fails here, without a stopwatch.
+    after_interrupt = [wait for wait in paced_waits if wait["stop_set"]]
+    assert len(after_interrupt) <= 1, paced_waits
     assert engine.drain_embedding_maintenance(0)
     assert not scheduler._queued_keys
 
