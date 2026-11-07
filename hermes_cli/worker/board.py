@@ -50,6 +50,12 @@ def work_state(job: dict, live: dict | None = None) -> tuple[str, str | None]:
     return "in_progress", None
 
 
+def waiting_on(job: dict, state: str, reason: str | None) -> str | None:
+    """Who the run waits on: a finished run's verdict belongs to the agent that handed it out
+    (``agent:<name>``, lina#295), never to the owner; None when it waits on nobody's verdict."""
+    return f"agent:{job['bot']}" if (state, reason) == ("waiting", "review") and job.get("bot") else None
+
+
 def _title(job: dict) -> str:
     """The brief's first ``# `` heading (after the mode prefix), else the run's topic."""
     for line in str(job.get("prompt") or "").splitlines():
@@ -111,6 +117,7 @@ def cards(worker_root: Path, now: float) -> list[dict]:
         live = lives.get(job["id"])
         state, reason = work_state(job, live)
         out.append({"id": job["id"], "title": _title(job), "state": state, "reason": reason, "agent": job.get("bot"),
+                    "waitingOn": waiting_on(job, state, reason),
                     "kind": job.get("mode"), "todo": job.get("todo"), "host": job.get("host"),
                     "startedAt": job.get("started"), "endedAt": record.ended_at(job, receipts.get(job["id"], [])),
                     "now": _now_line(live) if state in ("in_progress", "waiting") and live else None,

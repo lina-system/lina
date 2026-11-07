@@ -58,6 +58,14 @@ class Model(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
 
+def write_config(home, cfg):
+    """config.yaml stamped with the current schema version: an unstamped file reads as
+    below the migration floor, and boot maintenance then refuses it (#259)."""
+    from hermes_cli.config_defaults import DEFAULT_CONFIG
+    stamped = {'_config_version': DEFAULT_CONFIG['_config_version'], **cfg}
+    (Path(home) / 'config.yaml').write_text(json.dumps(stamped), encoding='utf-8')
+
+
 def main():
     root = Path(__file__).resolve().parents[3]
     home = Path(os.environ['HERMES_HOME'])
@@ -82,7 +90,7 @@ def main():
         'auxiliary': {'title_generation': {'enabled': False}}, 'platform_toolsets': {'cli': ['terminal', 'file']},
         'terminal': {'backend': 'local'}, 'agent': {'api_max_retries': 1}, 'kanban': {'dispatch_in_gateway': False},
         'hooks': {'post_tool_call': [{'command': f'{sys.executable} {hook}'}]}}
-    (home / 'config.yaml').write_text(json.dumps(cfg), encoding='utf-8')
+    write_config(home, cfg)
     from hermes_cli import kanban_db as kb
     from hermes_cli.kanban_db_connect import connect
     from hermes_cli import kanban_db_dispatch as dispatch

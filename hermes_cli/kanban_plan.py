@@ -15,6 +15,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import shlex
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Callable, Optional
@@ -196,6 +197,117 @@ def _gates(value: Any, where: str, *, required: bool) -> list[Any]:
     return gates
 
 
+_CLI_NAMES = {"hermes", "lina"}  # `lina` is another name for the `hermes` entry point
+_PYTHONS = {"python", "python3"}
+_SHELL_OPERATORS = set("();<>|&")
+
+
+def _shell_words(command: str) -> Optional[list[str]]:
+    """The words of *command* when bash runs it as ONE simple command, else None.
+
+    None for anything that could run more than the gate or change its exit code: a newline (a
+    second command), ``$`` or a backquote (expansion, command substitution), and an unquoted
+    operator ``; & | < > ( )`` even inside a word (``X;true``). Quoted text stays one word, as in
+    bash; ``#`` is not taken as a comment, so text after it is still checked."""
+    if any(c in command for c in "\n\r$`"):
+        return None
+    lexer = shlex.shlex(command, posix=True, punctuation_chars="".join(_SHELL_OPERATORS))
+    lexer.whitespace_split, lexer.commenters = True, ""
+    try:
+        words = list(lexer)
+    except ValueError:  # an unclosed quote
+        return None
+    operator = any(w and set(w) <= _SHELL_OPERATORS for w in words)
+    return None if operator or not words else words
+
+
+def _program(word: str, names: set[str]) -> bool:
+    """*word* runs one of *names*: a bare name (found on PATH) or an absolute path. A relative
+    path (``./hermes``, ``bin/hermes``) is refused: it resolves in the card's workspace, which the
+    card's own worker writes."""
+    return Path(word).name in names and ("/" not in word or word.startswith("/"))
+
+
+def _kanban_argv(words: list[str]) -> Optional[list[str]]:
+    """What follows ``kanban`` in ``hermes|lina [-p NAME | --profile NAME | --profile=NAME]
+    kanban ...``, or None. The profile option is the ONLY top-level option a gate may carry, at
+    most once, with a valid profile name; any other word before ``kanban`` (``--version``,
+    ``-h``, an unknown flag, another subcommand) means the command is not a gate: ``main``
+    exits on ``--version`` and ``--help`` before it dispatches."""
+    from hermes_constants import PROFILE_ID_RE
+
+    rest = words
+    if rest[:1] in (["-p"], ["--profile"]) and len(rest) > 1:
+        name, rest = rest[1], rest[2:]
+    elif rest and rest[0].startswith("--profile="):
+        name, rest = rest[0].split("=", 1)[1], rest[1:]
+    else:
+        name = None
+    if name is not None and not PROFILE_ID_RE.match(name.strip().casefold()):
+        return None
+    return rest[1:] if rest[:1] == ["kanban"] else None
+
+
+def _gate_argv(words: list[str]) -> Optional[list[str]]:
+    """The arguments ``kanban_gates.main`` receives when bash runs *words*, or None when *words*
+    do not run a kanban gate. The forms (an allowlist; anything else runs another program):
+
+    - ``hermes|lina [-p NAME | --profile NAME | --profile=NAME] kanban [--board B] gate ...``
+      (what follows ``kanban`` goes through the real kanban parser);
+    - ``[python|python3] kanban_gates.py ...`` (the script by absolute path after python).
+
+    Each program is a bare name or an absolute path (:func:`_program`); no ``env``, ``exec``,
+    ``command``, ``sh -c`` or interpreter flags in front."""
+    from hermes_cli import kanban_parser
+
+    # python opens its script argument relative to the cwd (the workspace), never from PATH.
+    if _program(words[0], _PYTHONS) and len(words) > 1 and words[1].startswith("/") \
+            and Path(words[1]).name == "kanban_gates.py":
+        return words[2:]
+    if _program(words[0], {"kanban_gates.py"}):
+        return words[1:]
+    rest = _kanban_argv(words[1:]) if _program(words[0], _CLI_NAMES) else None
+    if rest is None:
+        return None
+    rest = ["kanban", *rest]
+    parser = argparse.ArgumentParser(add_help=False)
+    kanban_parser.build_parser(parser.add_subparsers(dest="command"))
+    args = _quiet_parse(parser, rest)
+    return args.gate_argv if args is not None and args.kanban_action == "gate" else None
+
+
+def _quiet_parse(parser: argparse.ArgumentParser, argv: list[str]) -> Optional[argparse.Namespace]:
+    """``parser.parse_args(argv)``, None instead of argparse's usage error (or ``--help`` exit)."""
+    import contextlib
+    import io
+
+    with contextlib.redirect_stderr(io.StringIO()), contextlib.redirect_stdout(io.StringIO()):
+        try:
+            return parser.parse_args(argv)
+        except SystemExit:
+            return None
+
+
+def _runs_ui_qa(gate: Any) -> bool:
+    """True when the gate command, as the card's bash runs it, is one simple command
+    (:func:`_shell_words`) of an allowed form (:func:`_gate_argv`) whose gate arguments select
+    ``ui-qa`` in ``kanban_gates.build_parser`` itself, so ``review --owner ui-qa`` is the review
+    gate and extra words ui-qa does not take are refused."""
+    from hermes_cli import kanban_gates
+
+    command = gate if isinstance(gate, str) else gate.get("command", "")
+    words = _shell_words(command)
+    argv = _gate_argv(words) if words else None
+    args = _quiet_parse(kanban_gates.build_parser(), argv) if argv is not None else None
+    return args is not None and args.gate == "ui-qa"
+
+
+def _check_screen_gate(kind: Optional[str], gates: list[Any], where: str) -> None:
+    """A card with ``kind: screen`` changes what a person sees: it ends only after QA (lina#276)."""
+    if (kind or "").lower() == "screen" and not any(_runs_ui_qa(g) for g in gates):
+        raise PlanError(f"{where}: kind screen changes a screen, so its gates need `hermes kanban gate ui-qa`")
+
+
 def _assignee(value: Any, where: str, is_profile: Optional[Callable[[str], bool]], *,
               required: bool) -> Optional[str]:
     name = _text(value, where, "assignee", required=required)
@@ -255,13 +367,16 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
     size = raw.get("size")
     if size is not None and size not in ("S", "M", "L"):
         raise PlanError(f"{where}: size must be S, M or L")
+    kind = _text(raw.get("kind"), where, "kind", required=False)
+    gates = _gates(raw.get("gates"), where, required=True)
+    _check_screen_gate(kind, gates, where)
     return WorkCard(
         key=key,
         title=_text(raw.get("title"), where, "title"),
         assignee=_assignee(raw.get("assignee"), where, is_profile, required=True),
         todos=_todos(raw.get("todos"), where),
         sections=sections,
-        gates=_gates(raw.get("gates"), where, required=True),
+        gates=gates,
         max_turns=_positive_int(raw.get("max_turns"), where, "max_turns", required=True),
         max_runtime=_duration(raw.get("max_runtime"), where, required=True),
         workspace=_workspace(raw.get("workspace"), where),
@@ -269,7 +384,7 @@ def _parse_card(raw: Any, index: int, is_profile) -> WorkCard:
         ledger_todos=[_ledger_todo(item, where)
                       for item in _list(raw.get("ledger_todos"), where, "ledger_todos")],
         size=size,
-        kind=_text(raw.get("kind"), where, "kind", required=False),
+        kind=kind,
     )
 
 

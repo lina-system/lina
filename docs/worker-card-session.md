@@ -53,6 +53,29 @@ active profile. The submit line names the owner and its source; `accept` and `re
   no wake); answer it with `lina worker send <ID> "<answer>"`.
 - No chat notice is sent for a run on a Hermes card. The agent's main session hears about it from the card's own end.
 
+## A card ends only when its runs are judged
+
+On LINA's own board a card is finished only when every run it started (each `worker_run` event on it) has a verdict:
+`accept`, `reject` or `cancel`, as the hub's job record says. Finishing the card is not a verdict. `complete`,
+`request_review` and a goal judge's "done" are refused while one has none, naming each run and its state; an operator
+may close past it with `hermes kanban complete|request-review --allow-unjudged`, recorded on the card as
+`unjudged_runs_allowed` (`hermes_cli/kanban_db_verdicts.py`).
+
+- A run's end or question that reaches a card waiting in `todo` behind an unfinished parent, or `scheduled` on
+  something else, moves it to `ready` with a `run_verdict_wake` event and a comment: the card is claimed past its
+  open parent to judge the run. After the verdict its `kanban_complete` (or the next dispatcher tick, when the
+  verdict came from elsewhere) puts it back where it waited, the same parent wait or the same schedule and
+  `wait_for`. A schedule that names the run is met by its end and woken as usual.
+- A run that ended over an hour ago without a verdict is raised once: a comment on its card, or, when the card is
+  done, archived or deleted, the starting agent's main session through `worker.notice.command`. Never the owner.
+  - A card counts as gone when it is done, archived or deleted: no card session reads a comment there any more.
+- A pause (`scheduled`) whose reason names no run ID, card ID or time and that has no `wait_for` is raised once per
+  pause to the main session of the agent that paused it, after 24 hours.
+  - That agent is the profile of the run that made the pause, else the card's assignee.
+- The board API lists a finished run waiting for a verdict with `waitingOn: agent:<name>` and counts it under that
+  agent (`counts.agents`), never in the owner's `inbox.review`, `review` notices or `counts.inbox`; a card's detail
+  lists its `runsAwaitingVerdict`: the agent's to-do, not the owner's.
+
 ## The owner's private files
 
 Files under `worker.private_paths` are never copied to a node. A run that needs them goes to the hub node only (a
