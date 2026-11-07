@@ -104,6 +104,14 @@ def db_connect(hermes_home: Path) -> sqlite3.Connection:
     return con
 
 
+def _session_rows(hermes_home: Path, sql: str, params: tuple = ()) -> list[tuple]:
+    """Transcript rows through SessionDB, so text columns resolve in the memory store."""
+    from hermes_state import SessionDB
+
+    with SessionDB(db_path=hermes_home / "state.db", read_only=True) as db:
+        return [tuple(row) for row in db._read_all(sql, params)]
+
+
 def views(hermes_home: Path, sid: str) -> tuple[list[dict], list[dict]]:
     """(model_history, display_history) exactly as a resuming surface loads them."""
     from hermes_state import SessionDB
@@ -120,18 +128,20 @@ def model_only_identities(hermes_home: Path, model: list[dict]) -> set[tuple]:
     ids = [m["_row_id"] for m in model if m.get("_row_id") is not None]
     if not ids:
         return set()
-    with db_connect(hermes_home) as con:
-        hidden = {r[0] for r in con.execute(
-            f"SELECT id FROM messages WHERE id IN ({','.join('?' * len(ids))}) "
-            "AND COALESCE(json_extract(display_metadata, '$.model_only'), 0) != 0", ids)}
+    hidden = {r[0] for r in _session_rows(
+        hermes_home,
+        f"SELECT id FROM transcript_rows WHERE id IN ({','.join('?' * len(ids))}) "
+        "AND COALESCE(json_extract(display_metadata, '$.model_only'), 0) != 0",
+        tuple(ids))}
     return {identity(m) for m in model if m.get("_row_id") in hidden}
 
 
 def row_counts(hermes_home: Path, sid: str) -> dict[str, int]:
-    with db_connect(hermes_home) as con:
-        total, active = con.execute(
-            "SELECT count(*), coalesce(sum(active), 0) FROM messages WHERE session_id=?", (sid,)).fetchone()
-        return {"total": total, "active": active}
+    total, active = _session_rows(
+        hermes_home,
+        "SELECT count(*), coalesce(sum(active), 0) FROM transcript_rows WHERE session_id=?",
+        (sid,))[0]
+    return {"total": total, "active": active}
 
 
 def integrity_ok(hermes_home: Path) -> None:
@@ -161,13 +171,14 @@ def is_summary(msg: dict[str, Any]) -> bool:
 def assert_rows_exactly_once(hermes_home: Path, sid: str, where: str) -> None:
     """(a) at the storage layer: no two ACTIVE rows of a session are the same logical message.
     Readers dedupe defensively, so a double write can hide behind them; the rows cannot."""
-    con = db_connect(hermes_home)
-    try:
-        rows = con.execute(
-            "SELECT id, role, content, tool_call_id, tool_calls FROM messages "
-            "WHERE session_id = ? AND active = 1 ORDER BY id", (sid,)).fetchall()
-    finally:
-        con.close()
+    from hermes_state_store import text_sql
+
+    content, calls = text_sql("content"), text_sql("tool_calls")
+    rows = _session_rows(
+        hermes_home,
+        f"SELECT id, role, {content}, tool_call_id, {calls} FROM transcript_rows "
+        "WHERE session_id = ? AND active = 1 ORDER BY id",
+        (sid,))
     seen: dict[tuple, int] = {}
     dups = []
     for row_id, *ident in rows:

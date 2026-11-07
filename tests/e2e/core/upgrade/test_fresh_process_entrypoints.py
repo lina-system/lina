@@ -760,7 +760,14 @@ def test_entrypoint_in_a_fresh_process(case, tmp_path):
     assert db.exists(), "the one-shot turn persisted nothing"
     sessions = _db_rows(db, "SELECT id FROM sessions")
     assert len(sessions) == 1, sessions
-    rows = _db_rows(db, f"SELECT role, content FROM messages WHERE session_id = '{sessions[0][0]}' ORDER BY id")
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
+
+    content = text_sql("content")
+    with SessionDB(db_path=db, read_only=True) as state:
+        rows = [tuple(r) for r in state._read_all(
+            f"SELECT role, {content} FROM transcript_rows WHERE session_id = ? ORDER BY id",
+            (sessions[0][0],))]
     assert ("user", canary) in rows and ("assistant", reply) in rows, rows
 
 
