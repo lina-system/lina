@@ -117,6 +117,44 @@ def test_today_s_config_validates_and_its_env_never_reaches_a_revision(root):
     assert "/srv/codex" not in text
 
 
+@pytest.mark.parametrize("entry", [
+    {"role": "person"},
+    {"role": "person", "host": ""},
+    {"role": "person", "host": "   "},
+    {"role": "person", "host": None},
+])
+def test_person_without_a_usable_host_is_refused_without_writing(root, entry):
+    from hermes_cli.lina_work_settings import SettingsError
+    from hermes_cli.worker import settings
+
+    store = _store(root)
+    store.current()
+    before = (root / "config.yaml").read_bytes()
+    with pytest.raises(SettingsError) as refused:
+        store.apply(_set("devices.workers.laptop", entry), CLI)
+
+    assert [error["path"] for error in refused.value.errors] == ["devices.workers.laptop.host"]
+    assert (root / "config.yaml").read_bytes() == before
+    assert [dev.name for dev in settings.devices()] == ["build-a", "here"]
+
+
+@pytest.mark.parametrize(("key", "value"), [
+    ("cap", 1), ("named_cap", 2), ("last", 0), ("auto", False),
+    ("fast", True), ("no_repo", True), ("off", False), ("lina", "lina"),
+])
+def test_person_with_a_host_still_refuses_node_fields(root, key, value):
+    from hermes_cli.lina_work_settings import SettingsError
+
+    store = _store(root)
+    store.current()
+    before = (root / "config.yaml").read_bytes()
+    with pytest.raises(SettingsError) as refused:
+        store.apply(_set("devices.workers.laptop", {"host": "laptop-ssh", "role": "person", key: value}), CLI)
+
+    assert [error["path"] for error in refused.value.errors] == [f"devices.workers.laptop.{key}"]
+    assert (root / "config.yaml").read_bytes() == before
+
+
 # ---------------------------------------------------------------- revisions, audit, comments
 def test_a_change_is_one_revision_with_a_field_diff_and_keeps_the_comments_and_env(root):
     store = _store(root)
