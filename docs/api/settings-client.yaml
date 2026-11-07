@@ -11,7 +11,7 @@ info:
   version: 0.1.0
   description: >
     The work settings are keys of the LINA root's config.yaml (devices.workers, worker.default_runner,
-    worker.runners, worker.models, worker.routing). Every change is a new revision with one audit line; the ETag
+    worker.runners, worker.models, worker.routing, worker.access). Every change is a new revision with one audit line; the ETag
     of GET is the revision's, and PATCH and rollback need it back as If-Match. Times are Unix epoch seconds.
 servers:
   - url: /api/lina
@@ -332,6 +332,15 @@ components:
           properties:
             default_runner:
               type: string
+            access:
+              type: object
+              description: >-
+                Per-agent access ceilings read at submit, distinct from runner access. Agent names use
+                letters, digits, hyphens and underscores (up to 41 characters, starting with a letter or digit).
+                Included in revisions, rollback and outside-edit reads like every work setting.
+              additionalProperties:
+                type: string
+                enum: [read-only, workspace-write, full]
             runners:
               type: object
               additionalProperties:
@@ -365,14 +374,52 @@ components:
       type: object
       description: >-
         A person device carries only host (its SSH alias for status and tool versions)
-        and role (person). Its host is required; node fields such as cap, named_cap,
-        last and auto are not allowed.
+        and role (person), optionally kind (lina). Its host is required; node fields such as cap, named_cap,
+        last and auto are not allowed. Kind defaults to lina. Only kind file accepts omo, deny, volumes,
+        root, model_check and scan_s; its role defaults to files and cannot be work or person.
       properties:
         host:
           type: string
         role:
           type: string
           enum: [work, files, person]
+        kind:
+          type: string
+          enum: [lina, file]
+          default: lina
+        omo:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          default: omo
+        deny:
+          type: array
+          default: []
+          items:
+            type: string
+            minLength: 1
+            pattern: '\S'
+        volumes:
+          type: array
+          default: []
+          items:
+            type: string
+            minLength: 1
+            pattern: '\S'
+        root:
+          type: string
+          minLength: 1
+          pattern: '\S'
+          default: lina-file-node
+        model_check:
+          type: string
+          format: uri
+          pattern: '^https?://[^/\s?#]+(?:[/?#]|$)'
+          default: http://127.0.0.1:10100/healthz
+        scan_s:
+          type: integer
+          minimum: 1
+          default: 300
         cap:
           type: integer
           minimum: 1
