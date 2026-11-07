@@ -363,6 +363,10 @@ components:
                 $ref: "#/components/schemas/Rule"
     Device:
       type: object
+      description: >-
+        A person device carries only host (its SSH alias for status and tool versions)
+        and role (person). Its host is required; node fields such as cap, named_cap,
+        last and auto are not allowed.
       properties:
         host:
           type: string
