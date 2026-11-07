@@ -10,7 +10,10 @@ import hashlib
 import psycopg
 import pytest
 
+from hermes_cli.memory_eval_search import Question, new_vector
+from hermes_cli.store_migrations import MIGRATIONS_DIR
 from hermes_cli.store_reembed import ReembedError, expand_sources, reembed
+from hermes_state_store import MessageStore
 
 
 class _Client:
@@ -39,6 +42,65 @@ def _message(sql, uid: str, source: str, role: str, content: str, agent: str = "
 
 def _connect(memory_store):
     return lambda: psycopg.connect(memory_store.superuser_dsn(), autocommit=True)
+
+
+def _external(sql, uid: str, content: str) -> int:
+    return sql("INSERT INTO memory.messages (uid, source, agent_id, scope, role, content, content_sha256) "
+               "VALUES (%s, 'messages', NULL, 'agents', 'user', %s, %s) RETURNING message_id",
+               (uid, content, hashlib.sha256(content.encode()).hexdigest()))[0][0]
+
+
+def test_a_reembedded_external_message_is_found_by_the_vector_search_of_every_agent(_memory_store, memory_store_sql):
+    message_id = _external(memory_store_sql, "messages:shared", "the boiler service is on tuesday")
+    client = _Client()
+    reembed(_connect(_memory_store), client, ["messages"], batch_size=10)
+    query = client.embed(["the boiler service is on tuesday"])[0]
+
+    for agent in ("alpha", "beta"):
+        store = MessageStore(agent, dsn=_memory_store.app_dsn())
+        try:
+            assert store.has_memory_vectors(model=client.model, sources=["messages"])
+            rows = store.search_memory_vectors(query, model=client.model, sources=["messages"], limit=5)
+        finally:
+            store.close()
+        assert [row.uid for row in rows] == ["messages:shared"]
+        question = Question(id="q", source="messages", agent=agent, question="?", expected=("messages:shared",))
+        with psycopg.connect(_memory_store.superuser_dsn(), autocommit=True) as conn:
+            assert new_vector(conn, query, client.model, question) == ["messages:shared"]
+
+    reembed(_connect(_memory_store), client, ["messages"], batch_size=10, from_start=True)
+    assert memory_store_sql("SELECT count(*) FROM vec.chunks WHERE message_ids = %s::bigint[]", ([message_id],)) == [(1,)]
+    assert memory_store_sql("SELECT count(*) FROM vec.embeddings WHERE kind = 'chunk'") == [(1,)]
+    assert memory_store_sql("SELECT count(*) FROM vec.chunks WHERE agent_id = 'None'") == [(0,)]
+
+
+def test_an_agent_reads_but_cannot_change_shared_chunk_vectors(_memory_store, memory_store_sql):
+    _external(memory_store_sql, "messages:ro", "the parcel is at the neighbour")
+    reembed(_connect(_memory_store), _Client(), ["messages"], batch_size=10)
+    with psycopg.connect(_memory_store.app_dsn(), autocommit=True) as conn:
+        conn.execute("SELECT set_config('lina.agent_id', 'alpha', false)")
+        assert conn.execute("SELECT current_user").fetchone() == ("lina_app",)
+        assert conn.execute("SELECT count(*) FROM vec.chunks c JOIN vec.embeddings e "
+                            "ON e.kind = 'chunk' AND e.item_id = c.chunk_id").fetchone() == (1,)
+        assert conn.execute("UPDATE vec.chunks SET text = 'changed'").rowcount == 0
+        assert conn.execute("DELETE FROM vec.embeddings").rowcount == 0
+        with pytest.raises(psycopg.errors.InsufficientPrivilege):
+            conn.execute("INSERT INTO vec.chunks (source, agent_id, message_ids, text) "
+                         "VALUES ('messages', '*', '{1}', 'forged')")
+    assert memory_store_sql("SELECT text FROM vec.chunks") == [("the parcel is at the neighbour",)]
+
+
+def test_the_migration_gives_vectors_written_with_the_none_owner_the_shared_owner(_memory_store, memory_store_sql):
+    message_id = _external(memory_store_sql, "messages:old", "an old external message")
+    chunk = memory_store_sql("INSERT INTO vec.chunks (source, agent_id, message_ids, text) VALUES "
+                             "('messages', 'None', %s::bigint[], 't') RETURNING chunk_id", ([message_id],))[0][0]
+    memory_store_sql("INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding) VALUES "
+                     "('chunk', %s, 'None', 'm', 1024, %s::vector)", (chunk, "[" + ",".join(["1"] + ["0"] * 1023) + "]"))
+    migration = next(MIGRATIONS_DIR.glob("0009_*.sql")).read_text(encoding="utf-8-sig")
+    memory_store_sql(migration)
+    memory_store_sql(migration)
+    assert memory_store_sql("SELECT agent_id FROM vec.chunks") == [("*",)]
+    assert memory_store_sql("SELECT agent_id FROM vec.embeddings") == [("*",)]
 
 
 def test_agent_turns_embed_in_batches_and_a_second_run_continues_after_the_last_batch(_memory_store, memory_store_sql):
