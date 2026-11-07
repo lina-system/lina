@@ -197,14 +197,21 @@ def _queue(record: dict, jobs: list[dict], text: str, tag: str, payload: dict | 
 
 
 def _flush(hub, node: str) -> str:
-    """Send each notice queued on *node*'s record, with no lock held while it goes; after each send the record is read
-    again and only that item changes: one that went out leaves the queue, a failed one stays for the next tick, and one
-    for an outage the record no longer holds (it was reset meanwhile) is dropped. An outage whose every place was told
-    is done (``deliveries.jsonl``, a ``notified`` receipt per run)."""
+    """Send each notice queued on *node*'s record, with no lock held while it goes. One for an outage the record no
+    longer holds (it was reset: a placement published on the node, no run left on it) is dropped unsent. After each
+    send the record is read again and only that item changes: one that went out leaves the queue, a failed one stays
+    for the next tick, and one whose outage was reset while it went out is dropped. An outage whose every place was
+    told is done (``deliveries.jsonl``, a ``notified`` receipt per run)."""
     with hub.store.edit_node(node) as record:
         queued = dict(record.get("pending") or {})
     said: dict[str | None, list[str]] = {}
     for name, item in queued.items():
+        with hub.store.edit_node(node) as record:
+            pending = record.get("pending") or {}
+            if name in pending and item["delivery"] is not None and item["delivery"] != record["notified_outage"]:
+                del pending[name]
+        if name not in pending:
+            continue
         how, sent = _send(hub, item)
         said.setdefault(item["delivery"], []).append(how)
         with hub.store.edit_node(node) as record:
