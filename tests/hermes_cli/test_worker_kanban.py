@@ -50,7 +50,7 @@ def test_a_run_from_a_card_is_recorded_on_it_and_its_end_notice_is_a_comment(boa
 
     serve.serve_once(root)
     restarted = Hub(root, out=lines.append)
-    fakes.until(lambda: "done:1" in restarted.store.load(task_id)["notified"], what="the run ended")
+    fakes.until(lambda: "done:1" in fakes.notified(restarted.store.load(task_id)), what="the run ended")
     launcher.join()
     assert restarted.store.load(task_id)["topic"] == board
     before = len(lines)

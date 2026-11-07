@@ -18,7 +18,12 @@ worker:
     fallback: opencodex/small-model
   routing:                                       # first match wins, else default_runner
     - {name: docs, when: {runner_label: runner/agy, labels_any: [docs], size: [S, M]}, runner: agy}
+  goal_drive: true                               # the hub's goal drive (docs/work/goal-drive.md); false = off
+  goal_limits: {workers: 3, attempts: 3, runs: 40, wall_h: 24, usage_move: false}
 ```
+
+A runner may name ``usage_limit``, the regex its end text or stderr matches when a usage limit stopped it (unset: the
+goal drive's default).
 
 ``role``, ``on``, ``model``, ``fallback_model``, ``access``, ``models.fallback`` and ``routing`` are new; the run
 path reads all but ``role`` and ``access`` at submit (``lina_work_settings_route.decide``, lina#257). This module is the schema: the keys taken out of a config
@@ -37,7 +42,7 @@ from pathlib import Path
 from typing import Any
 
 KEYS = (("devices", "workers"), ("worker", "default_runner"), ("worker", "runners"), ("worker", "models"),
-        ("worker", "routing"))
+        ("worker", "routing"), ("worker", "goal_drive"), ("worker", "goal_limits"))
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$")
 SECRET = re.compile(r"key|token|secret|password", re.IGNORECASE)
 KEEP_OUT = "env"
@@ -51,7 +56,8 @@ DEVICE = {"host": _STR, "role": _STR, "cap": _INT, "named_cap": _INT, "last": "l
           "no_repo": _BOOL, "off": _BOOL, "auto": _BOOL, "lina": _STR}
 RUNNER = {"type": _STR, "argv": _STRS, "follow_up_argv": _STRS, "model_args": _STRS, "on": _BOOL, "model": "model",
           "fallback_model": "model", "access": _STR, "access_args": "access_args", "bin": _STR, "node": _STR, "engine": _STR,
-          "flavor": _STR}
+          "flavor": _STR, "usage_limit": "regex"}
+GOAL_LIMITS = {"workers": _INT, "attempts": _INT, "runs": _INT, "wall_h": _INT, "usage_move": _BOOL}
 ALIAS = {"provider": _STR, "id": _STR, "thinking": _STR}
 RULE = {"name": _STR, "when": "when", "runner": _STR}
 WHEN = {"runner_label": _STR, "labels_any": _STRS, "size": _STRS}
@@ -361,6 +367,7 @@ def _type_error(kind: str, value: Any) -> str | None:
         _STRS: (lambda v: isinstance(v, list) and all(isinstance(i, str) and i for i in v), "a list of texts"),
         "last": (lambda v: isinstance(v, bool) or isinstance(v, int) and v >= 0, "true, false or a tier of 0 or more"),
         "model": (lambda v: isinstance(v, str) and v.strip() != "", "<provider>/<id>[:<effort>] or an alias"),
+        "regex": (_is_regex, "a regular expression"),
     }
     ok, want = checks[kind]
     return None if ok(value) else f"must be {want}"
@@ -379,7 +386,8 @@ def _fields(entry: Any, schema: dict, path: str, errors: list[dict]) -> dict:
             errors.append({"path": where, "message": "a runner's env is not written here: edit config.yaml"})
         elif key not in schema:
             errors.append({"path": where, "message": f"unknown key (known: {', '.join(schema)})"})
-        elif schema[key] in (_BOOL, _INT, _STR, _STRS, "last", "model") and (why := _type_error(schema[key], value)):
+        elif schema[key] in (_BOOL, _INT, _STR, _STRS, "last", "model", "regex") and \
+                (why := _type_error(schema[key], value)):
             errors.append({"path": where, "message": why})
     return entry
 
@@ -525,6 +533,24 @@ def _rule(i: int, item: Any, count: int, names: set[str], known: set[str], error
             errors.append({"path": f"{path}.when", "message": "a rule that matches everything must be the last"})
 
 
+def _is_regex(value: Any) -> bool:
+    if not isinstance(value, str) or not value.strip():
+        return False
+    try:
+        re.compile(value)
+    except re.error:
+        return False
+    return True
+
+
+def _goal(doc: dict, errors: list[dict]) -> None:
+    """``worker.goal_drive`` (on/off) and ``worker.goal_limits`` (the goal drive's limits per goal)."""
+    switch = get_path(doc, "worker.goal_drive")
+    if switch is not None and (why := _type_error(_BOOL, switch)):
+        errors.append({"path": "worker.goal_drive", "message": why})
+    _section(get_path(doc, "worker.goal_limits"), GOAL_LIMITS, "worker.goal_limits", errors)
+
+
 def runner_table(doc: dict) -> dict[str, dict]:
     """The runners as ``lina worker`` sees them: omo is there even when not listed."""
     configured = get_path(doc, "worker.runners")
@@ -555,6 +581,7 @@ def validate(doc: Any) -> list[dict]:
             if key not in allowed:
                 errors.append({"path": f"{top}.{key}", "message": f"not a work setting (known: {', '.join(allowed)})"})
     _devices(doc, errors)
+    _goal(doc, errors)
     aliases = _models(doc, errors)
     _runners(doc, aliases, errors)
     table = runner_table(doc)

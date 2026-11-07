@@ -61,7 +61,7 @@ def test_an_omo_run_opens_with_the_mode_default_and_records_it(tmp_path, monkeyp
     task_id = lines[0].split()[0]
     assert "model planner" in lines[0]
     serve.serve_once(root)
-    fakes.until(lambda: "done:1" in hub.store.load(task_id)["notified"], what="the run ended")
+    fakes.until(lambda: "done:1" in fakes.notified(hub.store.load(task_id)), what="the run ended")
     launcher.join()
     opened = [json.loads(line)["openSession"] for line in (fake / "rpc.jsonl").read_text().splitlines()
               if "openSession" in line]
@@ -87,9 +87,9 @@ def test_an_answer_no_path_takes_closes_the_run_and_goes_to_the_next(tmp_path, m
     assert hub.send(task_id, "green") == 0
     assert "started run 2" in lines[-1]
     job = hub.store.load(task_id)
-    assert "stalled:1" in job["notified"]
+    assert "stalled:1" in fakes.notified(job)
     assert not list(hub.store.notices.glob(f"{task_id}-stalled-1-*"))
     serve.serve_once(root)
-    fakes.until(lambda: "done:2" in hub.store.load(task_id)["notified"], what="run 2 ended")
+    fakes.until(lambda: "done:2" in fakes.notified(hub.store.load(task_id)), what="run 2 ended")
     launcher.join()
     assert "Answer to the earlier question: green" in json.loads((fake / "state.json").read_text())["prompts"][-1]

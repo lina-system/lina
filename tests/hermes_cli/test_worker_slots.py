@@ -77,7 +77,7 @@ def test_a_task_cancelled_before_serve_is_never_started(lane):
     assert lane["launched"] == []
     assert not (task_dir / "prepared").exists() and not (task_dir / "handle.json").exists()
     assert (task_dir / "state").read_text().strip() == "cancelled"
-    assert hub.store.load(task_id)["notified"] == ["cancelled:1"]
+    assert fakes.notified(hub.store.load(task_id)) == ["cancelled:1"]
 
 
 def test_a_run_cancelled_after_launch_opens_no_session(lane):
