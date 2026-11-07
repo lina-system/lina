@@ -448,6 +448,16 @@ conclusions; their own id is text), `summary` → context summaries (#16). Row-l
 `lina.agent_id`, so the migration grants it `USAGE` on `vec`, `SELECT, INSERT, UPDATE, DELETE` on
 `vec.embeddings` and the policy `honcho_rows`, which lets it see and write kinds `message` and `document` only.
 
+A vector search filters its rows (owner, kind, model, the joined chunk or conclusion still there) after the
+HNSW index has picked candidates. With pgvector's defaults (`hnsw.ef_search` 40, `hnsw.iterative_scan` off) the
+index returns the 40 nearest rows of the whole table, the filter drops most of them, and the search returns
+fewer rows than asked for, or none, and misses rows an exact scan finds (#387: on the #148 store of 436k vectors,
+recall@5 against an exact scan was 0.875). `MessageStore.search_memory_vectors` and `eval-search` therefore run
+their query with `HNSW_FILTERED_SEARCH` (`hermes_state_store.py`): `hnsw.iterative_scan = strict_order`, which
+keeps reading the index until the filter lets the limit through, nearest first, and `hnsw.ef_search = 400`. On
+that store this gave recall@5 0.975 at about 20 ms a query, against about 1.6 s for an exact scan. Both are
+`SET LOCAL`, scoped to the query's own transaction (a savepoint inside a write).
+
 Honcho has no vector columns of its own any more: its revision `l19_vec_embeddings` copies the old vectors only
 when `EMBEDDING_LEGACY_MODEL` in `honcho.env` names the model that wrote them and that is the configured model
 (`EMBEDDING_MODEL_CONFIG__MODEL`), and then only those as wide as `vec.embeddings`. Honcho's old columns keep no
