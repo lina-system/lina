@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- Person devices in work settings now require and accept their status SSH alias (`host`) with `role: person`, while refusing node fields, so saved person devices appear in the devices view (lina#373).
 - `lina worker submit --host` refuses names outside `devices.workers` before creating a task; queued tasks whose named device was removed end failed with a reason on their card and notice, and a full named device no longer holds back tasks for other devices (lina#384).
 - A gateway started under test isolation stays a plain child instead of a launchd job: `start_gateway_job` returns `None` without a single `launchctl` call while `HERMES_TEST_ISOLATION` is set, so the e2e history tests no longer leave `com.nousresearch.lina.runtime.*` jobs in the developer's own `gui/<uid>` domain, outside the sandbox and out of the test's process tracking (lina#372).
 - `lina migrate memory` no longer refuses a profile with a shared skill linked into `skills/`: a symlink inside `skills/`, `memories/`, `memory/` or `personas/` is skipped without reading its target and listed in the report's `skipped_symlinks`; a symlinked profile directory, `state.db` or `lcm.db` is still refused (lina#366).
