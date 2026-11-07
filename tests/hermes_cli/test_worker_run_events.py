@@ -23,7 +23,7 @@ from hermes_cli.worker.hub import Hub
 from hermes_cli.worker.transport import Reply
 from tests.hermes_cli import _worker_fakes as fakes
 
-AGENT = "sion"
+AGENT = "tester"
 START = 1_800_000_000.0
 TICK_S = 30
 FAKE_CHAT = """import json, os, sys
@@ -132,7 +132,7 @@ class Far:
         monkeypatch.setattr(hub_module, "fetch", lambda transport, task_id, out: out.mkdir(parents=True, exist_ok=True))
 
     def run(self, n: int, *, on_card: bool = False, **fields) -> str:
-        task_id = f"OT-SIO100000000{n}"
+        task_id = f"OT-TES100000000{n}"
         self.hub.store.save({"id": task_id, "bot": AGENT, "topic": "t", "mode": "ulw", "runner": "fakecli",
                              "host": "far", "state": "running", "runs": 1, "created": self.now,
                              "access": "workspace-write", "grant": {"access": "workspace-write"}, "notified": [],
@@ -225,7 +225,7 @@ def test_each_end_carries_its_event_and_delivery_id_everywhere_it_is_recorded(fa
         (card_event, event, end_state)]
 
 
-HEAD = "[lina worker · automatic] sion · topic t · run OT-SIO1000000001 (fakecli on {host}, run {run}, access " \
+HEAD = "[lina worker · automatic] tester · topic t · run OT-TES1000000001 (fakecli on {host}, run {run}, access " \
        "workspace-write): "
 FIRST_LINES = {
     "done": "run.completed (done) · " + HEAD.format(host="far", run=1) + "done",
