@@ -263,14 +263,17 @@ def test_a_parked_reviewer_run_wakes_back_into_review(board, monkeypatch, stop):
     assert kb.request_changes(board, tid, reason="fix the edge case", expected_run_id=reclaimed.current_run_id)[0] is True
 
 
-def test_a_manual_schedule_without_a_wait_still_unblocks_to_ready(board):
+def test_a_reviewer_runs_manual_schedule_without_a_wait_unblocks_back_into_review(board):
     tid, impl_run = _running(board, "reviewed card")
     assert kb.request_review(board, tid, summary="implemented", expected_run_id=impl_run) is True
     review_run = kb.claim_review_task(board, tid).current_run_id
 
     assert kb.schedule_task(board, tid, reason="handed to a worker run", expected_run_id=review_run)
     assert kb.unblock_task(board, tid) is True
-    assert kb.get_task(board, tid).status == "ready"
+    assert kb.get_task(board, tid).status == "review"
+    reclaimed = kb.claim_review_task(board, tid)
+    assert reclaimed is not None
+    assert kb.request_changes(board, tid, reason="fix it", expected_run_id=reclaimed.current_run_id)[0] is True
 
 
 def _crash(conn, tid):
@@ -684,7 +687,8 @@ def test_an_archived_upstream_counts_only_when_it_was_completed(board, kind, com
 
     spawned: list[str] = []
     assert _tick(board, spawned).woken == ([tid] if completed else [])
-    assert (kb.get_task(board, tid).status == "scheduled") is (not completed)
+    # Unfinished: the wait can never be met, so it is handed to a person (lina#258).
+    assert (kb.get_task(board, tid).status == "blocked") is (not completed)
 
 
 def test_kanban_judge_reply_names_card_events_only_for_a_kanban_judge():
