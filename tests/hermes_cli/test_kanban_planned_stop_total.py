@@ -63,3 +63,25 @@ def test_planned_stops_between_waits_are_bounded_per_card(board, monkeypatch):
     assert kb.unblock_task(board, tid, by="operator") is True
     _runtime_end(board, tid)
     assert kb.get_task(board, tid).status == "ready"
+
+
+def test_a_dependency_wait_is_no_hold_for_a_person_and_does_not_start_the_count_over(board, monkeypatch):
+    (Path(os.environ["HERMES_HOME"]) / "config.yaml").write_text(
+        "kanban:\n  planned_stop_total_limit: 3\n", encoding="utf-8")
+    monkeypatch.setattr(kb, "_pid_alive", lambda pid: False)
+    tid = kb.create_task(board, title="long job", assignee="worker", max_runtime_seconds=1)
+    for _ in range(2):
+        _runtime_end(board, tid)
+    parent = kb.create_task(board, title="upstream")
+    run_id = kb.claim_task(board, tid).current_run_id
+    kb.link_tasks(board, parent_id=parent, child_id=tid, expected_child_run_id=run_id)
+    assert kb.block_task(board, tid, reason="needs the upstream", kind="dependency", expected_run_id=run_id)
+    assert kb.get_task(board, tid).status == "todo"
+    assert kb.complete_task(board, parent, result="landed") is True
+    assert kb.get_task(board, tid).status == "ready"
+
+    _runtime_end(board, tid)
+
+    held = kb.get_task(board, tid)
+    assert (held.status, held.block_kind) == ("blocked", "needs_input")
+    assert any("3 planned stops" in r for r in _blocked_reasons(board, tid) if r)

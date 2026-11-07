@@ -13,13 +13,15 @@ blocked ``needs_input`` with no ``wait_for``, for a person to look at.
 A streak is broken by anything in between, so planned stops alternating with parks on a recorded
 wait (a WAIT verdict, ``--wait-for``) never reach it. ``kanban.planned_stop_total_limit``
 (default 20) bounds those too (lina#258): planned stops since the card was last held for a person
-(a ``blocked`` run that is no park), whatever came between them. Past it the card is blocked the
-same way, and that hold starts the count over.
+(:func:`_run_is_person_hold`), whatever came between them. A dependency wait or a park on a
+recorded wait resumes with no person, so it neither starts the count over nor counts. Past the
+limit the card is blocked the same way, and that hold starts the count over.
 
 The streak is read from the run history, no schema of its own. A run is a planned stop when its
 outcome is ``timed_out`` (runtime or iteration limit), or ``scheduled`` with a ``scheduled``
 event whose ``wait_for`` carries ``handoff`` (the turn-budget re-queue). Any other run end
-(completed, crashed, blocked, a WAIT park) breaks the streak.
+(completed, crashed, a block of any kind including a dependency wait, a WAIT park) breaks the
+streak; only the total above tells a person's hold from a wait that resumes by itself.
 """
 from __future__ import annotations
 
@@ -146,9 +148,36 @@ def consecutive_planned_stops(conn: sqlite3.Connection, task_id: str) -> int:
     return streak
 
 
+# Block kinds only a person can answer; ``dependency`` resumes by itself once its parent is done.
+_PERSON_BLOCK_KINDS = (None, "needs_input", "capability", "transient")
+
+
+def _run_is_person_hold(conn: sqlite3.Connection, task_id: str, run_id: int, outcome: Optional[str]) -> bool:
+    """A run that ended in a block a person must answer, read from the run's block event.
+
+    That is a ``blocked`` event (or ``block_loop_detected``, a repeated block routed to triage)
+    whose ``kind`` is ``needs_input``, ``capability``, ``transient`` or none, with no ``wait_for``.
+    Not a hold: a ``dependency_wait`` event (``block_task(kind="dependency")``: the card waits in
+    ``todo`` and ``recompute_ready`` resumes it) and a park on a recorded wait (``wait_for``,
+    :func:`_run_is_park`), which the dispatcher wakes. A ``blocked`` run with no block event is
+    counted as a hold, the safe reading.
+    """
+    if outcome != "blocked":
+        return False
+    row = conn.execute(
+        "SELECT kind, payload FROM task_events WHERE task_id = ? AND run_id = ? AND kind IN "
+        "('blocked', 'block_loop_detected', 'dependency_wait') ORDER BY id DESC LIMIT 1", (task_id, run_id),
+    ).fetchone()
+    if row is None:
+        return True
+    payload = json.loads(row["payload"]) if row["payload"] else {}
+    return (row["kind"] != "dependency_wait" and not isinstance(payload.get("wait_for"), dict)
+            and payload.get("kind") in _PERSON_BLOCK_KINDS)
+
+
 def planned_stops_since_hold(conn: sqlite3.Connection, task_id: str) -> int:
-    """Planned stops among the card's ended runs since it was last held for a person: a
-    ``blocked`` run that is no park on a recorded wait."""
+    """Planned stops among the card's ended runs since it was last held for a person
+    (:func:`_run_is_person_hold`)."""
     rows = conn.execute(
         "SELECT id, outcome FROM task_runs WHERE task_id = ? AND ended_at IS NOT NULL ORDER BY id DESC",
         (task_id,),
@@ -156,7 +185,7 @@ def planned_stops_since_hold(conn: sqlite3.Connection, task_id: str) -> int:
     total = 0
     for row in rows:
         run_id, outcome = int(row["id"]), row["outcome"]
-        if outcome == "blocked" and not _run_is_park(conn, task_id, run_id, outcome):
+        if _run_is_person_hold(conn, task_id, run_id, outcome):
             break
         total += _run_is_planned_stop(conn, task_id, run_id, outcome)
     return total
