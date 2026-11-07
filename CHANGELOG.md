@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- `lina migrate memory` no longer refuses a profile with a shared skill linked into `skills/`: a symlink inside `skills/`, `memories/`, `memory/` or `personas/` is skipped without reading its target and listed in the report's `skipped_symlinks`; a symlinked profile directory, `state.db` or `lcm.db` is still refused (lina#366).
 - `scripts/sync-upstream` merges with git's directory-rename detection off, so an upstream file new under a pruned directory is pruned instead of being moved into a kept directory with similar files (a subtree) as a conflict; merging Hermes `main` at 6b21d0564d into `dev` leaves 30 conflicts instead of 179 (lina#4).
 - ACP worker execute requests with a missing or empty `cwd` use the session's work folder for access checks; explicit outside paths and read-only execution stay denied, and permission events record input key names without values (lina#352).
 - `hermes kanban boards rm` of a pinned worker's own board whose `kanban.db` links to the pinned database archives it and leaves the `archived` tombstone instead of failing after the move, and two kanban tests no longer fail on a Mac outside CI: the `enable-linger` spawn-refusal test is marked Linux-only, the dispatcher probe writes its config with the current `_config_version`, and the gateway test probes' child gateway no longer reads the account's launchd/systemd for a loaded Hermes Agent gateway (lina#259).

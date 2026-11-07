@@ -235,6 +235,11 @@ Global `--profile` may select a runtime profile within that root; it does not ch
 The command uses SQLite's online backup API, never opens an original
 database for writing, and reads only retained snapshots after the copy step. It copies skills, persona
 and memory files; credentials are excluded and config is limited to non-secret memory settings.
+A symlink inside `skills/`, `memories/`, `memory/` or `personas/` (such as a shared skill linked into a
+named profile) is skipped, not followed: its target is neither read nor checked, nothing behind it is
+copied, and the report lists it under `skipped_symlinks` as a path relative to the profile. A symlinked
+profile directory, `state.db`, `lcm.db`, one of those four directories itself or a named file such as
+`SOUL.md` still refuses the profile.
 Each database snapshot is consistent on its own, not a common snapshot instant across databases.
 
 The copied Honcho input is a pre-split logical `pg_dump` archive, not a physical store backup. The selected
