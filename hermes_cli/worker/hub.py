@@ -21,7 +21,7 @@ from pathlib import Path
 
 from hermes_cli.lina_work_settings import ACCESS, SettingsError
 from hermes_cli.lina_work_settings_route import decide
-from hermes_cli.worker import bidding, kanban_link, models, notice, request_keys, runners, settings
+from hermes_cli.worker import bidding, goal_drive, kanban_link, models, notice, request_keys, runners, settings
 from hermes_cli.worker.file_node_deny import review_reason
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt, with_hub_rules
@@ -178,7 +178,8 @@ class Hub:
                "private_inputs": opts.get("private_inputs") or [],
                "grant": grant, "delivery": "pending", "verdict": None, "group": group, "next_notes_rule": True,
                "card": opts.get("card"), "card_start_pending": kanban_link.on_hermes(opts.get("card")),
-               "settings": decision.settings, "request_key": opts.get("request_key")}
+               "settings": decision.settings, "request_key": opts.get("request_key"),
+               "base_branch": opts.get("base_branch")}
         self.store.save(job)
         self.store.receipt(tid, "submitted", bot=agent, topic=job["topic"], mode=job["mode"], runner=runner,
                            model=job["model"], brief=str(brief), repo=job["repo"], group=group, grant=grant,
@@ -239,7 +240,7 @@ class Hub:
         if why := bidding.missing_access(transport.descriptor, job.get("access")):
             raise HubError(f"{dev.name} {why}")
         device_job = {key: job.get(key) for key in ("id", "mode", "access", "runner", "runner_spec", "model", "repo", "branch",
-                                                     "next_notes_rule")}
+                                                     "next_notes_rule", "base_branch")}
         device_job["notify"] = self._notify_spec(dev)
         put(transport, tid, "job.json", json.dumps(device_job, ensure_ascii=False))
         put(transport, tid, "id", tid + "\n")
@@ -773,7 +774,8 @@ class Hub:
             self.store.receipt(job["id"], "answer" if action == "answer" else "steer", run=run, response=reply)
         else:
             self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run,
-                               **({"queued": True} if action == "queued" else {}))
+                               **({"queued": True} if action == "queued" else {}),
+                               **({"request_key": request_key} if request_key else {}))
         request_keys.sent(self.store, job["id"], request_key, action, run)
         self.out(NEXT_RUN_WORDS[action].format(id=job["id"], run=run))
         return 0
@@ -1183,6 +1185,7 @@ class Hub:
                     self._try_resume(job)
                 elif job.get("state") == "running" and job.get("host") and time.time() - job["created"] < 7 * 86400:
                     self._watch(job)
+            goal_drive.tick(self)
 
     def _try_place(self, job: dict) -> bool:
         try:

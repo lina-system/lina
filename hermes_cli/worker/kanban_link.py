@@ -312,6 +312,26 @@ def _still_open(store, run_id: str) -> bool:
     return job is None or job.get("state") not in ended
 
 
+def _view_path(store, card: dict) -> Path:
+    return store.root / "cards" / f"{card_key(card)}.view.json"
+
+
+def keep_view(store, card: dict, task: dict) -> None:
+    """The card's title, status and body as read at a run's end; the goal drive reads them (``kept_view``) instead
+    of asking the board again."""
+    path = _view_path(store, card)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({key: task.get(key) for key in ("title", "status", "body")}, ensure_ascii=False),
+                    encoding="utf-8")
+
+
+def kept_view(store, card: dict) -> dict | None:
+    try:
+        return json.loads(_view_path(store, card).read_text(encoding="utf-8-sig"))
+    except (FileNotFoundError, ValueError):
+        return None
+
+
 def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) -> str | None:
     """Unblock the card once if it waits on *run_id*, for judging *judged* (the run, or its ``OG-`` batch); the
     unblock form (``judge_wake`` / ``bare``) when it was woken, else None.
@@ -332,6 +352,7 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) 
             status = view["task"]["status"]
         except (ValueError, KeyError, TypeError) as exc:
             raise CardLinkError("kanban show did not return task.status") from exc
+        keep_view(store, card, view["task"])
         named, schedule = _last_schedule(view)
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named:
