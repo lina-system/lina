@@ -167,3 +167,33 @@ def test_full_named_device_waits_without_blocking_another_device(lane):
     assert hub.store.load(first)["notified"] == []
     assert hub.store.load(second)["state"] == "running"
     assert hub.store.load(second)["host"] == "here"
+
+
+def test_wait_reports_removed_named_device_failure(lane):
+    hub = lane["hub"]
+    (here,) = hub.devices()
+    devices = [replace(here, name="gone", cap=0)]
+    lane["mp"].setattr(hub, "devices", lambda: devices)
+    now = hub_mod.time.time()
+    started = now
+
+    def remove_device_and_tick(seconds):
+        nonlocal now
+        now += seconds
+        devices.clear()
+        hub.tick()
+
+    lane["mp"].setattr(hub_mod.time, "time", lambda: now)
+    lane["mp"].setattr(hub_mod.time, "sleep", remove_device_and_tick)
+
+    result = hub.submit({"briefs": [fakes.brief(lane["tmp"], "SCENARIO:done one")], "mode": "ulw",
+                         "topic": "place", "bot": "sion", "runner": "fakecli", "host": "gone", "wait": 30})
+
+    (job,) = hub.store.all()
+    assert result == 0
+    assert now - started < 30
+    assert job["state"] == "failed" and job["host"] is None
+    assert job["waiter"] is None and job["waiter_start"] is None
+    assert lane["lines"][-1] == f"{job['id']} failed · {job['placement_error']}"
+    assert "gone" in lane["lines"][-1] and len(lane["lines"][-1].splitlines()) == 1
+    assert not list(hub.store.notices.glob(f"{job['id']}-*"))
