@@ -60,6 +60,7 @@ class Snapshot:
     honcho_dump: Path | None
     spool: Path | None
     receipt: tuple[CopyReceipt, ...]
+    skipped_symlinks: tuple[str, ...] = ()
 
 
 def _safe(path: Path) -> Path:
@@ -91,11 +92,15 @@ def _fingerprint(path: Path, database: bool) -> str:
     return hashlib.sha256(json.dumps(records).encode()).hexdigest()
 
 
-def _inventory(profile_dir: Path) -> list[Path]:
-    """Only known memory/persona files and the skills tree are implicit inputs."""
-    paths = []
-    for relative in ("SOUL.md", "persona.md", "MEMORY.md", "USER.md",
-                     "memory/MEMORY.md", "memory/USER.md", "config.yaml"):
+def _inventory(profile_dir: Path) -> tuple[list[Path], list[str]]:
+    """Only known memory/persona files and the skills tree are implicit inputs.
+
+    A symlink inside an inventory directory is skipped by lstat alone and returned
+    as a profile-relative path; its target may lie outside the profile and is never
+    read. The named files and the inventory directories themselves must not be links.
+    """
+    paths, skipped = [], []
+    for relative in ("SOUL.md", "persona.md", "MEMORY.md", "USER.md", "config.yaml"):
         path = _safe(profile_dir / relative)
         if path.exists():
             if not path.is_file():
@@ -107,6 +112,9 @@ def _inventory(profile_dir: Path) -> list[Path]:
             continue
         def visit(directory: Path) -> None:
             for path in sorted(directory.iterdir()):
+                if path.is_symlink():
+                    skipped.append(path.relative_to(profile_dir).as_posix())
+                    continue
                 _safe(path)
                 if path.is_dir():
                     visit(path)
@@ -116,7 +124,7 @@ def _inventory(profile_dir: Path) -> list[Path]:
                 else:
                     raise SnapshotError(path, "expected a regular file or directory")
         visit(skills)
-    return paths
+    return paths, skipped
 
 
 def _config_bytes(home: Path) -> bytes:
@@ -181,13 +189,12 @@ def snapshot(
                           *[str(_safe(path)) if path is not None else None
                             for path in (honcho_dump, spool, work_db)]])
     if root.exists():
-        copies = _reuse(root, request)
-        return _result(root, source_home, profile_dir, profile, copies)
+        return _result(root, source_home, profile_dir, profile, *_reuse(root, request))
     if not profile_dir.is_dir():
         raise SnapshotError(profile_dir, "source profile does not exist")
+    inventory, skipped = _inventory(profile_dir)
     # Each tuple is (source, relative destination, online SQLite backup).
-    inputs = [(path, Path("profile") / path.relative_to(profile_dir), False)
-              for path in _inventory(profile_dir)]
+    inputs = [(path, Path("profile") / path.relative_to(profile_dir), False) for path in inventory]
     honcho_config = _safe(profile_dir / "honcho.json")
     if honcho_config.exists():
         inputs.append((honcho_config, Path("external/honcho-config.json"), False))
@@ -223,7 +230,8 @@ def snapshot(
                      for index, (path, relative, database) in enumerate(inputs))
 
     def manifest(copies: tuple[CopyReceipt, ...]) -> str:
-        return request + "\n" + json.dumps([asdict(row) for row in copies], default=str, sort_keys=True) + "\n"
+        rows = json.dumps([asdict(row) for row in copies], default=str, sort_keys=True)
+        return request + "\n" + rows + "\n" + (json.dumps(skipped) + "\n" if skipped else "")
 
     work_dir.mkdir(parents=True, exist_ok=True)
     with TemporaryDirectory(prefix=".snapshot-", dir=work_dir) as temporary:
@@ -250,14 +258,14 @@ def snapshot(
             if path.is_file():
                 path.chmod(0o444)
         staging.rename(root)
-    return _result(root, source_home, profile_dir, profile, copies)
+    return _result(root, source_home, profile_dir, profile, copies, tuple(skipped))
 
 
-def _reuse(root: Path, request: str) -> tuple[CopyReceipt, ...]:
+def _reuse(root: Path, request: str) -> tuple[tuple[CopyReceipt, ...], tuple[str, ...]]:
     """Verify copies only; the live source may have advanced or been removed."""
     receipt_path = _safe(root / "receipt.json")
     lines = receipt_path.read_text().splitlines()
-    if len(lines) != 2 or lines[0] != request:
+    if len(lines) not in (2, 3) or lines[0] != request:
         raise SnapshotError(root, "source request provenance differs; refusing overwrite")
     rows = json.loads(lines[1])
     copies = tuple(CopyReceipt(Path(row["source"]), Path(row["destination"]), row["method"],
@@ -278,15 +286,16 @@ def _reuse(root: Path, request: str) -> tuple[CopyReceipt, ...]:
             actual.add(path)
     if actual != expected:
         raise SnapshotError(root, "snapshot file inventory differs; refusing overwrite")
-    return copies
+    return copies, tuple(json.loads(lines[2])) if len(lines) == 3 else ()
 
 
 def _result(root: Path, source_home: Path, profile_dir: Path, profile: str,
-            copies: tuple[CopyReceipt, ...]) -> Snapshot:
+            copies: tuple[CopyReceipt, ...], skipped: tuple[str, ...] = ()) -> Snapshot:
     copied = {row.destination.relative_to(root) for row in copies}
     return Snapshot(root, source_home, profile_dir, profile, root / "profile",
                     root / "profile/state.db",
                     root / "profile/lcm.db" if Path("profile/lcm.db") in copied else None,
                     root / "profile/work.db" if Path("profile/work.db") in copied else None,
                     root / "external/honcho.dump" if Path("external/honcho.dump") in copied else None,
-                    root / "external/events.jsonl" if Path("external/events.jsonl") in copied else None, copies)
+                    root / "external/events.jsonl" if Path("external/events.jsonl") in copied else None, copies,
+                    skipped)
