@@ -154,18 +154,26 @@ def latest_session(nh: NativeHome) -> str:
 
 
 def messages(nh: NativeHome, session_id: str | None = None, *, active_only: bool = True) -> list[dict[str, Any]]:
-    """Persisted message rows (dicts) for ``session_id`` (default: every session), in insertion order."""
+    """Persisted message rows (dicts) for ``session_id`` (default: every session), in insertion order.
+
+    Text columns come from the memory store through SessionDB."""
     if not nh.db_path.exists():
         return []
+    from hermes_state import SessionDB
+    from hermes_state_store import text_columns_sql
+
     where, params = [], []
     if session_id:
         where.append("session_id = ?")
         params.append(session_id)
     if active_only:
         where.append("active = 1")
-    sql = "SELECT * FROM messages" + (f" WHERE {' AND '.join(where)}" if where else "") + " ORDER BY id"
-    with _connect(nh) as conn:
-        return [dict(r) for r in conn.execute(sql, params)]
+    sql = f"SELECT *, {text_columns_sql()} FROM transcript_rows"
+    if where:
+        sql += f" WHERE {' AND '.join(where)}"
+    sql += " ORDER BY id"
+    with SessionDB(db_path=nh.db_path, read_only=True) as db:
+        return [dict(r) for r in db._read_all(sql, params)]
 
 
 def tool_calls_of(row: dict[str, Any]) -> list[dict[str, Any]]:

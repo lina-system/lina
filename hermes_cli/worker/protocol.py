@@ -40,10 +40,12 @@ def verbs() -> dict[str, Verb]:
         "probe": Verb(lambda root, args, data: d._ok(d.probe(root, *args[:2])), "read"),
         "reserve": Verb(lambda root, args, data: d._ok(d.slots.reserve(
             root, d.safe_id(args[0]), int(args[1]), pool=args[2] if len(args) > 2 else "bid")), "write"),
-        "send": Verb(lambda root, args, data: d._ok(d.steer(root, args[0], data.decode("utf-8", "replace"))), "write", stdin=True),
+        "send": Verb(lambda root, args, data: d._ok(d.keyed(root, args, lambda: d.steer(
+            root, args[0], data.decode("utf-8", "replace")))), "write", stdin=True),
         "follow_up": Verb(lambda root, args, data: d._ok(d.follow_up(root, args[0], json.loads(data))), "write", stdin=True),
         "human": Verb(lambda root, args, data: d._ok(d.human(root, args[0])), "read", legacy=True),
-        "answer": Verb(lambda root, args, data: d._ok(d.answer(root, args[0], data.decode("utf-8", "replace"))), "write", stdin=True),
+        "answer": Verb(lambda root, args, data: d._ok(d.keyed(root, args, lambda: d.answer(
+            root, args[0], data.decode("utf-8", "replace")))), "write", stdin=True),
         "cancel": Verb(lambda root, args, data: d._ok(d.cancel(root, args[0], data.decode("utf-8", "replace"))),
                        "destructive", stdin=True, legacy=True),
         "pack": Verb(lambda root, args, data: (0, d.pack(root, args[0])), "read", legacy=True),
@@ -96,7 +98,8 @@ def hello(worker_root: Path) -> dict:
             "instance_id": instance_id, "serve": active,
             "version": LINA_VERSION,
             "capabilities": {"runners": lina_runners.cached_node_report(worker_root),
-                             "access_modes": list(ACCESS), "verbs": list(verbs())}}
+                             "access_modes": list(ACCESS), "verbs": list(verbs()),
+                             "request_keys": True}}
 
 
 def service_verb(worker_root: Path, args: list[str]) -> dict:

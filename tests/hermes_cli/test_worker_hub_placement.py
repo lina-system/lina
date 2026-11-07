@@ -103,7 +103,7 @@ def test_a_late_end_of_an_earlier_run_does_not_end_the_current_run(lane):
     assert hub.notify(task_id, "done", "1") == "earlier run"
     job = hub.store.load(task_id)
     assert (job["state"], job["runs"]) == ("running", 2)
-    assert "done:1" in job["notified"]
+    assert "done:1" in fakes.notified(job)
     assert not list(hub.store.notices.glob(f"{task_id}-*"))
 
 

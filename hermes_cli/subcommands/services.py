@@ -20,10 +20,11 @@ def build_services_parser(subparsers) -> None:
     from hermes_cli.lina_services import SERVICES
 
     parser = subparsers.add_parser(
-        "services", help="LINA's services: gateway, memory store, OCX, worker",
+        "services", help="LINA's services: gateway, memory store, OCX, worker, web",
         description="One line per LINA service: name, label, state. The gateway runs as a launchd/systemd "
-                    "service; the memory store runs in the Docker compose project lina-store; OCX (#32) and the "
-                    "worker (#35, `lina worker serve`) run as launchd/systemd services too.")
+                    "service; the memory store runs in the Docker compose project lina-store; OCX (#32), the "
+                    "worker (#35, `lina worker serve`) and the web server (#288, the dashboard with the app at "
+                    "/app/) run as launchd/systemd services too.")
     sub = parser.add_subparsers(dest="services_action")
     sub.add_parser("list", help="One line per service (the default)")
     sub.add_parser("status", help="Same as list")

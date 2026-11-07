@@ -16,7 +16,7 @@ import pytest
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli.worker import hub as hub_module
-from hermes_cli.worker import serve, settings
+from hermes_cli.worker import events, kanban_link, serve, settings
 from hermes_cli.worker.board import cards
 from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.transport import TransportError
@@ -26,7 +26,15 @@ AGENT = "agent-a"
 CARD, BOARD = "t_card1", "ops"
 
 FAKE_KANBAN = """import json, os, sys
+JUDGE_WAKE = True  # the owner's Hermes: unblock takes --judge-wake <run>
 verb = sys.argv[sys.argv.index("kanban") + 3] if "--board" in sys.argv else sys.argv[sys.argv.index("kanban") + 1]
+rest = sys.argv[sys.argv.index(verb) + 1:]
+if verb == "unblock" and not (len(rest) == 1 or (JUDGE_WAKE and len(rest) == 3 and rest[0] == "--judge-wake")):
+    with open(os.environ["FAKE_KANBAN_LOG"], "a") as fh:
+        fh.write(json.dumps({"argv": sys.argv[1:], "ok": False, "content": None, "env": []}) + "\\n")
+    print("usage: hermes kanban unblock [-h] task_id", file=sys.stderr)
+    print("hermes: error: unrecognized arguments: " + " ".join(rest[:-1]), file=sys.stderr)
+    sys.exit(2)
 once = os.path.join(os.environ.get("FAKE_KANBAN_FAIL_ONCE", ""), verb)
 failed = bool(os.environ.get("FAKE_KANBAN_FAIL_ONCE")) and os.path.exists(once)
 if failed:
@@ -43,6 +51,7 @@ if verb == "show":
     print(json.dumps({"task": {"status": os.environ.get("FAKE_KANBAN_STATUS", "scheduled")}}))
 sys.exit(1 if failed else 0)
 """
+FAKE_KANBAN_NO_JUDGE_WAKE = FAKE_KANBAN.replace("JUDGE_WAKE = True", "JUDGE_WAKE = False")  # upstream Hermes
 FAKE_CHAT = """import os, sys
 open(os.environ["FAKE_CHAT_LOG"], "a").write(sys.stdin.read())
 """
@@ -118,7 +127,7 @@ def _one_run_on_a_device(tmp_path, monkeypatch, command) -> tuple[Path, str]:
     task_id = lines[0].split()[0]
     serve.serve_once(root)
     hub = Hub(root, out=lines.append)
-    fakes.until(lambda: "done:1" in hub.store.load(task_id)["notified"], what="the run ended")
+    fakes.until(lambda: "done:1" in fakes.notified(hub.store.load(task_id)), what="the run ended")
     launcher.join()
     return root, task_id
 
@@ -131,8 +140,8 @@ def test_a_hermes_card_gets_start_end_and_report_through_the_command_and_no_kanb
 
     assert opened == []
     made = calls()
-    assert _verbs(made) == ["comment", "comment", "attach"]
-    start, end, attach = (call["argv"] for call in made)
+    assert _verbs(made) == ["comment", "comment", "attach", "show"]  # show: does the card's schedule name the run
+    start, end, attach, _ = (call["argv"] for call in made)
     assert start[:5] == ["kanban", "--board", BOARD, "comment", CARD] and task_id in start[-1]
     assert end[:5] == ["kanban", "--board", BOARD, "comment", CARD]
     assert end[end.index("--author") + 1] == "lina-worker"
@@ -182,7 +191,7 @@ def test_wait_parks_the_card_and_the_first_end_wakes_it_once(queued):
     assert calls()[-1]["argv"][-1] == CARD
 
     hub.notify(second, "done", "1")  # the card runs again: the comment only
-    assert _verbs(calls())[5:] == ["comment"]
+    assert _verbs(calls())[5:] == ["comment", "show"]
 
 
 def test_wait_on_one_run_is_woken_only_by_that_runs_end(queued):
@@ -190,10 +199,10 @@ def test_wait_on_one_run_is_woken_only_by_that_runs_end(queued):
     waited, other = submit("a.md"), submit("b.md")
     assert hub.wait({"task": CARD, "board": BOARD}, [waited]) == 0
     hub.notify(other, "done", "1")
-    assert _verbs(calls())[2:] == ["comment"]
+    assert _verbs(calls())[2:] == ["comment", "show"]
     hub.notify(waited, "done", "1")
     hub.notify(waited, "done", "1")
-    assert _verbs(calls())[2:] == ["comment", "comment", "show", "unblock"]
+    assert _verbs(calls())[2:] == ["comment", "show", "comment", "show", "unblock"]
 
 
 def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_through(queued, tmp_path, monkeypatch):
@@ -217,6 +226,36 @@ def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_thr
     hub.notify(run, "done", "1")
     assert _verbs(calls()) == ["comment", "comment", "attach", "show", "show", "unblock"]
     assert not hub.store.load(run).get("card_pending")
+
+
+class HubStopped(BaseException):
+    """The hub process ending where it is raised."""
+
+
+def test_a_hub_that_stops_once_a_card_end_is_staged_does_each_card_step_once(queued, monkeypatch):
+    hub, submit, calls = queued
+    run = submit()
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    report = hub.store.out_dir(hub.store.load(run)) / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# report\n", encoding="utf-8")
+    record = events.record
+
+    def stop(*args, **kwargs):  # the end is staged; marking it done is where the hub stops
+        monkeypatch.setattr(events, "record", record)
+        raise HubStopped
+    monkeypatch.setattr(events, "record", stop)
+    with pytest.raises(HubStopped):
+        hub.notify(run, "done", "1")
+
+    Hub(hub.worker_root, out=lambda *_: None).tick()  # the restarted hub
+    hub.notify(run, "done", "1")  # the device's report arrives again
+    Hub(hub.worker_root, out=lambda *_: None).tick()
+
+    assert _verbs(calls()) == ["comment", "comment", "attach", "show", "unblock"]
+    job = hub.store.load(run)
+    assert not job.get("card_pending") and not job.get("deliveries_pending")
+    assert [r["delivery"] for r in hub.store.receipts_of(run) if r["kind"] == "notified"] == [f"{run}:1:run.completed"]
 
 
 def _attached(calls: list[dict]) -> list[tuple[str, str]]:
@@ -276,9 +315,21 @@ def test_a_retried_fetch_that_finds_a_later_run_does_not_label_its_results_as_th
     assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
     assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[1]["argv"][-1]
     hub.notify(run, "done", "2")
-    assert _verbs(calls())[1:] == ["comment", "show", "unblock", "comment", "attach"]
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock", "comment", "attach", "show"]
     assert _attached(calls()) == [(f"report-{run}-2.md", "run 2 report\n")]
     assert not hub.store.load(run).get("card_pending")
+
+
+def test_a_held_end_resumed_after_the_next_run_started_does_not_attach_that_runs_report(on_a_device):
+    hub, run, results, calls = on_a_device
+    results += [OSError("no space left on device"), ("run 2 report\n", 2)]
+    with pytest.raises(OSError):
+        hub.notify(run, "done", "1")  # run 1's notice could not be built: its end is held
+    hub.store.update(run, runs=2, state="running")  # `send` started run 2, whose results the device holds now
+    hub.tick()
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
+    assert _attached(calls()) == []
+    assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[1]["argv"][-1]
 
 
 def test_a_run_with_no_report_completes_without_an_attachment(on_a_device):
@@ -321,7 +372,7 @@ def test_the_end_of_a_run_on_a_running_card_is_a_comment_only(queued):
     hub, submit, calls = queued
     run = submit()
     hub.notify(run, "failed", "1")
-    assert _verbs(calls()) == ["comment", "comment"]
+    assert _verbs(calls()) == ["comment", "comment", "show"]  # read only: no schedule names the run
 
 
 def test_wait_with_no_open_run_on_the_card_does_not_park_it(queued):
@@ -341,6 +392,78 @@ def test_hermes_card_runs_show_in_the_board_run_list_with_card_and_board(queued)
     shown = {row["id"]: row for row in cards(hub.worker_root, time.time())}
     assert set(shown) == {run}
     assert (shown[run]["card"], shown[run]["board"]) == (CARD, BOARD)
+
+
+def _unblocks(calls: list[dict]) -> list[tuple[list[str], bool]]:
+    """``(argv after unblock, went through)`` of each unblock call."""
+    return [(call["argv"][call["argv"].index("unblock") + 1:], call["ok"]) for call in calls
+            if call["argv"][call["argv"].index(BOARD) + 1] == "unblock"]
+
+
+def _noticed(hub, run: str) -> dict:
+    return [r for r in hub.store.receipts_of(run) if r["kind"] == "card_noticed"][-1]
+
+
+def test_the_wake_unblocks_the_card_to_judge_the_run_and_records_that_form(queued):
+    """lina#341: ``--judge-wake <run>`` lands the card ready to judge the run even behind an open parent."""
+    hub, submit, calls = queued
+    run = submit()
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    hub.notify(run, "done", "1")
+    assert _unblocks(calls()) == [(["--judge-wake", run, CARD], True)]
+    assert (_noticed(hub, run)["woke"], _noticed(hub, run)["unblock"]) == (True, "judge_wake")
+
+
+def test_a_hermes_without_judge_wake_is_unblocked_bare_once(queued, fake_kanban):
+    hub, submit, calls = queued
+    Path(fake_kanban[0][1]).write_text(FAKE_KANBAN_NO_JUDGE_WAKE, encoding="utf-8")
+    run = submit()
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    hub.notify(run, "done", "1")
+    assert _unblocks(calls()) == [(["--judge-wake", run, CARD], False), ([CARD], True)]
+    assert (_noticed(hub, run)["woke"], _noticed(hub, run)["unblock"]) == (True, "bare")
+    assert not hub.store.load(run).get("card_pending")
+
+
+def test_an_unblock_refused_for_another_reason_is_not_retried_bare(queued, monkeypatch):
+    hub, submit, calls = queued
+    run = submit()
+    monkeypatch.setenv("HERMES_DELEGATED_CHILD_CONTEXT", "1")
+    with pytest.raises(kanban_link.CardLinkError, match="exited 1"):
+        kanban_link.unblock(hub._link()["command"], hub.store.load(run)["card"], run)
+    assert _unblocks(calls()) == [(["--judge-wake", run, CARD], False)]
+
+
+def test_a_batch_run_wakes_the_card_to_judge_the_batch(queued, tmp_path):
+    hub, _, calls = queued
+    lines: list[str] = []
+    Hub(hub.worker_root, out=lines.append).submit({
+        "briefs": [fakes.brief(tmp_path, "a", "a.md"), fakes.brief(tmp_path, "b", "b.md")], "mode": "ulw",
+        "bot": AGENT, "topic": "t", "wait": None, "card": {"task": CARD, "board": BOARD}})
+    hub.tick()
+    first = lines[0].split()[0]
+    group = hub.store.load(first)["group"]
+    assert group.startswith("OG-")
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    hub.notify(first, "done", "1")
+    assert _unblocks(calls()) == [(["--judge-wake", group, CARD], True)]
+
+
+def test_a_run_on_a_hermes_card_records_its_cards_and_an_older_record_gains_them_on_save(queued, tmp_path):
+    """Hermes reads ``cards`` from the job record to hold the card until the run it launched is judged."""
+    hub, submit, _ = queued
+    run = submit()
+    job = hub.store.load(run)
+    assert job["cards"] == [{"id": CARD, "board": BOARD}]
+    assert job["card"] == {"task": CARD, "board": BOARD, "kind": "hermes"}
+
+    old = {key: value for key, value in job.items() if key != "cards"}
+    old["card"] = {"task": CARD, "board": None, "kind": "hermes"}
+    hub.store.path(run).write_text(json.dumps(old), encoding="utf-8")
+    assert "cards" not in hub.store.load(run)
+    hub.store.update(run, extra="touched")
+    assert hub.store.load(run)["cards"] == [{"id": CARD, "board": "default"}]
+    assert hub.store.load(run)["card"] == old["card"]
 
 
 @pytest.fixture

@@ -101,6 +101,7 @@ cards:
   - key: board-screen
     title: "Show gate results on the board screen"
     assignee: sion
+    kind: screen                     # changes a screen: the plan is refused without gate ui-qa
     todos: ["lina-system/lina-app#40"]
     outcome: "The board screen shows each card's gate results."
     verification: "QA on a disposable instance against the screen feature map finds no defects."
@@ -128,7 +129,14 @@ card.
 Gates: code cards use `gate prs` (every To-dos issue closed by a merged PR with green checks) and
 `gate dev owner/repo` (the branch is green after the merge); non-code cards use
 `gate artifact <path> --check "<cmd>"` and `gate review`; add `gate ask` when the card may ask
-the owner questions. A card that changes a screen people see also lists `gate ui-qa`.
+the owner questions. A card that changes a screen people see is marked `kind: screen` and lists
+`gate ui-qa`; `kanban plan` refuses a `kind: screen` card whose gates do not run `gate ui-qa`.
+A gate counts as ui-qa only as one simple command of an allowed form: `hermes|lina [-p NAME |
+--profile NAME | --profile=NAME] kanban [--board B] gate ui-qa ...` or `[python|python3]
+/abs/path/kanban_gates.py ui-qa ...`. The profile option is the only top-level option allowed;
+`--version`, `-h` or any other word before `kanban` does not count. Programs are named bare (from
+PATH) or by absolute path, never relative to the workspace. No `env`, `exec`, `sh -c`, `$`,
+backquotes, newlines or `; & | < > ( )` outside quotes.
 
 `gate ui-qa` reads the QA record on the card. Leave the aside-qa answer (`answer.md`) as it is, with
 one marker line on top, as a card comment (`hermes kanban comment <card> "<text>"`). The marker
@@ -139,6 +147,11 @@ and `## (D) Map drift`; each list item under Defects is a defect (`- None.` is n
 the newest result for the PR head with all four sections and zero defects, fails with the defect
 list, fails on a result taken anywhere but a disposable instance or only for an older head (run QA
 again), and waits (exit 75) while the newest marker for the head is a running run.
+Only the QA side's records count: a `ui-qa-result` or `ui-qa-run` comment written by the card's
+own profiles (its assignee and implementers, as `gate review` reads them) is ignored, and so is
+one by an author outside `--author <name>` (repeatable) when that is given; the gate prints one
+`note: ignored QA record(s) ...` line naming each ignored comment and why. A result for an older
+head stays a failure until the QA tool records a `ui-qa-run` for a new head by itself.
 
 `gate review` never counts the card assignee's own approval: put it on the card being reviewed
 (`--owner <reviewer>` for an agent reviewer), and gate the reviewer's own card on what the reviewer
@@ -149,11 +162,16 @@ event it waits for recorded on its `scheduled` event (`wait_for`): another card 
 card's result, a PR's required checks finished, or a time. Each dispatcher tick checks that event
 and unblocks the card once when it happens. A worker records the same by hand with
 `hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|until:<time>`, or
-`hermes kanban block <id> --wait-for ...` (a `needs_input` block that returns to ready by
-itself); a `needs_input` block without `--wait-for` waits for a person. A spent `max_turns`,
-`max_runtime` or agent iteration budget is a planned stop: the run leaves a handoff comment and the
-card goes back to ready without counting toward `max_retries`. After `kanban.planned_stop_limit`
-(default 5) planned stops in a row the card is blocked `needs_input` for a person.
+`hermes kanban block <id> --wait-for ...` or the `kanban_block` tool's `wait_for` (a `needs_input`
+block that returns to ready by itself); a `needs_input` block without one waits for a person. A
+manual schedule from a reviewer run returns to review on unblock. A wait that can no longer be met
+becomes a `needs_input` block naming why, once: its upstream card was archived unfinished or
+deleted, or the wait could not be read 30 ticks in a row (for example a gh login that cannot read
+the PR's repository). A spent `max_turns`, `max_runtime` or agent iteration budget is a planned
+stop: the run leaves a handoff comment and the card goes back to ready without counting toward
+`max_retries`. After `kanban.planned_stop_limit` (default 5) planned stops in a row, or
+`kanban.planned_stop_total_limit` (default 20) since the card was last held for a person with waits
+between them, the card is blocked `needs_input` for a person.
 
 ## Procedure
 

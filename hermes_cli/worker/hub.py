@@ -10,24 +10,37 @@ report.
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import re
 import shutil
+import subprocess
 import time
 from pathlib import Path
 
 from hermes_cli.lina_work_settings import ACCESS, SettingsError
 from hermes_cli.lina_work_settings_route import decide
-from hermes_cli.worker import bidding, kanban_link, models, notice, runners, settings
+from hermes_cli.worker import bidding, goal_drive, kanban_link, models, notice, request_keys, runners, settings
+from hermes_cli.worker.file_node_deny import review_reason
 from hermes_cli.worker.hub_store import Store
-from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt
+from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt, with_hub_rules
 from hermes_cli.worker.runners.base import RunnerError
 from hermes_cli.worker.task import read_json, verify
 from hermes_cli.worker.transport import TransportError, fetch, for_device, put, put_tree
+from hermes_cli.worker import events, node_watch
 
-ENDED = ("done", "done_empty", "review", "stalled", "failed", "cancelled")
+ENDED = events.END_STATES
 VERDICT_WORDS = {None: "no verdict yet", "accepted": "accepted", "rejected": "rejected"}
+NEXT_RUN_WORDS = {
+    "answer": "{id} answered the question of run {run}; the same run goes on.",
+    "queued": "{id} run {run} has not started yet: the instruction was added to it.",
+    "steered": "{id} took the instruction into run {run}: it applies after the current tool call, before the next "
+               "decision.",
+    "started": "{id} took the instruction into run {run}: it applies after the current tool call, before the next "
+               "decision.",
+    "requested": "{id} started run {run} in the same session. The end notice will come.",
+}
 HUMAN_NOTICE_AFTER_S = 120
 ANSWER_CLOSE_WAIT_S = 150
 # A Hermes card run's result fetch: tried on each report and tick (30 s) before its end goes out without report.md.
@@ -49,6 +62,47 @@ def caller_agent() -> str:
     return get_active_profile_name() or "default"
 
 
+def owner(bot: str | None = None) -> tuple[str, str]:
+    """The agent a call is made for, and where the name came from: ``--bot``, else ``HERMES_PROFILE``, else
+    ``HERMES_PROFILE_NAME``, else the profile the caller's Hermes Agent ``HERMES_HOME`` names
+    (``<root>/profiles/<name>``; the root itself is ``default``), else LINA's active profile."""
+    if bot:
+        return bot, "--bot"
+    for name in ("HERMES_PROFILE", "HERMES_PROFILE_NAME"):
+        value = os.environ.get(name, "").strip()
+        if value:
+            return value, name
+    home = settings.caller_hermes_home()
+    if home is not None:
+        return (home.name if home.parent.name == "profiles" else "default"), "HERMES_HOME"
+    return caller_agent(), "current profile"
+
+
+def _question_text(item) -> str:
+    """The words of a pending question as the runner's live view carries it."""
+    if isinstance(item, str):
+        return item.strip()
+    if isinstance(item, list):
+        return "\n".join(text for text in map(_question_text, item) if text)
+    if isinstance(item, dict):
+        for key in ("question", "text", "prompt", "title", "message"):
+            if isinstance(item.get(key), str) and item[key].strip():
+                return item[key].strip()
+        return _question_text(item.get("questions") or [])
+    return ""
+
+
+def _allowed_access(job: dict, access: str | None) -> str:
+    """The access a send asks for (the job's when None); refused when unknown or above the job's."""
+    recorded = job.get("access", "workspace-write")
+    requested = recorded if access is None else access
+    if requested not in ACCESS or recorded not in ACCESS:
+        raise HubError(f"invalid access mode: {requested!r}")
+    if ACCESS.index(requested) > ACCESS.index(recorded):
+        raise HubError(f"access {requested} exceeds recorded access {recorded}; submit a new task")
+    return requested
+
+
 def _ago(at: float | None) -> str:
     if not at:
         return "-"
@@ -64,6 +118,7 @@ class Hub:
         self.store = Store(worker_root)
         self.worker = settings.section(self.base)
         self.fetched: bool | None = None
+        self.contacts: dict[str, dict] = {}  # this tick's meta reply of each watched run (node_watch)
 
 
     def devices(self) -> list[settings.Device]:
@@ -85,9 +140,9 @@ class Hub:
         return job
 
 
-    def make_job(self, brief: Path, opts: dict, group: str | None) -> dict:
+    def make_job(self, brief: Path, opts: dict, group: str | None, tid: str | None = None) -> dict:
         agent = opts["bot"]
-        tid = self.store.new_id(agent)
+        tid = tid or self.store.new_id(agent)
         branch = f"omo/{tid}" if opts.get("repo") else None
         try:
             decision = decide(self.base, opts.get("runner"), opts["mode"], opts.get("model"), opts.get("labels"),
@@ -123,11 +178,13 @@ class Hub:
                "private_inputs": opts.get("private_inputs") or [],
                "grant": grant, "delivery": "pending", "verdict": None, "group": group, "next_notes_rule": True,
                "card": opts.get("card"), "card_start_pending": kanban_link.on_hermes(opts.get("card")),
-               "settings": decision.settings}
+               "settings": decision.settings, "request_key": opts.get("request_key"),
+               "base_branch": opts.get("base_branch")}
         self.store.save(job)
         self.store.receipt(tid, "submitted", bot=agent, topic=job["topic"], mode=job["mode"], runner=runner,
                            model=job["model"], brief=str(brief), repo=job["repo"], group=group, grant=grant,
-                           card=job["card"], input_id=f"{tid}.1", settings=decision.settings, access=access)
+                           card=job["card"], input_id=f"{tid}.1", settings=decision.settings, access=access,
+                           request_key=job["request_key"])
         if decision.fallback:
             self.store.receipt(tid, "model_fallback", **decision.fallback)
         return job
@@ -183,12 +240,13 @@ class Hub:
         if why := bidding.missing_access(transport.descriptor, job.get("access")):
             raise HubError(f"{dev.name} {why}")
         device_job = {key: job.get(key) for key in ("id", "mode", "access", "runner", "runner_spec", "model", "repo", "branch",
-                                                     "next_notes_rule")}
+                                                     "next_notes_rule", "base_branch")}
         device_job["notify"] = self._notify_spec(dev)
         put(transport, tid, "job.json", json.dumps(device_job, ensure_ascii=False))
         put(transport, tid, "id", tid + "\n")
         put(transport, tid, "grant.json", json.dumps(job["grant"], ensure_ascii=False) + "\n")
-        put(transport, tid, "prompt.1", job["prompt"])
+        put(transport, tid, "prompt.1", with_hub_rules(job["prompt"], settings.hub_rules(self.worker))
+            if dev.local else job["prompt"])
         if job.get("inputs"):
             put_tree(transport, tid, "input.upload", [Path(p) for p in job["inputs"]])
         put(transport, tid, "request.1", json.dumps({"run": 1, "at": time.time()}))
@@ -197,6 +255,7 @@ class Hub:
     def _started(self, job: dict, dev: settings.Device) -> None:
         job.update(self.store.update(job["id"], state="running", started=time.time()) or {})
         self.store.receipt(job["id"], "run_started", run=1, host=dev.name, award=job.get("award"))
+        node_watch.reset(self.store, dev.name)
 
     def place(self, job: dict) -> str | None:
         """Start *job* on its fixed device or on the bid winner; None when it stays queued.
@@ -278,6 +337,8 @@ class Hub:
 
     def submit(self, opts: dict) -> int:
         briefs = [Path(b).expanduser().resolve() for b in opts["briefs"]]
+        if not briefs:
+            raise HubError("--brief <file> is required")
         for brief in briefs:
             if not brief.is_file():
                 raise HubError(f"brief not found: {brief}")
@@ -285,14 +346,29 @@ class Hub:
         opts["topic"] = opts.get("topic") or opts.get("todo") or (opts["card"] or {}).get("task")
         if not opts["topic"]:
             raise HubError("--todo <to-do ID> is required (or --topic <short name> for work without a to-do)")
+        if opts.get("request_key"):
+            return request_keys.submit(self, opts, briefs)
         if opts.get("at") or opts.get("every"):
             return self.schedule(opts)
+        return self.handed_out(opts, self.hand_out(opts, briefs))
+
+    def hand_out(self, opts: dict, briefs: list[Path], ids: list[str] | None = None,
+                 group: str | None = None) -> list[dict]:
+        """Make and place one task per brief (under *ids* when the IDs were taken before)."""
         opts["private_inputs"] = []
         opts["inputs"] = self._inputs(opts.get("inputs") or [], opts["private_inputs"])
         if opts["private_inputs"]:
             opts["host"] = self._hub_node(opts.get("host"))
-        group = self.store.new_id(opts["bot"], "OG") if len(briefs) > 1 else None
-        jobs = [self._submit_one(brief, opts, group) for brief in briefs]
+        self._named_device_gate(opts, briefs)
+        group = group or (self.store.new_id(opts["bot"], "OG") if len(briefs) > 1 else None)
+        jobs = [self._submit_one(brief, opts, group, tid) for brief, tid in zip(briefs, ids or [None] * len(briefs))]
+        for job in jobs if opts.get("todo") else []:
+            self._todo(job, "link", opts["todo"], f"omo:{job['id']}")
+        return jobs
+
+    def handed_out(self, opts: dict, jobs: list[dict]) -> int:
+        """Where the end of the handed-out *jobs* will be said, or wait for it (``--wait``)."""
+        group = jobs[0].get("group")
         if group:
             self.out(f"{group} batch of {len(jobs)} · one notice when all of them end.")
         elif opts.get("wait") is None and kanban_link.on_hermes(opts["card"]):
@@ -305,25 +381,47 @@ class Hub:
             return self._wait(jobs[0]["id"], float(opts["wait"]))
         return 0
 
+    def _named_device_gate(self, opts: dict, briefs: list[Path]) -> None:
+        """Refuse at submit what the ``--host`` device would never take: its role (``person``; a repo on ``files``),
+        and for a file node a denied folder in a brief or input, or a model path that does not answer."""
+        dev = next((d for d in self.devices() if d.name == opts.get("host")), None)
+        if dev is None:
+            return
+        if why := bidding.role_refusal(dev, opts.get("repo")):
+            raise HubError(f"--host {dev.name}: {why}")
+        if dev.kind == settings.FILE_KIND:
+            from hermes_cli.worker.file_node import submit_refusal
+            texts = [brief.read_text(encoding="utf-8-sig", errors="replace") for brief in briefs]
+            if why := submit_refusal(dev, self.worker_root, texts, opts["inputs"]):
+                raise HubError(why)
+
     def _submit_identity(self, opts: dict) -> None:
-        explicit_card, link = bool(opts.get("card")), self._link()
+        link = self._link()
         opts["card"] = kanban_link.card_for(opts.get("card") or kanban_link.card_from_env(), link)
         if not opts["card"] and link["kind"] == kanban_link.HERMES and \
                 "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
             raise HubError("Hermes card session: pass --card <id> --board <slug>")
-        opts["bot_source"] = "--bot" if opts.get("bot") else "current profile"
-        if not opts.get("bot"):
-            if explicit_card and kanban_link.on_hermes(opts["card"]):
-                for name in ("HERMES_PROFILE", "HERMES_PROFILE_NAME"):
-                    profile = os.environ.get(name, "").strip()
-                    if profile:
-                        opts["bot"], opts["bot_source"] = profile, name
-                        break
-            if not opts.get("bot"):
-                opts["bot"] = caller_agent()
+        opts["bot"], opts["bot_source"] = owner(opts.get("bot"))
 
-    def _submit_one(self, brief: Path, opts: dict, group: str | None) -> dict:
-        job = self.make_job(brief, opts, group)
+    def _todo(self, job: dict, *args: str) -> None:
+        """``worker.todo_link``'s command with *args* on the run's to-do; a failure is one line, never an error."""
+        try:
+            command = settings.todo_link(self.worker)
+            if not command:
+                return
+            done = subprocess.run([*command, *args], text=True, encoding="utf-8", errors="replace",
+                                  capture_output=True, env=kanban_link.hub_env(),
+                                  timeout=kanban_link.COMMAND_TIMEOUT_S, check=False)
+            if done.returncode != 0:
+                raise OSError(f"exited {done.returncode}: {(done.stderr or done.stdout).strip()[-200:]}")
+        except (OSError, ValueError, subprocess.TimeoutExpired) as exc:
+            self.store.receipt(job["id"], "todo_link_failed", verb=args[0], error=str(exc)[:300])
+            self.out(f"lina worker: to-do {job.get('todo')}: {args[0]} for {job['id']} failed: {exc}"[:400])
+            return
+        self.store.receipt(job["id"], "todo_linked", verb=args[0], todo=job.get("todo"))
+
+    def _submit_one(self, brief: Path, opts: dict, group: str | None, tid: str | None = None) -> dict:
+        job = self.make_job(brief, opts, group, tid)
         if opts.get("wait") is not None and not group:
             job.update(self.store.update(job["id"], waiter=os.getpid(), waiter_start=_start_time(os.getpid())) or {})
         if not kanban_link.on_hermes(job.get("card")):
@@ -361,7 +459,7 @@ class Hub:
             self.store.update(task_id, waiter=None, waiter_start=None)
 
 
-    def schedule(self, opts: dict) -> int:
+    def schedule(self, opts: dict, sid: str | None = None) -> int:
         when = time.time()
         if opts.get("at"):
             try:
@@ -369,8 +467,8 @@ class Hub:
             except ValueError as exc:
                 raise HubError('--at must look like "2026-11-01 09:00"') from exc
         every = parse_every(opts["every"]) if opts.get("every") else None
-        sid = self.store.new_id(opts["bot"], "OS")
-        saved = {k: v for k, v in opts.items() if k not in ("at", "every")}
+        sid = sid or self.store.new_id(opts["bot"], "OS")
+        saved = {k: v for k, v in opts.items() if k not in ("at", "every", "request_key")}
         record = {"id": sid, "bot": opts["bot"], "opts": saved, "next": when, "every": every, "created": time.time()}
         self.store.schedules.mkdir(parents=True, exist_ok=True)
         (self.store.schedules / f"{sid}.json").write_text(json.dumps(record, ensure_ascii=False, indent=1),
@@ -388,8 +486,10 @@ class Hub:
             if record.get("off") or record["next"] > time.time():
                 continue
             lines: list[str] = []
+            # One key per firing: a hub that stopped before saving the next time fires it again as the same request.
+            key = f"lina-schedule:{record['id']}:{int(record['next'])}"
             try:
-                code = Hub(self.worker_root, out=lines.append).submit(dict(record["opts"]))
+                code = Hub(self.worker_root, out=lines.append).submit(dict(record["opts"], request_key=key))
             except (HubError, RunnerError, OSError) as exc:
                 code, lines = 1, [str(exc)]
             record.setdefault("fired", []).append({"at": time.time(), "rc": code, "out": " | ".join(lines)[:200]})
@@ -485,6 +585,9 @@ class Hub:
                         else ""))
             if live.get("last"):
                 self.out(f"  last said: {live['last'][:240]}")
+        elif state == "review" and (why := review_reason(
+                (read_json(self.store.out_dir(job) / "manifest.json", {}) or {}).get("deny_check"))):
+            self.out(f"  needs review — {why} (the end notice names them; `lina worker result {job['id']}`).")
         elif state == "review":
             self.out(f"  needs review: the '{NEXT_NOTES}' section of report.md is missing or empty. "
                      f"`lina worker send {job['id']} \"fill that section\"`, or copy it yourself and accept.")
@@ -529,12 +632,16 @@ class Hub:
         return 0
 
 
-    def send(self, task_id: str, message: str, card: dict | None = None, *, access: str | None = None) -> int:
+    def send(self, task_id: str, message: str, card: dict | None = None, *, access: str | None = None,
+             request_key: str | None = None) -> int:
+        if request_key:
+            return request_keys.send(self, task_id, message, card, access, request_key)
         # Keep access decisions and device requests in the same order across concurrent senders.
         with self.store.lock(f"send-{task_id}"):
             return self._send_locked(task_id, message, card, access=access)
 
-    def _send_locked(self, task_id: str, message: str, card: dict | None, *, access: str | None) -> int:
+    def _send_locked(self, task_id: str, message: str, card: dict | None, *, access: str | None,
+                     request_key: str | None = None) -> int:
         job = self.need(task_id)
         card = card or kanban_link.card_from_env()
         if card and any((job.get("card") or {}).get(key) != card.get(key) for key in ("task", "board")):
@@ -543,44 +650,80 @@ class Hub:
             raise HubError(f"{task_id} has not started yet (queued): cancel it and submit a new brief instead")
         if job.get("state") == "placing":
             raise HubError(f"{task_id} is still being handed to {job['host']}: send it again in a moment")
-        recorded = job.get("access", "workspace-write")
-        requested = recorded if access is None else access
-        if requested not in ACCESS or recorded not in ACCESS:
-            raise HubError(f"invalid access mode: {requested!r}")
-        if ACCESS.index(requested) > ACCESS.index(recorded):
-            raise HubError(f"access {requested} exceeds recorded access {recorded}; submit a new task")
+        _allowed_access(job, access)
         transport, remote = self.transport(job), self.meta(job)
+        job = self._synced_access(job, remote.get("access"))
+        recorded, requested = job.get("access", "workspace-write"), _allowed_access(job, access)
         human = transport.call(["human", task_id], timeout=90).json()
         if human.get("permission"):
             raise HubError(f"{task_id}: permission_dialog")
         if requested != recorded:
-            return self._next_run(job, message, access=requested)
+            return self._next_run(job, message, access=requested, request_key=request_key)
         if human.get("open"):
-            reply = transport.call(["answer", task_id], message.encode("utf-8"), timeout=180).json()
-            if (reply.get("reason") or "").split(":", 1)[0] == "permission_dialog":
-                raise HubError(f"{task_id}: permission_dialog")
-            run = reply.get("run") or remote.get("run") or job.get("runs", 1)
-            self.store.receipt(task_id, "answer", run=run, response={k: reply.get(k) for k in (
-                "action", "steps", "still_pending", "reason")})
-            if reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending"):
-                self.out(f"{task_id} answered the question of run {run}; the same run goes on.")
-                return 0
-            if not self._closed(job, int(run)):
-                raise HubError(f"{task_id} run {run} did not close on its question; send again in a moment")
-            message = "Answer to the earlier question: " + message
-        elif remote.get("alive"):
-            reply = transport.call(["send", task_id], message.encode("utf-8"), timeout=180).json()
-            self.store.receipt(task_id, "steer", run=reply.get("run"), response=reply)
-            if reply.get("action") in ("steered", "started"):
-                self.out(f"{task_id} took the instruction into run {reply.get('run')}: it applies after the current "
-                         "tool call, before the next decision.")
-                return 0
-            if reply.get("action") == "refused":
-                raise HubError(f"{task_id}: runner {job.get('runner')} has no channel into a running turn; send it "
-                               "again when this run ends")
-            if reply.get("action") == "error":
-                raise HubError(f"steer failed: {reply.get('reason')}")
-        return self._next_run(job, message)
+            reply = self._device_write(job, transport, "answer", {"message": message}, request_key)
+            return self._answered(job, reply, remote, message, request_key)
+        if remote.get("alive"):
+            reply = self._device_write(job, transport, "send", {"message": message}, request_key)
+            return self._steered(job, reply, message, request_key)
+        return self._next_run(job, message, request_key=request_key)
+
+    def _synced_access(self, job: dict, device_access: str | None) -> dict:
+        """The job with its access lowered to the device job's when that is lower: a lowering whose reply never
+        reached the hub (lost, replayed after its run ended) is what the device holds. Never raised from it."""
+        with self.store.edit(job["id"]) as stored:
+            before = stored.get("access", "workspace-write")
+            request_keys.lower_access(stored, device_access)
+        if stored.get("access", "workspace-write") != before:
+            self.store.receipt(job["id"], "access_synced", **{"from": before, "to": stored["access"]})
+        return stored
+
+    def resend(self, task_id: str, record: dict) -> int:
+        """A keyed send whose device reply was lost: the verb it chose, with the same arguments and key, never a new
+        route (the task's state may have moved on, and another verb would apply the words a second time)."""
+        job, verb, args, key = self.need(task_id), record["device_verb"], record["device_args"], record["key"]
+        reply = self._device_write(job, self.transport(job), verb, args, key, record["device_phase"])
+        if verb == "answer":
+            return self._answered(job, reply, self.meta(job), args["message"], key)
+        if verb == "send":
+            return self._steered(job, reply, args["message"], key)
+        return self._followed(job, reply, args, args["access"], key)
+
+    def _answered(self, job: dict, reply: dict, remote: dict, message: str, request_key: str | None) -> int:
+        task_id = job["id"]
+        if (reply.get("reason") or "").split(":", 1)[0] == "permission_dialog":
+            raise HubError(f"{task_id}: permission_dialog")
+        run = reply.get("run") or remote.get("run") or job.get("runs", 1)
+        answered = reply.get("action") == "answer" and reply.get("steps") and not reply.get("still_pending")
+        # A replayed answer that left its question open goes on to the next run only while its run is the task's.
+        if reply.get("replayed") and (answered or int(run) < int(job.get("runs") or 1)):
+            return request_keys.reconcile(self, task_id, request_key, {**reply, "run": run})
+        self.store.receipt(task_id, "answer", run=run, response={k: reply.get(k) for k in (
+            "action", "steps", "still_pending", "reason")})
+        if answered:
+            request_keys.sent(self.store, task_id, request_key, "answer", run)
+            self.out(NEXT_RUN_WORDS["answer"].format(id=task_id, run=run))
+            return 0
+        if not self._closed(job, int(run)):
+            raise HubError(f"{task_id} run {run} did not close on its question; send again in a moment")
+        # The device keeps the answer's reply under its key: the next run is its own device request.
+        return self._next_run(job, "Answer to the earlier question: " + message, request_key=request_key,
+                              phase="next")
+
+    def _steered(self, job: dict, reply: dict, message: str, request_key: str | None) -> int:
+        task_id = job["id"]
+        if reply.get("replayed") and reply.get("action") in ("steered", "started"):
+            return request_keys.reconcile(self, task_id, request_key, reply)
+        self.store.receipt(task_id, "steer", run=reply.get("run"), response=reply)
+        if reply.get("action") in ("steered", "started"):
+            request_keys.sent(self.store, task_id, request_key, reply["action"], reply.get("run"))
+            self.out(NEXT_RUN_WORDS["steered"].format(id=task_id, run=reply.get("run")))
+            return 0
+        if reply.get("action") == "refused":
+            raise HubError(f"{task_id}: runner {job.get('runner')} has no channel into a running turn; send it "
+                           "again when this run ends")
+        if reply.get("action") == "error":
+            raise HubError(f"steer failed: {reply.get('reason')}")
+        return self._next_run(job, message, request_key=request_key)
 
     def _closed(self, job: dict, run: int) -> bool:
         """After an answer closed run *run* on its question: wait for its end, recorded here once and silently (the
@@ -590,49 +733,74 @@ class Hub:
             if time.time() > deadline:
                 return False
             time.sleep(2)
-        marker = f"stalled:{run}"
+        end = events.marker(job["id"], "stalled", run)
         with self.store.edit(job["id"]) as job:
-            first = marker not in job.get("notified", [])
+            first = not events.delivered(job, "stalled", run)
+            if first and events.done(self.store, end["delivery"]):
+                events.duplicate(self.store, job["id"], "stalled", run, end["delivery"])
+            elif first:
+                self.store.receipt(job["id"], "exec_end", state="stalled", run=str(run), delivery=end["delivery"],
+                                   why="closed on an open question by send", **events.fields("stalled"))
+                events.record(self.store, end["delivery"], task=job["id"], run=str(run))
             if first:
-                job.setdefault("notified", []).append(marker)
-        if first:
-            self.store.receipt(job["id"], "exec_end", state="stalled", run=str(run), why="closed on an open question "
-                                                                                        "by send")
+                job.setdefault("notified", []).append(end)
         return True
 
-    def _next_run(self, job: dict, message: str, *, access: str | None = None) -> int:
+    def _next_run(self, job: dict, message: str, *, access: str | None = None, request_key: str | None = None,
+                  phase: str = "req") -> int:
         """Ask the device for the next run; it serializes this against a run still waiting, starting or running."""
         payload = {"prompt": follow_up_prompt(job.get("mode") or "ulw", message), "message": message,
                    "access": job.get("access", "workspace-write") if access is None else access}
-        reply = self.transport(job).call(["follow_up", job["id"]], json.dumps(payload).encode("utf-8"),
-                                         timeout=180).json()
+        reply = self._device_write(job, self.transport(job), "follow_up", payload, request_key, phase)
+        return self._followed(job, reply, payload, access, request_key)
+
+    def _followed(self, job: dict, reply: dict, payload: dict, access: str | None, request_key: str | None) -> int:
         action, run = reply.get("action"), reply.get("run")
-        if action in ("queued", "requested", "steered", "started", "answer") and access is not None:
-            self.store.update(job["id"], access=access, grant={**job["grant"], "access": access})
-        if action in ("queued", "requested"):
-            self.store.update(job["id"], run_access={**job.get("run_access", {}), str(run): payload["access"]})
-        if action == "answer":
-            self.store.receipt(job["id"], "answer", run=run, response=reply)
-            self.out(f"{job['id']} answered the question of run {run}; the same run goes on.")
-            return 0
-        if action == "queued":
-            self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run, queued=True)
-            self.out(f"{job['id']} run {run} has not started yet: the instruction was added to it.")
-            return 0
-        if action in ("steered", "started"):
-            self.store.receipt(job["id"], "steer", run=run, response=reply)
-            self.out(f"{job['id']} took the instruction into run {run}: it applies after the current tool call, before "
-                     "the next decision.")
-            return 0
         if action in ("busy", "refused"):
             raise HubError(f"{job['id']} run {run} is starting or running and cannot take an instruction now; send it "
                            "again when it is live or has ended")
-        if action != "requested":
+        if action not in NEXT_RUN_WORDS:
             raise HubError(f"follow-up failed: {reply.get('reason') or reply}")
-        self.store.update(job["id"], runs=run, state="running", delivery="pending", verdict=None)
-        self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run)
-        self.out(f"{job['id']} started run {run} in the same session. The end notice will come.")
+        if reply.get("replayed"):
+            return request_keys.reconcile(self, job["id"], request_key, reply, access=access,
+                                          run_access=payload["access"])
+        with self.store.edit(job["id"]) as stored:
+            request_keys.lower_access(stored, access)
+            if action == "queued":
+                stored.setdefault("run_access", {})[str(run)] = payload["access"]
+            if action == "requested":
+                request_keys.take_run(stored, run, payload["access"])
+        if action in ("answer", "steered", "started"):
+            self.store.receipt(job["id"], "answer" if action == "answer" else "steer", run=run, response=reply)
+        else:
+            self.store.receipt(job["id"], "follow_up", input_id=f"{job['id']}.{run}", run=run,
+                               **({"queued": True} if action == "queued" else {}),
+                               **({"request_key": request_key} if request_key else {}))
+        request_keys.sent(self.store, job["id"], request_key, action, run)
+        self.out(NEXT_RUN_WORDS[action].format(id=job["id"], run=run))
         return 0
+
+    def _device_write(self, job: dict, transport, verb: str, args: dict, request_key: str | None,
+                      phase: str = "req") -> dict:
+        """A device verb that changes the task (``answer``, ``send``, ``follow_up``), carrying the device key of
+        *phase*. With a request key the verb and its arguments go on the key's record first, so a retry sends that
+        same verb again. A failed call with no reply is an error, never read as the device's word."""
+        key = request_keys.device_key(request_key, phase) if request_key else None
+        if request_key:
+            request_keys.calling(self.store, request_key, verb, args, phase)
+        if verb == "follow_up":
+            argv, data = ["follow_up", job["id"]], json.dumps({**args, **({"request_key": key} if key else {})})
+        else:
+            argv, data = [verb, job["id"], *([key] if key else [])], args["message"]
+        answer = transport.call(argv, data.encode("utf-8"), timeout=180)
+        reply = answer.json()
+        if answer.code != 0 and not reply:
+            raise HubError(f"{job['id']}: {verb} got no reply from {job.get('host')} ("
+                           f"{answer.err.strip()[-200:] or f'exit {answer.code}'}); send it again"
+                           + (f" with request key {request_key}" if request_key else ""))
+        if request_key:
+            request_keys.note_device(self.store, job, transport)
+        return reply
 
     def cancel(self, task_id: str, why: str = "") -> int:
         job = self.need(task_id)
@@ -658,9 +826,23 @@ class Hub:
         job = self.need(task_id)
         verdict = "accepted" if accepted else "rejected"
         job = self.store.update(task_id, verdict=verdict, verdict_note=note) or job
-        self.store.receipt(task_id, "verdict", verdict=verdict, note=note[:500], by=caller_agent(),
+        self.store.receipt(task_id, "verdict", verdict=verdict, note=note[:500], by=owner()[0],
                            delivery=job.get("delivery"))
         self.out(f"{task_id} {verdict}")
+        if accepted and job.get("todo"):
+            self._todo(job, "evidence", job["todo"], f"omo:{task_id}")
+            if note:
+                self._todo(job, "note", job["todo"], f"{task_id} checked: {note}")
+        return 0
+
+    def card(self, task_id: str, card: str | None = None, drop: str | None = None) -> int:
+        """The card a run was handed out from; a run's card is set at submit and never changed afterwards."""
+        job = self.need(task_id)
+        if card or drop:
+            raise HubError(f"{task_id}: a run's card is set at submit (--card); it cannot be added or dropped")
+        linked = job.get("card")
+        self.out(f"{linked['task']}  {linked.get('board') or '-'}  ({linked.get('kind') or 'lina'})" if linked
+                 else f"{task_id}: no card")
         return 0
 
 
@@ -672,6 +854,15 @@ class Hub:
                 self.store.log(f"{task_id} {kind}: no job record, skipped")
                 return "no job"
             return self._notify_locked(job, kind, run)
+
+    def _adopt(self, job: dict, run: int) -> None:
+        """An end reported for a run newer than the job's: the hub missed the reply of the follow-up that started it
+        (an ssh drop, keyed or not), so the run is the task's now and its end is delivered as usual."""
+        held, remote = int(job.get("runs") or 1), self.meta(job)
+        # The device job holds the access its latest run was requested with.
+        request_keys.take_run(job, run, remote.get("access") if str(remote.get("run")) == str(run) else None)
+        self.store.save(job)
+        self.store.receipt(job["id"], "run_adopted", run=run, **{"from": held})
 
     def _waiter_alive(self, job: dict) -> bool:
         """The ``submit --wait`` process is still the one that registered: ``(pid, start time)``, never a bare
@@ -686,7 +877,7 @@ class Hub:
         """The end notice and where the results are; ``self.fetched`` says whether fetching them worked (None:
         nothing to fetch)."""
         out_dir, check = self.store.out_dir(job), {}
-        if job.get("host") and kind != "unknown":
+        if job.get("host"):
             try:
                 out_dir, check = self.fetch(job)
                 self.fetched = True
@@ -699,69 +890,152 @@ class Hub:
             if (out_dir / "stderr.txt").is_file() else ""
         text = notice.body(job, kind, run, out_dir, check, notes=manifest.get("next_notes"),
                            quiet_s=float((manifest.get("wait") or {}).get("quiet_s") or 0), err_tail=err_tail,
-                           unknown_after_s=int(settings.setting("unknown_after_s", worker=self.worker)))
-        if job.get("extra"):
-            text = f"[note left at hand-out] {job['extra']}\n\n" + text
+                           note=job.get("extra"))
+        if kind != "unknown" and str(manifest.get("run")) == str(run):
+            from hermes_cli.worker.file_node_deny import with_check
+            text = with_check(text, manifest.get("deny_check"))
         return text, out_dir
 
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
         if job.get("card_start_pending"):
             self._link_card(job)
-        marker = f"{kind}:{run}"
-        if marker in job.get("notified", []):
-            return self._card_steps(job, marker) if marker in (job.get("card_pending") or {}) else "already"
-        if str(run).isdigit() and int(run) >= 1 and int(run) != int(job.get("runs") or 1):
-            # A late end of an earlier run (its notice retried after a follow-up started the next one): record it,
-            # never let it end the run that is going now. Task-level notices are not run reports and always apply:
-            # a cancel before any run starts ("0") and an unreachable device ("x").
-            job.setdefault("notified", []).append(marker)
-            self.store.save(job)
-            self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True)
-            return "earlier run"
+        if kind == "unknown":
+            node_watch.mark_unknown(self.store, job["id"])
+            return f"{events.HOST_UNAVAILABLE}: one notice per outage of {job.get('host')} (the tick)"
+        end = events.marker(job["id"], kind, run)
+        if str(run).isdigit() and 1 <= int(run) < int(job.get("runs") or 1):
+            return self._earlier_end(job, kind, run, end)
+        if end["delivery"] in (job.get("deliveries_pending") or {}):
+            return self._end_advance(job, end["delivery"])
+        if events.delivered(job, kind, run) or events.done(self.store, end["delivery"]):
+            return self._end_again(job, kind, run, end)
+        if str(run).isdigit() and int(run) > int(job.get("runs") or 1):
+            self._adopt(job, int(run))
         job.update(state=kind, last_state=kind)
-        self.store.receipt(job["id"], "exec_end", state=kind, run=run)
-        if self._waiter_alive(job):
-            job.setdefault("notified", []).append(marker)
-            self.store.save(job)
-            return "waiter"
+        job.setdefault("deliveries_pending", {})[end["delivery"]] = {"kind": kind, "run": run, "stage": "held",
+                                                                     "created": time.time()}
         self.store.save(job)
-        self.fetched = None
-        text, _ = self._notice_body(job, kind, run)
-        fetched = self.fetched
-        job.setdefault("notified", []).append(marker)
-        job["notice"] = text
+        self.store.receipt(job["id"], "exec_end", state=kind, run=run, delivery=end["delivery"], **events.fields(kind))
+        return self._end_advance(job, end["delivery"])
+
+    def _earlier_end(self, job: dict, kind: str, run: str, end: dict) -> str:
+        """A late end of an earlier run (its report retried after a follow-up started the next one): its marker is
+        recorded, and it never ends the run that is going now. A cancel before any run starts ("0") is about the task,
+        not a run report, and is not one of these."""
+        if events.delivered(job, kind, run):
+            events.duplicate(self.store, job["id"], kind, run, end["delivery"])
+            return "already"
+        job.setdefault("notified", []).append(end)
         self.store.save(job)
-        if kanban_link.on_hermes(job.get("card")):  # the card is the one place the run ends: no chat notice
-            how = self._card_end(job, kind, run, text, fetched)
-        else:
-            how = self.group_notice(job["group"]) if job.get("group") else self._deliver(job, text, f"{kind}-{run}")
-            if job.get("card"):
-                self._card_end(job, kind, run, text)
-        self.store.receipt(job["id"], "notified", how=how[:200], state=kind, run=run)
-        self.store.log(f"{job['id']} {kind}: {how}")
+        self.store.receipt(job["id"], "exec_end", state=kind, run=run, stale=True, delivery=end["delivery"],
+                           **events.fields(kind))
+        return "earlier run"
+
+    def _end_advance(self, job: dict, delivery: str) -> str:
+        """Move a held end on, never back, saving each move under the job's lock (the caller holds it): **held**
+        (``deliveries_pending``) → **staged** (on a Hermes card its ``card_pending`` entry written, else the send
+        returned) → **done** (``deliveries.jsonl``, then ``notified``). A staged end is never built or sent again,
+        and a Hermes card's steps run only once it is done, from here or from ``_card_steps``'s own retries."""
+        held = job["deliveries_pending"][delivery]
+        kind, run = held["kind"], held["run"]
+        staged_now = held.get("stage") != "staged" and delivery not in (job.get("card_pending") or {})
+        how = "staged before the hub stopped"
+        if staged_now:
+            sent = self._end_stage(job, kind, run, delivery)
+            if not sent.ok:
+                self.store.log(f"{job['id']} {events.headline(kind)} {delivery} held: {sent.how}")
+                return f"{sent.how}; held, sent again on the next report or tick"
+            how = sent.how
+        self._end_done(job, events.marker(job["id"], kind, run))
+        entry = (job.get("card_pending") or {}).get(delivery)
+        if entry and staged_now and entry["fetch_pending"]:
+            how = f"card {job['card']['task']}: result not fetched yet (1/{FETCH_TRIES}), retried on the next report " \
+                  "or tick"
+        elif entry:
+            how = self._card_steps(job, delivery)
+        if how != "waiter":
+            self.store.receipt(job["id"], "notified", how=how[:200], state=kind, run=run, delivery=delivery,
+                               **events.fields(kind))
+        self.store.log(f"{job['id']} {events.headline(kind)} {delivery}: {how}")
         return how
 
-    def _deliver(self, job: dict, text: str, tag: str) -> str:
+    def _end_stage(self, job: dict, kind: str, run: str, delivery: str) -> notice.Sent:
+        """Build the end and hand it over: to the waiter (it shows it), to a Hermes card's work (the card is the one
+        place its run ends), else to the chat (a batch: once all of it ended) and then on the run's card. Saved as
+        staged; a chat send that failed stages nothing (the end stays held, and its card waits for it)."""
+        if self._waiter_alive(job):
+            sent = notice.Sent(True, "waiter")
+        else:
+            self.fetched = None
+            text, out_dir = self._notice_body(job, kind, run)  # reloads the job: read what is held after it
+            replaced = _replaced_line(out_dir, run, self.fetched)  # a held end resumed after a later run started
+            job["notice"] = text = text + replaced
+            if kanban_link.on_hermes(job.get("card")):
+                self._card_stage(job, kind, run, text, self.fetched, delivery, report=not replaced)
+                sent = notice.Sent(True, f"card {job['card']['task']}: staged")
+            else:
+                self.store.save(job)
+                sent = self.group_notice(job["group"]) if job.get("group") else \
+                    self._deliver(job, events.signed(text, delivery), f"{kind}-{run}")
+                if not sent.ok:
+                    return sent
+                if job.get("card"):
+                    self._card_end(job, kind, run, text, delivery=delivery)
+        job["deliveries_pending"][delivery]["stage"] = "staged"
+        self.store.save(job)
+        return sent
+
+    def _end_done(self, job: dict, end: dict) -> None:
+        """The end went out: its id in ``deliveries.jsonl``, then on the job, no longer held."""
+        events.record(self.store, end["delivery"], task=job["id"], run=end["run"])
+        if end not in job.setdefault("notified", []):
+            job["notified"].append(end)
+        (job.get("deliveries_pending") or {}).pop(end["delivery"], None)
+        if not job.get("deliveries_pending"):
+            job.pop("deliveries_pending", None)
+        self.store.save(job)
+
+    def _end_again(self, job: dict, kind: str, run: str, end: dict) -> str:
+        """A repeat of an end that went out (a device retry, the tick, a hub restart): recorded, sent nowhere; the
+        card work it left goes on."""
+        if not events.delivered(job, kind, run):  # out before a hub that stopped could save it on the job
+            job.update(state=kind, last_state=kind)
+            self._end_done(job, end)
+        events.duplicate(self.store, job["id"], kind, run, end["delivery"])
+        pending = events.pending(job, kind, run)
+        return self._card_steps(job, pending) if pending else "already"
+
+    def _retry_end(self, job: dict, delivery: str) -> str:
+        """A held end moved on by the tick. Called under the job's lock."""
+        try:
+            return self._end_advance(job, delivery)
+        except (TransportError, HubError, OSError) as exc:
+            return f"not sent on tick: {exc}"
+
+    def _deliver(self, job: dict, text: str, tag: str) -> notice.Sent:
+        """*text* to the agent's chat; a send that failed is on the job's receipts, and its caller sends it again."""
         command = (self.worker.get("notice") or {}).get("command") if isinstance(self.worker.get("notice"), dict) \
             else None
-        return notice.deliver(job, text, tag, self.store.notices, command)
+        sent = notice.deliver(job, text, tag, self.store.notices, command)
+        if not sent.ok:
+            self.store.receipt(job["id"], "notice_failed", tag=tag, code=sent.code, stderr=sent.stderr, how=sent.how)
+        return sent
 
-    def _card_end(self, job: dict, kind: str, run: str, text: str, fetched: bool | None = None) -> str:
-        """A run's end on its card. On a Hermes card it becomes pending work (``card_pending``): its result fetch
-        when that failed, then ``kanban_link.END_STEPS``, with this run's own report.md kept aside for the attachment."""
+    def _card_stage(self, job: dict, kind: str, run: str, text: str, fetched: bool | None, delivery: str, *,
+                    report: bool) -> None:
+        """A run's end on its Hermes card as card work (``card_pending``, under its delivery id; the caller saves it):
+        its result fetch when that failed, then ``kanban_link.END_STEPS``, with this run's own report.md kept aside
+        for the attachment (none when *report* is False: the results are a later run's)."""
+        job.setdefault("card_pending", {})[delivery] = {
+            "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
+            "fetch_tries": 1 if fetched is False else 0, "delivery": delivery,
+            "report": self._report_snapshot(job, delivery) if report and fetched is not False else None}
+
+    def _card_end(self, job: dict, kind: str, run: str, text: str, *, delivery: str) -> str:
+        """A run's end on its LINA card: the board's event and comment."""
         card = job["card"]
-        if kanban_link.on_hermes(card):
-            marker = f"{kind}:{run}"
-            job.setdefault("card_pending", {})[marker] = {
-                "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
-                "fetch_tries": 1 if fetched is False else 0,
-                "report": None if fetched is False else self._report_snapshot(job, marker)}
-            self.store.save(job)
-            if fetched is False:
-                return f"card {card['task']}: result not fetched yet (1/{FETCH_TRIES}), retried on the next report or tick"
-            return self._card_steps(job, marker)
         try:
-            kanban_link.record_end(card, job, kind, run, text)
+            kanban_link.record_end(card, job, kind, run, events.signed(text, delivery))
         except (ValueError, OSError) as exc:
             self.store.receipt(job["id"], "card_notice_failed", error=str(exc)[:300])
             return f"card {card['task']}: failed ({str(exc)[:120]})"
@@ -783,20 +1057,22 @@ class Hub:
             if step in entry["done"]:
                 continue
             try:
-                woke = kanban_link.end_step(step, self.store, card, job, entry["run"], entry["text"], link,
+                woke = kanban_link.end_step(step, self.store, card, job, entry["run"],
+                                            events.signed(entry["text"], entry.get("delivery")), link,
                                             Path(entry["report"]) if entry.get("report") else None)
             except (OSError, kanban_link.CardLinkError) as exc:
                 self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
                 return f"card {card['task']}: {step} failed, retried on the next report or tick"
             entry["done"].append(step)
-            entry["woke"] = entry.get("woke") or woke
+            if woke:
+                entry["woke"], entry["unblock"] = True, woke
             self.store.save(job)
         del job["card_pending"][marker]
         self.store.save(job)
         if entry.get("report"):
             shutil.rmtree(Path(entry["report"]).parent, ignore_errors=True)
         self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
-                           woke=bool(entry.get("woke")))
+                           woke=bool(entry.get("woke")), unblock=entry.get("unblock"))
         return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
 
     def _report_snapshot(self, job: dict, marker: str) -> str | None:
@@ -817,11 +1093,9 @@ class Hub:
         self.fetched = None
         text, out_dir = self._notice_body(job, kind, run)  # reloads the job: read the entry after it
         entry = job["card_pending"][marker]
-        fetched_run = (read_json(out_dir / "manifest.json", {}) or {}).get("run")
-        if self.fetched and fetched_run is not None and str(fetched_run) != str(run):
+        if replaced := _replaced_line(out_dir, run, self.fetched):
             entry["fetch_pending"] = False
-            entry["text"] += (f"- Run {run}'s results were replaced by a later run before they could be fetched, so no "
-                              "report is attached.\n")
+            entry["text"] += replaced
         elif self.fetched:
             entry.update(text=text, fetch_pending=False, report=self._report_snapshot(job, marker))
         else:
@@ -838,7 +1112,10 @@ class Hub:
             job = self.store.load(task_id) or {}
             if job.get("card_start_pending"):
                 self._link_card(job)
-            for marker in list(job.get("card_pending") or {}):
+            held = list(job.get("deliveries_pending") or {})
+            for delivery in held:  # its card work, if any, goes on from there once it is done
+                self.store.log(f"{task_id} held end {delivery}: {self._retry_end(job, delivery)}")
+            for marker in [marker for marker in job.get("card_pending") or {} if marker not in held]:
                 self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker)}")
 
     def wait(self, card: dict | None, task_ids: list[str] | None = None) -> int:
@@ -863,14 +1140,16 @@ class Hub:
                  f"reason=\"waiting on lina worker {' '.join(open_runs)}\", then end the turn.")
         return 0
 
-    def group_notice(self, group: str) -> str:
+    def group_notice(self, group: str) -> notice.Sent:
+        """The batch's one notice, once all of it ended; not ok when its chat send failed (nothing is marked sent, so
+        the end that sends it is held and tries again)."""
         members = [job for job in self.store.all() if job.get("group") == group]
         open_ = [job for job in members if job.get("state") not in ENDED + ("unknown",)]
         if open_:
-            return f"group {group}: waiting for {len(open_)} more"
+            return notice.Sent(True, f"group {group}: waiting for {len(open_)} more")
         marker = self.store.locks / f"{group}.sent"
         if marker.exists():
-            return f"group {group}: already sent"
+            return notice.Sent(True, f"group {group}: already sent")
         first = members[0]
         lines = [f"[lina worker · automatic] {first['bot']} · batch {group} ({len(members)} tasks, "
                  f"{first.get('todo') or first['topic']}) all ended"]
@@ -880,11 +1159,13 @@ class Hub:
         lines += ["To do:", "1. For each task hold report.md and out/ against the done conditions, then "
                   "`lina worker accept`/`reject`; what is missing goes to `lina worker send <ID> …`.",
                   f"2. Copy each report's '{NEXT_NOTES}' section into the notes of that field."]
-        how = self._deliver(first, "\n".join(lines) + "\n", f"group-{group}")
+        sent = self._deliver(first, "\n".join(lines) + "\n", f"group-{group}")
+        if not sent.ok:
+            return sent._replace(how=f"group {group}: {sent.how}")
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(how, encoding="utf-8")
-        self.store.receipt(group, "group_notified", how=how[:200], members=[j["id"] for j in members], group=group)
-        return f"group {group}: {how}"
+        marker.write_text(sent.how, encoding="utf-8")
+        self.store.receipt(group, "group_notified", how=sent.how[:200], members=[j["id"] for j in members], group=group)
+        return sent._replace(how=f"group {group}: {sent.how}")
 
 
     def tick(self) -> None:
@@ -893,8 +1174,9 @@ class Hub:
                 return
             self.run_due_schedules()
             for job in self.store.all():
-                if job.get("card_start_pending") or job.get("card_pending"):
+                if job.get("card_start_pending") or job.get("card_pending") or job.get("deliveries_pending"):
                     self._retry_cards(job["id"])
+            node_watch.watch(self)
             for job in self.store.all():
                 if job.get("state") == "queued":
                     if not self._try_place(job):
@@ -903,6 +1185,7 @@ class Hub:
                     self._try_resume(job)
                 elif job.get("state") == "running" and job.get("host") and time.time() - job["created"] < 7 * 86400:
                     self._watch(job)
+            goal_drive.tick(self)
 
     def _try_place(self, job: dict) -> bool:
         try:
@@ -918,18 +1201,14 @@ class Hub:
             self.store.log(f"{job['id']} placement not resumed on tick: {exc}")
 
     def _watch(self, job: dict) -> None:
-        now, remote = time.time(), self.meta(job)
+        """A running run on this tick: its end, or its question once it has waited long enough. A run its device did
+        not answer for is counted against its node (``node_watch``)."""
+        now = time.time()
+        remote = self.contacts.pop(job["id"], None) or self.meta(job)
         if remote.get("unreachable") or remote.get("missing"):
-            with self.store.edit(job["id"]) as job:
-                job.setdefault("unreachable_since", now)
-            if now - job["unreachable_since"] >= int(settings.setting("unknown_after_s", worker=self.worker)):
-                self.notify(job["id"], "unknown", "x")
             return
-        if job.pop("unreachable_since", None):
-            with self.store.edit(job["id"]) as stored:
-                stored.pop("unreachable_since", None)
         state, run = remote.get("state"), str(remote.get("run"))
-        if state in ENDED and f"{state}:{run}" not in job.get("notified", []):
+        if state in ENDED and not events.delivered(job, state, run):
             self.notify(job["id"], state, run)
         elif state == "running" and (remote.get("live") or {}).get("dash") == "human":
             self._human_notice(job, run, now)
@@ -950,17 +1229,74 @@ class Hub:
             job.pop("human_since", None)
             return
         job.setdefault("human_since", now)
-        marker = f"human:{run}"
-        if now - job["human_since"] >= HUMAN_NOTICE_AFTER_S and marker not in job.get("notified", []):
-            job.setdefault("notified", []).append(marker)
-            text = notice.body(job, "human", run, self.store.out_dir(job), {})
-            if kanban_link.on_hermes(job.get("card")):
-                how = self._card_end(job, "human", run, text)
-            else:
-                how = self._deliver(job, text, f"human-{run}")
-                if job.get("card"):
-                    self._card_end(job, "human", run, text)
-            self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run)
+        if now - job["human_since"] < HUMAN_NOTICE_AFTER_S:
+            return
+        text, key = self._question(job, human)
+        end = events.marker(job["id"], "human", run, key)
+        if events.delivered(job, "human", run, key):
+            return
+        if events.done(self.store, end["delivery"]):  # out before a hub that stopped could save it on the job
+            job.setdefault("notified", []).append(end)
+            events.duplicate(self.store, job["id"], "human", run, end["delivery"])
+            return
+        if kanban_link.on_hermes(job.get("card")):
+            self._card_question(job, run, text, end)
+            return
+        text = notice.body(job, "human", run, self.store.out_dir(job), {})
+        sent = self._deliver(job, events.signed(text, end["delivery"]), f"human-{run}")
+        if not sent.ok:  # nothing recorded: the next tick asks it again, and its card waits for it
+            return
+        if job.get("card"):
+            self._card_end(job, "human", run, text, delivery=end["delivery"])
+        events.record(self.store, end["delivery"], task=job["id"], run=run)
+        job.setdefault("notified", []).append(end)
+        self.store.receipt(job["id"], "notified", how=sent.how[:200], state="human", run=run,
+                           delivery=end["delivery"], **events.fields("human"))
+
+    def _question(self, job: dict, human: dict) -> tuple[str, str]:
+        """The words of the question the run waits on and its key: the omo runner's question ids, else a hash of
+        the words, else ``-``."""
+        text, key = (human.get("question") or "").strip(), ""
+        if not text:  # the omo runner's questions come with its live view
+            try:
+                live = self.meta(job, live=True).get("live") or {}
+            except (TransportError, HubError, OSError):
+                live = {}
+            questions = [q for q in live.get("questions") or [] if isinstance(q, dict)]
+            text = _question_text(questions)
+            key = ",".join(str(q["id"]) for q in questions if q.get("id"))
+        return text, key or (hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if text else "-")
+
+    def _card_question(self, job: dict, run: str, text: str, end: dict) -> None:
+        """One comment on the run's Hermes card for each question it waits on, with the question. It is card work
+        (``card_pending``: the comment step only), done once held there: a comment that did not go through is tried
+        again on the next tick. Called under the job's lock."""
+        if job.get("card_start_pending") or "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
+            return
+        body = (f"{events.headline('human')} · [lina worker · automatic] run {job['id']} (run {run}) waits for an "
+                "answer:\n\n" + (text or "(the question did not come with the run's state: `lina worker status "
+                                          f"{job['id']}` shows it)")
+                + f"\n\nAnswer with `lina worker send {job['id']} \"<answer>\"`; to stop: "
+                  f"`lina worker cancel {job['id']} --why …`.")
+        job.setdefault("card_pending", {})[end["delivery"]] = {
+            "kind": "human", "run": run, "text": body, "done": ["attach", "wake"], "fetch_pending": False,
+            "fetch_tries": 0, "delivery": end["delivery"], "report": None}
+        job.setdefault("notified", []).append(end)
+        self.store.save(job)
+        events.record(self.store, end["delivery"], task=job["id"], run=run)
+        how = self._card_steps(job, end["delivery"])
+        self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run, delivery=end["delivery"],
+                           **events.fields("human"))
+
+
+def _replaced_line(out_dir: Path, run: str, fetched: bool | None) -> str:
+    """The line an end of run *run* carries when the results just fetched are a later run's (the device keeps only its
+    latest run's results); "" when they are this run's or nothing was fetched."""
+    fetched_run = (read_json(out_dir / "manifest.json", {}) or {}).get("run")
+    if not fetched or fetched_run is None or str(fetched_run) == str(run):
+        return ""
+    return (f"- Run {run}'s results were replaced by a later run before they could be fetched, so no report is "
+            "attached.\n")
 
 
 def _private_lines(paths: list[str]) -> str:

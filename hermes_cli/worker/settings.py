@@ -6,15 +6,24 @@ devices:
     build-a: {host: build-a, cap: 2, fast: true}      # ssh alias the hub reaches it by
     build-b: {host: build-b, cap: 1, no_repo: true}   # docs and light work only
     here:    {host: local, cap: 1, named_cap: 2, last: 2}  # tier 2 fallback; separate --host capacity
+    files:   {host: files, kind: file, role: files, omo: "~/.bun/bin/omo",   # a file node (docs/file-node.md)
+              deny: [/volume1/backup, "#recycle", "#snapshot", "@*"], volumes: [/volume1]}
+    phone:   {host: phone, role: person}                # a person's device: never takes work
 worker:
   hub: {host: hub, lina: lina}     # how a device reaches the hub to report an end (ssh alias, lina command there)
   notice: {command: [my-notify, "{agent}"]}   # the end notice: body on stdin; unset = written to hub/notices only
   card_link: {kind: hermes, command: [hermes]}  # runs from Hermes cards end on the card (kanban_link.py)
+  todo_link: {kind: hermes, command: [my-todo]}  # `<command> link|evidence|note <to-do> ...` for --todo; unset = none
+  hub_rules: "- This machine is the hub: ..."     # added to the first prompt of a run on a `host: local` device
   models: {...}                    # see models.py
   runners: {...}                   # see runners/__init__.py
 ```
 
 Every value has a working default except the device list: without ``devices.workers`` nothing is bid on.
+
+``role`` is ``work`` (bid on; the default), ``files`` (only by ``--host``, never with a repository) or ``person``
+(never takes work). ``kind: file`` drives the device over ssh without LINA on it (``file_node.py``); its role
+defaults to ``files``.
 """
 
 from __future__ import annotations
@@ -23,7 +32,9 @@ from dataclasses import dataclass
 from pathlib import Path
 
 LOCAL = "local"
-DEFAULTS = {"cap": 1, "min_free_gb": 5, "unknown_after_s": 600, "input_max_mb": 300, "memory_max": "12G",
+ROLES = ("work", "files", "person")
+FILE_KIND = "file"
+DEFAULTS = {"cap": 1, "min_free_gb": 5, "input_max_mb": 300, "memory_max": "12G",
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
             "human_max_s": 3 * 3600.0, "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
 
@@ -47,6 +58,39 @@ def lina_home() -> Path:
     if os.environ.get("LINA_HOME", "").strip() or not hermes_home or is_hermes_agent_path(hermes_home):
         return platform_default_home_for(os.environ, Path.home())
     return get_default_hermes_root()
+
+
+CALLER_HERMES_HOME = "LINA_CALLER_HERMES_HOME"  # the caller's Hermes Agent HERMES_HOME, kept by the shim
+
+
+def caller_hermes_home() -> Path | None:
+    """The Hermes Agent ``HERMES_HOME`` the caller ran under: the one the ``omo-task`` shim kept before LINA's
+    bootstrap dropped it, else a ``HERMES_HOME`` under Hermes Agent's home still in this process."""
+    import os
+    from hermes_constants import is_hermes_agent_path
+    kept = os.environ.get(CALLER_HERMES_HOME, "").strip()
+    if kept:
+        return Path(kept).expanduser()
+    home = os.environ.get("HERMES_HOME", "").strip()
+    return Path(home).expanduser() if home and is_hermes_agent_path(home) else None
+
+
+def hub_rules(worker: dict) -> str:
+    """``worker.hub_rules``: the text added to the first prompt of a run on the hub node; "" when unset."""
+    value = worker.get("hub_rules")
+    return value.strip() if isinstance(value, str) else ""
+
+
+def todo_link(worker: dict) -> list[str] | None:
+    """``worker.todo_link: {kind: hermes, command: [...]}`` as its argv; None when unset. ValueError when it is
+    malformed."""
+    link = worker.get("todo_link")
+    if link is None:
+        return None
+    command = link.get("command") if isinstance(link, dict) and link.get("kind") == "hermes" else None
+    if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
+        raise ValueError("worker.todo_link must be {kind: hermes, command: [<argv>]}")
+    return command
 
 
 def root(base: Path | None = None) -> Path:
@@ -95,6 +139,14 @@ class Device:
     auto: bool = True
     lina: str = "lina"  # the lina command on that device
     named_cap: int | None = None  # independent --host capacity; defaults to cap
+    role: str = "work"  # work | files | person (ROLES); anything else takes no work
+    kind: str = "lina"  # "file": a file node driven over ssh (file_node.py)
+    omo: str = "omo"  # a file node's omo command
+    deny: tuple[str, ...] = ()  # a file node's denied folders: absolute paths and folder-name patterns
+    volumes: tuple[str, ...] = ()  # where a file node's folder-name patterns are looked for (3 levels deep)
+    root: str = "lina-file-node"  # a file node's task folders, under its HOME
+    model_check: str = "http://127.0.0.1:10100/healthz"  # a file node's model path, asked on the node
+    scan_s: int = 300  # how long the denied-folder check may look after a run
 
     @property
     def manual_cap(self) -> int:
@@ -109,10 +161,22 @@ def _device(name: str, item: dict) -> Device | None:
     host = item.get("host")
     if not isinstance(host, str) or not host or item.get("off") is True:
         return None
+    kind = str(item.get("kind") or "lina")
+    file_node = {}
+    if kind == FILE_KIND:
+        file_node = {"omo": str(item.get("omo") or "omo"), "deny": _strings(item.get("deny")),
+                     "volumes": _strings(item.get("volumes")), "root": str(item.get("root") or "lina-file-node"),
+                     "model_check": str(item.get("model_check") or Device.model_check),
+                     "scan_s": max(1, int(item.get("scan_s") or Device.scan_s))}
     return Device(name, host, max(1, int(item.get("cap") or DEFAULTS["cap"])), item.get("fast") is True,
                   item.get("no_repo") is True, max(0, int(item.get("last") or 0)), item.get("auto") is not False,
                   str(item.get("lina") or "lina"),
-                  max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None)
+                  max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None,
+                  str(item.get("role") or ("files" if kind == FILE_KIND else "work")), kind, **file_node)
+
+
+def _strings(value) -> tuple[str, ...]:
+    return tuple(str(each) for each in value if str(each).strip()) if isinstance(value, list) else ()
 
 
 def devices(base: Path | None = None, raw: dict | None = None) -> list[Device]:

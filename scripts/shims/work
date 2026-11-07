@@ -1,6 +1,7 @@
 #!/bin/sh
 # work -> lina work, same verbs and options (lina#37). Written by `lina install --shims`;
 # take its folder off PATH to go back to the old tool (docs/switch-callers.md).
-: "${HERMES_HOME:=@LINA_HOME@}"
-export HERMES_HOME
+# Always the LINA root this shim was installed for: a caller's HERMES_HOME is Hermes Agent's, not LINA's.
+LINA_HOME="@LINA_HOME@"
+export LINA_HOME
 PYTHONPATH="@PYTHONPATH@" exec "@PYTHON@" -m hermes_cli.lina_shims work "$@"

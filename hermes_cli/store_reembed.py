@@ -4,10 +4,13 @@ Sources:
 
 * ``agent``: agent turns in ``memory.messages`` (``source = 'agent'``, roles user and assistant);
 * ``messages``: external messages in ``memory.messages`` (``source = 'messages'``);
-* ``memory``: Honcho's conclusions (``ltm.documents``, kind ``document`` keyed by ``vec_id``).
+* ``memory``: Honcho conclusions and LCM-X summary nodes (through its vector view).
 
 A ``memory.messages`` row becomes one ``vec.chunks`` row (its text, cut at ``embedding.max_chars``) and one
-``vec.embeddings`` row of kind ``chunk``. Rows go in id order, a batch per transaction, and
+``vec.embeddings`` row of kind ``chunk``, owned by the message's agent; an external message every agent reads
+(NULL ``agent_id``, ``scope = 'agents'``) gets the shared owner ``*`` (``SHARED_VECTOR_OWNER``), which every
+agent reads through migration 0009's policies. An external message that a chunk imported from the collector's index
+(``--from-index``, ``hermes_cli/store_import_vectors.py``) covers with a vector of the model is skipped and counted. Rows go in id order, a batch per transaction, and
 ``vec.reembed_progress`` records the last id of each committed batch, so a stopped run continues where it
 stopped; ``--from-start`` forgets that and goes through everything again. It runs as the store owner, which
 row-level security does not limit, so it covers every agent's rows.
@@ -19,11 +22,18 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from hermes_state_store import SHARED_VECTOR_OWNER
+
 SOURCES = ("agent", "messages", "memory")
 DEFAULT_MAX_CHARS = 8000
 
+# A message an imported collector chunk with a vector of this model covers (hermes_cli/store_import_vectors.py).
+_COVERED = """EXISTS (SELECT 1 FROM vec.chunks c JOIN vec.embeddings e ON e.kind = 'chunk' AND e.item_id = c.chunk_id
+               WHERE c.source = 'messages' AND c.source_ref = 'collector' AND e.model = %(model)s
+                 AND c.message_ids @> ARRAY[m.message_id])"""
 _MESSAGE_ROWS = """
-    SELECT message_id, agent_id, content FROM memory.messages
+    SELECT message_id, coalesce(agent_id, CASE WHEN scope = 'agents' THEN %(shared)s END), content, {covered}
+    FROM memory.messages AS m
     WHERE source = %(source)s AND message_id > %(after)s {roles}
     ORDER BY message_id LIMIT %(limit)s"""
 _DOCUMENT_ROWS = """
@@ -42,6 +52,7 @@ class SourceCounts:
     resumed_after: int = 0
     embedded: int = 0
     skipped: int = 0
+    covered: int = 0
     batches: int = 0
     last_item_id: int = 0
     notes: list[str] = field(default_factory=list)
@@ -49,6 +60,8 @@ class SourceCounts:
     def line(self) -> str:
         text = (f"{self.source}: {self.embedded} embedded, {self.skipped} skipped (no text), {self.batches} batches, "
                 f"resumed after id {self.resumed_after}, last id {self.last_item_id}")
+        if self.source == "messages":
+            text += f", {self.covered} covered by imported collector chunks"
         return "; ".join([text, *self.notes])
 
 
@@ -57,6 +70,7 @@ class _Item:
     item_id: int
     agent_id: str
     text: Optional[str]
+    covered: bool = False
 
 
 def expand_sources(source: str) -> tuple[str, ...]:
@@ -85,7 +99,7 @@ def _progress(conn, source: str, model: str) -> int:
     return int(row[0]) if row else 0
 
 
-def _items(conn, source: str, after: int, limit: int, max_chars: int) -> list[_Item]:
+def _items(conn, source: str, model: str, after: int, limit: int, max_chars: int) -> list[_Item]:
     if source == "memory":
         if conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
             return []
@@ -93,11 +107,17 @@ def _items(conn, source: str, after: int, limit: int, max_chars: int) -> list[_I
     else:
         roles = "AND role IN ('user', 'assistant') AND forgotten_at IS NULL" if source == "agent" \
             else "AND forgotten_at IS NULL"
-        rows = conn.execute(_MESSAGE_ROWS.format(roles=roles),
-                            {"source": source, "after": after, "limit": limit}).fetchall()
+        covered = _COVERED if source == "messages" else "false"
+        rows = conn.execute(_MESSAGE_ROWS.format(roles=roles, covered=covered),
+                            {"source": source, "after": after, "limit": limit, "model": model,
+                             "shared": SHARED_VECTOR_OWNER}).fetchall()
     items = []
-    for item_id, agent_id, content in rows:
-        text = (content or "").strip()
+    for item_id, agent_id, content, *covered_by in rows:
+        if covered_by and covered_by[0]:
+            items.append(_Item(int(item_id), str(agent_id), None, covered=True))
+            continue
+        # A row with no owner (NULL agent_id outside scope 'agents') is readable by no agent: not embedded.
+        text = (content or "").strip() if agent_id is not None else ""
         items.append(_Item(int(item_id), str(agent_id), text[:max_chars] if text else None))
     return items
 
@@ -134,7 +154,7 @@ def reembed_source(conn, embed: Callable[[list[str]], list[list[float]]], *, sou
     if source == "memory" and conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
         counts.notes.append("no Honcho tables (ltm.documents) in this store")
     while max_batches is None or counts.batches < max_batches:
-        items = _items(conn, source, counts.last_item_id, batch_size, max_chars)
+        items = _items(conn, source, model, counts.last_item_id, batch_size, max_chars)
         if not items:
             break
         texts = [item.text for item in items if item.text]
@@ -142,7 +162,8 @@ def reembed_source(conn, embed: Callable[[list[str]], list[list[float]]], *, sou
         _write_batch(conn, source, model, items, vectors)
         counts.batches += 1
         counts.embedded += len(texts)
-        counts.skipped += len(items) - len(texts)
+        counts.covered += sum(item.covered for item in items)
+        counts.skipped += len(items) - len(texts) - sum(item.covered for item in items)
         counts.last_item_id = items[-1].item_id
         out(f"{source}: batch {counts.batches}, up to id {counts.last_item_id}, {counts.embedded} embedded")
     return counts
@@ -160,6 +181,10 @@ def reembed(connect: Callable[[], Any], client: Any, sources: Sequence[str], *, 
         for source in sources:
             counts = reembed_source(conn, client.embed, source=source, model=client.model, batch_size=batch_size,
                                     from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
+            if source == "memory":
+                from hermes_cli.store_reembed_lcm import reembed_summaries
+                reembed_summaries(conn, client.embed, counts, model=client.model, batch_size=batch_size,
+                                  from_start=from_start, max_chars=max_chars, max_batches=max_batches, out=out)
             out(counts.line())
             results.append(counts)
         return results
@@ -181,6 +206,9 @@ def run(args) -> int:
     from hermes_cli.config import load_config
     from hermes_state_store import StoreUnavailableError
     config = load_config()
+    if args.from_index:
+        from hermes_cli.store_import_vectors import run as import_run
+        return import_run(args, config)
     try:
         settings = EmbeddingSettings.from_config(config)
         max_chars = int((config.get("embedding") or {}).get("max_chars") or DEFAULT_MAX_CHARS)

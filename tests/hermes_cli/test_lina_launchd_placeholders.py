@@ -26,7 +26,8 @@ def _worker(tmp_path) -> dict:
 
 
 def _seam(tmp_path) -> dict:
-    return plistlib.loads(lina_services.service_definition("launchd", "ai.lina.any", ["/bin/true"], {}).encode())
+    return plistlib.loads(lina_services.service_definition(
+        "launchd", "ai.lina.any", ["/bin/true"], {}, logs=lina_services.service_logs(tmp_path, "any")).encode())
 
 
 @pytest.mark.parametrize("plist", [_ocx, _worker, _seam], ids=["ocx", "worker", "service_definition"])
@@ -36,8 +37,9 @@ def test_service_plists_materialize_dataless_files(tmp_path, plist):
     assert data["Label"].startswith("ai.lina.")
 
 
-def test_the_systemd_unit_is_unchanged_by_the_launchd_key():
-    unit = lina_services.service_definition("systemd", "lina-worker", ["/bin/true"], {})
+def test_the_systemd_unit_is_unchanged_by_the_launchd_key(tmp_path):
+    unit = lina_services.service_definition("systemd", "lina-worker", ["/bin/true"], {},
+                                            logs=lina_services.service_logs(tmp_path, "worker"))
     assert "Materialize" not in unit
 
 
@@ -51,6 +53,8 @@ def test_the_one_off_gateway_job_materializes_dataless_files(tmp_path, monkeypat
 
     monkeypatch.setattr(gateway_launchd_runtime, "_launchctl", launchctl)
     monkeypatch.setattr(gateway_launchd_runtime.os, "getuid", lambda: 501, raising=False)
+    # The real launch path: the conftest's test-isolation marker keeps a test run out of launchd (#372).
+    monkeypatch.delenv("HERMES_TEST_ISOLATION", raising=False)
     gateway_launchd_runtime.start_gateway_job([sys.executable, "-c", "pass"], env={}, cwd=tmp_path,
                                               log_path=tmp_path / "gateway.log")
     assert len(seen) == 1 and seen[0]["MaterializeDatalessFiles"] is True

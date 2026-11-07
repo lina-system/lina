@@ -87,7 +87,10 @@ def _merge(ref: str) -> bool:
     """Merge ``ref`` without committing; False when there was nothing to merge."""
     if _git("merge-base", "--is-ancestor", ref, "HEAD", check=False).returncode == 0:
         return False
-    proc = _git("merge", "--no-ff", "--no-commit", ref, check=False)
+    # Directory-rename detection would move upstream's new files under a pruned directory into
+    # the kept directory LINA added with similar files (a subtree), where the prune never sees them.
+    proc = _git("-c", "merge.directoryRenames=false", "merge", "--no-ff", "--no-commit", ref,
+                check=False)
     if _git("rev-parse", "-q", "--verify", "MERGE_HEAD", check=False).returncode != 0:
         raise RuntimeError(f"git merge {ref} failed: {(proc.stderr or proc.stdout).strip()}")
     return True

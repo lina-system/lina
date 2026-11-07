@@ -247,3 +247,8 @@ def brief(tmp: Path, text: str, name: str = "brief.md") -> str:
 
 def as_json(path: Path) -> dict:
     return json.loads(path.read_text(encoding="utf-8"))
+
+
+def notified(job: dict) -> list[str]:
+    """The ends the hub recorded on *job*, each as ``<end state or event>:<run>`` (``done:1``, ``question:1``)."""
+    return [f"{entry.get('end_state') or entry['event']}:{entry['run']}" for entry in job.get("notified") or []]

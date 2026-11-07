@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import argparse
 import sys
 
 from hermes_cli.lina_work_settings import ACCESS
@@ -13,8 +14,20 @@ def _hub():
     return Hub(settings.root())
 
 
+def _request_key(args) -> str:
+    """``--key``, else a new key, printed before anything else so the caller can retry with it. On stderr: callers
+    of ``omo-task submit`` read the task ID from the first word of stdout."""
+    if args.key:
+        return args.key
+    from hermes_cli.worker.request_keys import new_key
+    key = new_key()
+    print(f"request key: {key}", file=sys.stderr, flush=True)
+    return key
+
+
 def _submit(args) -> int:
-    opts = {"briefs": args.brief, "mode": args.mode, "repo": args.repo, "inputs": args.input, "todo": args.todo,
+    opts = {"request_key": _request_key(args), "briefs": args.brief, "mode": args.mode, "repo": args.repo,
+            "inputs": args.input, "todo": args.todo,
             "host": args.host, "model": args.model, "topic": args.topic, "note": args.note, "at": args.at,
             "every": args.every, "dry_notify": args.dry_notify, "wait": args.wait, "runner": args.runner,
             "card": _card(args), "size": args.size, "access": args.access,
@@ -30,6 +43,11 @@ def _card(args) -> dict | None:
     if args.board and not args.card:
         raise HubError("--board names the board of --card <id>")
     return {"task": args.card, "board": args.board or os.environ.get("HERMES_KANBAN_BOARD") or None} if args.card else None
+
+
+def _send(args) -> int:
+    key = _request_key(args)
+    return _hub().send(args.id, args.message, _card(args), access=args.access, request_key=key)
 
 
 def _device(args) -> int:
@@ -67,9 +85,11 @@ def _tick(args) -> int:
 
 _ACTIONS = {
     "submit": _submit,
-    "send": lambda a: _hub().send(a.id, a.message, _card(a), access=a.access),
+    "send": _send,
     "wait": lambda a: _hub().wait(_card(a), a.id),
     "status": lambda a: _hub().status(a.id, a.json),
+    "attach": lambda a: _hub().status(a.id),
+    "card": lambda a: _hub().card(a.id, a.card, a.drop),
     "result": lambda a: _hub().result(a.id),
     "accept": lambda a: _hub().verdict(a.id, True, a.note),
     "reject": lambda a: _hub().verdict(a.id, False, a.why),
@@ -127,12 +147,20 @@ def _submit_parser(sub) -> None:
     p.add_argument("--every", help="repeat interval: 30m, 6h, 1d, 7d")
     p.add_argument("--dry-notify", action="store_true", help="print the notice command instead of running it")
     p.add_argument("--wait", nargs="?", type=int, const=1800, help="wait in the foreground (seconds, default 1800)")
+    p.add_argument("--session", help=argparse.SUPPRESS)  # the old tool's; the end goes to the agent or the card
     _card_args(p)
+    _key_arg(p)
+
+
+def _key_arg(p) -> None:
+    p.add_argument("--key", help="request key: a retry with the same key and arguments is the same request, never a "
+                                 "second one (default: a new key, printed first as `request key: <key>`)")
 
 
 def _card_args(p) -> None:
-    p.add_argument("--card", help="the Hermes card this run is handed out from (default: HERMES_KANBAN_TASK)")
-    p.add_argument("--board", help="that card's board (default: HERMES_KANBAN_BOARD)")
+    p.add_argument("--card", help="the Hermes card this run is handed out from (default: HERMES_KANBAN_TASK of "
+                                  "this process, else of the nearest ancestor process that has it)")
+    p.add_argument("--board", "--card-board", dest="board", help="that card's board (default: HERMES_KANBAN_BOARD)")
 
 
 def build_worker_parser(subparsers) -> None:
@@ -153,12 +181,20 @@ def build_worker_parser(subparsers) -> None:
         p.add_argument("id")
         if name == "status":
             p.add_argument("--json", action="store_true")
+    sub.add_parser("attach", help="The old tool's attach: the run's status (the hub follows every run)") \
+        .add_argument("id")
+    card = sub.add_parser("card", help="The card a run was handed out from (set at submit, never changed)")
+    card.add_argument("id")
+    card.add_argument("card", nargs="?", help=argparse.SUPPRESS)
+    card.add_argument("--board", help=argparse.SUPPRESS)
+    card.add_argument("--drop", help=argparse.SUPPRESS)
     send = sub.add_parser("send", help="Running: steer into the run; waiting on a question: answer it; ended: the "
                                        "next run in the same session")
     send.add_argument("id")
     send.add_argument("message")
     send.add_argument("--access", choices=ACCESS, help="same or lower access for the next run")
     _card_args(send)
+    _key_arg(send)
     wait = sub.add_parser("wait", help="Record the runs to wait on and print the Hermes kanban_schedule tool "
                                        "instruction; call that tool and end the turn")
     wait.add_argument("id", nargs="*", help="the runs to wait on (default: every open run of the card)")
