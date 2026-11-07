@@ -86,6 +86,9 @@ def seed_offline_models_dev(home):
 @contextmanager
 def daemon(root, home, env, *, barrier, fixture='local_recovery_daemon.py'):
     seed_offline_models_dev(env.get('HERMES_HOME', home))
+    # The child gateway must not read the account's real launchd/systemd: a Hermes Agent gateway the developer runs
+    # would make it refuse to start (lina#259). The seam answers "none loaded" for this child only.
+    env = {**env, 'LINA_TEST_NO_HERMES_AGENT_GATEWAY': '1'}
     command = [sys.executable, str(root / 'tests/gateway/fixtures' / fixture)] if barrier else [sys.executable, '-m', 'gateway.run']
     with (home / ('first.log' if barrier else 'restart.log')).open('w+') as log:
         proc = subprocess.Popen(command, cwd=root, env=env, stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)

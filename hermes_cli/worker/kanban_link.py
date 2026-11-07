@@ -213,14 +213,17 @@ def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link:
 
 
 def record_end(card: dict, job: dict, state: str, run: str, body: str) -> None:
-    """The end of a run on a card of LINA's own board."""
+    """The end (or question, ``state: human``) of a run on a card of LINA's own board; a card that waits
+    is woken to judge it (``kanban_db_verdicts.wake_for_run``)."""
     from hermes_cli import kanban_db as kb
     from hermes_cli.kanban_db_connect import connect_closing
+    from hermes_cli.kanban_db_verdicts import wake_for_run
     _event(card, "worker_run_ended", {"run_id": job["id"], "runner": job.get("runner"), "state": state, "run": run,
                                       "device": job.get("host"), "delivery": job.get("delivery"),
                                       **events.fields(state)})
     with connect_closing(board=card.get("board")) as conn:
         kb.add_comment(conn, card["task"], AUTHOR, body)
+        wake_for_run(conn, card["task"], job["id"], state)
 
 
 def record_host(card: dict, link: dict, body: str, payload: dict | None) -> None:

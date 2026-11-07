@@ -15,7 +15,8 @@ global npm) is only read: its path and ``--version`` are shown as ``person_insta
 
 Sign-in is checked read-only, one way per runner (owner, 11-06): Claude and Codex (and their ACP adapters) through
 OCX, Grok and Antigravity through their own CLI's credential file (existence only, never its content), Cursor with
-``CURSOR_API_KEY``. The node only checks and reports; signing in is the person's (#230).
+``CURSOR_API_KEY``. The node only checks and reports; Grok and Antigravity are signed in from the hub's browser by
+``lina devices sign-in <node> <runner>`` (``lina_sign_in``, #230).
 """
 
 from __future__ import annotations
@@ -361,8 +362,8 @@ SIGN_IN: dict[str, Callable[[], tuple[str, str | None]]] = {
 }
 HOW_TO_SIGN_IN = {
     "ocx": "sign in through LINA's OCX on {node} (`lina models status`)",
-    "grok": "run `grok login --device-auth` on {node}",
-    "agy": "run `agy` on {node} and finish its sign-in",
+    "grok": "run `lina devices sign-in {node} {runner}` on the hub",
+    "agy": "run `lina devices sign-in {node} {runner}` on the hub",
     "cursor": "put CURSOR_API_KEY into the LINA .env on {node}",
     "unknown": "sign in to {runner} on {node} by hand",
 }
@@ -485,6 +486,11 @@ def node_report(worker_root: Path, *, run: Callable[..., subprocess.CompletedPro
 
 REPORT_CACHE = "runners.report.json"
 REPORT_MAX_AGE_S = 60.0
+
+
+def clear_report_cache(worker_root: Path) -> None:
+    """Drop the cached report so the next ``hello`` probes again (after a sign-in, lina#230)."""
+    (worker_root / REPORT_CACHE).unlink(missing_ok=True)
 
 
 def cached_node_report(worker_root: Path, *, max_age: float = REPORT_MAX_AGE_S) -> list[dict]:

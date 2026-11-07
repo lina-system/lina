@@ -139,6 +139,12 @@ def _bound_locale(root: Path):
     return env
 
 
+def _verdict_agent(card: dict) -> str | None:
+    """The agent a run waits on for its verdict (``waitingOn: agent:<name>``, lina#295): its to-do, not the owner's."""
+    waiting_on = card.get("waitingOn") or ""
+    return waiting_on.removeprefix("agent:") if waiting_on.startswith("agent:") else None
+
+
 def _counts(work: dict | None, cards: list[dict] | None, review: list[dict], now: float) -> dict:
     def n(rows, ok=True):
         return len(rows) if ok and rows is not None else None
@@ -147,6 +153,8 @@ def _counts(work: dict | None, cards: list[dict] | None, review: list[dict], now
     agents = dict.fromkeys((work or {}).get("agents") or {}, 0)
     for card in running:
         agents[card["agent"]] = agents.get(card["agent"], 0) + 1
+    for agent in filter(None, map(_verdict_agent, cards or [])):
+        agents[agent] = agents.get(agent, 0) + 1
     ok = cards is not None
     return {"inbox": n((work or {}).get("decide", []) + review + (work or {}).get("mine", []), work is not None and ok),
             "running": n(running, ok), "stopped": n([c for c in cards or [] if c["state"] == "stopped"], ok),
@@ -186,7 +194,7 @@ def board(now: float | None = None) -> dict:
     cards = _source("worker", errors, lambda: worker_read(root, now))
     machines = _source("devices", errors, lambda: devices_read(root, now, errors))
     services = _source("quota", errors, lambda: quota_read(root, now))
-    review = [c for c in cards or [] if c["state"] == "waiting"]
+    review = [c for c in cards or [] if c["state"] == "waiting" and _verdict_agent(c) is None]
     with _WORK_LOCK:
         lines = _source("work", errors, lambda: _notices_in_locale(root, work, review))
     counts = _counts(work, cards, review, now)

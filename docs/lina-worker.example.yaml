@@ -48,6 +48,10 @@ worker:
     dsh: {type: acp, flavor: dsh, argv: [dsh, acp]}
     agy: {type: acp, flavor: agy, argv: [agy, acp]}
     cursor-agent: {type: command, argv: [cursor-agent, -p, --force]}
+  sign_in:                                   # `lina devices sign-in <node> <runner>` (docs/lina-sign-in.md)
+    browser:
+      command: [hub-browser-sign-in]         # the hub operator's own: address on stdin, exit 0 or 3 + needs_person
+    accounts: {grok: <account>, agy: <account>}  # the account the browser command chooses, per runner
   # Limits (defaults shown): poll_s 15, stall_grace_s 600, answered_grace_s 60, background_max_s 10800,
   # hard_timeout_s 43200, min_free_gb 5, input_max_mb 300, memory_max 12G,
   # repo_url "https://github.com/{repo}.git", git_identity {name, email}, private_paths [].

@@ -315,7 +315,13 @@ def loaded_hermes_agent_gateway(profile: str) -> str | None:
     """Hermes Agent's gateway service for *profile* when it is loaded on this account, else None.
 
     Read-only: ``launchctl print`` (both launchd domains) on macOS, ``systemctl --user is-active`` on Linux. It never
-    stops, unloads or edits that service."""
+    stops, unloads or edits that service.
+
+    Test seam: ``LINA_TEST_NO_HERMES_AGENT_GATEWAY=1`` answers None without reading the account. The gateway probes
+    in ``tests/gateway/fixtures`` set it for their child gateway, which must not depend on what the developer's own
+    account runs (lina#259); nothing else sets it, and the guard itself stays unconditional."""
+    if os.environ.get("LINA_TEST_NO_HERMES_AGENT_GATEWAY") == "1":
+        return None
     if sys.platform == "darwin":
         name = hermes_agent_gateway_name(profile, HERMES_AGENT_LAUNCHD_LABEL)
         uid = os.getuid()  # windows-footgun: ok — darwin-only branch
