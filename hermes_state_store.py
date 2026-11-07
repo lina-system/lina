@@ -45,6 +45,13 @@ SOURCE_AGENT = "agent"
 # The vec.chunks / vec.embeddings owner of an external message every agent reads (memory.messages NULL agent_id,
 # scope 'agents'); not a profile name, so no agent can write it (migration 0009, lina#364).
 SHARED_VECTOR_OWNER = "*"
+# A filtered nearest-neighbour query on vec.embeddings (owner, kind, model, joins) under its HNSW index: pgvector's
+# defaults (ef_search 40, no iterative scan) hand back the 40 nearest rows of the whole table and filter afterwards,
+# so a query returned fewer than LIMIT rows, or none, and missed rows an exact scan finds (lina#387; on the #148
+# store of 436k vectors, recall@5 against an exact scan 0.875). Iterative scan keeps reading the index until the
+# filter lets LIMIT rows through (strict_order: still nearest first), and a wider candidate list brings recall@5 to
+# 0.975 at ~20 ms against ~1.6 s for an exact scan. Both are SET LOCAL: they last for the query's transaction only.
+HNSW_FILTERED_SEARCH = ("SET LOCAL hnsw.iterative_scan = strict_order", "SET LOCAL hnsw.ef_search = 400")
 _CACHE_ROWS = 50_000
 
 
@@ -695,11 +702,15 @@ class MessageStore:
         this agent's chunks and the shared external ones (owner ``SHARED_VECTOR_OWNER``, migration 0009)."""
         vector = "[" + ",".join(repr(float(v)) for v in embedding) + "]"
         with self._cursor() as cur:
-            cur.execute(
-                "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
-                " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
-                " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), vector, int(limit)))
-            ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
+            # Its own transaction (a savepoint inside a write) so the HNSW settings end with the query (lina#387).
+            with cur.connection.transaction():
+                for setting in HNSW_FILTERED_SEARCH:
+                    cur.execute(setting)
+                cur.execute(
+                    "SELECT c.message_ids FROM vec.embeddings e JOIN vec.chunks c ON c.chunk_id = e.item_id"
+                    " WHERE e.kind = 'chunk' AND e.model = %s AND c.source = ANY(%s)"
+                    " ORDER BY e.embedding <=> %s::vector LIMIT %s", (model, list(sources), vector, int(limit)))
+                ordered = list(dict.fromkeys(int(i) for row in cur.fetchall() for i in row[0]))
             if not ordered:
                 return []
             cur.execute(f"SELECT {_MEMORY_COLUMNS} FROM memory.messages WHERE message_id = ANY(%s)"
