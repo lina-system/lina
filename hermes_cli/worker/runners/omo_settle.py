@@ -6,7 +6,9 @@ session still runs, so the run is judged from the session's root lifecycle (``ho
 
 Ends: the engine sealed the lifecycle (``done``, ``failed``, ``cancelled``); the turn ended after an answered question
 (``idle_after_question``); nothing was recorded for the stall grace while not running, a hold or pause, or a
-background item older than its cap (``stalled``); the session closed or parked; the hard timeout; an unreadable state.
+background item older than its cap (``stalled``); a session still ``running`` and streaming whose recorded activity
+stopped for the stall grace (``done`` when its answer and this run's report are in, else ``stalled``); the session
+closed or parked; the hard timeout; an unreadable state.
 The clocks live in ``settle.<run>.json`` so a restarted service resumes the same judgement; ``lifecycle.<run>.json``
 is the last summary, ``progress.<run>.jsonl`` one line per change and ``wait.<run>.json`` the outcome.
 """
@@ -125,15 +127,9 @@ def answered_and_idle(view: dict, task: Task) -> bool:
             and (task.work / "report.md").is_file())
 
 
-def answered_with_receipts(view: dict, activity: dict, task: Task, run: int) -> bool:
-    """Only a completed answer and this run's report can retire leftover receipts."""
-    waiting = view["waitingOn"]
-    groups = waiting.get("background") or []
-    if (view.get("state") != "waiting_background" or not groups or real_question(view)
-            or waiting.get("children") or view.get("isStreaming") or view.get("isBashRunning")
-            or view.get("isCompacting") or view.get("pendingMessageCount")
-            or any(not receipt_source(g.get("source") or "") for g in groups)
-            or activity.get("last_msg_role") != "assistant" or activity.get("last_msg_tool_call")
+def answered_with_report(activity: dict, task: Task, run: int) -> bool:
+    """The last assistant message ended with ``stop`` and no tool call, and ``report.md`` is newer than this run."""
+    if (activity.get("last_msg_role") != "assistant" or activity.get("last_msg_tool_call")
             or activity.get("last_msg_stop") != "stop"):
         return False
     try:
@@ -141,6 +137,27 @@ def answered_with_receipts(view: dict, activity: dict, task: Task, run: int) -> 
         return (task.work / "report.md").stat().st_mtime >= started
     except (OSError, ValueError):
         return False
+
+
+def answered_with_receipts(view: dict, activity: dict, task: Task, run: int) -> bool:
+    """Only a completed answer and this run's report can retire leftover receipts."""
+    waiting = view["waitingOn"]
+    groups = waiting.get("background") or []
+    if (view.get("state") != "waiting_background" or not groups or real_question(view)
+            or waiting.get("children") or view.get("isStreaming") or view.get("isBashRunning")
+            or view.get("isCompacting") or view.get("pendingMessageCount")
+            or any(not receipt_source(g.get("source") or "") for g in groups)):
+        return False
+    return answered_with_report(activity, task, run)
+
+
+def streaming_on_receipts(view: dict) -> bool:
+    """Running and streaming with only receipts left to wait on: the lifecycle cannot tell a frozen session from a
+    working one, so its recorded activity decides (lina#404)."""
+    waiting = view["waitingOn"]
+    return (view.get("state") == "running" and bool(view.get("isStreaming")) and not view.get("isBashRunning")
+            and not waiting.get("children")
+            and all(receipt_source(g.get("source") or "") for g in waiting.get("background") or []))
 
 
 def permission_answered_and_done(view: dict, activity: dict, task: Task, run: int) -> bool:
@@ -276,6 +293,18 @@ class Settle:
         self.mem["quiet_since"] = seen if since is None else max(since, seen)
         return now - self.mem["quiet_since"]
 
+    def _frozen(self, view: dict, key: str, activity: dict, now: float) -> str | None:
+        """End a streaming session whose entries stopped for the stall grace; ``thinking`` resets ``_quiet``."""
+        if key != "thinking" or not streaming_on_receipts(view):
+            return None
+        idle = now - (activity.get("last_entry_at") or self.mem["start"])
+        if idle < float(self.limits.get("stall_grace_s", 600.0)):
+            return None
+        extra = {"lifecycle": view.get("state"), "dash": key, "quiet_s": round(idle)}
+        if answered_with_report(activity, self.task, self.run):
+            return self._finish("done", via="frozen streaming after report", **extra)
+        return self._finish("stalled", why=f"frozen streaming: no session entry for {round(idle)}s", **extra)
+
     def _judge(self, view: dict, key: str, why: str, quiet: float, now: float) -> str | None:
         grace = float(self.limits.get("stall_grace_s", 600.0))
         extra = {"lifecycle": view.get("state"), "dash": key, "quiet_s": round(quiet)}
@@ -339,7 +368,7 @@ class Settle:
         if (answered_with_receipts(view, activity, self.task, self.run)
                 and quiet >= float(self.limits.get("answered_grace_s", 60.0))):
             return self._finish("idle_after_background", why="answer and report left only receipts")
-        ended = self._judge(view, key, why, quiet, now)
+        ended = self._frozen(view, key, activity, now) or self._judge(view, key, why, quiet, now)
         if ended:
             return ended
         if key in MOVING and view.get("isStreaming"):

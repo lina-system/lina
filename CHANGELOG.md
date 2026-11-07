@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- An omo run whose session the engine keeps `running` and streaming after the work is done now ends: once no session entry is recorded for `stall_grace_s` (default 600 s) and only receipts (`terminal-monitors`, empty `delivery:*` groups) are left, the run ends `done` when the last assistant message ended with `stop` and no tool call and this run's `report.md` is newer than its start, else `stalled` naming the frozen streaming state; the end notice says which rule ended the run (lina#404).
 - Person devices in work settings now require and accept their status SSH alias (`host`) with `role: person`, while refusing node fields, so saved person devices appear in the devices view (lina#373).
 - A gateway started under test isolation stays a plain child instead of a launchd job: `start_gateway_job` returns `None` without a single `launchctl` call while `HERMES_TEST_ISOLATION` is set, so the e2e history tests no longer leave `com.nousresearch.lina.runtime.*` jobs in the developer's own `gui/<uid>` domain, outside the sandbox and out of the test's process tracking (lina#372).
 - `lina migrate memory` no longer refuses a profile with a shared skill linked into `skills/`: a symlink inside `skills/`, `memories/`, `memory/` or `personas/` is skipped without reading its target and listed in the report's `skipped_symlinks`; a symlinked profile directory, `state.db` or `lcm.db` is still refused (lina#366).
