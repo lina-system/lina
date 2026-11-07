@@ -171,8 +171,16 @@ def sign_in_questions(rows: list[dict]) -> list[dict]:
     return list(asks.values())
 
 
-def sign_in(base: Path | None = None, *, as_json: bool = False, out=print) -> int:
-    """``lina devices sign-in``: the sign-in questions over every device (read-only)."""
+def sign_in(base: Path | None = None, *, node: str | None = None, runner: str | None = None, as_json: bool = False,
+            out=print) -> int:
+    """``lina devices sign-in``: the sign-in questions over every device (read-only); with a node and a runner, that
+    runner's sign-in on that node from the hub's browser (``lina_sign_in.start``, lina#230)."""
+    if node is not None:
+        from hermes_cli.lina_sign_in import start
+        result = start(node, runner, base=base)
+        out(json.dumps(result, ensure_ascii=False) if as_json else
+            f"{result['node']} {result['runner']}: {result['state']} · {result['reason']}")
+        return 0 if result["state"] == "signed_in" else 1
     base = _base(base)
     asks = sign_in_questions([readiness(dev, settings.root(base)) for dev in _devices(base)])
     if as_json:
