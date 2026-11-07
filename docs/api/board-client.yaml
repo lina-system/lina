@@ -957,7 +957,7 @@ components:
     RunnerCell:
       type: object
       additionalProperties: false
-      required: [name, type, fleet, installed, signIn, ready, why]
+      required: [name, type, fleet, installed, signIn, signingIn, ready, why]
       description: >
         One runner on a node, from its hello (lina#222, lina#218). A node that cannot be reached lists the runners
         the hub offers, each why unreachable; one whose hello has no runner rows yet lists them why update.
@@ -981,6 +981,11 @@ components:
           type: string
           nullable: true
           enum: [signed_in, signed_out, api_key, ocx, unknown, null]
+        signingIn:
+          type: boolean
+          description: >
+            True while a sign-in this hub started for this runner on this node is still running
+            (POST /devices/{name}/sign-in); false otherwise. How it ended shows in signIn on a later read.
         ready:
           type: boolean
           nullable: true

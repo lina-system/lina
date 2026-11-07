@@ -7,12 +7,15 @@ is validated against ``docs/api/board-client.yaml``.
 
 from __future__ import annotations
 
+import inspect
 import json
 import logging
 import sys
 import textwrap
+import threading
 import time
 import types
+from pathlib import Path
 
 import pytest
 from fastapi.testclient import TestClient
@@ -402,8 +405,13 @@ def test_a_node_that_refuses_the_restart_is_502_with_its_reason(actions, client)
     assert actions.log()[0]["state"] == "refused"
 
 
+def test_the_core_s_sign_in_start_takes_the_call_the_route_makes():
+    from hermes_cli import lina_sign_in
+    inspect.signature(lina_sign_in.start).bind("build-a", "grok", base=Path("/lina"))
+
+
 def test_sign_in_is_501_until_lina_230_lands(actions, client, monkeypatch):
-    monkeypatch.delitem(sys.modules, lina_board_devices.SIGN_IN_MODULE, raising=False)
+    monkeypatch.setitem(sys.modules, lina_board_devices.SIGN_IN_MODULE, None)  # a core without lina#230
     reply = client.post("/api/lina/devices/build-a/sign-in", json={"runner": "grok"})
     assert (reply.status_code, reply.json()["detail"]) == (501, "sign-in is not on this core yet (lina#230)")
 
@@ -463,3 +471,35 @@ def test_no_sign_in_address_code_or_token_reaches_a_reply_the_log_or_the_process
     for text in (*replies, log, caplog.text):
         for secret in (SECRET_URL, SECRET_CODE, SECRET_TOKEN, "auth.example.test", "https://"):
             assert secret not in text
+
+
+def test_a_runner_cell_says_signing_in_while_its_sign_in_runs_and_not_after(actions, nodes, start, client):
+    entered, release = threading.Event(), threading.Event()
+    module = sys.modules[lina_board_devices.SIGN_IN_MODULE]
+    real_start = module.start
+
+    def waiting_start(node, runner, *, base=None):
+        entered.set()
+        assert release.wait(10)
+        return real_start(node, runner, base=base)
+    module.start = waiting_start
+    nodes.inline = False
+
+    def signing(reply):
+        assert reply.status_code == 200
+        view = _valid("DevicesView", reply.json())
+        return {(m["name"], cell["name"]) for m in view["machines"] for cell in m["runners"] if cell["signingIn"]}
+
+    _action(client.post("/api/lina/devices/build-a/sign-in", json={"runner": "grok"}), 202)
+    thread = threading.Thread(target=nodes.queued.pop())
+    thread.start()
+    assert entered.wait(10)
+    during = client.get("/api/lina/devices")
+    assert signing(during) == {("build-a", "grok")}
+
+    release.set()
+    thread.join(10)
+    assert not thread.is_alive()
+    after = client.get("/api/lina/devices")
+    assert signing(after) == set()
+    assert after.headers["etag"] != during.headers["etag"]

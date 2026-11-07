@@ -156,7 +156,7 @@ def _omo_fleet() -> str | None:
 
 def _cell(name: str, kind, fleet, installed, sign_in, ready, why) -> dict:
     return {"name": name, "type": kind, "fleet": fleet, "installed": installed,
-            "signIn": sign_in if sign_in in SIGN_IN else None, "ready": ready, "why": why}
+            "signIn": sign_in if sign_in in SIGN_IN else None, "signingIn": False, "ready": ready, "why": why}
 
 
 def runner_cell(row: dict, fleet: dict) -> dict:
@@ -233,6 +233,15 @@ def _fallback_why(probe: dict, descriptor: dict, reachable: bool, refused: bool)
     return "unknown"
 
 
+def _mark_signing(base: Path, node: str, cells: list[dict], reachable: bool) -> None:
+    """``signingIn`` from the sign-ins this hub is running now, read at every view (never kept with the probe or
+    hello answers), so it is false on the first read after the sign-in ends."""
+    with _SIGNING_LOCK:
+        running = set(_SIGNING)
+    for cell in cells:
+        cell["signingIn"] = reachable and cell["type"] != "omo" and (str(base), node, cell["name"]) in running
+
+
 def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
     """The work and files devices: work first, then files; in each, down, then warnings, then the rest."""
     from hermes_cli.worker import runners
@@ -249,8 +258,9 @@ def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
     rows = []
     for dev, (probe, descriptor, reachable) in zip(devs, contacts):
         row = machine(dev, probe, (metrics or {}).get(dev.name) or (metrics or {}).get(dev.host), now, min_free)
-        row.update(role=role(base, dev.name), reachable=reachable,
-                   runners=_cells(dev, base, probe, descriptor, reachable, runner))
+        cells = _cells(dev, base, probe, descriptor, reachable, runner)
+        _mark_signing(base, dev.name, cells, reachable)
+        row.update(role=role(base, dev.name), reachable=reachable, runners=cells)
         rows.append(row)
     return sorted(rows, key=lambda row: (NODE_ROLES.index(row["role"]), STATES.index(row["state"])))
 
