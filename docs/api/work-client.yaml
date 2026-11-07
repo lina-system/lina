@@ -269,6 +269,19 @@ components:
           type: integer
         lastSeenAt:
           type: integer
+    RunAwaitingVerdict:
+      type: object
+      additionalProperties: false
+      required: [id, state, waitingOn]
+      properties:
+        id:
+          type: string
+        state:
+          type: string
+          description: The run's state in the hub (running, done, review, failed, ...), or unknown.
+        waitingOn:
+          type: string
+          description: "`agent:<name>`: the agent whose verdict the run waits for."
     GateResult:
       type: object
       additionalProperties: false
@@ -333,7 +346,7 @@ components:
       type: object
       additionalProperties: false
       required: [id, title, agent, state, reason, elapsedSeconds, todoProgress, now, plain,
-                 todos, workerRuns, gates, comments, runs]
+                 todos, workerRuns, runsAwaitingVerdict, gates, comments, runs]
       properties:
         id:
           type: string
@@ -366,6 +379,11 @@ components:
           type: array
           items:
             $ref: "#/components/schemas/WorkerRun"
+        runsAwaitingVerdict:
+          type: array
+          description: Runs this card started with no verdict yet; each waits on an agent, never on the owner.
+          items:
+            $ref: "#/components/schemas/RunAwaitingVerdict"
         gates:
           type: array
           description: The latest result per gate command.
