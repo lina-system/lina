@@ -36,6 +36,13 @@ model path: one ssh session from the hub carries the node's 127.0.0.1:10100 to t
   was lost) is adopted from its pid file on the node, never started twice. A follow-up takes a slot like a first
   submit; while the device is full it waits (holding no slot) and the one that waited longest takes the next free
   slot, under the slot lock, so waiting follow-ups never block each other or overfill the device.
+- **A cancel stops the session on the node too.** A cancel that comes while the session is still opening finds no
+  session to abort; the runner aborts it as soon as it is there, and waits to see it stop, before its end marks
+  (as at the hard limit; a session not seen to stop is aborted again before the slot is freed). A failed abort is
+  reported by `lina worker cancel`, not hidden.
+- **Follow-ups change a run under the task lock.** The next run's number, its prompt (or an instruction added to
+  a run still waiting to start) and its request are written under one lock, so two follow-ups at once both keep
+  their instruction.
 - **The model path is asked again before every start.** A run that starts later than its submit (a waiting
   follow-up, a retried start) does not start while the model path does not answer: it waits with that reason and
   starts on a later tick, and the wait is not counted as a failed start.
@@ -104,10 +111,17 @@ folder, so the run user's home appeared again under `@*`, and all 59 changed fil
 run folder) were seen through that alias, with 0 under a real denied folder. The node's `/proc/mounts` is read
 before the look: a mount point under a denied folder whose source (its btrfs `subvol=`, placed through a mount of the
 same device) lies outside every denied folder is skipped ("aliases skipped: n"); one whose source is denied is
-looked through. Folders the run's user can neither read nor write ("Permission denied" from find, and `test -w`
-fails as that user) count as seen, since the run could not have written there ("unreadable by the run's user (and
-not writable): n"); a folder it may write but not read, or any other find error, still means the look did not
-see everything.
+looked through. Folders the run's user cannot write are not looked into (`find … -type d ! -writable -prune`): the run could not
+have changed anything there, and on a real node the look otherwise ran past its 300 s limit (106 folders it could
+not read, 245 changes by other users, 14 aliases). They are counted ("not writable by the run's user, not looked
+into: n"), also when the look runs out of time. The gap: a folder the run may write inside one it may not (DSM
+ACLs) is not seen either. A folder it may write but not read, or any other find error, still means the look did
+not see everything.
+
+Snapshot folders (`#snapshot`, `@sharesnap`) are never looked into, writable or not: a snapshot is a read-only copy
+the run cannot change, and walking the shares' snapshots once loaded a real node to 260, cut its ssh session and
+dropped the hub's model-path session three times. The whole look runs at `nice -n 19` (the node has no `ionice`).
+Not going into unwritable folders is therefore a safety measure for the node as much as a speed-up.
 
 One changed file owned by the run's user, or a look that did not finish (time limit, a find error), ends a `done`
 run as `review`; the end notice and the card comment name the files (up to 50) or say why the look was not

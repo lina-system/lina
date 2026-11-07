@@ -23,7 +23,7 @@ from tests.hermes_cli import _worker_fakes as fakes
 from tests.waiting import wait_until
 
 NODE_TOOLS = ("bash", "tar", "sha256sum", "setsid", "nohup", "cat", "sed", "cut", "head", "tail", "grep", "df", "tr",
-              "wc", "date", "sleep", "mkdir", "chmod", "rm", "cp", "mv", "sort")
+              "wc", "date", "sleep", "mkdir", "chmod", "rm", "cp", "mv", "sort", "nice")
 AGENT = "agent-a"
 
 
@@ -36,8 +36,10 @@ def _node(tmp_path: Path, monkeypatch, scan_s: int = 20, extra: str = "", first:
     for tool in NODE_TOOLS:
         (node_bin / tool).symlink_to(shutil.which(tool))
     real_find = shutil.which("find")
-    (node_bin / "find").write_text(f'#!/bin/sh\ncase "$*" in *-newer*) [ -f "$FAKE_NAS/slow_find" ] && sleep 30 ;; esac\n'
-                                   f'exec {real_find} "$@"\n')
+    (node_bin / "find").write_text(f'#!/bin/sh\ncase "$*" in *-writable*)  # a find of the denied-folder look\n'
+                                   f'  {shutil.which("cut")} -d" " -f19 /proc/$$/stat >> "$FAKE_NAS/find.nice" ;; esac\n'
+                                   f'{real_find} "$@"; rc=$?\n'  # slow_find: a look that runs out of time
+                                   f'case "$*" in *-newer*) [ -f "$FAKE_NAS/slow_find" ] && sleep 30 ;; esac\nexit $rc\n')
     (node_bin / "curl").write_text('#!/bin/sh\ncat "$FAKE_NAS/healthz" 2>/dev/null || printf 000\n')
     (nas / "healthz").write_text("200")
     fakes.install_fake_omo(nas / "omo", "")
@@ -215,13 +217,15 @@ def test_a_file_node_run_gets_the_node_rules_with_its_deny_list(tmp_path, monkey
     assert "Do not delete anything" in prompt and "## 다음에 알아야 할 것" in prompt
 
 
-def _abort_watch(node: dict, stubborn: bool) -> Path:
-    """Wrap the node's omo so every abort is logged, and (stubborn) refused while the session keeps running."""
+def _abort_watch(node: dict, stubborn: bool, slow_open: bool = False) -> Path:
+    """Wrap the node's omo so every abort is logged, and (stubborn) refused while the session keeps running; with
+    slow_open, `host session open` waits until the test drops `open_go` beside the node."""
     omo = node["home"] / ".bun" / "bin" / "omo"
     omo.rename(omo.with_name("omo.fake"))
     log = node["nas"] / "aborts.log"
     refuse = 'echo \'{"action":"error","reason":"refused"}\'; exit 1' if stubborn else ":"
-    omo.write_text(f'#!/usr/bin/env bash\nif [ "$3" = abort ]; then echo abort >> "{log}"; {refuse}; fi\n'
+    gate = 'if [ "$3" = open ]; then until [ -f "$FAKE_NAS/open_go" ]; do sleep 0.05; done; fi\n' if slow_open else ""
+    omo.write_text(f'#!/usr/bin/env bash\n{gate}if [ "$3" = abort ]; then echo abort >> "{log}"; {refuse}; fi\n'
                    f'exec "{omo.with_name("omo.fake")}" "$@"\n')
     omo.chmod(0o755)
     return log
@@ -543,7 +547,7 @@ def test_a_folder_the_run_can_neither_read_nor_write_counts_as_seen(tmp_path, mo
         hub = Hub(node["root"])
         hub.tick()
         assert hub.store.load(task_id)["state"] == "done"
-        assert "Unreadable by the run's user (and not writable): 1 folder(s)" in _notice(node, task_id)
+        assert "Not writable by the run's user, not looked into: 1 folder(s)" in _notice(node, task_id)
     finally:
         locked.chmod(0o755)
 
@@ -558,6 +562,161 @@ def test_status_names_the_denied_folder_check_as_the_reason_for_review(tmp_path,
     Hub(node["root"], out=lines.append).status(task_id)
     text = "\n".join(lines)
     assert "needs review — files changed under a denied folder" in text and "section of report.md" not in text
+
+
+def test_a_cancel_while_the_session_still_opens_stops_the_session_before_the_run_ends(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, first="running")
+    aborts = _abort_watch(node, stubborn=False, slow_open=True)
+    task_id = _submit(node)
+    remote = node["home"] / "lina-file-node" / task_id
+    wait_until(lambda: (remote / "pid.1").exists(), what="the runner's start")
+    hub = Hub(node["root"], out=lambda line: None)
+    hub.cancel(task_id, "not now")
+    assert not (remote / "session.json").exists()  # nothing the hub could abort yet
+    (node["nas"] / "open_go").write_text("")
+    wait_until(lambda: (remote / "rc.1").exists(), what="the runner's end mark")
+    assert (remote / "outcome.1").read_text().strip() == "cancelled_stopped" and aborts.read_text().count("abort") == 1
+    assert json.loads((node["nas"] / "omo" / "state.json").read_text())["phase"] == "cancelled"
+    hub.tick()
+    job = hub.store.load(task_id)
+    assert job["state"] == "cancelled" and hub.transport(job).call(["probe", "", "omo"]).json()["named_running"] == 0
+
+
+def test_a_cancel_whose_abort_fails_says_so(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, first="running")
+    _abort_watch(node, stubborn=True)
+    task_id = _submit(node)
+    remote = node["home"] / "lina-file-node" / task_id
+    wait_until(lambda: (remote / "session.json").exists(), what="the run's session")
+    with pytest.raises(HubError, match="refused"):
+        Hub(node["root"], out=lambda line: None).cancel(task_id, "not now")
+
+
+def test_two_follow_ups_at_once_both_keep_their_instruction(tmp_path, monkeypatch):
+    import threading
+    from hermes_cli.worker.file_node import FileNodeTransport
+    node = _node(tmp_path, monkeypatch, nas_extra=", named_cap: 1")
+    hub = Hub(node["root"], out=lambda line: None)
+    first = _submit(node)
+    _ended(node, first)
+    hub.tick()
+    (node["nas"] / "omo" / "scenario.json").write_text(json.dumps({"first": "running"}))
+    _submit(node)  # holds the only slot, so neither follow-up starts a run while they race
+    session = node["nas"] / "omo" / "state.json"
+    wait_until(lambda: json.loads(session.read_text())["phase"] == "running", what="the second run's session")
+    contact = hub.transport(hub.store.load(first)).raw
+    gate, capacity = threading.Barrier(2), FileNodeTransport._capacity
+
+    def both_read_the_run_first(self, task):
+        gate.wait(timeout=10)  # each follow-up has read the run number before either writes
+        return capacity(self, task)
+
+    monkeypatch.setattr(FileNodeTransport, "_capacity", both_read_the_run_first)
+    replies = []
+
+    def follow_up(text: str) -> None:
+        payload = {"prompt": f"ulw {text}", "message": text, "access": "full"}
+        replies.append(contact.call(["follow_up", first], json.dumps(payload).encode()).json())
+
+    threads = [threading.Thread(target=follow_up, args=(text,)) for text in ("left instruction", "right instruction")]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+    mirror = node["root"] / "file_nodes" / "nas" / "tasks" / first
+    prompts = "".join(path.read_text() for path in sorted(mirror.glob("prompt.*")) if path.name != "prompt.1")
+    assert "left instruction" in prompts and "right instruction" in prompts, replies
+
+
+def _unwritable(folder: Path) -> None:
+    for path in sorted([folder, *folder.rglob("*")], reverse=True):
+        if path.is_dir():
+            path.chmod(0o555)
+
+
+def _writable_again(folder: Path) -> None:
+    for path in [folder, *folder.rglob("*")]:
+        if path.is_dir():
+            path.chmod(0o755)
+
+
+def test_a_large_tree_the_run_cannot_write_is_not_looked_into(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch)
+    big = node["volume"] / "backup" / "big"
+    for part in range(30):
+        (big / f"part-{part}").mkdir(parents=True)
+        for index in range(100):
+            (big / f"part-{part}" / f"{index}.dat").write_text("x")
+    task_id = _submit(node)
+    _ended(node, task_id)
+    (big / "part-0" / "new-after-start.dat").write_text("y")  # would count if the look went in
+    _unwritable(big)
+    try:
+        hub = Hub(node["root"])
+        hub.tick()
+        assert hub.store.load(task_id)["state"] == "done"
+        assert "Not writable by the run's user, not looked into: 1 folder(s)" in _notice(node, task_id)
+    finally:
+        _writable_again(big)
+
+
+def test_a_writable_folder_inside_an_unwritable_one_is_not_seen(tmp_path, monkeypatch):
+    """The gap of skipping unwritable folders, kept on purpose: a folder the run may write below one it may not
+    (DSM ACLs) is not looked into, and the notice says so."""
+    node = _node(tmp_path, monkeypatch)
+    closed = node["volume"] / "backup" / "closed"
+    (closed / "open").mkdir(parents=True)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    (closed / "open" / "changed.txt").write_text("z")
+    closed.chmod(0o555)
+    try:
+        hub = Hub(node["root"])
+        hub.tick()
+        assert hub.store.load(task_id)["state"] == "done"
+        assert "a folder it may write inside one of them (DSM ACLs) is not seen either" in _notice(node, task_id)
+    finally:
+        closed.chmod(0o755)
+
+
+def test_a_look_that_runs_out_of_time_still_reports_what_it_skipped(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, scan_s=1)
+    closed = node["volume"] / "backup" / "closed"
+    closed.mkdir()
+    task_id = _submit(node)
+    _ended(node, task_id)
+    closed.chmod(0o555)
+    (node["nas"] / "slow_find").write_text("")
+    try:
+        hub = Hub(node["root"])
+        hub.tick()
+        assert hub.store.load(task_id)["state"] == "review"
+        text = _notice(node, task_id)
+        assert "not finished in 1s" in text and "Not writable by the run's user, not looked into: 1 folder(s)" in text
+    finally:
+        closed.chmod(0o755)
+
+
+def test_the_look_runs_at_nice_19_and_never_walks_snapshots_or_unwritable_trees(tmp_path, monkeypatch):
+    node = _node(tmp_path, monkeypatch, deny_extra=', "#snapshot", "@sharesnap"')
+    snapshot = node["volume"] / "@sharesnap" / "share" / "daily"
+    tagged = node["volume"] / "share" / "#snapshot" / "monday"
+    big = node["volume"] / "backup" / "big"
+    for folder in (snapshot, tagged, *(big / f"part-{n}" for n in range(20))):
+        folder.mkdir(parents=True)
+    task_id = _submit(node)
+    _ended(node, task_id)
+    for folder in (snapshot, tagged, big / "part-3"):  # writable snapshots too: a change there would count if walked
+        (folder / "seen-if-walked.txt").write_text("x")
+    _unwritable(big)
+    try:
+        hub = Hub(node["root"])
+        hub.tick()
+        assert hub.store.load(task_id)["state"] == "done"
+        assert "seen-if-walked" not in _notice(node, task_id)
+        assert set((node["nas"] / "find.nice").read_text().split()) == {"19"}  # every find of the look
+    finally:
+        _writable_again(big)
 
 
 def test_device_roles_and_file_node_keys_are_read_from_config():

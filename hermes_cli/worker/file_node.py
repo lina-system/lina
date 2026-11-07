@@ -345,7 +345,7 @@ class FileNodeTransport:
             write_json(task.path("manifest.json"), manifest)
             task.path("state").write_text(final + "\n", encoding="utf-8")
             task.event(run, "ended", state=final, runner_state=runner_state)
-            if _read(task, f"outcome.{run}") == "timeout_not_stopped":
+            if _read(task, f"outcome.{run}").endswith("_not_stopped"):
                 self._abort_again(task, run)
             task.path(f"rc.{run}").write_text(rc + "\n", encoding="utf-8")
             return final
@@ -370,7 +370,7 @@ class FileNodeTransport:
     def _runner_state(self, task: Task, run: int, gone: bool) -> tuple[str, str]:
         from hermes_cli.worker.runners.omo_settle import lifecycle_view
         outcome = _read(task, f"outcome.{run}")
-        if task.path("cancelled").exists() or outcome == "cancelled":
+        if task.path("cancelled").exists() or outcome.startswith("cancelled"):
             return "cancelled", ""
         if gone:
             return "failed", f"the runner on {self.device.name} ended without its end marks"
@@ -441,22 +441,24 @@ class FileNodeTransport:
         task, payload = self._task(args[0]), json.loads(data)
         if payload.get("access", ACCESS_MODES[0]) not in ACCESS_MODES:
             return _answer({"action": "error", "reason": f"a file node runs with access {ACCESS_MODES[0]} only"})
-        run = slots.requested(task.dir)
-        if self._live_now(task, run):
-            return self._steer(task, run, payload["message"].encode("utf-8"), timeout)
-        if run and not task.path(f"rc.{run}").exists() and not task.path(f"taken.{run}").exists():
-            with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:  # still waiting to start
-                fh.write("\n\n" + payload["message"])
-            return _answer({"action": "queued", "run": run})
-        if run and not task.path(f"rc.{run}").exists():
-            return _answer({"action": "busy", "run": run})
+        from hermes_cli.worker.device import task_lock
+        if self._live_now(task, slots.requested(task.dir)):  # outside the lock: meta may finish the run under it
+            return self._steer(task, slots.requested(task.dir), payload["message"].encode("utf-8"), timeout)
         pool, cap = self._capacity(task)
-        run += 1
-        task.path(f"prompt.{run}").write_text(payload["prompt"], encoding="utf-8")
-        # Every next run queues first and takes a slot through slots.admit (one lock, longest waiting first); one
-        # that is not admitted now is started by meta once a slot frees, like a start that failed.
-        task.path(f"{slots.WAIT}.{run}").write_text(f"{time.time():.6f}\n", encoding="utf-8")
-        task.path(f"request.{run}").write_text(json.dumps({"run": run, "at": time.time()}), encoding="utf-8")
+        with task_lock(task):  # the run number, the prompt and the request change hands here only, like device.follow_up
+            run = slots.requested(task.dir)
+            if run and not task.path(f"rc.{run}").exists() and not task.path(f"taken.{run}").exists():
+                with task.path(f"prompt.{run}").open("a", encoding="utf-8") as fh:  # still waiting to start
+                    fh.write("\n\n" + payload["message"])
+                return _answer({"action": "queued", "run": run})
+            if run and not task.path(f"rc.{run}").exists():
+                return _answer({"action": "busy", "run": run})
+            run += 1
+            task.path(f"prompt.{run}").write_text(payload["prompt"], encoding="utf-8")
+            # Every next run queues first and takes a slot through slots.admit (one lock, longest waiting first); one
+            # that is not admitted now is started by meta once a slot frees, like a start that failed.
+            task.path(f"{slots.WAIT}.{run}").write_text(f"{time.time():.6f}\n", encoding="utf-8")
+            task.path(f"request.{run}").write_text(json.dumps({"run": run, "at": time.time()}), encoding="utf-8")
         if slots.admit(self.mirror, task.id, run, cap, pool=pool):
             self.launch(task.id, run)  # a failed start is retried by meta
         return _answer({"action": "requested", "run": run})
@@ -478,9 +480,9 @@ class FileNodeTransport:
         if run and task.path(f"taken.{run}").exists() and not task.path(f"rc.{run}").exists():
             reply = self.rsh(bash.CANCEL, self._remote(task.id), self.device.omo, stdin=why.encode("utf-8"),
                              timeout=timeout)
-            if reply.code != 0:
-                return _answer({"action": "error", "reason": f"cancel on {self.device.name}: "
-                                                             f"{' '.join(reply.err.split())[-300:] or f'exit {reply.code}'}"})
+            if reply.code != 0:  # the abort itself failed: say so, with omo's answer
+                said = ' '.join((reply.err + " " + reply.out.decode("utf-8", "replace")).split())[-300:]
+                return _answer({"action": "error", "reason": f"cancel on {self.device.name}: {said or f'exit {reply.code}'}"})
             alive = self._live_now(task, run)
         elif run and not task.path(f"rc.{run}").exists():
             task.path(f"slot_wait.{run}").unlink(missing_ok=True)

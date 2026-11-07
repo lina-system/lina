@@ -150,7 +150,7 @@ def parse_scan(out: str, code: int, limit: int, skipped: int = 0) -> dict:
     total = int(fields["count"]) if fields.get("count", "").strip().isdigit() else len(lines)
     check = {"complete": code == 0 and fields.get("complete") == "1" and "uid" in fields, "files": mine[:200],
              "count": len(mine), "others": others, "uid": fields.get("uid"), "limit_s": limit,
-             "aliases_skipped": skipped, "unreadable": int(fields.get("unreadable") or 0)}
+             "aliases_skipped": skipped, "not_writable": int(fields.get("notwritable") or 0)}
     if total > len(lines):
         check["complete"], check["why"] = False, f"{total} changed files, only the first {len(lines)} were read"
     if not check["complete"]:
@@ -185,9 +185,10 @@ def with_check(text: str, check: dict | None) -> str:
     if check.get("aliases_skipped"):
         lines.append(f"- Aliases skipped: {check['aliases_skipped']} (bind mounts under a denied folder whose source is "
                      "outside every denied folder).")
-    if check.get("unreadable"):
-        lines.append(f"- Unreadable by the run's user (and not writable): {check['unreadable']} folder(s), counted as "
-                     "seen: the run could not have written there.")
+    if check.get("not_writable"):
+        lines.append(f"- Not writable by the run's user, not looked into: {check['not_writable']} folder(s). The run "
+                     "could not have written there; a folder it may write inside one of them (DSM ACLs) is not seen "
+                     "either.")
     if not check.get("complete"):
         lines.append(f"- Not every denied folder was seen: {check.get('why')}.")
     return text + "\n".join(lines) + "\n"

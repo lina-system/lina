@@ -54,6 +54,17 @@ export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
 cd "$T/work" || exit 1
 date +%s > "$T/started.$N"
 o() { local f=$1; shift; "$OMO" "$@" < /dev/null > "$f" 2>> "$T/stderr.$N.txt"; }
+# stop <why>: abort the turn and wait a little to see it stop -> outcome <why>_stopped or <why>_not_stopped
+stop() {
+  o "$T/abort.$N.json" host session abort "$(ref)" --json
+  o "$T/stop.$N.json" host session wait "$(ref)" --until idle --timeout 30000 --json
+  o "$T/state.$N.json" host session state "$(ref)" --json
+  if grep -Eq '"isStreaming"[[:space:]]*:[[:space:]]*true|"state"[[:space:]]*:[[:space:]]*"running"' "$T/state.$N.json"; then
+    outcome=$1_not_stopped
+  else
+    outcome=$1_stopped
+  fi
+}
 """ + _REF + r"""if [ ! -s "$T/session.json" ]; then
   margs=(); [ -n "$MODEL" ] && margs=(--model "$MODEL")
   o "$T/open.$N.json" host session open --cwd "$T/work" --name "$(cat "$T/id")" ${margs[@]+"${margs[@]}"} --prompt @"$T/prompt.$N" --json
@@ -77,17 +88,9 @@ if [ "$rc" = 0 ]; then
     o "$T/wait.$N.json" host session wait "$(ref)" --until idle --timeout 60000 --json
     sleep "$POLL"
   done
-  if [ "$outcome" = timeout ]; then
-    # At the hard limit the session is stopped before the end marks, so it cannot change files behind them.
-    o "$T/abort.$N.json" host session abort "$(ref)" --json
-    o "$T/stop.$N.json" host session wait "$(ref)" --until idle --timeout 30000 --json
-    o "$T/state.$N.json" host session state "$(ref)" --json
-    if grep -Eq '"isStreaming"[[:space:]]*:[[:space:]]*true|"state"[[:space:]]*:[[:space:]]*"running"' "$T/state.$N.json"; then
-      outcome=timeout_not_stopped
-    else
-      outcome=timeout_stopped
-    fi
-  fi
+  # At the hard limit, and on a cancel (one that came while the session was still opening finds no session to abort
+  # on the hub's side), the session is stopped here before the end marks, so it cannot change files behind them.
+  case "$outcome" in timeout|cancelled) stop "$outcome" ;; esac
 fi
 [ -s "$T/session.json" ] && o "$T/messages.$N.json" host session read "$(ref)" --messages --json
 echo "$outcome" > "$T/outcome.$N"
@@ -130,8 +133,11 @@ CANCEL = r"""T="$HOME/$1"; OMO=${2/#\~/$HOME}
 export PATH="$HOME/.bun/bin:$HOME/.local/bin:$PATH"
 """ + _REF + r"""[ -d "$T" ] || { echo missing=1; exit 0; }
 cat > "$T/cancelled"
-r=$(ref); [ -n "$r" ] && "$OMO" host session abort "$r" --json < /dev/null > "$T/abort.json" 2>&1
+r=$(ref); rc=0
+if [ -n "$r" ]; then "$OMO" host session abort "$r" --json < /dev/null > "$T/abort.json" 2>&1; rc=$?; fi
 echo cancelled=1
+[ "$rc" = 0 ] || tail -n 1 "$T/abort.json"
+exit "$rc"
 """
 
 # abort <task dir> <omo>: stop the session's turn once more (a run whose session did not stop at the hard limit).
@@ -148,10 +154,12 @@ tail -n 1 "$T/abort.again.json"; exit "$rc"
 # mtime but gets a new ctime. A folder moved in gets a new ctime while its files keep theirs, so a folder of the run's
 # user whose ctime alone is newer is listed (with a trailing /) together with everything under it. <skips> are bind-mount aliases of
 # undenied folders (``file_node_deny.aliases``). Each line is "<owner uid><TAB><path>"; the hub counts only the run's
-# own uid (``file_node_deny.owned``). The finds' exit codes land in deny_rc.<n> and their errors in deny_err.<n>: a
-# folder the run's user can neither read nor write could not have been changed by the run and counts as seen; any
-# other error means the look did not see everything.
-# The look runs in its own session and is killed at the limit: there is no timeout(1) on the node.
+# own uid (``file_node_deny.owned``). A folder the run's user cannot write is not looked into (``! -writable``, the
+# run could not have changed it; a writable folder below it, possible with DSM ACLs, is not seen either). The finds'
+# exit codes land in deny_rc.<n> and their errors in deny_err.<n>: an unreadable folder the run may write, or any other
+# error, means the look did not see everything.
+# The look runs in its own session at nice 19 (no ionice on the node) and is killed at the limit: there is no
+# timeout(1) on the node.
 DENY_SCAN = r"""T="$HOME/$1"; N=$2; LIMIT=$3; shift 3
 nr=$1; shift; roots=("${@:1:$nr}"); shift "$nr"
 nn=$1; shift; names=("${@:1:$nn}"); shift "$nn"
@@ -164,52 +172,60 @@ roots=("${@:1:$nr}"); shift "$nr"; nn=$1; shift; names=("${@:1:$nn}"); shift "$n
 np=$1; shift; skips=("${@:1:$np}"); shift "$np"
 S="$T/started.$N"; E="$T/deny_err.$N"; : > "$E"
 skip=(-path "$T"); for p in "${skips[@]}"; do skip+=(-o -path "$p"); done
+# Snapshot folders are read-only copies the run cannot change, and walking them once loaded a real node to 260 and cut
+# its ssh and model-path sessions: never looked into, writable or not.
+skip+=(-o -name '#snapshot' -o -name '@sharesnap')
+NW="$T/deny_nw.$N"; : > "$NW.d"; : > "$NW.s"
 found=(); d=0; s=0; m=0
 for r in "${roots[@]}"; do [ -e "$r" ] && found+=("$r"); done
 if [ "$nn" -gt 0 ] && [ "$#" -gt 0 ]; then
   expr=(); for p in "${names[@]}"; do [ "${#expr[@]}" -gt 0 ] && expr+=(-o); expr+=(-name "$p"); done
-  find "$@" -maxdepth 3 \( "${skip[@]}" \) -prune -o -type d \( "${expr[@]}" \) -prune -print > "$T/deny_dirs.$N.txt" 2>> "$E"; d=$?
+  find "$@" -maxdepth 3 \( "${skip[@]}" \) -prune -o -type d \( "${expr[@]}" \) -prune -print \
+    -o -type d ! -writable -fprint "$NW.d" -prune > "$T/deny_dirs.$N.txt" 2>> "$E"; d=$?
   while IFS= read -r dir; do found+=("$dir"); done < "$T/deny_dirs.$N.txt"
 fi
 : > "$T/moved.$N.txt"
 if [ "${#found[@]}" -gt 0 ]; then
-  find "${found[@]}" \( "${skip[@]}" \) -prune -o \( -newer "$S" -o -cnewer "$S" \) \( -type f -o -type l \) \
+  find "${found[@]}" \( "${skip[@]}" \) -prune -o -type d ! -writable -fprint "$NW.s" -prune \
+    -o \( -newer "$S" -o -cnewer "$S" \) \( -type f -o -type l \) \
     -printf '%U\t%p\n' -o -type d -uid "$EUID" -cnewer "$S" ! -newer "$S" -printf '%U\t%p/\n' -fprint "$T/moved.$N.txt" \
     2>> "$E"; s=$?
   while IFS= read -r dir; do
-    find "$dir" \( "${skip[@]}" \) -prune -o \( -type f -o -type l \) -printf '%U\t%p\n' 2>> "$E" || m=$?
+    find "$dir" \( "${skip[@]}" \) -prune -o -type d ! -writable -prune -o \( -type f -o -type l \) -printf '%U\t%p\n' \
+      2>> "$E" || m=$?
   done < "$T/moved.$N.txt"
 fi
 echo "$d $s $m" > "$T/deny_rc.$N"
 EOF
 rm -f "$T/deny_rc.$N"
-setsid bash "$T/deny_scan.sh" "$T" "$N" "$nr" "${roots[@]}" "$nn" "${names[@]}" "$np" "${skips[@]}" "$@" \
+setsid nice -n 19 bash "$T/deny_scan.sh" "$T" "$N" "$nr" "${roots[@]}" "$nn" "${names[@]}" "$np" "${skips[@]}" "$@" \
   > "$T/deny.$N.txt" 2>/dev/null < /dev/null &
 pid=$!; i=0; ticks=$((LIMIT * 10))
 while kill -0 "$pid" 2>/dev/null && [ "$i" -lt "$ticks" ]; do sleep 0.1; i=$((i + 1)); done
-if kill -0 "$pid" 2>/dev/null; then
-  kill -- "-$pid" 2>/dev/null; kill "$pid" 2>/dev/null; echo complete=0; echo "why=not finished in ${LIMIT}s"
+timed_out=0
+if kill -0 "$pid" 2>/dev/null; then kill -- "-$pid" 2>/dev/null; kill "$pid" 2>/dev/null; timed_out=1; fi
+# What the look met so far, also when it ran out of time: folders not looked into because the run's user cannot write
+# them (pruned, or found unreadable and not writable), and errors that leave the look incomplete.
+writable=0; other=0; : > "$T/deny_unreadable.$N"
+while IFS= read -r line; do
+  case "$line" in
+    *": Permission denied")
+      p=${line#*: }; p=${p%: Permission denied}; p=${p#?}; p=${p%?}  # "<find>: '<path>': Permission denied"
+      if [ -w "$p" ]; then writable=$((writable + 1)); else echo "$p" >> "$T/deny_unreadable.$N"; fi ;;
+    *) other=$((other + 1)) ;;
+  esac
+done < "$T/deny_err.$N"
+nw=$(cat "$T/deny_nw.$N.d" "$T/deny_nw.$N.s" "$T/deny_unreadable.$N" 2>/dev/null | sort -u | wc -l)
+echo "notwritable=$nw"
+if [ "$timed_out" = 1 ]; then
+  echo complete=0; echo "why=not finished in ${LIMIT}s"
 elif ! read -r d s m < "$T/deny_rc.$N" 2>/dev/null; then
   echo complete=0; echo 'why=the look left no exit code'
-elif [ "$d$s$m" = 000 ]; then
+elif [ "$d$s$m" = 000 ] || { [ "$writable" = 0 ] && [ "$other" = 0 ] && [ -s "$T/deny_unreadable.$N" ]; }; then
   echo complete=1
 else
-  writable=0; other=0; : > "$T/deny_unreadable.$N"
-  while IFS= read -r line; do
-    case "$line" in
-      *": Permission denied")
-        p=${line#*: }; p=${p%: Permission denied}; p=${p#?}; p=${p%?}  # "<find>: '<path>': Permission denied"
-        echo "$p" >> "$T/deny_unreadable.$N"; [ -w "$p" ] && writable=$((writable + 1)) ;;
-      *) other=$((other + 1)) ;;
-    esac
-  done < "$T/deny_err.$N"
-  denied=$(sort -u "$T/deny_unreadable.$N" | wc -l)
   code=$(for c in $d $s $m; do [ "$c" != 0 ] && { echo "$c"; break; }; done)
-  if [ "$denied" -gt 0 ] && [ "$writable" = 0 ] && [ "$other" = 0 ]; then
-    echo complete=1; echo "unreadable=$denied"
-  else
-    echo complete=0; echo "why=find exited $code (unreadable but writable: $writable, other errors: $other)"
-  fi
+  echo complete=0; echo "why=find exited $code (unreadable but writable: $writable, other errors: $other)"
 fi
 printf 'uid=%s\n' "$EUID"
 printf 'count=%s\n' "$(wc -l < "$T/deny.$N.txt")"
