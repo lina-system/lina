@@ -1,17 +1,18 @@
 """``lina store reembed --source messages --from-index <db>``: import the collector's stored chunk vectors (lina#365).
 
-The message collector keeps a derived SQLite index of its own vectors: one full-width vector per chunk of up to
-ten consecutive messages of one room, keyed by collector message uid. Where that vector was written by the
-configured model, ``truncate_stored`` cuts it to the width of ``vec.embeddings`` instead of embedding the text
-again. A chunk becomes one ``vec.chunks`` row (``source = 'messages'``, ``message_ids`` = its messages'
-``memory.messages`` ids in chunk order, ``text`` = their LINA text) and one ``chunk`` vector, owned by
-``SHARED_VECTOR_OWNER`` as ``lina store reembed`` writes shared external messages (migration 0009).
+The message collector keeps a derived SQLite index: ``chunks`` of up to ten consecutive messages of one room,
+``chunk_messages`` (their collector uids by ``ordinal``) and a sqlite-vec ``vec0`` table ``chunk_vectors``
+(``rowid = chunks.id``), with the model and width once in ``meta``. LINA does not depend on sqlite-vec, so the
+vectors are read from vec0's 0.1 shadow tables. When ``meta.vector_model`` is the configured model,
+``truncate_stored`` cuts each vector to the width of ``vec.embeddings`` instead of embedding the text again.
 
-The index is opened read-only and its shape is the one docs/store.md "Importing the collector's vectors" defines.
-Chunks whose messages are not all shared rows of ``memory.messages``, chunks with no messages or no text,
-vectors of another model and vectors that cannot be cut are counted and left for ``lina store reembed``. The
-import keeps no cursor (not ``vec.reembed_progress``): a chunk is keyed by its message ids, so a rerun goes
-through the index again and inserts nothing it inserted before.
+A chunk becomes one ``vec.chunks`` row (``source = 'messages'``, ``source_ref = 'collector'``, ``message_ids`` =
+its messages' ``memory.messages`` ids in chunk order, ``text`` = their LINA text) and one ``chunk`` vector, owned
+by ``SHARED_VECTOR_OWNER`` as ``lina store reembed`` writes shared external messages (migration 0009).
+``reembed --source messages`` skips the messages such a chunk covers. Chunks whose messages are not all shared
+rows of ``memory.messages``, empty chunks, an index of another model and vectors that cannot be cut are counted
+and left for ``reembed``. The import keeps no cursor: a chunk is keyed by its message ids, so a rerun inserts
+nothing it inserted before.
 """
 
 from __future__ import annotations
@@ -21,14 +22,22 @@ import struct
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
-from agent.embedding_client import EmbeddingModelMismatch, truncate_stored
+from agent.embedding_client import truncate_stored
 from hermes_cli.store_reembed import ReembedError, _vector_literal
 from hermes_state_store import SHARED_VECTOR_OWNER
 
-_CHUNKS = "SELECT chunk_id, model, dim, embedding FROM chunks WHERE chunk_id > ? ORDER BY chunk_id LIMIT ?"
-_MESSAGES = "SELECT chunk_id, message_uid FROM chunk_messages WHERE chunk_id BETWEEN ? AND ? ORDER BY chunk_id, position"
+IMPORTED_REF = "collector"
+_VEC0_VERSION = "v0.1."
+_REQUIRED = {
+    "meta": ("key", "value"),
+    "chunks": ("id",),
+    "chunk_messages": ("chunk_id", "uid", "ordinal"),
+    "chunk_vectors_info": ("key", "value"),
+    "chunk_vectors_rowids": ("rowid", "chunk_id", "chunk_offset"),
+    "chunk_vectors_chunks": ("chunk_id", "size", "validity"),
+    "chunk_vectors_vector_chunks00": ("rowid", "vectors"),
+}
 _STORE_ROWS = """
     SELECT uid, message_id, content FROM memory.messages
     WHERE uid = ANY(%s) AND source = 'messages' AND agent_id IS NULL AND scope = 'agents' AND forgotten_at IS NULL"""
@@ -56,35 +65,72 @@ class ImportCounts:
                 f"{self.unusable} unusable vectors")
 
 
-def _open_index(path: Path) -> sqlite3.Connection:
+@dataclass(frozen=True)
+class _Index:
+    conn: sqlite3.Connection
+    model: str
+    dim: int
+
+
+def _open_index(path: Path) -> _Index:
     if not path.is_file():
         raise ReembedError(f"no collector index at {path}")
     conn = sqlite3.connect(f"{path.resolve().as_uri()}?mode=ro", uri=True)
     try:
-        conn.execute("SELECT chunk_id, model, dim, embedding FROM chunks LIMIT 0")
-        conn.execute("SELECT chunk_id, position, message_uid FROM chunk_messages LIMIT 0")
+        for table, columns in _REQUIRED.items():
+            conn.execute(f"SELECT {', '.join(columns)} FROM {table} LIMIT 0")
+        version = conn.execute("SELECT value FROM chunk_vectors_info WHERE key = 'CREATE_VERSION'").fetchone()
+        meta = dict(conn.execute("SELECT key, value FROM meta WHERE key IN ('vector_model', 'vector_dimension')"))
     except sqlite3.Error as exc:
         conn.close()
         raise ReembedError(f"{path} is not a collector index (docs/store.md): {exc}") from exc
-    return conn
+    if version is None or not str(version[0]).startswith(_VEC0_VERSION):
+        conn.close()
+        raise ReembedError(f"{path}: chunk_vectors was made by sqlite-vec {version[0] if version else 'unknown'}, "
+                           f"whose storage this import does not read (it reads {_VEC0_VERSION}x shadow tables)")
+    try:
+        return _Index(conn, str(meta["vector_model"]), int(meta["vector_dimension"]))
+    except (KeyError, ValueError) as exc:
+        conn.close()
+        raise ReembedError(f"{path}: meta has no usable vector_model and vector_dimension") from exc
 
 
-def _decode(blob: Any, dim: Any) -> list[float] | None:
-    """The stored float32 little-endian vector, or None when the blob does not hold *dim* values."""
-    if not isinstance(blob, bytes) or not isinstance(dim, int) or dim <= 0 or len(blob) != 4 * dim:
-        return None
-    return list(struct.unpack(f"<{dim}f", blob))
+def _stored_vectors(index: _Index, first: int, last: int) -> dict[int, list[float]]:
+    """The live vec0 vectors of chunks *first*..*last*: a cell whose validity bit is 0 was deleted, and a block
+    blob that is not ``size`` vectors of ``dim`` float32 values yields none."""
+    places = index.conn.execute("SELECT rowid, chunk_id, chunk_offset FROM chunk_vectors_rowids "
+                                "WHERE rowid BETWEEN ? AND ?", (first, last)).fetchall()
+    blocks = sorted({block for _, block, _ in places})
+    if not blocks:
+        return {}
+    marks = ",".join("?" * len(blocks))
+    validity = {block: (int(size), bytes(bits)) for block, size, bits in index.conn.execute(
+        f"SELECT chunk_id, size, validity FROM chunk_vectors_chunks WHERE chunk_id IN ({marks})", blocks)}
+    blobs = dict(index.conn.execute(
+        f"SELECT rowid, vectors FROM chunk_vectors_vector_chunks00 WHERE rowid IN ({marks})", blocks))
+    width = index.dim * 4
+    vectors = {}
+    for rowid, block, offset in places:
+        size, bits = validity.get(block, (0, b""))
+        blob = blobs.get(block)
+        if not (0 <= offset < size and offset // 8 < len(bits) and bits[offset // 8] >> (offset % 8) & 1):
+            continue
+        if not isinstance(blob, bytes) or len(blob) != size * width:
+            continue
+        vectors[int(rowid)] = list(struct.unpack(f"<{index.dim}f", blob[offset * width:(offset + 1) * width]))
+    return vectors
 
 
 def _write_chunk(conn, message_ids: list[int], text: str, model: str, vector: list[float]) -> bool:
     row = conn.execute(
-        "INSERT INTO vec.chunks (source, agent_id, message_ids, text) VALUES ('messages', %s, %s, %s) "
+        "INSERT INTO vec.chunks (source, agent_id, message_ids, source_ref, text) VALUES ('messages', %s, %s, %s, %s) "
         "ON CONFLICT (source, message_ids, chunk_index, source_ref, lcm_identity_hash) DO NOTHING RETURNING chunk_id",
-        (SHARED_VECTOR_OWNER, message_ids, text)).fetchone()
+        (SHARED_VECTOR_OWNER, message_ids, IMPORTED_REF, text)).fetchone()
     if row is None:
         row = conn.execute(
             "SELECT chunk_id FROM vec.chunks WHERE source = 'messages' AND message_ids = %s::bigint[] "
-            "AND chunk_index IS NULL AND source_ref IS NULL AND lcm_identity_hash IS NULL", (message_ids,)).fetchone()
+            "AND chunk_index IS NULL AND source_ref = %s AND lcm_identity_hash IS NULL",
+            (message_ids, IMPORTED_REF)).fetchone()
     inserted = conn.execute(
         "INSERT INTO vec.embeddings (kind, item_id, agent_id, model, dim, embedding) "
         "VALUES ('chunk', %s, %s, %s, %s, %s::vector) ON CONFLICT (kind, item_id, model) DO NOTHING",
@@ -92,13 +138,19 @@ def _write_chunk(conn, message_ids: list[int], text: str, model: str, vector: li
     return inserted == 1
 
 
-def _import_batch(conn, chunks: list[tuple], uids: dict[int, list[str]], counts: ImportCounts, *,
+def _import_batch(conn, index: _Index, chunk_ids: list[int], counts: ImportCounts, *,
                   model: str, dimensions: int) -> None:
-    wanted = sorted({f"messages:{uid}" for chunk_uids in uids.values() for uid in chunk_uids})
+    uids: dict[int, list[str]] = {}
+    for chunk_id, uid in index.conn.execute(
+            "SELECT chunk_id, uid FROM chunk_messages WHERE chunk_id BETWEEN ? AND ? ORDER BY chunk_id, ordinal",
+            (chunk_ids[0], chunk_ids[-1])):
+        uids.setdefault(int(chunk_id), []).append(f"messages:{uid}")
+    stored = _stored_vectors(index, chunk_ids[0], chunk_ids[-1])
+    wanted = sorted({ref for refs in uids.values() for ref in refs})
     rows = {uid: (int(mid), content) for uid, mid, content in conn.execute(_STORE_ROWS, (wanted,)).fetchall()}
     with conn.transaction():
-        for chunk_id, stored_model, dim, blob in chunks:
-            refs = [f"messages:{uid}" for uid in uids.get(chunk_id, [])]
+        for chunk_id in chunk_ids:
+            refs = uids.get(chunk_id, [])
             if not refs:
                 counts.empty += 1
                 continue
@@ -109,15 +161,11 @@ def _import_batch(conn, chunks: list[tuple], uids: dict[int, list[str]], counts:
             if not text:
                 counts.empty += 1
                 continue
-            stored = _decode(blob, dim)
             try:
-                if stored is None:
-                    raise ValueError("blob width")
-                vector = truncate_stored(stored, stored_model=model_key(str(stored_model)), model=model_key(model),
-                                         dimensions=dimensions)
-            except EmbeddingModelMismatch:
-                counts.other_model += 1
-                continue
+                if chunk_id not in stored:
+                    raise ValueError("no live stored vector")
+                vector = truncate_stored(stored[chunk_id], stored_model=model_key(index.model),
+                                         model=model_key(model), dimensions=dimensions)
             except ValueError:
                 counts.unusable += 1
                 continue
@@ -127,28 +175,30 @@ def _import_batch(conn, chunks: list[tuple], uids: dict[int, list[str]], counts:
                 counts.present += 1
 
 
-def import_index(conn, index: Path, *, model: str, dimensions: int, batch_size: int,
+def import_index(conn, path: Path, *, model: str, dimensions: int, batch_size: int,
                  out: Callable[[str], None] = print) -> ImportCounts:
     from hermes_cli.store_reembed import _table_width
     width = _table_width(conn)
     if width != dimensions:
         raise ReembedError(f"vec.embeddings holds {width}-wide vectors but embedding.dimensions is {dimensions}")
     counts = ImportCounts()
-    source = _open_index(index)
+    index = _open_index(path)
     try:
-        after = 0
-        while True:
-            chunks = source.execute(_CHUNKS, (after, batch_size)).fetchall()
-            if not chunks:
-                break
-            uids: dict[int, list[str]] = {}
-            for chunk_id, uid in source.execute(_MESSAGES, (chunks[0][0], chunks[-1][0])).fetchall():
-                uids.setdefault(chunk_id, []).append(str(uid))
-            _import_batch(conn, chunks, uids, counts, model=model, dimensions=dimensions)
-            after = chunks[-1][0]
-            out(f"messages index: up to chunk {after}, {counts.imported} imported")
+        if model_key(index.model) != model_key(model):
+            counts.other_model = int(index.conn.execute("SELECT count(*) FROM chunks").fetchone()[0])
+            out(f"messages index: vectors of {index.model!r}, not {model!r}; nothing imported")
+        else:
+            after = 0
+            while True:
+                chunk_ids = [int(r[0]) for r in index.conn.execute(
+                    "SELECT id FROM chunks WHERE id > ? ORDER BY id LIMIT ?", (after, batch_size))]
+                if not chunk_ids:
+                    break
+                _import_batch(conn, index, chunk_ids, counts, model=model, dimensions=dimensions)
+                after = chunk_ids[-1]
+                out(f"messages index: up to chunk {after}, {counts.imported} imported")
     finally:
-        source.close()
+        index.conn.close()
     out(counts.line())
     return counts
 
