@@ -27,8 +27,13 @@ AGENT = "sion"
 START = 1_800_000_000.0
 TICK_S = 30
 FAKE_CHAT = """import json, os, sys
+text = sys.stdin.read()
+once = os.environ.get("FAKE_CHAT_FAIL_ONCE", "")
+if once and os.path.exists(once):
+    os.remove(once)
+    sys.exit("chat: the gateway is not running")
 with open(os.environ["FAKE_CHAT_LOG"], "a", encoding="utf-8") as fh:
-    fh.write(json.dumps({"agent": sys.argv[1], "text": sys.stdin.read()}) + "\\n")
+    fh.write(json.dumps({"agent": sys.argv[1], "text": text}) + "\\n")
 """
 
 
@@ -370,6 +375,44 @@ def test_an_outage_notice_a_card_did_not_take_is_retried_until_it_went_out(far, 
     assert len(comments) == 1 and comments[0].splitlines()[-1] == f"delivery {delivery}"
     assert len(far.chats()) == 1
     assert events.done(far.hub.store, delivery)
+    assert [r["delivery"] for r in _receipts(far.hub, task_id, "notified")] == [delivery]
+
+
+def _chat_fails_once(far: Far, monkeypatch) -> None:
+    fail = far.tmp / "chat-fails-once"
+    fail.touch()
+    monkeypatch.setenv("FAKE_CHAT_FAIL_ONCE", str(fail))
+
+
+def test_an_end_whose_chat_command_failed_goes_out_once_on_the_retry(far, monkeypatch):
+    task_id = far.run(1, on_card=True)
+    delivery = f"{task_id}:1:run.completed"
+    _chat_fails_once(far, monkeypatch)
+    far.hub.notify(task_id, "done", "1")
+    assert far.chats() == [] and _on_card(far.card)[0] == [] and not events.done(far.hub.store, delivery)
+    (failed,) = _receipts(far.hub, task_id, "notice_failed")
+    assert failed["code"] == 1 and "the gateway is not running" in failed["stderr"]
+
+    far.tick(2)
+    (chat,) = far.chats()
+    assert chat.startswith("run.completed (done) · ") and chat.splitlines()[-1] == f"delivery {delivery}"
+    assert len(_on_card(far.card)[0]) == 1 and events.done(far.hub.store, delivery)
+    assert [r["delivery"] for r in _receipts(far.hub, task_id, "notified")] == [delivery]
+
+
+def test_an_outage_whose_chat_command_failed_goes_out_once_on_the_retry(far, monkeypatch):
+    task_id = far.run(1, on_card=True)
+    delivery = f"far:host.unavailable:{int(START)}"
+    _chat_fails_once(far, monkeypatch)
+    far.down = True
+    far.tick(3)
+    assert far.chats() == [] and not events.done(far.hub.store, delivery)
+    assert len(_on_card(far.card)[0]) == 1  # the card took it: it is not told again
+
+    far.tick(2)
+    (chat,) = far.chats()
+    assert chat.startswith("host.unavailable · ") and chat.splitlines()[-1] == f"delivery {delivery}"
+    assert len(_on_card(far.card)[0]) == 1 and events.done(far.hub.store, delivery)
     assert [r["delivery"] for r in _receipts(far.hub, task_id, "notified")] == [delivery]
 
 

@@ -86,6 +86,11 @@ chat send returned, or on a Hermes card its `card_pending` entry is written),
 then **done** (its id appended to `hub/deliveries.jsonl` and marked in
 `notified`). One step of the hub makes every move. A held end that the send
 failed on, or that a stopped hub left, is moved on by the next report or tick. A
+chat send counts only when `worker.notice.command` exits 0. A command that
+cannot start, times out or exits non-zero leaves the end held (its card waits
+for it) and writes a `notice_failed` receipt with the exit code and the end of
+its stderr. The same goes for a question, a batch notice and each chat that an
+outage notice or its "is back" line goes to. A
 staged end is never built or sent again, and a Hermes card's steps (comment,
 attachment, wake) run only once the end is done, each step once. An id in
 `deliveries.jsonl` is done. A repeat of it, whether from a device retrying its

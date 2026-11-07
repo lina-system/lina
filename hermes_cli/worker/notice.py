@@ -3,7 +3,7 @@
 It starts with the end's event (``events``) and ends with its delivery id. It never pastes ``report.md`` or the final
 answer. It goes to the agent's chat through ``worker.notice.command`` (argv, ``{agent}`` filled in, the body on stdin)
 and is always kept in ``hub/notices/``; a run started from a work card also gets it as a comment on that card
-(``kanban_link``).
+(``kanban_link``). A send counts only when the command exits 0 (``Sent``); its caller sends a failed one again.
 """
 
 from __future__ import annotations
@@ -13,6 +13,7 @@ import shlex
 import subprocess
 import time
 from pathlib import Path
+from typing import NamedTuple
 
 from hermes_cli.worker import events
 from hermes_cli.worker.report import NEXT_NOTES
@@ -125,18 +126,31 @@ def body(job: dict, kind: str, run: str, out_dir: Path, check: dict, *, notes: i
     return f"{events.headline(kind)} · {first}\n" + (f"[note left at hand-out] {note}\n" if note else "") + rest
 
 
-def deliver(job: dict, text: str, tag: str, notices_dir: Path, command: list[str] | None) -> str:
-    """Keep the notice under ``notices_dir`` and hand it to the agent's chat; returns how it went."""
+class Sent(NamedTuple):
+    """How a notice went: ``ok`` False when the chat command could not run, timed out or exited non-zero (then its
+    exit code and the end of its stderr); ``how`` is the line callers log."""
+    ok: bool
+    how: str
+    code: int | None = None
+    stderr: str = ""
+
+
+def deliver(job: dict, text: str, tag: str, notices_dir: Path, command: list[str] | None) -> Sent:
+    """Keep the notice under ``notices_dir`` and hand it to the agent's chat."""
     notices_dir.mkdir(parents=True, exist_ok=True)
     (notices_dir / f"{job['id']}-{tag}-{int(time.time())}.md").write_text(text, encoding="utf-8")
     if not command:
-        return "kept in hub/notices (no worker.notice.command configured)"
+        return Sent(True, "kept in hub/notices (no worker.notice.command configured)")
     argv = [str(each).format(agent=job["bot"], id=job["id"]) for each in command]
     if job.get("dry_notify"):
-        return "DRY " + shlex.join(argv)
+        return Sent(True, "DRY " + shlex.join(argv))
     try:
-        subprocess.run(argv, input=text.encode("utf-8"), stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                       timeout=60, check=False)
+        done = subprocess.run(argv, input=text.encode("utf-8"), stdout=subprocess.DEVNULL, stderr=subprocess.PIPE,
+                              timeout=60, check=False)
     except (OSError, subprocess.TimeoutExpired) as exc:
-        return f"notice command failed: {exc}"
-    return f"{argv[0]} -> {job['bot']}"
+        return Sent(False, f"notice command failed: {exc}")
+    if done.returncode:
+        err = done.stderr.decode("utf-8", errors="replace")[-200:]
+        said = f"notice command failed: {argv[0]} exited {done.returncode}"
+        return Sent(False, said + (f": {err.strip()}" if err.strip() else ""), done.returncode, err)
+    return Sent(True, f"{argv[0]} -> {job['bot']}")

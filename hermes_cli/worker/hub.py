@@ -915,7 +915,13 @@ class Hub:
         held = job["deliveries_pending"][delivery]
         kind, run = held["kind"], held["run"]
         staged_now = held.get("stage") != "staged" and delivery not in (job.get("card_pending") or {})
-        how = self._end_stage(job, kind, run, delivery) if staged_now else "staged before the hub stopped"
+        how = "staged before the hub stopped"
+        if staged_now:
+            sent = self._end_stage(job, kind, run, delivery)
+            if not sent.ok:
+                self.store.log(f"{job['id']} {events.headline(kind)} {delivery} held: {sent.how}")
+                return f"{sent.how}; held, sent again on the next report or tick"
+            how = sent.how
         self._end_done(job, events.marker(job["id"], kind, run))
         entry = (job.get("card_pending") or {}).get(delivery)
         if entry and staged_now and entry["fetch_pending"]:
@@ -929,11 +935,12 @@ class Hub:
         self.store.log(f"{job['id']} {events.headline(kind)} {delivery}: {how}")
         return how
 
-    def _end_stage(self, job: dict, kind: str, run: str, delivery: str) -> str:
+    def _end_stage(self, job: dict, kind: str, run: str, delivery: str) -> notice.Sent:
         """Build the end and hand it over: to the waiter (it shows it), to a Hermes card's work (the card is the one
-        place its run ends), else to the chat (a batch: once all of it ended) and on the run's card. Saved as staged."""
+        place its run ends), else to the chat (a batch: once all of it ended) and then on the run's card. Saved as
+        staged; a chat send that failed stages nothing (the end stays held, and its card waits for it)."""
         if self._waiter_alive(job):
-            how = "waiter"
+            sent = notice.Sent(True, "waiter")
         else:
             self.fetched = None
             text, out_dir = self._notice_body(job, kind, run)  # reloads the job: read what is held after it
@@ -941,16 +948,18 @@ class Hub:
             job["notice"] = text = text + replaced
             if kanban_link.on_hermes(job.get("card")):
                 self._card_stage(job, kind, run, text, self.fetched, delivery, report=not replaced)
-                how = f"card {job['card']['task']}: staged"
+                sent = notice.Sent(True, f"card {job['card']['task']}: staged")
             else:
                 self.store.save(job)
-                how = self.group_notice(job["group"]) if job.get("group") else \
+                sent = self.group_notice(job["group"]) if job.get("group") else \
                     self._deliver(job, events.signed(text, delivery), f"{kind}-{run}")
+                if not sent.ok:
+                    return sent
                 if job.get("card"):
                     self._card_end(job, kind, run, text, delivery=delivery)
         job["deliveries_pending"][delivery]["stage"] = "staged"
         self.store.save(job)
-        return how
+        return sent
 
     def _end_done(self, job: dict, end: dict) -> None:
         """The end went out: its id in ``deliveries.jsonl``, then on the job, no longer held."""
@@ -979,10 +988,14 @@ class Hub:
         except (TransportError, HubError, OSError) as exc:
             return f"not sent on tick: {exc}"
 
-    def _deliver(self, job: dict, text: str, tag: str) -> str:
+    def _deliver(self, job: dict, text: str, tag: str) -> notice.Sent:
+        """*text* to the agent's chat; a send that failed is on the job's receipts, and its caller sends it again."""
         command = (self.worker.get("notice") or {}).get("command") if isinstance(self.worker.get("notice"), dict) \
             else None
-        return notice.deliver(job, text, tag, self.store.notices, command)
+        sent = notice.deliver(job, text, tag, self.store.notices, command)
+        if not sent.ok:
+            self.store.receipt(job["id"], "notice_failed", tag=tag, code=sent.code, stderr=sent.stderr, how=sent.how)
+        return sent
 
     def _card_stage(self, job: dict, kind: str, run: str, text: str, fetched: bool | None, delivery: str, *,
                     report: bool) -> None:
@@ -1102,14 +1115,16 @@ class Hub:
                  f"reason=\"waiting on lina worker {' '.join(open_runs)}\", then end the turn.")
         return 0
 
-    def group_notice(self, group: str) -> str:
+    def group_notice(self, group: str) -> notice.Sent:
+        """The batch's one notice, once all of it ended; not ok when its chat send failed (nothing is marked sent, so
+        the end that sends it is held and tries again)."""
         members = [job for job in self.store.all() if job.get("group") == group]
         open_ = [job for job in members if job.get("state") not in ENDED + ("unknown",)]
         if open_:
-            return f"group {group}: waiting for {len(open_)} more"
+            return notice.Sent(True, f"group {group}: waiting for {len(open_)} more")
         marker = self.store.locks / f"{group}.sent"
         if marker.exists():
-            return f"group {group}: already sent"
+            return notice.Sent(True, f"group {group}: already sent")
         first = members[0]
         lines = [f"[lina worker · automatic] {first['bot']} · batch {group} ({len(members)} tasks, "
                  f"{first.get('todo') or first['topic']}) all ended"]
@@ -1119,11 +1134,13 @@ class Hub:
         lines += ["To do:", "1. For each task hold report.md and out/ against the done conditions, then "
                   "`lina worker accept`/`reject`; what is missing goes to `lina worker send <ID> …`.",
                   f"2. Copy each report's '{NEXT_NOTES}' section into the notes of that field."]
-        how = self._deliver(first, "\n".join(lines) + "\n", f"group-{group}")
+        sent = self._deliver(first, "\n".join(lines) + "\n", f"group-{group}")
+        if not sent.ok:
+            return sent._replace(how=f"group {group}: {sent.how}")
         marker.parent.mkdir(parents=True, exist_ok=True)
-        marker.write_text(how, encoding="utf-8")
-        self.store.receipt(group, "group_notified", how=how[:200], members=[j["id"] for j in members], group=group)
-        return f"group {group}: {how}"
+        marker.write_text(sent.how, encoding="utf-8")
+        self.store.receipt(group, "group_notified", how=sent.how[:200], members=[j["id"] for j in members], group=group)
+        return sent._replace(how=f"group {group}: {sent.how}")
 
 
     def tick(self) -> None:
@@ -1200,13 +1217,15 @@ class Hub:
             self._card_question(job, run, text, end)
             return
         text = notice.body(job, "human", run, self.store.out_dir(job), {})
-        how = self._deliver(job, events.signed(text, end["delivery"]), f"human-{run}")
+        sent = self._deliver(job, events.signed(text, end["delivery"]), f"human-{run}")
+        if not sent.ok:  # nothing recorded: the next tick asks it again, and its card waits for it
+            return
         if job.get("card"):
             self._card_end(job, "human", run, text, delivery=end["delivery"])
         events.record(self.store, end["delivery"], task=job["id"], run=run)
         job.setdefault("notified", []).append(end)
-        self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run, delivery=end["delivery"],
-                           **events.fields("human"))
+        self.store.receipt(job["id"], "notified", how=sent.how[:200], state="human", run=run,
+                           delivery=end["delivery"], **events.fields("human"))
 
     def _question(self, job: dict, human: dict) -> tuple[str, str]:
         """The words of the question the run waits on and its key: the omo runner's question ids, else a hash of

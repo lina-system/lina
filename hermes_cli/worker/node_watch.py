@@ -193,8 +193,10 @@ def _send(hub, item: dict) -> tuple[str, bool]:
     """One queued notice to its agent's chat or its card: how it went, and whether it went out."""
     if "card" not in item:
         job = hub.store.load(item["job"])
-        how = hub._deliver(job, item["text"], item["tag"]) if job else f"{item['job']}: no job record"
-        return how, not how.startswith("notice command failed")
+        if not job:
+            return f"{item['job']}: no job record", True
+        sent = hub._deliver(job, item["text"], item["tag"])
+        return sent.how + ("" if sent.ok else ", retried on the next tick"), sent.ok
     card = item["card"]
     try:
         kanban_link.record_host(card, kanban_link.config(hub.worker), item["text"],

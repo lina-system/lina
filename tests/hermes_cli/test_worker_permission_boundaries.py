@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from hermes_cli.worker import device, hub as hub_mod, settings
+from hermes_cli.worker import device, hub as hub_mod, notice, settings
 from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.runners.base import Handle, RunnerError
 from hermes_cli.worker.task import read_json, write_json
@@ -135,7 +135,7 @@ def test_tick_never_delivers_permission_as_human_notice(lane, monkeypatch):
     # Given a stale human dashboard and a notification timer already expired.
     hub, task, _, _, _ = lane
     delivered = []
-    monkeypatch.setattr(hub, "_deliver", lambda *args: delivered.append(args) or "delivered")
+    monkeypatch.setattr(hub, "_deliver", lambda *args: delivered.append(args) or notice.Sent(True, "delivered"))
     monkeypatch.setattr(hub_mod.time, "time", lambda: 1000)
     # When the real tick checks the live run.
     hub.tick()
@@ -183,7 +183,7 @@ def test_tick_still_delivers_normal_human_question(lane, monkeypatch):
     hub, task, runner, _, _ = lane
     del runner.permission_pending
     delivered = []
-    monkeypatch.setattr(hub, "_deliver", lambda *args: delivered.append(args) or "delivered")
+    monkeypatch.setattr(hub, "_deliver", lambda *args: delivered.append(args) or notice.Sent(True, "delivered"))
     monkeypatch.setattr(hub_mod.time, "time", lambda: 1000)
     # When the notification delay has elapsed.
     hub.tick()
