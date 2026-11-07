@@ -787,12 +787,13 @@ class Drive:
         others = [dev for dev in self.hub.devices() if dev.name != job.get("host")]
         free_gb = int(settings.setting("min_free_gb", worker=self.hub.worker))
         dev, table = bidding.bid(others, self.hub.worker_root, repo=job.get("repo"), runner=job["runner"],
-                                 access=job.get("access"), min_free_gb=free_gb)
+                                 access=job.get("access"), min_free_gb=free_gb, runner_spec=job.get("runner_spec"))
         rows = {row["host"]: row.get("why") for row in table}
         named = next((other for other in others if other.name == self._named_host(job) and not other.auto), None)
         if dev is None and named is not None:
             dev, table = bidding.bid([named], self.hub.worker_root, repo=job.get("repo"), runner=job["runner"],
-                                     manual=True, access=job.get("access"), min_free_gb=free_gb)
+                                     manual=True, access=job.get("access"), min_free_gb=free_gb,
+                                     runner_spec=job.get("runner_spec"))
             rows.update({row["host"]: row.get("why") for row in table})
         for other in others:
             rows.setdefault(other.name, "only when named with --host")

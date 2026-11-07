@@ -31,6 +31,19 @@ def specs(worker: dict) -> dict[str, dict]:
     return table
 
 
+def spec_for(worker: dict, name: str, hub_spec: dict | None = None) -> dict | None:
+    """The spec a node builds runner *name* from, for a run and for its probe alike: the node's own entry of that name
+    (its local paths), else the hub's *hub_spec*, else the built-in omo; None when neither side defines it. The model
+    is always the hub's (lina#257): a node entry without ``model_args`` takes the hub's, so the job's model reaches
+    the CLI."""
+    configured = worker.get("runners") if isinstance(worker.get("runners"), dict) else {}
+    hub_spec = hub_spec or {}
+    spec = configured.get(name) or hub_spec or specs(worker).get(name)
+    if spec and spec is not hub_spec and not spec.get("model_args") and hub_spec.get("model_args"):
+        spec = {**spec, "model_args": hub_spec["model_args"]}
+    return spec or None
+
+
 def default_name(worker: dict) -> str:
     return str(worker.get("default_runner") or DEFAULT)
 

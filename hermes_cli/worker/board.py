@@ -225,7 +225,8 @@ def machines(worker_root: Path, metrics: dict[str, dict] | None, now: float) -> 
     base = worker_root.parent
     worker = settings.section(base)
     devs = settings.devices(base)
-    probes = bidding.probe_all(devs, worker_root, repo=None, runner=runners.default_name(worker))
+    name = runners.default_name(worker)
+    probes = bidding.probe_all(devs, worker_root, repo=None, runner=name, runner_spec=runners.specs(worker).get(name))
     min_free = int(settings.setting("min_free_gb", worker=worker))
     rows = [machine(dev, probe, (metrics or {}).get(dev.name) or (metrics or {}).get(dev.host), now, min_free)
             for dev, probe in zip(devs, probes)]

@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- The hub's bid probes a runner the way the run builds it: a node that offers `probe_runner_spec` in its hello gets the hub's runner spec on the probe's stdin and uses its own `worker.runners` entry of that name, else the hub's, so a runner defined only on the hub is ready on a node with its binary (also with `--host`), a node without the binary says the binary is missing, and an older node is asked as before with its bid row saying it does not take the hub's runner spec (lina#337).
 - A model has one name across the OCX list, the settings check and the omo runner: `<provider>/<id>` and `opencodex/<provider>/<id>` are the same model, so the settings check and `decide` read its state, quota and fallback from the one OCX row, the omo runner opens the session through OCX's `opencodex` provider with the namespaced id, and the run record and run page show the `<provider>/<id>` form whichever was written (lina#385).
 - Worker follow-ups reopen parked omo sessions from their recorded transcript with the same access mode; unknown and ambiguous session references report their specific reasons instead of a generic restore failure (lina#391).
 - Work settings accept validated file-node device fields and per-agent `worker.access` ceilings, including revisions, rollback and outside edits, so file nodes can be configured through the CLI (lina#389).
