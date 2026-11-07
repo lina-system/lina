@@ -158,6 +158,83 @@ def judged_cards(card: dict) -> list[dict]:
     return [{"id": card["task"], "board": card.get("board") or "default"}]
 
 
+def linked_cards(job: dict) -> list[dict]:
+    """Notification cards; old jobs have only the submit-time ``card``."""
+    return job.get("card_links", [job["card"]] if job.get("card") else [])
+
+
+def change_card(hub, task_id: str, card: str | None, drop: str | None, board: str | None) -> int:
+    """Change links under the same lock as end delivery; no-op calls never save the job."""
+    from hermes_cli.worker.hub import HubError
+    if card and drop:
+        raise HubError("card: choose a card to add or --drop <card>, not both")
+    if board and not card:
+        raise HubError("--board names the board of the card to add")
+    with hub.store.lock(task_id):
+        job = hub.need(task_id)
+        linked = linked_cards(job)
+        if not card and not drop:
+            for item in linked:
+                hub.out(f"{item['task']}  {item.get('board') or '-'}  ({item.get('kind') or 'lina'})")
+            if not linked:
+                hub.out(f"{task_id}: no card")
+            return 0
+        existing = next((item for item in linked if item["task"] == (card or drop)), None)
+        if (card and existing) or (drop and not existing):
+            hub.out(f"{task_id}: card {card or drop} " + ("already linked" if card else "not linked"))
+            return 0
+        changed = card_for({"task": card, "board": board or os.environ.get("HERMES_KANBAN_BOARD") or None},
+                           hub._link()) if card else existing
+        links = [*linked, changed] if card else [item for item in linked if item != existing]
+        job["card_links"] = links
+        job["cards"] = [entry for item in links if on_hermes(item) for entry in judged_cards(item)]
+        job["card"] = links[0] if links else None
+        if drop and existing == (linked[0] if linked else None):
+            job.pop("card_start_pending", None)
+        hub.store.save(job)
+        hub.store.receipt(task_id, "card_linked" if card else "card_dropped", card=changed)
+        hub.out(f"{task_id}: card {card or drop} " + ("linked" if card else "dropped"))
+    return 0
+
+
+def end_cards(hub, job: dict, entry: dict) -> str:
+    """Advance each remaining card independently, retaining completed steps across retries."""
+    targets = entry.setdefault("cards", linked_cards(job))
+    progress = entry.setdefault("card_progress", {})
+    for card in targets:
+        if card not in linked_cards(job):
+            continue
+        key = json.dumps(card, sort_keys=True)
+        state = progress.setdefault(key, {"done": list(entry["done"])})
+        if state.get("noticed"):
+            continue
+        for step in END_STEPS:
+            if step in state["done"]:
+                continue
+            try:
+                if on_hermes(card):
+                    woke = end_step(step, hub.store, card, job, entry["run"],
+                                    events.signed(entry["text"], entry.get("delivery")), hub._link(),
+                                    Path(entry["report"]) if entry.get("report") else None)
+                else:
+                    woke = None
+                    if step == "comment":
+                        record_end(card, job, entry["kind"], entry["run"],
+                                   events.signed(entry["text"], entry.get("delivery")))
+            except (OSError, ValueError, CardLinkError) as exc:
+                hub.store.receipt(job["id"], "card_notice_failed", card=card, step=step, error=str(exc)[:300])
+                return f"card {card['task']}: {step} failed, retried on the next report or tick"
+            state["done"].append(step)
+            if woke:
+                state["woke"], state["unblock"] = True, woke
+            hub.store.save(job)
+        hub.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
+                          woke=bool(state.get("woke")), unblock=state.get("unblock"))
+        state["noticed"] = True
+        hub.store.save(job)
+    return ""
+
+
 def hub_env() -> dict[str, str]:
     return {key: value for key, value in os.environ.items()
             if key not in _HUB_SIDE_DROP and not key.startswith("HERMES_KANBAN_")}
