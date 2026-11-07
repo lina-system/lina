@@ -186,7 +186,9 @@ def import_index(conn, path: Path, *, model: str, dimensions: int, batch_size: i
     try:
         if model_key(index.model) != model_key(model):
             counts.other_model = int(index.conn.execute("SELECT count(*) FROM chunks").fetchone()[0])
-            out(f"messages index: vectors of {index.model!r}, not {model!r}; nothing imported")
+            # Name only the index's model (read from the index), not the configured value: the config section is
+            # one CodeQL treats as secret-bearing, and the count line already says the import stopped.
+            out(f"messages index: vectors of {index.model!r}, not the configured embedding.model; nothing imported")
         else:
             after = 0
             while True:
