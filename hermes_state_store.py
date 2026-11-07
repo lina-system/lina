@@ -42,6 +42,9 @@ _NATIVE_TEXT_FIELDS = TEXT_FIELDS[2:]
 NATIVE_META_FIELDS = ("message_uid", "platform_message_id", "finish_reason", "token_count", "effect_disposition",
                       "observed", "_compressed_summary", "absorbed_message_uids", "tool_call_uids", "tool_call_uid")
 SOURCE_AGENT = "agent"
+# The vec.chunks / vec.embeddings owner of an external message every agent reads (memory.messages NULL agent_id,
+# scope 'agents'); not a profile name, so no agent can write it (migration 0009, lina#364).
+SHARED_VECTOR_OWNER = "*"
 _CACHE_ROWS = 50_000
 
 
@@ -688,7 +691,8 @@ class MessageStore:
     def search_memory_vectors(self, embedding: Sequence[float], *, model: str, sources: Sequence[str],
                               limit: int = 20) -> list[MemoryRow]:
         """The rows of the embedded chunks (``vec.chunks``, kind ``chunk``) of *sources* nearest *embedding*, nearest
-        first, each row once; empty when nothing of *sources* is embedded with *model*."""
+        first, each row once; empty when nothing of *sources* is embedded with *model*. Row-level security gives
+        this agent's chunks and the shared external ones (owner ``SHARED_VECTOR_OWNER``, migration 0009)."""
         vector = "[" + ",".join(repr(float(v)) for v in embedding) + "]"
         with self._cursor() as cur:
             cur.execute(

@@ -7,7 +7,9 @@ Sources:
 * ``memory``: Honcho conclusions and LCM-X summary nodes (through its vector view).
 
 A ``memory.messages`` row becomes one ``vec.chunks`` row (its text, cut at ``embedding.max_chars``) and one
-``vec.embeddings`` row of kind ``chunk``. Rows go in id order, a batch per transaction, and
+``vec.embeddings`` row of kind ``chunk``, owned by the message's agent; an external message every agent reads
+(NULL ``agent_id``, ``scope = 'agents'``) gets the shared owner ``*`` (``SHARED_VECTOR_OWNER``), which every
+agent reads through migration 0009's policies. Rows go in id order, a batch per transaction, and
 ``vec.reembed_progress`` records the last id of each committed batch, so a stopped run continues where it
 stopped; ``--from-start`` forgets that and goes through everything again. It runs as the store owner, which
 row-level security does not limit, so it covers every agent's rows.
@@ -19,11 +21,14 @@ from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any, Optional
 
+from hermes_state_store import SHARED_VECTOR_OWNER
+
 SOURCES = ("agent", "messages", "memory")
 DEFAULT_MAX_CHARS = 8000
 
 _MESSAGE_ROWS = """
-    SELECT message_id, agent_id, content FROM memory.messages
+    SELECT message_id, coalesce(agent_id, CASE WHEN scope = 'agents' THEN %(shared)s END), content
+    FROM memory.messages
     WHERE source = %(source)s AND message_id > %(after)s {roles}
     ORDER BY message_id LIMIT %(limit)s"""
 _DOCUMENT_ROWS = """
@@ -94,10 +99,12 @@ def _items(conn, source: str, after: int, limit: int, max_chars: int) -> list[_I
         roles = "AND role IN ('user', 'assistant') AND forgotten_at IS NULL" if source == "agent" \
             else "AND forgotten_at IS NULL"
         rows = conn.execute(_MESSAGE_ROWS.format(roles=roles),
-                            {"source": source, "after": after, "limit": limit}).fetchall()
+                            {"source": source, "after": after, "limit": limit,
+                             "shared": SHARED_VECTOR_OWNER}).fetchall()
     items = []
     for item_id, agent_id, content in rows:
-        text = (content or "").strip()
+        # A row with no owner (NULL agent_id outside scope 'agents') is readable by no agent: not embedded.
+        text = (content or "").strip() if agent_id is not None else ""
         items.append(_Item(int(item_id), str(agent_id), text[:max_chars] if text else None))
     return items
 
