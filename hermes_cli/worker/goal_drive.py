@@ -282,12 +282,14 @@ class Drive:
         self.tried: set[tuple[str, str]] = set()  # board writes tried this tick: a refused one waits for the next
         self.halted = False  # a limit was reached this tick, whether or not the board took the goal card's block
         self.created: list[str] = []  # tasks the drive submitted this tick (live, not yet in this pass's jobs)
+        self.held: set[str] = set()  # action ids holding a run and a worker until their send is made, this pass only
 
     def _load(self) -> dict:
         import json
         ledger = json.loads(self.path.read_text(encoding="utf-8-sig")) if self.path.is_file() else {}
-        for name in ("attempts", "followups", "runs", "workers", "actions", "usage", "blocked", "moved", "github",
-                     "notes"):
+        ledger.pop("workers", None)  # an older ledger's held workers: holds now live only inside one pass
+        ledger["runs"] = {task: count for task, count in (ledger.get("runs") or {}).items() if ":" not in task}
+        for name in ("attempts", "followups", "runs", "actions", "usage", "blocked", "moved", "github", "notes"):
             ledger.setdefault(name, {})
         ledger.setdefault("goal", self.goal)
         return ledger
@@ -338,7 +340,7 @@ class Drive:
                 self.ledger["attempts"][job["id"]] = highest.get(todo, 0) + 1
             highest[todo] = max(highest.get(todo, 0), self.ledger["attempts"][job["id"]])
             if job.get("host"):
-                self.ledger["runs"][job["id"]] = max(int(job.get("runs") or 1), self.ledger["runs"].get(job["id"], 0))
+                self.ledger["runs"][job["id"]] = int(job.get("runs") or 1)
 
     def _todo(self, job: dict) -> str:
         return f"{job['card']['task']}/{job.get('todo') or job.get('topic')}"
@@ -359,7 +361,7 @@ class Drive:
             per_todo[self._todo(job)] = max(per_todo.get(self._todo(job), 0), self.ledger["attempts"][job["id"]])
         found = {
             "wall_h": (hours >= self.limits["wall_h"], f"{hours:.1f} h"),
-            "runs": (sum(self.ledger["runs"].values()) > self.limits["runs"], f"{sum(self.ledger['runs'].values())} runs"),
+            "runs": (self.runs_used() > self.limits["runs"], f"{self.runs_used()} runs"),
             "workers": (sum(1 for job in jobs if job.get("state") not in ENDED + ("unknown",)) > self.limits["workers"],
                         f"{sum(1 for job in jobs if job.get('state') not in ENDED + ('unknown',))} live runs"),
             "attempts": (max(per_todo.values(), default=0) > self.limits["attempts"],
@@ -428,7 +430,7 @@ class Drive:
         """Run *do(aid)* once for action *aid*; its result is kept in the ledger. True when it ran or ran before. A
         *do* that returns None did not happen (the board refused): nothing is kept and it runs again on the next tick.
         A failure is raised, so the action runs again on the next tick (a device write with the same key)."""
-        if aid in self.ledger["actions"]:
+        if self.done_before(aid):
             return True
         result = do(aid)
         if result is None:
@@ -436,6 +438,23 @@ class Drive:
         self.ledger["actions"][aid] = {"at": self.now, "result": str(result)[:300]}
         self.save()
         self.hub.store.log(f"goal drive: {aid}: {str(result)[:200]}")
+        return True
+
+    def done_before(self, aid: str, recover=None) -> bool:
+        """Whether action *aid* already happened: in the ledger, or sent with its request key while the hub stopped
+        before the ledger was saved. Then the key record is the receipt: the action is recorded as done from it
+        (*recover* gets the record, to fill in what the send's own result would have) and is not sent again."""
+        if aid in self.ledger["actions"]:
+            return True
+        sent = self.hub.store.load_key(aid)
+        if not sent or not sent.get("action"):
+            return False
+        if recover is not None:
+            recover(sent)
+        self.ledger["actions"][aid] = {"at": self.now, "result": f"recovered from its request key: {sent['action']} "
+                                                                f"run {sent.get('run')} of {sent.get('task')}"}
+        self.save()
+        self.hub.store.log(f"goal drive: {aid}: {self.ledger['actions'][aid]['result']}")
         return True
 
     # ---------------------------------------------------------------- one run
@@ -462,7 +481,7 @@ class Drive:
     def follow_up(self, card: dict, job: dict, ids, rule: str, message: str) -> None:
         """One follow-up on the run; a follow-up due after ``FOLLOW_UPS`` of this attempt blocks the card instead."""
         from hermes_cli.worker.hub import ENDED
-        if ids(rule) in self.ledger["actions"] or not self.may_act(card):
+        if self.done_before(ids(rule), lambda _sent: self._counted_follow_up(job)) or not self.may_act(card):
             return
         sent, by = self.rounds(job)
         if sent >= FOLLOW_UPS:
@@ -473,53 +492,60 @@ class Drive:
             return
 
         def send(aid: str) -> str:
-            self.started(aid, job["id"] if starts else None,
-                         lambda: self.hub.send(job["id"], message, job["card"], request_key=aid))
-            self.ledger["followups"][job["id"]] = int(self.ledger["followups"].get(job["id"], 0)) + 1
+            self.started(aid, lambda: self.hub.send(job["id"], message, job["card"], request_key=aid))
+            self._counted_follow_up(job)
             return f"follow-up round {sent + 1}/{FOLLOW_UPS} ({rule}) on {job['id']}"
         self.act(ids(rule), send)
 
+    def _counted_follow_up(self, job: dict) -> None:
+        self.ledger["followups"][job["id"]] = int(self.ledger["followups"].get(job["id"], 0)) + 1
+
     def reserve(self, aid: str, job: dict) -> bool:
-        """Hold one run of the goal's run budget and one live worker for action *aid* before it is sent
-        (``ledger["runs"][aid]``, ``ledger["workers"][aid]``), so two sends in one tick cannot both pass a limit. A
-        spent run budget stops the goal; a full worker count defers the send to a later tick (noted). False when it
-        must not be sent now."""
-        held = sum(count for key, count in self.ledger["runs"].items() if key != aid)
-        if held + 1 > self.limits["runs"]:
-            self.stop("runs", f"the next run would be run {held + 1}")
+        """Hold one run of the goal's run budget and one live worker for action *aid* until it is sent, so two sends
+        in one pass cannot both pass a limit. The holds live only in this pass (``held``), on top of what the hub's
+        records say now (:meth:`runs_used`, :meth:`live`): a hub that stops mid-pass leaves nothing held. A spent run
+        budget stops the goal; a full worker count defers the send to a later tick (noted). False when it must not be
+        sent now."""
+        held = len(self.held - {aid})
+        used = self.runs_used() + held
+        if used + 1 > self.limits["runs"]:
+            self.stop("runs", f"the next run would be run {used + 1}")
             return False
-        busy = self.live() + sum(count for key, count in self.ledger["workers"].items() if key != aid)
+        busy = self.live() + held
         if busy + 1 > self.limits["workers"]:
             note = f"deferred: the workers limit ({self.limits['workers']}) is reached ({busy} live)"
             if self.ledger["notes"].get(job["id"]) != note:
                 self.ledger["notes"][job["id"]] = note
                 self.save()
             return False
-        self.ledger["runs"][aid] = self.ledger["workers"][aid] = 1
-        self.save()
+        self.held.add(aid)
         return True
 
-    def live(self) -> int:
-        """The goal's live runs now: its tasks as the hub holds them at this moment, and the ones moved this tick."""
-        from hermes_cli.worker.hub import ENDED
-        ids = [job["id"] for job in self.jobs()] + self.created
-        return sum(1 for task in ids if ((self.hub.store.load(task) or {}).get("state") or "new")
-                   not in ENDED + ("unknown",))
+    def _tasks(self) -> list[dict]:
+        """The goal's tasks as the hub holds them at this moment, with the ones the drive moved in this pass."""
+        ids = dict.fromkeys([job["id"] for job in self.jobs()] + self.created)
+        return [task for task in map(self.hub.store.load, ids) if task]
 
-    def started(self, aid: str, task: str | None, send) -> None:
-        """Run *send*; its reserved run becomes *task*'s, or is released when the send fails (or started none). Its
-        reserved worker is released either way: once sent, the task itself is live."""
+    def runs_used(self) -> int:
+        """The goal's runs, from the hub's records: each placed task's ``runs``."""
+        return sum(int(task.get("runs") or 1) for task in self._tasks() if task.get("host"))
+
+    def live(self) -> int:
+        """The goal's live runs, from the hub's records."""
+        from hermes_cli.worker.hub import ENDED
+        return sum(1 for task in self._tasks() if (task.get("state") or "new") not in ENDED + ("unknown",))
+
+    def started(self, aid: str, send) -> None:
+        """Run *send* and give back its hold: once sent, the hub's own records count its run and its task (the
+        ledger's ``runs`` is read from them again, as it is at the start of each pass)."""
         try:
             send()
-        except BaseException:
-            self.ledger["runs"].pop(aid, None)
-            self.ledger["workers"].pop(aid, None)
-            self.save()
-            raise
-        self.ledger["workers"].pop(aid, None)
-        if self.ledger["runs"].pop(aid, None) and task:
-            self.ledger["runs"][task] = self.ledger["runs"].get(task, 0) + 1
-        self.save()
+        finally:
+            self.held.discard(aid)
+        self._recount_runs()
+
+    def _recount_runs(self) -> None:
+        self.ledger["runs"] = {task["id"]: int(task.get("runs") or 1) for task in self._tasks() if task.get("host")}
 
     def rounds(self, job: dict) -> tuple[int, str]:
         """The follow-up rounds of the task (one attempt), whoever sent them, and who sent the last one. A round is a
@@ -645,9 +671,9 @@ class Drive:
         run = int(job.get("runs") or 1)
         wait = self.ledger["usage"].get(job["id"])
         if wait and int(wait["run"]) == run:
-            if self.now >= float(wait["until"]) and ids("usage-resume") not in self.ledger["actions"] \
+            if self.now >= float(wait["until"]) and not self.done_before(ids("usage-resume")) \
                     and self.may_act(card) and self.reserve(ids("usage-resume"), job):
-                self.act(ids("usage-resume"), lambda aid: self.started(aid, job["id"], lambda: self.hub.send(
+                self.act(ids("usage-resume"), lambda aid: self.started(aid, lambda: self.hub.send(
                     job["id"], "The usage limit has reset. Carry on with the task where you stopped.", job["card"],
                     request_key=aid)) or "continued after the usage limit")
             return True
@@ -698,7 +724,8 @@ class Drive:
         """The same brief on another allowed node, from the pushed branch; never while another run of the to-do is
         live. False when it cannot move now (it is tried again on the next tick)."""
         from hermes_cli.worker.hub import ENDED
-        if ids(rule) in self.ledger["actions"]:
+        attempt = self.ledger["attempts"][job["id"]] + (0 if same_attempt else 1)
+        if self.done_before(ids(rule), lambda sent: self._moved(job, sent["task"], attempt)):
             return True
         if not self.may_act(card):
             return True
@@ -711,7 +738,6 @@ class Drive:
         if job.get("private_inputs"):
             self.hub.store.log(f"goal drive: {job['id']} not moved: it reads private files on its hub node")
             return False
-        attempt = self.ledger["attempts"][job["id"]] + (0 if same_attempt else 1)
         if attempt > self.limits["attempts"]:
             self.stop("attempts", f"to-do {self._todo(job)} would start attempt {attempt}")
             return True
@@ -728,15 +754,17 @@ class Drive:
             return True
 
         def submit(aid: str) -> str:
-            self.started(aid, None, lambda: self.hub.submit(self._brief_opts(job, node, aid)))
+            self.started(aid, lambda: self.hub.submit(self._brief_opts(job, node, aid)))
             new = self.hub.store.load_key(aid)["task"]
             self.created.append(new)
-            self.ledger["runs"][new] = max(1, self.ledger["runs"].get(new, 0))
-            self.save()
-            self.ledger["attempts"][new] = attempt
-            self.ledger["moved"][job["id"]] = new
+            self._recount_runs()
+            self._moved(job, new, attempt)
             return f"{rule}: {job['id']} → {new} on {node}"
         return self.act(ids(rule), submit)
+
+    def _moved(self, job: dict, new: str, attempt: int) -> None:
+        self.ledger["attempts"][new] = attempt
+        self.ledger["moved"][job["id"]] = new
 
     def _other_node(self, job: dict) -> tuple[str | None, str]:
         """Another node by automatic placement (an ``auto: false`` device takes no moved run), or the device the

@@ -501,7 +501,69 @@ def test_a_send_past_the_workers_limit_waits_for_a_later_tick(drive):
     _end(drive, first, "done", report=True)  # the first one's run 2 ended and delivered
     _tick(drive)
     assert _requests(drive, second) == ["request.1", "request.2"]
-    assert _ledger(drive)["workers"] == {}
+    assert "workers" not in _ledger(drive)  # holds are never kept in the ledger
+
+
+class HubStopped(BaseException):
+    """The hub process ends here (no handler of the hub or the drive catches it)."""
+
+
+def _stop_after(drive, verb: str) -> dict:
+    """The hub stops right after ``Hub.<verb>`` returned, before the drive saves its ledger again."""
+    state = {"armed": True, "fired": False}
+    real, real_replace = getattr(Hub, verb), goal_drive._replace
+
+    def call(self, *args, **kwargs):
+        result = real(self, *args, **kwargs)
+        state["fired"] = state["armed"]
+        return result
+
+    def replace(path, record):
+        if state["fired"] and state["armed"]:
+            raise HubStopped
+        return real_replace(path, record)
+    drive.mp.setattr(Hub, verb, call)
+    drive.mp.setattr(goal_drive, "_replace", replace)
+    return state
+
+
+def test_a_hub_stopped_after_a_follow_up_holds_no_worker_and_counts_each_run_once(drive):
+    drive.configure("  goal_limits: {workers: 1, runs: 3}\n")
+    task = _submit(drive)
+    _end(drive, task, "done")
+    stop = _stop_after(drive, "send")
+    with pytest.raises(HubStopped):
+        _tick(drive)  # the follow-up started run 2; the ledger never heard of it
+    stop["armed"] = False
+    assert _requests(drive, task) == ["request.1", "request.2"]
+    assert _aid(task, 1, "deliverable") not in _ledger(drive)["actions"]
+    _end(drive, task, "done")  # run 2 ended, still without its deliverable
+    _tick(drive)  # a new Hub on the same root
+    assert _requests(drive, task) == ["request.1", "request.2", "request.3"]
+    ledger = _ledger(drive)
+    assert ledger["runs"] == {task: 3} and "stopped" not in ledger and task not in ledger["notes"]
+
+
+def test_a_send_its_request_key_shows_went_through_is_recorded_from_the_key_and_not_sent_again(drive):
+    """A pass that meets an action the hub sent before it stopped (its key record says so, the ledger does not): the
+    pass here is built on the task as it was before the send, the only way the drive meets that action again."""
+    task = _submit(drive)
+    _end(drive, task, "done")
+    before = _hub(drive).store.load(task)
+    stop = _stop_after(drive, "send")
+    with pytest.raises(HubStopped):
+        _tick(drive)
+    stop["armed"] = False
+    hub = _hub(drive)
+    card = {"card": before["card"], "view": kanban_link.kept_view(hub.store, before["card"]), "jobs": [before]}
+    entry = {"board": BOARD, "kind": "hermes", "cards": {WORK: card}}
+    with hub.store.lock("goal-t-goal"):
+        goal_drive.Drive(hub, goal_drive.Board(hub.worker), GOAL, entry)._job(card, before)
+    assert _requests(drive, task) == ["request.1", "request.2"]
+    assert not [r for r in hub.store.receipts_of(task) if r["kind"] == "request_replayed"]
+    ledger = _ledger(drive)
+    assert ledger["actions"][_aid(task, 1, "deliverable")]["result"].startswith("recovered from its request key")
+    assert ledger["followups"] == {task: 1}
 
 
 def _two_runs_of_one_todo(drive) -> None:

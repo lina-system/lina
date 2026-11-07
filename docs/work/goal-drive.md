@@ -94,8 +94,7 @@ The ledger is `$LINA_HOME/worker/hub/goals/<goal card>.json`, written under the 
 |---|---|
 | `attempts` | Attempt number per hub task. A new task of a to-do is the next attempt, except one the drive moved for a usage limit. |
 | `followups` | Follow-ups the drive itself sent per task. The limit does not read it: it counts every round from the hub. |
-| `runs` | Runs per task, and one run held per action id while its send is under way. |
-| `workers` | One live worker held per action id while its send is under way. |
+| `runs` | Runs per task, read from the hub's records at each pass and after each send (informational: the limits count from the hub). An older ledger's held runs and its `workers` field are dropped on load. |
 | `started_at` | The goal's start: its first task's hand-out time. |
 | `actions` | Action id → time and result. |
 | `usage`, `moved`, `blocked`, `red_heads`, `github` | Usage waits, moved tasks, cards the drive blocked, followed-up heads, cached GitHub reads. |
@@ -106,17 +105,22 @@ A `block` the drive made just before the hub stopped is not made again: the driv
 blocked card as it is. `stopped` and `blocked` are written only after the board took the block; a park only after it
 took the `schedule`.
 
-The run budget is held, not counted after the fact: before each follow-up that starts a run, each resubmit or move,
-and each continue after a usage limit, the drive reserves one run in `runs` under its action id (under the goal lock)
-and checks the limit against everything held. A send that fails gives its reservation back; one that went through
-turns it into its task's run. Two sends in one tick can therefore never pass `runs` together.
+The run budget and the live workers are never kept as state of their own. Each goal pass reads them from the hub's
+records: the runs used are the `runs` of every placed task of the goal, and the live workers are its tasks that have
+not ended, both as the hub holds them at that moment (plus tasks the drive moved earlier in the same pass). Before
+each follow-up that starts a run, each resubmit or move, and each continue after a usage limit, the drive holds one run
+and one worker for that action, in memory, for this pass only and under the goal lock, and checks `runs` and
+`workers` against the hub's count plus what it holds. The hold is given back as soon as the send is made (the hub's
+records count the run and the task from then on) or fails. Two sends in one pass can therefore never pass a limit
+together, and a hub that stops in the middle of a pass leaves nothing held: the next pass counts from the hub again.
 
-Live workers are held the same way, next to the run: each of those sends also reserves one worker in `workers` and
-checks the goal's live runs (its tasks as the hub holds them at that moment, plus tasks the drive moved in this tick)
-plus the workers held against `workers`. When that is full, the send is not made: it is deferred to a later tick and
-the ledger's `notes` say `deferred: the workers limit (<n>) is reached (<live> live)`. A deferred send does not stop
-the goal; it goes out on the first tick with a free worker. The worker reservation is given back once the send is
-made (the task itself is live then) or when it fails.
+A full `runs` stops the goal. A full `workers` defers the send to a later tick: it is not made, and the ledger's
+`notes` say `deferred: the workers limit (<n>) is reached (<live> live)`. A deferred send does not stop the goal; it
+goes out on the first tick with a free worker.
+
+A hub that stops after a send but before the drive saved its ledger is caught by the send's request key: when the
+drive meets that action again and its key record (`hub/keys/`) says the send went through, the action is recorded as
+done from the key record (`recovered from its request key: …`) and is not sent again.
 
 ## Limits
 
