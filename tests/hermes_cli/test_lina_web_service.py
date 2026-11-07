@@ -23,6 +23,7 @@ import shlex
 import socket
 import subprocess
 import sys
+import urllib.error
 import urllib.request
 
 import pytest
@@ -78,7 +79,14 @@ def test_every_launchd_job_starts_under_osascript_with_its_own_logs(tmp_path, na
     assert (plist["RunAtLoad"], plist["KeepAlive"], plist["MaterializeDatalessFiles"]) == (True, True, True)
 
 
-def test_web_runs_the_dashboard_of_the_lina_root_on_the_configured_endpoint(tmp_path):
+def _app_build(path):
+    path.mkdir(parents=True)
+    (path / "index.html").write_text(APP_HTML, encoding="utf-8")
+    return path
+
+
+def test_web_runs_the_dashboard_of_the_lina_root_on_the_configured_endpoint(tmp_path, monkeypatch):
+    monkeypatch.delenv("LINA_APP_DIST", raising=False)
     root = tmp_path / "lina"
     root.mkdir()
     argv, env = _systemd_parts(web.definition("systemd", root))
@@ -94,9 +102,13 @@ def test_web_runs_the_dashboard_of_the_lina_root_on_the_configured_endpoint(tmp_
     (root / "config.yaml").write_text(f"dashboard:\n  host: localhost\n  port: {port}\n", encoding="utf-8")
     argv, env = _systemd_parts(web.definition("systemd", root))
     assert argv[:6] == [sys.executable, "-m", "hermes_cli.main", "-p", "default", "dashboard"]
-    assert argv[6:] == ["--host", "localhost", "--port", str(port), "--no-open", "--skip-build", "--isolated"]
-    assert env["HERMES_HOME"] == str(root) and env["HERMES_WEB_DIST"] == str(web.web_dist())
+    # No --skip-build and no HERMES_WEB_DIST: the install has no dashboard UI, and either makes the dashboard exit.
+    assert argv[6:] == ["--host", "localhost", "--port", str(port), "--no-open", "--isolated"]
+    assert env["HERMES_HOME"] == str(root) and "HERMES_WEB_DIST" not in env and "LINA_APP_DIST" not in env
     assert env["HERMES_GATEWAY_LOCK_DIR"] == str(web.lock_dir(root))
+
+    monkeypatch.setenv("LINA_APP_DIST", str(tmp_path / "app"))  # the build start checks is the one the job serves
+    assert _systemd_parts(web.definition("systemd", root))[1]["LINA_APP_DIST"] == str(tmp_path / "app")
 
 
 def _active_profile(root, name="ops"):
@@ -130,12 +142,9 @@ def test_the_endpoint_comes_through_the_config_loader_and_a_bad_port_is_refused(
     argv, _env = _systemd_parts(web.definition("systemd", root))
     assert argv[argv.index("--port") + 1] == str(port)
 
+    monkeypatch.setenv("LINA_APP_DIST", str(_app_build(tmp_path / "app")))
     (root / "config.yaml").write_text("dashboard:\n  port: nine\n", encoding="utf-8")
     calls, lines = [], []
-    dist = tmp_path / "web_dist"
-    dist.mkdir()
-    (dist / "index.html").write_text("<html></html>", encoding="utf-8")
-    monkeypatch.setattr(web, "web_dist", lambda: dist)
     monkeypatch.setattr(web, "definition_path", lambda kind: tmp_path / "units" / "lina-web.service")
     monkeypatch.setattr(web, "_run", calls.append)
     assert web.start(root, out=lines.append) == 1
@@ -145,14 +154,44 @@ def test_the_endpoint_comes_through_the_config_loader_and_a_bad_port_is_refused(
 
 
 @pytest.mark.platforms("linux")
-def test_start_without_a_built_ui_refuses_in_one_line_and_writes_nothing(tmp_path, monkeypatch):
-    calls, lines = [], []
-    monkeypatch.setattr(web, "web_dist", lambda: tmp_path / "no-build")
+def test_start_without_the_app_build_refuses_in_one_line_and_writes_nothing(tmp_path, monkeypatch):
+    """No app build configured, a configured folder without ``index.html``, and a ``LINA_APP_DIST`` without one over
+    a good ``dashboard.app_dist`` (the dashboard's order) all refuse, naming the keys and never a value."""
+    root = tmp_path / "lina"
+    root.mkdir()
+    empty = tmp_path / "empty-build"
+    empty.mkdir()
+    app = _app_build(tmp_path / "app")
+    calls = []
+    monkeypatch.delenv("LINA_APP_DIST", raising=False)
     monkeypatch.setattr(web, "definition_path", lambda kind: tmp_path / "units" / "lina-web.service")
     monkeypatch.setattr(web, "_run", calls.append)
-    assert web.start(tmp_path / "lina", out=lines.append) == 1
-    assert len(lines) == 1 and "no built web UI" in lines[0]
+    cases = [("", None), (f"dashboard:\n  app_dist: {empty}\n", None), (f"dashboard:\n  app_dist: {app}\n", empty)]
+    for config, env_dist in cases:
+        (root / "config.yaml").write_text(config, encoding="utf-8")
+        if env_dist:
+            monkeypatch.setenv("LINA_APP_DIST", str(env_dist))
+        lines = []
+        assert web.start(root, out=lines.append) == 1, config
+        assert len(lines) == 1 and "LINA_APP_DIST" in lines[0] and "dashboard.app_dist" in lines[0]
+        assert str(tmp_path) not in lines[0] and "web_dist" not in lines[0]
     assert calls == [] and not (tmp_path / "units").exists()
+
+
+@pytest.mark.platforms("linux")
+def test_start_with_the_app_build_writes_the_unit_and_starts_it(tmp_path, monkeypatch):
+    """No dashboard UI on the install (``hermes_cli/web_dist`` is never built on dev): the app build is enough."""
+    root = tmp_path / "lina"
+    root.mkdir()
+    monkeypatch.delenv("LINA_APP_DIST", raising=False)
+    (root / "config.yaml").write_text(f"dashboard:\n  app_dist: {_app_build(tmp_path / 'app')}\n", encoding="utf-8")
+    unit, calls, lines = tmp_path / "units" / "lina-web.service", [], []
+    monkeypatch.setattr(web, "definition_path", lambda kind: unit)
+    monkeypatch.setattr(web, "_run", lambda argv: calls.append(argv) or subprocess.CompletedProcess(argv, 0, "", ""))
+    monkeypatch.setattr(web, "_answers", lambda host, port: False)
+    monkeypatch.setattr(web, "running", lambda root_: ["systemctl", "--user", "restart", "lina-web"] in calls)
+    assert web.start(root, out=lines.append) == 0, lines
+    assert unit.is_file() and lines[-1].startswith("✓ web running")
 
 
 def test_service_jobs_never_carry_a_card_sessions_env(tmp_path, monkeypatch):
@@ -211,7 +250,7 @@ def test_web_serves_the_app_beside_another_homes_dashboard_and_stops_only_itself
     """Another home's dashboard (Hermes Agent's beside LINA) owns the account's one-backend record; the LINA web
     service still binds its own port and serves its app, leaves that record alone, and its stop ends only itself."""
     from gateway import host_rendezvous as hr
-    dist = tmp_path / "web_dist"
+    dist = tmp_path / "other-web-dist"  # the other home's dashboard UI; the LINA service has none
     dist.mkdir()
     (dist / "index.html").write_text("<html><head></head><body>Dashboard</body></html>", encoding="utf-8")
     app = tmp_path / "lina-app"
@@ -232,7 +271,7 @@ def test_web_serves_the_app_beside_another_homes_dashboard_and_stops_only_itself
         env={**account_env, "HERMES_HOME": str(other_home), "HERMES_WEB_DIST": str(dist)},
         stdout=open(tmp_path / "other.log", "ab"), stderr=subprocess.STDOUT)
     systemd = _Systemd(tmp_path / "units" / "lina-web.service", account_env, tmp_path / "web.log")
-    monkeypatch.setattr(web, "web_dist", lambda: dist)
+    monkeypatch.delenv("LINA_APP_DIST", raising=False)
     monkeypatch.setattr(web, "definition_path", lambda kind: systemd.unit_path)
     monkeypatch.setattr(web, "_run", systemd)
     try:
@@ -243,6 +282,9 @@ def test_web_serves_the_app_beside_another_homes_dashboard_and_stops_only_itself
         assert web.start(root, out=lambda line: None) == 0, (tmp_path / "web.log").read_text()
         with urllib.request.urlopen(f"http://127.0.0.1:{port}/app/", timeout=10) as page:
             assert page.status == 200 and '<div id="root">lina-app</div>' in page.read().decode()
+        with pytest.raises(urllib.error.HTTPError) as no_ui:  # no dashboard UI: `/` is a 404 per request, no crash
+            urllib.request.urlopen(f"http://127.0.0.1:{port}/", timeout=10)
+        assert no_ui.value.code == 404
         assert web.state(root) == "running"
         assert web.own_pids(root) == [systemd.proc.pid]
         assert hr.read_record(hr.ROLE_SERVE).pid == record.pid  # LINA's server never became the account's owner

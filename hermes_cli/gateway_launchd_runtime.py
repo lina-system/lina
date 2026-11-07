@@ -100,9 +100,18 @@ def _remove_finished_jobs(deadline: float | None) -> None:
 def start_gateway_job(command: list[str], *, env: dict[str, str], cwd: str | Path,
                       log_path: str | Path, deadline: float | None = None) -> GatewayJob | None:
     """Run ``command`` as a one-off job in this user's GUI launchd domain. ``None`` when launchd
-    cannot take it (no GUI session, e.g. over SSH): the caller starts it as a plain child instead.
-    ``deadline`` (monotonic) bounds every launchctl call, here and in the job's ``poll()``."""
+    cannot take it (no GUI session, e.g. over SSH) or when this process runs under test isolation:
+    the caller starts it as a plain child instead. ``deadline`` (monotonic) bounds every launchctl
+    call, here and in the job's ``poll()``."""
     from hermes_cli.gateway_launchd import launchd_program_arguments
+    from hermes_state_guard import _TEST_ISOLATION_MARKER_ENV  # late: this module stays stdlib-only
+    if os.environ.get(_TEST_ISOLATION_MARKER_ENV):
+        # A test sandbox redirects HOME/HERMES_HOME but launchd is account-wide, so bootstrapping here
+        # would leave a runtime job in the developer's own gui/<uid> domain — outside the sandbox and
+        # invisible to the test's own process tracking, where it stays loaded until a later sweep
+        # (#372). Not one launchctl call, not even the sweep; ``None`` is the existing "start it as a
+        # plain child" answer, and that is what both callers then do.
+        return None
     _remove_finished_jobs(deadline)
     label = f"{LABEL_PREFIX}{uuid.uuid4().hex[:12]}"
     target = f"gui/{os.getuid()}/{label}"  # windows-footgun: ok — macOS-only module
