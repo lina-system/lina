@@ -70,7 +70,7 @@ def test_a_runner_signed_out_on_some_nodes_is_one_question_naming_them(base):
 
     assert len(asks) == 1, "one question per runner, not per node"
     assert asks[0]["runner"] == "grok" and [node["node"] for node in asks[0]["nodes"]] == ["build-a", "build-c"]
-    assert asks[0]["nodes"][0]["how"] == "run `grok login --device-auth` on build-a"
+    assert asks[0]["nodes"][0]["how"] == "run `lina devices sign-in build-a grok` on the hub"
 
     base["reports"]["build-a"] = base["reports"]["build-c"] = [CODEX, GROK_IN]
     lines: list[str] = []

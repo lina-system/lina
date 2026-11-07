@@ -121,7 +121,8 @@ async def probe(root, base, mode):
                 OPENAI_API_KEY='loopback-only', OPENAI_BASE_URL=url, PYTHONUNBUFFERED='1',
                 GATEWAY_RELAY_URL=f'ws://127.0.0.1:{relay.sockets[0].getsockname()[1]}/relay',
                 GATEWAY_RELAY_PLATFORMS='telegram', GATEWAY_RELAY_BOT_IDS='{"telegram":"fixture-bot"}',
-                GATEWAY_RELAY_ID='fixture-gateway', GATEWAY_RELAY_SECRET='fixture-secret')
+                GATEWAY_RELAY_ID='fixture-gateway', GATEWAY_RELAY_SECRET='fixture-secret',
+                LINA_TEST_NO_HERMES_AGENT_GATEWAY='1')  # never read the account's launchd/systemd (lina#259)
             with (home / 'daemon.log').open('w+') as log:
                 proc = subprocess.Popen([sys.executable, '-m', 'gateway.run'], cwd=root, env=env,  # noqa: ASYNC220 -- Popen returns immediately; the test drives the child through its handle
                     stdin=subprocess.DEVNULL, stdout=log, stderr=subprocess.STDOUT)

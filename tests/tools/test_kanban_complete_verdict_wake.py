@@ -13,6 +13,8 @@ from hermes_cli.worker import kanban_link, settings
 from tools import kanban_tools as kt
 
 RUN = "OT-AGT1107120000"
+RUN_B = "OT-AGT1107120100"
+RUN_C = "OT-AGT1107120200"
 
 
 @pytest.fixture
@@ -31,12 +33,23 @@ def board(monkeypatch, tmp_path):
         yield conn
 
 
-def _job(card: str, **fields) -> None:
+def _job(card: str, run_id: str = RUN, **fields) -> None:
     jobs = settings.hub_dir(settings.root()) / "jobs"
     jobs.mkdir(parents=True, exist_ok=True)
-    job = {"id": RUN, "bot": "test-worker", "state": "done", "verdict": None, "card": {"task": card, "board": None},
+    job = {"id": run_id, "bot": "test-worker", "state": "done", "verdict": None, "card": {"task": card, "board": None},
            "created": time.time(), **fields}
-    (jobs / f"{RUN}.json").write_text(json.dumps(job), encoding="utf-8")
+    (jobs / f"{run_id}.json").write_text(json.dumps(job), encoding="utf-8")
+
+
+def _start(card: str, run_id: str) -> None:
+    _job(card, run_id, state="running")
+    kanban_link.record_run({"task": card, "board": None}, {"id": run_id, "runner": "fakecli"}, {"kind": "lina"})
+
+
+def _end(card: str, run_id: str) -> None:
+    _job(card, run_id)
+    kanban_link.record_end({"task": card, "board": None}, {"id": run_id, "runner": "fakecli"}, "done", "1",
+                           f"run {run_id} ended")
 
 
 def _woken_and_claimed(conn, monkeypatch, card: str) -> int:
@@ -83,3 +96,41 @@ def test_a_scheduled_card_goes_back_to_its_schedule_not_to_done(board, monkeypat
     out = _complete(card)
     assert out.get("returned_to") == "scheduled", out
     assert kb.get_task(board, card).status == "scheduled"
+
+
+def _scheduled_on(board, monkeypatch, waits_on: list[str]) -> str:
+    """A card parked on runs *waits_on* (run IDs only, no ``wait_for``); an unrelated run ends and wakes
+    it to judge, then each run it waits on ends during that wake."""
+    card = kb.create_task(board, title="waits on runs", assignee="test-worker")
+    for run_id in waits_on:
+        _start(card, run_id)
+    assert kb.schedule_task(board, card, reason=f"waiting on lina worker {' '.join(waits_on)}")
+    _woken_and_claimed(board, monkeypatch, card)
+    return card
+
+
+def test_a_schedule_whose_runs_all_ended_during_the_wake_is_met_not_restored(board, monkeypatch):
+    card = _scheduled_on(board, monkeypatch, [RUN_B])
+    _end(card, RUN_B)
+    for run_id in (RUN, RUN_B):
+        _job(card, run_id, verdict="accepted")
+
+    out = _complete(card)
+    assert out.get("returned_to") == "ready", out
+    assert kb.get_task(board, card).status == "ready"
+    assert any("wait met" in c.body and RUN_B in c.body for c in kb.list_comments(board, card))
+
+
+def test_a_schedule_with_runs_still_going_is_restored_naming_only_those(board, monkeypatch):
+    from hermes_cli.kanban_db_wait import _latest_park_event
+
+    card = _scheduled_on(board, monkeypatch, [RUN_B, RUN_C])
+    _end(card, RUN_B)
+    for run_id in (RUN, RUN_B):
+        _job(card, run_id, verdict="accepted")
+    _job(card, RUN_C, state="running")
+
+    out = _complete(card)
+    assert out.get("returned_to") == "scheduled", out
+    reason = json.loads(_latest_park_event(board, card)["payload"])["reason"]
+    assert RUN_C in reason and RUN_B not in reason
