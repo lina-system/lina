@@ -17,7 +17,7 @@ import pytest
 
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
-from hermes_cli.worker import device, serve
+from hermes_cli.worker import device, events, kanban_link, serve
 from hermes_cli.worker import hub as hub_module
 from hermes_cli.worker.hub import Hub
 from hermes_cli.worker.transport import Reply
@@ -348,6 +348,29 @@ def test_an_end_held_by_a_hub_that_stopped_before_sending_it_goes_out_once(far, 
 
     _sent_once(far, task_id)
     assert len(_receipts(far.hub, task_id, "delivery_duplicate")) == 1
+
+
+def test_an_outage_notice_a_card_did_not_take_is_retried_until_it_went_out(far, monkeypatch):
+    task_id = far.run(1, on_card=True)
+    record_host, tries = kanban_link.record_host, []
+
+    def flaky(*args):
+        tries.append(args)
+        if len(tries) == 1:
+            raise OSError("database is locked")
+        return record_host(*args)
+    monkeypatch.setattr(kanban_link, "record_host", flaky)
+    delivery = f"far:host.unavailable:{int(START)}"
+    far.down = True
+    far.tick(3)
+    assert _on_card(far.card)[0] == [] and not events.done(far.hub.store, delivery)
+
+    far.tick(2)
+    comments, _ = _on_card(far.card)
+    assert len(comments) == 1 and comments[0].splitlines()[-1] == f"delivery {delivery}"
+    assert len(far.chats()) == 1
+    assert events.done(far.hub.store, delivery)
+    assert [r["delivery"] for r in _receipts(far.hub, task_id, "notified")] == [delivery]
 
 
 def test_a_late_retry_of_an_earlier_runs_end_leaves_the_run_going_now(far):

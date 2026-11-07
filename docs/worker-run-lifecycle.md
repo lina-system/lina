@@ -105,7 +105,11 @@ run with its card, and goes to each agent the runs belong to, with one comment
 per card. Those runs become `unknown` without a notice of their own. Nothing more
 is sent while the node stays down. The first answered contact afterwards sends
 one line, `<node> is back after <duration>; runs <ids> continue`, and resets the
-record. A tick that finds no running or `unknown` run on a node, or a placement
+record. Both notices are queued on the node record first, one item for each
+agent chat and each card they go to (`pending`). An item leaves the queue once
+it has gone out. The following ticks retry the ones that failed and send none of
+them twice. The outage's delivery id is done only once every place has been told.
+A tick that finds no running or `unknown` run on a node, or a placement
 published on it, resets its record too, so its next outage is told again. An
 `unknown` run whose device then reports it running or ended goes back under
 watch, so its end is delivered once like any other.

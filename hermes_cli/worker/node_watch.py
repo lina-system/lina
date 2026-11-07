@@ -9,6 +9,10 @@ per card. While the node stays down nothing more is sent. The first answered tic
 ``<node> is back after <duration>; runs <ids> continue``, and resets the record. A run left ``unknown`` whose device
 answers ``running`` or an end goes back under the tick's watch (``Hub._watch``), so its end is delivered once like any
 other. A tick that finds no watched run on a node, or a placement published on it, resets its record too.
+
+Each of those notices is queued on the node record first, one item per place it goes (``pending``: each agent's chat,
+each card), and an item leaves the queue once it went out; the next ticks retry what failed and send nothing twice. The
+outage's delivery id is done only once every place was told.
 """
 
 from __future__ import annotations
@@ -26,6 +30,9 @@ def watch(hub) -> None:
     """One contact with each node that holds a watched run; ``hub.contacts`` keeps each run's ``meta`` reply for
     ``Hub._watch``."""
     hub.contacts = {}
+    for path in hub.store.nodes.glob("*.json"):
+        if (record := hub.store.load_node(path.stem)) and record.get("pending"):
+            hub.store.log(f"{path.stem} notices retried: {_flush(hub, record)}")
     nodes: dict[str, list[dict]] = {}
     for job in hub.store.all():
         if job.get("state") in WATCHED and job.get("host") and time.time() - job["created"] < WATCH_FOR_S:
@@ -47,7 +54,8 @@ def reset(store, node: str) -> None:
     loss of contact counts from zero and is told again."""
     record = store.load_node(node)
     if record and (record.get("failures") or record.get("notified_outage")):
-        store.save_node({"node": node, "failures": 0, "down_since": None, "notified_outage": None})
+        store.save_node({"node": node, "failures": 0, "down_since": None, "notified_outage": None,
+                         **({"pending": record["pending"]} if record.get("pending") else {})})
 
 
 def _failed(job: dict, reply: dict) -> bool:
@@ -78,8 +86,9 @@ def _failed_contact(hub, node: str, jobs: list[dict]) -> None:
 
 
 def _unavailable(hub, node: str, record: dict, jobs: list[dict]) -> None:
-    """The outage told once: its running runs become ``unknown`` first, then the notice goes out, then its id is
-    done. A hub that stopped in between finds those runs ``unknown`` with this outage on them and tells it then."""
+    """The outage told once: its running runs become ``unknown`` first, then the notice is queued on the node record
+    for each place it goes and sent; its id is done once every one of them went out (``_flush``). A hub that stopped
+    before queueing it finds those runs ``unknown`` with this outage on them and tells it then."""
     delivery = events.outage_id(node, record["down_since"])
     named = [job for job in jobs if _held(job, delivery) or mark_unknown(hub.store, job["id"], delivery)]
     if not named:
@@ -90,12 +99,8 @@ def _unavailable(hub, node: str, record: dict, jobs: list[dict]) -> None:
             events.duplicate(hub.store, job["id"], "unknown", "x", delivery)
         return
     payload = {"device": node, "since": record["down_since"], "delivery": delivery, **events.fields("unknown")}
-    how = _tell(hub, named, events.signed(_outage_text(node, record, named), delivery),
-                f"{events.HOST_UNAVAILABLE}-{node}", payload)
-    events.record(hub.store, delivery, node=node, runs=record["runs"])
-    for job in named:
-        hub.store.receipt(job["id"], "notified", how=how[:200], state="unknown", run="x", delivery=delivery,
-                          **events.fields("unknown"))
+    how = _tell(hub, record, named, events.signed(_outage_text(node, record, named), delivery),
+                f"{events.HOST_UNAVAILABLE}-{node}", payload, key=delivery, delivery=delivery)
     hub.store.log(f"{node} {events.HOST_UNAVAILABLE} {delivery}: {how}")
 
 
@@ -130,7 +135,8 @@ def _answered(hub, node: str, jobs: list[dict], replies: dict[str, dict]) -> Non
     line = f"{node} is back after {_ago(record['down_since'])}; " + \
         (f"runs {', '.join(going)} continue\n" if going else "no run continues\n")
     told = [job for job in map(hub.store.load, record.get("runs") or []) if job]
-    how = _tell(hub, told, line, f"host.back-{node}", None)
+    how = _tell(hub, hub.store.load_node(node), told, line, f"host.back-{node}", None,
+                key=f"{record['notified_outage']}:back")
     hub.store.log(f"{node} back after the outage {record['notified_outage']}: {how}")
 
 
@@ -145,25 +151,56 @@ def _back_under_watch(hub, task_id: str, node: str, reply: dict) -> None:
         hub.store.receipt(task_id, "host_back", host=node, state=reply.get("state"), run=reply.get("run"))
 
 
-def _tell(hub, jobs: list[dict], text: str, tag: str, payload: dict | None) -> str:
-    """*text* once to each agent whose runs these are (a run on a Hermes card is told on its card only) and once on
-    each of their cards."""
-    agents: dict[str, dict] = {}
-    cards: dict[str, tuple[dict, list[str]]] = {}
+def _tell(hub, record: dict, jobs: list[dict], text: str, tag: str, payload: dict | None, *, key: str,
+          delivery: str | None = None) -> str:
+    """*text* queued on the node *record* (``pending``, under *key* and each place it goes), once to each agent whose
+    runs these are (a run on a Hermes card is told on its card only) and once on each of their cards, then sent."""
+    pending, runs = record.setdefault("pending", {}), [job["id"] for job in jobs]
     for job in jobs:
+        common = {"text": text, "tag": tag, "delivery": delivery, "runs": runs}
         if not kanban_link.on_hermes(job.get("card")):
-            agents.setdefault(job["bot"], job)
+            pending.setdefault(f"{key} agent:{job['bot']}", {**common, "job": job["id"]})
         if job.get("card"):
-            cards.setdefault(kanban_link.card_key(job["card"]), (job["card"], []))[1].append(job["id"])
-    said = [hub._deliver(job, text, tag) for job in agents.values()]
-    for card, runs in cards.values():
-        try:
-            kanban_link.record_host(card, kanban_link.config(hub.worker), text,
-                                    {**payload, "run_ids": runs} if payload else None)
-        except (ValueError, OSError, kanban_link.CardLinkError) as exc:
-            for run in runs:
-                hub.store.receipt(run, "card_notice_failed", step=tag, error=str(exc)[:300])
-            said.append(f"card {card['task']}: failed ({str(exc)[:120]})")
-            continue
-        said.append(f"card {card['task']}")
-    return "; ".join(said)
+            pending.setdefault(f"{key} card:{kanban_link.card_key(job['card'])}",
+                               {**common, "card": job["card"], "card_runs": [], "payload": payload}
+                               )["card_runs"].append(job["id"])
+    hub.store.save_node(record)
+    return _flush(hub, record)
+
+
+def _flush(hub, record: dict) -> str:
+    """Send each notice still queued on the node *record*, dropping each one that went out; a failed one stays for the
+    next tick. An outage whose every place was told is done (``deliveries.jsonl``, a ``notified`` receipt per run)."""
+    said: dict[str | None, list[str]] = {}
+    runs: dict[str, list[str]] = {}
+    for name, item in list(record["pending"].items()):
+        how, sent = _send(hub, item)
+        said.setdefault(item["delivery"], []).append(how)
+        if sent:
+            del record["pending"][name]
+            hub.store.save_node(record)
+            runs[item["delivery"]] = item["runs"]
+    left = {item["delivery"] for item in record["pending"].values()}
+    for delivery in [delivery for delivery in runs if delivery and delivery not in left]:
+        events.record(hub.store, delivery, node=record["node"], runs=runs[delivery])
+        for run in runs[delivery]:
+            hub.store.receipt(run, "notified", how="; ".join(said[delivery])[:200], state="unknown", run="x",
+                              delivery=delivery, **events.fields("unknown"))
+    return "; ".join(how for hows in said.values() for how in hows)
+
+
+def _send(hub, item: dict) -> tuple[str, bool]:
+    """One queued notice to its agent's chat or its card: how it went, and whether it went out."""
+    if "card" not in item:
+        job = hub.store.load(item["job"])
+        how = hub._deliver(job, item["text"], item["tag"]) if job else f"{item['job']}: no job record"
+        return how, not how.startswith("notice command failed")
+    card = item["card"]
+    try:
+        kanban_link.record_host(card, kanban_link.config(hub.worker), item["text"],
+                                {**item["payload"], "run_ids": item["card_runs"]} if item["payload"] else None)
+    except (ValueError, OSError, kanban_link.CardLinkError) as exc:
+        for run in item["card_runs"]:
+            hub.store.receipt(run, "card_notice_failed", step=item["tag"], error=str(exc)[:300])
+        return f"card {card['task']}: failed ({str(exc)[:120]}), retried on the next tick", False
+    return f"card {card['task']}", True

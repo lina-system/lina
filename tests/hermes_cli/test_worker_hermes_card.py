@@ -311,6 +311,18 @@ def test_a_retried_fetch_that_finds_a_later_run_does_not_label_its_results_as_th
     assert not hub.store.load(run).get("card_pending")
 
 
+def test_a_held_end_resumed_after_the_next_run_started_does_not_attach_that_runs_report(on_a_device):
+    hub, run, results, calls = on_a_device
+    results += [OSError("no space left on device"), ("run 2 report\n", 2)]
+    with pytest.raises(OSError):
+        hub.notify(run, "done", "1")  # run 1's notice could not be built: its end is held
+    hub.store.update(run, runs=2, state="running")  # `send` started run 2, whose results the device holds now
+    hub.tick()
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
+    assert _attached(calls()) == []
+    assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[1]["argv"][-1]
+
+
 def test_a_run_with_no_report_completes_without_an_attachment(on_a_device):
     hub, run, results, calls = on_a_device
     results.append(None)

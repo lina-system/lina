@@ -936,10 +936,11 @@ class Hub:
             how = "waiter"
         else:
             self.fetched = None
-            text, _ = self._notice_body(job, kind, run)  # reloads the job: read what is held after it
-            job["notice"] = text
+            text, out_dir = self._notice_body(job, kind, run)  # reloads the job: read what is held after it
+            replaced = _replaced_line(out_dir, run, self.fetched)  # a held end resumed after a later run started
+            job["notice"] = text = text + replaced
             if kanban_link.on_hermes(job.get("card")):
-                self._card_stage(job, kind, run, text, self.fetched, delivery)
+                self._card_stage(job, kind, run, text, self.fetched, delivery, report=not replaced)
                 how = f"card {job['card']['task']}: staged"
             else:
                 self.store.save(job)
@@ -983,14 +984,15 @@ class Hub:
             else None
         return notice.deliver(job, text, tag, self.store.notices, command)
 
-    def _card_stage(self, job: dict, kind: str, run: str, text: str, fetched: bool | None, delivery: str) -> None:
+    def _card_stage(self, job: dict, kind: str, run: str, text: str, fetched: bool | None, delivery: str, *,
+                    report: bool) -> None:
         """A run's end on its Hermes card as card work (``card_pending``, under its delivery id; the caller saves it):
         its result fetch when that failed, then ``kanban_link.END_STEPS``, with this run's own report.md kept aside
-        for the attachment."""
+        for the attachment (none when *report* is False: the results are a later run's)."""
         job.setdefault("card_pending", {})[delivery] = {
             "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
             "fetch_tries": 1 if fetched is False else 0, "delivery": delivery,
-            "report": None if fetched is False else self._report_snapshot(job, delivery)}
+            "report": self._report_snapshot(job, delivery) if report and fetched is not False else None}
 
     def _card_end(self, job: dict, kind: str, run: str, text: str, *, delivery: str) -> str:
         """A run's end on its LINA card: the board's event and comment."""
@@ -1053,11 +1055,9 @@ class Hub:
         self.fetched = None
         text, out_dir = self._notice_body(job, kind, run)  # reloads the job: read the entry after it
         entry = job["card_pending"][marker]
-        fetched_run = (read_json(out_dir / "manifest.json", {}) or {}).get("run")
-        if self.fetched and fetched_run is not None and str(fetched_run) != str(run):
+        if replaced := _replaced_line(out_dir, run, self.fetched):
             entry["fetch_pending"] = False
-            entry["text"] += (f"- Run {run}'s results were replaced by a later run before they could be fetched, so no "
-                              "report is attached.\n")
+            entry["text"] += replaced
         elif self.fetched:
             entry.update(text=text, fetch_pending=False, report=self._report_snapshot(job, marker))
         else:
@@ -1242,6 +1242,16 @@ class Hub:
         how = self._card_steps(job, end["delivery"])
         self.store.receipt(job["id"], "notified", how=how[:200], state="human", run=run, delivery=end["delivery"],
                            **events.fields("human"))
+
+
+def _replaced_line(out_dir: Path, run: str, fetched: bool | None) -> str:
+    """The line an end of run *run* carries when the results just fetched are a later run's (the device keeps only its
+    latest run's results); "" when they are this run's or nothing was fetched."""
+    fetched_run = (read_json(out_dir / "manifest.json", {}) or {}).get("run")
+    if not fetched or fetched_run is None or str(fetched_run) == str(run):
+        return ""
+    return (f"- Run {run}'s results were replaced by a later run before they could be fetched, so no report is "
+            "attached.\n")
 
 
 def _private_lines(paths: list[str]) -> str:
