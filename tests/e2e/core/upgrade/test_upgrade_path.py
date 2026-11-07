@@ -413,6 +413,7 @@ def db_fingerprint(db: Path) -> dict:
         sessions = {r[0] for r in con.execute("SELECT id FROM sessions")}
         msg_cols = {r[1] for r in con.execute("PRAGMA table_info(messages)")}
         key_cols = [c for c in ("id", "session_id", "role", "content") if c in msg_cols]
+        # Pre-v33 N-1 install: v33 leaves that messages table untouched (import is lina#24).
         rows = con.execute(f"SELECT {', '.join(key_cols)} FROM messages ORDER BY id").fetchall()
     finally:
         con.close()

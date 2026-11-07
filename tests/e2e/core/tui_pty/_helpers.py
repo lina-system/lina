@@ -538,21 +538,27 @@ class TmuxTui:
     # -- persisted state -------------------------------------------------------------------------
 
     def db_rows(self, sql: str, args: tuple = ()) -> list[tuple]:
+        """Read state.db through SessionDB so ``msg_text`` resolves transcript text.
+
+        A missing or locked database during early polls returns ``[]``."""
         db = self.hermes_home / "state.db"
         if not db.exists():
             return []
-        conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True, timeout=10)
+        from hermes_state import SessionDB
+
         try:
-            return conn.execute(sql, args).fetchall()
+            with SessionDB(db_path=db, read_only=True) as state:
+                return [tuple(row) for row in state._read_all(sql, args)]
         except sqlite3.OperationalError:
             return []
-        finally:
-            conn.close()
 
     def messages(self) -> list[tuple[str, str, str]]:
         """(session_id, role, content) for active user/assistant rows, in insertion order."""
+        from hermes_state_store import text_sql
+
+        content = text_sql("content")
         return [(str(s), str(r), str(c or "")) for s, r, c in self.db_rows(
-            "SELECT session_id, role, content FROM messages "
+            f"SELECT session_id, role, {content} FROM transcript_rows "
             "WHERE role IN ('user','assistant') AND active = 1 ORDER BY id")]
 
     def wait_replies(self, n: int, timeout: float = 90.0) -> None:

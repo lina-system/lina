@@ -178,6 +178,61 @@ def test_symlink_inputs_are_rejected(tmp_path: Path, kind: str) -> None:
     assert not (work / "snapshot").exists()
 
 
+def test_symlinked_inventory_entries_are_skipped_without_reading_targets(tmp_path: Path) -> None:
+    # Given a named profile whose skills and personas hold links to an unreadable outside tree.
+    home, work = tmp_path / "source", tmp_path / "work"
+    profile = home / "profiles/alpha"
+    database(profile / "state.db")
+    (profile / "skills/own").mkdir(parents=True)
+    (profile / "skills/own/SKILL.md").write_text("own skill")
+    (profile / "personas").mkdir()
+    locked = tmp_path / "locked"
+    (locked / "shared").mkdir(parents=True)
+    (locked / "shared/SKILL.md").write_text("outside")
+    (profile / "skills/shared").symlink_to(locked / "shared", target_is_directory=True)
+    (profile / "skills/own/linked.md").symlink_to(locked / "shared/SKILL.md")
+    (profile / "personas/alternate.md").symlink_to(locked / "missing.md")
+    locked.chmod(0)
+    try:
+        # When the profile is snapshotted and then retried.
+        first = snapshot(home, "alpha", work)
+        second = snapshot(home, "alpha", work)
+    finally:
+        locked.chmod(0o700)
+
+    # Then links are listed relative to the profile, never followed, and the rest is copied.
+    expected = ("personas/alternate.md", "skills/own/linked.md", "skills/shared")
+    assert sorted(first.skipped_symlinks) == list(expected)
+    assert second == first
+    assert (first.profile_dir / "skills/own/SKILL.md").read_text() == "own skill"
+    copied = {row.destination.relative_to(first.profile_dir).as_posix() for row in first.receipt}
+    assert copied == {"skills/own/SKILL.md", "state.db"}
+    assert not any((first.profile_dir / name).exists() for name in expected)
+
+
+@pytest.mark.parametrize("kind", ["state", "lcm", "profile"])
+def test_symlinked_top_level_inputs_are_still_rejected(tmp_path: Path, kind: str) -> None:
+    # Given a named profile whose database or directory itself is a link.
+    home, work = tmp_path / "source", tmp_path / "work"
+    real = tmp_path / "real"
+    database(real / "state.db")
+    database(real / "lcm.db")
+    profile = home / "profiles/alpha"
+    profile.parent.mkdir(parents=True)
+    if kind == "profile":
+        profile.symlink_to(real, target_is_directory=True)
+    else:
+        profile.mkdir()
+        database(profile / "state.db")
+        (profile / f"{kind}.db").unlink(missing_ok=True)
+        (profile / f"{kind}.db").symlink_to(real / f"{kind}.db")
+
+    # When snapshotting, then the whole profile is refused before publication.
+    with pytest.raises(SnapshotError, match="symlinks"):
+        snapshot(home, "alpha", work)
+    assert not (work / "snapshot").exists()
+
+
 @pytest.mark.parametrize("profile", ["../alpha", "/alpha", "alpha/beta", "..", ""])
 def test_profile_traversal_is_rejected(tmp_path: Path, profile: str) -> None:
     database(tmp_path / "source/state.db")

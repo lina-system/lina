@@ -64,9 +64,16 @@ class Fakes:
         self.accounts: list[dict] = []
         self.ocx_error: str | None = None
         monkeypatch.setattr(lina_ocx, "lina_root", lambda: work.root)
-        from hermes_cli.worker import bidding, hub
+        from hermes_cli.worker import hub
         monkeypatch.setattr(hub.Hub, "meta", lambda _hub, job, live=False: self.live.get(job["id"], {"state": "running"}))
-        monkeypatch.setattr(bidding, "probe_all", lambda devs, root, repo, runner: self.probes[:len(devs)])
+        from hermes_cli import lina_board_devices, lina_devices
+        names = ["build-a", "here"]
+        monkeypatch.setattr(lina_board_devices, "for_device",
+                            lambda dev, root: _Contact(lambda: self.probes[names.index(dev.name)]))
+        monkeypatch.setattr(lina_devices, "omo_status", lambda dev: {"current": None})
+        monkeypatch.setattr(lina_board_devices, "_spawn", lambda work: work())
+        lina_board_devices.OMO.reset()
+        lina_board_devices.PERSON.reset()
         from hermes_cli import lina_models
         monkeypatch.setattr(lina_models, "query", self._query)
 
@@ -86,6 +93,22 @@ class Fakes:
         if ended is not None:
             with (self.hub / "receipts.jsonl").open("a", encoding="utf-8") as fh:
                 fh.write(json.dumps({"at": "", "ts": ended, "task": tid, "kind": "exec_end", "state": state}) + "\n")
+
+
+class _Contact:
+    """A node's negotiated contact: ``hello`` (no runner rows) and then ``probe``; a probe with an ``error`` is a
+    node ssh could not reach."""
+
+    def __init__(self, probe):
+        self.probe, self.descriptor = probe, None
+
+    def call(self, verb, stdin=b"", timeout=120):
+        from hermes_cli.worker.transport import Reply
+        probe = self.probe()
+        if "error" in probe:
+            return Reply(255, b"", probe["error"])
+        self.descriptor = {"protocol": {"min": 1, "max": 1}, "capabilities": {"runners": []}}
+        return Reply(0, json.dumps(probe).encode())
 
 
 @pytest.fixture

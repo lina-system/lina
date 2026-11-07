@@ -5,7 +5,9 @@ API (schema: ``docs/api/board-client.yaml``).
 parts for polling them on their own (the device probe and the OCX read are the slow ones). ``/api/lina/work/items``
 and ``/api/lina/work/items/{id}`` (lina#166) serve the goals and to-dos with their comments, runs and links;
 ``/api/lina/work/runs/{id}/record`` (lina#201) one worker run's record, round by round; ``/api/lina/status/checks``
-(lina#233) the hub's own health checks from ``<LINA root>/status/*.json`` (``lina_status.py``). Like
+(lina#233) the hub's own health checks from ``<LINA root>/status/*.json`` (``lina_status.py``). ``POST
+/api/lina/devices/{name}/restart`` and ``…/sign-in`` (lina#234) are the owner's device actions, behind the work
+settings' owner-device gate. Like
 ``lina_models.py`` every response carries an ``ETag`` and a matching ``If-None-Match`` answers 304; the tag leaves out
 the snapshot time ``at``, so it changes only when the data does. Mounted through ``lina_models.router``, so the
 dashboard's auth gate applies the same way.
@@ -139,6 +141,41 @@ async def lina_events(ws: WebSocket):
 async def lina_devices(if_none_match: Optional[str] = Header(default=None)):
     from hermes_cli.lina_board import devices
     return await _serve(devices, if_none_match)
+
+
+async def _device_action(request: Request, act: Callable[[object, dict, object], dict], status: int) -> Response:
+    """An owner's device action (lina#234): the owner-device gate of the work settings first, then the action;
+    a refusal is a 4xx/5xx with one line."""
+    from hermes_cli.lina_board_devices import Refused
+    from hermes_cli.lina_work_settings_gate import GATE
+    from hermes_cli.web_routers.lina_work_settings import _base, _peer
+    base = _base()
+    by, refused, reason = await run_in_threadpool(GATE.check, _peer(request), base)
+    if by is None:
+        raise HTTPException(status_code=refused, detail=reason)
+    raw = await request.body()
+    try:
+        body = json.loads(raw) if raw.strip() else None
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail="the body is not JSON") from exc
+    try:
+        result = await run_in_threadpool(act, body, by, base)
+    except Refused as exc:
+        raise HTTPException(status_code=exc.status, detail=exc.detail) from exc
+    return Response(content=json.dumps(result, ensure_ascii=False), status_code=status,
+                    media_type="application/json")
+
+
+@router.post("/api/lina/devices/{name}/restart")
+async def lina_device_restart(name: str, request: Request):
+    from hermes_cli.lina_board_devices import restart
+    return await _device_action(request, lambda body, by, base: restart(name, body, by, base), 200)
+
+
+@router.post("/api/lina/devices/{name}/sign-in")
+async def lina_device_sign_in(name: str, request: Request):
+    from hermes_cli.lina_board_devices import sign_in
+    return await _device_action(request, lambda body, by, base: sign_in(name, body, by, base), 202)
 
 
 @router.get("/api/lina/quota")

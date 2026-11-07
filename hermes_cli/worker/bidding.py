@@ -5,6 +5,8 @@ exists, and a slot is free under the device's cap. The score is (running / cap, 
 core); lowest wins within the first available integer ``last`` tier (false/absent = 0, true = 1).
 ``no_repo`` never takes a task with a repo,
 ``auto: false`` takes work only when named with ``--host``. When nobody can, the task waits in the hub's queue.
+Roles: only ``work`` devices are bid on; a ``files`` device takes work only by ``--host`` and never with a repo;
+a ``person`` device never takes work.
 """
 
 from __future__ import annotations
@@ -12,7 +14,18 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
-from hermes_cli.worker.settings import Device
+from hermes_cli.worker.settings import FILE_KIND, ROLES, Device
+
+
+def role_refusal(dev: Device, repo: str | None) -> str | None:
+    """Why *dev* takes no task (with *repo*) whatever its probe says, even when named with ``--host``."""
+    if dev.role not in ROLES:
+        return f"role {dev.role!r} is not one of {'|'.join(ROLES)}: takes no work"
+    if dev.role == "person":
+        return "role person: takes no work"
+    if repo and (dev.role == "files" or dev.kind == FILE_KIND):
+        return "a file node takes no repository work"
+    return None
 
 
 def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
@@ -20,10 +33,13 @@ def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
     """Why *dev* cannot take the task now, or None when it can."""
     checks = (
         (bool(probe.get("protocol_error")), probe.get("reason")),
+        (bool(refused := role_refusal(dev, repo)), refused),
         (not manual and not dev.auto, "only when named with --host"),
         (bool(repo) and dev.no_repo, "takes no repo work"),
         ("error" in probe, f"unreachable: {probe.get('error')}"),
         (not probe.get("ready"), probe.get("why") or "runner not ready"),
+        # after readiness, so `lina devices` (which drops this reason) still shows why a file node cannot run
+        (not manual and dev.role != "work", "only when named with --host"),
         (not probe.get("serve"), "lina worker serve is not running"),
         (int(probe.get("free_gb") or 0) < min_free_gb, f"disk {probe.get('free_gb')}GB < {min_free_gb}GB"),
         (not probe.get("repo", True), "repo path missing"),
@@ -91,6 +107,6 @@ def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, 
 
 def bid(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str, min_free_gb: int = 5,
         manual: bool = False, access: str | None = None) -> tuple[Device | None, list[dict]]:
-    pool = [dev for dev in candidates if manual or dev.auto]
+    pool = [dev for dev in candidates if manual or (dev.auto and dev.role == "work")]
     return choose(pool, probe_all(pool, worker_root, repo=repo, runner=runner, access=access), repo=repo,
                   min_free_gb=min_free_gb, manual=manual)
