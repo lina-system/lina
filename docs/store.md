@@ -40,7 +40,7 @@ its settings are under the LINA root, not a profile home, in `store/`:
 | Role | Used by | Can |
 | --- | --- | --- |
 | `lina` | `lina store` (over the container's local socket) | everything (cluster superuser) |
-| `lina_app` | agents | read and write its agent's rows in `memory`, `ctx` and `vec`; also read shared `memory.messages` rows with `scope = 'agents'` |
+| `lina_app` | agents | read and write its agent's rows in `memory`, `ctx` and `vec`; also read shared `memory.messages` rows with `scope = 'agents'` and their `vec` chunks (owner `*`) |
 | `honcho` | the Honcho server | own schema `ltm` and migrate it; SELECT and INSERT on `memory.messages`, REFERENCES on its `message_id`, and USAGE on schema `memory`; read and write its own vectors (kinds `message` and `document`) in `vec.embeddings`, nothing else in `vec` |
 
 Every table in `memory`, `ctx`, `ltm` or `vec` that has an `agent_id` column gets row-level
@@ -67,6 +67,13 @@ Migration 0005 adds a permissive **SELECT-only** policy on `memory.messages` for
 These owner-level external rows have NULL `agent_id`: every agent can read them, including a session with
 no agent set, but the existing write policy still rejects inserting or changing NULL/another agent's rows.
 The extra SELECT policy does not grant INSERT, UPDATE or DELETE access.
+
+Migration 0009 does the same for their vectors. `lina store reembed --source messages` writes the `vec.chunks` row
+and `chunk` vector of such a row with the shared owner `*` as `agent_id` (`hermes_state_store.SHARED_VECTOR_OWNER`),
+which is not a profile name, so no agent's `lina_agent_rows` matches it for a write. The SELECT-only policies
+`lina_shared_chunks` (`vec.chunks`) and `lina_shared_chunk_vectors` (`vec.embeddings`, kind `chunk`) let every
+agent read rows with that owner, so an agent's vector search finds the shared external messages beside its own rows.
+The migration also gives that owner to such vectors written before it with the owner `'None'`.
 ## Migrations
 
 Honcho migrates `ltm` itself. Schemas `memory`, `ctx` and `vec` belong to LINA: each
@@ -498,7 +505,7 @@ lina memory eval-search --questions <file.jsonl> [--honcho-url http://127.0.0.1:
 ```
 
 `reembed` runs as the store owner, goes through `memory.messages` (`agent`: roles user and assistant;
-`messages`: external messages) and Honcho's conclusions in id order, a batch per transaction (`--batch-size`,
+`messages`: external messages, whose vectors take the shared owner `*`) and Honcho's conclusions in id order, a batch per transaction (`--batch-size`,
 default `embedding.batch_size`), and records the last id of each batch, so a stopped run continues where it
 stopped (`--from-start` starts over). It prints a line per batch and the counts per source. Renaming a profile moves its
 `vec.chunks` rows and their `chunk` vectors to the new agent with its messages, in the same transaction (and back
@@ -506,7 +513,7 @@ when the rename fails); `hermes profile migrate-identity` moves any a rename lef
 
 `eval-search` scores the top-5 hit rate per source: today's search of each source (the store's full-text search
 for `agent` and `messages`, Honcho's conclusion search for `memory`) against one vector search over all of the
-agent's rows in `vec.embeddings`. A line of the questions file is
+agent's rows in `vec.embeddings`, its Honcho workspace's and the shared external messages' (owner `*`). A line of the questions file is
 `{"id", "source", "agent", "question", "expected": [refs], "honcho": {"workspace", "observer", "observed"}}`;
 a ref is a `memory.messages` uid or a Honcho conclusion id. A synthetic set (36 questions over a 48-item corpus)
 is in `tests/fixtures/memory_eval/`.
