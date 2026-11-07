@@ -437,6 +437,22 @@ def test_a_placement_reset_while_an_outage_notice_goes_out_stays(far, monkeypatc
     assert f"- {second} · " in again
 
 
+def test_an_outage_notice_still_queued_when_its_node_is_reset_is_dropped_unsent(far, monkeypatch):
+    far.run(1)
+    delivery = f"far:host.unavailable:{int(START)}"
+    _chat_fails_once(far, monkeypatch)
+    far.down = True
+    far.tick(3)
+    assert far.chats() == [] and far.hub.store.load_node("far")["pending"]
+
+    node_watch.reset(far.hub.store, "far")  # a placement is published on the node before the next tick
+    far.tick()
+
+    assert far.chats() == []
+    assert not far.hub.store.load_node("far").get("pending")
+    assert not events.done(far.hub.store, delivery)
+
+
 def test_a_late_retry_of_an_earlier_runs_end_leaves_the_run_going_now(far):
     task_id = far.run(1)
     unsaved = far.hub.store.load(task_id)
