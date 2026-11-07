@@ -288,8 +288,9 @@ def test_symlink_escape_is_denied(lane):
 @pytest.mark.parametrize("command", ["python -m pytest -q", "git commit -m x", "npm run build"])
 @pytest.mark.parametrize("mode,cwd,allowed", [
     ("workspace-write", ".", True), ("workspace-write", "..", False),
-    ("workspace-write", "", False), ("workspace-write", None, False),
-    ("read-only", ".", False),
+    ("workspace-write", "", True), ("workspace-write", None, True),
+    ("read-only", ".", False), ("read-only", None, False), ("read-only", "..", False),
+    ("full", None, True), ("full", "..", True),
 ])
 def test_execution_uses_access_and_working_directory(lane, command, mode, cwd, allowed):
     create, wait, _ = lane
@@ -299,3 +300,12 @@ def test_execution_uses_access_and_working_directory(lane, command, mode, cwd, a
     runner, handle, _ = create(mode=mode, prompt="permission:" + json.dumps(call))
     wait(runner, handle, "done")
     assert (handle.task.work / "allowed.txt").exists() == allowed
+    opened = next(row for row in wire(handle) if row.get("method") == "session/new")
+    assert opened["params"]["cwd"] == str(handle.task.work.resolve())
+    reply = next(row for row in wire(handle) if row.get("id") == "permission")
+    assert reply["result"]["outcome"]["optionId"] == ("once" if allowed else "no")
+    events = [json.loads(line) for line in handle.task.path("events.1.jsonl").read_text(encoding="utf-8-sig").splitlines()]
+    event = next(row for row in events if row["kind"].startswith("permission_"))
+    assert event["kind"] == ("permission_allowed" if allowed else "permission_denied")
+    assert event["raw_keys"] == list(call["rawInput"])
+    assert command not in json.dumps(event)
