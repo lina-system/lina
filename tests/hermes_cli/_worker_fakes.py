@@ -34,7 +34,10 @@ with open(os.path.join(fake, "calls.jsonl"), "a") as fh:
 def load():
     return json.load(open(state_file)) if os.path.exists(state_file) else {{}}
 def save(s):
-    json.dump(s, open(state_file, "w"))
+    temporary = state_file + "." + str(os.getpid()) + ".tmp"
+    with open(temporary, "w") as fh:
+        json.dump(s, fh)
+    os.replace(temporary, state_file)
 def say(o):
     print(json.dumps(o))
     sys.exit(0)
@@ -103,11 +106,16 @@ say({{"action": "error", "reason": "usage", "detail": " ".join(args)}})
 '''
 
 RPC_CLIENT_JS = """
-import { readFileSync, writeFileSync, appendFileSync } from "node:fs";
+import { readFileSync, writeFileSync, appendFileSync, renameSync } from "node:fs";
 import { join } from "node:path";
 const fake = process.env.FAKE_OMO_DIR;
 const stateFile = join(fake, "state.json");
 const load = () => JSON.parse(readFileSync(stateFile, "utf8"));
+const save = (s) => {
+  const temporary = `${stateFile}.${process.pid}.tmp`;
+  writeFileSync(temporary, JSON.stringify(s));
+  renameSync(temporary, stateFile);
+};
 export class RpcClient {
   constructor(options) { appendFileSync(join(fake, "rpc.jsonl"), JSON.stringify({ new: options }) + "\\n"); }
   async start() {}
@@ -116,13 +124,13 @@ export class RpcClient {
     appendFileSync(join(fake, "rpc.jsonl"), JSON.stringify({ openSession: options }) + "\\n");
     if (options.sessionPath) return {};
     const scenario = JSON.parse(readFileSync(join(fake, "scenario.json"), "utf8"));
-    writeFileSync(stateFile, JSON.stringify({ phase: scenario.first, cwd: options.cwd, prompts: [], opened: options,
-                                            opened_at: new Date().toISOString() }));
+    save({ phase: scenario.first, cwd: options.cwd, prompts: [], opened: options,
+           opened_at: new Date().toISOString() });
     return { sessionId: "host-1", state: { sessionFile: "/fake/ses.jsonl", sessionId: "ses-fake-1", cwd: options.cwd,
              model: { provider: options.provider, id: options.modelId }, thinkingLevel: options.thinkingLevel } };
   }
-  async setSessionName(name) { const s = load(); s.name = name; writeFileSync(stateFile, JSON.stringify(s)); }
-  async prompt(text) { const s = load(); s.prompts.push(text); writeFileSync(stateFile, JSON.stringify(s)); return "accepted"; }
+  async setSessionName(name) { const s = load(); s.name = name; save(s); }
+  async prompt(text) { const s = load(); s.prompts.push(text); save(s); return "accepted"; }
   async getState() {
     const s = load();
     const open = s.phase === "question";
@@ -134,8 +142,8 @@ export class RpcClient {
     const s = load();
     if (process.env.FAKE_ANSWER_REFUSED !== "1") s.phase = "answered";
     s.materialized = false;
-    writeFileSync(stateFile, JSON.stringify(s));
-    if (process.env.FAKE_ANSWER_REFUSED === "1") { s.phase = "question"; writeFileSync(stateFile, JSON.stringify(s)); }
+    save(s);
+    if (process.env.FAKE_ANSWER_REFUSED === "1") { s.phase = "question"; save(s); }
   }
 }
 """
