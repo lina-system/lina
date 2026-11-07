@@ -162,11 +162,16 @@ event it waits for recorded on its `scheduled` event (`wait_for`): another card 
 card's result, a PR's required checks finished, or a time. Each dispatcher tick checks that event
 and unblocks the card once when it happens. A worker records the same by hand with
 `hermes kanban schedule <id> --wait-for card:<id>|review:<id>|pr:<url>|until:<time>`, or
-`hermes kanban block <id> --wait-for ...` (a `needs_input` block that returns to ready by
-itself); a `needs_input` block without `--wait-for` waits for a person. A spent `max_turns`,
-`max_runtime` or agent iteration budget is a planned stop: the run leaves a handoff comment and the
-card goes back to ready without counting toward `max_retries`. After `kanban.planned_stop_limit`
-(default 5) planned stops in a row the card is blocked `needs_input` for a person.
+`hermes kanban block <id> --wait-for ...` or the `kanban_block` tool's `wait_for` (a `needs_input`
+block that returns to ready by itself); a `needs_input` block without one waits for a person. A
+manual schedule from a reviewer run returns to review on unblock. A wait that can no longer be met
+becomes a `needs_input` block naming why, once: its upstream card was archived unfinished or
+deleted, or the wait could not be read 30 ticks in a row (for example a gh login that cannot read
+the PR's repository). A spent `max_turns`, `max_runtime` or agent iteration budget is a planned
+stop: the run leaves a handoff comment and the card goes back to ready without counting toward
+`max_retries`. After `kanban.planned_stop_limit` (default 5) planned stops in a row, or
+`kanban.planned_stop_total_limit` (default 20) since the card was last held for a person with waits
+between them, the card is blocked `needs_input` for a person.
 
 ## Procedure
 
