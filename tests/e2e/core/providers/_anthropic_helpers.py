@@ -106,10 +106,13 @@ class Rig:
             return [r[0] for r in db.execute("select id from sessions order by started_at")]
 
     def messages(self, session_id: str) -> list[dict[str, Any]]:
-        with self._db() as db:
-            db.row_factory = sqlite3.Row
-            return [dict(r) for r in db.execute(
-                "select * from messages where session_id = ? order by id", (session_id,))]
+        from hermes_state import SessionDB
+        from hermes_state_store import text_columns_sql
+
+        with SessionDB(db_path=self.hermes_home / "state.db", read_only=True) as db:
+            return [dict(r) for r in db._read_all(
+                f"SELECT *, {text_columns_sql()} FROM transcript_rows WHERE session_id = ? ORDER BY id",
+                (session_id,))]
 
 
 def hermes_argv(*args: str) -> list[str]:

@@ -1887,11 +1887,11 @@ DEFAULT_CONFIG = {
         # the same task/profile. Reassignment resets the streak.
         "failure_limit": 2,
         # A run that ends at its turn budget, runtime limit or iteration budget is a planned stop:
-        # re-queued with a handoff, never counted above. After this many planned stops in a row
-        # without the card finishing, the card is blocked (needs_input) for a person.
+        # re-queued with a handoff, never counted above. Blocked (needs_input) for a person after
+        # planned_stop_limit in a row, or planned_stop_total_limit since last held, waits between.
         "planned_stop_limit": 5,
-        # Worker stdout/stderr log rotation at spawn time (2 MiB + one backup). Raise to keep more
-        # early failure evidence from long-running workers.
+        "planned_stop_total_limit": 20,
+        # Worker stdout/stderr log rotation at spawn time (2 MiB + one backup); raise for more.
         "worker_log_rotate_bytes": 2 * 1024 * 1024,
         "worker_log_backup_count": 1,
         # Profile for the root/orchestration task after Triage decomposition; "" = default profile.

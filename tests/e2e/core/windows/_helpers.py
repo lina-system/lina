@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import json
 import os
-import sqlite3
 import subprocess
 import sys
 import time
@@ -209,18 +208,15 @@ def parse_tool_json(result: str) -> dict[str, Any]:
 # state.db --------------------------------------------------------------------
 
 
-def db_rows(home: WinHome, sql: str, params: Iterable[Any] = ()) -> list[sqlite3.Row]:
-    assert home.db_path.exists(), f"no state.db at {home.db_path}"
-    conn = sqlite3.connect(f"file:{home.db_path.as_posix()}?mode=ro", uri=True, timeout=30)
-    conn.row_factory = sqlite3.Row
-    try:
-        return list(conn.execute(sql, tuple(params)))
-    finally:
-        conn.close()
+def persisted_messages(home: WinHome) -> list[dict[str, Any]]:
+    """Session rows through SessionDB; text comes from the memory store."""
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
 
-
-def persisted_messages(home: WinHome) -> list[sqlite3.Row]:
-    return db_rows(home, "SELECT session_id, role, content FROM messages ORDER BY id")
+    content = text_sql("content")
+    with SessionDB(db_path=home.db_path, read_only=True) as db:
+        return [dict(r) for r in db._read_all(
+            f"SELECT session_id, role, {content} AS content FROM transcript_rows ORDER BY id")]
 
 
 # Processes -------------------------------------------------------------------

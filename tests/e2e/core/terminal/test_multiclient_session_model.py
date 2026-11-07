@@ -34,8 +34,11 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from hermes_state_store import text_sql
 from tests.e2e.core.terminal._gateway_client import Backend, RpcError, WSClient, etype, poll_until
 from tests.fakes.fake_llm_provider import Text
+
+_CONTENT = text_sql("content")
 
 # Not marked ``integration`` (that marker means external services and is deselected by addopts): the backend is
 # loopback-only. ``tests/e2e`` is outside default discovery; run with ``scripts/run_tests.sh --include-integration``.
@@ -232,7 +235,7 @@ class Model:
 
     def db_has_reply(self, turn: Turn) -> bool:
         return bool(self.be.db_rows(
-            "SELECT 1 FROM messages WHERE session_id=? AND role='assistant' AND content LIKE ?",
+            f"SELECT 1 FROM transcript_rows WHERE session_id=? AND role='assistant' AND {_CONTENT} LIKE ?",
             (turn.key, f"%ACK {turn.canary} %DONE%")))
 
     def complete_frames(self, conn: WSClient, turn: Turn) -> list[dict]:
@@ -291,12 +294,12 @@ class Model:
             self.submit(slot, slow=False)
         key = slot.key
         assert slot.conn is not None and key is not None
-        before = self.be.db_rows("SELECT COUNT(*) FROM messages WHERE session_id=?", (key,))
+        before = self.be.db_rows("SELECT COUNT(*) FROM transcript_rows WHERE session_id=?", (key,))
         frame = slot.conn.request("session.delete", {"session_id": key})
         assert "error" in frame, f"session.delete of LIVE session {key} succeeded: {frame}"
         assert self.be.db_rows("SELECT COUNT(*) FROM sessions WHERE id=?", (key,)) == [(1,)], (
             f"refused delete still removed live session {key}")
-        after = self.be.db_rows("SELECT COUNT(*) FROM messages WHERE session_id=?", (key,))
+        after = self.be.db_rows("SELECT COUNT(*) FROM transcript_rows WHERE session_id=?", (key,))
         assert after >= before, f"refused delete of {key} dropped messages: {before} -> {after}"
 
     def op_close_and_delete(self, slot: Slot) -> None:
@@ -317,7 +320,7 @@ class Model:
         slot.conn.call("session.delete", session_id=key)
         self.sessions[key].deleted = True
         assert self.be.db_rows("SELECT COUNT(*) FROM sessions WHERE id=?", (key,)) == [(0,)]
-        assert self.be.db_rows("SELECT COUNT(*) FROM messages WHERE session_id=?", (key,)) == [(0,)]
+        assert self.be.db_rows("SELECT COUNT(*) FROM transcript_rows WHERE session_id=?", (key,)) == [(0,)]
 
     def op_drop_mid_turn(self, slot: Slot) -> None:
         turn = self.op_prompt(slot, slow=True)
@@ -452,7 +455,9 @@ class Model:
                 self.wait_idle(key)
         prefix = f"cnry-s{self.seed}-"
         rows = self.be.db_rows(
-            "SELECT session_id, role, content FROM messages WHERE content LIKE ? ORDER BY id", (f"%{prefix}%",))
+            f"SELECT session_id, role, {_CONTENT} AS content FROM transcript_rows "
+            f"WHERE {_CONTENT} LIKE ? ORDER BY id",
+            (f"%{prefix}%",))
         user_by_key: dict[str, list[str]] = defaultdict(list)
         replies: Counter = Counter()
         full: Counter = Counter()
