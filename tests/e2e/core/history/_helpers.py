@@ -341,6 +341,9 @@ def child_env(home: Path, hermes_home: Path, workdir: Path) -> dict[str, str]:
         HERMES_STATE_DB_GUARD_BYPASS="1",
         PYTHONPATH=str(REPO_ROOT), PYTHONUNBUFFERED="1", NO_COLOR="1", TMPDIR=str(home),
         TZ="UTC", LANG="C.UTF-8", PYTHONHASHSEED="0",
+        # Never read the account's launchd/systemd for a loaded Hermes Agent gateway (lina#259): on a Mac that runs one,
+        # the one-shot child's gateway would refuse to serve (exit 78).
+        LINA_TEST_NO_HERMES_AGENT_GATEWAY="1",
     )
     return env
 
