@@ -201,13 +201,16 @@ def model_row(row: dict, accounts: list[dict]) -> dict:
 
 
 def _resolve(value: str | None, worker: dict) -> tuple[str, str] | None:
-    from hermes_cli.worker.models import parse
+    from hermes_cli.worker.models import canonical, parse
     from hermes_cli.worker.runners.base import RunnerError
     try:
         profile = parse(value or "", worker)
     except RunnerError:
         return None
-    return None if profile is None else (str(profile.provider), str(profile.id))
+    if profile is None:
+        return None
+    provider, model_id = canonical(profile.provider, profile.id)
+    return str(provider), str(model_id)
 
 
 def _state(value: str | None, worker: dict, rows: list[dict], accounts: list[dict], read_ok: bool) -> str | None:
@@ -216,7 +219,8 @@ def _state(value: str | None, worker: dict, rows: list[dict], accounts: list[dic
     ref = _resolve(value, worker)
     if ref is None or not read_ok:
         return "unknown"
-    row = next((r for r in rows if (r.get("provider"), r.get("id")) == ref), None)
+    from hermes_cli.worker.models import canonical
+    row = next((r for r in rows if canonical(r.get("provider"), r.get("id")) == ref), None)
     if row is None or _off(row):
         return "off"
     return model_row(row, accounts)["state"]
