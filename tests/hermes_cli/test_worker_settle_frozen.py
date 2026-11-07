@@ -21,7 +21,7 @@ def isolated_process_table(monkeypatch):
 
 
 def frozen_case(tmp_path, monkeypatch, *, now=1700, last_entry=1000, report_time=950, state="running",
-                streaming=True, background=None, stop="stop"):
+                streaming=True, background=None, stop="stop", obeys_abort=None):
     monkeypatch.setattr("hermes_cli.worker.runners.omo_settle.time.time", lambda: now)
     task = Task("OT-FROZEN", tmp_path)
     task.work.mkdir()
@@ -35,11 +35,11 @@ def frozen_case(tmp_path, monkeypatch, *, now=1700, last_entry=1000, report_time
     session = {"lifecycle": {"state": state, "waitingOn": {
         "background": DELIVERIES if background is None else background, "human": [], "children": 0}},
         "isStreaming": streaming, "pendingDialogs": [], "pendingQuestions": []}
-    calls = []
+    calls, obeys = [], [True] if obeys_abort is None else obeys_abort
 
     def call(argv, timeout):
         calls.append(argv[0])
-        if argv[0] == "abort":
+        if argv[0] == "abort" and obeys[0]:
             session.update(lifecycle={"state": "cancelled", "waitingOn": {}}, isStreaming=False)
         if argv[0] == "state":
             return {"action": "state", "state": session}
@@ -59,9 +59,24 @@ def wait_result(settle):
     return json.loads(settle.task.path("wait.1.json").read_text())
 
 
-def test_frozen_streaming_after_a_fresh_report_ends_done(tmp_path, monkeypatch):
-    settle, _ = frozen_case(tmp_path, monkeypatch)
+def test_frozen_streaming_after_a_fresh_report_stops_the_session_and_ends_done(tmp_path, monkeypatch):
+    settle, calls = frozen_case(tmp_path, monkeypatch)
     assert settle.step() == "done"
+    assert calls.index("abort") < calls.index("state", calls.index("abort")) < calls.index("unload")
+    result = wait_result(settle)
+    assert (result["outcome"], result["via"], result["quiet_s"]) == ("frozen_done", "frozen streaming after report",
+                                                                     700)
+
+
+def test_frozen_done_whose_session_does_not_stop_holds_the_run_and_aborts_again(tmp_path, monkeypatch):
+    obeys = [False]
+    settle, calls = frozen_case(tmp_path, monkeypatch, obeys_abort=obeys)
+    assert settle.step() == "running"
+    assert "unload" not in calls
+    assert not settle.task.path("wait.1.json").exists()
+    obeys[0] = True
+    assert Settle(settle.task, 1, settle.ref, settle.call, settle.limits).step() == "done"
+    assert calls.count("abort") == 2 and "unload" in calls
     assert wait_result(settle)["via"] == "frozen streaming after report"
 
 
@@ -93,7 +108,7 @@ def test_waiting_background_with_only_empty_deliveries_and_a_fresh_report_ends_d
 
 def test_end_notice_names_the_rule_that_ended_the_run(tmp_path):
     (tmp_path / "manifest.json").write_text(json.dumps({"run": 1, "wait": {
-        "outcome": "done", "via": "frozen streaming after report"}}))
+        "outcome": "frozen_done", "via": "frozen streaming after report"}}))
     job = {"id": "OT-FROZEN", "bot": "agent", "topic": "t", "runner": "omo", "delivery": "ok"}
     text = notice.body(job, "done", "1", tmp_path, {})
     assert "Ended by: frozen streaming after report" in text.splitlines()[1]

@@ -7,7 +7,8 @@ session still runs, so the run is judged from the session's root lifecycle (``ho
 Ends: the engine sealed the lifecycle (``done``, ``failed``, ``cancelled``); the turn ended after an answered question
 (``idle_after_question``); nothing was recorded for the stall grace while not running, a hold or pause, or a
 background item older than its cap (``stalled``); a session still ``running`` and streaming whose recorded activity
-stopped for the stall grace (``done`` when its answer and this run's report are in, else ``stalled``); the session
+stopped for the stall grace (``frozen_done``, read as ``done``, when its answer and this run's report are in, else
+``stalled``; both stop the session first); the session
 closed or parked; the hard timeout; an unreadable state.
 The clocks live in ``settle.<run>.json`` so a restarted service resumes the same judgement; ``lifecycle.<run>.json``
 is the last summary, ``progress.<run>.jsonl`` one line per change and ``wait.<run>.json`` the outcome.
@@ -25,9 +26,10 @@ from hermes_cli.worker.runners.omo_processes import live_work_processes, stop_ta
 
 OmoCall = Callable[[list[str], float], dict | None]
 MOVING = ("thinking", "tool", "running", "checking")
-CONTRACT = {"done": "done", "idle_after_question": "done", "idle_after_background": "done", "failed": "failed", "cancelled": "cancelled",
-            "stalled": "stalled"}
-LOCAL_ENDS = ("timeout", "cancelled", "stalled", "error")  # ends the worker imposes while the session may still be working
+# frozen_done is a worker-imposed end of a session the engine still reports running: it stops the session like stalled.
+CONTRACT = {"done": "done", "idle_after_question": "done", "idle_after_background": "done", "frozen_done": "done",
+            "failed": "failed", "cancelled": "cancelled", "stalled": "stalled"}
+LOCAL_ENDS = ("timeout", "cancelled", "stalled", "error", "frozen_done")  # the session may still be working
 SEALED = ("done", "failed", "cancelled")
 ABORT_WAIT_S = 120.0
 
@@ -302,7 +304,7 @@ class Settle:
             return None
         extra = {"lifecycle": view.get("state"), "dash": key, "quiet_s": round(idle)}
         if answered_with_report(activity, self.task, self.run):
-            return self._finish("done", via="frozen streaming after report", **extra)
+            return self._finish("frozen_done", via="frozen streaming after report", **extra)
         return self._finish("stalled", why=f"frozen streaming: no session entry for {round(idle)}s", **extra)
 
     def _judge(self, view: dict, key: str, why: str, quiet: float, now: float) -> str | None:
