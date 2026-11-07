@@ -65,7 +65,8 @@ def test_an_omo_run_opens_with_the_mode_default_and_records_it(tmp_path, monkeyp
     launcher.join()
     opened = [json.loads(line)["openSession"] for line in (fake / "rpc.jsonl").read_text().splitlines()
               if "openSession" in line]
-    assert opened == [{**opened[0], "provider": "proxy", "modelId": "vendor/plan-model", "thinkingLevel": "medium"}]
+    assert opened == [{**opened[0], "provider": "opencodex", "modelId": "proxy/vendor/plan-model",
+                       "thinkingLevel": "medium"}]
     assert json.loads((fake / "state.json").read_text())["prompts"][0].startswith("ulw research look it up")
     manifest = fakes.as_json(hub.store.out_dir(hub.store.load(task_id)) / "manifest.json")
     assert manifest["model"]["alias"] == "planner" and manifest["model"]["source"] == "mode:research"
