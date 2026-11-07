@@ -14,15 +14,16 @@ def test_read_operations_are_allowed_in_restricted_modes(tmp_path, mode, kind):
     assert _permission(tmp_path, mode, {"kind": kind})[0] is True
 
 
-@pytest.mark.parametrize("raw", [{"command": "ls"}, {"command": "ls", "cwd": ""},
-                                  {"command": "ls", "cwd": None}, {"command": "ls", "cwd": "  "}])
-def test_execution_needs_a_known_nonempty_cwd(tmp_path, raw):
-    assert _permission(tmp_path, "workspace-write", {"kind": "execute", "rawInput": raw})[0] is False
+@pytest.mark.parametrize("raw,allowed", [({"command": "ls"}, True), ({"command": "ls", "cwd": ""}, True),
+                                       ({"command": "ls", "cwd": None}, False),
+                                       ({"command": "ls", "cwd": "  "}, False)])
+def test_execution_defaults_only_missing_or_empty_cwd(tmp_path, raw, allowed):
+    assert _permission(tmp_path, "workspace-write", {"kind": "execute", "rawInput": raw})[0] is allowed
 
 
 @pytest.mark.parametrize("mode,allowed", [("workspace-write", True), ("read-only", False), ("full", True)])
 @pytest.mark.parametrize("tool", ["run_terminal_command", "bash"])
-@pytest.mark.parametrize("tool_cwd,allowed_workspace", [("absent", True), (".", True), ("..", False), ("", False)])
+@pytest.mark.parametrize("tool_cwd,allowed_workspace", [("absent", True), (".", True), ("..", False), ("", True)])
 def test_grok_execution_uses_tool_cwd_or_explicit_hook_cwd(tmp_path, mode, allowed, tool, tool_cwd, allowed_workspace):
     task = Task("hook-policy", tmp_path)
     task.work.mkdir()
@@ -43,6 +44,8 @@ def test_grok_execution_uses_tool_cwd_or_explicit_hook_cwd(tmp_path, mode, allow
         assert replies[0]["result"]["decision"] == ("allow" if expected else "deny")
         event = json.loads(task.path("events.1.jsonl").read_text(encoding="utf-8-sig"))
         assert event["kind"] == ("permission_allowed" if expected else "permission_denied")
+        assert event["raw_keys"] == list(raw)
+        assert raw["command"] not in json.dumps(event)
     finally:
         session.selector.close()
 
@@ -69,3 +72,28 @@ def test_execute_cwd_symlink_outside_worktree_is_denied(tmp_path):
     (work / "escape").symlink_to(tmp_path, target_is_directory=True)
     assert _permission(work, "workspace-write", {"kind": "execute", "rawInput": {
         "command": "python -m pytest -q", "cwd": "escape"}})[0] is False
+
+
+@pytest.mark.parametrize("channel", ["permission", "grok_hook"])
+@pytest.mark.parametrize("raw", [None, [], "not-an-object"])
+def test_permission_events_record_no_keys_for_nonobject_input(tmp_path, channel, raw):
+    task = Task("raw-keys", tmp_path)
+    task.work.mkdir()
+    session = _Session(AcpRunner("fake", {"argv": ["unused"]}), Handle(task, 1, {"access": "read-only"}))
+    session.session_id = "live-session"
+    replies = []
+    session.send = replies.append
+    try:
+        if channel == "permission":
+            session.permission("request", {"sessionId": "live-session", "toolCall": {
+                "kind": "execute", "rawInput": raw}, "options": [{"kind": "reject_once", "optionId": "no"}]})
+            assert replies[0]["result"]["outcome"]["optionId"] == "no"
+        else:
+            session.grok_hook("request", {"sessionId": "live-session", "toolName": "bash", "toolInput": raw,
+                              "hookCallbackId": "lina-access", "hookEventName": "pre_tool_use"})
+            assert replies[0]["result"]["decision"] == "deny"
+        event = json.loads(task.path("events.1.jsonl").read_text(encoding="utf-8-sig"))
+        assert event["kind"] == "permission_denied"
+        assert event["raw_keys"] == []
+    finally:
+        session.selector.close()

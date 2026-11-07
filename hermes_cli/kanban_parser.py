@@ -310,6 +310,9 @@ _SPECS = [
         _arg("--force", action="store_true",
              help="Override the live-claim guard: complete a running, claimed task "
                   "even without owning its run (closes the worker's run)."),
+        _arg("--allow-unjudged", action="store_true",
+             help="Operator override: finish even though runs this card started have no verdict "
+                  "(recorded on the card as unjudged_runs_allowed)."),
     ], help="Mark one or more tasks done"),
     _cmd("edit", [
         _TASK_ID,
@@ -352,6 +355,9 @@ _SPECS = [
         _arg("--force", action="store_true",
              help="Override the live-claim guard: move a running, claimed "
                   "task to review even without owning its run (clears the worker's claim)."),
+        _arg("--allow-unjudged", action="store_true",
+             help="Operator override: finish even though runs this card started have no verdict "
+                  "(recorded on the card as unjudged_runs_allowed)."),
     ], help="Move a task to 'review' (implementation done, awaiting review) — NOT a block"),
     _cmd("request-changes", [_TASK_ID, _arg("reason", nargs="+", help="Concrete changes required before re-review")],
          help="Reviewer verdict: return the active review run to its implementer"),

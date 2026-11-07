@@ -645,6 +645,32 @@ def test_ui_qa_reads_the_newest_record_for_the_pr_head(board, gh, capsys, commen
     assert "#30" not in out, "a closed, unmerged PR is not the card's PR"
 
 
+@pytest.mark.parametrize("records,argv,expected,why,ignored", [
+    ([("alice", _qa())], [], gates.FAIL, "no QA result for this head", "comment 1 by alice (the card's assignee)"),
+    ([("qa", _qa(defects="- title cut off")), ("alice", _qa())], [], gates.FAIL, "lists 1 defect(s)",
+     "comment 2 by alice (the card's assignee)"),
+    ([("qa", _qa()), ("alice", _running())], [], gates.PASS, "0 defects", "comment 2 by alice (the card's assignee)"),
+    ([("bob", _qa())], ["--author", "qa"], gates.FAIL, "no QA result for this head",
+     "comment 1 by bob (not a --author)"),
+    ([("bob", _qa()), ("qa", _qa())], ["--author", "qa"], gates.PASS, "0 defects", "comment 1 by bob (not a --author)"),
+    ([("alice", _qa())], ["--author", "alice"], gates.FAIL, "no QA result for this head",
+     "comment 1 by alice (the card's assignee)"),
+    ([("qa", _qa())], [], gates.PASS, "0 defects", None),
+])
+def test_ui_qa_counts_only_records_the_qa_side_wrote(board, gh, capsys, records, argv, expected, why, ignored):
+    """A QA record by the card's own profile never counts, like an approval under ``gate review`` (lina#276)."""
+    tid = _card(UI_TODOS)
+    with connect() as conn:
+        for author, body in records:
+            kb.add_comment(conn, tid, author, body)
+    gh.set([_ui_issue()])
+    assert _run("ui-qa", "--card", tid, *argv) == expected
+    out = capsys.readouterr().out
+    notes = [line for line in out.splitlines() if line.startswith("note: ")]
+    assert why in out, out
+    assert notes == ([f"note: ignored QA record(s) not written by the QA side: {ignored}"] if ignored else []), out
+
+
 def test_ui_qa_fail_prints_each_defect_and_runs_as_a_plain_file(board, gh, tmp_path):
     tid = _card(UI_TODOS)
     with connect() as conn:

@@ -17,6 +17,9 @@ unblock's status-guarded update is the exactly-once point: the woken card is
 no longer parked, so later ticks never wake it again. A parked card with no
 ``wait_for`` (a manual schedule, a block on a person's answer) is left alone:
 whoever parked it unblocks it.
+
+The same tick runs ``kanban_db_verdicts.verdict_tick``: a card woken to judge a run goes back to
+waiting once it is judged, and a run or a pause nobody acts on is raised once (lina#295).
 """
 from __future__ import annotations
 
@@ -313,6 +316,8 @@ def wake_waiting_tasks(conn: sqlite3.Connection, *, now: Optional[int] = None,
             continue
         if met and dispatcher_wake(conn, row["id"], park_event_id, wait_for):
             woken.append(row["id"])
+    from hermes_cli.kanban_db_verdicts import verdict_tick
+    verdict_tick(conn, now=now)  # lina#295: judged cards back to waiting; raise what nobody judged
     return woken
 
 

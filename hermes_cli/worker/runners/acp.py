@@ -94,7 +94,10 @@ def _permission(work: Path, mode: str, call: dict) -> tuple[bool, list[str]]:
     if call.get("kind") in ("edit", "delete"):
         return not malformed and bool(targets) and all(_inside(work, target) for target in targets), targets
     if call.get("kind") == "execute":
-        cwd = raw.get("cwd")
+        # Sessions open in work; an omitted or empty cwd keeps that directory.
+        cwd = raw.get("cwd", "")
+        if cwd == "":
+            cwd = str(work.resolve())
         return isinstance(cwd, str) and bool(cwd.strip()) and _inside(work, cwd), [str(cwd)]
     return False, targets
 
@@ -315,6 +318,8 @@ class _Session:
     def permission(self, request_id: int | str, params: dict) -> None:
         update = params.get("toolCall", {})
         call = {**self.calls.get(update.get("toolCallId", ""), {}), **update}
+        raw = call.get("rawInput")
+        raw_keys = list(raw) if isinstance(raw, dict) else []
         mode = self.access_mode()
         allow, targets = _permission(self.handle.task.work, mode, call)
         allow = allow and params.get("sessionId") == self.session_id and not self.stopping
@@ -323,7 +328,8 @@ class _Session:
         allowed = allow and option is not None
         outcome = {"outcome": "selected", "optionId": option["optionId"]} if option else {"outcome": "cancelled"}
         self.handle.task.event(self.handle.run, "permission_allowed" if allowed else "permission_denied",
-                               tool=call.get("title") or call.get("kind", "unknown"), targets=targets, mode=mode)
+                               tool=call.get("title") or call.get("kind", "unknown"), targets=targets, mode=mode,
+                               raw_keys=raw_keys)
         self.send({"id": request_id, "result": {"outcome": outcome}})
 
     def access_mode(self) -> str:
@@ -346,14 +352,15 @@ class _Session:
         """Grok's default native tools may skip request_permission; gate every pre-tool hook."""
         name = params.get("toolName", "unknown")
         raw = params.get("toolInput", {})
+        raw_keys = list(raw) if isinstance(raw, dict) else []
         kinds = {"write_file": "edit", "create_file": "edit", "edit_file": "edit",
                  "str_replace_editor": "edit", "search_replace": "edit",
                  "write": "edit", "run_terminal_command": "execute", "bash": "execute",
                  "read_file": "read", "read": "read", "list_dir": "read",
                  "grep": "search", "glob": "search", "search": "search", "web_search": "search",
                  "web_fetch": "fetch", "fetch": "fetch", "think": "think"}
-        if kinds.get(name) == "execute" and isinstance(raw, dict) and "cwd" not in raw:
-            raw = {**raw, "cwd": params.get("cwd")}
+        if kinds.get(name) == "execute" and isinstance(raw, dict) and "cwd" not in raw and "cwd" in params:
+            raw = {**raw, "cwd": params["cwd"]}
         call = {"kind": kinds.get(name, "other"), "rawInput": raw, "title": name}
         mode = self.access_mode()
         allow, targets = _permission(self.handle.task.work, mode, call)
@@ -361,7 +368,7 @@ class _Session:
                  and params.get("hookCallbackId") == "lina-access" and params.get("hookEventName") == "pre_tool_use"
                  and not self.stopping)
         self.handle.task.event(self.handle.run, "permission_allowed" if allow else "permission_denied",
-                               tool=name, targets=targets, mode=mode, channel="grok_hook")
+                               tool=name, targets=targets, mode=mode, channel="grok_hook", raw_keys=raw_keys)
         self.send({"id": request_id, "result": {"decision": "allow" if allow else "deny",
                                                 "reason": "LINA run access policy"}})
 
