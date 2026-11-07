@@ -34,7 +34,7 @@ from pathlib import Path
 LOCAL = "local"
 ROLES = ("work", "files", "person")
 FILE_KIND = "file"
-DEFAULTS = {"cap": 1, "min_free_gb": 5, "unknown_after_s": 600, "input_max_mb": 300, "memory_max": "12G",
+DEFAULTS = {"cap": 1, "min_free_gb": 5, "input_max_mb": 300, "memory_max": "12G",
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
             "human_max_s": 3 * 3600.0, "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
 

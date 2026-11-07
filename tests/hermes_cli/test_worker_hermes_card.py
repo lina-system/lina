@@ -16,7 +16,7 @@ import pytest
 from hermes_cli import kanban_db as kb
 from hermes_cli import kanban_db_connect as kbc
 from hermes_cli.worker import hub as hub_module
-from hermes_cli.worker import kanban_link, serve, settings
+from hermes_cli.worker import events, kanban_link, serve, settings
 from hermes_cli.worker.board import cards
 from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.transport import TransportError
@@ -127,7 +127,7 @@ def _one_run_on_a_device(tmp_path, monkeypatch, command) -> tuple[Path, str]:
     task_id = lines[0].split()[0]
     serve.serve_once(root)
     hub = Hub(root, out=lines.append)
-    fakes.until(lambda: "done:1" in hub.store.load(task_id)["notified"], what="the run ended")
+    fakes.until(lambda: "done:1" in fakes.notified(hub.store.load(task_id)), what="the run ended")
     launcher.join()
     return root, task_id
 
@@ -228,6 +228,36 @@ def test_a_card_write_that_fails_once_is_retried_without_repeating_what_went_thr
     assert not hub.store.load(run).get("card_pending")
 
 
+class HubStopped(BaseException):
+    """The hub process ending where it is raised."""
+
+
+def test_a_hub_that_stops_once_a_card_end_is_staged_does_each_card_step_once(queued, monkeypatch):
+    hub, submit, calls = queued
+    run = submit()
+    assert hub.wait({"task": CARD, "board": BOARD}) == 0
+    report = hub.store.out_dir(hub.store.load(run)) / "report.md"
+    report.parent.mkdir(parents=True)
+    report.write_text("# report\n", encoding="utf-8")
+    record = events.record
+
+    def stop(*args, **kwargs):  # the end is staged; marking it done is where the hub stops
+        monkeypatch.setattr(events, "record", record)
+        raise HubStopped
+    monkeypatch.setattr(events, "record", stop)
+    with pytest.raises(HubStopped):
+        hub.notify(run, "done", "1")
+
+    Hub(hub.worker_root, out=lambda *_: None).tick()  # the restarted hub
+    hub.notify(run, "done", "1")  # the device's report arrives again
+    Hub(hub.worker_root, out=lambda *_: None).tick()
+
+    assert _verbs(calls()) == ["comment", "comment", "attach", "show", "unblock"]
+    job = hub.store.load(run)
+    assert not job.get("card_pending") and not job.get("deliveries_pending")
+    assert [r["delivery"] for r in hub.store.receipts_of(run) if r["kind"] == "notified"] == [f"{run}:1:run.completed"]
+
+
 def _attached(calls: list[dict]) -> list[tuple[str, str]]:
     """``(stored name, content)`` of each attachment that went through."""
     out = []
@@ -288,6 +318,18 @@ def test_a_retried_fetch_that_finds_a_later_run_does_not_label_its_results_as_th
     assert _verbs(calls())[1:] == ["comment", "show", "unblock", "comment", "attach", "show"]
     assert _attached(calls()) == [(f"report-{run}-2.md", "run 2 report\n")]
     assert not hub.store.load(run).get("card_pending")
+
+
+def test_a_held_end_resumed_after_the_next_run_started_does_not_attach_that_runs_report(on_a_device):
+    hub, run, results, calls = on_a_device
+    results += [OSError("no space left on device"), ("run 2 report\n", 2)]
+    with pytest.raises(OSError):
+        hub.notify(run, "done", "1")  # run 1's notice could not be built: its end is held
+    hub.store.update(run, runs=2, state="running")  # `send` started run 2, whose results the device holds now
+    hub.tick()
+    assert _verbs(calls())[1:] == ["comment", "show", "unblock"]
+    assert _attached(calls()) == []
+    assert "Run 1's results were replaced by a later run before they could be fetched" in calls()[1]["argv"][-1]
 
 
 def test_a_run_with_no_report_completes_without_an_attachment(on_a_device):

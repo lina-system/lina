@@ -5,8 +5,8 @@ The card is named by ``submit --card <id> --board <slug>`` or by the card sessio
 removes both from a card session's terminal, so the card's worker process above it is the usual source. The card
 is only read here. Where it lives is ``worker.card_link``:
 
-* unset or ``{kind: lina}``: LINA's own board, through the kanban DB API (``worker_run`` and ``worker_run_ended``
-  events, the end notice as a comment).
+* unset or ``{kind: lina}``: LINA's own board, through the kanban DB API (``worker_run``, ``worker_run_ended`` and
+  ``worker_host_unavailable`` events, each carrying its ``events`` kind, the end notice as a comment).
 * ``{kind: hermes, command: [hermes]}``: a Hermes Agent card, written only through that command's
   ``kanban [--board <b>] comment | attach | show | unblock``. No LINA code opens a kanban database in this mode.
   The hub writes start/end comments and attaches ``report.md``. The card's model schedules itself
@@ -28,6 +28,8 @@ import sys
 import time
 from collections.abc import Callable
 from pathlib import Path
+
+from hermes_cli.worker import events
 
 AUTHOR = "lina-worker"
 HERMES = "hermes"
@@ -247,10 +249,25 @@ def record_end(card: dict, job: dict, state: str, run: str, body: str) -> None:
     from hermes_cli.kanban_db_connect import connect_closing
     from hermes_cli.kanban_db_verdicts import wake_for_run
     _event(card, "worker_run_ended", {"run_id": job["id"], "runner": job.get("runner"), "state": state, "run": run,
-                                      "device": job.get("host"), "delivery": job.get("delivery")})
+                                      "device": job.get("host"), "delivery": job.get("delivery"),
+                                      **events.fields(state)})
     with connect_closing(board=card.get("board")) as conn:
         kb.add_comment(conn, card["task"], AUTHOR, body)
         wake_for_run(conn, card["task"], job["id"], state)
+
+
+def record_host(card: dict, link: dict, body: str, payload: dict | None) -> None:
+    """A node's outage (*payload*: its ``host.unavailable`` event) or its return (None) on a card: one comment for
+    all of the card's runs on that node."""
+    if on_hermes(card):
+        comment(link["command"], card, body)
+        return
+    from hermes_cli import kanban_db as kb
+    from hermes_cli.kanban_db_connect import connect_closing
+    if payload:
+        _event(card, "worker_host_unavailable", payload)
+    with connect_closing(board=card.get("board")) as conn:
+        kb.add_comment(conn, card["task"], AUTHOR, body)
 
 
 def card_key(card: dict) -> str:
@@ -295,6 +312,26 @@ def _still_open(store, run_id: str) -> bool:
     return job is None or job.get("state") not in ended
 
 
+def _view_path(store, card: dict) -> Path:
+    return store.root / "cards" / f"{card_key(card)}.view.json"
+
+
+def keep_view(store, card: dict, task: dict) -> None:
+    """The card's title, status and body as read at a run's end; the goal drive reads them (``kept_view``) instead
+    of asking the board again."""
+    path = _view_path(store, card)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(json.dumps({key: task.get(key) for key in ("title", "status", "body")}, ensure_ascii=False),
+                    encoding="utf-8")
+
+
+def kept_view(store, card: dict) -> dict | None:
+    try:
+        return json.loads(_view_path(store, card).read_text(encoding="utf-8-sig"))
+    except (FileNotFoundError, ValueError):
+        return None
+
+
 def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) -> str | None:
     """Unblock the card once if it waits on *run_id*, for judging *judged* (the run, or its ``OG-`` batch); the
     unblock form (``judge_wake`` / ``bare``) when it was woken, else None.
@@ -315,6 +352,7 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) 
             status = view["task"]["status"]
         except (ValueError, KeyError, TypeError) as exc:
             raise CardLinkError("kanban show did not return task.status") from exc
+        keep_view(store, card, view["task"])
         named, schedule = _last_schedule(view)
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named:

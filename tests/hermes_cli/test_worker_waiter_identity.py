@@ -11,7 +11,7 @@ import sys
 
 import pytest
 
-from hermes_cli.worker import device, hub as hub_mod, serve
+from hermes_cli.worker import device, hub as hub_mod, notice, serve
 from hermes_cli.worker.hub import Hub
 from tests.hermes_cli import _worker_fakes as fakes
 
@@ -65,7 +65,7 @@ def test_a_reused_pid_does_not_swallow_the_end_notice(lane, monkeypatch):
     lane["hub"].store.update(job["id"], waiter=os.getpid(), waiter_start=-1)  # this pid, but not the waiter's start
     delivered = []
     monkeypatch.setattr(Hub, "_notice_body", lambda self, j, kind, run: ("ended", lane["tmp"]))
-    monkeypatch.setattr(Hub, "_deliver", lambda self, j, text, key: delivered.append(key) or "sent")
+    monkeypatch.setattr(Hub, "_deliver", lambda self, j, text, key: delivered.append(key) or notice.Sent(True, "sent"))
     assert lane["hub"].notify(job["id"], "done", "1") == "sent"
     assert delivered == ["done-1"]
 

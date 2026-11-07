@@ -73,8 +73,8 @@ class Lane:
 
     def ended(self, task_id: str, run: int) -> str:
         """The ending state the hub recorded for run *run* (the device reported it)."""
-        return fakes.until(lambda: next((m.split(":")[0] for m in self.job(task_id)["notified"]
-                                         if m.endswith(f":{run}") and not m.startswith("human")), None),
+        return fakes.until(lambda: next((m.split(":")[0] for m in fakes.notified(self.job(task_id))
+                                         if m.endswith(f":{run}") and not m.startswith("question")), None),
                            what=f"{task_id} run {run} reported")
 
     def task_dir(self, task_id: str):
