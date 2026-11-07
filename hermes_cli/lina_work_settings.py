@@ -6,7 +6,7 @@ LINA root's ``config.yaml``, the ones ``lina worker`` already reads on every com
 devices:
   workers:
     build-a: {host: build-a, role: work, cap: 2, named_cap: 2, last: 0, fast: true}
-    laptop:  {role: person}                      # the owner's own device: status only, never a cap, never a host
+    laptop:  {host: laptop-ssh, role: person}     # the owner's own device: ssh status only, never a node
 worker:
   default_runner: omo
   runners:
@@ -40,9 +40,10 @@ import json
 import re
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlsplit
 
 KEYS = (("devices", "workers"), ("worker", "default_runner"), ("worker", "runners"), ("worker", "models"),
-        ("worker", "routing"), ("worker", "goal_drive"), ("worker", "goal_limits"))
+        ("worker", "routing"), ("worker", "goal_drive"), ("worker", "goal_limits"), ("worker", "access"))
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$")
 SECRET = re.compile(r"key|token|secret|password", re.IGNORECASE)
 KEEP_OUT = "env"
@@ -52,8 +53,10 @@ SIZES = ("S", "M", "L")
 FLAVORS = ("grok", "dsh", "agy", "claude", "codex")  # an ACP runner's agent; omitted = generic
 LIMITS = {"devices.workers": 128, "worker.runners": 64, "worker.routing": 64}
 _BOOL, _INT, _STR, _STRS = "bool", "int", "str", "strs"
+FILE_DEVICE = {"omo": _STR, "deny": "file_strs", "volumes": "file_strs", "root": _STR,
+               "model_check": "http_url", "scan_s": _INT}
 DEVICE = {"host": _STR, "role": _STR, "cap": _INT, "named_cap": _INT, "last": "last", "fast": _BOOL,
-          "no_repo": _BOOL, "off": _BOOL, "auto": _BOOL, "lina": _STR}
+          "no_repo": _BOOL, "off": _BOOL, "auto": _BOOL, "lina": _STR, "kind": _STR, **FILE_DEVICE}
 RUNNER = {"type": _STR, "argv": _STRS, "follow_up_argv": _STRS, "model_args": _STRS, "on": _BOOL, "model": "model",
           "fallback_model": "model", "access": _STR, "access_args": "access_args", "bin": _STR, "node": _STR, "engine": _STR,
           "flavor": _STR, "usage_limit": "regex"}
@@ -126,7 +129,7 @@ def _excluded_key(key: Any) -> bool:
 
 # Mappings whose keys are names someone chose (a device, a runner, an alias, a mode), not fields: a runner named
 # ``monkey`` is a setting. Every other key at any depth is a field, and a credential-like field is never captured.
-NAME_TABLES = ("devices.workers", "worker.runners", "worker.models.aliases", "worker.models.defaults")
+NAME_TABLES = ("devices.workers", "worker.runners", "worker.models.aliases", "worker.models.defaults", "worker.access")
 
 
 def _excluded_at(path: str, key: Any) -> bool:
@@ -359,12 +362,25 @@ def diff(old: dict, new: dict) -> list[dict]:
 
 
 # ---------------------------------------------------------------- validation
+def _http_url(value: Any) -> bool:
+    if not isinstance(value, str) or any(char.isspace() for char in value):
+        return False
+    try:
+        url = urlsplit(value)
+        return url.scheme in ("http", "https") and bool(url.hostname)
+    except ValueError:  # malformed bracketed hosts are rejected by urlsplit
+        return False
+
+
 def _type_error(kind: str, value: Any) -> str | None:
     checks = {
         _BOOL: (lambda v: isinstance(v, bool), "true or false"),
         _INT: (lambda v: isinstance(v, int) and not isinstance(v, bool) and v >= 1, "a whole number of at least 1"),
         _STR: (lambda v: isinstance(v, str) and v.strip() != "", "a non-empty text"),
         _STRS: (lambda v: isinstance(v, list) and all(isinstance(i, str) and i for i in v), "a list of texts"),
+        "file_strs": (lambda v: isinstance(v, list) and all(isinstance(i, str) and i.strip() for i in v),
+                      "a list of non-empty texts"),
+        "http_url": (_http_url, "an http:// or https:// URL with a host"),
         "last": (lambda v: isinstance(v, bool) or isinstance(v, int) and v >= 0, "true, false or a tier of 0 or more"),
         "model": (lambda v: isinstance(v, str) and v.strip() != "", "<provider>/<id>[:<effort>] or an alias"),
         "regex": (_is_regex, "a regular expression"),
@@ -386,7 +402,7 @@ def _fields(entry: Any, schema: dict, path: str, errors: list[dict]) -> dict:
             errors.append({"path": where, "message": "a runner's env is not written here: edit config.yaml"})
         elif key not in schema:
             errors.append({"path": where, "message": f"unknown key (known: {', '.join(schema)})"})
-        elif schema[key] in (_BOOL, _INT, _STR, _STRS, "last", "model", "regex") and \
+        elif schema[key] in (_BOOL, _INT, _STR, _STRS, "last", "model", "regex", "file_strs", "http_url") and \
                 (why := _type_error(schema[key], value)):
             errors.append({"path": where, "message": why})
     return entry
@@ -412,12 +428,22 @@ def _devices(doc: dict, errors: list[dict]) -> None:
     for name, item in workers.items():
         path = f"devices.workers.{name}"
         entry = _fields(item, DEVICE, path, errors)
-        role = entry.get("role", "work")
+        kind = entry.get("kind", "lina")
+        if kind not in ("lina", "file"):
+            errors.append({"path": f"{path}.kind", "message": "one of lina, file"})
+        if kind != "file":
+            errors += [{"path": f"{path}.{key}", "message": "only a kind: file device has this field"}
+                       for key in FILE_DEVICE if key in entry]
+        role = entry.get("role", "files" if kind == "file" else "work")
+        if kind == "file" and role in ("work", "person"):
+            errors.append({"path": f"{path}.role", "message": "a kind: file device must have role: files"})
         if not isinstance(role, str) or role not in ROLES:  # the lookups below run only on a text
             errors.append({"path": f"{path}.role", "message": f"one of {', '.join(ROLES)}"})
         elif role == "person":
-            errors += [{"path": f"{path}.{key}", "message": "a person device is never a node: no caps, no host"}
-                       for key in ("cap", "named_cap", "last", "auto", "host") if key in entry]
+            errors += [{"path": f"{path}.{key}", "message": "a person device carries only host (ssh alias) and role"}
+                       for key in entry if key in DEVICE and key not in ("host", "role", "kind")]
+            if "host" not in entry:
+                errors.append({"path": f"{path}.host", "message": "a person device needs its host (ssh alias) for status"})
         elif "host" not in entry:
             errors.append({"path": f"{path}.host", "message": "a work or files device needs its host (ssh alias or local)"})
 
@@ -551,6 +577,14 @@ def _goal(doc: dict, errors: list[dict]) -> None:
     _section(get_path(doc, "worker.goal_limits"), GOAL_LIMITS, "worker.goal_limits", errors)
 
 
+def _access(doc: dict, errors: list[dict]) -> None:
+    for name, value in _named(get_path(doc, "worker.access"), "worker.access", errors).items():
+        if not isinstance(name, str):
+            errors.append({"path": f"worker.access.{name}", "message": "an agent name must be text"})
+        if not isinstance(value, str) or value not in ACCESS:
+            errors.append({"path": f"worker.access.{name}", "message": f"one of {', '.join(ACCESS)}"})
+
+
 def runner_table(doc: dict) -> dict[str, dict]:
     """The runners as ``lina worker`` sees them: omo is there even when not listed."""
     configured = get_path(doc, "worker.runners")
@@ -582,6 +616,7 @@ def validate(doc: Any) -> list[dict]:
                 errors.append({"path": f"{top}.{key}", "message": f"not a work setting (known: {', '.join(allowed)})"})
     _devices(doc, errors)
     _goal(doc, errors)
+    _access(doc, errors)
     aliases = _models(doc, errors)
     _runners(doc, aliases, errors)
     table = runner_table(doc)
