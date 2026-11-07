@@ -20,6 +20,7 @@ def lina(tmp_path, monkeypatch):
     (root / "config.yaml").write_text("model: {default: m}\n")
     (root / "profiles" / "coder" / "config.yaml").write_text("model: {default: m}\n")
     monkeypatch.setenv("HERMES_HOME", str(root / "profiles" / "coder"))
+    monkeypatch.delenv("LINA_TEST_NO_HERMES_AGENT_GATEWAY", raising=False)
     import hermes_constants
     hermes_constants._default_hermes_root_memo = None
     monkeypatch.setattr("hermes_cli.resource_limits.apply_nofile_soft_limit", lambda: None)
@@ -75,6 +76,22 @@ async def test_linux_refuses_beside_the_hermes_agent_unit(lina, monkeypatch, cap
     assert len(out) == 1 and "hermes-gateway-coder.service" in out[0] and "'coder'" in out[0]
     assert calls == [["systemctl", "--user", "is-active", "hermes-gateway-coder"]] and _read_only(calls)
     assert lina["reached"] == [] and lina["status"][-1]["exit_reason"] == "hermes_agent_gateway_loaded"
+
+
+@pytest.mark.platforms("posix")
+@pytest.mark.asyncio
+async def test_only_the_probe_seam_gets_past_a_loaded_hermes_agent_gateway(lina, monkeypatch):
+    """``LINA_TEST_NO_HERMES_AGENT_GATEWAY=1`` (set by the gateway test probes for their child, lina#259) is the one
+    way around the guard: without it a loaded answer still refuses, even with ``--force``."""
+    calls = _account(monkeypatch, {"hermes-gateway-coder", "ai.hermes.gateway-coder"})
+    with pytest.raises(SystemExit) as exc:
+        await _start(force=True)
+    assert exc.value.code == GATEWAY_FATAL_CONFIG_EXIT_CODE and lina["reached"] == []
+
+    probed = len(calls)
+    monkeypatch.setenv("LINA_TEST_NO_HERMES_AGENT_GATEWAY", "1")
+    assert await _start() is True
+    assert lina["reached"] == [False] and len(calls) == probed
 
 
 @pytest.mark.platforms("linux")
