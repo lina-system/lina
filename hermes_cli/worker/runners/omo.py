@@ -126,7 +126,8 @@ class OmoRunner:
                                 str(handle.task.work), handle.task.id, "", "", "", "", mode,
                                 handle.data["ref"]], 120, handle.task.path(f"stderr.{handle.run}.txt"))
         if rc != 0 or not reply or reply.get("action") != "attach":
-            raise RunnerError("omo could not restore recorded session access")
+            reason = (reply or {}).get("detail") or (reply or {}).get("reason") or "no answer"
+            raise RunnerError(f"omo could not restore recorded session access: {reason}")
         return mode
 
     def follow_up(self, handle: Handle, text: str, *, run: int | None = None,

@@ -11,6 +11,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 ### Fixed
 
 - A model has one name across the OCX list, the settings check and the omo runner: `<provider>/<id>` and `opencodex/<provider>/<id>` are the same model, so the settings check and `decide` read its state, quota and fallback from the one OCX row, the omo runner opens the session through OCX's `opencodex` provider with the namespaced id, and the run record and run page show the `<provider>/<id>` form whichever was written (lina#385).
+- Worker follow-ups reopen parked omo sessions from their recorded transcript with the same access mode; unknown and ambiguous session references report their specific reasons instead of a generic restore failure (lina#391).
 - Work settings accept validated file-node device fields and per-agent `worker.access` ceilings, including revisions, rollback and outside edits, so file nodes can be configured through the CLI (lina#389).
 - A card scheduled on both hub and legacy `omo-task` runs wakes once after the later end: `worker.legacy_omo_task` supplies bounded status checks for hub-unknown `OT-`/`OG-` IDs, while unavailable or unanswered legacy checks leave the card parked and log the failed probe (lina#390).
 - Person devices in work settings now require and accept their status SSH alias (`host`) with `role: person`, while refusing node fields, so saved person devices appear in the devices view (lina#373).
