@@ -85,7 +85,7 @@ def _session_id(tui: TmuxTui) -> str:
 
 
 def _compacted(tui: TmuxTui) -> int:
-    rows = tui.db_rows("SELECT COUNT(*) FROM messages WHERE compacted = 1")
+    rows = tui.db_rows("SELECT COUNT(*) FROM transcript_rows WHERE compacted = 1")
     return int(rows[0][0]) if rows else 0
 
 

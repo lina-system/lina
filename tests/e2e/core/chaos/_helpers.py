@@ -258,21 +258,22 @@ def tool_results_by_id(messages: list[dict[str, Any]]) -> dict[str, str]:
 def persisted_messages(state_db: Path, session_id: str | None = None) -> list[dict[str, Any]]:
     """Active message rows from a real state.db, oldest first, OpenAI-shaped.
 
-    With ``session_id=None`` the newest session that has messages is used."""
-    conn = sqlite3.connect(f"file:{state_db}?mode=ro", uri=True, timeout=10)
-    try:
-        conn.row_factory = sqlite3.Row
+    With ``session_id=None`` the newest session that has messages is used.
+    Text comes from the memory store through SessionDB."""
+    from hermes_state import SessionDB
+    from hermes_state_store import text_sql
+
+    content, calls = text_sql("content"), text_sql("tool_calls")
+    with SessionDB(db_path=state_db, read_only=True) as db:
         if session_id is None:
-            row = conn.execute(
-                "SELECT session_id FROM messages ORDER BY id DESC LIMIT 1").fetchone()
+            row = db._read_one("SELECT session_id FROM transcript_rows ORDER BY id DESC LIMIT 1")
             if row is None:
                 return []
             session_id = row["session_id"]
-        rows = conn.execute(
-            "SELECT role, content, tool_call_id, tool_calls FROM messages "
-            "WHERE session_id = ? AND active = 1 ORDER BY id", (session_id,)).fetchall()
-    finally:
-        conn.close()
+        rows = [dict(r) for r in db._read_all(
+            f"SELECT role, {content} AS content, tool_call_id, {calls} AS tool_calls FROM transcript_rows "
+            "WHERE session_id = ? AND active = 1 ORDER BY id",
+            (session_id,))]
     msgs = []
     for r in rows:
         m: dict[str, Any] = {"role": r["role"], "content": r["content"]}

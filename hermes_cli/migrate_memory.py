@@ -148,7 +148,7 @@ def _profile(args) -> dict:
     return {"format": 1, "round": 2, "profile": args.profile, "agent": args.agent,
             "destination_home": str(destination), "copies": [asdict(row) for row in copied.receipt],
             "sources": reports, "lcm": lcm, "honcho": honcho, "work": work_report,
-            "files": files, "duplicates": duplicates,
+            "files": files, "skipped_symlinks": list(copied.skipped_symlinks), "duplicates": duplicates,
             "complete": duplicates["ok"] and all(s["counted"] and s["ok"] for s in steps.values()),
             "steps": steps,
             "embeddings": {"status": "deferred", "counted": True, "ok": True, "command": "lina store reembed",

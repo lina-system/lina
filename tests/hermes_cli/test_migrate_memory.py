@@ -52,6 +52,26 @@ def test_real_cli_migrates_one_profile_and_replays_without_inserts(tmp_path, _me
     assert json.loads((tmp_path / "copy/migration-report.json").read_text()) == second
 
 
+def test_real_cli_skips_symlinked_skill_and_reports_it(tmp_path, _memory_store):
+    # Given a source profile with one shared skill linked into skills/.
+    command = _command(tmp_path, _memory_store)
+    shared = tmp_path / "shared-skill"
+    shared.mkdir()
+    (shared / "SKILL.md").write_text("Synthetic shared skill\n")
+    skills = tmp_path / "hermes/profiles/alpha/skills"
+    skills.mkdir(exist_ok=True)
+    (skills / "shared").symlink_to(shared, target_is_directory=True)
+
+    # When the profile is migrated.
+    done = _run(command, tmp_path)
+
+    # Then the migration succeeds, names the link and publishes nothing behind it.
+    assert done.returncode == 0, done.stdout + done.stderr
+    report = json.loads(done.stdout)
+    assert report["ok"] and report["skipped_symlinks"] == ["skills/shared"]
+    assert not (tmp_path / "lina/profiles/alpha-copy/skills/shared").exists()
+
+
 def test_real_cli_missing_fixture_row_exits_nonzero(tmp_path, _memory_store):
     command = _command(tmp_path, _memory_store)
     done = _run(command, tmp_path)
