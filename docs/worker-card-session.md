@@ -44,7 +44,7 @@ active profile. The submit line names the owner and its source; `accept` and `re
 - On a run's end the hub reads `hermes kanban show <id> --json`. The card waits on the run when its last
   `scheduled` event names it, in `reason` (any wording: the ID as a whole token) or in `goal_park.workers`, with or
   without `wait`; else when `wait` recorded it. A schedule that names several runs is woken once, after the last of
-  them ends; one that names a run this hub did not start is left to the tool that started it. A scheduled card is
+  them ends. With `worker.legacy_omo_task`, hub-unknown `OT-`/`OG-` IDs are checked by `<legacy> status --json <id>` (5 s timeout, exit 0 with `{"state":"<state>"}`): `done`, `review`, `done_empty`, `stalled`, `failed`, `cancelled` and `unknown` mean ended; running, missing tools, unanswered/malformed replies or unknown IDs (nonzero exit) keep the card parked for another hub tick, with a hub log line on a failed probe; without the setting they remain open. A scheduled card is
   unblocked once; running/ready means the model has not parked yet, so the wake stays pending for the next tick.
   Other states (including done, archived and blocked) finish without a wake. The end comment is already on the card.
 - The wake is `unblock --judge-wake <run id>` (the batch ID for an `OG-` batch), so the card lands `ready` to judge
