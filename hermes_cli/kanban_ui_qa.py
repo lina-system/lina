@@ -15,6 +15,10 @@ followed by the aside-qa answer as it is: the four sections ``## (A) Defects``, 
 is not), and so is every ``- FAIL: ...`` line under Verified: a Done when item the tool found
 broken. A QA run in progress is a comment whose first line is
 ``ui-qa-run v1 head=<sha> state=running``.
+
+Only the QA side's records count: a marker comment by one of the card's own profiles (its assignee
+and implementers, as ``gate review`` reads them) is ignored, and so is one by an author outside
+``--author`` when that is given (lina-system/lina#276).
 """
 from __future__ import annotations
 
@@ -64,6 +68,21 @@ def parse_marker(comment_id: int, body: Optional[str]) -> Optional[Marker]:
     if not _SHA.match(head):
         return None
     return Marker(match[1], comment_id, head, fields, "\n".join(lines[1:]))
+
+
+def qa_side_records(rows: Iterable[tuple[int, Optional[str], Optional[str]]], own: set[str],
+                    authors: Optional[set[str]] = None) -> tuple[list[tuple[int, Optional[str]]], list[str]]:
+    """Split the card's ``(comment id, author, body)`` rows into the ``(id, body)`` rows the verdict
+    reads and a note per ignored QA marker: one written by the card's own profiles, or (when
+    ``authors`` is given) by anyone outside it. Comments without a marker pass through."""
+    kept, ignored = [], []
+    for cid, author, body in rows:
+        if parse_marker(cid, body) and (author in own or authors is not None and author not in authors):
+            why = "the card's assignee" if author in own else "not a --author"
+            ignored.append(f"comment {cid} by {author or '-'} ({why})")
+        else:
+            kept.append((cid, body))
+    return kept, ignored
 
 
 def sections(body: str) -> dict[str, list[str]]:

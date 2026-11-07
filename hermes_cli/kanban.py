@@ -29,6 +29,7 @@ from hermes_cli.kanban_output import (
     _task_to_dict,
 )
 from hermes_cli.kanban_boards import _dispatch_boards
+from hermes_cli.kanban_db_verdicts import UnjudgedRunsError
 from hermes_cli.kanban_ops import (
     _cmd_daemon, _kanban_config, _cmd_dispatch, _cmd_gc, _cmd_repair, _cmd_tail, _cmd_watch,
 )
@@ -954,7 +955,11 @@ def _cmd_complete(args: argparse.Namespace) -> int:
             try:
                 done = kb.complete_task(conn, tid, result=args.result, summary=summary, metadata=metadata,
                                         expected_run_id=_worker_run_id_for(tid),
-                                        force=bool(getattr(args, "force", False)))
+                                        force=bool(getattr(args, "force", False)),
+                                        allow_unjudged=bool(getattr(args, "allow_unjudged", False)))
+            except UnjudgedRunsError as unjudged:
+                fail_msg[tid] = f"cannot complete {tid}: {unjudged} (an operator may pass --allow-unjudged)"
+                return False
             except kb.LiveClaimError:
                 fail_msg[tid] = (f"cannot complete {tid}: a live worker is running it. Wait for the "
                                  f"worker, `hermes kanban reclaim {tid}` to release it, or re-run with "
@@ -1112,9 +1117,13 @@ def _cmd_request_review(args: argparse.Namespace) -> int:
             "Provide acceptance evidence matching the task.")
         if gate_err:
             return _err(gate_err)
-        ok, reason = kb.request_review(
-            conn, tid, summary=summary, metadata=metadata, reviewer=getattr(args, "reviewer", None),
-            expected_run_id=_worker_run_id_for(tid), force=bool(getattr(args, "force", False)), with_reason=True)
+        try:
+            ok, reason = kb.request_review(
+                conn, tid, summary=summary, metadata=metadata, reviewer=getattr(args, "reviewer", None),
+                expected_run_id=_worker_run_id_for(tid), force=bool(getattr(args, "force", False)),
+                with_reason=True, allow_unjudged=bool(getattr(args, "allow_unjudged", False)))
+        except UnjudgedRunsError as unjudged:
+            return _err(f"cannot request review for {tid}: {unjudged} (an operator may pass --allow-unjudged)")
         if not ok:
             return _err(f"cannot request review for {tid}: {reason or 'not running/ready?'}")
         persisted_run = kb.latest_run(conn, tid)
