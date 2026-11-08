@@ -12,6 +12,7 @@ switch of a machine is a config change plus one command; going back is taking on
 
 A shim prints nothing of its own on success and exits with the wrapped command's code, so callers
 that parse the output see the same text.
+The shim does not depend on the caller's current directory: Python starts with `-P` and imports LINA through its pinned `PYTHONPATH`.
 
 An installed shim always runs with `LINA_HOME` set to the root it was installed for. A caller's
 `HERMES_HOME` (Hermes Agent's profile home, as in an agent's terminal) never moves it; it names the
