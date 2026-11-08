@@ -227,7 +227,9 @@ class Hub:
         if failing["tries"] == CARD_FAILING_AFTER:
             line = _card_failing(job)
             for entry in (job.get("card_pending") or {}).values():  # an end staged before the count got here
-                if "card link failing" not in entry["text"]:
+                if "comment" in entry["done"]:  # its text is on the card already: the line goes on its own
+                    entry.setdefault("warning", {"line": line, "sent": False})
+                elif "card link failing" not in entry["text"]:
                     entry["text"] = entry["text"].rstrip("\n") + f"\n- {line}\n"
             self.store.save(job)
             self.store.receipt(job["id"], "card_link_failing", **failing)
@@ -1103,12 +1105,17 @@ class Hub:
                 self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
                 if not isinstance(exc, kanban_link.CardWaiting):
                     self._card_failed(job, exc)
+                else:  # the card answered: the link works
+                    self._card_warning(job, entry)
                 return f"card {card['task']}: {step} failed, retried on the next report or tick"
             entry["done"].append(step)
             job.pop("card_link_failing", None)
             if woke:
                 entry["woke"], entry["unblock"] = True, woke
             self.store.save(job)
+            self._card_warning(job, entry)
+        if not self._card_warning(job, entry):
+            return f"card {card['task']}: the card-link warning failed, retried on the next report or tick"
         del job["card_pending"][marker]
         self.store.save(job)
         if entry.get("report"):
@@ -1116,6 +1123,24 @@ class Hub:
         self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
                            woke=bool(entry.get("woke")), unblock=entry.get("unblock"))
         return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
+
+    def _card_warning(self, job: dict, entry: dict) -> bool:
+        """The ``card link failing`` line of an end whose comment was on the card before the count got there, as its
+        own comment once the link works; True when there is none left to send. A failed send is counted and retried
+        later, and never holds the end's other steps."""
+        warning = entry.get("warning")
+        if not warning or warning["sent"]:
+            return True
+        try:
+            kanban_link.comment(kanban_link.config(self.worker)["command"], job["card"],
+                                f"[lina worker · automatic] run {job['id']}: {warning['line']}")
+        except (OSError, kanban_link.CardLinkError) as exc:
+            self.store.receipt(job["id"], "card_notice_failed", step="warning", error=str(exc)[:300])
+            self._card_failed(job, exc)
+            return False
+        warning["sent"] = True
+        self.store.save(job)
+        return True
 
     def _report_snapshot(self, job: dict, marker: str) -> str | None:
         """A copy of the run's report.md as fetched now: a later run's fetch replaces the one in out/."""

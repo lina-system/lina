@@ -24,7 +24,7 @@ CARD, BOARD = "t_card1", "ops"
 FAKE_HERMES = """import json, os, sys
 with open(os.environ["FAKE_HERMES_LOG"], "a") as fh:
     fh.write(json.dumps(sys.argv[1:]) + "\\n")
-if os.environ.get("FAKE_HERMES_FAIL"):
+if os.environ.get("FAKE_HERMES_FAIL") or os.environ.get("FAKE_HERMES_FAIL_VERB", "-") in sys.argv:
     print("kanban: board 'ops' does not exist", file=sys.stderr)
     sys.exit(1)
 if "show" in sys.argv:
@@ -180,6 +180,32 @@ def test_an_end_comment_that_kept_failing_reaches_the_card_saying_so_once(tmp_pa
     assert comments[-1].count("card link failing") == 1
     assert f"({CARD_FAILING_AFTER} tries)" in comments[-1]
     assert not hub.store.load(task_id).get("card_pending")
+
+
+@pytest.mark.platforms("posix")
+def test_a_later_end_step_that_kept_failing_is_said_once_in_its_own_comment(tmp_path, monkeypatch, lina_tree):
+    agent = _executable(tmp_path / "hermes-agent" / "bin" / "hermes", f"#!{sys.executable}\n" + FAKE_HERMES)
+    base = tmp_path / "lina"
+    _config(base, [str(agent)])
+    task_id = _submit(tmp_path, base)
+    hub = Hub(base / "worker", out=lambda *_: None)
+    hub.tick()
+
+    monkeypatch.setenv("FAKE_HERMES_FAIL_VERB", "show")  # the wake step reads the card first
+    hub.notify(task_id, "done", "1")
+    for _ in range(CARD_FAILING_AFTER - 1):
+        hub.tick()
+    monkeypatch.delenv("FAKE_HERMES_FAIL_VERB")
+    hub.tick()
+    sent = len(_calls(tmp_path))
+    hub.tick()
+
+    comments = [argv[-1] for argv in _calls(tmp_path) if "comment" in argv]
+    warnings = [text for text in comments if "card link failing" in text]
+    assert len(warnings) == 1 and f"({CARD_FAILING_AFTER} tries)" in warnings[0]
+    assert len(comments) == 3 and "card link failing" not in comments[1]  # start, end, the warning
+    assert not hub.store.load(task_id).get("card_pending")
+    assert len(_calls(tmp_path)) == sent
 
 
 def test_a_card_that_has_not_scheduled_itself_yet_is_waiting_not_failing(tmp_path):
