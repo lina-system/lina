@@ -126,11 +126,13 @@ def test_a_card_start_that_keeps_failing_is_said_once_on_the_hub_status_and_end_
     hub.notify(task_id, "done", "1")
 
     tries = CARD_FAILING_AFTER + 3  # every tick, then the end's own attempt
-    line = f"card link failing: {agent} kanban --board {BOARD} comment {CARD} exited 1: kanban: board " \
-           f"'ops' does not exist ({tries} tries)"
+    # The hub keeps the first 200 characters of the first error line, and the fake CLI's tmp path is part of it, so
+    # the kept text depends on how long the platform's tmp path is (macOS's is long): build it the same way.
+    error = (f"{agent} kanban --board {BOARD} comment {CARD} exited 1: kanban: board 'ops' does not exist")[:200]
+    line = f"card link failing: {error} ({tries} tries)"
     assert len(_calls(tmp_path)) == tries
     said = [text for text in out if "card link failing" in text]
-    assert said == [f"lina worker: {task_id} " + line.replace(f"({tries} tries)", f"({CARD_FAILING_AFTER} tries)")]
+    assert said == [f"lina worker: {task_id} card link failing: {error} ({CARD_FAILING_AFTER} tries)"]
     assert [text for text in _status(base, task_id) if "card link failing" in text] == [f"  {line}"]
     ends = [entry["text"] for entry in hub.store.load(task_id)["card_pending"].values()]
     assert len(ends) == 1 and ends[0].count("card link failing") == 1
