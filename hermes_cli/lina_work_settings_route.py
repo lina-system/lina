@@ -56,10 +56,6 @@ class Decision:
     fallback: dict | None = None  # the model_fallback receipt {from, to, why}
 
 
-def _named(profile) -> str:
-    return f"{profile.provider}/{profile.id}" + (f":{profile.thinking}" if profile.thinking else "")
-
-
 def decide(base: Path | None, runner: str | None, mode: str, override: str | None, labels: list[str] | None = None,
            size: str | None = None, now: float | None = None) -> Decision:
     """The runner (``--runner``, else routing on *labels*/*size*, else the default; one that is off is refused with
@@ -105,7 +101,7 @@ def decide(base: Path | None, runner: str | None, mode: str, override: str | Non
             except RunnerError:
                 used = None
             if used is not None:
-                fallback = {"from": _named(model), "to": _named(used), "why": check}
+                fallback = {"from": models.name(model), "to": models.name(used), "why": check}
                 model = used
     settings = {"rev": rev.id, "runner_source": runner_source,
                 "model_source": model.source if model is not None else "runner", "ocx_check": check}

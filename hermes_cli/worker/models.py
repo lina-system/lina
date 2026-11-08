@@ -14,6 +14,13 @@ worker:
 
 ``--model`` takes an alias or ``<provider>/<id>[:<thinking>]`` (the first ``/`` splits, so an id may hold ``/``).
 No model is named in code: without config a run keeps the runner's own default and says so.
+
+A model has one identity (lina#385): OCX's namespaced id ``<upstream provider>/<id>``. OCX's list names a model by
+its upstream provider and id; omo reaches every model through OCX's own provider ``opencodex`` with the namespaced id
+as its id. ``opencodex/anthropic/m`` and ``anthropic/m`` are the same model: ``canonical`` gives both as
+``(anthropic, m)``, the form the settings check looks up and the run record and the run page show; ``through_ocx``
+gives the form a runner that reaches models through OCX (omo) opens its session with. The profile itself keeps the
+form that was written: a runner that does not go through OCX (acp, command) gets it as before.
 """
 
 from __future__ import annotations
@@ -21,6 +28,28 @@ from __future__ import annotations
 from hermes_cli.worker.runners.base import ModelProfile, RunnerError
 
 THINKING = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+OCX = "opencodex"
+
+
+def canonical(provider: str | None, model_id: str | None) -> tuple[str | None, str | None]:
+    """``(upstream provider, id)`` of a model: ``opencodex`` with a namespaced id is that id's provider and id."""
+    if provider == OCX and model_id and "/" in model_id:
+        upstream, rest = model_id.split("/", 1)
+        return upstream, rest
+    return provider, model_id
+
+
+def through_ocx(profile: ModelProfile) -> tuple[str | None, str | None]:
+    """``(provider, id)`` a session reaching its model through OCX opens with: ``opencodex`` and the namespaced id."""
+    if not profile.provider or profile.provider == OCX:
+        return profile.provider, profile.id
+    return OCX, f"{profile.provider}/{profile.id}"
+
+
+def name(profile: ModelProfile) -> str:
+    """``<provider>/<id>[:<thinking>]`` in the canonical form."""
+    provider, model_id = canonical(profile.provider, profile.id)
+    return f"{provider}/{model_id}" + (f":{profile.thinking}" if profile.thinking else "")
 
 
 def _aliases(worker: dict) -> dict[str, dict]:
@@ -68,4 +97,6 @@ def label(profile: dict | None) -> str:
         return "runner default"
     if profile.get("alias"):
         return str(profile["alias"])
-    return f"{profile.get('id')}" + (f":{profile['thinking']}" if profile.get("thinking") else "")
+    provider, model_id = canonical(profile.get("provider"), profile.get("id"))
+    head = f"{provider}/{model_id}" if provider else f"{model_id}"
+    return head + (f":{profile['thinking']}" if profile.get("thinking") else "")

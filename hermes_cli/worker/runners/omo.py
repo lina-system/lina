@@ -88,10 +88,13 @@ class OmoRunner:
 
     def _open_session(self, task: Task, prompt_file: Path, model: ModelProfile | None, run: int,
                       access: str) -> tuple[dict | None, int]:
+        from hermes_cli.worker.models import through_ocx
         err = task.path(f"stderr.{run}.txt")
+        # omo reaches every model through OCX's own provider (lina#385).
+        provider, model_id = through_ocx(model) if model else (None, None)
         return self._call([str(self.node), str(HELPERS / "omo_open.mjs"), str(self.engine), str(task.work),
-                           task.id, str(prompt_file), model.provider or "" if model else "",
-                           model.id or "" if model else "", model.thinking or "" if model else "", access], 300, err)
+                           task.id, str(prompt_file), provider or "", model_id or "",
+                           model.thinking or "" if model else "", access], 300, err)
 
     def start(self, task: Task, prompt: str, model: ModelProfile | None,
               access: str = "workspace-write") -> Handle:
@@ -123,7 +126,8 @@ class OmoRunner:
                                 str(handle.task.work), handle.task.id, "", "", "", "", mode,
                                 handle.data["ref"]], 120, handle.task.path(f"stderr.{handle.run}.txt"))
         if rc != 0 or not reply or reply.get("action") != "attach":
-            raise RunnerError("omo could not restore recorded session access")
+            reason = (reply or {}).get("detail") or (reply or {}).get("reason") or "no answer"
+            raise RunnerError(f"omo could not restore recorded session access: {reason}")
         return mode
 
     def follow_up(self, handle: Handle, text: str, *, run: int | None = None,

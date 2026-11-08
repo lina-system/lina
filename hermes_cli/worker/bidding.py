@@ -11,6 +11,7 @@ a ``person`` device never takes work.
 
 from __future__ import annotations
 
+import json
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
@@ -84,18 +85,33 @@ def missing_access(descriptor: dict | None, access: str | None) -> str | None:
     return None if access in modes else f"does not enforce access {access} (update the node)"
 
 
+def takes_runner_spec(descriptor: dict | None) -> bool:
+    """Whether the node's hello says its ``probe`` builds a runner from the hub's spec (lina#337)."""
+    from hermes_cli.worker.protocol import PROBE_SPEC
+    return bool(((descriptor or {}).get("capabilities") or {}).get(PROBE_SPEC))
+
+
 def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str,
-              access: str | None = None) -> list[dict]:
+              access: str | None = None, runner_spec: dict | None = None) -> list[dict]:
+    """Each candidate's probe of *runner*. A node that takes the hub's *runner_spec* is sent it on stdin, so it builds
+    the runner as the run will (``device.runner_for``); an older node is asked as before, and when it has no runner of
+    that name its reason says it could not take the hub's spec."""
     from hermes_cli.worker.transport import for_device
 
     def ask(dev: Device) -> dict:
         contact = for_device(dev, worker_root)
-        reply = contact.call(["probe", repo or "", runner], timeout=60)
+        if runner_spec and contact.descriptor is None:
+            contact.refresh(timeout=60)
+        sends = bool(runner_spec) and takes_runner_spec(contact.descriptor)
+        reply = contact.call(["probe", repo or "", runner], json.dumps(runner_spec).encode() if sends else b"",
+                             timeout=60)
         if reply.code != 0:
             if reply.json().get("protocol_error"):
                 return reply.json()
             return {"error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
         found = reply.json() or {"error": "no answer"}
+        if runner_spec and not sends and str(found.get("why") or "").startswith("no runner "):
+            found = {**found, "why": f"{found['why']}; {dev.name} does not take the hub's runner spec (update the node)"}
         why = missing_access(contact.descriptor, access)
         return {**found, "protocol_error": True, "reason": f"{dev.name} {why}"} if why else found
 
@@ -106,7 +122,8 @@ def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, 
 
 
 def bid(candidates: list[Device], worker_root: Path, *, repo: str | None, runner: str, min_free_gb: int = 5,
-        manual: bool = False, access: str | None = None) -> tuple[Device | None, list[dict]]:
+        manual: bool = False, access: str | None = None,
+        runner_spec: dict | None = None) -> tuple[Device | None, list[dict]]:
     pool = [dev for dev in candidates if manual or (dev.auto and dev.role == "work")]
-    return choose(pool, probe_all(pool, worker_root, repo=repo, runner=runner, access=access), repo=repo,
-                  min_free_gb=min_free_gb, manual=manual)
+    return choose(pool, probe_all(pool, worker_root, repo=repo, runner=runner, access=access, runner_spec=runner_spec),
+                  repo=repo, min_free_gb=min_free_gb, manual=manual)

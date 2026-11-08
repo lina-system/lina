@@ -128,7 +128,7 @@ def test_omo_sets_session_permission_with_or_without_model(task, omo, mode, pres
     opened = json.loads((fake / "state.json").read_text())["opened"]
     assert {key: value for key, value in opened.items() if key == "permissionPreset"} == (
         {"permissionPreset": preset} if preset else {})
-    assert opened.get("modelId") == (model.id if model else None)
+    assert opened.get("modelId") == ("proxy/model-x" if model else None)
     assert Handle.load(task).data["access"] == handle.data["access"] == mode
     assert runner.honours(mode) == (True, "")
 
@@ -181,6 +181,51 @@ def test_omo_default_access_is_workspace_write(task, omo):
     handle = runner.start(task, "work", None)
     assert "permissionPreset" not in json.loads((fake / "state.json").read_text())["opened"]
     assert handle.data["access"] == "workspace-write"
+
+
+@pytest.mark.parametrize("mode", ACCESS)
+def test_omo_follow_up_reopens_parked_session_with_recorded_access(task, omo, mode):
+    # Given an earlier turn whose session was parked by the daemon.
+    runner, fake = omo
+    handle = runner.start(task, "earlier turn", None, mode)
+    state = fakes.as_json(fake / "state.json")
+    earlier = state["prompts"][:]
+    state["resolution"] = "parked"
+    (fake / "state.json").write_text(json.dumps(state))
+    # When starting the next round through the real Node helper.
+    result, new = runner.follow_up(Handle.load(task), "next turn", run=2)
+    # Then it resumes the same transcript, rather than creating a replacement.
+    after = fakes.as_json(fake / "state.json")
+    assert result == "started" and new.run == 2
+    assert new.data["ref"] == handle.data["ref"]
+    assert after["resolution"] == "live"
+    assert after["prompts"] == [*earlier, "next turn"]
+    assert after["phase"] == "done"
+    expected = {"sessionPath": "/fake/ses.jsonl", "cwd": str(task.work)}
+    if mode == "read-only":
+        expected["permissionPreset"] = "read-only"
+    assert after["attached"] == expected
+    assert Handle.load(task).data["access"] == mode
+
+
+@pytest.mark.parametrize(("kind", "reason"), [
+    ("unknown", "session is unknown"),
+    ("ambiguous", "session is ambiguous: host-1, host-2"),
+])
+def test_omo_follow_up_reports_unresolved_session_reason(task, omo, kind, reason):
+    # Given a saved session that no longer resolves uniquely.
+    runner, fake = omo
+    runner.start(task, "earlier turn", None, "read-only")
+    state = fakes.as_json(fake / "state.json")
+    state["resolution"] = kind
+    (fake / "state.json").write_text(json.dumps(state))
+    # When following up, the caller receives the resolver's specific reason.
+    with pytest.raises(RunnerError, match=reason):
+        runner.follow_up(Handle.load(task), "next turn", run=2)
+    # Then neither the transcript nor the recorded run was changed.
+    assert fakes.as_json(fake / "state.json") == state
+    assert Handle.load(task).run == 1
+    assert not task.path("prompt.2").exists()
 
 
 @pytest.mark.parametrize("kind", ["command", "omo"])

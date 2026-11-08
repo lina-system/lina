@@ -34,6 +34,7 @@ from hermes_cli.worker import events
 AUTHOR = "lina-worker"
 HERMES = "hermes"
 COMMAND_TIMEOUT_S = 120
+LEGACY_STATUS_TIMEOUT_S = 5
 # LINA's own home and the card session's identity must not reach Hermes's CLI: HERMES_HOME would point it at LINA's
 # root, ``unblock`` refuses inside a card session (HERMES_KANBAN_TASK), and the author is always ``AUTHOR``.
 _HUB_SIDE_DROP = ("HERMES_HOME", "HERMES_PROFILE", "HERMES_PROFILE_NAME")
@@ -379,14 +380,32 @@ def _last_schedule(view: dict) -> tuple[list[str], str | None]:
 
 
 def _still_open(store, run_id: str) -> bool:
-    """A run (or batch) this hub did not start counts as open: the tool that started it wakes the card."""
+    """Hub records win; a foreign run closes only on a successful legacy terminal status."""
+    from hermes_cli.lina_shims import legacy_omo_task
     from hermes_cli.worker.hub import ENDED
     ended = ENDED + ("unknown",)
     if run_id.startswith("OG-"):
         members = [job for job in store.all() if job.get("group") == run_id]
-        return not members or any(job.get("state") not in ended for job in members)
-    job = store.load(run_id)
-    return job is None or job.get("state") not in ended
+        if members:
+            return any(job.get("state") not in ended for job in members)
+    else:
+        job = store.load(run_id)
+        if job is not None:
+            return job.get("state") not in ended
+    legacy = legacy_omo_task(store.worker_root.parent)
+    if not run_id.startswith(("OT-", "OG-")) or not legacy:
+        return True
+    try:
+        done = subprocess.run([legacy, "status", "--json", run_id], capture_output=True, text=True,
+                              encoding="utf-8", errors="replace", timeout=LEGACY_STATUS_TIMEOUT_S, check=False)
+        if done.returncode != 0:
+            store.log(f"{run_id} legacy status exited {done.returncode}; keeping open")
+            return True
+        status = json.loads(done.stdout)
+    except (OSError, subprocess.TimeoutExpired, ValueError) as exc:
+        store.log(f"{run_id} legacy status unavailable ({type(exc).__name__}); keeping open")
+        return True
+    return not isinstance(status, dict) or status.get("state") not in ended
 
 
 def _view_path(store, card: dict) -> Path:
@@ -414,7 +433,7 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) 
     unblock form (``judge_wake`` / ``bare``) when it was woken, else None.
 
     It waits on the run when its last ``scheduled`` event names it: then it is woken after the last run that
-    schedule names has ended, and never while one this hub does not know is named.
+    schedule names has ended, including legacy runs whose configured tool confirms their end.
     Else when ``park`` (``lina worker wait``) recorded the run. A card still ``running`` or ``ready`` has not
     scheduled itself yet, so the wake is retried on the next tick. The end of a run the card does not wait on, or
     whose schedule still waits on others, leaves it parked."""
@@ -434,6 +453,10 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) 
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named:
             if any(_still_open(store, other) for other in named if other != run_id):
+                from hermes_cli.lina_shims import legacy_omo_task
+                if status == "scheduled" and legacy_omo_task(store.worker_root.parent):
+                    # A legacy end does not report to this hub; retain its wake for the next tick.
+                    raise CardLinkError(f"card {card['task']} is waiting for scheduled runs to end")
                 return None
             if woken.is_file() and woken.read_text(encoding="utf-8-sig").strip() == schedule:
                 return None  # this schedule was woken already, by the end of another run it names
