@@ -5,8 +5,13 @@ what comes back and talks to people. These are the only verbs it needs. The hub 
 can do is handed to it the same way (`--host <the hub's local device>`).
 
 The card's end of a run is written on the card, not in a chat. With `worker.card_link: {kind: hermes, command:
-[hermes]}` in LINA's `config.yaml`, the card is a Hermes Agent card, and every write goes through that command
+[/path/to/hermes]}` in LINA's `config.yaml`, the card is a Hermes Agent card, and every write goes through that command
 (`hermes kanban [--board <b>] comment | attach | show | unblock`). LINA never opens Hermes's kanban database.
+Give the Hermes Agent CLI by absolute path: inside LINA, a bare `hermes` on `PATH` is LINA's own alias, so the hub
+refuses a `command[0]` that resolves into the running LINA tree (its checkout or install directory, or its virtual
+environment) in one line naming the path it found, before any card write. A card write that fails three times in a
+row for one run shows once as `card link failing: <first error> (<n> tries)` in the hub's output, in
+`lina worker status <id>` and in the run's end notice.
 Without `card_link`, cards are LINA's own board, as before.
 
 From a card session, `submit`, `send` and `wait` find the card without flags: `HERMES_KANBAN_TASK` and
@@ -94,7 +99,8 @@ The worker's state root is `LINA_HOME` when it is set, whatever `HERMES_HOME` sa
 worker:
   card_link:
     kind: hermes
-    command: [hermes]   # or [env, HERMES_HOME=<Hermes's root>, hermes] when Hermes runs from a custom root
+    command: [/path/to/hermes]   # the Hermes Agent CLI by absolute path, never a bare `hermes` (LINA's own alias);
+                                 # or [env, HERMES_HOME=<Hermes's root>, /path/to/hermes] for a custom root
   todo_link:            # optional: the owner's to-do record, shaped like card_link
     kind: hermes
     command: [my-todo]  # `link <to-do> omo:<ID>` after submit --todo; `evidence` and `note` after accept
