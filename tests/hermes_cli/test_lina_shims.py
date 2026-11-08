@@ -55,6 +55,10 @@ OMO_TASK = [
     (["hosts"], {"worker_action": "hosts"}),
     (["schedules"], {"worker_action": "schedules"}),
     (["unschedule", "OS-SIO1"], {"worker_action": "unschedule", "id": "OS-SIO1"}),
+    (["card", "OT-SIO1", "t_second", "--board", "ops"],
+     {"worker_action": "card", "id": "OT-SIO1", "card": "t_second", "board": "ops"}),
+    (["card", "OT-SIO1", "--drop", "t_first"],
+     {"worker_action": "card", "id": "OT-SIO1", "drop": "t_first"}),
 ]
 
 WORK = [
@@ -158,3 +162,19 @@ def test_an_installed_shim_hands_an_old_id_to_the_old_tool_with_its_argv_and_exi
     done = _run(base / "bin" / "omo-task", ["accept", "OT-OLD1", "--note", "fine"], base)
     assert done.returncode == 7
     assert json.loads(done.stdout) == {"legacy": ["accept", "OT-OLD1", "--note", "fine"]}
+
+
+@pytest.mark.platforms("posix")
+@pytest.mark.parametrize("args, expected", [
+    (["t_second", "--board", "ops"], [{"id": "t_first", "board": "ops"}, {"id": "t_second", "board": "ops"}]),
+    (["--drop", "t_first"], []),
+])
+def test_installed_shim_passes_card_mutations_to_worker(base, args, expected):
+    from hermes_cli.worker.hub_store import Store
+    store = Store(base / "worker")
+    store.save({"id": "OT-NEW1", "card": {"task": "t_first", "board": "ops", "kind": "hermes"}})
+    (base / "config.yaml").write_text('worker:\n  card_link: {kind: hermes, command: [hermes]}\n', encoding="utf-8")
+    assert lina_shims.install(base, out=lambda line: None) == 0
+    done = _run(base / "bin" / "omo-task", ["card", "OT-NEW1", *args], base)
+    assert done.returncode == 0, done.stderr
+    assert store.load("OT-NEW1")["cards"] == expected

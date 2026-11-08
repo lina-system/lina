@@ -227,9 +227,11 @@ class Hub:
         if failing["tries"] == CARD_FAILING_AFTER:
             line = _card_failing(job)
             for entry in (job.get("card_pending") or {}).values():  # an end staged before the count got here
-                if "comment" in entry["done"]:  # its text is on the card already: the line goes on its own
-                    entry.setdefault("warning", {"line": line, "sent": False})
-                elif "card link failing" not in entry["text"]:
+                progress = list((entry.get("card_progress") or {}).values()) or [entry]
+                for state in progress:
+                    if "comment" in state["done"] and not state.get("noticed"):
+                        state.setdefault("warning", {"line": line, "sent": False})
+                if any("comment" not in state["done"] for state in progress) and "card link failing" not in entry["text"]:
                     entry["text"] = entry["text"].rstrip("\n") + f"\n- {line}\n"
             self.store.save(job)
             self.store.receipt(job["id"], "card_link_failing", **failing)
@@ -883,15 +885,9 @@ class Hub:
                 self._todo(job, "note", job["todo"], f"{task_id} checked: {note}")
         return 0
 
-    def card(self, task_id: str, card: str | None = None, drop: str | None = None) -> int:
-        """The card a run was handed out from; a run's card is set at submit and never changed afterwards."""
-        job = self.need(task_id)
-        if card or drop:
-            raise HubError(f"{task_id}: a run's card is set at submit (--card); it cannot be added or dropped")
-        linked = job.get("card")
-        self.out(f"{linked['task']}  {linked.get('board') or '-'}  ({linked.get('kind') or 'lina'})" if linked
-                 else f"{task_id}: no card")
-        return 0
+    def card(self, task_id: str, card: str | None = None, drop: str | None = None, *,
+             board: str | None = None) -> int:
+        return kanban_link.change_card(self, task_id, card, drop, board)
 
 
     def notify(self, task_id: str, kind: str, run: str) -> str:
@@ -1001,7 +997,7 @@ class Hub:
         self._end_done(job, events.marker(job["id"], kind, run))
         entry = (job.get("card_pending") or {}).get(delivery)
         if entry and staged_now and entry["fetch_pending"]:
-            how = f"card {job['card']['task']}: result not fetched yet (1/{FETCH_TRIES}), retried on the next report " \
+            how = f"cards: result not fetched yet (1/{FETCH_TRIES}), retried on the next report " \
                   "or tick"
         elif entry:
             how = self._card_steps(job, delivery)
@@ -1080,63 +1076,43 @@ class Hub:
         for the attachment (none when *report* is False: the results are a later run's)."""
         job.setdefault("card_pending", {})[delivery] = {
             "kind": kind, "run": run, "text": text, "done": [], "fetch_pending": fetched is False,
+            "cards": kanban_link.linked_cards(job),
             "fetch_tries": 1 if fetched is False else 0, "delivery": delivery,
             "report": self._report_snapshot(job, delivery) if report and fetched is not False else None}
 
     def _card_end(self, job: dict, kind: str, run: str, text: str, *, delivery: str) -> str:
-        """A run's end on its LINA card: the board's event and comment."""
-        card = job["card"]
-        try:
-            kanban_link.record_end(card, job, kind, run, events.signed(text, delivery))
-        except (ValueError, OSError) as exc:
-            self.store.receipt(job["id"], "card_notice_failed", error=str(exc)[:300])
-            return f"card {card['task']}: failed ({str(exc)[:120]})"
-        self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=False)
-        return f"card {card['task']}"
+        """A run's end on its LINA cards: the board's event and comment on each. A card that fails is recorded and
+        does not keep the end from the cards after it."""
+        failed = []
+        for card in kanban_link.linked_cards(job):
+            try:
+                kanban_link.record_end(card, job, kind, run, events.signed(text, delivery))
+            except (ValueError, OSError) as exc:
+                self.store.receipt(job["id"], "card_notice_failed", card=card, error=str(exc)[:300])
+                failed.append(f"card {card['task']}: failed ({str(exc)[:120]})")
+                continue
+            self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=False)
+        return "; ".join(failed) or "cards notified"
 
     def _card_steps(self, job: dict, marker: str) -> str:
         """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
         went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
         under the job's lock."""
-        card = job["card"]
         if job.get("card_start_pending") or "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
-            return f"card {card['task']}: pending hub tick"
+            return "cards: pending hub tick"
         if job["card_pending"][marker].get("fetch_pending") and not self._card_fetch(job, marker):
-            return (f"card {card['task']}: result not fetched yet ({job['card_pending'][marker]['fetch_tries']}/"
+            return (f"cards: result not fetched yet ({job['card_pending'][marker]['fetch_tries']}/"
                     f"{FETCH_TRIES}), retried on the next report or tick")
         entry = job["card_pending"][marker]
-        for step in kanban_link.END_STEPS:
-            if step in entry["done"]:
-                continue
-            try:
-                link = kanban_link.config(self.worker)
-                woke = kanban_link.end_step(step, self.store, card, job, entry["run"],
-                                            events.signed(entry["text"], entry.get("delivery")), link,
-                                            Path(entry["report"]) if entry.get("report") else None)
-            except (OSError, kanban_link.CardLinkError) as exc:
-                self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
-                if not isinstance(exc, kanban_link.CardWaiting):
-                    self._card_failed(job, exc)
-                else:  # the card answered: the link works
-                    self._card_warning(job, entry)
-                return f"card {card['task']}: {step} failed, retried on the next report or tick"
-            entry["done"].append(step)
-            job.pop("card_link_failing", None)
-            if woke:
-                entry["woke"], entry["unblock"] = True, woke
-            self.store.save(job)
-            self._card_warning(job, entry)
-        if not self._card_warning(job, entry):
-            return f"card {card['task']}: the card-link warning failed, retried on the next report or tick"
+        if pending := kanban_link.end_cards(self, job, entry):
+            return pending
         del job["card_pending"][marker]
         self.store.save(job)
         if entry.get("report"):
             shutil.rmtree(Path(entry["report"]).parent, ignore_errors=True)
-        self.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
-                           woke=bool(entry.get("woke")), unblock=entry.get("unblock"))
-        return f"card {card['task']}" + (" (woken)" if entry.get("woke") else "")
+        return "cards notified"
 
-    def _card_warning(self, job: dict, entry: dict) -> bool:
+    def _card_warning(self, job: dict, entry: dict, card: dict | None = None) -> bool:
         """The ``card link failing`` line of an end whose comment was on the card before the count got there, as its
         own comment once the link works; True when there is none left to send. A failed send is counted and retried
         later, and never holds the end's other steps."""
@@ -1144,7 +1120,7 @@ class Hub:
         if not warning or warning["sent"]:
             return True
         try:
-            kanban_link.comment(kanban_link.config(self.worker)["command"], job["card"],
+            kanban_link.comment(kanban_link.config(self.worker)["command"], card or job["card"],
                                 f"[lina worker · automatic] run {job['id']}: {warning['line']}")
         except (OSError, kanban_link.CardLinkError) as exc:
             self.store.receipt(job["id"], "card_notice_failed", step="warning", error=str(exc)[:300])
@@ -1208,8 +1184,8 @@ class Hub:
         card = kanban_link.card_for(card, link)
         with self.store.lock(f"card-{kanban_link.card_key(card)}"):
             open_runs = [job["id"] for job in self.store.all()
-                         if (job.get("card") or {}).get("task") == card["task"]
-                         and (job.get("card") or {}).get("board") == card.get("board")
+                          if any(item["task"] == card["task"] and item.get("board") == card.get("board")
+                                 for item in kanban_link.linked_cards(job))
                          and job.get("state") not in ENDED + ("unknown",) and (not task_ids or job["id"] in task_ids)]
             if not open_runs:
                 raise HubError(f"card {card['task']} has no open run to wait for; read the ends on the card "
