@@ -45,6 +45,17 @@ HUMAN_NOTICE_AFTER_S = 120
 ANSWER_CLOSE_WAIT_S = 150
 # A Hermes card run's result fetch: tried on each report and tick (30 s) before its end goes out without report.md.
 FETCH_TRIES = 10
+# A card write that failed this many times in a row for one run is said once on the hub: one failure can be a blip (a
+# timeout, a busy board) the next tick clears, three in a row (about 90 s of ticks) is a link that keeps failing.
+CARD_FAILING_AFTER = 3
+
+
+def _card_failing(job: dict) -> str | None:
+    """The one line a run whose card writes keep failing carries on its status and end notice."""
+    failing = job.get("card_link_failing") or {}
+    if failing.get("tries", 0) < CARD_FAILING_AFTER:
+        return None
+    return f"card link failing: {failing['error']} ({failing['tries']} tries)"
 
 
 def _start_time(pid: int) -> int | None:
@@ -195,15 +206,38 @@ class Hub:
         if kanban_link.on_hermes(job["card"]) and "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
             return
         try:
-            kanban_link.record_run(job["card"], job, self._link())
+            kanban_link.record_run(job["card"], job, kanban_link.config(self.worker))
         except (ValueError, OSError, kanban_link.CardLinkError) as exc:
             self.store.receipt(job["id"], "card_link_failed", error=str(exc)[:300])
             self.out(f"lina worker: could not record {job['id']} on card {job['card']['task']}: {exc}")
+            self._card_failed(job, exc)
             return
         self.store.receipt(job["id"], "card_linked", card=job["card"])
-        if job.get("card_start_pending"):
-            job.pop("card_start_pending")
+        if job.get("card_start_pending") or job.get("card_link_failing"):
+            job.pop("card_start_pending", None)
+            job.pop("card_link_failing", None)
             self.store.save(job)
+
+    def _card_failed(self, job: dict, exc: Exception) -> None:
+        """Count a failed card write of *job*'s run (start or end, the same ``kanban_link.config`` verdict); at
+        ``CARD_FAILING_AFTER`` in a row it is said once on the hub. The job's caller holds its lock or owns it."""
+        failing = job.setdefault("card_link_failing", {"error": (str(exc).strip().splitlines() or [""])[0][:200]
+                                                      or type(exc).__name__, "tries": 0})
+        failing["tries"] += 1
+        if failing["tries"] == CARD_FAILING_AFTER:
+            line = _card_failing(job)
+            for entry in (job.get("card_pending") or {}).values():  # an end staged before the count got here
+                progress = list((entry.get("card_progress") or {}).values()) or [entry]
+                for state in progress:
+                    if "comment" in state["done"] and not state.get("noticed"):
+                        state.setdefault("warning", {"line": line, "sent": False})
+                if any("comment" not in state["done"] for state in progress) and "card link failing" not in entry["text"]:
+                    entry["text"] = entry["text"].rstrip("\n") + f"\n- {line}\n"
+            self.store.save(job)
+            self.store.receipt(job["id"], "card_link_failing", **failing)
+            self.out(f"lina worker: {job['id']} {line}")
+            return
+        self.store.save(job)
 
     def _notify_spec(self, dev: settings.Device) -> dict:
         if dev.local:
@@ -301,6 +335,10 @@ class Hub:
                                  for r in table or []])
         self.start_on(job, dev)
         return dev.name
+
+    def _status_card(self, job: dict) -> None:
+        if line := _card_failing(job):
+            self.out(f"  {line}")
 
     def _link(self) -> dict:
         try:
@@ -575,6 +613,7 @@ class Hub:
             state = job.get("state", "queued")
             self.out(f"{head} · {notice.STATE_WORDS.get(state, state)} · handed out {_ago(job['created'])} ago"
                      + (" · starts when a device is free (`lina worker hosts`)" if state == "queued" else ""))
+            self._status_card(job)
             return 0
         remote = self.meta(job, live=True)
         if as_json:
@@ -606,6 +645,7 @@ class Hub:
             self.out(f"  repo {job['repo']} · branch {job['branch']} (push blocked)")
         self.out(f"  delivery: {notice.DELIVERY_WORDS.get(job.get('delivery', 'pending'))} · verdict: "
                  f"{VERDICT_WORDS.get(job.get('verdict'))}" + (f" · group {job['group']}" if job.get("group") else ""))
+        self._status_card(job)
         return 0
 
     def list(self, bot: str | None = None, show_all: bool = False) -> int:
@@ -900,6 +940,8 @@ class Hub:
             text = with_check(text, manifest.get("deny_check"))
         if job.get("placement_error"):
             text += f"- {job['placement_error']}\n"
+        if line := _card_failing(job):
+            text = text.rstrip("\n") + f"\n- {line}\n"
         return text, out_dir
 
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
@@ -1066,6 +1108,24 @@ class Hub:
         if entry.get("report"):
             shutil.rmtree(Path(entry["report"]).parent, ignore_errors=True)
         return "cards notified"
+
+    def _card_warning(self, job: dict, entry: dict, card: dict | None = None) -> bool:
+        """The ``card link failing`` line of an end whose comment was on the card before the count got there, as its
+        own comment once the link works; True when there is none left to send. A failed send is counted and retried
+        later, and never holds the end's other steps."""
+        warning = entry.get("warning")
+        if not warning or warning["sent"]:
+            return True
+        try:
+            kanban_link.comment(kanban_link.config(self.worker)["command"], card or job["card"],
+                                f"[lina worker · automatic] run {job['id']}: {warning['line']}")
+        except (OSError, kanban_link.CardLinkError) as exc:
+            self.store.receipt(job["id"], "card_notice_failed", step="warning", error=str(exc)[:300])
+            self._card_failed(job, exc)
+            return False
+        warning["sent"] = True
+        self.store.save(job)
+        return True
 
     def _report_snapshot(self, job: dict, marker: str) -> str | None:
         """A copy of the run's report.md as fetched now: a later run's fetch replaces the one in out/."""

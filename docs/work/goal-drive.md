@@ -12,9 +12,9 @@ Hub runs handed out from a card (`lina worker submit --card <id> --board <slug>`
 as `hermes kanban plan` lays it out: the card body opens with `## Goal` and the line `<goal card> — <goal title>`.
 
 The hub never opens a Hermes kanban database. It reads a card with `hermes kanban --board <b> show <id> --json` and
-writes only with `hermes kanban block` and `hermes kanban schedule`, through `worker.card_link.command` with the same
-environment as the run's start and end comments. A card on LINA's own board (`card_link: {kind: lina}`) goes through
-LINA's board API.
+writes only with `hermes kanban block` and `hermes kanban schedule` (and `hermes kanban unblock` to wake a card it
+parked, see [Parking](#parking)), through `worker.card_link.command` with the same environment as the run's start and
+end comments. A card on LINA's own board (`card_link: {kind: lina}`) goes through LINA's board API.
 
 The board blocks only a `running` or `ready` card and schedules only a `todo`, `ready`, `running` or `blocked` one. A
 card in another state first takes the board's own step to `ready`: `unblock` for a `scheduled` card, `promote` for a
@@ -47,14 +47,38 @@ Each rule acts at most once per action id.
 | Rule | When | What the drive does |
 |---|---|---|
 | `red-check` | The run ended (`done`, `done_empty`, `review`) and its branch has an open pull request with a red required check | One follow-up to the run naming the check, with the last 80 lines of its log. Required checks are read the way `hermes kanban gate prs` reads them. The same head is followed up once; a new push is needed for another. |
-| `check-park` | Same, but the required checks are still running | Parks the work card with `schedule --wait-for pr:<repo>#<n>`. |
+| `check-park` | Same, but the required checks are still running | Parks the work card on `pr:<repo>#<n>` (see [Parking](#parking)). |
 | `deliverable` | The run ended `done`, `done_empty` or `review` with no pull request for its branch (a run with a repository), no `report.md` and no file in `out/` | One follow-up asking for it. |
 | `block` | A follow-up is due and the attempt has had 3 rounds already, or the attempt already has more than 3 | Blocks the work card with kind `needs_input` and one inbox line, `<card title> · 갈림길 · <one line>` naming who sent the last round, and stops driving that card. |
-| `node-park` | The run's node is lost and its outage is still open (no tick has had an answer from it) | Parks the work card with `schedule --wait-for until:<time>`, `node_watch.FAILED_CONTACTS` hub ticks (3 × 30 s) ahead: no `--wait-for` event names a node's return, and that is the soonest the next outage could be told. |
+| `node-park` | The run's node is lost and its outage is still open (no tick has had an answer from it) | Parks the work card on `until:<time>`, `node_watch.FAILED_CONTACTS` hub ticks (3 × 30 s) ahead: no `--wait-for` event names a node's return, and that is the soonest the next outage could be told. |
 | `resubmit` | The run's node was lost, and once the device answers again the run ended there or never started | Submits the same brief on another allowed node, from the pushed branch. The node is chosen by automatic placement among the other devices, so an `auto: false` device takes no moved run, except the device the original run was handed out to with `--host`. When no node can take it, the ledger's `notes` say why for each device, and the drive tries again on the next tick. The branch: `origin/<branch>` when GitHub has the branch, else the repository's default. Not while another run of the same to-do is live. A new attempt. |
 | `node-continued` | Same, but the device says the run went on | Nothing is moved; the ledger records it. |
-| `usage-park`, `usage-resume` | The run ended `failed`, `stalled` or `done_empty` and its end text or stderr matches its runner's usage-limit pattern | Parks the work card until the reset time (an ISO time after `reset`, or `reset in <n> <unit>`; else 1 h), then sends one message that continues the same task. Not a new attempt and not a follow-up. |
+| `usage-park`, `usage-resume` | The run ended `failed`, `stalled` or `done_empty` and its end text or stderr matches its runner's usage-limit pattern | Parks the work card on `until:<reset time>` (an ISO time after `reset`, or `reset in <n> <unit>`; else 1 h), then sends one message that continues the same task. Not a new attempt and not a follow-up. |
 | `usage-move` | Same, with `worker.goal_limits.usage_move: true` and another node free | Submits the same brief on that node instead of waiting, chosen as for `resubmit`. Same attempt. |
+| `check-wake`, `node-wake`, `usage-wake` | A card the drive parked with a plain `schedule` (see [Parking](#parking)), and its event happened | Unblocks the card once, with `--judge-wake <run>` and the event as the reason. |
+
+### Parking
+
+Which form a park takes depends on the board:
+
+| Board | Park | Woken by |
+|---|---|---|
+| LINA's own board (`card_link: {kind: lina}`) | `schedule_task` with the `wait_for` event | LINA's kanban dispatcher |
+| A Hermes whose `kanban schedule` has `--wait-for` | `hermes kanban schedule <card> --wait-for <event> -- <reason>` | that Hermes's dispatcher |
+| A Hermes without it (the installed Hermes) | `hermes kanban schedule <card> -- <reason> · WAIT_EVENT=<event> GOAL_ACTION=<action id>` | the hub's own tick |
+
+On a Hermes card the first park of a tick tries `--wait-for`. A Hermes that does not know the option exits 2 with
+argparse's "unrecognized arguments"; that park, and the others in the same tick, are then made as a plain `schedule`
+whose reason carries the event (`WAIT_EVENT=pr:<repo>#<n>`, `WAIT_EVENT=until:<ISO time>`) and the park's action id.
+The ledger's `waits` keeps each card parked that way.
+
+Such a card is woken by the hub, because the installed Hermes wakes a scheduled card only on the worker ids its reason
+names. On each tick the drive reads the card (`show --json`) and wakes it when its event happened: the pull request's
+required checks all have a conclusion (read as LINA's `pr:` wait reads them, kept 60 s like every check read), or the
+time passed. The wake is `hermes kanban unblock --judge-wake <run> --reason "goal drive: wait met: <event>"` (a bare
+`unblock --reason` on a Hermes without `--judge-wake`), once per park (`<rule>-wake`). The drive wakes only a card that
+is still `scheduled` and whose latest `scheduled` reason carries a `GOAL_ACTION` that is in its ledger: a card a
+person or another tool unblocked or parked again is let go and dropped from `waits`.
 
 ### Follow-up rounds
 
@@ -104,6 +128,7 @@ The ledger is `$LINA_HOME/worker/hub/goals/<goal card>.json`, written under the 
 | `actions` | Action id → time and result. |
 | `usage`, `moved`, `blocked`, `red_heads`, `github` | Usage waits, moved tasks, cards the drive blocked, followed-up heads, cached GitHub reads. |
 | `outages` | Per task, the outage (its delivery id) the drive settled: the run went on, or it was moved. |
+| `waits` | Per card the drive parked with a plain `schedule`, the park's action id and the run it wakes the card to judge. |
 | `notes` | Why the drive left a card (`skipped: card <status>`), a write the board refused (`card_write_refused: …`), or a run (`not moved: …`, `deferred: …`). |
 | `stopped` | Set when a limit stopped the drive for this goal. |
 
