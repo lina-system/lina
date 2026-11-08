@@ -81,6 +81,8 @@ def missing_access(descriptor: dict | None, access: str | None) -> str | None:
     """Why a device whose hello lacks *access* must not take the run (an older node would ignore the mode)."""
     if not access:
         return None
+    if not descriptor:  # no hello to read: the node is not shown to be old
+        return f"could not be asked whether it enforces access {access} (no worker hello)"
     modes = ((descriptor or {}).get("capabilities") or {}).get("access_modes") or []
     return None if access in modes else f"does not enforce access {access} (update the node)"
 

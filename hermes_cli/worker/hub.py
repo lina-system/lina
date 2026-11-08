@@ -237,6 +237,8 @@ class Hub:
         # would ignore it and run with its old, wider permissions.
         if not transport.descriptor:
             transport.refresh(timeout=90)
+        if transport.reason:  # the hello failed: the node's modes are not known, it is not shown to be old
+            raise HubError(transport.reason)
         if why := bidding.missing_access(transport.descriptor, job.get("access")):
             raise HubError(f"{dev.name} {why}")
         device_job = {key: job.get(key) for key in ("id", "mode", "access", "runner", "runner_spec", "model", "repo", "branch",
@@ -821,15 +823,44 @@ class Hub:
             self.notify(task_id, "cancelled", "0")
             self.out(f"{task_id} cancelled while queued.")
             return 0
-        answer = self.transport(job).call(["cancel", task_id], (why or "cancelled").encode("utf-8"), timeout=120)
-        reply = answer.json()
-        if answer.code != 0 or reply.get("action") != "cancel":
-            raise HubError(f"{task_id}: the cancel did not reach {job['host']} (rc {answer.code}: "
-                           f"{(answer.err.strip() or reply.get('reason') or 'no acknowledgement')[-300:]}); the task "
-                           "is not cancelled, try again")
+        reply, unreached = self._tell_cancel(job, why)
+        if unreached:
+            return self._cancel_on_hub(job, unreached)
         self.out(f"{task_id} cancelled (the runner was stopped). The task folder stays. One notice follows.")
         if not reply.get("alive"):
             self.notify(task_id, "cancelled", str(reply.get("run") or 1))
+        return 0
+
+    def _tell_cancel(self, job: dict, why: str) -> tuple[dict, str]:
+        """The device's answer to the cancel, and why it could not be told ("" when it answered): it left
+        devices.workers, gave no answer, or its hello failed. A device that answered and did not cancel (its abort
+        failed) is an error: the run is still going there and the cancel can be tried again."""
+        try:
+            transport = self.transport(job)
+        except HubError as exc:  # the device left devices.workers
+            return {}, str(exc)
+        answer = transport.call(["cancel", job["id"]], (why or "cancelled").encode("utf-8"), timeout=120)
+        reply = answer.json()
+        if answer.code == 0 and reply.get("action") == "cancel":
+            return reply, ""
+        said = answer.err.strip() or reply.get("reason") or "no acknowledgement"
+        said = f"rc {answer.code}: {' '.join(said.split())[-300:]}"
+        if not reply or reply.get("protocol_error"):
+            return reply, said
+        raise HubError(f"{job['id']}: the cancel did not reach {job['host']} ({said}); the task is not cancelled, "
+                       "try again")
+
+    def _cancel_on_hub(self, job: dict, unreached: str) -> int:
+        """End on the hub a task whose device could not be told (it left devices.workers or did not answer), so
+        the tick neither resumes nor watches it and a device that comes back is never handed its old request. A run
+        already going there is not stopped by this; the line says so."""
+        placing = job.get("state") == "placing"
+        run = "0" if placing else str(job.get("runs") or 1)
+        self.store.receipt(job["id"], "cancel_not_delivered", host=job["host"], run=run, error=unreached[:300])
+        left = "its task folder there may remain" if placing else \
+            "a run already going there may go on, and its work folder there may remain"
+        self.out(f"{job['id']} cancelled on the hub only: {job['host']} could not be told ({unreached}); {left}.")
+        self.notify(job["id"], "cancelled", run)
         return 0
 
     def verdict(self, task_id: str, accepted: bool, note: str = "") -> int:
@@ -1213,10 +1244,24 @@ class Hub:
             return False
 
     def _try_resume(self, job: dict) -> None:
+        if job.get("host") and not any(dev.name == job["host"] for dev in self.devices()):
+            self._drop_placement(job)
+            return
         try:
             self.resume_placement(job["id"])
         except (TransportError, HubError, OSError) as exc:
             self.store.log(f"{job['id']} placement not resumed on tick: {exc}")
+
+    def _drop_placement(self, job: dict) -> None:
+        """A placement on a device that left devices.workers ends as failed, once. Not re-queued: such a task is
+        often handed out again by hand meanwhile, and a second placement would run the same brief twice; not kept:
+        a device added back would be handed the old request."""
+        why = (f"device {job['host']!r} left devices.workers while this task was being placed on it; the hub ended "
+               "the placement and will not resume it: submit again with an available device")
+        self.store.update(job["id"], placement_error=why)
+        self.store.receipt(job["id"], "placement_dropped", host=job["host"], why=why)
+        self.store.log(f"{job['id']} {why}")
+        self.notify(job["id"], "failed", "0")
 
     def _watch(self, job: dict) -> None:
         """A running run on this tick: its end, or its question once it has waited long enough. A run its device did
