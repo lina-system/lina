@@ -279,10 +279,11 @@ class Hub:
         if job.get("fixed_host"):
             dev, table = bidding.bid([self.device(job["fixed_host"])], self.worker_root, repo=job.get("repo"),
                                      runner=job["runner"], manual=True, access=job.get("access"),
+                                     runner_spec=job.get("runner_spec"),
                                      min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))
         else:
             dev, table = bidding.bid(self.devices(), self.worker_root, repo=job.get("repo"), runner=job["runner"],
-                                     access=job.get("access"),
+                                     access=job.get("access"), runner_spec=job.get("runner_spec"),
                                      min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))
             self.store.log(f"{job['id']} bid: " + "; ".join(
                 f"{r['host']} {r.get('running', '-')}/{r['cap']} {r.get('why', 'ok')}" for r in table)
@@ -620,6 +621,7 @@ class Hub:
     def hosts(self, runner: str | None = None) -> int:
         _, table = bidding.bid(self.devices(), self.worker_root, repo=None,
                                runner=runner or runners.default_name(self.worker), manual=True,
+                               runner_spec=runners.specs(self.worker).get(runner or runners.default_name(self.worker)),
                                min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))
         if not table:
             self.out("no devices: add them under devices.workers in config.yaml")
