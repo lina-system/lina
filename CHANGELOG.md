@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- The `omo-task` and `work` shims and LINA's worker run, worker service and web service start Python with `-P`, so the caller's current directory cannot shadow LINA's modules (lina#428).
 - Omo's Python code-mode kernel is excluded from live task work even when interpreter options precede its runtime script, while task commands started by that kernel remain live work (lina#425).
 - `lina worker card <ID> <card> [--board <slug>]` and `--drop <card>` add and remove task cards through the `omo-task` shim too, recording one `card_linked` / `card_dropped` receipt per change, leaving repeated requests unchanged, and delivering subsequent run ends only to the remaining cards (lina#402).
 - `worker.card_link.command` whose first word resolves into the running LINA (its checkout or install directory, its virtual environment, or a user-bin forwarder to it) is refused in one line naming the path found and asking for the Hermes Agent CLI by absolute path, before any card write, instead of every card write failing with `kanban: board '<slug>' does not exist`; a card write that fails three times in a row for one run is said once as `card link failing: <first error> (<n> tries)` on the hub's output, `lina worker status` and the end notice, and a card still waiting for `kanban_schedule` is not counted as failing; the docs give the command by absolute path (lina#345).

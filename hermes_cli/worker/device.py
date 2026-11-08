@@ -554,7 +554,7 @@ def dispatch(worker_root: Path, verb: list[str], stdin: bytes = b"") -> tuple[in
 
 
 def run_argv(task: Task, run: int) -> list[str]:
-    return [sys.executable, "-m", "hermes_cli.main", "worker", "_run", task.id, str(run)]
+    return [sys.executable, "-P", "-m", "hermes_cli.main", "worker", "_run", task.id, str(run)]
 
 
 def _systemd_available() -> bool:

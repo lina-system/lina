@@ -4,4 +4,4 @@
 # Always the LINA root this shim was installed for: a caller's HERMES_HOME is Hermes Agent's, not LINA's.
 LINA_HOME="@LINA_HOME@"
 export LINA_HOME
-PYTHONPATH="@PYTHONPATH@" exec "@PYTHON@" -m hermes_cli.lina_shims omo-task "$@"
+PYTHONPATH="@PYTHONPATH@" exec "@PYTHON@" -P -m hermes_cli.lina_shims omo-task "$@"
