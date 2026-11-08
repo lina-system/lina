@@ -155,12 +155,13 @@ def test_card_drop_during_pending_end_does_not_retarget_old_work(handoff, monkey
     monkeypatch.setenv("FAKE_KANBAN_STATUS", "running")
     hub.notify(run, "done", "1")  # first card's wake is pending after its comment
     assert hub.store.load(run).get("card_pending")
+    assert [c["argv"][4] for c in calls() if c["argv"][3] == "comment"].count("t_second") == 1
     assert _cli(["card", run, "--drop", card["task"]]) == 0
     before = len(calls())
     monkeypatch.setenv("FAKE_KANBAN_STATUS", "scheduled")
     hub.tick()
     hub.tick()
-    assert [c["argv"][4] for c in calls()[before:] if c["argv"][3] == "comment"] == ["t_second"]
+    assert not [c for c in calls()[before:] if c["argv"][3] == "comment"]
     assert all(c["argv"][4] == "t_second" for c in calls()[before:])
     assert not hub.store.load(run).get("card_pending")
 
@@ -172,3 +173,52 @@ def test_card_add_after_empty_uses_submit_board_default(handoff, monkeypatch):
     assert _cli(["card", run, "t_second"]) == 0
     assert hub.store.load(run)["card"] == {"task": "t_second", "board": "inherited", "kind": "hermes"}
     assert hub.store.load(run)["cards"] == [{"id": "t_second", "board": "inherited"}]
+
+
+@pytest.mark.parametrize("failure", ["running", "ready", "comment"])
+def test_card_targets_progress_independently_and_retry_only_pending(handoff, tmp_path, monkeypatch, failure):
+    hub, run, first, calls = handoff
+    second = {"task": "t_second", "board": "ops", "kind": "hermes"}
+    assert _cli(["card", run, second["task"], "--board", second["board"]]) == 0
+    monkeypatch.delenv("HERMES_DELEGATED_CHILD_CONTEXT")
+    hub.tick()  # finish submit's start comment before testing end delivery
+    for card in (first, second):
+        kanban_link.park(hub.store, card, [run])
+    fake = tmp_path / "hermes.py"
+    fake.write_text(FAKE_KANBAN.replace(
+        'os.environ.get("FAKE_KANBAN_STATUS", "scheduled")',
+        'json.loads(os.environ.get("FAKE_CARD_STATUSES", "{}" )).get(rest[0], "scheduled")'), encoding="utf-8")
+    monkeypatch.setenv("FAKE_CARD_STATUSES", json.dumps({first["task"]: failure if failure != "comment" else "scheduled"}))
+    if failure == "comment":
+        fail = tmp_path / "fail-comment"
+        fail.mkdir()
+        (fail / "comment").touch()
+        monkeypatch.setenv("FAKE_KANBAN_FAIL_ONCE", str(fail))
+    start = len(calls())
+
+    result = hub.notify(run, "done", "1")
+
+    assert "retried" in result
+    entry, = hub.store.load(run)["card_pending"].values()
+    first_state = entry.get("card_progress", {}).get(json.dumps(first, sort_keys=True), {"done": []})
+    second_state = entry.get("card_progress", {}).get(json.dumps(second, sort_keys=True), {})
+    assert not first_state.get("noticed")
+    assert second_state.get("noticed"), "a pending first card must not block the second card"
+    assert "wake" not in first_state["done"]
+    assert ("comment" in first_state["done"]) == (failure != "comment")
+    delivered = [c["argv"] for c in calls()[start:] if c["ok"]]
+    assert sum(a[3] == "comment" and a[4] == second["task"] for a in delivered) == 1
+    assert sum(a[3] == "unblock" and a[-1] == second["task"] for a in delivered) == 1
+    assert all(f"delivery {run}:1:run.completed" in a[-1] for a in delivered if a[3] == "comment")
+
+    monkeypatch.setenv("FAKE_CARD_STATUSES", "{}")
+    Hub(hub.worker_root).tick()  # persisted progress survives a new hub instance
+    hub.tick()
+
+    assert not hub.store.load(run).get("card_pending")
+    delivered = [c["argv"] for c in calls()[start:] if c["ok"]]
+    for card in (first, second):
+        assert sum(a[3] == "comment" and a[4] == card["task"] for a in delivered) == 1
+        assert sum(a[3] == "unblock" and a[-1] == card["task"] for a in delivered) == 1
+    noticed = [r["card"]["task"] for r in hub.store.receipts_of(run) if r["kind"] == "card_noticed"]
+    assert noticed == [second["task"], first["task"]]

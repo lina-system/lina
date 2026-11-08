@@ -235,6 +235,7 @@ def end_cards(hub, job: dict, entry: dict) -> str:
     """Advance each remaining card independently, retaining completed steps across retries."""
     targets = entry.setdefault("cards", linked_cards(job))
     progress = entry.setdefault("card_progress", {})
+    pending = ""
     for card in targets:
         if card not in linked_cards(job):
             continue
@@ -261,20 +262,24 @@ def end_cards(hub, job: dict, entry: dict) -> str:
                     hub._card_failed(job, exc)
                 else:
                     hub._card_warning(job, state, card)
-                return f"card {card['task']}: {step} failed, retried on the next report or tick"
+                pending = f"card {card['task']}: {step} failed, retried on the next report or tick"
+                break
             state["done"].append(step)
             job.pop("card_link_failing", None)
             if woke:
                 state["woke"], state["unblock"] = True, woke
             hub.store.save(job)
             hub._card_warning(job, state, card)
+        if any(step not in state["done"] for step in END_STEPS):
+            continue
         if not hub._card_warning(job, state, card):
-            return f"card {card['task']}: the card-link warning failed, retried on the next report or tick"
+            pending = f"card {card['task']}: the card-link warning failed, retried on the next report or tick"
+            continue
         hub.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
                           woke=bool(state.get("woke")), unblock=state.get("unblock"))
         state["noticed"] = True
         hub.store.save(job)
-    return ""
+    return pending
 
 
 def hub_env() -> dict[str, str]:
