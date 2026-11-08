@@ -1081,15 +1081,18 @@ class Hub:
             "report": self._report_snapshot(job, delivery) if report and fetched is not False else None}
 
     def _card_end(self, job: dict, kind: str, run: str, text: str, *, delivery: str) -> str:
-        """A run's end on its LINA card: the board's event and comment."""
+        """A run's end on its LINA cards: the board's event and comment on each. A card that fails is recorded and
+        does not keep the end from the cards after it."""
+        failed = []
         for card in kanban_link.linked_cards(job):
             try:
                 kanban_link.record_end(card, job, kind, run, events.signed(text, delivery))
             except (ValueError, OSError) as exc:
                 self.store.receipt(job["id"], "card_notice_failed", card=card, error=str(exc)[:300])
-                return f"card {card['task']}: failed ({str(exc)[:120]})"
+                failed.append(f"card {card['task']}: failed ({str(exc)[:120]})")
+                continue
             self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=False)
-        return "cards notified"
+        return "; ".join(failed) or "cards notified"
 
     def _card_steps(self, job: dict, marker: str) -> str:
         """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
