@@ -157,7 +157,7 @@ class FileNodeTransport:
 
     def _hello(self, args, data, timeout) -> Reply:
         from hermes_cli.lina_version import LINA_VERSION
-        from hermes_cli.worker.protocol import PROTOCOL_MAX, PROTOCOL_MIN
+        from hermes_cli.worker.protocol import PROBE_SPEC, PROTOCOL_MAX, PROTOCOL_MIN
         reply, found = self.facts(timeout)
         if reply.code != 0:
             return reply
@@ -167,16 +167,18 @@ class FileNodeTransport:
                         "serve": True, "version": LINA_VERSION, "kind": settings.FILE_KIND, "role": self.device.role,
                         "bash": found.get("bash"),
                         **{key: found[key] for key in ("omo", "model_path", "model_path_why", "ready", "why") if key in found},
-                        "capabilities": {"runners": [runner], "access_modes": list(ACCESS_MODES), "verbs": list(VERBS)}})
+                        "capabilities": {"runners": [runner], "access_modes": list(ACCESS_MODES), "verbs": list(VERBS),
+                                         PROBE_SPEC: True}})
 
     def _probe(self, args, data, timeout) -> Reply:
-        from hermes_cli.worker import runners
+        from hermes_cli.worker import device, runners
+        hub_spec = device.hub_spec_of(data)
         reply, found = self.facts(timeout)
         if reply.code != 0:
             return reply
         worker = settings.section(self.worker_root.parent)
         name = (args[1] if len(args) > 1 else "") or runners.default_name(worker)
-        kind = (runners.specs(worker).get(name) or {}).get("type")
+        kind = (runners.spec_for(worker, name, hub_spec) or {}).get("type")
         ready, why = found["ready"], found.get("why")
         if ready and kind != "omo":
             ready, why = False, f"a file node runs omo only (runner {name} is {kind})"

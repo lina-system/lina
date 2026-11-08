@@ -109,6 +109,14 @@ def _notice(node: dict, task_id: str) -> str:
     return notices[-1].read_text(encoding="utf-8")
 
 
+def _session_phase(session: Path) -> str | None:
+    """An absent or incomplete fake state has not reached the awaited phase yet."""
+    try:
+        return json.loads(session.read_text())["phase"]
+    except (FileNotFoundError, json.JSONDecodeError):
+        return None
+
+
 def test_a_run_on_a_file_node_ends_done_with_its_result_on_the_hub(tmp_path, monkeypatch):
     node = _node(tmp_path, monkeypatch)
     (tmp_path / "list.txt").write_text("a\nb\n")
@@ -383,7 +391,7 @@ def test_a_follow_up_waits_for_a_free_slot_before_its_run_starts(tmp_path, monke
     (node["nas"] / "omo" / "scenario.json").write_text(json.dumps({"first": "running"}))
     second = _submit(node)
     session = node["nas"] / "omo" / "state.json"
-    wait_until(lambda: session.exists() and json.loads(session.read_text())["phase"] == "running",
+    wait_until(lambda: _session_phase(session) == "running",
                what="the second run's session")
     hub.send(first, "one more file")
     first_remote = node["home"] / "lina-file-node" / first
@@ -411,7 +419,7 @@ def _two_waiting_behind_a_third(tmp_path, monkeypatch) -> tuple[dict, Hub, list[
     (node["nas"] / "omo" / "scenario.json").write_text(json.dumps({"first": "running"}))
     third = _submit(node)
     session = node["nas"] / "omo" / "state.json"
-    wait_until(lambda: json.loads(session.read_text())["phase"] == "running", what="the third run's session")
+    wait_until(lambda: _session_phase(session) == "running", what="the third run's session")
     for task_id in done:
         hub.send(task_id, "one more file")
     hub.tick()
@@ -612,7 +620,7 @@ def test_two_follow_ups_at_once_both_keep_their_instruction(tmp_path, monkeypatc
     (node["nas"] / "omo" / "scenario.json").write_text(json.dumps({"first": "running"}))
     _submit(node)  # holds the only slot, so neither follow-up starts a run while they race
     session = node["nas"] / "omo" / "state.json"
-    wait_until(lambda: json.loads(session.read_text())["phase"] == "running", what="the second run's session")
+    wait_until(lambda: _session_phase(session) == "running", what="the second run's session")
     contact = hub.transport(hub.store.load(first)).raw
     gate, capacity = threading.Barrier(2), FileNodeTransport._capacity
 

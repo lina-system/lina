@@ -168,14 +168,19 @@ _NEW_SQL = """
 
 
 def new_vector(conn, query_vector: Sequence[float], model: str, question: Question, k: int = TOP_K) -> list[str]:
-    from hermes_state_store import SHARED_VECTOR_OWNER
+    from hermes_state_store import HNSW_FILTERED_SEARCH, SHARED_VECTOR_OWNER
     owners = [question.agent, question.honcho.get("workspace", "hermes"), SHARED_VECTOR_OWNER]
     literal = "[" + ",".join(repr(float(v)) for v in query_vector) + "]"
     sql = _NEW_SQL
     if conn.execute("SELECT to_regclass('ltm.documents') IS NULL").fetchone()[0]:
         sql = _NEW_SQL.replace("LEFT JOIN ltm.documents d ON e.kind = 'document' AND d.vec_id = e.item_id",
                                "LEFT JOIN (SELECT NULL::text AS id, NULL::bigint AS vec_id, NULL::timestamptz AS deleted_at) d ON false")
-    return [row[0] for row in conn.execute(sql, (model, owners, literal, k)).fetchall() if row[0]]
+    # The filters run after the HNSW index; the store's search settings keep them from dropping rows (lina#387).
+    with conn.transaction():
+        for setting in HNSW_FILTERED_SEARCH:
+            conn.execute(setting)
+        rows = conn.execute(sql, (model, owners, literal, k)).fetchall()
+    return [row[0] for row in rows if row[0]]
 
 
 def evaluate(questions: Sequence[Question], *, conn, client, dsn_for_agent: Callable[[str], str],

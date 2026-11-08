@@ -16,6 +16,8 @@ from hermes_cli.worker.task import read_json, write_json
 PROTOCOL_MIN = 1
 PROTOCOL_MAX = 1
 INSTANCE = "serve.instance.json"
+# hello capability: ``probe`` takes the hub's runner spec as JSON on stdin (lina#337); a node without it is sent none
+PROBE_SPEC = "probe_runner_spec"
 
 
 @dataclass(frozen=True)
@@ -37,7 +39,8 @@ def verbs() -> dict[str, Verb]:
         "put": Verb(lambda root, args, data: d._ok(d._put(root, args[0], args[1], data)), "write", stdin=True),
         "untar": Verb(lambda root, args, data: d._ok(d._untar(root, args[0], args[1], data)), "write", stdin=True),
         "meta": Verb(lambda root, args, data: d._ok(d.meta(root, args[0], live=args[1:] == ["live"])), "read", legacy=True),
-        "probe": Verb(lambda root, args, data: d._ok(d.probe(root, *args[:2])), "read"),
+        "probe": Verb(lambda root, args, data: d._ok(d.probe(root, *args[:2], hub_spec=d.hub_spec_of(data))), "read",
+                       stdin=True),
         "reserve": Verb(lambda root, args, data: d._ok(d.slots.reserve(
             root, d.safe_id(args[0]), int(args[1]), pool=args[2] if len(args) > 2 else "bid")), "write"),
         "send": Verb(lambda root, args, data: d._ok(d.keyed(root, args, lambda: d.steer(
@@ -99,7 +102,7 @@ def hello(worker_root: Path) -> dict:
             "version": LINA_VERSION,
             "capabilities": {"runners": lina_runners.cached_node_report(worker_root),
                              "access_modes": list(ACCESS), "verbs": list(verbs()),
-                             "request_keys": True}}
+                             "request_keys": True, PROBE_SPEC: True}}
 
 
 def service_verb(worker_root: Path, args: list[str]) -> dict:

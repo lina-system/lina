@@ -56,11 +56,7 @@ def runner_for(worker_root: Path, task: Task, job: dict):
     the hub's are used, so the job's model reaches the CLI."""
     worker = settings.section(base_of(worker_root))
     name = job.get("runner") or runners.default_name(worker)
-    configured = worker.get("runners") if isinstance(worker.get("runners"), dict) else {}
-    hub_spec = job.get("runner_spec") or {}
-    spec = configured.get(name) or hub_spec or runners.specs(worker).get(name) or {"type": name}
-    if spec is not hub_spec and not spec.get("model_args") and hub_spec.get("model_args"):
-        spec = {**spec, "model_args": hub_spec["model_args"]}
+    spec = runners.spec_for(worker, name, job.get("runner_spec")) or {"type": name}
     return runners.build(name, spec, task.limits, base_of(worker_root))
 
 
@@ -312,12 +308,26 @@ def _free_gb(path: Path) -> int:
     return int(shutil.disk_usage(path).free / (1 << 30))
 
 
-def probe(worker_root: Path, repo: str = "", runner_name: str = "") -> dict:
-    """What the hub bids with: readiness of the runner, the service, running tasks, load, disk and the repo path."""
+def hub_spec_of(data: bytes) -> dict | None:
+    """The hub's runner spec a ``probe`` carries on stdin as JSON (lina#337); None when it sent none."""
+    if not data.strip():
+        return None
+    spec = json.loads(data)
+    if not isinstance(spec, dict):
+        raise ValueError("the runner spec on stdin is not a JSON object")
+    return spec
+
+
+def probe(worker_root: Path, repo: str = "", runner_name: str = "", hub_spec: dict | None = None) -> dict:
+    """What the hub bids with: readiness of the runner, the service, running tasks, load, disk and the repo path.
+    The runner is built as the run builds it (``runner_for``): the node's own entry, else the hub's *hub_spec*."""
     worker = settings.section(base_of(worker_root))
     name = runner_name or runners.default_name(worker)
+    spec = runners.spec_for(worker, name, hub_spec)
     try:
-        ready, why = runners.get(name, worker, root=base_of(worker_root)).available()
+        if spec is None:
+            raise RunnerError(f"no runner {name!r} (configured: {', '.join(runners.specs(worker))})")
+        ready, why = runners.build(name, spec, root=base_of(worker_root)).available()
     except RunnerError as exc:
         ready, why = False, str(exc)
     heartbeat = settings.tasks_dir(worker_root).parent / HEARTBEAT
