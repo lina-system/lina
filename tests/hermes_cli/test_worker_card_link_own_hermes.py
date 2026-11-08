@@ -159,6 +159,29 @@ def test_the_end_steps_refuse_lina_own_hermes_with_the_same_verdict_and_say_it_o
     assert len([text for text in out if "card link failing" in text]) == 1
 
 
+@pytest.mark.platforms("posix")
+def test_an_end_comment_that_kept_failing_reaches_the_card_saying_so_once(tmp_path, monkeypatch, lina_tree):
+    agent = _executable(tmp_path / "hermes-agent" / "bin" / "hermes", f"#!{sys.executable}\n" + FAKE_HERMES)
+    base = tmp_path / "lina"
+    _config(base, [str(agent)])
+    task_id = _submit(tmp_path, base)
+    hub = Hub(base / "worker", out=lambda *_: None)
+    hub.tick()
+
+    monkeypatch.setenv("FAKE_HERMES_FAIL", "1")
+    hub.notify(task_id, "done", "1")
+    for _ in range(CARD_FAILING_AFTER - 1):
+        hub.tick()
+    monkeypatch.delenv("FAKE_HERMES_FAIL")
+    hub.tick()
+
+    comments = [argv[-1] for argv in _calls(tmp_path) if "comment" in argv]
+    assert len(comments) == 1 + CARD_FAILING_AFTER + 1
+    assert comments[-1].count("card link failing") == 1
+    assert f"({CARD_FAILING_AFTER} tries)" in comments[-1]
+    assert not hub.store.load(task_id).get("card_pending")
+
+
 def test_a_card_that_has_not_scheduled_itself_yet_is_waiting_not_failing(tmp_path):
     """``wake`` retries a card still ``running``: that is the card's own pace, never a failing link."""
     show = _executable(tmp_path / "show", f"#!{sys.executable}\n" + textwrap.dedent("""\

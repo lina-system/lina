@@ -224,10 +224,16 @@ class Hub:
         failing = job.setdefault("card_link_failing", {"error": (str(exc).strip().splitlines() or [""])[0][:200]
                                                       or type(exc).__name__, "tries": 0})
         failing["tries"] += 1
-        self.store.save(job)
         if failing["tries"] == CARD_FAILING_AFTER:
+            line = _card_failing(job)
+            for entry in (job.get("card_pending") or {}).values():  # an end staged before the count got here
+                if "card link failing" not in entry["text"]:
+                    entry["text"] = entry["text"].rstrip("\n") + f"\n- {line}\n"
+            self.store.save(job)
             self.store.receipt(job["id"], "card_link_failing", **failing)
-            self.out(f"lina worker: {job['id']} {_card_failing(job)}")
+            self.out(f"lina worker: {job['id']} {line}")
+            return
+        self.store.save(job)
 
     def _notify_spec(self, dev: settings.Device) -> dict:
         if dev.local:

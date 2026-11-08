@@ -23,7 +23,6 @@ import json
 import os
 import re
 import shlex
-import shutil
 import subprocess
 import sys
 import time
@@ -67,7 +66,8 @@ def config(worker: dict) -> dict:
     command = link.get("command")
     if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
         raise CardLinkError("worker.card_link.command must be an argv list, e.g. [/path/to/hermes]")
-    found = command[0] if os.path.isabs(command[0]) else shutil.which(command[0])
+    from hermes_platform.resolver import locate_command
+    found = next(iter(locate_command(command[0]).command), None)
     if found and _in_lina_tree(found):
         raise CardLinkError(f"worker.card_link.command[0] {command[0]!r} is this LINA's own {found}; "
                             "set the Hermes Agent CLI by absolute path")
