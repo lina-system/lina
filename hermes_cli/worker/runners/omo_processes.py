@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import getpass
 import os
+import re
 import shlex
 import signal
 import subprocess
@@ -138,9 +139,40 @@ def _is_runtime(process: Process) -> bool:
         return False
     executable = Path(process.argv[0]).name
     paths = [process.argv[0]]
-    if executable in ("node", "bun", "python", "python3") and len(process.argv) > 1:
-        if not process.argv[1].startswith("-"):
-            paths.append(process.argv[1])
+    python = re.fullmatch(r"python(?:3(?:\.[0-9]+)?)?", executable) is not None
+    if python or executable in ("node", "bun"):
+        arguments = iter(process.argv[1:])
+        for argument in arguments:
+            if argument == "--":
+                script = next(arguments, None)
+                if script and script != "-":
+                    paths.append(script)
+                break
+            if not argument.startswith("-"):
+                paths.append(argument)
+                break
+            if python:
+                option = re.fullmatch(r"-[bBdEiIOPqRsSuvx]*([WX])(.*)", argument)
+                if option:
+                    if not option[2]:
+                        next(arguments, None)
+                    continue
+                if re.fullmatch(r"-[bBdEiIOPqRsSuvx]+", argument):
+                    continue
+            else:
+                name, separator, _ = argument.partition("=")
+                value_options = ("-r", "--require", "--import", "--loader", "--experimental-loader") if executable == "node" else (
+                    "-r", "--preload", "--require", "--loader", "--cwd", "--env-file")
+                if name in value_options:
+                    if not separator:
+                        next(arguments, None)
+                    continue
+                flags = ("--no-warnings", "--enable-source-maps", "--experimental-strip-types") if executable == "node" else (
+                    "--smol", "--silent", "--no-install")
+                if argument in flags:
+                    continue
+            # Unknown options and code/module/stdin modes do not establish a script.
+            break
     for path in paths:
         parts = Path(path).parts
         if any(tuple(parts[i:i + len(mark)]) == mark
