@@ -45,6 +45,17 @@ HUMAN_NOTICE_AFTER_S = 120
 ANSWER_CLOSE_WAIT_S = 150
 # A Hermes card run's result fetch: tried on each report and tick (30 s) before its end goes out without report.md.
 FETCH_TRIES = 10
+# A card write that failed this many times in a row for one run is said once on the hub: one failure can be a blip (a
+# timeout, a busy board) the next tick clears, three in a row (about 90 s of ticks) is a link that keeps failing.
+CARD_FAILING_AFTER = 3
+
+
+def _card_failing(job: dict) -> str | None:
+    """The one line a run whose card writes keep failing carries on its status and end notice."""
+    failing = job.get("card_link_failing") or {}
+    if failing.get("tries", 0) < CARD_FAILING_AFTER:
+        return None
+    return f"card link failing: {failing['error']} ({failing['tries']} tries)"
 
 
 def _start_time(pid: int) -> int | None:
@@ -195,15 +206,28 @@ class Hub:
         if kanban_link.on_hermes(job["card"]) and "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
             return
         try:
-            kanban_link.record_run(job["card"], job, self._link())
+            kanban_link.record_run(job["card"], job, kanban_link.config(self.worker))
         except (ValueError, OSError, kanban_link.CardLinkError) as exc:
             self.store.receipt(job["id"], "card_link_failed", error=str(exc)[:300])
             self.out(f"lina worker: could not record {job['id']} on card {job['card']['task']}: {exc}")
+            self._card_failed(job, exc)
             return
         self.store.receipt(job["id"], "card_linked", card=job["card"])
-        if job.get("card_start_pending"):
-            job.pop("card_start_pending")
+        if job.get("card_start_pending") or job.get("card_link_failing"):
+            job.pop("card_start_pending", None)
+            job.pop("card_link_failing", None)
             self.store.save(job)
+
+    def _card_failed(self, job: dict, exc: Exception) -> None:
+        """Count a failed card write of *job*'s run (start or end, the same ``kanban_link.config`` verdict); at
+        ``CARD_FAILING_AFTER`` in a row it is said once on the hub. The job's caller holds its lock or owns it."""
+        failing = job.setdefault("card_link_failing", {"error": (str(exc).strip().splitlines() or [""])[0][:200]
+                                                      or type(exc).__name__, "tries": 0})
+        failing["tries"] += 1
+        self.store.save(job)
+        if failing["tries"] == CARD_FAILING_AFTER:
+            self.store.receipt(job["id"], "card_link_failing", **failing)
+            self.out(f"lina worker: {job['id']} {_card_failing(job)}")
 
     def _notify_spec(self, dev: settings.Device) -> dict:
         if dev.local:
@@ -300,6 +324,10 @@ class Hub:
                                  for r in table or []])
         self.start_on(job, dev)
         return dev.name
+
+    def _status_card(self, job: dict) -> None:
+        if line := _card_failing(job):
+            self.out(f"  {line}")
 
     def _link(self) -> dict:
         try:
@@ -566,6 +594,7 @@ class Hub:
             state = job.get("state", "queued")
             self.out(f"{head} · {notice.STATE_WORDS.get(state, state)} · handed out {_ago(job['created'])} ago"
                      + (" · starts when a device is free (`lina worker hosts`)" if state == "queued" else ""))
+            self._status_card(job)
             return 0
         remote = self.meta(job, live=True)
         if as_json:
@@ -597,6 +626,7 @@ class Hub:
             self.out(f"  repo {job['repo']} · branch {job['branch']} (push blocked)")
         self.out(f"  delivery: {notice.DELIVERY_WORDS.get(job.get('delivery', 'pending'))} · verdict: "
                  f"{VERDICT_WORDS.get(job.get('verdict'))}" + (f" · group {job['group']}" if job.get("group") else ""))
+        self._status_card(job)
         return 0
 
     def list(self, bot: str | None = None, show_all: bool = False) -> int:
@@ -894,6 +924,8 @@ class Hub:
         if kind != "unknown" and str(manifest.get("run")) == str(run):
             from hermes_cli.worker.file_node_deny import with_check
             text = with_check(text, manifest.get("deny_check"))
+        if line := _card_failing(job):
+            text = text.rstrip("\n") + f"\n- {line}\n"
         return text, out_dir
 
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
@@ -1046,7 +1078,7 @@ class Hub:
         """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
         went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
         under the job's lock."""
-        card, link = job["card"], self._link()
+        card = job["card"]
         if job.get("card_start_pending") or "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
             return f"card {card['task']}: pending hub tick"
         if job["card_pending"][marker].get("fetch_pending") and not self._card_fetch(job, marker):
@@ -1057,13 +1089,17 @@ class Hub:
             if step in entry["done"]:
                 continue
             try:
+                link = kanban_link.config(self.worker)
                 woke = kanban_link.end_step(step, self.store, card, job, entry["run"],
                                             events.signed(entry["text"], entry.get("delivery")), link,
                                             Path(entry["report"]) if entry.get("report") else None)
             except (OSError, kanban_link.CardLinkError) as exc:
                 self.store.receipt(job["id"], "card_notice_failed", step=step, error=str(exc)[:300])
+                if not isinstance(exc, kanban_link.CardWaiting):
+                    self._card_failed(job, exc)
                 return f"card {card['task']}: {step} failed, retried on the next report or tick"
             entry["done"].append(step)
+            job.pop("card_link_failing", None)
             if woke:
                 entry["woke"], entry["unblock"] = True, woke
             self.store.save(job)
