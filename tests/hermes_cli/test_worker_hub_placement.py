@@ -4,11 +4,13 @@ instead of bidding again; a cancel that never reached the device is an error, no
 earlier run never ends the run that is going now."""
 
 import json
+from dataclasses import replace
 
 import pytest
 
 from hermes_cli.worker import device, hub as hub_mod, serve
 from hermes_cli.worker.hub import Hub, HubError
+from hermes_cli.worker.task import write_manifest
 from hermes_cli.worker.transport import Reply
 from tests.hermes_cli import _worker_fakes as fakes
 
@@ -32,9 +34,9 @@ def lane(tmp_path, monkeypatch):
             "mp": monkeypatch}
 
 
-def _submit(lane) -> str:
+def _submit(lane, host=None) -> str:
     lane["hub"].submit({"briefs": [fakes.brief(lane["tmp"], "SCENARIO:done one")], "mode": "ulw", "topic": "place",
-                        "bot": "sion", "runner": "fakecli", "wait": None})
+                        "bot": "sion", "runner": "fakecli", "wait": None, "host": host})
     return lane["hub"].store.all()[-1]["id"]
 
 
@@ -114,3 +116,115 @@ def test_task_level_notices_still_end_the_task(lane, kind, run):
     hub = lane["hub"]
     assert hub.notify(task_id, kind, run) != "earlier run"
     assert hub.store.load(task_id)["state"] == kind
+
+
+def test_unknown_named_device_is_refused_before_creating_a_task(lane):
+    hub = lane["hub"]
+    with pytest.raises(HubError) as error:
+        _submit(lane, "missing")
+    assert len(str(error.value).splitlines()) == 1
+    assert "missing" in str(error.value) and "here" in str(error.value)
+    assert hub.store.all() == []
+
+
+def test_removed_named_device_fails_and_places_the_next_task_on_the_same_tick(lane):
+    hub = lane["hub"]
+    (here,) = hub.devices()
+    devices = [replace(here, name="gone", cap=0), replace(here, cap=0)]
+    lane["mp"].setattr(hub, "devices", lambda: devices)
+    first, second = _submit(lane, "gone"), _submit(lane, "here")
+    card_ends = []
+    hub.store.update(first, card={"task": "card-1", "kind": "lina"})
+    lane["mp"].setattr(hub_mod.kanban_link, "record_end", lambda *args: card_ends.append(args[-1]))
+    devices[:] = [here]
+
+    hub.tick()
+
+    ended = hub.store.load(first)
+    delivery = f"{first}:0:run.completed"
+    assert ended["state"] == "failed"
+    assert [(entry["delivery"], entry["end_state"]) for entry in ended["notified"]] == [(delivery, "failed")]
+    assert hub.store.load(second)["state"] == "running"
+    assert card_ends == [f"{ended['notice'].rstrip()}\n\ndelivery {delivery}\n"]
+    reason = [line for line in ended["notice"].splitlines() if "gone" in line]
+    assert len(reason) == 1
+    (notice,) = hub.store.notices.glob(f"{first}-failed-0-*.md")
+    assert notice.read_text() == card_ends[0]
+    hub.tick()
+    assert len(card_ends) == 1
+
+
+def test_full_named_device_waits_without_blocking_another_device(lane):
+    hub = lane["hub"]
+    (here,) = hub.devices()
+    devices = [replace(here, name="full", cap=0), replace(here, cap=0)]
+    lane["mp"].setattr(hub, "devices", lambda: devices)
+    first, second = _submit(lane, "full"), _submit(lane, "here")
+    devices[:] = [devices[0], here]
+
+    hub.tick()
+
+    assert hub.store.load(first)["state"] == "queued"
+    assert hub.store.load(first)["notified"] == []
+    assert hub.store.load(second)["state"] == "running"
+    assert hub.store.load(second)["host"] == "here"
+
+
+def test_wait_reports_removed_named_device_failure(lane):
+    hub = lane["hub"]
+    (here,) = hub.devices()
+    devices = [replace(here, name="gone", cap=0)]
+    lane["mp"].setattr(hub, "devices", lambda: devices)
+    now = hub_mod.time.time()
+    started = now
+
+    def remove_device_and_tick(seconds):
+        nonlocal now
+        now += seconds
+        devices.clear()
+        hub.tick()
+
+    lane["mp"].setattr(hub_mod.time, "time", lambda: now)
+    lane["mp"].setattr(hub_mod.time, "sleep", remove_device_and_tick)
+
+    result = hub.submit({"briefs": [fakes.brief(lane["tmp"], "SCENARIO:done one")], "mode": "ulw",
+                         "topic": "place", "bot": "sion", "runner": "fakecli", "host": "gone", "wait": 30})
+
+    (job,) = hub.store.all()
+    assert result == 0
+    assert now - started < 30
+    assert job["state"] == "failed" and job["host"] is None
+    assert job["waiter"] is None and job["waiter_start"] is None
+    assert lane["lines"][-1] == f"{job['id']} failed · {job['placement_error']}"
+    assert "gone" in lane["lines"][-1] and len(lane["lines"][-1].splitlines()) == 1
+    assert not list(hub.store.notices.glob(f"{job['id']}-*"))
+
+
+def test_wait_fetches_result_after_tick_records_device_end(lane):
+    hub = lane["hub"]
+
+    def finish_device_and_tick(seconds):
+        (job,) = hub.store.all()
+        task = device.task_of(lane["root"], job["id"])
+        task.work.mkdir(parents=True, exist_ok=True)
+        (task.work / "report.md").write_text(fakes.REPORT_WITH_NOTES)
+        write_manifest(task, 1)
+        task.path("rc.1").write_text("0")
+        task.path("state").write_text("done")
+        hub.tick()
+        assert hub.store.load(job["id"])["state"] == "done"
+        assert not (hub.store.out_dir(job) / "report.md").exists()
+
+    lane["mp"].setattr(hub_mod.time, "sleep", finish_device_and_tick)
+
+    result = hub.submit({"briefs": [fakes.brief(lane["tmp"], "SCENARIO:done one")], "mode": "ulw",
+                         "topic": "place", "bot": "sion", "runner": "fakecli", "host": "here", "wait": 30})
+
+    (job,) = hub.store.all()
+    out_dir = hub.store.out_dir(job)
+    assert result == 0
+    assert lane["lines"][-1] == f"{job['id']} done · result {out_dir}"
+    assert (out_dir / "report.md").read_text() == fakes.REPORT_WITH_NOTES
+    assert job["delivery"] == "ok"
+    assert job["waiter"] is None and job["waiter_start"] is None
+    assert not list(hub.store.notices.glob(f"{job['id']}-*"))

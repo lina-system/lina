@@ -383,11 +383,15 @@ class Hub:
         return 0
 
     def _named_device_gate(self, opts: dict, briefs: list[Path]) -> None:
-        """Refuse at submit what the ``--host`` device would never take: its role (``person``; a repo on ``files``),
+        """Refuse an unknown ``--host`` and what it would never take: its role (``person``; a repo on ``files``),
         and for a file node a denied folder in a brief or input, or a model path that does not answer."""
-        dev = next((d for d in self.devices() if d.name == opts.get("host")), None)
-        if dev is None:
+        if not opts.get("host"):
             return
+        devices = self.devices()
+        dev = next((d for d in devices if d.name == opts["host"]), None)
+        if dev is None:
+            raise HubError(f"no device {opts['host']!r} in devices.workers "
+                           f"(available: {', '.join(d.name for d in devices) or 'none'})")
         if why := bidding.role_refusal(dev, opts.get("repo")):
             raise HubError(f"--host {dev.name}: {why}")
         if dev.kind == settings.FILE_KIND:
@@ -448,6 +452,10 @@ class Hub:
             while time.time() < deadline:
                 time.sleep(min(15.0, max(0.5, timeout / 20)))
                 job = self.need(task_id)
+                if not job.get("host") and job.get("state") in ENDED:
+                    self.out(f"{task_id} {notice.STATE_WORDS.get(job['state'])}"
+                             + (f" · {job['placement_error']}" if job.get("placement_error") else ""))
+                    return 0
                 if job.get("host"):
                     remote = self.meta(job)
                     if remote.get("state") in ENDED:
@@ -896,6 +904,8 @@ class Hub:
         if kind != "unknown" and str(manifest.get("run")) == str(run):
             from hermes_cli.worker.file_node_deny import with_check
             text = with_check(text, manifest.get("deny_check"))
+        if job.get("placement_error"):
+            text += f"- {job['placement_error']}\n"
         return text, out_dir
 
     def _notify_locked(self, job: dict, kind: str, run: str) -> str:
@@ -1157,7 +1167,8 @@ class Hub:
                  f"{first.get('todo') or first['topic']}) all ended"]
         lines += [f"- {j['id']} {notice.STATE_WORDS.get(j['state'], j['state'])} · delivery "
                   f"{notice.DELIVERY_WORDS.get(j.get('delivery', 'pending'))} · brief {Path(j['brief']).name} · result "
-                  f"{self.store.out_dir(j)}" for j in members]
+                  f"{self.store.out_dir(j)}"
+                  + (f" · {j['placement_error']}" if j.get("placement_error") else "") for j in members]
         lines += ["To do:", "1. For each task hold report.md and out/ against the done conditions, then "
                   "`lina worker accept`/`reject`; what is missing goes to `lina worker send <ID> …`.",
                   f"2. Copy each report's '{NEXT_NOTES}' section into the notes of that field."]
@@ -1181,8 +1192,8 @@ class Hub:
             node_watch.watch(self)
             for job in self.store.all():
                 if job.get("state") == "queued":
-                    if not self._try_place(job):
-                        break  # first in, first out: nothing free for the oldest means nothing for newer ones
+                    if not self._try_place(job) and not job.get("fixed_host"):
+                        break  # a named device's full slots say nothing about other devices
                 elif job.get("state") == "placing":
                     self._try_resume(job)
                 elif job.get("state") == "running" and job.get("host") and time.time() - job["created"] < 7 * 86400:
@@ -1191,6 +1202,11 @@ class Hub:
 
     def _try_place(self, job: dict) -> bool:
         try:
+            if job.get("fixed_host") and not any(d.name == job["fixed_host"] for d in self.devices()):
+                self.store.update(job["id"], placement_error=f"device {job['fixed_host']!r} left devices.workers "
+                                  "while this task was queued; submit again with an available device")
+                self.notify(job["id"], "failed", "0")
+                return True
             return self.place(job) is not None
         except (TransportError, HubError, RunnerError, OSError) as exc:
             self.store.log(f"{job['id']} start failed on tick: {exc}")
