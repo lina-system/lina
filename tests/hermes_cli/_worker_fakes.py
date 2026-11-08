@@ -130,7 +130,7 @@ export class RpcClient {
       if (options.sessionPath !== "/fake/ses.jsonl" || options.cwd !== s.cwd) throw new Error("wrong session");
       s.resolution = "live";
       s.attached = options;
-      writeFileSync(stateFile, JSON.stringify(s));
+      save(s);
       return {};
     }
     const scenario = JSON.parse(readFileSync(join(fake, "scenario.json"), "utf8"));
