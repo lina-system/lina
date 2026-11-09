@@ -605,6 +605,23 @@ class Hub:
 
 
     def status(self, task_id: str, as_json: bool = False) -> int:
+        if task_id.startswith("OG-"):
+            members = self._batch(task_id)
+            done = sum(job.get("state") in ENDED for job in members)
+            notified = (self.store.locks / f"{task_id}.sent").exists()
+            if as_json:
+                self.out(json.dumps({"id": task_id, "members": [{k: v for k, v in job.items() if k != "prompt"}
+                                                               for job in members],
+                                     "done": done, "total": len(members), "notified": notified}, ensure_ascii=False))
+            else:
+                for job in members:
+                    state = job.get("state") or "running"
+                    self.out(f"{job['id']} · {job['bot']} · {job['topic']} · {job.get('host') or '-'} · "
+                             f"{notice.STATE_WORDS.get(state, state)} · delivery: "
+                             f"{notice.DELIVERY_WORDS.get(job.get('delivery', 'pending'))} · verdict: "
+                             f"{VERDICT_WORDS.get(job.get('verdict'))}")
+                self.out(f"{task_id} · {done}/{len(members)} done · notice {'sent' if notified else 'not sent'}")
+            return 0
         job = self.need(task_id)
         access = job.get("run_access", {}).get(str(job.get("runs", 1)), job.get("access", "workspace-write"))
         head = (f"{job['id']} · {job['bot']} · {job['topic']} · mode {job.get('mode')} · runner {job.get('runner')} · "
@@ -852,7 +869,21 @@ class Hub:
             request_keys.note_device(self.store, job, transport)
         return reply
 
+    def _batch(self, group: str) -> list[dict]:
+        members = [job for job in self.store.all() if job.get("group") == group]
+        if not members:
+            raise HubError(f"{group}: no such task")
+        return members
+
     def cancel(self, task_id: str, why: str = "") -> int:
+        if task_id.startswith("OG-"):
+            cancelled = 0
+            for job in self._batch(task_id):
+                if job.get("state") not in ENDED:
+                    self.cancel(job["id"], why)
+                    cancelled += 1
+            self.out(f"{task_id} · {cancelled} cancelled.")
+            return 0
         job = self.need(task_id)
         why = (why or "").replace("\n", " ")[:300]
         job = self.store.update(task_id, cancel_why=why) or job
