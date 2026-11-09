@@ -4,6 +4,7 @@
 ``HERMES_HOME`` that points into Hermes Agent's home, or outside an explicit ``LINA_HOME``, is dropped
 at bootstrap so LINA never opens the Hermes install it was forked from.
 """
+import json
 import os
 import subprocess
 import sys
@@ -81,6 +82,47 @@ def test_profile_handoff_and_custom_homes_survive(account, tmp_path):
         before = dict(env)
         assert drop_foreign_hermes_home(env) is None
         assert env == before
+
+
+@pytest.mark.platforms("posix")
+def test_a_dropped_hermes_agent_home_is_kept_quietly_as_the_callers(account, monkeypatch, capsys):
+    import hermes_bootstrap
+    profile = str(account / ".hermes" / "profiles" / "agent-b")
+    monkeypatch.setenv("HERMES_HOME", profile)
+    monkeypatch.setenv("LINA_CALLER_HERMES_HOME", "")
+
+    hermes_bootstrap._drop_foreign_home()
+
+    assert "HERMES_HOME" not in os.environ
+    assert os.environ["LINA_CALLER_HERMES_HOME"] == profile
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.platforms("posix")
+def test_a_caller_home_already_kept_is_not_overwritten(account, monkeypatch, capsys):
+    import hermes_bootstrap
+    monkeypatch.setenv("HERMES_HOME", str(account / ".hermes" / "profiles" / "agent-b"))
+    monkeypatch.setenv("LINA_CALLER_HERMES_HOME", str(account / ".hermes" / "profiles" / "agent-a"))
+
+    hermes_bootstrap._drop_foreign_home()
+
+    assert "HERMES_HOME" not in os.environ
+    assert os.environ["LINA_CALLER_HERMES_HOME"] == str(account / ".hermes" / "profiles" / "agent-a")
+    assert capsys.readouterr().err == ""
+
+
+@pytest.mark.platforms("posix")
+def test_a_dropped_home_that_is_not_hermes_agents_is_reported(account, tmp_path, monkeypatch, capsys):
+    import hermes_bootstrap
+    monkeypatch.setenv("LINA_HOME", str(tmp_path / "lina"))
+    monkeypatch.setenv("HERMES_HOME", str(tmp_path / "elsewhere"))
+    monkeypatch.setenv("LINA_CALLER_HERMES_HOME", "")
+
+    hermes_bootstrap._drop_foreign_home()
+
+    assert "HERMES_HOME" not in os.environ
+    assert os.environ["LINA_CALLER_HERMES_HOME"] == ""
+    assert f"lina: ignoring HERMES_HOME={tmp_path / 'elsewhere'}" in capsys.readouterr().err
 
 
 @pytest.mark.platforms("posix")
@@ -165,3 +207,25 @@ def test_lina_cli_ignores_a_foreign_hermes_home(tmp_path):
     assert result.returncode == 0, result.stderr
     assert Path(result.stdout.strip()) == tmp_path / "data" / "config.yaml"
     assert "ignoring HERMES_HOME" in result.stderr
+
+
+@pytest.mark.platforms("posix")
+def test_lina_worker_from_a_hermes_agent_terminal_names_that_agent_quietly(tmp_path):
+    """A Hermes Agent terminal's ``HERMES_HOME`` is a profile under the account's Hermes Agent home (found from
+    the password database, never ``$HOME``). Only its name is read: the profile is never created."""
+    user = tmp_path / "user"
+    user.mkdir()
+    brief = tmp_path / "brief.md"
+    brief.write_text("do it\n", encoding="utf-8")
+    profile = hermes_constants.hermes_agent_home() / "profiles" / "agent-b-lina434-test"
+    assert not profile.exists()
+
+    done = _lina(["worker", "submit", "--brief", str(brief), "--topic", "caller-check"], user,
+                 HERMES_HOME=str(profile))
+
+    assert done.returncode == 0, done.stderr
+    assert "ignoring HERMES_HOME" not in done.stderr
+    task_id = done.stdout.split()[0]
+    job = (user / ".lina" / "worker" / "hub" / "jobs" / f"{task_id}.json").read_text(encoding="utf-8")
+    assert json.loads(job)["bot"] == "agent-b-lina434-test"
+    assert not profile.exists()
