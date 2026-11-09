@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- The `omo-task` shim routes LINA-minted task (`OT-`), schedule (`OS-`) and batch (`OG-`) IDs, including collision suffixes and older held records, to `lina worker` instead of the legacy tool (lina#430).
 - The `omo-task` and `work` shims and LINA's worker run, worker service and web service start Python with `-P`, so the caller's current directory cannot shadow LINA's modules (lina#428).
 - Omo's Python code-mode kernel is excluded from live task work even when interpreter options precede its runtime script, while task commands started by that kernel remain live work (lina#425).
 - `lina worker card <ID> <card> [--board <slug>]` and `--drop <card>` add and remove task cards through the `omo-task` shim too, recording one `card_linked` / `card_dropped` receipt per change, leaving repeated requests unchanged, and delivering subsequent run ends only to the remaining cards (lina#402).

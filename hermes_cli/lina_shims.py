@@ -5,7 +5,8 @@ with the same verbs and options, so agents, skills and cron jobs keep calling th
 PATH switches a caller, taking it off switches it back. A shim prints nothing of its own on success (callers parse the
 output) and exits with the wrapped command's code.
 
-Who owns a task ID: ``lina worker``'s hub record (``worker/hub/jobs/<ID>.json``) is the registry of the IDs it started.
+Who owns an ID: ``lina worker`` reserves every minted ID in ``worker/hub/ids/<ID>``; older IDs are held in job,
+schedule or batch receipt records.
 An ID it does not hold was started by the old tool, and goes to the old ``omo-task`` kept beside it when
 ``worker.legacy_omo_task`` names it. One call goes to one tool, never both, except ``list``: ``lina worker``'s tasks,
 then the old tool's ``list``.
@@ -55,7 +56,10 @@ def legacy_omo_task(base: Path | None = None) -> str | None:
 def owned_by_lina(task_id: str, base: Path | None = None) -> bool:
     from hermes_cli.worker import settings
     from hermes_cli.worker.hub_store import Store
-    return Store(settings.root(base)).path(task_id).is_file()
+    store = Store(settings.root(base))
+    return ((store.root / "ids" / task_id).is_file() or store.path(task_id).is_file()
+            or (store.schedules / f"{task_id}.json").is_file()
+            or any(record.get("group") == task_id for record in store.receipts_of(task_id)))
 
 
 def route(tool: str, args: list[str], base: Path | None = None) -> Route:
