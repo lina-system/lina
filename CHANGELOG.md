@@ -10,7 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
-- `lina worker status <OG-ID>` shows each batch member and its completion/notice summary (also as JSON), and `cancel <OG-ID> --why ...` cancels only unfinished members through the existing task path (lina#431).
+- The `omo-task` shim routes LINA-minted task (`OT-`), schedule (`OS-`) and batch (`OG-`) IDs, including collision suffixes and older held records, to `lina worker` instead of the legacy tool (lina#430).
 - The `omo-task` and `work` shims and LINA's worker run, worker service and web service start Python with `-P`, so the caller's current directory cannot shadow LINA's modules (lina#428).
 - Omo's Python code-mode kernel is excluded from live task work even when interpreter options precede its runtime script, while task commands started by that kernel remain live work (lina#425).
 - `lina worker card <ID> <card> [--board <slug>]` and `--drop <card>` add and remove task cards through the `omo-task` shim too, recording one `card_linked` / `card_dropped` receipt per change, leaving repeated requests unchanged, and delivering subsequent run ends only to the remaining cards (lina#402).
@@ -38,6 +38,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - The work settings hold on the hub's real paths: a submit in a new process checks the model against `work-settings/models-last-good.json` (the models view's last good read, at most 10 minutes old), `lina work next --submit` passes each issue's labels and size so the `worker.routing` rules choose the runner before its runner label, and behind the hub's own `tailscale serve` the owner-device gate judges the last `X-Forwarded-For` entry of a loopback peer (lina#283).
 - `GET /api/lina/usage` no longer waits on per-machine OCX reads: `byMachine` is summed from one `usage --range 30d --api-key-id` read per `link:` key, run one after another in the background at most every 15 minutes and started by a usage read; a failed round keeps the previous rows; and the `ocx status --json` gate of an external OCX serves its last answer while a background read refreshes it at most every 60 s (lina#273).
 - A kanban goal-mode card whose judge says WAIT is parked (`scheduled`) on the event it waits for, recorded on the card, and the dispatcher wakes it once when that card is done, that review has its result, that PR's required checks finish or that time passes (`kanban schedule|block --wait-for` record the same by hand); a spent turn budget, runtime limit or agent iteration budget hands off and returns the card to ready without counting toward `max_retries`, and `kanban.planned_stop_limit` (default 5) such stops in a row block the card for a person.
+- `lina worker status <OG-ID>` shows each batch member and its completion/notice summary (also as JSON), and `cancel <OG-ID> --why ...` cancels only unfinished members through the existing task path (lina#431).
 
 ### Added
 
