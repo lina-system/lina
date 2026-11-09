@@ -149,13 +149,16 @@ def device(name: str, base: Path) -> settings.Device:
 
 def list_devices(base: Path | None = None, *, as_json: bool = False, out=print) -> int:
     base = _base(base)
-    rows = [readiness(dev, settings.root(base)) for dev in _devices(base)]
+    devices = _devices(base)
+    rows = [readiness(dev, settings.root(base)) for dev in devices if dev.role != "person"]
     if as_json:
         out(json.dumps(rows, ensure_ascii=False))
-    elif not rows:
+    elif not devices:
         out("no devices: `lina devices add <name> --host <ssh alias|local>`")
     for row in [] if as_json else rows:
         _render_with_runners(row, out)
+    if not as_json and any(dev.role == "person" for dev in devices):
+        out("person devices are shown in the devices view (GET /api/lina/devices, person); not probed here")
     return 0
 
 
@@ -277,6 +280,8 @@ def check(name: str, *, base: Path | None = None, run_smoke: bool = False, timeo
           as_json: bool = False, out=print) -> int:
     base = _base(base)
     dev = device(name, base)
+    if dev.role == "person":
+        raise DevicesError(f"{name}: a person device is not a node (see the devices view, GET /api/lina/devices)")
     row = readiness(dev, settings.root(base))
     if run_smoke:
         row["smoke"] = smoke(dev, base, timeout=timeout)
