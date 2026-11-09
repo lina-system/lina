@@ -1,30 +1,27 @@
-"""The caller shims (lina-system/lina#37): ``omo-task`` -> ``lina worker`` and ``work`` -> ``lina work``.
+"""The ``work`` caller shim (lina-system/lina#37): ``work`` -> ``lina work``; ``omo-task`` is gone (lina#434).
 
-Every verb and option of the old tools is routed and then parsed by the real ``lina`` parsers; the installed shims
-run as real processes against a temp LINA home: stdout is the wrapped command's, exit codes pass through, an ID that
-``lina worker`` did not start goes to the old tool named in ``worker.legacy_omo_task``, one it did start never does.
+Every verb and option of ``work`` is routed and then parsed by the real ``lina`` parser; the installed shim runs as
+a real process against a temp LINA home: stdout is the wrapped command's and exit codes pass through.
+``lina install --shims`` writes only ``work`` and removes the ``omo-task`` shim an older install wrote, never a
+file of that name it did not write.
 """
 
 from __future__ import annotations
 
 import argparse
-import json
 import os
 import subprocess
 import sys
-import textwrap
 
 import pytest
 
 from hermes_cli import lina_shims
 from hermes_cli.subcommands.work import build_work_parser
-from hermes_cli.subcommands.worker import build_worker_parser
 
 
 def _parse(argv: list[str]) -> argparse.Namespace:
     root = argparse.ArgumentParser(prog="lina")
     sub = root.add_subparsers(dest="command")
-    build_worker_parser(sub)
     build_work_parser(sub)
     return root.parse_args(argv)
 
@@ -35,31 +32,6 @@ def base(tmp_path):
     root.mkdir()
     return root
 
-
-OMO_TASK = [
-    (["submit", "--brief", "b.md", "--mode", "research", "--repo", "o/n", "--input", "in.txt", "--todo", "T-1",
-      "--host", "build-a", "--model", "opus", "--topic", "t", "--bot", "sion", "--at", "2026-11-03 09:00",
-      "--every", "1d", "--wait", "60"],
-     {"worker_action": "submit", "brief": ["b.md"], "mode": "research", "repo": "o/n", "input": ["in.txt"],
-      "todo": "T-1", "host": "build-a", "model": "opus", "topic": "t", "bot": "sion", "at": "2026-11-03 09:00",
-      "every": "1d", "wait": 60}),
-    (["submit", "--brief", "b.md", "--mode", "mass-research", "--wait"], {"mode": "mass-research", "wait": 1800}),
-    (["status", "OT-SIO1"], {"worker_action": "status", "id": "OT-SIO1"}),
-    (["list"], {"worker_action": "list", "all": False}),
-    (["send", "OT-SIO1", "also the docs"], {"worker_action": "send", "id": "OT-SIO1", "message": "also the docs"}),
-    (["cancel", "OT-SIO1"], {"worker_action": "cancel", "id": "OT-SIO1"}),
-    (["result", "OT-SIO1"], {"worker_action": "result", "id": "OT-SIO1"}),
-    (["accept", "OT-SIO1", "--note", "checked"], {"worker_action": "accept", "id": "OT-SIO1", "note": "checked"}),
-    (["reject", "OT-SIO1", "--why", "no test"], {"worker_action": "reject", "id": "OT-SIO1", "why": "no test"}),
-    (["receipts", "OT-SIO1"], {"worker_action": "receipts", "id": "OT-SIO1"}),
-    (["hosts"], {"worker_action": "hosts"}),
-    (["schedules"], {"worker_action": "schedules"}),
-    (["unschedule", "OS-SIO1"], {"worker_action": "unschedule", "id": "OS-SIO1"}),
-    (["card", "OT-SIO1", "t_second", "--board", "ops"],
-     {"worker_action": "card", "id": "OT-SIO1", "card": "t_second", "board": "ops"}),
-    (["card", "OT-SIO1", "--drop", "t_first"],
-     {"worker_action": "card", "id": "OT-SIO1", "drop": "t_first"}),
-]
 
 WORK = [
     (["add", "todo", "--by", "sion", "--goal", "G-1", "--title", "x", "--why", "y"], {"cmd": "add", "kind": "todo"}),
@@ -76,14 +48,6 @@ WORK = [
 ]
 
 
-@pytest.mark.parametrize(("args", "expected"), OMO_TASK, ids=[" ".join(a[:2]) for a, _ in OMO_TASK])
-def test_every_omo_task_verb_and_option_reaches_lina_worker(base, args, expected):
-    routed = lina_shims.route("omo-task", args, base)
-    assert routed.to == "lina" and routed.argv == ["worker", *args]
-    parsed = vars(_parse(routed.argv))
-    assert {key: parsed[key] for key in expected} == expected
-
-
 @pytest.mark.parametrize(("args", "expected"), WORK, ids=[" ".join(a[:2]) for a, _ in WORK])
 def test_every_work_verb_reaches_lina_work_unchanged(base, args, expected):
     routed = lina_shims.route("work", args, base)
@@ -92,38 +56,9 @@ def test_every_work_verb_reaches_lina_work_unchanged(base, args, expected):
     assert {key: parsed[key] for key in expected} == expected
 
 
-def _with_legacy(base, tmp_path) -> str:
-    legacy = tmp_path / "old-omo-task"
-    legacy.write_text(textwrap.dedent(f"""\
-        #!{sys.executable}
-        import json, sys
-        print(json.dumps({{"legacy": sys.argv[1:]}}))
-        sys.exit(7)
-        """), encoding="utf-8")
-    legacy.chmod(0o755)
-    (base / "config.yaml").write_text(f"worker:\n  legacy_omo_task: {legacy}\n", encoding="utf-8")
-    return str(legacy)
-
-
-def _own(base, task_id: str) -> None:
-    jobs = base / "worker" / "hub" / "jobs"
-    jobs.mkdir(parents=True, exist_ok=True)
-    (jobs / f"{task_id}.json").write_text(json.dumps({"id": task_id}), encoding="utf-8")
-
-
-@pytest.mark.parametrize("verb", sorted(lina_shims.ID_VERBS))
-def test_an_id_lina_did_not_start_goes_to_the_old_tool_and_one_it_did_never_does(base, tmp_path, verb):
-    legacy = _with_legacy(base, tmp_path)
-    _own(base, "OT-NEW1")
-    assert lina_shims.route("omo-task", [verb, "OT-OLD1"], base).argv == [legacy, verb, "OT-OLD1"]
-    routed = lina_shims.route("omo-task", [verb, "OT-NEW1"], base)
-    assert routed.to != "legacy"
-    assert lina_shims.route("omo-task", ["list"], base).to == "lina"
-
-
-def test_fork_of_a_lina_task_is_refused_and_without_a_legacy_tool_every_id_is_lina(base):
-    assert lina_shims.route("omo-task", ["fork", "OT-NEW1"], base).to == "refuse"
-    assert lina_shims.route("omo-task", ["status", "OT-OLD1"], base).to == "lina"
+def test_omo_task_is_no_shim_any_more(base):
+    with pytest.raises(ValueError, match="no shim 'omo-task'"):
+        lina_shims.route("omo-task", ["status", "OT-SIO1"], base)
 
 
 def _run(shim, args, base):
@@ -140,41 +75,58 @@ def _direct(args, base):
 
 
 @pytest.mark.platforms("posix")
-def test_installed_shims_print_what_lina_prints_and_pass_its_exit_code(base, tmp_path):
+def test_the_installed_work_shim_prints_what_lina_work_prints_and_passes_its_exit_code(base):
     assert lina_shims.install(base, out=lambda line: None) == 0
-    shim = base / "bin" / "omo-task"
-    for args in (["hosts"], ["status", "OT-NOPE1"]):
-        through, direct = _run(shim, args, base), _direct(["worker", *args], base)
-        assert (through.returncode, through.stdout, through.stderr) == (direct.returncode, direct.stdout,
-                                                                       direct.stderr)
-    assert _run(shim, ["status", "OT-NOPE1"], base).returncode == 2
-    work = _run(base / "bin" / "work", ["json"], base)
-    assert (work.returncode, work.stdout) == (_direct(["work", "json"], base).returncode,
-                                             _direct(["work", "json"], base).stdout)
-    fork = _run(shim, ["fork", "OT-NOPE1"], base)
-    assert fork.returncode == 2 and fork.stdout == "" and "no fork" in fork.stderr
+    for args in (["json"], ["show", "G-NOPE"]):
+        through, direct = _run(base / "bin" / "work", args, base), _direct(["work", *args], base)
+        assert (through.returncode, through.stdout) == (direct.returncode, direct.stdout)
 
 
 @pytest.mark.platforms("posix")
-def test_an_installed_shim_hands_an_old_id_to_the_old_tool_with_its_argv_and_exit(base, tmp_path):
-    _with_legacy(base, tmp_path)
-    assert lina_shims.install(base, out=lambda line: None) == 0
-    done = _run(base / "bin" / "omo-task", ["accept", "OT-OLD1", "--note", "fine"], base)
-    assert done.returncode == 7
-    assert json.loads(done.stdout) == {"legacy": ["accept", "OT-OLD1", "--note", "fine"]}
+def test_install_writes_only_the_work_shim(base):
+    lines: list[str] = []
+    assert lina_shims.install(base, out=lines.append) == 0
+    assert sorted(p.name for p in (base / "bin").iterdir()) == ["work"]
+    assert len(lines) == 1 and "omo-task" not in lines[0]
 
 
 @pytest.mark.platforms("posix")
-@pytest.mark.parametrize("args, expected", [
-    (["t_second", "--board", "ops"], [{"id": "t_first", "board": "ops"}, {"id": "t_second", "board": "ops"}]),
-    (["--drop", "t_first"], []),
-])
-def test_installed_shim_passes_card_mutations_to_worker(base, args, expected):
-    from hermes_cli.worker.hub_store import Store
-    store = Store(base / "worker")
-    store.save({"id": "OT-NEW1", "card": {"task": "t_first", "board": "ops", "kind": "hermes"}})
-    (base / "config.yaml").write_text('worker:\n  card_link: {kind: hermes, command: [hermes]}\n', encoding="utf-8")
-    assert lina_shims.install(base, out=lambda line: None) == 0
-    done = _run(base / "bin" / "omo-task", ["card", "OT-NEW1", *args], base)
+def test_install_removes_the_omo_task_shim_an_older_install_wrote(base):
+    old = base / "bin" / "omo-task"
+    old.parent.mkdir(parents=True)
+    old.write_text("#!/bin/sh\n# omo-task -> lina worker, same verbs and options (lina#37). Written by "
+                   "`lina install --shims`;\nexec true\n", encoding="utf-8")
+    lines: list[str] = []
+    assert lina_shims.install(base, out=lines.append) == 0
+    assert not old.exists()
+    assert sorted(p.name for p in (base / "bin").iterdir()) == ["work"]
+    assert [line for line in lines if "omo-task" in line] == [
+        f"shims: removed the old omo-task shim from {base / 'bin'}; call `lina worker` instead."]
+
+
+@pytest.mark.platforms("posix")
+def test_install_leaves_a_foreign_omo_task_file_alone_and_names_it(base):
+    foreign = base / "bin" / "omo-task"
+    foreign.parent.mkdir(parents=True)
+    foreign.write_text("#!/bin/sh\nexec /opt/old/omo-task \"$@\"\n", encoding="utf-8")
+    foreign.chmod(0o755)
+    before = (foreign.read_bytes(), foreign.stat().st_mode)
+    lines: list[str] = []
+    assert lina_shims.install(base, out=lines.append) == 0
+    assert (foreign.read_bytes(), foreign.stat().st_mode) == before
+    assert [line for line in lines if "omo-task" in line] == [
+        f"shims: left {foreign} alone: it was not written by `lina install --shims`."]
+
+
+@pytest.mark.platforms("posix")
+def test_lina_install_shims_runs_the_same_install_from_the_cli(base):
+    old = base / "bin" / "omo-task"
+    old.parent.mkdir(parents=True)
+    old.write_text("# Written by `lina install --shims`;\n", encoding="utf-8")
+    env = {"PATH": os.environ.get("PATH", "/usr/bin:/bin"), "HOME": str(base.parent), "LINA_HOME": str(base),
+           "LANG": "C.UTF-8", "PYTHONPATH": str(lina_shims.TEMPLATES.parents[1])}
+    done = subprocess.run([sys.executable, "-m", "hermes_cli.main", "install", "--shims"], capture_output=True,
+                          text=True, env=env, timeout=120, check=False)
     assert done.returncode == 0, done.stderr
-    assert store.load("OT-NEW1")["cards"] == expected
+    assert sorted(p.name for p in (base / "bin").iterdir()) == ["work"]
+    assert "removed the old omo-task shim" in done.stdout

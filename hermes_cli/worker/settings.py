@@ -60,12 +60,13 @@ def lina_home() -> Path:
     return get_default_hermes_root()
 
 
-CALLER_HERMES_HOME = "LINA_CALLER_HERMES_HOME"  # the caller's Hermes Agent HERMES_HOME, kept by the shim
+CALLER_HERMES_HOME = "LINA_CALLER_HERMES_HOME"  # the caller's Hermes Agent HERMES_HOME, kept by LINA's bootstrap
 
 
 def caller_hermes_home() -> Path | None:
-    """The Hermes Agent ``HERMES_HOME`` the caller ran under: the one the ``omo-task`` shim kept before LINA's
-    bootstrap dropped it, else a ``HERMES_HOME`` under Hermes Agent's home still in this process."""
+    """The Hermes Agent ``HERMES_HOME`` the caller ran under: the one LINA's bootstrap kept when it dropped it
+    (``hermes_bootstrap._drop_foreign_home``), else a ``HERMES_HOME`` under Hermes Agent's home still in this
+    process."""
     import os
     from hermes_constants import is_hermes_agent_path
     kept = os.environ.get(CALLER_HERMES_HOME, "").strip()
@@ -120,6 +121,13 @@ def section(base: Path | None = None) -> dict:
     """``worker:`` of the LINA root's config (one worker serves every profile of that root)."""
     value = _config(base).get("worker")
     return value if isinstance(value, dict) else {}
+
+
+def legacy_omo_task(base: Path | None = None) -> str | None:
+    """``worker.legacy_omo_task``: the old tool that answers for runs it started before the switch to
+    ``lina worker`` (a card parked on them still wakes after the later end, lina#390); None when unset."""
+    value = section(base).get("legacy_omo_task")
+    return str(Path(value).expanduser()) if isinstance(value, str) and value.strip() else None
 
 
 def setting(name: str, base: Path | None = None, worker: dict | None = None):

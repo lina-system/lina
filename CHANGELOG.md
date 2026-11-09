@@ -71,6 +71,14 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 - The hub's own health checks: each check that runs outside the core writes `<LINA root>/status/<name>.json` (`{name, ok, line, at, stale_after}`) and the app reads them from `GET /api/lina/status/checks`, newest first, stale past `stale_after`, a malformed file as one error row (`docs/api/board-client.yaml`).
 - `lina worker` takes runs from a Hermes card and reports back on that card (`worker.card_link: {kind: hermes, command: [hermes]}`): the start, the end and `report.md` land on the card through Hermes's own `kanban` command, with no chat notice; `lina worker submit --card <id> --board <slug>` names the card, and `lina worker wait` parks it until the first run end wakes it (see [docs/worker-card-session.md](docs/worker-card-session.md)).
 
+### Changed
+
+- The repo skill `omo-tasks` is renamed `lina-worker` (`.agents/skills/lina-worker/`), and `owner-intake` and `work-ledger` name it in `related_skills` (lina#434).
+
+### Removed
+
+- The `omo-task` caller shim: callers reach the worker only as `lina worker <verb>`. `lina install --shims` writes only `work` and removes an `omo-task` shim an older install wrote in `$LINA_HOME/bin` (a file of that name it did not write is left alone and named); the shim's routing of old IDs to the old tool, its `fork` refusal and its merged `list` are gone. `worker.legacy_omo_task` stays for the hub's end checks on runs the old tool started (lina#434).
+
 ## [0.0.1-alpha.20261102.1] - 2026-11-02
 
 ### Added

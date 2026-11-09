@@ -427,8 +427,8 @@ def _last_schedule(view: dict) -> tuple[list[str], str | None]:
 
 def _still_open(store, run_id: str) -> bool:
     """Hub records win; a foreign run closes only on a successful legacy terminal status."""
-    from hermes_cli.lina_shims import legacy_omo_task
     from hermes_cli.worker.hub import ENDED
+    from hermes_cli.worker.settings import legacy_omo_task
     ended = ENDED + ("unknown",)
     if run_id.startswith("OG-"):
         members = [job for job in store.all() if job.get("group") == run_id]
@@ -499,7 +499,7 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) 
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named:
             if any(_still_open(store, other) for other in named if other != run_id):
-                from hermes_cli.lina_shims import legacy_omo_task
+                from hermes_cli.worker.settings import legacy_omo_task
                 if status == "scheduled" and legacy_omo_task(store.worker_root.parent):
                     # A legacy end does not report to this hub; retain its wake for the next tick.
                     raise CardWaiting(f"card {card['task']} is waiting for scheduled runs to end")

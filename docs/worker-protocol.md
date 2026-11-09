@@ -152,8 +152,8 @@ transient unit. The runner does not claim an OS sandbox or inspect shell command
 
 omo: workspace-write is enforced by the task boundary (worktree, blocked push, read-only inputs), not by an omo preset, because the engine's workspace preset asks on every codemode eval
 
-`workspace-write` and `full` both omit `permissionPreset`, matching today's
-omo-task default (`full-access` without project/global overrides). Their session
+`workspace-write` and `full` both omit `permissionPreset`, matching omo's
+own default (`full-access` without project/global overrides). Their session
 settings are identical; their distinction is the hub ceiling and recorded mode.
 The task brief requires work inside the worktree, inputs are read-only copies,
 push is blocked, and Linux workers run in transient units. This is the task

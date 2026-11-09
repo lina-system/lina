@@ -1,4 +1,4 @@
-"""``lina worker`` called the way the agents call ``omo-task`` today (lina-system/lina#287, #275).
+"""``lina worker`` called the way the agents called ``omo-task`` before the switch (lina-system/lina#287, #275).
 
 A card session's terminal has no ``HERMES_KANBAN_TASK``: the card comes from the nearest ancestor process that has
 it. The owner of a run follows the caller's profile. A card parked with ``kanban_schedule`` that names the run is

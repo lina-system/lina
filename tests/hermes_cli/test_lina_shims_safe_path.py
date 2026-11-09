@@ -30,19 +30,15 @@ def _env(base: Path) -> dict[str, str]:
 
 
 @pytest.mark.platforms("posix")
-@pytest.mark.parametrize("tool,args", [("omo-task", ["hosts"]), ("work", ["--help"])])
-def test_installed_shim_routes_from_a_decoy_checkout(tmp_path, caller, tool, args):
+def test_installed_shim_routes_from_a_decoy_checkout(tmp_path, caller):
     base = tmp_path / "lina"
     assert lina_shims.install(base, out=lambda line: None) == 0
 
-    done = subprocess.run([str(base / "bin" / tool), *args], cwd=caller, env=_env(base),
+    done = subprocess.run([str(base / "bin" / "work"), "--help"], cwd=caller, env=_env(base),
                           capture_output=True, text=True, encoding="utf-8", timeout=120, check=False)
 
     assert done.returncode == 0, done.stderr
-    if tool == "work":
-        assert "--help" in done.stdout and "work" in done.stdout
-    else:
-        assert "queue: 0" in done.stdout
+    assert "--help" in done.stdout and "work" in done.stdout
 
 
 def test_worker_run_argv_reaches_lina_from_a_decoy_checkout(tmp_path, caller):
