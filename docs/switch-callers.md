@@ -21,8 +21,8 @@ the card is found without `--card` (docs/worker-card-session.md).
 
 ## Who answers an ID
 
-`lina worker` keeps a record of every task it started (`worker/hub/jobs/<ID>.json` under the LINA
-home). For a verb that names a task (`status`, `attach`, `card`, `send`, `cancel`, `result`,
+The shim recognizes LINA's task (`OT-`), schedule (`OS-`) and batch (`OG-`) IDs by `worker/hub/ids/<ID>` reservations or held job, schedule and batch receipt records.
+For a verb that names an ID (`status`, `attach`, `card`, `send`, `cancel`, `result`,
 `accept`, `reject`, `receipts`, `unschedule`, `fork`), the `omo-task` shim sends an ID that
 `lina worker` started to `lina worker`, and any other ID to the old tool named in
 `worker.legacy_omo_task`. One call goes to one tool, never both. Without `worker.legacy_omo_task`
