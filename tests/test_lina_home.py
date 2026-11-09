@@ -212,13 +212,13 @@ def test_lina_cli_ignores_a_foreign_hermes_home(tmp_path):
 @pytest.mark.platforms("posix")
 def test_lina_worker_from_a_hermes_agent_terminal_names_that_agent_quietly(tmp_path):
     """A Hermes Agent terminal's ``HERMES_HOME`` is a profile under the account's Hermes Agent home (found from
-    the password database, never ``$HOME``). Only its name is read: the profile is never created."""
+    the password database, never ``$HOME``). Only its name is read. The test never touches that path itself: the
+    suite's home guard refuses any file call of this process against the real Hermes home."""
     user = tmp_path / "user"
     user.mkdir()
     brief = tmp_path / "brief.md"
     brief.write_text("do it\n", encoding="utf-8")
     profile = hermes_constants.hermes_agent_home() / "profiles" / "agent-b-lina434-test"
-    assert not profile.exists()
 
     done = _lina(["worker", "submit", "--brief", str(brief), "--topic", "caller-check"], user,
                  HERMES_HOME=str(profile))
@@ -228,4 +228,3 @@ def test_lina_worker_from_a_hermes_agent_terminal_names_that_agent_quietly(tmp_p
     task_id = done.stdout.split()[0]
     job = (user / ".lina" / "worker" / "hub" / "jobs" / f"{task_id}.json").read_text(encoding="utf-8")
     assert json.loads(job)["bot"] == "agent-b-lina434-test"
-    assert not profile.exists()
