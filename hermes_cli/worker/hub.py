@@ -684,7 +684,8 @@ class Hub:
         return 0
 
     def hosts(self, runner: str | None = None) -> int:
-        _, table = bidding.bid(self.devices(), self.worker_root, repo=None,
+        nodes = [dev for dev in self.devices() if dev.role != "person"]
+        _, table = bidding.bid(nodes, self.worker_root, repo=None,
                                runner=runner or runners.default_name(self.worker), manual=True,
                                runner_spec=runners.specs(self.worker).get(runner or runners.default_name(self.worker)),
                                min_free_gb=int(settings.setting("min_free_gb", worker=self.worker)))
