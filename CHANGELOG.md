@@ -11,6 +11,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 ### Added
 
 - `lina runners sync [--plan] [--only] [--json]` moves each followed runner pin (codex, claude, dsh, grok, cursor-agent, agy) to its source's newest version once a real request passes on the hub, and the nodes follow the same day through their `runner-sync` verb; a failure holds the runner (or that node) until `lina runners sync clear`, a major jump waits for `--accept`, a busy node is skipped, and `sync status --issues` prints the lines the daily check reads; `worker.runner_sync.at` starts it daily from the hub's worker service (lina#238).
+- Goal and work-card sessions run on the deployment's `kanban.worker_model` / `worker_provider` / `worker_reasoning_effort` (Hermes' keys, read from the agent's config.yaml, then the deployment root's) unless the card names its own model or effort, and each attempt records the model and effort it runs on as a `session_model` event on the card; reviews and conversations keep the agent's model. A goal-mode run whose context reaches `kanban.goal_context_bound_tokens` (default 200000) hands off, and the next run starts a new session from the card record, which now names each attempt's run id and the goal gates' last results. Card sessions are told to park a PR-check wait with `kanban_block(wait_for="pr:<owner/repo>#<n>")` instead of waiting in the shell (lina#346).
 
 ### Fixed
 
