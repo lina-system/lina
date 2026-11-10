@@ -52,6 +52,8 @@ WORKER_NOISE_KINDS = {
     "card_link_failed": "the same link failing: nothing on the board changes",
     "card_noticed": "the end written on the kanban card: the kanban stream carries that comment",
     "card_notice_failed": "the same card note failing: nothing on the board changes",
+    "card_notice_waiting": "the card is not ready for the wake yet: nothing on the board changes",
+    "card_wake_expired": "the wake given up on the kanban card: the kanban stream carries its comment",
     "award": "the bid winner, recorded just before start_on: the placed receipt that follows carries host and state",
     "publish_failed_resumes": "the job stays placing, as placed already said; the resumed placement ends in run_started",
     "fetch_failed": "the result fetch for the end notice failed: state and delivery come as exec_end and delivery",
