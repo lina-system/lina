@@ -325,6 +325,7 @@ def test_two_merges_filing_into_one_follow_up_issue_keep_both_findings(tmp_path,
         snap = snapshot(number=pr, review_comments=[finding("P2", HEAD, line=pr, title=title)])
         gh = _github(snap, queue=False)
         gh.routes[f"repos/{REPO}/pulls/{pr}/comments"] = snap["review_comments"]
+        gh.routes[f"repos/{REPO}/pulls/{pr}"] = {"number": pr, "body": snap["body"]}
 
         def issues(_query):
             rows = [dict(i) for i in store["issues"]]
