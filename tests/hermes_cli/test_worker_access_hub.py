@@ -85,7 +85,7 @@ def test_publish_and_resume_carry_recorded_access(lane, monkeypatch):
     hub, brief, opts, _ = lane
     job = hub.make_job(brief, {**opts, "access": "read-only"}, None)
     published = {}
-    transport = SimpleNamespace(call=lambda *args, **kw: Reply(0, b'{}', ""),
+    transport = SimpleNamespace(call=lambda *args, **kw: Reply(0, b'{}', ""), reason="",
                                 descriptor={"capabilities": {"access_modes": ["read-only", "workspace-write", "full"]}})
     monkeypatch.setattr(hub_mod, "for_device", lambda *args: transport)
     monkeypatch.setattr(hub_mod, "put", lambda tr, tid, name, data: published.update({name: data}))
@@ -244,7 +244,7 @@ def test_publish_refuses_a_node_that_does_not_advertise_the_run_access(lane, mon
     hub, brief, opts, _ = lane
     job = hub.make_job(brief, {**opts, "access": "read-only"}, None)
     published = {}
-    transport = SimpleNamespace(call=lambda *args, **kw: Reply(0, b'{}', ""),
+    transport = SimpleNamespace(call=lambda *args, **kw: Reply(0, b'{}', ""), reason="",
                                 descriptor={"protocol": {"min": 1, "max": 1}, "capabilities": {"access_modes": modes}})
     monkeypatch.setattr(hub_mod, "for_device", lambda *args: transport)
     monkeypatch.setattr(hub_mod, "put", lambda tr, tid, name, data: published.update({name: data}))
