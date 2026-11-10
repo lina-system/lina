@@ -57,6 +57,18 @@ def test_runner_artifacts_are_published_where_their_installer_fetches_them():
                 pytest.skip(f"no network: {artifact['url']}: {exc}")
 
 
+def test_followed_runner_sources_name_a_version_today():
+    """Each ``follow`` source of the daily runner sync (lina#238) answers with a version it would move to."""
+    from hermes_cli import lina_runner_sync_sources as sources
+    from hermes_cli import lina_runner_sync_state as state
+    for runner in (pin for pin in lina_runners.pins(moved=False).values() if pin.follow):
+        try:
+            version = sources.newest(runner.follow, runner.package, sources.UrlHttp(timeout=20))
+        except sources.SourceError as exc:
+            pytest.skip(f"no network: {runner.name}: {exc}")
+        assert state.parse(version) is not None, (runner.name, version)
+
+
 def test_node_checksums_are_nodejs_orgs():
     pin = lina_ocx.pins()
     sums = {name: digest for digest, name in

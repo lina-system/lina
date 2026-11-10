@@ -68,10 +68,17 @@ class RunnerPin:
     check: str = "version"
     env: dict = field(default_factory=dict)
     artifacts: dict = field(default_factory=dict)
+    follow: dict = field(default_factory=dict)  # where the daily sync reads the newest version (lina#238)
+    trial: dict = field(default_factory=dict)  # the one real request the hub trial sends (lina#238)
 
 
-def pins(path: Path = lina_ocx.PIN_FILE) -> dict[str, RunnerPin]:
+def pins(path: Path = lina_ocx.PIN_FILE, root: Path | None = None, *, moved: bool = True) -> dict[str, RunnerPin]:
+    """The repo pins, with the daily sync's moves (``<root>/runner-pins.json``, lina#238) laid over them; a move
+    below the repo pin is ignored, the repo pin is the floor."""
     table = json.loads(path.read_text(encoding="utf-8-sig")).get("runners", {})
+    if moved:
+        from hermes_cli import lina_runner_sync_state as sync_state
+        table = sync_state.merged(table, root or lina_ocx.lina_root())
     return {name: RunnerPin(name=name, **spec) for name, spec in table.items()}
 
 
@@ -424,7 +431,9 @@ def row(root: Path, runner: RunnerPin, *, run: Callable[..., subprocess.Complete
     installed, installed_why = active_version(root, runner, run)
     sign_in, sign_in_why = SIGN_IN.get(runner.sign_in, SIGN_IN["unknown"])()
     why = _why(runner, installed, sign_in)
-    return {"name": runner.name, "pin": runner.name, "pinned": runner.version, "current": current_version(root, runner),
+    from hermes_cli import lina_runner_sync_state as sync_state
+    return {"name": runner.name, "pin": runner.name, "pinned": runner.version, "pin_from": sync_state.pin_from(root, runner.name),
+            "current": current_version(root, runner),
             "installed": installed, "installed_why": installed_why, "versions": installed_versions(root, runner), "person_installed": person_installed(root, runner, run, path),
             "sign_in": sign_in, "sign_in_by": runner.sign_in, "sign_in_why": sign_in_why,
             "shim": str(shim_path(root, runner.name)) if shim_path(root, runner.name).exists() else None,
