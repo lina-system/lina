@@ -155,7 +155,7 @@ class Device:
     deny: tuple[str, ...] = ()  # a file node's denied folders: absolute paths and folder-name patterns
     volumes: tuple[str, ...] = ()  # where a file node's folder-name patterns are looked for (3 levels deep)
     root: str = "lina-file-node"  # a file node's task folders, under its HOME
-    model_check: str = MODEL_CHECK  # the node's model path, asked on the node
+    model_check: str | None = None  # the node's model path, asked on the node; None: not set, use the root's ocx.port
     scan_s: int = 300  # how long the denied-folder check may look after a run
 
     @property
@@ -182,7 +182,7 @@ def _device(name: str, item: dict) -> Device | None:
                   str(item.get("lina") or "lina"),
                   max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None,
                   str(item.get("role") or ("files" if kind == FILE_KIND else "work")), kind,
-                  model_check=str(item.get("model_check") or MODEL_CHECK), **file_node)
+                  model_check=str(item["model_check"]) if item.get("model_check") else None, **file_node)
 
 
 def _strings(value) -> tuple[str, ...]:

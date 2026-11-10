@@ -320,13 +320,27 @@ def hub_spec_of(data: bytes) -> dict | None:
     return spec
 
 
+def through_ocx(worker: dict, name: str, spec: dict | None) -> bool:
+    """Whether runner *name* (built from *spec*) reaches its model through this node's OCX, so its model path has to
+    answer before the node takes work: the omo runner, or a pinned runner that signs in through OCX (claude, codex and
+    their ACP adapters). A command runner carrying its own credentials (grok, agy, cursor-agent) and a pin whose
+    sign-in is unknown (dsh) needs no model path — the same exemption ``bidding.ocx_down()`` makes for a node that
+    reports no OCX."""
+    from hermes_cli import lina_runners
+    if (spec or {}).get("type") == "omo":
+        return True
+    pairs = lina_runners.offered(worker)
+    named = next((pin for offered, _kind, pin in pairs if offered == name and pin is not None), None)
+    pin = named or lina_runners.pins().get(name)  # a runner the hub names that this node does not list itself
+    return pin is not None and pin.sign_in == "ocx"
+
 def model_check_url(worker_root: Path) -> str:
-    """The model path this node asks: the ``model_check`` of the local device this root lists (the hub is a device of
-    itself), else the ``model_check`` default on this root's own OCX port. Asked here, never on the hub: a node's
-    127.0.0.1 is the node's own."""
+    """The model path this node asks: the ``model_check`` its config gives the local device it lists (the hub is a
+    device of itself), else the same default on this root's own ``ocx.port`` — which is not always 10100. Asked here,
+    never on the hub: a node's 127.0.0.1 is the node's own."""
     base = base_of(worker_root)
     local = next((dev for dev in settings.devices(base) if dev.local), None)
-    if local is not None:
+    if local is not None and local.model_check:
         return local.model_check
     from hermes_cli import lina_ocx
     try:
@@ -347,9 +361,16 @@ def http_status(url: str, timeout: float = 2.0) -> int:
         return 0
 
 
-def model_path(worker_root: Path) -> dict:
-    """Whether this node's model path answers: ``{"model_path": "ok"}``, else ``"down"`` with the reason a run there
-    would end ``provider_error`` straight away (``model path does not answer (<url>: HTTP <code>)``)."""
+def model_path(worker_root: Path, name: str = "", spec: dict | None = None) -> dict:
+    """Whether this node's model path answers for the runner asked (its default runner when none was named):
+    ``{"model_path": "ok"}``, else ``"down"`` with the reason a run there would end ``provider_error`` straight away.
+    A runner that reaches models without this node's OCX is asked for no model path, and the reply then carries no
+    ``model_path`` key at all, so the node bids exactly as it did before this check."""
+    worker = settings.section(base_of(worker_root))
+    name = name or runners.default_name(worker)
+    spec = spec if spec is not None else runners.specs(worker).get(name)
+    if not through_ocx(worker, name, spec):
+        return {}
     url = model_check_url(worker_root)
     code = http_status(url)
     if code == 200:
@@ -381,7 +402,7 @@ def probe(worker_root: Path, repo: str = "", runner_name: str = "", hub_spec: di
             "memory_max": memory_max,
             "bid_running": slots.held(worker_root, pool="bid"), "named_running": slots.held(worker_root, pool="named"),
             "cores": os.cpu_count() or 1, "load": round(load, 2), "free_gb": _free_gb(worker_root), "repo": repo_ok,
-            **model_path(worker_root)}
+            **model_path(worker_root, name, spec)}
 
 
 def steer(worker_root: Path, task_id: str, text: str) -> dict:

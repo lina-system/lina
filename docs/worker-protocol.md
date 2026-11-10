@@ -54,14 +54,22 @@ the score order, and none touches a run already on the node: the node watch
 speaks for a lost node.
 
 - `model path does not answer (<url>: HTTP <code>)`: `probe` asks the
-  node's model path on the node (the `model_check` of the device the node's
-  own `config.yaml` lists as `host: local`, else the same
+  node's model path on the node — the `model_check` its own `config.yaml`
+  gives the device it lists as `host: local`, else the same
   `http://127.0.0.1:10100/healthz` default a file node asks, on the node's
-  `ocx.port`) and reports `model_path: ok` / `down` with `model_path_why`.
-  The hello carries the same two fields in `capabilities`, and they stand in
-  when an older probe reply has none. A node whose model path does not
-  answer would end its run `provider_error` at once, so the bid passes it and
-  a `--host` submit there is refused with the same line. A node without the
+  own `ocx.port` (not always 10100) — and reports `model_path: ok` / `down`
+  with `model_path_why`. Only a runner that reaches its model through the
+  node's own OCX is asked for: the omo runner, or a pinned runner whose
+  sign-in is `ocx` (claude, codex and their ACP adapters). A command runner
+  carrying its own credentials (grok, agy, cursor-agent) and a pin whose
+  sign-in is unknown (dsh) needs no model path; its probe and hello then
+  carry no `model_path` field at all and the node bids exactly as before —
+  the same exemption `ocx_down()` makes for a node that reports no OCX. The
+  hello asks for the node's default runner and carries the same two fields in
+  `capabilities`; they stand in only for a probe reply that does not name the
+  runner it asked (an older node). A node whose model path does not answer
+  would end its run `provider_error` at once, so the bid passes it and a
+  `--host` submit there is refused with the same line. A node without the
   field is bid on as before. Note that `/healthz` can answer 200 while model
   calls still fail (a node's OCX cut off from its hub answers 503 on
   `/v1/models`); that gap is not covered here.

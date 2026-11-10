@@ -141,23 +141,26 @@ def with_node_facts(found: dict, descriptor: dict | None, node: str, worker_root
     ocx = capabilities.get("ocx")
     if isinstance(ocx, dict):
         facts["ocx"] = ocx
-    # the hello asks the model path too: it stands in when the probe reply does not carry a fresher answer
-    for key in ("model_path", "model_path_why"):
-        if key not in found and key in capabilities:
-            facts[key] = capabilities[key]
+    # the hello asks the model path of the node's default runner: it stands in only for a probe reply that does not
+    # name the runner it asked (an older node), never against a newer probe that asked a runner of its own
+    if "runner" not in found:
+        for key in ("model_path", "model_path_why"):
+            if key not in found and key in capabilities:
+                facts[key] = capabilities[key]
     if count := cooling(Store(worker_root).load_node(node), worker, time.time() if now is None else now):
         facts["cooling"] = count
     return {**found, **facts}
 
 
-def model_path_refusal(dev: Device, worker_root: Path) -> str | None:
-    """Why a run named onto *dev* is refused at submit: the model path its node asks does not answer now, so the run
-    would end ``provider_error`` straight away. A file node answers in ``file_node.submit_refusal``."""
+def model_path_refusal(dev: Device, worker_root: Path, runner: str = "") -> str | None:
+    """Why a run named onto *dev* is refused at submit: the model path the node asks for *runner* does not answer now,
+    so the run would end ``provider_error`` straight away. None when that runner reaches models without the node's
+    OCX — its probe carries no model path at all. A file node answers in ``file_node.submit_refusal``."""
     if dev.kind == FILE_KIND:
         return None
     from hermes_cli.worker.transport import for_device
     contact = for_device(dev, worker_root)
-    reply = contact.call(["probe", "", ""], timeout=60)
+    reply = contact.call(["probe", "", runner], timeout=60)
     if reply.code != 0:
         return None  # unreachable or a protocol error: the bid and the placement say why
     found = with_node_facts(reply.json() or {}, contact.descriptor, dev.name, worker_root)

@@ -432,7 +432,8 @@ class Hub:
                            f"(available: {', '.join(d.name for d in devices) or 'none'})")
         if why := bidding.role_refusal(dev, opts.get("repo")):
             raise HubError(f"--host {dev.name}: {why}")
-        if why := bidding.model_path_refusal(dev, self.worker_root):
+        runner = opts.get("runner") or runners.default_name(self.worker)
+        if why := bidding.model_path_refusal(dev, self.worker_root, runner):
             raise HubError(f"--host {dev.name}: {why}")
         if dev.kind == settings.FILE_KIND:
             from hermes_cli.worker.file_node import submit_refusal

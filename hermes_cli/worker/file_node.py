@@ -145,12 +145,13 @@ class FileNodeTransport:
     def facts(self, timeout: float = 60) -> tuple[Reply, dict]:
         """The node's omo, model path, disk and load; the second item adds ``ready``/``why`` and ``model_path``."""
         dev = self.device
-        reply = self.rsh(bash.FACTS, dev.omo, dev.model_check, timeout=timeout)
+        check = dev.model_check or settings.MODEL_CHECK  # a file node reaches models through the hub
+        reply = self.rsh(bash.FACTS, dev.omo, check, timeout=timeout)
         found = _fields(reply)
         code = found.get("model", "")
         view = {"model_path": "ok" if code == "200" else "down", "omo": found.get("omo") or None}
         if code != "200":
-            view["model_path_why"] = f"model path through the hub does not answer ({dev.model_check}: HTTP {code or 'none'})"
+            view["model_path_why"] = f"model path through the hub does not answer ({check}: HTTP {code or 'none'})"
         why = f"omo not found on the node ({dev.omo})" if not view["omo"] else view.get("model_path_why")
         view.update(ready=why is None, **({"why": why} if why else {}))
         return reply, {**found, **view}

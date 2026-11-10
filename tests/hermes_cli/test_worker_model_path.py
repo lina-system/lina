@@ -6,6 +6,8 @@ bids as before, and an older node whose probe/hello has no such field is judged 
 """
 
 import json
+import shutil
+import socket
 import textwrap
 import threading
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
@@ -69,14 +71,24 @@ class Node:
 
 @pytest.fixture
 def field(tmp_path, monkeypatch):
-    """*make(model_check)*: the hub ``box`` and a node with its own LINA root whose ``model_check`` is *model_check*."""
+    """*make(...)*: the hub ``box`` and one node with its own LINA root. The node offers *runner* (``claude`` by
+    default: a pinned runner that reaches its model through the node's OCX) and, with *local*, a ``host: local``
+    device entry whose ``model_check`` is *model_check*; *ocx_port* writes that root's ``ocx.port``."""
 
-    def make(model_check: str) -> dict:
+    def make(model_check: str | None = None, runner: str = "claude", local: bool = True,
+             ocx_port: int | None = None) -> dict:
         hub_base, node_base = tmp_path / "hub", tmp_path / "node"
         hub_base.mkdir()
         node_base.mkdir()
-        runner = json.dumps({"type": "command", "argv": fakes.install_fake_cli(tmp_path / "fake"),
-                             "access": "workspace-write"})
+        if runner == "omo":
+            node_bin = shutil.which("node")
+            if node_bin is None:
+                pytest.skip("Node is required for the omo runner")
+            monkeypatch.setenv("FAKE_OMO_DIR", str(tmp_path / "fake"))
+            spec = json.dumps(fakes.install_fake_omo(tmp_path / "fake", node_bin))
+        else:
+            spec = json.dumps({"type": "command", "argv": fakes.install_fake_cli(tmp_path / "fake"),
+                               "access": "workspace-write"})
         (hub_base / "config.yaml").write_text(textwrap.dedent(f"""\
             devices:
               workers:
@@ -84,19 +96,21 @@ def field(tmp_path, monkeypatch):
             worker:
               min_free_gb: 0
               min_free_mem_gb: 0
-              default_runner: fakecli
+              default_runner: {runner}
               runners:
-                fakecli: {runner}
+                {runner}: {spec}
             """), encoding="utf-8")
-        (node_base / "config.yaml").write_text(textwrap.dedent(f"""\
-            devices:
-              workers:
-                me: {{host: local, model_check: {model_check}}}
+        entry = f"me: {{host: local{', model_check: ' + model_check if model_check else ''}}}"
+        node = (f"devices:\n  workers:\n    {entry}\n" if local else "") + textwrap.dedent(f"""\
             worker:
               min_free_gb: 0
+              default_runner: {runner}
               runners:
-                fakecli: {runner}
-            """), encoding="utf-8")
+                {runner}: {spec}
+            """)
+        if ocx_port is not None:
+            node += f"ocx:\n  port: {ocx_port}\n"
+        (node_base / "config.yaml").write_text(node, encoding="utf-8")
         node = Node(node_base / "worker")
         serve.serve_once(node.root)
 
@@ -115,14 +129,23 @@ def field(tmp_path, monkeypatch):
         monkeypatch.setattr(lina_devices, "runner_status", lambda dev, root: [])
         lines: list[str] = []
         return {"hub": Hub(hub_base / "worker", out=lines.append), "hub_base": hub_base, "node": node,
-                "lines": lines}
+                "lines": lines, "runner": runner}
 
     return make
 
 
+def _closed_url() -> str:
+    """A URL nothing answers: a port bound and closed again, so the check finds a refused connection rather than a
+    port that happens to be open on the host running this test."""
+    with socket.socket() as sock:
+        sock.bind(("127.0.0.1", 0))
+        port = sock.getsockname()[1]
+    return f"http://127.0.0.1:{port}/healthz"
+
+
 def _bid(lane: dict):
     (dev,) = lane["hub"].devices()
-    return bidding.bid([dev], lane["hub"].worker_root, repo=None, runner="fakecli")
+    return bidding.bid([dev], lane["hub"].worker_root, repo=None, runner=lane["runner"])
 
 
 def _hosts_line(lane: dict) -> str:
@@ -142,13 +165,13 @@ def test_the_node_reports_its_model_path_in_probe_and_hello(field, model_path):
     lane = field(model_path.url)
     node = lane["node"]
 
-    answered = json.loads(node.call(["probe", "", "fakecli"]).out)
+    answered = json.loads(node.call(["probe", "", "claude"]).out)
     assert answered["model_path"] == "ok" and "model_path_why" not in answered
     assert json.loads(node.call(["hello"]).out)["capabilities"]["model_path"] == "ok"
 
     model_path.status = 503
     reason = f"model path does not answer ({model_path.url}: HTTP 503)"
-    assert json.loads(node.call(["probe", "", "fakecli"]).out)["model_path_why"] == reason
+    assert json.loads(node.call(["probe", "", "claude"]).out)["model_path_why"] == reason
     assert json.loads(node.call(["hello"]).out)["capabilities"]["model_path_why"] == reason
 
 
@@ -217,3 +240,43 @@ def test_an_older_node_without_the_field_is_bid_on_as_before():
     dev = Device("node-a", "node-a", cap=2)
     assert bidding.readiness(dev, probe(), repo=None, min_free_gb=5) is None
     assert bidding.readiness(dev, probe(model_path="ok"), repo=None, min_free_gb=5) is None
+
+
+def test_a_command_runner_with_its_own_credentials_needs_no_model_path(field):
+    """grok, agy and cursor-agent carry their own credentials on the node: a closed OCX port is not their business."""
+    lane = field(_closed_url(), runner="grok")
+
+    probe = json.loads(lane["node"].call(["probe", "", "grok"]).out)
+    assert "model_path" not in probe and "model_path_why" not in probe
+    assert "model_path" not in json.loads(lane["node"].call(["hello"]).out)["capabilities"]
+
+    winner, rows = _bid(lane)
+
+    assert winner is not None and "why" not in rows[0]
+    assert _hosts_line(lane).endswith(" · can take work")
+    brief = fakes.brief(lane["hub_base"], "write out/ok.txt")
+    opts = {"briefs": [brief], "mode": "ulw", "topic": "own credentials", "bot": "sion", "host": "box", "wait": None}
+    assert lane["hub"].submit(dict(opts)) == 0, "a named submit to it is not refused"
+
+
+def test_an_omo_node_whose_model_path_does_not_answer_is_still_passed(field, model_path):
+    """omo reaches every model through the node's own OCX (lina#385), so its model path is still asked and judged."""
+    model_path.status = 503
+    lane = field(model_path.url, runner="omo")
+    reason = f"model path does not answer ({model_path.url}: HTTP 503)"
+
+    winner, rows = _bid(lane)
+
+    assert winner is None and rows[0]["why"] == reason
+    assert _hosts_line(lane).endswith(f" · {reason}")
+
+
+def test_a_node_with_no_model_check_asks_its_own_ocx_port(field, model_path):
+    """``ocx.port`` is not always 10100: a ``host: local`` entry without ``model_check`` takes that root's own port."""
+    port = int(model_path.url.removeprefix("http://127.0.0.1:").split("/")[0])
+    model_path.status = 503
+    lane = field(None, ocx_port=port)
+
+    asked = json.loads(lane["node"].call(["probe", "", "claude"]).out)
+
+    assert asked["model_path_why"] == f"model path does not answer (http://127.0.0.1:{port}/healthz: HTTP 503)"
