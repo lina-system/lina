@@ -28,7 +28,7 @@ from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt,
 from hermes_cli.worker.runners.base import RunnerError
 from hermes_cli.worker.task import read_json, verify
 from hermes_cli.worker.transport import TransportError, fetch, for_device, put, put_tree
-from hermes_cli.worker import events, node_watch
+from hermes_cli.worker import events, kanban_link_wait, node_watch
 
 ENDED = events.END_STATES
 VERDICT_WORDS = {None: "no verdict yet", "accepted": "accepted", "rejected": "rejected"}
@@ -271,6 +271,8 @@ class Hub:
         # would ignore it and run with its old, wider permissions.
         if not transport.descriptor:
             transport.refresh(timeout=90)
+        if transport.reason:  # the hello failed: the node's modes are not known, it is not shown to be old
+            raise HubError(transport.reason)
         if why := bidding.missing_access(transport.descriptor, job.get("access")):
             raise HubError(f"{dev.name} {why}")
         device_job = {key: job.get(key) for key in ("id", "mode", "access", "runner", "runner_spec", "model", "repo", "branch",
@@ -422,7 +424,7 @@ class Hub:
 
     def _named_device_gate(self, opts: dict, briefs: list[Path]) -> None:
         """Refuse an unknown ``--host`` and what it would never take: its role (``person``; a repo on ``files``),
-        and for a file node a denied folder in a brief or input, or a model path that does not answer."""
+        its model path when it does not answer, and for a file node a denied folder in a brief or input."""
         if not opts.get("host"):
             return
         devices = self.devices()
@@ -431,6 +433,9 @@ class Hub:
             raise HubError(f"no device {opts['host']!r} in devices.workers "
                            f"(available: {', '.join(d.name for d in devices) or 'none'})")
         if why := bidding.role_refusal(dev, opts.get("repo")):
+            raise HubError(f"--host {dev.name}: {why}")
+        runner = opts.get("runner") or runners.default_name(self.worker)
+        if why := bidding.model_path_refusal(dev, self.worker_root, runner):
             raise HubError(f"--host {dev.name}: {why}")
         if dev.kind == settings.FILE_KIND:
             from hermes_cli.worker.file_node import submit_refusal
@@ -895,15 +900,44 @@ class Hub:
             self.notify(task_id, "cancelled", "0")
             self.out(f"{task_id} cancelled while queued.")
             return 0
-        answer = self.transport(job).call(["cancel", task_id], (why or "cancelled").encode("utf-8"), timeout=120)
-        reply = answer.json()
-        if answer.code != 0 or reply.get("action") != "cancel":
-            raise HubError(f"{task_id}: the cancel did not reach {job['host']} (rc {answer.code}: "
-                           f"{(answer.err.strip() or reply.get('reason') or 'no acknowledgement')[-300:]}); the task "
-                           "is not cancelled, try again")
+        reply, unreached = self._tell_cancel(job, why)
+        if unreached:
+            return self._cancel_on_hub(job, unreached)
         self.out(f"{task_id} cancelled (the runner was stopped). The task folder stays. One notice follows.")
         if not reply.get("alive"):
             self.notify(task_id, "cancelled", str(reply.get("run") or 1))
+        return 0
+
+    def _tell_cancel(self, job: dict, why: str) -> tuple[dict, str]:
+        """The device's answer to the cancel, and why it could not be told ("" when it answered): it left
+        devices.workers, gave no answer, or its hello failed. A device that answered and did not cancel (its abort
+        failed) is an error: the run is still going there and the cancel can be tried again."""
+        try:
+            transport = self.transport(job)
+        except HubError as exc:  # the device left devices.workers
+            return {}, str(exc)
+        answer = transport.call(["cancel", job["id"]], (why or "cancelled").encode("utf-8"), timeout=120)
+        reply = answer.json()
+        if answer.code == 0 and reply.get("action") == "cancel":
+            return reply, ""
+        said = answer.err.strip() or reply.get("reason") or "no acknowledgement"
+        said = f"rc {answer.code}: {' '.join(said.split())[-300:]}"
+        if not reply or reply.get("protocol_error"):
+            return reply, said
+        raise HubError(f"{job['id']}: the cancel did not reach {job['host']} ({said}); the task is not cancelled, "
+                       "try again")
+
+    def _cancel_on_hub(self, job: dict, unreached: str) -> int:
+        """End on the hub a task whose device could not be told (it left devices.workers or did not answer), so
+        the tick neither resumes nor watches it and a device that comes back is never handed its old request. A run
+        already going there is not stopped by this; the line says so."""
+        placing = job.get("state") == "placing"
+        run = "0" if placing else str(job.get("runs") or 1)
+        self.store.receipt(job["id"], "cancel_not_delivered", host=job["host"], run=run, error=unreached[:300])
+        left = "its task folder there may remain" if placing else \
+            "a run already going there may go on, and its work folder there may remain"
+        self.out(f"{job['id']} cancelled on the hub only: {job['host']} could not be told ({unreached}); {left}.")
+        self.notify(job["id"], "cancelled", run)
         return 0
 
     def verdict(self, task_id: str, accepted: bool, note: str = "") -> int:
@@ -1144,7 +1178,7 @@ class Hub:
             self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=False)
         return "; ".join(failed) or "cards notified"
 
-    def _card_steps(self, job: dict, marker: str) -> str:
+    def _card_steps(self, job: dict, marker: str, *, ticked: bool = False) -> str:
         """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
         went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
         under the job's lock."""
@@ -1154,7 +1188,7 @@ class Hub:
             return (f"cards: result not fetched yet ({job['card_pending'][marker]['fetch_tries']}/"
                     f"{FETCH_TRIES}), retried on the next report or tick")
         entry = job["card_pending"][marker]
-        if pending := kanban_link.end_cards(self, job, entry):
+        if pending := kanban_link.end_cards(self, job, entry, ticked=ticked):
             return pending
         del job["card_pending"][marker]
         self.store.save(job)
@@ -1221,7 +1255,9 @@ class Hub:
             for delivery in held:  # its card work, if any, goes on from there once it is done
                 self.store.log(f"{task_id} held end {delivery}: {self._retry_end(job, delivery)}")
             for marker in [marker for marker in job.get("card_pending") or {} if marker not in held]:
-                self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker)}")
+                if kanban_link_wait.resting(job, job["card_pending"][marker], time.time()):
+                    continue  # a wake waiting out its gap: no card read, no line
+                self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker, ticked=True)}")
 
     def wait(self, card: dict | None, task_ids: list[str] | None = None) -> int:
         """Record open runs and tell the card's model how to schedule itself. The hub wakes it after a run ends."""
@@ -1306,10 +1342,24 @@ class Hub:
             return False
 
     def _try_resume(self, job: dict) -> None:
+        if job.get("host") and not any(dev.name == job["host"] for dev in self.devices()):
+            self._drop_placement(job)
+            return
         try:
             self.resume_placement(job["id"])
         except (TransportError, HubError, OSError) as exc:
             self.store.log(f"{job['id']} placement not resumed on tick: {exc}")
+
+    def _drop_placement(self, job: dict) -> None:
+        """A placement on a device that left devices.workers ends as failed, once. Not re-queued: such a task is
+        often handed out again by hand meanwhile, and a second placement would run the same brief twice; not kept:
+        a device added back would be handed the old request."""
+        why = (f"device {job['host']!r} left devices.workers while this task was being placed on it; the hub ended "
+               "the placement and will not resume it: submit again with an available device")
+        self.store.update(job["id"], placement_error=why)
+        self.store.receipt(job["id"], "placement_dropped", host=job["host"], why=why)
+        self.store.log(f"{job['id']} {why}")
+        self.notify(job["id"], "failed", "0")
 
     def _watch(self, job: dict) -> None:
         """A running run on this tick: its end, or its question once it has waited long enough. A run its device did
