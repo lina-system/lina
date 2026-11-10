@@ -19,7 +19,9 @@ import uuid
 from pathlib import Path
 
 from agent.memory_provider import spawn_context_thread
+from hermes_cli import lina_ocx
 from hermes_cli.lina_work_settings import ACCESS
+from hermes_cli.worker.runners import lina_copy
 from hermes_cli.worker.runners.access import recorded_access
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
 from hermes_cli.worker.runners.command import CommandRunner, FINAL_MAX
@@ -103,7 +105,7 @@ def _permission(work: Path, mode: str, call: dict) -> tuple[bool, list[str]]:
 
 
 class AcpRunner:
-    def __init__(self, name: str, spec: dict, limits: dict | None = None):
+    def __init__(self, name: str, spec: dict, limits: dict | None = None, root: Path | None = None):
         argv = spec.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(arg, str) and arg for arg in argv):
             raise RunnerError(f"runner {name}: `argv` must be a non-empty list of strings")
@@ -115,10 +117,11 @@ class AcpRunner:
         self.name, self.argv, self.flavor = name, list(argv), flavor
         self.env = {str(key): str(value) for key, value in (spec.get("env") or {}).items()}
         self.limits = limits or {}
+        self.root = root or lina_ocx.lina_root()
         self._sessions: dict[int, _Session] = {}
 
     def available(self) -> tuple[bool, str]:
-        found = locate_command(self.argv[0]).command
+        found = locate_command(lina_copy.command(self.argv[0], self.root)).command
         return (True, found[0]) if found else (False, f"{self.argv[0]} not found on PATH")
 
     def honours(self, mode: str) -> tuple[bool, str]:
@@ -134,8 +137,9 @@ class AcpRunner:
                                     "requested_model": model.as_dict() if model else None})
         _inbox(handle).mkdir()
         session = _Session(self, handle)
+        argv = lina_copy.argv(self.argv, self.root)
         with task.path(f"stderr.{run}.txt").open("ab") as err:
-            session.proc = subprocess.Popen(self.argv, cwd=task.work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
+            session.proc = subprocess.Popen(argv, cwd=task.work, stdin=subprocess.PIPE, stdout=subprocess.PIPE,
                                             # detached-spawn: ok — awaited with group-killing cleanup on every ending
                                             stderr=err, start_new_session=True,
                                             env=build_subprocess_env(scrub_secrets=False, inherit_profile_home=False,
@@ -143,7 +147,7 @@ class AcpRunner:
         handle.data["pid"] = session.proc.pid
         handle.save()
         session.publish("running")
-        task.event(run, "launched", argv=self.argv[:1], flavor=self.flavor)
+        task.event(run, "launched", argv=argv[:1], flavor=self.flavor)
         self._sessions[run] = session
         session.thread = spawn_context_thread(session.run, args=(prompt, previous or {}), name=f"acp-{run}", daemon=False)
         session.thread.start()
