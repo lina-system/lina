@@ -28,7 +28,23 @@
       "version": "0.166.0-alpha.5.1",
       "integrity": "sha512-agRE7KtoI+2zrPV59soKKCxkDaK0qaoz3qmnjKZ3VtkpiMzkcxke2POlgQfLv09Wy6ZnaXEcX73UQh5y3UXZoA==",
       "bin": "codex",
-      "sign_in": "ocx"
+      "sign_in": "ocx",
+      "follow": {
+        "npm": "latest"
+      },
+      "trial": {
+        "argv": [
+          "exec",
+          "--skip-git-repo-check",
+          "--ephemeral",
+          "-s",
+          "read-only",
+          "-C",
+          "{dir}",
+          "{prompt}"
+        ],
+        "ocx": true
+      }
     },
     "claude": {
       "installer": "npm",
@@ -39,6 +55,18 @@
       "sign_in": "ocx",
       "env": {
         "DISABLE_AUTOUPDATER": "1"
+      },
+      "follow": {
+        "npm": "stable"
+      },
+      "trial": {
+        "argv": [
+          "-p",
+          "{prompt}",
+          "--model",
+          "haiku"
+        ],
+        "ocx": true
       }
     },
     "dsh": {
@@ -47,7 +75,16 @@
       "version": "0.2.1-rc.5",
       "integrity": "sha512-WkyJZv4zl9sCAxSzRctGm58m0rilGqwR6pniBiLOz5CPDfHfDuAUicg0AAazXI7oj/Cph6/cjNTncA/rpLTXpw==",
       "bin": "dsh",
-      "sign_in": "unknown"
+      "sign_in": "unknown",
+      "follow": {
+        "npm": "latest"
+      },
+      "trial": {
+        "acp": [
+          "acp"
+        ],
+        "ocx": true
+      }
     },
     "claude-agent-acp": {
       "installer": "npm",
@@ -90,6 +127,22 @@
           "url": "https://x.ai/cli/grok-1.0.70-linux-x86_64",
           "sha256": "22d281c5964c5444147328096ba2a221f3f0874c6858e27c825656a80f6e58e9"
         }
+      },
+      "follow": {
+        "channel": "https://x.ai/cli/stable",
+        "artifact": "https://x.ai/cli/grok-{version}-{platform}",
+        "platforms": {
+          "darwin-arm64": "macos-aarch64",
+          "darwin-x64": "macos-x86_64",
+          "linux-arm64": "linux-aarch64",
+          "linux-x64": "linux-x86_64"
+        }
+      },
+      "trial": {
+        "argv": [
+          "-p",
+          "{prompt}"
+        ]
       }
     },
     "cursor-agent": {
@@ -116,6 +169,26 @@
           "url": "https://downloads.cursor.com/lab/2026.10.22-27dcf5f/linux/x64/agent-cli-package.tar.gz",
           "sha256": "85296944e4600a83c4b764f578d1502bf9c416db200d33a593e8f3ecabfdc294"
         }
+      },
+      "follow": {
+        "page": "https://cursor.com/install",
+        "pattern": "downloads\\.cursor\\.com/lab/([0-9][^/\"'\\s]*)/",
+        "artifact": "https://downloads.cursor.com/lab/{version}/{platform}/agent-cli-package.tar.gz",
+        "platforms": {
+          "darwin-arm64": "darwin/arm64",
+          "darwin-x64": "darwin/x64",
+          "linux-arm64": "linux/arm64",
+          "linux-x64": "linux/x64"
+        }
+      },
+      "trial": {
+        "argv": [
+          "-p",
+          "{prompt}",
+          "--trust",
+          "--output-format",
+          "text"
+        ]
       }
     },
     "agy": {
@@ -142,6 +215,23 @@
           "url": "https://storage.googleapis.com/antigravity-public/antigravity-cli/1.5.2-4951595792859136/linux-x64/cli_linux_x64.tar.gz",
           "sha512": "aa876c0813572efaf85ed47983cc937414705d40490cbdb54f6e255656a4f8744ae38e457823e924fa8270b348124e0521d3cda3fec6824bb2d14b98a7a05baa"
         }
+      },
+      "follow": {
+        "manifest": "https://antigravity-cli-auto-updater-974169037036.us-central1.run.app/manifests/{platform}.json",
+        "platforms": {
+          "darwin-arm64": "darwin_arm64",
+          "darwin-x64": "darwin_amd64",
+          "linux-arm64": "linux_arm64",
+          "linux-x64": "linux_amd64"
+        }
+      },
+      "trial": {
+        "argv": [
+          "-p",
+          "{prompt}",
+          "--print-timeout",
+          "150s"
+        ]
       }
     }
   }

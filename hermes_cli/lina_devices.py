@@ -90,11 +90,20 @@ def runner_rows(dev: settings.Device, worker_root: Path, found: dict) -> list[di
     from hermes_cli.lina_runners import offered
     got = runner_status(dev, worker_root) if found["ssh"] and not found.get("protocol_error") else None
     if isinstance(got, list):
-        return got
+        return _against_hub(got)
     why = "update" if got and got.get("legacy") else "unreachable"
     return [{"name": name, "type": kind, "pin": pin.name, "pinned": pin.version, "installed": None, "sign_in": None,
              "ready": False, "why": why}
             for name, kind, pin in offered(settings.section(worker_root.parent)) if pin is not None]
+
+
+def _against_hub(rows: list[dict]) -> list[dict]:
+    """Each pinned row with the hub's pin and whether the node runs it (the daily runner sync, lina#238)."""
+    from hermes_cli.lina_runners import pins
+    hub = pins()
+    return [{**item, "hub_pinned": hub[item["pin"]].version,
+             "same_as_hub": item.get("installed") == hub[item["pin"]].version}
+            if item.get("pin") in hub else item for item in rows]
 
 
 def readiness(dev: settings.Device, worker_root: Path) -> dict:

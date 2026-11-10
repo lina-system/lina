@@ -18,6 +18,17 @@ def _status(args) -> int:
     return 0
 
 
+def _sync(args) -> int:
+    from hermes_cli import lina_runner_sync
+    action = getattr(args, "sync_action", None)
+    if action == "status":
+        return lina_runner_sync.status(issues_only=args.issues, as_json=args.json)
+    if action == "clear":
+        return lina_runner_sync.clear(args.runner, node=args.node, accept=args.accept)
+    only = [name.strip() for name in (args.only or "").split(",") if name.strip()] or None
+    return lina_runner_sync.sync(plan=args.plan, only=only, as_json=args.json)
+
+
 def _run(args) -> int:
     from hermes_cli import lina_runners
     actions = {
@@ -25,6 +36,7 @@ def _run(args) -> int:
         "upgrade": lambda: lina_runners.upgrade(args.name, version=args.runner_version, integrity=args.integrity),
         "rollback": lambda: lina_runners.rollback(args.name),
         "status": lambda: _status(args),
+        "sync": lambda: _sync(args),
     }
     return actions[args.runners_action]()
 
@@ -61,4 +73,17 @@ def build_runners_parser(subparsers) -> None:
     status.add_argument("--json", action="store_true", help="the same as JSON")
     status.add_argument("--offered", action="store_true",
                         help="only the runners this node offers (worker.runners), as hello reports them")
+    sync = sub.add_parser("sync", help="Once a day: move each followed runner to its source's newest version after a "
+                                        "trial on the hub, and let the nodes follow (lina#238)")
+    sync.add_argument("--plan", action="store_true", help="only show what a run would do; install and write nothing")
+    sync.add_argument("--only", help="comma-separated runners (default: every followed runner)")
+    sync.add_argument("--json", action="store_true", help="the run's record as JSON")
+    sync_sub = sync.add_subparsers(dest="sync_action")
+    sync_status = sync_sub.add_parser("status", help="the hub's pins, holds, the last run, issues and notes")
+    sync_status.add_argument("--issues", action="store_true", help="only the issue lines (`- none` when there are none)")
+    sync_status.add_argument("--json", action="store_true")
+    sync_clear = sync_sub.add_parser("clear", help="clear a runner's holds so it moves again")
+    sync_clear.add_argument("runner")
+    sync_clear.add_argument("--node", help="only that node's hold")
+    sync_clear.add_argument("--accept", metavar="VERSION", help="let this major version move")
     parser.set_defaults(func=_cmd_runners)

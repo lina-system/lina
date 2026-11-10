@@ -8,6 +8,10 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ## [Unreleased]
 
+### Added
+
+- `lina runners sync [--plan] [--only] [--json]` moves each followed runner pin (codex, claude, dsh, grok, cursor-agent, agy) to its source's newest version once a real request passes on the hub, and the nodes follow the same day through their `runner-sync` verb; a failure holds the runner (or that node) until `lina runners sync clear`, a major jump waits for `--accept`, a busy node is skipped, and `sync status --issues` prints the lines the daily check reads; `worker.runner_sync.at` starts it daily from the hub's worker service (lina#238).
+
 ### Fixed
 
 - `lina devices list` and `lina worker hosts` omit person devices from node probes and capacity rows, and `lina devices check` refuses them as non-nodes before probing (lina#427).

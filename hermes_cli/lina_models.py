@@ -50,7 +50,8 @@ STATUS = ("status", "--json")
 # OCX 2.97's plain ``usage --json`` is not on the read list; the view's own range (the last 30 days) is named.
 EXTERNAL_VIEWS = {**VIEWS, "usage": ("usage", "--range", "30d", "--json")}
 READS = frozenset({("account", "list", "--json"), ("account", "list", "--quota", "--json"), ("models", "live", "--json"),
-                   ("link", "status", "--json"), ("access", "key", "list", "--json"), STATUS})
+                   ("link", "status", "--json"), ("access", "key", "list", "--json"), STATUS,
+                   ("logs", "--json")})  # the runner sync's trial reads its 200 here (lina#238)
 CACHE_S = 60
 LINK_FRESH_S = 600
 # OCX's access-key ids are UUIDs with hyphens; the first char is alphanumeric so an id can never be another argument.
