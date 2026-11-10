@@ -23,11 +23,27 @@ SHARED = "fake-key-shared"
 
 
 class AgentGateway(FakeGateway):
-    """One agent's api_server behind the multiplexed listener, with its own key and the session messages route."""
+    """One agent's api_server behind the multiplexed listener, with its own key and the session messages route in
+    the shape of ``_handle_session_messages``: at most 500 rows a page from ``offset``, tool rows counted, and the
+    turns before ``compacted`` replaced by a hidden summary row unless ``include_compacted`` is true."""
+
+    PAGE = 500
 
     def __init__(self, key: str):
         super().__init__()
         self.KEY = key
+        self.compacted = 0
+
+    def _rows(self, sid: str, include_compacted: bool) -> list[dict]:
+        turns = [t for t in self.turns if t["session_id"] == sid]
+        rows = [] if include_compacted or not self.compacted else [
+            {"role": "user", "content": "", "display_kind": "hidden"}]
+        for n, turn in enumerate(turns):
+            if n < self.compacted and not include_compacted:
+                continue
+            rows += [{"role": "user", "content": turn["message"]}, {"role": "tool", "content": "{}"},
+                     {"role": "assistant", "content": fake_model(turn["message"])}]
+        return [{"id": i + 1, "session_id": sid, "timestamp": 1800000000.0 + i, **row} for i, row in enumerate(rows)]
 
     def handle(self, request: httpx.Request) -> httpx.Response:
         path = request.url.path
@@ -36,15 +52,16 @@ class AgentGateway(FakeGateway):
             if request.headers.get("authorization") != f"Bearer {self.KEY}":
                 return httpx.Response(401, json={"error": {"message": "Invalid API key"}})
             sid = path.split("/")[-2]
-            rows = []
-            for turn in (t for t in self.turns if t["session_id"] == sid):
-                rows += [{"id": len(rows) + 1, "session_id": sid, "role": "user", "content": turn["message"],
-                          "timestamp": 1800000000.0 + len(rows)},
-                         {"id": len(rows) + 2, "session_id": sid, "role": "tool", "content": "{}",
-                          "timestamp": 1800000000.5 + len(rows)},
-                         {"id": len(rows) + 3, "session_id": sid, "role": "assistant",
-                          "content": fake_model(turn["message"]), "timestamp": 1800000001.0 + len(rows)}]
-            return httpx.Response(200, json={"object": "list", "session_id": sid, "data": rows})
+            params = request.url.params
+            rows = self._rows(sid, params.get("include_compacted", "").lower() in ("1", "true"))
+            limit = min(int(params.get("limit", self.PAGE)), self.PAGE)
+            offset = int(params.get("offset", "0"))
+            if params.get("order") != "oldest":
+                rows = rows[::-1]
+            page = rows[offset:offset + limit]
+            return httpx.Response(200, json={"object": "list", "session_id": sid, "data": page,
+                                             "pagination": {"limit": limit, "offset": offset,
+                                                            "order": params.get("order"), "returned": len(page)}})
         return super().handle(request)
 
 
@@ -151,6 +168,33 @@ def test_the_history_route_returns_the_earlier_turns_of_that_app_chat(work, mux,
     assert [(m["role"], m["content"]) for m in body["messages"]] == [
         ("user", "[LINA app]\n\n하나"), ("assistant", fake_model("하나")),
         ("user", "[LINA app]\n\n둘"), ("assistant", fake_model("둘"))]
+
+
+def _history_after(client, gw: AgentGateway, turns: int) -> list[tuple[str, str]]:
+    """The window's history once the alpha app conversation holds *turns* turns (the first one run through the
+    route, the rest stored as the gateway would)."""
+    _talk(client, "alpha", "차례 1")
+    (first,) = gw.turns
+    gw.turns += [{**first, "message": f"[LINA app]\n\n차례 {n}"} for n in range(2, turns + 1)]
+    body = _valid("AgentTalkHistory", client.get("/api/lina/agents/alpha/talk").json())
+    return [(m["role"], m["content"]) for m in body["messages"]]
+
+
+def test_the_history_reaches_the_latest_turn_past_one_page_of_the_gateway(work, mux, client):
+    gw = mux.agents["alpha"]
+    seen = _history_after(client, gw, 200)  # 600 stored rows with the tool rows: more than one 500-row page
+    assert len(seen) == 400
+    assert seen[:2] == [("user", "[LINA app]\n\n차례 1"), ("assistant", fake_model("차례 1"))]
+    assert seen[-2:] == [("user", "[LINA app]\n\n차례 200"), ("assistant", fake_model("차례 200"))]
+
+
+def test_the_history_keeps_the_turns_before_a_compaction(work, mux, client):
+    gw = mux.agents["alpha"]
+    before = _history_after(client, gw, 3)
+    gw.compacted = 2
+    after = _valid("AgentTalkHistory", client.get("/api/lina/agents/alpha/talk").json())
+    assert [(m["role"], m["content"]) for m in after["messages"]] == before
+    assert [c for _r, c in before][::2] == [f"[LINA app]\n\n차례 {n}" for n in (1, 2, 3)]
 
 
 def test_a_refused_key_answers_without_the_key(work, mux, client, monkeypatch, caplog):

@@ -28,6 +28,7 @@ MAX_CHARS = 4000
 SESSION_TITLE = "LINA app: {agent}"
 _CRON_FIRE_PATH = "/api/cron/fire"
 KEY_ENV = "LINA_GATEWAY_KEY_{agent}"
+_MESSAGES_PAGE = 500  # the gateway's cap per messages page (api_server._handle_session_messages)
 REFUSED_KEY = "the gateway refused the key for {agent}"
 
 
@@ -176,6 +177,22 @@ def _headers(agent: str) -> tuple[str, dict]:
     return base, {"Authorization": f"Bearer {key}"} if key else {}
 
 
+async def _messages(client, base: str, headers: dict, session_id: str) -> list:
+    """Every stored row of the conversation, oldest first: the gateway answers at most ``_MESSAGES_PAGE`` rows (tool
+    rows included) from ``offset``, so pages are read until a short one. ``include_compacted`` keeps the turns a
+    compaction archived, which the gateway leaves out by default."""
+    url = f"{base}/api/sessions/{urllib.parse.quote(session_id, safe='')}/messages"
+    rows: list = []
+    while True:
+        resp = await client.get(url, headers=headers, params={
+            "order": "oldest", "limit": _MESSAGES_PAGE, "offset": len(rows), "include_compacted": "true"})
+        resp.raise_for_status()
+        page = resp.json().get("data") or []
+        rows += page
+        if len(page) < _MESSAGES_PAGE:
+            return rows
+
+
 async def history(target: Target) -> Opened:
     """The earlier turns of the agent's app conversation, oldest first: ``{agent, session_id, messages}`` with the
     owner's and the agent's messages (``role``, ``content``, ``timestamp``); none before the first turn."""
@@ -184,19 +201,15 @@ async def history(target: Target) -> Opened:
     async with http_client() as client:
         try:
             session_id = await _find_session(client, base, headers, target.agent)
-            rows = []
-            if session_id:
-                resp = await client.get(f"{base}/api/sessions/{urllib.parse.quote(session_id, safe='')}/messages",
-                                        params={"order": "oldest", "limit": 500}, headers=headers)
-                resp.raise_for_status()
-                rows = resp.json().get("data") or []
+            rows = await _messages(client, base, headers, session_id) if session_id else []
         except httpx.HTTPStatusError as exc:
             return _upstream(target.agent, exc.response.status_code, exc.response.content,
                              exc.response.headers.get("content-type", "application/json"))
         except httpx.HTTPError as exc:
             return Opened(503, _error_body("gateway_unreachable", f"{target.agent}'s gateway: {type(exc).__name__}"))
     messages = [{"role": row["role"], "content": row.get("content") or "", "timestamp": row.get("timestamp")}
-                for row in rows if isinstance(row, dict) and row.get("role") in ("user", "assistant")]
+                for row in rows if isinstance(row, dict) and row.get("role") in ("user", "assistant")
+                and row.get("display_kind") != "hidden"]
     body = {"agent": target.agent, "session_id": session_id, "messages": messages}
     return Opened(200, json.dumps(body, ensure_ascii=False).encode())
 

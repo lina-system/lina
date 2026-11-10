@@ -133,7 +133,9 @@ paths:
       summary: The earlier turns of the owner's app conversation with the agent, oldest first.
       responses:
         "200":
-          description: The owner's and the agent's messages; none (and no session) before the first turn.
+          description: >
+            The owner's and the agent's messages, every page of the gateway's and the turns a compaction archived
+            included; none (and no session) before the first turn.
           content:
             application/json:
               schema:
