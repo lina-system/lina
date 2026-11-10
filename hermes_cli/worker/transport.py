@@ -128,6 +128,11 @@ class NegotiatedTransport:
         self._reason = ""
         self._legacy = False
 
+    @property
+    def reason(self) -> str:
+        """Why this contact refuses calls (its hello failed or the protocols do not meet); "" when it takes them."""
+        return self._reason
+
     def _refused(self, reason: str) -> Reply:
         code = self._hello.code if self._hello and not self._legacy and self._hello.code else 1
         return Reply(code, json.dumps({"action": "error", "reason": reason, "protocol_error": True}).encode(), reason)
