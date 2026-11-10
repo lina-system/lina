@@ -315,6 +315,41 @@ def test_a_failing_command_is_one_error_and_the_other_sources_are_served(hermes,
     assert client.get(f"{WORK}/cards/hermes:t_a1").status_code == 503
 
 
+def test_a_reply_slower_than_cache_seconds_is_kept_from_when_it_ended(hermes, client):
+    hermes.on(timeout_seconds=1, cache_seconds=0.5)
+    hermes.canned(_canned(), mode="hang")
+    for _ in range(2):
+        board = _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
+        assert [(e["source"], "timed out" in e["message"]) for e in board["errors"]] == [("hermes", True)]
+    assert hermes.calls() == [["json"]]
+
+
+def test_the_old_record_is_served_when_lina_s_own_record_fails(hermes, client, monkeypatch):
+    def broken(_root):
+        raise RuntimeError("store unavailable")
+    monkeypatch.setattr(lina_board, "work_read", broken)
+    hermes.on()
+    board = _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
+    assert [e["source"] for e in board["errors"]] == ["work"]
+    assert [d["target"] for d in board["inbox"]["decide"]] == ["hermes:G1"]
+    assert [m["id"] for m in board["inbox"]["mine"]] == ["hermes:T1"]
+    assert [row["id"] for row in board["due"]["today"]] == ["hermes:G1"]
+    assert (board["counts"]["inbox"], board["counts"]["due"], board["counts"]["unread"]) == (None, None, None)
+    due = _get(client, "/api/lina/work/due", "board-client.yaml", "DueView")
+    assert ([e["source"] for e in due["errors"]], due["count"]) == (["work"], None)
+    assert [row["id"] for row in due["due"]["today"]] == ["hermes:G1"]
+
+
+def test_with_only_the_old_record_set_no_card_read_runs(hermes, client):
+    hermes.on(command=None)
+    for path, schema in (("cards", "WorkCardList"), ("goals", "GoalList"), ("inbox", "Inbox")):
+        reply = _get(client, f"{WORK}/{path}", "work-client.yaml", schema)
+        assert reply["errors"] == [], path
+    assert hermes.calls() == []
+    board = _get(client, "/api/lina/board", "board-client.yaml", "BoardSnapshot")
+    assert board["errors"] == [] and [m["id"] for m in board["inbox"]["mine"]] == ["hermes:T1"]
+
+
 def _files(*roots: Path) -> set[Path]:
     return {p for root in roots for p in root.rglob("*") if p.is_file()}
 

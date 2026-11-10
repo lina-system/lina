@@ -169,7 +169,8 @@ def due(now: float | None = None) -> dict:
     work = own_and_hermes_work(root, errors)
     groups = work["due"] if work else {name: [] for name in ("overdue", "today", "week", "later")}
     return {"version": API_VERSION, "at": now, "errors": errors, "today": (work or {}).get("today"),
-            "count": sum(len(v) for v in groups.values()) if work else None, "due": groups}
+            "count": sum(len(v) for v in groups.values()) if work and not _own_failed(errors) else None,
+            "due": groups}
 
 
 def devices(now: float | None = None) -> dict:
@@ -193,20 +194,21 @@ def board(now: float | None = None) -> dict:
     """``GET /api/lina/board``: one snapshot of everything above."""
     now, root, errors = time.time() if now is None else now, _root(), []
     work = own_and_hermes_work(root, errors)
+    counted = None if _own_failed(errors) else work
     cards = _source("worker", errors, lambda: worker_read(root, now))
     machines = (_source("devices", errors, lambda: devices_read(root, now, errors)) or {}).get("machines")
     services = _source("quota", errors, lambda: quota_read(root, now))
     review = [c for c in cards or [] if c["state"] == "waiting" and _verdict_agent(c) is None]
     with _WORK_LOCK:
         lines = _source("work", errors, lambda: _notices_in_locale(root, work, review))
-    counts = _counts(work, cards, review, now)
+    counts = _counts(counted, cards, review, now)
     if lines is not None:
         from hermes_cli.lina_board_write import read_marks
         read = read_marks(root)
         for note in lines:
             note["read"] = note["key"] in read
     counts["unread"] = (sum(not note["read"] for note in lines)
-                        if lines is not None and work is not None and cards is not None else None)
+                        if lines is not None and counted is not None and cards is not None else None)
     return {
         "version": API_VERSION, "at": now, "errors": errors, "counts": counts,
         "cards": cards or [],
@@ -219,8 +221,14 @@ def board(now: float | None = None) -> dict:
     }
 
 
+def _own_failed(errors: list[dict]) -> bool:
+    """LINA's own record failed: the old record's rows may still be served, but a count would be a guess."""
+    return any(e["source"] == "work" for e in errors)
+
+
 def own_and_hermes_work(root: Path, errors: list[dict]) -> dict | None:
-    """The work record's part, with the old record's rows of the ``hermes`` source added while it is set (lina#481)."""
+    """The work record's part, with the old record's rows of the ``hermes`` source added while it is set (lina#481);
+    when LINA's own record fails, the old record's rows alone."""
     from hermes_cli.lina_board_hermes import merge
     return merge(_source("work", errors, lambda: work_read(root)), errors, root)
 

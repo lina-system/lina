@@ -153,7 +153,8 @@ def _call(src: Source, argv: tuple[str, ...]) -> Any:
 
 
 def _cached(src: Source, argv: tuple[str, ...]) -> Any:
-    """One command's reply, run again only after ``cache_seconds``; a failure is kept as long and raised again."""
+    """One command's reply, run again only ``cache_seconds`` after it ended (a command slower than that would
+    otherwise run on every read); a failure is kept as long and raised again."""
     key, now = (argv, src.home), time.monotonic()
     with _CACHE_LOCK:
         hit = _CACHE.get(key)
@@ -164,13 +165,14 @@ def _cached(src: Source, argv: tuple[str, ...]) -> Any:
     try:
         value, entry = _call(src, argv), None
     except SourceError as exc:
-        value, entry = None, (now + src.cache, False, str(exc))
+        value, entry = None, (False, str(exc))
+    ended = time.monotonic()
     with _CACHE_LOCK:
-        for old in [k for k, v in _CACHE.items() if v[0] <= now]:
+        for old in [k for k, v in _CACHE.items() if v[0] <= ended]:
             del _CACHE[old]
-        _CACHE[key] = entry or (now + src.cache, True, value)
+        _CACHE[key] = (ended + src.cache, *(entry or (True, value)))
     if entry is not None:
-        raise SourceError(entry[2])
+        raise SourceError(entry[1])
     return value
 
 
@@ -250,7 +252,8 @@ def _record_rows(reply: dict, root: Path) -> dict:
 
 def merge(work: dict | None, errors: list[dict], root: Path) -> dict | None:
     """LINA's own record part (``lina_board.work_read``) with the old record's rows added after its own. Off, it is
-    returned as it is; a failing command adds one ``errors`` entry and LINA's part is served alone."""
+    returned as it is; a failing command adds one ``errors`` entry and LINA's part is served alone, and a failing
+    LINA record leaves the old record's rows served alone."""
     sec = section(root)
     if sec is None:
         return work
@@ -261,7 +264,7 @@ def merge(work: dict | None, errors: list[dict], root: Path) -> dict | None:
         return None if reply is None else _record_rows(reply, root)
     extra = _source(SOURCE, errors, read)
     if work is None or extra is None:
-        return work
+        return work if extra is None else extra
     return {**work, "agents": {**extra["agents"], **work["agents"]},
             "decide": work["decide"] + extra["decide"], "mine": work["mine"] + extra["mine"],
             "due": {name: rows + extra["due"].get(name, []) for name, rows in work["due"].items()}}

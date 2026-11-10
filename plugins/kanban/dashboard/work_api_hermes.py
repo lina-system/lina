@@ -124,8 +124,13 @@ def add(out: dict, board: Optional[str], read: Callable[[hermes.Source], dict[st
     if sec is None:
         return out
     errors: list[dict] = []
-    extra = _source(hermes.SOURCE, errors, lambda: read(hermes.source(sec))) or {}
+    extra = _source(hermes.SOURCE, errors, lambda: _cards_part(hermes.source(sec), read)) or {}
     return dict(out, **{key: out[key] + rows for key, rows in extra.items()}, errors=errors)
+
+
+def _cards_part(src: hermes.Source, read: Callable[[hermes.Source], Any]) -> Any:
+    """*read*'s rows, or none when only the old record is set (``board.hermes.work`` without ``command``)."""
+    return None if src.command is None else read(src)
 
 
 def one(item_id: str, read: Callable[[hermes.Source, str], Optional[dict]]) -> dict:
@@ -135,7 +140,7 @@ def one(item_id: str, read: Callable[[hermes.Source, str], Optional[dict]]) -> d
     if sec is None:
         raise HTTPException(status_code=404, detail=f"card {item_id} not found")
     errors: list[dict] = []
-    found = _source(hermes.SOURCE, errors, lambda: read(hermes.source(sec), item_id))
+    found = _source(hermes.SOURCE, errors, lambda: _cards_part(hermes.source(sec), lambda src: read(src, item_id)))
     if errors:
         raise HTTPException(status_code=503, detail=errors[0]["message"])
     if found is None:
