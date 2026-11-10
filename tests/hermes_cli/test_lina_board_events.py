@@ -299,6 +299,7 @@ def test_a_kanban_cursor_before_a_selectively_pruned_gap_gets_a_resync_and_one_a
     *[({"kind": kind}, True) for kind in ("submitted", "placed", "queued", "run_started", "start_failed_requeued",
                                           "follow_up", "answer", "exec_end", "delivery", "verdict")],
     *[({"kind": kind}, False) for kind in ("card_linked", "card_link_failed", "card_noticed", "card_notice_failed",
+                                           "card_notice_waiting", "card_wake_expired",
                                            "award", "publish_failed_resumes", "fetch_failed", "group_notified",
                                            "cancel_requested", "steer")],
     ({"kind": "notified", "state": "human"}, True),
