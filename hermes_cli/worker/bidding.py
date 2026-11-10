@@ -1,7 +1,8 @@
 """Which device takes a task: every candidate in ``devices.workers`` is asked at once and the least full ready one wins.
 
 Ready means: the runner is installed and its daemon up, ``lina worker serve`` runs, there is disk, the repo path
-exists, and a slot is free under the device's cap. The score is (running / cap, 0 for a ``fast`` device, load per
+exists, the node's OCX answers when it reports one (``capabilities.ocx`` of its hello), and a slot is free under the
+device's cap. The score is (running / cap, 0 for a ``fast`` device, load per
 core); lowest wins within the first available integer ``last`` tier (false/absent = 0, true = 1).
 ``no_repo`` never takes a task with a repo,
 ``auto: false`` takes work only when named with ``--host``. When nobody can, the task waits in the hub's queue.
@@ -43,6 +44,7 @@ def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
         (not manual and dev.role != "work", "only when named with --host"),
         (not probe.get("serve"), "lina worker serve is not running"),
         (int(probe.get("free_gb") or 0) < min_free_gb, f"disk {probe.get('free_gb')}GB < {min_free_gb}GB"),
+        (ocx_down(probe.get("ocx")), "ocx not answering"),
         (not probe.get("repo", True), "repo path missing"),
         (int(probe.get("named_running" if manual else "bid_running", probe.get("running")) or 0)
          >= (dev.manual_cap if manual else dev.cap), "full"),
@@ -77,6 +79,21 @@ def choose(candidates: list[Device], probes: list[dict], *, repo: str | None, mi
     return (best[0] if best else None), rows
 
 
+def ocx_down(ocx) -> bool:
+    """Whether a node that reports an OCX (``external`` or a ``version``) has one that does not answer (``health``
+    not 200). A node with no OCX at all (a file node, one that reaches models another way) is never down for this."""
+    if not isinstance(ocx, dict) or not (ocx.get("external") is True or ocx.get("version") is not None):
+        return False
+    return ocx.get("health") != 200
+
+
+def with_node_facts(found: dict, descriptor: dict | None) -> dict:
+    """*found* (a node's probe) with what the hub knows of the node apart from it: ``ocx`` from the hello the same
+    contact asked first. ``lina devices`` merges the same way, so both say the same reason."""
+    ocx = ((descriptor or {}).get("capabilities") or {}).get("ocx")
+    return {**found, "ocx": ocx} if isinstance(ocx, dict) else found
+
+
 def missing_access(descriptor: dict | None, access: str | None) -> str | None:
     """Why a device whose hello lacks *access* must not take the run (an older node would ignore the mode)."""
     if not access:
@@ -109,7 +126,7 @@ def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, 
             if reply.json().get("protocol_error"):
                 return reply.json()
             return {"error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
-        found = reply.json() or {"error": "no answer"}
+        found = with_node_facts(reply.json() or {"error": "no answer"}, contact.descriptor)
         if runner_spec and not sends and str(found.get("why") or "").startswith("no runner "):
             found = {**found, "why": f"{found['why']}; {dev.name} does not take the hub's runner spec (update the node)"}
         why = missing_access(contact.descriptor, access)

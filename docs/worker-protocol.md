@@ -45,6 +45,23 @@ node response refreshes hello without retrying the action. There is no new human
 service-control CLI in this change. This guard is instance checking, not access
 authorization; the SSH account remains the existing trust boundary.
 
+## Bid skip reasons
+
+Besides its slots, the bid (`bidding.readiness`) passes a node for these reasons
+and names them in the bid row (`why`, carried by the `award` and `queued`
+receipts), in `lina worker hosts` and in `lina devices`. None of them changes
+the score order, and none touches a run already on the node: the node watch
+speaks for a lost node.
+
+- `ocx not answering`: the node's hello carries `capabilities.ocx` =
+  `{external, version, health}`, and a node that reports an OCX (`external`
+  true or a `version`) whose `health` is not 200 is passed. The hub reads it
+  from the hello the same contact asks before its probe
+  (`bidding.with_node_facts`), so there is no second round trip. A node with
+  no OCX (`external` false and no `version`) or whose hello has no `ocx` (an
+  older node, a file node) is not passed for this. A named run (`--host`) is
+  not started there either.
+
 ## Request keys
 
 `lina worker submit` and `send` take `--key <k>` (Python: `opts["request_key"]`,
