@@ -45,7 +45,8 @@ def probe(dev: settings.Device, worker_root: Path, runner: str) -> dict:
     contact = for_device(dev, worker_root)
     reply = contact.call(["probe", "", runner], timeout=60)
     if reply.code == 0:
-        return {"ssh": True, **bidding.with_node_facts(reply.json() or {"error": "no answer"}, contact.descriptor)}
+        return {"ssh": True, **bidding.with_node_facts(reply.json() or {"error": "no answer"}, contact.descriptor,
+                                                             dev.name, worker_root)}
     if reply.json().get("protocol_error"):
         return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, **reply.json()}
     return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, "error": (reply.err.strip() or f"exit {reply.code}")[-160:]}

@@ -1,8 +1,9 @@
 """Which device takes a task: every candidate in ``devices.workers`` is asked at once and the least full ready one wins.
 
 Ready means: the runner is installed and its daemon up, ``lina worker serve`` runs, there is disk, the repo path
-exists, the node's OCX answers when it reports one (``capabilities.ocx`` of its hello), and a slot is free under the
-device's cap. The score is (running / cap, 0 for a ``fast`` device, load per
+exists, the node's OCX answers when it reports one (``capabilities.ocx`` of its hello), it has the memory floor
+(``worker.min_free_mem_gb``), it is not cooling off after quick failures (``worker.cooloff_*``; a named run still
+starts), and a slot is free under the device's cap. The score is (running / cap, 0 for a ``fast`` device, load per
 core); lowest wins within the first available integer ``last`` tier (false/absent = 0, true = 1).
 ``no_repo`` never takes a task with a repo,
 ``auto: false`` takes work only when named with ``--host``. When nobody can, the task waits in the hub's queue.
@@ -13,10 +14,14 @@ a ``person`` device never takes work.
 from __future__ import annotations
 
 import json
+import time
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
+from hermes_cli.worker import settings
 from hermes_cli.worker.settings import FILE_KIND, ROLES, Device
+
+ENDS_KEPT = 10  # the run ends a node record keeps for the cool-off
 
 
 def role_refusal(dev: Device, repo: str | None) -> str | None:
@@ -44,7 +49,9 @@ def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
         (not manual and dev.role != "work", "only when named with --host"),
         (not probe.get("serve"), "lina worker serve is not running"),
         (int(probe.get("free_gb") or 0) < min_free_gb, f"disk {probe.get('free_gb')}GB < {min_free_gb}GB"),
+        (low_memory(probe), f"memory {probe.get('mem_available_gb')}GB < {mem_floor(probe)}GB"),
         (ocx_down(probe.get("ocx")), "ocx not answering"),
+        (not manual and bool(probe.get("cooling")), f"cooling off after {probe.get('cooling')} quick failures"),
         (not probe.get("repo", True), "repo path missing"),
         (int(probe.get("named_running" if manual else "bid_running", probe.get("running")) or 0)
          >= (dev.manual_cap if manual else dev.cap), "full"),
@@ -87,11 +94,52 @@ def ocx_down(ocx) -> bool:
     return ocx.get("health") != 200
 
 
-def with_node_facts(found: dict, descriptor: dict | None) -> dict:
+def mem_floor(probe: dict) -> int:
+    return int(probe.get("mem_floor_gb", settings.DEFAULTS["min_free_mem_gb"]))
+
+
+def low_memory(probe: dict) -> bool:
+    """Available memory under the floor; an older node whose probe has no ``mem_available_gb`` is never low."""
+    return probe.get("mem_available_gb") is not None and int(probe["mem_available_gb"]) < mem_floor(probe)
+
+
+def record_end(store, node: str, state: str, took: float | None, at: float | None = None) -> None:
+    """One run end on *node*'s record (``ends``, the newest last), for the cool-off. *took* None: its length is not
+    known, so it never counts as a quick failure."""
+    with store.edit_node(node) as record:
+        ends = [*(record.get("ends") or []), {"at": time.time() if at is None else at, "state": state, "took": took}]
+        record["ends"] = ends[-ENDS_KEPT:]
+
+
+def cooling(record: dict | None, worker: dict, now: float) -> int | None:
+    """The quick failures *record* cools off after, or None: its newest ``cooloff_failures`` ends all ``failed``, each
+    no longer than ``cooloff_quick_s``, within ``cooloff_window_s`` of each other, and the newest less than
+    ``cooloff_s`` ago. A newer end of any other state (``done``) clears it."""
+    count = int(settings.setting("cooloff_failures", worker=worker))
+    quick = float(settings.setting("cooloff_quick_s", worker=worker))
+    ends = ((record or {}).get("ends") or [])[-count:]
+    if count < 1 or len(ends) < count or any(
+            end.get("state") != "failed" or end.get("took") is None or end["took"] > quick for end in ends):
+        return None
+    if ends[-1]["at"] - ends[0]["at"] > float(settings.setting("cooloff_window_s", worker=worker)):
+        return None
+    return count if now - ends[-1]["at"] < float(settings.setting("cooloff_s", worker=worker)) else None
+
+
+def with_node_facts(found: dict, descriptor: dict | None, node: str, worker_root: Path,
+                    now: float | None = None) -> dict:
     """*found* (a node's probe) with what the hub knows of the node apart from it: ``ocx`` from the hello the same
-    contact asked first. ``lina devices`` merges the same way, so both say the same reason."""
+    contact asked first, ``cooling`` from the run ends on its node record and the hub's memory floor
+    (``mem_floor_gb``). ``lina devices`` merges the same way, so both say the same reasons."""
+    from hermes_cli.worker.hub_store import Store
+    worker = settings.section(worker_root.parent)
+    facts = {"mem_floor_gb": int(settings.setting("min_free_mem_gb", worker=worker))}
     ocx = ((descriptor or {}).get("capabilities") or {}).get("ocx")
-    return {**found, "ocx": ocx} if isinstance(ocx, dict) else found
+    if isinstance(ocx, dict):
+        facts["ocx"] = ocx
+    if count := cooling(Store(worker_root).load_node(node), worker, time.time() if now is None else now):
+        facts["cooling"] = count
+    return {**found, **facts}
 
 
 def missing_access(descriptor: dict | None, access: str | None) -> str | None:
@@ -126,7 +174,7 @@ def probe_all(candidates: list[Device], worker_root: Path, *, repo: str | None, 
             if reply.json().get("protocol_error"):
                 return reply.json()
             return {"error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
-        found = with_node_facts(reply.json() or {"error": "no answer"}, contact.descriptor)
+        found = with_node_facts(reply.json() or {"error": "no answer"}, contact.descriptor, dev.name, worker_root)
         if runner_spec and not sends and str(found.get("why") or "").startswith("no runner "):
             found = {**found, "why": f"{found['why']}; {dev.name} does not take the hub's runner spec (update the node)"}
         why = missing_access(contact.descriptor, access)

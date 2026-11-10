@@ -61,6 +61,22 @@ speaks for a lost node.
   no OCX (`external` false and no `version`) or whose hello has no `ocx` (an
   older node, a file node) is not passed for this. A named run (`--host`) is
   not started there either.
+- `memory <n>GB < <floor>GB`: `probe` reports `mem_available_gb` (available
+  memory, whole GB rounded down) and a node under `worker.min_free_mem_gb`
+  (default 4, read on the hub like `min_free_gb`) is passed, a named run too.
+  An older node whose probe has no `mem_available_gb` is not passed for this.
+- `cooling off after <n> quick failures`: the hub keeps the last run ends of
+  each node on its node record (`hub/nodes/<node>.json`, `ends`: `at`,
+  `state`, `took`). When the newest `worker.cooloff_failures` (default 2) of
+  them all ended `failed`, each ran no longer than `worker.cooloff_quick_s`
+  (default 120) and they ended within `worker.cooloff_window_s` (default 1800)
+  of each other, the bid passes the node for `worker.cooloff_s` (default 900)
+  after the last one. A newer end that is not `failed` (`done`) clears it. A
+  run whose length the hub does not know (any run after the first of a task)
+  never counts as quick. A named run still starts there, and `lina worker
+  hosts` (which shows named-run readiness) says it on the node's line as
+  `cooling off after <n> quick failures (named runs still start)`. The four
+  numbers are work settings (`lina worker settings set worker.cooloff_s 600`).
 
 ## Request keys
 
