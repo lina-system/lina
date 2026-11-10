@@ -126,8 +126,8 @@ def contact_nodes(root: Path) -> list[NodeView]:
         return list(pool.map(lambda dev: _contact(dev, worker_root), devices))
 
 
-def _hub_sign_in(runner: lina_runners.RunnerPin) -> str:
-    return lina_runners.SIGN_IN.get(runner.sign_in, lina_runners.SIGN_IN["unknown"])()[0]
+def _hub_sign_in(runner: lina_runners.RunnerPin, root: Path) -> str:
+    return lina_runners.SIGN_IN.get(runner.sign_in, lina_runners.SIGN_IN["unknown"])(root)[0]
 
 
 
@@ -203,7 +203,7 @@ class Run:
         return dataclasses.replace(runner, artifacts=artifacts)
 
     def move(self, name: str, runner: lina_runners.RunnerPin, newest: str, rec: dict) -> lina_runners.RunnerPin:
-        signed = (self.env.sign_in or _hub_sign_in)(runner)
+        signed = (self.env.sign_in or (lambda pin: _hub_sign_in(pin, self.root)))(runner)
         if signed == "signed_out":
             rec["hub"] = {"state": "hub sign-in needed", "to": newest}
             self.hub_questions.append({"name": name, "sign_in": "signed_out", "sign_in_by": runner.sign_in})

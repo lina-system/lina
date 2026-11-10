@@ -14,6 +14,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- `lina devices` and `hello` show an `acp` runner by the adapter it runs: the pin is chosen by the command in its `argv` before its name, so an `acp` runner named `claude` reports `claude-agent-acp`'s pinned and installed versions instead of the `claude` CLI pin LINA did not install; a node signed in through an external OCX (`ocx.external.cli`) counts as signed in when that OCX answers `/healthz` (a node with no OCX at all still reports `unknown` with the reason), and a runner whose sign-in has no read-only check (`unknown`, today `dsh`) shows `unknown` with its reason and stays ready instead of `not ready: sign in` (lina#452).
 - A `lina` call from a Hermes Agent terminal (`HERMES_HOME` under Hermes Agent's home, such as `~/.hermes/profiles/<bot>`) no longer prints `lina: ignoring HERMES_HOME=…` on stderr: LINA drops that home quietly and keeps it as `LINA_CALLER_HERMES_HOME`, so `lina worker` still names the calling agent as a run's owner; a dropped home outside an explicit `LINA_HOME` that is not Hermes Agent's is still reported (lina#434).
 - `lina devices list` and `lina worker hosts` omit person devices from node probes and capacity rows, and `lina devices check` refuses them as non-nodes before probing (lina#427).
 - The `omo-task` shim routes LINA-minted task (`OT-`), schedule (`OS-`) and batch (`OG-`) IDs, including collision suffixes and older held records, to `lina worker` instead of the legacy tool (lina#430).
