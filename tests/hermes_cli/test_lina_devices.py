@@ -179,6 +179,7 @@ def local_device(tmp_path, monkeypatch):
           default_runner: fakecli
           poll_s: 0.05
           min_free_gb: 0
+          min_free_mem_gb: 0
           runners:
             fakecli: {json.dumps({"type": "command", "argv": argv, "access": "workspace-write"})}
         """), encoding="utf-8")

@@ -53,7 +53,7 @@ def _config(base: Path, extra: str = "", devices: str = "{}", runners: str = "{}
     base.mkdir(parents=True, exist_ok=True)
     (base / "config.yaml").write_text(
         "devices:\n  workers:\n" + textwrap.indent(devices, "    ") + "\n"
-        "worker:\n  poll_s: 0.05\n  min_free_gb: 0\n" + extra + "  runners:\n" + textwrap.indent(runners, "    ")
+        "worker:\n  poll_s: 0.05\n  min_free_gb: 0\n  min_free_mem_gb: 0\n" + extra + "  runners:\n" + textwrap.indent(runners, "    ")
         + "\n", encoding="utf-8")
 
 
