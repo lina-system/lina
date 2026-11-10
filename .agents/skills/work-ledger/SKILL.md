@@ -9,7 +9,7 @@ metadata:
   hermes:
     tags: [work, goals, evidence]
     category: productivity
-    related_skills: [omo-tasks, verification-gate, writing-review, owner-intake]
+    related_skills: [lina-worker, verification-gate, writing-review, owner-intake]
 ---
 
 # Work Ledger Skill
@@ -26,7 +26,7 @@ Identify the repository's existing record surface: an issue, task board, or main
 
 ## How to Run
 
-Read the current record and linked source artifacts with `read_file` or the available task tools before changing state. Use `omo-tasks` for delegated execution and `verification-gate` for evidence.
+Read the current record and linked source artifacts with `read_file` or the available task tools before changing state. Use `lina-worker` for delegated execution and `verification-gate` for evidence.
 
 ## Quick Reference
 

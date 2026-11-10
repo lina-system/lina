@@ -1,33 +1,40 @@
 # Switching callers to `lina worker` and `lina work`
 
-Agents, skills and cron jobs that call `omo-task` or `work` keep working after the switch: two
-shims with the same names forward every verb and option to `lina worker` and `lina work`. The
-switch of a machine is a config change plus one command; going back is taking one folder off PATH.
+The switch is finished: agents, skills and cron jobs call the worker as `lina worker <verb> ...`. There is no
+other name for it and no shim (lina#434); `omo` is only the name of a runner (`worker.runners`).
 
-| Old call | Runs | Notes |
-| --- | --- | --- |
-| `omo-task <verb> ...` | `lina worker <verb> ...` | `submit --brief --mode --repo --input --todo --host --model --topic --bot --at --every --wait --card --card-board`, `submit --session` (accepted, ignored), `status`, `attach` (prints the status), `card` (shows the card; adding or dropping one is refused), `list`, `send --card --card-board`, `cancel`, `result`, `accept --note`, `reject --why`, `receipts`, `hosts`, `schedules`, `unschedule` |
-| `omo-task fork <ID>` | nothing (exit 2) | `lina worker` has no fork: submit a new brief, or `send` for the next run in the same session |
-| `work <verb> ...` | `lina work <verb> ...` | every verb and option; task IDs imported with `lina work import` keep their IDs |
+| Call | Notes |
+| --- | --- |
+| `lina worker <verb> ...` | `submit --brief --mode --repo --input --todo --host --model --topic --bot --at --every --wait --card --card-board`, `status`, `attach` (prints the status), `card`, `list`, `send --card --card-board`, `cancel`, `result`, `accept --note`, `reject --why`, `receipts`, `hosts`, `schedules`, `unschedule` |
+| `work <verb> ...` | the `work` shim: runs `lina work <verb> ...` with every verb and option; task IDs imported with `lina work import` keep their IDs |
 
-A shim prints nothing of its own on success and exits with the wrapped command's code, so callers
-that parse the output see the same text.
-The shim does not depend on the caller's current directory: Python starts with `-P` and imports LINA through its pinned `PYTHONPATH`.
+`lina worker` has no `fork`: submit a new brief, or `send` for the next run in the same session.
 
-An installed shim always runs with `LINA_HOME` set to the root it was installed for. A caller's
-`HERMES_HOME` (Hermes Agent's profile home, as in an agent's terminal) never moves it; it names the
-owner of a run when `--bot`, `HERMES_PROFILE` and `HERMES_PROFILE_NAME` do not. From a card session
-the card is found without `--card` (docs/worker-card-session.md).
+Called from a Hermes Agent terminal, where `HERMES_HOME` is that agent's profile home (`~/.hermes/profiles/<bot>`),
+`lina` drops that home without a word and keeps it as `LINA_CALLER_HERMES_HOME`: it names the owner of a run when
+`--bot`, `HERMES_PROFILE` and `HERMES_PROFILE_NAME` do not. From a card session the card is found without `--card`
+(docs/worker-card-session.md).
 
-## Who answers an ID
+## The `work` shim
 
-The shim recognizes LINA's task (`OT-`), schedule (`OS-`) and batch (`OG-`) IDs by `worker/hub/ids/<ID>` reservations or held job, schedule and batch receipt records.
-For a verb that names an ID (`status`, `attach`, `card`, `send`, `cancel`, `result`,
-`accept`, `reject`, `receipts`, `unschedule`, `fork`), the `omo-task` shim sends an ID that
-`lina worker` started to `lina worker`, and any other ID to the old tool named in
-`worker.legacy_omo_task`. One call goes to one tool, never both. Without `worker.legacy_omo_task`
-every ID goes to `lina worker`. `list` prints the tasks `lina worker` started and then, when
-`worker.legacy_omo_task` is set, the old tool's `list` output (same options).
+`lina install --shims` writes `work` into `$LINA_HOME/bin/`. It installs nothing else; re-run it after moving the
+LINA checkout or its Python. It also removes an `omo-task` shim an older `lina install --shims` wrote there (it
+says so in one line); a file of that name it did not write is left alone and named.
+
+The shim prints nothing of its own on success and exits with `lina work`'s code, so callers that parse the output
+see the same text. It does not depend on the caller's current directory: Python starts with `-P` and imports LINA
+through its pinned `PYTHONPATH`, and it always runs with `LINA_HOME` set to the root it was installed for.
+
+## Runs the old tool started before the switch
+
+`worker.legacy_omo_task` names the old tool's path for runs it started before the switch. Nothing calls it for a
+caller any more; the hub only asks it (`<legacy> status --json <ID>`) whether such a run has ended, so a card
+parked on both kinds of runs wakes after the later end (docs/worker-card-session.md).
+
+```yaml
+worker:
+  legacy_omo_task: /path/to/the/old/tool   # only for runs started before the switch
+```
 
 ## Checklist
 
@@ -47,43 +54,38 @@ every ID goes to `lina worker`. `list` prints the tasks `lina worker` started an
        <name>: {host: <ssh alias>, cap: 2}
    worker:
      hub: {host: <ssh alias of the hub>, lina: lina}
-     legacy_omo_task: /path/to/the/old/omo-task   # IDs started before the switch go there
    desk:
      path: /path/to/the/Desk                       # default profile only (docs/desk.md)
    ```
 
    Move the work record once with `lina work import --from <work.db|ledger.jsonl>`.
 
-3. **Shims.** `lina install --shims` writes `omo-task` and `work` into `$LINA_HOME/bin/`. It installs
-   nothing else; re-run it after moving the LINA checkout or its Python.
-
-4. **PATH.** Put `$LINA_HOME/bin` before the folder of the old tools, for the account the agents run
-   under and for its services (launchd `EnvironmentVariables`, systemd `Environment=`, cron lines):
+3. **Shim and PATH.** Run `lina install --shims` and put `$LINA_HOME/bin` before the folder of the old `work`, for
+   the account the agents run under and for its services (launchd `EnvironmentVariables`, systemd `Environment=`,
+   cron lines):
 
    ```sh
    export PATH="$LINA_HOME/bin:$PATH"
-   command -v omo-task work        # both must print $LINA_HOME/bin/...
+   command -v lina work           # lina, and $LINA_HOME/bin/work
    ```
 
-5. **Cron jobs and skills on the Desk.** A cron job's `workdir: desk` or `workdir: desk:<sub path>`
+4. **Cron jobs and skills on the Desk.** A cron job's `workdir: desk` or `workdir: desk:<sub path>`
    follows the `desk.path` setting, so it keeps working when the Desk moves, a synced folder
    included. LINA's launchd jobs set `MaterializeDatalessFiles`, so a not yet downloaded file opens
    instead of failing the job; nothing is needed on Linux.
 
-6. **Check one agent end to end.** From that agent's shell (same user, same PATH):
+5. **Check one agent end to end.** From that agent's shell (same user, same PATH):
 
    ```sh
-   omo-task submit --brief "$TMPDIR/brief.md" --topic switch-check --wait 1800
-   omo-task status <ID>            # same text as `lina worker status <ID>`
-   omo-task result <ID>
-   omo-task status <an ID from before the switch>   # answered by the old tool
+   lina worker submit --brief "$TMPDIR/brief.md" --topic switch-check --wait 1800
+   lina worker status <ID>
+   lina worker result <ID>
    work list                       # same text as `lina work list`
    ```
 
    Then let the agent run one real to-do through its usual skill and read its end notice.
 
-## Going back
+## Going back for `work`
 
-Take `$LINA_HOME/bin` off PATH (and out of the service definitions), so `omo-task` and `work`
-resolve to the old tools again. Nothing else changes: the old tools were left in place, and the
-tasks `lina worker` started stay readable with `lina worker status <ID>`.
+Take `$LINA_HOME/bin` off PATH (and out of the service definitions), so `work` resolves to the old tool again.
+The tasks `lina worker` started stay readable with `lina worker status <ID>`.

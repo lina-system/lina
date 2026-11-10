@@ -1,7 +1,0 @@
-#!/bin/sh
-# omo-task -> lina worker, same verbs and options (lina#37). Written by `lina install --shims`;
-# take its folder off PATH to go back to the old tool (docs/switch-callers.md).
-# Always the LINA root this shim was installed for: a caller's HERMES_HOME is Hermes Agent's, not LINA's.
-LINA_HOME="@LINA_HOME@"
-export LINA_HOME
-PYTHONPATH="@PYTHONPATH@" exec "@PYTHON@" -P -m hermes_cli.lina_shims omo-task "$@"

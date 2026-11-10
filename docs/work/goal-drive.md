@@ -83,7 +83,7 @@ person or another tool unblocked or parked again is let go and dropped from `wai
 ### Follow-up rounds
 
 The limit of 3 counts every follow-up round of one attempt (one hub task), whoever sends it: the drive's own
-follow-ups and the card session's (`lina worker send`, `omo-task send`, for example a review round with Codex
+follow-ups and the card session's (`lina worker send`, for example a review round with Codex
 findings on the pull request). The drive reads them from the hub, not from its ledger: each run of the task after its
 first one, plus each follow-up queued into a run that had not started yet (the hub's `follow_up` receipts). A steer
 into a live run is not a round, and neither is the drive's own continue after a usage limit.

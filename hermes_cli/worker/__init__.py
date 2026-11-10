@@ -15,6 +15,7 @@ The hub reaches a device through ``transport.py`` (ssh today; one small interfac
 and the device reports back the same way. Coding agents plug in through ``runners/``: omo is the default runner,
 and a ``command`` runner registered in config runs any CLI that reads a prompt on stdin.
 
-The state root is LINA's own: today's ``omo-task`` state, its device folders and its runner are never read, written
-or started from here, so both can run side by side on one device.
+The state root is LINA's own: the state, device folders and runner of the old tool it replaced are never read,
+written or started from here (only ``worker.legacy_omo_task`` is asked about runs that tool started before the
+switch), so both can run side by side on one device.
 """

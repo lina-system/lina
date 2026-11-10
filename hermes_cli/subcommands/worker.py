@@ -16,7 +16,7 @@ def _hub():
 
 def _request_key(args) -> str:
     """``--key``, else a new key, printed before anything else so the caller can retry with it. On stderr: callers
-    of ``omo-task submit`` read the task ID from the first word of stdout."""
+    of ``lina worker submit`` read the task ID from the first word of stdout."""
     if args.key:
         return args.key
     from hermes_cli.worker.request_keys import new_key
