@@ -1,7 +1,7 @@
 """The hub hands a task to a device and cancels it only on the device's word (lina#35, review of #128 and #132): the
 placement is recorded before the request is published, so a hub that stops in between resumes the same placement
-instead of bidding again; a cancel that never reached the device is an error, not a cancelled task; a late end of an
-earlier run never ends the run that is going now."""
+instead of bidding again; a late end of an earlier run never ends the run that is going now. A cancel that never
+reached the device ends the task on the hub only and says so (lina#413, ``test_worker_gone_device.py``)."""
 
 import json
 from dataclasses import replace
@@ -11,7 +11,6 @@ import pytest
 from hermes_cli.worker import device, hub as hub_mod, serve
 from hermes_cli.worker.hub import Hub, HubError
 from hermes_cli.worker.task import write_manifest
-from hermes_cli.worker.transport import Reply
 from tests.hermes_cli import _worker_fakes as fakes
 
 
@@ -78,22 +77,6 @@ def test_a_hub_that_stops_mid_placement_resumes_it_on_the_same_device(lane, stop
     task_dir = lane["root"] / "tasks" / job["id"]
     assert sorted(p.name for p in task_dir.glob("request.*")) == ["request.1"]
     assert lane["launched"] == [(job["id"], 1)]
-
-
-def test_a_cancel_that_never_reached_the_device_is_not_a_cancel(lane):
-    task_id = _submit(lane)
-    hub = lane["hub"]
-
-    class Unreachable:
-        def call(self, verb, stdin=b"", timeout=120):
-            return Reply(255, b"", "ssh: connect to host port 22: Connection refused")
-
-    lane["mp"].setattr(Hub, "transport", lambda self, job: Unreachable())
-    with pytest.raises(HubError, match="did not reach"):
-        hub.cancel(task_id, "not needed")
-    job = hub.store.load(task_id)
-    assert job["state"] == "running" and job["notified"] == []
-    assert not list(hub.store.notices.glob(f"{task_id}-*"))
 
 
 def test_a_late_end_of_an_earlier_run_does_not_end_the_current_run(lane):
