@@ -14,6 +14,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- A goal-mode card whose end condition names a reviewer's approval can be handed to its reviewer again: `kanban_request_review` and `kanban request-review` are judged on "ready for the reviewer" (the work is finished and the handoff shows evidence), not on the card's final completion, through one shared scope; `kanban_complete` / `kanban complete` still judge the whole card, so an unfinished card is still refused at the review request and a complete before the approval is still refused (lina#460).
 - A `lina` call from a Hermes Agent terminal (`HERMES_HOME` under Hermes Agent's home, such as `~/.hermes/profiles/<bot>`) no longer prints `lina: ignoring HERMES_HOME=…` on stderr: LINA drops that home quietly and keeps it as `LINA_CALLER_HERMES_HOME`, so `lina worker` still names the calling agent as a run's owner; a dropped home outside an explicit `LINA_HOME` that is not Hermes Agent's is still reported (lina#434).
 - `lina devices list` and `lina worker hosts` omit person devices from node probes and capacity rows, and `lina devices check` refuses them as non-nodes before probing (lina#427).
 - The `omo-task` shim routes LINA-minted task (`OT-`), schedule (`OS-`) and batch (`OG-`) IDs, including collision suffixes and older held records, to `lina worker` instead of the legacy tool (lina#430).
