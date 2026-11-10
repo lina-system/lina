@@ -1,7 +1,8 @@
 """Which device takes a task: every candidate in ``devices.workers`` is asked at once and the least full ready one wins.
 
-Ready means: the runner is installed and its daemon up, ``lina worker serve`` runs, there is disk, the repo path
-exists, the node's OCX answers when it reports one (``capabilities.ocx`` of its hello), it has the memory floor
+Ready means: the runner is installed and its daemon up, ``lina worker serve`` runs, the node's model path answers
+(``probe`` asks it on the node, and its hello reports the same), there is disk, the repo path exists, the node's OCX
+answers when it reports one (``capabilities.ocx`` of its hello), it has the memory floor
 (``worker.min_free_mem_gb``), it is not cooling off after quick failures (``worker.cooloff_*``; a named run still
 starts), and a slot is free under the device's cap. The score is (running / cap, 0 for a ``fast`` device, load per
 core); lowest wins within the first available integer ``last`` tier (false/absent = 0, true = 1).
@@ -48,6 +49,7 @@ def readiness(dev: Device, probe: dict, *, repo: str | None, min_free_gb: int,
         # after readiness, so `lina devices` (which drops this reason) still shows why a file node cannot run
         (not manual and dev.role != "work", "only when named with --host"),
         (not probe.get("serve"), "lina worker serve is not running"),
+        (probe.get("model_path") == "down", probe.get("model_path_why") or "model path does not answer"),
         (int(probe.get("free_gb") or 0) < min_free_gb, f"disk {probe.get('free_gb')}GB < {min_free_gb}GB"),
         (low_memory(probe), f"memory {probe.get('mem_available_gb')}GB < {mem_floor(probe)}GB"),
         (ocx_down(probe.get("ocx")), "ocx not answering"),
@@ -135,12 +137,34 @@ def with_node_facts(found: dict, descriptor: dict | None, node: str, worker_root
     from hermes_cli.worker.hub_store import Store
     worker = settings.section(worker_root.parent)
     facts = {"mem_floor_gb": int(settings.setting("min_free_mem_gb", worker=worker))}
-    ocx = ((descriptor or {}).get("capabilities") or {}).get("ocx")
+    capabilities = (descriptor or {}).get("capabilities") or {}
+    ocx = capabilities.get("ocx")
     if isinstance(ocx, dict):
         facts["ocx"] = ocx
+    # the hello asks the model path of the node's default runner: it stands in only for a probe reply that does not
+    # name the runner it asked (an older node), never against a newer probe that asked a runner of its own
+    if "runner" not in found:
+        for key in ("model_path", "model_path_why"):
+            if key not in found and key in capabilities:
+                facts[key] = capabilities[key]
     if count := cooling(Store(worker_root).load_node(node), worker, time.time() if now is None else now):
         facts["cooling"] = count
     return {**found, **facts}
+
+
+def model_path_refusal(dev: Device, worker_root: Path, runner: str = "") -> str | None:
+    """Why a run named onto *dev* is refused at submit: the model path the node asks for *runner* does not answer now,
+    so the run would end ``provider_error`` straight away. None when that runner reaches models without the node's
+    OCX — its probe carries no model path at all. A file node answers in ``file_node.submit_refusal``."""
+    if dev.kind == FILE_KIND:
+        return None
+    from hermes_cli.worker.transport import for_device
+    contact = for_device(dev, worker_root)
+    reply = contact.call(["probe", "", runner], timeout=60)
+    if reply.code != 0:
+        return None  # unreachable or a protocol error: the bid and the placement say why
+    found = with_node_facts(reply.json() or {}, contact.descriptor, dev.name, worker_root)
+    return found.get("model_path_why") if found.get("model_path") == "down" else None
 
 
 def missing_access(descriptor: dict | None, access: str | None) -> str | None:

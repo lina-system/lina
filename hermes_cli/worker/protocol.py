@@ -94,10 +94,12 @@ def identity(worker_root: Path) -> tuple[bool, str | None]:
 
 def hello(worker_root: Path) -> dict:
     """Describe this installation, its offered runners with their pins and readiness (lina#222, bounded by
-    ``lina_runners.HELLO_TIMEOUT_S``) and its supported access-mode vocabulary."""
+    ``lina_runners.HELLO_TIMEOUT_S``), whether its model path answers (asked on the node, like a file node's hello)
+    and its supported access-mode vocabulary."""
     from hermes_cli import lina_runner_sync_node, lina_runners
     from hermes_cli.lina_work_settings import ACCESS
     from hermes_cli.lina_version import LINA_VERSION
+    from hermes_cli.worker import device
 
     active, instance_id = identity(worker_root)
     return {"protocol": {"min": PROTOCOL_MIN, "max": PROTOCOL_MAX},
@@ -106,6 +108,7 @@ def hello(worker_root: Path) -> dict:
             "capabilities": {"runners": lina_runners.cached_node_report(worker_root),
                              "platform": lina_runner_sync_node.platform(),
                              "ocx": lina_runner_sync_node.ocx_report(worker_root.parent),
+                             **device.model_path(worker_root),
                              "access_modes": list(ACCESS), "verbs": list(verbs()),
                              "request_keys": True, PROBE_SPEC: True}}
 
