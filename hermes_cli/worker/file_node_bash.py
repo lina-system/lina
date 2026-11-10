@@ -106,10 +106,11 @@ echo "$rc" > "$T/rc.$N"
 
 STATUS = r"""T="$HOME/$1"; N=$2
 """ + _START + r"""[ -d "$T" ] || { echo missing=1; exit 0; }
-printf 'rc=%s\n' "$(cat "$T/rc.$N" 2>/dev/null)"
 pid=$(cat "$T/pid.$N" 2>/dev/null); want=$(cat "$T/pidstart.$N" 2>/dev/null); now=""
 [ -n "$pid" ] && now=$(start_of "$pid")
 if [ -n "$now" ] && [ "$now" = "$want" ]; then echo alive=1; else echo alive=0; fi
+# Read the end mark after liveness: the runner can write it and exit during this probe.
+printf 'rc=%s\n' "$(cat "$T/rc.$N" 2>/dev/null)"
 printf 'lifecycle=%s\n' "$(tail -n 1 "$T/state.$N.json" 2>/dev/null)"
 """
 

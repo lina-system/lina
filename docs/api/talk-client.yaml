@@ -1,4 +1,4 @@
-# Talking with the agent that owns a to-do (lina#167). Served by hermes_cli/web_routers/lina_talk.py behind the
+# Talking with the agent that owns a to-do (lina#167), and with each agent in its own app window (lina#482). Served by hermes_cli/web_routers/lina_talk.py behind the
 # dashboard auth gate (session token); the turn runs on the agent's own gateway (hermes_cli/lina_talk.py).
 # tests/hermes_cli/test_lina_talk_api.py validates every streamed frame against TalkEvent, so a shape change here and
 # in the code land together. Frames other than talk.* are the gateway's own session chat stream
@@ -12,8 +12,12 @@ info:
     the owner's own to-do the agent that asked for it). The turn runs in that agent's app conversation, a session
     titled "LINA app: <agent>" on its gateway, authored by the owner, its first line naming the app and the to-do. The
     agent's next direct-message turn on a messaging platform (Telegram) reads the exchange ahead of the owner's new
-    message. When the gateway does not stream (the agent is busy, the gateway refuses or is down) its own status and
-    body are answered as they are.
+    message. When the gateway does not stream (the agent is busy or down) its own status and body are answered as
+    they are. The owner's window on one agent (`/agents/{agent}/talk`) runs turns in the same app conversation with
+    no to-do: its first line is "[LINA app]" and nothing is carried into the messenger chat; this window is not the
+    messenger chat. The web server sends each agent's gateway the key in its environment variable
+    LINA_GATEWAY_KEY_<AGENT> (the agent name in upper case), else the shared API_SERVER_KEY; a key never appears in
+    any response, and a refused key answers 502 `gateway_refused_key`.
 servers:
   - url: /api/lina
 paths:
@@ -69,9 +73,93 @@ paths:
                 $ref: "#/components/schemas/Error"
         "429":
           description: The agent's gateway is busy; its own response body, as it answered.
+        "502":
+          $ref: "#/components/responses/RefusedKey"
+        "503":
+          description: The agent's gateway is unreachable (`gateway_unreachable`), or its own 503.
+  /agents/{agent}/talk:
+    parameters:
+      - name: agent
+        in: path
+        required: true
+        description: One of the record's agents (`work.agents`), by profile name.
+        schema:
+          type: string
+        example: alpha
+    post:
+      operationId: talkWithAgent
+      summary: One turn in the owner's app window on the agent; the reply streams as server-sent events.
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/TalkRequest"
+      responses:
+        "200":
+          description: >
+            The turn's events, one SSE frame each, as for a to-do; `talk.started` carries no item and there is no
+            `talk.carried`.
+          content:
+            text/event-stream:
+              schema:
+                $ref: "#/components/schemas/AgentTalkEvent"
+        "400":
+          description: The message is empty (`empty_message`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "404":
+          description: No such agent (`unknown_agent`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "413":
+          description: The message is longer than 4000 characters (`message_too_long`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "429":
+          description: The agent's gateway is busy; its own response body, as it answered.
+        "502":
+          $ref: "#/components/responses/RefusedKey"
+        "503":
+          description: The agent's gateway is unreachable (`gateway_unreachable`), or its own 503.
+    get:
+      operationId: agentTalkHistory
+      summary: The earlier turns of the owner's app conversation with the agent, oldest first.
+      responses:
+        "200":
+          description: >
+            The owner's and the agent's messages, every page of the gateway's and the turns a compaction archived
+            included; none (and no session) before the first turn.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AgentTalkHistory"
+        "404":
+          description: No such agent (`unknown_agent`).
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+        "502":
+          $ref: "#/components/responses/RefusedKey"
         "503":
           description: The agent's gateway is unreachable (`gateway_unreachable`), or its own 503.
 components:
+  responses:
+    RefusedKey:
+      description: >
+        The agent's gateway refused the key (`gateway_refused_key`, message "the gateway refused the key for
+        <agent>"); the key itself is never in the body.
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
   schemas:
     TalkRequest:
       type: object
@@ -132,6 +220,60 @@ components:
             session_id:
               type: string
               description: The agent's app conversation on its gateway.
+    AgentTalkEvent:
+      description: One frame of the owner's window on an agent, as {event, data}.
+      oneOf:
+        - $ref: "#/components/schemas/AgentTalkStartedEvent"
+        - $ref: "#/components/schemas/RunStartedEvent"
+        - $ref: "#/components/schemas/MessageStartedEvent"
+        - $ref: "#/components/schemas/AssistantDeltaEvent"
+        - $ref: "#/components/schemas/AssistantCompletedEvent"
+        - $ref: "#/components/schemas/RunEndedEvent"
+        - $ref: "#/components/schemas/ProgressEvent"
+        - $ref: "#/components/schemas/ErrorEvent"
+        - $ref: "#/components/schemas/DoneEvent"
+    AgentTalkStartedEvent:
+      type: object
+      required: [event, data]
+      properties:
+        event:
+          type: string
+          enum: [talk.started]
+        data:
+          type: object
+          required: [agent, session_id]
+          additionalProperties: false
+          properties:
+            agent:
+              type: string
+            session_id:
+              type: string
+              description: The agent's app conversation on its gateway.
+    AgentTalkHistory:
+      type: object
+      required: [agent, session_id, messages]
+      properties:
+        agent:
+          type: string
+        session_id:
+          type: string
+          nullable: true
+          description: The agent's app conversation; null before its first turn.
+        messages:
+          type: array
+          items:
+            type: object
+            required: [role, content, timestamp]
+            properties:
+              role:
+                type: string
+                enum: [user, assistant]
+              content:
+                type: string
+                description: As stored; the owner's turns start with the app's first line.
+              timestamp:
+                type: number
+                nullable: true
     TalkCarriedEvent:
       type: object
       required: [event, data]
