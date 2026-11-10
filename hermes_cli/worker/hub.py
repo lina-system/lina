@@ -422,7 +422,7 @@ class Hub:
 
     def _named_device_gate(self, opts: dict, briefs: list[Path]) -> None:
         """Refuse an unknown ``--host`` and what it would never take: its role (``person``; a repo on ``files``),
-        and for a file node a denied folder in a brief or input, or a model path that does not answer."""
+        its model path when it does not answer, and for a file node a denied folder in a brief or input."""
         if not opts.get("host"):
             return
         devices = self.devices()
@@ -431,6 +431,8 @@ class Hub:
             raise HubError(f"no device {opts['host']!r} in devices.workers "
                            f"(available: {', '.join(d.name for d in devices) or 'none'})")
         if why := bidding.role_refusal(dev, opts.get("repo")):
+            raise HubError(f"--host {dev.name}: {why}")
+        if why := bidding.model_path_refusal(dev, self.worker_root):
             raise HubError(f"--host {dev.name}: {why}")
         if dev.kind == settings.FILE_KIND:
             from hermes_cli.worker.file_node import submit_refusal

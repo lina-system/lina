@@ -34,6 +34,7 @@ from pathlib import Path
 LOCAL = "local"
 ROLES = ("work", "files", "person")
 FILE_KIND = "file"
+MODEL_CHECK = "http://127.0.0.1:10100/healthz"  # a node's model path: its own OCX's /healthz, asked on the node
 DEFAULTS = {"cap": 1, "min_free_gb": 5, "min_free_mem_gb": 4, "input_max_mb": 300, "memory_max": "12G",
             "cooloff_failures": 2, "cooloff_window_s": 1800, "cooloff_quick_s": 120, "cooloff_s": 900,
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
@@ -154,7 +155,7 @@ class Device:
     deny: tuple[str, ...] = ()  # a file node's denied folders: absolute paths and folder-name patterns
     volumes: tuple[str, ...] = ()  # where a file node's folder-name patterns are looked for (3 levels deep)
     root: str = "lina-file-node"  # a file node's task folders, under its HOME
-    model_check: str = "http://127.0.0.1:10100/healthz"  # a file node's model path, asked on the node
+    model_check: str = MODEL_CHECK  # the node's model path, asked on the node
     scan_s: int = 300  # how long the denied-folder check may look after a run
 
     @property
@@ -175,13 +176,13 @@ def _device(name: str, item: dict) -> Device | None:
     if kind == FILE_KIND:
         file_node = {"omo": str(item.get("omo") or "omo"), "deny": _strings(item.get("deny")),
                      "volumes": _strings(item.get("volumes")), "root": str(item.get("root") or "lina-file-node"),
-                     "model_check": str(item.get("model_check") or Device.model_check),
                      "scan_s": max(1, int(item.get("scan_s") or Device.scan_s))}
     return Device(name, host, max(1, int(item.get("cap") or DEFAULTS["cap"])), item.get("fast") is True,
                   item.get("no_repo") is True, max(0, int(item.get("last") or 0)), item.get("auto") is not False,
                   str(item.get("lina") or "lina"),
                   max(1, int(item["named_cap"])) if item.get("named_cap") is not None else None,
-                  str(item.get("role") or ("files" if kind == FILE_KIND else "work")), kind, **file_node)
+                  str(item.get("role") or ("files" if kind == FILE_KIND else "work")), kind,
+                  model_check=str(item.get("model_check") or MODEL_CHECK), **file_node)
 
 
 def _strings(value) -> tuple[str, ...]:

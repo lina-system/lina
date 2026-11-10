@@ -53,6 +53,18 @@ receipts), in `lina worker hosts` and in `lina devices`. None of them changes
 the score order, and none touches a run already on the node: the node watch
 speaks for a lost node.
 
+- `model path does not answer (<url>: HTTP <code>)`: `probe` asks the
+  node's model path on the node (the `model_check` of the device the node's
+  own `config.yaml` lists as `host: local`, else the same
+  `http://127.0.0.1:10100/healthz` default a file node asks, on the node's
+  `ocx.port`) and reports `model_path: ok` / `down` with `model_path_why`.
+  The hello carries the same two fields in `capabilities`, and they stand in
+  when an older probe reply has none. A node whose model path does not
+  answer would end its run `provider_error` at once, so the bid passes it and
+  a `--host` submit there is refused with the same line. A node without the
+  field is bid on as before. Note that `/healthz` can answer 200 while model
+  calls still fail (a node's OCX cut off from its hub answers 503 on
+  `/v1/models`); that gap is not covered here.
 - `ocx not answering`: the node's hello carries `capabilities.ocx` =
   `{external, version, health}`, and a node that reports an OCX (`external`
   true or a `version`) whose `health` is not 200 is passed. The hub reads it
