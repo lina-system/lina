@@ -52,9 +52,7 @@ def build(name: str, spec: dict, limits: dict | None = None, root: Path | None =
     kind = spec.get("type")
     if kind not in TYPES:
         raise RunnerError(f"runner {name}: unknown type {kind!r} (known: {', '.join(TYPES)})")
-    if kind == "omo":
-        return OmoRunner(name, spec, limits, root)
-    return TYPES[kind](name, spec, limits)
+    return TYPES[kind](name, spec, limits, root)
 
 
 def get(name: str, worker: dict, limits: dict | None = None, root: Path | None = None):

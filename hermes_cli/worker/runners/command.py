@@ -34,6 +34,8 @@ from pathlib import Path
 
 from hermes_platform.resolver import locate_command
 from tools.environments.local import build_subprocess_env
+from hermes_cli import lina_ocx
+from hermes_cli.worker.runners import lina_copy
 from hermes_cli.worker.runners.base import Handle, ModelProfile, RunnerError, Task, standard_result
 from hermes_cli.worker.runners.access import recorded_access
 from hermes_cli.lina_work_settings import ACCESS
@@ -75,7 +77,7 @@ def _alive(pid: int | None) -> bool:
 
 
 class CommandRunner:
-    def __init__(self, name: str, spec: dict, limits: dict | None = None):
+    def __init__(self, name: str, spec: dict, limits: dict | None = None, root: Path | None = None):
         argv = spec.get("argv")
         if not isinstance(argv, list) or not argv or not all(isinstance(each, str) for each in argv):
             raise RunnerError(f"runner {name}: `argv` must be a list of strings")
@@ -93,6 +95,7 @@ class CommandRunner:
             raise RunnerError(f"runner {name}: `access_args` must map access modes to lists of strings")
         self.env = {str(k): str(v) for k, v in (spec.get("env") or {}).items()}
         self.limits = limits or {}
+        self.root = root or lina_ocx.lina_root()
 
     def honours(self, mode: str) -> tuple[bool, str]:
         supported = mode in ACCESS and (mode in self.access_args if self.access_args is not None
@@ -105,7 +108,7 @@ class CommandRunner:
         return build_subprocess_env(scrub_secrets=False, inherit_profile_home=False, extra=self.env)
 
     def available(self) -> tuple[bool, str]:
-        found = locate_command(self.argv[0]).command
+        found = locate_command(lina_copy.command(self.argv[0], self.root)).command
         return (True, found[0]) if found else (False, f"{self.argv[0]} not found on PATH")
 
     def _stall_s(self) -> float:
@@ -116,7 +119,7 @@ class CommandRunner:
         if model is not None and model.id:
             values.update(provider=model.provider or "", id=model.id, thinking=model.thinking or "")
             base = base + self.model_args
-        return [each.format(**values) for each in base]
+        return lina_copy.argv([each.format(**values) for each in base], self.root)
 
     def _launch(self, task: Task, run: int, step: int, base: list[str], model: ModelProfile | None,
                 text: str, access: str) -> Handle:
