@@ -177,6 +177,28 @@ lina worker settings set worker.goal_limits.usage_move true
 lina worker settings set worker.runners.codex.usage_limit '(?i)usage limit|429'
 ```
 
+## Seen on the real setup
+
+Two runs on a hub with five nodes, a private practice repository whose base branch requires one status check, and
+cards laid out as `hermes kanban plan` lays them out (`hermes kanban create`, because the installed Hermes has no
+`plan`). Nobody touched the cards after they were released.
+
+| Run | What happened | What the drive did |
+|---|---|---|
+| 1, card A | The first pull request failed the required check. | One `red-check` follow-up into the same run; the run fixed it and the head went green. |
+| 1, card B | The node was stopped for 150 s (its omo process killed, the hub's traffic to it dropped). | `host.unavailable`, `node-park`, then `resubmit` to another node from the pushed branch (attempt 2). |
+| 2, one card | The check stayed pending after the run ended. | `check-park`, then `check-wake` when the check settled; the card's session made no call in between. |
+
+Where a session still started around a park:
+
+- A park the drive makes carries no `goal_park` record, so the woken card starts a fresh session instead of resuming the
+  one that was working on it. A park the card makes itself (`kanban_schedule` with a worker ID) resumes that session.
+- A run's end wakes every card waiting on it. A `red-check` follow-up or a `resubmit` does not park the card, so the
+  dispatcher can start a session before the next drive pass parks the card again. A `check-park` that came before the
+  dispatcher's next claim started none.
+
+Both are tracked in lina#461. A wait on a review was not part of these runs.
+
 ## Switching it off
 
 ```sh
