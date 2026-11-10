@@ -10,6 +10,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Added
 
+- A read-only `hermes` board source (`board.hermes` in the LINA root's `config.yaml`): the app's work cards, goals, inbox and board snapshot also show the cards of a Hermes Agent kanban board and the goals and to-dos of the old work record, read only through their CLIs (`kanban list|show --json`, `work json`) and never from their databases, with `hermes:` ids marked `readOnly` that the write routes refuse with 409; a failing command is one `errors` entry, and unset nothing runs (lina#481).
 - `lina runners sync [--plan] [--only] [--json]` moves each followed runner pin (codex, claude, dsh, grok, cursor-agent, agy) to its source's newest version once a real request passes on the hub, and the nodes follow the same day through their `runner-sync` verb; a failure holds the runner (or that node) until `lina runners sync clear`, a major jump waits for `--accept`, a busy node is skipped, and `sync status --issues` prints the lines the daily check reads; `worker.runner_sync.at` starts it daily from the hub's worker service (lina#238).
 
 ### Fixed

@@ -555,7 +555,7 @@ components:
       properties:
         source:
           type: string
-          enum: [work, worker, devices, metrics, quota]
+          enum: [work, worker, devices, metrics, quota, hermes]
         message:
           type: string
     Errors:
@@ -788,6 +788,11 @@ components:
       type: object
       required: [id, kind, title, due, agent]
       properties:
+        readOnly:
+          type: boolean
+          description: >
+            Present and true on rows of the old work record served by the read-only hermes source (lina#481); their
+            ids start with "hermes:" and the write routes refuse them with 409.
         id:
           type: string
         kind:
@@ -805,6 +810,11 @@ components:
       type: object
       required: [id, title, waiting, due, agent]
       properties:
+        readOnly:
+          type: boolean
+          description: >
+            Present and true on rows of the old work record served by the read-only hermes source (lina#481); their
+            ids start with "hermes:" and the write routes refuse them with 409.
         id:
           type: string
         title:
@@ -823,6 +833,11 @@ components:
       type: object
       required: [target, title, agent, kind, text, at, answered]
       properties:
+        readOnly:
+          type: boolean
+          description: >
+            Present and true on rows of the old work record served by the read-only hermes source (lina#481); their
+            ids start with "hermes:" and the write routes refuse them with 409.
         target:
           type: string
           description: The work record item the decision is aimed at.
