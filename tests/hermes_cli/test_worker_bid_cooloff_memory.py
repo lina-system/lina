@@ -53,8 +53,10 @@ def test_two_quick_failures_pass_the_node_in_the_bid_but_a_named_run_still_start
 def test_a_done_run_clears_the_cool_off(root):
     ends(root, (T0, "failed", 30.0), (T0 + 60, "failed", 30.0))
     assert facts(root, now=T0 + 120).get("cooling") == 2
-    ends(root, (T0 + 100, "done", 500.0))
+    ends(root, (T0 + 100, "done", 30.0))
     assert "cooling" not in facts(root, now=T0 + 120)
+    ends(root, (T0 + 110, "failed", 30.0))
+    assert "cooling" not in facts(root, now=T0 + 120), "the newest two are done and failed, not two failures"
 
 
 def test_the_cool_off_ends_after_cooloff_s(root):
@@ -145,6 +147,19 @@ def test_the_score_order_is_unchanged_with_the_new_fields():
 
     fuller = [Device("fast", "fast", cap=2, fast=True), Device("slow", "slow", cap=2)]
     assert bidding.choose(fuller, [probe(running=1, **healthy), probe(**healthy)], repo=None)[0].name == "slow"
+
+
+@pytest.mark.parametrize("fast", [False, True])
+def test_on_equal_fill_and_fast_the_lower_load_per_core_wins(fast):
+    busy, calm = Device("node-a", "node-a", cap=2, fast=fast), Device("node-b", "node-b", cap=2, fast=fast)
+    winner, rows = bidding.choose([busy, calm], [probe(running=1, load=6.0), probe(running=1, load=2.0)], repo=None)
+    assert winner is calm and rows[0]["score"][2] == 0.75 and rows[1]["score"][2] == 0.25
+
+
+def test_the_load_is_compared_per_core():
+    small, big = Device("node-a", "node-a", cap=2), Device("node-b", "node-b", cap=2)
+    winner, _ = bidding.choose([small, big], [probe(load=3.0, cores=2), probe(load=4.0, cores=8)], repo=None)
+    assert winner is big, "4.0 on 8 cores (0.5) is lighter than 3.0 on 2 cores (1.5)"
 
 
 @pytest.fixture
