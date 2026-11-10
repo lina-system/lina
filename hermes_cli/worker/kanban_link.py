@@ -527,7 +527,7 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, 
         keep_view(store, card, view["task"])
         named, schedule = _last_schedule(view)
         woken = store.root / "cards" / f"{card_key(card)}.woken"
-        if run_id in named:
+        if run_id in named or (judged in named and judged != run_id):  # a batch member's end is its batch's end
             others = [other for other in named if other != run_id and _still_open(store, other)]
             if others:
                 from hermes_cli.worker.settings import legacy_omo_task

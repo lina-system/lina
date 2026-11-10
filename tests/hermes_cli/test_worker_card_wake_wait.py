@@ -63,6 +63,35 @@ def test_a_schedule_on_hub_runs_only_is_woken_by_the_last_end_and_the_first_end_
 
 
 @pytest.mark.platforms("posix")
+def test_a_schedule_on_a_run_and_a_hub_batch_is_woken_by_the_last_end_of_either(board, legacy, clock, tmp_path):
+    # Given a legacy tool configured and a schedule naming one hub run and one hub batch of two members.
+    hub, submit, show, calls = board
+    single = submit("a.md")
+    lines: list[str] = []
+    hub_module.Hub(hub.worker_root, out=lines.append).submit({
+        "briefs": [callers.fakes.brief(tmp_path, "b", "b.md"), callers.fakes.brief(tmp_path, "c", "c.md")],
+        "mode": "ulw", "bot": "agent-a", "topic": "t", "wait": None,
+        "card": {"task": callers.CARD, "board": callers.BOARD}})
+    hub.tick()
+    first, second = (line.split()[0] for line in lines if line.startswith("OT-"))
+    group = hub.store.load(first)["group"]
+    show("scheduled", [_scheduled(f"workers={single},{group}")])
+
+    # When the single run ends first, then the batch members one after the other.
+    hub.notify(single, "done", "1")
+    hub.notify(first, "done", "1")
+    for _ in range(5):
+        clock[0] += 30
+        hub.tick()
+    assert _woke(calls) == 0 and not _kinds(hub, single, "card_notice_failed", "card_notice_waiting")
+
+    # Then the last member's end wakes the card once, for the batch, and nothing is left to retry.
+    hub.notify(second, "done", "1")
+    assert _woke(calls) == 1
+    assert not any(hub.store.load(run).get("card_pending") for run in (single, first, second))
+
+
+@pytest.mark.platforms("posix")
 def test_a_legacy_run_still_open_on_the_schedule_holds_the_wake(board, legacy, clock):
     # Given a schedule naming two hub runs and one legacy run the old tool says is running.
     hub, submit, show, calls = board
