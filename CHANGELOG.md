@@ -11,6 +11,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 ### Added
 
 - `lina runners sync [--plan] [--only] [--json]` moves each followed runner pin (codex, claude, dsh, grok, cursor-agent, agy) to its source's newest version once a real request passes on the hub, and the nodes follow the same day through their `runner-sync` verb; a failure holds the runner (or that node) until `lina runners sync clear`, a major jump waits for `--accept`, a busy node is skipped, and `sync status --issues` prints the lines the daily check reads; `worker.runner_sync.at` starts it daily from the hub's worker service (lina#238).
+- The app can talk with each agent in its own window: `POST /api/lina/agents/{agent}/talk` runs a turn in the agent's app conversation on its gateway and streams the reply, and `GET` on the same path returns that conversation's earlier turns. Both talk routes send each agent's gateway the web server's `LINA_GATEWAY_KEY_<AGENT>` (the agent name in upper case), else `API_SERVER_KEY`, and a refused key answers "the gateway refused the key for <agent>" without the key (lina#482).
 
 ### Fixed
 
