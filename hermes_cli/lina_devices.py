@@ -40,10 +40,13 @@ def _base(base: Path | None) -> Path:
 
 
 def probe(dev: settings.Device, worker_root: Path, runner: str) -> dict:
-    """The bidding probe of *dev*; ``ssh: False`` when ssh itself could not reach it."""
-    reply = for_device(dev, worker_root).call(["probe", "", runner], timeout=60)
+    """The bidding probe of *dev*, with what the hub knows of the node apart from it the way the bid merges it
+    (``bidding.with_node_facts``); ``ssh: False`` when ssh itself could not reach it."""
+    contact = for_device(dev, worker_root)
+    reply = contact.call(["probe", "", runner], timeout=60)
     if reply.code == 0:
-        return {"ssh": True, **(reply.json() or {"error": "no answer"})}
+        return {"ssh": True, **bidding.with_node_facts(reply.json() or {"error": "no answer"}, contact.descriptor,
+                                                             dev.name, worker_root)}
     if reply.json().get("protocol_error"):
         return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, **reply.json()}
     return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, "error": (reply.err.strip() or f"exit {reply.code}")[-160:]}

@@ -99,7 +99,7 @@ def drive(tmp_path, monkeypatch):
         link = {"kind": "hermes", "command": [sys.executable, str(script)]} if hermes else {"kind": "lina"}
         (base / "config.yaml").write_text(
             f"devices:\n  workers:\n    here: {{host: local, cap: 4}}\n    there: {there}\n"
-            "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n"
+            "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n  min_free_mem_gb: 0\n"
             f"  card_link: {json.dumps(link)}\n"
             f"  runners:\n    fakecli: {json.dumps(spec)}\n" + extra)
     configure()

@@ -45,6 +45,44 @@ node response refreshes hello without retrying the action. There is no new human
 service-control CLI in this change. This guard is instance checking, not access
 authorization; the SSH account remains the existing trust boundary.
 
+## Bid skip reasons
+
+Besides its slots, the bid (`bidding.readiness`) passes a node for these reasons
+and names them in the bid row (`why`, carried by the `award` and `queued`
+receipts), in `lina worker hosts` and in `lina devices`. None of them changes
+the score order, and none touches a run already on the node: the node watch
+speaks for a lost node.
+
+- `ocx not answering`: the node's hello carries `capabilities.ocx` =
+  `{external, version, health}`, and a node that reports an OCX (`external`
+  true or a `version`) whose `health` is not 200 is passed. The hub reads it
+  from the hello the same contact asks before its probe
+  (`bidding.with_node_facts`), so there is no second round trip. A node with
+  no OCX (`external` false and no `version`) or whose hello has no `ocx` (an
+  older node, a file node) is not passed for this. A named run (`--host`) is
+  not started there either.
+- `memory <n>GB < <floor>GB`: `probe` reports `mem_available_gb` (available
+  memory, whole GB rounded down) and a node under `worker.min_free_mem_gb`
+  (default 4, read on the hub like `min_free_gb`) is passed, a named run too.
+  An older node whose probe has no `mem_available_gb` is not passed for this.
+- `cooling off after <n> quick failures`: the hub keeps the last run ends of
+  each node on its node record (`hub/nodes/<node>.json`, `ends`: `at`,
+  `state`, `took`). When the newest `worker.cooloff_failures` (default 2) of
+  them all ended `failed`, each ran no longer than `worker.cooloff_quick_s`
+  (default 120) and they ended within `worker.cooloff_window_s` (default 1800)
+  of each other, the bid passes the node for `worker.cooloff_s` (default 900)
+  after the last one. A newer end that is not `failed` (`done`) clears it. A
+  run's length (`took`) is how long it ran on the node: `run_s` of the run's
+  fetched `manifest.json` (the node's `started.<run>` to `ended.<run>`), so a
+  late end report does not lengthen it, for every run of a task. An end whose
+  result the hub did not fetch (a `--wait` waiter shows it, or the fetch
+  failed) or whose fetched manifest is another run's has no known length and
+  never counts as quick. The node record keeps at least
+  `worker.cooloff_failures` ends (and at least 10). A named run still starts there, and `lina worker
+  hosts` (which shows named-run readiness) says it on the node's line as
+  `cooling off after <n> quick failures (named runs still start)`. The four
+  numbers are work settings (`lina worker settings set worker.cooloff_s 600`).
+
 ## Request keys
 
 `lina worker submit` and `send` take `--key <k>` (Python: `opts["request_key"]`,
