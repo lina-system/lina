@@ -26,6 +26,14 @@ CACHES = {
 VECTORS = ("lcm_embedding_vectors", "lcm_chunk_vectors")
 VECTOR_META = ("lcm_embedding_meta", "lcm_chunk_meta")
 RECEIPT_KEY = "lina_memory_import:v1"
+QUARANTINE = "lcm_fork_quarantined_messages"
+QUARANTINE_SUFFIX = "::fork-quarantine"
+LEFT_OUT = "fork_quarantine_uncited"
+# Rows that belong to one message and go wherever it goes; every other store_id reference cites it.
+OWNED_BY_MESSAGE = ("messages", "host_uid_bindings", "lcm_chunk_meta")
+CITING = (("message_relations", "store_id"), ("message_relations", "related_store_id"),
+          ("lcm_assertion_sources", "source_store_id"), ("lcm_assertions", "source_store_id"),
+          ("lcm_imported_messages", "target_store_id"))
 
 
 def digest(row: dict) -> str:
@@ -42,8 +50,7 @@ def schema(source) -> dict:
         if name in DURABLE or name in CACHES or name in VECTORS or name in VECTOR_META:
             tables[name] = list(source.execute(f'PRAGMA table_info("{name}")'))
         elif (any(name.startswith(prefix) for prefix in ("messages_fts", "nodes_fts", "lcm_trajectory_states_fts"))
-              or (name == "lcm_fork_quarantined_messages" and not source.execute(
-                  "SELECT 1 FROM lcm_fork_quarantined_messages LIMIT 1").fetchone())):
+              or name == QUARANTINE):
             tables[name] = []
         else:
             raise ValueError(f"unsupported LCM table: {name}")
@@ -92,7 +99,9 @@ def verify_references(source, tables: dict) -> int:
         ("lcm_imported_summaries", "target_node_id", nodes), ("lcm_chunk_meta", "store_id", messages),
     ):
         if table in tables:
-            for (value,) in source.execute(f'SELECT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL'):
+            # LCM-X records the uids it mints for its own rows as kind='engine' with store_id 0, which names no message.
+            engine = " AND NOT (kind='engine' AND store_id=0)" if table == "host_uid_bindings" else ""
+            for (value,) in source.execute(f'SELECT "{column}" FROM "{table}" WHERE "{column}" IS NOT NULL{engine}'):
                 if value not in available:
                     raise ValueError(f"unresolved LCM reference: {table}.{column}/{value}")
                 count += 1
@@ -116,6 +125,41 @@ def verify_references(source, tables: dict) -> int:
                     raise ValueError(f"unresolved LCM reference: {table}.{column}/{value}")
                 count += 1
     return count
+
+
+def fork_quarantine(source, tables: dict) -> dict:
+    """The unrestored fork-quarantined messages nothing cites, and the chunks only they own (docs/store.md)."""
+    found = {"records": 0, "store_ids": set(), "chunk_ids": set(), "kept_cited": 0}
+    if QUARANTINE not in tables:
+        return found
+    found["records"] = source.execute(f"SELECT count(*) FROM {QUARANTINE}").fetchone()[0]
+    held = {r[0] for r in source.execute(f"SELECT store_id FROM {QUARANTINE} WHERE restored_at IS NULL")}
+    held &= {store_id for store_id, session in source.execute(
+        "SELECT store_id,session_id FROM messages WHERE session_id LIKE '%::fork-quarantine'")
+        if session.endswith(QUARANTINE_SUFFIX)}
+    cited = set()
+    for kind, encoded in source.execute("SELECT source_type,source_ids FROM summary_nodes"):
+        if kind == "messages":
+            cited.update(json.loads(encoded))
+    for table, column in CITING:
+        if table in tables:
+            cited.update(r[0] for r in source.execute(f'SELECT "{column}" FROM "{table}"'))
+    found["store_ids"] = held - cited
+    found["kept_cited"] = len(held & cited)
+    if "lcm_chunk_meta" in tables:
+        found["chunk_ids"] = {chunk for chunk, store_id in source.execute("SELECT chunk_id,store_id FROM lcm_chunk_meta")
+                              if store_id in found["store_ids"]}
+    return found
+
+
+def engine_bindings(source, tables: dict) -> int:
+    if "host_uid_bindings" not in tables:
+        return 0
+    return source.execute("SELECT count(*) FROM host_uid_bindings WHERE kind='engine' AND store_id=0").fetchone()[0]
+
+
+def left_out(table: str, row: dict, quarantine: dict) -> bool:
+    return table in OWNED_BY_MESSAGE and row.get("store_id") in quarantine["store_ids"]
 
 
 def source_rows(source, table: str):

@@ -5,7 +5,7 @@ from array import array
 from hermes_cli.migrate_memory_lcm_rows import source_rows, digest
 
 
-def transfer_vectors(conn, source, tables, receipt, ledger, replay) -> tuple[dict, list]:
+def transfer_vectors(conn, source, tables, receipt, ledger, replay, left_chunks=frozenset()) -> tuple[dict, list]:
     from agent.embedding_client import DEFAULT_MODEL
     from hermes_cli.config import load_config
 
@@ -16,9 +16,12 @@ def transfer_vectors(conn, source, tables, receipt, ledger, replay) -> tuple[dic
     for table, identity in (("lcm_embedding_vectors", "embedded_id"), ("lcm_chunk_vectors", "chunk_id")):
         if table not in tables:
             continue
-        copied = deferred = total = 0
+        copied = deferred = left = total = 0
         for native, row in source_rows(source, table):
             total += 1
+            if table == "lcm_chunk_vectors" and row["chunk_id"] in left_chunks:
+                left += 1
+                continue
             profile = profiles.get(row["identity_hash"], {})
             value = row["vec"]
             compatible = (profile.get("model_name") == model and profile.get("dim") == 1024
@@ -44,7 +47,9 @@ def transfer_vectors(conn, source, tables, receipt, ledger, replay) -> tuple[dic
                 ledger.execute(f"INSERT INTO {side}_manifest VALUES (?,?)", (f"{table}:{native}", sha))
             copied += 1
         counts[table] = {"source": total, "matched": copied if replay else 0,
-                         "inserted": 0 if replay else copied, "skipped": deferred}
+                         "inserted": 0 if replay else copied, "skipped": deferred + left}
         if deferred:
             skipped.append({"kind": table, "rows": deferred, "reason": "incompatible_model_width_or_dtype_reembed"})
+        if left:
+            skipped.append({"kind": table, "rows": left, "reason": "fork_quarantine_uncited"})
     return counts, skipped
