@@ -59,6 +59,17 @@ Each rule acts at most once per action id.
 
 ### Parking
 
+Run-end notifications leave a scheduled goal card asleep until the drive has chosen its next action. A follow-up
+or moved run retargets that wait to `WAIT_EVENT=omo-task:<task>/<run>`. The drive waits for that run's end and applies
+its rules before releasing the card, so another follow-up does not briefly expose a ready card.
+
+Hermes cannot schedule an already scheduled card. Instead of unblocking it first, the drive uses one
+`kanban edit --body` write to replace its `## Goal drive resume` section while preserving the scheduled status.
+That section contains the wait, action, and schedule generation, and tells a new session to reread the goal,
+to-dos, run-end comments, reports, and worker result or pull request. LINA does not manufacture Hermes's
+`goal_park` session record: actual same-session selection belongs to the external Hermes dispatcher.
+A later manual schedule invalidates the body's wait, and the drive relinquishes it.
+
 Which form a park takes depends on the board:
 
 | Board | Park | Woken by |
@@ -72,10 +83,14 @@ argparse's "unrecognized arguments"; that park, and the others in the same tick,
 whose reason carries the event (`WAIT_EVENT=pr:<repo>#<n>`, `WAIT_EVENT=until:<ISO time>`) and the park's action id.
 The ledger's `waits` keeps each card parked that way.
 
-Such a card is woken by the hub, because the installed Hermes wakes a scheduled card only on the worker ids its reason
-names. On each tick the drive reads the card (`show --json`) and wakes it when its event happened: the pull request's
-required checks all have a conclusion (read as LINA's `pr:` wait reads them, kept 60 s like every check read), or the
-time passed. The wake is `hermes kanban unblock --judge-wake <run> --reason "goal drive: wait met: <event>"` (a bare
+Retargeted scheduled Hermes cards also use the hub-owned wait, regardless of `--wait-for` support. A usage reset
+continues the worker and replaces the timer with its new run wait; it does not wake the card session first.
+
+Such a card is managed by the hub, because the installed Hermes wakes a scheduled card only on the worker ids its reason
+names. On each tick the drive reads the card (`show --json`). Settled red checks go through the follow-up rule;
+settled non-red checks wake the card (read as LINA's `pr:` wait reads them, kept 60 s like every check read).
+Timers go through the usage or node rule before the next wait. The check wake is
+`hermes kanban unblock --judge-wake <run> --reason "goal drive: wait met: <event>"` (a bare
 `unblock --reason` on a Hermes without `--judge-wake`), once per park (`<rule>-wake`). The drive wakes only a card that
 is still `scheduled` and whose latest `scheduled` reason carries a `GOAL_ACTION` that is in its ledger: a card a
 person or another tool unblocked or parked again is let go and dropped from `waits`.

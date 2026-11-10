@@ -250,7 +250,8 @@ def end_cards(hub, job: dict, entry: dict) -> str:
                 if on_hermes(card):
                     woke = end_step(step, hub.store, card, job, entry["run"],
                                     events.signed(entry["text"], entry.get("delivery")), config(hub.worker),
-                                    Path(entry["report"]) if entry.get("report") else None)
+                                    Path(entry["report"]) if entry.get("report") else None,
+                                    drive=hub.worker.get("goal_drive") is not False)
                 else:
                     woke = None
                     if step == "comment":
@@ -353,7 +354,7 @@ END_STEPS = ("comment", "attach", "wake")
 
 
 def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link: dict,
-             report: Path | None) -> str | None:
+             report: Path | None, *, drive: bool = False) -> str | None:
     """One step of a run's end on a Hermes card; raises ``CardLinkError`` when it did not go through. The unblock
     form (``judge_wake`` / ``bare``) when ``wake`` woke the card."""
     if step == "comment":
@@ -362,7 +363,7 @@ def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link:
         _kanban(link["command"], card, "attach", str(report), "--name", f"report-{job['id']}-{run}.md",
                 "--author", AUTHOR)
     elif step == "wake":
-        return wake(store, card, link, job["id"], judged=job.get("group") or job["id"])
+        return wake(store, card, link, job["id"], judged=job.get("group") or job["id"], drive=drive)
     return None
 
 
@@ -474,7 +475,7 @@ def kept_view(store, card: dict) -> dict | None:
         return None
 
 
-def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) -> str | None:
+def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, *, drive: bool = False) -> str | None:
     """Unblock the card once if it waits on *run_id*, for judging *judged* (the run, or its ``OG-`` batch); the
     unblock form (``judge_wake`` / ``bare``) when it was woken, else None.
 
@@ -495,7 +496,21 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) 
         except (ValueError, KeyError, TypeError) as exc:
             raise CardLinkError("kanban show did not return task.status") from exc
         keep_view(store, card, view["task"])
+        from hermes_cli.worker.goal_drive import goal_of, marker, resume_wait
+        if drive and status == "scheduled" and goal_of(view["task"].get("body")):
+            return None  # let the drive choose the next wait before a run-end unblock
+        resume = resume_wait(view)
+        event, _ = marker(resume)
+        if event:
+            if not event.startswith("omo-task:"):
+                return None  # a check or timer, not the old worker's completion
+            task, _, run = event.removeprefix("omo-task:").partition("/")
+            current = store.load(task)
+            if task != run_id or not current or int(current.get("runs") or 1) < int(run) or _still_open(store, task):
+                return None
         named, schedule = _last_schedule(view)
+        if event:
+            named, schedule = [task], event
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named:
             if any(_still_open(store, other) for other in named if other != run_id):

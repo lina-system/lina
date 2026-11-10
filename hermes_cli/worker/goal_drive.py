@@ -61,6 +61,7 @@ _RESET_IN = re.compile(r"(?:reset\w*|try again|retry)\s+(?:in|after)\s+(\d+)\s*(
 _UNIT_S = {"s": 1, "m": 60, "h": 3600}
 _WAIT_EVENT = re.compile(r"\bWAIT_EVENT=(\S+)")
 _GOAL_ACTION = re.compile(r"\bGOAL_ACTION=(\S+)")
+RESUME_SECTION = "\n\n## Goal drive resume\n"
 # Required-check classifications that are not a conclusion yet, as LINA's own ``pr:`` wait reads them.
 UNFINISHED_CHECKS = ("pending", "missing", "stale")
 
@@ -164,6 +165,13 @@ def marker(reason: str | None) -> tuple[str | None, str | None]:
     return (event.group(1) if event else None), (aid.group(1) if aid else None)
 
 
+def resume_wait(view: dict) -> str:
+    """A body wait belongs to the schedule it replaced, not a later manual park."""
+    resume = (view["task"].get("body") or "").partition(RESUME_SECTION)[2]
+    schedules = sum(event.get("kind") == "scheduled" for event in view.get("events") or [])
+    return resume if f"GOAL_SCHEDULE={schedules}\n" in resume else ""
+
+
 def checks_settled(receipt: dict) -> bool:
     """Every required check of the receipt has a conclusion, read from complete evidence (a receipt with ``detail``
     stopped early; only "no required checks" is complete then)."""
@@ -206,6 +214,8 @@ class Board:
         """A Hermes card's status and the reason of its latest ``scheduled`` event (None when it has none)."""
         import json
         view = json.loads(kanban_link._kanban(self._command(), card, "show", "--json"))
+        if resume := resume_wait(view):
+            return view["task"].get("status"), resume
         reasons = [str(event["payload"].get("reason") or "") for event in view.get("events") or []
                    if isinstance(event, dict) and event.get("kind") == "scheduled"
                    and isinstance(event.get("payload"), dict)]
@@ -244,6 +254,22 @@ class Board:
                 aid: str | None = None) -> str | None:
         command = self._command()
         try:
+            if verb == "schedule":
+                import json
+                shown = json.loads(kanban_link._kanban(command, card, "show", "--json"))
+                view = shown["task"]
+                schedules = sum(event.get("kind") == "scheduled" for event in shown.get("events") or [])
+                schedules += int(step != "unblock")
+                body = (view.get("body") or "").split(RESUME_SECTION, 1)[0]
+                body += (RESUME_SECTION + "Before judging, re-read this card's Goal and To-dos, its run-end "
+                         "comments and attached reports, and the worker result / pull request named there. "
+                         "The drive may have continued or moved the work while this session slept.\n"
+                         + f"GOAL_SCHEDULE={schedules}\n" + marked(reason, str(wait_for), str(aid)))
+                kanban_link._kanban(command, card, "edit", "--body", body)
+                if step == "unblock":
+                    # A scheduled card cannot be scheduled again. Editing its wait keeps it undispatchable.
+                    self.wait_form = "marker"
+                    return None
             if step:
                 kanban_link._kanban(command, card, step, *(["goal drive: to be parked or blocked"]
                                                            if step == "promote" else []))
@@ -258,6 +284,8 @@ class Board:
     def _park(self, command: list[str], card: dict, wait_for: str, reason: str, aid: str) -> None:
         """``schedule --wait-for`` on a board that has it; else a plain ``schedule`` with a :func:`marked` reason. The
         first park probes: a Hermes without the option exits 2 with argparse's "unrecognized arguments"."""
+        if wait_for.startswith("omo-task:"):
+            self.wait_form = "marker"
         if self.wait_form != "marker":
             shown, done = kanban_link._run(command, card, "schedule", "--wait-for", wait_for, "--", reason)
             if not (done.returncode == 2 and "unrecognized arguments" in done.stderr and "--wait-for" in done.stderr):
@@ -400,6 +428,25 @@ class Drive:
                     break
             if self.halted:
                 return
+        self.release_ended()
+
+    def release_ended(self) -> None:
+        """Only after the rules had their turn may an ended run wake a goal card with no drive wait."""
+        for task, card in self.entry["cards"].items():
+            if task in self.ledger["blocked"] or task in self.ledger["waits"]:
+                continue
+            if self.ledger["notes"].get(task) == "park ownership released":
+                continue
+            if not kanban_link.on_hermes(card["card"]):
+                continue
+            if self.status(card["card"]) != "scheduled":
+                continue
+            if any(not _settled(job) for job in self._tasks() if job.get("card") == card["card"]):
+                continue
+            for job in self._latest(card["jobs"]):
+                if _settled(job):
+                    kanban_link.wake(self.hub.store, card["card"], kanban_link.config(self.hub.worker),
+                                     job["id"], judged=job.get("group") or job["id"])
 
     def _count(self) -> None:
         """Attempts by to-do (a run the drive moved keeps its attempt), runs by task and the goal's start."""
@@ -467,6 +514,8 @@ class Drive:
         """Whether the drive may act on the work card: not when it is done, archived or blocked by someone else (the
         ledger notes ``skipped: card <status>``)."""
         status = self.status(card["card"])
+        if status == "scheduled" and self.ledger["notes"].get(card["card"]["task"]) == "park ownership released":
+            return False
         if status in CLOSED_CARDS or status == "blocked":
             if self.ledger["notes"].get(card["card"]["task"]) != f"skipped: card {status}":
                 self.ledger["notes"][card["card"]["task"]] = f"skipped: card {status}"
@@ -484,9 +533,10 @@ class Drive:
     def write(self, card: dict, verb: str, reason: str, wait_for: str | None = None, aid: str | None = None) -> bool:
         """One board write, at most once per card and verb per tick. A refusal is noted (``card_write_refused``) and
         tried again on the next tick."""
-        if (verb, card["task"]) in self.tried:
+        key = (aid if verb == "schedule" else verb, card["task"])
+        if key in self.tried:
             return False
-        self.tried.add((verb, card["task"]))
+        self.tried.add(key)
         status = self.status(card)
         refused = self.board.block(card, reason, status) if verb == "block" else \
             self.board.schedule(card, str(wait_for), reason, status, str(aid))
@@ -554,7 +604,10 @@ class Drive:
     def follow_up(self, card: dict, job: dict, ids, rule: str, message: str) -> None:
         """One follow-up on the run; a follow-up due after ``FOLLOW_UPS`` of this attempt blocks the card instead."""
         from hermes_cli.worker.hub import ENDED
-        if self.done_before(ids(rule), lambda _sent: self._counted_follow_up(job)) or not self.may_act(card):
+        if self.done_before(ids(rule), lambda _sent: self._counted_follow_up(job)):
+            self.park_run(card, job, ids(rule + "-park"), job["id"])
+            return
+        if not self.may_act(card):
             return
         sent, by = self.rounds(job)
         if sent >= FOLLOW_UPS:
@@ -569,6 +622,15 @@ class Drive:
             self._counted_follow_up(job)
             return f"follow-up round {sent + 1}/{FOLLOW_UPS} ({rule}) on {job['id']}"
         self.act(ids(rule), send)
+        self.park_run(card, job, ids(rule + "-park"), job["id"])
+
+    def park_run(self, card: dict, job: dict, aid: str, task: str) -> None:
+        """Keep a continued or moved Hermes card asleep until that specific worker run ends."""
+        if not kanban_link.on_hermes(card["card"]):
+            return
+        current = self.hub.store.load(task)
+        self.park(card, job, aid, f"omo-task:{task}/{int(current.get('runs') or 1)}",
+                  f"goal drive: waiting for worker {task}")
 
     def _counted_follow_up(self, job: dict) -> None:
         self.ledger["followups"][job["id"]] = int(self.ledger["followups"].get(job["id"], 0)) + 1
@@ -689,12 +751,30 @@ class Drive:
         event, aid = marker(reason)
         if status != "scheduled" or event is None or aid not in self.ledger["actions"]:
             self.ledger["waits"].pop(card["task"])
+            self.ledger["notes"][card["task"]] = "park ownership released"
             self.save()
             self.hub.store.log(f"goal drive: card {card['task']} let go: it is {status}, not parked by the drive")
+            return
+        if event.startswith("omo-task:"):
+            task, _, run = event.removeprefix("omo-task:").partition("/")
+            job = self.hub.store.load(task)
+            if not job or int(job.get("runs") or 1) < int(run) or not _settled(job):
+                return
+            # Release the wait to the rules first: another follow-up must not see an intermediate ready card.
+            self.ledger["waits"].pop(card["task"])
+            self.save()
             return
         wait_for = parse_wait_for(event)
         if not self._met(wait_for):
             return
+        if wait_for["kind"] == "until":
+            return  # the usage/node rule continues or moves the worker before retargeting this wait
+        url = f"https://github.com/{wait_for['repo']}/pull/{int(wait_for['number'])}"
+        receipt = self.ledger["github"][f"checks:{url}"]["value"]
+        if any(check.get("classification") == "failure" for check in receipt.get("checks") or []):
+            self.ledger["waits"].pop(card["task"])
+            self.save()
+            return  # the red-check rule must send and repark without waking the card
 
         def wake(_aid: str) -> str:
             form = self.board.wake(card, wait["judged"], f"goal drive: wait met: {describe_wait(wait_for)}")
@@ -802,6 +882,7 @@ class Drive:
                 self.act(ids("usage-resume"), lambda aid: self.started(aid, lambda: self.hub.send(
                     job["id"], "The usage limit has reset. Carry on with the task where you stopped.", job["card"],
                     request_key=aid)) or "continued after the usage limit")
+                self.park_run(card, job, ids("usage-resume-park"), job["id"])
             return True
         if job.get("state") not in USAGE_STATES or not re.search(self._usage_pattern(job), self._end_text(job)):
             return False
@@ -853,6 +934,7 @@ class Drive:
         if went_on:
             self.act(ids("node-continued"), lambda _aid: f"{job.get('host')} is back: run {remote.get('run')} "
                                                          f"{remote.get('state')}; not moved")
+            self.park_run(card, job, ids("node-continued-park"), job["id"])
         elif not self.move(card, job, ids, "resubmit", same_attempt=False) or \
                 ids("resubmit") not in self.ledger["actions"]:
             return
@@ -865,6 +947,7 @@ class Drive:
         from hermes_cli.worker.hub import ENDED
         attempt = self.ledger["attempts"][job["id"]] + (0 if same_attempt else 1)
         if self.done_before(ids(rule), lambda sent: self._moved(job, sent["task"], attempt)):
+            self.park_run(card, job, ids(rule + "-park"), self.ledger["moved"][job["id"]])
             return True
         if not self.may_act(card):
             return True
@@ -899,7 +982,10 @@ class Drive:
             self._recount_runs()
             self._moved(job, new, attempt)
             return f"{rule}: {job['id']} → {new} on {node}"
-        return self.act(ids(rule), submit)
+        acted = self.act(ids(rule), submit)
+        if acted:
+            self.park_run(card, job, ids(rule + "-park"), self.ledger["moved"][job["id"]])
+        return acted
 
     def _moved(self, job: dict, new: str, attempt: int) -> None:
         self.ledger["attempts"][new] = attempt

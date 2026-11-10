@@ -43,6 +43,9 @@ moves = {"block": (("running", "ready"), "blocked"), "schedule": (("todo", "read
 if verb == "show":
     events = card.pop("events", [])
     print(json.dumps({"task": card, "events": events}))
+elif verb == "edit":
+    card["body"] = rest[rest.index("--body") + 1]
+    json.dump(card, open(path, "w"))
 elif verb in moves and os.path.exists(path):
     sources, target = moves[verb]
     if card["status"] not in sources:
@@ -52,6 +55,9 @@ elif verb in moves and os.path.exists(path):
     if verb == "schedule":
         card.setdefault("events", []).append({"kind": "scheduled", "payload": {"reason": rest[-1]}})
     json.dump(card, open(path, "w"))
+if verb != "show":
+    with open(os.path.join(cards, "states.jsonl"), "a") as fh:
+        fh.write(json.dumps({"verb": verb, "task": task, "status": card["status"], "body": card["body"]}) + "\\n")
 """
 
 FAKE_GH = """import json, os, re, sys
@@ -179,7 +185,7 @@ def test_a_run_without_its_deliverable_gets_one_follow_up_and_a_restarted_hub_re
     _tick(drive)
     assert _requests(drive, task) == ["request.1", "request.2"]
     assert "without its deliverable" in (drive.root / "tasks" / task / "prompt.2").read_text()
-    assert list(_ledger(drive)["actions"]) == [_aid(task, 1, "deliverable")]
+    assert list(_ledger(drive)["actions"]) == [_aid(task, 1, "deliverable"), _aid(task, 1, "deliverable-park")]
     _tick(drive)
     _tick(drive)  # every _tick is a new Hub on the same root
     assert _requests(drive, task) == ["request.1", "request.2"]
@@ -257,6 +263,7 @@ def test_checks_still_running_park_the_card_on_the_pull_request(drive):
     _red_check(drive, conclusion=None, status="in_progress")
     task = _submit(drive, repo="acme/app")
     _end(drive, task, "done", report=True)
+    _set_status(drive, WORK, "ready")  # also exercise a fresh park, not only retargeting an existing schedule
     _tick(drive)
     _tick(drive)
     parks = _writes(drive, "schedule", WORK)
@@ -286,7 +293,8 @@ def test_two_to_dos_on_one_card_each_get_their_own_follow_up(drive):
     _tick(drive)
     assert _requests(drive, first) == ["request.1", "request.2"]
     assert _requests(drive, second) == ["request.1", "request.2"]
-    assert set(_ledger(drive)["actions"]) == {_aid(first, 1, "deliverable"), _aid(second, 1, "deliverable")}
+    assert set(_ledger(drive)["actions"]) == {
+        _aid(task, 1, rule) for task in (first, second) for rule in ("deliverable", "deliverable-park")}
 
 
 def test_an_action_id_too_long_for_a_request_key_writes_its_task_as_a_hash():
@@ -417,7 +425,8 @@ def test_a_lost_node_waits_while_the_outage_is_open_and_moves_once_after_the_run
     assert hub.store.load(task)["state"] == "unknown"
     assert hub.store.load_node("here")["notified_outage"]
     assert [job["id"] for job in hub.store.all()] == [task]
-    assert [call[2] for call in _writes(drive, "schedule", WORK)] == ["--wait-for"]
+    assert "WAIT_EVENT=until:" in _writes(drive, "edit", WORK)[-1][-1]
+    assert not _writes(drive, "unblock", WORK)
     _outage(drive, False)
     (drive.root / "tasks" / task / "rc.1").write_text("1\n")
     (drive.root / "tasks" / task / "state").write_text("failed\n")
@@ -473,6 +482,7 @@ def test_a_usage_limit_waits_without_a_new_attempt_then_the_run_goes_on(drive):
     out = hub.store.out_dir(hub.store.load(task))
     out.mkdir(parents=True, exist_ok=True)
     (out / "stderr.txt").write_text("Error 429: usage limit reached, resets in 30 minutes\n")
+    _set_status(drive, WORK, "ready")
     _tick(drive)
     _tick(drive)
     (park,) = _writes(drive, "schedule", WORK)
@@ -765,6 +775,7 @@ def test_a_hermes_without_wait_for_gets_a_plain_park_and_the_hub_wakes_it_once_t
     _red_check(drive, conclusion=None, status="in_progress")
     task = _submit(drive, repo="acme/app")
     _end(drive, task, "done", report=True)
+    _set_status(drive, WORK, "ready")
     _tick(drive)
     probe, park = _writes(drive, "schedule", WORK)
     assert probe[2:4] == ["--wait-for", "pr:acme/app#7"]
@@ -788,6 +799,7 @@ def test_a_hermes_without_wait_for_gets_a_plain_park_and_the_hub_wakes_it_once_t
     drive.mp.setenv("FAKE_NO_WAIT_FOR", "1")
     task = _submit(drive)
     _usage_end(drive, task)
+    _set_status(drive, WORK, "ready")
     _tick(drive)
     park = _writes(drive, "schedule", WORK)[-1]
     assert park[2] == "--" and " · WAIT_EVENT=until:" in park[3] and park[3].endswith(
@@ -797,9 +809,8 @@ def test_a_hermes_without_wait_for_gets_a_plain_park_and_the_hub_wakes_it_once_t
     _later(drive, 1801)
     _tick(drive)
     _tick(drive)
-    (wake,) = _judge_wakes(drive)
-    assert wake[:5] == ["unblock", WORK, "--judge-wake", task, "--reason"]
-    assert wake[5].startswith("goal drive: wait met: time ") and wake[5].endswith(" passed")
+    assert not _judge_wakes(drive)  # the reset continues the worker, not the card's session
+    assert f"WAIT_EVENT=omo-task:{task}/2" in _writes(drive, "edit", WORK)[-1][-1]
     assert _requests(drive, task) == ["request.1", "request.2"]  # and the run goes on after its usage limit
 
 
@@ -810,7 +821,7 @@ def test_a_card_parked_again_by_someone_else_is_not_woken_by_the_hub(drive):
     _tick(drive)
     path = drive.cards / f"{WORK}.json"
     card = json.loads(path.read_text())
-    card["events"].append({"kind": "scheduled", "payload": {"reason": "waiting for the owner's call"}})
+    card.setdefault("events", []).append({"kind": "scheduled", "payload": {"reason": "waiting for the owner's call"}})
     path.write_text(json.dumps(card))
     _later(drive, 1801)
     _tick(drive)
