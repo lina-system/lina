@@ -101,7 +101,7 @@ def write_shim(root: Path, node: Path) -> Path:
 
 def reported_version(root: Path, node: Path, version: str,
                      run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> str | None:
-    """The version ``omo --version`` of an installed *version* prints (``omo 5.1.51 (engine: …)``), else None."""
+    """The version ``omo --version`` of an installed *version* prints (``omo 5.1.66 (engine: …)``), else None."""
     try:
         result = run([str(node / "bin" / "node"), str(entry_path(root, version)), "--version"], env=omo_env(),
                      capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=120, check=False)
