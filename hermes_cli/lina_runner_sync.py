@@ -37,6 +37,7 @@ from pathlib import Path
 from typing import Callable
 
 from hermes_cli import lina_ocx, lina_runners
+from hermes_cli import lina_runner_sync_hub as hub_view
 from hermes_cli import lina_runner_sync_sources as sources
 from hermes_cli import lina_runner_sync_state as state
 from hermes_cli import lina_runner_sync_trial as trials
@@ -213,8 +214,9 @@ class Run:
             return runner
         previous = lina_runners.current_version(self.root, runner)
         if previous is None:
-            rec["hub"] = {"state": "hub prepare needed", "to": newest,
+            rec["hub"] = {"state": hub_view.PREPARE, "to": newest,
                           "reason": f"`lina runners install {name}` on the hub first"}
+            self.event(hub_view.prepare_event(name, newest))
             return runner
         with tempfile.TemporaryDirectory(prefix="lina-runner-sync-") as work:
             try:
@@ -326,7 +328,7 @@ class Run:
         from hermes_cli.lina_devices import sign_in_questions
         rows = [{"name": node.name, "runners": list(node.rows.values())} for node in self.nodes if node.reachable]
         if self.hub_questions:
-            rows.append({"name": "hub", "runners": self.hub_questions})
+            rows.append({"name": hub_view.hub_name(self.root), "runners": self.hub_questions})
         return sign_in_questions(rows)
 
 
@@ -397,18 +399,22 @@ def sync(root: Path | None = None, *, plan: bool = False, only: list[str] | None
         return 0
     try:
         with run_lock(root):
-            state.write_json(state.last_path(root), {"started": env.clock(), "finished": None, "rc": None})
-            rc = 1
+            started = env.clock()
+            state.write_json(state.last_path(root), {**hub_view.carried(state.last(root), started), "started": started,
+                                                     "finished": None, "rc": None})
+            rc, retry = 1, {}
             try:
                 record = execute(root, env, plan=False, only=only)
                 rc = 1 if any(e for e in record["events"] if ": held (" in e) else 0
-                state.write_json(state.record_path(root, record["started"]), record)
+                retry = hub_view.retry_mark(record, state.last(root))
+                path = state.record_path(root, record["started"])
+                state.write_json(path, hub_view.day_record(path, record) if only else record)
                 if record["events"]:
                     record["notice"] = (env.notify or notify)(root, _notice_text(record))
                 _show(record, as_json, out)
             finally:
                 last = state.last(root)
-                state.write_json(state.last_path(root), {**last, "finished": env.clock(), "rc": rc})
+                state.write_json(state.last_path(root), {**last, "finished": env.clock(), "rc": rc, **retry})
     except SyncBusy as exc:
         out(str(exc))
         return 1
@@ -457,6 +463,7 @@ def issue_lines(root: Path, now: float | None = None) -> tuple[list[str], list[s
         ocx = view.get("ocx")
         if isinstance(ocx, dict) and ocx.get("health") != 200:
             issues.append(f"- ocx: {node} health {ocx.get('health')}" + (" (external)" if ocx.get("external") else ""))
+    issues += hub_view.prepare_issues(record)
     for ask in record.get("questions") or []:
         issues.append(f"- sign-in: {ask['question']}")
     if state.last(root).get("error"):

@@ -78,6 +78,10 @@ class FakeNode:
 
 @pytest.fixture
 def hub(tmp_path, monkeypatch):
+    return make_hub(tmp_path, monkeypatch)
+
+
+def make_hub(tmp_path, monkeypatch) -> dict:
     root = tmp_path / "hub"
     vendor = lina_runners.vendor_dir(root, "grok")
     (vendor / "1.0.70").mkdir(parents=True)

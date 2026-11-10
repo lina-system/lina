@@ -29,7 +29,7 @@ import time
 from collections.abc import Callable
 from pathlib import Path
 
-from hermes_cli.worker import events
+from hermes_cli.worker import events, kanban_link_wait
 
 AUTHOR = "lina-worker"
 HERMES = "hermes"
@@ -49,8 +49,12 @@ class CardLinkError(RuntimeError):
 
 
 class CardWaiting(CardLinkError):
-    """The card is not ready for this step yet (it has not scheduled itself, or still waits on other runs): retried
-    on the next tick, and not a failing link."""
+    """The card is not ready for this step yet (it has not scheduled itself, or still waits on other runs): a wait,
+    not a failing link (``kanban_link_wait``), with its *reason* (``card running``, ``other runs open``)."""
+
+    def __init__(self, message: str, reason: str):
+        super().__init__(message)
+        self.reason = reason
 
 
 def config(worker: dict) -> dict:
@@ -231,8 +235,9 @@ def change_card(hub, task_id: str, card: str | None, drop: str | None, board: st
     return 0
 
 
-def end_cards(hub, job: dict, entry: dict) -> str:
-    """Advance each remaining card independently, retaining completed steps across retries."""
+def end_cards(hub, job: dict, entry: dict, *, ticked: bool = False) -> str:
+    """Advance each remaining card independently, retaining completed steps across retries; a wake that waits is
+    tried by a tick only past its gap (*ticked*)."""
     targets = entry.setdefault("cards", linked_cards(job))
     progress = entry.setdefault("card_progress", {})
     pending = ""
@@ -246,6 +251,14 @@ def end_cards(hub, job: dict, entry: dict) -> str:
         for step in END_STEPS:
             if step in state["done"]:
                 continue
+            if step == "wake" and (gap := kanban_link_wait.gate(hub, job, entry, card, state,
+                                                                          ticked=ticked)) is not None:
+                if gap:
+                    pending = gap
+                    break
+                state["done"].append(step)  # expired: noticed, not woken
+                hub.store.save(job)
+                continue
             try:
                 if on_hermes(card):
                     woke = end_step(step, hub.store, card, job, entry["run"],
@@ -257,12 +270,13 @@ def end_cards(hub, job: dict, entry: dict) -> str:
                     if step == "comment":
                         record_end(card, job, entry["kind"], entry["run"],
                                    events.signed(entry["text"], entry.get("delivery")))
+            except CardWaiting as exc:
+                pending = kanban_link_wait.waited(hub, job, card, state, exc)
+                hub._card_warning(job, state, card)
+                break
             except (OSError, ValueError, CardLinkError) as exc:
                 hub.store.receipt(job["id"], "card_notice_failed", card=card, step=step, error=str(exc)[:300])
-                if not isinstance(exc, CardWaiting):
-                    hub._card_failed(job, exc)
-                else:
-                    hub._card_warning(job, state, card)
+                hub._card_failed(job, exc)
                 pending = f"card {card['task']}: {step} failed, retried on the next report or tick"
                 break
             state["done"].append(step)
@@ -363,8 +377,23 @@ def end_step(step: str, store, card: dict, job: dict, run: str, body: str, link:
         _kanban(link["command"], card, "attach", str(report), "--name", f"report-{job['id']}-{run}.md",
                 "--author", AUTHOR)
     elif step == "wake":
-        return wake(store, card, link, job["id"], judged=job.get("group") or job["id"], drive=drive)
+        return wake(store, card, link, job["id"], judged=job.get("group") or job["id"],
+                    settled=settled(job, run), drive=drive)
     return None
+
+
+def settled(job: dict, run: str) -> bool:
+    """Whether the end of *run* is no longer one the card can park on: the run has its verdict, or a later run of
+    the task superseded it."""
+    later = str(run).isdigit() and int(run) < int(job.get("runs") or 1)
+    return job.get("verdict") in ("accepted", "rejected") or later
+
+
+def _on_hub(store, run_id: str) -> bool:
+    """Whether this hub owns *run_id* (a run record, or an ``OG-`` batch with members): its end wakes the card."""
+    if run_id.startswith("OG-"):
+        return any(job.get("group") == run_id for job in store.all())
+    return store.load(run_id) is not None
 
 
 def record_end(card: dict, job: dict, state: str, run: str, body: str) -> None:
@@ -475,15 +504,17 @@ def kept_view(store, card: dict) -> dict | None:
         return None
 
 
-def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, *, drive: bool = False) -> str | None:
+def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, *,
+         settled: bool = False, drive: bool = False) -> str | None:
     """Unblock the card once if it waits on *run_id*, for judging *judged* (the run, or its ``OG-`` batch); the
     unblock form (``judge_wake`` / ``bare``) when it was woken, else None.
 
     It waits on the run when its last ``scheduled`` event names it: then it is woken after the last run that
     schedule names has ended, including legacy runs whose configured tool confirms their end.
     Else when ``park`` (``lina worker wait``) recorded the run. A card still ``running`` or ``ready`` has not
-    scheduled itself yet, so the wake is retried on the next tick. The end of a run the card does not wait on, or
-    whose schedule still waits on others, leaves it parked."""
+    scheduled itself yet, so the wake waits, unless the run is *settled* (judged or superseded): the card read the
+    end already and will not park on it. The end of a run the card does not wait on, or whose schedule still waits
+    on others, leaves it parked: only an open run this hub does not own makes that end wait."""
     with store.lock(f"card-{card_key(card)}"):
         mark = _parked_path(store, card)
         try:
@@ -512,19 +543,23 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, 
         if event:
             named, schedule = [task], event
         woken = store.root / "cards" / f"{card_key(card)}.woken"
-        if run_id in named:
-            if any(_still_open(store, other) for other in named if other != run_id):
+        if run_id in named or (judged in named and judged != run_id):  # a batch member's end is its batch's end
+            others = [other for other in named if other != run_id and _still_open(store, other)]
+            if others:
                 from hermes_cli.worker.settings import legacy_omo_task
-                if status == "scheduled" and legacy_omo_task(store.worker_root.parent):
-                    # A legacy end does not report to this hub; retain its wake for the next tick.
-                    raise CardWaiting(f"card {card['task']} is waiting for scheduled runs to end")
+                if status == "scheduled" and legacy_omo_task(store.worker_root.parent) and \
+                        not all(_on_hub(store, other) for other in others):
+                    # A legacy end does not report to this hub; retain its wake. A hub run's own end wakes the card.
+                    raise CardWaiting(f"card {card['task']} is waiting for scheduled runs to end", "other runs open")
                 return None
             if woken.is_file() and woken.read_text(encoding="utf-8-sig").strip() == schedule:
                 return None  # this schedule was woken already, by the end of another run it names
         elif run_id not in parked and status not in ("running", "ready"):
             return None
         if status in ("running", "ready"):  # not parked yet: it may still schedule on this run
-            raise CardWaiting(f"card {card['task']} is {status}; waiting for kanban_schedule")
+            if settled:
+                return None
+            raise CardWaiting(f"card {card['task']} is {status}; waiting for kanban_schedule", "card running")
         form = None
         if status == "scheduled":
             form = unblock(link["command"], card, judged or run_id)
