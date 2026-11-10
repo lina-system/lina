@@ -8,8 +8,13 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ## [Unreleased]
 
+### Added
+
+- `lina runners sync [--plan] [--only] [--json]` moves each followed runner pin (codex, claude, dsh, grok, cursor-agent, agy) to its source's newest version once a real request passes on the hub, and the nodes follow the same day through their `runner-sync` verb; a failure holds the runner (or that node) until `lina runners sync clear`, a major jump waits for `--accept`, a busy node is skipped, and `sync status --issues` prints the lines the daily check reads; `worker.runner_sync.at` starts it daily from the hub's worker service (lina#238).
+
 ### Fixed
 
+- A `lina` call from a Hermes Agent terminal (`HERMES_HOME` under Hermes Agent's home, such as `~/.hermes/profiles/<bot>`) no longer prints `lina: ignoring HERMES_HOME=…` on stderr: LINA drops that home quietly and keeps it as `LINA_CALLER_HERMES_HOME`, so `lina worker` still names the calling agent as a run's owner; a dropped home outside an explicit `LINA_HOME` that is not Hermes Agent's is still reported (lina#434).
 - `lina devices list` and `lina worker hosts` omit person devices from node probes and capacity rows, and `lina devices check` refuses them as non-nodes before probing (lina#427).
 - The `omo-task` shim routes LINA-minted task (`OT-`), schedule (`OS-`) and batch (`OG-`) IDs, including collision suffixes and older held records, to `lina worker` instead of the legacy tool (lina#430).
 - The `omo-task` and `work` shims and LINA's worker run, worker service and web service start Python with `-P`, so the caller's current directory cannot shadow LINA's modules (lina#428).

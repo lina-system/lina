@@ -572,12 +572,21 @@ def _drop_foreign_home() -> None:
     """Keep this process and every child it spawns inside LINA's home, before PM or any home reader
     runs: an inherited ``HERMES_HOME`` naming Hermes Agent's home (or a home outside ``LINA_HOME``)
     is removed, so resolution falls back to ``LINA_HOME`` / ``~/.lina``. A launcher's pin above is
-    always inside LINA's root, so it survives."""
-    from hermes_constants import drop_foreign_hermes_home
+    always inside LINA's root, so it survives.
+
+    A dropped Hermes Agent home is the calling agent's (a Hermes Agent terminal): it goes quietly to
+    ``LINA_CALLER_HERMES_HOME`` (``hermes_cli.worker.settings.CALLER_HERMES_HOME``), which names the
+    owner of a ``lina worker`` run. Any other dropped home is a misconfiguration and is reported."""
+    from hermes_constants import drop_foreign_hermes_home, is_hermes_agent_path
 
     dropped = drop_foreign_hermes_home(os.environ)
-    if dropped is not None:
-        print(f"lina: ignoring HERMES_HOME={dropped}: it is outside the LINA home", file=sys.stderr)
+    if dropped is None:
+        return
+    if is_hermes_agent_path(dropped):
+        if not os.environ.get("LINA_CALLER_HERMES_HOME", "").strip():
+            os.environ["LINA_CALLER_HERMES_HOME"] = dropped
+        return
+    print(f"lina: ignoring HERMES_HOME={dropped}: it is outside the LINA home", file=sys.stderr)
 
 
 _drop_foreign_home()
