@@ -146,6 +146,15 @@ the repo pin is the floor. Every change appends the previous entry to
   <runner> --accept <version>`;
 - the source names a version below the pin (reported, not moved);
 - the hub is not signed in to the runner: a sign-in question, not a failure.
+  The question names the hub by its `devices.workers` name (the first
+  `host: local` device, else `hub`), so `lina devices sign-in <name> <runner>`
+  finds it;
+- the hub has no LINA copy of the runner (`hub prepare needed`): a line in the
+  notice and the issue line
+  ``- prepare: <runner> is not installed on the hub; run `lina runners install <runner>` ``
+  in `sync status --issues`, not a hold. Once it is installed, the next day's
+  run moves it;
+- a run holds a hub slot (`hub busy`): see the retry below.
 
 A node with a run holding a slot, an unreachable node, a node without the
 `runner-sync` verb (`update`) and a node that never installed the runner
@@ -173,7 +182,21 @@ service from running it twice on one day. A start that fails is written into
 `last.json` (`rc: 1`, `error`) and `runner-sync/sync.log`, is not retried that
 day, and shows as `- daily: could not start: ...` in `sync status --issues`.
 
-## Not wired yet
+When the day's run found the hub busy for some runners, it writes `retry: true`
+and those runners (`busy`) into `last.json`. 30 minutes after that run finished,
+on the same day, the tick starts one more run with `--only` those runners
+(`retried: true` in `last.json`). If the hub is busy again, that day is over: a
+day has at most two runs, and a new day starts without the retry. The second
+run's results are laid over the day's record, so the first run's other runners
+stay in `runner-sync/YYYYMMDD.json` and in the issues.
 
-The runner `argv` in `docs/lina-worker.example.yaml` still names the bare
-commands instead of `$LINA_HOME/bin/runners/<name>`.
+## Which copy a run uses
+
+The runner `argv` in `docs/lina-worker.example.yaml` still names bare commands
+(`grok`, `codex-acp`), and so may the hub's and the nodes' configs. An `acp` or
+`command` runner whose `argv[0]` is such a bare name, pinned in
+`pm/lina-deps.json` `runners`, starts `$LINA_HOME/bin/runners/<name>` when that
+shim is an executable file (after `lina runners install <name>`), and the name
+on `PATH` otherwise. The bid probe (`lina worker hosts`), the spawned command
+and the `launched` event use the same choice. An `argv[0]` that is a path, or a
+name LINA does not pin (such as `lina-dsh-acp`), is run as written.

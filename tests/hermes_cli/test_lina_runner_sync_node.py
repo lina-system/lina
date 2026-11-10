@@ -258,7 +258,7 @@ def test_the_daily_sync_starts_once_a_day_after_its_time(tmp_path, zone, monkeyp
 
     def start(at):
         return lina_runner_sync_daily.maybe_start(base / "worker", now=at,
-                                                  spawn=lambda root: started.append(at) or _Ended())
+                                                  spawn=lambda root, only: started.append(at) or _Ended())
 
     assert start(_local(0, 3, 59)) is False
     assert start(_local(0, 4, 0)) is True
@@ -276,7 +276,7 @@ def test_a_daily_start_that_raises_stays_inside_the_tick_and_is_an_issue(tmp_pat
     (base / "config.yaml").write_text('worker:\n  runner_sync: {at: "04:00"}\n', encoding="utf-8")
     calls: list[float] = []
 
-    def broken(root):
+    def broken(root, only):
         calls.append(1)
         raise OSError("no python here")
 
@@ -294,5 +294,5 @@ def test_the_daily_sync_is_off_without_its_setting(tmp_path):
     base = tmp_path / "lina"
     base.mkdir()
     assert lina_runner_sync_daily.maybe_start(base / "worker", now=_local(0, 12),
-                                              spawn=lambda root: pytest.fail("off by default")) is False
+                                              spawn=lambda root, only: pytest.fail("off by default")) is False
     assert not state.last_path(base).exists()
