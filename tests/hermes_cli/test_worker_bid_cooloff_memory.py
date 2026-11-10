@@ -123,6 +123,15 @@ def test_a_node_under_the_memory_floor_is_passed(root, manual):
     assert why(dev, facts(root, probe(mem_available_gb=6), now=T0), manual=manual) == "memory 6GB < 8GB"
 
 
+def test_a_floor_of_zero_lets_a_low_memory_node_take_a_named_run(root):
+    dev = Device("node-a", "node-a", cap=2)
+    low = probe(mem_available_gb=2)
+    assert why(dev, facts(root, low, now=T0), manual=True) == "memory 2GB < 4GB"
+    (root.parent / "config.yaml").write_text("worker:\n  min_free_mem_gb: 0\n", encoding="utf-8")
+    assert why(dev, facts(root, low, now=T0), manual=True) is None
+    assert why(dev, facts(root, low, now=T0)) is None
+
+
 def test_probe_reports_available_memory_in_whole_gb(tmp_path, monkeypatch):
     (tmp_path / "config.yaml").write_text("worker:\n  min_free_gb: 0\n", encoding="utf-8")
     monkeypatch.setattr(device.psutil, "virtual_memory", lambda: type("Mem", (), {"available": int(6.7 * 2**30)})())

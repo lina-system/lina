@@ -328,6 +328,7 @@ def hub(work, tmp_path, monkeypatch):
             here: {{host: local, cap: 2}}
         worker:
           min_free_gb: 0
+          min_free_mem_gb: 0
           runners:
             fakecli: {json.dumps({"type": "command", "argv": argv, "access": "workspace-write"})}
         """))
