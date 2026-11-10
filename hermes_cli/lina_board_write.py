@@ -124,8 +124,12 @@ def _result(i: str, cid: str | None = None) -> dict:
 
 
 def _write(root: Path, item_id: str | None, act: Callable[[str | None], tuple[str, str | None]]) -> dict:
-    """Under the work lock with the record bound: check the item, run the command, read its state back."""
+    """Under the work lock with the record bound: check the item, run the command, read its state back. An item of the
+    ``hermes`` source is read only (lina#481) and refused before anything is opened."""
+    from hermes_cli.lina_board_hermes import READ_ONLY, is_hermes
     from hermes_cli.work import env, ledger
+    if is_hermes(item_id):
+        raise Refused(409, READ_ONLY)
     with _WORK_LOCK:
         env.bind(env.load(root))
         try:
@@ -182,9 +186,12 @@ def retry(item_id: str, body) -> dict:
 
 def quick_add(body) -> dict:
     """One line to a chosen agent: ``work add 메모 --by <agent> --via app [--due]`` (the words are its basis)."""
+    from hermes_cli.lina_board_hermes import READ_ONLY, only_hermes_agent
     from hermes_cli.work.cmd_add import cmd_add
     body = _body(body, {"agent": str, "text": str, "due": str}, required=("agent", "text"))
     text = _text(body["text"])
+    if only_hermes_agent(body["agent"], _root()):
+        raise Refused(409, READ_ONLY)
 
     def act(_):
         from hermes_cli.work.env import current
@@ -212,9 +219,9 @@ def read_marks(root: Path) -> set[str]:
 
 def current_notices(root: Path, now: float) -> list[dict]:
     """The board's notices now; refused when a source they come from fails (the keys would be a guess)."""
-    from hermes_cli.lina_board import _notices_in_locale
+    from hermes_cli.lina_board import _notices_in_locale, own_and_hermes_work
     errors: list[dict] = []
-    work = _source("work", errors, lambda: work_read(root))
+    work = own_and_hermes_work(root, errors)
     cards = _source("worker", errors, lambda: worker_read(root, now))
     if errors:
         raise Refused(503, f"{errors[0]['source']}: {errors[0]['message']}")
