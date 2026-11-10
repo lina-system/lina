@@ -43,7 +43,10 @@
           "{dir}",
           "{prompt}"
         ],
-        "ocx": true
+        "ocx": true,
+        "ocx_match": {
+          "protocol": "responses"
+        }
       }
     },
     "claude": {
@@ -66,7 +69,10 @@
           "--model",
           "haiku"
         ],
-        "ocx": true
+        "ocx": true,
+        "ocx_match": {
+          "model_contains": "haiku"
+        }
       }
     },
     "dsh": {
@@ -83,7 +89,10 @@
         "acp": [
           "acp"
         ],
-        "ocx": true
+        "ocx": true,
+        "ocx_match": {
+          "model_endswith": "deepseek-v4.1-flash"
+        }
       }
     },
     "claude-agent-acp": {

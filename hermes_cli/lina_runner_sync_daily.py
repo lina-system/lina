@@ -9,6 +9,7 @@ restarted service from running it twice on one day.
 
 from __future__ import annotations
 
+import logging
 import re
 import subprocess
 import sys
@@ -20,6 +21,7 @@ from hermes_cli import lina_runner_sync_state as state
 
 _AT = re.compile(r"^([01]?\d|2[0-3]):([0-5]\d)$")
 _child: subprocess.Popen | None = None
+_log = logging.getLogger(__name__)
 
 
 def at_of(worker: dict) -> tuple[int, int] | None:
@@ -63,5 +65,19 @@ def maybe_start(worker_root: Path, *, now: float | None = None,
     if at is None or not due(root, at, now):
         return False
     state.write_json(state.last_path(root), {"started": now, "finished": None, "rc": None, "by": "serve"})
-    _child = (spawn or _spawn)(root)
+    try:
+        _child = (spawn or _spawn)(root)
+    except Exception as exc:  # health: allow BLE001 -- nothing may leave the serve tick; the traceback is logged
+        _log.exception("the daily runner sync could not start")
+        _failed_start(root, now, exc)
+        return False
     return True
+
+
+def _failed_start(root: Path, now: float, exc: BaseException) -> None:
+    from hermes_cli.lina_runner_sync import scrub
+    error = scrub(" ".join(f"{type(exc).__name__}: {exc}".split()))[:300]
+    state.write_json(state.last_path(root), {"started": now, "finished": now, "rc": 1, "by": "serve", "error": error})
+    log = state.sync_dir(root) / "sync.log"
+    with log.open("a", encoding="utf-8") as fh:
+        fh.write(f"{time.strftime('%Y-%m-%d %H:%M:%S', time.localtime(now))} could not start: {error}\n")

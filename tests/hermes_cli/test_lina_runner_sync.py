@@ -310,6 +310,121 @@ def test_the_cli_prints_the_issue_lines(hub, capsys):
     assert capsys.readouterr().out == "- none\n"
 
 
+def _hold_a_hub_slot(root: Path) -> Path:
+    task = root / "worker" / "tasks" / "OT-HUBWORK"
+    task.mkdir(parents=True)
+    (task / "request.1").write_text("{}")
+    return task
+
+
+def test_a_busy_hub_moves_nothing_that_day_and_moves_once_free(hub):
+    import shutil
+    hub["http"].publish("1.0.71", release("1.0.71"))
+    node = FakeNode("build-a")
+    hub["nodes"].append(node)
+    task = _hold_a_hub_slot(hub["root"])
+
+    code, _ = run(hub)
+
+    root = hub["root"]
+    record = json.loads(state.record_path(root, state.last(root)["started"]).read_text())
+    assert code == 0 and record["runners"]["grok"]["hub"]["state"] == "hub busy"
+    assert current(root) == "1.0.70" and "grok" not in state.overlay(root)
+    assert hub["http"].downloads == [] and not (lina_runners.vendor_dir(root, "grok") / "1.0.71").exists()
+    assert node.sent == [] and state.holds(root)["holds"] == [], "not a hold: tomorrow tries again"
+
+    shutil.rmtree(task)
+    assert run(hub)[0] == 0 and current(root) == "1.0.71" and len(node.sent) == 1
+
+
+def test_a_run_starting_on_the_hub_during_the_trial_stops_the_switch(hub):
+    import subprocess
+    hub["http"].publish("1.0.71", release("1.0.71"))
+    node = FakeNode("build-a")
+    hub["nodes"].append(node)
+
+    def run_and_take_a_slot(argv, **kwargs):
+        if "-p" in argv:
+            _hold_a_hub_slot(hub["root"])
+        return subprocess.run(argv, check=False, **{k: v for k, v in kwargs.items() if k != "check"})
+    hub["env"].run = run_and_take_a_slot
+
+    run(hub)
+
+    root = hub["root"]
+    assert current(root) == "1.0.70" and "grok" not in state.overlay(root)
+    assert not (lina_runners.vendor_dir(root, "grok") / "1.0.71").exists() and node.sent == []
+    assert state.holds(root)["holds"] == []
+
+
+def _ocx_runner(root: Path, match: dict | None):
+    trial = {"argv": ["-p", "{prompt}"], "ocx": True, **({"ocx_match": match} if match else {})}
+    runner = lina_runners.RunnerPin(name="claude", installer="binary", version="2.0.0", bin="claude",
+                                    sign_in="ocx", entry="claude", trial=trial)
+    folder = lina_runners.vendor_dir(root, "claude") / "2.0.0"
+    folder.mkdir(parents=True)
+    (folder / "claude").write_bytes(release("2.0.0"))
+    (folder / "claude").chmod(0o755)
+    return runner
+
+
+BEGAN = 2_000_000_000.0
+HAIKU = "anthropic/claude-haiku-5-5"
+
+
+def _row(rid: str, model: str, at: float, status: int = 200) -> dict:
+    return {"requestId": rid, "requestedModel": model, "inboundProtocol": "chat", "status": status,
+            "timestamp": int(at * 1000), "client": "unknown"}
+
+
+def _ocx_trial(tmp_path, before, after, match=None, run=None):
+    """The OCX log reads *before* until the runner was asked, *after* from then on."""
+    import subprocess
+    from hermes_cli import lina_runner_sync_trial as trials
+    asked: list[bool] = []
+
+    def ask(argv, **kwargs):
+        asked.append(True)
+        return (run or subprocess.run)(argv, **kwargs)
+
+    def logs(root):
+        value = after if asked else before
+        if isinstance(value, Exception):
+            raise value
+        return value
+    return trials.trial(tmp_path, _ocx_runner(tmp_path, match if match is not None else {"model_contains": "haiku"}),
+                        "2.0.0", run=ask, ocx_logs=logs, clock=lambda: BEGAN)
+
+
+def test_an_ocx_trial_ignores_200s_of_other_models(tmp_path):
+    after = {"logs": [_row("bot-1", "anthropic/claude-sonnet-5", BEGAN + 1), _row("bot-2", "anthropic/opus", BEGAN + 2)]}
+    assert _ocx_trial(tmp_path, {"logs": []}, after)[0] is False
+
+
+def test_an_ocx_trial_ignores_200s_that_were_there_before_it(tmp_path):
+    old = _row("old-1", HAIKU, BEGAN + 1)
+    assert _ocx_trial(tmp_path, {"logs": [old]}, {"logs": [old]})[0] is False
+
+
+def test_an_ocx_trial_passes_on_a_new_matching_200(tmp_path):
+    old = _row("old-1", HAIKU, BEGAN + 1)
+    after = {"logs": [old, _row("bot-1", "anthropic/claude-sonnet-5", BEGAN + 2), _row("new-1", HAIKU, BEGAN + 3)]}
+    assert _ocx_trial(tmp_path, {"logs": [old]}, after) == (True, "OCX answered 200")
+
+
+def test_an_ocx_pin_without_ocx_match_fails_before_the_trial(tmp_path):
+    after = {"logs": [_row("new-1", HAIKU, BEGAN + 3)]}
+    ok, why = _ocx_trial(tmp_path, {"logs": []}, after, match={},
+                         run=lambda *a, **k: pytest.fail("the trial must not run"))
+    assert (ok, why) == (False, "no ocx_match in the pin")
+
+
+def test_an_unreadable_ocx_log_before_the_trial_fails_without_a_trial(tmp_path):
+    ok, why = _ocx_trial(tmp_path, lina_runners.OcxError("proxy down"), {"logs": []},
+                         run=lambda *a, **k: pytest.fail("the trial must not run"))
+    assert ok is False and why.startswith("OCX log could not be read before the trial")
+
+
 def test_a_second_run_waits_for_the_first(hub):
     with lina_runner_sync.run_lock(hub["root"]):
         code, lines = run(hub)

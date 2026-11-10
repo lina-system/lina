@@ -209,6 +209,8 @@ class Run:
             self.hub_questions.append({"name": name, "sign_in": "signed_out", "sign_in_by": runner.sign_in})
             self.event(f"{name} hub {newest}: not moved, the hub is not signed in")
             return runner
+        if self.hub_busy(name, newest, rec):
+            return runner
         previous = lina_runners.current_version(self.root, runner)
         if previous is None:
             rec["hub"] = {"state": "hub prepare needed", "to": newest,
@@ -228,7 +230,20 @@ class Run:
             rec["hub"] = {"state": "failed", "to": newest, "reason": scrub(why)}
             self.hold(name, "hub", newest, why, "trial")
             return runner
+        if self.hub_busy(name, newest, rec):
+            self.discard(moved)
+            return runner
         return self.switch(name, runner, moved, previous, rec)
+
+    def hub_busy(self, name: str, newest: str, rec: dict) -> bool:
+        """The hub is a node too: while a run holds one of its slots it neither installs nor switches today, and
+        nothing is held; tomorrow's run tries again."""
+        from hermes_cli.worker import settings, slots
+        held = slots.held(settings.root(self.root))
+        if held:
+            rec["hub"] = {"state": "hub busy", "to": newest, "reason": f"{held} run(s) hold a hub slot; next day"}
+            self.event(f"{name} hub {newest}: not moved, {held} run(s) on the hub")
+        return bool(held)
 
     def try_on_hub(self, moved: lina_runners.RunnerPin, downloads: dict) -> tuple[bool, str]:
         def fetch(url: str, dest: Path) -> None:
@@ -350,7 +365,7 @@ def execute(root: Path, env: Env, *, plan: bool, only: list[str] | None) -> dict
             rec["hub"] = {"state": "held"}
             continue
         pin = run.hub(name, runner, rec)
-        if rec["hub"]["state"] in ("major waits",):
+        if rec["hub"]["state"] in ("major waits", "hub busy"):
             continue
         run.follow(name, pin, rec)
     run.record["questions"] = run.questions()
@@ -444,6 +459,8 @@ def issue_lines(root: Path, now: float | None = None) -> tuple[list[str], list[s
             issues.append(f"- ocx: {node} health {ocx.get('health')}" + (" (external)" if ocx.get("external") else ""))
     for ask in record.get("questions") or []:
         issues.append(f"- sign-in: {ask['question']}")
+    if state.last(root).get("error"):
+        issues.append(f"- daily: could not start: {state.last(root)['error']}")
     return [scrub(line) for line in issues], [scrub(line) for line in notes]
 
 

@@ -25,6 +25,9 @@ TIMEOUT_S = 300.0
 OCX_LOGS = ("logs", "--json")
 _LOG_LISTS = ("logs", "entries", "requests", "items", "rows")
 _LOG_STATUS = ("status", "statusCode", "status_code")
+_LOG_ID = ("requestId", "request_id", "id")
+_LOG_MODEL = ("requestedModel", "model")
+_LOG_PROTOCOL = ("inboundProtocol", "protocol")
 _LOG_TIME = ("timestamp", "ts", "time", "at", "startedAt", "started_at", "createdAt", "created_at")
 
 
@@ -129,23 +132,46 @@ def _stamp(value) -> float | None:
     return None
 
 
-def ocx_answered(logs, since: float) -> tuple[bool, str]:
+def _rows(logs) -> list[dict]:
     rows = logs
     if isinstance(logs, dict):
         rows = next((logs[key] for key in _LOG_LISTS if isinstance(logs.get(key), list)), [])
-    if not isinstance(rows, list):
+    return [row for row in rows if isinstance(row, dict)] if isinstance(rows, list) else []
+
+
+def _first(row: dict, keys: tuple[str, ...]):
+    return next((row.get(key) for key in keys if row.get(key) is not None), None)
+
+
+def request_ids(logs) -> set[str]:
+    return {str(rid) for rid in (_first(row, _LOG_ID) for row in _rows(logs)) if rid is not None}
+
+
+def matches(row: dict, match: dict) -> bool:
+    """*row* is the trial's kind of request: every condition of the pin's ``ocx_match`` holds."""
+    model = str(_first(row, _LOG_MODEL) or "")
+    protocol = str(_first(row, _LOG_PROTOCOL) or "")
+    return (model.find(match.get("model_contains", "")) >= 0
+            and model.endswith(match.get("model_endswith", ""))
+            and ("protocol" not in match or protocol == match["protocol"]))
+
+
+def ocx_answered(logs, since: float, match: dict, seen: set[str]) -> tuple[bool, str]:
+    """A ``200`` the trial caused: a request id that was not in the log before the trial (*seen*), of the trial's
+    kind (*match*), not older than the trial's start. Other requests of the same model and protocol that arrive at
+    the same time cannot be told apart from it (OCX records no client); the trial's ``OK`` is the main evidence."""
+    if not isinstance(logs, (dict, list)):
         return False, "the OCX log is not a list"
-    timed = 0
-    for row in rows:
-        if not isinstance(row, dict):
-            continue
+    new = 0
+    for row in _rows(logs):
+        rid = _first(row, _LOG_ID)
         stamp = next((s for s in (_stamp(row.get(key)) for key in _LOG_TIME) if s is not None), None)
-        if stamp is None or stamp < since - 1:
+        if rid is None or str(rid) in seen or (stamp is not None and stamp < since - 1):
             continue
-        timed += 1
-        if next((row.get(key) for key in _LOG_STATUS if row.get(key) is not None), None) in (200, "200"):
+        new += 1
+        if _first(row, _LOG_STATUS) in (200, "200") and matches(row, match):
             return True, "OCX answered 200"
-    return False, f"no 200 in the OCX log since the trial began ({timed} entries then)"
+    return False, f"no new 200 matching {match} in the OCX log since the trial began ({new} new entries)"
 
 
 def read_ocx_logs(root: Path):
@@ -159,6 +185,14 @@ def trial(root: Path, runner: lina_runners.RunnerPin, version: str, *,
     spec = runner.trial
     if not spec:
         return False, "no trial in the pin"
+    seen: set[str] = set()
+    if spec.get("ocx"):
+        if not isinstance(spec.get("ocx_match"), dict) or not spec["ocx_match"]:
+            return False, "no ocx_match in the pin"
+        try:
+            seen = request_ids(ocx_logs(root))
+        except lina_runners.OcxError as exc:
+            return False, f"OCX log could not be read before the trial: {exc}"
     entry = lina_runners.entry_path(root, runner, version)
     env = lina_runners.run_env(root, runner)
     began = clock()
@@ -173,4 +207,4 @@ def trial(root: Path, runner: lina_runners.RunnerPin, version: str, *,
         logs = ocx_logs(root)
     except lina_runners.OcxError as exc:
         return False, f"answered OK but the OCX log could not be read: {exc}"
-    return ocx_answered(logs, began)
+    return ocx_answered(logs, began, spec["ocx_match"], seen)

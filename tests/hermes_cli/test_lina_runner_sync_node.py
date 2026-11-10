@@ -183,15 +183,19 @@ def _installed_runner(root, trial: dict) -> lina_runners.RunnerPin:
 
 
 def test_a_trial_through_ocx_needs_a_200_logged_after_it_began(tmp_path):
-    runner = _installed_runner(tmp_path, {"argv": ["-p", "{prompt}"], "ocx": True})
+    runner = _installed_runner(tmp_path, {"argv": ["-p", "{prompt}"], "ocx": True,
+                                          "ocx_match": {"model_contains": "haiku"}})
     began = 2_000_000_000.0
 
-    def attempt(logs):
-        return trials.trial(tmp_path, runner, "1.0.71", ocx_logs=lambda root: logs, clock=lambda: began)
+    def attempt(after):
+        logs = iter([{"logs": []}, after])
+        return trials.trial(tmp_path, runner, "1.0.71", ocx_logs=lambda root: next(logs), clock=lambda: began)
 
-    assert attempt({"logs": [{"status": 200, "timestamp": (began + 2) * 1000}]}) == (True, "OCX answered 200")
-    assert attempt([{"status": 200, "time": "2001-01-01T00:00:00Z"}])[0] is False, "an old 200 is not this trial's"
-    assert attempt([{"status": 502, "ts": began + 2}])[0] is False
+    row = {"requestId": "r1", "requestedModel": "anthropic/claude-haiku-5-5"}
+    assert attempt({"logs": [{**row, "status": 200, "timestamp": (began + 2) * 1000}]}) == (True, "OCX answered 200")
+    assert attempt([{**row, "status": 200, "time": "2001-01-01T00:00:00Z"}])[0] is False, \
+        "an old 200 is not this trial's"
+    assert attempt([{**row, "status": 502, "ts": began + 2}])[0] is False
 
 
 def test_a_trial_without_ocx_only_needs_the_answer(tmp_path):
@@ -263,6 +267,27 @@ def test_the_daily_sync_starts_once_a_day_after_its_time(tmp_path, zone, monkeyp
     assert start(_local(1, 4, 30)) is True
     assert started == [_local(0, 4, 0), _local(1, 4, 30)]
     assert state.last(base)["started"] == _local(1, 4, 30)
+
+
+def test_a_daily_start_that_raises_stays_inside_the_tick_and_is_an_issue(tmp_path, zone):
+    from hermes_cli import lina_runner_sync
+    base = tmp_path / "lina"
+    base.mkdir()
+    (base / "config.yaml").write_text('worker:\n  runner_sync: {at: "04:00"}\n', encoding="utf-8")
+    calls: list[float] = []
+
+    def broken(root):
+        calls.append(1)
+        raise OSError("no python here")
+
+    assert lina_runner_sync_daily.maybe_start(base / "worker", now=_local(0, 5), spawn=broken) is False
+    assert lina_runner_sync_daily.maybe_start(base / "worker", now=_local(0, 6), spawn=broken) is False
+    assert calls == [1], "today's start is spent: not tried again the same day"
+    last = state.last(base)
+    assert (last["rc"], last["finished"], last["error"]) == (1, _local(0, 5), "OSError: no python here")
+    assert "could not start: OSError: no python here" in (state.sync_dir(base) / "sync.log").read_text()
+    issues, _ = lina_runner_sync.issue_lines(base)
+    assert issues == ["- daily: could not start: OSError: no python here"]
 
 
 def test_the_daily_sync_is_off_without_its_setting(tmp_path):

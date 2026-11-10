@@ -106,8 +106,17 @@ nothing that day.
 2. a version above the hub's pin is installed on the hub beside the current one
    and asked one real request (the pin's `trial`: "Reply with exactly OK and
    nothing else." must come back as a line `OK`; dsh is asked once over ACP).
-   codex, claude and dsh also need a `200` in the hub's OCX log since the trial
-   began (`ocx logs --json`, read-only with `ocx.external`);
+   codex, claude and dsh also need a new `200` in the hub's OCX log
+   (`ocx logs --json`, read-only with `ocx.external`): a `requestId` that was
+   not in the log read just before the trial, of the trial's kind (the pin's
+   `trial.ocx_match`: `model_contains`, `model_endswith`, `protocol`). A pin with
+   `ocx: true` and no `ocx_match`, or a log that cannot be read before the trial,
+   fails without a trial. OCX records no client, so another request of the same
+   model and protocol at the same moment cannot be told apart: the `OK` answer
+   is the main evidence, the `200` shows the runner went through OCX. While a
+   run holds a hub slot (checked before the install and before the switch), the
+   hub neither installs nor switches that day and the nodes do not follow;
+   nothing is held;
 3. when it passes, the hub writes the move into `$LINA_HOME/runner-pins.json`,
    switches, and sends each node its `runner-sync` verb with the new pin. The
    node checks again that no run holds a slot, writes the same file in its own
@@ -149,7 +158,9 @@ Unreachable nodes and lags under 24 hours are notes.
 `worker.runner_sync: {at: "04:00"}` (off by default) lets `lina worker serve` on
 the hub start the sync as its own owned process once the local time is past
 `at`; the start written into `last.json` and the sync's lock keep a restarted
-service from running it twice on one day.
+service from running it twice on one day. A start that fails is written into
+`last.json` (`rc: 1`, `error`) and `runner-sync/sync.log`, is not retried that
+day, and shows as `- daily: could not start: ...` in `sync status --issues`.
 
 ## Not wired yet
 
