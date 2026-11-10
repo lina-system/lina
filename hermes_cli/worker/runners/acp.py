@@ -125,7 +125,24 @@ class AcpRunner:
         return (True, found[0]) if found else (False, f"{self.argv[0]} not found on PATH")
 
     def honours(self, mode: str) -> tuple[bool, str]:
-        return mode in ACCESS, "" if mode in ACCESS else f"unknown access mode {mode!r}"
+        if mode not in ACCESS:
+            return False, f"unknown access mode {mode!r}"
+        if mode == "full":
+            return True, ""
+        from hermes_cli import lina_runners
+        adapter = self.flavor or Path(self.argv[0]).name
+        observations = lina_runners.ACP_PERMISSION_OBSERVATIONS.get(adapter)
+        if observations is None:
+            return True, ""
+        argv = lina_copy.argv(self.argv, self.root)
+        env = build_subprocess_env(scrub_secrets=False, inherit_profile_home=False, extra=self.env)
+        version = lina_runners.ask_version([argv[0]], env, subprocess.run)
+        observed = observations.get(version)
+        if observed is True:
+            return True, ""
+        reason = ("its ACP native tools bypass permission requests" if observed is False
+                  else "ACP permission enforcement has not been observed; recheck this version")
+        return False, f"{self.name} ({adapter} {version or 'unknown version'}) cannot hold {mode}: {reason}"
 
     def _launch(self, task: Task, run: int, prompt: str, model: ModelProfile | None,
                 access: str, previous: dict | None = None) -> Handle:
@@ -173,6 +190,9 @@ class AcpRunner:
     def follow_up(self, handle: Handle, text: str, *, run: int | None = None,
                   access: str | None = None) -> tuple[str, Handle]:
         mode = recorded_access(handle, access)
+        supported, reason = self.honours(mode)
+        if not supported:
+            raise RunnerError(reason)
         if run is None and self._enqueue(handle, "steer", text, mode):
             return "steered", handle
         if self.state(handle) in ("running", "waiting_human"):
