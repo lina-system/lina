@@ -114,6 +114,8 @@ def serve(worker_root: Path | None = None, *, once: bool = False) -> int:
             if settings.devices(device.base_of(worker_root)) and time.monotonic() - last_tick >= HUB_TICK_S:
                 from hermes_cli.worker import hub
                 hub.tick(worker_root)
+                from hermes_cli.lina_runner_sync_daily import maybe_start
+                maybe_start(worker_root)
                 last_tick = time.monotonic()
             if once:
                 return 0

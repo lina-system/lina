@@ -79,6 +79,89 @@ through its `service` verb. The worker goes through #218's
 the service layer (`lina_services.act`, its refusals included: OCX is not
 restarted while the worker or gateway runs on it).
 
+## Daily sync (lina#238)
+
+Each runner pin with `follow` moves once a day to its source's newest version,
+after a trial on the hub, and the nodes follow the same day. omo, OCX and the
+ACP adapters keep LINA's pins; `gh`, `opencode` and `pi` are not runners.
+
+| Runner | Source (`follow`) | Hash |
+|---|---|---|
+| `codex` | npm `@openai/codex` dist-tag `latest` | npm `dist.integrity` |
+| `claude` | npm `@anthropic-ai/claude-code` dist-tag `stable` | npm `dist.integrity` |
+| `dsh` | npm `@deepseek-ai/dsh` dist-tag `latest` | npm `dist.integrity` |
+| `grok` | `https://x.ai/cli/stable` (the body is the version) | sha256 the hub measures |
+| `cursor-agent` | the `downloads.cursor.com/lab/<version>/` in `https://cursor.com/install` | sha256 the hub measures |
+| `agy` | the per-platform release manifest | the manifest's sha512 |
+
+For grok and cursor-agent the hub downloads the new version for each platform
+its nodes report (`hello`'s `capabilities.platform`, plus its own), records
+the sha256, and compares the bytes with the hash or length the download's
+answer carries (GCS `x-goog-hash` md5, a plain md5 `etag`); a mismatch moves
+nothing that day.
+
+`lina runners sync [--plan] [--only grok,codex] [--json]`, per runner:
+
+1. the source names its newest version;
+2. a version above the hub's pin is installed on the hub beside the current one
+   and asked one real request (the pin's `trial`: "Reply with exactly OK and
+   nothing else." must come back as a line `OK`; dsh is asked once over ACP).
+   codex, claude and dsh also need a new `200` in the hub's OCX log
+   (`ocx logs --json`, read-only with `ocx.external`): a `requestId` that was
+   not in the log read just before the trial, of the trial's kind (the pin's
+   `trial.ocx_match`: `model_contains`, `model_endswith`, `protocol`). A pin with
+   `ocx: true` and no `ocx_match`, or a log that cannot be read before the trial,
+   fails without a trial. OCX records no client, so another request of the same
+   model and protocol at the same moment cannot be told apart: the `OK` answer
+   is the main evidence, the `200` shows the runner went through OCX. While a
+   run holds a hub slot (checked before the install and before the switch), the
+   hub neither installs nor switches that day and the nodes do not follow;
+   nothing is held;
+3. when it passes, the hub writes the move into `$LINA_HOME/runner-pins.json`,
+   switches, and sends each node its `runner-sync` verb with the new pin. The
+   node checks again that no run holds a slot, writes the same file in its own
+   root, upgrades (`lina runners upgrade`: hash, `--version`, switch, shim
+   trial, back to `previous` on failure) and answers.
+
+`runner-pins.json` is laid over `pm/lina-deps.json` by `lina_runners.pins()`;
+the repo pin is the floor. Every change appends the previous entry to
+`runner-pins.history.jsonl`. Nothing moves when:
+
+- the runner is held: a failed hub trial holds the runner, a failed node install
+  holds it on that node only (`runner-sync/holds.json`). `lina runners sync clear
+  <runner> [--node <node>]` releases it;
+- the jump is major (the first number changes; a year such as cursor-agent's
+  `2026.11.05-...` is not one): it is held without a trial until `sync clear
+  <runner> --accept <version>`;
+- the source names a version below the pin (reported, not moved);
+- the hub is not signed in to the runner: a sign-in question, not a failure.
+
+A node with a run holding a slot, an unreachable node, a node without the
+`runner-sync` verb (`update`) and a node that never installed the runner
+(`prepare`, see `lina runners install`) are skipped and follow on a later day.
+`hello` carries `pin_from` (`repo` or `sync`) per runner row, `platform`, and
+`ocx` (`external`, `version`, `health`: the `/healthz` status code);
+`lina devices --json` adds `hub_pinned` and `same_as_hub` to each row.
+
+Each run writes `runner-sync/YYYYMMDD.json` (sources, the hub's trial, each
+node's result, holds) and `runner-sync/last.json` (`started`, `finished`,
+`rc`), and sends one short English notice through `worker.notice.command` to
+`worker.runner_sync.notify` (default `default`) when something moved, failed
+or waits; a quiet day sends none. `--plan` installs, writes and sends nothing.
+
+`lina runners sync status` shows the hub's pins, holds, the last run, issues
+and notes; `--issues` prints only the issue lines (`- none` when there are
+none): holds, a node behind the hub's pin for over 24 hours
+(`runner-sync/lag.json`), an OCX whose health is not 200, and sign-ins.
+Unreachable nodes and lags under 24 hours are notes.
+
+`worker.runner_sync: {at: "04:00"}` (off by default) lets `lina worker serve` on
+the hub start the sync as its own owned process once the local time is past
+`at`; the start written into `last.json` and the sync's lock keep a restarted
+service from running it twice on one day. A start that fails is written into
+`last.json` (`rc: 1`, `error`) and `runner-sync/sync.log`, is not retried that
+day, and shows as `- daily: could not start: ...` in `sync status --issues`.
+
 ## Not wired yet
 
 The runner `argv` in `docs/lina-worker.example.yaml` still names the bare
