@@ -105,10 +105,11 @@ def low_memory(probe: dict) -> bool:
 
 def record_end(store, node: str, state: str, took: float | None, at: float | None = None) -> None:
     """One run end on *node*'s record (``ends``, the newest last), for the cool-off. *took* None: its length is not
-    known, so it never counts as a quick failure."""
+    known, so it never counts as a quick failure. Enough ends are kept for ``cooloff_failures``."""
+    kept = max(ENDS_KEPT, int(settings.setting("cooloff_failures", worker=settings.section(store.worker_root.parent))))
     with store.edit_node(node) as record:
         ends = [*(record.get("ends") or []), {"at": time.time() if at is None else at, "state": state, "took": took}]
-        record["ends"] = ends[-ENDS_KEPT:]
+        record["ends"] = ends[-kept:]
 
 
 def cooling(record: dict | None, worker: dict, now: float) -> int | None:

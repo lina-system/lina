@@ -72,8 +72,13 @@ speaks for a lost node.
   (default 120) and they ended within `worker.cooloff_window_s` (default 1800)
   of each other, the bid passes the node for `worker.cooloff_s` (default 900)
   after the last one. A newer end that is not `failed` (`done`) clears it. A
-  run whose length the hub does not know (any run after the first of a task)
-  never counts as quick. A named run still starts there, and `lina worker
+  run's length (`took`) is how long it ran on the node: `run_s` of the run's
+  fetched `manifest.json` (the node's `started.<run>` to `ended.<run>`), so a
+  late end report does not lengthen it, for every run of a task. An end whose
+  result the hub did not fetch (a `--wait` waiter shows it, or the fetch
+  failed) or whose fetched manifest is another run's has no known length and
+  never counts as quick. The node record keeps at least
+  `worker.cooloff_failures` ends (and at least 10). A named run still starts there, and `lina worker
   hosts` (which shows named-run readiness) says it on the node's line as
   `cooling off after <n> quick failures (named runs still start)`. The four
   numbers are work settings (`lina worker settings set worker.cooloff_s 600`).

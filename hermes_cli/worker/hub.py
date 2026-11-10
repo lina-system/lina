@@ -934,8 +934,18 @@ class Hub:
                 return "no job"
             how = self._notify_locked(job, kind, run)
         if self.run_end:  # after the job's lock: the node watch takes a node's lock, then its jobs'
-            bidding.record_end(self.store, *self.run_end)
+            host, kind, run = self.run_end
+            bidding.record_end(self.store, host, kind, self._run_seconds(job, run))
         return how
+
+    def _run_seconds(self, job: dict, run: str) -> float | None:
+        """How long run *run* ran on its node (``run_s`` of the fetched manifest, from the node's own start and end),
+        however late its end reached the hub; None when the fetched manifest is not that run's (nothing fetched: a
+        waiter shows the end, or the fetch failed)."""
+        manifest = read_json(self.store.out_dir(job) / "manifest.json", {}) or {}
+        if str(manifest.get("run")) != str(run) or manifest.get("run_s") is None:
+            return None
+        return float(manifest["run_s"])
 
     def _adopt(self, job: dict, run: int) -> None:
         """An end reported for a run newer than the job's: the hub missed the reply of the follow-up that started it
@@ -1003,9 +1013,7 @@ class Hub:
         self.store.save(job)
         self.store.receipt(job["id"], "exec_end", state=kind, run=run, delivery=end["delivery"], **events.fields(kind))
         if job.get("host"):
-            # Only run 1 has a start on the hub (``started``); a later run's length is not known.
-            started = job.get("started") if str(run) == "1" else None
-            self.run_end = (job["host"], kind, time.time() - started if started else None)
+            self.run_end = (job["host"], kind, run)
         return self._end_advance(job, end["delivery"])
 
     def _earlier_end(self, job: dict, kind: str, run: str, end: dict) -> str:

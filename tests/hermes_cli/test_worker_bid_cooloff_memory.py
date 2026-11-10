@@ -181,9 +181,17 @@ def fleet(tmp_path, monkeypatch):
     return tmp_path
 
 
-def _ended(hub, task_id, state, took, run="1"):
-    hub.store.save({"id": task_id, "created": 1.0, "runner": "omo", "state": "running", "host": "node-a",
-                    "bot": "bot", "runs": int(run), "started": time.time() - took})
+def _ended(hub, task_id, state, run_s, run="1", manifest_run=None, started=None):
+    """*task_id*'s run *run* ends on node-a; its fetched manifest says the node ran it *run_s* seconds (for run
+    *manifest_run*, default *run*; *run_s* None: nothing fetched)."""
+    job = {"id": task_id, "created": 1.0, "runner": "omo", "state": "running", "host": "node-a", "bot": "bot",
+           "runs": int(run), "started": time.time() if started is None else started}
+    hub.store.save(job)
+    if run_s is not None:
+        out = hub.store.out_dir(job)
+        out.mkdir(parents=True, exist_ok=True)
+        (out / "manifest.json").write_text(json.dumps({"run": int(manifest_run or run), "run_s": run_s}),
+                                           encoding="utf-8")
     hub.notify(task_id, state, run)
 
 
@@ -213,9 +221,44 @@ def test_run_ends_reported_to_the_hub_cool_the_node_off_and_every_surface_says_w
     assert "cooling" not in bidding.with_node_facts(probe(), None, "node-a", fleet / "worker")
 
 
-def test_a_later_run_of_unknown_length_does_not_count_as_quick(fleet):
+def test_a_later_run_is_measured_by_its_manifest_too(fleet):
     hub = Hub(fleet / "worker", out=lambda line: None)
     _ended(hub, "OT-T0000000001", "failed", 20)
     _ended(hub, "OT-T0000000002", "failed", 20, run="2")
-    assert hub.store.load_node("node-a")["ends"][-1]["took"] is None
+    assert hub.store.load_node("node-a")["ends"][-1]["took"] == 20.0
+    assert bidding.with_node_facts(probe(), None, "node-a", fleet / "worker").get("cooling") == 2
+
+
+def test_a_late_end_report_still_counts_the_node_s_run_time(fleet):
+    hub = Hub(fleet / "worker", out=lambda line: None)
+    hours_ago = time.time() - 3 * 3600
+    _ended(hub, "OT-T0000000001", "failed", 20, started=hours_ago)
+    _ended(hub, "OT-T0000000002", "failed", 20, started=hours_ago)
+    assert [end["took"] for end in hub.store.load_node("node-a")["ends"]] == [20.0, 20.0]
+    assert bidding.with_node_facts(probe(), None, "node-a", fleet / "worker").get("cooling") == 2
+
+
+def test_a_long_run_reported_at_once_is_not_a_quick_failure(fleet):
+    hub = Hub(fleet / "worker", out=lambda line: None)
+    _ended(hub, "OT-T0000000001", "failed", 300)
+    _ended(hub, "OT-T0000000002", "failed", 300)
+    assert [end["took"] for end in hub.store.load_node("node-a")["ends"]] == [300.0, 300.0]
     assert "cooling" not in bidding.with_node_facts(probe(), None, "node-a", fleet / "worker")
+
+
+def test_an_end_without_that_run_s_manifest_has_no_length(fleet):
+    hub = Hub(fleet / "worker", out=lambda line: None)
+    _ended(hub, "OT-T0000000001", "failed", None)  # nothing fetched (a waiter, a failed fetch)
+    _ended(hub, "OT-T0000000002", "failed", 20, run="2", manifest_run="1")  # an earlier run's manifest
+    assert [end["took"] for end in hub.store.load_node("node-a")["ends"]] == [None, None]
+    assert "cooling" not in bidding.with_node_facts(probe(), None, "node-a", fleet / "worker")
+
+
+def test_enough_ends_are_kept_for_a_threshold_above_ten(root):
+    (root.parent / "config.yaml").write_text("worker:\n  cooloff_failures: 11\n", encoding="utf-8")
+    ends(root, *((T0 + i, "failed", 5.0) for i in range(11)))
+    assert facts(root, now=T0 + 20).get("cooling") == 11
+
+    (root / "hub" / "nodes" / "node-a.json").unlink()
+    ends(root, *((T0 + i, "failed", 5.0) for i in range(10)))
+    assert "cooling" not in facts(root, now=T0 + 20)
