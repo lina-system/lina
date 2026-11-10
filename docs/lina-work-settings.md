@@ -52,7 +52,7 @@ Omitted file fields use the worker reader's defaults: `omo: omo`, empty `deny`/`
   replaced. A submit never calls OCX: it decides from the models list this process last read (`…/models` or
   `lina worker settings models`, kept 10 minutes), else from `work-settings/models-last-good.json`, the snapshot
   every good read writes (whole: a temp file, then a rename) for the submits that run in a process of their own
-  (`lina worker submit`, `lina work submit`, the omo-task shim). It keeps only what the check uses: per model its
+  (`lina worker submit`, `lina work submit`). It keeps only what the check uses: per model its
   provider, id, efforts and off flags; per account its provider, paused and sign-in flags and quota windows (no
   account name, email, id or label); and `at`, the read time. It stays fresh while someone has the models view open
   (the hub page reads it once a minute); older than 10 minutes, missing or unreadable, the check is `unchecked` and

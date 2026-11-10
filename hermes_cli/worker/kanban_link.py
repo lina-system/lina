@@ -7,7 +7,7 @@ is only read here. Where it lives is ``worker.card_link``:
 
 * unset or ``{kind: lina}``: LINA's own board, through the kanban DB API (``worker_run``, ``worker_run_ended`` and
   ``worker_host_unavailable`` events, each carrying its ``events`` kind, the end notice as a comment).
-* ``{kind: hermes, command: [hermes]}``: a Hermes Agent card, written only through that command's
+* ``{kind: hermes, command: [/path/to/hermes]}``: a Hermes Agent card, written only through that command's
   ``kanban [--board <b>] comment | attach | show | unblock``. No LINA code opens a kanban database in this mode.
   The hub writes start/end comments and attaches ``report.md``. The card's model schedules itself
   (``kanban_schedule``), naming the runs it waits on in the reason or in ``workers``; ``lina worker wait`` also
@@ -48,6 +48,11 @@ class CardLinkError(RuntimeError):
     pass
 
 
+class CardWaiting(CardLinkError):
+    """The card is not ready for this step yet (it has not scheduled itself, or still waits on other runs): retried
+    on the next tick, and not a failing link."""
+
+
 def config(worker: dict) -> dict:
     """``worker.card_link`` as ``{kind: lina}`` or ``{kind: hermes, command: [...]}``."""
     link = worker.get("card_link")
@@ -60,8 +65,36 @@ def config(worker: dict) -> dict:
         raise CardLinkError(f"worker.card_link.kind is lina or hermes, not {kind!r}")
     command = link.get("command")
     if not isinstance(command, list) or not command or not all(isinstance(part, str) and part for part in command):
-        raise CardLinkError("worker.card_link.command must be an argv list, e.g. [hermes]")
-    return {"kind": HERMES, "command": command}
+        raise CardLinkError("worker.card_link.command must be an argv list, e.g. [/path/to/hermes]")
+    from hermes_platform.resolver import locate_command
+    found = next(iter(locate_command(command[0]).command), None)
+    if found and _in_lina_tree(found):
+        raise CardLinkError(f"worker.card_link.command[0] {command[0]!r} is this LINA's own {found}; "
+                            "set the Hermes Agent CLI by absolute path")
+    return {"kind": HERMES, "command": [found or command[0], *command[1:]]}
+
+
+def lina_trees() -> list[Path]:
+    """The running LINA's own trees: the checkout (or install directory) holding the ``hermes_cli`` package, whose
+    ``.hermes/bin/hermes`` is LINA's alias, and the virtual environment it runs in, whose ``bin/hermes`` is its
+    console script. A Python that is not a virtual environment (``sys.prefix == sys.base_prefix``) is a shared
+    system prefix, not LINA's."""
+    import hermes_cli
+    trees = [Path(hermes_cli.__file__).resolve().parent.parent]
+    if sys.prefix != sys.base_prefix:
+        trees.append(Path(sys.prefix).resolve())
+    return trees
+
+
+def _in_lina_tree(path: str) -> bool:
+    """Whether *path*, with its links followed, is a file of the running LINA, or a user-bin forwarder to one
+    (``exec <tree>/.hermes/bin/hermes "$@"``). The interpreter itself is not LINA's ``hermes`` (``[python, script]``
+    runs the script), even where a virtual environment copies it in."""
+    from hermes_cli._launchers import _owns_launcher
+    real = Path(path).resolve()
+    if real == Path(sys.executable).resolve():
+        return False
+    return any(real.is_relative_to(tree) or _owns_launcher(Path(path), tree) for tree in lina_trees())
 
 
 def _card_of(env) -> dict | None:
@@ -157,6 +190,96 @@ def judged_cards(card: dict) -> list[dict]:
     """The ``cards`` of a run on a Hermes card, in the shape Hermes reads from a job record to refuse the card's
     ``complete`` / ``request-review`` while the run it launched is unjudged."""
     return [{"id": card["task"], "board": card.get("board") or "default"}]
+
+
+def linked_cards(job: dict) -> list[dict]:
+    """Notification cards; old jobs have only the submit-time ``card``."""
+    return job.get("card_links", [job["card"]] if job.get("card") else [])
+
+
+def change_card(hub, task_id: str, card: str | None, drop: str | None, board: str | None) -> int:
+    """Change links under the same lock as end delivery; no-op calls never save the job."""
+    from hermes_cli.worker.hub import HubError
+    if card and drop:
+        raise HubError("card: choose a card to add or --drop <card>, not both")
+    if board and not card:
+        raise HubError("--board names the board of the card to add")
+    with hub.store.lock(task_id):
+        job = hub.need(task_id)
+        linked = linked_cards(job)
+        if not card and not drop:
+            for item in linked:
+                hub.out(f"{item['task']}  {item.get('board') or '-'}  ({item.get('kind') or 'lina'})")
+            if not linked:
+                hub.out(f"{task_id}: no card")
+            return 0
+        existing = next((item for item in linked if item["task"] == (card or drop)), None)
+        if (card and existing) or (drop and not existing):
+            hub.out(f"{task_id}: card {card or drop} " + ("already linked" if card else "not linked"))
+            return 0
+        changed = card_for({"task": card, "board": board or os.environ.get("HERMES_KANBAN_BOARD") or None},
+                           hub._link()) if card else existing
+        links = [*linked, changed] if card else [item for item in linked if item != existing]
+        job["card_links"] = links
+        job["cards"] = [entry for item in links if on_hermes(item) for entry in judged_cards(item)]
+        job["card"] = links[0] if links else None
+        if drop and existing == (linked[0] if linked else None):
+            job.pop("card_start_pending", None)
+        hub.store.save(job)
+        hub.store.receipt(task_id, "card_linked" if card else "card_dropped", card=changed)
+        hub.out(f"{task_id}: card {card or drop} " + ("linked" if card else "dropped"))
+    return 0
+
+
+def end_cards(hub, job: dict, entry: dict) -> str:
+    """Advance each remaining card independently, retaining completed steps across retries."""
+    targets = entry.setdefault("cards", linked_cards(job))
+    progress = entry.setdefault("card_progress", {})
+    pending = ""
+    for card in targets:
+        if card not in linked_cards(job):
+            continue
+        key = json.dumps(card, sort_keys=True)
+        state = progress.setdefault(key, {"done": list(entry["done"])})
+        if state.get("noticed"):
+            continue
+        for step in END_STEPS:
+            if step in state["done"]:
+                continue
+            try:
+                if on_hermes(card):
+                    woke = end_step(step, hub.store, card, job, entry["run"],
+                                    events.signed(entry["text"], entry.get("delivery")), config(hub.worker),
+                                    Path(entry["report"]) if entry.get("report") else None)
+                else:
+                    woke = None
+                    if step == "comment":
+                        record_end(card, job, entry["kind"], entry["run"],
+                                   events.signed(entry["text"], entry.get("delivery")))
+            except (OSError, ValueError, CardLinkError) as exc:
+                hub.store.receipt(job["id"], "card_notice_failed", card=card, step=step, error=str(exc)[:300])
+                if not isinstance(exc, CardWaiting):
+                    hub._card_failed(job, exc)
+                else:
+                    hub._card_warning(job, state, card)
+                pending = f"card {card['task']}: {step} failed, retried on the next report or tick"
+                break
+            state["done"].append(step)
+            job.pop("card_link_failing", None)
+            if woke:
+                state["woke"], state["unblock"] = True, woke
+            hub.store.save(job)
+            hub._card_warning(job, state, card)
+        if any(step not in state["done"] for step in END_STEPS):
+            continue
+        if not hub._card_warning(job, state, card):
+            pending = f"card {card['task']}: the card-link warning failed, retried on the next report or tick"
+            continue
+        hub.store.receipt(job["id"], "card_noticed", card=card, state=entry["kind"], run=entry["run"],
+                          woke=bool(state.get("woke")), unblock=state.get("unblock"))
+        state["noticed"] = True
+        hub.store.save(job)
+    return pending
 
 
 def hub_env() -> dict[str, str]:
@@ -304,8 +427,8 @@ def _last_schedule(view: dict) -> tuple[list[str], str | None]:
 
 def _still_open(store, run_id: str) -> bool:
     """Hub records win; a foreign run closes only on a successful legacy terminal status."""
-    from hermes_cli.lina_shims import legacy_omo_task
     from hermes_cli.worker.hub import ENDED
+    from hermes_cli.worker.settings import legacy_omo_task
     ended = ENDED + ("unknown",)
     if run_id.startswith("OG-"):
         members = [job for job in store.all() if job.get("group") == run_id]
@@ -376,17 +499,17 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None) 
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named:
             if any(_still_open(store, other) for other in named if other != run_id):
-                from hermes_cli.lina_shims import legacy_omo_task
+                from hermes_cli.worker.settings import legacy_omo_task
                 if status == "scheduled" and legacy_omo_task(store.worker_root.parent):
                     # A legacy end does not report to this hub; retain its wake for the next tick.
-                    raise CardLinkError(f"card {card['task']} is waiting for scheduled runs to end")
+                    raise CardWaiting(f"card {card['task']} is waiting for scheduled runs to end")
                 return None
             if woken.is_file() and woken.read_text(encoding="utf-8-sig").strip() == schedule:
                 return None  # this schedule was woken already, by the end of another run it names
         elif run_id not in parked and status not in ("running", "ready"):
             return None
         if status in ("running", "ready"):  # not parked yet: it may still schedule on this run
-            raise CardLinkError(f"card {card['task']} is {status}; waiting for kanban_schedule")
+            raise CardWaiting(f"card {card['task']} is {status}; waiting for kanban_schedule")
         form = None
         if status == "scheduled":
             form = unblock(link["command"], card, judged or run_id)

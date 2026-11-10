@@ -194,6 +194,7 @@ elif mode == "hang":
 
 def write_config(base: Path, runners_yaml: str, extra: str = "", stall: float = 30) -> None:
     base.mkdir(parents=True, exist_ok=True)
+    # A test that must place on the local node lifts both floors: the bid refuses a node under min_free_mem_gb too.
     (base / "config.yaml").write_text(textwrap.dedent(f"""\
         devices:
           workers:
@@ -203,6 +204,7 @@ def write_config(base: Path, runners_yaml: str, extra: str = "", stall: float = 
           stall_grace_s: {stall}
           answered_grace_s: 0.2
           min_free_gb: 0
+          min_free_mem_gb: 0
           runners:
         {textwrap.indent(textwrap.dedent(runners_yaml), "    ")}
         """) + extra, encoding="utf-8")

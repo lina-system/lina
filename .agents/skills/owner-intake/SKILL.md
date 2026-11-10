@@ -9,7 +9,7 @@ metadata:
   hermes:
     tags: [intake, planning, owner-report]
     category: productivity
-    related_skills: [work-ledger, omo-tasks, writing-review]
+    related_skills: [work-ledger, lina-worker, writing-review]
 ---
 
 # Owner Intake Skill
@@ -26,7 +26,7 @@ Read the current goal, acceptance checklist, issue history, dependencies, and an
 
 ## How to Run
 
-Inspect the authoritative record and source evidence with `read_file`, `search_files`, or available issue tools. Use `work-ledger` to track accepted work and `omo-tasks` for scoped execution.
+Inspect the authoritative record and source evidence with `read_file`, `search_files`, or available issue tools. Use `work-ledger` to track accepted work and `lina-worker` for scoped execution.
 
 ## Quick Reference
 

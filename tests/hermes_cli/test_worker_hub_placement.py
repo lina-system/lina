@@ -137,6 +137,33 @@ def test_removed_named_device_fails_and_places_the_next_task_on_the_same_tick(la
     assert len(card_ends) == 1
 
 
+def test_a_failing_lina_card_does_not_keep_the_end_from_the_next_card(lane):
+    hub = lane["hub"]
+    (here,) = hub.devices()
+    devices = [replace(here, name="gone", cap=0), replace(here, cap=0)]
+    lane["mp"].setattr(hub, "devices", lambda: devices)
+    first = _submit(lane, "gone")
+    cards = [{"task": "card-1", "kind": "lina"}, {"task": "card-2", "kind": "lina"}]
+    hub.store.update(first, card=cards[0], card_links=cards)
+    reached = []
+
+    def record_end(card, *args):
+        if card["task"] == "card-1":
+            raise OSError("board is locked")
+        reached.append(card["task"])
+
+    lane["mp"].setattr(hub_mod.kanban_link, "record_end", record_end)
+    devices[:] = [here]
+
+    hub.tick()
+
+    assert hub.store.load(first)["state"] == "failed"
+    assert reached == ["card-2"]
+    receipts = [(r["kind"], r["card"]["task"]) for r in hub.store.receipts_of(first)
+                if r["kind"] in ("card_notice_failed", "card_noticed")]
+    assert receipts == [("card_notice_failed", "card-1"), ("card_noticed", "card-2")]
+
+
 def test_full_named_device_waits_without_blocking_another_device(lane):
     hub = lane["hub"]
     (here,) = hub.devices()

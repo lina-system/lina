@@ -43,7 +43,9 @@ from typing import Any
 from urllib.parse import urlsplit
 
 KEYS = (("devices", "workers"), ("worker", "default_runner"), ("worker", "runners"), ("worker", "models"),
-        ("worker", "routing"), ("worker", "goal_drive"), ("worker", "goal_limits"), ("worker", "access"))
+        ("worker", "routing"), ("worker", "goal_drive"), ("worker", "goal_limits"), ("worker", "access"),
+        *(("worker", key) for key in ("cooloff_failures", "cooloff_window_s", "cooloff_quick_s", "cooloff_s")))
+COOLOFF = tuple(key for top, key in KEYS if key.startswith("cooloff_"))  # the bid's cool-off (bidding.cooling)
 NAME = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_-]{0,40}$")
 SECRET = re.compile(r"key|token|secret|password", re.IGNORECASE)
 KEEP_OUT = "env"
@@ -570,11 +572,16 @@ def _is_regex(value: Any) -> bool:
 
 
 def _goal(doc: dict, errors: list[dict]) -> None:
-    """``worker.goal_drive`` (on/off) and ``worker.goal_limits`` (the goal drive's limits per goal)."""
+    """``worker.goal_drive`` (on/off), ``worker.goal_limits`` (the goal drive's limits per goal) and the bid's
+    ``worker.cooloff_*`` numbers."""
     switch = get_path(doc, "worker.goal_drive")
     if switch is not None and (why := _type_error(_BOOL, switch)):
         errors.append({"path": "worker.goal_drive", "message": why})
     _section(get_path(doc, "worker.goal_limits"), GOAL_LIMITS, "worker.goal_limits", errors)
+    for key in COOLOFF:
+        value = get_path(doc, f"worker.{key}")
+        if value is not None and (why := _type_error(_INT, value)):
+            errors.append({"path": f"worker.{key}", "message": why})
 
 
 def _access(doc: dict, errors: list[dict]) -> None:

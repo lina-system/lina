@@ -1,5 +1,5 @@
 ---
-name: omo-tasks
+name: lina-worker
 description: "Delegate scoped work and inspect runner results."
 version: 1.0.0
 author: LINA
@@ -12,7 +12,7 @@ metadata:
     related_skills: [work-ledger, verification-gate, code-review, long-task-sessions]
 ---
 
-# Omo Tasks Skill
+# LINA Worker Skill
 
 Use omo as the default coding runner. Keep assignment, execution, result delivery, acceptance, and integration as separate observed states.
 

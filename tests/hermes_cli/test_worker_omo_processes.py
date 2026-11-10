@@ -57,6 +57,53 @@ def test_scope_ancestry_and_argv_literals(api, task, monkeypatch):
     assert {p["pid"] for p in api.live_work_processes(task)} == {11, 12}
 
 
+@pytest.mark.parametrize("with_child", [False, True])
+def test_python_kernel_is_not_work_but_its_child_is(api, task, monkeypatch, with_child):
+    kernel = task.dir / "home/.omo/agent/runtime/id/node_modules/@code-yeongyu/senpi-codemode/src/kernels/py/prelude.py"
+    rows = {10: proc(api, 10, 1, 10, "/", ("node", "/opt/node_modules/omo-ai/cli.js")),
+            11: proc(api, 11, 10, 11, task.work, ("python3", "-u", str(kernel)))}
+    if with_child:
+        rows[12] = proc(api, 12, 11, 12, task.work, ("pytest", "-q"))
+    monkeypatch.setattr(api, "_process_table", lambda: rows)
+    assert {row["pid"] for row in api.live_work_processes(task)} == ({12} if with_child else set())
+
+
+@pytest.mark.parametrize("interpreter,options", [
+    ("python", ("-B",)),
+    ("python3", ("-u", "-B", "-X", "dev", "-W", "ignore")),
+    ("/usr/bin/python3.14", ("-uB", "-Xdev", "-Wignore")),
+    ("python3.13", ("--",)),
+    ("node", ("--no-warnings",)),
+    ("node", ("--require", "./bootstrap.js", "--import=./loader.mjs")),
+    ("bun", ("--smol",)),
+    ("bun", ("--preload", "./bootstrap.js", "--",)),
+])
+def test_runtime_interpreter_options_reach_only_script(api, task, interpreter, options):
+    script = "/opt/.omo/agent/runtime/id/kernel.py"
+    assert api._is_runtime(proc(api, 11, 1, 11, task.work, (interpreter, *options, script)))
+
+
+@pytest.mark.parametrize("argv", [
+    ("python3", "-c", "/opt/.omo/agent/runtime/id/code"),
+    ("python3", "-m", "/opt/.omo/agent/runtime/id/module"),
+    ("python3", "-W", "/opt/.omo/agent/runtime/id/warning", "work.py"),
+    ("python3", "-X", "/opt/.omo/agent/runtime/id/option", "work.py"),
+    ("python3", "-u", "work.py", "/opt/.omo/agent/runtime/id/argument"),
+    ("python3", "-", "/opt/.omo/agent/runtime/id/argument"),
+    ("python3", "--unknown", "/opt/.omo/agent/runtime/id/argument"),
+    ("python3", "-X"),
+    ("python3", "--"),
+    ("python3.bad", "/opt/.omo/agent/runtime/id/kernel.py"),
+    ("node", "--eval", "/opt/.omo/agent/runtime/id/code"),
+    ("node", "-p", "/opt/.omo/agent/runtime/id/code"),
+    ("node", "--require", "/opt/.omo/agent/runtime/id/loader.js", "work.js"),
+    ("bun", "--preload", "/opt/.omo/agent/runtime/id/loader.js", "work.js"),
+    ("bun", "--smol", "work.js", "/opt/.omo/agent/runtime/id/argument"),
+])
+def test_runtime_interpreter_arguments_are_not_paths(api, task, argv):
+    assert not api._is_runtime(proc(api, 11, 1, 11, task.work, argv))
+
+
 @pytest.mark.parametrize("foreign_inside", [False, True])
 def test_foreign_cwd_is_never_resolved_before_ownership(api, task, monkeypatch, foreign_inside):
     foreign = task.dir / "foreign" if foreign_inside else task.dir.parent / "foreign"

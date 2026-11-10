@@ -16,7 +16,7 @@ def _hub():
 
 def _request_key(args) -> str:
     """``--key``, else a new key, printed before anything else so the caller can retry with it. On stderr: callers
-    of ``omo-task submit`` read the task ID from the first word of stdout."""
+    of ``lina worker submit`` read the task ID from the first word of stdout."""
     if args.key:
         return args.key
     from hermes_cli.worker.request_keys import new_key
@@ -89,7 +89,7 @@ _ACTIONS = {
     "wait": lambda a: _hub().wait(_card(a), a.id),
     "status": lambda a: _hub().status(a.id, a.json),
     "attach": lambda a: _hub().status(a.id),
-    "card": lambda a: _hub().card(a.id, a.card, a.drop),
+    "card": lambda a: _hub().card(a.id, a.card, a.drop, board=a.board),
     "result": lambda a: _hub().result(a.id),
     "accept": lambda a: _hub().verdict(a.id, True, a.note),
     "reject": lambda a: _hub().verdict(a.id, False, a.why),
@@ -183,11 +183,12 @@ def build_worker_parser(subparsers) -> None:
             p.add_argument("--json", action="store_true")
     sub.add_parser("attach", help="The old tool's attach: the run's status (the hub follows every run)") \
         .add_argument("id")
-    card = sub.add_parser("card", help="The card a run was handed out from (set at submit, never changed)")
+    card = sub.add_parser("card", help="List, add or drop the cards told when a task's runs end")
     card.add_argument("id")
-    card.add_argument("card", nargs="?", help=argparse.SUPPRESS)
-    card.add_argument("--board", help=argparse.SUPPRESS)
-    card.add_argument("--drop", help=argparse.SUPPRESS)
+    change = card.add_mutually_exclusive_group()
+    change.add_argument("card", nargs="?", help="card to add")
+    change.add_argument("--drop", help="card to remove")
+    card.add_argument("--board", help="the added card's board (default: HERMES_KANBAN_BOARD)")
     send = sub.add_parser("send", help="Running: steer into the run; waiting on a question: answer it; ended: the "
                                        "next run in the same session")
     send.add_argument("id")

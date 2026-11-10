@@ -31,6 +31,7 @@ class Verb:
 def verbs() -> dict[str, Verb]:
     """The only dispatch table, including payload and legacy recovery contracts."""
     import json
+    from hermes_cli import lina_runner_sync_node as runner_sync
     from hermes_cli.worker import device as d
 
     return {
@@ -53,6 +54,8 @@ def verbs() -> dict[str, Verb]:
                        "destructive", stdin=True, legacy=True),
         "pack": Verb(lambda root, args, data: (0, d.pack(root, args[0])), "read", legacy=True),
         "bundle": Verb(lambda root, args, data: d.bundle(root, *args[:2]), "read", legacy=True),
+        "runner-sync": Verb(lambda root, args, data: d._ok(runner_sync.apply(root, json.loads(data))), "destructive",
+                            stdin=True),
     }
 
 
@@ -92,7 +95,7 @@ def identity(worker_root: Path) -> tuple[bool, str | None]:
 def hello(worker_root: Path) -> dict:
     """Describe this installation, its offered runners with their pins and readiness (lina#222, bounded by
     ``lina_runners.HELLO_TIMEOUT_S``) and its supported access-mode vocabulary."""
-    from hermes_cli import lina_runners
+    from hermes_cli import lina_runner_sync_node, lina_runners
     from hermes_cli.lina_work_settings import ACCESS
     from hermes_cli.lina_version import LINA_VERSION
 
@@ -101,6 +104,8 @@ def hello(worker_root: Path) -> dict:
             "instance_id": instance_id, "serve": active,
             "version": LINA_VERSION,
             "capabilities": {"runners": lina_runners.cached_node_report(worker_root),
+                             "platform": lina_runner_sync_node.platform(),
+                             "ocx": lina_runner_sync_node.ocx_report(worker_root.parent),
                              "access_modes": list(ACCESS), "verbs": list(verbs()),
                              "request_keys": True, PROBE_SPEC: True}}
 

@@ -25,10 +25,15 @@ FAKE_KANBAN = """import json, os, sys
 args = sys.argv[sys.argv.index("kanban") + 1:]
 if args[0] == "--board":
     args = args[2:]
+if args[0] == "unblock" and args[1] == "--judge-wake":  # unblock --judge-wake <run> <card> ...
+    args = [args[0], args[3], *args[1:3], *args[4:]]
 verb, task, rest = args[0], args[1], args[2:]
 cards = os.environ["FAKE_CARDS"]
 with open(os.path.join(cards, "calls.jsonl"), "a") as fh:
     fh.write(json.dumps([verb, task, *rest]) + "\\n")
+if verb == "schedule" and "--wait-for" in rest and os.environ.get("FAKE_NO_WAIT_FOR"):  # the installed Hermes
+    print("hermes: error: unrecognized arguments: --wait-for", file=sys.stderr)
+    sys.exit(2)
 path = os.path.join(cards, task + ".json")
 card = json.load(open(path)) if os.path.exists(path) else {"title": task, "status": "running", "body": ""}
 # The transitions of the real board: block from running/ready, schedule from todo/ready/running/blocked, unblock
@@ -36,13 +41,16 @@ card = json.load(open(path)) if os.path.exists(path) else {"title": task, "statu
 moves = {"block": (("running", "ready"), "blocked"), "schedule": (("todo", "ready", "running", "blocked"), "scheduled"),
          "unblock": (("blocked", "scheduled"), "ready"), "promote": (("todo", "blocked"), "ready")}
 if verb == "show":
-    print(json.dumps({"task": card, "events": []}))
+    events = card.pop("events", [])
+    print(json.dumps({"task": card, "events": events}))
 elif verb in moves and os.path.exists(path):
     sources, target = moves[verb]
     if card["status"] not in sources:
         print(f"cannot {verb} {task}", file=sys.stderr)
         sys.exit(1)
     card["status"] = target
+    if verb == "schedule":
+        card.setdefault("events", []).append({"kind": "scheduled", "payload": {"reason": rest[-1]}})
     json.dump(card, open(path, "w"))
 """
 
@@ -91,7 +99,7 @@ def drive(tmp_path, monkeypatch):
         link = {"kind": "hermes", "command": [sys.executable, str(script)]} if hermes else {"kind": "lina"}
         (base / "config.yaml").write_text(
             f"devices:\n  workers:\n    here: {{host: local, cap: 4}}\n    there: {there}\n"
-            "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n"
+            "worker:\n  poll_s: 0.05\n  stall_grace_s: 30\n  answered_grace_s: 0.2\n  min_free_gb: 0\n  min_free_mem_gb: 0\n"
             f"  card_link: {json.dumps(link)}\n"
             f"  runners:\n    fakecli: {json.dumps(spec)}\n" + extra)
     configure()
@@ -739,3 +747,73 @@ def test_action_ids_are_request_keys_and_a_reset_time_is_read_from_the_end_text(
     assert goal_drive.reset_at("limit resets at 2030-01-01T00:00:00Z", 0) == 1893456000
     assert goal_drive.reset_at("try again in 2 hours", 100) == 100 + 7200
     assert goal_drive.reset_at("rate limit", 100) == 100 + goal_drive.USAGE_WAIT_S
+
+
+def _judge_wakes(drive) -> list[list[str]]:
+    return [call for call in _writes(drive, "unblock", WORK) if "--judge-wake" in call]
+
+
+def _later(drive, seconds: float) -> None:
+    real = time.time
+    drive.mp.setattr(goal_drive.time, "time", lambda: real() + seconds)
+
+
+def test_a_hermes_without_wait_for_gets_a_plain_park_and_the_hub_wakes_it_once_the_checks_settle(drive):
+    """lina#419: the installed Hermes has no ``schedule --wait-for``, so the hub parks with the wait in the reason and
+    wakes the card itself."""
+    drive.mp.setenv("FAKE_NO_WAIT_FOR", "1")
+    _red_check(drive, conclusion=None, status="in_progress")
+    task = _submit(drive, repo="acme/app")
+    _end(drive, task, "done", report=True)
+    _tick(drive)
+    probe, park = _writes(drive, "schedule", WORK)
+    assert probe[2:4] == ["--wait-for", "pr:acme/app#7"]
+    assert park[2:] == ["--", "goal drive: waiting on the required checks of #7 · WAIT_EVENT=pr:acme/app#7 "
+                              f"GOAL_ACTION={_aid(task, 1, 'check-park')}"]
+    assert "card_write_refused" not in json.dumps(_ledger(drive)["notes"])
+    _red_check(drive, conclusion="success")
+    _tick(drive)  # the pending read is kept for 60 s
+    assert not _judge_wakes(drive)
+    _later(drive, goal_drive.CHECK_CACHE_S + 1)
+    _tick(drive)
+    _tick(drive)
+    assert _judge_wakes(drive) == [["unblock", WORK, "--judge-wake", task, "--reason",
+                                    "goal drive: wait met: required checks of acme/app#7 finished"]]
+    assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "ready"
+    assert _ledger(drive)["waits"] == {} and _aid(task, 1, "check-wake") in _ledger(drive)["actions"]
+    assert _requests(drive, task) == ["request.1"]
+
+
+def test_a_hermes_without_wait_for_gets_a_plain_park_and_the_hub_wakes_it_once_the_time_passed(drive):
+    drive.mp.setenv("FAKE_NO_WAIT_FOR", "1")
+    task = _submit(drive)
+    _usage_end(drive, task)
+    _tick(drive)
+    park = _writes(drive, "schedule", WORK)[-1]
+    assert park[2] == "--" and " · WAIT_EVENT=until:" in park[3] and park[3].endswith(
+        f"GOAL_ACTION={_aid(task, 1, 'usage-park')}")
+    _tick(drive)
+    assert not _judge_wakes(drive)
+    _later(drive, 1801)
+    _tick(drive)
+    _tick(drive)
+    (wake,) = _judge_wakes(drive)
+    assert wake[:5] == ["unblock", WORK, "--judge-wake", task, "--reason"]
+    assert wake[5].startswith("goal drive: wait met: time ") and wake[5].endswith(" passed")
+    assert _requests(drive, task) == ["request.1", "request.2"]  # and the run goes on after its usage limit
+
+
+def test_a_card_parked_again_by_someone_else_is_not_woken_by_the_hub(drive):
+    drive.mp.setenv("FAKE_NO_WAIT_FOR", "1")
+    task = _submit(drive)
+    _usage_end(drive, task)
+    _tick(drive)
+    path = drive.cards / f"{WORK}.json"
+    card = json.loads(path.read_text())
+    card["events"].append({"kind": "scheduled", "payload": {"reason": "waiting for the owner's call"}})
+    path.write_text(json.dumps(card))
+    _later(drive, 1801)
+    _tick(drive)
+    _tick(drive)
+    assert not _judge_wakes(drive) and _ledger(drive)["waits"] == {}
+    assert json.loads(path.read_text())["status"] == "scheduled"

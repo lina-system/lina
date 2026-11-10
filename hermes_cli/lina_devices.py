@@ -40,10 +40,13 @@ def _base(base: Path | None) -> Path:
 
 
 def probe(dev: settings.Device, worker_root: Path, runner: str) -> dict:
-    """The bidding probe of *dev*; ``ssh: False`` when ssh itself could not reach it."""
-    reply = for_device(dev, worker_root).call(["probe", "", runner], timeout=60)
+    """The bidding probe of *dev*, with what the hub knows of the node apart from it the way the bid merges it
+    (``bidding.with_node_facts``); ``ssh: False`` when ssh itself could not reach it."""
+    contact = for_device(dev, worker_root)
+    reply = contact.call(["probe", "", runner], timeout=60)
     if reply.code == 0:
-        return {"ssh": True, **(reply.json() or {"error": "no answer"})}
+        return {"ssh": True, **bidding.with_node_facts(reply.json() or {"error": "no answer"}, contact.descriptor,
+                                                             dev.name, worker_root)}
     if reply.json().get("protocol_error"):
         return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, **reply.json()}
     return {"ssh": dev.local or reply.code != SSH_UNREACHABLE, "error": (reply.err.strip() or f"exit {reply.code}")[-160:]}
@@ -90,11 +93,20 @@ def runner_rows(dev: settings.Device, worker_root: Path, found: dict) -> list[di
     from hermes_cli.lina_runners import offered
     got = runner_status(dev, worker_root) if found["ssh"] and not found.get("protocol_error") else None
     if isinstance(got, list):
-        return got
+        return _against_hub(got)
     why = "update" if got and got.get("legacy") else "unreachable"
     return [{"name": name, "type": kind, "pin": pin.name, "pinned": pin.version, "installed": None, "sign_in": None,
              "ready": False, "why": why}
             for name, kind, pin in offered(settings.section(worker_root.parent)) if pin is not None]
+
+
+def _against_hub(rows: list[dict]) -> list[dict]:
+    """Each pinned row with the hub's pin and whether the node runs it (the daily runner sync, lina#238)."""
+    from hermes_cli.lina_runners import pins
+    hub = pins()
+    return [{**item, "hub_pinned": hub[item["pin"]].version,
+             "same_as_hub": item.get("installed") == hub[item["pin"]].version}
+            if item.get("pin") in hub else item for item in rows]
 
 
 def readiness(dev: settings.Device, worker_root: Path) -> dict:
@@ -149,13 +161,16 @@ def device(name: str, base: Path) -> settings.Device:
 
 def list_devices(base: Path | None = None, *, as_json: bool = False, out=print) -> int:
     base = _base(base)
-    rows = [readiness(dev, settings.root(base)) for dev in _devices(base)]
+    devices = _devices(base)
+    rows = [readiness(dev, settings.root(base)) for dev in devices if dev.role != "person"]
     if as_json:
         out(json.dumps(rows, ensure_ascii=False))
-    elif not rows:
+    elif not devices:
         out("no devices: `lina devices add <name> --host <ssh alias|local>`")
     for row in [] if as_json else rows:
         _render_with_runners(row, out)
+    if not as_json and any(dev.role == "person" for dev in devices):
+        out("person devices are shown in the devices view (GET /api/lina/devices, person); not probed here")
     return 0
 
 
@@ -277,6 +292,8 @@ def check(name: str, *, base: Path | None = None, run_smoke: bool = False, timeo
           as_json: bool = False, out=print) -> int:
     base = _base(base)
     dev = device(name, base)
+    if dev.role == "person":
+        raise DevicesError(f"{name}: a person device is not a node (see the devices view, GET /api/lina/devices)")
     row = readiness(dev, settings.root(base))
     if run_smoke:
         row["smoke"] = smoke(dev, base, timeout=timeout)

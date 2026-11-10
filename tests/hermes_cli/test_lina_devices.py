@@ -78,6 +78,49 @@ def test_check_exits_1_for_a_device_that_is_not_ready(base, probes):
         lina_devices.check("nope", base=base)
 
 
+@pytest.fixture
+def mixed_devices(tmp_path, monkeypatch):
+    (tmp_path / "config.yaml").write_text(
+        "devices:\n  workers:\n    build: {host: build, cap: 2}\n"
+        "    laptop: {host: laptop-ssh, role: person}\n", encoding="utf-8")
+    asked = []
+
+    def probe(dev, root, runner):
+        asked.append(dev.name)
+        return {"ssh": False, "error": "offline"}
+
+    monkeypatch.setattr(lina_devices, "probe", probe)
+    return tmp_path, asked
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_list_never_probes_person_devices(mixed_devices, as_json):
+    base, asked = mixed_devices
+    lines = []
+
+    assert lina_devices.list_devices(base, as_json=as_json, out=lines.append) == 0
+
+    assert asked == ["build"]
+    if as_json:
+        assert [row["name"] for row in json.loads(lines[0])] == ["build"]
+    else:
+        assert lines[0].startswith("build ")
+        assert any("/api/lina/devices" in line for line in lines)
+        assert not any(line.startswith("laptop ") for line in lines)
+
+
+@pytest.mark.parametrize("run_smoke", [False, True])
+def test_check_person_device_refuses_before_probe_or_smoke(mixed_devices, monkeypatch, run_smoke):
+    base, asked = mixed_devices
+    smoked = []
+    monkeypatch.setattr(lina_devices, "smoke", lambda *a, **k: smoked.append(a) or {"state": "done", "id": "fake"})
+
+    with pytest.raises(lina_devices.DevicesError, match="person device.*not a node"):
+        lina_devices.check("laptop", base=base, run_smoke=run_smoke, out=lambda line: None)
+
+    assert asked == [] and smoked == []
+
+
 def test_add_and_remove_edit_the_list_lina_worker_bids_over(base):
     lina_devices.add("build-e", "build-e", base=base, cap=3, no_repo=True, manual=True, out=lambda line: None)
     added = next(dev for dev in settings.devices(base) if dev.name == "build-e")
@@ -106,7 +149,7 @@ def test_person_saved_with_a_host_appears_in_settings_cli_and_api(tmp_path, monk
     monkeypatch.setattr(lina_devices, "probe", lambda *args: {"ssh": False})
     lines: list[str] = []
     assert lina_devices.list_devices(as_json=True, out=lines.append) == 0
-    assert [(row["name"], row["host"]) for row in json.loads(lines[0])] == [("laptop", "laptop-ssh")]
+    assert json.loads(lines[0]) == [], "person devices are served by the API, not the CLI node list"
 
     # Keep the real view and config reader; only the remote status read is replaced.
     monkeypatch.setattr(lina_board_devices, "PERSON", lina_board_devices._Lazy(900))
@@ -136,6 +179,7 @@ def local_device(tmp_path, monkeypatch):
           default_runner: fakecli
           poll_s: 0.05
           min_free_gb: 0
+          min_free_mem_gb: 0
           runners:
             fakecli: {json.dumps({"type": "command", "argv": argv, "access": "workspace-write"})}
         """), encoding="utf-8")

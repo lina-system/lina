@@ -73,8 +73,9 @@ def build_install_parser(subparsers) -> None:
     parser.add_argument("--apply", action="store_true",
                         help="with --role worker: write the routing changes the check found (default: show them)")
     parser.add_argument("--shims", action="store_true",
-                        help="only write the caller shims omo-task (-> lina worker) and work (-> lina work) into "
-                             "$LINA_HOME/bin; nothing else is installed (docs/switch-callers.md)")
+                        help="only write the caller shim work (-> lina work) into $LINA_HOME/bin and remove the "
+                             "omo-task shim an older install wrote there (call `lina worker` instead); nothing else "
+                             "is installed (docs/switch-callers.md)")
     parser.set_defaults(func=_cmd_install)
     build_store_parser(subparsers)
     build_services_parser(subparsers)

@@ -16,6 +16,10 @@ worker:
   hub: {host: hub, lina: lina}               # how a device reaches the hub to report an end (ssh alias, lina there)
   notice:
     command: [notify-agent, "{agent}"]       # the end notice for the agent's chat, body on stdin
+  runner_sync: {at: "04:00", notify: default}  # the hub's daily `lina runners sync` after this local time (off
+                                             # when unset); its notice goes to `notify` (docs/lina-runners.md)
+  card_link: {kind: hermes, command: [/path/to/hermes]}  # runs from Hermes cards end on the card: the Hermes Agent
+                                             # CLI by absolute path (a bare `hermes` is LINA's own alias)
   todo_link: {kind: hermes, command: [my-todo]}  # runs `link|evidence|note <to-do> ...` for --todo; unset = none
   hub_rules: "- This machine is the hub: never open secrets or the owner's private records."  # host: local runs
   default_runner: omo

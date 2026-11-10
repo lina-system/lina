@@ -1,4 +1,4 @@
-"""``lina worker`` called the way the agents call ``omo-task`` today (lina-system/lina#287, #275).
+"""``lina worker`` called the way the agents called ``omo-task`` before the switch (lina-system/lina#287, #275).
 
 A card session's terminal has no ``HERMES_KANBAN_TASK``: the card comes from the nearest ancestor process that has
 it. The owner of a run follows the caller's profile. A card parked with ``kanban_schedule`` that names the run is
@@ -53,7 +53,7 @@ def _config(base: Path, extra: str = "", devices: str = "{}", runners: str = "{}
     base.mkdir(parents=True, exist_ok=True)
     (base / "config.yaml").write_text(
         "devices:\n  workers:\n" + textwrap.indent(devices, "    ") + "\n"
-        "worker:\n  poll_s: 0.05\n  min_free_gb: 0\n" + extra + "  runners:\n" + textwrap.indent(runners, "    ")
+        "worker:\n  poll_s: 0.05\n  min_free_gb: 0\n  min_free_mem_gb: 0\n" + extra + "  runners:\n" + textwrap.indent(runners, "    ")
         + "\n", encoding="utf-8")
 
 
@@ -364,7 +364,7 @@ def _cli(argv: list[str]) -> int:
     return ended.value.code
 
 
-def test_attach_prints_the_status_and_card_shows_the_card_and_refuses_changes(tmp_path, monkeypatch, capsys, board):
+def test_attach_prints_the_status_and_card_shows_the_current_cards(tmp_path, monkeypatch, capsys, board):
     hub, submit, _, _ = board
     run = submit()
     monkeypatch.setenv("LINA_HOME", str(hub.base))
@@ -373,10 +373,12 @@ def test_attach_prints_the_status_and_card_shows_the_card_and_refuses_changes(tm
     assert _cli(["card", run]) == 0
     assert capsys.readouterr().out.split() == [CARD, BOARD, "(hermes)"]
     for change in (["card", run, "t_other"], ["card", run, "--drop", CARD]):
-        assert _cli(change) == 2
+        assert _cli(change) == 0
         printed = capsys.readouterr()
-        assert printed.out == "" and printed.err.count("\n") == 1 and "cannot be added or dropped" in printed.err
-    assert hub.store.load(run)["card"]["task"] == CARD
+        assert len(printed.out.splitlines()) == 1 and printed.err == ""
+    assert _cli(["card", run]) == 0
+    assert capsys.readouterr().out.split()[0] == "t_other"
+    assert hub.store.load(run)["card"]["task"] == "t_other"
 
 
 @pytest.fixture

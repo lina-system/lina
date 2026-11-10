@@ -58,6 +58,7 @@ def field(tmp_path, monkeypatch):
                 box: {{host: box, cap: 2}}
             worker:
               min_free_gb: 0
+              min_free_mem_gb: 0
               runners: {{{hub_runners}}}
             """), encoding="utf-8")
         (node_base / "config.yaml").write_text(f"worker:\n  min_free_gb: 0\n  runners: {node_runners}\n",

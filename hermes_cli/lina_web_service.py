@@ -90,7 +90,7 @@ def definition(kind: str, root: Path) -> str:
     label = LAUNCHD_LABEL if kind == "launchd" else SYSTEMD_UNIT
     host, port = endpoint(root)
     # `-p default`: the root itself, never the profile a person last picked with `lina profile use` (active_profile).
-    argv = [sys.executable, "-m", "hermes_cli.main", "-p", "default", "dashboard", "--host", host, "--port", str(port),
+    argv = [sys.executable, "-P", "-m", "hermes_cli.main", "-p", "default", "dashboard", "--host", host, "--port", str(port),
             "--no-open", "--isolated"]
     env = {"HERMES_HOME": str(root), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
            "PYTHONPATH": settings.child_pythonpath(), "HERMES_GATEWAY_LOCK_DIR": str(lock_dir(root))}

@@ -12,7 +12,7 @@ devices:
 worker:
   hub: {host: hub, lina: lina}     # how a device reaches the hub to report an end (ssh alias, lina command there)
   notice: {command: [my-notify, "{agent}"]}   # the end notice: body on stdin; unset = written to hub/notices only
-  card_link: {kind: hermes, command: [hermes]}  # runs from Hermes cards end on the card (kanban_link.py)
+  card_link: {kind: hermes, command: [/path/to/hermes]}  # Hermes cards: the Hermes Agent CLI by absolute path (kanban_link.py)
   todo_link: {kind: hermes, command: [my-todo]}  # `<command> link|evidence|note <to-do> ...` for --todo; unset = none
   hub_rules: "- This machine is the hub: ..."     # added to the first prompt of a run on a `host: local` device
   models: {...}                    # see models.py
@@ -34,7 +34,8 @@ from pathlib import Path
 LOCAL = "local"
 ROLES = ("work", "files", "person")
 FILE_KIND = "file"
-DEFAULTS = {"cap": 1, "min_free_gb": 5, "input_max_mb": 300, "memory_max": "12G",
+DEFAULTS = {"cap": 1, "min_free_gb": 5, "min_free_mem_gb": 4, "input_max_mb": 300, "memory_max": "12G",
+            "cooloff_failures": 2, "cooloff_window_s": 1800, "cooloff_quick_s": 120, "cooloff_s": 900,
             "poll_s": 15.0, "stall_grace_s": 600.0, "answered_grace_s": 60.0, "background_max_s": 3 * 3600.0,
             "human_max_s": 3 * 3600.0, "hard_timeout_s": 43200.0, "repo_url": "https://github.com/{repo}.git"}
 
@@ -60,12 +61,13 @@ def lina_home() -> Path:
     return get_default_hermes_root()
 
 
-CALLER_HERMES_HOME = "LINA_CALLER_HERMES_HOME"  # the caller's Hermes Agent HERMES_HOME, kept by the shim
+CALLER_HERMES_HOME = "LINA_CALLER_HERMES_HOME"  # the caller's Hermes Agent HERMES_HOME, kept by LINA's bootstrap
 
 
 def caller_hermes_home() -> Path | None:
-    """The Hermes Agent ``HERMES_HOME`` the caller ran under: the one the ``omo-task`` shim kept before LINA's
-    bootstrap dropped it, else a ``HERMES_HOME`` under Hermes Agent's home still in this process."""
+    """The Hermes Agent ``HERMES_HOME`` the caller ran under: the one LINA's bootstrap kept when it dropped it
+    (``hermes_bootstrap._drop_foreign_home``), else a ``HERMES_HOME`` under Hermes Agent's home still in this
+    process."""
     import os
     from hermes_constants import is_hermes_agent_path
     kept = os.environ.get(CALLER_HERMES_HOME, "").strip()
@@ -120,6 +122,13 @@ def section(base: Path | None = None) -> dict:
     """``worker:`` of the LINA root's config (one worker serves every profile of that root)."""
     value = _config(base).get("worker")
     return value if isinstance(value, dict) else {}
+
+
+def legacy_omo_task(base: Path | None = None) -> str | None:
+    """``worker.legacy_omo_task``: the old tool that answers for runs it started before the switch to
+    ``lina worker`` (a card parked on them still wakes after the later end, lina#390); None when unset."""
+    value = section(base).get("legacy_omo_task")
+    return str(Path(value).expanduser()) if isinstance(value, str) and value.strip() else None
 
 
 def setting(name: str, base: Path | None = None, worker: dict | None = None):

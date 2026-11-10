@@ -37,7 +37,7 @@ def definition(kind: str, base: Path) -> str:
     label = LAUNCHD_LABEL if kind == "launchd" else SYSTEMD_UNIT
     env = {"HERMES_HOME": str(base), "PATH": os.environ.get("PATH", "/usr/bin:/bin"),
            "PYTHONPATH": settings.child_pythonpath()}
-    return service_definition(kind, label, [sys.executable, "-m", "hermes_cli.main", "worker", "serve"], env,
+    return service_definition(kind, label, [sys.executable, "-P", "-m", "hermes_cli.main", "worker", "serve"], env,
                               logs=service_logs(base, "worker"))
 
 

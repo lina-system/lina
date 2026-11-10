@@ -76,6 +76,8 @@ def test_every_launchd_job_starts_under_osascript_with_its_own_logs(tmp_path, na
     assert log.parent.is_dir()
     systemd_argv, _env = _systemd_parts(define("systemd"))
     assert shlex.split(command) == systemd_argv and "osascript" not in systemd_argv[0]
+    if name in ("worker", "web"):
+        assert systemd_argv[1:4] == ["-P", "-m", "hermes_cli.main"]
     assert (plist["RunAtLoad"], plist["KeepAlive"], plist["MaterializeDatalessFiles"]) == (True, True, True)
 
 
@@ -101,9 +103,9 @@ def test_web_runs_the_dashboard_of_the_lina_root_on_the_configured_endpoint(tmp_
     port = _free_port()
     (root / "config.yaml").write_text(f"dashboard:\n  host: localhost\n  port: {port}\n", encoding="utf-8")
     argv, env = _systemd_parts(web.definition("systemd", root))
-    assert argv[:6] == [sys.executable, "-m", "hermes_cli.main", "-p", "default", "dashboard"]
+    assert argv[:7] == [sys.executable, "-P", "-m", "hermes_cli.main", "-p", "default", "dashboard"]
     # No --skip-build and no HERMES_WEB_DIST: the install has no dashboard UI, and either makes the dashboard exit.
-    assert argv[6:] == ["--host", "localhost", "--port", str(port), "--no-open", "--isolated"]
+    assert argv[7:] == ["--host", "localhost", "--port", str(port), "--no-open", "--isolated"]
     assert env["HERMES_HOME"] == str(root) and "HERMES_WEB_DIST" not in env and "LINA_APP_DIST" not in env
     assert env["HERMES_GATEWAY_LOCK_DIR"] == str(web.lock_dir(root))
 
@@ -127,7 +129,7 @@ def test_the_service_command_runs_the_root_whatever_profile_is_active(tmp_path, 
     argv, env = _systemd_parts(web.definition("systemd", root))
     monkeypatch.setattr(hermes_constants, "_default_hermes_root_memo", None)
     monkeypatch.setenv("HERMES_HOME", env["HERMES_HOME"])
-    monkeypatch.setattr(sys, "argv", ["hermes", *argv[3:]])
+    monkeypatch.setattr(sys, "argv", ["hermes", *argv[4:]])
     hermes_main._apply_profile_override()
     assert os.environ["HERMES_HOME"] == str(root)
     assert sys.argv[1:3] == ["dashboard", "--host"]

@@ -51,6 +51,30 @@ def test_nothing_ready_means_the_queue():
     assert [r["why"] for r in rows] == ["full", "omo daemon not ready", "unreachable: ssh: timeout"]
 
 
+def test_hosts_never_contacts_person_devices(tmp_path, monkeypatch):
+    from hermes_cli.worker import transport
+
+    (tmp_path / "config.yaml").write_text(
+        "devices:\n  workers:\n    build: {host: build, cap: 2, named_cap: 3}\n"
+        "    laptop: {host: laptop-ssh, role: person}\n", encoding="utf-8")
+    asked = []
+
+    def for_device(dev, root):
+        asked.append(dev.name)
+        return transport.NegotiatedTransport(
+            type("Offline", (), {"call": lambda self, *a, **k: transport.Reply(255, b"", "offline")})(), dev.name)
+
+    monkeypatch.setattr(transport, "for_device", for_device)
+    lines = []
+
+    assert Hub(tmp_path / "worker", out=lines.append).hosts() == 0
+
+    assert asked == ["build"]
+    assert lines[0].startswith("build ") and "cap 3" in lines[0]
+    assert not any("laptop" in line for line in lines)
+    assert lines[-1] == "queue: 0"
+
+
 def test_a_queued_task_starts_from_the_tick_when_a_slot_frees(tmp_path, monkeypatch):
     base, fake = tmp_path / "lina", tmp_path / "fake"
     argv = fakes.install_fake_cli(fake)
