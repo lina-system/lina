@@ -28,7 +28,7 @@ from hermes_cli.worker.report import NEXT_NOTES, first_prompt, follow_up_prompt,
 from hermes_cli.worker.runners.base import RunnerError
 from hermes_cli.worker.task import read_json, verify
 from hermes_cli.worker.transport import TransportError, fetch, for_device, put, put_tree
-from hermes_cli.worker import events, node_watch
+from hermes_cli.worker import events, kanban_link_wait, node_watch
 
 ENDED = events.END_STATES
 VERDICT_WORDS = {None: "no verdict yet", "accepted": "accepted", "rejected": "rejected"}
@@ -1175,7 +1175,7 @@ class Hub:
             self.store.receipt(job["id"], "card_noticed", card=card, state=kind, run=run, woke=False)
         return "; ".join(failed) or "cards notified"
 
-    def _card_steps(self, job: dict, marker: str) -> str:
+    def _card_steps(self, job: dict, marker: str, *, ticked: bool = False) -> str:
         """Carry the end *marker* of a Hermes card run through the steps it has not done yet, saving each one that
         went through: a step that fails stays pending for the next report or tick, and none is done twice. Called
         under the job's lock."""
@@ -1185,7 +1185,7 @@ class Hub:
             return (f"cards: result not fetched yet ({job['card_pending'][marker]['fetch_tries']}/"
                     f"{FETCH_TRIES}), retried on the next report or tick")
         entry = job["card_pending"][marker]
-        if pending := kanban_link.end_cards(self, job, entry):
+        if pending := kanban_link.end_cards(self, job, entry, ticked=ticked):
             return pending
         del job["card_pending"][marker]
         self.store.save(job)
@@ -1252,7 +1252,9 @@ class Hub:
             for delivery in held:  # its card work, if any, goes on from there once it is done
                 self.store.log(f"{task_id} held end {delivery}: {self._retry_end(job, delivery)}")
             for marker in [marker for marker in job.get("card_pending") or {} if marker not in held]:
-                self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker)}")
+                if kanban_link_wait.resting(job, job["card_pending"][marker], time.time()):
+                    continue  # a wake waiting out its gap: no card read, no line
+                self.store.log(f"{task_id} card retry {marker}: {self._card_steps(job, marker, ticked=True)}")
 
     def wait(self, card: dict | None, task_ids: list[str] | None = None) -> int:
         """Record open runs and tell the card's model how to schedule itself. The hub wakes it after a run ends."""
