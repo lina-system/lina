@@ -36,6 +36,14 @@ if verb == "schedule" and "--wait-for" in rest and os.environ.get("FAKE_NO_WAIT_
     sys.exit(2)
 path = os.path.join(cards, task + ".json")
 card = json.load(open(path)) if os.path.exists(path) else {"title": task, "status": "running", "body": ""}
+# Like recorded_wait(): only the latest transition payload counts, never the body.
+if verb == "dispatch-native":
+    parks = [e for e in card.get("events", []) if e["kind"] in ("scheduled", "blocked", "unblocked", "gave_up")]
+    latest = parks[-1] if parks else {}
+    wait = latest.get("payload", {}).get("wait_for") if latest.get("kind") == "scheduled" else None
+    if card["status"] == "scheduled" and wait and os.environ.get("FAKE_NATIVE_WAIT_MET"):
+        card["status"] = "ready"
+        json.dump(card, open(path, "w"))
 # The transitions of the real board: block from running/ready, schedule from todo/ready/running/blocked, unblock
 # from blocked/scheduled, promote from todo/blocked; any other is refused with exit 1.
 moves = {"block": (("running", "ready"), "blocked"), "schedule": (("todo", "ready", "running", "blocked"), "scheduled"),
@@ -53,7 +61,13 @@ elif verb in moves and os.path.exists(path):
         sys.exit(1)
     card["status"] = target
     if verb == "schedule":
-        card.setdefault("events", []).append({"kind": "scheduled", "payload": {"reason": rest[-1]}})
+        payload = {"reason": rest[-1]}
+        if "--wait-for" in rest:
+            kind, value = rest[rest.index("--wait-for") + 1].split(":", 1)
+            payload["wait_for"] = {"kind": kind, "value": value}
+        card.setdefault("events", []).append({"kind": "scheduled", "payload": payload})
+    elif verb == "unblock":
+        card.setdefault("events", []).append({"kind": "unblocked", "payload": {}})
     json.dump(card, open(path, "w"))
 if verb != "show":
     with open(os.path.join(cards, "states.jsonl"), "a") as fh:
@@ -267,7 +281,7 @@ def test_checks_still_running_park_the_card_on_the_pull_request(drive):
     _tick(drive)
     _tick(drive)
     parks = _writes(drive, "schedule", WORK)
-    assert len(parks) == 1 and parks[0][2:4] == ["--wait-for", "pr:acme/app#7"]
+    assert len(parks) == 1 and "WAIT_EVENT=pr:acme/app#7" in parks[0][-1]
     assert _requests(drive, task) == ["request.1"]
 
 
@@ -486,7 +500,7 @@ def test_a_usage_limit_waits_without_a_new_attempt_then_the_run_goes_on(drive):
     _tick(drive)
     _tick(drive)
     (park,) = _writes(drive, "schedule", WORK)
-    assert park[3].startswith("until:")
+    assert "WAIT_EVENT=until:" in park[-1]
     assert _requests(drive, task) == ["request.1"]
     ledger = _ledger(drive)
     assert ledger["attempts"] == {task: 1} and ledger["followups"] == {}
@@ -777,8 +791,7 @@ def test_a_hermes_without_wait_for_gets_a_plain_park_and_the_hub_wakes_it_once_t
     _end(drive, task, "done", report=True)
     _set_status(drive, WORK, "ready")
     _tick(drive)
-    probe, park = _writes(drive, "schedule", WORK)
-    assert probe[2:4] == ["--wait-for", "pr:acme/app#7"]
+    (park,) = _writes(drive, "schedule", WORK)
     assert park[2:] == ["--", "goal drive: waiting on the required checks of #7 · WAIT_EVENT=pr:acme/app#7 "
                               f"GOAL_ACTION={_aid(task, 1, 'check-park')}"]
     assert "card_write_refused" not in json.dumps(_ledger(drive)["notes"])

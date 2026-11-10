@@ -20,8 +20,7 @@ Rules, each at most once per action id ``<goal card>:<work card>:<attempt>:<run>
 * ``usage-*``: a run stopped by its runner's usage limit waits for the reset (else ``USAGE_WAIT_S``) and is continued
   in the same task, or moves to another node when ``worker.goal_limits.usage_move`` is set. Not a new attempt.
 
-A park is ``kanban schedule --wait-for <event>`` where the board has that option. A Hermes without it (probed by the
-first park of a tick) gets a plain ``schedule`` whose reason carries ``WAIT_EVENT=<event> GOAL_ACTION=<action id>``,
+A Hermes park is a plain ``schedule`` whose reason carries ``WAIT_EVENT=<event> GOAL_ACTION=<action id>``,
 and the drive wakes that card itself (``unblock --judge-wake``) once the event happened (:meth:`Drive.wake_parked`).
 
 Device writes carry the action id as their request key, so a hub restarted mid-pass repeats nothing; the ledger
@@ -172,6 +171,14 @@ def resume_wait(view: dict) -> str:
     return resume if f"GOAL_SCHEDULE={schedules}\n" in resume else ""
 
 
+def native_wait(view: dict) -> bool:
+    """Whether the latest park transition still owns a native dispatcher wait."""
+    for event in reversed(view.get("events") or []):
+        if event.get("kind") in ("scheduled", "blocked", "unblocked", "gave_up"):
+            return event["kind"] == "scheduled" and bool((event.get("payload") or {}).get("wait_for"))
+    return False
+
+
 def checks_settled(receipt: dict) -> bool:
     """Every required check of the receipt has a conclusion, read from complete evidence (a receipt with ``detail``
     stopped early; only "no required checks" is complete then)."""
@@ -191,7 +198,7 @@ class Board:
 
     def __init__(self, worker: dict):
         self.worker = worker
-        self.wait_form: str | None = None  # a Hermes park's form, ``wait_for`` or ``marker``, once a park probed it
+        self.wait_form: str | None = None  # Hermes waits are hub-owned markers, never native dispatcher waits
 
     def _command(self) -> list[str]:
         return kanban_link.config(self.worker)["command"]
@@ -257,6 +264,8 @@ class Board:
             if verb == "schedule":
                 import json
                 shown = json.loads(kanban_link._kanban(command, card, "show", "--json"))
+                if step == "unblock" and native_wait(shown):
+                    return "native wait still recorded; Hermes CLI cannot atomically clear it; unblock the card first"
                 view = shown["task"]
                 schedules = sum(event.get("kind") == "scheduled" for event in shown.get("events") or [])
                 schedules += int(step != "unblock")
@@ -282,17 +291,8 @@ class Board:
         return None
 
     def _park(self, command: list[str], card: dict, wait_for: str, reason: str, aid: str) -> None:
-        """``schedule --wait-for`` on a board that has it; else a plain ``schedule`` with a :func:`marked` reason. The
-        first park probes: a Hermes without the option exits 2 with argparse's "unrecognized arguments"."""
-        if wait_for.startswith("omo-task:"):
-            self.wait_form = "marker"
-        if self.wait_form != "marker":
-            shown, done = kanban_link._run(command, card, "schedule", "--wait-for", wait_for, "--", reason)
-            if not (done.returncode == 2 and "unrecognized arguments" in done.stderr and "--wait-for" in done.stderr):
-                kanban_link._checked(shown, done)
-                self.wait_form = "wait_for"
-                return
-            self.wait_form = "marker"
+        """Keep Hermes waits hub-owned: its CLI cannot replace a native wait while still scheduled."""
+        self.wait_form = "marker"
         kanban_link._kanban(command, card, "schedule", "--", marked(reason, wait_for, aid))
 
     def _lina(self, card: dict, verb: str, step: str | None, *, reason: str, wait_for: str | None = None,
@@ -516,6 +516,14 @@ class Drive:
         status = self.status(card["card"])
         if status == "scheduled" and self.ledger["notes"].get(card["card"]["task"]) == "park ownership released":
             return False
+        if status == "scheduled" and kanban_link.on_hermes(card["card"]):
+            import json
+            view = json.loads(kanban_link._kanban(self.board._command(), card["card"], "show", "--json"))
+            if native_wait(view):
+                self.ledger["notes"][card["card"]["task"]] = (
+                    "native wait still recorded; Hermes CLI cannot atomically clear it; unblock the card first")
+                self.save()
+                return False
         if status in CLOSED_CARDS or status == "blocked":
             if self.ledger["notes"].get(card["card"]["task"]) != f"skipped: card {status}":
                 self.ledger["notes"][card["card"]["task"]] = f"skipped: card {status}"
@@ -723,6 +731,8 @@ class Drive:
                 return f"not parked: card is {status}"
             if not self.write(card["card"], "schedule", reason, wait_for, aid):
                 return None
+            if self.ledger["notes"].get(card["card"]["task"]) == "park ownership released":
+                self.ledger["notes"].pop(card["card"]["task"])
             if not kanban_link.on_hermes(card["card"]) or self.board.wait_form != "marker":
                 return f"parked on {wait_for}"
             self.ledger["waits"][card["card"]["task"]] = {"aid": aid, "judged": job.get("group") or job["id"]}

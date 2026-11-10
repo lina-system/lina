@@ -251,7 +251,7 @@ def end_cards(hub, job: dict, entry: dict) -> str:
                     woke = end_step(step, hub.store, card, job, entry["run"],
                                     events.signed(entry["text"], entry.get("delivery")), config(hub.worker),
                                     Path(entry["report"]) if entry.get("report") else None,
-                                    drive=hub.worker.get("goal_drive") is not False)
+                                    drive=hub.worker.get("goal_drive") is not False and card == job.get("card"))
                 else:
                     woke = None
                     if step == "comment":

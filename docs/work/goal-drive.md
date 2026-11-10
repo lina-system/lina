@@ -59,7 +59,9 @@ Each rule acts at most once per action id.
 
 ### Parking
 
-Run-end notifications leave a scheduled goal card asleep until the drive has chosen its next action. A follow-up
+Run-end notifications leave the primary scheduled goal card asleep until the drive has chosen its next action.
+Additional cards attached with `lina worker card` retain their normal run-end wake; the drive does not visit them.
+A follow-up
 or moved run retargets that wait to `WAIT_EVENT=omo-task:<task>/<run>`. The drive waits for that run's end and applies
 its rules before releasing the card, so another follow-up does not briefly expose a ready card.
 
@@ -68,20 +70,22 @@ Hermes cannot schedule an already scheduled card. Instead of unblocking it first
 That section contains the wait, action, and schedule generation, and tells a new session to reread the goal,
 to-dos, run-end comments, reports, and worker result or pull request. LINA does not manufacture Hermes's
 `goal_park` session record: actual same-session selection belongs to the external Hermes dispatcher.
-A later manual schedule invalidates the body's wait, and the drive relinquishes it.
+A later manual schedule invalidates the body's wait, and the drive relinquishes it. After a manual unblock,
+a successful new drive park clears that old ownership-release note.
 
 Which form a park takes depends on the board:
 
 | Board | Park | Woken by |
 |---|---|---|
 | LINA's own board (`card_link: {kind: lina}`) | `schedule_task` with the `wait_for` event | LINA's kanban dispatcher |
-| A Hermes whose `kanban schedule` has `--wait-for` | `hermes kanban schedule <card> --wait-for <event> -- <reason>` | that Hermes's dispatcher |
-| A Hermes without it (the installed Hermes) | `hermes kanban schedule <card> -- <reason> · WAIT_EVENT=<event> GOAL_ACTION=<action id>` | the hub's own tick |
+| Hermes, with or without native `--wait-for` support | `hermes kanban schedule <card> -- <reason> · WAIT_EVENT=<event> GOAL_ACTION=<action id>` | the hub's own tick |
 
-On a Hermes card the first park of a tick tries `--wait-for`. A Hermes that does not know the option exits 2 with
-argparse's "unrecognized arguments"; that park, and the others in the same tick, are then made as a plain `schedule`
-whose reason carries the event (`WAIT_EVENT=pr:<repo>#<n>`, `WAIT_EVENT=until:<ISO time>`) and the park's action id.
-The ledger's `waits` keeps each card parked that way.
+All new Hermes drive parks omit native `--wait-for`: the CLI has no option to atomically replace or clear a native
+scheduled-event payload while keeping the card scheduled. A body edit cannot change that payload. Plain schedule
+records no native wait in the first place, so an expired timer or settled PR cannot wake a later worker run.
+The ledger's `waits` keeps the marker event and action. A preexisting native wait is not silently converted: the
+drive refuses further work and records that an operator must unblock it first. LINA does not alter the external
+board database or use a non-atomic unblock/schedule sequence to migrate it.
 
 Retargeted scheduled Hermes cards also use the hub-owned wait, regardless of `--wait-for` support. A usage reset
 continues the worker and replaces the timer with its new run wait; it does not wake the card session first.
