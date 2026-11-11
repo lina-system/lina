@@ -112,7 +112,7 @@ def _fill(db) -> None:
 
 def _view(path: Path, name: str, as_name: str) -> str:
     body = re.search(rf"CREATE OR REPLACE VIEW {name} WITH \(security_invoker = true\) AS\n(.*?);\n",
-                     path.read_text(encoding="utf-8"), re.S)[1]
+                     path.read_text(encoding="utf-8"), re.DOTALL)[1]
     return f"CREATE VIEW {as_name} AS\n{body}"
 
 
