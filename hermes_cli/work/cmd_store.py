@@ -6,9 +6,12 @@ from __future__ import annotations
 import fcntl  # windows-footgun: ok — the work record runs on the POSIX hub only
 import json
 import os
+import re
 import sys
 from pathlib import Path
 
+from hermes_cli.migrate_memory_work_rows import KINDS, canonical, key
+from hermes_cli.migrate_memory_work_rows import rows as table_rows
 from hermes_cli.work import ledger, store
 from hermes_cli.work.common import Lock, die, iso, now, paths, warn, writer_profile
 from hermes_cli.work.env import current
@@ -70,14 +73,6 @@ class Source:
                 row = None
             out.append((eid, line, row if isinstance(row, dict) and row.get("id") is not None else None))
         return out
-
-    def runs(self) -> tuple[list[tuple], list[tuple]]:
-        if self.db is None:
-            return [], []
-        runs = self.db.execute(f"SELECT {', '.join(RUN_COLUMNS)} FROM run ORDER BY id").fetchall()
-        pairs = self.db.execute("SELECT run_id, todo_id, closes, added_by, added_at FROM run_todo "
-                                "ORDER BY run_id, todo_id").fetchall()
-        return runs, pairs
 
     def counts(self) -> dict:
         if self.db is None:
@@ -185,8 +180,9 @@ def import_selected_rows(db, selected: dict) -> None:
                            f"GREATEST(COALESCE((SELECT max(id) FROM {kind}), 0), 1), true)")
 
 
-def _check_counts(src: Source, db, lines, skipped) -> tuple[bool, list[str]]:
-    """Rows per table, source against store; then every item's latest record and their order (what json reads)."""
+def _check_counts(src: Source, db, lines, skipped, scope=None) -> tuple[bool, list[str]]:
+    """Rows per table, source against store; then every item's latest record and their order (what json reads);
+    for a work.db, the content of the rows this import wrote (scope), so equal counts cannot hide stale rows."""
     ok, report = True, [t("표          원본      저장소  결과")]
     rows = [row for _, _, row in lines if row]
     recs, order = latest(rows)
@@ -204,6 +200,16 @@ def _check_counts(src: Source, db, lines, skipped) -> tuple[bool, list[str]]:
     same = back_order == [i for i in order if i in back] and all(back.get(i) == recs[i] for i in back)
     ok = ok and same and set(back) == set(recs) - {row["id"] for row in skipped}
     report.append(t("최신 기록 {n}개: {result}", n=len(back), result=t("일치") if same else t("다름")))
+    if scope is not None:
+        want_rows, touched = scope
+        got_rows = {kind: {key(kind, row): row for row in records
+                           if key(kind, row) in want_rows[kind] or _belongs(kind, row, touched)}
+                    for kind, records in table_rows(db).items()}
+        same = all({k: canonical(db, kind, r) for k, r in want_rows[kind].items()}
+                   == {k: canonical(db, kind, r) for k, r in got_rows[kind].items()} for kind in KINDS)
+        ok = ok and same
+        report.append(t("표 내용 {n}행: {result}", n=sum(map(len, want_rows.values())),
+                        result=t("일치") if same else t("다름")))
     return ok, report
 
 
@@ -224,19 +230,81 @@ def _import_new(db, lines, done: dict) -> tuple[int, list]:
     return added, skipped
 
 
+def _event_data(value) -> dict:
+    return json.loads(value) if isinstance(value, str) else value
+
+
+IDENTIFIER = re.compile(r"[a-z_][a-z0-9_]*")
+
+
+def _check_columns(db, src: Source) -> None:
+    """Every source table has exactly the store's columns, each a plain identifier: its names become the store's
+    SQL (and psql input on Postgres), so anything else stops the import before a write."""
+    for kind in (k for k in KINDS if k in store.TABLES):
+        got, want = src.db.columns(kind), db.columns(kind)
+        if set(got) != set(want) or not all(IDENTIFIER.fullmatch(c) for c in got):
+            die(t("원본 work.db의 {table} 표 열이 저장소와 다르다: {columns}", table=kind,
+                  columns=", ".join(repr(c) for c in sorted(set(got) ^ set(want)) or got)), 1)
+
+
+def _belongs(kind: str, row: dict, touched: dict) -> bool:
+    """An item's projection rows, the ones store.project_item rewrites from its latest record."""
+    if kind in touched:
+        return row["id"] in touched[kind]
+    if kind == "run_todo":
+        return row["todo_id"] in touched["todo"]
+    if kind in ("wait", "decision", "link") and not (kind == "decision" and row["run_id"] is not None):
+        return row["goal_id"] in touched["goal"] or row["todo_id"] in touched["todo"]
+    return False
+
+
+def _import_tables(db, src: Source) -> tuple[int, int, tuple]:
+    """A work.db source: copy its absent rows as stored. Replaying its lines would rebuild projects and links from
+    today's Desk paths and repo settings, not the source's (lina#480). An event already in the store must match;
+    an item that gets new events here takes the source's projection rows, since its edits live there. -> (new
+    events, new run/to-do pairs, the rows to check)."""
+    source, present = table_rows(src.db), table_rows(db)
+    have = {kind: {key(kind, row): row for row in present[kind]} for kind in KINDS}
+    for row in source["event"]:
+        old = have["event"].get(key("event", row))
+        if old is not None and _event_data(old["data"]) != _event_data(row["data"]):
+            die(t("저장소의 {n}번째 줄이 원본과 다르다. 다른 기록이 이미 들어 있다", n=row["id"]), 1)
+    new_events = [row for row in source["event"] if key("event", row) not in have["event"]]
+    touched = {kind: {row[kind + "_id"] for row in new_events if row[kind + "_id"] is not None}
+               for kind in ("area", "goal", "todo")}
+    touched["project"] = {row["project_id"] for row in source["goal"]
+                          if row["id"] in touched["goal"] and row["project_id"] is not None}
+    for kind in ("wait", "decision", "link"):
+        stale = [row["id"] for row in present[kind] if _belongs(kind, row, touched)]
+        for i in stale:
+            db.execute(f"DELETE FROM {kind} WHERE id = ?", (i,))
+    for todo_id in touched["todo"]:
+        db.execute("DELETE FROM run_todo WHERE todo_id = ?", (todo_id,))
+    absent = {kind: [row for row in source[kind] if key(kind, row) not in have[kind]] for kind in KINDS}
+    scope = {kind: {key(kind, row): row for row in source[kind]
+                    if key(kind, row) not in have[kind] or _belongs(kind, row, touched)} for kind in KINDS}
+    import_selected_rows(db, {kind: list(scope[kind].values()) for kind in KINDS})
+    return len(absent["event"]), len(absent["run_todo"]), (scope, touched)
+
+
 def cmd_import(a) -> None:
     """Copy a record into the configured store: idempotent (a line already imported is never written twice), the
     source opened read-only, then a count check per table and a compare of every item's latest record."""
     src = Source(Path(a.from_).expanduser())
     try:
         lines = src.lines()
-        runs, pairs = src.runs()
         with Lock():
             db = ledger.db()
+            if src.db is not None:
+                _check_columns(db, src)
             with store.transaction(db):
-                added, skipped = _import_new(db, lines, _imported(db, lines))
-                copied = _copy_runs(db, runs, pairs)
-                ok, report = _check_counts(src, db, lines, skipped)
+                scope = None
+                if src.db is None:
+                    added, skipped = _import_new(db, lines, _imported(db, lines))
+                    copied = 0
+                else:
+                    (added, copied, scope), skipped = _import_tables(db, src), []
+                ok, report = _check_counts(src, db, lines, skipped, scope)
                 if not ok:
                     print("\n".join(report))
                     raise SystemExit(t("가져온 기록이 원본과 다르다. 아무것도 바꾸지 않았다"))

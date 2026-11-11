@@ -79,6 +79,82 @@ def test_import_from_a_work_db_copies_lines_runs_and_pairs(work):
     assert {i["id"]: i["title"] for i in work.json("--all")["items"]}["T1"] == "Updated fixture task"
 
 
+def test_import_from_a_work_db_keeps_its_projects_when_lines_name_old_paths(work):
+    """lina#480: the Desk folder 1_Projects was renamed 1_Goals in the source's project table, while its older lines
+    still name 1_Projects. The import keeps the source's projects instead of rebuilding them from the lines."""
+    jsonl = _source(work)
+    lines = jsonl.read_text(encoding="utf-8").splitlines()
+    moved = lines[1].replace('"op": "add"', '"op": "edit"').replace("1_Projects/Fixture", "1_Goals/Fixture")
+    jsonl.write_text("\n".join(lines + [moved]) + "\n", encoding="utf-8")
+    db_file = work.tmp / "old" / "work.db"
+    db_file.parent.mkdir()
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("DELETE FROM project WHERE para_path = '1_Projects/Fixture'")
+        conn.execute("UPDATE project SET para_path = replace(para_path, '1_Projects/', '1_Goals/')")
+        projects = conn.execute("SELECT id, para_path FROM project ORDER BY id").fetchall()
+    assert "새 줄 8개" in work.ok("import", "--from", str(db_file))
+    assert "새 줄 0개" in work.ok("import", "--from", str(db_file))
+    db = ledger.open_db()
+    try:
+        assert db.execute("SELECT id, para_path FROM project ORDER BY id").fetchall() == projects
+    finally:
+        db.close()
+
+
+def _edited(jsonl):
+    """The source's later edits: the area renamed and a to-do retitled."""
+    lines = jsonl.read_text(encoding="utf-8").splitlines()
+    area = lines[0].replace('"op": "add"', '"op": "edit"').replace('"Dev"', '"Ops"')
+    todo = next(line for line in lines if '"Updated fixture task"' in line).replace("Updated fixture task", "Edited at the source")
+    jsonl.write_text("\n".join(lines + [area, todo]) + "\n", encoding="utf-8")
+
+
+def _tables():
+    from hermes_cli.migrate_memory_work_rows import rows
+    db = ledger.open_db()
+    try:
+        return rows(db)
+    finally:
+        db.close()
+
+
+def test_reimporting_a_work_db_brings_its_new_edits_into_the_tables(work):
+    """lina#504 review: a re-import whose new events edit items already imported rewrites those items' rows."""
+    jsonl = _source(work)
+    db_file = work.tmp / "old" / "work.db"
+    db_file.parent.mkdir()
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    work.ok("import", "--from", str(db_file))
+    _edited(jsonl)
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    assert "새 줄 2개" in work.ok("import", "--from", str(db_file))
+    tables = _tables()
+    area = {r["id"]: r for r in tables["area"]}["A1"]
+    assert (area["title"], area["para_path"]) == ("Ops", "Areas/Ops")
+    assert {r["id"]: r["title"] for r in tables["todo"]}["T1"] == "Edited at the source"
+    assert "새 줄 0개" in work.ok("import", "--from", str(db_file))
+    assert _tables() == tables
+
+
+def test_import_refuses_a_work_db_with_an_unsafe_column_name(work):
+    """lina#504 review: a work.db column name is never spliced into the store's SQL; the import stops before any
+    write."""
+    jsonl = _source(work)
+    db_file = work.tmp / "old" / "work.db"
+    db_file.parent.mkdir()
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    marker = work.tmp / "ran"
+    name = f'x"\n\\! touch {marker}\n'
+    with sqlite3.connect(db_file) as conn:
+        conn.execute('ALTER TABLE area ADD COLUMN "' + name.replace('"', '""') + '" TEXT')
+    code, _, err = work.run("import", "--from", str(db_file))
+    assert code != 0 and "area" in err
+    assert not marker.exists()
+    counts = _counts()
+    assert [counts[k] for k in ("area", "goal", "todo", "event")] == [0, 0, 0, 0]
+
+
 def test_import_refuses_a_store_that_holds_a_different_record(work):
     src = _source(work)
     work.ok("import", "--from", str(src))
