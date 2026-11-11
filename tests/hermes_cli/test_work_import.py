@@ -102,6 +102,59 @@ def test_import_from_a_work_db_keeps_its_projects_when_lines_name_old_paths(work
         db.close()
 
 
+def _edited(jsonl):
+    """The source's later edits: the area renamed and a to-do retitled."""
+    lines = jsonl.read_text(encoding="utf-8").splitlines()
+    area = lines[0].replace('"op": "add"', '"op": "edit"').replace('"Dev"', '"Ops"')
+    todo = next(line for line in lines if '"Updated fixture task"' in line).replace("Updated fixture task", "Edited at the source")
+    jsonl.write_text("\n".join(lines + [area, todo]) + "\n", encoding="utf-8")
+
+
+def _tables():
+    from hermes_cli.migrate_memory_work_rows import rows
+    db = ledger.open_db()
+    try:
+        return rows(db)
+    finally:
+        db.close()
+
+
+def test_reimporting_a_work_db_brings_its_new_edits_into_the_tables(work):
+    """lina#504 review: a re-import whose new events edit items already imported rewrites those items' rows."""
+    jsonl = _source(work)
+    db_file = work.tmp / "old" / "work.db"
+    db_file.parent.mkdir()
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    work.ok("import", "--from", str(db_file))
+    _edited(jsonl)
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    assert "새 줄 2개" in work.ok("import", "--from", str(db_file))
+    tables = _tables()
+    area = {r["id"]: r for r in tables["area"]}["A1"]
+    assert (area["title"], area["para_path"]) == ("Ops", "Areas/Ops")
+    assert {r["id"]: r["title"] for r in tables["todo"]}["T1"] == "Edited at the source"
+    assert "새 줄 0개" in work.ok("import", "--from", str(db_file))
+    assert _tables() == tables
+
+
+def test_import_refuses_a_work_db_with_an_unsafe_column_name(work):
+    """lina#504 review: a work.db column name is never spliced into the store's SQL; the import stops before any
+    write."""
+    jsonl = _source(work)
+    db_file = work.tmp / "old" / "work.db"
+    db_file.parent.mkdir()
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    marker = work.tmp / "ran"
+    name = f'x"\n\\! touch {marker}\n'
+    with sqlite3.connect(db_file) as conn:
+        conn.execute('ALTER TABLE area ADD COLUMN "' + name.replace('"', '""') + '" TEXT')
+    code, _, err = work.run("import", "--from", str(db_file))
+    assert code != 0 and "area" in err
+    assert not marker.exists()
+    counts = _counts()
+    assert [counts[k] for k in ("area", "goal", "todo", "event")] == [0, 0, 0, 0]
+
+
 def test_import_refuses_a_store_that_holds_a_different_record(work):
     src = _source(work)
     work.ok("import", "--from", str(src))

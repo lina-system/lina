@@ -531,6 +531,8 @@ MESSAGES = {
         "Only a {goal} or {todo} can be marked done",
     "요청: {who}":
         "Requested by: {who}",
+    "원본 work.db의 {table} 표 열이 저장소와 다르다: {columns}":
+        "The {table} table of the source work.db has columns that differ from the store: {columns}",
     "원본이 없다: {path}":
         "Source not found: {path}",
     "이 칸: {shape} · {max}자까지 · 들어갈 것: {content}":
@@ -665,6 +667,8 @@ MESSAGES = {
         "Passed",
     "파일 {name}":
         "File {name}",
+    "표 내용 {n}행: {result}":
+        "Table rows {n}: {result}",
     "표          원본      저장소  결과":
         "Table       Source    Store   Result",
     "프로젝트(Desk): {names}":

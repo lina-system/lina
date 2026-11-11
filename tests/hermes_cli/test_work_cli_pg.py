@@ -57,6 +57,29 @@ def test_import_from_a_work_db_keeps_its_projects_on_postgres(work):
         db.close()
 
 
+def test_import_refuses_a_work_db_with_an_unsafe_column_name_on_postgres(work):
+    """lina#504 review: a work.db column name with a quote, a newline and a psql meta-command never reaches psql."""
+    import sqlite3
+    jsonl = work.tmp / "ledger.jsonl"
+    jsonl.write_text((FIXTURES / "ledger.jsonl").read_text(encoding="utf-8"), encoding="utf-8")
+    db_file = work.tmp / "work.db"
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    marker = work.tmp / "ran"
+    name = f'x"\n\\! touch {marker}\n'
+    with sqlite3.connect(db_file) as conn:
+        conn.execute('ALTER TABLE area ADD COLUMN "' + name.replace('"', '""') + '" TEXT')
+    code, _, err = work.run("import", "--from", str(db_file))
+    assert code != 0 and "area" in err
+    assert not marker.exists()
+    from hermes_cli.work import ledger, store
+    db = ledger.open_db()
+    try:
+        counts = store.counts(db)
+    finally:
+        db.close()
+    assert [counts[k] for k in ("area", "goal", "todo", "event")] == [0, 0, 0, 0]
+
+
 def test_interrupted_hand_off_resumes_on_postgres(work, monkeypatch):
     work.goal_and_todos(todos=2)
     brief = work.tmp / "brief.md"
