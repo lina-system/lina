@@ -275,6 +275,80 @@ def test_hello_carries_the_runner_rows(world):
 
 
 @pytest.mark.platforms("posix")
+def test_an_acp_runner_is_pinned_by_its_adapter_before_its_name(world):
+    world["table"]["claude-agent-acp"] = _npm("claude-agent-acp", "@zed-industries/claude-agent-acp", "0.23.1",
+                                              sign_in="ocx", check="package")
+    world["table"]["codex-acp"] = _npm("codex-acp", "@zed-industries/codex-acp", "0.16.0", sign_in="ocx",
+                                       check="package")
+    (world["root"] / "config.yaml").write_text(textwrap.dedent("""\
+        worker:
+          runners:
+            claude: {type: acp, argv: [claude-agent-acp]}
+            codex: {type: acp, argv: [/opt/zed/codex-acp, --stdio]}
+            grok: {type: acp, argv: [/opt/x/grok-wrapper]}
+            plain: {type: command, argv: [claude, -p]}
+        """), encoding="utf-8")
+    assert _install(world, "claude-agent-acp") == 0
+    assert _install(world, "codex-acp") == 0
+
+    rows = {row["name"]: row for row in lina_runners.node_report(world["root"] / "worker")}
+
+    assert (rows["claude"]["pin"], rows["claude"]["pinned"], rows["claude"]["installed"]) == \
+        ("claude-agent-acp", "0.23.1", "0.23.1"), "the adapter it runs, not the CLI that shares its name"
+    assert rows["claude"]["ready"] is True
+    assert (rows["codex"]["pin"], rows["codex"]["installed"]) == ("codex-acp", "0.16.0"), \
+        "the command in argv decides, absolute path or not"
+    assert rows["grok"]["pin"] == "grok", "a command name with no pin falls back to the runner's name"
+    assert rows["plain"]["pin"] == "claude", "a command runner keeps the pin by name, then by its command"
+    assert "pinned 0.23.1 · installed 0.23.1" in "\n".join(lina_runners.render([rows["claude"]])), \
+        "`lina devices` shows the adapter's pinned and installed versions"
+
+
+@pytest.mark.platforms("posix")
+def test_a_node_whose_ocx_is_external_is_signed_in_when_it_answers_health(world, monkeypatch):
+    assert _install(world, "codex") == 0
+    root = world["root"]
+    answered = {10999: 200}
+    monkeypatch.setattr(lina_ocx, "http_get",
+                        lambda port, path, timeout=3: (answered.get(port, 0), b"{}" if answered.get(port) else b""))
+    world["ocx"]["state"] = "not installed"  # LINA's own OCX is not installed on this node
+    (root / "config.yaml").write_text(textwrap.dedent("""\
+        ocx:
+          port: 10999
+          external: {cli: /opt/ocx/bin/ocx}
+        """), encoding="utf-8")
+
+    row = {item["name"]: item for item in lina_runners.status(root)}["codex"]
+    assert (row["sign_in"], row["sign_in_why"], row["ready"]) == ("ocx", None, True), \
+        "the node's runs reach the models through the operator's OCX"
+
+    answered.clear()
+    row = {item["name"]: item for item in lina_runners.status(root)}["codex"]
+    assert (row["sign_in"], row["why"]) == ("unknown", "prepare")
+    assert "external OCX is not answering on port 10999" in row["sign_in_why"]
+
+    (root / "config.yaml").write_text("worker: {}\n", encoding="utf-8")
+    row = {item["name"]: item for item in lina_runners.status(root)}["codex"]
+    assert (row["sign_in"], row["sign_in_why"]) == ("unknown", "OCX is not installed"), \
+        "a node with no OCX at all says so instead of pretending to be signed in"
+
+
+@pytest.mark.platforms("posix")
+def test_a_runner_with_no_known_sign_in_check_shows_unknown_not_a_failure(world):
+    world["table"]["dsh"] = _npm("dsh", "@deepseek-ai/dsh", "0.2.1-rc.5", sign_in="unknown")
+    assert _install(world, "dsh") == 0
+
+    row = {item["name"]: item for item in lina_runners.status(world["root"])}["dsh"]
+
+    assert (row["sign_in"], row["sign_in_why"]) == (
+        "unknown", "no read-only sign-in check is known for this runner"), "unknown is not shown as a failure"
+    assert (row["installed"], row["ready"], row["why"]) == ("0.2.1-rc.5", True, None)
+    line = "\n".join(lina_runners.render([row]))
+    assert "sign-in unknown (no read-only sign-in check is known for this runner)" in line
+    assert "not ready" not in line
+
+
+@pytest.mark.platforms("posix")
 def test_a_late_or_failing_probe_does_not_hold_hello(world, monkeypatch):
     import threading
     (world["root"] / "config.yaml").write_text(
@@ -293,7 +367,7 @@ def test_a_late_or_failing_probe_does_not_hold_hello(world, monkeypatch):
     assert (rows["codex"]["why"], rows["codex"]["why_detail"]) == ("unknown", "no answer in 0.5s")
     assert rows["codex"]["pinned"] == "1.0.0" and rows["codex"]["ready"] is False
 
-    def broken():
+    def broken(root):
         raise RuntimeError("check broke")
 
     monkeypatch.setitem(lina_runners.SIGN_IN, "grok", broken)
