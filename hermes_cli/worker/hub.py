@@ -1417,7 +1417,7 @@ class Hub:
     def _question(self, job: dict, human: dict) -> tuple[str, str]:
         """The words of the question the run waits on and its key: the omo runner's question ids, else a hash of
         the words, else ``-``."""
-        text, key = (human.get("question") or "").strip(), ""
+        text, key = _question_text(human), ""
         if not text:  # the omo runner's questions come with its live view
             try:
                 live = self.meta(job, live=True).get("live") or {}
@@ -1429,9 +1429,8 @@ class Hub:
         return text, key or (hashlib.sha256(text.encode("utf-8")).hexdigest()[:12] if text else "-")
 
     def _card_question(self, job: dict, run: str, text: str, end: dict) -> None:
-        """One comment on the run's Hermes card for each question it waits on, with the question. It is card work
-        (``card_pending``: the comment step only), done once held there: a comment that did not go through is tried
-        again on the next tick. Called under the job's lock."""
+        """Comment and wake the waiting Hermes card once per question, retaining failed steps for the next tick.
+        Called under the job's lock."""
         if job.get("card_start_pending") or "HERMES_DELEGATED_CHILD_CONTEXT" in os.environ:
             return
         body = (f"{events.headline('human')} · [lina worker · automatic] run {job['id']} (run {run}) waits for an "
@@ -1440,7 +1439,7 @@ class Hub:
                 + f"\n\nAnswer with `lina worker send {job['id']} \"<answer>\"`; to stop: "
                   f"`lina worker cancel {job['id']} --why …`.")
         job.setdefault("card_pending", {})[end["delivery"]] = {
-            "kind": "human", "run": run, "text": body, "done": ["attach", "wake"], "fetch_pending": False,
+            "kind": "human", "run": run, "text": body, "done": ["attach"], "fetch_pending": False,
             "fetch_tries": 0, "delivery": end["delivery"], "report": None}
         job.setdefault("notified", []).append(end)
         self.store.save(job)
