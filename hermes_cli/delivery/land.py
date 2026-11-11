@@ -8,7 +8,8 @@ an added line matching ``work.forbidden_patterns``, or a gitleaks finding. Then 
 request opened, and the same gates as ``lina work merge <repo> <pr>`` decide. A task submitted with ``--base`` lands
 on that branch instead of ``dev``.
 
-A branch whose pull request is open takes the worker's new commits as a follow-up on that pull request: the same
+A branch whose pull request is open takes the worker's new commits as a follow-up on that pull request: the pull
+request's head merged into the worker branch when the branch lacks it (a conflict stops the landing), the same
 checks, the pull request's base merged in only when the result lacks it, and a fast-forward push (never forced).
 A closed or merged pull request for the branch refuses the landing.
 """
@@ -167,6 +168,18 @@ def _open_pull(pulls: list, branch: str) -> dict:
     raise LandError(f"a pull request for {branch} already exists")
 
 
+def _merge_pull_head(clone: Path, pushed: str, number: int, base: Path | None) -> None:
+    """The pull request's head (often the first landing's merge of its base) into the worker branch."""
+    identity = _identity(base)
+    who = ["-c", f"user.name={identity[0]}", "-c", f"user.email={identity[1]}"] if identity else []
+    if subprocess.run(["git", *who, "merge", "-q", "--no-edit", pushed], cwd=clone, capture_output=True,
+                      check=False, timeout=600).returncode == 0:
+        return
+    left = git("diff", "--name-only", "--diff-filter=U", cwd=clone).split()
+    git("merge", "--abort", cwd=clone, check=False)
+    raise LandError(f"conflict with pull request #{number} in {', '.join(left) or 'the merge'}: resolve it by hand")
+
+
 def follow_up(gh, hub, job: dict, pull: dict, branch: str, *, base: Path | None, source, out, **merge_options) -> int:
     """The worker's new commits onto the open pull request *pull* of *branch*, pushed as a fast-forward."""
     from hermes_cli.worker import settings as worker_settings
@@ -178,13 +191,13 @@ def follow_up(gh, hub, job: dict, pull: dict, branch: str, *, base: Path | None,
         onto, pushed = f"origin/{onto_branch}", git("rev-parse", f"refs/remotes/origin/{branch}", cwd=clone)
         worker_head = (source or WorkerBranchSource(base)).fetch(job, clone, branch)
         git("switch", "-q", branch, cwd=clone)
+        if not git("merge-base", pushed, branch, cwd=clone, check=False):
+            raise LandError(f"{branch} has no common ancestor with pull request #{number}")
         count = int(git("rev-list", "--count", f"{pushed}..{branch}", cwd=clone))
         if count == 0:
             raise LandError(f"{branch} has no commits over pull request #{number}")
         if not _contains(clone, pushed, branch):
-            raise LandError(f"{branch} does not build on the head of pull request #{number} ({pushed[:12]}): a "
-                            "follow-up is pushed only as a fast-forward, never forced; bring that head into the "
-                            "worker branch first")
+            _merge_pull_head(clone, pushed, number, base)  # the result then descends from it: a fast-forward
         check_authors(clone, onto, branch, base)
         merged = not _contains(clone, onto, branch)
         if merged:

@@ -235,16 +235,46 @@ def test_new_commits_on_a_branch_with_an_open_pull_request_follow_up_as_a_fast_f
     assert said.endswith("dev merged in") is dev_moves
 
 
-def test_a_follow_up_that_does_not_build_on_the_pull_request_head_is_never_forced(world):
+def test_a_pull_request_head_ahead_of_the_worker_is_merged_in_and_pushed_as_a_fast_forward(world):
     origin = world["origin"]
     gh, pr_head = _landed_once(world)  # dev was merged into the pull request; the work folder lacks that merge
     commit(world["work"], "app/fix.py", "FIX = 1\n", "fix(app): the review finding")
+    worker_head = git(world["work"], "rev-parse", "HEAD")
+    lines = []
 
-    with pytest.raises(LandError, match=r"does not build on the head of pull request #31 .*never forced"):
+    code = land(gh, BRANCH, TASK, "feat(app): the feature", 12, base=world["base"], out=lines.append)
+
+    assert code == rules.WAIT, lines
+    landed = git(origin, "rev-parse", f"refs/heads/{BRANCH}")
+    for ancestor in (pr_head, worker_head):
+        subprocess.run(["git", "merge-base", "--is-ancestor", ancestor, landed], cwd=origin, check=True)
+    assert git(origin, "show", f"{landed}:app/fix.py") == "FIX = 1"
+    assert [c[:2] for c in gh.commands].count(["pr", "create"]) == 1
+    (said,) = [line for line in lines if "added to #31" in line]
+    assert said.startswith(f"{BRANCH}: 1 worker commit(s)")
+
+
+def test_a_conflict_with_the_pull_request_head_stops_before_any_push(world):
+    origin = world["origin"]
+    gh, pr_head = _landed_once(world)  # the pull request carries dev's docs/later.md
+    commit(world["work"], "docs/later.md", "the worker's own words\n", "docs: later, by the worker")
+
+    with pytest.raises(LandError, match=r"conflict with pull request #31 in docs/later\.md"):
         land(gh, BRANCH, TASK, "feat(app): the feature", 12, base=world["base"], out=lambda _line: None)
 
     assert git(origin, "rev-parse", f"refs/heads/{BRANCH}") == pr_head
-    assert [c[:2] for c in gh.commands].count(["pr", "create"]) == 1
+
+
+def test_a_worker_branch_without_a_common_ancestor_with_the_pull_request_is_refused(world):
+    origin, work = world["origin"], world["work"]
+    gh, pr_head = _landed_once(world)
+    git(work, "switch", "-q", "--orphan", "elsewhere")
+    commit(work, "other.txt", "other\n", "feat: unrelated history")
+
+    with pytest.raises(LandError, match=r"no common ancestor with pull request #31"):
+        land(gh, BRANCH, TASK, "feat(app): the feature", 12, base=world["base"], out=lambda _line: None)
+
+    assert git(origin, "rev-parse", f"refs/heads/{BRANCH}") == pr_head
 
 
 def test_a_closed_pull_request_for_the_branch_still_refuses_the_landing(world):
