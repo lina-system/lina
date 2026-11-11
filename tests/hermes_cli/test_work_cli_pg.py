@@ -34,6 +34,29 @@ def test_golden_json_and_list_on_postgres(work):
     assert work.ok("list", "--all") == (FIXTURES / "work-list-all.txt").read_text(encoding="utf-8")
 
 
+def test_import_from_a_work_db_keeps_its_projects_on_postgres(work):
+    """lina#480 on Postgres: a work.db whose project table no longer matches the paths its lines name."""
+    import sqlite3
+    jsonl = work.tmp / "ledger.jsonl"
+    lines = (FIXTURES / "ledger.jsonl").read_text(encoding="utf-8").splitlines()
+    moved = lines[1].replace('"op": "add"', '"op": "edit"').replace("1_Projects/Fixture", "1_Goals/Fixture")
+    jsonl.write_text("\n".join(lines + [moved]) + "\n", encoding="utf-8")
+    db_file = work.tmp / "work.db"
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("DELETE FROM project WHERE para_path = '1_Projects/Fixture'")
+        conn.execute("UPDATE project SET para_path = replace(para_path, '1_Projects/', '1_Goals/')")
+        projects = conn.execute("SELECT id, para_path FROM project ORDER BY id").fetchall()
+    assert "새 줄 8개" in work.ok("import", "--from", str(db_file))
+    assert "새 줄 0개" in work.ok("import", "--from", str(db_file))
+    from hermes_cli.work import ledger
+    db = ledger.open_db()
+    try:
+        assert [tuple(r) for r in db.execute("SELECT id, para_path FROM project ORDER BY id").fetchall()] == projects
+    finally:
+        db.close()
+
+
 def test_interrupted_hand_off_resumes_on_postgres(work, monkeypatch):
     work.goal_and_todos(todos=2)
     brief = work.tmp / "brief.md"

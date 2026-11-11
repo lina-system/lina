@@ -79,6 +79,29 @@ def test_import_from_a_work_db_copies_lines_runs_and_pairs(work):
     assert {i["id"]: i["title"] for i in work.json("--all")["items"]}["T1"] == "Updated fixture task"
 
 
+def test_import_from_a_work_db_keeps_its_projects_when_lines_name_old_paths(work):
+    """lina#480: the Desk folder 1_Projects was renamed 1_Goals in the source's project table, while its older lines
+    still name 1_Projects. The import keeps the source's projects instead of rebuilding them from the lines."""
+    jsonl = _source(work)
+    lines = jsonl.read_text(encoding="utf-8").splitlines()
+    moved = lines[1].replace('"op": "add"', '"op": "edit"').replace("1_Projects/Fixture", "1_Goals/Fixture")
+    jsonl.write_text("\n".join(lines + [moved]) + "\n", encoding="utf-8")
+    db_file = work.tmp / "old" / "work.db"
+    db_file.parent.mkdir()
+    work.ok("migrate", "--from", str(jsonl), "--to", str(db_file))
+    with sqlite3.connect(db_file) as conn:
+        conn.execute("DELETE FROM project WHERE para_path = '1_Projects/Fixture'")
+        conn.execute("UPDATE project SET para_path = replace(para_path, '1_Projects/', '1_Goals/')")
+        projects = conn.execute("SELECT id, para_path FROM project ORDER BY id").fetchall()
+    assert "새 줄 8개" in work.ok("import", "--from", str(db_file))
+    assert "새 줄 0개" in work.ok("import", "--from", str(db_file))
+    db = ledger.open_db()
+    try:
+        assert db.execute("SELECT id, para_path FROM project ORDER BY id").fetchall() == projects
+    finally:
+        db.close()
+
+
 def test_import_refuses_a_store_that_holds_a_different_record(work):
     src = _source(work)
     work.ok("import", "--from", str(src))

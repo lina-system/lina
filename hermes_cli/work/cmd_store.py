@@ -9,6 +9,7 @@ import os
 import sys
 from pathlib import Path
 
+from hermes_cli.migrate_memory_work_rows import KINDS, key, rows
 from hermes_cli.work import ledger, store
 from hermes_cli.work.common import Lock, die, iso, now, paths, warn, writer_profile
 from hermes_cli.work.env import current
@@ -70,14 +71,6 @@ class Source:
                 row = None
             out.append((eid, line, row if isinstance(row, dict) and row.get("id") is not None else None))
         return out
-
-    def runs(self) -> tuple[list[tuple], list[tuple]]:
-        if self.db is None:
-            return [], []
-        runs = self.db.execute(f"SELECT {', '.join(RUN_COLUMNS)} FROM run ORDER BY id").fetchall()
-        pairs = self.db.execute("SELECT run_id, todo_id, closes, added_by, added_at FROM run_todo "
-                                "ORDER BY run_id, todo_id").fetchall()
-        return runs, pairs
 
     def counts(self) -> dict:
         if self.db is None:
@@ -224,18 +217,38 @@ def _import_new(db, lines, done: dict) -> tuple[int, list]:
     return added, skipped
 
 
+def _event_data(value) -> dict:
+    return json.loads(value) if isinstance(value, str) else value
+
+
+def _import_tables(db, src: Source) -> tuple[int, int]:
+    """A work.db source: copy its absent rows as stored. Replaying its lines would rebuild projects and links from
+    today's Desk paths and repo settings, not the source's (lina#480). An event already in the store must match."""
+    source, present = rows(src.db), rows(db)
+    have = {kind: {key(kind, row): row for row in present[kind]} for kind in KINDS}
+    for row in source["event"]:
+        old = have["event"].get(key("event", row))
+        if old is not None and _event_data(old["data"]) != _event_data(row["data"]):
+            die(t("저장소의 {n}번째 줄이 원본과 다르다. 다른 기록이 이미 들어 있다", n=row["id"]), 1)
+    selected = {kind: [row for row in source[kind] if key(kind, row) not in have[kind]] for kind in KINDS}
+    import_selected_rows(db, selected)
+    return len(selected["event"]), len(selected["run_todo"])
+
+
 def cmd_import(a) -> None:
     """Copy a record into the configured store: idempotent (a line already imported is never written twice), the
     source opened read-only, then a count check per table and a compare of every item's latest record."""
     src = Source(Path(a.from_).expanduser())
     try:
         lines = src.lines()
-        runs, pairs = src.runs()
         with Lock():
             db = ledger.db()
             with store.transaction(db):
-                added, skipped = _import_new(db, lines, _imported(db, lines))
-                copied = _copy_runs(db, runs, pairs)
+                if src.db is None:
+                    added, skipped = _import_new(db, lines, _imported(db, lines))
+                    copied = 0
+                else:
+                    (added, copied), skipped = _import_tables(db, src), []
                 ok, report = _check_counts(src, db, lines, skipped)
                 if not ok:
                     print("\n".join(report))
