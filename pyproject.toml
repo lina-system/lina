@@ -660,6 +660,7 @@ hermes_cli = [
   "data/*.json",
   "local_runtime/*.json",
   "process_supervisor.sh",
+  "worker/*.json",
   "worker/runners/*.mjs",
   "work/*.sql",
 ]
