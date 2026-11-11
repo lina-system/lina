@@ -13,6 +13,12 @@ import pytest
 
 from gateway import hosted_room_driver as state
 from gateway import hosted_rooms
+from tests.tui_gateway._hosted_room_waits import (
+    _LEASE_TTL_SECONDS,
+    _wait_for,
+    _wait_set,
+    _wait_status,
+)
 from tui_gateway.hosted_room_driver import (
     MAX_TERMINAL_TEXT_BYTES,
     ROOM_SESSION_SOURCE,
@@ -416,19 +422,10 @@ def _runtime(
         rooms=[BINDING],
         rpc=rpc,
         turn_lock=locks or RecordingTurnLocks(),
-        lease_ttl_seconds=kwargs.pop("lease_ttl_seconds", 0.4),
+        lease_ttl_seconds=kwargs.pop("lease_ttl_seconds", _LEASE_TTL_SECONDS),
         poll_interval_seconds=kwargs.pop("poll_interval_seconds", 0.01),
         **kwargs,
     )
-
-
-def _wait_for(predicate, *, timeout: float = 10.0) -> None:
-    deadline = time.monotonic() + timeout
-    while time.monotonic() < deadline:
-        if predicate():
-            return
-        time.sleep(0.01)
-    raise AssertionError("condition was not reached before timeout")
 
 
 def test_runtime_uses_unique_process_generation(db: Path):
@@ -455,7 +452,7 @@ def test_queued_task_routes_profile_and_credentials_without_overrides(db: Path):
     runtime = _runtime(db, rpc)
 
     runtime.start()
-    _wait_for(lambda: state.get_task(db, identity)["status"] == "settled")
+    _wait_status(db, identity, runtime, "settled")
     assert runtime.stop(timeout=5.0)
 
     create = next(params for method, params in rpc.calls if method == "create")
@@ -508,7 +505,7 @@ def test_policy_hooks_prepare_and_publish_terminal_idempotently(db: Path):
     )
 
     runtime.start()
-    _wait_for(lambda: state.get_task(db, identity)["status"] == "settled")
+    _wait_status(db, identity, runtime, "settled")
     assert runtime.stop(timeout=5.0)
 
     assert prepared
@@ -532,7 +529,7 @@ def test_transport_resolver_selects_member_transport_without_forking_state(
         rooms=[BINDING],
         transport_resolver=resolve_transport,
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=_LEASE_TTL_SECONDS,
         poll_interval_seconds=0.01,
     )
 
@@ -665,14 +662,14 @@ def test_waiting_room_does_not_block_an_independent_room(tmp_path: Path):
             waiting if binding.room_id == "room-waiting" else healthy
         ),
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=_LEASE_TTL_SECONDS,
         poll_interval_seconds=0.01,
         max_concurrent_rooms=2,
     )
 
     runtime.start()
-    assert waiting.submitted.wait(1.0)
-    _wait_for(lambda: state.get_task(db, identities[1])["status"] == "settled")
+    _wait_set(waiting.submitted, runtime)
+    _wait_status(db, identities[1], runtime, "settled")
     assert state.get_task(db, identities[0])["status"] == "running"
     assert runtime.stop(timeout=5.0)
 
@@ -713,7 +710,7 @@ def test_bounded_scheduler_eventually_runs_later_room(tmp_path: Path):
         rooms=bindings,
         rpc=FakeSessionRPC(),
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=_LEASE_TTL_SECONDS,
         poll_interval_seconds=0.01,
         max_concurrent_rooms=2,
     )
@@ -1013,7 +1010,7 @@ def test_deadline_releases_worker_capacity_for_later_room(tmp_path: Path):
         rooms=bindings,
         rpc=rpc,
         turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4,
+        lease_ttl_seconds=_LEASE_TTL_SECONDS,
         poll_interval_seconds=0.02,
         active_poll_interval_seconds=0.01,
         turn_timeout_seconds=0.05,
@@ -1092,7 +1089,7 @@ def test_retry_ignores_late_receipt_from_prior_execution_generation(db: Path):
     runtime = _runtime(db, rpc, clock=clock)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
     time.sleep(0.04)
     assert runtime.stop(timeout=5.0)
 
@@ -1463,7 +1460,7 @@ def test_post_submit_observation_failure_preserves_recoverable_outcome(db: Path)
     runtime = _runtime(db, rpc)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
     _wait_for(
         lambda: (
             "observation failed after submit"
@@ -1494,7 +1491,7 @@ def test_cancellation_is_persisted_before_interrupt_and_fences_late_result(
     )
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
     cancelled = runtime.cancel(identity, cancel_id="cancel-user")
     rpc.complete(identity.task_id, content="Too late.")
     runtime.wakeup()
@@ -1519,12 +1516,12 @@ def test_transient_remote_stop_failure_stays_pending_and_retries(db: Path):
         attempts += 1
         if attempts == 1:
             raise RuntimeError("temporary stop transport failure")
-        assert retry_allowed.wait(1.0)
+        assert retry_allowed.wait(10.0)
         return original_interrupt(**kwargs)
 
     rpc.interrupt = flaky_interrupt
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
     stopping = runtime.cancel(identity, cancel_id="cancel-retry")
     assert stopping["status"] == "stopping"
     assert state.get_task(db, identity)["status"] == "stopping"
@@ -1670,7 +1667,7 @@ def test_completion_wins_a_race_with_unacknowledged_stop(db: Path):
     runtime = _runtime(db, rpc)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
 
     def finish_only_after_stop_intent():
         if state.get_task(db, identity)["status"] == "stopping":
@@ -1863,7 +1860,7 @@ def test_pending_local_approval_is_reported_with_safe_choices(db: Path):
     )
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
     session_id = next(iter(rpc.states))
     with rpc._lock:
         rpc.states[session_id]["pending_approval"] = {
@@ -1888,7 +1885,7 @@ def test_cancel_never_interrupts_a_newer_task_in_the_same_session(db: Path):
     runtime = _runtime(db, rpc)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
     session_id = next(iter(rpc.states))
 
     def switch_to_newer_task() -> None:
@@ -1951,7 +1948,7 @@ def test_authority_loss_stops_terminal_commit(db: Path):
     runtime = _runtime(db, rpc, lease_ttl_seconds=30.0)
 
     runtime.start()
-    assert rpc.submitted.wait(1.0)
+    _wait_set(rpc.submitted, runtime)
     hosted_rooms.claim_authority(
         db,
         room_id=ROOM_ID,

@@ -18,13 +18,13 @@ import pytest
 
 from gateway import hosted_room_driver as state
 from gateway import hosted_rooms
+from tests.tui_gateway._hosted_room_waits import _LEASE_TTL_SECONDS, _task_state, _wait_for
 from tests.tui_gateway.test_hosted_room_driver_runtime import (
     BINDING,
     PROFILE,
     ROOM_ID,
     RecordingTurnLocks,
     _identity,
-    _wait_for,
 )
 from tui_gateway.hosted_room_driver import HostedRoomRuntime
 from tui_gateway.hosted_room_peer_transport import PeerHostedRoomTransport, PeerMemberRoute
@@ -74,7 +74,8 @@ def _run_until_settled_or_error(runtime: HostedRoomRuntime, db: Path, identity) 
     try:
         _wait_for(lambda: (
             state.get_task(db, identity)["status"] in state.TERMINAL_STATUSES
-            or runtime.status()["last_error"] is not None))
+            or runtime.status()["last_error"] is not None),
+            describe=_task_state(db, identity, runtime))
     finally:
         assert runtime.stop(timeout=5.0)
     return state.get_task(db, identity)
@@ -110,7 +111,7 @@ def _server_module():
 def _legacy_runtime(db: Path, rpc: HostedRoomServerRPC) -> HostedRoomRuntime:
     return HostedRoomRuntime(
         db_path=db, rooms=[BINDING], rpc=rpc, turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4, poll_interval_seconds=0.01)
+        lease_ttl_seconds=_LEASE_TTL_SECONDS, poll_interval_seconds=0.01)
 
 
 class DispatchingPeerClient:
@@ -151,7 +152,7 @@ def _peer_runtime(db: Path, client: DispatchingPeerClient) -> HostedRoomRuntime:
 
     return HostedRoomRuntime(
         db_path=db, rooms=[BINDING], transport_resolver=resolve, turn_lock=RecordingTurnLocks(),
-        lease_ttl_seconds=0.4, poll_interval_seconds=0.01)
+        lease_ttl_seconds=_LEASE_TTL_SECONDS, poll_interval_seconds=0.01)
 
 
 def _assert_refused_as_proven_failure(task: dict, runtime: HostedRoomRuntime) -> None:
