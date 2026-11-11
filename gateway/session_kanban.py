@@ -43,16 +43,16 @@ def build_kanban_policy(connection, params, config):
                 raise RuntimeStoreError('stale_kanban_claim')
             context = kb.build_worker_context(conn, task.id)
             skills = list(task.skills or ())
-            if kb._retry_status_for_run(conn, task.id, task.current_run_id) == 'review':
+            review = kb._retry_status_for_run(conn, task.id, task.current_run_id) == 'review'
+            if review:
                 # Same rule as the dispatcher's review lane: the reviewer always loads code-review.
                 skills = list(dict.fromkeys([*skills, 'code-review']))
     except (ValueError, OSError, sqlite3.Error) as exc:
         raise RuntimeStoreError('invalid_kanban_claim') from exc
     cwd = task.workspace_path
-    params_policy = {'source': 'cli', 'cwd': cwd}
-    for name, value in (('model', task.model_override), ('provider', task.provider_override), ('reasoning', task.reasoning_effort)):
-        if value:
-            params_policy[name] = value
+    from hermes_cli.kanban_session_model import card_session_route, session_model_record
+    route, origin = card_session_route(task, config, review=review)
+    params_policy = {'source': 'cli', 'cwd': cwd, **route}
     private = {}
     policy = build_policy(params_policy, config, private_secrets=private)
     if policy.model is None:
@@ -62,7 +62,8 @@ def build_kanban_policy(connection, params, config):
         profile=task.assignee, workspaces_root=str(kb.workspaces_root(board=board).resolve()),
         skills=skills, goal_mode=task.goal_mode, goal_max_turns=task.goal_max_turns,
         goal_text='\n\n'.join(p for p in (task.title, task.body) if p), context=context,
-        max_runtime_seconds=task.max_runtime_seconds, accept_hooks=True)
+        max_runtime_seconds=task.max_runtime_seconds, accept_hooks=True,
+        session_model=session_model_record(policy, origin))
     context['db'] = str(path)
     request = json.loads(policy.request_json)
     request.update(source='kanban', board=board, task_id=task.id, run_id=task.current_run_id)
@@ -128,6 +129,10 @@ async def run_task(connection, params):
                     {'db': owner_db, 'session_id': ref.session_id,
                      'request_id': request_id, 'pid': os.getpid(), 'birth': worker_birth(psutil.Process())},
                     run_id=task.current_run_id)
+                if context.get('session_model'):
+                    # The card shows the model and effort this attempt runs on (lina#346).
+                    kb._append_event(conn, task.id, 'session_model', context['session_model'],
+                                     run_id=task.current_run_id)
     from gateway.session_runtime_workers import tracked_write
     await tracked_write(authority, admit_claim)
     await connection.resume(ref, {})
@@ -424,10 +429,13 @@ def _run_task_turns(agent, frame, history, context):
                                         turn_author=KANBAN_TURN_AUTHOR)
         return result.get('final_response', '')
     from hermes_cli.kanban_goal_gates import loop_gate_check, wait_with_heartbeat
+    from hermes_cli.kanban_session_model import goal_context_bound
     run_kanban_goal_loop(task_id=context['task_id'], goal_text=context['goal_text'], run_turn=turn,
         task_status_fn=status, block_fn=block, max_turns=context['goal_max_turns'] or DEFAULT_MAX_TURNS,
         first_response=result.get('final_response', ''),
         gate_check=loop_gate_check(context['task_id'], context['goal_text'], run_id=context['run_id'],
                                    workspace=context.get('workspace')),
-        wait_fn=wait_with_heartbeat, record_turn=record_turn)
+        wait_fn=wait_with_heartbeat, record_turn=record_turn,
+        context_tokens=lambda: getattr(getattr(agent, 'context_compressor', None), 'last_prompt_tokens', 0),
+        context_bound=goal_context_bound())
     return result

@@ -25,6 +25,8 @@ from hermes_cli import kanban_db_connect as kbc
 from hermes_cli.goals import GATE_WAIT_EXIT_CODE
 from hermes_cli.kanban_gates import own_names
 from hermes_cli.kanban_goal_gates import GATE_EVENT_KIND
+from hermes_cli.lina_board_hermes import READ_ONLY, is_hermes
+from plugins.kanban.dashboard import work_api_hermes as hermes_rows
 
 router = APIRouter(prefix="/work")
 
@@ -91,6 +93,8 @@ class CardFacts:
     runs: list[kanban_db.Run] = field(default_factory=list)
     board: Optional[str] = None  # the board the request resolved (``_board_slug``); None = the default board
     own: set[str] = field(default_factory=set)  # ``own_names``: the implementer(s) and the assignee, never the reviewer
+    # A source with no claim or heartbeat to read (the Hermes board through its CLI, lina#481): an open run is live.
+    assume_live: bool = False
 
 
 def _facts(conn: sqlite3.Connection, task: kanban_db.Task, board: Optional[str] = None) -> CardFacts:
@@ -183,6 +187,12 @@ def run_is_live(run: Optional[kanban_db.Run], now: int) -> bool:
     return (run.claim_expires or 0) > now or now - last_beat <= LIVE_WINDOW_SECONDS
 
 
+def _run_live(facts: CardFacts, run: Optional[kanban_db.Run], now: int) -> bool:
+    if facts.assume_live:
+        return run is not None and run.ended_at is None
+    return run_is_live(run, now)
+
+
 def _latest_block_payload(events: list[kanban_db.Event]) -> dict[str, Any]:
     ev = next((e for e in reversed(events) if e.kind in _BLOCK_EVENT_KINDS), None)
     return (ev.payload or {}) if ev else {}
@@ -219,7 +229,7 @@ def work_state(facts: CardFacts, now: Optional[int] = None) -> tuple[str, Option
         return "stopped", _block_reason_word(facts.task, facts.events)
     if status != "running":
         return "planned", status if status in _PLANNED_STATUSES else None
-    if not run_is_live(_current_run(facts), now):
+    if not _run_live(facts, _current_run(facts), now):
         return "stopped", "unresponsive"
     gate = _latest_gate_event(facts.events, facts.task.current_run_id)
     if gate is not None and (gate.payload or {}).get("exit_code") == GATE_WAIT_EXIT_CODE:
@@ -343,11 +353,11 @@ def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
     }
 
 
-def _run_dict(run: kanban_db.Run, now: int) -> dict[str, Any]:
+def _run_dict(facts: CardFacts, run: kanban_db.Run, now: int) -> dict[str, Any]:
     return {
         "id": run.id, "profile": run.profile, "status": run.status, "outcome": run.outcome,
         "startedAt": run.started_at, "endedAt": run.ended_at, "lastHeartbeatAt": run.last_heartbeat_at,
-        "summary": run.summary, "live": run_is_live(run, now),
+        "summary": run.summary, "live": _run_live(facts, run, now),
     }
 
 
@@ -361,7 +371,7 @@ def card_detail(facts: CardFacts, now: int) -> dict[str, Any]:
         "gates": gates,
         "comments": [{"id": c.id, "author": c.author, "body": c.body, "createdAt": c.created_at}
                      for c in facts.comments],
-        "runs": [_run_dict(r, now) for r in facts.runs],
+        "runs": [_run_dict(facts, r, now) for r in facts.runs],
     }
 
 
@@ -381,6 +391,11 @@ def _goal_dict(conn: sqlite3.Connection, goal: kanban_db.Task, work_ids: list[st
                board: Optional[str] = None) -> dict[str, Any]:
     goal_facts = _facts(conn, goal, board)
     work = [_facts(conn, t, board) for t in filter(None, (kanban_db.get_task(conn, i) for i in work_ids))]
+    return goal_view(goal_facts, work, now)
+
+
+def goal_view(goal_facts: CardFacts, work: list[CardFacts], now: int) -> dict[str, Any]:
+    goal = goal_facts.task
     state, reason = work_state(goal_facts, now)
     return {
         "id": goal.id, "title": goal.title, **_agent_fields(goal_facts), "state": state, "reason": reason,
@@ -409,9 +424,7 @@ def _require_card(conn: Optional[sqlite3.Connection], card_id: str) -> kanban_db
     return task
 
 
-@router.get("/goals")
-def list_goals(board: Optional[str] = Query(None)):
-    now, board = int(time.time()), _board_slug(board)
+def _own_goals(board: Optional[str], now: int) -> dict[str, list]:
     with _read_conn(board) as conn:
         if conn is None:
             return {"goals": []}
@@ -423,8 +436,16 @@ def list_goals(board: Optional[str] = Query(None)):
         return {"goals": goals}
 
 
+@router.get("/goals")
+def list_goals(board: Optional[str] = Query(None)):
+    now, board = int(time.time()), _board_slug(board)
+    return hermes_rows.add(_own_goals(board, now), board, lambda src: hermes_rows.goals(src, now))
+
+
 @router.get("/goals/{goal_id}")
 def get_goal(goal_id: str, board: Optional[str] = Query(None)):
+    if is_hermes(goal_id):
+        return hermes_rows.one(goal_id, lambda src, i: hermes_rows.goal(src, i, int(time.time())))
     board = _board_slug(board)
     with _read_conn(board) as conn:
         goal = _require_card(conn, goal_id)
@@ -440,6 +461,11 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
     if state is not None and state not in WORK_STATES:
         raise HTTPException(status_code=400, detail=f"state must be one of {list(WORK_STATES)}")
     now, board = int(time.time()), _board_slug(board)
+    return hermes_rows.add(_own_cards(board, now, agent, state), board,
+                           lambda src: hermes_rows.cards(src, now, agent, state))
+
+
+def _own_cards(board: Optional[str], now: int, agent: Optional[str], state: Optional[str]) -> dict[str, list]:
     with _read_conn(board) as conn:
         if conn is None:
             return {"cards": []}
@@ -456,14 +482,19 @@ def list_cards(agent: Optional[str] = Query(None), state: Optional[str] = Query(
 
 @router.get("/cards/{card_id}")
 def get_card(card_id: str, board: Optional[str] = Query(None)):
+    if is_hermes(card_id):
+        return hermes_rows.one(card_id, lambda src, i: hermes_rows.card(src, i, int(time.time())))
     board = _board_slug(board)
     with _read_conn(board) as conn:
         return card_detail(_facts(conn, _require_card(conn, card_id), board), int(time.time()))
 
 
-@router.get("/inbox")
-def get_inbox(board: Optional[str] = Query(None)):
-    now = int(time.time())
+def question_rows(facts: CardFacts) -> list[dict[str, Any]]:
+    return [{"cardId": facts.task.id, "title": facts.task.title, **_agent_fields(facts),
+             "commentId": c.id, "body": c.body, "askedAt": c.created_at} for c in open_questions(facts)]
+
+
+def _own_inbox(board: Optional[str], now: int) -> dict[str, list]:
     with _read_conn(board) as conn:
         if conn is None:
             return {"blocked": [], "questions": []}
@@ -472,11 +503,14 @@ def get_inbox(board: Optional[str] = Query(None)):
             facts = _facts(conn, task)
             if task.status == "blocked":
                 blocked.append(_inbox_blocked(facts, now))
-            questions += [{
-                "cardId": task.id, "title": task.title, **_agent_fields(facts),
-                "commentId": c.id, "body": c.body, "askedAt": c.created_at,
-            } for c in open_questions(facts)]
+            questions += question_rows(facts)
         return {"blocked": blocked, "questions": questions}
+
+
+@router.get("/inbox")
+def get_inbox(board: Optional[str] = Query(None)):
+    now = int(time.time())
+    return hermes_rows.add(_own_inbox(board, now), board, lambda src: hermes_rows.inbox(src, now))
 
 
 class AnswerBody(BaseModel):
@@ -486,7 +520,10 @@ class AnswerBody(BaseModel):
 
 @router.post("/inbox/{card_id}/answer")
 def answer_inbox_item(card_id: str, payload: AnswerBody, board: Optional[str] = Query(None)):
-    """Comment as the owner; unblock the card when it is blocked waiting for input."""
+    """Comment as the owner; unblock the card when it is blocked waiting for input. A card of the Hermes board is read
+    only here (lina#481)."""
+    if is_hermes(card_id):
+        raise HTTPException(status_code=409, detail=READ_ONLY)
     text = payload.text.strip()
     if not text:
         raise HTTPException(status_code=400, detail="text is required")

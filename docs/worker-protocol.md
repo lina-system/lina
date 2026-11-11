@@ -53,6 +53,26 @@ receipts), in `lina worker hosts` and in `lina devices`. None of them changes
 the score order, and none touches a run already on the node: the node watch
 speaks for a lost node.
 
+- `model path does not answer (<url>: HTTP <code>)`: `probe` asks the
+  node's model path on the node — the `model_check` its own `config.yaml`
+  gives the device it lists as `host: local`, else the same
+  `http://127.0.0.1:10100/healthz` default a file node asks, on the node's
+  own `ocx.port` (not always 10100) — and reports `model_path: ok` / `down`
+  with `model_path_why`. Only a runner that reaches its model through the
+  node's own OCX is asked for: the omo runner, or a pinned runner whose
+  sign-in is `ocx` (claude, codex and their ACP adapters). A command runner
+  carrying its own credentials (grok, agy, cursor-agent) and a pin whose
+  sign-in is unknown (dsh) needs no model path; its probe and hello then
+  carry no `model_path` field at all and the node bids exactly as before —
+  the same exemption `ocx_down()` makes for a node that reports no OCX. The
+  hello asks for the node's default runner and carries the same two fields in
+  `capabilities`; they stand in only for a probe reply that does not name the
+  runner it asked (an older node). A node whose model path does not answer
+  would end its run `provider_error` at once, so the bid passes it and a
+  `--host` submit there is refused with the same line. A node without the
+  field is bid on as before. Note that `/healthz` can answer 200 while model
+  calls still fail (a node's OCX cut off from its hub answers 503 on
+  `/v1/models`); that gap is not covered here.
 - `ocx not answering`: the node's hello carries `capabilities.ocx` =
   `{external, version, health}`, and a node that reports an OCX (`external`
   true or a `version`) whose `health` is not 200 is passed. The hub reads it
@@ -159,6 +179,19 @@ Claude Code and Codex use the public `@zed-industries/claude-agent-acp` and
 `@zed-industries/codex-acp` adapters; provisioning and version pins are maintained separately.
 
 - The client advertises no file-system and no terminal capability (both false).
+- Before starting a restricted dsh run, `honours(mode)` reads the version of the same executable the run would
+  launch, including LINA's managed shim. `lina_runners.ACP_PERMISSION_OBSERVATIONS` records whether that adapter
+  version mediates native tools through ACP permission requests. The observed dsh versions `0.2.1-rc.5` and
+  `0.2.2-rc.1` do not: native writes can bypass requests (the latter requests approval for explicit escalation).
+  They refuse `read-only` and `workspace-write` with the agent, version and mode in the reason, before task
+  delivery. Unknown versions also refuse until observed; `full` keeps its existing path without this probe.
+  Recheck this observation whenever the pin changes; a newly verified version can be admitted without changing
+  the runner policy. This is a version observation, not a permanent ban on the dsh name. Initialization does not
+  advertise complete permission mediation, and the current profile dump contains runtime expressions rather
+  than a resolved per-mode guarantee, so neither is treated as evidence of enforcement.
+  Claude and Codex retain their existing ACP permission path, Grok retains its required blocking hook, and
+  other generic ACP adapters retain their existing protocol contract. Live access narrowing calls the same
+  `honours(mode)` gate before delivering input; a dsh `full` session cannot silently narrow to an unsupported mode.
 - Permission requests are answered by the runner, never a person. `read-only` allows `read`, `search`, `fetch`
   and `think`, and rejects writes and execution. `workspace-write` also answers `allow_once` for edits/deletions
   whose targets are all inside the worktree, and arbitrary commands with a known, nonempty cwd inside it.

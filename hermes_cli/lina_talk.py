@@ -9,6 +9,11 @@ door ``hermes peer dm`` uses (``POST /api/sessions/{id}/chat/stream``; a multipl
 ``/p/<profile>/``). The gateway is the only writer of that session and a busy agent answers with the gateway's own
 response. The turn's author is the owner; its first line names the app and the to-do. After a reply the exchange is
 left as a note the agent's next messaging DM turn reads (``gateway/app_talk_carry.py``).
+
+The owner's window per agent (lina#482) runs turns in the same app conversation with no to-do: :func:`resolve_agent`
+names the agent, :func:`history` reads the conversation's earlier turns, and no note is carried into the messenger
+chat. The gateway key is the web server's ``LINA_GATEWAY_KEY_<AGENT>``, else its ``API_SERVER_KEY``; a refused key
+answers :data:`REFUSED_KEY` and never the key itself.
 """
 
 from __future__ import annotations
@@ -22,6 +27,9 @@ from typing import AsyncIterator, Optional
 MAX_CHARS = 4000
 SESSION_TITLE = "LINA app: {agent}"
 _CRON_FIRE_PATH = "/api/cron/fire"
+KEY_ENV = "LINA_GATEWAY_KEY_{agent}"
+_MESSAGES_PAGE = 500  # the gateway's cap per messages page (api_server._handle_session_messages)
+REFUSED_KEY = "the gateway refused the key for {agent}"
 
 
 class TalkError(Exception):
@@ -32,6 +40,7 @@ class TalkError(Exception):
 
 @dataclass(frozen=True)
 class Target:
+    """Who the turn goes to; ``item`` is ``""`` for the agent's own window (no to-do)."""
     item: str
     title: str
     agent: str
@@ -43,6 +52,8 @@ class Target:
         return {"id": self.owner, "name": self.owner_name, "is_bot": False}
 
     def turn_text(self, message: str) -> str:
+        if not self.item:
+            return f"[LINA app]\n\n{message}"
         return f'[LINA app · to-do {self.item} "{self.title}"]\n\n{message}'
 
 
@@ -78,6 +89,16 @@ def resolve(item_id: str) -> Target:
             env.reset()
 
 
+def resolve_agent(agent: str) -> Target:
+    """The owner's window on *agent*: one of the record's agents (``work.agents``), else 404."""
+    from hermes_cli.lina_ocx import lina_root
+    from hermes_cli.work import env
+    current = env.load(lina_root())
+    if agent not in current.agents:
+        raise TalkError(404, "unknown_agent", f"no agent {agent}")
+    return Target("", "", agent, current.owner, current.owner_name)
+
+
 def profile_home(agent: str) -> Path:
     from hermes_cli.profiles import get_profile_dir
     return get_profile_dir(agent)
@@ -85,13 +106,14 @@ def profile_home(agent: str) -> Path:
 
 def gateway(agent: str) -> tuple[str, str]:
     """``(base URL, API key)`` of the agent's gateway api_server on loopback: the port the cron forwarder resolves
-    (``/p/<agent>`` on a multiplexed default listener), the key from the agent's own ``.env`` (it authorizes
-    ``/p/<agent>/`` too), else this process's."""
+    (``/p/<agent>`` on a multiplexed default listener), the key from this process's ``LINA_GATEWAY_KEY_<AGENT>``
+    (the agent name in upper case), else its shared ``API_SERVER_KEY``."""
     import os
-    from hermes_cli.web_server_cron import _gateway_fire_endpoint, _profile_env_value
-    home = profile_home(agent)
-    base = _gateway_fire_endpoint(agent, home).removesuffix(_CRON_FIRE_PATH)
-    key = _profile_env_value(home, "API_SERVER_KEY") or os.environ.get("API_SERVER_KEY", "")
+    from hermes_cli.web_server_cron import _gateway_fire_endpoint
+    base = _gateway_fire_endpoint(agent, profile_home(agent)).removesuffix(_CRON_FIRE_PATH)
+    key = os.environ.get(KEY_ENV.format(agent=agent.upper()))
+    if key is None:
+        key = os.environ.get("API_SERVER_KEY", "")
     return base, key.strip()
 
 
@@ -100,8 +122,8 @@ def http_client():
     return httpx.AsyncClient(timeout=httpx.Timeout(30.0, read=None))
 
 
-async def _session(client, base: str, headers: dict, agent: str) -> str:
-    """The agent's app conversation, created on first use (the find-then-create of ``hermes peer dm``)."""
+async def _find_session(client, base: str, headers: dict, agent: str) -> Optional[str]:
+    """The agent's app conversation, ``None`` before its first turn."""
     title = SESSION_TITLE.format(agent=agent)
     query = urllib.parse.urlencode({"limit": 200, "title": title, "include_hidden": 1})
     listing = await client.get(f"{base}/api/sessions?{query}", headers=headers)
@@ -109,6 +131,15 @@ async def _session(client, base: str, headers: dict, agent: str) -> str:
     for row in listing.json().get("data") or []:
         if isinstance(row, dict) and (row.get("title") or "").strip() == title and row.get("id"):
             return str(row["id"])
+    return None
+
+
+async def _session(client, base: str, headers: dict, agent: str) -> str:
+    """The agent's app conversation, created on first use (the find-then-create of ``hermes peer dm``)."""
+    found = await _find_session(client, base, headers, agent)
+    if found:
+        return found
+    title = SESSION_TITLE.format(agent=agent)
     created = await client.post(f"{base}/api/sessions", headers=headers, json={"title": title, "source": "api_server"})
     created.raise_for_status()
     body = created.json()
@@ -133,11 +164,61 @@ def _error_body(code: str, message: str) -> bytes:
     return json.dumps({"error": {"code": code, "message": message}}).encode()
 
 
-async def open_talk(target: Target, message: str) -> Opened:
-    """Start the turn; the gateway's own status and body when it does not stream (busy, refused, unreachable)."""
+def _upstream(agent: str, status: int, body: bytes, media_type: str) -> Opened:
+    """The gateway's own answer, except a refused key: the gateway's 401 body is never relayed, and the dashboard
+    client must not read it as its own sign-in expiring."""
+    if status == 401:
+        return Opened(502, _error_body("gateway_refused_key", REFUSED_KEY.format(agent=agent)))
+    return Opened(status, body, media_type)
+
+
+def _headers(agent: str) -> tuple[str, dict]:
+    base, key = gateway(agent)
+    return base, {"Authorization": f"Bearer {key}"} if key else {}
+
+
+async def _messages(client, base: str, headers: dict, session_id: str) -> list:
+    """Every stored row of the conversation, oldest first: the gateway answers at most ``_MESSAGES_PAGE`` rows (tool
+    rows included) from ``offset``, so pages are read until a short one. ``include_compacted`` keeps the turns a
+    compaction archived, which the gateway leaves out by default."""
+    url = f"{base}/api/sessions/{urllib.parse.quote(session_id, safe='')}/messages"
+    rows: list = []
+    while True:
+        resp = await client.get(url, headers=headers, params={
+            "order": "oldest", "limit": _MESSAGES_PAGE, "offset": len(rows), "include_compacted": "true"})
+        resp.raise_for_status()
+        page = resp.json().get("data") or []
+        rows += page
+        if len(page) < _MESSAGES_PAGE:
+            return rows
+
+
+async def history(target: Target) -> Opened:
+    """The earlier turns of the agent's app conversation, oldest first: ``{agent, session_id, messages}`` with the
+    owner's and the agent's messages (``role``, ``content``, ``timestamp``); none before the first turn."""
     import httpx
-    base, key = gateway(target.agent)
-    headers = {"Authorization": f"Bearer {key}"} if key else {}
+    base, headers = _headers(target.agent)
+    async with http_client() as client:
+        try:
+            session_id = await _find_session(client, base, headers, target.agent)
+            rows = await _messages(client, base, headers, session_id) if session_id else []
+        except httpx.HTTPStatusError as exc:
+            return _upstream(target.agent, exc.response.status_code, exc.response.content,
+                             exc.response.headers.get("content-type", "application/json"))
+        except httpx.HTTPError as exc:
+            return Opened(503, _error_body("gateway_unreachable", f"{target.agent}'s gateway: {type(exc).__name__}"))
+    messages = [{"role": row["role"], "content": row.get("content") or "", "timestamp": row.get("timestamp")}
+                for row in rows if isinstance(row, dict) and row.get("role") in ("user", "assistant")
+                and row.get("display_kind") != "hidden"]
+    body = {"agent": target.agent, "session_id": session_id, "messages": messages}
+    return Opened(200, json.dumps(body, ensure_ascii=False).encode())
+
+
+async def open_talk(target: Target, message: str) -> Opened:
+    """Start the turn; the gateway's own status and body when it does not stream (busy, unreachable), and
+    :data:`REFUSED_KEY` when it refuses the key."""
+    import httpx
+    base, headers = _headers(target.agent)
     client = http_client()
     try:
         session_id = await _session(client, base, headers, target.agent)
@@ -147,8 +228,8 @@ async def open_talk(target: Target, message: str) -> Opened:
         upstream = await client.send(request, stream=True)
     except httpx.HTTPStatusError as exc:
         await client.aclose()
-        return Opened(exc.response.status_code, exc.response.content,
-                      exc.response.headers.get("content-type", "application/json"))
+        return _upstream(target.agent, exc.response.status_code, exc.response.content,
+                         exc.response.headers.get("content-type", "application/json"))
     except httpx.HTTPError as exc:
         await client.aclose()
         return Opened(503, _error_body("gateway_unreachable", f"{target.agent}'s gateway: {type(exc).__name__}"))
@@ -156,7 +237,8 @@ async def open_talk(target: Target, message: str) -> Opened:
         body = await upstream.aread()
         await upstream.aclose()
         await client.aclose()
-        return Opened(upstream.status_code, body, upstream.headers.get("content-type", "application/json"))
+        return _upstream(target.agent, upstream.status_code, body,
+                         upstream.headers.get("content-type", "application/json"))
     return Opened(200, stream=_relay(client, upstream, target, message, session_id))
 
 
@@ -194,13 +276,15 @@ async def _relay(client, upstream, target: Target, message: str, session_id: str
     import asyncio
     from gateway.app_talk_carry import write_carry
     try:
-        yield _frame("talk.started", {"item": {"id": target.item, "title": target.title}, "agent": target.agent,
-                                      "session_id": session_id})
+        started = {"agent": target.agent, "session_id": session_id}
+        if target.item:
+            started = {"item": {"id": target.item, "title": target.title}, **started}
+        yield _frame("talk.started", started)
         async for event, data in _events(upstream):
             if event is None:
                 yield (data + "\n\n").encode()
                 continue
-            reply = _settled_reply(data) if event == "assistant.completed" else ""
+            reply = _settled_reply(data) if event == "assistant.completed" and target.item else ""
             if reply:
                 note = {"item": target.item, "title": target.title, "message": message, "reply": reply,
                         "session_id": session_id}
