@@ -176,7 +176,7 @@ def ocx_answered(logs, since: float, match: dict, seen: set[str]) -> tuple[bool,
 
 def read_ocx_logs(root: Path):
     from hermes_cli import lina_models
-    return lina_models.run(OCX_LOGS, root)
+    return lina_models.run(OCX_LOGS, root, fresh=True)  # a cached read would hide the trial's own request
 
 
 def trial(root: Path, runner: lina_runners.RunnerPin, version: str, *,
