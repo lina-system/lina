@@ -47,8 +47,19 @@ global npm) is only read: `status` shows its path and `--version` as
   or `unknown` with `sign_in_why`), `ready` and one `why` (`prepare`, `update`,
   `sign in`, `unknown`). A runner that updated itself in place shows `update`;
   a missing entry shows `prepare`. `--offered` reports the runners this node
-  offers in `worker.runners`, matched by name or by the command in `argv`; this
-  is what `hello` carries.
+  offers in `worker.runners`: an `acp` runner is pinned by the command in its
+  `argv` first and by its name after that, so its row is the adapter it runs
+  (`claude-agent-acp`) and not the CLI that shares its name; every other
+  runner is matched by name, then by the command in `argv`. This is what
+  `hello` carries.
+
+`sign_in` `ocx` means the node reaches the models through an OCX that answers:
+LINA's own service when it is installed, else the operator's external OCX
+(`ocx.external.cli`) when its `/healthz` answers on `ocx.port`. A node with no
+OCX at all reports `unknown` with the reason (`OCX is not installed`). A runner
+whose sign-in has no read-only check (`unknown`, today `dsh`) is shown as
+`unknown` with its reason and stays ready: unknown is not a failure, and only a
+reason the node can name makes a runner `not ready`.
 
 Each `--version` the status asks is bounded by 10 s, the rows run in parallel,
 and the report `hello` carries is bounded by 20 s as a whole. Credential files
