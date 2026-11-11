@@ -11,7 +11,8 @@ export type Chains = {
 export type Upstream = { path: string; version: string; chains: Chains };
 
 const IDENT = "[A-Za-z_$][\\w$]*";
-const CATEGORY_ANCHOR = new RegExp(`=(\\{"visual-engineering":${IDENT}\\(\\[)`);
+// omo <=5.1.66 wraps each category chain in a helper (`"visual-engineering":va([...])`); 5.1.69 writes the array directly.
+const CATEGORY_ANCHOR = new RegExp(`=(\\{"visual-engineering":(?:${IDENT}\\()?\\[)`);
 const AGENT_ANCHOR = /=(\{explore:\[\{providers:)/;
 
 /** Return the balanced bracket expression starting at `start`, skipping string contents. */

@@ -132,7 +132,9 @@ def client():
 
 
 def _today(offset: int = 0) -> str:
-    return (datetime.datetime.fromtimestamp(NOW, datetime.UTC).date()
+    """The owner's calendar day at the fixture clock with no ``work.timezone`` set: the host's zone, which is what
+    the board reads by default (``work.notify.owner_today``), not UTC (lina#512)."""
+    return (datetime.datetime.fromtimestamp(NOW).astimezone().date()
             + datetime.timedelta(days=offset)).isoformat()
 
 
@@ -262,7 +264,8 @@ def test_a_source_that_fails_is_an_error_and_its_counts_are_null(work, fakes, cl
 
 
 def test_due_groups_follow_the_owner_s_time_zone(work, fakes, client):
-    # 2027-01-15 (Fri) 20:00 UTC is 2027-01-16 (Sat) 05:00 in Seoul.
+    """2027-01-15 (Fri) 20:00 UTC is 2027-01-16 (Sat) 05:00 in Seoul: one instant, two calendar days, and the groups
+    follow ``work.timezone`` (lina#512: an unset zone is the host's, never UTC, so both cases name their zone)."""
     work.clock[0] = datetime.datetime(2027, 1, 15, 20, tzinfo=datetime.UTC).timestamp()
     work.goal_and_todos(todos=3)
     for item, due in (("T1", "2027-01-15"), ("T2", "2027-01-16"), ("T3", "2027-01-18")):
@@ -271,6 +274,7 @@ def test_due_groups_follow_the_owner_s_time_zone(work, fakes, client):
     def groups():
         due = _valid("DueView", client.get("/api/lina/work/due").json())
         return due["today"], {name: [row["id"] for row in rows] for name, rows in due["due"].items() if rows}
+    work.config(extra="  timezone: UTC\n" + DEVICES)
     assert groups() == ("2027-01-15", {"today": ["T1"], "week": ["T2"], "later": ["T3"]})
     work.config(extra="  timezone: Asia/Seoul\n" + DEVICES)
     assert groups() == ("2027-01-16", {"overdue": ["T1"], "today": ["T2"], "later": ["T3"]})

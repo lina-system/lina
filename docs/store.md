@@ -336,7 +336,7 @@ selection; counts describe the upgraded retained graph, not obsolete pre-upgrade
 | `message_embeddings.id` | Destination embedding identity sequence; receipt map | `vec.embeddings(kind='message',item_id)` for Honcho chunks; its own `message_id` is a text public ID. |
 | `queue.id` | Destination queue identity sequence; receipt map | Worker job identity, not message identity. Consumed jobs are not recreated on replay. |
 | `session_peers` composite PK | Workspace and selected-AI name mapping | Preserve session name and ordinary peer name; composite name FKs remain within the destination workspace. |
-| `document_sources` composite PK | Mapped document/public endpoints | Source may be a document or message public ID; missing retained targets fail. Keep edge position. |
+| `document_sources` composite PK | Mapped document/public endpoints | Source may be a document or message public ID. An edge whose source is neither any more (the conclusion outlived its message) is dropped and counted as `source_gone` in `counts.document_sources.excluded` and `excluded`; the conclusion is kept. Keep edge position. |
 | `conclusion_source_messages` composite PK | Mapped document and public-message endpoints | Both endpoints are text identities; preserve citation position. |
 | `active_queue_sessions.id`, `webhook_endpoints.id` | Excluded from selected imports | Worker leases and webhook endpoints are not migrated memory; zero retained counts do not mean their source tables were empty. |
 | Shared text `uid`, registry identities | Destination-qualified Honcho UID or verified existing UID; registry alias resolution | Top-level message metadata UID/agent bindings follow chosen text. Registry IDs are not Honcho nanoids. |
@@ -396,8 +396,26 @@ aliases resolve to the same conversation identity as host transcript sessions.
 Query corpus generations/views are caches rebuilt from the imported corpus. FTS tables and their shadow tables
 are rebuilt by store indexes. Binary vector accelerators and trajectory vector indexes are rebuilt from retained
 text; source backfill leases are not resumed. Unknown populated tables are refused rather than silently dropped.
-The SQLite-only fork quarantine is accepted only when empty because #16 has no corresponding destination table.
 Every source table receives accounting, including skipped cache rows and their reasons.
+
+LCM-X records the uids it mints for its own rows in `host_uid_bindings` as `kind='engine'`, `store_id=0`. Such a
+row names no message and is copied as it is (`engine_uid_bindings` in the report); any other `store_id` that is
+no source message still fails.
+
+The SQLite-only fork quarantine (`lcm_fork_quarantined_messages`, written by the fork's repair scripts) is left
+out, not copied: the destination has no such table, and the rows it records are raw copies of LCM's own summary
+heads or of earlier rows, so their text is held elsewhere and only `restore()` would be lost. An unrestored
+quarantined message in its `::fork-quarantine` session that nothing cites (summary nodes, message relations,
+assertion sources/assertions/relations, importer receipts, memory note `cites`/`retracts_store_ids`, entity
+alias/key `source_store_ids`, and those arrays and override `scope_store_ids` in memory event payloads) is not
+copied, nor are its chunk metadata, chunk vectors and host UID bindings;
+each table counts them as `skipped` with reason `fork_quarantine_uncited`. A quarantined message something cites
+is copied as an ordinary message in its `::fork-quarantine` session. The quarantine records are counted as skipped
+(`fork_quarantine_records_left_out`), and `fork_quarantine` in the report gives the record, left-out and kept-cited
+message counts.
+
+An LCM tool row whose `tool_name` is NULL while the matched host text has one is copied with the host's name
+(`tool_name_from_host` in the report): the host kept a name LCM lost. Two different non-NULL names still fail.
 
 Compatible summary/chunk vectors use the existing 0008 views; other model/width/dtype vectors are counted as
 deferred. `lina store reembed --source memory` (also `all`) includes LCM summaries, with separate per-agent progress

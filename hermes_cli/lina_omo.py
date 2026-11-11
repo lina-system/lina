@@ -96,8 +96,8 @@ def omo_env() -> dict[str, str]:
 
 def install(root: Path | None = None, *, fetch: Callable[[str, Path], None] = lina_ocx.download,
             run: Callable[..., subprocess.CompletedProcess] = subprocess.run, out=print) -> int:
-    """``lina omo install`` without the routing step: ``lina_runners.install_pin`` of omo's block, then its route
-    source prepared (``lina_runner_routes``)."""
+    """``lina omo install`` without the routing step: ``lina_runners.install_pin`` of omo's block (its ``--version``
+    must print the pin, ``omo 5.1.69 (engine: …)``), then its route source prepared (``lina_runner_routes``)."""
     from hermes_cli import lina_runner_routes
     root = root or lina_ocx.lina_root()
     block = runner()
