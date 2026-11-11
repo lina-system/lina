@@ -22,6 +22,47 @@ def _states(drive):
             if json.loads(line)["task"] == WORK]
 
 
+@pytest.mark.parametrize("enabled", [True, False])
+def test_question_wakes_matching_drive_wait_once_per_question(drive, enabled):
+    from hermes_cli.worker import events
+    task = _submit(drive)
+    _end(drive, task, "done")
+    _tick(drive)
+    if not enabled:
+        drive.configure("  goal_drive: false\n")
+    hub = _hub(drive)
+    for number, text in enumerate(("Which release?", "Which region?"), 1):
+        if number == 2:
+            card = hub.store.load(task)["card"]
+            kanban_link.park(hub.store, card, [task])
+            kanban_link._kanban(kanban_link.config(hub.worker)["command"], card,
+                                "schedule", "--reason", f"workers={task}")
+        job = hub.store.load(task)
+        hub._card_question(job, "2", text, events.marker(task, "human", "2", f"q{number}"))
+        for _ in range(3):
+            hub.tick()
+        assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "ready"
+        wakes = support._writes(drive, "unblock", WORK)
+        assert len(wakes) == number
+        assert text in wakes[-1][-1]
+        assert not hub.store.load(task).get("card_pending")
+
+
+@pytest.mark.parametrize("status", ["ready", "running", "scheduled"])
+def test_question_leaves_awake_or_other_run_wait_untouched(drive, status):
+    from hermes_cli.worker import events
+    task = _submit(drive)
+    other = _submit(drive, todo="acme/app#2")
+    _end(drive, other, "done")
+    _tick(drive)
+    support._set_status(drive, WORK, status)
+    hub = _hub(drive)
+    job = hub.store.load(task)
+    hub._card_question(job, "1", "Which release?", events.marker(task, "human", "1", "q1"))
+    assert not support._writes(drive, "unblock", WORK)
+    assert not hub.store.load(task).get("card_pending")
+
+
 def test_red_check_keeps_card_parked_through_run_end_and_follow_up(drive):
     drive.mp.setenv("FAKE_NO_WAIT_FOR", "1")
     _red_check(drive)
