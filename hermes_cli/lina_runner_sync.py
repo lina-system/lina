@@ -128,7 +128,7 @@ def contact_nodes(root: Path) -> list[NodeView]:
 
 
 def _hub_sign_in(runner: lina_runners.RunnerPin, root: Path) -> str:
-    return lina_runners.SIGN_IN.get(runner.sign_in, lina_runners.SIGN_IN["unknown"])(root)[0]
+    return lina_runners.read_sign_in(root, runner)[0]
 
 
 
@@ -207,7 +207,8 @@ class Run:
         signed = (self.env.sign_in or (lambda pin: _hub_sign_in(pin, self.root)))(runner)
         if signed == "signed_out":
             rec["hub"] = {"state": "hub sign-in needed", "to": newest}
-            self.hub_questions.append({"name": name, "sign_in": "signed_out", "sign_in_by": runner.sign_in})
+            self.hub_questions.append({"name": name, "sign_in": "signed_out",
+                                       "sign_in_by": lina_runners.sign_in_kind(runner)})
             self.event(f"{name} hub {newest}: not moved, the hub is not signed in")
             return runner
         if self.hub_busy(name, newest, rec):
@@ -266,7 +267,7 @@ class Run:
     def discard(self, moved: lina_runners.RunnerPin) -> None:
         """A version that failed its trial is not kept: a later retry must download and check it again."""
         if moved.version != lina_runners.current_version(self.root, moved):
-            shutil.rmtree(lina_runners.vendor_dir(self.root, moved.name) / moved.version, ignore_errors=True)
+            shutil.rmtree(lina_runners.vendor_dir(self.root, moved) / moved.version, ignore_errors=True)
 
     def switch(self, name: str, runner, moved, previous: str, rec: dict) -> lina_runners.RunnerPin:
         entry = {"version": moved.version, **({"integrity": moved.integrity} if moved.installer == "npm"

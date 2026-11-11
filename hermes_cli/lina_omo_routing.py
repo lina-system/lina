@@ -157,6 +157,20 @@ def check(root: Path, run: Callable[..., subprocess.CompletedProcess] = subproce
     return result.returncode, ((result.stdout or "") + (result.stderr or "")).strip()
 
 
+def prepare(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> str:
+    """The route source's ``prepare`` (``lina_runner_routes``): ocx-omo built on the pinned Node."""
+    return str(build(root, lina_omo.node_bin(root).parent.parent, run=run))
+
+
+def apply(root: Path, run: Callable[..., subprocess.CompletedProcess] = subprocess.run) -> int:
+    """The route source's ``apply`` with its output captured (the daily sync, lina#531)."""
+    problem = _missing(root)
+    if problem:
+        return 2
+    return run(argv(root, "apply", []), env=lina_omo.omo_env(), capture_output=True, text=True, encoding="utf-8",
+               errors="replace", timeout=120, check=False).returncode
+
+
 def install_step(apply: bool = False, root: Path | None = None, out=print,
                  run: Callable[..., subprocess.CompletedProcess] = subprocess.run, **install_kw) -> int:
     """``lina omo install`` (and the worker step of ``lina install --role worker``): install the pinned omo, then

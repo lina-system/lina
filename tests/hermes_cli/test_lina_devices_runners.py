@@ -59,7 +59,8 @@ def test_list_shows_each_runner_of_each_device_with_one_reason(base):
     assert [(item["name"], item["ready"], item["why"]) for item in rows["build-a"]["runners"]] == [
         ("codex", True, None), ("grok", False, "sign in")]
     assert [(item["name"], item["why"]) for item in rows["build-b"]["runners"]] == [
-        ("codex", "unreachable"), ("grok", "unreachable")], "a node ssh cannot reach still lists its runners"
+        ("omo", "unreachable"), ("codex", "unreachable"), ("grok", "unreachable")], \
+        "a node ssh cannot reach still lists its runners, omo's block included (lina#531)"
 
     text: list[str] = []
     lina_devices.list_devices(base["root"], out=text.append)

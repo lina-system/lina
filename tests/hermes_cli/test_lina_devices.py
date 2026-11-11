@@ -68,7 +68,8 @@ def test_list_shows_each_device_with_ssh_omo_disk_and_cap(base, probes):
     text: list[str] = []
     lina_devices.list_devices(base, out=text.append)
     assert text[0].split()[:2] == ["build-a", "build-a"] and text[0].endswith("ready")
-    assert "ssh unreachable" in text[1] and "omo missing" in text[2]
+    devices = [line for line in text if not line.startswith(" ")]  # runner rows (omo's block too) are indented
+    assert "ssh unreachable" in devices[1] and "omo missing" in devices[2]
 
 
 def test_check_exits_1_for_a_device_that_is_not_ready(base, probes):
