@@ -11,6 +11,10 @@
    or without the verb yet, is probed on a later day.
 
 Every probe result lands in the device's ``runner-probes.json``, which readiness shows (``lina_runner_probe``).
+
+Before all of it, a block the hub's settings declare (``worker.runners.<name>.install``) that the hub has no copy of
+yet is installed at its pin (``install_declared``): adding a tool is one block of settings, and the daily run installs,
+moves, probes and lists it. A built-in block the hub lacks stays ``hub prepare needed`` (#238): nobody asked for it.
 """
 
 from __future__ import annotations
@@ -107,6 +111,23 @@ def nodes(run, name: str, asks: dict, rec: dict) -> None:
         results[node.name] = got
         if got.get("state") == "failed":
             run.event(f"{name} on {node.name}: probe failed: {got.get('why')}")
+
+
+def install_declared(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> bool:
+    """Install a settings-declared block the hub has no copy of; False when that failed (the runner is held)."""
+    if run.plan or name not in lina_runners.config_blocks(run.root) or \
+            lina_runners.current_version(run.root, pin) is not None:
+        return True
+    said: list[str] = []
+    try:
+        lina_runners.install_pin(run.root, pin, fetch=run.env.fetch, run=run.env.run, out=said.append)
+    except lina_runners.OcxError as exc:
+        rec["install"] = {"state": "failed", "reason": str(exc)}
+        run.hold(name, "hub", pin.version, f"install: {exc}", "install")
+        return False
+    rec["install"] = {"state": "installed", "version": pin.version}
+    run.event(f"{name} hub {pin.version}: installed from its settings block", alert=False)
+    return True
 
 
 def tend(run, name: str, pin: lina_runners.RunnerPin, rec: dict) -> None:

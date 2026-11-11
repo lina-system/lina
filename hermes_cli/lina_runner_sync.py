@@ -390,6 +390,9 @@ def execute(root: Path, env: Env, *, plan: bool, only: list[str] | None) -> dict
         if state.held(root, name) or state.held(root, name, "hub"):
             rec["hub"] = {"state": "held"}
             continue
+        if not tending.install_declared(run, name, runner, rec):
+            rec["hub"] = {"state": "held"}
+            continue
         pin = run.hub(name, runner, rec)
         if rec["hub"]["state"] in ("major waits", "hub busy"):
             continue
