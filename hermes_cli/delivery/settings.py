@@ -21,7 +21,11 @@ from pathlib import Path
 
 DEFAULT_SCOPES = ("store", "install", "models", "cli", "home", "config", "service", "migrate")
 _SPRINT = re.compile(r"^\s*(?:(M\d+)\s+)?S(\d+)\s*$", re.IGNORECASE)
-_ISSUE_SPRINT = re.compile(r"^\s*Sprint:\s*(?:(M\d+)\s+)?S(\d+)\b", re.MULTILINE | re.IGNORECASE)
+# The issue form writes Context as a list (`- Sprint: M0 S3 — ...`), so a list marker in front of a field is the
+# same field: `docs/delivery.md` names the form, and the bare line is what earlier issues wrote by hand.
+LIST_ITEM = r"^[ \t]*(?:[-*][ \t]+)?"
+_ISSUE_SPRINT = re.compile(LIST_ITEM + r"Sprint:(.*)$", re.MULTILINE | re.IGNORECASE)
+_ISSUE_SPRINT_VALUE = re.compile(r"^\s*(?:(M\d+)\s+)?S(\d+)\b", re.IGNORECASE)
 
 
 def lina_root(base: Path | None = None) -> Path:
@@ -122,9 +126,20 @@ def set_sprint(value: str, base: Path | None = None) -> str:
     return label
 
 
-def issue_sprint(body: str | None) -> tuple[str | None, int] | None:
+def sprint_line(body: str | None) -> str | None:
+    """The text after ``Sprint:`` on the body's first sprint line, a ``- Sprint:`` list item being that same line,
+    or None when the body has no such line."""
     match = _ISSUE_SPRINT.search(body or "")
-    return (match[1].upper() if match[1] else None, int(match[2])) if match else None
+    return match[1].strip() if match else None
+
+
+def issue_sprint(body: str | None) -> tuple[str | None, int] | None:
+    """The first ``Sprint:`` line that names a sprint: an earlier line naming none does not hide a later one."""
+    for match in _ISSUE_SPRINT.finditer(body or ""):
+        found = _ISSUE_SPRINT_VALUE.match(match[1])
+        if found:
+            return (found[1].upper() if found[1] else None, int(found[2]))
+    return None
 
 
 def in_sprint(body: str | None, current: tuple[str | None, int] | None) -> bool:
