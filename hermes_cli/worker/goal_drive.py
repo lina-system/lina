@@ -179,6 +179,19 @@ def native_wait(view: dict) -> bool:
     return False
 
 
+def owns_wait(store, card: dict, view: dict) -> bool:
+    """Read drive ownership from its ledger; the body is only a projection of that record."""
+    import json
+    goal = goal_of(view["task"].get("body"))
+    if goal is None:
+        return False
+    path = store.root / "goals" / f"{_part(goal)}.json"
+    if not path.is_file():
+        return False
+    ledger = json.loads(path.read_text(encoding="utf-8-sig"))
+    return card["task"] in ledger.get("waits", {})
+
+
 def checks_settled(receipt: dict) -> bool:
     """Every required check of the receipt has a conclusion, read from complete evidence (a receipt with ``detail``
     stopped early; only "no required checks" is complete then)."""
@@ -414,6 +427,7 @@ class Drive:
         self.save()
         if self._over_limit():
             return
+        self.recover_parks()
         self.wake_parked()
         errors = _errors()
         for card_id, card in self.entry["cards"].items():
@@ -433,7 +447,8 @@ class Drive:
     def release_ended(self) -> None:
         """Only after the rules had their turn may an ended run wake a goal card with no drive wait."""
         for task, card in self.entry["cards"].items():
-            if task in self.ledger["blocked"] or task in self.ledger["waits"]:
+            wait = self.ledger["waits"].get(task)
+            if task in self.ledger["blocked"] or (wait and wait.get("items", True)):
                 continue
             if self.ledger["notes"].get(task) == "park ownership released":
                 continue
@@ -442,6 +457,15 @@ class Drive:
             if self.status(card["card"]) != "scheduled":
                 continue
             if any(not _settled(job) for job in self._tasks() if job.get("card") == card["card"]):
+                continue
+            if wait is not None:
+                aid = wait.get("completed", wait["aid"])
+                description = wait.get("description", "worker runs finished")
+                if self.act(_wake_id(aid), lambda _aid: self.board.wake(
+                        card["card"], wait["judged"], f"goal drive: wait met: {description}")):
+                    self.ledger["waits"].pop(task)
+                    self.statuses.pop(task, None)
+                    self.save()
                 continue
             for job in self._latest(card["jobs"]):
                 if _settled(job):
@@ -724,20 +748,48 @@ class Drive:
         ``--wait-for``) is kept in ``waits`` for :meth:`wake_parked`."""
         if aid in self.ledger["actions"] or not self.may_act(card):
             return
+        status = self.status(card["card"])
+        if status not in PARKABLE:
+            self.act(aid, lambda _aid: f"not parked: card is {status}")
+            return
+
+        if kanban_link.on_hermes(card["card"]):
+            wait = self.ledger["waits"].setdefault(card["card"]["task"], {})
+            wait.setdefault("items", {})[self._todo(job)] = {
+                "aid": aid, "event": wait_for, "reason": reason, "job": job["id"], "applied": False}
+            self.save()  # intent survives a refused board write or a stopped hub
 
         def schedule(_aid: str) -> str | None:
-            status = self.status(card["card"])
-            if status not in PARKABLE:
-                return f"not parked: card is {status}"
             if not self.write(card["card"], "schedule", reason, wait_for, aid):
                 return None
             if self.ledger["notes"].get(card["card"]["task"]) == "park ownership released":
                 self.ledger["notes"].pop(card["card"]["task"])
             if not kanban_link.on_hermes(card["card"]) or self.board.wait_form != "marker":
                 return f"parked on {wait_for}"
-            self.ledger["waits"][card["card"]["task"]] = {"aid": aid, "judged": job.get("group") or job["id"]}
+            wait.update(aid=aid, judged=job.get("group") or job["id"])
+            wait["items"][self._todo(job)]["applied"] = True
             return f"parked on {wait_for} (a plain schedule with WAIT_EVENT: the hub wakes it)"
         self.act(aid, schedule)
+
+    def recover_parks(self) -> None:
+        """Reconcile committed sends and pending board writes before any wait can wake a card."""
+        for task, usage in self.ledger["usage"].items():
+            job = self.hub.store.load(task)
+            if not job or not job.get("card"):
+                continue
+            card = self.entry["cards"].get(job["card"]["task"])
+            aid = action_id(self.goal, job["card"]["task"], task, int(usage["run"]), "usage-resume")
+            sent = self.hub.store.load_key(aid)
+            if card and sent and sent.get("action") and int(job.get("runs") or 1) > int(usage["run"]):
+                self.park_run(card, job, aid + "-park", task)
+        for task, wait in list(self.ledger["waits"].items()):
+            card = self.entry["cards"].get(task)
+            if card is None:
+                continue
+            for item in list(wait.get("items", {}).values()):
+                if not item["applied"]:
+                    job = self.hub.store.load(item["job"])
+                    self.park(card, job, item["aid"], item["event"], item["reason"])
 
     def wake_parked(self) -> None:
         """Wake each card of ``waits`` whose event happened (the pull request's required checks settled, or the time
@@ -755,44 +807,52 @@ class Drive:
                 self.hub.store.log(f"goal drive: card {task} not woken: {str(exc)[:300]}")
 
     def _wake(self, card: dict, wait: dict) -> None:
-        from hermes_cli.kanban_db_wait import describe_wait, parse_wait_for
         status, reason = self.board.parked(card)
         self.statuses[card["task"]] = status
         event, aid = marker(reason)
+        if any(not item["applied"] for item in wait.get("items", {}).values()):
+            return
         if status != "scheduled" or event is None or aid not in self.ledger["actions"]:
             self.ledger["waits"].pop(card["task"])
             self.ledger["notes"][card["task"]] = "park ownership released"
             self.save()
             self.hub.store.log(f"goal drive: card {card['task']} let go: it is {status}, not parked by the drive")
             return
-        if event.startswith("omo-task:"):
-            task, _, run = event.removeprefix("omo-task:").partition("/")
-            job = self.hub.store.load(task)
-            if not job or int(job.get("runs") or 1) < int(run) or not _settled(job):
-                return
-            # Release the wait to the rules first: another follow-up must not see an intermediate ready card.
-            self.ledger["waits"].pop(card["task"])
+        if "items" not in wait:
+            _, _, _, run, rule = aid.split(":")
+            job = next(job for job in self.entry["cards"][card["task"]]["jobs"]
+                       if action_id(self.goal, card["task"], job["id"], int(run), rule) == aid)
+            wait["items"] = {self._todo(job): {
+                "aid": aid, "event": event, "reason": reason, "job": job["id"], "applied": True}}
             self.save()
-            return
-        wait_for = parse_wait_for(event)
-        if not self._met(wait_for):
-            return
-        if wait_for["kind"] == "until":
-            return  # the usage/node rule continues or moves the worker before retargeting this wait
-        url = f"https://github.com/{wait_for['repo']}/pull/{int(wait_for['number'])}"
-        receipt = self.ledger["github"][f"checks:{url}"]["value"]
-        if any(check.get("classification") == "failure" for check in receipt.get("checks") or []):
-            self.ledger["waits"].pop(card["task"])
-            self.save()
-            return  # the red-check rule must send and repark without waking the card
+        self._wake_items(card, wait)
 
-        def wake(_aid: str) -> str:
-            form = self.board.wake(card, wait["judged"], f"goal drive: wait met: {describe_wait(wait_for)}")
-            return f"woke {card['task']} ({form}): {describe_wait(wait_for)}"
-        if self.act(_wake_id(aid), wake):
-            self.statuses.pop(card["task"], None)
-            self.ledger["waits"].pop(card["task"])
-            self.save()
+    def _wake_items(self, card: dict, wait: dict) -> None:
+        """The ledger owns all to-do waits; board markers only identify the park we still own."""
+        from hermes_cli.kanban_db_wait import describe_wait, parse_wait_for
+        completed = []
+        check_wake = None
+        for todo, item in wait["items"].items():
+            event = item["event"]
+            if event.startswith("omo-task:"):
+                task, _, run = event.removeprefix("omo-task:").partition("/")
+                job = self.hub.store.load(task)
+                if job and int(job.get("runs") or 1) >= int(run) and _settled(job):
+                    completed.append(todo)
+                continue
+            parsed = parse_wait_for(event)
+            if parsed["kind"] == "until" or not self._met(parsed):
+                continue
+            completed.append(todo)
+            url = f"https://github.com/{parsed['repo']}/pull/{int(parsed['number'])}"
+            receipt = self.ledger["github"][f"checks:{url}"]["value"]
+            if not any(check.get("classification") == "failure" for check in receipt.get("checks") or []):
+                check_wake = (item["aid"], describe_wait(parsed))
+        for todo in completed:
+            del wait["items"][todo]
+        if check_wake:
+            wait["completed"], wait["description"] = check_wake
+        self.save()
 
     def _met(self, wait_for: dict) -> bool:
         if wait_for["kind"] == "until":

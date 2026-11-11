@@ -527,21 +527,12 @@ def wake(store, card: dict, link: dict, run_id: str, judged: str | None = None, 
         except (ValueError, KeyError, TypeError) as exc:
             raise CardLinkError("kanban show did not return task.status") from exc
         keep_view(store, card, view["task"])
-        from hermes_cli.worker.goal_drive import goal_of, marker, resume_wait
+        from hermes_cli.worker.goal_drive import goal_of, owns_wait
         if drive and status == "scheduled" and goal_of(view["task"].get("body")):
             return None  # let the drive choose the next wait before a run-end unblock
-        resume = resume_wait(view)
-        event, _ = marker(resume)
-        if event:
-            if not event.startswith("omo-task:"):
-                return None  # a check or timer, not the old worker's completion
-            task, _, run = event.removeprefix("omo-task:").partition("/")
-            current = store.load(task)
-            if task != run_id or not current or int(current.get("runs") or 1) < int(run) or _still_open(store, task):
-                return None
+        if owns_wait(store, card, view):
+            return None
         named, schedule = _last_schedule(view)
-        if event:
-            named, schedule = [task], event
         woken = store.root / "cards" / f"{card_key(card)}.woken"
         if run_id in named or (judged in named and judged != run_id):  # a batch member's end is its batch's end
             others = [other for other in named if other != run_id and _still_open(store, other)]

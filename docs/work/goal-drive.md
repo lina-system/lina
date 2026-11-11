@@ -73,6 +73,17 @@ to-dos, run-end comments, reports, and worker result or pull request. LINA does 
 A later manual schedule invalidates the body's wait, and the drive relinquishes it. After a manual unblock,
 a successful new drive park clears that old ownership-release note.
 
+The goal ledger is the wait owner: `waits[card].items[todo]` stores each to-do's event, worker, action and whether
+the board write succeeded. Intent is saved before writing the board. The body and schedule marker identify the
+park and give the next session context; they are not the source of the card's complete wait set. A worker wait
+for one to-do cannot replace another to-do's check wait. All waits must settle and all drive rules must run before
+`release_ended` wakes the card. Run-end delivery consults this same ledger instead of interpreting the last body
+marker independently.
+
+At the start of each tick, committed usage-resume request-key receipts recover a missing park even when the job
+already holds the next run. Pending board writes are retried before evaluating wakes. Recovery never sends the
+resume message again. Old single-wait ledger records are imported on their first owned-park read.
+
 Which form a park takes depends on the board:
 
 | Board | Park | Woken by |

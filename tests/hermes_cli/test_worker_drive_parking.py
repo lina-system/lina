@@ -149,3 +149,85 @@ def test_existing_native_wait_is_not_silently_retargeted(drive):
     assert _hub(drive).store.load(task)["runs"] == 1
     assert "cannot atomically clear" in _ledger(drive)["notes"][WORK]
     assert not support._writes(drive, "edit", WORK)
+
+
+@pytest.mark.parametrize("interrupted", [False, True])
+def test_usage_resume_recovers_its_park_after_send_committed(drive, interrupted):
+    task = _submit(drive)
+    support._usage_end(drive, task)
+    _tick(drive)
+    original = goal_drive.Board.schedule
+
+    def refuse(board, card, event, reason, status, aid):
+        if "usage-resume-park" in aid:
+            if interrupted:
+                raise OSError("hub stopped after send")
+            return "board temporarily refused"
+        return original(board, card, event, reason, status, aid)
+
+    drive.mp.setattr(goal_drive.Board, "schedule", refuse)
+    _later(drive, 1801)
+    _tick(drive)
+    assert _hub(drive).store.load(task)["runs"] == 2
+    drive.mp.setattr(goal_drive.Board, "schedule", original)
+    _tick(drive)  # a fresh Hub reads run 2, not the old usage wait's run 1
+    body = json.loads((drive.cards / f"{WORK}.json").read_text())["body"]
+    assert f"WAIT_EVENT=omo-task:{task}/2" in body
+    assert support._requests(drive, task) == ["request.1", "request.2"]
+
+
+def test_one_todo_worker_end_does_not_discard_another_todos_checks(drive):
+    _red_check(drive, conclusion=None, status="in_progress")
+    first = _submit(drive, repo="acme/app")
+    _end(drive, first, "done", report=True)
+    _tick(drive)
+    second = _submit(drive, todo="acme/app#2")
+    _end(drive, second, "done")
+    _tick(drive)
+    assert _hub(drive).store.load(second)["runs"] == 2
+    _end(drive, second, "done", report=True)
+    _tick(drive)
+    assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "scheduled"
+    _red_check(drive, conclusion="success")
+    _later(drive, goal_drive.CHECK_CACHE_S + 1)
+    _tick(drive)
+    assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "ready"
+
+
+def test_usage_resume_recovers_when_hub_stops_before_recording_park(drive):
+    task = _submit(drive)
+    support._usage_end(drive, task)
+    _tick(drive)
+    original = goal_drive.Drive.started
+
+    def stop_after_send(self, aid, send):
+        original(self, aid, send)
+        if aid.endswith(":usage-resume"):
+            raise OSError("hub stopped before park intent")
+
+    drive.mp.setattr(goal_drive.Drive, "started", stop_after_send)
+    _later(drive, 1801)
+    _tick(drive)
+    assert _hub(drive).store.load(task)["runs"] == 2
+    drive.mp.setattr(goal_drive.Drive, "started", original)
+    _tick(drive)
+    body = json.loads((drive.cards / f"{WORK}.json").read_text())["body"]
+    assert f"WAIT_EVENT=omo-task:{task}/2" in body
+    assert support._requests(drive, task) == ["request.1", "request.2"]
+
+
+def test_checks_finishing_first_do_not_wake_another_todos_worker(drive):
+    _red_check(drive, conclusion=None, status="in_progress")
+    first = _submit(drive, repo="acme/app")
+    _end(drive, first, "done", report=True)
+    _tick(drive)
+    second = _submit(drive, todo="acme/app#2")
+    _end(drive, second, "done")
+    _tick(drive)
+    _red_check(drive, conclusion="success")
+    _later(drive, goal_drive.CHECK_CACHE_S + 1)
+    _tick(drive)
+    assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "scheduled"
+    _end(drive, second, "done", report=True)
+    _tick(drive)
+    assert json.loads((drive.cards / f"{WORK}.json").read_text())["status"] == "ready"
