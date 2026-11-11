@@ -340,6 +340,18 @@ def _elapsed_seconds(task: kanban_db.Task, now: int) -> int:
     return max(0, end - start)
 
 
+def card_times(facts: CardFacts) -> dict[str, Optional[int]]:
+    """``endedAt`` (a done card's ``completed_at``) and ``lastHeartbeatAt`` (the latest beat in the card's or a run's
+    heartbeat column or its heartbeat events; the Hermes CLI carries only the events) for the list row and the detail
+    alike, from facts the list already reads (lina#577)."""
+    task = facts.task
+    beats = [task.last_heartbeat_at, *(r.last_heartbeat_at for r in facts.runs),
+             *(e.created_at for e in facts.events if e.kind == "heartbeat")]
+    beats = [b for b in map(kanban_db._to_epoch, beats) if b is not None]
+    return {"endedAt": kanban_db._to_epoch(task.completed_at) if task.status == "done" else None,
+            "lastHeartbeatAt": max(beats, default=None)}
+
+
 def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
     from hermes_cli.lina_board_plain import board_key, lookup  # checked model-written lines (lina#151), cache only
     state, reason = work_state(facts, now)
@@ -348,7 +360,7 @@ def card_summary(facts: CardFacts, now: int) -> dict[str, Any]:
         "id": facts.task.id, "title": facts.task.title, **_agent_fields(facts),
         "state": state, "reason": reason, "elapsedSeconds": _elapsed_seconds(facts.task, now),
         "todoProgress": {"done": sum(t["done"] for t in todos), "total": len(todos)},
-        "now": now_line(facts),
+        "now": now_line(facts), **card_times(facts),
         "plain": lookup("card", [facts.task.id], board=board_key(facts.board))[facts.task.id],
     }
 

@@ -272,6 +272,59 @@ def test_goal_lists_work_cards_and_the_evidence_that_closed_them(client, conn):
     assert client.get(f"{WORK}/cards/t_missing").status_code == 404
 
 
+def test_list_rows_carry_the_end_and_last_heartbeat_the_detail_has(client, conn):
+    """lina#577: the list row alone tells when a done card ended and when a stopped card last beat."""
+    done, stale, todo = _card(conn, "done"), _card(conn, "stale"), _card(conn, "todo")
+    for tid in (done, stale):
+        _running(conn, tid)
+    assert kb.complete_task(conn, done, summary="shipped")
+    beat = int(time.time()) - 3600
+    with kb.write_txn(conn):
+        conn.execute("UPDATE task_runs SET claim_expires = ?, started_at = ?, last_heartbeat_at = ? WHERE task_id = ?",
+                     (beat, beat - 60, beat, stale))
+        conn.execute("UPDATE tasks SET last_heartbeat_at = ? WHERE id = ?", (beat, stale))
+
+    rows = {c["id"]: c for c in _valid("WorkCardList", client.get(f"{WORK}/cards").json())["cards"]}
+    ended = kb.get_task(conn, done).completed_at
+    assert ended is not None and rows[done]["endedAt"] == ended
+    assert (rows[stale]["state"], rows[stale]["endedAt"], rows[todo]["endedAt"]) == ("stopped", None, None)
+    assert rows[stale]["lastHeartbeatAt"] == _card_json(client, stale)["lastHeartbeatAt"] == beat
+    assert rows[todo]["lastHeartbeatAt"] is None
+    for tid in (done, stale, todo):
+        detail = _card_json(client, tid)
+        assert (detail["endedAt"], detail["lastHeartbeatAt"]) == (rows[tid]["endedAt"], rows[tid]["lastHeartbeatAt"])
+
+
+def test_hermes_list_rows_carry_the_end_and_last_heartbeat_the_detail_has(client):
+    """lina#577 on the Hermes board: a shown card's heartbeat comes from its events (the CLI has no heartbeat
+    column), and a done card served from its ``list`` row alone (``detail: false``) ends at that row's
+    ``completed_at``."""
+    from plugins.kanban.dashboard import work_api_hermes
+    now = int(time.time())
+
+    def show(task_id, status, **extra):
+        task = {"id": task_id, "title": task_id, "body": "", "assignee": AGENT, "status": status,
+                "created_at": now - 9000, "started_at": now - 7200, "completed_at": extra.pop("completed_at", None)}
+        return {"task": task, "parents": [], "children": [], "comments": [], "events": [], "runs": [], **extra}
+
+    shows = [
+        show("t_done", "done", completed_at=now - 600,
+             events=[{"kind": "heartbeat", "payload": None, "created_at": now - 900, "run_id": 1}]),
+        show("t_old", "done", completed_at=now - 90 * 86400, detail=False),
+        show("t_stuck", "blocked", events=[
+            {"kind": "heartbeat", "payload": {"note": "halfway"}, "created_at": now - 300, "run_id": 2},
+            {"kind": "blocked", "payload": {"reason": "which colour?"}, "created_at": now - 200, "run_id": 2}]),
+    ]
+    rows = {c["id"]: c for c in _valid("WorkCardList", work_api_hermes.cards(shows, now, None, None))["cards"]}
+    assert {i: (r["endedAt"], r["lastHeartbeatAt"]) for i, r in rows.items()} == {
+        "hermes:t_done": (now - 600, now - 900), "hermes:t_old": (now - 90 * 86400, None),
+        "hermes:t_stuck": (None, now - 300)}
+    assert rows["hermes:t_old"]["detail"] is False and rows["hermes:t_stuck"]["state"] == "stopped"
+    for card_id, row in rows.items():
+        detail = _valid("WorkCardDetail", work_api_hermes.card(shows, card_id, now))
+        assert (detail["endedAt"], detail["lastHeartbeatAt"]) == (row["endedAt"], row["lastHeartbeatAt"])
+
+
 def test_inbox_lists_blocks_and_open_questions_and_answer_unblocks_only_needs_input(client, conn):
     needs_input, capability, asked, answered = (_card(conn, n) for n in ("needs", "cap", "asked", "answered"))
     _goal(conn, [needs_input, capability, asked, answered])

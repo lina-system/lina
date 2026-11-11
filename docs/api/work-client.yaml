@@ -264,6 +264,14 @@ components:
           description: The latest comment or heartbeat note, plain text.
         plain:
           $ref: "#/components/schemas/PlainLines"
+        endedAt:
+          type: integer
+          nullable: true
+          description: When a done card was completed (epoch seconds); null for any other state.
+        lastHeartbeatAt:
+          type: integer
+          nullable: true
+          description: The card's latest heartbeat (epoch seconds), from its heartbeat columns or events; null when it never beat.
     WorkCardList:
       type: object
       additionalProperties: false
@@ -412,6 +420,14 @@ components:
           maxLength: 120
         plain:
           $ref: "#/components/schemas/PlainLines"
+        endedAt:
+          type: integer
+          nullable: true
+          description: When a done card was completed (epoch seconds); null for any other state.
+        lastHeartbeatAt:
+          type: integer
+          nullable: true
+          description: The card's latest heartbeat (epoch seconds), from its heartbeat columns or events; null when it never beat.
         todos:
           type: array
           items:
