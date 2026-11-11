@@ -6,6 +6,7 @@ from __future__ import annotations
 import time
 
 from hermes_cli.work.common import ago, now
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.ledger import projects_of
 from hermes_cli.work.locale import STAGES, status, t
 from hermes_cli.work.sources import desk_file, first_said
@@ -84,7 +85,7 @@ def row_view(r: dict, c: dict, recs: dict) -> dict:
     at = now()
     if r.get("state") == "done":
         return {"stage": ENDED, "health": "green", "news": "", "news_at": int(r.get("done_at") or 0)}
-    kids = [x for x in recs.values() if x.get("parent") == r["id"] and x["kind"] == "할 일"
+    kids = [x for x in recs.values() if x.get("parent") == r["id"] and kind_now(x["kind"]) == TODO
             and x.get("state") != "dropped"]
     stage = _stage(r, c, kids)
     news, news_at = _news(r, kids)

@@ -10,6 +10,7 @@ import subprocess
 from hermes_cli.work.common import iso, load_json, now, paths, save_json, warn
 from hermes_cli.work.env import current
 from hermes_cli.work.evaluate import item_name
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.locale import t
 from hermes_cli.work.people import agents, owner
 
@@ -63,7 +64,7 @@ def next_command(r: dict, c: dict, agent: str) -> str:
         return f"work show {i}  →  work check {i}"
     if c["status"] in ("due_over", "due_today"):
         return f"work edit {i} --due YYYY-MM-DD  ·  work note {i} \"…\""
-    if not (r.get("links") or r.get("session")) and r["kind"] == "할 일":
+    if not (r.get("links") or r.get("session")) and kind_now(r["kind"]) == TODO:
         return f"lina work run submit {i} --brief <brief.md>"
     if not r.get("links") and r["kind"] == "목표":
         return f"work add 할 일 --goal {i} …"
@@ -157,7 +158,7 @@ def due_alerts(items) -> list[tuple[dict, dict]]:
     out = []
     for r in items:
         d = r.get("due") or ""
-        if not d or r.get("state") != "open" or r["kind"] not in ("목표", "할 일"):
+        if not d or r.get("state") != "open" or kind_now(r["kind"]) not in ("목표", TODO):
             continue
         if d < today:
             code, line = "due_over", t("마감일 지남: {name}({id}) {due}", name=item_name(r), id=r["id"], due=d)

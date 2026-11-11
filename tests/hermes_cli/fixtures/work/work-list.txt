@@ -1,4 +1,4 @@
 A1    [영역] Dev — 열린 목표 1, 메모 1
 G1      목표 알파 하는 중 · Fixture goal [Fixture] — Fixture is active (2시간)
-T1        할 일 알파 기다림 · Updated fixture task — Fixture dependency (2시간)
+T1        작업 알파 기다림 · Updated fixture task — Fixture dependency (2시간)
 M1      메모 알파 메모 · Synthetic memo — 정리 전 (2시간)

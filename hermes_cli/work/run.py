@@ -17,6 +17,7 @@ from pathlib import Path
 from hermes_cli.work import ledger, store
 from hermes_cli.work.common import Lock, die, now, warn
 from hermes_cli.work.items import get
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.links import kanban_parts, norm_link
 from hermes_cli.work.locale import t
 from hermes_cli.work.people import agent, owner
@@ -243,7 +244,7 @@ def card_todos(card: str) -> list[str]:
     """The ledger to-dos a work card covers: every open to-do linked ``kanban:<card>``."""
     link = norm_link("kanban:" + card if not card.startswith("kanban:") else card, owner())
     recs, order = ledger.read_all()
-    return [i for i in order if recs[i]["kind"] == "할 일" and recs[i].get("state") == "open"
+    return [i for i in order if kind_now(recs[i]["kind"]) == TODO and recs[i].get("state") == "open"
             and link in (recs[i].get("links") or [])]
 
 
@@ -256,7 +257,7 @@ def _covered(a, recs: dict) -> list[dict]:
     out = []
     for i in dict.fromkeys(ids):
         r = get(recs, i)
-        if r["kind"] != "할 일" or r.get("state") != "open":
+        if kind_now(r["kind"]) != TODO or r.get("state") != "open":
             die(t("{id}는 열린 할 일이 아니다", id=i))
         out.append(r)
     return out

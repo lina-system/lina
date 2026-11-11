@@ -82,6 +82,7 @@ def _replies(root: Path, read: set[str]) -> list[dict]:
     from hermes_cli.lina_board import _WORK_LOCK
     from hermes_cli.work import env, ledger
     from hermes_cli.work.evaluate import item_name
+    from hermes_cli.work.kinds import TODO, kind_now
     out = []
     with _WORK_LOCK:
         env.bind(env.load(root))
@@ -93,7 +94,7 @@ def _replies(root: Path, read: set[str]) -> list[dict]:
             env.reset()
     for i in order:
         r = recs[i]
-        if r.get("kind") not in ("목표", "할 일") or r.get("state") != "open":
+        if kind_now(r.get("kind")) not in ("목표", TODO) or r.get("state") != "open":
             continue
         comments = r.get("comments") or []
         owner_last = max((int(c.get("at") or 0) for c in comments if c.get("by") == owner), default=0)

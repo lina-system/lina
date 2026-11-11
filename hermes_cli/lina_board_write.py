@@ -20,11 +20,12 @@ from pathlib import Path
 from typing import Callable
 
 from hermes_cli.lina_board import _WORK_LOCK, _root, _source, work_read, worker_read
+from hermes_cli.work.kinds import TODO, kind_now
 
 VIA = "app"
 TEXT_LIMIT = 2000
 WRITES_PER_MINUTE = 30
-KINDS = ("목표", "할 일")
+KINDS = ("목표", TODO)
 RETRY_TEXT = "다시 해 달라: 앞서 한 것을 이어서 하고 결과를 남겨 줘"
 _HITS: dict[str, collections.deque] = {}
 _HITS_LOCK = threading.Lock()
@@ -103,7 +104,7 @@ def _item(i: str) -> dict:
     from hermes_cli.work import ledger
     recs, _ = ledger.read_all()
     r = recs.get(i)
-    if not r or r.get("kind") not in KINDS or r.get("state") == "dropped":
+    if not r or kind_now(r.get("kind")) not in KINDS or r.get("state") == "dropped":
         raise Refused(404, f"no goal or to-do {i}")
     return r
 

@@ -10,6 +10,7 @@ from pathlib import Path
 
 from hermes_cli.work.common import die, mask
 from hermes_cli.work.env import current
+from hermes_cli.work.kinds import TODO, kind_now
 from hermes_cli.work.locale import lang, t
 from hermes_cli.work.writing_fields import TABLES
 
@@ -168,11 +169,11 @@ def missing_field(name: str, flag: str):
 
 def record_texts(r: dict) -> list[tuple[str, str]]:
     """(field, text) pairs a record shows on the dashboard; notes and replies are history, not listed."""
-    kind, out = r.get("kind"), []
-    if kind in ("목표", "할 일"):
+    kind, out = kind_now(r.get("kind")), []
+    if kind in ("목표", TODO):
         out.append(("목표 이름" if kind == "목표" else "할 일 제목", r.get("title")))
         out.append(("완료 조건", r.get("done")))
-    if kind == "할 일":
+    if kind == TODO:
         out.append(("왜", r.get("why")))
     out.append(("결정 문장", r.get("decide")))
     out += [("고를 답", c) for c in r.get("decide_choices") or []]

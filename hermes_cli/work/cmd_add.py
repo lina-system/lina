@@ -12,6 +12,7 @@ from hermes_cli.work.common import Lock, die, now
 from hermes_cli.work.items import (
     KIND_IN, due_hint, due_of, ensure_area, find_area, get, next_id, norm_session, split_projects,
 )
+from hermes_cli.work.kinds import TODO
 from hermes_cli.work.links import OMO_ID, norm_link, refuse_reason
 from hermes_cli.work.locale import t
 from hermes_cli.work.notify import tell
@@ -33,7 +34,7 @@ def _links(a, by: str):
 def _check_args(a, kind: str, by: str) -> bool:
     if not kind:
         die(t("종류는 영역|목표|할일|메모 (이슈는 work link로 붙인다)"))
-    if by == owner() and kind != "할 일":
+    if by == owner() and kind != TODO:
         die(t("주인은 할 일만 맡는다(work add 할 일 --by {owner} --from <요청한 에이전트>)", owner=owner()))
     board = bool(a.via)
     if board and (kind != "메모" or by == owner()):
@@ -137,7 +138,7 @@ def _record(a, kind: str, recs: dict, by: str, basis: list, parent: str, links: 
            "session": norm_session(a.session, by) if a.session else "",
            "links": links, "every": a.every or "", "stall": a.stall, "notes": [], "evidence": [], "wait": {},
            "state": "open", "created": now(), "progress_at": now()}
-    if kind == "할 일":
+    if kind == TODO:
         rec["why"] = a.why.strip()
     if by == owner():
         rec["from"] = agent(a.from_)
@@ -169,13 +170,13 @@ def add(a, *, write: bool = True) -> dict | None:
             return None
         basis = [new_basis(q.strip(), a.said, by) for q in (a.basis or []) if q.strip()]
         parent, memo = _parent(a, kind, recs, by, basis)
-        if a.why and kind != "할 일":
+        if a.why and kind != TODO:
             die(t("--why는 할 일에만 쓴다"))
         guard_text("진행 메모", a.note)
         rec = _record(a, kind, recs, by, basis, parent, links, due)
         if not write:
             return rec
-        if kind == "할 일" and omo_next and not any(link.startswith("omo:") for link in links):
+        if kind == TODO and omo_next and not any(link.startswith("omo:") for link in links):
             rec["omo_next_at"] = now()  # waits for `work link <id> omo:OT-…` (lina work run submit links it)
         if a.note:
             rec["notes"].append({"ts": now(), "by": rec.get("from", by), "text": a.note})
