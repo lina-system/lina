@@ -7,9 +7,10 @@ from __future__ import annotations
 import datetime
 
 from hermes_cli.work.env import current
+from hermes_cli.work.kinds import TODO, kind_now
 
 DUE_GROUPS = ("overdue", "today", "week", "later")
-DUE_KINDS = ("목표", "할 일")
+DUE_KINDS = ("목표", TODO)
 
 
 def agent_of(item: dict, recs: dict) -> str:
@@ -58,7 +59,7 @@ def mine(recs: dict, order: list[str], today: datetime.date) -> list[tuple[dict,
         if due is None:
             return (3, 0, made)
         return (0 if due < today else 1 if due == today else 2, due.toordinal(), made)
-    own = [recs[i] for i in order if recs[i].get("kind") == "할 일" and recs[i].get("by") == owner
+    own = [recs[i] for i in order if kind_now(recs[i].get("kind")) == TODO and recs[i].get("by") == owner
            and recs[i].get("state") == "open"]
     rows = [(item, waits_on(item, recs)) for item in own]
     return sorted(rows, key=lambda row: (row[1], rank(row[0])))
@@ -110,7 +111,7 @@ def due_groups(recs: dict, order: list[str], today: datetime.date) -> dict[str, 
     for i in order:
         item = recs[i]
         due = due_day(item)
-        if due is None or item.get("state") != "open" or item.get("kind") not in DUE_KINDS:
+        if due is None or item.get("state") != "open" or kind_now(item.get("kind")) not in DUE_KINDS:
             continue
         name = "overdue" if due < today else "today" if due == today else "week" if due <= sunday else "later"
         groups[name].append(item)

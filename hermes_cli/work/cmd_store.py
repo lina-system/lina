@@ -15,6 +15,7 @@ from hermes_cli.migrate_memory_work_rows import rows as table_rows
 from hermes_cli.work import ledger, store
 from hermes_cli.work.common import Lock, die, iso, now, paths, warn, writer_profile
 from hermes_cli.work.env import current
+from hermes_cli.work.kinds import current as current_kind
 from hermes_cli.work.locale import t
 
 RUN_COLUMNS = ("id", "runner", "title", "mode", "topic", "agent_id", "goal_id", "device", "created_at", "started_at",
@@ -44,7 +45,7 @@ def latest(rows) -> tuple[dict, list]:
             continue
         if row["id"] not in recs:
             order.append(row["id"])
-        recs[row["id"]] = row
+        recs[row["id"]] = current_kind(dict(row))
     return recs, order
 
 
