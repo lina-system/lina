@@ -17,6 +17,7 @@ Hermes Agent upstream changes are not listed here; see the upstream history on t
 
 ### Fixed
 
+- The app's first screen no longer waits on one Hermes command per card: the `hermes` board source is read in the background (when lina-web starts, every 15 s, and as soon as `kanban watch` prints an event; one pass at most 120 s), and `/api/plugins/kanban/work/*`, `/api/lina/board` and `/api/lina/work/due` answer from the last good pass with its time (`hermesAt`), adding one `errors` entry before the first pass ends or while passes fail. A pass runs `kanban show` only for cards not done and cards done within the app's done window; every other done card is its `list` row alone, marked `detail: false`. `board.hermes.cache_seconds` is no longer read (lina#533).
 - A worker's question wakes the goal card waiting on that run with the question text, including text absent from status; repeated notices stay deduplicated and awake or unrelated cards stay untouched (lina#494).
 - Usage-move replacements keep their original attempt from request-key receipts after an interrupted hub save, so an attempts limit of one does not block the continuing work (lina#354).
 - `lina work next` reads the sprint from a `- Sprint:` list item under `## Context` as well as a bare `Sprint:` line, so an issue written to the form in `docs/delivery.md` is no longer held as "no sprint"; a `Sprint:` line that names no sprint is held with the text it reads, and the form's `- Size:` item is read too (lina#511).

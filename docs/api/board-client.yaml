@@ -1272,6 +1272,12 @@ components:
           type: number
         errors:
           $ref: "#/components/schemas/Errors"
+        hermesAt:
+          type: number
+          nullable: true
+          description: >
+            Present only while the hermes source serves the old record (lina#533): when its rows were read, in epoch
+            seconds; null before the first read ended.
         counts:
           $ref: "#/components/schemas/Counts"
         cards:
@@ -1321,6 +1327,12 @@ components:
           type: number
         errors:
           $ref: "#/components/schemas/Errors"
+        hermesAt:
+          type: number
+          nullable: true
+          description: >
+            Present only while the hermes source serves the old record (lina#533): when its rows were read, in epoch
+            seconds; null before the first read ended.
         today:
           type: string
           nullable: true
