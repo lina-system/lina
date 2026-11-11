@@ -199,6 +199,17 @@ def test_the_record_and_the_card_serve_the_run_s_model_and_settings_revision(fak
         assert (cards[tid]["model"], cards[tid]["settingsRevision"]) == want
 
 
+def test_the_record_names_the_card_that_started_the_run_by_its_work_card_id(fakes, client):
+    """A run handed out from a card names that card as ``/work/cards`` serves it (``hermes:`` on a Hermes card); a run
+    no card started names none."""
+    fakes.job("OT-ALP0013", card={"task": "t_3cb98fe8", "board": "main", "kind": "hermes"})
+    fakes.job("OT-ALP0014", card={"task": "t_own", "board": None})
+    fakes.job("OT-ALP0015")
+
+    assert [_record(client, tid)["cardId"] for tid in ("OT-ALP0013", "OT-ALP0014", "OT-ALP0015")] == [
+        "hermes:t_3cb98fe8", "t_own", None]
+
+
 def test_the_record_is_behind_the_auth_gate_and_answers_304_until_it_changes(work, fakes, client):
     from hermes_cli import web_server
     _two_rounds(fakes, "OT-ALP0008", first_end=True, state="running")

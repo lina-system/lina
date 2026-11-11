@@ -22,7 +22,10 @@ card, minutes on a big board, so a background reader (:class:`_Reader`) runs one
 :data:`PASS_LIMIT_S`. A request serves the last good pass with its time (``hermesAt``); before the first one ends, or
 while the passes fail, it adds one ``errors`` entry. ``show`` runs only for cards not done and cards done within the
 app's done window (``lina_board.DONE_WINDOW_S``); every other done card is its ``list`` row alone, marked
-``detail: false``. Nothing is written to disk. Items from this source carry ids prefixed ``hermes:`` and
+``detail: false``. Each command starts a Hermes CLI (about 1.4 s of CPU on the hub), so the reader keeps every card's
+last ``show`` (:class:`Memo`, lina#573) and shows a card again only when its ``list`` row changed or ``kanban watch``
+named it; a pass cut by its limit leaves the replies it got to the next. A pass woken by ``kanban watch`` does not
+read the old record again before :data:`PASS_EVERY_S` (the watch says nothing about it). Nothing is written to disk. Items from this source carry ids prefixed ``hermes:`` and
 ``readOnly: true``; LINA's write routes refuse such ids with 409 (:data:`READ_ONLY`).
 """
 
@@ -31,6 +34,7 @@ from __future__ import annotations
 import dataclasses
 import json
 import logging
+import re
 import shlex
 import subprocess
 import threading
@@ -227,16 +231,60 @@ def _links(shows: list[dict]) -> dict[str, dict[str, list[str]]]:
     return links
 
 
-def read_cards(src: Source, budget: _Budget) -> list[dict]:
-    """One pass's cards in ``list`` order: ``show`` of every card :func:`_shown`, a few at a time, and the list row
-    alone of every other. A failing ``show`` fails the pass and cancels the ones not started."""
+class Memo:
+    """The cards' last ``show`` replies, kept by a reader from pass to pass (lina#573). A card is shown again only when
+    it has none, when its ``list`` row is not the row its reply was read with, or when ``kanban watch`` named it since
+    (a comment or a run changes the reply, not the row). A reply is kept as soon as its ``show`` ends, so a pass cut by
+    :data:`PASS_LIMIT_S` leaves the replies it got to the next pass."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._kept: dict[str, tuple[dict, dict]] = {}
+        self._named: set[str] = set()
+
+    def name(self, raw: str | None) -> None:
+        """A card to show again; None names every card kept (an event that names no card, or a gap in the watch)."""
+        with self._lock:
+            self._named.update(self._kept if raw is None else (raw,))
+
+    def stale(self, rows: list[dict]) -> list[str]:
+        """The ids of *rows* to show again, their names taken; cards no longer among *rows* are forgotten."""
+        with self._lock:
+            ids = {str(row["id"]) for row in rows}
+            self._kept = {raw: kept for raw, kept in self._kept.items() if raw in ids}
+            stale = [str(row["id"]) for row in rows
+                     if str(row["id"]) in self._named or self._kept.get(str(row["id"]), (None,))[0] != row]
+            self._named = (self._named & ids) - set(stale)
+            return stale
+
+    def keep(self, row: dict, show: dict) -> None:
+        with self._lock:
+            self._kept[str(row["id"])] = (row, show)
+
+    def shows(self, ids: list[str]) -> dict[str, dict]:
+        with self._lock:
+            return {raw: self._kept[raw][1] for raw in ids if raw in self._kept}
+
+
+def read_cards(src: Source, budget: _Budget, memo: Memo) -> list[dict]:
+    """One pass's cards in ``list`` order: the kept ``show`` of every card :func:`_shown`, after showing again the ones
+    *memo* holds stale (a few at a time), and the list row alone of every other. A failing ``show`` fails the pass and
+    cancels the ones not started; the cards it did not show stay stale for the next pass."""
     rows, now = card_list(src, budget), time.time()
-    wanted = [str(row["id"]) for row in rows if _shown(row, now)]
+    wanted = {str(row["id"]): row for row in rows if _shown(row, now)}
+    left = set(memo.stale(list(wanted.values())))
+
+    def show(raw: str) -> None:
+        memo.keep(wanted[raw], card_show(src, raw, budget))
+        left.discard(raw)
     pool = ThreadPoolExecutor(SHOW_WORKERS, thread_name_prefix="lina-hermes-show")
     try:
-        shows = dict(zip(wanted, pool.map(lambda raw: card_show(src, raw, budget), wanted)))
+        list(pool.map(show, [raw for raw in wanted if raw in left]))
     finally:
         pool.shutdown(cancel_futures=True)
+        for raw in list(left):
+            memo.name(raw)
+    shows = memo.shows(list(wanted))
     links = _links(list(shows.values()))
     return [shows.get(str(row["id"])) or _listed_only(row, links) for row in rows]
 
@@ -278,6 +326,8 @@ class _Reader:
     def __init__(self, root: Path, src: Source):
         self.root, self.src = root, src
         self.passes = 0
+        self.memo = Memo()
+        self._record_at: float | None = None
         self._parts = {"cards": Part(), "record": Part()}
         self._cond = threading.Condition()
         self._wake, self._stopped = threading.Event(), threading.Event()
@@ -301,12 +351,18 @@ class _Reader:
             return self._cond.wait_for(lambda: self.passes >= passes, timeout)
 
     def stop(self) -> None:
+        """Stops the passes and ends ``kanban watch``. Only the first stop signals it, under the lock the watch thread
+        takes before it reaps the process, so no signal goes to a PID already reaped (stop runs from the server and
+        from the reader's own loop at once)."""
         self._stopped.set()
         self._wake.set()
         with self._cond:
-            proc = self._watch
-        if proc is not None and proc.poll() is None:
-            proc.terminate()
+            proc, self._watch = self._watch, None
+            if proc is not None and proc.poll() is None:
+                proc.terminate()
+            else:
+                proc = None
+        if proc is not None:
             try:
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
@@ -329,15 +385,18 @@ class _Reader:
         self.stop()
 
     def _pass(self) -> None:
-        budget = _Budget(time.monotonic() + PASS_LIMIT_S, self._stopped)
+        started = time.monotonic()
+        budget = _Budget(started + PASS_LIMIT_S, self._stopped)
         reads: dict[str, Callable[[], Any]] = {}
-        if self.src.work is not None:
+        if self.src.work is not None and (self._record_at is None or started - self._record_at >= PASS_EVERY_S):
+            self._record_at = started
             reads["record"] = lambda: read_record(self.src, budget)
         if self.src.command is not None:
-            reads["cards"] = lambda: read_cards(self.src, budget)
-        with ThreadPoolExecutor(len(reads), thread_name_prefix="lina-hermes-pass") as pool:
-            for name, read in reads.items():
-                pool.submit(self._keep, name, read)
+            reads["cards"] = lambda: read_cards(self.src, budget, self.memo)
+        if reads:
+            with ThreadPoolExecutor(len(reads), thread_name_prefix="lina-hermes-pass") as pool:
+                for name, read in reads.items():
+                    pool.submit(self._keep, name, read)
         with self._cond:
             self.passes += 1
             self._cond.notify_all()
@@ -358,9 +417,11 @@ class _Reader:
             self._parts[name] = Part(value, time.time(), None)
 
     def _watch_loop(self) -> None:
-        """``kanban watch``: every event line it prints starts the next pass now. Restarted after
-        :data:`PASS_EVERY_S` when it ends; the timer alone keeps the board read meanwhile."""
+        """``kanban watch``: every event line it prints names its card to :attr:`memo` and starts the next pass now.
+        Restarted after :data:`PASS_EVERY_S` when it ends; the timer alone keeps the board read meanwhile, and the
+        events of that gap are unknown, so a restart names every card kept."""
         argv = list(_kanban_argv(self.src, "watch", "--interval", f"{WATCH_POLL_S:g}"))
+        restart = False
         while not self.stopped:
             try:
                 # health: allow HX006 -- kanban watch is a stream that runs until the reader stops; stop() ends and reaps it
@@ -371,18 +432,36 @@ class _Reader:
                 logger.warning("hermes board: %s did not start", shlex.join(argv), exc_info=True)
             else:
                 with self._cond:
-                    self._watch = proc
-                if self.stopped:
-                    proc.terminate()
+                    if self.stopped:  # a stop before this point never saw proc
+                        proc.terminate()
+                    else:
+                        self._watch = proc
+                if restart:
+                    self.memo.name(None)
+                restart = True
                 for line in proc.stdout or ():
                     if line.strip() and not line.startswith("Watching "):
+                        self.memo.name(event_card(line))
                         self._wake.set()
+                with self._cond:
+                    if self._watch is proc:
+                        self._watch = None
                 try:
                     proc.wait(timeout=5)
                 except subprocess.TimeoutExpired:
                     proc.kill()
                     proc.wait()
             self._stopped.wait(PASS_EVERY_S)
+
+
+_EVENT = re.compile(r"\[[^\]]*\]\s+(\S+)\s")
+
+
+def event_card(line: str) -> str | None:
+    """The card id of a ``kanban watch`` line (``[<time>] <id> <kind> (@<assignee>) ...``); None when the line is not
+    in that shape."""
+    found = _EVENT.match(line)
+    return found.group(1) if found else None
 
 
 _READER: _Reader | None = None

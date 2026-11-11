@@ -20,6 +20,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+from hermes_cli.worker import kanban_link
 from hermes_cli.worker.hub import ENDED, Hub
 from hermes_cli.worker.hub_store import Store
 from hermes_cli.worker.task import safe_id
@@ -223,8 +224,19 @@ def settings_revision(job: dict) -> str | None:
     return str(rev) if rev else None
 
 
+def card_id(job: dict) -> str | None:
+    """The work card that started the run, by its id as the work API serves it (``hermes:<task>`` for a Hermes card,
+    ``lina_board_hermes``); from the job's own ``card``, so no board is read. None when no card started it."""
+    from hermes_cli.lina_board_hermes import hermes_id
+    card = job.get("card")
+    task = card.get("task") if isinstance(card, dict) else None
+    if not task:
+        return None
+    return hermes_id(task) if kanban_link.on_hermes(card) else str(task)
+
+
 def record(worker_root: Path, run_id: str, now: float) -> dict:
-    """``{id, at, model, settingsRevision, rounds, comments, errors}``: rounds newest first, each with its rows oldest first; ``comments`` are
+    """``{id, at, model, settingsRevision, cardId, rounds, comments, errors}``: rounds newest first, each with its rows oldest first; ``comments`` are
     the ones made while no round was going."""
     try:
         store = Store(worker_root)
@@ -262,4 +274,4 @@ def record(worker_root: Path, run_id: str, now: float) -> dict:
                        "result": outcome.get("result"), "verdict": outcome.get("verdict"),
                        "stopped": one["end_state"] in STOPPED_ENDS, "rows": _fold(placed[index])})
     return {"id": job["id"], "at": now, "model": served_model(job), "settingsRevision": settings_revision(job),
-            "rounds": served[::-1], "comments": _fold(loose)[::-1], "errors": errors}
+            "cardId": card_id(job), "rounds": served[::-1], "comments": _fold(loose)[::-1], "errors": errors}

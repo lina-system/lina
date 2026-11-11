@@ -235,8 +235,20 @@ def _mark_signing(base: Path, node: str, cells: list[dict], reachable: bool) -> 
         cell["signingIn"] = reachable and cell["type"] != "omo" and (str(base), node, cell["name"]) in running
 
 
-def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
-    """The work and files devices: work first, then files; in each, down, then warnings, then the rest."""
+def _contacts(base: Path, devs: list[settings.Device], worker_root: Path, runner: str):
+    """Every node's ``hello`` and ``probe`` at once, through the board's shared reads (``lina_board.READS``,
+    lina#573): requests within ``READ_TTL_S`` seconds of each other ask the nodes once."""
+    from hermes_cli.lina_board import READS
+
+    def read(_errors):
+        with ThreadPoolExecutor(len(devs)) as pool:
+            return list(pool.map(lambda dev: _contact(dev, worker_root, runner), devs))
+    return READS.get(("contacts", str(base), runner, tuple((dev.name, dev.host) for dev in devs)), read)
+
+
+def nodes(base: Path, metrics: dict | None, now: float) -> tuple[list[dict], float | None]:
+    """The work and files devices: work first, then files; in each, down, then warnings, then the rest; and the time
+    their ``hello`` and ``probe`` were read (None without nodes)."""
     from hermes_cli.worker import runners
     from hermes_cli.worker.board import machine
     worker_root = settings.root(base)
@@ -245,9 +257,9 @@ def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
     min_free = int(settings.setting("min_free_gb", worker=worker))
     devs = [dev for dev in settings.devices(base) if dev.role in NODE_ROLES]
     if not devs:
-        return []
-    with ThreadPoolExecutor(len(devs)) as pool:
-        contacts = list(pool.map(lambda dev: _contact(dev, worker_root, runner), devs))
+        return [], None
+    read = _contacts(base, devs, worker_root, runner)
+    contacts = read.result()
     rows = []
     for dev, (probe, descriptor, reachable) in zip(devs, contacts):
         row = machine(dev, probe, (metrics or {}).get(dev.name) or (metrics or {}).get(dev.host), now, min_free)
@@ -255,7 +267,7 @@ def nodes(base: Path, metrics: dict | None, now: float) -> list[dict]:
         _mark_signing(base, dev.name, cells, reachable)
         row.update(role=dev.role, reachable=reachable, runners=cells)
         rows.append(row)
-    return sorted(rows, key=lambda row: (NODE_ROLES.index(row["role"]), STATES.index(row["state"])))
+    return sorted(rows, key=lambda row: (NODE_ROLES.index(row["role"]), STATES.index(row["state"]))), read.at
 
 
 def _person_tools() -> list[tuple[str, str, str | None]]:
@@ -318,7 +330,8 @@ def people(base: Path) -> list[dict]:
 
 
 def view(base: Path, metrics: dict | None, now: float) -> dict:
-    return {"machines": nodes(base, metrics, now), "person": people(base)}
+    machines, at = nodes(base, metrics, now)
+    return {"machines": machines, "person": people(base), "at": at}
 
 
 class Refused(Exception):
