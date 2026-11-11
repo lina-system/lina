@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { describe, test } from "node:test";
 import { OcxOmoError } from "../src/errors.js";
 import { escapeRegExp, extractChains } from "../src/upstream.js";
@@ -11,6 +12,15 @@ const MINIFIED = [
   'quick:w([{providers:["openai"],model:qa.gptAstra}])};',
   'Ha={explore:[{providers:["kimi"],model:"kimi-x",variant:"off"}],"plan-reviewer":[{providers:["openai"],model:qa.gptAstra,variant:"xhigh"}]};',
 ].join("");
+
+/** Excerpts of omo-ai's plugin/extensions/omo-task.js: the chains and the constants they read. */
+const fixture = (version: string) =>
+  readFileSync(new URL(`../../test/fixtures/omo-task-${version}.js`, import.meta.url), "utf8");
+const CATEGORIES = [
+  "visual-engineering", "architect", "ultrabrain", "deep-low", "deep-high",
+  "artistry", "quick", "unspecified-low", "unspecified-high", "writing",
+];
+const AGENTS = ["explore", "librarian", "plan-consultant", "plan-reviewer"];
 
 describe("extractChains", () => {
   test("reads wrapped category chains and resolves minified constants", () => {
@@ -26,6 +36,32 @@ describe("extractChains", () => {
     const chains = extractChains(MINIFIED);
     assert.deepEqual(Object.keys(chains.agents), ["explore", "plan-reviewer"]);
     assert.deepEqual(chains.agents["plan-reviewer"]?.[0], { providers: ["openai"], model: "gpt-6-astra", variant: "xhigh" });
+  });
+
+  test("reads omo 5.1.66, whose category chains are wrapped in a helper", () => {
+    const chains = extractChains(fixture("5.1.66"));
+    assert.deepEqual(Object.keys(chains.categories), CATEGORIES);
+    assert.deepEqual(Object.keys(chains.agents), AGENTS);
+    assert.deepEqual(chains.categories["architect"]?.map((rung) => rung.model), ["claude-fable-5-5", "claude-fable-5-1"]);
+  });
+
+  test("reads omo 5.1.69, whose category chains are bare arrays, with Fable 5.2 first", () => {
+    const chains = extractChains(fixture("5.1.69"));
+    assert.deepEqual(Object.keys(chains.categories), CATEGORIES);
+    assert.deepEqual(Object.keys(chains.agents), AGENTS);
+    for (const chain of [chains.categories["architect"], chains.categories["artistry"], chains.agents["plan-consultant"]]) {
+      assert.deepEqual(chain?.slice(0, 2).map((rung) => rung.model), ["claude-fable-5-2", "claude-fable-5-1"]);
+    }
+  });
+
+  test("fails with the format-changed message on an unknown category shape", () => {
+    const unknown = fixture("5.1.69").replace('{"visual-engineering":[', '{"visual-engineering":new Set([');
+    assert.throws(
+      () => extractChains(unknown),
+      (error) =>
+        error instanceof OcxOmoError &&
+        error.message === "category model chains not found in omo-task.js; its format changed",
+    );
   });
 
   test("fails loudly when the chains are gone", () => {
